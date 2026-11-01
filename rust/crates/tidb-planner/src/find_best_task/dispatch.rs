@@ -2263,9 +2263,7 @@ fn build_index_join_path_result(
     };
     let source_index = match path {
         tidb_planner_util::path::PossiblePath::Index { index } => {
-            let Some(source_index) = ds.indexes.get(*index) else {
-                return Ok(IndexJoinPathAnswer::NotApplicable);
-            };
+            let source_index = index;
             // Go `IsIndexJoinUnapplicable`: an MV or partial index is
             // reachable only through IndexMerge or its own condition.
             if source_index.read().mv_index || !source_index.read().condition_expr_string.is_empty() {
@@ -3209,14 +3207,14 @@ fn find_best_task_4_logical_data_source_paths(
                 } else {
                     fallback_table_path = crate::access_path::ordinary::fill_table_path(
                         ds,
-                        *primary_index,
+                        primary_index.as_ref(),
                         &ctx.access_path_derivation_context(),
                     )?;
                     &fallback_table_path
                 };
                 let handle_column = table_path.handle_column.as_ref();
                 let handle_type = &table_path.handle_type;
-                let common_handle = primary_index.and_then(|index| ds.indexes.get(index));
+                let common_handle = primary_index.as_ref();
                 let (common_columns, common_lengths): (Vec<_>, Vec<_>) =
                     table_path.common_columns.iter().cloned().unzip();
                 // Go `buildDataSource2TableScanByIndexJoinProp`: a common
@@ -3872,9 +3870,7 @@ fn find_best_task_4_logical_data_source_paths(
                 })
             }
             tidb_planner_util::path::PossiblePath::Index { index } => 'index_path: {
-                let Some(source_index) = ds.indexes.get(*index) else {
-                    continue 'paths;
-                };
+                let source_index = index;
                 // Go `convertToIndexScan`: "MVIndex is special since different
                 // index rows may return the same _row_id" -- a multi-valued
                 // index is read only through IndexMerge, never as an
@@ -4893,7 +4889,7 @@ fn heuristic_selection_note(
 ) -> String {
     let table = note_table_name(ds);
     let index = match path {
-        tidb_planner_util::path::PossiblePath::Index { index } => ds.indexes.get(*index),
+        tidb_planner_util::path::PossiblePath::Index { index } => Some(index),
         _ => None,
     };
     let Some(index) = index else {
@@ -4935,15 +4931,10 @@ fn pruning_info_message(
     let path_name = |path: &PossiblePath| match path {
         PossiblePath::Table { .. } => table.to_owned(),
         PossiblePath::TiFlashTable => format!("{table}(tiflash)"),
-        PossiblePath::Index { index } => ds
-            .indexes
-            .get(*index)
-            .map_or_else(String::new, |index| index.read().name.original().to_owned()),
+        PossiblePath::Index { index } => index.read().name.original().to_owned(),
     };
-    let index_name = |position: usize| {
-        ds.indexes
-            .get(position)
-            .map_or_else(String::new, |index| index.read().name.original().to_owned())
+    let index_name = |index: &tidb_infoschema::table_source::SourceIndex| {
+        index.read().name.original().to_owned()
     };
     let mut names = Vec::new();
     for (position, path) in derived.paths.iter().enumerate() {
@@ -4966,10 +4957,10 @@ fn pruning_info_message(
                         .partials()
                         .iter()
                         .map(|partial| match partial {
-                            tidb_planner_util::path::Partial::Index { index_pos, .. }
+                            tidb_planner_util::path::Partial::Index { index, .. }
                             | tidb_planner_util::path::Partial::MvIndex {
-                                index_pos, ..
-                            } => index_name(*index_pos),
+                                index, ..
+                            } => index_name(index),
                             tidb_planner_util::path::Partial::Table { .. } => {
                                 table.to_owned()
                             }
@@ -4978,7 +4969,7 @@ fn pruning_info_message(
                     PreparedMerge::IndexMerge(path) => path
                         .partials
                         .iter()
-                        .map(|partial| index_name(partial.index_pos))
+                        .map(|partial| index_name(&partial.index))
                         .collect(),
                 };
                 names.push(format!("IndexMerge{{{}}}", partials.join(",")));
@@ -6251,6 +6242,17 @@ mod tests {
         )));
         base.base
             .set_schema(Some(Schema::new(vec![a.clone(), b.clone(), c.clone()])));
+        let index_0 = tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id: 3,
+                name: tidb_ast::CiString::new("ia"),
+                columns: vec![tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new("a"),
+                    offset: 0,
+                    length: UNSPECIFIED_LENGTH,
+                    ..tidb_model::IndexColumn::default()
+                }].into(),
+                ..tidb_model::IndexInfo::default()
+            });
         let source = LogicalPlan::DataSource(DataSource {
             base,
             table_id: 7,
@@ -6289,18 +6291,8 @@ mod tests {
             common_handle_cols: vec![b, c],
             common_handle_lens: vec![UNSPECIFIED_LENGTH; 2],
             pushed_down_conds: vec![cond],
-            enumerated_paths: vec![PossiblePath::Index { index: 0 }],
-            indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
-                id: 3,
-                name: tidb_ast::CiString::new("ia"),
-                columns: vec![tidb_model::IndexColumn {
-                    name: tidb_ast::CiString::new("a"),
-                    offset: 0,
-                    length: UNSPECIFIED_LENGTH,
-                    ..tidb_model::IndexColumn::default()
-                }].into(),
-                ..tidb_model::IndexInfo::default()
-            })],
+            enumerated_paths: vec![PossiblePath::Index { index: index_0.clone() }],
+            indexes: vec![index_0],
             ..DataSource::default()
         });
         let task = find_best_task(&source, &PhysicalProperty::default(), &mut ctx).expect("plans");
@@ -6522,6 +6514,12 @@ mod tests {
         let build = |index_columns: Vec<SourceIndexColumn>| {
             let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
             base.base.set_stats(Some(StatsInfo::new(50.0, [])));
+            let index_0 = tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 3,
+                    name: tidb_ast::CiString::new("ib"),
+                    columns: (index_columns).into(),
+                    ..tidb_model::IndexInfo::default()
+                });
             let mut schema = Schema::default();
             schema.columns = vec![
                 Column::new(11, FieldType::new(FieldTypeCode::LongLong)),
@@ -6556,14 +6554,9 @@ mod tests {
                         is_int_handle: true,
                         primary_index: None,
                     },
-                    PossiblePath::Index { index: 0 },
+                    PossiblePath::Index { index: index_0.clone() },
                 ],
-                indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
-                    id: 3,
-                    name: tidb_ast::CiString::new("ib"),
-                    columns: (index_columns).into(),
-                    ..tidb_model::IndexInfo::default()
-                })],
+                indexes: vec![index_0],
                 ..DataSource::default()
             })
         };
@@ -6674,6 +6667,17 @@ mod tests {
         base.base.set_stats(Some(StatsInfo::new(100.0, [])));
         base.base
             .set_schema(Some(Schema::new(vec![column.clone()])));
+        let index_0 = tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id: 3,
+                name: tidb_ast::CiString::new("ia_prefix"),
+                columns: vec![tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new("a"),
+                    offset: 0,
+                    length: 4,
+                    ..tidb_model::IndexColumn::default()
+                }].into(),
+                ..tidb_model::IndexInfo::default()
+            });
         let mut source = DataSource {
             base,
             physical_table_id: 7,
@@ -6686,18 +6690,8 @@ mod tests {
                     };
                     info
                 })],
-            enumerated_paths: vec![PossiblePath::Index { index: 0 }],
-            indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
-                id: 3,
-                name: tidb_ast::CiString::new("ia_prefix"),
-                columns: vec![tidb_model::IndexColumn {
-                    name: tidb_ast::CiString::new("a"),
-                    offset: 0,
-                    length: 4,
-                    ..tidb_model::IndexColumn::default()
-                }].into(),
-                ..tidb_model::IndexInfo::default()
-            })],
+            enumerated_paths: vec![PossiblePath::Index { index: index_0.clone() }],
+            indexes: vec![index_0],
             ..DataSource::default()
         };
         let partial = PhysicalProperty {

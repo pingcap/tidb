@@ -372,17 +372,15 @@ impl DataSource {
     /// statistics loading; ranger resolves the current schema again later.
     pub fn initialize_index_columns(&mut self) {
         for path in &self.enumerated_paths {
-            let position = match path {
+            let index = match path {
                 tidb_planner_util::path::PossiblePath::Index { index }
                 | tidb_planner_util::path::PossiblePath::Table {
                     primary_index: Some(index),
                     ..
-                } => *index,
+                } => index.clone(),
                 _ => continue,
             };
-            let Some(index) = self.indexes.get(position) else {
-                continue;
-            };
+            let index = &index;
             let columns = self.declared_index_columns(index);
             // Go `buildDataSource` (`logical_plan_builder.go:5316`): only a
             // unique secondary index of more than one column whose first
@@ -418,9 +416,6 @@ impl DataSource {
         let mut new_conds = conds.clone();
         for path in &self.enumerated_paths {
             let tidb_planner_util::path::PossiblePath::Index { index } = path else {
-                continue;
-            };
-            let Some(index) = self.indexes.get(*index) else {
                 continue;
             };
             if !self
@@ -516,15 +511,13 @@ impl DataSource {
         for path in &self.enumerated_paths {
             match path {
                 tidb_planner_util::path::PossiblePath::Table {
-                    primary_index: Some(position),
+                    primary_index: Some(index),
                     ..
                 } => {
-                    if let Some(index) = self.indexes.get(*position) {
-                        paths.insert(index.read().id, Vec::new());
-                    }
+                    paths.insert(index.read().id, Vec::new());
                 }
-                tidb_planner_util::path::PossiblePath::Index { index: position } => {
-                    if let Some(index) = self.indexes.get(*position) {
+                tidb_planner_util::path::PossiblePath::Index { index } => {
+                    {
                         // The path's `IdxCols`: the schema columns behind the
                         // collection's ids, a prefix up to the first absent one.
                         let schema = self.base.base.schema();
@@ -756,9 +749,7 @@ impl DataSource {
             let tidb_planner_util::path::PossiblePath::Index { index } = path else {
                 continue;
             };
-            let Some(metadata) = self.indexes.get(*index) else {
-                continue;
-            };
+            let metadata = index;
             if metadata.read().condition_expr_string.is_empty() {
                 continue;
             }
@@ -796,9 +787,7 @@ impl DataSource {
         };
         self.derived_access_paths = None;
         self.enumerated_paths.retain(|path| match path {
-            tidb_planner_util::path::PossiblePath::Index { index } => self
-                .indexes
-                .get(*index)
+            tidb_planner_util::path::PossiblePath::Index { index } => Some(index)
                 .is_some_and(|metadata| keep_index_id(metadata.read().id)),
             tidb_planner_util::path::PossiblePath::Table { .. }
             | tidb_planner_util::path::PossiblePath::TiFlashTable => !partial_index_used_hint,

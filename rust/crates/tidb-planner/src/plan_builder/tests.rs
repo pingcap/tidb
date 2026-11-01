@@ -754,7 +754,7 @@ fn test_dynamic_partition_pruning_retains_global_index_paths() {
     assert_eq!(flags & flags::PARTITION_PROCESSOR, 0);
     assert!(source
         .enumerated_paths
-        .contains(&tidb_planner_util::path::PossiblePath::Index { index: 0 }));
+        .contains(&tidb_planner_util::path::PossiblePath::Index { index: source.indexes[0].clone() }));
 
     let mut builder = harness.builder();
     let (plan, flags) = builder
@@ -769,7 +769,7 @@ fn test_dynamic_partition_pruning_retains_global_index_paths() {
     assert_ne!(flags & flags::PARTITION_PROCESSOR, 0);
     assert!(!source
         .enumerated_paths
-        .contains(&tidb_planner_util::path::PossiblePath::Index { index: 0 }));
+        .contains(&tidb_planner_util::path::PossiblePath::Index { index: source.indexes[0].clone() }));
 }
 
 #[test]
@@ -811,7 +811,7 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
     };
     assert_eq!(
         source.enumerated_paths,
-        vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }]
+        vec![tidb_planner_util::path::PossiblePath::Index { index: source.indexes[0].clone() }]
     );
     assert_eq!(
         source.forced_index_ids,
@@ -830,7 +830,7 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
     };
     assert_eq!(
         source.enumerated_paths,
-        vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }]
+        vec![tidb_planner_util::path::PossiblePath::Index { index: source.indexes[0].clone() }]
     );
     assert_eq!(
         source.forced_index_ids,
@@ -1685,7 +1685,7 @@ fn a_built_data_source_enumerates_its_access_paths() {
                 is_int_handle: true,
                 primary_index: None
             },
-            PossiblePath::Index { index: 0 },
+            PossiblePath::Index { index: data_source.indexes[0].clone() },
         ]
     );
     // The GROWN lists stay empty at build time; the costing seam fills them.

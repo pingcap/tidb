@@ -89,25 +89,56 @@ pub struct DerivedAccessPaths {
 /// [`DataSourceAccessPath`] above is the grown, costing-time form the bounded
 /// scanner builds. Two stages, as in Go, where one struct mutates through
 /// both.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum PossiblePath {
     /// The table path, always first (`publicPaths[0]`).
     Table {
         /// Go `IsIntHandlePath`: the table is not common-handle.
         is_int_handle: bool,
         /// Go `fillContentForTablePath`: a common-handle table path carries
-        /// its PRIMARY index, by offset into the catalog's index list.
-        primary_index: Option<usize>,
+        /// its PRIMARY index (`path.Index`).
+        primary_index: Option<tidb_model::GoShared<tidb_model::IndexInfo>>,
     },
     /// Go `genTiFlashPath`: a table path served by an available TiFlash
     /// replica.
     TiFlashTable,
-    /// One public index, by offset into the catalog's index list.
+    /// One index path: Go `AccessPath.Index`, the `*model.IndexInfo` itself.
     Index {
-        /// The offset into `SourceTable::indexes`.
-        index: usize,
+        /// The index's `IndexInfo`.
+        index: tidb_model::GoShared<tidb_model::IndexInfo>,
     },
 }
+
+/// Go compares `AccessPath.Index` by pointer: two paths over the same index
+/// are the same path.
+impl PartialEq for PossiblePath {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Table {
+                    is_int_handle: left,
+                    primary_index: left_primary,
+                },
+                Self::Table {
+                    is_int_handle: right,
+                    primary_index: right_primary,
+                },
+            ) => {
+                left == right
+                    && match (left_primary, right_primary) {
+                        (Some(left), Some(right)) => left.ptr_eq(right),
+                        (None, None) => true,
+                        _ => false,
+                    }
+            }
+            (Self::TiFlashTable, Self::TiFlashTable) => true,
+            (Self::Index { index: left }, Self::Index { index: right }) => left.ptr_eq(right),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for PossiblePath {}
 
 /// Go `util.IndexLookUpPushDownByType`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -170,8 +201,8 @@ pub struct FilledTablePath {
 pub enum Partial {
     /// A secondary-index range scan; rows are (index cols..., handle...).
     Index {
-        /// The index, by offset into the catalog's index list.
-        index_pos: usize,
+        /// Go `path.Index`.
+        index: tidb_model::GoShared<tidb_model::IndexInfo>,
         /// The filled ranges and filters.
         filled: FilledIndexPath,
         /// Go `CountAfterAccess`.
@@ -191,8 +222,8 @@ pub enum Partial {
     /// Go's MV alternative (`buildIntoAccessPath`'s MV arm): one partial path
     /// per value over a multi-valued index, whose handles unite.
     MvIndex {
-        /// The multi-valued index, by offset into the catalog's index list.
-        index_pos: usize,
+        /// Go `path.Index`, the multi-valued index.
+        index: tidb_model::GoShared<tidb_model::IndexInfo>,
         /// One partial path per value.
         paths: Vec<IndexMergePartial>,
         /// Whether the disjunct must still be applied above the merge.
@@ -233,8 +264,8 @@ pub struct UnionIndexMergePath {
 /// One index partial of a finished index merge (Go `PartialIndexPaths[i]`).
 #[derive(Clone, Debug)]
 pub struct IndexMergePartial {
-    /// The index, by offset into the catalog's index list.
-    pub index_pos: usize,
+    /// Go `path.Index`.
+    pub index: tidb_model::GoShared<tidb_model::IndexInfo>,
     /// Its filled state.
     pub path: IndexPathState,
 }

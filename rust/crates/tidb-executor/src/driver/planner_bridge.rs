@@ -3839,7 +3839,7 @@ mod statistics_initialization_tests {
             state: tidb_model::SchemaState::PUBLIC,
             ..tidb_model::IndexInfo::default()
         })];
-        source.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }];
+        source.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Index { index: source.indexes[0].clone() }];
         let mut parameter = Constant::new(Datum::Int(1), field_type);
         parameter.param_marker = Some(ParamMarker { order: 0 });
         let comparison = Expression::ScalarFunction(ScalarFunction::new(

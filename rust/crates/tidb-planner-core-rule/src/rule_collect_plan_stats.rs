@@ -1027,8 +1027,8 @@ mod tests {
                 is_int_handle: true,
                 primary_index: None,
             },
-            PossiblePath::Index { index: 0 },
-            PossiblePath::Index { index: 1 },
+            PossiblePath::Index { index: source.indexes[0].clone() },
+            PossiblePath::Index { index: source.indexes[1].clone() },
         ];
         source.pushed_down_conds = vec![Expression::ScalarFunction(ScalarFunction::new(
             CiString::new("eq"),

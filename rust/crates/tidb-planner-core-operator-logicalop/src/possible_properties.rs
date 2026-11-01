@@ -52,10 +52,7 @@ fn data_source_orders(source: &super::DataSource, inherited_fixed: &[i64]) -> Ve
     fixed.sort_unstable();
     fixed.dedup();
     let mut orders = Vec::new();
-    let index_orders = |index_offset: usize| {
-        let Some(index) = source.indexes.get(index_offset) else {
-            return Vec::new();
-        };
+    let index_orders = |index: &tidb_model::GoShared<tidb_model::IndexInfo>| {
         // Go `IndexInfo2PrefixCols`: the index columns up to the first one
         // the schema lacks, a prefix-length column included.
         let mut order: Vec<Column> = index
@@ -99,7 +96,7 @@ fn data_source_orders(source: &super::DataSource, inherited_fixed: &[i64]) -> Ve
         index_orders
     };
     for path in &source.enumerated_paths {
-        match *path {
+        match path {
             PossiblePath::Table {
                 is_int_handle: true,
                 ..

@@ -1319,3 +1319,31 @@ fn group_concat_truncation_obeys_dml_strictness_atomically() {
         [["hello,h"]]
     );
 }
+
+/// Go `getPossibleAccessPaths` (`planbuilder.go:1419-1441`) makes an
+/// EXPLAIN's hypothetical index an access path only: `DataSource.BuildKeyInfo`
+/// walks `TableInfo.Indices`, so a hypothetical UNIQUE index on a NOT NULL
+/// column is no key and the aggregation stays. Recorded by TiDB (`./gorun`).
+#[test]
+fn a_hypothetical_unique_index_is_an_access_path_but_no_key() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT, b INT NOT NULL)")
+        .unwrap();
+    session
+        .run("CREATE UNIQUE INDEX ub ON t (b) TYPE HYPO")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("EXPLAIN FORMAT='brief' SELECT b, COUNT(*) FROM t GROUP BY b"))
+            .into_iter()
+            .map(|row| row.join("|"))
+            .collect::<Vec<_>>(),
+        vec![
+            "Projection|8000.00|root||test.t.b, Column#5",
+            "└─HashAgg|8000.00|root||group by:test.t.b, funcs:count(Column#6)->Column#5, funcs:firstrow(test.t.b)->test.t.b",
+            "  └─IndexReader|8000.00|root||index:HashAgg",
+            "    └─HashAgg|8000.00|cop[tikv]||group by:test.t.b, funcs:count(1)->Column#6",
+            "      └─IndexFullScan|10000.00|cop[tikv]|table:t, index:ub(b)|keep order:false, stats:pseudo",
+        ],
+    );
+}

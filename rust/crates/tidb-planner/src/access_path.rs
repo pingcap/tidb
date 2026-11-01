@@ -109,7 +109,7 @@ pub(crate) fn derive_access_paths(
         .enumerated_paths
         .iter()
         .find_map(|path| match path {
-            PossiblePath::Table { primary_index, .. } => Some(*primary_index),
+            PossiblePath::Table { primary_index, .. } => Some(primary_index.as_ref()),
             _ => None,
         })
         .map(|primary| ordinary::fill_table_path(source, primary, context))
@@ -130,9 +130,7 @@ pub(crate) fn derive_access_paths(
                 .enumerated_paths
                 .iter()
                 .filter_map(|path| match path {
-                    PossiblePath::Index { index } => source
-                        .indexes
-                        .get(*index)
+                    PossiblePath::Index { index } => Some(index)
                         .and_then(|index| source.derived_index_paths.get(&index.read().id))
                         .and_then(|path| {
                             path.filled
@@ -201,9 +199,7 @@ pub(crate) fn derive_access_paths(
                             PossiblePath::Table { .. } | PossiblePath::TiFlashTable => table_path
                                 .as_ref()
                                 .is_some_and(|path| !path.detached.access_conds.is_empty()),
-                            PossiblePath::Index { index } => source
-                                .indexes
-                                .get(*index)
+                            PossiblePath::Index { index } => Some(index)
                                 .and_then(|index| source.derived_index_paths.get(&index.read().id))
                                 .and_then(|path| path.filled.as_ref())
                                 .is_some_and(|filled| !filled.detached.access_conds.is_empty()),
@@ -356,10 +352,10 @@ pub(crate) fn derive_access_paths(
 ///   [`crate::plan_builder::catalog::SourceIndex`], so an inverted index
 ///   would enumerate here where Go skips it; the catalog does not model one
 ///   today;
-/// * hypo indexes (`:1419-1441`) are not enumerated here: an EXPLAIN's
-///   [`crate::plan_builder::catalog::TableSource::hypo_indexes`] are appended
-///   to the table's index list before this runs, so they enumerate as public
-///   paths after the real ones;
+/// * an EXPLAIN's hypothetical TiFlash replica (`:1331-1346`) adds the
+///   TiFlash path, and its hypothetical indexes (`:1419-1441`) are public
+///   paths after the real ones, appended as they are; neither joins the
+///   table's own metadata;
 /// Hint filtering (`:1443` onward) is the separate
 /// [`apply_table_index_hints`] stage, matching Go's enumeration-then-filter
 /// structure. Comment-style hints must join that same stage through the
@@ -372,6 +368,8 @@ pub fn get_possible_access_paths(
     connection_id: Option<u64>,
     repeatable_read: bool,
     is_for_update_read: bool,
+    hypo_indexes: &[tidb_infoschema::table_source::SourceIndex],
+    hypo_tiflash_replica: bool,
 ) -> Result<Vec<PossiblePath>, tidb_planner_core_base::PlanError> {
     // Go splits ONLY on `tblInfo.IsCommonHandle` (`planbuilder.go:1521`):
     // a table with no explicit handle column is still an int-handle path,
@@ -382,26 +380,19 @@ pub fn get_possible_access_paths(
     paths.push(PossiblePath::Table {
         is_int_handle: !is_common_handle,
         primary_index: if is_common_handle {
-            table.indexes.iter().position(|index| index.read().primary)
+            table.indexes.iter().find(|index| index.read().primary).cloned()
         } else {
             None
         },
     });
-    if table.has_tiflash_replica() {
+    if table.has_tiflash_replica() || hypo_tiflash_replica {
         paths.push(PossiblePath::TiFlashTable);
     }
     let mut check_latest_schema =
         (is_for_update_read || !repeatable_read) && connection_id.is_some_and(|id| id > 0);
     let mut latest_indexes = None;
-    for (offset, index) in table.indexes.iter().enumerate() {
+    for index in &table.indexes {
         if !index.read().is_public() {
-            continue;
-        }
-        // A hypothetical index (negative id) is appended to the public paths
-        // as it is (`:1419-1441`): it is not in the latest schema, whose check
-        // only vets stored indexes.
-        if index.read().id < 0 {
-            paths.push(PossiblePath::Index { index: offset });
             continue;
         }
         if check_latest_schema && latest_indexes.is_none() {
@@ -429,8 +420,9 @@ pub fn get_possible_access_paths(
         if index.read().is_columnar_index() {
             continue;
         }
-        paths.push(PossiblePath::Index { index: offset });
+        paths.push(PossiblePath::Index { index: index.clone() });
     }
+    paths.extend(hypo_indexes.iter().map(|index| PossiblePath::Index { index: index.clone() }));
     Ok(paths)
 }
 
@@ -529,9 +521,7 @@ pub fn apply_table_index_hints(
             let PossiblePath::Index { index } = path else {
                 continue;
             };
-            let Some(metadata) = table.indexes.get(*index) else {
-                continue;
-            };
+            let metadata = index;
             if unsupported_reason(metadata).is_none() {
                 result
                     .index_lookup_push_down_by
@@ -587,18 +577,16 @@ pub fn apply_table_index_hints(
                         && (table.pk_is_handle || table.is_common_handle)
                 }
                 PossiblePath::Index { index } => {
-                    table.indexes.get(*index).is_some_and(|metadata| {
-                        if tidb_mysql::lowercase_equal(metadata.read().name.original(), name) {
-                            return true;
-                        }
-                        if tidb_mysql::to_lowercase(metadata.read().name.original())
-                            .starts_with(&tidb_mysql::to_lowercase(name))
-                        {
-                            prefix_path = Some(*path);
-                            prefix_matches += 1;
-                        }
-                        false
-                    })
+                    if tidb_mysql::lowercase_equal(index.read().name.original(), name) {
+                        return true;
+                    }
+                    if tidb_mysql::to_lowercase(index.read().name.original())
+                        .starts_with(&tidb_mysql::to_lowercase(name))
+                    {
+                        prefix_path = Some(*path);
+                        prefix_matches += 1;
+                    }
+                    false
                 }
                 PossiblePath::TiFlashTable => false,
             });
@@ -620,8 +608,9 @@ pub fn apply_table_index_hints(
                 ));
             };
             if kind == IndexHintKind::Ignore {
+                // Go `removeIgnoredPaths` matches `path.Index.ID`.
                 if let PossiblePath::Index { index } = path {
-                    ignored.insert(index);
+                    ignored.insert(index.read().id);
                 }
                 continue;
             }
@@ -630,10 +619,7 @@ pub fn apply_table_index_hints(
                     tidb_mysql::lowercase_equal(name, "primary") && table.pk_is_handle
                         || table.is_common_handle
                 }
-                PossiblePath::Index { index } => table
-                    .indexes
-                    .get(index)
-                    .is_some_and(|metadata| !metadata.read().is_columnar_index()),
+                PossiblePath::Index { ref index } => !index.read().is_columnar_index(),
                 PossiblePath::TiFlashTable => false,
             };
             if is_tikv_index && !tikv_in_isolation_read {
@@ -648,8 +634,9 @@ pub fn apply_table_index_hints(
             }
             has_use_or_force = true;
             match path {
-                PossiblePath::Index { index } => {
-                    if let Some(metadata) = table.indexes.get(index) {
+                PossiblePath::Index { ref index } => {
+                    {
+                        let metadata = index;
                         result.forced_index_ids.insert(metadata.read().id);
                         if force_keep_order {
                             result.force_keep_order_index_ids.insert(metadata.read().id);
@@ -676,15 +663,14 @@ pub fn apply_table_index_hints(
                         }
                     }
                 }
-                PossiblePath::Table { primary_index, .. } => {
+                PossiblePath::Table { ref primary_index, .. } => {
                     if force_keep_order {
                         result.force_keep_order_table_path = true;
                     }
                     if force_no_keep_order {
                         result.force_no_keep_order_table_path = true;
                     }
-                    if let Some(metadata) = primary_index.and_then(|index| table.indexes.get(index))
-                    {
+                    if let Some(metadata) = primary_index.as_ref() {
                         result.forced_index_ids.insert(metadata.read().id);
                         if force_keep_order {
                             result.force_keep_order_index_ids.insert(metadata.read().id);
@@ -721,11 +707,12 @@ pub fn apply_table_index_hints(
         available = public_paths.to_vec();
     }
     available
-        .retain(|path| !matches!(path, PossiblePath::Index { index } if ignored.contains(index)));
+        .retain(|path| {
+            !matches!(path, PossiblePath::Index { index } if ignored.contains(&index.read().id))
+        });
     if remove_global_indexes {
         available.retain(|path| {
-            !matches!(path, PossiblePath::Index { index }
-                if table.indexes.get(*index).is_some_and(|metadata| metadata.read().global))
+            !matches!(path, PossiblePath::Index { index } if index.read().global)
         });
     }
     if available.is_empty() {
@@ -733,9 +720,9 @@ pub fn apply_table_index_hints(
     }
     if available.iter().all(|path| match path {
         PossiblePath::Table { .. } | PossiblePath::TiFlashTable => false,
-        PossiblePath::Index { index } => table.indexes.get(*index).is_some_and(|metadata| {
-            metadata.read().mv_index || !metadata.read().condition_expr_string.is_empty()
-        }),
+        PossiblePath::Index { index } => {
+            index.read().mv_index || !index.read().condition_expr_string.is_empty()
+        }
     }) {
         available.push(table_path);
     }
@@ -873,6 +860,8 @@ mod enumeration_tests {
             None,
             true,
             false,
+            &[],
+            false,
         )
         .unwrap()
     }
@@ -952,7 +941,7 @@ mod enumeration_tests {
         };
 
         let paths =
-            enumerate_possible_access_paths(&source, false, Some(&latest), Some(7), false, false)
+            enumerate_possible_access_paths(&source, false, Some(&latest), Some(7), false, false, &[], false)
                 .unwrap();
 
         assert_eq!(
@@ -962,16 +951,56 @@ mod enumeration_tests {
                     is_int_handle: true,
                     primary_index: None,
                 },
-                PossiblePath::Index { index: 1 },
+                PossiblePath::Index { index: source.indexes[1].clone() },
             ]
         );
+    }
+
+    /// Go `getPossibleAccessPaths` (`planbuilder.go:1419-1441`): an
+    /// EXPLAIN's hypothetical indexes follow the real ones as they are,
+    /// unvetted by the latest schema, and its hypothetical TiFlash replica
+    /// adds the TiFlash path.
+    #[test]
+    fn hypothetical_indexes_and_replica_join_only_the_paths() {
+        let mut source = table(vec![index("real")]);
+        source.table_id = 42;
+        let latest = LatestIndexSchema {
+            schema_meta_version: 8,
+            table_indexes: BTreeMap::from([(42, vec![source.indexes[0].clone()])]),
+        };
+        let hypo = index("hypo");
+        hypo.write().id = -1;
+        let paths = enumerate_possible_access_paths(
+            &source,
+            false,
+            Some(&latest),
+            Some(7),
+            false,
+            false,
+            std::slice::from_ref(&hypo),
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            paths,
+            vec![
+                PossiblePath::Table {
+                    is_int_handle: true,
+                    primary_index: None,
+                },
+                PossiblePath::TiFlashTable,
+                PossiblePath::Index { index: source.indexes[0].clone() },
+                PossiblePath::Index { index: hypo },
+            ]
+        );
+        assert_eq!(source.indexes.len(), 1);
     }
 
     #[test]
     fn internal_session_does_not_consult_the_latest_domain_schema() {
         let source = table(vec![index("i1")]);
         let paths =
-            enumerate_possible_access_paths(&source, false, None, None, false, false).unwrap();
+            enumerate_possible_access_paths(&source, false, None, None, false, false, &[], false).unwrap();
         assert_eq!(paths.len(), 2);
     }
 
@@ -985,7 +1014,7 @@ mod enumeration_tests {
         };
 
         let paths =
-            enumerate_possible_access_paths(&source, false, Some(&latest), Some(7), true, true)
+            enumerate_possible_access_paths(&source, false, Some(&latest), Some(7), true, true, &[], false)
                 .unwrap();
         assert_eq!(paths.len(), 1);
     }

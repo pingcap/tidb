@@ -180,8 +180,8 @@ fn datasource_prunes_partial_paths_and_marks_the_ordinary_cached_plan() {
             is_int_handle: true,
             primary_index: None,
         },
-        PossiblePath::Index { index: 0 },
-        PossiblePath::Index { index: 1 },
+        PossiblePath::Index { index: source.indexes[0].clone() },
+        PossiblePath::Index { index: source.indexes[1].clone() },
     ];
     source.pushed_down_conds = vec![compare("lt", integer_column(1), integer(0))];
     source.check_partial_indexes(&NoResolver, false, true);
@@ -192,19 +192,19 @@ fn datasource_prunes_partial_paths_and_marks_the_ordinary_cached_plan() {
                 is_int_handle: true,
                 primary_index: None,
             },
-            PossiblePath::Index { index: 1 },
+            PossiblePath::Index { index: source.indexes[1].clone() },
         ]
     );
 
     source
         .enumerated_paths
-        .insert(1, PossiblePath::Index { index: 0 });
+        .insert(1, PossiblePath::Index { index: source.indexes[0].clone() });
     source.pushed_down_conds = vec![compare("gt", integer_column(1), integer(5))];
     source.forced_index_ids.insert(10);
     source.check_partial_indexes(&NoResolver, true, true);
     assert_eq!(
         source.enumerated_paths,
-        vec![PossiblePath::Index { index: 0 }]
+        vec![PossiblePath::Index { index: source.indexes[0].clone() }]
     );
     assert!(source.partial_index_noncacheable_ids.contains(&10));
 }

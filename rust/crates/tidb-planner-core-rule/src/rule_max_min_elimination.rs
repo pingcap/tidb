@@ -105,9 +105,6 @@ fn check_column_can_use_index(
                             source.common_handle_lens.clone(),
                         ),
                         PossiblePath::Index { index } => {
-                            let Some(index) = source.indexes.get(*index) else {
-                                continue;
-                            };
                             index
                                 .read().columns
                                 .iter_deref()

@@ -6155,6 +6155,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-expr",
  "tidb-hint",
+ "tidb-model",
  "tidb-mysql",
  "tidb-planner-cascades-base",
  "tidb-ranger",

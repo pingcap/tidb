@@ -135,8 +135,8 @@ pub fn init_stats(
     // index column; this collection is consumed after path preparation.
     for index in &source.indexes {
         let has_possible_path = source.enumerated_paths.iter().any(|path| {
-            matches!(path, tidb_planner_util::path::PossiblePath::Index { index: position }
-                if source.indexes.get(*position).is_some_and(|candidate| candidate.read().id == index.read().id))
+            matches!(path, tidb_planner_util::path::PossiblePath::Index { index: candidate }
+                if candidate.read().id == index.read().id)
         });
         let Some(columns) = hist_coll.idx_to_col_unique_ids.get_mut(&index.read().id) else {
             continue;
@@ -338,7 +338,7 @@ use tidb_charset::Collation;
                 mv_index: multi_valued,
                 ..tidb_model::IndexInfo::default()
             })];
-            source.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }];
+            source.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Index { index: source.indexes[0].clone() }];
             // Go `ds.TableInfo`: columns a and j, and the index on j.
             let table_info = tidb_model::TableInfo {
                 columns: vec![

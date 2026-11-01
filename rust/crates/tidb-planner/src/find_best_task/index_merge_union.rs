@@ -69,11 +69,11 @@ fn partial_matches_order(
         // Go `isMatchPropForIndexMerge`: every MV partial path must match,
         // its equality on the array value fixing that key position.
         Partial::MvIndex {
-            index_pos, paths, ..
+            index, paths, ..
         } => paths
             .iter()
             .all(|path| {
-                index_partial_matches_order(ds, *index_pos, path.filled(), items, false)
+                index_partial_matches_order(ds, index, path.filled(), items, false)
                     .is_some()
             })
             .then(Vec::new),
@@ -98,10 +98,10 @@ fn partial_matches_order(
             )
         }
         Partial::Index {
-            index_pos, filled, ..
+            index, filled, ..
         } => index_partial_matches_order(
             ds,
-            *index_pos,
+            index,
             filled,
             items,
             allow_groups(&filled.detached),
@@ -113,12 +113,11 @@ fn partial_matches_order(
 /// the key after a prefix every range pins to one value.
 fn index_partial_matches_order(
     ds: &DataSource,
-    index_pos: usize,
+    index: &tidb_infoschema::table_source::SourceIndex,
     filled: &tidb_planner_util::path::FilledIndexPath,
     items: &[tidb_planner_property::SortItem],
     allow_groups: bool,
 ) -> Option<Vec<usize>> {
-    let index = &ds.indexes[index_pos];
     if ds.force_no_keep_order_index_ids.contains(&index.read().id) {
         return None;
     }
@@ -227,7 +226,7 @@ pub(super) fn converge_union_index_merge_path<'a>(
             .filter_map(|partial| {
                 partial_matches_order(ds, partial, sort_items).map(|groups| (partial, groups))
             })
-            .min_by(|left, right| compare_alternatives(ds, left.0, right.0, true));
+            .min_by(|left, right| compare_alternatives(left.0, right.0, true));
         let (partial, result, groups) = if let Some((partial, groups)) = matched {
             let result = if groups.is_empty() {
                 PhysicalPropMatchResult::Matched
@@ -242,7 +241,7 @@ pub(super) fn converge_union_index_merge_path<'a>(
             (
                 branch
                     .iter()
-                    .min_by(|left, right| compare_alternatives(ds, left, right, true))
+                    .min_by(|left, right| compare_alternatives(left, right, true))
                     .expect("prepared branches are nonempty"),
                 PhysicalPropMatchResult::NotMatched,
                 Vec::new(),
@@ -259,8 +258,8 @@ pub(super) fn converge_union_index_merge_path<'a>(
         &ctx.access_path_derivation_context(),
     );
     let index_id = |partial: &Partial| match partial {
-        Partial::Index { index_pos, .. } | Partial::MvIndex { index_pos, .. } => {
-            ds.indexes[*index_pos].read().id
+        Partial::Index { index, .. } | Partial::MvIndex { index, .. } => {
+            index.read().id
         }
         Partial::Table { .. } => -1,
     };
@@ -285,11 +284,11 @@ pub(super) fn converge_union_index_merge_path<'a>(
             }
             !partials.iter().all(|partial| match partial {
                 Partial::Index {
-                    index_pos, filled, ..
+                    index, filled, ..
                 } => {
                     tidb_planner_core_operator_logicalop::data_source::index_covers_condition(
                         ds,
-                        &ds.indexes[*index_pos],
+                        index,
                         filter,
                         ctx.opt_prefix_index_single_scan,
                     ) && !filled.table_filters.iter().any(|condition| {
@@ -457,7 +456,7 @@ pub(super) fn build_converged_union_index_merge_task(
     {
         match partial {
             Partial::Index {
-                index_pos,
+                index,
                 filled,
                 rows,
                 ..
@@ -467,7 +466,7 @@ pub(super) fn build_converged_union_index_merge_task(
                 partial_remaining.extend(push_index_partial(
                     ds,
                     ctx,
-                    *index_pos,
+                    index,
                     filled,
                     *rows,
                     scan_rows,
@@ -479,7 +478,7 @@ pub(super) fn build_converged_union_index_merge_task(
             }
             // Go builds one partial scan per path of the MV alternative.
             Partial::MvIndex {
-                index_pos, paths, ..
+                index, paths, ..
             } => {
                 for path in paths {
                     let filled = path.filled();
@@ -492,7 +491,7 @@ pub(super) fn build_converged_union_index_merge_task(
                     partial_remaining.extend(push_index_partial(
                         ds,
                         ctx,
-                        *index_pos,
+                        index,
                         filled,
                         path.rows(),
                         scan_rows,
@@ -851,7 +850,7 @@ fn partial_table_range_rebuild(
 fn push_index_partial(
     ds: &DataSource,
     ctx: &DispatchContext<'_>,
-    index_pos: usize,
+    index: &tidb_infoschema::table_source::SourceIndex,
     filled: &tidb_planner_util::path::FilledIndexPath,
     rows: f64,
     scan_rows: f64,
@@ -861,7 +860,7 @@ fn push_index_partial(
     partial_plans_raw: &mut Vec<PhysicalPlan>,
 ) -> Result<Vec<tidb_expr::expression::Expression>, PlanError> {
     let ranges = &filled.detached.ranges;
-    let source_index = &ds.indexes[index_pos];
+    let source_index = index;
     let mut schema_columns = partial_index_schema(ds, source_index, ctx)?;
     // Go `ConvertToPartialIndexScan`: an ordered partial of a dynamically
     // pruned partitioned table also reads each entry's partition id, unless
@@ -1189,7 +1188,6 @@ mod tests {
                     info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::NOT_NULL));
                     info
                 })],
-            enumerated_paths: vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }],
             index_merge_hints: vec![Default::default()],
             common_handle_cols: vec![a.clone()],
             is_common_handle: true,
@@ -1222,6 +1220,7 @@ mod tests {
         // Go's `AllConds` contains every pushed condition.
         let ds = DataSource {
             all_conds: ds.pushed_down_conds.clone(),
+            enumerated_paths: vec![tidb_planner_util::path::PossiblePath::Index { index: ds.indexes[0].clone() }],
             ..ds
         };
         let allocator = tidb_planner_core_base::PlanIdAllocator::new();
@@ -1260,7 +1259,7 @@ mod tests {
         choices.indexes.push(shorter);
         choices
             .enumerated_paths
-            .push(tidb_planner_util::path::PossiblePath::Index { index: 1 });
+            .push(tidb_planner_util::path::PossiblePath::Index { index: choices.indexes[1].clone() });
         let alternatives = prepare_union_index_merge_path(&choices, &derivation)
             .unwrap()
             .unwrap();
@@ -1321,7 +1320,7 @@ mod tests {
             }));
             multiple_or
                 .enumerated_paths
-                .push(tidb_planner_util::path::PossiblePath::Index { index: multiple_or.indexes.len() - 1 });
+                .push(tidb_planner_util::path::PossiblePath::Index { index: multiple_or.indexes.last().unwrap().clone() });
         }
         multiple_or.pushed_down_conds.push(Expression::ScalarFunction(ScalarFunction::new(
             tidb_ast::CiString::new("or"), ty.clone(), vec![eq_b(1), eq_b(2)],
@@ -1500,6 +1499,7 @@ mod tests {
         let tidb_planner_core_operator_logicalop::LogicalPlan::DataSource(surviving_source) = &mut surviving_only else {
             unreachable!()
         };
+        let first_index = surviving_source.indexes[0].clone();
         surviving_source
             .derived_access_paths
             .as_mut()
@@ -1509,8 +1509,8 @@ mod tests {
                 matches!(
                     path,
                     tidb_planner_util::path::DerivedAccessPath::Ordinary(
-                        tidb_planner_util::path::PossiblePath::Index { index: 0 }
-                    )
+                        tidb_planner_util::path::PossiblePath::Index { index }
+                    ) if index.ptr_eq(&first_index)
                 )
             });
         let before_survivor = allocator.current();
@@ -1540,7 +1540,7 @@ mod tests {
         table_source.indexes[0].write().unique = true;
         table_source.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Table {
             is_int_handle: false,
-            primary_index: Some(0),
+            primary_index: Some(table_source.indexes[0].clone()),
         }];
         let mut table = tidb_planner_core_operator_logicalop::LogicalPlan::DataSource(table_source);
         table

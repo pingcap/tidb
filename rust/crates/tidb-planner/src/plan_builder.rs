@@ -2918,33 +2918,19 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ///
     /// `ErrBadDB` for an unknown database, `ErrNoSuchTable` for an unknown
     /// table.
-    /// `table` with the session's hypothetical indexes appended to its index
-    /// list and its hypothetical TiFlash replica set, or `None` when the
-    /// session declared neither for it (or the statement is not an EXPLAIN).
-    fn with_hypo_access_paths(
+    /// The session's hypothetical indexes on `table` and whether it uses a
+    /// hypothetical TiFlash replica (Go `UsedHypoTiFlashReplicas`); both are
+    /// empty outside an EXPLAIN.
+    fn hypo_access_paths(
         &self,
         db_name: &str,
         table: &tidb_infoschema::table_source::SourceTable,
-    ) -> Option<tidb_infoschema::table_source::SourceTable> {
-        let indexes = self.source.hypo_indexes(db_name, &table.table_name);
-        let tiflash = !table.has_tiflash_replica()
-            && self
-                .source
-                .uses_hypo_tiflash_replicas(db_name, &table.table_name);
-        if indexes.is_empty() && !tiflash {
-            return None;
-        }
-        let mut table = table.clone();
-        table.indexes.extend(indexes);
-        // Go appends `genTiFlashPath` for a hypothetical replica whatever
-        // the real one's state.
-        if tiflash {
-            table.tiflash_replica = Some(tidb_model::TiFlashReplicaInfo {
-                available: true,
-                ..tidb_model::TiFlashReplicaInfo::default()
-            });
-        }
-        Some(table)
+    ) -> (Vec<tidb_infoschema::table_source::SourceIndex>, bool) {
+        (
+            self.source.hypo_indexes(db_name, &table.table_name),
+            self.source
+                .uses_hypo_tiflash_replicas(db_name, &table.table_name),
+        )
     }
 
     /// Go `b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L,
@@ -3225,14 +3211,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // Go `getPossibleAccessPaths` (`planbuilder.go:1332`, `:1419`): an
         // EXPLAIN also plans the session's hypothetical TiFlash replica and
         // hypothetical indexes, as public paths after the real ones.
-        let hypo_table;
-        let table = match self.with_hypo_access_paths(&db_name, table) {
-            Some(with_hypo) => {
-                hypo_table = with_hypo;
-                &hypo_table
-            }
-            None => table,
-        };
+        let (hypo_indexes, hypo_tiflash_replica) = self.hypo_access_paths(&db_name, table);
         let as_name = table_ref.alias.clone();
         let visible_table = as_name.clone().unwrap_or_else(|| table.table_name.clone());
         let mut force_no_index_lookup_push_down = false;
@@ -3506,7 +3485,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             handle_is_int,
             common_handle_cols,
             common_handle_lens: table.common_handle_lens.clone(),
-            has_tiflash_replica: table.has_tiflash_replica(),
+            // Go `DataSource.HasTiFlash`: a hypothetical replica counts.
+            has_tiflash_replica: table.has_tiflash_replica() || hypo_tiflash_replica,
             is_for_update_read: self.is_for_update_read,
             prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
             index_merge_skip_range_scan_check: self.index_merge_skip_range_scan_check,
@@ -3526,6 +3506,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // Go `getPossibleAccessPaths`: a table without an available TiFlash
         // replica (a hypothetical one is available) blocks enforced MPP.
         match &table.tiflash_replica {
+            _ if hypo_tiflash_replica => {}
             None => self.raise_mpp_warning(&format!(
                 "MPP mode may be blocked because there aren't tiflash replicas of table `{}`.",
                 table.table_name
@@ -3543,6 +3524,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             self.ctx.connection_id(),
             self.index_lookup_push_down_session.repeatable_read,
             self.is_for_update_read,
+            &hypo_indexes,
+            hypo_tiflash_replica,
         )?;
         let check_fd_latest_indexes = (!self.index_lookup_push_down_session.repeatable_read
             || self.is_for_update_read)
@@ -3593,9 +3576,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         | tidb_planner_util::path::PossiblePath::TiFlashTable => {
                             lower_name_matches(name, "primary")
                         }
-                        tidb_planner_util::path::PossiblePath::Index { index } => table
-                            .indexes
-                            .get(*index)
+                        tidb_planner_util::path::PossiblePath::Index { index } => Some(index)
                             .is_some_and(|index| lower_name_matches(index.read().name.original(), name)),
                     })
                 })

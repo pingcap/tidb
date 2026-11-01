@@ -38,7 +38,7 @@ pub(super) fn build_prepared_index_merge_task(
     let mut partial_remaining = Vec::new();
     let output_rows = path.count_after_access;
     for partial in partials {
-        let source_index = &ds.indexes[partial.index_pos];
+        let source_index = &partial.index;
         let filled = partial
             .path
             .filled

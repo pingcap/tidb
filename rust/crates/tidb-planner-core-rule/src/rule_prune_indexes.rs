@@ -118,7 +118,7 @@ fn score_index_path(
     let PossiblePath::Index { index } = path else {
         return None;
     };
-    let metadata = source.indexes.get(*index)?;
+    let metadata = Some(index)?;
     let state = source.derived_index_paths.get(&metadata.read().id);
     let declared = state.and_then(|state| state.declared_columns.as_ref());
     let mut score = IndexWithScore {
@@ -309,9 +309,7 @@ pub fn prune_indexes_by_where_and_order(
                 table_paths.push(path.clone())
             }
             PossiblePath::Index { index } => {
-                let Some(metadata) = source.indexes.get(*index) else {
-                    continue;
-                };
+                let metadata = index;
                 if metadata.read().mv_index {
                     multi_value_paths.push(path.clone());
                     continue;
@@ -385,7 +383,20 @@ pub fn prune_data_source_with_options(
     if threshold < 0 || source.enumerated_paths.len() <= 1 {
         return None;
     }
-    for index in &source.indexes {
+    // The paths' indexes, which `initialize_index_columns` declared.
+    let path_indexes = source
+        .enumerated_paths
+        .iter()
+        .filter_map(|path| match path {
+            PossiblePath::Index { index }
+            | PossiblePath::Table {
+                primary_index: Some(index),
+                ..
+            } => Some(index.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for index in &path_indexes {
         if source
             .derived_index_paths
             .get(&index.read().id)
@@ -414,11 +425,11 @@ pub fn prune_data_source_with_options(
     let kept = pruned
         .iter()
         .filter_map(|path| match path {
-            PossiblePath::Index { index } => source.indexes.get(*index).map(|index| index.read().id),
-            PossiblePath::Table {
+            PossiblePath::Index { index }
+            | PossiblePath::Table {
                 primary_index: Some(index),
                 ..
-            } => source.indexes.get(*index).map(|index| index.read().id),
+            } => Some(index.read().id),
             PossiblePath::Table { .. } => None,
             PossiblePath::TiFlashTable => None,
         })
@@ -442,7 +453,7 @@ mod tests {
     }
 
     fn source() -> DataSource {
-        DataSource {
+        let mut source = DataSource {
             table_columns: vec![column(1), column(2), column(3)],
             // Go `ds.TableInfo.Columns`, which index offsets address.
             table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo {
@@ -478,17 +489,18 @@ mod tests {
                     ..tidb_model::IndexInfo::default()
                 }),
             ],
-            enumerated_paths: vec![
-                PossiblePath::Table {
-                    is_int_handle: true,
-                    primary_index: None,
-                },
-                PossiblePath::Index { index: 0 },
-                PossiblePath::Index { index: 1 },
-            ],
             interesting_columns: vec![column(1)],
             ..DataSource::default()
-        }
+        };
+        source.enumerated_paths = vec![
+            PossiblePath::Table {
+                is_int_handle: true,
+                primary_index: None,
+            },
+            PossiblePath::Index { index: source.indexes[0].clone() },
+            PossiblePath::Index { index: source.indexes[1].clone() },
+        ];
+        source
     }
 
     #[test]
@@ -503,7 +515,7 @@ mod tests {
                     is_int_handle: true,
                     primary_index: None,
                 },
-                PossiblePath::Index { index: 0 },
+                PossiblePath::Index { index: source.indexes[0].clone() },
             ]
         );
     }
@@ -540,8 +552,8 @@ mod tests {
                     is_int_handle: true,
                     primary_index: None,
                 },
-                PossiblePath::Index { index: 1 },
-                PossiblePath::Index { index: 0 },
+                PossiblePath::Index { index: source.indexes[1].clone() },
+                PossiblePath::Index { index: source.indexes[0].clone() },
             ]
         );
     }
@@ -563,7 +575,7 @@ mod tests {
                     is_int_handle: true,
                     primary_index: None,
                 },
-                PossiblePath::Index { index: 1 },
+                PossiblePath::Index { index: source.indexes[1].clone() },
             ]
         );
     }
@@ -586,15 +598,16 @@ mod tests {
             is_int_handle: true,
             primary_index: None,
         })
-        .chain((0..12).map(|index| PossiblePath::Index { index }))
+        .chain(source.indexes.iter().map(|index| PossiblePath::Index { index: index.clone() }))
         .collect();
 
         let pruned = prune_indexes_by_where_and_order(&source, &source.enumerated_paths, 1);
         assert_eq!(pruned.len(), 11);
         assert_eq!(
             pruned[1..],
-            (0..10)
-                .map(|index| PossiblePath::Index { index })
+            source.indexes[..10]
+                .iter()
+                .map(|index| PossiblePath::Index { index: index.clone() })
                 .collect::<Vec<_>>()
         );
     }
@@ -619,7 +632,7 @@ mod tests {
             prune_indexes_by_where_and_order(&source, &source.enumerated_paths, 1),
             vec![
                 source.enumerated_paths[0].clone(),
-                PossiblePath::Index { index: 0 }
+                PossiblePath::Index { index: source.indexes[0].clone() }
             ]
         );
     }
@@ -680,7 +693,7 @@ mod tests {
         assert_eq!(discounted, HashSet::from([3]));
         let a = score_index_path(
             &source,
-            &PossiblePath::Index { index: 0 },
+            &PossiblePath::Index { index: source.indexes[0].clone() },
             &interesting,
             &discounted,
         )
@@ -694,7 +707,7 @@ mod tests {
         assert!(!a.droppable());
         let b = score_index_path(
             &source,
-            &PossiblePath::Index { index: 1 },
+            &PossiblePath::Index { index: source.indexes[1].clone() },
             &interesting,
             &discounted,
         )
@@ -710,7 +723,7 @@ mod tests {
             .unwrap()[0] = None;
         let missing = score_index_path(
             &source,
-            &PossiblePath::Index { index: 0 },
+            &PossiblePath::Index { index: source.indexes[0].clone() },
             &interesting,
             &discounted,
         )
@@ -728,7 +741,7 @@ mod tests {
         assert_eq!(
             score_index_path(
                 &source,
-                &PossiblePath::Index { index: 0 },
+                &PossiblePath::Index { index: source.indexes[0].clone() },
                 &interesting,
                 &discounted
             )

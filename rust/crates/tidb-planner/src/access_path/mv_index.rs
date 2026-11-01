@@ -31,7 +31,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use super::index_merge::{enumerated_index_mask, estimate_partial_index_ranges, index_merge_hint_allows};
+use super::index_merge::{enumerated_indexes, estimate_partial_index_ranges, index_merge_hint_allows};
 
 use tidb_planner_util::path::{IndexMergePartial, IndexMergePath};
 use super::AccessPathDerivationContext;
@@ -378,9 +378,8 @@ fn build_partial_path_for_mv_index(
     ctx: &AccessPathDerivationContext<'_>,
     access_filters: &[Expression],
     idx_cols: &[Column],
-    index_pos: usize,
+    index: &tidb_infoschema::table_source::SourceIndex,
 ) -> Result<Option<IndexMergePartial>, PlanError> {
-    let index = &ds.indexes[index_pos];
     let declared_lengths = index.read().columns.iter_deref().map(|key| key.read().length).collect::<Vec<_>>();
     let columns = idx_cols
         .iter()
@@ -416,7 +415,7 @@ fn build_partial_path_for_mv_index(
     };
     let rows = estimate_partial_index_ranges(ds, index, &filled, ctx)?;
     Ok(Some(IndexMergePartial {
-        index_pos,
+        index: index.clone(),
         path: IndexPathState {
             filled: Some(filled),
             declared_columns: None,
@@ -437,7 +436,7 @@ fn build_partial_paths_for_mv_index(
     ctx: &AccessPathDerivationContext<'_>,
     access_filters: &[Expression],
     idx_cols: &[Column],
-    index_pos: usize,
+    index: &tidb_infoschema::table_source::SourceIndex,
     use_plan_cache: bool,
     noncacheable: &mut Option<String>,
 ) -> Result<Option<(Vec<IndexMergePartial>, bool)>, PlanError> {
@@ -467,7 +466,7 @@ fn build_partial_paths_for_mv_index(
     };
     let mut partials = Vec::with_capacity(filter_sets.len());
     for access in filter_sets {
-        let Some(partial) = build_partial_path_for_mv_index(ds, ctx, &access, idx_cols, index_pos)?
+        let Some(partial) = build_partial_path_for_mv_index(ds, ctx, &access, idx_cols, index)?
         else {
             return Ok(None);
         };
@@ -596,14 +595,14 @@ fn build_partial_path_up_for_mv_index(
 /// Go `splitIndexFilterConditions` over an MV index's columns.
 fn split_index_filter_conditions(
     ds: &DataSource,
-    index_pos: usize,
+    index: &tidb_infoschema::table_source::SourceIndex,
     conditions: Vec<Expression>,
     ctx: &AccessPathDerivationContext<'_>,
 ) -> (Vec<Expression>, Vec<Expression>) {
     conditions.into_iter().partition(|condition| {
         tidb_planner_core_operator_logicalop::data_source::index_covers_condition(
             ds,
-            &ds.indexes[index_pos],
+            index,
             condition,
             ctx.opt_prefix_index_single_scan,
         )
@@ -611,17 +610,9 @@ fn split_index_filter_conditions(
 }
 
 /// The enumerated MV indexes an IndexMerge may read, in path order.
-fn possible_mv_indexes(ds: &DataSource) -> Vec<usize> {
-    let enumerated = enumerated_index_mask(ds);
-    ds.indexes
-        .iter()
-        .enumerate()
-        .filter(|(position, index)| {
-            enumerated[*position]
-                && index.read().mv_index
-                && index_merge_hint_allows(ds, index.read().name.original())
-        })
-        .map(|(position, _)| position)
+fn possible_mv_indexes(ds: &DataSource) -> Vec<&tidb_infoschema::table_source::SourceIndex> {
+    enumerated_indexes(ds)
+        .filter(|index| index.read().mv_index && index_merge_hint_allows(ds, index.read().name.original()))
         .collect()
 }
 
@@ -643,8 +634,8 @@ pub(crate) fn generate_and_index_merge_for_mv_index(
     use_plan_cache: bool,
 ) -> Result<Vec<IndexMergePath>, PlanError> {
     let mut paths = Vec::new();
-    for index_pos in possible_mv_indexes(ds) {
-        let Some(idx_cols) = prepare_idx_cols_and_unwrap_array_type(ds, &ds.indexes[index_pos], true)
+    for index in possible_mv_indexes(ds) {
+        let Some(idx_cols) = prepare_idx_cols_and_unwrap_array_type(ds, index, true)
         else {
             continue;
         };
@@ -658,7 +649,7 @@ pub(crate) fn generate_and_index_merge_for_mv_index(
             ctx,
             &access_filters,
             &idx_cols,
-            index_pos,
+            index,
             use_plan_cache,
             &mut noncacheable,
         )?
@@ -669,7 +660,7 @@ pub(crate) fn generate_and_index_merge_for_mv_index(
         // classify the remaining filters; a union needs the index filters on
         // every partial for correctness.
         let (index_filters, table_filters) =
-            split_index_filter_conditions(ds, index_pos, remaining, ctx);
+            split_index_filter_conditions(ds, index, remaining, ctx);
         for partial in &mut partials {
             if let Some(filled) = partial.path.filled.as_mut() {
                 filled.index_filters.extend(index_filters.iter().cloned());
@@ -704,8 +695,8 @@ fn generate_mv_index_merge_partial_paths_for_and(
     }
     let mut used_access_conds = HashMap::new();
     let mut by_access_filters: BTreeMap<Vec<u8>, Record> = BTreeMap::new();
-    for (origin_offset, index_pos) in possible_mv_indexes(ds).into_iter().enumerate() {
-        let Some(idx_cols) = prepare_idx_cols_and_unwrap_array_type(ds, &ds.indexes[index_pos], true)
+    for (origin_offset, index) in possible_mv_indexes(ds).into_iter().enumerate() {
+        let Some(idx_cols) = prepare_idx_cols_and_unwrap_array_type(ds, index, true)
         else {
             continue;
         };
@@ -730,7 +721,7 @@ fn generate_mv_index_merge_partial_paths_for_and(
                 ctx,
                 &access_filters,
                 &idx_cols,
-                index_pos,
+                index,
                 use_plan_cache,
                 noncacheable,
             )?
@@ -792,10 +783,7 @@ pub(crate) fn generate_and_index_merge_for_composed_index(
         return Ok(None);
     }
     // At least one hinted MV index path.
-    let enumerated = enumerated_index_mask(ds);
-    let has_mv = ds.indexes.iter().enumerate().any(|(position, index)| {
-        enumerated[position] && index.read().mv_index && index_merge_hint_allows(ds, index.read().name.original())
-    });
+    let has_mv = !possible_mv_indexes(ds).is_empty();
     if !has_mv {
         return Ok(None);
     }
@@ -826,7 +814,7 @@ pub(crate) fn generate_and_index_merge_for_composed_index(
     let mut in_index_filter = std::collections::HashSet::new();
     for partial in &mut combined {
         let (index_filters, _) =
-            split_index_filter_conditions(ds, partial.index_pos, remained.clone(), ctx);
+            split_index_filter_conditions(ds, &partial.index, remained.clone(), ctx);
         for filter in &index_filters {
             in_index_filter.insert(filter.canonical_hash_code());
         }
@@ -853,12 +841,11 @@ pub(crate) fn clean_access_path_for_mv_index_hint(
     ds: &DataSource,
     paths: &mut Vec<tidb_planner_util::path::DerivedAccessPath>,
 ) {
-    let forced: std::collections::BTreeSet<usize> = ds
+    let forced: std::collections::BTreeSet<i64> = ds
         .indexes
         .iter()
-        .enumerate()
-        .filter(|(_, index)| index.read().mv_index && ds.forced_index_ids.contains(&index.read().id))
-        .map(|(position, _)| position)
+        .filter(|index| index.read().mv_index && ds.forced_index_ids.contains(&index.read().id))
+        .map(|index| index.read().id)
         .collect();
     if forced.is_empty() {
         return;
@@ -867,7 +854,7 @@ pub(crate) fn clean_access_path_for_mv_index_hint(
         tidb_planner_util::path::DerivedAccessPath::IndexMerge(path) => path
             .partials
             .iter()
-            .any(|partial| forced.contains(&partial.index_pos)),
+            .any(|partial| forced.contains(&partial.index.read().id)),
         _ => false,
     };
     if paths.iter().any(reads_forced) {
@@ -888,10 +875,10 @@ pub(crate) struct UnfinishedMvPath {
 pub(crate) fn init_unfinished_mv_path(
     ds: &DataSource,
     ctx: &AccessPathDerivationContext<'_>,
-    index_pos: usize,
+    index: &tidb_infoschema::table_source::SourceIndex,
     expr: &Expression,
 ) -> Option<UnfinishedMvPath> {
-    let idx_cols = prepare_idx_cols_and_unwrap_array_type(ds, &ds.indexes[index_pos], false)?;
+    let idx_cols = prepare_idx_cols_and_unwrap_array_type(ds, index, false)?;
     let cnf_items = tidb_expr::expr_util::normal_form::split_cnf_items(expr);
     let unpushable = cnf_items.iter().any(|item| {
         !tidb_expr::infer_pushdown::can_exprs_push_down(
@@ -957,11 +944,11 @@ impl UnfinishedMvPath {
 pub(crate) fn build_mv_alternative(
     ds: &DataSource,
     ctx: &AccessPathDerivationContext<'_>,
-    index_pos: usize,
+    index: &tidb_infoschema::table_source::SourceIndex,
     unfinished: &UnfinishedMvPath,
     use_plan_cache: bool,
 ) -> Result<Option<(Vec<IndexMergePartial>, bool)>, PlanError> {
-    let Some(idx_cols) = prepare_idx_cols_and_unwrap_array_type(ds, &ds.indexes[index_pos], true)
+    let Some(idx_cols) = prepare_idx_cols_and_unwrap_array_type(ds, index, true)
     else {
         return Ok(None);
     };
@@ -976,7 +963,7 @@ pub(crate) fn build_mv_alternative(
         ctx,
         &access,
         &idx_cols,
-        index_pos,
+        index,
         use_plan_cache,
         &mut noncacheable,
     )?

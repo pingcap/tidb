@@ -51,18 +51,16 @@ pub(crate) fn index_merge_hint_specifies(ds: &DataSource, index_name: &str) -> b
     })
 }
 
-/// Go's union and intersection generators both consume the ordinary
-/// session-filtered `PossibleAccessPaths` list.
-pub(crate) fn enumerated_index_mask(ds: &DataSource) -> Vec<bool> {
-    let mut indexes = vec![false; ds.indexes.len()];
-    for path in &ds.enumerated_paths {
-        if let tidb_planner_util::path::PossiblePath::Index { index } = path {
-            if let Some(enumerated) = indexes.get_mut(*index) {
-                *enumerated = true;
-            }
-        }
-    }
-    indexes
+/// Go's union and intersection generators both walk the ordinary
+/// session-filtered `PossibleAccessPaths` list; these are its index paths'
+/// `path.Index`, in path order.
+pub(crate) fn enumerated_indexes(
+    ds: &DataSource,
+) -> impl Iterator<Item = &tidb_infoschema::table_source::SourceIndex> {
+    ds.enumerated_paths.iter().filter_map(|path| match path {
+        tidb_planner_util::path::PossiblePath::Index { index } => Some(index),
+        _ => None,
+    })
 }
 
 #[cfg(test)]
@@ -119,7 +117,6 @@ fn prepare_union_index_merge_path_for_or(
         return Ok(None);
     }
 
-    let enumerated_indexes = enumerated_index_mask(ds);
     let mut alternatives: Vec<Vec<Partial>> = Vec::with_capacity(disjuncts.len());
     for disjunct in &disjuncts {
         let mut branch = Vec::new();
@@ -137,11 +134,11 @@ fn prepare_union_index_merge_path_for_or(
             tidb_planner_util::path::PossiblePath::Table {
                 is_int_handle: false,
                 primary_index: Some(primary),
-            } if ds.is_common_handle => Some(Some(*primary)),
+            } if ds.is_common_handle => Some(Some(primary)),
             _ => None,
         });
         if let Some(primary) = table_primary.filter(|_| index_merge_hint_allows(ds, "primary")) {
-            let primary_index = primary.and_then(|position| ds.indexes.get(position));
+            let primary_index = primary;
             let collected = collect_unfinished_filters(ds, primary_index, disjunct, ctx);
             if let Some((mut usable, keep_branch_filter)) = collected {
                 for filter in &table_filters {
@@ -153,7 +150,7 @@ fn prepare_union_index_merge_path_for_or(
                 }
                 let (pushable, rejected) = partition_partial_filters(&usable, ctx);
                 if let Ok(mut filled) =
-                    super::ordinary::detach_table_path(ds, primary, &pushable, ctx, false)
+                    super::ordinary::detach_table_path(ds, primary_index, &pushable, ctx, false)
                         .and_then(|mut filled| {
                             filled.count_after_access = Some(match primary_index {
                                 // Go `deriveCommonHandleTablePathStats`: the
@@ -208,9 +205,8 @@ fn prepare_union_index_merge_path_for_or(
                 }
             }
         }
-        for (index_pos, source_index) in ds.indexes.iter().enumerate() {
-            if !enumerated_indexes[index_pos]
-                || source_index.read().is_columnar_index()
+        for source_index in enumerated_indexes(ds) {
+            if source_index.read().is_columnar_index()
                 || !source_index.read().condition_expr_string.is_empty()
             {
                 continue;
@@ -222,13 +218,13 @@ fn prepare_union_index_merge_path_for_or(
                 // Go initUnfinishedPathsFromExpr, then handleTopLevelANDList,
                 // then buildIntoAccessPath, for an MV candidate.
                 let Some(mut unfinished) =
-                    super::mv_index::init_unfinished_mv_path(ds, ctx, index_pos, disjunct)
+                    super::mv_index::init_unfinished_mv_path(ds, ctx, source_index, disjunct)
                 else {
                     continue;
                 };
                 for filter in &table_filters {
                     if let Some(item) =
-                        super::mv_index::init_unfinished_mv_path(ds, ctx, index_pos, filter)
+                        super::mv_index::init_unfinished_mv_path(ds, ctx, source_index, filter)
                     {
                         unfinished.merge_and_item(item);
                     }
@@ -236,12 +232,12 @@ fn prepare_union_index_merge_path_for_or(
                 if let Some((paths, keep_source_filter)) = super::mv_index::build_mv_alternative(
                     ds,
                     ctx,
-                    index_pos,
+                    source_index,
                     &unfinished,
                     use_plan_cache,
                 )? {
                     branch.push(Partial::MvIndex {
-                        index_pos,
+                        index: source_index.clone(),
                         paths,
                         keep_source_filter,
                     });
@@ -304,7 +300,7 @@ fn prepare_union_index_merge_path_for_or(
             filled.count_after_index =
                 Some(rows * super::ordinary::filter_selectivity(ds, &filled.index_filters, ctx));
             branch.push(Partial::Index {
-                index_pos,
+                index: source_index.clone(),
                 filled,
                 rows,
                 keep_source_filter,
@@ -323,11 +319,9 @@ fn prepare_union_index_merge_path_for_or(
     let mut contain_mv_path = false;
     for partial in alternatives.iter().flatten() {
         match partial {
-            Partial::Index { index_pos, .. } | Partial::MvIndex { index_pos, .. } => {
-                if let Some(index) = ds.indexes.get(*index_pos) {
-                    possible_ids.insert(index.read().id);
-                    contain_mv_path |= index.read().mv_index;
-                }
+            Partial::Index { index, .. } | Partial::MvIndex { index, .. } => {
+                possible_ids.insert(index.read().id);
+                contain_mv_path |= index.read().mv_index;
             }
             Partial::Table { .. } => {
                 possible_ids.insert(-1);
@@ -343,7 +337,7 @@ fn prepare_union_index_merge_path_for_or(
         .map(|branch| {
             branch
                 .iter()
-                .min_by(|left, right| compare_alternatives(ds, left, right, false))
+                .min_by(|left, right| compare_alternatives(left, right, false))
                 .expect("nonempty branch")
         })
         .collect::<Vec<_>>();
@@ -511,7 +505,6 @@ fn collect_unfinished_filters(
 // Go cmpAlternatives prefers empty/unique-point alternatives before row
 // count. Physical convergence additionally prefers global indexes on ties.
 pub(crate) fn compare_alternatives(
-    ds: &DataSource,
     left: &Partial,
     right: &Partial,
     physical: bool,
@@ -519,13 +512,12 @@ pub(crate) fn compare_alternatives(
     let attributes = |partial: &Partial| {
         let (point, rows, global) = match partial {
             Partial::Index {
-                index_pos,
+                index,
                 filled,
                 rows,
                 ..
             } => {
                 let ranges = &filled.detached.ranges;
-                let index = &ds.indexes[*index_pos];
                 let point = ranges.is_empty()
                     || (index.read().unique
                         && ranges.iter().all(|range| {
@@ -542,9 +534,8 @@ pub(crate) fn compare_alternatives(
             // Go cmpAlternatives: every path must be empty or unique-point,
             // and a multi-path alternative compares by its largest count.
             Partial::MvIndex {
-                index_pos, paths, ..
+                index, paths, ..
             } => {
-                let index = &ds.indexes[*index_pos];
                 let point = paths.iter().all(|path| {
                     let ranges = &path.filled().detached.ranges;
                     ranges.is_empty()
@@ -689,14 +680,12 @@ fn generate_and_index_merge_for_normal_index(
         return None;
     }
     let composed_with_mv_index = !used_access.is_empty();
-    let enumerated = enumerated_index_mask(ds);
     let mut partials = Vec::new();
     let mut final_filters = Vec::new();
     let mut partial_filters = Vec::new();
     let mut covered = HashSet::new();
-    for (index_pos, index) in ds.indexes.iter().enumerate() {
-        if !enumerated[index_pos]
-            || index.read().mv_index
+    for index in enumerated_indexes(ds) {
+        if index.read().mv_index
             || index.read().is_columnar_index()
             || !index.read().condition_expr_string.is_empty()
             || !index_merge_hint_specifies(ds, index.read().name.original())
@@ -762,7 +751,7 @@ fn generate_and_index_merge_for_normal_index(
             partial_filters.push(condition.clone());
         }
         final_filters.extend(not_covered);
-        partials.push(IndexMergePartial { index_pos, path });
+        partials.push(IndexMergePartial { index: index.clone(), path });
     }
     // Even a single normal path can be composed with MV partials.
     if partials.is_empty() || (partials.len() == 1 && !composed_with_mv_index) {

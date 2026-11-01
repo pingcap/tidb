@@ -56,9 +56,6 @@ pub(crate) fn collect_candidates(
         let tidb_planner_util::path::PossiblePath::Index { index } = path else {
             continue;
         };
-        let Some(index) = source.indexes.get(*index) else {
-            continue;
-        };
         for part in index.read().columns.iter_deref() {
             let Some(column) = schema.columns.get(part.read().offset as usize) else {
                 continue;

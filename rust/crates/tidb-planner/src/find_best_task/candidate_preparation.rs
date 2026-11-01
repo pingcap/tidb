@@ -86,7 +86,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
                     max_count_after_access: table.max_count_after_access,
                     ..Default::default()
                 });
-                let primary = primary_index.and_then(|index| ds.indexes.get(index));
+                let primary = primary_index.as_ref();
                 let heuristic = HeuristicPath {
                     range_count: table.detached.ranges.len(),
                     only_points: table.detached.ranges.iter().all(|range| {
@@ -106,7 +106,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
                 (metrics, Some(heuristic))
             }
             PossiblePath::Index { index } => {
-                let index = ds.indexes.get(*index)?;
+                let index = Some(index)?;
                 // Go `convertToIndexScan`: a multi-valued index is read only
                 // through IndexMerge, so it is no ordinary candidate (and its
                 // logical derivation fills no ordinary path).
@@ -255,9 +255,6 @@ fn range_scan_flags(
             )
         }
         PossiblePath::Index { index } => {
-            let Some(index) = ds.indexes.get(*index) else {
-                return (false, false);
-            };
             let Some(filled) = ds
                 .derived_index_paths
                 .get(&index.read().id)

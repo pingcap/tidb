@@ -178,9 +178,6 @@ pub(crate) fn fill_ordinary_index_paths(
         let PossiblePath::Index { index } = candidate else {
             continue;
         };
-        let Some(index) = source.indexes.get(*index) else {
-            continue;
-        };
         if index.read().mv_index || index.read().is_columnar_index() {
             continue;
         }
@@ -267,7 +264,7 @@ pub(crate) fn fill_ordinary_index_paths(
 /// ordinary datasource output-count lower bound to merge partials.
 pub(crate) fn detach_table_path(
     source: &DataSource,
-    primary_index: Option<usize>,
+    primary_index: Option<&tidb_infoschema::table_source::SourceIndex>,
     conditions: &[Expression],
     context: &AccessPathDerivationContext<'_>,
     correlated_access: bool,
@@ -288,7 +285,7 @@ pub(crate) fn detach_table_path(
         .as_ref()
         .and_then(|column| column.ret_type.clone())
         .unwrap_or_else(|| tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong));
-    let common_index = primary_index.and_then(|index| source.indexes.get(index));
+    let common_index = primary_index;
     let common_columns =
         common_index.map_or_else(Vec::new, |index| source.index_range_columns(index));
     let map_error = |error| match error {
@@ -425,12 +422,12 @@ pub(crate) fn prune_estimate_range(
 
 pub(crate) fn fill_table_path(
     source: &DataSource,
-    primary_index: Option<usize>,
+    primary_index: Option<&tidb_infoschema::table_source::SourceIndex>,
     context: &AccessPathDerivationContext<'_>,
 ) -> Result<FilledTablePath, PlanError> {
     let mut filled =
         detach_table_path(source, primary_index, &source.pushed_down_conds, context, true)?;
-    let common_index = primary_index.and_then(|index| source.indexes.get(index));
+    let common_index = primary_index;
     // Go `deriveTablePathStats` answers one row for a correlated integer
     // handle and returns before `adjustCountAfterAccess`.
     if common_index.is_none() && filled.correlated_access_count > 0 {
