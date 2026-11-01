@@ -685,7 +685,7 @@ impl SessionExtendedInfoSchema {
 
     /// Whether `database` exists (Go `is.SchemaExists`).
     #[must_use]
-    pub fn has_database(&self, database: &str) -> bool {
+    pub fn schema_exists(&self, database: &str) -> bool {
         self.schema.databases.contains_key(&database.go_to_lower())
     }
 
@@ -975,7 +975,7 @@ impl SessionExtendedInfoSchema {
             return None;
         }
         let (database, table) = self
-            .kv_table_by_physical_id(table_id)
+            .table_by_id(table_id)
             .filter(|(_, table)| table.table_id() == table_id)?;
         let database = self
             .schema.databases
@@ -1159,7 +1159,7 @@ impl SessionExtendedInfoSchema {
     /// same stable ID, so executor construction must not recover the table by
     /// walking SQL names or aliases again.
     pub fn kv_table_by_id(&self, table_id: i64) -> Option<&crate::TableCommon> {
-        self.kv_table_by_physical_id(table_id)
+        self.table_by_id(table_id)
             .map(|(_, table)| table)
             .filter(|table| table.table_id() == table_id)
             .map(|table| &**table)
@@ -1169,7 +1169,7 @@ impl SessionExtendedInfoSchema {
     /// for a partition's id): the session's LOCAL temporary table with that
     /// id, else the shared schema's table owning it, with its folded
     /// database.
-    pub fn kv_table_by_physical_id(
+    pub fn table_by_id(
         &self,
         physical_id: i64,
     ) -> Option<(&str, &Arc<crate::TableCommon>)> {
@@ -1231,7 +1231,7 @@ impl SessionExtendedInfoSchema {
     /// either. Only the partitioned branch pays `Arc::make_mut`'s clone,
     /// since restricting reads to one partition needs an independent copy.
     pub fn physical_kv_table_by_id(&self, physical_id: i64) -> Option<Arc<crate::TableCommon>> {
-        let (_, table) = self.kv_table_by_physical_id(physical_id)?;
+        let (_, table) = self.table_by_id(physical_id)?;
         let mut physical = Arc::clone(table);
         if table.table_id() != physical_id {
             Arc::make_mut(&mut physical).restrict_read_to_partitions(&[physical_id]);
@@ -1241,7 +1241,7 @@ impl SessionExtendedInfoSchema {
 
     /// Resolves a logical or partition table ID to its owning database name.
     pub fn physical_kv_table_database_by_id(&self, physical_id: i64) -> Option<&str> {
-        let (database, _) = self.kv_table_by_physical_id(physical_id)?;
+        let (database, _) = self.table_by_id(physical_id)?;
         Some(self.schema.databases.get(database)?.name.as_str())
     }
 

@@ -125,7 +125,7 @@ pub(super) fn equality_facts(detached: &tidb_ranger::detacher::DetachRangeResult
 /// the logically filled path. Missing facts must not eliminate a competitor.
 pub(crate) fn get_index_candidate(
     source: &tidb_planner_core_operator_logicalop::DataSource,
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     path: &tidb_planner_util::path::IndexPathState,
     single_scan: bool,
     matches_property: bool,
@@ -446,7 +446,6 @@ mod skyline_tests {
     #[test]
     fn index_facts_keep_full_key_filters_and_dnf_equality_counts() {
         use tidb_planner_util::path::{IndexPathState, FilledIndexPath};
-        use tidb_infoschema::table_source::SourceIndexColumn;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::{
             column::Column, constant::Constant, expression::Expression,
@@ -473,7 +472,7 @@ mod skyline_tests {
         };
         let index = tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 9,
-            columns: vec![SourceIndexColumn::default(); 3].into(),
+            columns: vec![tidb_model::IndexColumn::default(); 3].into(),
             ..tidb_model::IndexInfo::default()
         });
         let source = tidb_planner_core_operator_logicalop::DataSource::default();

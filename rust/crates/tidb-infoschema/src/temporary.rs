@@ -24,7 +24,7 @@ impl SessionExtendedInfoSchema {
     /// wraps the infoschema in a `SessionExtendedInfoSchema` whose
     /// `LocalTemporaryTables` resolve first. Each entry is `(folded
     /// database, folded name, table)`.
-    pub fn attach_local_temporary_tables(&mut self, tables: Vec<(String, String, TableCommon)>) {
+    pub fn attach_local_temporary_table_info_schema(&mut self, tables: Vec<(String, String, TableCommon)>) {
         // The version bump is gated on an ACTUAL visibility change: this runs
         // around EVERY statement via [`crate::txn`]'s overlay guard, and the
         // common case is a session with NO temporary tables, where attaching
@@ -54,7 +54,7 @@ impl SessionExtendedInfoSchema {
     /// Detaches the session's LOCAL temporary tables -- Go
     /// `temptable.DetachLocalTemporaryTableInfoSchema` -- returning them as
     /// the statement left them.
-    pub fn take_local_temporary_tables(&mut self) -> Vec<(String, String, TableCommon)> {
+    pub fn detach_local_temporary_table_info_schema(&mut self) -> Vec<(String, String, TableCommon)> {
         // A statement that changed no schema leaves the image it found, so
         // detaching restores that image's version.
         let restored = self

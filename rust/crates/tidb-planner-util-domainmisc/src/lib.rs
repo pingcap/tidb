@@ -21,8 +21,6 @@
 
 use std::collections::BTreeMap;
 
-use tidb_infoschema::table_source::SourceIndex;
-
 use tidb_infoschema::table_source::LatestIndexSchema;
 
 
@@ -46,7 +44,7 @@ pub fn get_latest_index_info(
     latest: Option<&LatestIndexSchema>,
     table_id: i64,
     start_version: u64,
-) -> Result<(Option<BTreeMap<i64, SourceIndex>>, bool), DomainNotFound> {
+) -> Result<(Option<BTreeMap<i64, tidb_model::GoShared<tidb_model::IndexInfo>>>, bool), DomainNotFound> {
     let latest = latest.ok_or(DomainNotFound)?;
     if latest.schema_meta_version == start_version {
         return Ok((None, false));

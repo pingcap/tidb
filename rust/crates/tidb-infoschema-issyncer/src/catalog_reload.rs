@@ -181,7 +181,7 @@ impl ReloadedCatalog {
 pub(crate) fn get_schema_version_with_non_empty_diff<S: MetaSnapshot>(
     snapshot: &mut S,
 ) -> Result<i64, ClusterCatalogError> {
-    let version = tidb_infoschema::cluster_catalog::read_schema_version(snapshot)?;
+    let version = tidb_infoschema::cluster_catalog::get_schema_version(snapshot)?;
     if version > 0 && read_schema_diff(snapshot, version)?.is_none() {
         return Ok(version - 1);
     }

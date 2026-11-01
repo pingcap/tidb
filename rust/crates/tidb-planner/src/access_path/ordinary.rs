@@ -46,7 +46,7 @@ pub(crate) fn filter_selectivity(
 /// Ordinary paths and OR branch alternatives must use the same detacher.
 pub(crate) fn fill_index_path(
     source: &DataSource,
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     conditions: &[Expression],
     context: &AccessPathDerivationContext<'_>,
     prefix_single_scan: bool,
@@ -264,7 +264,7 @@ pub(crate) fn fill_ordinary_index_paths(
 /// ordinary datasource output-count lower bound to merge partials.
 pub(crate) fn detach_table_path(
     source: &DataSource,
-    primary_index: Option<&tidb_infoschema::table_source::SourceIndex>,
+    primary_index: Option<&tidb_model::GoShared<tidb_model::IndexInfo>>,
     conditions: &[Expression],
     context: &AccessPathDerivationContext<'_>,
     correlated_access: bool,
@@ -422,7 +422,7 @@ pub(crate) fn prune_estimate_range(
 
 pub(crate) fn fill_table_path(
     source: &DataSource,
-    primary_index: Option<&tidb_infoschema::table_source::SourceIndex>,
+    primary_index: Option<&tidb_model::GoShared<tidb_model::IndexInfo>>,
     context: &AccessPathDerivationContext<'_>,
 ) -> Result<FilledTablePath, PlanError> {
     let mut filled =

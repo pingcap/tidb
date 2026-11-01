@@ -113,7 +113,7 @@ fn partial_matches_order(
 /// the key after a prefix every range pins to one value.
 fn index_partial_matches_order(
     ds: &DataSource,
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     filled: &tidb_planner_util::path::FilledIndexPath,
     items: &[tidb_planner_property::SortItem],
     allow_groups: bool,
@@ -850,7 +850,7 @@ fn partial_table_range_rebuild(
 fn push_index_partial(
     ds: &DataSource,
     ctx: &DispatchContext<'_>,
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     filled: &tidb_planner_util::path::FilledIndexPath,
     rows: f64,
     scan_rows: f64,
@@ -956,7 +956,7 @@ fn push_index_partial(
 /// immutable table metadata and retain the handle suffix's exact order.
 pub(super) fn partial_index_schema(
     ds: &DataSource,
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     ctx: &DispatchContext<'_>,
 ) -> Result<Vec<tidb_expr::column::Column>, PlanError> {
     index_scan_schema(ds, index, ctx, true)
@@ -965,7 +965,7 @@ pub(super) fn partial_index_schema(
 /// Construct the physical index row, including handles required by lookup.
 pub(super) fn index_scan_schema(
     ds: &DataSource,
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     ctx: &DispatchContext<'_>,
     double_read: bool,
 ) -> Result<Vec<tidb_expr::column::Column>, PlanError> {

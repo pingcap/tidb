@@ -2373,7 +2373,7 @@ fn table_has_index_matching_ordering(
 }
 
 fn index_matches_ordering(
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     data_source: &tidb_planner_core_operator_logicalop::data_source::DataSource,
     ordering_column_ids: &[i64],
     equality_column_ids: &BTreeSet<i64>,

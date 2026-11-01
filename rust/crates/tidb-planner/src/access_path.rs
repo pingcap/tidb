@@ -32,7 +32,7 @@ pub(crate) mod ordinary;
 #[must_use]
 pub fn prepare_cols_for_mv_index(
     ds: &tidb_planner_core_operator_logicalop::DataSource,
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
 ) -> Option<Vec<tidb_expr::column::Column>> {
     mv_index::prepare_idx_cols_and_unwrap_array_type(ds, index, true)
 }
@@ -349,7 +349,7 @@ pub(crate) fn derive_access_paths(
 ///   are represented today;
 /// * `kv.TiDB` for cluster tables (`:1324-1326`) — no cluster-table flag;
 /// * inverted indexes (`:1396-1398`) — no inverted flag on
-///   [`crate::plan_builder::catalog::SourceIndex`], so an inverted index
+///   [`tidb_model::GoShared<tidb_model::IndexInfo>`], so an inverted index
 ///   would enumerate here where Go skips it; the catalog does not model one
 ///   today;
 /// * an EXPLAIN's hypothetical TiFlash replica (`:1331-1346`) adds the
@@ -368,7 +368,7 @@ pub fn get_possible_access_paths(
     connection_id: Option<u64>,
     repeatable_read: bool,
     is_for_update_read: bool,
-    hypo_indexes: &[tidb_infoschema::table_source::SourceIndex],
+    hypo_indexes: &[tidb_model::GoShared<tidb_model::IndexInfo>],
     hypo_tiflash_replica: bool,
 ) -> Result<Vec<PossiblePath>, tidb_planner_core_base::PlanError> {
     // Go splits ONLY on `tblInfo.IsCommonHandle` (`planbuilder.go:1521`):
@@ -485,7 +485,7 @@ pub fn apply_table_index_hints(
     let mut ignored = std::collections::BTreeSet::new();
     let mut result = ResolvedIndexPaths::default();
 
-    let unsupported_reason = |metadata: &tidb_infoschema::table_source::SourceIndex| {
+    let unsupported_reason = |metadata: &tidb_model::GoShared<tidb_model::IndexInfo>| {
         if table.is_common_handle && table.common_handle_version < 1 {
             Some("common handle table with old encoding version is not supported")
         } else if metadata.read().global {
@@ -821,13 +821,12 @@ mod enumeration_tests {
     use tidb_planner_util::path::{PossiblePath};
     use tidb_infoschema::table_source::LatestIndexSchema;
     use tidb_infoschema::table_source::SourceTable;
-    use tidb_infoschema::table_source::SourceIndex;
 
     // All WRITTEN: Go's coverage of getPossibleAccessPaths is
     // planner-integration bound. Each expectation cites the Go line it
     // checks.
 
-    fn index(name: &str) -> SourceIndex {
+    fn index(name: &str) -> tidb_model::GoShared<tidb_model::IndexInfo> {
         tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 1,
             name: tidb_ast::CiString::new(name.to_string()),
@@ -842,7 +841,7 @@ mod enumeration_tests {
         })
     }
 
-    fn table(indexes: Vec<SourceIndex>) -> SourceTable {
+    fn table(indexes: Vec<tidb_model::GoShared<tidb_model::IndexInfo>>) -> SourceTable {
         SourceTable {
             indexes,
             ..SourceTable::default()

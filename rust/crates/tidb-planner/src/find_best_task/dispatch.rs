@@ -1994,7 +1994,7 @@ pub(super) fn table_path_matches_order(
 
 pub(super) fn index_path_matches_order(
     ds: &tidb_planner_core_operator_logicalop::DataSource,
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     prop: &PhysicalProperty,
     ranges: Option<&tidb_ranger::types::Ranges>,
 ) -> OrderMatch {
@@ -2077,7 +2077,7 @@ fn has_v0_new_collation_string_handle(ds: &tidb_planner_core_operator_logicalop:
 /// (no partition here is hidden by an in-flight DDL).
 pub(super) fn add_selection_condition_for_global_index(
     ds: &tidb_planner_core_operator_logicalop::DataSource,
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     scan_schema: Option<&tidb_expr::schema::Schema>,
 ) -> Option<tidb_expr::expression::Expression> {
     use tidb_expr::expression::Expression;
@@ -2131,7 +2131,7 @@ pub(super) fn add_selection_condition_for_global_index(
 /// a prefix column, and no earlier definition column is truncated.
 pub(super) fn match_partial_order_property(
     ds: &tidb_planner_core_operator_logicalop::DataSource,
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     partial: &tidb_planner_property::PartialOrderInfo,
 ) -> Option<tidb_planner_property::PartialOrderMatchResult> {
     if partial.sort_items.is_empty() || !partial.all_same_order().0 {
@@ -2377,7 +2377,7 @@ fn build_index_join_path_result(
 /// joins both coverage maps, and the equality count is that width.
 fn index_join_candidate(
     ds: &tidb_planner_core_operator_logicalop::DataSource,
-    source_index: &tidb_infoschema::table_source::SourceIndex,
+    source_index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     idx_cols: &[tidb_expr::column::Column],
     idx_col_lens: &[i64],
     core: &super::index_join_path::IndexJoinPathCore,
@@ -4933,7 +4933,7 @@ fn pruning_info_message(
         PossiblePath::TiFlashTable => format!("{table}(tiflash)"),
         PossiblePath::Index { index } => index.read().name.original().to_owned(),
     };
-    let index_name = |index: &tidb_infoschema::table_source::SourceIndex| {
+    let index_name = |index: &tidb_model::GoShared<tidb_model::IndexInfo>| {
         index.read().name.original().to_owned()
     };
     let mut names = Vec::new();
@@ -6502,7 +6502,6 @@ mod tests {
         // plain IndexReader.
         use tidb_planner_util::path::PossiblePath;
         use tidb_planner_core_operator_logicalop::DataSource;
-        use tidb_infoschema::table_source::SourceIndexColumn;
         use tidb_datatype::{FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
         use tidb_expr::schema::Schema;
@@ -6511,7 +6510,7 @@ mod tests {
         let coster = crate::find_best_task::coster::Ver2Coster::default();
         let column_ids = tidb_planner_core_base::ColumnIdAllocator::new();
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0).with_column_ids(&column_ids);
-        let build = |index_columns: Vec<SourceIndexColumn>| {
+        let build = |index_columns: Vec<tidb_model::IndexColumn>| {
             let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
             base.base.set_stats(Some(StatsInfo::new(50.0, [])));
             let index_0 = tidb_model::GoShared::new(tidb_model::IndexInfo {

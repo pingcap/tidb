@@ -236,7 +236,7 @@ impl crate::RepositorySession for WorkloadRepositorySession {
             .shared_catalog()
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .has_database(schema)
+            .schema_exists(schema)
     }
 
     fn table_info(

@@ -1526,7 +1526,7 @@ fn all_schemas(catalog: &tidb_infoschema::SessionExtendedInfoSchema) -> Vec<stor
             tables: information_schema,
         });
     }
-    if catalog.has_database("metrics_schema") {
+    if catalog.schema_exists("metrics_schema") {
         schemas.push(store_helper::HelperSchema {
             name: "METRICS_SCHEMA".to_owned(),
             tables: tidb_infoschema::metricsschema::table_ids()

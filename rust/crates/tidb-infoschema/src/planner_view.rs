@@ -236,7 +236,7 @@ impl crate::table_source::TableSource for PlannerCatalog {
         &self,
         db_name: &str,
         table_name: &str,
-    ) -> Vec<crate::table_source::SourceIndex> {
+    ) -> Vec<tidb_model::GoShared<tidb_model::IndexInfo>> {
         // Go appends the session's `*model.IndexInfo` itself.
         let Some(hypo) = self.hypo_indexes.as_deref() else {
             return Vec::new();

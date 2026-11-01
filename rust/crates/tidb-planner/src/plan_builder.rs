@@ -2925,7 +2925,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         &self,
         db_name: &str,
         table: &tidb_infoschema::table_source::SourceTable,
-    ) -> (Vec<tidb_infoschema::table_source::SourceIndex>, bool) {
+    ) -> (Vec<tidb_model::GoShared<tidb_model::IndexInfo>>, bool) {
         (
             self.source.hypo_indexes(db_name, &table.table_name),
             self.source

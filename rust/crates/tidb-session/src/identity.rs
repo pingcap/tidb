@@ -713,7 +713,7 @@ impl Session {
                 return plan(catalog);
             }
             let mut catalog = catalog.clone();
-            catalog.attach_local_temporary_tables(self.local_temporary_tables.clone());
+            catalog.attach_local_temporary_table_info_schema(self.local_temporary_tables.clone());
             plan(&catalog)
         };
         self.with_txn_catalog(overlay)?

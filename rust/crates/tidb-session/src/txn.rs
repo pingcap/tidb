@@ -206,11 +206,11 @@ impl TemporaryTableOverlay {
         catalog: &mut SessionExtendedInfoSchema,
         body: impl FnOnce(&mut SessionExtendedInfoSchema) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
-        catalog.attach_local_temporary_tables(std::mem::take(&mut self.local));
+        catalog.attach_local_temporary_table_info_schema(std::mem::take(&mut self.local));
         self.swap_global_storage(catalog);
         let value = body(catalog);
         self.swap_global_storage(catalog);
-        self.local = catalog.take_local_temporary_tables();
+        self.local = catalog.detach_local_temporary_table_info_schema();
         value
     }
 
@@ -281,7 +281,7 @@ fn run_discovering_temporary_overlay<T>(
         global: std::collections::HashMap::new(),
     };
     overlay.swap_global_storage(catalog);
-    overlay.local = catalog.take_local_temporary_tables();
+    overlay.local = catalog.detach_local_temporary_table_info_schema();
     let discovered = (!overlay.local.is_empty() || !overlay.global.is_empty()).then_some(overlay);
     (value, discovered)
 }

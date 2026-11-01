@@ -178,7 +178,7 @@ fn load_sysvars_from_snapshot_with_catalog_cache<S: MetaSnapshot>(
         Some(cache) => {
             // Any DDL moves the schema version, so a catalog loaded at the
             // version this snapshot reads is this snapshot's catalog.
-            let version = tidb_infoschema::cluster_catalog::read_schema_version(snapshot)?;
+            let version = tidb_infoschema::cluster_catalog::get_schema_version(snapshot)?;
             let cached = lock_catalog_cache(cache)
                 .as_ref()
                 .filter(|catalog| version != 0 && catalog.schema_version == version)

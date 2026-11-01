@@ -20,8 +20,6 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
-use tidb_infoschema::table_source::SourceIndex;
-
 /// Go `ResolveExprAndReplace` and `ResolveColumnAndReplace`.
 #[must_use]
 pub fn resolve_expr_and_replace(
@@ -156,7 +154,7 @@ pub fn check_max_one_row_cond(equal_column_ids: &BTreeSet<i64>, child: &Schema) 
 /// all-NOT-NULL `newKey`.
 #[must_use]
 pub fn check_index_can_be_key(
-    index: &SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     columns: &[tidb_model::GoShared<tidb_model::ColumnInfo>],
     schema: &Schema,
 ) -> (Option<Vec<Column>>, Option<Vec<Column>>) {

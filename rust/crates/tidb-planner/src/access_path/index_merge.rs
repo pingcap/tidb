@@ -56,7 +56,7 @@ pub(crate) fn is_specified_in_index_merge_hints(ds: &DataSource, index_name: &st
 /// `path.Index`, in path order.
 pub(crate) fn enumerated_indexes(
     ds: &DataSource,
-) -> impl Iterator<Item = &tidb_infoschema::table_source::SourceIndex> {
+) -> impl Iterator<Item = &tidb_model::GoShared<tidb_model::IndexInfo>> {
     ds.enumerated_paths.iter().filter_map(|path| match path {
         tidb_planner_util::path::PossiblePath::Index { index } => Some(index),
         _ => None,
@@ -434,7 +434,7 @@ fn partition_partial_filters(
 /// supply a missing leading key. Keep incomplete branches until that stage.
 fn collect_unfinished_filters(
     ds: &DataSource,
-    index: Option<&tidb_infoschema::table_source::SourceIndex>,
+    index: Option<&tidb_model::GoShared<tidb_model::IndexInfo>>,
     expression: &Expression,
     ctx: &AccessPathDerivationContext<'_>,
 ) -> Option<(Vec<Expression>, bool)> {
@@ -581,7 +581,7 @@ pub(crate) fn compare_alternatives(
 /// `GetRowCountByIndexRanges`.
 pub(super) fn estimate_partial_index_ranges(
     ds: &DataSource,
-    source_index: &tidb_infoschema::table_source::SourceIndex,
+    source_index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     filled: &tidb_planner_util::path::FilledIndexPath,
     ctx: &AccessPathDerivationContext<'_>,
 ) -> Result<f64, PlanError> {
@@ -593,7 +593,7 @@ pub(super) fn estimate_partial_index_ranges(
 /// `ranges` of `source_index`, whose usable key columns are `columns`.
 pub(super) fn estimate_index_ranges(
     ds: &DataSource,
-    source_index: &tidb_infoschema::table_source::SourceIndex,
+    source_index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     ranges: &tidb_ranger::types::Ranges,
     columns: &[(tidb_expr::column::Column, i64)],
     ctx: &AccessPathDerivationContext<'_>,

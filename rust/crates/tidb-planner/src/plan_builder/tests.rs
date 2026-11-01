@@ -30,7 +30,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::{Columns, EvalError, ZonedNoColumns};
 
-use super::catalog::{SourceColumn, SourceIndex, SourceIndexColumn, SourceTable, TableSource};
+use super::catalog::{SourceColumn, SourceTable, TableSource};
 use super::marker::{MarkerKind, PlanMarker};
 use super::{
     constant_is_always_false, snapshot_schema_and_names, PlanBuilder, PlanScopeResolver,

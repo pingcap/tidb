@@ -62,7 +62,7 @@ pub(crate) enum AccessFilterType {
 /// index without exactly one ARRAY column.
 pub(crate) fn prepare_idx_cols_and_unwrap_array_type(
     ds: &DataSource,
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     check_only_1_array: bool,
 ) -> Option<Vec<Column>> {
     let mut array_columns = 0;
@@ -378,7 +378,7 @@ fn build_partial_path_for_mv_index(
     ctx: &AccessPathDerivationContext<'_>,
     access_filters: &[Expression],
     idx_cols: &[Column],
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
 ) -> Result<Option<IndexMergePartial>, PlanError> {
     let declared_lengths = index.read().columns.iter_deref().map(|key| key.read().length).collect::<Vec<_>>();
     let columns = idx_cols
@@ -436,7 +436,7 @@ fn build_partial_paths_for_mv_index(
     ctx: &AccessPathDerivationContext<'_>,
     access_filters: &[Expression],
     idx_cols: &[Column],
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     use_plan_cache: bool,
     noncacheable: &mut Option<String>,
 ) -> Result<Option<(Vec<IndexMergePartial>, bool)>, PlanError> {
@@ -595,7 +595,7 @@ fn build_partial_path_up_for_mv_index(
 /// Go `splitIndexFilterConditions` over an MV index's columns.
 fn split_index_filter_conditions(
     ds: &DataSource,
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     conditions: Vec<Expression>,
     ctx: &AccessPathDerivationContext<'_>,
 ) -> (Vec<Expression>, Vec<Expression>) {
@@ -610,7 +610,7 @@ fn split_index_filter_conditions(
 }
 
 /// The enumerated MV indexes an IndexMerge may read, in path order.
-fn possible_mv_indexes(ds: &DataSource) -> Vec<&tidb_infoschema::table_source::SourceIndex> {
+fn possible_mv_indexes(ds: &DataSource) -> Vec<&tidb_model::GoShared<tidb_model::IndexInfo>> {
     enumerated_indexes(ds)
         .filter(|index| index.read().mv_index && is_in_index_merge_hints(ds, index.read().name.original()))
         .collect()
@@ -875,7 +875,7 @@ pub(crate) struct UnfinishedAccessPath {
 pub(crate) fn init_unfinished_paths_from_expr(
     ds: &DataSource,
     ctx: &AccessPathDerivationContext<'_>,
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     expr: &Expression,
 ) -> Option<UnfinishedAccessPath> {
     let idx_cols = prepare_idx_cols_and_unwrap_array_type(ds, index, false)?;
@@ -944,7 +944,7 @@ impl UnfinishedAccessPath {
 pub(crate) fn build_mv_alternative(
     ds: &DataSource,
     ctx: &AccessPathDerivationContext<'_>,
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     unfinished: &UnfinishedAccessPath,
     use_plan_cache: bool,
 ) -> Result<Option<(Vec<IndexMergePartial>, bool)>, PlanError> {

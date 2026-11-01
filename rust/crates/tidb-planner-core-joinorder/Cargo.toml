@@ -11,6 +11,7 @@ description = "TiDB pkg/planner/core/joinorder (Rust)."
 workspace = true
 
 [dependencies]
+tidb-model = { path = "../tidb-model" }
 tidb-planner-core-operator-logicalop = { path = "../tidb-planner-core-operator-logicalop" }
 tidb-planner-core-base = { path = "../tidb-planner-core-base" }
 tidb-planner-property = { path = "../tidb-planner-property" }
@@ -24,7 +25,6 @@ tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-mysql = { path = "../tidb-mysql" }
 
 [dev-dependencies]
-tidb-model = { path = "../tidb-model" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-planner-cardinality = { path = "../tidb-planner-cardinality" }

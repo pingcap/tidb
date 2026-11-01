@@ -12,3 +12,4 @@ workspace = true
 
 [dependencies]
 tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-model = { path = "../tidb-model" }

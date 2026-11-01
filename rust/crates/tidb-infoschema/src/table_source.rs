@@ -44,7 +44,7 @@
 //!   keeps the type on its schema columns instead, so it never restates it.
 //! * [`SourceTable::indexes`] — `crate::access_path` enumerates one path per
 //!   usable index. `DataSource::possible_access_paths` holds the RESULT;
-//!   [`SourceIndex`] is the input that result is derived from.
+//!   [`tidb_model::GoShared<tidb_model::IndexInfo>`] is the input that result is derived from.
 //!
 //! # Narrowings, by exact Go symbol
 //!
@@ -55,7 +55,7 @@
 //!   arrive at `crate::cardinality` already derived; the builder only tags
 //!   the operator, so no statistics handle crosses this seam.
 //! * The builder's hot path caches `StatePublic` as
-//!   [`SourceColumn::is_public`] / [`SourceIndex::is_public`], while the full
+//!   [`SourceColumn::is_public`] / [`tidb_model::GoShared::<tidb_model::IndexInfo>::is_public`], while the full
 //!   states remain available through [`SourceTable::table_info`].
 //! * `infoschema.InfoSchema.SchemaMetaVersion` / `AllSchemas` / the
 //!   `TableByID` family. `buildDataSource` reaches the catalogue exactly once,
@@ -71,11 +71,7 @@ use tidb_model::{DBInfo, GoShared, GoSharedPointerSlice, IndexInfo, SchemaState,
 /// `GeneratedExpr`.
 pub type SourceColumn = tidb_table::column::Column;
 
-/// Go `*model.IndexColumn`.
-pub type SourceIndexColumn = tidb_model::IndexColumn;
 
-/// Go `*model.IndexInfo`, shared with the table's `TableInfo.Indices`.
-pub type SourceIndex = GoShared<IndexInfo>;
 
 /// What the ported builder bodies read off a `*model.TableInfo` plus the
 /// partition selection `buildDataSource` has already made.
@@ -120,7 +116,7 @@ pub struct SourceTable {
     /// Go `TableInfo.Columns`, in offset order.
     pub columns: Vec<SourceColumn>,
     /// Go `TableInfo.Indices`, in declaration order.
-    pub indexes: Vec<SourceIndex>,
+    pub indexes: Vec<tidb_model::GoShared<tidb_model::IndexInfo>>,
     /// Go `TableInfo.PKIsHandle`.
     pub pk_is_handle: bool,
     /// Go `TableInfo.IsCommonHandle`.
@@ -246,7 +242,7 @@ pub trait TableSource {
     /// `getPossibleAccessPaths` only under `StmtCtx.InExplainStmt`; a source
     /// outside an `EXPLAIN` answers none. Each comes back as the index Go
     /// built for it (`BuildIndexInfo`, no id allocated).
-    fn hypo_indexes(&self, _db_name: &str, _table_name: &str) -> Vec<SourceIndex> {
+    fn hypo_indexes(&self, _db_name: &str, _table_name: &str) -> Vec<tidb_model::GoShared<tidb_model::IndexInfo>> {
         Vec::new()
     }
 
@@ -444,7 +440,7 @@ pub struct LatestIndexSchema {
     /// Go `InfoSchema.SchemaMetaVersion()`.
     pub schema_meta_version: u64,
     /// Go `InfoSchema.TableByID` followed by `TableInfo.Indices`.
-    pub table_indexes: BTreeMap<i64, Vec<SourceIndex>>,
+    pub table_indexes: BTreeMap<i64, Vec<tidb_model::GoShared<tidb_model::IndexInfo>>>,
 }
 
 /// Go `sctx.GetLatestInfoSchema()` as `metabuild.WithInfoSchema` keeps it

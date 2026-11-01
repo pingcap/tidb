@@ -6163,6 +6163,7 @@ name = "tidb-planner-util-domainmisc"
 version = "0.0.0"
 dependencies = [
  "tidb-infoschema",
+ "tidb-model",
 ]
 
 [[package]]

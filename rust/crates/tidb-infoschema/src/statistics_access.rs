@@ -117,8 +117,8 @@ impl SessionExtendedInfoSchema {
     /// Go `GetTblInfoForUsedStatsByPhysicalID`'s name: the table's name, then
     /// ` <partition>` for a partition id or ` global` for a partitioned
     /// table's own id, and `tableID <id>` when no table owns the id.
-    pub fn used_stats_table_name(&self, physical_id: i64) -> String {
-        let Some((_, table)) = self.kv_table_by_physical_id(physical_id) else {
+    pub fn get_tbl_info_for_used_stats_by_physical_id(&self, physical_id: i64) -> String {
+        let Some((_, table)) = self.table_by_id(physical_id) else {
             return format!("tableID {physical_id}");
         };
         let mut name = table.name().clone();

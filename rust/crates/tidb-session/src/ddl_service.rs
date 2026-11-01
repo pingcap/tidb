@@ -136,7 +136,7 @@ impl Session {
                 self.with_catalog_mut(|catalog| {
                     // Go `executor.CreateTable`'s `SchemaByName` (1049)
                     // precedes `BuildTableInfoWithStmt`.
-                    if !catalog.has_database(&database) {
+                    if !catalog.schema_exists(&database) {
                         return Err(DriverError::from(
                             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                                 .generate_with_stack_by_args(&[(database.clone()).into()]),

@@ -136,7 +136,7 @@ pub fn load_table_stats(
         );
         ctx.record_used_stats_info(
             physical_table_id,
-            catalog.used_stats_table_name(physical_table_id),
+            catalog.get_tbl_info_for_used_stats_by_physical_id(physical_table_id),
             version,
             realtime_count,
             modify_count,

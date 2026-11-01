@@ -155,7 +155,7 @@ pub struct DataSource {
     /// [`Self::enumerated_paths`]' `Index { index }` offsets address — what
     /// Go reads off `ds.TableInfo.Indices` when it fills `path.IdxCols`
     /// (`fillIndexPath`). Filled beside the newborn path list.
-    pub indexes: Vec<tidb_infoschema::table_source::SourceIndex>,
+    pub indexes: Vec<tidb_model::GoShared<tidb_model::IndexInfo>>,
     /// Go `AllPossibleAccessPaths`, reusing this crate's own path model.
     pub all_possible_access_paths: Vec<DataSourceAccessPath>,
     /// Go `PossibleAccessPaths`: the pruned subset the optimizer enumerates.
@@ -329,7 +329,7 @@ impl DataSource {
     #[must_use]
     pub fn schema_column_for_index_column(
         &self,
-        index_column: &tidb_infoschema::table_source::SourceIndexColumn,
+        index_column: &tidb_model::IndexColumn,
     ) -> Option<&Column> {
         let position = self
             .columns
@@ -343,7 +343,7 @@ impl DataSource {
     #[must_use]
     pub fn index_info_2_full_cols(
         &self,
-        index: &tidb_infoschema::table_source::SourceIndex,
+        index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     ) -> Vec<Option<(Column, i64)>> {
         index
             .read().columns
@@ -437,7 +437,7 @@ impl DataSource {
     /// (`IndexInfo2PrefixCols`) drive `exprPrefixAdder.addExprPrefix4ShardIndex`.
     fn add_expr_prefix_cond(
         &self,
-        index: &tidb_infoschema::table_source::SourceIndex,
+        index: &tidb_model::GoShared<tidb_model::IndexInfo>,
         conds: Vec<Expression>,
         regard_null_as_point: bool,
     ) -> Result<Vec<Expression>, tidb_ranger::points::PointBuilderError> {
@@ -553,7 +553,7 @@ impl DataSource {
     #[must_use]
     pub fn handle_cols_to_append(
         &self,
-        index: &tidb_infoschema::table_source::SourceIndex,
+        index: &tidb_model::GoShared<tidb_model::IndexInfo>,
         declared: &[(Column, i64)],
     ) -> Vec<(Column, i64)> {
         if index.read().unique || index.read().primary || declared.len() != index.read().columns.len() {
@@ -582,7 +582,7 @@ impl DataSource {
     #[must_use]
     pub fn index_range_columns(
         &self,
-        index: &tidb_infoschema::table_source::SourceIndex,
+        index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     ) -> Vec<(Column, i64)> {
         let mut columns = self
             .index_info_2_full_cols(index)
@@ -1197,7 +1197,7 @@ impl DataSource {
 /// a direct IS NULL argument can use a prefix when the session allows it.
 pub fn index_path_is_single_scan(
     ds: &crate::DataSource,
-    source_index: &tidb_infoschema::table_source::SourceIndex,
+    source_index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     opt_prefix_index_single_scan: bool,
 ) -> bool {
     if opt_prefix_index_single_scan {
@@ -1216,7 +1216,7 @@ pub fn index_path_is_single_scan(
 
 fn index_covers_expression_column(
     ds: &crate::DataSource,
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     column: &tidb_expr::column::Column,
     ignore_len: bool,
 ) -> bool {
@@ -1236,7 +1236,7 @@ fn index_covers_expression_column(
 /// `isIndexCoveringCondition` over the path's columns).
 pub fn index_covers_condition(
     ds: &crate::DataSource,
-    index: &tidb_infoschema::table_source::SourceIndex,
+    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     condition: &tidb_expr::expression::Expression,
     opt_prefix_index_single_scan: bool,
 ) -> bool {
@@ -1259,7 +1259,7 @@ pub fn index_covers_condition(
 
 fn index_covers_column(
     ds: &crate::DataSource,
-    source_index: &tidb_infoschema::table_source::SourceIndex,
+    source_index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     position: usize,
     ignore_len: bool,
 ) -> bool {

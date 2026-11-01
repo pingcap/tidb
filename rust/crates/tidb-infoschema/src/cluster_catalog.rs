@@ -213,7 +213,7 @@ impl ClusterCatalog {
 }
 
 /// Reads the cluster schema version alone (Go `m.GetSchemaVersion`).
-pub fn read_schema_version<S: MetaSnapshot>(snapshot: &mut S) -> Result<i64, ClusterCatalogError> {
+pub fn get_schema_version<S: MetaSnapshot>(snapshot: &mut S) -> Result<i64, ClusterCatalogError> {
     match snapshot.get(&key::schema_version_kv_key())? {
         Some(stored) => value::parse_int_value(&stored)
             .map_err(|error| ClusterCatalogError::Decode(format!("SchemaVersionKey: {error}"))),
@@ -231,7 +231,7 @@ pub fn read_schema_version<S: MetaSnapshot>(snapshot: &mut S) -> Result<i64, Clu
 pub fn fetch_all_schemas_with_tables<S: MetaSnapshot>(
     snapshot: &mut S,
 ) -> Result<ClusterCatalog, ClusterCatalogError> {
-    let schema_version = read_schema_version(snapshot)?;
+    let schema_version = get_schema_version(snapshot)?;
 
     let mut resource_groups = Vec::new();
     for (_, stored) in snapshot.scan_prefix(&key::resource_groups_kv_prefix())? {

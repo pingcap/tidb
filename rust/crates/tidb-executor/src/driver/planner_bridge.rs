@@ -1220,7 +1220,7 @@ impl InitStats<'_> {
         if self.record_used_stats {
             self.context.record_used_stats_info(
                 source.physical_table_id,
-                self.catalog.used_stats_table_name(source.physical_table_id),
+                self.catalog.get_tbl_info_for_used_stats_by_physical_id(source.physical_table_id),
                 statistics
                     .filter(|statistics| !statistics.hist_coll.pseudo)
                     .map_or(0, |statistics| statistics.version),

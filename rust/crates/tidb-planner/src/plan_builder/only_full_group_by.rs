@@ -46,7 +46,7 @@
 //! checker — the one `buildSelect` (`:4370`) actually calls, gated on
 //! `!OptimizerEnableNewOnlyFullGroupByCheck` — is `checkColFuncDepend`, the
 //! "some unique index is wholly determined" test, and THAT is what is ported
-//! here, against [`super::catalog::SourceIndex`]. The two agree on every case
+//! here, against [`tidb_model::GoShared<tidb_model::IndexInfo>`]. The two agree on every case
 //! a candidate key covers and differ only on the generated-column and
 //! promoted-nullable-key relaxations, which are the new checker's alone.
 //!
