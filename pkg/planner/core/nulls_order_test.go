@@ -15,9 +15,12 @@
 package core_test
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNullsOrderResults(t *testing.T) {
@@ -75,6 +78,44 @@ func TestNullsOrderResults(t *testing.T) {
 		"[planner:1235]This version of TiDB doesn't yet support 'NULLS FIRST/LAST in the ORDER BY of a RANGE frame with an offset'")
 	tk.MustQuery("select sum(id) over (order by b nulls last range between 1 preceding and current row) from t order by id").
 		Check(testkit.Rows("1", "2", "3", "4", "5"))
+
+	// A non-deterministic expression is evaluated once per row, not once for
+	// ISNULL(expr) and again for expr: each statement takes one sequence value per row.
+	tk.MustExec("create sequence s")
+	key := "if(nextval(s) % 2 = 1, null, id)"
+	for _, tc := range []struct {
+		sql  string
+		vals int
+	}{
+		{"select id from t order by " + key + " nulls last", 5},
+		{"select id from t order by " + key + " desc nulls first limit 2", 5},
+		{"(select id from t) union all (select id from t) order by " + key + " nulls last", 10},
+		{"select row_number() over (order by " + key + " nulls last) from t", 5},
+		{"update t set b = b order by " + key + " nulls last", 5},
+		{"delete from t order by " + key + " nulls last", 5},
+	} {
+		tk.MustExec("begin")
+		before, err := strconv.Atoi(tk.MustQuery("select nextval(s)").Rows()[0][0].(string))
+		require.NoError(t, err)
+		if strings.HasPrefix(tc.sql, "update") || strings.HasPrefix(tc.sql, "delete") {
+			tk.MustExec(tc.sql)
+		} else {
+			tk.MustQuery(tc.sql)
+		}
+		after, err := strconv.Atoi(tk.MustQuery("select nextval(s)").Rows()[0][0].(string))
+		require.NoError(t, err)
+		tk.MustExec("rollback")
+		require.Equal(t, tc.vals, after-before-1, tc.sql)
+	}
+	for _, sql := range []string{
+		"select id from t order by " + key + " nulls last",
+		"select row_number() over (order by " + key + " nulls last) from t",
+	} {
+		tk.MustQuery("explain format = 'brief' " + sql).CheckContain("isnull(Column#")
+		tk.MustQuery("explain format = 'brief' " + sql).CheckNotContain("isnull(if(")
+	}
+	tk.MustGetErrMsg("select group_concat(id order by "+key+" nulls last) from t",
+		"[planner:1235]This version of TiDB doesn't yet support 'NULLS FIRST/LAST on a non-deterministic expression in the ORDER BY of GROUP_CONCAT'")
 
 	// NULLS FIRST/LAST only applies to ORDER BY.
 	tk.MustGetErrMsg("select a from t group by a nulls last",
