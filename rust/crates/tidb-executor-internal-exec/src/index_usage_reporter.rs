@@ -561,11 +561,22 @@ mod tests {
         assert_eq!(usage.percentage_access, [0, 1, 0, 0, 0, 0, 0]);
     }
 
+    /// The table's column `a`, which a handle fixture keys its rows by.
+    fn handle_column() -> tidb_table::kv_table::KvColumn {
+        tidb_table::kv_table::KvColumn::new(tidb_model::GoShared::new(tidb_model::ColumnInfo {
+            id: 1,
+            name: tidb_ast::CiString::new("a"),
+            field_type: tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            state: tidb_model::SchemaState::PUBLIC,
+            ..tidb_model::ColumnInfo::default()
+        }))
+    }
+
     #[test]
     fn common_handle_without_primary_uses_zero_index_id() {
         let (global, session, statement) = collectors();
         let reporter = IndexUsageReporter::new(Some(&statement));
-        let mut table = KvTable::new(1, vec![]);
+        let mut table = KvTable::new(1, vec![handle_column()]);
         table.set_common_handle_offsets(vec![0]);
 
         reporter.report_point_for_handle(
@@ -582,11 +593,11 @@ mod tests {
 
     #[test]
     fn cluster_index_id_matches_go_table_handle_kinds() {
-        let mut integer_handle = KvTable::new(1, vec![]);
+        let mut integer_handle = KvTable::new(1, vec![handle_column()]);
         integer_handle.set_pk_handle_offset(0);
         assert_eq!(cluster_index_id(&integer_handle), Some(0));
 
-        let mut common_handle = KvTable::new(2, vec![]);
+        let mut common_handle = KvTable::new(2, vec![handle_column()]);
         common_handle.set_common_handle_offsets(vec![0]);
         common_handle.add_index(
             tidb_table::kv_table::KvIndex {

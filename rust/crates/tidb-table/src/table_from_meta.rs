@@ -665,18 +665,17 @@ pub fn cluster_table(
     if table.sep_auto_inc() {
         kv_table.set_row_id(auto.row_allocator_for(table));
     }
+    // The table reads its handle off the `TableInfo`; one whose handle
+    // names no public column cannot be loaded.
     if table.pk_is_handle {
-        let handle = columns
+        columns
             .iter()
             .position(|column| column.read().field_type.flags() & PRI_KEY_FLAG != 0)
             .ok_or_else(|| {
                 "it is marked PKIsHandle but has no public primary key column".to_owned()
             })?;
-        kv_table.set_pk_handle_offset(handle);
     } else if table.is_common_handle {
-        let (handles, prefix_lengths) = clustered_handle_offsets(table, &columns)?;
-        kv_table.set_common_handle_offsets(handles);
-        kv_table.set_common_handle_prefix_lengths(prefix_lengths);
+        clustered_handle_offsets(table, &columns)?;
     }
     kv_table.set_new_table_global_indexes(
         table

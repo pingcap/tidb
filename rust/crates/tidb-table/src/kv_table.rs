@@ -1018,9 +1018,12 @@ impl KvTable {
         &mut self.nonpublic_columns
     }
 
-    /// The handle column's offset, for edits.
-    pub fn pk_handle_offset_mut(&mut self) -> &mut Option<usize> {
-        &mut self.pk_handle_offset
+    /// Clears Go `TableInfo.PKIsHandle`: the table's rows are keyed by the
+    /// implicit row id instead.
+    pub fn clear_pk_handle(&mut self) {
+        if self.meta.read().pk_is_handle {
+            self.update_meta(|meta| meta.pk_is_handle = false);
+        }
     }
 
     /// The auto-increment allocator.
@@ -1083,16 +1086,6 @@ impl KvTable {
     /// The partition spec, mutably.
     pub fn partition_mut(&mut self) -> &mut Option<Box<crate::partition_routing::PartitionSpec>> {
         &mut self.partition
-    }
-
-    /// The handle columns' offsets, mutably.
-    pub fn common_handle_offsets_mut(&mut self) -> &mut Vec<usize> {
-        &mut self.common_handle_offsets
-    }
-
-    /// The handle columns' prefix lengths, mutably.
-    pub fn common_handle_prefix_lengths_mut(&mut self) -> &mut Vec<i64> {
-        &mut self.common_handle_prefix_lengths
     }
 
     /// Whether the table uses the new-collation encoding, mutably.
@@ -2083,53 +2076,60 @@ impl KvTable {
     /// Marks the columns whose encoding is the clustered row handle, which Go
     /// records as `TableInfo.IsCommonHandle`.
     pub fn set_common_handle_offsets(&mut self, offsets: Vec<usize>) {
-        self.common_handle_offsets = offsets;
-        self.common_handle_prefix_lengths = vec![tidb_datatype::UNSPECIFIED_LENGTH; self.common_handle_offsets.len()];
-        if self.common_handle_offsets.is_empty() {
+        if offsets.is_empty() {
+            if self.meta.read().is_common_handle {
+                self.update_meta(|meta| meta.is_common_handle = false);
+            }
             return;
         }
-        let offsets = self.common_handle_offsets.clone();
         self.record_fixture_primary_key(&offsets);
+        // A table built from columns alone lists its clustered PRIMARY KEY in
+        // `TableInfo.Indices` over these columns, as every Go clustered table
+        // does.
+        let columns = self.fixture_index_columns(&offsets, &[]);
+        let primary = self
+            .meta
+            .read()
+            .indices
+            .iter_deref()
+            .position(|index| index.read().primary);
+        let matches = primary.is_some() && self.common_handle_offsets == offsets;
+        if !matches {
+            self.update_meta_cloned(|meta| {
+                match primary {
+                    Some(position) => {
+                        meta.indices.get(position).expect("the PRIMARY KEY").write().columns =
+                            columns.into();
+                    }
+                    None => meta.indices.push_go(tidb_model::IndexInfo {
+                        name: tidb_ast::CiString::new("PRIMARY"),
+                        columns: columns.into(),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        unique: true,
+                        primary: true,
+                        ..tidb_model::IndexInfo::default()
+                    }),
+                }
+            });
+        }
         if !self.meta.read().is_common_handle {
             self.update_meta(|meta| meta.is_common_handle = true);
         }
-        if self.meta.read().indices.iter_deref().any(|index| index.read().primary) {
-            return;
-        }
-        // A table built from columns alone lists its clustered PRIMARY KEY in
-        // `TableInfo.Indices`, as every Go clustered table does.
-        let primary = tidb_model::IndexInfo {
-            name: tidb_ast::CiString::new("PRIMARY"),
-            columns: self.fixture_index_columns(&offsets, &[]).into(),
-            state: tidb_model::SchemaState::PUBLIC,
-            unique: true,
-            primary: true,
-            ..tidb_model::IndexInfo::default()
-        };
-        self.update_meta(|meta| meta.indices.push_go(primary));
     }
 
     /// Records Go `IndexColumn.Length` for each common-handle component.
     pub fn set_common_handle_prefix_lengths(&mut self, lengths: Vec<i64>) {
         assert_eq!(lengths.len(), self.common_handle_offsets.len());
-        let recorded = self.meta.read().get_primary_key().is_some_and(|primary| {
-            primary
-                .read()
-                .columns
-                .iter_deref()
-                .map(|column| column.read().length)
-                .eq(lengths.iter().copied())
-        });
-        if !recorded {
-            self.update_meta_cloned(|meta| {
-                if let Some(primary) = meta.indices.iter_deref().find(|index| index.read().primary) {
-                    for (column, length) in primary.read().columns.iter_deref().zip(&lengths) {
-                        column.write().length = *length;
-                    }
-                }
-            });
+        if self.common_handle_prefix_lengths == lengths {
+            return;
         }
-        self.common_handle_prefix_lengths = lengths;
+        self.update_meta_cloned(|meta| {
+            if let Some(primary) = meta.indices.iter_deref().find(|index| index.read().primary) {
+                for (column, length) in primary.read().columns.iter_deref().zip(&lengths) {
+                    column.write().length = *length;
+                }
+            }
+        });
     }
 
     /// Sets Go `TableInfo.CommonHandleVersion` of a table built from
@@ -2968,6 +2968,37 @@ impl KvTable {
                 }
             }
         }
+        // Go reads the handle off the `TableInfo`: `PKIsHandle` names the
+        // `PriKeyFlag` column, `IsCommonHandle` the PRIMARY KEY's parts.
+        let position_of_id = |id: i64| self.columns.iter().position(|column| column.read().id == id);
+        self.pk_handle_offset = meta
+            .pk_is_handle
+            .then(|| meta.get_pk_col_info())
+            .flatten()
+            .and_then(|info| position_of_id(info.read().id));
+        let primary = meta
+            .is_common_handle
+            .then(|| meta.indices.iter_deref().find(|index| index.read().primary))
+            .flatten();
+        let (offsets, lengths) = primary
+            .map(|primary| {
+                primary
+                    .read()
+                    .columns
+                    .iter_deref()
+                    .filter_map(|part| {
+                        let part = part.read();
+                        let offset = self
+                            .columns
+                            .iter()
+                            .position(|column| column.read().name == part.name)?;
+                        Some((offset, part.length))
+                    })
+                    .unzip()
+            })
+            .unwrap_or_default();
+        self.common_handle_offsets = offsets;
+        self.common_handle_prefix_lengths = lengths;
         self.hidden_offsets = self
             .columns
             .iter()
@@ -3007,12 +3038,6 @@ impl KvTable {
                 *offset += 1;
             }
         };
-        if let Some(offset) = self.pk_handle_offset.as_mut() {
-            shift(offset);
-        }
-        for offset in &mut self.common_handle_offsets {
-            shift(offset);
-        }
         if let Some(offset) = self.auto_increment_offset.as_mut() {
             shift(offset);
         }
@@ -3061,12 +3086,6 @@ impl KvTable {
                 *value -= 1;
             }
         };
-        if let Some(value) = self.pk_handle_offset.as_mut() {
-            shift(value);
-        }
-        for value in &mut self.common_handle_offsets {
-            shift(value);
-        }
         if let Some(value) = self.auto_increment_offset.as_mut() {
             shift(value);
         }
@@ -3765,7 +3784,6 @@ impl KvTable {
     /// Marks the column at `offset` as the table's handle column, which Go
     /// records as `TableInfo.PKIsHandle`.
     pub fn set_pk_handle_offset(&mut self, offset: usize) {
-        self.pk_handle_offset = Some(offset);
         self.record_fixture_primary_key(&[offset]);
         if !self.meta.read().pk_is_handle {
             self.update_meta(|meta| meta.pk_is_handle = true);

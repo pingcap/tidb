@@ -6711,7 +6711,7 @@ mod remote_cursor_tests {
             let mut table = index_selection_table(capture.clone(), prefix)
                 .with_new_collation_mode(new_collation);
             if common {
-                *table.pk_handle_offset_mut() = None;
+                table.clear_pk_handle();
                 table.set_common_handle_offsets(vec![0, 1]);
                 table.set_common_handle_version(version);
             }
@@ -6789,7 +6789,7 @@ mod remote_cursor_tests {
             {
                 let capture = RequestCapture::default();
                 let mut table = index_selection_table(capture.clone(), -1);
-                *table.pk_handle_offset_mut() = None;
+                table.clear_pk_handle();
                 // Stored source columns [a, v], with _tidb_rowid inserted at
                 // extra_slot. Neither source nor wire positions are table offsets.
                 let a_slot = usize::from(extra_slot == 0);
@@ -6861,7 +6861,7 @@ mod remote_cursor_tests {
             };
             let mut table = index_selection_table(capture.clone(), 2);
             let (projected, expected_ids, expected_handle, expected_projection) = if common {
-                *table.pk_handle_offset_mut() = None;
+                table.clear_pk_handle();
                 table.set_common_handle_offsets(vec![0, 1]);
                 table.set_common_handle_version(1);
                 (1, vec![2, 1, 2], vec![1, 2], vec![2])
@@ -6910,7 +6910,7 @@ mod remote_cursor_tests {
                 ..RequestCapture::default()
             };
             let mut table = index_selection_table(capture.clone(), index_prefix);
-            *table.pk_handle_offset_mut() = None;
+            table.clear_pk_handle();
             table.set_common_handle_offsets(vec![0, 1]);
             table.set_common_handle_version(1);
             let mut primary = table.indexes()[0].clone();
@@ -6982,7 +6982,7 @@ mod remote_cursor_tests {
         ] {
             let mut table = index_selection_table(RequestCapture::default(), index_length)
                 .with_new_collation_mode(false);
-            *table.pk_handle_offset_mut() = None;
+            table.clear_pk_handle();
             table.set_common_handle_offsets(vec![1]);
             let mut primary = table.indexes()[0].clone();
             let detached = tidb_model::GoShared::new(primary.read().clone_like_go());
