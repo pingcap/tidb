@@ -15,7 +15,7 @@
 //! Derivation consumes expression, range and statistics inputs only. Physical
 //! property convergence and task construction belong to `find_best_task`.
 
-use tidb_planner_util::path::{IndexMergePartial, IndexMergePath, Partial, UnionIndexMergePath};
+use tidb_planner_util::path::{AccessPath, IndexMergePath, Partial, UnionIndexMergePath};
 use super::AccessPathDerivationContext;
 use tidb_planner_core_operator_logicalop::DataSource;
 use tidb_planner_core_base::PlanError;
@@ -364,7 +364,7 @@ pub(crate) fn estimate_union_access(
     {
         let rows = selected.iter().flat_map(|partial| match partial {
             Partial::Index { rows, .. } | Partial::Table { rows, .. } => vec![*rows],
-            Partial::MvIndex { paths, .. } => paths.iter().map(IndexMergePartial::rows).collect(),
+            Partial::MvIndex { paths, .. } => paths.iter().map(|path| path.count_after_access().unwrap_or(0.0)).collect(),
         });
         return ds.table_stats.as_ref().map_or(0.0, |stats| stats.row_count())
             * super::mv_index::union_selectivity(ds, rows);
@@ -373,7 +373,7 @@ pub(crate) fn estimate_union_access(
         .iter()
         .map(|partial| match partial {
             Partial::Index { rows, .. } | Partial::Table { rows, .. } => *rows,
-            Partial::MvIndex { paths, .. } => paths.iter().map(IndexMergePartial::rows).sum(),
+            Partial::MvIndex { paths, .. } => paths.iter().map(|path| path.count_after_access().unwrap_or(0.0)).sum(),
         })
         .sum::<f64>();
     let access_branches = selected
@@ -392,7 +392,7 @@ pub(crate) fn estimate_union_access(
                     .iter()
                     .filter_map(|path| {
                         tidb_expr::simple_expr::compose_cnf_condition(
-                            path.filled().detached.access_conds.clone(),
+                            path.filled_index_path().detached.access_conds.clone(),
                         )
                     })
                     .collect(),
@@ -536,7 +536,7 @@ pub(crate) fn compare_alternatives(
                 index, paths, ..
             } => {
                 let point = paths.iter().all(|path| {
-                    let ranges = &path.filled().detached.ranges;
+                    let ranges = &path.filled_index_path().detached.ranges;
                     ranges.is_empty()
                         || (index.read().unique
                             && ranges.iter().all(|range| {
@@ -547,9 +547,9 @@ pub(crate) fn compare_alternatives(
                 let rows = paths
                     .iter()
                     .map(|path| {
-                        let filled = path.filled();
+                        let filled = path.filled_index_path();
                         if filled.index_filters.is_empty() {
-                            path.rows()
+                            path.count_after_access().unwrap_or(0.0)
                         } else {
                             filled.count_after_index.unwrap_or(0.0)
                         }
@@ -640,7 +640,7 @@ pub(crate) fn generate_normal_index_partial_path_4_and(
     ds: &DataSource,
     ctx: &AccessPathDerivationContext<'_>,
     used_access: &mut std::collections::HashMap<Vec<u8>, Expression>,
-) -> Vec<IndexMergePartial> {
+) -> Vec<AccessPath> {
     generate_and_index_merge_for_normal_index(ds, ctx, false, used_access)
         .map(|path| path.partials)
         .unwrap_or_default()
@@ -750,7 +750,7 @@ fn generate_and_index_merge_for_normal_index(
             partial_filters.push(condition.clone());
         }
         final_filters.extend(not_covered);
-        partials.push(IndexMergePartial { index: index.clone(), path });
+        partials.push(path);
     }
     // Even a single normal path can be composed with MV partials.
     if partials.is_empty() || (partials.len() == 1 && !composed_with_mv_index) {

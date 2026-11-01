@@ -200,6 +200,9 @@ fn datasource_prunes_partial_paths_and_marks_the_ordinary_cached_plan() {
         source.enumerated_paths,
         vec![tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())]
     );
-    assert!(source.partial_index_noncacheable_ids.contains(&10));
+    assert_eq!(
+        source.path_by_index_id(10).unwrap().noncacheable_reason.as_deref(),
+        Some("IndexScan of partial index is uncacheable")
+    );
 }
 

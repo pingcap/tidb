@@ -210,9 +210,6 @@ pub struct DataSource {
     pub asked_column_group: Vec<Vec<Column>>,
     /// Go `InterestingColumns`.
     pub interesting_columns: Vec<Column>,
-    /// Index IDs carrying Go `AccessPath.NoncacheableReason` after
-    /// `CheckPartialIndexes` rejects the general cached-plan proof.
-    pub partial_index_noncacheable_ids: std::collections::BTreeSet<i64>,
     /// Go `forceNoIndexLookUpPushDown`, set by a matching
     /// `NO_INDEX_LOOKUP_PUSHDOWN` hint before paths are enumerated.
     pub force_no_index_lookup_push_down: bool,
@@ -744,11 +741,10 @@ impl DataSource {
         let mut partial_index_used_hint = false;
         let mut has_partial_index = false;
 
-        for path in &self.enumerated_paths {
-            let Some(index) = path.index_info() else {
+        for path in &mut self.enumerated_paths {
+            let Some(metadata) = path.index_info().cloned() else {
                 continue;
             };
-            let metadata = index;
             if metadata.read().condition_expr_string.is_empty() {
                 continue;
             }
@@ -773,7 +769,7 @@ impl DataSource {
             if use_plan_cache
                 && !tidb_planner_core_partidx::always_meet_constraints(&predicates, &self.pushed_down_conds)
             {
-                self.partial_index_noncacheable_ids.insert(metadata.read().id);
+                path.noncacheable_reason = Some("IndexScan of partial index is uncacheable".to_owned());
             }
         }
         if !has_partial_index || (removed_ids.is_empty() && !partial_index_used_hint) {
@@ -1153,7 +1149,6 @@ impl DataSource {
             access_path_min_selectivity: self.access_path_min_selectivity,
             asked_column_group: self.asked_column_group.clone(),
             interesting_columns: self.interesting_columns.clone(),
-            partial_index_noncacheable_ids: self.partial_index_noncacheable_ids.clone(),
             force_no_index_lookup_push_down: self.force_no_index_lookup_push_down,
             index_merge_hints: self.index_merge_hints.clone(),
             prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,

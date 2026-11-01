@@ -93,6 +93,9 @@ pub struct AccessPath {
     pub force_no_keep_order: bool,
     /// Go `IndexLookUpPushDownBy`.
     pub index_lookup_push_down_by: IndexLookUpPushDownByType,
+    /// Go `NoncacheableReason`: why a plan reading this path may not enter
+    /// the plan cache.
+    pub noncacheable_reason: Option<String>,
 }
 
 impl AccessPath {
@@ -126,6 +129,15 @@ impl AccessPath {
     #[must_use]
     pub fn count_after_access(&self) -> Option<f64> {
         self.row_estimate.map(|estimate| estimate.est)
+    }
+
+    /// An index path's filled ranges and filters; index-merge partial paths
+    /// are always filled.
+    #[must_use]
+    pub fn filled_index_path(&self) -> &FilledIndexPath {
+        self.filled
+            .as_ref()
+            .expect("index merge partials are filled logical paths")
     }
 
     /// Go `IsTablePath`: a handle path, or a TiFlash path over an index.
@@ -281,25 +293,10 @@ pub enum Partial {
         /// Go `path.Index`, the multi-valued index.
         index: tidb_model::GoShared<tidb_model::IndexInfo>,
         /// One partial path per value.
-        paths: Vec<IndexMergePartial>,
+        paths: Vec<AccessPath>,
         /// Whether the disjunct must still be applied above the merge.
         keep_source_filter: bool,
     },
-}
-
-impl IndexMergePartial {
-    /// Go `CountAfterAccess`.
-    pub fn rows(&self) -> f64 {
-        self.path.count_after_access().unwrap_or(0.0)
-    }
-
-    /// The partial's filled ranges and filters.
-    pub fn filled(&self) -> &FilledIndexPath {
-        self.path
-            .filled
-            .as_ref()
-            .expect("index merge partials are filled logical paths")
-    }
 }
 
 /// Logical access ranges and counts, prepared before physical path costing.
@@ -317,22 +314,13 @@ pub struct UnionIndexMergePath {
     pub use_plan_cache: bool,
 }
 
-/// One index partial of a finished index merge (Go `PartialIndexPaths[i]`).
-#[derive(Clone, Debug)]
-pub struct IndexMergePartial {
-    /// Go `path.Index`.
-    pub index: tidb_model::GoShared<tidb_model::IndexInfo>,
-    /// Its filled state.
-    pub path: AccessPath,
-}
-
 /// Go's finished index-merge `AccessPath` (`PartialIndexPaths` set): the
 /// partials are fixed at logical derivation, unlike the OR alternatives of
 /// [`UnionIndexMergePath`] that converge only under physical properties.
 #[derive(Clone, Debug)]
 pub struct IndexMergePath {
     /// Go `PartialIndexPaths`.
-    pub partials: Vec<IndexMergePartial>,
+    pub partials: Vec<AccessPath>,
     /// Go `CountAfterAccess`.
     pub count_after_access: f64,
     /// Go `TableFilters`.

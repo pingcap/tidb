@@ -4091,9 +4091,12 @@ fn find_best_task_4_logical_data_source_paths(
                 if keeps_phys_tbl_id && !source_index.read().global {
                     add_extra_phys_tbl_id_column(&mut index_schema, ctx);
                 }
-                if ds.partial_index_noncacheable_ids.contains(&source_index.read().id) {
-                    base.base
-                        .set_noncacheable_reason("IndexScan of partial index is uncacheable");
+                // Go `is.SetNoncacheableReason(path.NoncacheableReason)`.
+                let noncacheable_reason = ds
+                    .path_by_index_id(source_index.read().id)
+                    .and_then(|path| path.noncacheable_reason.clone());
+                if let Some(reason) = &noncacheable_reason {
+                    base.base.set_noncacheable_reason(reason.clone());
                 }
                 base.base.set_schema(Some(tidb_expr::schema::Schema::new(index_schema)));
                 // Go `tryConvertToPointGet`: a complete non-NULL point range
@@ -4132,10 +4135,8 @@ fn find_best_task_4_logical_data_source_paths(
                         },
                         ds.base.base.query_block_offset(),
                     );
-                    if ds.partial_index_noncacheable_ids.contains(&source_index.read().id) {
-                        point_base
-                            .base
-                            .set_noncacheable_reason("IndexScan of partial index is uncacheable");
+                    if let Some(reason) = &noncacheable_reason {
+                        point_base.base.set_noncacheable_reason(reason.clone());
                     }
                     point_base.base.set_schema(ds.base.base.schema().cloned());
                     let access_rows = ds
@@ -4950,7 +4951,7 @@ fn pruning_info_message(
                     PreparedMerge::IndexMerge(path) => path
                         .partials
                         .iter()
-                        .map(|partial| index_name(&partial.index))
+                        .map(|partial| index_name(partial.index_info().expect("an index merge partial reads an index")))
                         .collect(),
                 };
                 names.push(format!("IndexMerge{{{}}}", partials.join(",")));

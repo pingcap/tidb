@@ -33,7 +33,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::index_merge::{enumerated_indexes, estimate_partial_index_ranges, is_in_index_merge_hints};
 
-use tidb_planner_util::path::{IndexMergePartial, IndexMergePath};
+use tidb_planner_util::path::{AccessPath, IndexMergePath};
 use super::AccessPathDerivationContext;
 use tidb_planner_core_operator_logicalop::DataSource;
 use tidb_planner_core_base::PlanError;
@@ -378,7 +378,7 @@ fn build_partial_path_for_mv_index(
     access_filters: &[Expression],
     idx_cols: &[Column],
     index: &tidb_model::GoShared<tidb_model::IndexInfo>,
-) -> Result<Option<IndexMergePartial>, PlanError> {
+) -> Result<Option<AccessPath>, PlanError> {
     let declared_lengths = index.read().columns.iter_deref().map(|key| key.read().length).collect::<Vec<_>>();
     let columns = idx_cols
         .iter()
@@ -413,16 +413,13 @@ fn build_partial_path_for_mv_index(
         correlated_access_count: 0,
     };
     let rows = estimate_partial_index_ranges(ds, index, &filled, ctx)?;
-    Ok(Some(IndexMergePartial {
-        index: index.clone(),
-        path: tidb_planner_util::path::AccessPath {
-            filled: Some(filled),
-            row_estimate: Some(tidb_stats::RowEstimate::new(
-                rows, rows, rows,
-            )),
-            is_single_scan: Some(false),
-            ..tidb_planner_util::path::AccessPath::index_path(index.clone())
-        },
+    Ok(Some(AccessPath {
+        filled: Some(filled),
+        row_estimate: Some(tidb_stats::RowEstimate::new(
+            rows, rows, rows,
+        )),
+        is_single_scan: Some(false),
+        ..AccessPath::index_path(index.clone())
     }))
 }
 
@@ -437,7 +434,7 @@ fn build_partial_paths_for_mv_index(
     index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     use_plan_cache: bool,
     noncacheable: &mut Option<String>,
-) -> Result<Option<(Vec<IndexMergePartial>, bool)>, PlanError> {
+) -> Result<Option<(Vec<AccessPath>, bool)>, PlanError> {
     // Go `jsonArrayExpr2Exprs(..., checkForSkipPlanCache = true)`: the plan
     // depends on the array's VALUES, so it must not be reused for others.
     if let Some(Expression::ScalarFunction(function)) = idx_cols
@@ -550,12 +547,12 @@ pub(crate) fn mv_index_column_lengths(idx_cols: &[Column], declared_lengths: &[i
 /// each selectivity is over the table's realtime count -- Go's "case 1".
 fn calc_total_selectivity_for_mv_idx_path(
     ds: &DataSource,
-    partials: &[IndexMergePartial],
+    partials: &[AccessPath],
     is_intersection: bool,
 ) -> f64 {
     let realtime_count = ds.table_stats.as_ref().map_or(0.0, |stats| stats.row_count());
     let selectivities = partials.iter().map(|partial| {
-        let rows = partial.path.count_after_access().unwrap_or(0.0);
+        let rows = partial.count_after_access().unwrap_or(0.0);
         if realtime_count > 0.0 {
             (rows / realtime_count).clamp(0.0, 1.0)
         } else {
@@ -572,7 +569,7 @@ fn calc_total_selectivity_for_mv_idx_path(
 /// Go `buildPartialPathUp4MVIndex`.
 fn build_partial_path_up_for_mv_index(
     ds: &DataSource,
-    partials: Vec<IndexMergePartial>,
+    partials: Vec<AccessPath>,
     is_intersection: bool,
     table_filters: Vec<Expression>,
     noncacheable_reason: Option<String>,
@@ -660,7 +657,7 @@ pub(crate) fn generate_and_index_merge_4_mv_index(
         let (index_filters, table_filters) =
             split_index_filter_conditions(ds, index, remaining, ctx);
         for partial in &mut partials {
-            if let Some(filled) = partial.path.filled.as_mut() {
+            if let Some(filled) = partial.filled.as_mut() {
                 filled.index_filters.extend(index_filters.iter().cloned());
             }
         }
@@ -675,7 +672,7 @@ pub(crate) fn generate_and_index_merge_4_mv_index(
     Ok(paths)
 }
 
-/// Go `generateMVIndexMergePartialPaths4And`: the partial paths of every MV
+/// Go `generateMVAccessPathPaths4And`: the partial paths of every MV
 /// index whose filters can join an intersection, with the access conditions
 /// they consumed. Two MV indexes whose access filters are the same keep only
 /// the one with the lower count.
@@ -685,10 +682,10 @@ fn generate_mv_index_merge_partial_paths_for_and(
     filters: &[Expression],
     use_plan_cache: bool,
     noncacheable: &mut Option<String>,
-) -> Result<(Vec<IndexMergePartial>, HashMap<Vec<u8>, Expression>), PlanError> {
+) -> Result<(Vec<AccessPath>, HashMap<Vec<u8>, Expression>), PlanError> {
     struct Record {
         origin_offset: usize,
-        paths: Vec<IndexMergePartial>,
+        paths: Vec<AccessPath>,
         count_after_access: f64,
     }
     let mut used_access_conds = HashMap::new();
@@ -812,11 +809,11 @@ pub(crate) fn generate_and_index_merge_4_composed_index(
     let mut in_index_filter = std::collections::HashSet::new();
     for partial in &mut combined {
         let (index_filters, _) =
-            split_index_filter_conditions(ds, &partial.index, remained.clone(), ctx);
+            split_index_filter_conditions(ds, &partial.index.clone().expect("an index merge partial reads an index"), remained.clone(), ctx);
         for filter in &index_filters {
             in_index_filter.insert(filter.canonical_hash_code());
         }
-        if let Some(filled) = partial.path.filled.as_mut() {
+        if let Some(filled) = partial.filled.as_mut() {
             filled.index_filters.extend(index_filters);
         }
     }
@@ -854,7 +851,7 @@ pub(crate) fn clean_access_path_for_mv_index_hint(
         tidb_planner_util::path::DerivedAccessPath::IndexMerge(path) => path
             .partials
             .iter()
-            .any(|partial| forced.contains(&partial.index.read().id)),
+            .any(|partial| partial.index.as_ref().is_some_and(|index| forced.contains(&index.read().id))),
         _ => false,
     };
     if paths.iter().any(reads_forced) {
@@ -947,7 +944,7 @@ pub(crate) fn build_mv_alternative(
     index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     unfinished: &UnfinishedAccessPath,
     use_plan_cache: bool,
-) -> Result<Option<(Vec<IndexMergePartial>, bool)>, PlanError> {
+) -> Result<Option<(Vec<AccessPath>, bool)>, PlanError> {
     let Some(idx_cols) = prepare_idx_cols_and_unwrap_array_type(ds, index, true)
     else {
         return Ok(None);

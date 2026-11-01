@@ -38,14 +38,12 @@ pub(super) fn build_prepared_index_merge_task(
     let mut partial_remaining = Vec::new();
     let output_rows = path.count_after_access;
     for partial in partials {
-        let source_index = &partial.index;
+        let source_index = partial.index_info().expect("an index merge partial reads an index");
         let filled = partial
-            .path
             .filled
             .as_ref()
             .expect("intersection partials are filled logical paths");
         let rows = partial
-            .path
             .count_after_access()
             .unwrap_or(filled.detached.ranges.len() as f64);
         let schema_columns =

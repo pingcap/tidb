@@ -73,7 +73,7 @@ fn partial_matches_order(
         } => paths
             .iter()
             .all(|path| {
-                index_partial_matches_order(ds, index, path.filled(), items, false)
+                index_partial_matches_order(ds, index, path.filled_index_path(), items, false)
                     .is_some()
             })
             .then(Vec::new),
@@ -483,9 +483,9 @@ pub(super) fn build_converged_union_index_merge_task(
                 index, paths, ..
             } => {
                 for path in paths {
-                    let filled = path.filled();
+                    let filled = path.filled_index_path();
                     let scan_rows = partial_rows(
-                        path.rows(),
+                        path.count_after_access().unwrap_or(0.0),
                         matched.matched(),
                         false,
                         !filled.index_filters.is_empty(),
@@ -495,7 +495,7 @@ pub(super) fn build_converged_union_index_merge_task(
                         ctx,
                         index,
                         filled,
-                        path.rows(),
+                        path.count_after_access().unwrap_or(0.0),
                         scan_rows,
                         matched.matched(),
                         desc,
