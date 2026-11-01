@@ -941,35 +941,7 @@ pub fn partition_spec_for(
         .iter()
         .map(|column| column.read().field_type.clone())
         .collect();
-    let definitions: Vec<crate::partition_metadata::StoredPartitionDefinition> = partition
-        .definitions
-        .snapshot()
-        .into_iter()
-        .map(|definition| crate::partition_metadata::StoredPartitionDefinition {
-            id: definition.id,
-            name: definition.name.original().to_owned(),
-            comment: definition.comment.clone(),
-            less_than: definition.less_than.snapshot(),
-            in_values: definition
-                .in_values
-                .snapshot()
-                .into_iter()
-                .map(|tuple| tuple.snapshot())
-                .collect(),
-            // Go's `PartitionDefinition.PlacementPolicyRef`. A definition a
-            // Go cluster wrote can name a policy, and dropping it here would
-            // mean this node stores the partition back WITHOUT the reference
-            // -- the catalog would lose a policy binding that Go put there.
-            placement_policy: definition
-                .placement_policy_ref
-                .as_ref()
-                .map(|reference| reference.read().clone()),
-            storage_class: (
-                definition.storage_class_tier.clone(),
-                definition.storage_class_transitions.snapshot(),
-            ),
-        })
-        .collect();
+    let definitions = partition.definitions.snapshot();
     let columns: Vec<String> = partition
         .columns
         .snapshot()

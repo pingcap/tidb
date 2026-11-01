@@ -30,7 +30,6 @@ use tidb_table::partition_routing::{
 };
 
 use crate::table_partition::self;
-use tidb_table::partition_metadata::StoredPartitionDefinition;
 
 /// Go `StmtCtx.AppendNote(err)` for a refusal `IF [NOT] EXISTS` turns into a
 /// note.
@@ -253,8 +252,8 @@ pub fn hash_partition_management(
     }
     let source_ids = existing.iter().map(|definition| definition.id).collect();
     let key = matches!(partition.kind, tidb_table::partition_routing::PartitionKind::Key);
-    let stored = crate::table_partition::StoredPartitionMetadata {
-        kind: if key {
+    let mut stored = tidb_model::partition::PartitionInfo {
+        partition_type: if key {
             tidb_ast::PartitionType::KEY
         } else {
             tidb_ast::PartitionType::HASH
@@ -266,27 +265,29 @@ pub fn hash_partition_management(
         } else {
             partition.expr_text.clone()
         },
-        columns: if key {
-            partition.dependencies.clone()
-        } else {
-            Vec::new()
-        },
         is_empty_columns: false,
-        definitions: definitions
-            .iter()
-            .map(
-                |definition| tidb_table::partition_metadata::StoredPartitionDefinition {
-                    id: definition.id,
-                    name: definition.name.clone(),
-                    less_than: Vec::new(),
-                    in_values: Vec::new(),
-                    comment: definition.comment.clone(),
-                    placement_policy: definition.placement_policy.clone(),
-                    storage_class: definition.storage_class.clone(),
-                },
-            )
-            .collect(),
+        ..tidb_model::partition::PartitionInfo::default()
     };
+    if key {
+        stored.columns = partition
+            .dependencies
+            .iter()
+            .map(|name| tidb_ast::CiString::new(name.clone()))
+            .collect::<Vec<_>>()
+            .into();
+    }
+    stored.definitions = definitions
+        .iter()
+        .map(|definition| {
+            tidb_table::partition_routing::PartitionDef {
+                less_than: Vec::new(),
+                in_values: Vec::new(),
+                ..definition.clone()
+            }
+            .to_definition()
+        })
+        .collect::<Vec<_>>()
+        .into();
     Ok(PartitionReorgPlan {
         source_ids,
         interval_rewrite: None,
@@ -1300,7 +1301,7 @@ pub struct PartitionReorgPlan {
     /// stores it (folded COLUMNS bounds, written expression bounds), the new
     /// definitions under the host's placeholder ids; `None` once
     /// partitioning is removed.
-    pub stored: Option<crate::table_partition::StoredPartitionMetadata>,
+    pub stored: Option<tidb_model::partition::PartitionInfo>,
 }
 
 /// The method of an existing partitioned table, as the clause that would
@@ -1350,24 +1351,14 @@ fn stored_with_ids(
     clause: &TablePartitioning,
     spec: &PartitionSpec,
     ctx: &tidb_metabuild::Context,
-) -> Result<table_partition::StoredPartitionMetadata, MysqlError> {
+) -> Result<tidb_model::partition::PartitionInfo, MysqlError> {
     let mut stored = table_partition::stored_partition_metadata(clause, spec, ctx)?;
-    for (definition, built) in stored.definitions.iter_mut().zip(&spec.definitions) {
+    let mut definitions = stored.definitions.snapshot();
+    for (definition, built) in definitions.iter_mut().zip(&spec.definitions) {
         definition.id = built.id;
     }
+    stored.definitions = definitions.into();
     Ok(stored)
-}
-
-fn stored_definition(definition: &PartitionDef) -> StoredPartitionDefinition {
-    StoredPartitionDefinition {
-        id: definition.id,
-        name: definition.name.clone(),
-        less_than: definition.less_than.clone(),
-        in_values: definition.in_values.clone(),
-        comment: definition.comment.clone(),
-        placement_policy: definition.placement_policy.clone(),
-        storage_class: definition.storage_class.clone(),
-    }
 }
 
 /// Go `getReplacedPartitionIDs`: the ordinals of the named partitions, with
@@ -1476,9 +1467,9 @@ pub fn plan_reorganize_partition(
             .map(|slot| match slot {
                 Some(definition) => {
                     Ok(
-                        tidb_table::partition_metadata::stored_definitions_as_ast(&[stored_definition(
+                        tidb_table::partition_metadata::stored_definitions_as_ast(std::slice::from_ref(
                             definition,
-                        )])?
+                        ))?
                         .remove(0),
                     )
                 }

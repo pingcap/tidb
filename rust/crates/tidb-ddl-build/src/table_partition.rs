@@ -72,7 +72,7 @@ use tidb_table::partition_routing::{
 use tidb_terror::MysqlError;
 
 use tidb_table::partition_metadata::{
-    partition_spec_from_metadata, StoredPartitionDefinition,
+    partition_spec_from_metadata,
     PARTITION_MAX_VALUE,
 };
 use tidb_hack::GoCaseCompare;
@@ -157,8 +157,13 @@ pub fn build_table_partition_info(
     )?;
     let stored = stored_definitions_for(partitioning, &spec, ctx)?;
     for (routing, stored) in spec.definitions.iter_mut().zip(&stored) {
-        routing.less_than.clone_from(&stored.less_than);
-        routing.in_values.clone_from(&stored.in_values);
+        routing.less_than = stored.less_than.snapshot();
+        routing.in_values = stored
+            .in_values
+            .snapshot()
+            .into_iter()
+            .map(|tuple| tuple.snapshot())
+            .collect();
     }
     Ok(spec)
 }
@@ -1813,37 +1818,6 @@ fn check_unique_keys_include_partition_columns(
     Ok(())
 }
 
-/// A `PARTITION BY` clause in the STORED form Go persists, which is Go
-/// `buildTablePartitionInfo` + `buildPartitionDefinitionsInfo`
-/// (`ddl/partition.go`) reduced to the fields `model.PartitionInfo` carries.
-///
-/// Physical ids are NOT here. Go allocates them when the DDL job is
-/// submitted, one per definition after the table's own
-/// (`ddl/jobsubmit/submit.go` `assignIDsForTable`), so the builder that
-/// persists this metadata supplies them.
-#[derive(Clone, Debug)]
-pub struct StoredPartitionMetadata {
-    /// Go `PartitionInfo.Type`.
-    pub kind: PartitionType,
-    /// Go `PartitionInfo.Enable`. Metadata written with this false is not
-    /// partitioning -- `GetPartitionInfo` returns nil for it -- so a method
-    /// Go treats as unsupported is stored disabled rather than refused.
-    pub enable: bool,
-    /// Go `PartitionInfo.Num`: the written `PARTITIONS n`.
-    pub num: u64,
-    /// Go `PartitionInfo.Expr`, restored under Go's own flags. Empty for the
-    /// COLUMNS and KEY forms, which name their inputs instead.
-    pub expr: String,
-    /// Go `PartitionInfo.Columns`.
-    pub columns: Vec<String>,
-    /// Go `PartitionInfo.IsEmptyColumns`: set when `PARTITION BY KEY` named
-    /// no columns and Go filled them in from the primary key.
-    pub is_empty_columns: bool,
-    /// One entry per partition, in written order, with `id` left at zero for
-    /// the id allocator to fill.
-    pub definitions: Vec<StoredPartitionDefinition>,
-}
-
 /// Builds the STORED partition metadata for a `CREATE TABLE`, alongside the
 /// routing spec the same clause produces.
 ///
@@ -1867,7 +1841,7 @@ pub fn build_partition_metadata(
     handle_offsets: &[usize],
     allocate_id: &mut dyn FnMut() -> i64,
     ctx: &tidb_metabuild::Context,
-) -> Result<Option<(StoredPartitionMetadata, PartitionSpec)>, MysqlError> {
+) -> Result<Option<(tidb_model::partition::PartitionInfo, PartitionSpec)>, MysqlError> {
     let Some(spec) = build_table_partitioning(
         create,
         names,
@@ -1941,7 +1915,7 @@ pub fn reload_partition_spec_from_meta_json(
     let definitions = spec
         .definitions
         .iter()
-        .map(|definition| StoredPartitionDefinition {
+        .map(|definition| tidb_table::partition_routing::PartitionDef {
             id: definition.id,
             name: reloaded(&definition.name),
             less_than: definition
@@ -1957,7 +1931,7 @@ pub fn reload_partition_spec_from_meta_json(
             comment: reloaded(&definition.comment),
             placement_policy: definition.placement_policy.clone(),
             storage_class: definition.storage_class.clone(),
-        })
+        }.to_definition())
         .collect::<Vec<_>>();
     Some(partition_spec_from_metadata(
         kind,
@@ -1982,7 +1956,7 @@ pub fn stored_partition_metadata(
     partitioning: &tidb_ast::TablePartitioning,
     spec: &PartitionSpec,
     ctx: &tidb_metabuild::Context,
-) -> Result<StoredPartitionMetadata, MysqlError> {
+) -> Result<tidb_model::partition::PartitionInfo, MysqlError> {
     let method = &partitioning.method;
     // Go dispatches the stored shape on whether an EXPRESSION was written:
     // `pi.Expr` for one, `pi.Columns` for a written column list.
@@ -2006,17 +1980,23 @@ pub fn stored_partition_metadata(
         }
     };
     let definitions = stored_definitions_for(partitioning, spec, ctx)?;
-    Ok(StoredPartitionMetadata {
-        kind: method.kind,
+    let mut info = tidb_model::partition::PartitionInfo {
+        partition_type: method.kind,
+        expr,
         // Every method this tier builds a spec for is one Go enables; the
         // ones Go stores disabled it refuses outright, above.
         enable: true,
-        num: method.count,
-        expr,
-        columns,
         is_empty_columns,
-        definitions,
-    })
+        num: method.count,
+        ..tidb_model::partition::PartitionInfo::default()
+    };
+    info.columns = columns
+        .into_iter()
+        .map(tidb_ast::CiString::new)
+        .collect::<Vec<_>>()
+        .into();
+    info.definitions = definitions.into();
+    Ok(info)
 }
 
 /// The stored `LessThan`/`InValues` TEXT for each definition.
@@ -2030,11 +2010,11 @@ fn stored_definitions_for(
     partitioning: &tidb_ast::TablePartitioning,
     spec: &PartitionSpec,
     ctx: &tidb_metabuild::Context,
-) -> Result<Vec<StoredPartitionDefinition>, MysqlError> {
+) -> Result<Vec<tidb_model::partition::PartitionDefinition>, MysqlError> {
     let mut stored = Vec::with_capacity(spec.definitions.len());
     for (ordinal, definition) in spec.definitions.iter().enumerate() {
         let written = partitioning.definitions.get(ordinal);
-        let mut entry = StoredPartitionDefinition {
+        let mut entry = tidb_table::partition_routing::PartitionDef {
             // Filled by the tier that publishes this metadata; Go allocates
             // it at job-submission time.
             id: 0,
@@ -2078,7 +2058,7 @@ fn stored_definitions_for(
                 )?;
             }
         }
-        stored.push(entry);
+        stored.push(entry.to_definition());
     }
     Ok(stored)
 }
@@ -2260,8 +2240,8 @@ mod load_permissiveness_tests {
         name: &str,
         less_than: &[&str],
         in_values: &[&[&str]],
-    ) -> StoredPartitionDefinition {
-        StoredPartitionDefinition {
+    ) -> tidb_model::partition::PartitionDefinition {
+        tidb_table::partition_routing::PartitionDef {
             id,
             name: name.to_owned(),
             less_than: less_than.iter().map(|bound| (*bound).to_owned()).collect(),
@@ -2272,7 +2252,7 @@ mod load_permissiveness_tests {
             comment: String::new(),
             placement_policy: None,
             storage_class: Default::default(),
-        }
+        }.to_definition()
     }
 
     fn int_column() -> (Vec<String>, Vec<FieldType>) {

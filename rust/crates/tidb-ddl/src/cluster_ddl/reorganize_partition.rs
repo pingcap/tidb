@@ -211,7 +211,7 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
         .unwrap_or_default();
     let mut part_info = match (&planned.stored, job_action) {
         (Some(final_metadata), ActionType::ACTION_ALTER_TABLE_PARTITIONING) => {
-            let mut info = tidb_ddl_build::table_info_build::partition_info(final_metadata);
+            let mut info = final_metadata.clone();
             info.ddl_type = old
                 .as_ref()
                 .map_or(tidb_ast::PartitionType::NONE, |old| old.partition_type);
@@ -230,7 +230,7 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
         }
         (Some(final_metadata), _) => {
             // Only the definitions the job adds, under the table's scheme.
-            let rebuilt = tidb_ddl_build::table_info_build::partition_info(final_metadata);
+            let rebuilt = final_metadata.clone();
             let old = old.as_ref().expect("a reorganized table is partitioned");
             let added = rebuilt
                 .definitions

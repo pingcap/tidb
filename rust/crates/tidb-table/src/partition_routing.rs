@@ -210,7 +210,58 @@ pub struct PartitionDef {
     pub storage_class: StorageClass,
 }
 
+impl From<&tidb_model::partition::PartitionDefinition> for PartitionDef {
+    /// The stored Go `model.PartitionDefinition` a table routes by.
+    fn from(definition: &tidb_model::partition::PartitionDefinition) -> Self {
+        PartitionDef {
+            id: definition.id,
+            name: definition.name.original().to_owned(),
+            less_than: definition.less_than.snapshot(),
+            in_values: definition
+                .in_values
+                .snapshot()
+                .into_iter()
+                .map(|tuple| tuple.snapshot())
+                .collect(),
+            comment: definition.comment.clone(),
+            placement_policy: definition
+                .placement_policy_ref
+                .as_ref()
+                .map(|reference| reference.read().clone()),
+            storage_class: (
+                definition.storage_class_tier.clone(),
+                definition.storage_class_transitions.snapshot(),
+            ),
+        }
+    }
+}
+
 impl PartitionDef {
+    /// The Go `model.PartitionDefinition` this definition is stored as.
+    #[must_use]
+    pub fn to_definition(&self) -> tidb_model::partition::PartitionDefinition {
+        let mut stored = tidb_model::partition::PartitionDefinition {
+            id: self.id,
+            name: tidb_ast::CiString::new(self.name.clone()),
+            comment: self.comment.clone(),
+            storage_class_tier: self.storage_class.0.clone(),
+            ..tidb_model::partition::PartitionDefinition::default()
+        };
+        stored.less_than = self.less_than.clone().into();
+        stored.in_values = self
+            .in_values
+            .iter()
+            .map(|tuple| tuple.clone().into())
+            .collect::<Vec<_>>()
+            .into();
+        stored.placement_policy_ref = self
+            .placement_policy
+            .as_ref()
+            .map(|reference| tidb_model::GoShared::new(reference.clone()));
+        stored.storage_class_transitions = self.storage_class.1.clone().into();
+        stored
+    }
+
     /// Go `PartitionDefinition.StorageClassString`.
     #[must_use]
     pub fn storage_class_string(&self) -> String {

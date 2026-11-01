@@ -38,35 +38,6 @@ use crate::partition_routing::{
 /// with `strings.EqualFold`.
 pub const PARTITION_MAX_VALUE: &str = "MAXVALUE";
 
-/// One stored partition definition, as Go's `model.PartitionDefinition`
-/// carries it across a restart: the physical id, the name, and the bounds as
-/// SQL TEXT rather than as folded values.
-///
-/// Go re-parses that text every time it loads the table (`newPartitionExpr`
-/// builds a fresh `parser.New()` for exactly this), because the stored form
-/// is the user's own `VALUES LESS THAN (...)` / `VALUES IN (...)` and the
-/// folding depends on the table's current column types.
-#[derive(Clone, Debug, Default)]
-pub struct StoredPartitionDefinition {
-    /// Go `PartitionDefinition.ID`: the physical table id.
-    pub id: i64,
-    /// Go `PartitionDefinition.Name`.
-    pub name: String,
-    /// Go `PartitionDefinition.LessThan`: one bound per partition column,
-    /// with the literal `MAXVALUE` kept as text.
-    pub less_than: Vec<String>,
-    /// Go `PartitionDefinition.InValues`: one tuple per `VALUES IN` entry,
-    /// with the literal `DEFAULT` kept as text in the first component.
-    pub in_values: Vec<Vec<String>>,
-    /// Go `PartitionDefinition.Comment`.
-    pub comment: String,
-    /// Go `PartitionDefinition.PlacementPolicyRef`: id AND name.
-    pub placement_policy: Option<tidb_model::PolicyRefInfo>,
-    /// Go `PartitionDefinition.StorageClassTier` and
-    /// `StorageClassTransitions`.
-    pub storage_class: StorageClass,
-}
-
 /// Go `tables.NewPartitionExprBuildCtx` (`table/tables/partition.go:284`):
 /// the FIXED context a metadata load folds bounds under.
 ///
@@ -125,7 +96,7 @@ fn range_bound_from_stored_text(text: &str) -> Option<RangeBound> {
 /// text and matches them case-insensitively (`strings.EqualFold`) before
 /// parsing, because neither is an expression.
 fn stored_clause(
-    definition: &StoredPartitionDefinition,
+    definition: &crate::partition_routing::PartitionDef,
 ) -> Result<PartitionDefinitionClause, MysqlError> {
     let parse = |text: &String| {
         tidb_model::generated_expr::parse_expression(text).map_err(|error| {
@@ -172,7 +143,7 @@ fn stored_clause(
 /// The stored definitions as the AST nodes the bound folding reads, which is
 /// the shape Go reconstructs when it re-parses `LessThan`/`InValues`.
 pub fn stored_definitions_as_ast(
-    definitions: &[StoredPartitionDefinition],
+    definitions: &[crate::partition_routing::PartitionDef],
 ) -> Result<Vec<PartitionDefinition>, MysqlError> {
     definitions
         .iter()
@@ -215,7 +186,7 @@ pub fn partition_spec_from_metadata(
     expr_text: &str,
     columns: &[String],
     is_empty_columns: bool,
-    definitions: &[StoredPartitionDefinition],
+    definitions: &[tidb_model::partition::PartitionDefinition],
     overlapping_dropping_partition_indices: &[Option<usize>],
     names: &[String],
     types: &[FieldType],
@@ -232,18 +203,7 @@ pub fn partition_spec_from_metadata(
             &crate::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[]),
         ));
     }
-    let physical = definitions
-        .iter()
-        .map(|definition| PartitionDef {
-            id: definition.id,
-            name: definition.name.clone(),
-            less_than: definition.less_than.clone(),
-            in_values: definition.in_values.clone(),
-            comment: definition.comment.clone(),
-            placement_policy: definition.placement_policy.clone(),
-            storage_class: definition.storage_class.clone(),
-        })
-        .collect::<Vec<_>>();
+    let physical = definitions.iter().map(PartitionDef::from).collect::<Vec<_>>();
     // The COLUMNS forms name their inputs directly. The builders take the
     // parser's qualified paths, whose last component is the column name.
     let column_paths = columns
@@ -266,7 +226,7 @@ pub fn partition_spec_from_metadata(
             FieldType::new(FieldTypeCode::LongLong),
         ))
     };
-    let ast_definitions = || stored_definitions_as_ast(definitions);
+    let ast_definitions = || stored_definitions_as_ast(&physical);
     match kind {
         // Go `generateKeyPartitionExpr`: KEY builds no expression at all. The
         // stored column list IS the routing input, hashed by the same
@@ -353,7 +313,7 @@ pub fn partition_spec_from_metadata(
                     // that way falls back to folding the stored text as an
                     // expression, which is where Go reaches
                     // `fixOldVersionPartitionInfo`.
-                    let stored: Option<Vec<RangeBound>> = definitions
+                    let stored: Option<Vec<RangeBound>> = physical
                         .iter()
                         .map(|definition| {
                             definition

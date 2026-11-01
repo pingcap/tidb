@@ -724,11 +724,14 @@ pub fn build_table_info_with_stmt(
             )
             .map_err(default_admission_error)?
             {
-                for (definition, class) in metadata.definitions.iter_mut().zip(classes) {
-                    definition.storage_class = class;
+                let mut definitions = metadata.definitions.snapshot();
+                for (definition, class) in definitions.iter_mut().zip(classes) {
+                    definition.storage_class_tier = class.0;
+                    definition.storage_class_transitions = class.1.into();
                 }
+                metadata.definitions = definitions.into();
             }
-            table.partition = Some(GoShared::new(partition_info(&metadata)));
+            table.partition = Some(GoShared::new(metadata.clone()));
             // Go `buildTablePartitionInfo`.
             if table
                 .indices
@@ -1332,64 +1335,6 @@ pub fn append_check_constraints(
 /// preserving the MySQL error code a client would have seen.
 fn partition_refusal(error: MysqlError) -> DdlAdmissionError {
     DdlAdmissionError::from_mysql_error(error)
-}
-
-/// The stored `model.PartitionInfo` for a built clause.
-pub fn partition_info(
-    metadata: &crate::table_partition::StoredPartitionMetadata,
-) -> tidb_model::partition::PartitionInfo {
-    let mut partition = tidb_model::partition::PartitionInfo {
-        partition_type: metadata.kind,
-        expr: metadata.expr.clone(),
-        columns: metadata
-            .columns
-            .iter()
-            .map(|name| CiString::new(name.clone()))
-            .collect::<Vec<_>>()
-            .into(),
-        enable: metadata.enable,
-        is_empty_columns: metadata.is_empty_columns,
-        num: metadata.num,
-        ..tidb_model::partition::PartitionInfo::default()
-    };
-    partition.definitions = metadata
-        .definitions
-        .iter()
-        .map(|definition| {
-            let mut stored = tidb_model::partition::PartitionDefinition {
-                id: definition.id,
-                name: CiString::new(definition.name.clone()),
-                ..tidb_model::partition::PartitionDefinition::default()
-            };
-            stored.less_than = definition.less_than.clone().into();
-            stored.in_values = definition
-                .in_values
-                .iter()
-                .map(|tuple| tuple.clone().into())
-                .collect::<Vec<_>>()
-                .into();
-            // Go `buildPartitionDefinitionsInfo` puts the validated comment on
-            // the definition it stores (`ddl/partition.go:1576` and `:1670`),
-            // and `AppendPartitionDefs` prints it back from there. Leaving it
-            // out here meant the comment was length-checked at CREATE and then
-            // dropped, so a cluster round trip lost it while the in-process
-            // path -- which reads the spec, not this -- still showed it.
-            stored.comment = definition.comment.clone();
-            // Go `setPartitionPlacementFromOptions` stores the partition's
-            // OWN policy reference; an inherited table policy is deliberately
-            // not copied down, because the table's rules already cover the
-            // partition's range and copying would freeze the cascade.
-            stored.placement_policy_ref = definition
-                .placement_policy
-                .as_ref()
-                .map(|reference| tidb_model::GoShared::new(reference.clone()));
-            stored.storage_class_tier = definition.storage_class.0.clone();
-            stored.storage_class_transitions = definition.storage_class.1.clone().into();
-            stored
-        })
-        .collect::<Vec<_>>()
-        .into();
-    partition
 }
 
 /// One constraint, in the single normalized shape Go's `ast.Constraint` has by

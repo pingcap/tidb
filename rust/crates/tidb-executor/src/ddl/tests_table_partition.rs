@@ -110,14 +110,20 @@ fn routes_the_same_way(sql: &str) {
     .unwrap_or_else(|error| panic!("{sql}: {error:?}"))
     .unwrap_or_else(|| panic!("{sql} declares partitioning"));
     let (stored, direct) = built;
-    let mut definitions = stored.definitions.clone();
+    let mut definitions = stored.definitions.snapshot();
     for (ordinal, definition) in definitions.iter_mut().enumerate() {
         definition.id = direct.definitions[ordinal].id;
     }
+    let columns = stored
+        .columns
+        .snapshot()
+        .iter()
+        .map(|column| column.original().to_owned())
+        .collect::<Vec<_>>();
     let reloaded = partition_spec_from_metadata(
-        stored.kind,
+        stored.partition_type,
         &stored.expr,
-        &stored.columns,
+        &columns,
         stored.is_empty_columns,
         &definitions,
         &[],
@@ -127,7 +133,7 @@ fn routes_the_same_way(sql: &str) {
     .unwrap_or_else(|error| {
         panic!(
             "{sql} reloads: {error:?}\n  kind={:?} expr={:?} columns={:?}\n  definitions={:?}",
-            stored.kind, stored.expr, stored.columns, definitions
+            stored.partition_type, stored.expr, columns, definitions
         )
     });
     assert_eq!(
