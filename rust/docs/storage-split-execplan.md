@@ -324,7 +324,10 @@ CARGO_INCREMENTAL=0`.
   - [x] (2026-11-02, e659cfd33ad) a schema in the image holds its `DBInfo`
     pointer (Go `schemaTables.dbInfo`), not a reduced copy; the node
     registers the loader's `DBInfo`; the planner shares it.
-  - [ ] the image answers `ClusterCatalog`'s reads from those pointers:
+  - [x] (2026-11-02, 4958ebf5b8f; test
+    `the_session_image_answers_the_loaders_reads_from_its_db_info`, which a
+    public-only lookup fails) the image answers `ClusterCatalog`'s reads from
+    those pointers:
     `schema_version`, every schema's `DBInfo` (with `deprecated_tables`, so
     non-public tables a DDL reads stay visible, as Go loads every table),
     `find_table` / `schema_by_name`, policies, resource groups. Counted
@@ -332,6 +335,11 @@ CARGO_INCREMENTAL=0`.
     policies / resource_groups 13 each, in 73 files (28 in `tidb-ddl`).
   - [ ] `InfoCache` publishes the built image (folding `SessionCatalogs`
     in) instead of `Arc<ClusterCatalog>`; readers switch.
+    Go's shape for this: the domain's loader builds the infoschema and
+    inserts it into `InfoCache`; so the image builder
+    (`cluster_session_catalog_with_templates`, domain-core) runs where
+    `InfoCache` is filled (the issyncer reload) via a builder the domain
+    installs, and `SessionCatalogs` folds into `InfoCache`.
   - [ ] delete `ClusterCatalog` and the raw `MetaSnapshot` seam (the loader
     reads through `tidb_meta`).
 
