@@ -97,6 +97,23 @@ gains the filter and the copy. Then `TemporaryTableOverlay`,
 local temporary table deletes its session-data range and takes a new id, as
 Go's `TruncateLocalTemporaryTable` does).
 
+Milestone 4 design (decided 2026-11-02): the store's owner is the
+SESSION, Go's `sctx.Txn()`. Executors reach it through `StmtContext`
+(the statement's view of the session), never through a table or the
+infoschema, so Milestone 5's shared `InfoSchema` needs no change for it.
+A node-less session and every executor fixture catalog get ONE
+`MemTableStorage` as that store (keys are TiKV-format, so one map serves
+every table, as Go's single KV store does); a table's `len` / `is_empty` /
+`stored_keys` fixtures scan the table's key range of a given store instead
+of a per-table byte counter. Memtables and virtual tables have no rows in
+any store; their readers never take one. Unit fixtures that build a lone
+`TableCommon` hold a `MemTableStorage` beside it and pass it to every call.
+Order: (a) `StmtContext::txn_store` and the session/fixture stores;
+(b) executor library sites move from `table.store().clone_box()` /
+`with_own_store` to the statement's store; (c) the test fixtures; (d) the
+field, `with_own_store`, `DetachedStorage`, `store()`, `store_mut()`,
+`replace_storage`, `swap_storage` go.
+
 Milestone 4: delete the `store` field, `replace_storage`, `swap_storage`,
 `store`, `store_mut` and the `TemporaryTableTxnData.store` duplication. A
 GLOBAL temporary table's rows then live in the session transaction, as Go's
