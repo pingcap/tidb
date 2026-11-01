@@ -112,9 +112,12 @@ enum ReaderStorage {
 }
 
 impl ReaderStorage {
-    /// `table` as a reader leaf of this kind reads it, and whether its
-    /// storage was separated from the transaction's buffered writes.
-    fn table(&self, table: Arc<crate::TableCommon>) -> (Arc<crate::TableCommon>, bool) {
+    /// The store a reader leaf of this kind reads `table` through, and
+    /// whether it was separated from the transaction's buffered writes.
+    fn table(
+        &self,
+        table: Arc<crate::TableCommon>,
+    ) -> (Arc<crate::TableCommon>, Box<dyn tidb_kv::storage::TableStorage>, bool) {
         let store = match self {
             ReaderStorage::Snapshot => table.snapshot_reader(),
             ReaderStorage::Merged => None,
@@ -124,12 +127,11 @@ impl ReaderStorage {
                 as Box<dyn tidb_kv::storage::TableStorage>),
         };
         match store {
-            Some(store) => {
-                let mut table = Arc::unwrap_or_clone(table);
-                table.replace_storage(store);
-                (Arc::new(table), true)
+            Some(store) => (table, store, true),
+            None => {
+                let store = table.store().clone_box();
+                (table, store, false)
             }
-            None => (table, false),
         }
     }
 
@@ -1230,7 +1232,7 @@ fn build_table_scan(
     storage: &ReaderStorage,
     cop_chain: Option<&CopChain>,
 ) -> Result<Box<dyn Executor>, DriverError> {
-    let (table, separated) = storage.table(
+    let (table, store, separated) = storage.table(
         catalog
             .physical_kv_table_by_id(scan.table_id)
             .ok_or_else(|| {
@@ -1267,6 +1269,7 @@ fn build_table_scan(
     let mut source = TableScanExec::new_with_context(
         meta(ctx, plan, schema.clone()),
         std::sync::Arc::unwrap_or_clone(table),
+        store,
         RowDecodeContext::for_query(ctx),
         ReaderStorage::statement(
             separated,
@@ -2578,7 +2581,7 @@ fn build_index_reader(
     // `UnionScanExec.getOneRow` merges them with the snapshot stream by
     // `usedIndex`; handle order would append the staged rows instead.
     let keep_order = keep_order || storage.is_mem_buffer();
-    let (mut table, separated) = storage.table(
+    let (mut table, store, separated) = storage.table(
         catalog
             .physical_kv_table_by_id(scan.table_id)
             .ok_or_else(|| {
@@ -2674,6 +2677,7 @@ fn build_index_reader(
     let mut source = IndexRangeSourceExec::new_with_statement(
         meta(ctx, plan, source_schema),
         std::sync::Arc::unwrap_or_clone(table),
+        store,
         scan.index_id,
         ranges,
         RowDecodeContext::for_query(ctx),
@@ -3332,7 +3336,7 @@ fn build_index_inner_reader(
     let table_id = join.inner_access_table_id.ok_or_else(|| {
         DriverError::unsupported("a physical index join has no retained inner table ID")
     })?;
-    let (mut table, separated) =
+    let (mut table, store, separated) =
         storage.table(catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
             DriverError::unsupported("a physical index-join table ID is absent from the catalog")
         })?);
@@ -3405,6 +3409,7 @@ fn build_index_inner_reader(
     let mut source = IndexJoinLookupExec::new_with_statement(
         meta(ctx, plan, row_schema.clone()),
         std::sync::Arc::unwrap_or_clone(table),
+        store,
         object,
         RowDecodeContext::for_query(ctx),
         statement,
@@ -4920,7 +4925,8 @@ fn select_lock_executor(
     // Go `buildSelectLock` removes the temporary tables from `tblID2Handle`;
     // `SelectLockExec.Next` locks through the statement's transaction.
     let mut locked_table_ids = Vec::new();
-    let mut lock_carrier = None;
+    // The statement's snapshot, reached through any non-temporary table.
+    let mut lock_store = None;
     for (table_id, columns) in &lock.tbl_id_to_handle_cols {
         let table = catalog.kv_table_by_id(*table_id).ok_or_else(|| {
             DriverError::unsupported("SelectLock table ID is absent from the catalog")
@@ -4929,7 +4935,7 @@ fn select_lock_executor(
             continue;
         }
         locked_table_ids.push(*table_id);
-        lock_carrier.get_or_insert_with(|| table.clone());
+        lock_store.get_or_insert_with(|| table.store().clone_box());
         let width = table.common_handle_offsets().len().max(1);
         if columns.len() % width != 0 {
             return Err(DriverError::unsupported(
@@ -5001,9 +5007,9 @@ fn select_lock_executor(
     let locker = selected
         .lock_in_execution()
         .then(|| {
-            lock_carrier.map(|table| {
+            lock_store.map(|store| {
                 crate::select_lock::StatementLocker::new(
-                    table,
+                    store,
                     locked_table_ids,
                     ctx.clone(),
                     selected.lock_state(),
@@ -5175,6 +5181,7 @@ fn build_point_get(
             UniqueIndexPointSourceExec::new(
                 executor_meta,
                 (*table).clone(),
+                table.store().clone_box(),
                 index_id,
                 index_values,
                 output_columns,
@@ -5204,6 +5211,7 @@ fn build_point_get(
         HandleSourceExec::new_point_mapped_with_context(
             executor_meta,
             (*table).clone(),
+            table.store().clone_box(),
             handles.into_iter().next().expect("checked one handle"),
             output_columns,
             RowDecodeContext::for_query(ctx),
@@ -5254,6 +5262,7 @@ fn build_batch_point_get(
             UniqueIndexPointSourceExec::new(
                 executor_meta,
                 (*table).clone(),
+                table.store().clone_box(),
                 index_id,
                 index_values,
                 output_columns,
@@ -5304,6 +5313,7 @@ fn build_batch_point_get(
         HandleSourceExec::new_mapped_with_context(
             executor_meta,
             (*table).clone(),
+            table.store().clone_box(),
             handles,
             output_columns,
             RowDecodeContext::for_query(ctx),
@@ -5563,7 +5573,7 @@ fn build_index_merge_reader(
             "a physical index-merge final table plan reads a different table",
         ));
     }
-    let (table, separated) =
+    let (table, store, separated) =
         state
             .reader_storage
             .table(catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
@@ -5601,6 +5611,7 @@ fn build_index_merge_reader(
                 let mut source = IndexRangeSourceExec::new_with_statement(
                     meta(ctx, partial, partial_schema),
                     partial_table.clone(),
+                    store.clone(),
                     scan.index_id,
                     ranges,
                     RowDecodeContext::for_query(ctx),
@@ -5801,6 +5812,7 @@ fn build_index_merge_reader(
     let mut executor = IndexMergeReaderExecutor::new(
         meta(ctx, plan, schema.clone()),
         (*table).clone(),
+        store,
         RowDecodeContext::for_query(ctx),
         partials,
         reader.is_intersection_type,
@@ -9200,6 +9212,7 @@ use super::*;
                 source: IndexRangeSourceExec::new_with_statement(
                     ExecutorMeta::new(two_long_schema(), 10, 2, 2),
                     table.clone(),
+                    table.store().clone_box(),
                     7,
                     tidb_ranger::points::full_range(),
                     RowDecodeContext::for_query(&ctx),

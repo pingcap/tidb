@@ -37,9 +37,9 @@ pub type SelectedRecordKey = Box<dyn Fn(Row<'_>) -> Result<Option<Vec<u8>>, Exec
 /// Go `SelectLockExec.Next`'s lock step: `UpdateDeltaForTableID` for every
 /// locked table, then `doLockKeys` over the statement's transaction.
 pub struct StatementLocker {
-    /// Any one table of the statement: its storage is the statement's
-    /// snapshot, which owns the transaction the keys lock in.
-    table: tidb_table::tables::TableCommon,
+    /// The statement's snapshot, which owns the transaction the keys lock
+    /// in.
+    store: Box<dyn tidb_kv::storage::TableStorage>,
     /// The logical table ids of Go's `tblID2Handle`, temporary tables removed.
     table_ids: Vec<i64>,
     ctx: crate::StmtContext,
@@ -47,15 +47,15 @@ pub struct StatementLocker {
 }
 
 impl StatementLocker {
-    /// A locker over `table`'s storage for the tables `table_ids`.
+    /// A locker over the statement's `store` for the tables `table_ids`.
     pub(crate) fn new(
-        table: tidb_table::tables::TableCommon,
+        store: Box<dyn tidb_kv::storage::TableStorage>,
         table_ids: Vec<i64>,
         ctx: crate::StmtContext,
         lock_state: Option<LockStateObserver>,
     ) -> Self {
         Self {
-            table,
+            store,
             table_ids,
             ctx,
             lock_state,
@@ -76,7 +76,10 @@ impl StatementLocker {
         if let Some(state) = &self.lock_state {
             state.set(true);
         }
-        let locked = self.table.do_lock_keys(&keys, wait);
+        let locked = self
+            .store
+            .do_lock_keys(&keys, wait)
+            .map_err(tidb_table::tables::KvTableError::from);
         if let Some(state) = &self.lock_state {
             state.set(false);
         }

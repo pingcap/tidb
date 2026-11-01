@@ -940,7 +940,7 @@ mod tests {
             let handles = [TableHandle::Int(3), TableHandle::Int(1)];
             let staged = fixture
                 .table
-                .build_table_reader_from_routed_handles(
+                .build_table_reader_from_routed_handles(&mut *fixture.table.store().clone_box(), 
                     &handles,
                     None,
                     &[1],
@@ -1274,7 +1274,8 @@ mod tests {
         let ctx = crate::StmtContext::for_query();
         let mut source = IndexJoinLookupExec::new_with_context(
             ExecutorMeta::new(schema, 0, 32, 1024),
-            fixture.table,
+            fixture.table.clone(),
+            fixture.table.store().clone_box(),
             LookupObject::CommonHandle,
             crate::RowDecodeContext::for_query(&ctx),
         );
@@ -1379,7 +1380,8 @@ mod tests {
         let ctx = crate::StmtContext::for_query();
         let mut lookup = IndexJoinLookupExec::new_with_context(
             ExecutorMeta::new(schema(2), 0, 32, 1024),
-            fixture.table,
+            fixture.table.clone(),
+            fixture.table.store().clone_box(),
             LookupObject::CommonHandle,
             crate::RowDecodeContext::for_query(&ctx),
         );
@@ -1554,7 +1556,7 @@ mod tests {
             for keep in [vec![1], vec![1, 0], vec![]] {
                 let staged = fixture
                     .table
-                    .build_table_reader_from_routed_handles(
+                    .build_table_reader_from_routed_handles(&mut *fixture.table.store().clone_box(), 
                         &handles,
                         None,
                         &keep,
@@ -1672,7 +1674,7 @@ mod tests {
             for desc in [false, true] {
                 let mut cursor = fixture
                     .table
-                    .pushdown_row_cursor_with_context(
+                    .pushdown_row_cursor_with_context(&mut *fixture.table.store().clone_box(), 
                         &[1],
                         &[],
                         projected.then_some([0].as_slice()),

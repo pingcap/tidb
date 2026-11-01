@@ -101,7 +101,7 @@ fn admin_check_detects_generated_column_index_value_corruption() {
         panic!("the index holds one entry");
     };
     let rows = table
-        .scan_rows_with_handles_recomputed(&context)
+        .scan_rows_with_handles_recomputed(&mut *table.store().clone_box(), &context)
         .expect("rows readable");
     let (handle, row) = &rows[0];
     let mut wrong_row = row.clone();

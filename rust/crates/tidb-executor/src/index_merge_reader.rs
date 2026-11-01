@@ -1238,6 +1238,8 @@ pub struct IndexMergeReaderExecutor {
     meta: ExecutorMeta,
     /// Go `table`.
     table: TableCommon,
+    /// The snapshot the table side reads.
+    store: Box<dyn tidb_kv::storage::TableStorage>,
     /// The statement-class row decoding [`HandleSourceExec`] needs; this tier
     /// carries it where Go reads `sessionctx`.
     decode_context: RowDecodeContext,
@@ -1290,15 +1292,17 @@ impl IndexMergeReaderExecutor {
     pub fn new(
         meta: ExecutorMeta,
         mut table: TableCommon,
+        store: Box<dyn tidb_kv::storage::TableStorage>,
         decode_context: RowDecodeContext,
         partials: Vec<Box<dyn PartialHandleSource>>,
         is_intersection: bool,
     ) -> Self {
         // The table side is a coprocessor read of the handles' rows.
-        table.count_keys_read(decode_context.keys_read());
+        table.count_keys_read(&*store, decode_context.keys_read());
         IndexMergeReaderExecutor {
             meta,
             table,
+            store,
             decode_context,
             partials,
             opened_partials: 0,
@@ -1778,6 +1782,7 @@ impl IndexMergeReaderExecutor {
             Some(columns) => HandleSourceExec::new_mapped_with_context(
                 meta.clone(),
                 self.table.clone(),
+                self.store.clone(),
                 handles,
                 columns.clone(),
                 self.decode_context.clone(),
@@ -1785,6 +1790,7 @@ impl IndexMergeReaderExecutor {
             None => HandleSourceExec::new_with_context(
                 meta.clone(),
                 self.table.clone(),
+                self.store.clone(),
                 handles,
                 self.decode_context.clone(),
             ),
@@ -1936,6 +1942,7 @@ mod tests {
         IndexMergeReaderExecutor::new(
             ExecutorMeta::new(Schema::new(Vec::new()), 1, 32, 1024),
             TableCommon::new(1, Vec::new()),
+            Box::new(tidb_kv::storage::MemTableStorage::new()),
             RowDecodeContext::for_test_query_utc(),
             partials,
             intersection,

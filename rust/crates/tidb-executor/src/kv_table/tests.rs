@@ -147,7 +147,7 @@ fn writable_check_constraints_guard_insert_and_update() {
     ));
     assert_eq!(
         table
-            .scan_rows_with_context(&RowDecodeContext::for_test_query_utc())
+            .scan_rows_with_context(&mut *table.store().clone_box(), &RowDecodeContext::for_test_query_utc())
             .expect("scan preserved rows")[0][0],
         Datum::Int(1),
         "failed UPDATE must leave the original row"
@@ -656,7 +656,7 @@ fn update_rewrites_only_index_entries_whose_bytes_change() {
     let after_untouched = table.index_entries_for_check(1).unwrap();
     assert_eq!(after_untouched, before, "untouched index stayed as it was");
     let rows = table
-        .scan_rows_with_handles_with_context(&RowDecodeContext::for_test_query_utc())
+        .scan_rows_with_handles_with_context(&mut *table.store().clone_box(), &RowDecodeContext::for_test_query_utc())
         .unwrap();
     assert_eq!(rows[0].1[2], Datum::Int(11), "the row itself did update");
 
@@ -798,7 +798,7 @@ fn a_nonpublic_index_is_written_by_its_backfill_state() {
         // No reader sees an index a DDL has not made public.
         assert!(table.index_entries_for_check(1).is_err());
         let handle = table
-            .scan_rows_with_handles_with_context(&RowDecodeContext::for_test_query_utc())
+            .scan_rows_with_handles_with_context(&mut *table.store().clone_box(), &RowDecodeContext::for_test_query_utc())
             .unwrap()[0]
             .0
             .clone();
@@ -882,7 +882,7 @@ fn test_unique_index_multiple_null_entries() {
         .unwrap();
     assert_eq!(
         table
-            .scan_rows_with_context(&RowDecodeContext::for_test_query_utc())
+            .scan_rows_with_context(&mut *table.store().clone_box(), &RowDecodeContext::for_test_query_utc())
             .unwrap()
             .len(),
         2
@@ -952,7 +952,7 @@ fn test_iter_records() {
         .unwrap();
 
     let rows = table
-        .scan_rows_with_handles_with_context(&RowDecodeContext::for_test_query_utc())
+        .scan_rows_with_handles_with_context(&mut *table.store().clone_box(), &RowDecodeContext::for_test_query_utc())
         .unwrap();
     assert_eq!(rows.len(), 2);
     assert_eq!(
@@ -985,7 +985,7 @@ fn scan_reports_the_handles_the_key_codec_wrote() {
         );
     }
     let scanned: Vec<TableHandle> = t
-        .scan_rows_with_handles_with_context(&RowDecodeContext::for_test_query_utc())
+        .scan_rows_with_handles_with_context(&mut *t.store().clone_box(), &RowDecodeContext::for_test_query_utc())
         .unwrap()
         .into_iter()
         .map(|(handle, _)| handle)
@@ -1000,7 +1000,7 @@ fn scan_reports_the_handles_the_key_codec_wrote() {
     )
     .unwrap();
     let rows = t
-        .scan_rows_with_handles_with_context(&RowDecodeContext::for_test_query_utc())
+        .scan_rows_with_handles_with_context(&mut *t.store().clone_box(), &RowDecodeContext::for_test_query_utc())
         .unwrap();
     assert_eq!(rows.len(), 3, "update replaced in place, it did not append");
     assert_eq!(rows[1].0, handles[1]);
@@ -1012,7 +1012,7 @@ fn scan_reports_the_handles_the_key_codec_wrote() {
     )
     .unwrap();
     let after: Vec<TableHandle> = t
-        .scan_rows_with_handles_with_context(&RowDecodeContext::for_test_query_utc())
+        .scan_rows_with_handles_with_context(&mut *t.store().clone_box(), &RowDecodeContext::for_test_query_utc())
         .unwrap()
         .into_iter()
         .map(|(handle, _)| handle)
@@ -1040,7 +1040,7 @@ fn scan_covers_the_whole_table_and_stops_at_its_range() {
         .unwrap();
 
     let rows = t
-        .scan_rows_with_context(&RowDecodeContext::for_test_query_utc())
+        .scan_rows_with_context(&mut *t.store().clone_box(), &RowDecodeContext::for_test_query_utc())
         .unwrap();
     assert_eq!(
         rows.len(),
@@ -1050,7 +1050,7 @@ fn scan_covers_the_whole_table_and_stops_at_its_range() {
     assert_eq!(rows[2][0], Datum::Int(2));
     assert_eq!(
         neighbour
-            .scan_rows_with_context(&RowDecodeContext::for_test_query_utc())
+            .scan_rows_with_context(&mut *neighbour.store().clone_box(), &RowDecodeContext::for_test_query_utc())
             .unwrap()
             .len(),
         1
@@ -1069,7 +1069,7 @@ fn insert_encodes_real_bytes_and_scan_decodes() {
     assert_eq!(t.len(), 2);
 
     let rows = t
-        .scan_rows_with_context(&RowDecodeContext::for_test_query_utc())
+        .scan_rows_with_context(&mut *t.store().clone_box(), &RowDecodeContext::for_test_query_utc())
         .unwrap();
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0][0], Datum::Int(7));
@@ -1099,7 +1099,8 @@ fn table_scan_exec_emits_chunks() {
     }
     let mut scan = TableScanExec::new_with_context(
         ExecutorMeta::new(Schema::new(out_cols), 0, 4, 1024),
-        t,
+        t.clone(),
+        t.store().clone_box(),
         RowDecodeContext::for_test_query_utc(),
         tidb_distsql::remote_scan::PushdownStatementContext::default(),
     );
@@ -1206,7 +1207,7 @@ fn a_short_common_handle_indexes_under_the_key_the_delete_path_computes() {
     // derives from the record key must be the same handle, or every
     // index entry the write filed is unreachable.
     let scanned = t
-        .scan_rows_with_handles_with_context(&RowDecodeContext::for_test_query_utc())
+        .scan_rows_with_handles_with_context(&mut *t.store().clone_box(), &RowDecodeContext::for_test_query_utc())
         .unwrap();
     assert_eq!(scanned.len(), 1);
     assert_eq!(scanned[0].0, written, "the write and the read disagree");

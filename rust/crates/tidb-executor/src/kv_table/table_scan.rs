@@ -43,7 +43,7 @@ use tidb_distsql::remote_scan::PushdownRowStream;
 use tidb_distsql::remote_scan::PushdownPartialAggregate;
 use tidb_distsql::remote_scan::PushdownIndexScan;
 use tidb_distsql::remote_scan::PushdownAggregateKind;
-use tidb_kv::storage::{StorageError, StorageIterator};
+use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
 use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use tidb_chunk::chunk::Chunk;
 use tidb_tablecodec::table_key::{
@@ -65,6 +65,7 @@ pub trait KvTableReader {
     /// The storage owner merges the transaction's current writes/tombstones.
     fn foreign_key_handles(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: Option<i64>,
         values: &[Datum],
         zone: &SessionTimeZone,
@@ -111,6 +112,7 @@ pub trait KvTableReader {
     /// a caller may hold it across chunk boundaries.
     fn row_cursor_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         context: &RowDecodeContext,
     ) -> Result<RowCursor, KvTableError>;
 
@@ -122,6 +124,7 @@ pub trait KvTableReader {
     /// `None` reads the whole table.
     fn row_cursor_projected_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         keep: Option<&[usize]>,
         handle_ranges: Option<&[Range]>,
         context: &RowDecodeContext,
@@ -132,6 +135,7 @@ pub trait KvTableReader {
     /// local half of Go's `desc` table scan.
     fn row_cursor_projected_directed_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         keep: Option<&[usize]>,
         handle_ranges: Option<&[Range]>,
         descending: bool,
@@ -144,6 +148,7 @@ pub trait KvTableReader {
     /// order and use `None` for an index entry whose record disappeared.
     fn get_rows_by_handles_projected_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         handles: &[TableHandle],
         keep: Option<&[usize]>,
         context: &RowDecodeContext,
@@ -153,6 +158,7 @@ pub trait KvTableReader {
     /// partition IDs come from the index entry, not from probing for a match.
     fn get_rows_by_routed_handles_projected_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         handles: &[TableHandle],
         routes: Option<&[i64]>,
         keep: Option<&[usize]>,
@@ -165,6 +171,7 @@ pub trait KvTableReader {
     /// for in every partition. A slot with no row has no physical id.
     fn get_located_rows_by_routed_handles_projected_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         handles: &[TableHandle],
         routes: Option<&[i64]>,
         keep: Option<&[usize]>,
@@ -173,6 +180,7 @@ pub trait KvTableReader {
 
     fn row_cursor_with_decoder(
         &mut self,
+        store: &mut dyn TableStorage,
         decoder: RowDecoder,
         handle_ranges: Option<&[Range]>,
         descending: bool,
@@ -244,6 +252,7 @@ pub trait KvTableReader {
     #[allow(clippy::too_many_arguments)]
     fn pushdown_row_cursor_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         keep: &[usize],
         predicates: &[Expression],
         output_offsets: Option<&[usize]>,
@@ -267,6 +276,7 @@ pub trait KvTableReader {
     #[allow(clippy::too_many_arguments)]
     fn pushdown_row_cursor_with_physical_id(
         &mut self,
+        store: &mut dyn TableStorage,
         keep: &[usize],
         predicates: &[Expression],
         output_offsets: Option<&[usize]>,
@@ -286,6 +296,7 @@ pub trait KvTableReader {
 
     fn pushdown_row_cursor_with_context_and_key_ranges(
         &mut self,
+        store: &mut dyn TableStorage,
         keep: &[usize],
         predicates: &[Expression],
         output_offsets: Option<&[usize]>,
@@ -309,6 +320,7 @@ pub trait KvTableReader {
     #[allow(clippy::too_many_arguments)]
     fn build_table_reader_from_routed_handles(
         &mut self,
+        store: &mut dyn TableStorage,
         handles: &[TableHandle],
         physical_ids: Option<&[i64]>,
         scan_keep: &[usize],
@@ -321,6 +333,7 @@ pub trait KvTableReader {
     #[allow(clippy::too_many_arguments)]
     fn build_physical_table_reader(
         &mut self,
+        store: &mut dyn TableStorage,
         scan_keep: &[usize],
         predicates: &[Expression],
         context: &RowDecodeContext,
@@ -377,6 +390,7 @@ pub trait KvTableReader {
     #[allow(clippy::too_many_arguments)]
     fn pushdown_partial_aggregate_cursor(
         &mut self,
+        store: &mut dyn TableStorage,
         keep: &[usize],
         predicates: &[Expression],
         handle_ranges: Option<&[Range]>,
@@ -393,6 +407,7 @@ pub trait KvTableReader {
     /// schema to the covering index's physical column order.
     fn pushdown_index_partial_aggregate_cursor(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         ranges: &[Range],
         scan_keep: &[usize],
@@ -425,6 +440,7 @@ pub trait KvTableReader {
     #[allow(clippy::too_many_arguments)]
     fn pushdown_index_handle_cursor(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         ranges: &[Range],
         scan_keep: &[usize],
@@ -448,6 +464,7 @@ pub trait KvTableReader {
     /// NULL, and the handle columns come from the key).
     fn scan_rows_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         context: &RowDecodeContext,
     ) -> Result<Vec<Vec<Datum>>, KvTableError>;
 
@@ -460,6 +477,7 @@ pub trait KvTableReader {
     /// instead (see [`TableCommon::row_cursor_with_context`]).
     fn scan_rows_with_handles_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError>;
 
@@ -474,12 +492,14 @@ pub trait KvTableReader {
     /// in one of `offsets`.
     fn any_null_in_columns(
         &mut self,
+        store: &mut dyn TableStorage,
         offsets: &[usize],
         context: &RowDecodeContext,
     ) -> Result<bool, KvTableError>;
 
     fn scan_physical_rows_with_handles_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         context: &RowDecodeContext,
     ) -> Result<Vec<(i64, TableHandle, Vec<Datum>)>, KvTableError>;
 
@@ -495,12 +515,14 @@ pub trait KvTableReader {
     /// produced.
     fn scan_rows_with_handles_in_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         handle_ranges: Option<&[Range]>,
         context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError>;
 
     fn scan_rows_with_handles_recomputed(
         &mut self,
+        store: &mut dyn TableStorage,
         context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError>;
 
@@ -509,6 +531,7 @@ pub trait KvTableReader {
     /// sample's order, decoded with generated columns recomputed.
     fn first_snapshot_row_in_range(
         &mut self,
+        store: &mut dyn TableStorage,
         start: &[u8],
         end: &[u8],
         context: &RowDecodeContext,
@@ -524,6 +547,7 @@ pub trait KvTableReader {
     /// each entry.
     fn scan_index_range(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         range: &Range,
         zone: &SessionTimeZone,
@@ -533,6 +557,7 @@ pub trait KvTableReader {
     /// form of [`TableCommon::scan_index_range`].
     fn index_range_cursor(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         range: &Range,
         zone: &SessionTimeZone,
@@ -542,6 +567,7 @@ pub trait KvTableReader {
     /// on `PhysicalIndexScan`.
     fn index_range_cursor_with_direction(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         range: &Range,
         zone: &SessionTimeZone,
@@ -554,6 +580,7 @@ pub trait KvTableReader {
     /// partition in the request before advancing to the next partition.
     fn index_ranges_cursor(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         ranges: &[Range],
         zone: &SessionTimeZone,
@@ -563,6 +590,7 @@ pub trait KvTableReader {
     /// preserving global index order when the plan requires it.
     fn index_ranges_cursor_with_direction(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         ranges: &[Range],
         zone: &SessionTimeZone,
@@ -591,6 +619,7 @@ pub trait KvTableReader {
     /// through this cursor.
     fn index_lookup_ranges_cursor(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         ranges: &[Range],
         zone: &SessionTimeZone,
@@ -598,6 +627,7 @@ pub trait KvTableReader {
 
     fn index_ranges_cursor_for_physical_ids(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         ranges: &[Range],
         zone: &SessionTimeZone,
@@ -610,6 +640,7 @@ pub trait KvTableReader {
 impl KvTableReader for TableCommon {
     fn foreign_key_handles(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: Option<i64>,
         values: &[Datum],
         zone: &SessionTimeZone,
@@ -631,7 +662,7 @@ impl KvTableReader for TableCommon {
                 }
             };
             return Ok(self
-                .stored_record(&handle)?
+                .stored_record(store, &handle)?
                 .map(|_| handle)
                 .into_iter()
                 .collect());
@@ -650,7 +681,7 @@ impl KvTableReader for TableCommon {
             let handle = TableHandle::Common(handle.encoded().to_vec());
             if values.len() == index.column_offsets.len() {
                 return Ok(self
-                    .stored_record(&handle)?
+                    .stored_record(store, &handle)?
                     .map(|_| handle)
                     .into_iter()
                     .collect());
@@ -660,7 +691,7 @@ impl KvTableReader for TableCommon {
                 &handle.record_handle(),
             ));
             let high = low.prefix_next();
-            let mut iter = self.store_mut().iter(Some(&low), Some(&high))?;
+            let mut iter = store.iter(Some(&low), Some(&high))?;
             let mut handles = Vec::new();
             while iter.valid() && handles.len() < limit {
                 handles.push(TableHandle::Common(
@@ -674,7 +705,7 @@ impl KvTableReader for TableCommon {
         }
         if index.read().unique && values.len() == index.column_offsets.len() && !index.has_prefix() {
             return Ok(self
-                .lookup_unique(index_id, values, zone)?
+                .lookup_unique(store, index_id, values, zone)?
                 .into_iter()
                 .collect());
         }
@@ -685,7 +716,7 @@ impl KvTableReader for TableCommon {
             low_exclude: false,
             high_exclude: false,
         };
-        let mut cursor = self.index_range_cursor(index_id, &range, zone)?;
+        let mut cursor = self.index_range_cursor(store, index_id, &range, zone)?;
         let mut handles = Vec::new();
         while handles.len() < limit {
             let Some(handle) = cursor.next_handle()? else {
@@ -738,22 +769,25 @@ impl KvTableReader for TableCommon {
 
     fn row_cursor_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         context: &RowDecodeContext,
     ) -> Result<RowCursor, KvTableError> {
-        self.row_cursor_projected_with_context(None, None, context)
+        self.row_cursor_projected_with_context(store, None, None, context)
     }
 
     fn row_cursor_projected_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         keep: Option<&[usize]>,
         handle_ranges: Option<&[Range]>,
         context: &RowDecodeContext,
     ) -> Result<RowCursor, KvTableError> {
-        self.row_cursor_projected_directed_with_context(keep, handle_ranges, false, false, context)
+        self.row_cursor_projected_directed_with_context(store, keep, handle_ranges, false, false, context)
     }
 
     fn row_cursor_projected_directed_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         keep: Option<&[usize]>,
         handle_ranges: Option<&[Range]>,
         descending: bool,
@@ -761,26 +795,28 @@ impl KvTableReader for TableCommon {
         context: &RowDecodeContext,
     ) -> Result<RowCursor, KvTableError> {
         let decoder = self.row_decoder_projected(keep, context)?;
-        self.row_cursor_with_decoder(decoder, handle_ranges, descending, ordered, context.zone())
+        self.row_cursor_with_decoder(store, decoder, handle_ranges, descending, ordered, context.zone())
     }
 
     fn get_rows_by_handles_projected_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         handles: &[TableHandle],
         keep: Option<&[usize]>,
         context: &RowDecodeContext,
     ) -> Result<Vec<Option<Vec<Datum>>>, KvTableError> {
-        self.get_rows_by_routed_handles_projected_with_context(handles, None, keep, context)
+        self.get_rows_by_routed_handles_projected_with_context(store, handles, None, keep, context)
     }
 
     fn get_rows_by_routed_handles_projected_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         handles: &[TableHandle],
         routes: Option<&[i64]>,
         keep: Option<&[usize]>,
         context: &RowDecodeContext,
     ) -> Result<Vec<Option<Vec<Datum>>>, KvTableError> {
-        self.get_located_rows_by_routed_handles_projected_with_context(
+        self.get_located_rows_by_routed_handles_projected_with_context(store, 
             handles, routes, keep, context,
         )
         .map(|(rows, _)| rows)
@@ -788,6 +824,7 @@ impl KvTableReader for TableCommon {
 
     fn get_located_rows_by_routed_handles_projected_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         handles: &[TableHandle],
         routes: Option<&[i64]>,
         keep: Option<&[usize]>,
@@ -821,7 +858,7 @@ impl KvTableReader for TableCommon {
                 )));
             }
         }
-        let entries = self.store_mut().batch_get(&keys).map_err(KvTableError::from)?;
+        let entries = store.batch_get(&keys).map_err(KvTableError::from)?;
         // Each handle owns a contiguous window of physical keys. Preserve
         // handle order and the first matching partition without a second
         // key/handle collection or a tree lookup for every output row.
@@ -893,6 +930,7 @@ impl KvTableReader for TableCommon {
 
     fn row_cursor_with_decoder(
         &mut self,
+        store: &mut dyn TableStorage,
         decoder: RowDecoder,
         handle_ranges: Option<&[Range]>,
         descending: bool,
@@ -911,7 +949,7 @@ impl KvTableReader for TableCommon {
         let mut iterators = Vec::new();
         for (low, upper) in self.record_key_ranges(handle_ranges, zone, ordered || descending)? {
             iterators.push(
-                self.scan_iterator(&low, &upper, descending)
+                self.scan_iterator(store, &low, &upper, descending)
                     .map_err(KvTableError::from)?,
             );
         }
@@ -1049,6 +1087,7 @@ impl KvTableReader for TableCommon {
     #[allow(clippy::too_many_arguments)]
     fn pushdown_row_cursor_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         keep: &[usize],
         predicates: &[Expression],
         output_offsets: Option<&[usize]>,
@@ -1064,7 +1103,7 @@ impl KvTableReader for TableCommon {
         read_engine: tidb_distsql::remote_scan::PushdownReadEngine,
         schema_version: u64,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
-        self.pushdown_row_cursor_with_physical_id(
+        self.pushdown_row_cursor_with_physical_id(store, 
             keep,
             predicates,
             output_offsets,
@@ -1086,6 +1125,7 @@ impl KvTableReader for TableCommon {
     #[allow(clippy::too_many_arguments)]
     fn pushdown_row_cursor_with_physical_id(
         &mut self,
+        store: &mut dyn TableStorage,
         keep: &[usize],
         predicates: &[Expression],
         output_offsets: Option<&[usize]>,
@@ -1102,7 +1142,7 @@ impl KvTableReader for TableCommon {
         read_engine: tidb_distsql::remote_scan::PushdownReadEngine,
         schema_version: u64,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
-        self.pushdown_row_cursor_with_context_and_key_ranges(
+        self.pushdown_row_cursor_with_context_and_key_ranges(store, 
             keep,
             predicates,
             output_offsets,
@@ -1124,6 +1164,7 @@ impl KvTableReader for TableCommon {
 
     fn pushdown_row_cursor_with_context_and_key_ranges(
         &mut self,
+        store: &mut dyn TableStorage,
         keep: &[usize],
         predicates: &[Expression],
         output_offsets: Option<&[usize]>,
@@ -1407,7 +1448,7 @@ impl KvTableReader for TableCommon {
                 .collect()
         };
         for (physical_id, ranges) in request_groups {
-            let Some(scan) = crate::remote_scan::open_remote_scan(self.store(), &build_request(physical_id, ranges))
+            let Some(scan) = crate::remote_scan::open_remote_scan(&*store, &build_request(physical_id, ranges))
             else {
                 for (_, opened_parts) in partition_scans.drain(..) {
                     for mut opened in opened_parts {
@@ -1587,6 +1628,7 @@ impl KvTableReader for TableCommon {
     #[allow(clippy::too_many_arguments)]
     fn build_table_reader_from_routed_handles(
         &mut self,
+        store: &mut dyn TableStorage,
         handles: &[TableHandle],
         physical_ids: Option<&[i64]>,
         scan_keep: &[usize],
@@ -1649,6 +1691,7 @@ impl KvTableReader for TableCommon {
                 &mut physical
             };
             let Some(reader) = table.build_physical_table_reader(
+                store,
                 scan_keep,
                 predicates,
                 context,
@@ -1669,6 +1712,7 @@ impl KvTableReader for TableCommon {
     #[allow(clippy::too_many_arguments)]
     fn build_physical_table_reader(
         &mut self,
+        store: &mut dyn TableStorage,
         scan_keep: &[usize],
         predicates: &[Expression],
         context: &RowDecodeContext,
@@ -1695,7 +1739,7 @@ impl KvTableReader for TableCommon {
         let physical_predicates = materialization
             .as_ref()
             .map(|projection| projection.remap_predicates(keep, predicates));
-        let Some(cursor) = self.pushdown_row_cursor_with_context_and_key_ranges(
+        let Some(cursor) = self.pushdown_row_cursor_with_context_and_key_ranges(store, 
             materialization
                 .as_ref()
                 .map_or(keep, |projection| projection.offsets.as_slice()),
@@ -1984,6 +2028,7 @@ impl KvTableReader for TableCommon {
     #[allow(clippy::too_many_arguments)]
     fn pushdown_partial_aggregate_cursor(
         &mut self,
+        store: &mut dyn TableStorage,
         keep: &[usize],
         predicates: &[Expression],
         handle_ranges: Option<&[Range]>,
@@ -2102,7 +2147,7 @@ impl KvTableReader for TableCommon {
                 range_hints: Vec::new(),
                 statement: statement.clone(),
             };
-            let Some(scan) = crate::remote_scan::open_remote_scan(self.store(), &request) else {
+            let Some(scan) = crate::remote_scan::open_remote_scan(&*store, &request) else {
                 close_streams(&mut streams);
                 return Ok(None);
             };
@@ -2136,6 +2181,7 @@ impl KvTableReader for TableCommon {
 
     fn pushdown_index_partial_aggregate_cursor(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         ranges: &[Range],
         scan_keep: &[usize],
@@ -2372,7 +2418,7 @@ impl KvTableReader for TableCommon {
                 range_hints: Vec::new(),
                 statement: statement.clone(),
             };
-            let Some(scan) = crate::remote_scan::open_remote_scan(self.store(), &request) else {
+            let Some(scan) = crate::remote_scan::open_remote_scan(&*store, &request) else {
                 close_streams(&mut streams);
                 return Ok(None);
             };
@@ -2489,6 +2535,7 @@ impl KvTableReader for TableCommon {
     #[allow(clippy::too_many_arguments)]
     fn pushdown_index_handle_cursor(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         ranges: &[Range],
         scan_keep: &[usize],
@@ -2882,7 +2929,7 @@ impl KvTableReader for TableCommon {
             range_hints: Vec::new(),
             statement: statement.clone(),
         };
-        let Some(scan) = crate::remote_scan::open_remote_scan(self.store(), &request) else {
+        let Some(scan) = crate::remote_scan::open_remote_scan(&*store, &request) else {
             return Ok(None);
         };
         let mut scan = scan.map_err(KvTableError::from)?;
@@ -2914,10 +2961,11 @@ impl KvTableReader for TableCommon {
 
     fn scan_rows_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         context: &RowDecodeContext,
     ) -> Result<Vec<Vec<Datum>>, KvTableError> {
         Ok(self
-            .scan_rows_with_handles_with_context(context)?
+            .scan_rows_with_handles_with_context(store, context)?
             .into_iter()
             .map(|(_, row)| row)
             .collect())
@@ -2925,17 +2973,19 @@ impl KvTableReader for TableCommon {
 
     fn scan_rows_with_handles_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
-        self.scan_rows_with_handles_in_with_context(None, context)
+        self.scan_rows_with_handles_in_with_context(store, None, context)
     }
 
     fn any_null_in_columns(
         &mut self,
+        store: &mut dyn TableStorage,
         offsets: &[usize],
         context: &RowDecodeContext,
     ) -> Result<bool, KvTableError> {
-        let rows = self.scan_physical_rows_with_handles_with_context(context)?;
+        let rows = self.scan_physical_rows_with_handles_with_context(store, context)?;
         Ok(rows.iter().any(|(_, _, row)| {
             offsets
                 .iter()
@@ -2945,11 +2995,12 @@ impl KvTableReader for TableCommon {
 
     fn scan_physical_rows_with_handles_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         context: &RowDecodeContext,
     ) -> Result<Vec<(i64, TableHandle, Vec<Datum>)>, KvTableError> {
         let decoder = self.row_decoder_projected(None, context)?;
         let mut cursor =
-            self.row_cursor_with_decoder(decoder, None, false, false, context.zone())?;
+            self.row_cursor_with_decoder(store, decoder, None, false, false, context.zone())?;
         let mut rows = Vec::new();
         while let Some(entry) = cursor.next_physical_row()? {
             rows.push(entry);
@@ -2959,6 +3010,7 @@ impl KvTableReader for TableCommon {
 
     fn scan_rows_with_handles_in_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         handle_ranges: Option<&[Range]>,
         context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
@@ -2973,7 +3025,7 @@ impl KvTableReader for TableCommon {
                 (!tidb_table::generated_column::is_virtual(column)).then_some(offset)
             })
             .collect();
-        if let Some(mut cursor) = self.pushdown_row_cursor_with_context(
+        if let Some(mut cursor) = self.pushdown_row_cursor_with_context(store, 
             &keep,
             &[],
             None,
@@ -3005,7 +3057,7 @@ impl KvTableReader for TableCommon {
             }
             return Ok(rows);
         }
-        let mut cursor = self.row_cursor_projected_with_context(None, handle_ranges, context)?;
+        let mut cursor = self.row_cursor_projected_with_context(store, None, handle_ranges, context)?;
         let mut rows = Vec::new();
         while let Some(entry) = cursor.next_row()? {
             rows.push(entry);
@@ -3015,11 +3067,12 @@ impl KvTableReader for TableCommon {
 
     fn scan_rows_with_handles_recomputed(
         &mut self,
+        store: &mut dyn TableStorage,
         context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
         let decoder = self.row_decoder_recomputed(context)?;
         let mut cursor =
-            self.row_cursor_with_decoder(decoder, None, false, false, context.zone())?;
+            self.row_cursor_with_decoder(store, decoder, None, false, false, context.zone())?;
         let mut rows = Vec::new();
         while let Some(entry) = cursor.next_row()? {
             rows.push(entry);
@@ -3029,11 +3082,12 @@ impl KvTableReader for TableCommon {
 
     fn first_snapshot_row_in_range(
         &mut self,
+        store: &mut dyn TableStorage,
         start: &[u8],
         end: &[u8],
         context: &RowDecodeContext,
     ) -> Result<Option<(TableHandle, Vec<Datum>)>, KvTableError> {
-        let Some((key, value)) = self.store_mut().snapshot_first(
+        let Some((key, value)) = store.snapshot_first(
             &Key::from_bytes(start.to_vec()),
             &Key::from_bytes(end.to_vec()),
         )?
@@ -3047,11 +3101,12 @@ impl KvTableReader for TableCommon {
 
     fn scan_index_range(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         range: &Range,
         zone: &SessionTimeZone,
     ) -> Result<Vec<TableHandle>, KvTableError> {
-        let mut cursor = self.index_range_cursor(index_id, range, zone)?;
+        let mut cursor = self.index_range_cursor(store, index_id, range, zone)?;
         let mut handles = Vec::new();
         while let Some(handle) = cursor.next_handle()? {
             handles.push(handle);
@@ -3061,24 +3116,26 @@ impl KvTableReader for TableCommon {
 
     fn index_range_cursor(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         range: &Range,
         zone: &SessionTimeZone,
     ) -> Result<IndexRangeCursor, KvTableError> {
         // `ordered`: this entry point serves reads whose answer is the index
         // walk itself, so it keeps the cross-partition merge.
-        self.index_range_cursor_with_direction(index_id, range, zone, false, true)
+        self.index_range_cursor_with_direction(store, index_id, range, zone, false, true)
     }
 
     fn index_range_cursor_with_direction(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         range: &Range,
         zone: &SessionTimeZone,
         descending: bool,
         ordered: bool,
     ) -> Result<IndexRangeCursor, KvTableError> {
-        self.index_ranges_cursor_for_physical_ids(
+        self.index_ranges_cursor_for_physical_ids(store, 
             index_id,
             std::slice::from_ref(range),
             zone,
@@ -3090,12 +3147,13 @@ impl KvTableReader for TableCommon {
 
     fn index_ranges_cursor(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         ranges: &[Range],
         zone: &SessionTimeZone,
     ) -> Result<IndexRangeCursor, KvTableError> {
         let physical_ids = self.record_physical_ids();
-        self.index_ranges_cursor_for_physical_ids(
+        self.index_ranges_cursor_for_physical_ids(store, 
             index_id,
             ranges,
             zone,
@@ -3107,6 +3165,7 @@ impl KvTableReader for TableCommon {
 
     fn index_ranges_cursor_with_direction(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         ranges: &[Range],
         zone: &SessionTimeZone,
@@ -3114,7 +3173,7 @@ impl KvTableReader for TableCommon {
         ordered: bool,
     ) -> Result<IndexRangeCursor, KvTableError> {
         let physical_ids = self.record_physical_ids();
-        self.index_ranges_cursor_for_physical_ids(
+        self.index_ranges_cursor_for_physical_ids(store, 
             index_id,
             ranges,
             zone,
@@ -3126,12 +3185,13 @@ impl KvTableReader for TableCommon {
 
     fn index_lookup_ranges_cursor(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         ranges: &[Range],
         zone: &SessionTimeZone,
     ) -> Result<IndexRangeCursor, KvTableError> {
         let physical_ids = self.record_physical_ids();
-        self.index_ranges_cursor_for_physical_ids(
+        self.index_ranges_cursor_for_physical_ids(store, 
             index_id,
             ranges,
             zone,
@@ -3143,6 +3203,7 @@ impl KvTableReader for TableCommon {
 
     fn index_ranges_cursor_for_physical_ids(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         ranges: &[Range],
         zone: &SessionTimeZone,
@@ -3206,7 +3267,7 @@ impl KvTableReader for TableCommon {
             for (low, high) in key_ranges {
                 partition_of_iterator.push(ordinal);
                 let iterator = self
-                    .scan_iterator(&low, &high, descending)
+                    .scan_iterator(store, &low, &high, descending)
                     .map_err(KvTableError::from)?;
                 iterators.push(iterator);
             }
@@ -4691,6 +4752,9 @@ impl Drop for IndexRangeCursor {
 pub struct TableScanExec {
     meta: ExecutorMeta,
     table: TableCommon,
+    /// The snapshot this reader reads, apart from the table metadata (Go's
+    /// executor reads through the session transaction, never the table).
+    store: Box<dyn TableStorage>,
     /// The open storage cursor; `None` before `open` and once exhausted, and
     /// always `None` when the backend served the scan through `remote`.
     cursor: Option<RowCursor>,
@@ -4916,18 +4980,20 @@ impl TableScanExec {
     pub fn new_with_context(
         meta: ExecutorMeta,
         mut table: TableCommon,
+        store: Box<dyn TableStorage>,
         decode_context: RowDecodeContext,
         statement: PushdownStatementContext,
     ) -> Self {
         // Go's TableReader reads through the coprocessor, whose processed
         // keys count against `tidb_max_keys_read`.
-        table.count_keys_read(decode_context.keys_read());
+        table.count_keys_read(&*store, decode_context.keys_read());
         // The physical DML schema includes hidden expression-index columns;
         // user-facing scans may provide only the visible prefix. Preserve
         // the supplied schema before later accept_column_prune composition.
         let keep = (0..meta.schema().columns.len()).collect();
         TableScanExec {
             meta,
+            store,
             table,
             cursor: None,
             remote: None,
@@ -4995,6 +5061,7 @@ impl TableScanExec {
         self.cursor = Some(
             self.table
                 .row_cursor_projected_directed_with_context(
+                    &mut *self.store,
                     projection,
                     handle_ranges.as_deref(),
                     self.descending,
@@ -5604,6 +5671,7 @@ impl Executor for TableScanExec {
             self.partial_remote = self
                 .table
                 .pushdown_partial_aggregate_cursor(
+                    &mut *self.store,
                     &self.keep,
                     &self.pushed,
                     self.handle_ranges.as_deref(),
@@ -5650,6 +5718,7 @@ impl Executor for TableScanExec {
         self.remote = self
             .table
             .pushdown_row_cursor_with_physical_id(
+                &mut *self.store,
                 remote_keep,
                 remote_predicates,
                 self.post_filter_projection.as_deref(),
@@ -6375,6 +6444,7 @@ mod remote_cursor_tests {
             let mut scan = TableScanExec::new_with_context(
                 ExecutorMeta::new(schema, 0, 4, 4),
                 table.clone(),
+                table.store().clone_box(),
                 RowDecodeContext::legacy_default(&context.session_zone()),
                 PushdownStatementContext::default(),
             );
@@ -6604,7 +6674,7 @@ mod remote_cursor_tests {
             true,
         );
         assert!(table
-            .pushdown_index_handle_cursor(
+            .pushdown_index_handle_cursor(&mut *table.store().clone_box(), 
                 7,
                 &tidb_ranger::points::full_range(),
                 &[2, 1, 0],
@@ -6723,7 +6793,7 @@ mod remote_cursor_tests {
                 column_offset: 0,
             });
             let cursor = table
-                .pushdown_index_handle_cursor(
+                .pushdown_index_handle_cursor(&mut *table.store().clone_box(), 
                     7,
                     &tidb_ranger::points::full_range(),
                     &[2, 1, 0],
@@ -6812,7 +6882,7 @@ mod remote_cursor_tests {
                     limit: 2,
                 };
                 let cursor = table
-                    .pushdown_index_handle_cursor(
+                    .pushdown_index_handle_cursor(&mut *table.store().clone_box(), 
                         7,
                         &tidb_ranger::points::full_range(),
                         &[1, 2],
@@ -6874,7 +6944,7 @@ mod remote_cursor_tests {
                 (0, vec![1, 1], vec![1], vec![1])
             };
             let cursor = table
-                .pushdown_index_handle_cursor(
+                .pushdown_index_handle_cursor(&mut *table.store().clone_box(), 
                     7,
                     &tidb_ranger::points::full_range(),
                     &[0, 1, 2],
@@ -6943,7 +7013,7 @@ mod remote_cursor_tests {
                     Vec::new()
                 };
                 let cursor = table
-                    .pushdown_index_handle_cursor(
+                    .pushdown_index_handle_cursor(&mut *table.store().clone_box(), 
                         7,
                         &tidb_ranger::points::full_range(),
                         &[0, 1, 2],
@@ -7039,7 +7109,7 @@ mod remote_cursor_tests {
             ],
         )];
         let mut cursor = table
-            .pushdown_index_handle_cursor(
+            .pushdown_index_handle_cursor(&mut *table.store().clone_box(), 
                 7,
                 &tidb_ranger::points::full_range(),
                 &[0, 1],
@@ -7093,7 +7163,7 @@ mod remote_cursor_tests {
             limit: 1,
         };
         assert!(table
-            .pushdown_index_handle_cursor(
+            .pushdown_index_handle_cursor(&mut *table.store().clone_box(), 
                 7,
                 &tidb_ranger::points::full_range(),
                 &[0, 1],
@@ -7137,7 +7207,7 @@ mod remote_cursor_tests {
             }
             let mut open = |retain_identity: bool| {
                 let cursor = table
-                    .pushdown_row_cursor_with_context(
+                    .pushdown_row_cursor_with_context(&mut *table.store().clone_box(), 
                         &[1],
                         &[],
                         None,
@@ -7210,7 +7280,8 @@ mod remote_cursor_tests {
             );
             let mut scan = TableScanExec::new_with_context(
                 ExecutorMeta::new(schema, 0, 4, 4),
-                table,
+                table.clone(),
+                table.store().clone_box(),
                 RowDecodeContext::legacy_default(&SessionTimeZone::utc()),
                 statement,
             );
@@ -7272,7 +7343,7 @@ mod remote_cursor_tests {
         ));
 
         let cursor = table
-            .pushdown_row_cursor_with_context(
+            .pushdown_row_cursor_with_context(&mut *table.store().clone_box(), 
                 &[0],
                 &[],
                 None,
@@ -7316,7 +7387,7 @@ mod remote_cursor_tests {
         let statement = PushdownStatementContext::default();
         for routes in [&[101][..], &[101, 999][..]] {
             assert!(table
-                .build_table_reader_from_routed_handles(
+                .build_table_reader_from_routed_handles(&mut *table.store().clone_box(), 
                     &handles,
                     Some(routes),
                     &[0],
@@ -7333,7 +7404,7 @@ mod remote_cursor_tests {
         );
         assert!(
             table
-                .build_table_reader_from_routed_handles(
+                .build_table_reader_from_routed_handles(&mut *table.store().clone_box(), 
                     &handles,
                     None,
                     &[0],
@@ -7347,7 +7418,7 @@ mod remote_cursor_tests {
             "bare handles cannot select a partition"
         );
         let staged = table
-            .build_table_reader_from_routed_handles(
+            .build_table_reader_from_routed_handles(&mut *table.store().clone_box(), 
                 &handles,
                 Some(&[102, 101]),
                 &[0],
@@ -7371,7 +7442,7 @@ mod remote_cursor_tests {
         captured.lock().unwrap().clear();
         statement.staged_writes.mark_dirty(91);
         assert!(table
-            .build_table_reader_from_routed_handles(
+            .build_table_reader_from_routed_handles(&mut *table.store().clone_box(), 
                 &handles,
                 Some(&[102, 101]),
                 &[0],
@@ -7390,7 +7461,7 @@ mod remote_cursor_tests {
         *table.read_partitions_mut() = Some(vec![102]);
         assert!(
             table
-                .build_table_reader_from_routed_handles(
+                .build_table_reader_from_routed_handles(&mut *table.store().clone_box(), 
                     &handles,
                     Some(&[102, 101]),
                     &[0],
@@ -7405,7 +7476,7 @@ mod remote_cursor_tests {
         assert!(captured.lock().unwrap().is_empty());
         assert!(
             table
-                .build_table_reader_from_routed_handles(
+                .build_table_reader_from_routed_handles(&mut *table.store().clone_box(), 
                     &handles,
                     None,
                     &[0],
@@ -7427,7 +7498,7 @@ mod remote_cursor_tests {
         };
         let closed = capture.closed.clone();
         table.swap_storage(Box::new(capture));
-        let result = table.build_table_reader_from_routed_handles(
+        let result = table.build_table_reader_from_routed_handles(&mut *table.store().clone_box(), 
             &handles,
             Some(&[101, 102]),
             &[0],
@@ -7504,7 +7575,7 @@ mod remote_cursor_tests {
             high_exclude: false,
         }];
         let statement = PushdownStatementContext::default();
-        let stream = table.pushdown_index_partial_aggregate_cursor(
+        let stream = table.pushdown_index_partial_aggregate_cursor(&mut *table.store().clone_box(), 
             5,
             &ranges,
             &[0, 1, 2],
@@ -7547,7 +7618,7 @@ mod remote_cursor_tests {
         // TableReader uses the same request-level flags as IndexReader.
         for (desc, keep_order) in [(true, true), (false, true), (false, false)] {
             assert!(table
-                .pushdown_partial_aggregate_cursor(
+                .pushdown_partial_aggregate_cursor(&mut *table.store().clone_box(), 
                     &[0, 1, 2],
                     &[],
                     None,
@@ -7638,7 +7709,7 @@ mod remote_cursor_tests {
         }];
         let statement = PushdownStatementContext::default();
         let stream = table
-            .pushdown_index_partial_aggregate_cursor(
+            .pushdown_index_partial_aggregate_cursor(&mut *table.store().clone_box(), 
                 7,
                 &ranges,
                 &[0, 1, 2],
@@ -8351,7 +8422,7 @@ mod remote_cursor_tests {
 
         assert!(
             table
-                .build_table_reader_from_routed_handles(
+                .build_table_reader_from_routed_handles(&mut *table.store().clone_box(), 
                     &handles,
                     None,
                     &[0],
@@ -8409,7 +8480,7 @@ mod remote_cursor_tests {
             )
             .unwrap();
         let rows = table
-            .get_rows_by_handles_projected_with_context(
+            .get_rows_by_handles_projected_with_context(&mut *table.store().clone_box(), 
                 &[
                     TableHandle::Int(2),
                     TableHandle::Int(1),

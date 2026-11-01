@@ -99,7 +99,17 @@ CARGO_INCREMENTAL=0`.
 
 ## Progress
 
-- [ ] Milestone 1: record-read family takes the store as a parameter.
+- [x] Milestone 1: record-read family takes the store as a parameter
+  (2026-11-01). `TableCommon::{stored_record, stored_records_batched,
+  scan_iterator, point_reader, lookup_unique*, count_keys_read}` take the
+  store; the 30 `KvTableReader` methods that reach storage take
+  `store: &mut dyn TableStorage`; every reader leaf (`TableScanExec`,
+  `HandleSourceExec`, `UniqueIndexPointSourceExec`, `IndexRangeSourceExec`,
+  `IndexJoinLookupExec`, `IndexMergeReaderExecutor`) owns a `store` given by
+  its builder; `ReaderStorage::table` returns the reader's store instead of
+  cloning the table to swap one in; `StatementLocker` holds the statement's
+  store, not a table. `TableCommon::lock_keys_for_read` / `do_lock_keys`
+  are gone (callers lock through the store).
 - [ ] Milestone 2: write family.
 - [ ] Milestone 3: DDL, backfill and maintenance users.
 - [ ] Milestone 4: the `store` field is gone.
@@ -133,6 +143,23 @@ CARGO_INCREMENTAL=0`.
   encode_row_key_with_handle`, `t{tid}_r{handle}`). So one store per node,
   with each session's staging over it, can serve every table, as Go's single
   KV store does. Milestone 1 does not need a key-format change.
+
+- 2026-11-01: `Session::new()` already runs on the mock store
+  (`new_on_mock_store`), so production and almost every test session read
+  through the session-wide `ClusterTableStorage`. A per-table
+  `MemTableStorage` that holds rows survives only in temporary tables,
+  memtables and unit fixtures.
+- 2026-11-01 (Milestone 1): where a caller holds only a catalog table, the
+  transitional store source is `table.store().clone_box()`. For
+  `ClusterTableStorage` that is the session's shared handle, exactly what
+  the table read before; for a per-table `MemTableStorage` it is a copy,
+  which reads see identically. Milestone 4 replaces that one expression with
+  the session's store. Write paths inside `tidb-table` still read through
+  `stored_record_in_own_store` until Milestone 2 passes them the store.
+- 2026-11-01: `count_keys_read` now judges the READER's store
+  (`reads_processed_keys`): before, a union scan's mem reader got the
+  membuffer store swapped into its table copy, and with the swap gone the
+  table's own store would have counted membuffer reads as processed keys.
 
 ## Decision Log
 

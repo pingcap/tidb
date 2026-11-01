@@ -36,7 +36,7 @@ fn column(name: &str, id: i64, code: FieldTypeCode, origin: Option<Datum>) -> ti
 }
 
 fn stored(table: &mut TableCommon, handle: &TableHandle) -> BTreeMap<i64, Datum> {
-    let (_, entry) = table.stored_record(handle).unwrap().unwrap();
+    let (_, entry) = table.stored_record(&mut *table.store().clone_box(), handle).unwrap().unwrap();
     let types = [1_i64, 2, 3, 4]
         .into_iter()
         .map(|id| (id, FieldType::new(FieldTypeCode::LongLong)))

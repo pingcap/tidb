@@ -54,8 +54,9 @@ impl tidb_privilege::cluster_privilege_load::PrivilegeTables for SessionPrivileg
             columns,
         );
         let ids: Vec<i64> = stored.columns().iter().map(|column| column.read().id).collect();
+        let mut store = stored.store().clone_box();
         let rows = stored
-            .scan_rows_with_context(&self.decode)
+            .scan_rows_with_context(&mut *store, &self.decode)
             .map_err(
                 |error| tidb_syssession::mysql_system_tables::SystemTableError::Decode {
                     name: name.clone(),

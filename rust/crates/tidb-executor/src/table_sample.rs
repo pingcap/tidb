@@ -95,8 +95,9 @@ impl Executor for TableSampleExecutor {
                 .tables
                 .get_mut(range.table)
                 .ok_or_else(|| ExecError::unsupported("a sampled range names no physical table"))?;
+            let mut store = table.store().clone_box();
             let sampled = table
-                .first_snapshot_row_in_range(&range.start, &range.end, &self.decode_context)
+                .first_snapshot_row_in_range(&mut *store, &range.start, &range.end, &self.decode_context)
                 .map_err(|error| {
                     ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
                 })?;

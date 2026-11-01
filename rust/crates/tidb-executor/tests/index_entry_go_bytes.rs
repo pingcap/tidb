@@ -118,7 +118,7 @@ impl TableStorage for Mirror {
 
     fn clone_box(&self) -> Box<dyn TableStorage> {
         Box::new(Mirror {
-            inner: MemTableStorage::new(),
+            inner: self.inner.clone(),
             written: Arc::clone(&self.written),
         })
     }
@@ -273,12 +273,12 @@ fn one_captured_mode_drives_both_kv_index_key_and_value() {
     assert_eq!(legacy_handle, modern_handle);
     let zone = tidb_datatype::SessionTimeZone::utc();
     assert_eq!(
-        legacy.scan_index_range(1, &point, &zone).unwrap(),
+        legacy.scan_index_range(&mut *legacy.store().clone_box(), 1, &point, &zone).unwrap(),
         vec![legacy_handle],
         "legacy range bounds use the legacy entry's key format"
     );
     assert_eq!(
-        modern.scan_index_range(1, &point, &zone).unwrap(),
+        modern.scan_index_range(&mut *modern.store().clone_box(), 1, &point, &zone).unwrap(),
         vec![modern_handle],
         "new-collation range bounds use the new entry's key format"
     );

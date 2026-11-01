@@ -107,8 +107,9 @@ pub fn analyze_kv_table_columns(
     let decode_context = RowDecodeContext::for_analyze(ctx);
     let (plan, source_positions, source_indexes) =
         kv_analyze_plan(table, &decode_context, selected_column_ids)?;
+    let mut store = table.store().clone_box();
     let rows = table
-        .scan_rows_with_handles_with_context(&decode_context)
+        .scan_rows_with_handles_with_context(&mut *store, &decode_context)
         .map_err(AnalyzeError::from)?;
     let mut run = AnalyzeRun::start(&plan, options, realtime_count)?;
     for (_, row) in &rows {

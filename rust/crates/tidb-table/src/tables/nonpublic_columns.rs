@@ -237,7 +237,7 @@ impl TableCommon {
             .iter()
             .map(|column| (column.column.read().id, column.column.read().field_type.clone()))
             .collect();
-        let stored = match self.stored_record(handle)? {
+        let stored = match self.stored_record_in_own_store(handle)? {
             Some((_, entry)) => {
                 tidb_tablecodec::decode_table_row_to_map(&entry, &types, Some(zone))
                     .map_err(|error| KvTableError::Decode(format!("{error:?}")))?

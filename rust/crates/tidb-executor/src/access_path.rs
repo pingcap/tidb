@@ -108,7 +108,7 @@ impl PointLock {
     /// Go `doLockKeys` for a point read, publishing the lock wait around it.
     pub(crate) fn lock(
         &self,
-        table: &mut TableCommon,
+        store: &mut dyn tidb_kv::storage::TableStorage,
         keys: &[tidb_txnkv::Key],
         only_if_exists: bool,
     ) -> Result<(), ExecError> {
@@ -118,7 +118,9 @@ impl PointLock {
         if let Some(state) = &self.lock_state {
             state.set(true);
         }
-        let locked = table.lock_keys_for_read(keys, self.wait, only_if_exists);
+        let locked = store
+            .lock_keys_for_read(keys, self.wait, only_if_exists)
+            .map_err(tidb_table::tables::KvTableError::from);
         if let Some(state) = &self.lock_state {
             state.set(false);
         }
@@ -587,6 +589,9 @@ pub(crate) enum HandleOutputColumn {
 pub struct HandleSourceExec {
     meta: ExecutorMeta,
     table: TableCommon,
+    /// The snapshot this reader reads, apart from the table metadata (Go's
+    /// executor reads through the session transaction, never the table).
+    store: Box<dyn tidb_kv::storage::TableStorage>,
     handles: Vec<TableHandle>,
     /// The next handle to read.
     cursor: usize,
@@ -639,11 +644,13 @@ impl HandleSourceExec {
     pub fn new_with_context(
         meta: ExecutorMeta,
         table: TableCommon,
+        store: Box<dyn tidb_kv::storage::TableStorage>,
         handles: Vec<TableHandle>,
         decode_context: tidb_table::tables::RowDecodeContext,
     ) -> Self {
         HandleSourceExec {
             meta,
+            store,
             table,
             handles,
             cursor: 0,
@@ -710,13 +717,14 @@ impl HandleSourceExec {
     pub(crate) fn new_mapped_with_context(
         meta: ExecutorMeta,
         table: TableCommon,
+        store: Box<dyn tidb_kv::storage::TableStorage>,
         handles: Vec<TableHandle>,
         output_columns: Vec<HandleOutputColumn>,
         decode_context: tidb_table::tables::RowDecodeContext,
     ) -> Self {
         Self {
             output_columns: Some(output_columns),
-            ..Self::new_with_context(meta, table, handles, decode_context)
+            ..Self::new_with_context(meta, table, store, handles, decode_context)
         }
     }
 
@@ -726,13 +734,14 @@ impl HandleSourceExec {
     pub(crate) fn new_point_mapped_with_context(
         meta: ExecutorMeta,
         table: TableCommon,
+        store: Box<dyn tidb_kv::storage::TableStorage>,
         handle: TableHandle,
         output_columns: Vec<HandleOutputColumn>,
         decode_context: tidb_table::tables::RowDecodeContext,
     ) -> Self {
         Self {
             single_point_get: true,
-            ..Self::new_mapped_with_context(meta, table, vec![handle], output_columns, decode_context)
+            ..Self::new_mapped_with_context(meta, table, store, vec![handle], output_columns, decode_context)
         }
     }
 
@@ -772,10 +781,10 @@ impl HandleSourceExec {
                 let positions = (0..self.handles.len()).collect::<Vec<_>>();
                 let mut keys = self.lock_keys_at(record_keys, &positions);
                 keys.extend(self.lock_missing_index_keys.iter().cloned());
-                lock.lock(&mut self.table, &keys, false)?;
+                lock.lock(&mut *self.store, &keys, false)?;
                 locked_before_read = true;
             } else if self.single_point_get {
-                lock.lock(&mut self.table, record_keys, true)?;
+                lock.lock(&mut *self.store, record_keys, true)?;
                 locked_before_read = true;
             }
         }
@@ -795,6 +804,7 @@ impl HandleSourceExec {
             if let Some(staged) = self
                 .table
                 .build_table_reader_from_routed_handles(
+                    &mut *self.store,
                     &self.handles,
                     self.partition_ids.as_deref(),
                     &keep,
@@ -830,7 +840,7 @@ impl HandleSourceExec {
                 .ok_or_else(|| ExecError::unsupported("a point get lost its retained handle"))?;
             tidb_table::tables::PointReadValues::Single(
                 self.table
-                    .stored_record(handle)
+                    .stored_record(&mut *self.store, handle)
                     .map_err(ExecError::from)?
                     .map(|(_, bytes)| bytes),
             )
@@ -845,7 +855,7 @@ impl HandleSourceExec {
                 ));
             }
             self.table
-                .stored_records_batched(&self.handles, self.partition_ids.as_deref())
+                .stored_records_batched(&mut *self.store, &self.handles, self.partition_ids.as_deref())
                 .map_err(ExecError::from)?
         };
         // Counted only on an IndexMerge reader's table side, whose copy
@@ -883,7 +893,7 @@ impl HandleSourceExec {
                 }
             };
             let keys = self.lock_keys_at(&record_keys, &positions);
-            lock.lock(&mut self.table, &keys, false)?;
+            lock.lock(&mut *self.store, &keys, false)?;
         }
         self.preloaded = Some(rows);
         self.decoder = Some(tidb_table::tables::PointRowDecoder::new(&self.table));
@@ -1105,6 +1115,9 @@ impl tidb_executor_internal_exec::table_access::TableAccess for HandleSourceExec
 pub(crate) struct UniqueIndexPointSourceExec {
     meta: ExecutorMeta,
     table: TableCommon,
+    /// The snapshot this reader reads, apart from the table metadata (Go's
+    /// executor reads through the session transaction, never the table).
+    store: Box<dyn tidb_kv::storage::TableStorage>,
     index_id: i64,
     index_values: Vec<Vec<Datum>>,
     output_columns: Vec<HandleOutputColumn>,
@@ -1138,6 +1151,7 @@ impl UniqueIndexPointSourceExec {
     pub(crate) fn new(
         meta: ExecutorMeta,
         table: TableCommon,
+        store: Box<dyn tidb_kv::storage::TableStorage>,
         index_id: i64,
         index_values: Vec<Vec<Datum>>,
         output_columns: Vec<HandleOutputColumn>,
@@ -1146,6 +1160,7 @@ impl UniqueIndexPointSourceExec {
     ) -> Self {
         Self {
             meta,
+            store,
             table,
             index_id,
             index_values,
@@ -1214,10 +1229,15 @@ impl UniqueIndexPointSourceExec {
                             "unique index key encoding failed: {error:?}"
                         ))
                     })?;
-                lock.lock(&mut self.table, &keys, lock.read_committed)?;
+                lock.lock(&mut *self.store, &keys, lock.read_committed)?;
             }
             self.table
-                .lookup_unique_with_partition(self.index_id, values, self.decode_context.zone())
+                .lookup_unique_with_partition(
+                    &mut *self.store,
+                    self.index_id,
+                    values,
+                    self.decode_context.zone(),
+                )
                 .map_err(|error| {
                     ExecError::unsupported(format!("unique index lookup failed: {error:?}"))
                 })?
@@ -1239,7 +1259,7 @@ impl UniqueIndexPointSourceExec {
                 })?;
             let looked_up = self
                 .table
-                .lookup_unique_index_keys(&keys)
+                .lookup_unique_index_keys(&mut *self.store, &keys)
                 .map_err(|error| {
                     ExecError::unsupported(format!("unique index batch lookup failed: {error:?}"))
                 })?;
@@ -1267,7 +1287,7 @@ impl UniqueIndexPointSourceExec {
             // Go `BatchPointGetExec.initialize` with no row found still
             // locks every named index key under repeatable read.
             if let Some(lock) = self.lock.clone().filter(|lock| !lock.read_committed) {
-                lock.lock(&mut self.table, &missing_index_keys, false)?;
+                lock.lock(&mut *self.store, &missing_index_keys, false)?;
             }
             return Ok(());
         };
@@ -1281,6 +1301,7 @@ impl UniqueIndexPointSourceExec {
             HandleSourceExec::new_point_mapped_with_context(
                 meta,
                 self.table.clone(),
+                self.store.clone(),
                 first,
                 self.output_columns.clone(),
                 self.decode_context.clone(),
@@ -1290,6 +1311,7 @@ impl UniqueIndexPointSourceExec {
             HandleSourceExec::new_mapped_with_context(
                 meta,
                 self.table.clone(),
+                self.store.clone(),
                 std::mem::take(&mut handles),
                 self.output_columns.clone(),
                 self.decode_context.clone(),
@@ -1581,6 +1603,9 @@ pub struct IndexRangeSourceExec {
     lookup_stats: Option<crate::index_lookup_stats::IndexLookUpStatsHandle>,
     meta: ExecutorMeta,
     table: TableCommon,
+    /// The snapshot this reader reads, apart from the table metadata (Go's
+    /// executor reads through the session transaction, never the table).
+    store: Box<dyn tidb_kv::storage::TableStorage>,
     /// The cursor's partition ordinals resolve against this stable scan list.
     record_physical_ids: Vec<i64>,
     /// Physical visible-column offsets emitted by this source. The mapping is
@@ -1899,6 +1924,7 @@ impl IndexRangeSourceExec {
     pub fn new_with_context(
         meta: ExecutorMeta,
         table: TableCommon,
+        store: Box<dyn tidb_kv::storage::TableStorage>,
         index_id: i64,
         ranges: Vec<Range>,
         decode_context: tidb_table::tables::RowDecodeContext,
@@ -1906,6 +1932,7 @@ impl IndexRangeSourceExec {
         Self::new_with_statement(
             meta,
             table,
+            store,
             index_id,
             ranges,
             decode_context,
@@ -1990,6 +2017,7 @@ impl IndexRangeSourceExec {
     pub fn new_with_statement(
         meta: ExecutorMeta,
         mut table: TableCommon,
+        store: Box<dyn tidb_kv::storage::TableStorage>,
         index_id: i64,
         ranges: Vec<Range>,
         decode_context: tidb_table::tables::RowDecodeContext,
@@ -1997,7 +2025,7 @@ impl IndexRangeSourceExec {
     ) -> Self {
         // Go's IndexReader/IndexLookUp read both the index and the table
         // side through the coprocessor; every processed key counts.
-        table.count_keys_read(decode_context.keys_read());
+        table.count_keys_read(&*store, decode_context.keys_read());
         // The IDENTITY default is only right when the schema is the table's
         // leading columns; a caller whose schema was narrowed by column
         // pruning must say so with [`Self::read_table_columns`].
@@ -2012,6 +2040,7 @@ impl IndexRangeSourceExec {
         IndexRangeSourceExec {
             lookup_stats: None,
             meta,
+            store,
             table,
             record_physical_ids,
             keep,
@@ -2630,6 +2659,7 @@ impl IndexRangeSourceExec {
         let rows = self
             .table
             .get_rows_by_routed_handles_projected_with_context(
+                &mut *self.store,
                 &handles,
                 Some(&physical_ids),
                 Some(&self.keep),
@@ -2945,6 +2975,7 @@ impl IndexRangeSourceExec {
                     let lookup_rows = match self
                         .table
                         .get_rows_by_routed_handles_projected_with_context(
+                            &mut *self.store,
                             &handles,
                             (!job.physical_ids.is_empty()).then_some(job.physical_ids.as_slice()),
                             Some(&self.keep),
@@ -3018,6 +3049,7 @@ impl IndexRangeSourceExec {
             let staged = self
                 .table
                 .build_table_reader_from_routed_handles(
+                    &mut *self.store,
                     &handles,
                     (!physical_ids.is_empty()).then_some(physical_ids.as_slice()),
                     &self.keep,
@@ -3067,6 +3099,7 @@ impl IndexRangeSourceExec {
         let worker_handles = handles;
         let worker_physical_ids = physical_ids.clone();
         let mut worker_table = self.table.clone();
+        let mut worker_store = self.store.clone();
         let worker_keep = self.keep.clone();
         let worker_pushed = self.pushed.clone();
         let worker_decode_context = self.decode_context.clone();
@@ -3075,6 +3108,7 @@ impl IndexRangeSourceExec {
         let worker_allow_chunks = allow_lookup_chunks;
         let worker = move || {
             let staged = match worker_table.build_table_reader_from_routed_handles(
+                &mut *worker_store,
                 &worker_handles,
                 (!worker_physical_ids.is_empty()).then_some(worker_physical_ids.as_slice()),
                 &worker_keep,
@@ -3284,6 +3318,7 @@ impl IndexRangeSourceExec {
                 self.cursor = Some(
                     self.table
                         .index_lookup_ranges_cursor(
+                            &mut *self.store,
                             self.index_id,
                             &self.ranges,
                             self.decode_context.zone(),
@@ -3312,6 +3347,7 @@ impl IndexRangeSourceExec {
             self.cursor = Some(
                 self.table
                     .index_range_cursor_with_direction(
+                        &mut *self.store,
                         self.index_id,
                         &range,
                         self.decode_context.zone(),
@@ -4077,6 +4113,7 @@ impl Executor for IndexRangeSourceExec {
             self.partial_remote = self
                 .table
                 .pushdown_index_partial_aggregate_cursor(
+                    &mut *self.store,
                     self.index_id,
                     &self.ranges,
                     &self.keep,
@@ -4100,6 +4137,7 @@ impl Executor for IndexRangeSourceExec {
             self.remote_index = self
                 .table
                 .pushdown_index_handle_cursor(
+                    &mut *self.store,
                     self.index_id,
                     &self.ranges,
                     &self.keep,
@@ -4972,6 +5010,9 @@ impl LookupProbeBoundOp {
 pub(crate) struct LookupForkTemplate {
     meta: ExecutorMeta,
     table: TableCommon,
+    /// The snapshot this reader reads, apart from the table metadata (Go's
+    /// executor reads through the session transaction, never the table).
+    store: Box<dyn tidb_kv::storage::TableStorage>,
     object: LookupObject,
     covering: bool,
     keep_order: bool,
@@ -5006,6 +5047,7 @@ impl LookupForkTemplate {
         let mut task = IndexJoinLookupExec {
             meta: self.meta.clone(),
             table: self.table.clone(),
+            store: self.store.clone(),
             object: self.object.clone(),
             covering: self.covering,
             keep_order: self.keep_order,
@@ -5072,6 +5114,9 @@ impl LookupForkTemplate {
 pub struct IndexJoinLookupExec {
     meta: ExecutorMeta,
     table: TableCommon,
+    /// The snapshot this reader reads, apart from the table metadata (Go's
+    /// executor reads through the session transaction, never the table).
+    store: Box<dyn tidb_kv::storage::TableStorage>,
     object: LookupObject,
     /// Whether the shared physical task selected Go's single-read
     /// `PhysicalIndexReader` for this secondary-index inner child. A covering
@@ -5194,11 +5239,12 @@ impl IndexJoinLookupExec {
     pub fn new_with_context(
         meta: ExecutorMeta,
         table: TableCommon,
+        store: Box<dyn tidb_kv::storage::TableStorage>,
         object: LookupObject,
         decode_context: tidb_table::tables::RowDecodeContext,
     ) -> Self {
         let statement = crate::remote_scan::pushdown_statement_context(tidb_sessionctx::stmt_context_of(decode_context.expression()));
-        Self::new_with_statement(meta, table, object, decode_context, statement)
+        Self::new_with_statement(meta, table, store, object, decode_context, statement)
     }
 
     /// Retains the selected reader's statement policy across rebuilt inner tasks.
@@ -5206,12 +5252,13 @@ impl IndexJoinLookupExec {
     pub(crate) fn new_with_statement(
         meta: ExecutorMeta,
         mut table: TableCommon,
+        store: Box<dyn tidb_kv::storage::TableStorage>,
         object: LookupObject,
         decode_context: tidb_table::tables::RowDecodeContext,
         statement: PushdownStatementContext,
     ) -> Self {
         // Go's index-join inner reader is a coprocessor read too.
-        table.count_keys_read(decode_context.keys_read());
+        table.count_keys_read(&*store, decode_context.keys_read());
         // Go evaluates the inner Selection before its final projection. Keep
         // that physical table shape here even when `meta` already describes
         // the compact row emitted to the join above.
@@ -5223,6 +5270,7 @@ impl IndexJoinLookupExec {
         let filter_chunk = Chunk::new(&filter_types, meta.init_cap(), meta.max_chunk_size());
         IndexJoinLookupExec {
             meta,
+            store,
             table,
             object,
             covering: false,
@@ -5334,6 +5382,7 @@ impl IndexJoinLookupExec {
         match self
             .table
             .pushdown_index_handle_cursor(
+                &mut *self.store,
                 index_id,
                 &ranges,
                 &keep,
@@ -5382,6 +5431,7 @@ impl IndexJoinLookupExec {
         Some(LookupForkTemplate {
             meta: self.meta.clone(),
             table: self.table.clone(),
+            store: self.store.clone(),
             object: self.object.clone(),
             covering: self.covering,
             keep_order: self.keep_order,
@@ -5863,6 +5913,7 @@ impl IndexJoinLookupExec {
                     self.cursor = Some(
                         self.table
                             .index_ranges_cursor_with_direction(
+                                &mut *self.store,
                                 index_id,
                                 &ranges,
                                 self.decode_context.zone(),
@@ -5939,6 +5990,7 @@ impl IndexJoinLookupExec {
         let remote_cursor = self
             .table
             .pushdown_row_cursor_with_context(
+                &mut *self.store,
                 &keep,
                 &remote_predicates,
                 None,
@@ -5961,6 +6013,7 @@ impl IndexJoinLookupExec {
             self.record_cursor = Some(
                 self.table
                     .row_cursor_projected_directed_with_context(
+                        &mut *self.store,
                         Some(&keep),
                         Some(&ranges),
                         self.descending,
@@ -6109,6 +6162,7 @@ impl IndexJoinLookupExec {
         let remote_cursor = self
             .table
             .pushdown_row_cursor_with_context(
+                &mut *self.store,
                 &keep,
                 &remote_predicates,
                 None,
@@ -6171,6 +6225,7 @@ impl IndexJoinLookupExec {
         let (rows, located) = self
             .table
             .get_located_rows_by_routed_handles_projected_with_context(
+                &mut *self.store,
                 handles,
                 physical_ids,
                 self.decode_offsets.as_deref(),
@@ -6201,6 +6256,7 @@ impl IndexJoinLookupExec {
         let Some(staged) = self
             .table
             .build_table_reader_from_routed_handles(
+                &mut *self.store,
                 handles,
                 physical_ids,
                 &keep,
@@ -7007,6 +7063,7 @@ use std::collections::HashMap;
             let mut source = IndexRangeSourceExec::new_with_context(
                 ExecutorMeta::new(schema, 0, 2, 32),
                 table.clone(),
+                table.store().clone_box(),
                 1,
                 tidb_ranger::points::full_range(),
                 crate::RowDecodeContext::for_test_query_utc(),
@@ -7048,6 +7105,7 @@ use std::collections::HashMap;
                     let mut source = IndexRangeSourceExec::new_with_context(
                         ExecutorMeta::new(Schema::new(columns), 0, 2, 2),
                         table.clone(),
+                        table.store().clone_box(),
                         1,
                         tidb_ranger::points::full_range(),
                         crate::RowDecodeContext::for_test_query_utc(),
@@ -7173,7 +7231,8 @@ use std::collections::HashMap;
         ]);
         let mut source = HandleSourceExec::new_mapped_with_context(
             ExecutorMeta::new(schema, 0, 1, 1024),
-            table,
+            table.clone(),
+            table.store().clone_box(),
             vec![TableHandle::Int(7)],
             vec![HandleOutputColumn::Stored(1), HandleOutputColumn::Stored(0)],
             tidb_table::tables::RowDecodeContext::for_test_query_utc(),
@@ -7282,6 +7341,7 @@ use std::collections::HashMap;
         let mut source = IndexRangeSourceExec::new_with_context(
             ExecutorMeta::new(schema, 0, 1, 3),
             (**table).clone(),
+            (**table).store().clone_box(),
             index_id,
             tidb_ranger::points::full_range(),
             crate::RowDecodeContext::for_test_query_utc(),
@@ -7459,7 +7519,8 @@ use std::collections::HashMap;
         output.index = 0;
         let mut source = IndexJoinLookupExec::new_with_context(
             ExecutorMeta::new(Schema::new(vec![output]), 0, 1, 32),
-            table,
+            table.clone(),
+            table.store().clone_box(),
             LookupObject::Index(1),
             crate::RowDecodeContext::for_test_query_utc(),
         );
@@ -7645,7 +7706,8 @@ use std::collections::HashMap;
                         );
                         let mut source = IndexJoinLookupExec::new_with_context(
                             ExecutorMeta::new(schema, 0, 1, 1),
-                            table,
+                            table.clone(),
+                            table.store().clone_box(),
                             object,
                             crate::RowDecodeContext::for_test_query_utc(),
                         );
@@ -7729,6 +7791,7 @@ use std::collections::HashMap;
             let mut source = IndexJoinLookupExec::new_with_context(
                 ExecutorMeta::new(Schema::new(vec![b]), 0, 1, 1),
                 table.as_ref().clone(),
+                table.as_ref().store().clone_box(),
                 LookupObject::Index(1),
                 crate::RowDecodeContext::for_test_query_utc(),
             );
@@ -7880,7 +7943,8 @@ use std::collections::HashMap;
                 1,
                 32,
             ),
-            table,
+            table.clone(),
+            table.store().clone_box(),
             1,
             tidb_ranger::points::full_range(),
             crate::RowDecodeContext::for_test_query_utc(),
@@ -7997,7 +8061,8 @@ use std::collections::HashMap;
         );
         let mut source = IndexJoinLookupExec::new_with_context(
             ExecutorMeta::new(Schema::default(), 0, 1, 32),
-            table,
+            table.clone(),
+            table.store().clone_box(),
             LookupObject::Index(1),
             crate::RowDecodeContext::for_test_query_utc(),
         );
@@ -8049,7 +8114,8 @@ use std::collections::HashMap;
         );
         let mut source = IndexRangeSourceExec::new_with_context(
             ExecutorMeta::new(Schema::new(vec![]), 0, 1, 32),
-            table,
+            table.clone(),
+            table.store().clone_box(),
             1,
             tidb_ranger::points::full_range(),
             crate::RowDecodeContext::for_test_query_utc(),
@@ -8078,7 +8144,8 @@ use std::collections::HashMap;
         );
         let mut source = IndexRangeSourceExec::new_with_context(
             ExecutorMeta::new(Schema::new(vec![]), 0, 32, 32),
-            table,
+            table.clone(),
+            table.store().clone_box(),
             1,
             tidb_ranger::points::full_range(),
             crate::RowDecodeContext::for_test_query_utc(),
@@ -8156,7 +8223,8 @@ use std::collections::HashMap;
         );
         let mut scan = crate::kv_table::TableScanExec::new_with_context(
             meta,
-            table,
+            table.clone(),
+            table.store().clone_box(),
             crate::RowDecodeContext::for_test_query_utc(),
             tidb_distsql::remote_scan::PushdownStatementContext::default(),
         );
@@ -8584,6 +8652,7 @@ use std::collections::HashMap;
                 )
             },
             table.clone(),
+            table.store().clone_box(),
             1,
             tidb_ranger::points::full_range(),
             tidb_table::tables::RowDecodeContext::for_test_query_utc(),
@@ -8612,7 +8681,8 @@ use std::collections::HashMap;
                     1024,
                 )
             },
-            table,
+            table.clone(),
+            table.store().clone_box(),
             1,
             tidb_ranger::points::full_range(),
             tidb_table::tables::RowDecodeContext::for_test_query_utc(),
@@ -8800,7 +8870,8 @@ use std::collections::HashMap;
             .collect();
         let mut exec = IndexRangeSourceExec::new_with_context(
             ExecutorMeta::new(tidb_expr::schema::Schema::new(columns), 0, 32, 1024),
-            table,
+            table.clone(),
+            table.store().clone_box(),
             1,
             tidb_ranger::points::full_range(),
             crate::RowDecodeContext::for_test_query_utc(),

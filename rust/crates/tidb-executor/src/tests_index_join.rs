@@ -178,6 +178,7 @@ fn scan_of(table: &TableCommon, width: usize) -> Box<dyn Executor> {
     Box::new(crate::kv_table::TableScanExec::new_with_context(
         ExecutorMeta::new(schema_of(width), 0, INIT_CAP, CHUNK),
         table.clone(),
+        table.store().clone_box(),
         crate::RowDecodeContext::for_test_query_utc(),
         tidb_distsql::remote_scan::PushdownStatementContext::default(),
     ))
@@ -187,6 +188,7 @@ fn lookup_source(table: &TableCommon, object: LookupObject, width: usize) -> Ind
     IndexJoinLookupExec::new_with_context(
         ExecutorMeta::new(schema_of(width), 0, INIT_CAP, CHUNK),
         table.clone(),
+        table.store().clone_box(),
         object,
         crate::RowDecodeContext::for_test_query_utc(),
     )

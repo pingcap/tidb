@@ -1663,6 +1663,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     let mut source = crate::access_path::HandleSourceExec::new_mapped_with_context(
         crate::ExecutorMeta::new(schema, 1, 8, 8),
         (**table).clone(),
+        (**table).store().clone_box(),
         vec![
             tidb_table::tables::TableHandle::Int(1),
             tidb_table::tables::TableHandle::Int(99),
@@ -1707,6 +1708,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     let mut unique = crate::access_path::UniqueIndexPointSourceExec::new(
         crate::ExecutorMeta::new(schema.clone(), 1, 8, 8),
         (**table).clone(),
+        (**table).store().clone_box(),
         index_id,
         vec![
             vec![Datum::new_collation_string(
@@ -1743,7 +1745,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     // the first chunk or an early Close, but must fail when actually pulled.
     let mut malformed = (**table).clone();
     let (key, value) = malformed
-        .stored_record(&tidb_table::tables::TableHandle::Int(1))
+        .stored_record(&mut *malformed.store().clone_box(), &tidb_table::tables::TableHandle::Int(1))
         .unwrap()
         .unwrap();
     let mut storage = BatchGetCountingStorage {
@@ -1764,7 +1766,8 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     malformed.replace_storage(Box::new(storage));
     let mut source = crate::access_path::HandleSourceExec::new_mapped_with_context(
         crate::ExecutorMeta::new(schema, 1, 8, 8),
-        malformed,
+        malformed.clone(),
+        malformed.store().clone_box(),
         vec![
             tidb_table::tables::TableHandle::Int(1),
             tidb_table::tables::TableHandle::Int(2),
@@ -1873,7 +1876,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         // key/handle index. Projection keeps the requested column order.
         batch_gets.store(0, Ordering::Relaxed);
         let projected = table
-            .get_rows_by_handles_projected_with_context(
+            .get_rows_by_handles_projected_with_context(&mut *table.store().clone_box(), 
                 &handles,
                 Some(&[1, 0]),
                 &tidb_table::tables::RowDecodeContext::for_test_query_utc(),
@@ -1889,7 +1892,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         assert_eq!(batch_gets.load(Ordering::Relaxed), 1);
         for routes in [Some(routes.as_slice()), None] {
             batch_gets.store(0, Ordering::Relaxed);
-            let values = table.stored_records_batched(&handles, routes).unwrap();
+            let values = table.stored_records_batched(&mut *table.store().clone_box(), &handles, routes).unwrap();
             let decoded = handles
                 .iter()
                 .enumerate()
@@ -1913,7 +1916,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
             );
         }
         batch_gets.store(0, Ordering::Relaxed);
-        assert!(table.stored_records_batched(&[], None,).unwrap().is_empty());
+        assert!(table.stored_records_batched(&mut *table.store().clone_box(), &[], None,).unwrap().is_empty());
         assert_eq!(batch_gets.load(Ordering::Relaxed), 0);
     }
 }

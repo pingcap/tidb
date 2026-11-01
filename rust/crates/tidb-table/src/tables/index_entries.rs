@@ -1076,13 +1076,14 @@ impl TableCommon {
     /// Looks a row handle up through a unique index, the point-get Go plans as
     /// `PointGetPlan` on a unique key. `None` when no entry matches.
     pub fn lookup_unique(
-        &mut self,
+        &self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         values: &[Datum],
         zone: &SessionTimeZone,
     ) -> Result<Option<TableHandle>, KvTableError> {
         match self.unique_point_read(index_id, values, zone)? {
-            Some(read) => read.get(self.store.as_mut()),
+            Some(read) => read.get(store),
             None => Ok(None),
         }
     }
@@ -1090,13 +1091,14 @@ impl TableCommon {
     /// [`Self::lookup_unique`] plus the partition a global index entry
     /// records for its row.
     pub fn lookup_unique_with_partition(
-        &mut self,
+        &self,
+        store: &mut dyn TableStorage,
         index_id: i64,
         values: &[Datum],
         zone: &SessionTimeZone,
     ) -> Result<Option<(TableHandle, Option<i64>)>, KvTableError> {
         match self.unique_point_read(index_id, values, zone)? {
-            Some(read) => read.get_with_partition(self.store.as_mut()),
+            Some(read) => read.get_with_partition(store),
             None => Ok(None),
         }
     }
@@ -1246,7 +1248,8 @@ impl TableCommon {
 
     /// Resolves [`Self::unique_batch_index_keys`] through one `BatchGet`.
     pub fn lookup_unique_index_keys(
-        &mut self,
+        &self,
+        store: &mut dyn TableStorage,
         keys: &[Option<(Key, Option<i64>)>],
     ) -> Result<Vec<Option<(TableHandle, Option<i64>)>>, KvTableError> {
         let request = keys
@@ -1257,7 +1260,7 @@ impl TableCommon {
         let entries = if request.is_empty() {
             std::collections::HashMap::new()
         } else {
-            self.store.batch_get(&request).map_err(KvTableError::from)?
+            store.batch_get(&request).map_err(KvTableError::from)?
         };
         keys.iter()
             .map(|key| {

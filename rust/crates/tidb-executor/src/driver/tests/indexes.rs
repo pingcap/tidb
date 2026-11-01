@@ -179,7 +179,7 @@ fn a_unique_index_entry_points_at_its_row() {
         .read().id;
     assert_eq!(
         table
-            .lookup_unique(
+            .lookup_unique(&mut *table.store().clone_box(), 
                 index_id,
                 &[Datum::Bytes(b"abc".to_vec())],
                 &tidb_datatype::SessionTimeZone::utc()
@@ -190,7 +190,7 @@ fn a_unique_index_entry_points_at_its_row() {
     );
     assert_eq!(
         table
-            .lookup_unique(
+            .lookup_unique(&mut *table.store().clone_box(), 
                 index_id,
                 &[Datum::Bytes(b"nope".to_vec())],
                 &tidb_datatype::SessionTimeZone::utc()

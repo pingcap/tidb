@@ -1698,6 +1698,19 @@ impl TableCommon {
     /// would double the round trips a point read costs -- which the access-
     /// path tests count.
     pub fn stored_record(
+        &self,
+        store: &mut dyn TableStorage,
+        handle: &TableHandle,
+    ) -> Result<Option<(Key, Vec<u8>)>, KvTableError> {
+        if self.read_partitions.is_none() && self.partition.is_none() {
+            return read_stored_record_one(store, self.table_id, handle);
+        }
+        read_stored_record(store, self.record_physical_ids(), handle)
+    }
+
+    /// [`Self::stored_record`] through the store this table still owns, for
+    /// the write paths that have not yet been given the transaction's store.
+    fn stored_record_in_own_store(
         &mut self,
         handle: &TableHandle,
     ) -> Result<Option<(Key, Vec<u8>)>, KvTableError> {
@@ -1743,40 +1756,9 @@ impl TableCommon {
         }
     }
 
-    /// Go `PointGetExecutor.lockKeyBase` / `LockKeys` over this table's
-    /// storage (see [`TableStorage::lock_keys_for_read`]).
-    pub fn lock_keys_for_read(
-        &mut self,
-        keys: &[Key],
-        wait: tidb_txnkv::transaction::LockWaitTime,
-        only_if_exists: bool,
-    ) -> Result<(), KvTableError> {
-        if keys.is_empty() {
-            return Ok(());
-        }
-        self.store
-            .lock_keys_for_read(keys, wait, only_if_exists)
-            .map_err(KvTableError::from)
-    }
-
-    /// Go `doLockKeys` over this table's storage (see
-    /// [`TableStorage::do_lock_keys`]).
-    pub fn do_lock_keys(
-        &mut self,
-        keys: &[Key],
-        wait: tidb_txnkv::transaction::LockWaitTime,
-    ) -> Result<(), KvTableError> {
-        if keys.is_empty() {
-            return Ok(());
-        }
-        self.store
-            .do_lock_keys(keys, wait)
-            .map_err(KvTableError::from)
-    }
-
-    /// [`TableCommon::stored_record`] without the bytes.
+    /// [`TableCommon::stored_record_in_own_store`] without the bytes.
     fn stored_record_key(&mut self, handle: &TableHandle) -> Result<Option<Key>, KvTableError> {
-        Ok(self.stored_record(handle)?.map(|(key, _)| key))
+        Ok(self.stored_record_in_own_store(handle)?.map(|(key, _)| key))
     }
 
     /// One stored record per requested handle, in request order; `None`
@@ -1787,7 +1769,8 @@ impl TableCommon {
     /// `BatchGet` -- instead of one point read per handle. A handle whose
     /// row is absent yields `None`, Go's point get that finds nothing.
     pub fn stored_records_batched(
-        &mut self,
+        &self,
+        store: &mut dyn TableStorage,
         handles: &[TableHandle],
         physical_ids: Option<&[i64]>,
     ) -> Result<PointReadValues, KvTableError> {
@@ -1827,7 +1810,7 @@ impl TableCommon {
                 values: Default::default(),
             });
         }
-        let found = self.store.batch_get(&keys).map_err(KvTableError::from)?;
+        let found = store.batch_get(&keys).map_err(KvTableError::from)?;
         for (index, key) in positions.into_iter().zip(keys) {
             // The first matching candidate answers an unrouted handle.
             if rows[index].is_none() {
@@ -1949,10 +1932,14 @@ impl TableCommon {
     /// response's `ScanDetail.ProcessedKeys`. Reader executors install it on
     /// their own copy; point gets, foreign-key checks and DDL reads stay
     /// outside it, as they stay outside Go's coprocessor.
-    pub fn count_keys_read(&mut self, budget: &tidb_kv::keys_read::KeysReadBudget) {
+    pub fn count_keys_read(
+        &mut self,
+        store: &dyn TableStorage,
+        budget: &tidb_kv::keys_read::KeysReadBudget,
+    ) {
         // A union scan's mem reader walks the membuffer, which no
         // coprocessor processes.
-        if !self.store.reads_processed_keys() {
+        if !store.reads_processed_keys() {
             return;
         }
         self.keys_read = Some(budget.clone());
@@ -1961,15 +1948,16 @@ impl TableCommon {
     /// Opens one scan range, counting the keys it moves past when this copy
     /// carries a statement budget.
     pub fn scan_iterator(
-        &mut self,
+        &self,
+        store: &mut dyn TableStorage,
         low: &Key,
         high: &Key,
         descending: bool,
     ) -> Result<Box<dyn StorageIterator>, tidb_kv::storage::StorageError> {
         let iterator = if descending {
-            self.store.iter_reverse(Some(high), Some(low))?
+            store.iter_reverse(Some(high), Some(low))?
         } else {
-            self.store.iter(Some(low), Some(high))?
+            store.iter(Some(low), Some(high))?
         };
         Ok(match &self.keys_read {
             Some(budget) => Box::new(KeysReadIterator {
@@ -2002,11 +1990,10 @@ impl TableCommon {
         self.store.set_snapshot_read_options(options);
     }
 
-    pub fn point_reader(&self) -> PointRead<'_> {
-        PointRead {
-            table: self,
-            store: self.store.clone(),
-        }
+    /// Go `PointGetExecutor`: this table's metadata over the snapshot
+    /// `store` the executor reads.
+    pub fn point_reader(&self, store: Box<dyn TableStorage>) -> PointRead<'_> {
+        PointRead { table: self, store }
     }
 
 
@@ -4260,7 +4247,7 @@ impl TableCommon {
         decoder: &PreparedPointGetRowDecoder,
         context: &PreparedPointGetDecodeContext,
     ) -> Result<Option<Vec<Datum>>, KvTableError> {
-        let Some((_, entry)) = self.stored_record(handle)? else {
+        let Some((_, entry)) = self.stored_record_in_own_store(handle)? else {
             return Ok(None);
         };
         decoder.decode(handle, &entry, context).map(Some)
@@ -4272,7 +4259,7 @@ impl TableCommon {
         handle: &TableHandle,
         context: &RowDecodeContext,
     ) -> Result<Option<Vec<Datum>>, KvTableError> {
-        let Some((_, entry)) = self.stored_record(handle)? else {
+        let Some((_, entry)) = self.stored_record_in_own_store(handle)? else {
             return Ok(None);
         };
         Ok(Some(self.decode_row_entry(handle, &entry, context)?))

@@ -58,7 +58,8 @@ impl KvTablePartitionMaintenance for TableCommon {
             .partition()
             .is_some()
             .then(|| self.read_partitions_mut().replace(vec![physical_id]));
-        let rows = self.scan_rows_with_handles_recomputed(decode_context);
+        let mut store = self.store().clone_box();
+        let rows = self.scan_rows_with_handles_recomputed(&mut *store, decode_context);
         if let Some(previous) = previous_read_partitions {
             *self.read_partitions_mut() = previous;
         }

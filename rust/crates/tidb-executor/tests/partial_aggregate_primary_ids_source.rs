@@ -204,7 +204,7 @@ fn count_over_primary() -> PushdownPartialAggregate {
 }
 
 fn capture(table: &mut TableCommon, captured: Arc<Mutex<Option<Recorded>>>) {
-    let opened = table.pushdown_partial_aggregate_cursor(
+    let opened = table.pushdown_partial_aggregate_cursor(&mut *table.store().clone_box(), 
         &[0],
         Vec::<tidb_expr::expression::Expression>::new().as_slice(),
         Option::<&[Range]>::None,

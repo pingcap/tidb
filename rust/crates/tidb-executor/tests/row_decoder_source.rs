@@ -137,7 +137,8 @@ fn assert_point_chunks(
     );
     let mut source = tidb_executor::access_path::HandleSourceExec::new_with_context(
         tidb_executor_internal_exec::ExecutorMeta::new(schema, 0, 8, 8),
-        table,
+        table.clone(),
+        table.store().clone_box(),
         rows.iter().map(|(handle, _, _)| handle.clone()).collect(),
         query_context(zone),
     );
@@ -454,7 +455,7 @@ fn restored_common_handle_value_wins_over_its_lossy_sort_key_even_when_fast_path
         .insert_row(&[Datum::new_string("abc"), Datum::Int(9)], &statement)
         .unwrap();
     let (_, stored) = table
-        .row_cursor_with_context(&RowDecodeContext::for_query(&statement))
+        .row_cursor_with_context(&mut *table.store().clone_box(), &RowDecodeContext::for_query(&statement))
         .unwrap()
         .next_row()
         .unwrap()
@@ -472,7 +473,7 @@ fn restored_common_handle_value_wins_over_its_lossy_sort_key_even_when_fast_path
         .insert_row(&[Datum::new_string("abc"), Datum::Int(10)], &statement)
         .unwrap();
     let (_, stored) = old_collation_table
-        .row_cursor_with_context(&RowDecodeContext::for_query(&statement))
+        .row_cursor_with_context(&mut *old_collation_table.store().clone_box(), &RowDecodeContext::for_query(&statement))
         .unwrap()
         .next_row()
         .unwrap()
@@ -526,7 +527,7 @@ fn projected_row_decoder_keeps_common_handle_component_positions() {
         )
         .unwrap();
     let mut cursor = table
-        .row_cursor_projected_with_context(
+        .row_cursor_projected_with_context(&mut *table.store().clone_box(), 
             Some(&[1]),
             None,
             &RowDecodeContext::for_query(&statement),
@@ -771,7 +772,7 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
     };
     table.create_index_with_context(index, &statement).unwrap();
     let handles = table
-        .scan_index_range(
+        .scan_index_range(&mut *table.store().clone_box(), 
             7,
             &tidb_ranger::types::Range {
                 low_val: vec![Datum::Int(4)],
@@ -977,13 +978,13 @@ fn legacy_generated_enum_set_cursor_preserves_members_and_declared_collation() {
                 .unwrap();
             let context = RowDecodeContext::for_query(&statement);
             let (_, row) = table
-                .row_cursor_with_context(&context)
+                .row_cursor_with_context(&mut *table.store().clone_box(), &context)
                 .unwrap()
                 .next_row()
                 .unwrap()
                 .unwrap();
             let (_, projected) = table
-                .row_cursor_projected_with_context(Some(&[1]), None, &context)
+                .row_cursor_projected_with_context(&mut *table.store().clone_box(), Some(&[1]), None, &context)
                 .unwrap()
                 .next_row()
                 .unwrap()

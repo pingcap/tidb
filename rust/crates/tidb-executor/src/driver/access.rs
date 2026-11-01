@@ -2010,7 +2010,7 @@ impl Executor for PreparedPointGetExecutor {
         let TableEntry::Kv(table) = self.table.as_ref() else {
             unreachable!("validated point table")
         };
-        let mut reader = table.point_reader();
+        let mut reader = table.point_reader(table.store().clone_box());
         let before = reader.point_rpc_counts();
         let decode_error = |error: tidb_table::tables::KvTableError| {
             ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
