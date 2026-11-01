@@ -257,7 +257,21 @@ CARGO_INCREMENTAL=0`.
     `HistoricalRead.store` while one is active, the session transaction's
     store otherwise (every `Session` is built over a node and gets it in
     `open_storage_session`).
-  - [ ] (b) about 20 executor/session library sites (admin check/recover/
+  - [x] (b) (2026-11-02, 48e83795d89 reads, 844203b0079 writes) library
+    reads go through `tidb_executor::statement_store` and writes through
+    `with_statement_store` / `WithStatementStore`; the context-taking write
+    entry points take the store (Go `AddRecord(ctx, txn, ...)`). The FK
+    read-error test now injects into the session's store
+    (`Session::set_transaction_store`). Remaining library own-store uses
+    (29, counted 2026-11-02): the snapshot-option and union-scan reader
+    calls in `physical_builder` / `access.rs` / `index_usage_reporter`,
+    `tidb_infoschema`'s per-table statement staging (fixture-only now: node
+    sessions' tables all report `has_external_statement_rollback`),
+    `cluster_session`'s template rebinding (Milestone 5), the global
+    temporary allocator swap, local-temporary TRUNCATE, and internal
+    `tables.rs` helpers. Tests: about 338 (insert_row 104, store 104,
+    with_own_store 82).
+  - [ ] (b, done above) about 20 executor/session library sites (admin check/recover/
     cleanup, foreign keys, TABLESAMPLE, the legacy `get_row_by_handle`,
     the prepared point get, physical-builder leaves, DML prefetch, ANALYZE,
     account and privilege tables) take the statement's store; several have
