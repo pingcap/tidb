@@ -108,8 +108,7 @@ fn edge_table() -> TableCommon {
         false,
     );
     table
-        .insert_row(
-            &[
+        .with_own_store(|table, store| table.insert_row(store, &[
                 Datum::Int(848250056732),
                 Datum::Int(1947761684552),
                 Datum::new_string("3"),
@@ -117,7 +116,7 @@ fn edge_table() -> TableCommon {
                 Datum::new_string("hello"),
             ],
             &tidb_exprctx::NoColumns,
-        )
+        ))
         .unwrap();
     table
 }
@@ -395,8 +394,7 @@ fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<DagRequest>>>) -> Tabl
         false,
     );
     table
-        .insert_row(
-            &[
+        .with_own_store(|table, store| table.insert_row(store, &[
                 Datum::Int(848250056732),
                 Datum::Int(1947761684552),
                 Datum::new_string("3"),
@@ -404,7 +402,7 @@ fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<DagRequest>>>) -> Tabl
                 Datum::new_string("hello"),
             ],
             &tidb_exprctx::NoColumns,
-        )
+        ))
         .unwrap();
     table
 }

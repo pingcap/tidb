@@ -132,7 +132,7 @@ mod tests {
         let mut table = TableCommon::new(42, vec![column]);
         assert!(!table.cache_storage_size_exceeds(0).unwrap());
         table
-            .insert_row(&[Datum::Int(1)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1)], &tidb_exprctx::NoColumns))
             .unwrap();
         assert!(table.cache_storage_size_exceeds(0).unwrap());
     }

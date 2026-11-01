@@ -652,9 +652,9 @@ use tidb_txnkv::Key;
                         .unwrap();
                 }
                 let old = [Datum::Int(1), Datum::Int(-1)];
-                table.insert_row(&old, &ctx).unwrap();
+                table.with_own_store(|table, store| table.insert_row(store, &old, &ctx)).unwrap();
                 table
-                    .insert_row(&[Datum::Int(2), Datum::Int(2)], &ctx)
+                    .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(2), Datum::Int(2)], &ctx))
                     .unwrap();
                 for (key, value) in buffer.snapshot() {
                     snapshot
@@ -673,7 +673,7 @@ use tidb_txnkv::Key;
                     Some((if operation == "backfill" { 2 } else { 1 }, error.clone()));
                 let candidate = [Datum::Int(3), Datum::Int(3)];
                 let result = match operation {
-                    "insert" => table.insert_row(&candidate, &ctx).map(|_| ()),
+                    "insert" => table.with_own_store(|table, store| table.insert_row(store, &candidate, &ctx)).map(|_| ()),
                     "update" | "partial_update" => table.with_own_store(|table, store| table.update_row_with_old_context(store, &TableHandle::Int(1),
                         Some(&old),
                         &[Datum::Int(1), Datum::Int(3)],

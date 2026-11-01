@@ -234,13 +234,13 @@ mod tests {
 
         // Committed half: one row above the predicate, one below.
         let committed_low = table
-            .insert_row(&[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns))
             .unwrap();
         table
-            .insert_row(&[Datum::Int(9), Datum::Int(90)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(9), Datum::Int(90)], &tidb_exprctx::NoColumns))
             .unwrap();
         let committed_moved = table
-            .insert_row(&[Datum::Int(2), Datum::Int(20)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(2), Datum::Int(20)], &tidb_exprctx::NoColumns))
             .unwrap();
         commit(&buffer, &snapshot);
         assert!(buffer.is_empty(), "nothing is staged after the commit");
@@ -251,10 +251,10 @@ mod tests {
         //   * an UPDATE that lifts a committed row across the boundary,
         //   * a DELETE of a committed row that satisfies it.
         table
-            .insert_row(&[Datum::Int(7), Datum::Int(70)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(7), Datum::Int(70)], &tidb_exprctx::NoColumns))
             .unwrap();
         table
-            .insert_row(&[Datum::Int(3), Datum::Int(30)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(3), Datum::Int(30)], &tidb_exprctx::NoColumns))
             .unwrap();
         table
             .with_own_store(|table, store| table.update_row_with_context(store, &committed_moved,
@@ -350,7 +350,7 @@ mod tests {
         let mut table = TableCommon::new(92, vec![column("a", 1), column("b", 2)]);
         for (a, b) in [(1, 10), (5, 50), (7, 70), (9, 90)] {
             table
-                .insert_row(&[Datum::Int(a), Datum::Int(b)], &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(b)], &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -407,7 +407,7 @@ mod tests {
             (Datum::Null, Datum::Int(30)),
             (Datum::Int(4), Datum::Int(40)),
         ] {
-            table.insert_row(&[a, b], &tidb_exprctx::NoColumns).unwrap();
+            table.with_own_store(|table, store| table.insert_row(store, &[a, b], &tidb_exprctx::NoColumns)).unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
@@ -472,7 +472,7 @@ mod tests {
             (Datum::Int(7), Datum::Int(7)),
             (Datum::Null, Datum::Int(1)),
         ] {
-            table.insert_row(&[a, b], &tidb_exprctx::NoColumns).unwrap();
+            table.with_own_store(|table, store| table.insert_row(store, &[a, b], &tidb_exprctx::NoColumns)).unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
@@ -534,7 +534,7 @@ mod tests {
         let mut table = TableCommon::new(95, vec![column("a", 1), column("b", 2)]);
         for a in [1_i64, 2, 3] {
             table
-                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();

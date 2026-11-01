@@ -217,10 +217,9 @@
             panic!("od is not a KV table")
         };
         Arc::make_mut(od)
-            .insert_row(
-                &[tidb_datatype::Datum::Int(1), tidb_datatype::Datum::Int(2)],
+            .with_own_store(|table, store| table.insert_row(store, &[tidb_datatype::Datum::Int(1), tidb_datatype::Datum::Int(2)],
                 &tidb_exprctx::NoColumns,
-            )
+            ))
             .unwrap();
         assert!(
             Arc::ptr_eq(&directory, &catalog.table_id_names),

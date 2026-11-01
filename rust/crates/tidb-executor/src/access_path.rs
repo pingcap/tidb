@@ -6967,7 +6967,7 @@ use std::collections::HashMap;
         ));
         for value in 1..=3 {
             table
-                .insert_row(&[Datum::Int(value)], &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(value)], &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -7047,12 +7047,11 @@ use std::collections::HashMap;
             // order alternates those keyspaces; a bare handle is insufficient.
             for (p, value, row_id) in [(0, 10, 7), (1, 20, 7), (0, 30, 8), (1, 40, 8)] {
                 table
-                    .insert_row_with_row_id(
-                        &[Datum::Int(p), Datum::Int(value)],
+                    .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(p), Datum::Int(value)],
                         Some(row_id),
                         0,
                         &crate::StmtContext::for_query(),
-                    )
+                    ))
                     .unwrap();
             }
             let schema = Schema::new(vec![
@@ -7217,12 +7216,11 @@ use std::collections::HashMap;
         );
         table.add_hidden_column(column("hidden", 2));
         table
-            .insert_row_with_row_id(
-                &[Datum::Int(7), Datum::Int(8)],
+            .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(7), Datum::Int(8)],
                 Some(7),
                 0,
                 &crate::StmtContext::for_query(),
-            )
+            ))
             .unwrap();
         let schema = tidb_expr::schema::Schema::new(vec![
             tidb_expr::column::Column::new(2, long()),
@@ -7286,10 +7284,9 @@ use std::collections::HashMap;
         }
         for i in 1..=n {
             table
-                .insert_row(
-                    &[Datum::Int(i), Datum::Int(i), Datum::Int(n - i)],
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(i), Datum::Int(i), Datum::Int(n - i)],
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -7505,12 +7502,11 @@ use std::collections::HashMap;
         );
 
         table
-            .insert_row_with_row_id(
-                &[Datum::Int(42), Datum::Int(7)],
+            .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(42), Datum::Int(7)],
                 Some(101),
                 0,
                 &crate::StmtContext::for_query(),
-            )
+            ))
             .unwrap();
         gets.store(0, Ordering::Relaxed);
         let mut output = tidb_expr::column::Column::new(2, long());
@@ -7679,12 +7675,11 @@ use std::collections::HashMap;
                             false,
                         );
                         table
-                            .insert_row_with_row_id(
-                                &[Datum::Int(42), Datum::Int(7)],
+                            .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(42), Datum::Int(7)],
                                 Some(101),
                                 0,
                                 &crate::StmtContext::for_query(),
-                            )
+                            ))
                             .unwrap();
                         gets.store(0, Ordering::Relaxed);
                         let (object, key, offsets) = match reader {
@@ -7924,12 +7919,11 @@ use std::collections::HashMap;
             false,
         );
         table
-            .insert_row_with_row_id(
-                &[Datum::Int(42), Datum::Int(7)],
+            .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(42), Datum::Int(7)],
                 Some(101),
                 0,
                 &crate::StmtContext::for_query(),
-            )
+            ))
             .unwrap();
         let mut source = IndexRangeSourceExec::new_with_context(
             ExecutorMeta::new(
@@ -8206,7 +8200,7 @@ use std::collections::HashMap;
         );
         for i in 1..=ROWS {
             table
-                .insert_row(&[Datum::Int(i)], &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(i)], &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         entries.store(0, Ordering::Relaxed);
@@ -8429,10 +8423,9 @@ use std::collections::HashMap;
             .unwrap();
         for o_id in 1..=100 {
             table
-                .insert_row(
-                    &[Datum::Int(1), Datum::Int(1), Datum::Int(o_id)],
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Int(1), Datum::Int(o_id)],
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -8503,8 +8496,7 @@ use std::collections::HashMap;
             for o_id in 1..=100 {
                 for line_number in 1..=2 {
                     table
-                        .insert_row(
-                            &[
+                        .with_own_store(|table, store| table.insert_row(store, &[
                                 Datum::Int(1),
                                 Datum::Int(d_id),
                                 Datum::Int(o_id),
@@ -8512,7 +8504,7 @@ use std::collections::HashMap;
                                 Datum::Int(o_id * 10 + line_number),
                             ],
                             &tidb_exprctx::NoColumns,
-                        )
+                        ))
                         .unwrap();
                 }
             }
@@ -8841,10 +8833,9 @@ use std::collections::HashMap;
             .unwrap();
         for (a, b, c) in [(1, 2, 20), (2, 1, 30), (3, 2, 10), (4, 1, 40)] {
             table
-                .insert_row(
-                    &[Datum::Int(a), Datum::Int(b), Datum::Int(c)],
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(b), Datum::Int(c)],
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .unwrap();
         }
         table
@@ -9028,10 +9019,9 @@ use std::collections::HashMap;
             let b = n / 4 - (handle - 1) / 4;
             let c = 4 - (handle - 1) % 4;
             table
-                .insert_row(
-                    &[Datum::Int(handle), Datum::Int(b), Datum::Int(c)],
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(handle), Datum::Int(b), Datum::Int(c)],
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .unwrap();
         }
         table

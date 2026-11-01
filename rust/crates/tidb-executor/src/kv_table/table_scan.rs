@@ -6426,7 +6426,7 @@ mod remote_cursor_tests {
             ],
         );
         table
-            .insert_row(&[Datum::Int(10), Datum::Int(20), Datum::Int(30)], &context)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(10), Datum::Int(20), Datum::Int(30)], &context))
             .unwrap();
         for (keep, expected) in [
             ([2, 0, 1], [30, 10, 20]),
@@ -8470,16 +8470,14 @@ mod remote_cursor_tests {
         );
         table.set_pk_handle_offset(0);
         table
-            .insert_row(
-                &[Datum::Int(1), Datum::Int(10)],
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Int(10)],
                 &crate::StmtContext::for_query(),
-            )
+            ))
             .unwrap();
         table
-            .insert_row(
-                &[Datum::Int(2), Datum::Int(20)],
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(2), Datum::Int(20)],
                 &crate::StmtContext::for_query(),
-            )
+            ))
             .unwrap();
         let rows = table
             .get_rows_by_handles_projected_with_context(&mut *table.store().clone_box(), 

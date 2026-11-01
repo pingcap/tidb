@@ -103,7 +103,7 @@ fn inner_table(rows: &[(i64, i64)]) -> TableCommon {
         .unwrap();
     for (a, b) in rows {
         table
-            .insert_row(&[Datum::Int(*a), Datum::Int(*b)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(*a), Datum::Int(*b)], &tidb_exprctx::NoColumns))
             .unwrap();
     }
     table
@@ -140,7 +140,7 @@ fn common_handle_table(rows: &[(i64, i64)]) -> TableCommon {
         .unwrap();
     for (a, b) in rows {
         table
-            .insert_row(&[Datum::Int(*a), Datum::Int(*b)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(*a), Datum::Int(*b)], &tidb_exprctx::NoColumns))
             .unwrap();
     }
     table
@@ -153,7 +153,7 @@ fn ddl_common_handle_table(rows: &[(i64, i64)]) -> TableCommon {
     table.set_common_handle_offsets(vec![0, 1]);
     for (a, b) in rows {
         table
-            .insert_row(&[Datum::Int(*a), Datum::Int(*b)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(*a), Datum::Int(*b)], &tidb_exprctx::NoColumns))
             .unwrap();
     }
     table
@@ -379,7 +379,7 @@ fn a_handle_probe_reads_the_row_the_key_names() {
     table.set_pk_handle_offset(0);
     for i in 1..=20i64 {
         table
-            .insert_row(&[Datum::Int(i), Datum::Int(i * 10)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(i), Datum::Int(i * 10)], &tidb_exprctx::NoColumns))
             .unwrap();
     }
     // Keys 21..25 name no row at all.
@@ -570,10 +570,9 @@ fn index_join_static_templates_preserve_tuple_identity() {
     for a in [1, 2] {
         for b in [7, 8] {
             table
-                .insert_row(
-                    &[Datum::Int(a), Datum::Int(b), Datum::Int(9)],
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(b), Datum::Int(9)],
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .unwrap();
         }
     }

@@ -8756,12 +8756,11 @@ use super::*;
         let mut table = crate::TableCommon::new(41, vec![long_column("value", 1)]);
         for (row_id, value) in [(11, 100), (13, 200)] {
             table
-                .insert_row_with_row_id(
-                    &[Datum::Int(value)],
+                .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(value)],
                     Some(row_id),
                     0,
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .expect("seed heap row");
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -8801,10 +8800,9 @@ use super::*;
         table.set_pk_handle_offset(0);
         for value in 1..=3 {
             table
-                .insert_row(
-                    &[Datum::Int(value), Datum::Int(value * 10)],
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(value), Datum::Int(value * 10)],
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .expect("seed clustered row");
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -8875,10 +8873,9 @@ use super::*;
             .expect("create unique index");
         for value in 1..=3 {
             table
-                .insert_row(
-                    &[Datum::Int(value), Datum::Int(value * 10)],
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(value), Datum::Int(value * 10)],
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .expect("seed common-handle row");
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -8923,10 +8920,9 @@ use super::*;
         table.set_pk_handle_offset(0);
         for value in 1..=3 {
             table
-                .insert_row(
-                    &[Datum::Int(value), Datum::Int(value * 10)],
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(value), Datum::Int(value * 10)],
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .expect("seed clustered row");
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -9000,10 +8996,9 @@ use super::*;
             .expect("create unique index");
         for value in 1..=3 {
             table
-                .insert_row(
-                    &[Datum::Int(value), Datum::Int(value * 10)],
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(value), Datum::Int(value * 10)],
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .expect("seed unique-index row");
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -9099,12 +9094,11 @@ use super::*;
         table.set_pk_handle_offset(0);
         for id in 1..=19 {
             table
-                .insert_row_with_row_id(
-                    &[Datum::Int(id), Datum::Int(id * 10)],
+                .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(id), Datum::Int(id * 10)],
                     None,
                     0,
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .unwrap();
         }
         table
@@ -9297,12 +9291,11 @@ use super::*;
         table.set_pk_handle_offset(0);
         for id in 1..=19 {
             table
-                .insert_row_with_row_id(
-                    &[Datum::Int(id), Datum::Int(id * 10)],
+                .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(id), Datum::Int(id * 10)],
                     None,
                     0,
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -9382,12 +9375,11 @@ use super::*;
         table.set_pk_handle_offset(0);
         for id in 1..=19 {
             table
-                .insert_row_with_row_id(
-                    &[Datum::Int(id), Datum::Int(id * 10)],
+                .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(id), Datum::Int(id * 10)],
                     None,
                     0,
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -9439,12 +9431,11 @@ use super::*;
         table.set_pk_handle_offset(0);
         for id in 1..=6 {
             table
-                .insert_row_with_row_id(
-                    &[Datum::Int(id), Datum::Int(id * 10)],
+                .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(id), Datum::Int(id * 10)],
                     None,
                     0,
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -9597,14 +9588,13 @@ use super::*;
                     .expect("create secondary index");
                 for value in 1..=4 {
                     table
-                        .insert_row_with_row_id(
-                            &[Datum::Int(value), Datum::Int(value * 10)],
+                        .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(value), Datum::Int(value * 10)],
                             // The same hidden handle in different partitions
                             // must survive dedup AND fetch the correct record.
                             (partitioned && handle_kind == "heap").then_some((value + 1) / 2),
                             0,
                             &tidb_exprctx::NoColumns,
-                        )
+                        ))
                         .expect("seed row");
                 }
                 let mut catalog = tidb_infoschema_perfschema::mock_catalog();

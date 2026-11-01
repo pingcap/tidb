@@ -452,7 +452,7 @@ fn restored_common_handle_value_wins_over_its_lossy_sort_key_even_when_fast_path
     let mut table = TableCommon::new(43, columns.clone());
     table.set_common_handle_offsets(vec![0]);
     table
-        .insert_row(&[Datum::new_string("abc"), Datum::Int(9)], &statement)
+        .with_own_store(|table, store| table.insert_row(store, &[Datum::new_string("abc"), Datum::Int(9)], &statement))
         .unwrap();
     let (_, stored) = table
         .row_cursor_with_context(&mut *table.store().clone_box(), &RowDecodeContext::for_query(&statement))
@@ -470,7 +470,7 @@ fn restored_common_handle_value_wins_over_its_lossy_sort_key_even_when_fast_path
     let mut old_collation_table = TableCommon::new(44, columns).with_new_collation_mode(false);
     old_collation_table.set_common_handle_offsets(vec![0]);
     old_collation_table
-        .insert_row(&[Datum::new_string("abc"), Datum::Int(10)], &statement)
+        .with_own_store(|table, store| table.insert_row(store, &[Datum::new_string("abc"), Datum::Int(10)], &statement))
         .unwrap();
     let (_, stored) = old_collation_table
         .row_cursor_with_context(&mut *old_collation_table.store().clone_box(), &RowDecodeContext::for_query(&statement))
@@ -521,10 +521,9 @@ fn projected_row_decoder_keeps_common_handle_component_positions() {
     let mut table = TableCommon::new(42, columns);
     table.set_common_handle_offsets(vec![0, 1]);
     table
-        .insert_row(
-            &[Datum::Int(100), Datum::new_string("abc"), Datum::Int(9)],
+        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(100), Datum::new_string("abc"), Datum::Int(9)],
             &statement,
-        )
+        ))
         .unwrap();
     let mut cursor = table
         .row_cursor_projected_with_context(&mut *table.store().clone_box(), 
@@ -737,7 +736,7 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
     let mut table = TableCommon::new(42, columns);
     let handle = table
         // Table.AddRecord consumes an already materialized mutation row.
-        .insert_row(&[Datum::Int(2), Datum::Int(3)], &statement)
+        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(2), Datum::Int(3)], &statement))
         .unwrap();
 
     // Stored reads preserve the value written under the old expression.
@@ -980,7 +979,7 @@ fn legacy_generated_enum_set_cursor_preserves_members_and_declared_collation() {
             generated.generated = Some(generated_column("source", false, &[source.clone()], &zone));
             let mut table = TableCommon::new(42, vec![source, generated]).with_new_collation_mode(mode);
             table
-                .insert_row(&[Datum::new_string("a"), Datum::Null], &statement)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::new_string("a"), Datum::Null], &statement))
                 .unwrap();
             let context = RowDecodeContext::for_query(&statement);
             let (_, row) = table

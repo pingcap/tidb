@@ -48,12 +48,11 @@ fn auto_id_owner_explicit_hidden_handle_does_not_rebase_auto_increment() {
     table.set_auto_increment_offset(0);
     table.init_auto_id_cache(1);
     table
-        .insert_row_with_row_id(
-            &[Datum::Int(1), Datum::Null],
+        .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(1), Datum::Null],
             Some(700),
             0,
             &crate::StmtContext::for_dml(false, false, false),
-        )
+        ))
         .unwrap();
     assert_eq!(table.auto_id().alloc(1, 1).unwrap(), 1);
 }
@@ -124,13 +123,13 @@ fn writable_check_constraints_guard_insert_and_update() {
         .expect("persisted CHECK expression builds");
 
     let handle = table
-        .insert_row(&[Datum::Int(1), Datum::Null], &tidb_exprctx::NoColumns)
+        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Null], &tidb_exprctx::NoColumns))
         .expect("TRUE passes CHECK");
     table
-        .insert_row(&[Datum::Null, Datum::Null], &tidb_exprctx::NoColumns)
+        .with_own_store(|table, store| table.insert_row(store, &[Datum::Null, Datum::Null], &tidb_exprctx::NoColumns))
         .expect("UNKNOWN passes CHECK");
     assert!(matches!(
-        table.insert_row(&[Datum::Int(-1), Datum::Null], &tidb_exprctx::NoColumns),
+        table.with_own_store(|table, store| table.insert_row(store, &[Datum::Int(-1), Datum::Null], &tidb_exprctx::NoColumns)),
         Err(KvTableError::Mysql(error))
             if error.equal(&tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED)
                 && error.message == "Check constraint 'positive_a' is violated."
@@ -633,10 +632,9 @@ fn update_rewrites_only_index_entries_whose_bytes_change() {
         false,
     );
     table
-        .insert_row(
-            &[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(10)],
+        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(10)],
             &tidb_exprctx::NoColumns,
-        )
+        ))
         .unwrap();
     let handle = TableHandle::Int(1);
     let before = table.with_own_store(|table, store| table.index_entries_for_check(store, 1)).unwrap();
@@ -708,10 +706,9 @@ fn row_conflicts_only_include_matching_partial_indexes() {
         .add_partial_index_condition(1, "unique_s", &condition, &SessionTimeZone::utc(), b'\\')
         .unwrap();
     table
-        .insert_row(
-            &[Datum::Int(1), Datum::Bytes(b"same".to_vec())],
+        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Bytes(b"same".to_vec())],
             &tidb_exprctx::NoColumns,
-        )
+        ))
         .unwrap();
     assert!(table
         .with_own_store(|table, store| table.row_conflicts(store, &[Datum::Int(-1), Datum::Bytes(b"same".to_vec())],
@@ -789,7 +786,7 @@ fn a_nonpublic_index_is_written_by_its_backfill_state() {
         };
         table.add_nonpublic_index(index.clone(), state, backfill);
         let row = [Datum::Int(7), Datum::Null];
-        table.insert_row(&row, &tidb_exprctx::NoColumns).unwrap();
+        table.with_own_store(|table, store| table.insert_row(store, &row, &tidb_exprctx::NoColumns)).unwrap();
         // No reader sees an index a DDL has not made public.
         assert!(table.with_own_store(|table, store| table.index_entries_for_check(store, 1)).is_err());
         let handle = table
@@ -870,10 +867,10 @@ fn test_unique_index_multiple_null_entries() {
     );
 
     table
-        .insert_row(&[Datum::Int(1), Datum::Null], &tidb_exprctx::NoColumns)
+        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Null], &tidb_exprctx::NoColumns))
         .unwrap();
     table
-        .insert_row(&[Datum::Int(2), Datum::Null], &tidb_exprctx::NoColumns)
+        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(2), Datum::Null], &tidb_exprctx::NoColumns))
         .unwrap();
     assert_eq!(
         table
@@ -940,10 +937,10 @@ fn test_iter_records() {
     );
     table.set_pk_handle_offset(0);
     table
-        .insert_row(&[Datum::Int(-1), Datum::Int(2)], &tidb_exprctx::NoColumns)
+        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(-1), Datum::Int(2)], &tidb_exprctx::NoColumns))
         .unwrap();
     table
-        .insert_row(&[Datum::Int(2), Datum::Null], &tidb_exprctx::NoColumns)
+        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(2), Datum::Null], &tidb_exprctx::NoColumns))
         .unwrap();
 
     let rows = table
@@ -972,10 +969,9 @@ fn scan_reports_the_handles_the_key_codec_wrote() {
     let mut handles = Vec::new();
     for i in 0..3 {
         handles.push(
-            t.insert_row(
-                &[Datum::Int(i * 10), Datum::Bytes(b"x".to_vec())],
+            t.with_own_store(|table, store| table.insert_row(store, &[Datum::Int(i * 10), Datum::Bytes(b"x".to_vec())],
                 &tidb_exprctx::NoColumns,
-            )
+            ))
             .unwrap(),
         );
     }
@@ -1017,19 +1013,17 @@ fn scan_reports_the_handles_the_key_codec_wrote() {
 fn scan_covers_the_whole_table_and_stops_at_its_range() {
     let mut t = test_table();
     for i in 0..3 {
-        t.insert_row(
-            &[Datum::Int(i), Datum::Bytes(b"x".to_vec())],
+        t.with_own_store(|table, store| table.insert_row(store, &[Datum::Int(i), Datum::Bytes(b"x".to_vec())],
             &tidb_exprctx::NoColumns,
-        )
+        ))
         .unwrap();
     }
     // A row of the next table id, written into the same storage layout.
     let mut neighbour = TableCommon::new(t.table_id() + 1, t.columns().to_vec());
     neighbour
-        .insert_row(
-            &[Datum::Int(99), Datum::Bytes(b"y".to_vec())],
+        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(99), Datum::Bytes(b"y".to_vec())],
             &tidb_exprctx::NoColumns,
-        )
+        ))
         .unwrap();
 
     let rows = t
@@ -1055,9 +1049,9 @@ fn insert_encodes_real_bytes_and_scan_decodes() {
     let mut t = test_table();
     let mut s1 = Datum::Null;
     s1.set_bytes(b"hello".to_vec());
-    t.insert_row(&[Datum::Int(7), s1.clone()], &tidb_exprctx::NoColumns)
+    t.with_own_store(|table, store| table.insert_row(store, &[Datum::Int(7), s1.clone()], &tidb_exprctx::NoColumns))
         .unwrap();
-    t.insert_row(&[Datum::Int(8), Datum::Null], &tidb_exprctx::NoColumns)
+    t.with_own_store(|table, store| table.insert_row(store, &[Datum::Int(8), Datum::Null], &tidb_exprctx::NoColumns))
         .unwrap();
     assert_eq!(t.len(), 2);
 
@@ -1081,7 +1075,7 @@ fn table_scan_exec_emits_chunks() {
     let mut t = test_table();
     let mut s = Datum::Null;
     s.set_bytes(b"x".to_vec());
-    t.insert_row(&[Datum::Int(1), s], &tidb_exprctx::NoColumns)
+    t.with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), s], &tidb_exprctx::NoColumns))
         .unwrap();
 
     let mut out_cols = Vec::new();
@@ -1188,13 +1182,12 @@ fn a_short_common_handle_indexes_under_the_key_the_delete_path_computes() {
         false,
     );
     let written = t
-        .insert_row(
-            &[
+        .with_own_store(|table, store| table.insert_row(store, &[
                 Datum::Decimal(tidb_datatype::Decimal::from_int(5)),
                 Datum::Int(42),
             ],
             &tidb_exprctx::NoColumns,
-        )
+        ))
         .unwrap();
     // The handle a WRITE derives from the row and the handle a READ
     // derives from the record key must be the same handle, or every

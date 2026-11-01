@@ -558,7 +558,7 @@ mod tests {
         for a in [100, 200] {
             let handle = fixture
                 .table
-                .insert_row(&[Datum::Int(a), Datum::Int(a + 10)], &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a + 10)], &tidb_exprctx::NoColumns))
                 .unwrap();
             let tidb_table::tables::TableHandle::Int(handle) = handle else {
                 unreachable!()
@@ -614,10 +614,9 @@ mod tests {
             for row in [[1, 10], [2, 20], [3, 30], [4, 40]] {
                 fixture
                     .table
-                    .insert_row(
-                        &[Datum::Int(row[0]), Datum::Int(row[1])],
+                    .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(row[0]), Datum::Int(row[1])],
                         &tidb_exprctx::NoColumns,
-                    )
+                    ))
                     .unwrap();
             }
             commit(&fixture.buffer, &fixture.snapshot);
@@ -671,10 +670,9 @@ mod tests {
             for c in 1..=4 {
                 fixture
                     .table
-                    .insert_row(
-                        &[Datum::Int(1), Datum::Int(b), Datum::Int(c), Datum::Int(10)],
+                    .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Int(b), Datum::Int(c), Datum::Int(10)],
                         &tidb_exprctx::NoColumns,
-                    )
+                    ))
                     .unwrap();
             }
         }
@@ -770,7 +768,7 @@ mod tests {
         for (a, b) in [(0, 10), (1, 20), (1_u64 << 63, 30), (u64::MAX, 40)] {
             fixture
                 .table
-                .insert_row(&[Datum::UInt(a), Datum::Int(b)], &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::UInt(a), Datum::Int(b)], &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -944,10 +942,9 @@ mod tests {
             for a in [1, 2, 3] {
                 fixture
                     .table
-                    .insert_row(
-                        &[Datum::Int(a), Datum::Null, Datum::Int(a + 20)],
+                    .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Null, Datum::Int(a + 20)],
                         &tidb_exprctx::NoColumns,
-                    )
+                    ))
                     .unwrap();
             }
             commit(&fixture.buffer, &fixture.snapshot);
@@ -1087,10 +1084,9 @@ mod tests {
                 handles.push(
                     fixture
                         .table
-                        .insert_row(
-                            &[key.clone(), Datum::Int(b), Datum::Int(b * 10)],
+                        .with_own_store(|table, store| table.insert_row(store, &[key.clone(), Datum::Int(b), Datum::Int(b * 10)],
                             &tidb_exprctx::NoColumns,
-                        )
+                        ))
                         .unwrap(),
                 );
             }
@@ -1115,10 +1111,9 @@ mod tests {
                 .unwrap();
             fixture
                 .table
-                .insert_row(
-                    &[key.clone(), Datum::Int(0), Datum::Int(0)],
+                .with_own_store(|table, store| table.insert_row(store, &[key.clone(), Datum::Int(0), Datum::Int(0)],
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .unwrap();
             let catalog = catalog_of(fixture.table);
             for (condition, expected) in [("b=1", vec![110]), ("b IN (1,4,1,99)", vec![110, 40])] {
@@ -1199,10 +1194,9 @@ mod tests {
         for row in [[1, 10], [1, 20], [2, 30]] {
             fixture
                 .table
-                .insert_row(
-                    &[Datum::Int(row[0]), Datum::Int(row[1])],
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(row[0]), Datum::Int(row[1])],
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -1230,10 +1224,9 @@ mod tests {
         for row in [[1, 10], [1, 20], [2, 30]] {
             fixture
                 .table
-                .insert_row(
-                    &[Datum::Int(row[0]), Datum::Int(row[1])],
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(row[0]), Datum::Int(row[1])],
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -1261,10 +1254,9 @@ mod tests {
         for row in [[1, 10], [1, 20], [2, 30], [3, 40]] {
             fixture
                 .table
-                .insert_row(
-                    &[Datum::Int(row[0]), Datum::Int(row[1])],
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(row[0]), Datum::Int(row[1])],
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -1355,10 +1347,9 @@ mod tests {
         for row in [[1, 10], [2, 20]] {
             fixture
                 .table
-                .insert_row(
-                    &[Datum::Int(row[0]), Datum::Int(row[1])],
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(row[0]), Datum::Int(row[1])],
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -1451,10 +1442,9 @@ mod tests {
         for row in [[1, 10], [2, 20], [3, 30]] {
             fixture
                 .table
-                .insert_row(
-                    &[Datum::Int(row[0]), Datum::Int(row[1])],
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(row[0]), Datum::Int(row[1])],
                     &tidb_exprctx::NoColumns,
-                )
+                ))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -1506,10 +1496,9 @@ mod tests {
             for row in [[1, 10], [2, 20]] {
                 fixture
                     .table
-                    .insert_row(
-                        &[Datum::Int(row[0]), Datum::Int(row[1])],
+                    .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(row[0]), Datum::Int(row[1])],
                         &tidb_exprctx::NoColumns,
-                    )
+                    ))
                     .unwrap();
             }
             commit(&fixture.buffer, &fixture.snapshot);
@@ -1557,7 +1546,7 @@ mod tests {
                 handles.push(
                     fixture
                         .table
-                        .insert_row(&row.map(Datum::Int), &tidb_exprctx::NoColumns)
+                        .with_own_store(|table, store| table.insert_row(store, &row.map(Datum::Int), &tidb_exprctx::NoColumns))
                         .unwrap(),
                 );
             }
@@ -1631,7 +1620,7 @@ mod tests {
         for row in [[1, 30, 100], [2, 20, 200], [3, 10, 300]] {
             fixture
                 .table
-                .insert_row(&row.map(Datum::Int), &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &row.map(Datum::Int), &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -1679,7 +1668,7 @@ mod tests {
         for row in [[1, 30], [2, 20], [3, 10], [4, 40]] {
             fixture
                 .table
-                .insert_row(&row.map(Datum::Int), &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &row.map(Datum::Int), &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -1766,7 +1755,7 @@ mod tests {
         for row in [[1, 30, 100], [2, 20, 200], [3, 10, 300], [4, 40, 400]] {
             fixture
                 .table
-                .insert_row(&row.map(Datum::Int), &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &row.map(Datum::Int), &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -1824,7 +1813,7 @@ mod tests {
         for row in [[1, 10], [2, 20], [3, 30]] {
             fixture
                 .table
-                .insert_row(&row.map(Datum::Int), &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &row.map(Datum::Int), &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -1890,7 +1879,7 @@ mod tests {
             for row in [[1, 30], [2, 20], [3, 10]] {
                 fixture
                     .table
-                    .insert_row(&row.map(Datum::Int), &tidb_exprctx::NoColumns)
+                    .with_own_store(|table, store| table.insert_row(store, &row.map(Datum::Int), &tidb_exprctx::NoColumns))
                     .unwrap();
             }
             commit(&fixture.buffer, &fixture.snapshot);
@@ -1949,7 +1938,7 @@ mod tests {
         let mut fixture = fixture();
         fixture
             .table
-            .insert_row(&[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns))
             .unwrap();
         commit(&fixture.buffer, &fixture.snapshot);
         let region = Arc::clone(&fixture.region);
@@ -1985,7 +1974,7 @@ mod tests {
         let mut fixture = fixture();
         fixture
             .table
-            .insert_row(&[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns))
             .unwrap();
         commit(&fixture.buffer, &fixture.snapshot);
         let region = Arc::clone(&fixture.region);
@@ -2037,7 +2026,7 @@ mod tests {
         let mut fixture = fixture();
         fixture
             .table
-            .insert_row(&[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns))
             .unwrap();
         commit(&fixture.buffer, &fixture.snapshot);
         let region = Arc::clone(&fixture.region);
@@ -2068,7 +2057,7 @@ mod tests {
         for a in 1..=100 {
             fixture
                 .table
-                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -2113,7 +2102,7 @@ mod tests {
         for a in 1..=100 {
             fixture
                 .table
-                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -2173,7 +2162,7 @@ mod tests {
         for a in 1..=100 {
             fixture
                 .table
-                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -2203,26 +2192,26 @@ mod tests {
             .store(true, Ordering::Relaxed);
         let committed_low = fixture
             .table
-            .insert_row(&[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns))
             .unwrap();
         fixture
             .table
-            .insert_row(&[Datum::Int(9), Datum::Int(90)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(9), Datum::Int(90)], &tidb_exprctx::NoColumns))
             .unwrap();
         let committed_moved = fixture
             .table
-            .insert_row(&[Datum::Int(2), Datum::Int(20)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(2), Datum::Int(20)], &tidb_exprctx::NoColumns))
             .unwrap();
         commit(&fixture.buffer, &fixture.snapshot);
 
         // One open transaction stages all four shapes.
         fixture
             .table
-            .insert_row(&[Datum::Int(7), Datum::Int(70)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(7), Datum::Int(70)], &tidb_exprctx::NoColumns))
             .unwrap();
         fixture
             .table
-            .insert_row(&[Datum::Int(3), Datum::Int(30)], &tidb_exprctx::NoColumns)
+            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(3), Datum::Int(30)], &tidb_exprctx::NoColumns))
             .unwrap();
         fixture
             .table
@@ -2278,7 +2267,7 @@ mod tests {
         for a in 1..=6 {
             fixture
                 .table
-                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -2331,7 +2320,7 @@ mod tests {
             };
             fixture
                 .table
-                .insert_row(&[Datum::Int(a), b], &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), b], &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -2381,7 +2370,7 @@ mod tests {
         for a in 1..=100 {
             fixture
                 .table
-                .insert_row(&[Datum::Int(a), Datum::Null], &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Null], &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -2443,7 +2432,7 @@ mod tests {
             };
             fixture
                 .table
-                .insert_row(&[Datum::Int(a), b], &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), b], &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -2597,7 +2586,7 @@ mod tests {
         for a in 1..=100 {
             fixture
                 .table
-                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -2678,7 +2667,7 @@ mod tests {
         for a in 1..=10 {
             fixture
                 .table
-                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -2714,7 +2703,7 @@ mod tests {
         for a in 1..=10 {
             fixture
                 .table
-                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -2792,7 +2781,7 @@ mod tests {
         for a in 1..=20 {
             fixture
                 .table
-                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
+                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);

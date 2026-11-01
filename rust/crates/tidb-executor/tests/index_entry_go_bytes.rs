@@ -222,13 +222,12 @@ fn assert_entry(name: &str, written: &Written) {
 fn a_unique_case_insensitive_entry_carries_gos_restored_data() {
     let (mut t, written) = table(vec![column(2, "s", varchar(Collation::Utf8Mb4GeneralCi))]);
     t.add_index(index(1, true, vec![0]), false);
-    t.insert_row(
-        &[Datum::new_collation_string(
+    t.with_own_store(|table, store| table.insert_row(store, &[Datum::new_collation_string(
             b"A".to_vec(),
             Collation::Utf8Mb4GeneralCi,
         )],
         &tidb_exprctx::NoColumns,
-    )
+    ))
     .unwrap();
     assert_entry("unique_general_ci_A", &written);
 }
@@ -248,8 +247,8 @@ fn one_captured_mode_drives_both_kv_index_key_and_value() {
         Collation::Utf8Mb4GeneralCi,
     )];
 
-    let legacy_handle = legacy.insert_row(&row, &tidb_exprctx::NoColumns).unwrap();
-    let modern_handle = modern.insert_row(&row, &tidb_exprctx::NoColumns).unwrap();
+    let legacy_handle = legacy.with_own_store(|table, store| table.insert_row(store, &row, &tidb_exprctx::NoColumns)).unwrap();
+    let modern_handle = modern.with_own_store(|table, store| table.insert_row(store, &row, &tidb_exprctx::NoColumns)).unwrap();
     let (legacy_key, legacy_value) = only_index_entry(&legacy_written);
     let (modern_key, modern_value) = only_index_entry(&modern_written);
 
@@ -291,13 +290,12 @@ fn one_captured_mode_drives_both_kv_index_key_and_value() {
 fn a_non_unique_case_insensitive_entry_is_not_the_bare_marker_byte() {
     let (mut t, written) = table(vec![column(2, "s", varchar(Collation::Utf8Mb4GeneralCi))]);
     t.add_index(index(1, false, vec![0]), false);
-    t.insert_row(
-        &[Datum::new_collation_string(
+    t.with_own_store(|table, store| table.insert_row(store, &[Datum::new_collation_string(
             b"A".to_vec(),
             Collation::Utf8Mb4GeneralCi,
         )],
         &tidb_exprctx::NoColumns,
-    )
+    ))
     .unwrap();
     assert_entry("non_unique_general_ci_A", &written);
 }
@@ -309,13 +307,12 @@ fn a_non_unique_case_insensitive_entry_is_not_the_bare_marker_byte() {
 fn a_bin_collation_entry_restores_the_trailing_space_its_key_trimmed() {
     let (mut t, written) = table(vec![column(2, "s", varchar(Collation::Utf8Mb4Bin))]);
     t.add_index(index(1, true, vec![0]), false);
-    t.insert_row(
-        &[Datum::new_collation_string(
+    t.with_own_store(|table, store| table.insert_row(store, &[Datum::new_collation_string(
             b"a ".to_vec(),
             Collation::Utf8Mb4Bin,
         )],
         &tidb_exprctx::NoColumns,
-    )
+    ))
     .unwrap();
     assert_entry("unique_utf8mb4_bin_a_space", &written);
 }
@@ -335,13 +332,12 @@ fn a_short_common_handle_entry_matches_gos_padded_key_and_v1_value() {
     ]);
     t.set_common_handle_offsets(vec![0]);
     t.add_index(index(2, false, vec![1]), false);
-    t.insert_row(
-        &[
+    t.with_own_store(|table, store| table.insert_row(store, &[
             Datum::Decimal(tidb_datatype::Decimal::from_int(5)),
             Datum::Int(42),
         ],
         &tidb_exprctx::NoColumns,
-    )
+    ))
     .unwrap();
     assert_entry("short_common_handle_non_unique", &written);
 }
@@ -359,13 +355,12 @@ fn a_clustered_varchar_handle_restores_itself_into_every_secondary_entry() {
     ]);
     t.set_common_handle_offsets(vec![0]);
     t.add_index(index(2, false, vec![1]), false);
-    t.insert_row(
-        &[
+    t.with_own_store(|table, store| table.insert_row(store, &[
             Datum::new_collation_string(b"Key".to_vec(), Collation::Utf8Mb4GeneralCi),
             Datum::new_collation_string(b"Val".to_vec(), Collation::Utf8Mb4GeneralCi),
         ],
         &tidb_exprctx::NoColumns,
-    )
+    ))
     .unwrap();
     assert_entry("common_handle_v1_restored", &written);
 }

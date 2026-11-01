@@ -3904,10 +3904,11 @@ impl TableCommon {
     /// exactly the bytes a TiKV-backed table would store.
     pub fn insert_row(
         &mut self,
+        store: &mut dyn TableStorage,
         row: &[Datum],
         ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<TableHandle, KvTableError> {
-        self.insert_row_with_row_id(row, None, 0, ctx)
+        self.insert_row_with_row_id(store, row, None, 0, ctx)
     }
 
     /// [`Self::insert_row`] for a statement that WROTE `_tidb_rowid`.
@@ -3924,14 +3925,13 @@ impl TableCommon {
     /// draw from it. Ignored when the table declares no shard bits.
     pub fn insert_row_with_row_id(
         &mut self,
+        store: &mut dyn TableStorage,
         row: &[Datum],
         row_id: Option<i64>,
         shard: i64,
         ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<TableHandle, KvTableError> {
-        self.with_own_store(|table, store| {
-            table.insert_row_in(store, row, row_id, shard, ctx, false, false, None, true)
-        })
+        self.insert_row_in(store, row, row_id, shard, ctx, false, false, None, true)
     }
 
     /// [`Self::insert_row_with_row_id`] for the INSERT executor, which names
