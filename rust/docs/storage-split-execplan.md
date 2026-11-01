@@ -321,6 +321,19 @@ CARGO_INCREMENTAL=0`.
   client) now read through `Session::transaction_store` inside the
   committed-snapshot scope.
 - [ ] Milestone 6: `ClusterCatalog` is gone.
+  - [x] (2026-11-02, e659cfd33ad) a schema in the image holds its `DBInfo`
+    pointer (Go `schemaTables.dbInfo`), not a reduced copy; the node
+    registers the loader's `DBInfo`; the planner shares it.
+  - [ ] the image answers `ClusterCatalog`'s reads from those pointers:
+    `schema_version`, every schema's `DBInfo` (with `deprecated_tables`, so
+    non-public tables a DDL reads stay visible, as Go loads every table),
+    `find_table` / `schema_by_name`, policies, resource groups. Counted
+    2026-11-02: `.databases` 184, `.schema_version` 174, `.find_table` 104,
+    policies / resource_groups 13 each, in 73 files (28 in `tidb-ddl`).
+  - [ ] `InfoCache` publishes the built image (folding `SessionCatalogs`
+    in) instead of `Arc<ClusterCatalog>`; readers switch.
+  - [ ] delete `ClusterCatalog` and the raw `MetaSnapshot` seam (the loader
+    reads through `tidb_meta`).
 
 ## Surprises & Discoveries
 
