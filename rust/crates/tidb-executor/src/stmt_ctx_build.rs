@@ -1518,6 +1518,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             },
             txn_temporary_tables: Arc::clone(self.txn_temporary_tables_ref()),
             temporary_table_data: self.temporary_table_data_ref().cloned(),
+            txn_store: self.txn_store(),
             retry_auto_ids: Arc::clone(&self.retry_auto_ids_ref()),
             row_id_shards: Arc::clone(&self.row_id_shards_ref()),
             planned_apply: Arc::clone(&self.planned_apply_ref()),
@@ -2212,6 +2213,8 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn staged_writes_ref(&self) -> &std::sync::Arc<tidb_kv::staged_writes::StagedWrites>;
     /// Go `TxnCtx.TemporaryTables`, read.
     fn txn_temporary_tables_ref(&self) -> &tidb_tblctx::temporary_table::TxnTemporaryTables;
+    /// Go `sctx.Txn()`: a handle on the session's store.
+    fn txn_store(&self) -> Option<Box<dyn tidb_kv::storage::TableStorage>>;
     /// Go `SessionVars.TemporaryTableData`, read.
     fn temporary_table_data_ref(&self) -> Option<&tidb_variable::temporary_table_data::SessionData>;
     /// Go `SessionVars` / `StmtCtx` state `staged_writes`, mutably.

@@ -770,9 +770,11 @@ fn snapshot_selection_retains_schema_and_rolls_back_effective_ts_on_failure() {
         }
         Ok(historical.clone())
     }));
-    session.set_historical_read_provider(Arc::new(|_, _, schema| {
+    let store = session.transaction_store().expect("a node session has a store");
+    session.set_historical_read_provider(Arc::new(move |_, _, schema| {
         Ok(HistoricalRead {
             catalog: schema.expect("read must use the SET-time schema").clone(),
+            store: store.clone(),
             timestamp_hold: Arc::new(()),
         })
     }));
@@ -845,9 +847,11 @@ fn snapshot_provider_batch_preserves_transaction_writes_and_timestamp() {
         session.run("INSERT INTO sp_batch VALUES (1,10)").unwrap();
         let historical = session.shared_catalog().lock().unwrap().clone();
         session.set_snapshot_schema_provider(Arc::new(move |_, _, _| Ok(historical.clone())));
-        session.set_historical_read_provider(Arc::new(|ts, _, schema| {
+        let store = session.transaction_store().expect("a node session has a store");
+        session.set_historical_read_provider(Arc::new(move |ts, _, schema| {
             Ok(HistoricalRead {
                 catalog: schema.unwrap().clone(),
+                store: store.clone(),
                 timestamp_hold: Arc::new(tidb_txnkv::ACTIVE_START_TS.hold(ts)),
             })
         }));
@@ -890,9 +894,11 @@ fn snapshot_provider_batch_result_close_preserves_outer_transaction_and_cursor_p
         .unwrap();
     let historical = session.shared_catalog().lock().unwrap().clone();
     session.set_snapshot_schema_provider(Arc::new(move |_, _, _| Ok(historical.clone())));
-    session.set_historical_read_provider(Arc::new(|ts, _, schema| {
+    let store = session.transaction_store().expect("a node session has a store");
+    session.set_historical_read_provider(Arc::new(move |ts, _, schema| {
         Ok(HistoricalRead {
             catalog: schema.unwrap().clone(),
+            store: store.clone(),
             timestamp_hold: Arc::new(tidb_txnkv::ACTIVE_START_TS.hold(ts)),
         })
     }));

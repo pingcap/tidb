@@ -299,6 +299,7 @@ impl DomainSessions for Domain {
                 );
                 Ok(crate::HistoricalRead {
                     catalog,
+                    store: Box::new(historical_storage.clone()),
                     timestamp_hold: hold,
                 })
             }));

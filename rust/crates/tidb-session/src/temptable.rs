@@ -100,6 +100,18 @@ impl tidb_temptable::TemporaryTableContext for Session {
 }
 
 impl Session {
+    /// Go `sctx.Txn()` for the running statement: a stale read's historical
+    /// store while one is active, the session transaction's otherwise.
+    pub(crate) fn transaction_store(&self) -> Option<Box<dyn tidb_kv::storage::TableStorage>> {
+        if let Some((_, read)) = &self.statement_snapshot {
+            return Some(read.store.clone());
+        }
+        if let Some((_, read)) = self.txn_ctx.as_ref().and_then(|ctx| ctx.stale.as_ref()) {
+            return Some(read.store.clone());
+        }
+        self.temporary.txn_store.clone()
+    }
+
     /// Binds the session's transaction store (Go `sctx.Txn()`), which its
     /// temporary tables write through like every other table.
     pub fn set_temporary_txn_store(&mut self, store: Box<dyn tidb_kv::storage::TableStorage>) {

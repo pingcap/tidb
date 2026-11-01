@@ -38,6 +38,9 @@ use crate::{Session, SessionTxnMode};
 /// A persisted schema image and the storage authority's retained timestamp guard.
 pub struct HistoricalRead {
     pub catalog: SessionExtendedInfoSchema,
+    /// Go's stale-read `sctx.Txn()`: the store the historical catalog's
+    /// tables read through.
+    pub store: Box<dyn tidb_kv::storage::TableStorage>,
     pub timestamp_hold: std::sync::Arc<dyn Send + Sync>,
 }
 
@@ -69,7 +72,7 @@ pub(crate) struct TxnCtx {
     /// Go `StalenessTxnContextProvider`: the as-of timestamp, which is also
     /// the transaction's `StartTS`, and the historical schema and timestamp
     /// hold every statement of the transaction reads (`TxnCtx.InfoSchema`).
-    stale: Option<(u64, HistoricalRead)>,
+    pub(crate) stale: Option<(u64, HistoricalRead)>,
     /// The transaction's savepoint stack, oldest first -- Go
     /// `TxnCtx.Savepoints` (`pkg/sessionctx/variable/session.go`).
     savepoints: tidb_variable::savepoints::SavepointStack<Savepoint>,

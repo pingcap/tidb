@@ -233,6 +233,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &self.txn_temporary_tables
     }
 
+    fn txn_store(&self) -> Option<Box<dyn tidb_kv::storage::TableStorage>> {
+        self.transaction_store()
+    }
+
     fn temporary_table_data_ref(&self) -> Option<&tidb_variable::temporary_table_data::SessionData> {
         self.temporary_table_data.as_ref()
     }

@@ -435,6 +435,9 @@ pub struct StmtContextSessionState {
     pub txn_temporary_tables: tidb_tblctx::temporary_table::TxnTemporaryTables,
     /// Go `SessionVars.TemporaryTableData`.
     pub temporary_table_data: Option<tidb_variable::temporary_table_data::SessionData>,
+    /// Go `sctx.Txn()`: the store every table of the session reads and
+    /// writes through. `None` for a statement no session runs.
+    pub txn_store: Option<Box<dyn tidb_kv::storage::TableStorage>>,
     /// Retry ID history retained across attempts.
     pub retry_auto_ids: Arc<Mutex<RetryAutoIds>>,
     /// Session row-ID shard generator.
@@ -506,6 +509,7 @@ impl Default for StmtContextSessionState {
             staged_writes: Arc::default(),
             txn_temporary_tables: Arc::default(),
             temporary_table_data: None,
+            txn_store: None,
             retry_auto_ids: Arc::default(),
             row_id_shards: Arc::default(),
             planned_apply: Arc::default(),
@@ -845,6 +849,8 @@ pub struct StmtContextData {
     txn_temporary_tables: tidb_tblctx::temporary_table::TxnTemporaryTables,
     /// Go `SessionVars.TemporaryTableData`.
     temporary_table_data: Option<tidb_variable::temporary_table_data::SessionData>,
+    /// Go `sctx.Txn()`, see [`StmtContextSessionState::txn_store`].
+    txn_store: Option<Box<dyn tidb_kv::storage::TableStorage>>,
     /// Go `StmtCtx.InsertID`: the explicit value a row gave the
     /// `AUTO_INCREMENT` column, which the OK packet falls back to.
     given_insert_id: Arc<AtomicU64>,
@@ -2620,6 +2626,7 @@ impl StmtContext {
             staged_writes: session.staged_writes,
             txn_temporary_tables: session.txn_temporary_tables,
             temporary_table_data: session.temporary_table_data,
+            txn_store: session.txn_store,
             given_insert_id: Arc::default(),
             retry_auto_ids: session.retry_auto_ids,
             row_id_shards: session.row_id_shards,
@@ -5279,6 +5286,13 @@ impl StmtContext {
     #[must_use]
     pub fn staged_writes(&self) -> &tidb_kv::staged_writes::StagedWrites {
         &self.staged_writes
+    }
+
+    /// Go `sctx.Txn()`: a handle on the store the session's tables read and
+    /// write through; `None` for a statement no session runs.
+    #[must_use]
+    pub fn txn_store(&self) -> Option<Box<dyn tidb_kv::storage::TableStorage>> {
+        self.txn_store.clone()
     }
 
     /// The shared handle behind [`Self::staged_writes`], for a coprocessor
