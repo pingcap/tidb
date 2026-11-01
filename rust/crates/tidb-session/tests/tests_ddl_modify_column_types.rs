@@ -25,7 +25,6 @@
 
 use crate::support::testkit::TestKit;
 use tidb_infoschema::TableEntry;
-use tidb_table::kv_table::KvColumn;
 
 // Go `modify_column_test.go::TestModifyColumnBetweenStringTypes`: same-family
 // shrinks succeed and keep values, shrinking below an existing value answers
@@ -380,7 +379,7 @@ fn clustered_handle_integer_type_changes_are_refused() {
 }
 
 /// Go `external.GetModifyColumn(t, tk, "test", table, column, false)`.
-fn column_of(tk: &TestKit, table: &str, column: &str) -> KvColumn {
+fn column_of(tk: &TestKit, table: &str, column: &str) -> tidb_table::column::Column {
     let TableEntry::Kv(table) = tk.get_table_by_name("test", table) else {
         panic!("table {table} is not a KV table");
     };

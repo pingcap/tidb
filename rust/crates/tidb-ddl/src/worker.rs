@@ -49,7 +49,7 @@ use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_infoschema_isvalidator::SchemaValidator;
 use tidb_kv::cluster_storage::ClusterSnapshot;
 use tidb_store_driver_txn::cluster_storage::{ClusterTableStorage, MutationBuffer};
-use tidb_table::kv_table::RowDecodeContext;
+use tidb_table::tables::RowDecodeContext;
 use tidb_pd_client::EtcdClient;
 
 use crate::real_tikv_ddl::cluster_ddl_error;
@@ -2849,7 +2849,7 @@ where
 
 /// The index backfill, performed by the very code an `INSERT` uses.
 ///
-/// `KvTable::create_index_with_context` expresses Go's reorg step: it walks
+/// `TableCommon::create_index_with_context` expresses Go's reorg step: it walks
 /// the table's rows, computes each entry from the row, and refuses a UNIQUE
 /// index whose existing rows already collide -- leaving the table without the
 /// index, which is what TiDB answers too. Nothing about it is
@@ -2865,7 +2865,7 @@ struct DdlTransactionAutoIds {
     storage: ClusterTableStorage,
 }
 
-use tidb_table::kv_table::TableAutoId;
+use tidb_table::tables::TableAutoId;
 
 impl tidb_table::table_from_meta::TableAutoIds for DdlTransactionAutoIds {
     fn allocator_for(&self, db_id: i64, table: &tidb_model::TableInfo) -> TableAutoId {
@@ -3269,7 +3269,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
             .map_err(exchange_validation_internal)?;
         probe.enable_cache().map_err(|error| {
             let error = match error {
-                tidb_table::kv_table::KvTableError::Mysql(error) => error,
+                tidb_table::tables::KvTableError::Mysql(error) => error,
                 other => tidb_terror::MysqlError::unknown(format!(
                     "cache table size check failed: {other:?}"
                 )),
@@ -3348,7 +3348,7 @@ fn exchange_validation_internal(message: String) -> LockSqlError {
 }
 
 /// Preserve the shared table/expression error identity through DDL rollback.
-fn backfill_failure(error: tidb_table::kv_table::KvTableError) -> LockSqlError {
+fn backfill_failure(error: tidb_table::tables::KvTableError) -> LockSqlError {
     let error = tidb_ddl_build::table_backfill::index_backfill_error(error);
     LockSqlError::from(error)
 }

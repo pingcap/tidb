@@ -97,11 +97,11 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.hypo_tiflash_replicas
     }
 
-    fn local_temporary_tables_ref(&self) -> &Vec<(String, String, tidb_table::kv_table::KvTable)> {
+    fn local_temporary_tables_ref(&self) -> &Vec<(String, String, tidb_table::tables::TableCommon)> {
         &self.local_temporary_tables
     }
 
-    fn local_temporary_tables_mut(&mut self) -> &mut Vec<(String, String, tidb_table::kv_table::KvTable)> {
+    fn local_temporary_tables_mut(&mut self) -> &mut Vec<(String, String, tidb_table::tables::TableCommon)> {
         &mut self.local_temporary_tables
     }
 

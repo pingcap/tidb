@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `ANALYZE TABLE` over the IN-PROCESS catalog: a [`KvTable`]'s own rows in,
+//! `ANALYZE TABLE` over the IN-PROCESS catalog: a [`TableCommon`]'s own rows in,
 //! the [`Table`] the planner reads out.
 //!
 //! Everything that decides a NUMBER is [`super`]'s, shared with the cluster
 //! tier. This file is only the two translations either side of it: a
-//! `KvTable`'s columns and indexes into an [`AnalyzePlan`], and the built
+//! `TableCommon`'s columns and indexes into an [`AnalyzePlan`], and the built
 //! histograms into the map `EXPLAIN` estimates from. That split is the
 //! shared computation requires the same materialized sample layout and values
 //! from both tiers; schema projection and virtual-column evaluation belong to
@@ -52,14 +52,14 @@ use crate::analyze::{
     AnalyzeError, AnalyzeOptions, AnalyzePlan, AnalyzeRun, AnalyzedColumn, AnalyzedHistogram,
     AnalyzedIndex,
 };
-use tidb_table::kv_table::RowDecodeContext;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::RowDecodeContext;
+use tidb_table::tables::TableCommon;
 
 /// Go `handleutil.IsSpecialGlobalIndex`: these indexes cannot be rebuilt from
 /// the ordinary column sample and therefore own an independent ordered index
 /// task.
 #[must_use]
-pub fn is_special_global_index(table: &KvTable, index: &tidb_table::kv_table::KvIndex) -> bool {
+pub fn is_special_global_index(table: &TableCommon, index: &tidb_table::tables::Index) -> bool {
     index.read().global
         && index
             .column_offsets
@@ -88,7 +88,7 @@ pub fn is_special_global_index(table: &KvTable, index: &tidb_table::kv_table::Kv
 /// The table is taken by `&mut` only because reading its rows drains a
 /// cursor; nothing here writes to it.
 pub fn analyze_kv_table(
-    table: &mut KvTable,
+    table: &mut TableCommon,
     options: &AnalyzeOptions,
     realtime_count: Option<i64>,
     ctx: &crate::StmtContext,
@@ -98,7 +98,7 @@ pub fn analyze_kv_table(
 
 /// Runs ANALYZE over the selected column IDs. `None` means all columns.
 pub fn analyze_kv_table_columns(
-    table: &mut KvTable,
+    table: &mut TableCommon,
     options: &AnalyzeOptions,
     realtime_count: Option<i64>,
     ctx: &crate::StmtContext,
@@ -161,7 +161,7 @@ pub fn analyze_kv_table_columns(
 /// analyzed empty table as a real (not pseudo) cache object; only the
 /// planner's per-query copy turns pseudo because its realtime count is zero.
 fn analyzed_table(
-    table: &KvTable,
+    table: &TableCommon,
     realtime_count: i64,
     columns: BTreeMap<i64, tidb_stats::column::Column>,
     indexes: BTreeMap<i64, tidb_stats::index::Index>,
@@ -186,7 +186,7 @@ fn analyzed_table(
 /// essential for prefix and virtual-generated indexes: reconstructing their
 /// keys from a table-row sample is not the same operation.
 pub fn analyze_kv_table_independent_index(
-    table: &mut KvTable,
+    table: &mut TableCommon,
     index_id: i64,
     options: &AnalyzeOptions,
 ) -> Result<Table, AnalyzeError> {
@@ -322,7 +322,7 @@ fn index_statistics(
 
 /// Which columns and indexes an `ANALYZE` of this in-process table covers.
 fn kv_analyze_plan(
-    table: &KvTable,
+    table: &TableCommon,
     context: &RowDecodeContext,
     selected_column_ids: Option<&HashSet<i64>>,
 ) -> Result<(AnalyzePlan, Vec<usize>, Vec<usize>), AnalyzeError> {
@@ -403,17 +403,17 @@ fn kv_analyze_plan(
 
 /// Applies Go statistics `UniqueBySchema` to the in-process public catalog.
 #[must_use]
-pub fn unique_by_schema(table: &KvTable, is_index: bool, id: i64) -> bool {
+pub fn unique_by_schema(table: &TableCommon, is_index: bool, id: i64) -> bool {
     schema_unique_item(table, is_index, id, false)
 }
 
 /// Applies Go globalstats `isLocalUnique` to the same catalog representation.
 #[must_use]
-pub fn is_local_unique(table: &KvTable, is_index: bool, id: i64) -> bool {
+pub fn is_local_unique(table: &TableCommon, is_index: bool, id: i64) -> bool {
     schema_unique_item(table, is_index, id, true)
 }
 
-fn schema_unique_item(table: &KvTable, is_index: bool, id: i64, local_only: bool) -> bool {
+fn schema_unique_item(table: &TableCommon, is_index: bool, id: i64, local_only: bool) -> bool {
     table.indexes().iter().any(|index| {
         if local_only && index.read().global {
             return false;

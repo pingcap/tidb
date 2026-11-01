@@ -76,11 +76,11 @@ fn varstr() -> FieldType {
     FieldType::new(FieldTypeCode::VarString)
 }
 
-fn test_table() -> KvTable {
-    KvTable::new(
+fn test_table() -> TableCommon {
+    TableCommon::new(
         42,
         vec![
-            KvColumn {
+            tidb_table::column::Column {
                 info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("a"),
@@ -93,7 +93,7 @@ fn test_table() -> KvTable {
                 default_value: None,
                 origin_default: None,
             },
-            KvColumn {
+            tidb_table::column::Column {
                 info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 2,
                     name: tidb_ast::CiString::new("s"),
@@ -349,7 +349,7 @@ fn test_extract_columns_from_condition() {
 
 /// Go delete-range cleanup uses key ownership, even if the base row is
 /// absent or its generated value can no longer be evaluated.
-/// The planner reads a table's Go `TableInfo` (`KvTable::meta`), so every
+/// The planner reads a table's Go `TableInfo` (`TableCommon::meta`), so every
 /// column and index mutator keeps it as Go's DDL leaves it: an added column
 /// is appended behind a hidden one unless placed (`LocateOffsetToMove`), a
 /// dropped column leaves and renumbers the offsets (`MoveColumnInfo`), an
@@ -357,7 +357,7 @@ fn test_extract_columns_from_condition() {
 /// is the PRIMARY KEY over `PriKeyFlag` columns.
 #[test]
 fn column_and_index_mutators_keep_the_table_info_in_step() {
-    let column = |name: &str, id: i64| KvColumn {
+    let column = |name: &str, id: i64| tidb_table::column::Column {
         info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
             id: id,
             name: tidb_ast::CiString::new(name.to_owned()),
@@ -370,7 +370,7 @@ fn column_and_index_mutators_keep_the_table_info_in_step() {
         default_value: None,
         origin_default: None,
     };
-    let layout = |table: &KvTable| {
+    let layout = |table: &TableCommon| {
         table
             .meta()
             .read()
@@ -400,7 +400,7 @@ fn column_and_index_mutators_keep_the_table_info_in_step() {
     assert!(table.is_hidden(3));
 
     table.add_index(
-        KvIndex {
+        Index {
             info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 9,
                 name: tidb_ast::CiString::new("iz"),
@@ -456,9 +456,9 @@ fn column_and_index_mutators_keep_the_table_info_in_step() {
 
 #[test]
 fn drop_index_removes_orphan_entries_without_decoding_rows() {
-    let mut table = KvTable::new(42, Vec::new());
+    let mut table = TableCommon::new(42, Vec::new());
     table.add_index(
-        KvIndex {
+        Index {
             info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 1,
                 name: tidb_ast::CiString::new("retired"),
@@ -493,7 +493,7 @@ fn drop_index_removes_orphan_entries_without_decoding_rows() {
 fn drop_index_covers_all_partition_ranges_and_global_ownership() {
     use tidb_table::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
     for global in [false, true] {
-        let mut table = KvTable::new(42, Vec::new());
+        let mut table = TableCommon::new(42, Vec::new());
         *table.partition_mut() = Some(Box::new(PartitionSpec {
             kind: PartitionKind::Hash,
             expr_text: "0".to_owned(),
@@ -514,7 +514,7 @@ fn drop_index_covers_all_partition_ranges_and_global_ownership() {
         }));
         table.restrict_read_to_partitions(&[43]);
         table.add_index(
-            KvIndex {
+            Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("retired"),
@@ -566,10 +566,10 @@ fn update_rewrites_only_index_entries_whose_bytes_change() {
     // the entry byte-for-byte as it was (and stage no index write at
     // all), while an update that changes an indexed column must move the
     // entry to its new key.
-    let mut table = KvTable::new(
+    let mut table = TableCommon::new(
         42,
         vec![
-            KvColumn {
+            tidb_table::column::Column {
                 info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("a"),
@@ -582,7 +582,7 @@ fn update_rewrites_only_index_entries_whose_bytes_change() {
                 default_value: None,
                 origin_default: None,
             },
-            KvColumn {
+            tidb_table::column::Column {
                 info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 2,
                     name: tidb_ast::CiString::new("s"),
@@ -595,7 +595,7 @@ fn update_rewrites_only_index_entries_whose_bytes_change() {
                 default_value: None,
                 origin_default: None,
             },
-            KvColumn {
+            tidb_table::column::Column {
                 info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 3,
                     name: tidb_ast::CiString::new("x"),
@@ -612,7 +612,7 @@ fn update_rewrites_only_index_entries_whose_bytes_change() {
     );
     table.set_pk_handle_offset(0);
     table.add_index(
-        KvIndex {
+        Index {
             info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 1,
                 name: tidb_ast::CiString::new("s"),
@@ -684,7 +684,7 @@ fn row_conflicts_only_include_matching_partial_indexes() {
     table.set_name("partial_conflicts");
     table.set_pk_handle_offset(0);
     table.add_index(
-        KvIndex {
+        Index {
             info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 1,
                 name: tidb_ast::CiString::new("unique_s"),
@@ -772,7 +772,7 @@ fn a_nonpublic_index_is_written_by_its_backfill_state() {
         ),
     ] {
         let mut table = test_table();
-        let index = KvIndex {
+        let index = Index {
             info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 1,
                 name: tidb_ast::CiString::new("ua"),
@@ -851,7 +851,7 @@ fn test_unique_index_multiple_null_entries() {
     let mut table = test_table();
     table.set_pk_handle_offset(0);
     table.add_index(
-        KvIndex {
+        Index {
             info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 1,
                 name: tidb_ast::CiString::new("s"),
@@ -896,9 +896,9 @@ fn test_table_from_meta_with_collate_uses_fixed_mode() {
     // TestTableFromMetaWithCollateUsesFixedMode. The table captures the
     // supplied persisted mode instead of consulting process-global state.
     for use_new_collation in [false, true] {
-        let table = KvTable::with_storage_and_collation(
+        let table = TableCommon::with_storage_and_collation(
             1,
-            vec![KvColumn {
+            vec![tidb_table::column::Column {
                 info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("a"),
@@ -923,12 +923,12 @@ fn test_iter_records() {
     // Direct port of pkg/table/tables/tables_test.go::TestIterRecords.
     // Record iteration crosses the signed-handle ordering boundary and
     // preserves NULL in a non-handle column.
-    let mut table = KvTable::new(
+    let mut table = TableCommon::new(
         42,
         ["a", "b"]
             .into_iter()
             .enumerate()
-            .map(|(offset, name)| KvColumn {
+            .map(|(offset, name)| tidb_table::column::Column {
                 info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: offset as i64 + 1,
                     name: tidb_ast::CiString::new(name.to_owned()),
@@ -1031,7 +1031,7 @@ fn scan_covers_the_whole_table_and_stops_at_its_range() {
         .unwrap();
     }
     // A row of the next table id, written into the same storage layout.
-    let mut neighbour = KvTable::new(t.table_id() + 1, t.columns().to_vec());
+    let mut neighbour = TableCommon::new(t.table_id() + 1, t.columns().to_vec());
     neighbour
         .insert_row(
             &[Datum::Int(99), Datum::Bytes(b"y".to_vec())],
@@ -1139,10 +1139,10 @@ fn a_short_common_handle_indexes_under_the_key_the_delete_path_computes() {
     let mut decimal_type = FieldType::new(FieldTypeCode::NewDecimal);
     decimal_type.set_flen(4);
     decimal_type.set_decimal(0);
-    let mut t = KvTable::new(
+    let mut t = TableCommon::new(
         77,
         vec![
-            KvColumn {
+            tidb_table::column::Column {
                 info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("pk"),
@@ -1155,7 +1155,7 @@ fn a_short_common_handle_indexes_under_the_key_the_delete_path_computes() {
                 default_value: None,
                 origin_default: None,
             },
-            KvColumn {
+            tidb_table::column::Column {
                 info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 2,
                     name: tidb_ast::CiString::new("v"),
@@ -1172,7 +1172,7 @@ fn a_short_common_handle_indexes_under_the_key_the_delete_path_computes() {
     );
     t.set_common_handle_offsets(vec![0]);
     t.add_index(
-        KvIndex {
+        Index {
             info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 1,
                 name: tidb_ast::CiString::new("idx"),

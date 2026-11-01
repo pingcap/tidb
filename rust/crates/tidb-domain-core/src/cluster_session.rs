@@ -41,7 +41,7 @@ use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_stats_handle_syncload::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_store_driver_txn::cluster_storage::ClusterTableStorage;
 use tidb_infoschema::{Catalog, ViewDef};
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 use tidb_kv::storage::TableStorage;
 #[cfg(test)]
 use tidb_model::GoShared;
@@ -123,7 +123,7 @@ impl tidb_stats_handle::StatisticsSource for SnapshotStatisticsSource {
     }
 }
 
-/// One schema version's worth of fully built [`KvTable`]s, reused by every
+/// One schema version's worth of fully built [`TableCommon`]s, reused by every
 /// session opened against it.
 ///
 /// Building a loaded table means materializing every column's owned name,
@@ -134,7 +134,7 @@ impl tidb_stats_handle::StatisticsSource for SnapshotStatisticsSource {
 /// hold pointers; this cache is that single build. The cached tables are
 /// never executed: a session CLONES its table (columns/indexes are already
 /// `Arc`-shared) and swaps in its own storage seam through
-/// [`KvTable::replace_storage`], so staging stays session-private exactly as
+/// [`TableCommon::replace_storage`], so staging stays session-private exactly as
 /// before.
 ///
 /// The set belongs to ONE schema version; [`KvTableTemplates::reuse`] drops
@@ -142,7 +142,7 @@ impl tidb_stats_handle::StatisticsSource for SnapshotStatisticsSource {
 #[derive(Default)]
 pub struct KvTableTemplates {
     schema_version: i64,
-    tables: std::collections::HashMap<(String, String), KvTable>,
+    tables: std::collections::HashMap<(String, String), TableCommon>,
 }
 
 impl KvTableTemplates {
@@ -155,11 +155,11 @@ impl KvTableTemplates {
         }
     }
 
-    fn get(&self, schema: &str, name: &str) -> Option<&KvTable> {
+    fn get(&self, schema: &str, name: &str) -> Option<&TableCommon> {
         self.tables.get(&(schema.to_owned(), name.to_owned()))
     }
 
-    fn insert(&mut self, schema: &str, name: &str, table: KvTable) {
+    fn insert(&mut self, schema: &str, name: &str, table: TableCommon) {
         self.tables
             .insert((schema.to_owned(), name.to_owned()), table);
     }
@@ -199,11 +199,11 @@ pub fn cluster_session_catalog_with_templates(
         // created without its own charset inherits. An unrecognised stored
         // name falls back to the server default rather than refusing the
         // whole database.
-        let charset = tidb_table::kv_table::TableCharset {
+        let charset = tidb_table::tables::TableCharset {
             charset: tidb_charset::Charset::from_name(&database.info.charset)
-                .unwrap_or(tidb_table::kv_table::TableCharset::default().charset),
+                .unwrap_or(tidb_table::tables::TableCharset::default().charset),
             collation: tidb_charset::Collation::from_name(&database.info.collate)
-                .unwrap_or(tidb_table::kv_table::TableCharset::default().collation),
+                .unwrap_or(tidb_table::tables::TableCharset::default().collation),
         };
         catalog.register_database_with_id_and_charset(&schema, database.info.id, charset);
         // Go `DBInfo.PlacementPolicyRef`: the schema default a table created
@@ -911,7 +911,7 @@ use tidb_table::table_from_meta::kv_index;
                 loaded.stored_raw_value(&key(5, copy)).is_some(),
                 "{state:?} new copy"
             );
-            let moved = tidb_table::kv_table::TableHandle::Int(5);
+            let moved = tidb_table::tables::TableHandle::Int(5);
             loaded
                 .delete_row_with_context(&moved, &ctx)
                 .expect("the delete succeeds");

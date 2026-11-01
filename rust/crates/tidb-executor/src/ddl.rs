@@ -226,7 +226,7 @@ mod tests {
     use tidb_datatype::Datum;
     use tidb_charset::Charset;
 use tidb_charset::Collation;
-    use tidb_table::kv_table::TableCharset;
+    use tidb_table::tables::TableCharset;
 
     /// CREATE TABLE -> INSERT -> SELECT, all from SQL strings, with rows as
     /// real TiKV-format bytes and metadata as tidb-model structs.
@@ -264,9 +264,9 @@ use tidb_charset::Collation;
     }
 
     /// An index's visibility is stated by the DDL and read by the planner off
-    /// `KvIndex::visible` -- one fact, two places. Every statement that
+    /// `Index::visible` -- one fact, two places. Every statement that
     /// creates an index resolves it at the single point that builds the
-    /// `KvIndex`, so an `INVISIBLE` key is maintained (it is in `indexes()`)
+    /// `Index`, so an `INVISIBLE` key is maintained (it is in `indexes()`)
     /// and hidden from every access path (it is not in `plan_indexes()`),
     /// which is Go's rule. Hardcoding `visible: true` -- as all three sites
     /// did -- made the planner new_row_sample_collector an index Go never chooses. The

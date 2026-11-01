@@ -22,7 +22,7 @@ use tidb_datatype::{Datum, FieldTypeFlags};
 /// (`statsTbl.GetCol(col.ID).NDV`, 0 without them).
 pub fn show_index_rows(
     table_name: &str,
-    table: &crate::KvTable,
+    table: &crate::TableCommon,
     column_ndv: impl Fn(i64) -> i64,
 ) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();

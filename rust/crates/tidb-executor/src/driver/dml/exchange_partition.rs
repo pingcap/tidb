@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use tidb_datatype::Datum;
 
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 use crate::{Catalog, DriverError, TableEntry};
 
 /// The other table of an ongoing EXCHANGE PARTITION, resolved from the
@@ -31,13 +31,13 @@ use crate::{Catalog, DriverError, TableEntry};
 pub(crate) enum ExchangePartitionCheck {
     /// The written table is the standalone one.
     Standalone {
-        partitioned: Arc<KvTable>,
+        partitioned: Arc<TableCommon>,
         partition_id: i64,
         standalone_id: i64,
     },
     /// The written table is the partitioned one.
     Partitioned {
-        standalone: Arc<KvTable>,
+        standalone: Arc<TableCommon>,
         partition_id: i64,
     },
 }
@@ -124,7 +124,7 @@ impl ExchangePartitionCheck {
     /// table `table` writes into the exchanged partition.
     pub(crate) fn check_constraint_for_exchange_partition(
         &self,
-        table: &KvTable,
+        table: &TableCommon,
         row: &[Datum],
         ctx: &crate::StmtContext,
     ) -> Result<(), DriverError> {

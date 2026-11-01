@@ -1908,7 +1908,7 @@ pub fn reload_partition_spec_from_meta_json(
     names: &[String],
     types: &[FieldType],
 ) -> Option<Result<PartitionSpec, MysqlError>> {
-    use tidb_table::kv_table::table_meta::go_json_text_round_trip;
+    use tidb_table::tables::table_meta::go_json_text_round_trip;
     let reloaded = |text: &str| {
         let mut text = text.to_owned();
         go_json_text_round_trip(&mut text);

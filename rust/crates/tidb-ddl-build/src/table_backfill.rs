@@ -26,9 +26,9 @@ use std::collections::HashMap;
 
 use tidb_txnkv::Key;
 
-use tidb_table::kv_table::index_entries::{convert_handle, duplicate_value_text};
-use tidb_table::kv_table::row_decoder::RowDecoder;
-use tidb_table::kv_table::{KvIndex, KvTable, KvTableError, RowDecodeContext, TableHandle};
+use tidb_table::tables::index_entries::{convert_handle, duplicate_value_text};
+use tidb_table::tables::row_decoder::RowDecoder;
+use tidb_table::tables::{Index, TableCommon, KvTableError, RowDecodeContext, TableHandle};
 
 /// Go `TempIndexKeyTypeMerge`: a double write made after the backfill.
 const TEMP_INDEX_KEY_TYPE_MERGE: u8 = b'm';
@@ -41,7 +41,7 @@ pub use crate::backfilling::ReorgBatch;
 /// The decoder Go's `fetchRowColVals` decodes a batch's records with: every
 /// column of the table's current shape.
 pub(crate) fn reorg_row_decoder(
-    table: &KvTable,
+    table: &TableCommon,
     context: &RowDecodeContext,
 ) -> Result<RowDecoder, KvTableError> {
     RowDecoder::for_table_read(
@@ -61,7 +61,7 @@ fn key_next(key: &[u8]) -> Vec<u8> {
     next
 }
 
-/// Go's DDL backfill (`addIndexTxnWorker.BackfillData`, the column and temp-index workers) over a [`KvTable`].
+/// Go's DDL backfill (`addIndexTxnWorker.BackfillData`, the column and temp-index workers) over a [`TableCommon`].
 pub trait KvTableBackfill {
     /// Go `getTableRange`: the first record key of `physical_id` and the key
     /// past its largest handle, at this storage's snapshot. `None` for an
@@ -139,7 +139,7 @@ pub trait KvTableBackfill {
 
     /// Go `ExtractKeyExistsErrFromIndex`'s value text: the index key's
     /// values.
-    fn duplicate_text_of_key(&self, index: &KvIndex, key: &[u8]) -> String;
+    fn duplicate_text_of_key(&self, index: &Index, key: &[u8]) -> String;
 
     /// Go `updateColumnWorker.BackfillData`: one batch of a MODIFY COLUMN's
     /// row rewrite over `[start, end)`. Each row not yet carrying the
@@ -163,7 +163,7 @@ pub trait KvTableBackfill {
     ) -> Result<ReorgBatch, KvTableError>;
 }
 
-impl KvTableBackfill for KvTable {
+impl KvTableBackfill for TableCommon {
     fn physical_record_range(
         &mut self,
         physical_id: i64,
@@ -581,7 +581,7 @@ impl KvTableBackfill for KvTable {
         tidb_tablecodec::table_key::encode_row_key_with_handle(physical_id, &handle)
     }
 
-    fn duplicate_text_of_key(&self, index: &KvIndex, key: &[u8]) -> String {
+    fn duplicate_text_of_key(&self, index: &Index, key: &[u8]) -> String {
         tidb_tablecodec::cut_index_key(key, index.column_offsets.len())
             .ok()
             .map(|(values, _)| {
@@ -589,7 +589,7 @@ impl KvTableBackfill for KvTable {
                     .iter()
                     .map(|encoded| {
                         tidb_codec::decode_one(encoded)
-                            .map(|(_, datum)| tidb_table::kv_table::datum_text(&datum))
+                            .map(|(_, datum)| tidb_table::tables::datum_text(&datum))
                             .unwrap_or_default()
                     })
                     .collect::<Vec<_>>()
@@ -675,7 +675,7 @@ impl KvTableBackfill for KvTable {
         // Go `null` -> NOT NULL TIMESTAMP: the current timestamp stands in.
         let substitute = (self.columns()[old_offset].read().field_type.code()
             != tidb_datatype::FieldTypeCode::Timestamp)
-            .then(|| tidb_table::kv_table::null_timestamp_substitute(&target.read().field_type, cast_context))
+            .then(|| tidb_table::tables::null_timestamp_substitute(&target.read().field_type, cast_context))
             .flatten();
         let flags = cast_context.reorg_default_conversion_flags();
         let statement_warnings = cast_context.take_warnings();

@@ -30,7 +30,7 @@ use tidb_datatype::{
     Datum, FieldType, FieldTypeCode, STRICT_INTEGER_DISPLAY_WIDTH, UNSPECIFIED_LENGTH,
 };
 use tidb_privilege::PrivilegeTypeExt;
-use crate::{Catalog, KvTable, TableEntry};
+use crate::{Catalog, TableCommon, TableEntry};
 
 use tidb_infoschema::infoschema_meta::INFORMATION_SCHEMA;
 
@@ -1750,7 +1750,7 @@ fn views_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum
 /// Go `GetShardingInfo` (`pkg/infoschema/tables.go`): the AUTO_RANDOM branch
 /// prints the shard bit count (with a RANGE BITS suffix only when the range
 /// bits are non-default), then SHARD_BITS, then the two NOT_SHARDED forms.
-fn sharding_info(table: &KvTable) -> String {
+fn sharding_info(table: &TableCommon) -> String {
     if let Some(spec) = table.auto_random() {
         let mut info = format!("PK_AUTO_RANDOM_BITS={}", spec.shard_bits);
         if spec.range_bits != 0 && spec.range_bits != 64 {
@@ -1767,7 +1767,7 @@ fn sharding_info(table: &KvTable) -> String {
 }
 
 /// Go `TIDB_PK_TYPE`: how the primary key is stored.
-fn pk_type(table: &KvTable) -> String {
+fn pk_type(table: &TableCommon) -> String {
     if table.pk_handle_offset().is_some() || !table.common_handle_offsets().is_empty() {
         "CLUSTERED".to_owned()
     } else {
@@ -1777,7 +1777,7 @@ fn pk_type(table: &KvTable) -> String {
 
 /// Go `information_schema.tables.CREATE_OPTIONS`: partitioning takes
 /// precedence, otherwise an enabled table cache is reported as `cached=on`.
-fn table_create_options(table: &KvTable) -> &'static str {
+fn table_create_options(table: &TableCommon) -> &'static str {
     if table.partition().is_some() {
         "partitioned"
     } else if table.is_cached() {
@@ -1853,10 +1853,10 @@ fn columns_rows(
 fn column_row(
     schema: &str,
     table_name: &str,
-    table: &KvTable,
+    table: &TableCommon,
     ordinal: usize,
     offset: usize,
-    column: &crate::KvColumn,
+    column: &tidb_table::column::Column,
     privileges: &str,
     ctx: &crate::StmtContext,
 ) -> Vec<Datum> {

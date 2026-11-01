@@ -35,9 +35,8 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_charset::Collation;
 use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use tidb_ranger::types::Range;
-use tidb_table::kv_table::KvColumn;
-use tidb_table::kv_table::KvIndex;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::Index;
+use tidb_table::tables::TableCommon;
 use tidb_txnkv::Key;
 
 const FIXTURE: &str =
@@ -127,24 +126,24 @@ impl TableStorage for Mirror {
 
 type Written = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
 
-fn table(columns: Vec<KvColumn>) -> (KvTable, Written) {
+fn table(columns: Vec<tidb_table::column::Column>) -> (TableCommon, Written) {
     table_with_collation(columns, true)
 }
 
-fn table_with_collation(columns: Vec<KvColumn>, use_new_collation: bool) -> (KvTable, Written) {
+fn table_with_collation(columns: Vec<tidb_table::column::Column>, use_new_collation: bool) -> (TableCommon, Written) {
     let written: Written = Arc::new(Mutex::new(BTreeMap::new()));
     let store = Mirror {
         inner: MemTableStorage::new(),
         written: Arc::clone(&written),
     };
     (
-        KvTable::with_storage_and_collation(TABLE_ID, columns, Box::new(store), use_new_collation),
+        TableCommon::with_storage_and_collation(TABLE_ID, columns, Box::new(store), use_new_collation),
         written,
     )
 }
 
-fn column(id: i64, name: &str, field_type: FieldType) -> KvColumn {
-    KvColumn {
+fn column(id: i64, name: &str, field_type: FieldType) -> tidb_table::column::Column {
+    tidb_table::column::Column {
         info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
             id: id,
             name: tidb_ast::CiString::new(name.to_owned()),
@@ -165,9 +164,9 @@ fn varchar(collation: Collation) -> FieldType {
     field_type
 }
 
-fn index(id: i64, unique: bool, offsets: Vec<usize>) -> KvIndex {
+fn index(id: i64, unique: bool, offsets: Vec<usize>) -> Index {
     let prefix_lengths = vec![WHOLE_COLUMN; offsets.len()];
-    KvIndex {
+    Index {
         info: tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: id,
             name: tidb_ast::CiString::new("idx"),

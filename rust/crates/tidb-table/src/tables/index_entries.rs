@@ -40,7 +40,7 @@ use tidb_txnkv::{AssertionOp, Key};
 use tidb_datatype::UNSPECIFIED_LENGTH;
 use tidb_kv::storage::{StorageError, TableStorage};
 
-use super::{datum_text, KvIndex, KvTable, KvTableError, TableHandle};
+use super::{datum_text, Index, TableCommon, KvTableError, TableHandle};
 
 pub struct IndexEntryForCheck {
     pub key: Vec<u8>,
@@ -52,7 +52,7 @@ pub struct IndexEntryForCheck {
 }
 
 /// One entry key a row files under one index (see
-/// [`KvTable::index_entry_keys`]).
+/// [`TableCommon::index_entry_keys`]).
 pub struct IndexEntryKey {
     pub key: Vec<u8>,
     pub distinct: bool,
@@ -103,7 +103,7 @@ impl UniquePointRead {
     }
 }
 
-impl KvTable {
+impl TableCommon {
     /// Record and unique-index writes share Go's Get/GetLocal duplicate check.
     /// Returns whether a local miss deferred the absence check (Go setPresume /
     /// lazyCheck). A tombstone is an observed deletion and sets no presumption.
@@ -196,7 +196,7 @@ impl KvTable {
             self.record_physical_ids()
         };
         for physical_id in physical_ids {
-            let (low, high) = crate::kv_table::index_key_bounds(physical_id, index_id);
+            let (low, high) = crate::tables::index_key_bounds(physical_id, index_id);
             let mut iterator = self
                 .store
                 .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(high)))
@@ -229,7 +229,7 @@ impl KvTable {
 
     pub fn index_entry_values_for_check(
         &self,
-        index: &KvIndex,
+        index: &Index,
         key: &[u8],
         value: &[u8],
         zone: &SessionTimeZone,
@@ -245,7 +245,7 @@ impl KvTable {
             .map_err(|error| KvTableError::Decode(format!("{error:?}")))
     }
 
-    pub fn index_values_for_check(&self, index: &KvIndex, row: &[Datum]) -> Vec<Datum> {
+    pub fn index_values_for_check(&self, index: &Index, row: &[Datum]) -> Vec<Datum> {
         self.index_values(index, row)
     }
 
@@ -281,7 +281,7 @@ impl KvTable {
     /// because two rows sharing it produce one key. Captured from real TiDB:
     /// with `unique key uidx(a(3))` holding `'abcdef'`, inserting `'abcxyz'`
     /// is rejected.
-    pub fn index_values(&self, index: &KvIndex, row: &[Datum]) -> Vec<Datum> {
+    pub fn index_values(&self, index: &Index, row: &[Datum]) -> Vec<Datum> {
         index
             .column_offsets
             .iter()
@@ -310,7 +310,7 @@ impl KvTable {
     /// Go `IndexInfo.MVIndex`: whether one of `index`'s key parts is a
     /// multi-valued (`CAST(... AS ... ARRAY)`) hidden column. Go's DDL sets
     /// the flag from exactly this test (`buildIndexColumns`).
-    pub fn is_mv_index(&self, index: &KvIndex) -> bool {
+    pub fn is_mv_index(&self, index: &Index) -> bool {
         index.column_offsets.iter().any(|offset| {
             self.write_column(*offset)
                 .is_some_and(|column| column.read().field_type.is_array())
@@ -324,7 +324,7 @@ impl KvTable {
     /// NULL when the array is NULL, and nothing for an empty array.
     pub fn get_indexed_value(
         &self,
-        index: &KvIndex,
+        index: &Index,
         values: Vec<Datum>,
     ) -> Result<Vec<Vec<Datum>>, KvTableError> {
         if !self.is_mv_index(index) {
@@ -385,7 +385,7 @@ impl KvTable {
     /// the key) and never collides.
     pub fn index_entry_keys(
         &self,
-        index: &KvIndex,
+        index: &Index,
         row: &[Datum],
         handle: &TableHandle,
         physical_id: i64,
@@ -411,7 +411,7 @@ impl KvTable {
     /// the split point.
     pub fn split_index_key(
         &self,
-        index: &KvIndex,
+        index: &Index,
         values: Vec<Datum>,
         physical_id: i64,
         zone: &SessionTimeZone,
@@ -429,7 +429,7 @@ impl KvTable {
     /// Go `GenIndexKey` over one value tuple.
     fn index_key_of_values(
         &self,
-        index: &KvIndex,
+        index: &Index,
         mut values: Vec<Datum>,
         handle: &TableHandle,
         physical_id: i64,
@@ -529,7 +529,7 @@ impl KvTable {
     }
 
     /// The `tidb-tablecodec` view of one of this table's indexes.
-    pub(crate) fn codec_index_info(&self, index: &KvIndex) -> CodecIndexInfo {
+    pub(crate) fn codec_index_info(&self, index: &Index) -> CodecIndexInfo {
         CodecIndexInfo {
             id: index.read().id,
             columns: index
@@ -554,7 +554,7 @@ impl KvTable {
 
     /// Go `tables.NeedRestoredData`: whether ANY of `index`'s key parts stores
     /// a column whose new-collation sort key loses the original bytes.
-    fn index_needs_restored_data(&self, index: &KvIndex) -> bool {
+    fn index_needs_restored_data(&self, index: &Index) -> bool {
         index
             .column_offsets
             .iter()
@@ -611,7 +611,7 @@ impl KvTable {
     /// data.
     pub fn gen_index_value(
         &self,
-        index: &KvIndex,
+        index: &Index,
         values: &[Datum],
         row: &[Datum],
         handle: &TableHandle,
@@ -636,7 +636,7 @@ impl KvTable {
     /// without changing and which the commit then drops.
     fn index_entry_value_marked(
         &self,
-        index: &KvIndex,
+        index: &Index,
         values: &[Datum],
         row: &[Datum],
         handle: &TableHandle,
@@ -729,7 +729,7 @@ impl KvTable {
     #[allow(clippy::too_many_arguments)]
     pub fn create_index_entries(
         &mut self,
-        index: &KvIndex,
+        index: &Index,
         row: &[Datum],
         handle: &TableHandle,
         physical_id: i64,
@@ -789,7 +789,7 @@ impl KvTable {
     /// un-commit flag").
     fn write_untouched_index_entries(
         &mut self,
-        index: &KvIndex,
+        index: &Index,
         row: &[Datum],
         handle: &TableHandle,
         physical_id: i64,
@@ -822,7 +822,7 @@ impl KvTable {
     /// filed.
     fn remove_index_entries(
         &mut self,
-        index: &KvIndex,
+        index: &Index,
         row: &[Datum],
         handle: &TableHandle,
         physical_id: i64,
@@ -1340,7 +1340,7 @@ pub fn convert_handle(handle: &tidb_txnkv::Handle) -> TableHandle {
 }
 
 pub fn index_entry_handle(
-    index: &KvIndex,
+    index: &Index,
     key: &[u8],
     value: &[u8],
     common: bool,

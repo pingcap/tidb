@@ -313,7 +313,7 @@ impl Session {
     ///
     /// The count must not touch the storage seam: iterating keys shows up in
     /// the storage-op counters the plan-cache tests measure statements by.
-    /// `KvTable::len` is a stored size, and every row writes exactly one
+    /// `TableCommon::len` is a stored size, and every row writes exactly one
     /// record key plus one key per index (NULLs are indexed), so more keys
     /// than one row's worth means a second row exists.
     fn has_global_binding_rows(&mut self) -> bool {

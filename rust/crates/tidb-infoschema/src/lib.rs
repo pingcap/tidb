@@ -26,9 +26,9 @@ use tidb_table::sequence::SequenceDef;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tidb_datatype::FieldType;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 use tidb_driver_error::DriverError;
-use tidb_table::kv_table::TableCharset;
+use tidb_table::tables::TableCharset;
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
@@ -451,7 +451,7 @@ pub enum TableEntry {
     /// in place with no clone at all, and one still shared with another
     /// transaction's snapshot forks away first, exactly as before this
     /// change.
-    Kv(std::sync::Arc<KvTable>),
+    Kv(std::sync::Arc<TableCommon>),
     /// A view: a stored `SELECT` rather than stored rows.
     View(ViewDef),
     /// A sequence: a counter rather than rows. It lives in the TABLE
@@ -591,7 +591,7 @@ impl Catalog {
     ///
     /// # Panics
     /// As [`Catalog::register`].
-    pub fn register_kv(&mut self, name: &str, table: KvTable) {
+    pub fn register_kv(&mut self, name: &str, table: TableCommon) {
         self.bump_metadata_version();
         self.register_in(DEFAULT_DATABASE, name, TableEntry::Kv(Arc::new(table)))
             .expect("the default database exists in a freshly built catalog");
@@ -1007,7 +1007,7 @@ impl Catalog {
 
     /// Every table carrying a `TableInfo.Lock`, with its schema name -- Go
     /// `ListTablesWithSpecialAttribute(TableLockAttribute)`.
-    pub fn locked_tables(&self) -> impl Iterator<Item = (&str, &crate::KvTable)> {
+    pub fn locked_tables(&self) -> impl Iterator<Item = (&str, &crate::TableCommon)> {
         self.table_entries()
             .filter(|_| self.schema.table_locks_present)
             .filter_map(|(schema, _, entry)| match entry {
@@ -1158,7 +1158,7 @@ impl Catalog {
     /// the statement's InfoSchema. The cached Rust physical tree owns the
     /// same stable ID, so executor construction must not recover the table by
     /// walking SQL names or aliases again.
-    pub fn kv_table_by_id(&self, table_id: i64) -> Option<&crate::KvTable> {
+    pub fn kv_table_by_id(&self, table_id: i64) -> Option<&crate::TableCommon> {
         self.kv_table_by_physical_id(table_id)
             .map(|(_, table)| table)
             .filter(|table| table.table_id() == table_id)
@@ -1172,7 +1172,7 @@ impl Catalog {
     pub fn kv_table_by_physical_id(
         &self,
         physical_id: i64,
-    ) -> Option<(&str, &Arc<crate::KvTable>)> {
+    ) -> Option<(&str, &Arc<crate::TableCommon>)> {
         let local = self.local_temporary.iter().find_map(|(key, entry)| match entry.as_ref() {
             TableEntry::Kv(table) if table.table_id() == physical_id => {
                 Some((key.database.as_str(), table))
@@ -1227,10 +1227,10 @@ impl Catalog {
     /// The common, unpartitioned case (`physical_id == table.table_id`,
     /// every table in most schemas) returns a cheap `Arc::clone` of the
     /// table already sitting in this transaction's own catalog view --
-    /// no `KvTable` clone at all, so no `staged_record_keys` deep copy
+    /// no `TableCommon` clone at all, so no `staged_record_keys` deep copy
     /// either. Only the partitioned branch pays `Arc::make_mut`'s clone,
     /// since restricting reads to one partition needs an independent copy.
-    pub fn physical_kv_table_by_id(&self, physical_id: i64) -> Option<Arc<crate::KvTable>> {
+    pub fn physical_kv_table_by_id(&self, physical_id: i64) -> Option<Arc<crate::TableCommon>> {
         let (_, table) = self.kv_table_by_physical_id(physical_id)?;
         let mut physical = Arc::clone(table);
         if table.table_id() != physical_id {
@@ -1283,7 +1283,7 @@ impl Catalog {
         &mut self,
         database: &str,
         name: &str,
-        table: KvTable,
+        table: TableCommon,
     ) -> Result<(), DriverError> {
         self.bump_metadata_version();
         self.register_in(database, name, TableEntry::Kv(Arc::new(table)))

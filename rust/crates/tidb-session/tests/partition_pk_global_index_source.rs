@@ -23,7 +23,7 @@ use tidb_infoschema::TableEntry;
 /// Go `db_partition_test.go:3872::checkGlobalAndPK`: `indexes` count,
 /// `PKIsHandle`, `IsCommonHandle`, and — when an index exists — the PRIMARY
 /// entry's `Global` flag and `Primary` flag. The tier's equivalents are
-/// `KvTable::pk_handle_offset`/`common_handle_offsets` and the `KvIndex`
+/// `TableCommon::pk_handle_offset`/`common_handle_offsets` and the `Index`
 /// fields; `Global` is false on every index this tier can build, and a
 /// nonclustered PRIMARY is identified by name exactly as Go names it.
 fn check_global_and_pk(tk: &TestKit, name: &str, indexes: usize, pk_is_handle: bool, is_common_handle: bool, global: bool) {

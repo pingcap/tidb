@@ -38,7 +38,7 @@
 //!   property of the caller rather than an accident of the storage.
 //!
 //! Because both halves are `Arc` handles, [`TableStorage::clone_box`] clones
-//! *handles*: two `KvTable` copies of the same session see each other's staged
+//! *handles*: two `TableCommon` copies of the same session see each other's staged
 //! writes, as two `table.Table` handles of one Go transaction do. That is the
 //! divergence [`tidb_kv::storage`] reserved for the real backend.
 //!
@@ -46,7 +46,7 @@
 //!
 //! * An unbounded [`iter`](TableStorage::iter) range. In-process, `None` means
 //!   "to the end of the map"; against a cluster it would mean scanning every
-//!   region of the keyspace. Both of `KvTable`'s scan sites pass a bounded
+//!   region of the keyspace. Both of `TableCommon`'s scan sites pass a bounded
 //!   range, so refusing costs nothing and keeps a mistake loud.
 //! * [`clear`](TableStorage::clear) (TRUNCATE). TiKV performs it as a new
 //!   table id plus an unsafe-destroy-range, not as "empty the container".
@@ -819,7 +819,7 @@ impl TableStorage for MemBufferStorage {
 /// every statement boundary.
 ///
 /// A [`ClusterTableStorage`] fixes its snapshot handle at construction, and a
-/// catalog of `KvTable`s is built once per connection -- but "one statement,
+/// catalog of `TableCommon`s is built once per connection -- but "one statement,
 /// one `start_ts`" requires a different transaction for every statement. Both
 /// hold at once when the handle every table shares is this slot: the session
 /// binds a fresh snapshot before a statement and takes it back afterwards, and

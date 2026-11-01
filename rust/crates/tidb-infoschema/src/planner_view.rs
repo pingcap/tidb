@@ -559,7 +559,7 @@ fn memory_column(
 /// The planner's `SourceTable` for a stored table of the schema `db_name`
 /// (Go's `TableInfo` as `buildDataSource` reads it).
 fn kv_source_table(
-    table: &crate::KvTable,
+    table: &crate::TableCommon,
     db_name: &str,
     resolve_db_info: tidb_model::GoShared<tidb_model::DBInfo>,
 ) -> crate::table_source::SourceTable {

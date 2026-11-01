@@ -32,9 +32,8 @@ use tidb_expr::schema::Schema;
 use crate::access_path::{IndexJoinLookupExec, LookupObject, LookupProbePart};
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_executor_join::join::{IndexLookupPlan, JoinExec, JoinKind};
-use tidb_table::kv_table::KvTable;
-use tidb_table::kv_table::KvIndex;
-use tidb_table::kv_table::KvColumn;
+use tidb_table::tables::TableCommon;
+use tidb_table::tables::Index;
 use crate::mem_table::MemTableSourceExec;
 
 const INIT_CAP: usize = 32;
@@ -44,8 +43,8 @@ fn long() -> FieldType {
     FieldType::new(FieldTypeCode::LongLong)
 }
 
-fn column(name: &str, id: i64) -> KvColumn {
-    KvColumn {
+fn column(name: &str, id: i64) -> tidb_table::column::Column {
+    tidb_table::column::Column {
         info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
             id: id,
             name: tidb_ast::CiString::new(name.to_owned()),
@@ -77,11 +76,11 @@ fn schema_of(width: usize) -> Schema {
 /// `b` is deliberately NOT unique: an outer key that matches several inner
 /// rows is the case a probe that stopped at the first entry, or a lookup map
 /// that kept one row per key, would answer wrongly.
-fn inner_table(rows: &[(i64, i64)]) -> KvTable {
-    let mut table = KvTable::new(91, vec![column("a", 1), column("b", 2)]);
+fn inner_table(rows: &[(i64, i64)]) -> TableCommon {
+    let mut table = TableCommon::new(91, vec![column("a", 1), column("b", 2)]);
     table
         .create_index_with_context(
-            KvIndex {
+            Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("ib"),
@@ -112,12 +111,12 @@ fn inner_table(rows: &[(i64, i64)]) -> KvTable {
 }
 
 /// `inner(a, b)` clustered by the composite primary key `(a, b)`.
-fn common_handle_table(rows: &[(i64, i64)]) -> KvTable {
-    let mut table = KvTable::new(94, vec![column("a", 1), column("b", 2)]);
+fn common_handle_table(rows: &[(i64, i64)]) -> TableCommon {
+    let mut table = TableCommon::new(94, vec![column("a", 1), column("b", 2)]);
     table.set_common_handle_offsets(vec![0, 1]);
     table
         .create_index_with_context(
-            KvIndex {
+            Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("PRIMARY"),
@@ -151,8 +150,8 @@ fn common_handle_table(rows: &[(i64, i64)]) -> KvTable {
 
 /// The DDL representation of a clustered common handle: the PRIMARY is the
 /// table path itself and is therefore absent from the secondary-index list.
-fn ddl_common_handle_table(rows: &[(i64, i64)]) -> KvTable {
-    let mut table = KvTable::new(95, vec![column("a", 1), column("b", 2)]);
+fn ddl_common_handle_table(rows: &[(i64, i64)]) -> TableCommon {
+    let mut table = TableCommon::new(95, vec![column("a", 1), column("b", 2)]);
     table.set_common_handle_offsets(vec![0, 1]);
     for (a, b) in rows {
         table
@@ -175,7 +174,7 @@ fn outer_source(rows: &[Vec<Datum>]) -> Box<dyn Executor> {
 }
 
 /// A whole-table scan of `table`, which is what the hash strategy reads.
-fn scan_of(table: &KvTable, width: usize) -> Box<dyn Executor> {
+fn scan_of(table: &TableCommon, width: usize) -> Box<dyn Executor> {
     Box::new(crate::kv_table::TableScanExec::new_with_context(
         ExecutorMeta::new(schema_of(width), 0, INIT_CAP, CHUNK),
         table.clone(),
@@ -184,7 +183,7 @@ fn scan_of(table: &KvTable, width: usize) -> Box<dyn Executor> {
     ))
 }
 
-fn lookup_source(table: &KvTable, object: LookupObject, width: usize) -> IndexJoinLookupExec {
+fn lookup_source(table: &TableCommon, object: LookupObject, width: usize) -> IndexJoinLookupExec {
     IndexJoinLookupExec::new_with_context(
         ExecutorMeta::new(schema_of(width), 0, INIT_CAP, CHUNK),
         table.clone(),
@@ -235,7 +234,7 @@ fn drain(exec: &mut dyn Executor, types: &[FieldType]) -> Vec<Vec<Datum>> {
 fn both_ways(
     kind: JoinKind,
     outer_rows: &[Vec<Datum>],
-    table: &KvTable,
+    table: &TableCommon,
     object: LookupObject,
     outer_key: usize,
     inner_key: usize,
@@ -376,7 +375,7 @@ fn a_null_outer_key_matches_nothing() {
 /// answer is still the hash join's.
 #[test]
 fn a_handle_probe_reads_the_row_the_key_names() {
-    let mut table = KvTable::new(92, vec![column("a", 1), column("b", 2)]);
+    let mut table = TableCommon::new(92, vec![column("a", 1), column("b", 2)]);
     table.set_pk_handle_offset(0);
     for i in 1..=20i64 {
         table
@@ -566,7 +565,7 @@ fn one_key_repeated_across_a_batch_is_probed_once() {
 /// ranger tuple; static columns from different tuples must not be mixed.
 #[test]
 fn index_join_static_templates_preserve_tuple_identity() {
-    let mut table = KvTable::new(95, vec![column("a", 1), column("b", 2), column("c", 3)]);
+    let mut table = TableCommon::new(95, vec![column("a", 1), column("b", 2), column("c", 3)]);
     table.set_common_handle_offsets(vec![0, 1, 2]);
     for a in [1, 2] {
         for b in [7, 8] {

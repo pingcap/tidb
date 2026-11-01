@@ -23,7 +23,7 @@ use std::sync::Arc;
 use crate::analyze::exec::AnalyzeExec;
 use tidb_stats_handle_storage::json::parse_stats_json;
 use tidb_stats_util::JsonTable;
-use crate::{DriverError, KvTable, TableEntry};
+use crate::{DriverError, TableCommon, TableEntry};
 use tidb_hack::go_to_lower;
 
 /// The physical tables a `FLUSH STATS_DELTA` dumps.
@@ -185,7 +185,7 @@ pub trait StatsExec: AnalyzeExec {
     fn resolve_drop_stats(
         &mut self,
         stmt: &tidb_ast::DropStatsStmt,
-    ) -> Result<(Vec<Arc<KvTable>>, Vec<i64>), DriverError> {
+    ) -> Result<(Vec<Arc<TableCommon>>, Vec<i64>), DriverError> {
         let mut tables = Vec::with_capacity(stmt.tables.len());
         for path in &stmt.tables {
             let (database, name) = match path.as_slice() {
@@ -291,7 +291,7 @@ pub fn parse_load_stats_dump(data: &[u8]) -> Result<Option<JsonTable>, DriverErr
 /// Go `GetPhysicalIDsAndPartitionNames`' ids: a partition name matches by
 /// its lower-case form (`def.Name.L == name.L`).
 pub fn get_physical_ids_and_partition_names(
-    table: &KvTable,
+    table: &TableCommon,
     partition_names: &[String],
 ) -> Result<Vec<i64>, DriverError> {
     let Some(partition) = table.partition() else {

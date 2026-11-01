@@ -165,16 +165,15 @@ fn insert_then_select_round_trip() {
 /// values), not a value matrix.
 #[test]
 fn sql_round_trips_through_real_tikv_bytes() {
-    use tidb_table::kv_table::KvTable;
-    use tidb_table::kv_table::KvColumn;
+    use tidb_table::tables::TableCommon;
     use tidb_datatype::FieldTypeCode;
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     catalog.register_kv(
         "kt",
-        KvTable::new(
+        TableCommon::new(
             77,
             vec![
-                KvColumn {
+                tidb_table::column::Column {
                     info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("a"),
@@ -187,7 +186,7 @@ fn sql_round_trips_through_real_tikv_bytes() {
                     default_value: None,
                     origin_default: None,
                 },
-                KvColumn {
+                tidb_table::column::Column {
                     info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                         id: 2,
                         name: tidb_ast::CiString::new("b"),

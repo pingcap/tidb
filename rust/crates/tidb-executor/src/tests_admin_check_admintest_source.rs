@@ -20,7 +20,7 @@
 //! and the `tidb_enable_fast_table_check` session variable, corrupting index
 //! entries with `tables.NewIndex(...).Create/Delete` on a raw txn. This tier
 //! corrupts through the equivalent raw-key seam
-//! ([`crate::kv_table::KvTable::delete_raw_key_for_test`] and a crafted
+//! ([`crate::kv_table::TableCommon::delete_raw_key_for_test`] and a crafted
 //! `storage.set` of `encode_handle_in_unique_index_value`), which leaves the
 //! store byte-identical to a half-applied write; `tidb_enable_fast_table_check`
 //! has no Rust variable to set, so both Go fast-check settings map to the one
@@ -45,7 +45,7 @@ fn insert(catalog: &mut Catalog, sql: &str) {
         .unwrap_or_else(|error| panic!("insert {sql:?} failed: {error:?}"));
 }
 
-fn kv_table_of(catalog: &Catalog, name: &str) -> tidb_table::kv_table::KvTable {
+fn kv_table_of(catalog: &Catalog, name: &str) -> tidb_table::tables::TableCommon {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", name) else {
         panic!("table {name} is not stored as bytes");
     };
@@ -115,7 +115,7 @@ fn admin_check_detects_generated_column_index_value_corruption() {
         .expect("old entry dropped");
     let mut storage = table.swap_storage(Box::new(tidb_kv::storage::MemTableStorage::default()));
     let crafted_handle = tidb_txnkv::Handle::Int(tidb_txnkv::IntHandle::new(match handle {
-        tidb_table::kv_table::TableHandle::Int(value) => *value,
+        tidb_table::tables::TableHandle::Int(value) => *value,
         other => panic!("unexpected handle {other:?}"),
     }));
     storage

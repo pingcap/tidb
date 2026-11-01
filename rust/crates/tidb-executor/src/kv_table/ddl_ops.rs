@@ -18,7 +18,7 @@
 
 use super::*;
 
-/// Go's DDL work over a [`KvTable`] (`modify_column.go`'s row conversion and check, the reload from metadata), above the table layer.
+/// Go's DDL work over a [`TableCommon`] (`modify_column.go`'s row conversion and check, the reload from metadata), above the table layer.
 pub trait KvTableDdl {
 
     /// Creates an index over the existing rows, which Go backfills as part of
@@ -26,20 +26,20 @@ pub trait KvTableDdl {
     /// rejected with the duplicate it found, leaving the table unchanged.
     fn create_index_with_context(
         &mut self,
-        index: KvIndex,
+        index: Index,
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError>;
 
     fn create_index_in(
         &mut self,
-        index: KvIndex,
+        index: Index,
         ctx: &dyn tidb_exprctx::Columns,
         decode_context: &RowDecodeContext,
     ) -> Result<usize, KvTableError>;
 
     fn backfill_index(
         &mut self,
-        index: KvIndex,
+        index: Index,
         ctx: &dyn tidb_exprctx::Columns,
         decode_context: &RowDecodeContext,
     ) -> Result<usize, KvTableError>;
@@ -63,10 +63,10 @@ pub trait KvTableDdl {
 
 }
 
-impl KvTableDdl for KvTable {
+impl KvTableDdl for TableCommon {
     fn create_index_with_context(
         &mut self,
-        index: KvIndex,
+        index: Index,
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
         self.create_index_in(index, ctx, &RowDecodeContext::for_ddl(ctx))
@@ -75,7 +75,7 @@ impl KvTableDdl for KvTable {
 
     fn create_index_in(
         &mut self,
-        index: KvIndex,
+        index: Index,
         ctx: &dyn tidb_exprctx::Columns,
         decode_context: &RowDecodeContext,
     ) -> Result<usize, KvTableError> {
@@ -93,7 +93,7 @@ impl KvTableDdl for KvTable {
 
     fn backfill_index(
         &mut self,
-        index: KvIndex,
+        index: Index,
         ctx: &dyn tidb_exprctx::Columns,
         decode_context: &RowDecodeContext,
     ) -> Result<usize, KvTableError> {

@@ -24,7 +24,7 @@ use tidb_txnkv::CommonHandle;
 
 use tidb_datatype::UNSPECIFIED_LENGTH;
 use super::table_meta::NOT_NULL_FLAG;
-use super::{KvColumn, KvTableError, PreparedPointGetDecodeContext, RowDecodeContext, TableHandle};
+use super::{KvTableError, PreparedPointGetDecodeContext, RowDecodeContext, TableHandle};
 
 /// Which generated columns a decoder evaluates.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -65,14 +65,14 @@ impl DecodedRow {
 #[derive(Clone)]
 pub struct RowDecoder {
     /// The table schema this decoder reads, SHARED with the catalog's
-    /// `KvTable` (`Arc`): building the decoder per execute must not deep-copy
+    /// `TableCommon` (`Arc`): building the decoder per execute must not deep-copy
     /// every column's name and collation strings again.
-    columns: Arc<Vec<KvColumn>>,
+    columns: Arc<Vec<crate::column::Column>>,
     /// Columns for generated-column evaluation: the shared schema when any
     /// virtual generated column is decoded, with every non-generated entry's
     /// expression nulled; `None` when there is nothing to evaluate, so the
     /// common no-generated-columns case never copies the schema at all.
-    evaluation_columns: Option<Arc<Vec<KvColumn>>>,
+    evaluation_columns: Option<Arc<Vec<crate::column::Column>>>,
     column_types: BTreeMap<i64, FieldType>,
     decoded_offsets: BTreeSet<usize>,
     generated_offsets: BTreeSet<usize>,
@@ -117,7 +117,7 @@ fn projection_columns(keep: &[usize]) -> Vec<ProjectedColumn> {
 
 #[derive(Clone, Debug)]
 struct PreparedPointGetColumn {
-    column: KvColumn,
+    column: crate::column::Column,
     from_handle: bool,
     common_handle_part: Option<usize>,
 }
@@ -150,7 +150,7 @@ pub struct PreparedPointGetRowDecoder {
 impl PreparedPointGetRowDecoder {
     /// Compiles the schema-versioned projection stored on the point plan.
     pub fn new(
-        columns: &[KvColumn],
+        columns: &[crate::column::Column],
         pk_handle_offset: usize,
         output_offsets: &[usize],
     ) -> Result<Self, KvTableError> {
@@ -160,7 +160,7 @@ impl PreparedPointGetRowDecoder {
     /// Compiles a prepared point-get projection for either an integer or a
     /// common clustered handle.
     pub fn new_with_handles(
-        columns: &[KvColumn],
+        columns: &[crate::column::Column],
         pk_handle_offset: Option<usize>,
         common_handle_offsets: &[usize],
         output_offsets: &[usize],
@@ -178,7 +178,7 @@ impl PreparedPointGetRowDecoder {
     /// Compiles a point-get decoder that preserves primary-key prefix values
     /// from row storage rather than replacing them with their truncated handle.
     pub fn new_with_handle_prefixes(
-        columns: &[KvColumn],
+        columns: &[crate::column::Column],
         pk_handle_offset: Option<usize>,
         common_handle_offsets: &[usize],
         common_handle_prefix_lengths: &[i64],
@@ -383,7 +383,7 @@ impl RowDecoder {
     /// Builds a full-schema decoder, equivalent to Go `NewRowDecoder` with
     /// `BuildFullDecodeColMap` when `generated` is [`GeneratedColumnSelection::All`].
     pub fn new(
-        columns: Vec<KvColumn>,
+        columns: Vec<crate::column::Column>,
         pk_handle_offset: Option<usize>,
         common_handle_offsets: Vec<usize>,
         generated: GeneratedColumnSelection,
@@ -406,7 +406,7 @@ impl RowDecoder {
     /// Builds a decoder for a subset of table-column offsets. Dependencies
     /// of selected generated columns are included automatically.
     pub fn projected(
-        columns: Vec<KvColumn>,
+        columns: Vec<crate::column::Column>,
         pk_handle_offset: Option<usize>,
         common_handle_offsets: Vec<usize>,
         generated: GeneratedColumnSelection,
@@ -428,7 +428,7 @@ impl RowDecoder {
     }
 
     pub fn for_table_read(
-        columns: Arc<Vec<KvColumn>>,
+        columns: Arc<Vec<crate::column::Column>>,
         pk_handle_offset: Option<usize>,
         common_handle_offsets: Vec<usize>,
         common_handle_prefix_lengths: Vec<i64>,
@@ -451,7 +451,7 @@ impl RowDecoder {
     }
 
     pub fn for_recomputed_read(
-        columns: Arc<Vec<KvColumn>>,
+        columns: Arc<Vec<crate::column::Column>>,
         pk_handle_offset: Option<usize>,
         common_handle_offsets: Vec<usize>,
         common_handle_prefix_lengths: Vec<i64>,
@@ -471,7 +471,7 @@ impl RowDecoder {
     }
 
     fn build(
-        columns: Arc<Vec<KvColumn>>,
+        columns: Arc<Vec<crate::column::Column>>,
         pk_handle_offset: Option<usize>,
         common_handle_offsets: Vec<usize>,
         common_handle_prefix_lengths: Vec<i64>,
@@ -957,7 +957,7 @@ pub(crate) fn decode_int_handle(key: &[u8]) -> Result<i64, KvTableError> {
 
 /// Restores integer or common-handle columns into a row.
 pub fn fill_handle_columns(
-    columns: &[KvColumn],
+    columns: &[crate::column::Column],
     pk_handle_offset: Option<usize>,
     common_handle_offsets: &[usize],
     common_handle_prefix_lengths: &[i64],
@@ -988,7 +988,7 @@ struct HandleDecodeContext<'a> {
 }
 
 fn fill_handle_columns_if(
-    columns: &[KvColumn],
+    columns: &[crate::column::Column],
     pk_handle_offset: Option<usize>,
     common_handle_offsets: &[usize],
     common_handle_prefix_lengths: &[i64],
@@ -1049,7 +1049,7 @@ fn fill_handle_columns_if(
 /// handle columns the value does not carry (`DecodeHandleToDatumMap`), and
 /// each still-missing column's `GetColOriginDefaultValue`.
 pub fn fill_row_checksum(
-    table: &super::KvTable,
+    table: &super::TableCommon,
     handle: &TableHandle,
     value: &[u8],
     context: &RowDecodeContext,
@@ -1112,7 +1112,7 @@ pub fn fill_row_checksum(
 /// Go `table.GetColOriginDefaultValue` with its `getColDefaultValueFromNil`
 /// arms, under the statement's own strictness.
 fn column_origin_default_for_checksum(
-    column: &KvColumn,
+    column: &crate::column::Column,
     context: &RowDecodeContext,
 ) -> Result<Datum, KvTableError> {
     if column.origin_default.is_some() {

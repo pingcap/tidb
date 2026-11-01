@@ -22,7 +22,7 @@
 //! index range, and materializing it into a `Vec<Vec<Datum>>` to hand to a
 //! `MemTableSourceExec` costs the whole relation in decoded form before the
 //! first row leaves the source. These executors hold the cursor instead
-//! ([`KvTable::row_cursor_with_context`], [`KvTable::index_range_cursor`]) and decode one
+//! ([`TableCommon::row_cursor_with_context`], [`TableCommon::index_range_cursor`]) and decode one
 //! row per pull, so the decoded rows alive at once are one chunk's worth
 //! regardless of how many rows the range covers, and a pushed `LIMIT` never
 //! decodes or looks up a row past its cap.
@@ -82,8 +82,8 @@ use tidb_hack::GoCaseCompare;
 /// nothing measurable where a native lane handoff costs two context switches.
 const INDEX_LOOKUP_INLINE_HANDLES: usize = 16;
 use crate::kv_table::{IndexRangeCursor, RemoteIndexHandleCursor, RemoteRowCursor, RowCursor};
-use tidb_table::kv_table::TableHandle;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableHandle;
+use tidb_table::tables::TableCommon;
 use tidb_ranger::types::Range;
 use tidb_distsql::remote_scan::PushdownStatementContext;
 use tidb_distsql::remote_scan::PushdownRowStream;
@@ -108,7 +108,7 @@ impl PointLock {
     /// Go `doLockKeys` for a point read, publishing the lock wait around it.
     pub(crate) fn lock(
         &self,
-        table: &mut KvTable,
+        table: &mut TableCommon,
         keys: &[tidb_txnkv::Key],
         only_if_exists: bool,
     ) -> Result<(), ExecError> {
@@ -337,10 +337,10 @@ mod common_handle_shape_tests {
     #[test]
     fn common_handle_point_read_is_admitted() {
         let mut table = tidb_infoschema::Catalog::mock();
-        let mut kv = tidb_table::kv_table::KvTable::new(
+        let mut kv = tidb_table::tables::TableCommon::new(
             1,
             vec![
-                tidb_table::kv_table::KvColumn {
+                tidb_table::column::Column {
                     info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("k"),
@@ -353,7 +353,7 @@ mod common_handle_shape_tests {
                     default_value: None,
                     origin_default: None,
                 },
-                tidb_table::kv_table::KvColumn {
+                tidb_table::column::Column {
                     info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                         id: 2,
                         name: tidb_ast::CiString::new("v"),
@@ -386,10 +386,10 @@ mod common_handle_shape_tests {
     #[test]
     fn a_limit_bound_does_not_replace_the_complete_point_key_proof() {
         let mut table = tidb_infoschema::Catalog::mock();
-        let mut kv = tidb_table::kv_table::KvTable::new(
+        let mut kv = tidb_table::tables::TableCommon::new(
             1,
             vec![
-                tidb_table::kv_table::KvColumn {
+                tidb_table::column::Column {
                     info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("k"),
@@ -402,7 +402,7 @@ mod common_handle_shape_tests {
                     default_value: None,
                     origin_default: None,
                 },
-                tidb_table::kv_table::KvColumn {
+                tidb_table::column::Column {
                     info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                         id: 2,
                         name: tidb_ast::CiString::new("v"),
@@ -538,7 +538,7 @@ fn select_is_bare_read(select: &tidb_ast::SelectStmt, allow_limit: bool) -> bool
 
 /// The visible columns of a decoded table row, the ones a source emits.
 ///
-/// `KvTable::get_row_by_handle` decodes and materializes EVERY column of the
+/// `TableCommon::get_row_by_handle` decodes and materializes EVERY column of the
 /// table, hidden ones included -- the hidden column an expression index was
 /// rewritten into has to be computed so an index entry can be written from
 /// the same row. The default output schema of these sources is the visible
@@ -549,7 +549,7 @@ fn select_is_bare_read(select: &tidb_ast::SelectStmt, allow_limit: bool) -> bool
 /// `TableScanExec` states the same rule as its `keep` list; this is that rule
 /// for the two narrowed sources, which read their rows by handle instead.
 fn visible_of<'a>(
-    table: &KvTable,
+    table: &TableCommon,
     row: &'a [tidb_datatype::Datum],
 ) -> std::borrow::Cow<'a, [tidb_datatype::Datum]> {
     if table.visible_column_count() == table.columns().len() {
@@ -586,7 +586,7 @@ pub(crate) enum HandleOutputColumn {
 /// takes no row cap.
 pub struct HandleSourceExec {
     meta: ExecutorMeta,
-    table: KvTable,
+    table: TableCommon,
     handles: Vec<TableHandle>,
     /// The next handle to read.
     cursor: usize,
@@ -595,17 +595,17 @@ pub struct HandleSourceExec {
     /// The statement-class flags for an origin default plus the session zone
     /// a stored `TIMESTAMP` is read back into, captured where the statement's
     /// context is (`Executor` has none).
-    decode_context: tidb_table::kv_table::RowDecodeContext,
+    decode_context: tidb_table::tables::RowDecodeContext,
     /// Source-row offsets this complete point plan emits, in result order.
     /// `None` keeps the ordinary visible-row schema for residual root work.
     output_columns: Option<Vec<HandleOutputColumn>>,
     /// Encoded values fetched once by the first Next, then decoded only to
     /// fill the requested chunk, like Go's BatchPointGetExec.values.
-    preloaded: Option<tidb_table::kv_table::PointReadValues>,
+    preloaded: Option<tidb_table::tables::PointReadValues>,
     /// Set only for a table task; PointGet/BatchPointGet retain native gets.
     table_statement: Option<PushdownStatementContext>,
     remote_rows: Option<std::collections::VecDeque<(usize, TableHandle, Vec<Datum>)>>,
-    decoder: Option<tidb_table::kv_table::PointRowDecoder>,
+    decoder: Option<tidb_table::tables::PointRowDecoder>,
     initialized: bool,
     /// Go's `PointGetExecutor` performs one direct record-key `Get`; the
     /// batch executor uses `BatchGet` even when its retained list happens to
@@ -638,9 +638,9 @@ impl HandleSourceExec {
     #[must_use]
     pub fn new_with_context(
         meta: ExecutorMeta,
-        table: KvTable,
+        table: TableCommon,
         handles: Vec<TableHandle>,
-        decode_context: tidb_table::kv_table::RowDecodeContext,
+        decode_context: tidb_table::tables::RowDecodeContext,
     ) -> Self {
         HandleSourceExec {
             meta,
@@ -709,10 +709,10 @@ impl HandleSourceExec {
     #[must_use]
     pub(crate) fn new_mapped_with_context(
         meta: ExecutorMeta,
-        table: KvTable,
+        table: TableCommon,
         handles: Vec<TableHandle>,
         output_columns: Vec<HandleOutputColumn>,
-        decode_context: tidb_table::kv_table::RowDecodeContext,
+        decode_context: tidb_table::tables::RowDecodeContext,
     ) -> Self {
         Self {
             output_columns: Some(output_columns),
@@ -725,10 +725,10 @@ impl HandleSourceExec {
     #[must_use]
     pub(crate) fn new_point_mapped_with_context(
         meta: ExecutorMeta,
-        table: KvTable,
+        table: TableCommon,
         handle: TableHandle,
         output_columns: Vec<HandleOutputColumn>,
-        decode_context: tidb_table::kv_table::RowDecodeContext,
+        decode_context: tidb_table::tables::RowDecodeContext,
     ) -> Self {
         Self {
             single_point_get: true,
@@ -806,7 +806,7 @@ impl HandleSourceExec {
                 .map_err(ExecError::from)?
             {
                 if let Some((rows, _, _, indices)) =
-                    KvTable::finish_routed_rows_by_handles(&self.handles, staged)
+                    TableCommon::finish_routed_rows_by_handles(&self.handles, staged)
                         .map_err(ExecError::from)?
                 {
                     self.remote_rows = Some(
@@ -828,7 +828,7 @@ impl HandleSourceExec {
                 .handles
                 .first()
                 .ok_or_else(|| ExecError::unsupported("a point get lost its retained handle"))?;
-            tidb_table::kv_table::PointReadValues::Single(
+            tidb_table::tables::PointReadValues::Single(
                 self.table
                     .stored_record(handle)
                     .map_err(ExecError::from)?
@@ -851,8 +851,8 @@ impl HandleSourceExec {
         // Counted only on an IndexMerge reader's table side, whose copy
         // carries the statement budget; a point get's copy does not.
         let found = match &rows {
-            tidb_table::kv_table::PointReadValues::Single(row) => usize::from(row.is_some()),
-            tidb_table::kv_table::PointReadValues::Batch { values, .. } => values.len(),
+            tidb_table::tables::PointReadValues::Single(row) => usize::from(row.is_some()),
+            tidb_table::tables::PointReadValues::Batch { values, .. } => values.len(),
         };
         self.table
             .note_keys_read(found as u64)
@@ -863,14 +863,14 @@ impl HandleSourceExec {
         // could name no key before reading and locks what it found.
         if let Some(lock) = self.lock.clone().filter(|_| !locked_before_read) {
             let (record_keys, positions): (Vec<tidb_txnkv::Key>, Vec<usize>) = match &rows {
-                tidb_table::kv_table::PointReadValues::Single(Some(_)) => {
+                tidb_table::tables::PointReadValues::Single(Some(_)) => {
                     match record_keys.as_ref().and_then(|keys| keys.first()) {
                         Some(key) => (vec![key.clone()], vec![0]),
                         None => (Vec::new(), Vec::new()),
                     }
                 }
-                tidb_table::kv_table::PointReadValues::Single(None) => (Vec::new(), Vec::new()),
-                tidb_table::kv_table::PointReadValues::Batch { keys, .. } => {
+                tidb_table::tables::PointReadValues::Single(None) => (Vec::new(), Vec::new()),
+                tidb_table::tables::PointReadValues::Batch { keys, .. } => {
                     let mut found_keys = vec![tidb_txnkv::Key::default(); keys.len()];
                     let mut positions = Vec::new();
                     for (position, key) in keys.iter().enumerate() {
@@ -886,7 +886,7 @@ impl HandleSourceExec {
             lock.lock(&mut self.table, &keys, false)?;
         }
         self.preloaded = Some(rows);
-        self.decoder = Some(tidb_table::kv_table::PointRowDecoder::new(&self.table));
+        self.decoder = Some(tidb_table::tables::PointRowDecoder::new(&self.table));
         Ok(())
     }
 }
@@ -956,7 +956,7 @@ impl HandleSourceExec {
                                 "a row checksum needs the encoded row value of a point get",
                             )
                         })?;
-                        let checksum = tidb_table::kv_table::fill_row_checksum(
+                        let checksum = tidb_table::tables::fill_row_checksum(
                             &self.table,
                             handle,
                             stored_value,
@@ -1104,11 +1104,11 @@ impl tidb_executor_internal_exec::table_access::TableAccess for HandleSourceExec
 /// uses one index BatchGet followed by one record BatchGet.
 pub(crate) struct UniqueIndexPointSourceExec {
     meta: ExecutorMeta,
-    table: KvTable,
+    table: TableCommon,
     index_id: i64,
     index_values: Vec<Vec<Datum>>,
     output_columns: Vec<HandleOutputColumn>,
-    decode_context: tidb_table::kv_table::RowDecodeContext,
+    decode_context: tidb_table::tables::RowDecodeContext,
     single_point: bool,
     /// Go `PartitionNames` resolved to physical ids: a global index entry
     /// whose row lives elsewhere answers nothing. `None` restricts nothing.
@@ -1137,11 +1137,11 @@ impl UniqueIndexPointSourceExec {
     #[must_use]
     pub(crate) fn new(
         meta: ExecutorMeta,
-        table: KvTable,
+        table: TableCommon,
         index_id: i64,
         index_values: Vec<Vec<Datum>>,
         output_columns: Vec<HandleOutputColumn>,
-        decode_context: tidb_table::kv_table::RowDecodeContext,
+        decode_context: tidb_table::tables::RowDecodeContext,
         single_point: bool,
     ) -> Self {
         Self {
@@ -1488,7 +1488,7 @@ fn project_index_identity(
 /// just that stream -- so the whole of `compare()` reduces, here, to leaving
 /// the handle batch unsorted.
 ///
-/// The gate is [`crate::kv_table::KvTable::has_dirty_content`], Go's
+/// The gate is [`crate::kv_table::TableCommon::has_dirty_content`], Go's
 /// `HasDirtyContent` narrowed to this tier's staging. It is deliberately NOT
 /// "inside a transaction": Go asks per TABLE, so a clean table read inside a
 /// dirty transaction still gets no `UnionScan` and still answers in handle
@@ -1571,7 +1571,7 @@ pub(crate) type RangeRebuilder =
 /// Adds the rows a table-side handle lookup found to the statement's
 /// processed keys: Go's table-side coprocessor scan processes one key per
 /// existing row.
-fn note_found_rows<T>(table: &KvTable, rows: &[Option<T>]) -> Result<(), ExecError> {
+fn note_found_rows<T>(table: &TableCommon, rows: &[Option<T>]) -> Result<(), ExecError> {
     let found = rows.iter().filter(|row| row.is_some()).count();
     table.note_keys_read(found as u64).map_err(ExecError::from)
 }
@@ -1580,7 +1580,7 @@ pub struct IndexRangeSourceExec {
     /// Go `IndexLookUpExecutor`'s runtime stats, when collected.
     lookup_stats: Option<crate::index_lookup_stats::IndexLookUpStatsHandle>,
     meta: ExecutorMeta,
-    table: KvTable,
+    table: TableCommon,
     /// The cursor's partition ordinals resolve against this stable scan list.
     record_physical_ids: Vec<i64>,
     /// Physical visible-column offsets emitted by this source. The mapping is
@@ -1737,7 +1737,7 @@ pub struct IndexRangeSourceExec {
     remote_covering_selected: bool,
     /// The statement-class flags and session zone the row is decoded under;
     /// the zone also encodes the index probe. See [`HandleSourceExec`].
-    decode_context: tidb_table::kv_table::RowDecodeContext,
+    decode_context: tidb_table::tables::RowDecodeContext,
     /// Statement flags and warning sink carried into a remote DAG request.
     statement: PushdownStatementContext,
     /// Planner row estimate for this source. Go's aggregate push-down decision
@@ -1898,10 +1898,10 @@ impl IndexRangeSourceExec {
     #[must_use]
     pub fn new_with_context(
         meta: ExecutorMeta,
-        table: KvTable,
+        table: TableCommon,
         index_id: i64,
         ranges: Vec<Range>,
-        decode_context: tidb_table::kv_table::RowDecodeContext,
+        decode_context: tidb_table::tables::RowDecodeContext,
     ) -> Self {
         Self::new_with_statement(
             meta,
@@ -1989,10 +1989,10 @@ impl IndexRangeSourceExec {
     #[must_use]
     pub fn new_with_statement(
         meta: ExecutorMeta,
-        mut table: KvTable,
+        mut table: TableCommon,
         index_id: i64,
         ranges: Vec<Range>,
-        decode_context: tidb_table::kv_table::RowDecodeContext,
+        decode_context: tidb_table::tables::RowDecodeContext,
         statement: PushdownStatementContext,
     ) -> Self {
         // Go's IndexReader/IndexLookUp read both the index and the table
@@ -3036,7 +3036,7 @@ impl IndexRangeSourceExec {
                     ready: Some(Ok(LookupFetch::LocalFallback(handles))),
                 });
             };
-            let outcome = match tidb_table::kv_table::KvTable::finish_lookup_by_handles(
+            let outcome = match tidb_table::tables::TableCommon::finish_lookup_by_handles(
                 &handles,
                 staged,
                 allow_lookup_chunks,
@@ -3089,7 +3089,7 @@ impl IndexRangeSourceExec {
             let Some(staged) = staged else {
                 return Ok(LookupFetch::LocalFallback(worker_handles));
             };
-            match tidb_table::kv_table::KvTable::finish_lookup_by_handles(
+            match tidb_table::tables::TableCommon::finish_lookup_by_handles(
                 &worker_handles,
                 staged,
                 worker_allow_chunks,
@@ -4011,7 +4011,7 @@ impl Executor for IndexRangeSourceExec {
         // than walking a handful of entries locally. Every condition that
         // could change WHAT the stream answers -- dirty staging, a
         // partitioned table, rows staged behind the request -- refuses inside
-        // [`KvTable::pushdown_index_handle_cursor`] and lands back on the
+        // [`TableCommon::pushdown_index_handle_cursor`] and lands back on the
         // byte-level cursor. No row-estimate gate: pseudo statistics price
         // an unanalyzed range at one row and would pin every cold read to
         // the local walk, which is exactly the shape that cannot afford it;
@@ -4559,7 +4559,7 @@ impl tidb_executor_internal_exec::table_access::TableAccess for IndexRangeSource
             .indexes()
             .iter()
             .find(|index| index.read().id == self.index_id)
-            .is_some_and(tidb_table::kv_table::KvIndex::has_prefix);
+            .is_some_and(tidb_table::tables::Index::has_prefix);
         if (self.filter.is_some() || self.index_probe.is_some()) && index_is_prefix {
             return false;
         }
@@ -4971,7 +4971,7 @@ impl LookupProbeBoundOp {
 /// original reader's cursor and counters. See [`IndexJoinLookupExec::fork_template`].
 pub(crate) struct LookupForkTemplate {
     meta: ExecutorMeta,
-    table: KvTable,
+    table: TableCommon,
     object: LookupObject,
     covering: bool,
     keep_order: bool,
@@ -4982,7 +4982,7 @@ pub(crate) struct LookupForkTemplate {
     /// The lookup key's column types, computed once here and shared by every
     /// task this template opens (Go's `innerCtx.keyColTypes`, fixed at build).
     probe_key_types: Option<Arc<[FieldType]>>,
-    decode_context: tidb_table::kv_table::RowDecodeContext,
+    decode_context: tidb_table::tables::RowDecodeContext,
     statement: PushdownStatementContext,
     /// Selection on the index side of a double read, before handle lookup.
     index_filters: Vec<Expression>,
@@ -5071,7 +5071,7 @@ impl LookupForkTemplate {
 /// between chunk fetches, including incremental index-hash join windows.
 pub struct IndexJoinLookupExec {
     meta: ExecutorMeta,
-    table: KvTable,
+    table: TableCommon,
     object: LookupObject,
     /// Whether the shared physical task selected Go's single-read
     /// `PhysicalIndexReader` for this secondary-index inner child. A covering
@@ -5147,7 +5147,7 @@ pub struct IndexJoinLookupExec {
     /// Rows produced since `open`, which the trace reads as `actRows`.
     produced: tidb_executor_internal_exec::RowCount,
     /// See [`HandleSourceExec`].
-    decode_context: tidb_table::kv_table::RowDecodeContext,
+    decode_context: tidb_table::tables::RowDecodeContext,
     /// Statement flags, warning sink, and time zone carried by a batched
     /// common-handle coprocessor request.
     statement: PushdownStatementContext,
@@ -5193,9 +5193,9 @@ impl IndexJoinLookupExec {
     #[must_use]
     pub fn new_with_context(
         meta: ExecutorMeta,
-        table: KvTable,
+        table: TableCommon,
         object: LookupObject,
-        decode_context: tidb_table::kv_table::RowDecodeContext,
+        decode_context: tidb_table::tables::RowDecodeContext,
     ) -> Self {
         let statement = crate::remote_scan::pushdown_statement_context(tidb_sessionctx::stmt_context_of(decode_context.expression()));
         Self::new_with_statement(meta, table, object, decode_context, statement)
@@ -5205,9 +5205,9 @@ impl IndexJoinLookupExec {
     #[must_use]
     pub(crate) fn new_with_statement(
         meta: ExecutorMeta,
-        mut table: KvTable,
+        mut table: TableCommon,
         object: LookupObject,
-        decode_context: tidb_table::kv_table::RowDecodeContext,
+        decode_context: tidb_table::tables::RowDecodeContext,
         statement: PushdownStatementContext,
     ) -> Self {
         // Go's index-join inner reader is a coprocessor read too.
@@ -6142,7 +6142,7 @@ impl IndexJoinLookupExec {
     /// Preferred shape -- Go's index-join table fetch (`buildTableReader` over
     /// the window's handles turned into record-key ranges): ONE multi-range
     /// distsql request whose regions answer concurrently and whose rows TiKV
-    /// evaluates vectorized. Fallback shape -- [`KvTable::
+    /// evaluates vectorized. Fallback shape -- [`TableCommon::
     /// get_rows_by_handles_projected_with_context`], one MVCC point command
     /// per key over BatchCommands; correct, but each command resolves MVCC
     /// alone and costs a round trip, which dominates large windows.
@@ -6218,7 +6218,7 @@ impl IndexJoinLookupExec {
         // handle naming no stored row simply contributes nothing -- the same
         // answer the batch-get gave as a `None` slot.
         let Some((pairs, _, _, _)) =
-            KvTable::finish_routed_rows_by_handles(handles, staged).map_err(ExecError::from)?
+            TableCommon::finish_routed_rows_by_handles(handles, staged).map_err(ExecError::from)?
         else {
             return Ok(None);
         };
@@ -6568,8 +6568,7 @@ use std::collections::HashMap;
     use crate::driver::run_select_on;
     use tidb_infoschema::Catalog;
     use tidb_sessionctx::explain_format::ExplainFormat;
-    use tidb_table::kv_table::KvTable;
-    use tidb_table::kv_table::KvColumn;
+    use tidb_table::tables::TableCommon;
     use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 
     /// A backend that counts the work a scan actually does: every entry an
@@ -6869,8 +6868,8 @@ use std::collections::HashMap;
         FieldType::new(FieldTypeCode::LongLong)
     }
 
-    fn column(name: &str, id: i64) -> KvColumn {
-        KvColumn {
+    fn column(name: &str, id: i64) -> tidb_table::column::Column {
+        tidb_table::column::Column {
             info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                 id: id,
                 name: tidb_ast::CiString::new(name.to_owned()),
@@ -6889,7 +6888,7 @@ use std::collections::HashMap;
     fn partition_batch_reads_only_the_partitions_its_keys_reach() {
         let storage = CountingStorage::default();
         let gets = Arc::clone(&storage.gets);
-        let mut table = KvTable::with_storage(77, vec![column("id", 1)], Box::new(storage));
+        let mut table = TableCommon::with_storage(77, vec![column("id", 1)], Box::new(storage));
         table.set_pk_handle_offset(0);
         table.set_partition(tidb_table::partition_routing::PartitionSpec {
             kind: tidb_table::partition_routing::PartitionKind::Hash,
@@ -6940,7 +6939,7 @@ use std::collections::HashMap;
             let gets = Arc::clone(&storage.gets);
             let batch_keys = Arc::clone(&storage.batch_keys);
             let mut table =
-                KvTable::with_storage(77, vec![column("p", 1), column("v", 2)], Box::new(storage));
+                TableCommon::with_storage(77, vec![column("p", 1), column("v", 2)], Box::new(storage));
             table.set_partition(tidb_table::partition_routing::PartitionSpec {
                 kind: tidb_table::partition_routing::PartitionKind::Hash,
                 expr_text: "p".to_owned(),
@@ -6958,7 +6957,7 @@ use std::collections::HashMap;
             });
             table
                 .create_index_with_context(
-                    tidb_table::kv_table::KvIndex {
+                    tidb_table::tables::Index {
                         info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                             id: 1,
                             name: tidb_ast::CiString::new("idx"),
@@ -7146,7 +7145,7 @@ use std::collections::HashMap;
 
     #[test]
     fn mapped_point_read_retains_hidden_columns_required_by_the_plan() {
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             77,
             vec![column("id", 1)],
             Box::new(MemTableStorage::default()),
@@ -7169,7 +7168,7 @@ use std::collections::HashMap;
             table,
             vec![TableHandle::Int(7)],
             vec![HandleOutputColumn::Stored(1), HandleOutputColumn::Stored(0)],
-            tidb_table::kv_table::RowDecodeContext::for_test_query_utc(),
+            tidb_table::tables::RowDecodeContext::for_test_query_utc(),
         );
         // The row decoder supplies the full table layout, including the
         // expression-index column needed by an UPDATE's physical plan.
@@ -7189,7 +7188,7 @@ use std::collections::HashMap;
         let store = CountingStorage::default();
         let entries = Arc::clone(&store.entries);
         let gets = Arc::clone(&store.gets);
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             77,
             vec![column("a", 1), column("b", 2), column("c", 3)],
             Box::new(store),
@@ -7197,7 +7196,7 @@ use std::collections::HashMap;
         if indexed {
             table
                 .create_index_with_context(
-                    tidb_table::kv_table::KvIndex {
+                    tidb_table::tables::Index {
                         info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                             id: 1,
                             name: tidb_ast::CiString::new("ib"),
@@ -7403,7 +7402,7 @@ use std::collections::HashMap;
         let gets = Arc::new(AtomicUsize::new(0));
         let table_requests = Arc::new(AtomicUsize::new(0));
         let request = Arc::new(std::sync::Mutex::new(None));
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             89,
             vec![column("a", 1), column("b", 2)],
             Box::new(CoveringIndexStorage {
@@ -7417,7 +7416,7 @@ use std::collections::HashMap;
             }),
         );
         table.add_index(
-            tidb_table::kv_table::KvIndex {
+            tidb_table::tables::Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("ib"),
@@ -7569,7 +7568,7 @@ use std::collections::HashMap;
                         }
                         let gets = Arc::new(AtomicUsize::new(0));
                         let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-                        let mut table = KvTable::with_storage(
+                        let mut table = TableCommon::with_storage(
                             89,
                             vec![column("a", 1), column("b", 2)],
                             Box::new(CoveringIndexStorage {
@@ -7591,7 +7590,7 @@ use std::collections::HashMap;
                             table.set_common_handle_offsets(vec![0, 1]);
                         }
                         table.add_index(
-                            tidb_table::kv_table::KvIndex {
+                            tidb_table::tables::Index {
                                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                                     id: 1,
                                     name: tidb_ast::CiString::new("ib"),
@@ -7820,7 +7819,7 @@ use std::collections::HashMap;
         use tidb_executor_internal_exec::table_access::TableAccess;
         let check_close = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let request = Arc::new(std::sync::Mutex::new(None));
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             89,
             vec![column("a", 1), column("b", 2)],
             Box::new(CoveringIndexStorage {
@@ -7834,7 +7833,7 @@ use std::collections::HashMap;
             }),
         );
         table.add_index(
-            tidb_table::kv_table::KvIndex {
+            tidb_table::tables::Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("ib"),
@@ -7962,9 +7961,9 @@ use std::collections::HashMap;
     /// not be appended as two independent index columns.
     #[test]
     fn index_join_compare_filters_intersect_on_one_target_column() {
-        let mut table = KvTable::new(91, vec![column("a", 1), column("b", 2)]);
+        let mut table = TableCommon::new(91, vec![column("a", 1), column("b", 2)]);
         table.add_index(
-            tidb_table::kv_table::KvIndex {
+            tidb_table::tables::Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("ab"),
@@ -8035,7 +8034,7 @@ use std::collections::HashMap;
     /// environment variable nor impose its former eight-worker ceiling.
     #[test]
     fn lookup_worker_width_uses_the_session_value_without_a_rust_cap() {
-        let table = KvTable::with_storage(
+        let table = TableCommon::with_storage(
             91,
             vec![column("a", 1)],
             Box::new(MemTableStorage::default()),
@@ -8064,7 +8063,7 @@ use std::collections::HashMap;
 
     #[test]
     fn ten_point_lookup_stays_inline_like_go() {
-        let table = KvTable::with_storage(
+        let table = TableCommon::with_storage(
             92,
             vec![column("a", 1)],
             Box::new(MemTableStorage::default()),
@@ -8127,7 +8126,7 @@ use std::collections::HashMap;
     fn a_scan_reads_one_chunk_per_pull_not_the_whole_range() {
         let store = CountingStorage::default();
         let entries = Arc::clone(&store.entries);
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             78,
             vec![column("a", 1)],
             Box::new(store) as Box<dyn TableStorage>,
@@ -8323,7 +8322,7 @@ use std::collections::HashMap;
     fn a_common_handle_equality_prefix_satisfies_order_and_pushes_the_limit() {
         let store = CountingStorage::default();
         let entries = Arc::clone(&store.entries);
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             79,
             vec![column("w_id", 1), column("d_id", 2), column("o_id", 3)],
             Box::new(store),
@@ -8331,7 +8330,7 @@ use std::collections::HashMap;
         table.set_common_handle_offsets(vec![0, 1, 2]);
         table
             .create_index_with_context(
-                tidb_table::kv_table::KvIndex {
+                tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("PRIMARY"),
@@ -8390,7 +8389,7 @@ use std::collections::HashMap;
     fn a_common_handle_row_in_reads_only_the_named_prefixes() {
         let store = CountingStorage::default();
         let entries = Arc::clone(&store.entries);
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             80,
             vec![
                 column("w_id", 1),
@@ -8404,7 +8403,7 @@ use std::collections::HashMap;
         table.set_common_handle_offsets(vec![0, 1, 2, 3]);
         table
             .create_index_with_context(
-                tidb_table::kv_table::KvIndex {
+                tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("PRIMARY"),
@@ -8477,7 +8476,7 @@ use std::collections::HashMap;
     /// `getPlanCostVer24PhysicalIndexLookUpReader`.
     ///
     /// `IndexRangeSourceExec` now hands the whole handle batch to
-    /// `KvTable::get_rows_by_handles_projected_with_context`, so against a
+    /// `TableCommon::get_rows_by_handles_projected_with_context`, so against a
     /// cluster it issues one snapshot batch round trip for these rows. The
     /// assertion below is `1`; before the fix it was `n`.
     #[test]
@@ -8530,7 +8529,7 @@ use std::collections::HashMap;
     /// accepts the same column, which its executor schema carries.
     #[test]
     fn an_extreme_over_a_handle_column_the_index_does_not_rank_lowers_the_cop_topn_instead() {
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             91,
             vec![
                 column("a", 1),
@@ -8543,7 +8542,7 @@ use std::collections::HashMap;
         table.set_common_handle_offsets(vec![0, 1, 2]);
         table
             .create_index_with_context(
-                tidb_table::kv_table::KvIndex {
+                tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("k4"),
@@ -8579,7 +8578,7 @@ use std::collections::HashMap;
             table.clone(),
             1,
             tidb_ranger::points::full_range(),
-            tidb_table::kv_table::RowDecodeContext::for_test_query_utc(),
+            tidb_table::tables::RowDecodeContext::for_test_query_utc(),
             crate::remote_scan::pushdown_statement_context(
                 &crate::StmtContext::for_query(),
             ),
@@ -8608,7 +8607,7 @@ use std::collections::HashMap;
             table,
             1,
             tidb_ranger::points::full_range(),
-            tidb_table::kv_table::RowDecodeContext::for_test_query_utc(),
+            tidb_table::tables::RowDecodeContext::for_test_query_utc(),
             crate::remote_scan::pushdown_statement_context(
                 &crate::StmtContext::for_query(),
             ),
@@ -8735,15 +8734,15 @@ use std::collections::HashMap;
     /// KEEP-ORDER case observable too: `ORDER BY b` leaves two pairs tied, and
     /// the index breaks those ties by `c` where a handle-ordered read breaks
     /// them by handle.
-    fn crossed_order_table() -> KvTable {
-        let mut table = KvTable::with_storage(
+    fn crossed_order_table() -> TableCommon {
+        let mut table = TableCommon::with_storage(
             81,
             vec![column("a", 1), column("b", 2), column("c", 3)],
             Box::new(MemTableStorage::default()),
         );
         table
             .create_index_with_context(
-                tidb_table::kv_table::KvIndex {
+                tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("ibc"),
@@ -8920,15 +8919,15 @@ use std::collections::HashMap;
     /// [`the_driver_offers_keep_order_to_an_order_by_the_index_produces`]'s
     /// table: `n` rows whose handle order, `b` order and `c` order all
     /// disagree. See that test for the layout.
-    fn paired_order_table(n: i64) -> KvTable {
-        let mut table = KvTable::with_storage(
+    fn paired_order_table(n: i64) -> TableCommon {
+        let mut table = TableCommon::with_storage(
             82,
             vec![column("a", 1), column("b", 2), column("c", 3)],
             Box::new(MemTableStorage::default()),
         );
         table
             .create_index_with_context(
-                tidb_table::kv_table::KvIndex {
+                tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("ibc"),

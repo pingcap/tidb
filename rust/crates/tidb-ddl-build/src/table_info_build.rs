@@ -1257,10 +1257,10 @@ pub fn build_index_condition(
     .map_err(default_admission_error)?;
     if index.has_condition() {
         let columns =
-            tidb_table::kv_table::extract_columns_from_index_condition(index, table, true)
+            tidb_table::tables::extract_columns_from_index_condition(index, table, true)
                 .map_err(|error| DdlAdmissionError::plain(error))?;
         index.affect_column = tidb_model::GoSharedPointerSlice::from_handles(
-            tidb_table::kv_table::dedup_index_columns(columns)
+            tidb_table::tables::dedup_index_columns(columns)
                 .into_iter()
                 .map(Some)
                 .collect(),

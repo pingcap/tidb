@@ -156,7 +156,7 @@ fn result_rows(result: Result<StmtResult, tidb_driver_error::DriverError>) -> Ve
 fn kv_table<'a>(
     catalog: &'a tidb_infoschema::Catalog,
     name: &str,
-) -> &'a tidb_table::kv_table::KvTable {
+) -> &'a tidb_table::tables::TableCommon {
     let tidb_infoschema::TableEntry::Kv(kv) = catalog
         .table_in("app", name)
         .expect("the table is in the catalog")
@@ -483,7 +483,7 @@ fn wide_sql_runs_on_cluster_storage_without_committing() {
 
 /// A column's DEFAULT is stored twice once a table is loaded: on the
 /// cluster's `ColumnInfo` (where `SHOW CREATE TABLE` and the system-row
-/// writer read it) and on the `KvColumn` the driver's INSERT path reads.
+/// writer read it) and on the `tidb_table::column::Column` the driver's INSERT path reads.
 /// The loader must carry it across, or an omitted column silently stores
 /// NULL where TiDB stores the default -- a wrong row, written without a
 /// word.

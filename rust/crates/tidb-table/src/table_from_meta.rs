@@ -24,7 +24,7 @@
 use std::sync::{Arc, Mutex};
 use tidb_datatype::FieldTypeFlags;
 use crate::sequence::SequenceDef;
-use crate::kv_table::{KvColumn, KvForeignKey, KvIndex, KvTable, TableAutoId};
+use crate::tables::{KvForeignKey, Index, TableCommon, TableAutoId};
 use tidb_kv::storage::TableStorage;
 use tidb_model::{GoAnyView, GoShared, SchemaState, TableInfo};
 
@@ -224,7 +224,7 @@ impl AutoIdSource<'_> {
 /// it travels the path a real unreachable meta key travels rather than taking
 /// the process down.
 ///
-/// [`AutoIdStoreError`]: crate::kv_table::AutoIdStoreError
+/// [`AutoIdStoreError`]: crate::tables::AutoIdStoreError
 #[derive(Debug)]
 struct UnavailableAutoIdStore;
 
@@ -280,7 +280,7 @@ fn unavailable_counter() -> tidb_autoid::AutoIdStoreError {
 pub fn new_temporary_table_from_table_info(
     mut table: TableInfo,
     table_id: i64,
-) -> Result<KvTable, String> {
+) -> Result<TableCommon, String> {
     table.id = table_id;
     table.state = SchemaState::PUBLIC;
     let mut kv_table = cluster_table(
@@ -308,7 +308,7 @@ pub fn cluster_table(
     table: &TableInfo,
     storage: &dyn TableStorage,
     auto: &AutoIdSource<'_>,
-) -> Result<KvTable, String> {
+) -> Result<TableCommon, String> {
     if table.is_view() {
         return Err("it is a view".to_owned());
     }
@@ -378,21 +378,21 @@ pub fn cluster_table(
     // public-column list, which is why the offsets below are indexes into it.
     //
     // A DEFAULT is stored on the cluster's `ColumnInfo` as a Go `any`, and the
-    // driver's INSERT path reads it off `KvColumn` instead -- one fact in two
+    // driver's INSERT path reads it off `crate::column::Column` instead -- one fact in two
     // places. Dropping the second copy is NOT the safe side of that: a
     // nullable column whose DEFAULT this loader forgets stores NULL where
     // TiDB stores the default, silently, with no error to see. So the value
-    // is materialised HERE, in the one call that builds the `KvColumn`, by
+    // is materialised HERE, in the one call that builds the `crate::column::Column`, by
     // the same `system_row_write` rule the system-row writer uses; a default
     // that cannot be carried across verbatim (an expression, or
     // `CURRENT_TIMESTAMP`, whose instant is per-INSERT and not per-load)
     // refuses the whole table by name.
-    let mut kv_columns: Vec<KvColumn> = Vec::with_capacity(columns.len());
-    // One `KvColumn` per stored column, public or not (the write path
+    let mut kv_columns: Vec<crate::column::Column> = Vec::with_capacity(columns.len());
+    // One `crate::column::Column` per stored column, public or not (the write path
     // carries the non-public ones).
     // Each column shares the `ColumnInfo` pointer `TableInfo.Columns` holds,
     // as Go's `table.Column` embeds it.
-    let build_column = |shared: &tidb_model::GoShared<tidb_model::ColumnInfo>| -> Result<KvColumn, String> {
+    let build_column = |shared: &tidb_model::GoShared<tidb_model::ColumnInfo>| -> Result<crate::column::Column, String> {
         let guard = shared.read();
         let column: &tidb_model::ColumnInfo = &guard;
         let name = column.name.original().to_owned();
@@ -539,7 +539,7 @@ pub fn cluster_table(
         } else {
             None
         };
-        Ok(KvColumn {
+        Ok(crate::column::Column {
             info: shared.clone(),
             generated,
             default_value,
@@ -549,7 +549,7 @@ pub fn cluster_table(
     for column in &columns {
         kv_columns.push(build_column(column)?);
     }
-    let mut kv_table = KvTable::loaded(table.clone(), kv_columns, storage.clone_box());
+    let mut kv_table = TableCommon::loaded(table.clone(), kv_columns, storage.clone_box());
     kv_table.set_all_columns_public(
         table
             .columns
@@ -581,7 +581,7 @@ pub fn cluster_table(
             let id = table.columns.get(offset)?.read().id;
             public_ids.iter().position(|public| *public == id)
         });
-        kv_table.add_nonpublic_column(crate::kv_table::NonPublicColumn {
+        kv_table.add_nonpublic_column(crate::tables::NonPublicColumn {
             column: build_column(&shared)?,
             state: column.state,
             dependency,
@@ -710,7 +710,7 @@ pub fn cluster_table(
                 .first()
                 .expect("an AUTO_RANDOM common handle has a first column")
         };
-        kv_table.set_auto_random(crate::kv_table::AutoRandomSpec {
+        kv_table.set_auto_random(crate::tables::AutoRandomSpec {
             offset,
             shard_bits: table.auto_random_bits,
             range_bits: if table.auto_random_range_bits == 0 {
@@ -750,7 +750,7 @@ pub fn cluster_table(
             }
             // A key part may address a column a DDL is adding or changing,
             // which the write row carries past the public columns.
-            let write_columns: Vec<KvColumn> = kv_table
+            let write_columns: Vec<crate::column::Column> = kv_table
                 .columns
                 .iter()
                 .cloned()
@@ -866,7 +866,7 @@ pub fn cluster_table(
 fn partition_double_write_for(
     table_columns: &[GoShared<tidb_model::column::ColumnInfo>],
     partition: &tidb_model::partition::PartitionInfo,
-) -> Result<Option<crate::kv_table::PartitionDoubleWrite>, String> {
+) -> Result<Option<crate::tables::PartitionDoubleWrite>, String> {
     use tidb_model::{ActionType, SchemaState};
     if !matches!(
         partition.ddl_action,
@@ -917,7 +917,7 @@ fn partition_double_write_for(
         .as_ref()
         .map(|changed| changed.read().clone())
         .unwrap_or_default();
-    let mode = |adding_side: bool| crate::kv_table::PartitionIndexMode {
+    let mode = |adding_side: bool| crate::tables::PartitionIndexMode {
         // Untouched indexes: the side not yet (or no longer) public writes
         // its clone in a non-public state.
         state: match (adding_side, changes_are_public) {
@@ -943,7 +943,7 @@ fn partition_double_write_for(
     for definition in &adding {
         index_modes.insert(definition.id, mode(true));
     }
-    Ok(Some(crate::kv_table::PartitionDoubleWrite {
+    Ok(Some(crate::tables::PartitionDoubleWrite {
         spec,
         reorganize,
         double_write,
@@ -964,8 +964,8 @@ fn partition_double_write_for(
 /// Go `ast.ReferOptionType` over the stored `FKInfo.On{Delete,Update}` int
 /// (`pkg/parser/ast/model.go:242`): NoOption 0, Restrict 1, Cascade 2,
 /// SetNull 3, NoAction 4, SetDefault 5.
-fn fk_action_from_stored(action: i64) -> crate::kv_table::FkAction {
-    use crate::kv_table::FkAction;
+fn fk_action_from_stored(action: i64) -> crate::tables::FkAction {
+    use crate::tables::FkAction;
     match action {
         1 => FkAction::Restrict,
         2 => FkAction::Cascade,
@@ -1051,25 +1051,25 @@ fn loaded_partition_spec(
         .map_err(|error| format!("its partitioning cannot be rebuilt: {error}"))
 }
 
-/// Translates one stored `IndexInfo` into the executor's `KvIndex`, against
+/// Translates one stored `IndexInfo` into the executor's `Index`, against
 /// the loaded executor table's full native column list.
 ///
 /// The offsets are resolved by NAME here even though `IndexColumn.Offset`
 /// carries one, because the two count different things: Go's offset is a
-/// position in `TableInfo.Columns`, and a `KvIndex`'s is a position in the
+/// position in `TableInfo.Columns`, and a `Index`'s is a position in the
 /// native columns this loader built from `TableInfo.Cols()`, the public
 /// ones. Resolving against that same list also keeps backfill and normal
 /// writes from indexing different row slots.
 ///
 /// It is one function rather than a loop inside [`cluster_table`] because the
-/// `CREATE INDEX` backfill has to build the very same `KvIndex` for an index
+/// `CREATE INDEX` backfill has to build the very same `Index` for an index
 /// the stored table does not carry yet -- and an index whose entries are
 /// WRITTEN under one mapping and READ under another is the exact silent wrong
 /// answer this tier keeps hunting.
 pub fn kv_index(
     shared: &tidb_model::GoShared<tidb_model::index::IndexInfo>,
-    columns: &[KvColumn],
-) -> Result<KvIndex, String> {
+    columns: &[crate::column::Column],
+) -> Result<Index, String> {
     let index = shared.read();
     let mut offsets = Vec::with_capacity(index.columns.len());
     for column in index.columns.iter_deref() {
@@ -1091,7 +1091,7 @@ pub fn kv_index(
     }
     // Go `table.Index` wraps the `IndexInfo` pointer `TableInfo.Indices`
     // holds.
-    Ok(KvIndex {
+    Ok(Index {
         info: shared.clone(),
         column_offsets: offsets,
         clustered_primary: false,

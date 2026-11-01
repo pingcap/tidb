@@ -19,12 +19,12 @@
 //! exchanged in against the partition's condition.
 
 use tidb_datatype::Datum;
-use tidb_table::kv_table::{KvTable, KvTableError, RowDecodeContext, TableHandle};
+use tidb_table::tables::{TableCommon, KvTableError, RowDecodeContext, TableHandle};
 use tidb_txnkv::Key;
 
 use crate::backfilling::ReorgBatch;
 
-/// The partition reorganization's row work over a [`KvTable`].
+/// The partition reorganization's row work over a [`TableCommon`].
 pub trait KvTablePartitionReorg {
     /// Go `reorgPartitionWorker.BackfillData` for one batch of the
     /// reorganized partition `physical_id`'s rows in `[start, end)`: each
@@ -46,7 +46,7 @@ pub trait KvTablePartitionReorg {
 
 }
 
-impl KvTablePartitionReorg for KvTable {
+impl KvTablePartitionReorg for TableCommon {
     fn reorg_partition_batch(
         &mut self,
         physical_id: i64,

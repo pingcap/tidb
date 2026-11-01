@@ -123,7 +123,7 @@ pub enum ColumnError {
 /// A column failure raised while reading a stored row (the checksum's
 /// origin default): Go's error with its identity, or the row decode
 /// failure a stored definition this layer cannot read is.
-impl From<ColumnError> for crate::kv_table::KvTableError {
+impl From<ColumnError> for crate::tables::KvTableError {
     fn from(error: ColumnError) -> Self {
         match error {
             ColumnError::ColumnCannotBeNull(column) => Self::Mysql(MysqlError::from_terror(

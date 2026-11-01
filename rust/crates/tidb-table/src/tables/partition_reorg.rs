@@ -30,7 +30,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use tidb_datatype::{Datum, SessionTimeZone};
 use tidb_txnkv::Key;
 
-use super::{KvIndex, KvTable, KvTableError, NonPublicIndex, RowDecodeContext, TableHandle};
+use super::{Index, TableCommon, KvTableError, NonPublicIndex, RowDecodeContext, TableHandle};
 use crate::partition_routing::PartitionSpec;
 
 /// One table's ongoing partition reorganization, as Go's
@@ -79,7 +79,7 @@ pub(crate) struct ReorgUpdate {
     copy_handle: TableHandle,
 }
 
-impl KvTable {
+impl TableCommon {
     /// Installs (or clears) the table's ongoing partition reorganization.
     pub fn set_partition_reorg(&mut self, reorg: Option<PartitionDoubleWrite>) {
         self.partition_reorg = reorg.map(Box::new);
@@ -96,7 +96,7 @@ impl KvTable {
     pub(crate) fn partition_index_sets(
         &self,
         physical_id: i64,
-    ) -> (Vec<KvIndex>, Vec<NonPublicIndex>) {
+    ) -> (Vec<Index>, Vec<NonPublicIndex>) {
         let mode = self
             .partition_reorg
             .as_deref()

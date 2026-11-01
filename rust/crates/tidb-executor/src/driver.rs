@@ -30,7 +30,7 @@
 
 use tidb_executor_internal_exec::Executor;
 use tidb_driver_error::ExecError;
-use tidb_table::kv_table::TableHandle;
+use tidb_table::tables::TableHandle;
 use tidb_variable::mem_quota;
 use std::sync::Arc;
 use tidb_ast::{QueryStmt, Stmt, Visitable, Visitor};

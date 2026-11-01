@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use crate::support::testkit::TestKit;
 use tidb_infoschema::TableEntry;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 
 /// The `(id, followers, primary_region, regions, schedule)` a policy must
 /// carry after a create/alter, checked against Go's `checkFunc` expectations.
@@ -66,7 +66,7 @@ fn policy_exists(tk: &TestKit, name: &str) -> bool {
 }
 
 /// Go `external.GetTableByName(t, tk, "test", name).Meta()`.
-fn stored_table(tk: &TestKit, name: &str) -> Arc<KvTable> {
+fn stored_table(tk: &TestKit, name: &str) -> Arc<TableCommon> {
     match tk.get_table_by_name("test", name) {
         TableEntry::Kv(table) => table,
         _ => panic!("{name} is not a storage-backed table"),

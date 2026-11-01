@@ -104,7 +104,7 @@ fn a_five_row_update_colliding_on_the_third_row_leaves_the_table_unchanged() {
 /// A session opened over a shared in-process catalog still needs the image
 /// rollback path. This is the shape used by the pipeline front end: unlike a
 /// cluster-backed table it has no outer mutation-buffer checkpoint, even
-/// though its rows are represented by a `KvTable` rather than a `MemTable`.
+/// though its rows are represented by a `TableCommon` rather than a `MemTable`.
 #[test]
 fn a_shared_in_process_catalog_rolls_back_a_failed_insert() {
     let mut owner = Session::new();

@@ -39,7 +39,7 @@
 //! which ids are issued, which explicit value rebases, when the domain is
 //! exhausted -- exist once and be the same rules on both.
 //!
-//! The callers that drive the allocator -- `KvTable::adjust_auto_increment_datum`,
+//! The callers that drive the allocator -- `TableCommon::adjust_auto_increment_datum`,
 //! `rebase_auto_increment`, `truncate` -- stay with the table in
 //! `tidb-table` (Go `pkg/table/tables`), above this package.
 
@@ -359,7 +359,7 @@ pub const fn get_increment_and_offset(increment: u64, offset: u64) -> (u64, u64)
 /// unsigned progression past `i64::MAX` stays on its grid.
 ///
 /// Note this is the ONLY place the step arithmetic lives, and it runs BEFORE
-/// the column-width cast in `KvTable::check_auto_increment_fits`. Captured
+/// the column-width cast in `TableCommon::check_auto_increment_fits`. Captured
 /// from TiDB: a `TINYINT AUTO_INCREMENT` under `increment = 100` hands out
 /// `1`, then `101`, and then fails with `[types:1690]constant 201 overflows
 /// tinyint` -- the stepped candidate is produced first and the column bound

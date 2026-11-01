@@ -74,7 +74,7 @@ pub fn column_default_text(
 /// report.
 pub fn literal_column_default_text(
     value: &Datum,
-    column: &crate::KvColumn,
+    column: &tidb_table::column::Column,
     flags: tidb_datatype::ConversionFlags,
     session_zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Option<String>, tidb_datatype::DatumValueError> {
@@ -125,9 +125,9 @@ const FULL_COL_DESC_PRIVILEGES: &str = "select,insert,update,references";
 /// ON UPDATE CURRENT_TIMESTAMP, generated-column kind, then expression
 /// default.
 pub fn new_col_desc(
-    column: &crate::KvColumn,
+    column: &tidb_table::column::Column,
     offset: usize,
-    table: &crate::KvTable,
+    table: &crate::TableCommon,
     full: bool,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<Datum>, DriverError> {
@@ -327,7 +327,7 @@ pub(crate) const NOT_NULL_FLAG: u32 = 1;
 /// Go `NewColDesc`'s key flag, shared by `SHOW COLUMNS` and
 /// `information_schema.COLUMNS`: PRI for a primary key, UNI for a column that
 /// is the whole of a unique index, MUL for one that leads a non-unique index.
-pub fn column_key_flag(table: &crate::KvTable, offset: usize) -> String {
+pub fn column_key_flag(table: &crate::TableCommon, offset: usize) -> String {
     if table.columns()[offset]
         .read().field_type
         .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)

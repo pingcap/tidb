@@ -124,7 +124,7 @@ impl GeneratedColumn {
 /// A column description reduced to what generation needs: the two facts
 /// [`materialize`] reads per column.
 ///
-/// This exists so the write/read paths can hand over `KvColumn`s without
+/// This exists so the write/read paths can hand over `crate::column::Column`s without
 /// `generated_column` depending on the table module, and so the unit tests
 /// here can drive the same code the table drives.
 pub trait GeneratedColumnSlot {
@@ -669,7 +669,7 @@ impl From<GenerationError> for crate::column::ColumnError {
     }
 }
 
-impl From<GenerationError> for crate::kv_table::KvTableError {
+impl From<GenerationError> for crate::tables::KvTableError {
     fn from(error: GenerationError) -> Self {
         Self::Generation {
             column: error.column,

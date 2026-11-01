@@ -3431,9 +3431,8 @@ mod predicate_column_tests {
 mod statistics_initialization_tests {
     use super::*;
     use tidb_planner_property::stats_info::HistCollExt as _;
-    use tidb_table::kv_table::KvTable;
-    use tidb_table::kv_table::KvIndex;
-    use tidb_table::kv_table::KvColumn;
+    use tidb_table::tables::TableCommon;
+    use tidb_table::tables::Index;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
     use tidb_expr::constant::{Constant, ParamMarker};
@@ -3444,9 +3443,9 @@ mod statistics_initialization_tests {
 
     #[test]
     fn unfiltered_table_path_count_uses_realtime_row_count() {
-        let table = KvTable::new(
+        let table = TableCommon::new(
             7,
-            vec![KvColumn {
+            vec![tidb_table::column::Column {
                 info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("a"),
@@ -3542,9 +3541,9 @@ mod statistics_initialization_tests {
     #[test]
     fn statistics_collection_preserves_estimation_validity() {
         let field_type = FieldType::new(FieldTypeCode::LongLong);
-        let mut table = KvTable::new(
+        let mut table = TableCommon::new(
             7,
-            vec![KvColumn {
+            vec![tidb_table::column::Column {
                 info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("a"),
@@ -3559,7 +3558,7 @@ mod statistics_initialization_tests {
             }],
         );
         table.add_index(
-            KvIndex {
+            Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 9,
                     name: tidb_ast::CiString::new("ia"),
@@ -3766,9 +3765,9 @@ mod statistics_initialization_tests {
     #[test]
     fn statistics_initialization_preserves_range_evaluation_error() {
         let field_type = FieldType::new(FieldTypeCode::LongLong);
-        let mut table = KvTable::new(
+        let mut table = TableCommon::new(
             7,
-            vec![KvColumn {
+            vec![tidb_table::column::Column {
                 info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("a"),
@@ -3783,7 +3782,7 @@ mod statistics_initialization_tests {
             }],
         );
         table.add_index(
-            KvIndex {
+            Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 9,
                     name: tidb_ast::CiString::new("ia"),

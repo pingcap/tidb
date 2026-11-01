@@ -23,15 +23,15 @@
 //! remapped, because nothing stored is positional.
 //!
 //! The price is paid here, and only here. A name becomes an offset at the
-//! moment of use ([`KvTable::foreign_key_offsets`], and
+//! moment of use ([`TableCommon::foreign_key_offsets`], and
 //! `generated_column::dependency_offsets` for the two expressions), and the
 //! DDL that could make a name WRONG has to be refused rather than allowed to
-//! dangle -- which is what [`KvTable::column_dependent`] is asked before a
+//! dangle -- which is what [`TableCommon::column_dependent`] is asked before a
 //! column is dropped or renamed.
 
-use super::{KvForeignKey, KvTable};
+use super::{KvForeignKey, TableCommon};
 
-impl KvTable {
+impl TableCommon {
 
     /// The offsets a foreign key's referencing columns sit at NOW, resolved
     /// from the names the constraint stores.
@@ -47,16 +47,15 @@ impl KvTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kv_table::FkAction;
-    use crate::kv_table::KvColumn;
+    use crate::tables::FkAction;
     use tidb_datatype::{FieldType, FieldTypeCode};
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::LongLong)
     }
 
-    fn column(name: &str, id: i64) -> KvColumn {
-        KvColumn {
+    fn column(name: &str, id: i64) -> crate::column::Column {
+        crate::column::Column {
             info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                 id: id,
                 name: tidb_ast::CiString::new(name.to_owned()),
@@ -71,8 +70,8 @@ mod tests {
         }
     }
 
-    fn test_table() -> KvTable {
-        KvTable::new(42, vec![column("a", 1), column("s", 2)])
+    fn test_table() -> TableCommon {
+        TableCommon::new(42, vec![column("a", 1), column("s", 2)])
     }
 
     /// A foreign key names its referencing columns, so a column inserted
@@ -100,7 +99,7 @@ mod tests {
         // Re-read the constraint from the table on both sides: a clone taken
         // BEFORE the insert carries its own `cols` and would answer from
         // those, which is not the question.
-        let offsets = |t: &KvTable| t.foreign_key_offsets(&t.foreign_keys()[0]);
+        let offsets = |t: &TableCommon| t.foreign_key_offsets(&t.foreign_keys()[0]);
         assert_eq!(offsets(&t), Some(vec![1]));
         t.add_column(0, column("z", 3));
         assert_eq!(

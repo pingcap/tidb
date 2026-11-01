@@ -31,7 +31,7 @@ use tidb_ddl_build::table_lock;
 use tidb_infoschema::Catalog;
 use tidb_driver_error::DriverError;
 use tidb_infoschema::TableEntry;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 use tidb_model::{SessionInfo, TableLockTpInfo};
 use tidb_hack::go_to_lower;
 
@@ -41,7 +41,7 @@ use crate::Session;
 
 /// Go `ddl.checkTableLocked` over an in-process table.
 fn check_table_locked(
-    table: &KvTable,
+    table: &TableCommon,
     tp: TableLockType,
     info: &SessionInfo,
 ) -> Result<(), DriverError> {

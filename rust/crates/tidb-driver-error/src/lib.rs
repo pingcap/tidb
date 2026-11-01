@@ -135,7 +135,7 @@ use tidb_variable::mem_quota::KillStop;
 use tidb_kv::storage::StorageError;
 use tidb_table::column::{CastError, ColumnError};
 use tidb_table::generated_column::GenerationError;
-use tidb_table::kv_table::KvTableError;
+use tidb_table::tables::KvTableError;
 
 /// The SQL layer's view of a storage failure. A retryable route error is
 /// Go's `ErrRegionUnavailable`; any other non-SQL failure is a 1105 carrying

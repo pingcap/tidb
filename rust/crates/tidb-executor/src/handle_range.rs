@@ -22,7 +22,7 @@
 //! `points2TableRanges`, which the planner already applied to a planned
 //! table path), so every bound is an integer the boundary split can read.
 
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 use tidb_ranger::types::Range;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_distsql::{
@@ -32,7 +32,7 @@ use tidb_txnkv::Key;
 
 /// The primary-key column that IS the row handle, when the table has one and
 /// this tier can range over it.
-fn handle_column(table: &KvTable) -> Option<HandleColumn> {
+fn handle_column(table: &TableCommon) -> Option<HandleColumn> {
     if let Some(offset) = table.pk_handle_offset() {
         let column = table.columns().get(offset)?;
         // The handle codec is integer; a clustered non-integer key reaches
@@ -88,7 +88,7 @@ struct HandleColumn {
 /// endpoint becomes ([`to_table_range_in_domain`]), and whether the ranges
 /// have to be cut at the point the key encoding flips sign
 /// ([`tidb_distsql::split_ranges_across_int64_boundary`]).
-fn handle_is_unsigned(table: &KvTable) -> bool {
+fn handle_is_unsigned(table: &TableCommon) -> bool {
     handle_column(table).is_some_and(|column| column.field_type.is_unsigned())
 }
 
@@ -172,7 +172,7 @@ fn materialize_open_bounds(range: &Range, unsigned: bool) -> Range {
 /// the whole record range -- reading a superset is always correct, because
 /// the `WHERE` above the source filters every row it returns.
 pub fn record_key_ranges(
-    table: &KvTable,
+    table: &TableCommon,
     ranges: &[Range],
     zone: &tidb_datatype::SessionTimeZone,
     keep_order: bool,
@@ -213,7 +213,7 @@ pub fn record_key_ranges(
 /// table's record keys, encoded as Go's read path encodes them -- the session
 /// location and the process's collation mode.
 fn common_handle_record_key_ranges(
-    table: &KvTable,
+    table: &TableCommon,
     ranges: &[Range],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Vec<(Key, Key)>, tidb_distsql::KvRequestBuildError> {
@@ -227,7 +227,7 @@ fn common_handle_record_key_ranges(
 }
 
 pub fn record_key_range_value_halves(
-    table: &KvTable,
+    table: &TableCommon,
     ranges: &[Range],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<

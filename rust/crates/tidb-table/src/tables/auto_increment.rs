@@ -17,14 +17,14 @@
 //! Everything about where a row's auto-increment id comes from lives here:
 //! the shared allocator handle a node keeps across catalog rebuilds
 //! ([`TableAutoId`]), the three origins Go distinguishes ([`AutoIncrement`]),
-//! and the [`KvTable`] methods that mark the column, rebase the counter, draw
+//! and the [`TableCommon`] methods that mark the column, rebase the counter, draw
 //! an id for a row, and refuse an id the column's own width cannot hold.
 //!
 //! The counting itself is one level down in [`super::auto_id`]; this module
 //! is the seam between that counter and a table's columns.
 
 use tidb_autoid::{self as auto_id, exceeds, AutoIdAllocator, AutoIdError, AutoIdStore, AutoIdStoreError};
-use super::KvTable;
+use super::TableCommon;
 use std::sync::Arc;
 use tidb_datatype::{
     integer_signed_upper_bound, integer_unsigned_upper_bound, type_str, Datum, FieldTypeCode,
@@ -35,7 +35,7 @@ use tidb_datatype::{
 ///
 /// Cloning shares the reserved range and the counter's home, which is what
 /// lets a node keep one allocator per table across catalog rebuilds and hand
-/// each rebuilt [`KvTable`] a clone of it -- Go's arrangement, where the
+/// each rebuilt [`TableCommon`] a clone of it -- Go's arrangement, where the
 /// allocator sits on the domain's table cache and the `TableInfo` carries no
 /// counter at all.
 #[derive(Clone, Debug)]
@@ -144,7 +144,7 @@ pub(crate) fn get_auto_record_id(value: &Datum, is_insert: bool) -> u64 {
     }
 }
 
-impl KvTable {
+impl TableCommon {
     /// Marks the AUTO_INCREMENT column.
     ///
     /// The column's signedness travels to the allocator here, because it is
@@ -165,7 +165,7 @@ impl KvTable {
     /// This is the seam the cluster tier uses to give the counter the meta-key
     /// home Go gives it, and the sharing is as load-bearing as the home. Go's
     /// allocator lives on the domain's table cache, not on the `TableInfo`, so
-    /// it outlives every schema reload; this tier rebuilds its `KvTable`s
+    /// it outlives every schema reload; this tier rebuilds its `TableCommon`s
     /// whenever the schema version or the stats snapshot moves, and an
     /// allocator rebuilt with them would throw away its reserved range and
     /// reserve a fresh one -- leaving a visible hole in the ids on a table
@@ -274,7 +274,7 @@ impl KvTable {
     /// rebuilds with the requested step, single-point included.
     pub fn init_auto_id_cache(&mut self, cache: u64) {
         let step = if cache == 0 {
-            crate::kv_table::DEFAULT_AUTO_ID_STEP
+            crate::tables::DEFAULT_AUTO_ID_STEP
         } else {
             cache
         };
@@ -500,7 +500,6 @@ impl KvTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kv_table::KvColumn;
     use tidb_datatype::FieldType;
 
     fn long() -> FieldType {
@@ -508,10 +507,10 @@ mod tests {
     }
 
     /// A table whose only column is an AUTO_INCREMENT `BIGINT`, signed or not.
-    fn auto_increment_table(unsigned: bool) -> KvTable {
-        let mut table = KvTable::new(
+    fn auto_increment_table(unsigned: bool) -> TableCommon {
+        let mut table = TableCommon::new(
             7,
-            vec![KvColumn {
+            vec![crate::column::Column {
                 info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("id"),

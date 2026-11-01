@@ -162,7 +162,7 @@ pub(super) fn loaded_catalog() -> ClusterCatalog {
         ..TableInfo::default()
     };
     // `app.hnd(v BIGINT UNIQUE)`: no primary key, so its row handles come
-    // from `KvTable`'s own `next_handle` counter (Go's `_tidb_rowid`)
+    // from `TableCommon`'s own `next_handle` counter (Go's `_tidb_rowid`)
     // rather than from a column, and the unique index gives a failure that
     // lands AFTER earlier rows of the same statement are already staged.
     // Both are what the rollback tests below need.

@@ -23,7 +23,7 @@ use tidb_hack::GoCaseCompare;
 
 /// Go prints the column comment last, after AUTO_RANDOM and before the next
 /// column's line, for every column that carries one.
-fn push_column_comment(clause: &mut String, column: &crate::KvColumn) {
+fn push_column_comment(clause: &mut String, column: &tidb_table::column::Column) {
     if column.read().comment.is_empty() {
         return;
     }
@@ -84,7 +84,7 @@ pub fn show_create_view_text(view: &crate::ViewDef, ansi_quotes: bool) -> String
 /// ``UNIQUE KEY `idx` (`a`(2),`b`)``, and a prefix covering the whole column
 /// prints no `(n)` at all because the DDL stored none.
 fn index_part_text(
-    table: &crate::KvTable,
+    table: &crate::TableCommon,
     offset: usize,
     prefix_length: i64,
     ansi_quotes: bool,
@@ -120,7 +120,7 @@ fn index_part_text(
 pub fn construct_result_of_show_create_table(
     database: &str,
     name: &str,
-    table: &crate::KvTable,
+    table: &crate::TableCommon,
     ctx: &crate::StmtContext,
 ) -> Result<String, DriverError> {
     let ansi_quotes = ctx.sql_mode().ansi_quotes;
@@ -309,7 +309,7 @@ pub fn construct_result_of_show_create_table(
     // hypothetical indexes after the public ones, sorted by name.
     let hypo_indexes = ctx
         .hypo_indexes()
-        .map(|hypo| tidb_table::kv_table::hypo_kv_indexes(hypo, database, table))
+        .map(|hypo| tidb_table::tables::hypo_kv_indexes(hypo, database, table))
         .unwrap_or_default();
     let indexes = table
         .indexes()
@@ -595,7 +595,7 @@ pub fn construct_result_of_show_create_table(
 /// Go `ShowCreateTable`'s region split policies (`executor/show.go:1435`):
 /// the table's own, then each index's in index order, each on its own line
 /// behind the `region_split` feature comment.
-fn region_split_text(table: &crate::KvTable, ansi_quotes: bool) -> String {
+fn region_split_text(table: &crate::TableCommon, ansi_quotes: bool) -> String {
     fn bounds(policy: &tidb_model::RegionSplitPolicy) -> String {
         let values = |values: &[String]| {
             values
@@ -669,7 +669,7 @@ fn split_value_text(value: &str) -> String {
 /// `TTLInfo`, rather than only when they were written -- which is why a table
 /// created with `TTL=` alone prints `TTL_ENABLE='ON'` and the default job
 /// interval back.
-fn ttl_clause_text(table: &crate::KvTable) -> String {
+fn ttl_clause_text(table: &crate::TableCommon) -> String {
     let Some(info) = table.ttl_info() else {
         return String::new();
     };
@@ -730,7 +730,7 @@ fn hash_definitions_are_default(definitions: &[crate::PartitionDef]) -> bool {
     })
 }
 
-fn partition_clause_text(table: &crate::KvTable, ansi_quotes: bool) -> String {
+fn partition_clause_text(table: &crate::TableCommon, ansi_quotes: bool) -> String {
     let Some(partition) = table.partition() else {
         return String::new();
     };

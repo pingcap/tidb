@@ -78,7 +78,7 @@ use tidb_stats_util::{JsonBucket, JsonCmSketch, JsonCmSketchRow, JsonCmSketchTop
 use tidb_stats_util::JsonTable;
 use tidb_compress::{GzipReaderPool, GzipWriterPool};
 
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 use tidb_hack::GoToLower;
 
 /// Why a dump could not be loaded. Go surfaces each of these as the
@@ -639,7 +639,7 @@ fn index_from_json(
 /// statistics -- the estimator falls back to its per-column pseudo rates for
 /// it, which is also what Go's `StatsAvailable` gate reaches.
 pub fn statistics_table_from_json(
-    table: &KvTable,
+    table: &TableCommon,
     physical_id: i64,
     json: &JsonTable,
 ) -> Result<Table, LoadStatsError> {
@@ -748,8 +748,8 @@ mod tests {
         assert!(resident.is_none() && needed);
     }
 
-    fn column(id: i64, name: &str) -> tidb_table::kv_table::KvColumn {
-        tidb_table::kv_table::KvColumn {
+    fn column(id: i64, name: &str) -> tidb_table::column::Column {
+        tidb_table::column::Column {
             info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                 id: id,
                 name: tidb_ast::CiString::new(name.to_owned()),
@@ -968,7 +968,7 @@ mod tests {
             .info
             .write()
             .add_flag(u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY));
-        let mut schema = KvTable::new(41, vec![handle]);
+        let mut schema = TableCommon::new(41, vec![handle]);
         schema.set_pk_handle_offset(0);
         schema.add_hidden_column(column(2, "_V$_expr"));
         let dumped = JsonTable {
@@ -1038,7 +1038,7 @@ mod tests {
 
     #[test]
     fn zero_index_placeholder_keeps_presence_and_load_state() {
-        let schema = KvTable::new(42, vec![column(1, "a")]);
+        let schema = TableCommon::new(42, vec![column(1, "a")]);
         let stats = statistics_table_from_json(
             &schema,
             42,
@@ -1093,7 +1093,7 @@ mod tests {
     /// pseudo.
     #[test]
     fn uninitialized_placeholder_keeps_realtime_count_and_is_pseudo() {
-        let schema = KvTable::new(41, vec![column(1, "a")]);
+        let schema = TableCommon::new(41, vec![column(1, "a")]);
         let stats = statistics_table_from_json(
             &schema,
             41,

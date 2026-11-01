@@ -78,7 +78,7 @@ pub(crate) fn stored_column_metadata(table: &TableEntry) -> Vec<ColumnDefaultMet
 }
 
 /// [`ColumnDefaultMeta`] of one stored column.
-pub(crate) fn kv_column_metadata(column: &tidb_table::kv_table::KvColumn) -> ColumnDefaultMeta {
+pub(crate) fn kv_column_metadata(column: &tidb_table::column::Column) -> ColumnDefaultMeta {
     ColumnDefaultMeta {
         default_value: column.default_value.clone(),
         not_null: column

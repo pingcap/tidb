@@ -18,14 +18,14 @@
 //! name it was created with (`tbl.Meta().Name.O`).
 
 use tidb_hack::go_to_lower;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 
 /// The session's LOCAL temporary tables: `(schema.L, table.L, table)`.
-pub type SessionTables = Vec<(String, String, KvTable)>;
+pub type SessionTables = Vec<(String, String, TableCommon)>;
 
 /// Where `schema.name` is in `tables`; the lookup lowercases both names.
 #[must_use]
-pub fn position(tables: &[(String, String, KvTable)], schema: &str, name: &str) -> Option<usize> {
+pub fn position(tables: &[(String, String, TableCommon)], schema: &str, name: &str) -> Option<usize> {
     let (schema, name) = (go_to_lower(schema), go_to_lower(name));
     tables
         .iter()
@@ -35,9 +35,9 @@ pub fn position(tables: &[(String, String, KvTable)], schema: &str, name: &str) 
 /// Go `SessionTables.TableByName`.
 #[must_use]
 pub fn table_by_name<'a>(
-    tables: &'a [(String, String, KvTable)],
+    tables: &'a [(String, String, TableCommon)],
     schema: &str,
     name: &str,
-) -> Option<&'a KvTable> {
+) -> Option<&'a TableCommon> {
     position(tables, schema, name).map(|index| &tables[index].2)
 }

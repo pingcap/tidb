@@ -25,7 +25,7 @@
 //! plus the auto-created supporting index and `FKInfo.String`.
 //!
 //! This tier carries the same two halves: the child constraint on
-//! `KvTable::foreign_keys`, read from the domain's current schema the way
+//! `TableCommon::foreign_keys`, read from the domain's current schema the way
 //! Go's `getTableInfo` reads it (`tk.get_table_by_name`), and — because
 //! nothing caches a referred-FK registry — the parent half computed the way
 //! Go's runtime checks compute it (`rust/crates/tidb-executor/src/foreign_key.rs:175`,
@@ -41,8 +41,8 @@
 
 use crate::support::testkit::TestKit;
 use tidb_infoschema::TableEntry;
-use tidb_table::kv_table::FkAction;
-use tidb_table::kv_table::KvForeignKey;
+use tidb_table::tables::FkAction;
+use tidb_table::tables::KvForeignKey;
 
 /// Go `getTableInfo(t, dom, db, table).ForeignKeys`.
 fn foreign_keys_of(tk: &TestKit, db: &str, table: &str) -> Vec<KvForeignKey> {

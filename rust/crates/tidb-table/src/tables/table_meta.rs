@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! What a [`KvTable`](super::KvTable) IS, as opposed to what it does: the row
+//! What a [`TableCommon`](super::TableCommon) IS, as opposed to what it does: the row
 //! identifier, the column, index and foreign-key descriptions, and the
 //! table's default character set.
 //!
-//! Inside: [`TableHandle`] (Go `kv.Handle`), [`KvIndex`],
-//! [`FkAction`] + [`KvForeignKey`], [`KvColumn`] with the read-time cast that
+//! Inside: [`TableHandle`] (Go `kv.Handle`), [`Index`],
+//! [`FkAction`] + [`KvForeignKey`], [`crate::column::Column`] with the read-time cast that
 //! makes `OriginDefaultValue` behave, and [`TableCharset`].
 //!
 //! Mirrors Go `pkg/meta/model`'s `IndexInfo`, `FKInfo` and `ColumnInfo`
@@ -220,10 +220,10 @@ impl TableHandle {
     }
 }
 
-/// One index of a [`KvTable`]: Go `table.Index`, the table's
+/// One index of a [`TableCommon`]: Go `table.Index`, the table's
 /// `*model.IndexInfo` and where its key parts sit in the table's columns.
 #[derive(Clone, Debug)]
-pub struct KvIndex {
+pub struct Index {
     /// Go's `*model.IndexInfo`, the pointer `TableInfo.Indices` holds.
     pub info: tidb_model::GoShared<tidb_model::IndexInfo>,
     /// Each key part's place in the table's columns, in index order: Go's
@@ -245,7 +245,7 @@ pub struct KvIndex {
 #[derive(Clone, Debug)]
 pub(crate) struct NonPublicIndex {
     /// The index as a write builds its keys and values.
-    pub index: KvIndex,
+    pub index: Index,
     /// Go `IndexInfo.State`.
     pub state: tidb_model::SchemaState,
     /// Go `IndexInfo.BackfillState`: whether DML writes go to the
@@ -262,7 +262,7 @@ pub(crate) struct NonPublicIndex {
 #[derive(Clone, Debug)]
 pub struct NonPublicColumn {
     /// The column as a write encodes it.
-    pub column: KvColumn,
+    pub column: crate::column::Column,
     /// Go `ColumnInfo.State`.
     pub state: tidb_model::SchemaState,
     /// Go `ChangeStateInfo.DependencyColumnOffset`: for the temporary column
@@ -289,7 +289,7 @@ impl NonPublicIndex {
     }
 }
 
-impl KvIndex {
+impl Index {
     /// An index over `info` whose key parts sit at `column_offsets`.
     #[must_use]
     pub fn new(info: tidb_model::IndexInfo, column_offsets: Vec<usize>) -> Self {
@@ -403,7 +403,7 @@ pub enum FkAction {
 impl FkAction {
 }
 
-/// One foreign key of a [`KvTable`]: Go `model.FKInfo`, reduced to what a
+/// One foreign key of a [`TableCommon`]: Go `model.FKInfo`, reduced to what a
 /// referential check and a cascade need.
 ///
 /// BOTH sides are stored as NAMES (Go `FKInfo.Cols` / `RefCols`, both
@@ -419,7 +419,7 @@ pub struct KvForeignKey {
     pub name: String,
     /// Go `FKInfo.Cols`: the referencing columns' NAMES in this table.
     /// Resolved to offsets against the current column list where they are
-    /// used ([`KvTable::foreign_key_offsets`]).
+    /// used ([`TableCommon::foreign_key_offsets`]).
     pub cols: Vec<String>,
     /// The referenced schema.
     pub ref_schema: String,
@@ -433,9 +433,9 @@ pub struct KvForeignKey {
     pub on_update: FkAction,
 }
 
-/// A column of a [`KvTable`]: Go's `table.Column`, whose `ColumnInfo` is
+/// A column of a [`TableCommon`]: Go's `table.Column`, whose `ColumnInfo` is
 /// the pointer the table's `TableInfo.Columns` holds.
-pub type KvColumn = crate::column::Column;
+pub use crate::column::Column;
 
 impl crate::generated_column::GeneratedColumnSlot for crate::column::Column {
     fn generation(&self) -> Option<&crate::generated_column::GeneratedColumn> {
@@ -481,7 +481,7 @@ impl Default for TableCharset {
 /// Go `mysql.NotNullFlag`.
 pub const NOT_NULL_FLAG: u32 = 1;
 
-impl KvColumn {
+impl crate::column::Column {
     /// The value a row written before this column existed reads back.
     ///
     /// Go stores the written DEFAULT as given and casts it to the column's

@@ -397,8 +397,8 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
     /// clocks, globals, and expression state cannot affect the result.
     fn prepared_point_get_context(
         &self,
-    ) -> tidb_table::kv_table::PreparedPointGetDecodeContext {
-        tidb_table::kv_table::PreparedPointGetDecodeContext::for_query(
+    ) -> tidb_table::tables::PreparedPointGetDecodeContext {
+        tidb_table::tables::PreparedPointGetDecodeContext::for_query(
             self.session_vars().sql_mode().has_allow_invalid_dates_mode(),
             self.session_time_zone(),
         )
@@ -2143,9 +2143,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Go `SessionVars` / `StmtCtx` state `hypo_tiflash_replicas`, mutably.
     fn hypo_tiflash_replicas_mut(&mut self) -> &mut Arc<tidb_variable::hypo_index::HypoTiFlashReplicas>;
     /// Go `SessionVars` / `StmtCtx` state `local_temporary_tables`, read.
-    fn local_temporary_tables_ref(&self) -> &Vec<(String, String, crate::KvTable)>;
+    fn local_temporary_tables_ref(&self) -> &Vec<(String, String, crate::TableCommon)>;
     /// Go `SessionVars` / `StmtCtx` state `local_temporary_tables`, mutably.
-    fn local_temporary_tables_mut(&mut self) -> &mut Vec<(String, String, crate::KvTable)>;
+    fn local_temporary_tables_mut(&mut self) -> &mut Vec<(String, String, crate::TableCommon)>;
     /// Go `SessionVars` / `StmtCtx` state `mpp_query_info`, read.
     fn mpp_query_info_ref(&self) -> &Arc<crate::MppQueryInfo>;
     /// Go `SessionVars` / `StmtCtx` state `mpp_query_info`, mutably.

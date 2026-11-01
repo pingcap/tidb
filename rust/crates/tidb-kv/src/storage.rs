@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The key/value interface used by the table layer's `KvTable`.
+//! The key/value interface used by the table layer's `TableCommon`.
 //!
 //! [`TableStorage`] erases the associated iterator and error types of Go's
 //! `kv.Retriever`/`kv.Mutator` counterparts so table metadata and executors do

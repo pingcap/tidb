@@ -8,20 +8,19 @@ use std::sync::{Arc, Mutex};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_executor::driver::run_select_on;
 use tidb_infoschema::Catalog;
-use tidb_table::kv_table::KvTable;
-use tidb_table::kv_table::KvIndex;
-use tidb_table::kv_table::KvColumn;
+use tidb_table::tables::TableCommon;
+use tidb_table::tables::Index;
 use prost::Message;
 use tidb_proto::tipb::DagRequest;
 use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use tidb_sessionctx::StmtContext;
 use tidb_txnkv::Key;
 
-fn long_col(name: &str, id: i64) -> KvColumn {
+fn long_col(name: &str, id: i64) -> tidb_table::column::Column {
     let mut ft = FieldType::new(FieldTypeCode::LongLong);
     ft.set_flen(20);
     ft.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
-    KvColumn {
+    tidb_table::column::Column {
         info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
             id: id,
             name: tidb_ast::CiString::new(name.to_owned()),
@@ -36,12 +35,12 @@ fn long_col(name: &str, id: i64) -> KvColumn {
     }
 }
 
-fn varchar_col(name: &str, id: i64) -> KvColumn {
+fn varchar_col(name: &str, id: i64) -> tidb_table::column::Column {
     let mut ft = FieldType::new(FieldTypeCode::Varchar);
     ft.set_flen(63);
     ft.set_collation(tidb_charset::Collation::Utf8Mb4Bin);
     ft.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
-    KvColumn {
+    tidb_table::column::Column {
         info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
             id: id,
             name: tidb_ast::CiString::new(name.to_owned()),
@@ -56,7 +55,7 @@ fn varchar_col(name: &str, id: i64) -> KvColumn {
     }
 }
 
-fn edges_columns() -> Vec<KvColumn> {
+fn edges_columns() -> Vec<tidb_table::column::Column> {
     vec![
         long_col("id1", 1),
         long_col("id2", 2),
@@ -65,7 +64,7 @@ fn edges_columns() -> Vec<KvColumn> {
         {
             let mut ft = FieldType::new(FieldTypeCode::Varchar);
             ft.set_flen(150);
-            KvColumn {
+            tidb_table::column::Column {
                 info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 5,
                     name: tidb_ast::CiString::new("value"),
@@ -82,10 +81,10 @@ fn edges_columns() -> Vec<KvColumn> {
     ]
 }
 
-fn edge_table() -> KvTable {
-    let mut table = KvTable::new(459, edges_columns());
+fn edge_table() -> TableCommon {
+    let mut table = TableCommon::new(459, edges_columns());
     table.add_index(
-        KvIndex {
+        Index {
             info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 1,
                 name: tidb_ast::CiString::new("PRIMARY"),
@@ -365,14 +364,14 @@ impl TableStorage for CapturingStore {
     }
 }
 
-fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<DagRequest>>>) -> KvTable {
-    let mut table = KvTable::with_storage(
+fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<DagRequest>>>) -> TableCommon {
+    let mut table = TableCommon::with_storage(
         459,
         edges_columns(),
         Box::new(CapturingStore::new(captured)),
     );
     table.add_index(
-        KvIndex {
+        Index {
             info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 1,
                 name: tidb_ast::CiString::new("PRIMARY"),

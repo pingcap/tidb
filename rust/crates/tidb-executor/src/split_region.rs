@@ -22,9 +22,9 @@
 //! to the store's `SplitRegions`; the answer is how many regions they created
 //! and the fraction that finished scattering.
 
-use tidb_table::kv_table::TableHandle;
-use tidb_table::kv_table::KvTable;
-use tidb_table::kv_table::KvIndex;
+use tidb_table::tables::TableHandle;
+use tidb_table::tables::TableCommon;
+use tidb_table::tables::Index;
 use crate::{DriverError, ExecError, MysqlError, StmtContext};
 use tidb_tablecodec::table_key::{encode_record_key, encode_table_index_prefix, RecordHandle};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone};
@@ -73,7 +73,7 @@ const CHECK_SCATTER_REGION_FINISH_BACKOFF: i64 = 50;
 /// (`GetSplitRegionTimeout`).
 pub fn split_region(
     stmt: &tidb_ast::SplitRegionStmt,
-    table: &KvTable,
+    table: &TableCommon,
     ctx: &StmtContext,
     wait_finish: bool,
     timeout: std::time::Duration,
@@ -179,10 +179,10 @@ enum SplitValues {
 fn plan_index_split<'a>(
     stmt: &tidb_ast::SplitRegionStmt,
     index_name: &str,
-    table: &'a KvTable,
+    table: &'a TableCommon,
     table_name: &str,
     converter: &ValueConverter<'_>,
-) -> Result<(&'a KvIndex, SplitValues), DriverError> {
+) -> Result<(&'a Index, SplitValues), DriverError> {
     let clustered = table.pk_handle_offset().is_some() || !table.common_handle_offsets().is_empty();
     if index_name.go_lower_eq("primary") && clustered {
         return Err(DriverError::Mysql(MysqlError::from_terror(
@@ -259,7 +259,7 @@ fn plan_index_split<'a>(
 /// Go `buildSplitTableRegion` over `buildHandleColumnInfos`.
 fn plan_table_split(
     stmt: &tidb_ast::SplitRegionStmt,
-    table: &KvTable,
+    table: &TableCommon,
     converter: &ValueConverter<'_>,
 ) -> Result<SplitValues, DriverError> {
     let handle_columns: Vec<(String, FieldType)> = if let Some(offset) = table.pk_handle_offset() {
@@ -352,7 +352,7 @@ fn checked_region_num(regions: i64, what: &str) -> Result<usize, DriverError> {
 /// partition, or the named ones (Go `tables.FindPartitionByName`).
 fn physical_ids(
     stmt: &tidb_ast::SplitRegionStmt,
-    table: &KvTable,
+    table: &TableCommon,
     table_name: &str,
 ) -> Result<Vec<i64>, DriverError> {
     let Some(partition) = table.partition() else {
@@ -394,8 +394,8 @@ fn physical_ids(
 /// Go `getSplitIdxPhysicalKeysFromValueList` / `GetSplitIndexKeys` for one
 /// physical table.
 fn index_split_keys(
-    table: &KvTable,
-    index: &KvIndex,
+    table: &TableCommon,
+    index: &Index,
     physical_id: i64,
     values: &SplitValues,
     ctx: &StmtContext,
@@ -451,7 +451,7 @@ fn index_split_keys(
 /// Go `getSplitTablePhysicalKeysFromValueList` / `GetSplitTableKeys` for one
 /// physical table.
 fn table_split_keys(
-    table: &KvTable,
+    table: &TableCommon,
     table_name: &str,
     physical_id: i64,
     values: &SplitValues,
@@ -510,7 +510,7 @@ fn table_split_keys(
 /// Go `HandleCols.BuildHandleByDatums` for the handle `buildHandleColsForSplit`
 /// makes: the first value's int64 bits, or the encoded primary-key tuple.
 fn build_handle(
-    table: &KvTable,
+    table: &TableCommon,
     common_handle: bool,
     values: &[Datum],
     zone: &SessionTimeZone,
@@ -539,7 +539,7 @@ fn handle_bytes(handle: &RecordHandle) -> &[u8] {
 /// Go `calculateIntBoundValue`: the lower handle and the step, compared and
 /// divided as unsigned when the handle is an UNSIGNED primary key.
 fn int_bound_and_step(
-    table: &KvTable,
+    table: &TableCommon,
     lower: &[Datum],
     upper: &[Datum],
     num: usize,

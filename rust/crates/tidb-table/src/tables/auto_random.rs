@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use tidb_autoid::{AutoIdError, AutoIdStoreError};
-use super::{KvTable, TableAutoId};
+use super::{TableCommon, TableAutoId};
 use tidb_datatype::Datum;
 
 /// The persisted bit layout of one `AUTO_RANDOM` handle column.
@@ -92,7 +92,7 @@ pub enum AutoRandomError {
     AutoId(AutoIdError),
 }
 
-impl KvTable {
+impl TableCommon {
     /// Installs the table's persisted `AUTO_RANDOM` layout.
     pub fn set_auto_random(&mut self, spec: AutoRandomSpec) {
         self.auto_random = Some(spec);

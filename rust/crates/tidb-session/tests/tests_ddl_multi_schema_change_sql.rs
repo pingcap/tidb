@@ -33,11 +33,11 @@
 
 use crate::support::testkit::{enable_failpoint, TestKit};
 use tidb_infoschema::TableEntry;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 use tidb_context::WarningLevel;
 
 /// Go `external.GetTableByName(t, tk, "test", table).Meta()`.
-fn table_meta(tk: &TestKit, table: &str) -> std::sync::Arc<KvTable> {
+fn table_meta(tk: &TestKit, table: &str) -> std::sync::Arc<TableCommon> {
     let TableEntry::Kv(kv) = tk.get_table_by_name("test", table) else {
         panic!("table {table} is not a KV table");
     };

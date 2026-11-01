@@ -16,7 +16,7 @@
 //! (`TIDB_DECODE_KEY`): the statement's catalog image.
 
 use tidb_infoschema::{Catalog, TableEntry};
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 
 use crate::{KeyInfoCatalog, KeyInfoIndex, KeyInfoTable, KeyInfoTableLookup};
 
@@ -67,7 +67,7 @@ fn key_info_table(
     catalog: &Catalog,
     database: &str,
     registered_name: &str,
-    table: &KvTable,
+    table: &TableCommon,
     partition_id: i64,
     partition_name: String,
 ) -> KeyInfoTable {

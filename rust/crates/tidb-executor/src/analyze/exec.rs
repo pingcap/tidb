@@ -164,7 +164,7 @@ fn merge_independent_index_statistics(
 /// Rebuilds dynamic-mode global statistics from the physical partition
 /// statistics, the same source used by Go's `MergePartitionStats2GlobalStats`.
 fn merge_partitioned_global_statistics(
-    table: &tidb_table::kv_table::KvTable,
+    table: &tidb_table::tables::TableCommon,
     partitions: &[(i64, Arc<tidb_stats::Table>)],
     previous: Option<Arc<tidb_stats::Table>>,
     options: &crate::analyze::AnalyzeOptions,
@@ -346,7 +346,7 @@ struct AnalyzeIndexTasks {
 }
 
 fn select_index_tasks(
-    table: &tidb_table::kv_table::KvTable,
+    table: &tidb_table::tables::TableCommon,
     statement: &AnalyzeStatement,
 ) -> Result<AnalyzeIndexTasks, DriverError> {
     let Some(names) = &statement.index_names else {
@@ -425,7 +425,7 @@ fn select_index_tasks(
 }
 
 fn analyze_partition_ids(
-    table: &tidb_table::kv_table::KvTable,
+    table: &tidb_table::tables::TableCommon,
     requested: &[String],
 ) -> Result<Vec<i64>, DriverError> {
     let Some(partition) = table.partition() else {
@@ -472,7 +472,7 @@ fn effective_column_choice(
 }
 
 fn selected_column_ids(
-    table: &tidb_table::kv_table::KvTable,
+    table: &tidb_table::tables::TableCommon,
     choice: &AnalyzeColumnChoice,
     default_choice: &AnalyzeColumnChoice,
     predicate_ids: &HashSet<(i64, i64)>,
@@ -588,7 +588,7 @@ fn selected_column_ids(
 /// or the integer handle needs their sample values, then the generated columns
 /// that depend on a skipped one.
 fn skip_column_types(
-    table: &tidb_table::kv_table::KvTable,
+    table: &tidb_table::tables::TableCommon,
     selected: Option<HashSet<i64>>,
     skip_types: &std::collections::BTreeSet<String>,
 ) -> Option<HashSet<i64>> {
@@ -671,7 +671,7 @@ fn skip_column_types(
 }
 
 fn saved_options(
-    table: &tidb_table::kv_table::KvTable,
+    table: &tidb_table::tables::TableCommon,
     options: &PhysicalAnalyzeOptions,
     selected: Option<&HashSet<i64>>,
 ) -> SavedAnalyzeOptions {
@@ -697,7 +697,7 @@ fn saved_options(
 /// column ids resolved against `table` (an id it no longer has is dropped).
 fn saved_options_from_row(
     row: &[tidb_datatype::Datum],
-    table: &tidb_table::kv_table::KvTable,
+    table: &tidb_table::tables::TableCommon,
 ) -> SavedAnalyzeOptions {
     let text = |index: usize| row.get(index).and_then(tidb_datatype::datum_text::sysvar_datum_text).unwrap_or_default();
     let int = |index: usize| text(index).parse::<i64>().unwrap_or(0);
@@ -731,7 +731,7 @@ fn saved_options_from_row(
 /// over `saved`, a LIST's column names stored as `table`'s column ids.
 fn save_analyze_options_sql(
     saved: &[(i64, SavedAnalyzeOptions)],
-    table: &tidb_table::kv_table::KvTable,
+    table: &tidb_table::tables::TableCommon,
 ) -> String {
     let rows = saved
         .iter()

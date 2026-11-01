@@ -93,10 +93,10 @@ use tidb_datatype::Datum;
 use crate::driver::DriverError;
 use tidb_infoschema::TableEntry;
 use tidb_infoschema::Catalog;
-use tidb_table::kv_table::TableHandle;
-use tidb_table::kv_table::RowDecodeContext;
-use tidb_table::kv_table::KvForeignKey;
-use tidb_table::kv_table::FkAction;
+use tidb_table::tables::TableHandle;
+use tidb_table::tables::RowDecodeContext;
+use tidb_table::tables::KvForeignKey;
+use tidb_table::tables::FkAction;
 use tidb_hack::GoCaseCompare;
 use tidb_planner_core_operator_physicalop::{FkTriggerKind, FkTriggerNode};
 

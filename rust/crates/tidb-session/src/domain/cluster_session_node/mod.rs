@@ -110,7 +110,7 @@
 //!
 //! An index change publishes a second thing in that same transaction: the
 //! entries the rows the table ALREADY holds owe it. They are staged by the very
-//! `KvTable` call an `INSERT` maintains an index with, over this seam's own
+//! `TableCommon` call an `INSERT` maintains an index with, over this seam's own
 //! storage -- see [`RealClusterDdl`]'s backfiller -- because an index that
 //! exists and holds nothing loses rows from every query routed through it,
 //! with no error anywhere.

@@ -25,7 +25,7 @@
 //!   range through a transaction's snapshot and writes `mysql.stats_*` rows a
 //!   Go TiDB reads back.
 //! * The in-process tier ([`kv::analyze_kv_table`]) scans a
-//!   [`crate::kv_table::KvTable`]'s own rows and publishes the result straight
+//!   [`crate::kv_table::TableCommon`]'s own rows and publishes the result straight
 //!   into the catalog's statistics map, which is what `EXPLAIN` reads.
 //!
 //! Both drive the SAME [`AnalyzePlan`] and the SAME [`AnalyzeRun`], so
@@ -119,8 +119,8 @@ impl From<crate::DriverError> for AnalyzeError {
     }
 }
 
-impl From<tidb_table::kv_table::KvTableError> for AnalyzeError {
-    fn from(error: tidb_table::kv_table::KvTableError) -> Self {
+impl From<tidb_table::tables::KvTableError> for AnalyzeError {
+    fn from(error: tidb_table::tables::KvTableError) -> Self {
         crate::DriverError::from(crate::ExecError::from(error)).into()
     }
 }
@@ -1252,8 +1252,8 @@ mod tests {
         )
             .from_evaluation();
         for error in [
-            tidb_table::kv_table::KvTableError::Mysql(original.clone()),
-            tidb_table::kv_table::KvTableError::Storage(tidb_kv::storage::StorageError::Sql(
+            tidb_table::tables::KvTableError::Mysql(original.clone()),
+            tidb_table::tables::KvTableError::Storage(tidb_kv::storage::StorageError::Sql(
                 original.clone(),
             )),
         ] {

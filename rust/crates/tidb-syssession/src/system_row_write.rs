@@ -24,7 +24,7 @@
 //!    next writer does not hand out a handle this one already used.
 //!
 //! None of it is encoded here. Every write goes through the one table-layer
-//! writer, `KvTable` (Go `tables.TableCommon`), opened over the stored
+//! writer, `TableCommon` (Go `tables.TableCommon`), opened over the stored
 //! `TableInfo` the way Go's `tables.TableFromMeta` opens it: `AddRecord`,
 //! `UpdateRecord` and `RemoveRecord` produce the record, the index entries
 //! and their assertions exactly as for a user table's `INSERT`, `UPDATE` and
@@ -68,7 +68,7 @@ use tidb_tablecodec::table_key::encode_row_key_with_handle;
 use tidb_datatype::FieldTypeCode;
 use tidb_goruntime::GoString;
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone, Time};
-use tidb_table::kv_table::{KvTable, TableHandle};
+use tidb_table::tables::{TableCommon, TableHandle};
 use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use tidb_model::column::ColumnInfo;
 use tidb_model::table_info::TableInfo;
@@ -111,7 +111,7 @@ pub fn defaults_row(table: &TableInfo, now: Time) -> Result<RowValues, RowEncode
     Ok(values)
 }
 
-/// The one table-layer writer (`KvTable`, Go `tables.TableCommon`) opened
+/// The one table-layer writer (`TableCommon`, Go `tables.TableCommon`) opened
 /// over one stored `TableInfo` (Go `tables.TableFromMeta`), whose writes are
 /// captured as mutations for the caller's transaction instead of a session
 /// buffer.
@@ -122,7 +122,7 @@ pub fn defaults_row(table: &TableInfo, now: Time) -> Result<RowValues, RowEncode
 /// common handle and the assertions are the table layer's, never a second
 /// encoding of them.
 struct TableWriter {
-    table: KvTable,
+    table: TableCommon,
     writes: CapturedWrites,
     context: Arc<dyn tidb_tblctx::MutateContext>,
     name: String,

@@ -667,7 +667,7 @@ pub struct Domain {
     pub stats: Arc<SharedStats>,
     /// Go's per-`tidb-server` auto-increment allocators. Held HERE, above the
     /// per-session catalogs, because a reserved id range must outlive the
-    /// `KvTable` that was handing it out; see [`crate::cluster_auto_id_seam`].
+    /// `TableCommon` that was handing it out; see [`crate::cluster_auto_id_seam`].
     pub auto_ids: Arc<dyn TableAutoIds>,
     /// Process-owned spill authority inherited by every connection.
     pub spill_storage: Option<Arc<tidb_spill_storage::SpillStorage>>,

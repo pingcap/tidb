@@ -16,7 +16,7 @@ use super::*;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 #[allow(unused_imports)]
-use tidb_table::kv_table::row_decoder::*;
+use tidb_table::tables::row_decoder::*;
 
 #[test]
 fn legacy_generated_enum_matching_is_binary_on_new_collation_process() {
@@ -43,7 +43,7 @@ fn check_generated_matching(code: tidb_datatype::FieldTypeCode, mode: bool, expe
     {
         let mut field_type = FieldType::new(code).with_collation_name("utf8mb4_general_ci");
         field_type.set_elems(vec!["A".into(), "a".into(), "B".into()]);
-        let mut column = KvColumn {
+        let mut column = tidb_table::column::Column {
             info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                 id: 1,
                 name: tidb_ast::CiString::new("v"),

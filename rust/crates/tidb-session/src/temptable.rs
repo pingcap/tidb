@@ -43,7 +43,7 @@ impl Session {
         &self,
         schema: &str,
         name: &str,
-    ) -> Option<&tidb_table::kv_table::KvTable> {
+    ) -> Option<&tidb_table::tables::TableCommon> {
         session_tables::table_by_name(&self.local_temporary_tables, schema, name)
     }
 

@@ -730,7 +730,7 @@ fn an_index_join_probe_displays_the_outer_probe_count() {
         };
         let table = std::sync::Arc::make_mut(table);
         table.add_index(
-            tidb_table::kv_table::KvIndex {
+            tidb_table::tables::Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("PRIMARY"),

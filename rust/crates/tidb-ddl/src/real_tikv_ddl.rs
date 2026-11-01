@@ -401,7 +401,7 @@ impl SchemaVersionNotifier for tidb_pd_client::EtcdClient {
 ///
 /// It is a trait because the walk itself is NOT this crate's to own: the entry
 /// for a row is exactly what an `INSERT` would have written, and that single
-/// definition lives in the executor's `KvTable` over the same
+/// definition lives in the executor's `TableCommon` over the same
 /// [`ClusterTableStorage`] seam the session writes through. Implementing the
 /// walk here would be a second index-entry writer, and two of those drift —
 /// which on an index means a query returns rows that are not there, or misses

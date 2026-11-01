@@ -22,7 +22,7 @@ use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_hack::GoToLower;
 use tidb_tablecodec::{decode_column_value, decode_index_kv, HandleStatus};
 
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 
 #[derive(Clone, Debug)]
 struct DecodeColumn {
@@ -55,7 +55,7 @@ pub struct TidbDecodeKeySnapshot {
 }
 
 impl TidbDecodeKeySnapshot {
-    pub fn insert_table(&mut self, table: &KvTable) {
+    pub fn insert_table(&mut self, table: &TableCommon) {
         let metadata = DecodeTable {
             logical_id: table.table_id(),
             partitioned: table.partition().is_some(),

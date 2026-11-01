@@ -708,7 +708,7 @@ fn a_virtual_generated_columns_literal_folds_in_the_reading_sessions_zone() {
 
     // Both read shapes, because they restore a virtual column through
     // DIFFERENT call sites: the scan through `KvTableScan`, the point get
-    // through `KvTable::fill_virtual_columns`. Fixing one and not the other
+    // through `TableCommon::fill_virtual_columns`. Fixing one and not the other
     // would make the same row read two ways in one session.
     for select in ["SELECT v, s FROM g", "SELECT v, s FROM g WHERE a = 1"] {
         assert_eq!(

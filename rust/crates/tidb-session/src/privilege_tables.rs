@@ -22,7 +22,7 @@ use tidb_executor::KvTableReader;
 pub(crate) struct SessionPrivilegeTables<'a> {
     pub(crate) catalog: &'a mut tidb_infoschema::Catalog,
     /// TIMESTAMP columns decode in UTC, as the cluster reader decodes them.
-    pub(crate) decode: tidb_table::kv_table::RowDecodeContext,
+    pub(crate) decode: tidb_table::tables::RowDecodeContext,
 }
 
 impl tidb_privilege::cluster_privilege_load::PrivilegeTables for SessionPrivilegeTables<'_> {

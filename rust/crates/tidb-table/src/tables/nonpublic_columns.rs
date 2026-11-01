@@ -30,9 +30,9 @@ use std::sync::Arc;
 
 use tidb_datatype::{ConversionFlags, Datum, FieldType, FieldTypeCode, SessionTimeZone};
 
-use super::{KvColumn, KvTable, KvTableError, NonPublicColumn, TableHandle};
+use super::{TableCommon, KvTableError, NonPublicColumn, TableHandle};
 
-impl KvTable {
+impl TableCommon {
     /// Adds a column a DDL is adding, dropping or changing.
     pub fn add_nonpublic_column(&mut self, column: NonPublicColumn) {
         Arc::make_mut(&mut self.nonpublic_columns).push(column);
@@ -61,7 +61,7 @@ impl KvTable {
     /// The column a write row holds at `offset`: a public column, or past
     /// them a non-public one.
     #[must_use]
-    pub(crate) fn write_column(&self, offset: usize) -> Option<&KvColumn> {
+    pub(crate) fn write_column(&self, offset: usize) -> Option<&crate::column::Column> {
         self.columns.get(offset).or_else(|| {
             offset
                 .checked_sub(self.columns.len())
@@ -125,7 +125,7 @@ impl KvTable {
     /// changing column holds for its dependency's value.
     fn cast_into_column(
         value: Datum,
-        column: &KvColumn,
+        column: &crate::column::Column,
         ctx: Option<&dyn tidb_tblctx::MutateContext>,
         flags: ConversionFlags,
         zone: &SessionTimeZone,
@@ -359,11 +359,11 @@ fn datum_text(value: &Datum) -> Vec<u8> {
 }
 
 #[cfg(any(test, feature = "test-util"))]
-impl KvTable {
+impl TableCommon {
     /// A copy sharing this table's storage, for state changes in tests.
-    pub fn clone_for_test_nonpublic(&self) -> KvTable {
+    pub fn clone_for_test_nonpublic(&self) -> TableCommon {
         let mut copy =
-            KvTable::with_storage(self.table_id, self.columns.to_vec(), self.store.clone_box());
+            TableCommon::with_storage(self.table_id, self.columns.to_vec(), self.store.clone_box());
         copy.nonpublic_columns = Arc::clone(&self.nonpublic_columns);
         copy
     }

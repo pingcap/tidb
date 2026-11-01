@@ -61,7 +61,7 @@ impl GeneratedWrite {
 /// INSERT also handles each NULL here; UPDATE keeps its later row-wide NULL pass.
 /// Storage must not repeat these expressions or their warning side effects.
 pub(crate) fn materialize_generated_for_write(
-    table: &tidb_table::kv_table::KvTable,
+    table: &tidb_table::tables::TableCommon,
     row: &mut Vec<Datum>,
     ctx: &crate::StmtContext,
     policy: GeneratedWrite,
@@ -73,7 +73,7 @@ pub(crate) fn materialize_generated_for_write(
     if row.len() < columns.len() {
         *row = table.stored_row(std::mem::take(row));
     }
-    let convert = |column: &tidb_table::kv_table::KvColumn, value| {
+    let convert = |column: &tidb_table::column::Column, value| {
         let mut value = match policy {
             GeneratedWrite::Insert { row_index, .. } => cast_value_for_column(
                 value,
@@ -183,7 +183,7 @@ impl From<DriverError> for GeneratedWriteFailure {
 /// 3752 for an out-of-range number (with the 1-based row), 3907 for a string
 /// too long -- and leaves any other error as it was.
 fn complete_func_index_error(
-    table: &tidb_table::kv_table::KvTable,
+    table: &tidb_table::tables::TableCommon,
     offset: usize,
     row_index: usize,
     error: tidb_exprctx::EvalError,

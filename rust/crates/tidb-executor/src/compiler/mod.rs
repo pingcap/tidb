@@ -146,7 +146,7 @@ pub trait CompilerSession: crate::admin::AdminExec {
     ///
     /// AUTO_INCREMENT deliberately survives the restore: Go allocates ids
     /// outside transaction semantics and never returns a consumed one, and
-    /// `KvTable`'s `AutoIdAllocator` is a SHARED cell that a catalog copy
+    /// `TableCommon`'s `AutoIdAllocator` is a SHARED cell that a catalog copy
     /// keeps pointing at -- so the burn is retained with no exclusion rule
     /// here (captured: a failed one-row insert into an `AUTO_INCREMENT` table
     /// stores nothing and the next successful insert skips the burned id).

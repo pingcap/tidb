@@ -1023,7 +1023,7 @@ fn prepared_point_plan_binds_common_handle_without_cloning_template() {
     let execution = plan
         .bind(&[Datum::Bytes(b"user-0001".to_vec())], &zone)
         .expect("the current marker value rebuilds its common handle");
-    let decode = tidb_table::kv_table::PreparedPointGetDecodeContext::for_query(false, zone);
+    let decode = tidb_table::tables::PreparedPointGetDecodeContext::for_query(false, zone);
     let fast = run_prepared_point_get(
         &execution,
         &mut catalog,
@@ -1077,7 +1077,7 @@ fn prepared_point_cache_answers_a_unique_secondary_index() {
 
     // The same answer the ordinary scan gives.
     let zone: tidb_datatype::SessionTimeZone = Default::default();
-    let ctx = tidb_table::kv_table::PreparedPointGetDecodeContext::for_query(false, zone.clone());
+    let ctx = tidb_table::tables::PreparedPointGetDecodeContext::for_query(false, zone.clone());
     let expected = run_select_on(
         "SELECT id, v FROM idx_pin WHERE a = 'a1' AND b = 'b2' AND v = 20",
         &catalog,
@@ -1174,7 +1174,7 @@ fn prepared_point_cache_declines_partial_and_non_unique_keys() {
 fn cached_rows(
     plan: &std::sync::Arc<crate::driver::access::PreparedPointGetPlan>,
     catalog: &mut Catalog,
-    ctx: &tidb_table::kv_table::PreparedPointGetDecodeContext,
+    ctx: &tidb_table::tables::PreparedPointGetDecodeContext,
     zone: &tidb_datatype::SessionTimeZone,
     values: &[Datum],
 ) -> Vec<Vec<Datum>> {
@@ -1224,7 +1224,7 @@ fn prepared_point_cache_answers_an_is_null_residual() {
     );
 
     let zone: tidb_datatype::SessionTimeZone = Default::default();
-    let ctx = tidb_table::kv_table::PreparedPointGetDecodeContext::for_query(false, zone.clone());
+    let ctx = tidb_table::tables::PreparedPointGetDecodeContext::for_query(false, zone.clone());
     let rows = cached_rows(
         &plan,
         &mut catalog,
@@ -1664,12 +1664,12 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         crate::ExecutorMeta::new(schema, 1, 8, 8),
         (**table).clone(),
         vec![
-            tidb_table::kv_table::TableHandle::Int(1),
-            tidb_table::kv_table::TableHandle::Int(99),
-            tidb_table::kv_table::TableHandle::Int(2),
+            tidb_table::tables::TableHandle::Int(1),
+            tidb_table::tables::TableHandle::Int(99),
+            tidb_table::tables::TableHandle::Int(2),
         ],
         vec![crate::access_path::HandleOutputColumn::Stored(0)],
-        tidb_table::kv_table::RowDecodeContext::for_test_query_utc(),
+        tidb_table::tables::RowDecodeContext::for_test_query_utc(),
     );
     for _ in 0..2 {
         batch_gets.store(0, Ordering::Relaxed);
@@ -1719,7 +1719,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
             )],
         ],
         vec![crate::access_path::HandleOutputColumn::Stored(0)],
-        tidb_table::kv_table::RowDecodeContext::for_test_query_utc(),
+        tidb_table::tables::RowDecodeContext::for_test_query_utc(),
         false,
     );
     batch_gets.store(0, Ordering::Relaxed);
@@ -1743,7 +1743,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     // the first chunk or an early Close, but must fail when actually pulled.
     let mut malformed = (**table).clone();
     let (key, value) = malformed
-        .stored_record(&tidb_table::kv_table::TableHandle::Int(1))
+        .stored_record(&tidb_table::tables::TableHandle::Int(1))
         .unwrap()
         .unwrap();
     let mut storage = BatchGetCountingStorage {
@@ -1766,11 +1766,11 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         crate::ExecutorMeta::new(schema, 1, 8, 8),
         malformed,
         vec![
-            tidb_table::kv_table::TableHandle::Int(1),
-            tidb_table::kv_table::TableHandle::Int(2),
+            tidb_table::tables::TableHandle::Int(1),
+            tidb_table::tables::TableHandle::Int(2),
         ],
         vec![crate::access_path::HandleOutputColumn::Stored(0)],
-        tidb_table::kv_table::RowDecodeContext::for_test_query_utc(),
+        tidb_table::tables::RowDecodeContext::for_test_query_utc(),
     );
     for pull_bad_row in [false, true] {
         batch_gets.store(0, Ordering::Relaxed);
@@ -1854,9 +1854,9 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
             .iter()
             .map(|&id| {
                 if primary == "PRIMARY KEY(id)" {
-                    tidb_table::kv_table::TableHandle::Int(id)
+                    tidb_table::tables::TableHandle::Int(id)
                 } else {
-                    tidb_table::kv_table::TableHandle::Common(
+                    tidb_table::tables::TableHandle::Common(
                         tidb_codec::encode_key(&[Datum::Int(id), Datum::Int(id * 10)]).unwrap(),
                     )
                 }
@@ -1876,7 +1876,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
             .get_rows_by_handles_projected_with_context(
                 &handles,
                 Some(&[1, 0]),
-                &tidb_table::kv_table::RowDecodeContext::for_test_query_utc(),
+                &tidb_table::tables::RowDecodeContext::for_test_query_utc(),
             )
             .unwrap();
         assert_eq!(
@@ -1899,7 +1899,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
                             .decode_row_entry(
                                 handle,
                                 value,
-                                &tidb_table::kv_table::RowDecodeContext::for_test_query_utc(),
+                                &tidb_table::tables::RowDecodeContext::for_test_query_utc(),
                             )
                             .unwrap()
                     })
@@ -2483,7 +2483,7 @@ fn residual_selection_uses_logical_rows_over_access_rows() {
     let customer = std::sync::Arc::make_mut(customer);
     customer.set_common_handle_offsets(vec![2, 1, 0]);
     customer.add_index(
-        tidb_table::kv_table::KvIndex {
+        tidb_table::tables::Index {
             info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 2,
                 name: tidb_ast::CiString::new("PRIMARY"),
@@ -2700,7 +2700,7 @@ fn prepared_point_plan_answers_an_out_of_range_handle_without_reading() {
     let execution = plan
         .bind(&[Datum::new_string("99999999999999999999999999")], &zone)
         .expect("an out-of-range value still binds to the empty answer");
-    let decode = tidb_table::kv_table::PreparedPointGetDecodeContext::for_query(false, zone);
+    let decode = tidb_table::tables::PreparedPointGetDecodeContext::for_query(false, zone);
     let fast = run_prepared_point_get(
         &execution,
         &mut catalog,
@@ -2890,7 +2890,7 @@ fn snapshot_read_policy_prepared_follow_go() {
     ] {
         let ctx = snapshot_policy_context(mode);
         let execution = plan.bind(&[Datum::Int(1)], &zone).unwrap();
-        let decode = tidb_table::kv_table::PreparedPointGetDecodeContext::for_query(false, zone.clone());
+        let decode = tidb_table::tables::PreparedPointGetDecodeContext::for_query(false, zone.clone());
         let result = run_prepared_point_get(&execution, &mut catalog, &decode, &ctx)
             .unwrap()
             .unwrap()

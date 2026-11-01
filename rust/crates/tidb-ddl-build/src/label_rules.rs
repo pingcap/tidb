@@ -35,7 +35,7 @@ use tidb_hack::GoToLower;
 
 use tidb_ddl_label::{self as ddl_label, CodecV1, LabelCodec, LabelRulePatch, Rule};
 use tidb_domain_infosync::label_manager::LabelRuleManager;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 
 /// What Go's label-rule helpers read of a `TableInfo`: its lower-case name,
 /// its ID, and its partitions' lower-case names and IDs in definition order.
@@ -52,7 +52,7 @@ pub struct LabelRuleTable {
 impl LabelRuleTable {
     /// The in-process table's names and IDs.
     #[must_use]
-    pub fn from_kv(table: &KvTable) -> Self {
+    pub fn from_kv(table: &TableCommon) -> Self {
         Self {
             name: table.name().go_to_lower(),
             id: table.table_id(),

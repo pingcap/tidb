@@ -24,7 +24,7 @@
 //! in its size cache as a [`TableRowStatsSnapshot`]. Either way the tables
 //! walked are the statement's own schema.
 
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 use tidb_infoschema::Catalog;
 use tidb_datatype::{UNSPECIFIED_LENGTH, VAR_STORAGE_LEN};
 
@@ -168,7 +168,7 @@ impl SizeStats<'_> {
     /// Go `EstimateDataLength`: a partitioned table sums its partitions'
     /// rows and data, and adds their local index lengths to its own global
     /// ones.
-    fn estimate_data_length(&self, table: &KvTable) -> StorageEstimate {
+    fn estimate_data_length(&self, table: &TableCommon) -> StorageEstimate {
         let mut rows = self.table_rows(table.table_id());
         let (mut data, mut index) = self.data_and_index_length(table, table.table_id(), rows);
         if let Some(partition) = table.partition() {
@@ -190,7 +190,7 @@ impl SizeStats<'_> {
     /// width per row, a variable-width one its histogram's total size; an
     /// index part costs its column's length, or its prefix per row. Global
     /// indexes count at the table level, local ones per partition.
-    fn data_and_index_length(&self, table: &KvTable, physical_id: i64, rows: u64) -> (u64, u64) {
+    fn data_and_index_length(&self, table: &TableCommon, physical_id: i64, rows: u64) -> (u64, u64) {
         let mut column_lengths = vec![0_u64; table.columns().len()];
         let mut data = 0_u64;
         for (offset, column) in table.columns().iter().enumerate() {

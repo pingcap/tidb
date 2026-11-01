@@ -103,8 +103,7 @@ mod tests {
     use tidb_store_driver_txn::cluster_storage::{ClusterTableStorage, MutationBuffer};
     use crate::driver::run_select_on;
     use tidb_infoschema::Catalog;
-    use tidb_table::kv_table::KvTable;
-    use tidb_table::kv_table::KvColumn;
+    use tidb_table::tables::TableCommon;
     use tidb_kv::storage::StorageError;
 
     /// A snapshot over a fixed map: the committed half of a cluster read.
@@ -137,8 +136,8 @@ mod tests {
         FieldType::new(FieldTypeCode::LongLong)
     }
 
-    fn column(name: &str, id: i64) -> KvColumn {
-        KvColumn {
+    fn column(name: &str, id: i64) -> tidb_table::column::Column {
+        tidb_table::column::Column {
             info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                 id: id,
                 name: tidb_ast::CiString::new(name.to_owned()),
@@ -227,7 +226,7 @@ mod tests {
         let snapshot = Arc::new(Mutex::new(MockSnapshot::default()));
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
         let buffer = MutationBuffer::new();
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             91,
             vec![column("a", 1), column("b", 2)],
             Box::new(ClusterTableStorage::new(buffer.clone(), handle)),
@@ -350,7 +349,7 @@ mod tests {
     /// must not change any answer a `Selection` alone produced.
     #[test]
     fn splitting_a_where_does_not_change_its_result() {
-        let mut table = KvTable::new(92, vec![column("a", 1), column("b", 2)]);
+        let mut table = TableCommon::new(92, vec![column("a", 1), column("b", 2)]);
         for (a, b) in [(1, 10), (5, 50), (7, 70), (9, 90)] {
             table
                 .insert_row(&[Datum::Int(a), Datum::Int(b)], &tidb_exprctx::NoColumns)
@@ -403,7 +402,7 @@ mod tests {
     /// UNKNOWN, not FALSE, is the reason a row is absent.
     #[test]
     fn the_composed_predicates_keep_mysqls_three_valued_answers() {
-        let mut table = KvTable::new(93, vec![column("a", 1), column("b", 2)]);
+        let mut table = TableCommon::new(93, vec![column("a", 1), column("b", 2)]);
         for (a, b) in [
             (Datum::Int(1), Datum::Int(10)),
             (Datum::Int(2), Datum::Null),
@@ -467,7 +466,7 @@ mod tests {
     /// three-valued logic gives for the same predicate.
     #[test]
     fn a_pushed_math_builtin_answers_what_the_same_selection_answered() {
-        let mut table = KvTable::new(94, vec![column("a", 1), column("b", 2)]);
+        let mut table = TableCommon::new(94, vec![column("a", 1), column("b", 2)]);
         for (a, b) in [
             (Datum::Int(0), Datum::Int(3)),
             (Datum::Int(1), Datum::Int(0)),
@@ -534,7 +533,7 @@ mod tests {
     /// engine evaluates.
     #[test]
     fn a_call_outside_the_catalog_stays_above_the_scan() {
-        let mut table = KvTable::new(95, vec![column("a", 1), column("b", 2)]);
+        let mut table = TableCommon::new(95, vec![column("a", 1), column("b", 2)]);
         for a in [1_i64, 2, 3] {
             table
                 .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)

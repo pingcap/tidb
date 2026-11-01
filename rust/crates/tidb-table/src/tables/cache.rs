@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{KvTable, KvTableError};
+use super::{TableCommon, KvTableError};
 use tidb_txnkv::Key;
 
 const CACHE_TABLE_SIZE_LIMIT: usize = 64 * (1 << 20);
 
-impl KvTable {
+impl TableCommon {
     /// Whether Go's persisted table-cache state is enabled.
     #[must_use]
     pub fn is_cached(&self) -> bool {
@@ -112,12 +112,11 @@ impl KvTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kv_table::KvColumn;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
     #[test]
     fn cache_admission_measures_the_encoded_table_image() {
-        let column = KvColumn {
+        let column = crate::column::Column {
             info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                 id: 1,
                 name: tidb_ast::CiString::new("id"),
@@ -130,7 +129,7 @@ mod tests {
             default_value: None,
             origin_default: None,
         };
-        let mut table = KvTable::new(42, vec![column]);
+        let mut table = TableCommon::new(42, vec![column]);
         assert!(!table.cache_storage_size_exceeds(0).unwrap());
         table
             .insert_row(&[Datum::Int(1)], &tidb_exprctx::NoColumns)

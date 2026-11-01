@@ -31,11 +31,11 @@
 //! and nothing else; there is deliberately no second code path to keep in
 //! step with the first.
 //!
-//! What that DOES cost is one invariant, enforced in [`tidb_table::kv_table`]: a
+//! What that DOES cost is one invariant, enforced in [`tidb_table::tables`]: a
 //! hidden column exists in the row and in index offsets but must appear in no
 //! user-visible column enumeration -- not `SELECT *`, not an `INSERT`'s
 //! arity, not `SHOW CREATE TABLE`, `DESC`, or `information_schema.COLUMNS`.
-//! `KvTable` keeps hidden columns as a contiguous TAIL and records their
+//! `TableCommon` keeps hidden columns as a contiguous TAIL and records their
 //! count, so "the visible columns" is a prefix slice and a visible offset IS
 //! a physical offset. That removes the mapping an interior hidden column
 //! would have forced between the two numberings -- and a mapping that can be
@@ -156,7 +156,7 @@
 //! JSON with `IsArray` set -- which is exactly why the 3753 arm tests
 //! `!col.FieldType.IsArray()`. The cast is legal only as the whole key part
 //! (Go `illegalFunctionChecker`); the write path then files one entry per
-//! array element (`KvTable::get_indexed_value`).
+//! array element (`TableCommon::get_indexed_value`).
 //!
 //! Two smaller residuals, both the safe direction (this tier refuses what Go
 //! accepts, never the reverse): `MATCH ... AGAINST` and `DEFAULT(a)` are

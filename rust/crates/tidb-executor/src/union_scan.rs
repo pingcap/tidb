@@ -189,7 +189,7 @@ use tidb_table::column::cast_table_value;
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use tidb_executor_join::joiner::eval_bool;
-use tidb_table::kv_table::TableHandle;
+use tidb_table::tables::TableHandle;
 use crate::mem_reader::{MemReaderError, MemRowsIter, RowComparator};
 use crate::StmtContext;
 

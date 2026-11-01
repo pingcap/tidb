@@ -29,7 +29,7 @@
 //! reading a byte would be a success return that is not one -- the exact
 //! shape of bug this engine converts into refusals elsewhere. So this module
 //! runs TiDB's count-selected direction over the real stored bytes, and
-//! [`crate::kv_table::KvTable`] is the only backing it accepts: a table with
+//! [`crate::kv_table::TableCommon`] is the only backing it accepts: a table with
 //! no stored index entries at all (a `MemTable`) is REFUSED by name rather
 //! than passed (see [`AdminCheckError::NotStored`]).
 //!
@@ -50,10 +50,10 @@ use std::collections::BTreeMap;
 
 use tidb_datatype::Datum;
 
-use tidb_table::kv_table::TableHandle;
-use tidb_table::kv_table::RowDecodeContext;
-use tidb_table::kv_table::KvTable;
-use tidb_table::kv_table::KvIndex;
+use tidb_table::tables::TableHandle;
+use tidb_table::tables::RowDecodeContext;
+use tidb_table::tables::TableCommon;
+use tidb_table::tables::Index;
 use tidb_hack::GoCaseCompare;
 
 /// Why an `ADMIN CHECK` could not answer, or answered that the table is
@@ -200,9 +200,9 @@ fn render_handle(handle: &TableHandle) -> String {
 /// cursor, because the check is over the WHOLE index and a range cursor needs
 /// datum bounds it would have to invent.
 fn index_entries(
-    table: &mut KvTable,
+    table: &mut TableCommon,
     index_id: i64,
-) -> Result<Vec<tidb_table::kv_table::IndexEntryForCheck>, AdminCheckError> {
+) -> Result<Vec<tidb_table::tables::IndexEntryForCheck>, AdminCheckError> {
     table
         .index_entry_records_for_check(index_id)
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))
@@ -212,8 +212,8 @@ fn index_entries(
 /// `CheckIndicesCount` compares an index against this set, not against every
 /// record in the table; a NULL/false predicate is deliberately absent.
 fn partial_index_rows<'a>(
-    table: &KvTable,
-    index: &KvIndex,
+    table: &TableCommon,
+    index: &Index,
     rows: &'a [(i64, TableHandle, Vec<Datum>)],
     context: &RowDecodeContext,
 ) -> Result<Vec<(i64, &'a TableHandle, &'a Vec<Datum>)>, AdminCheckError> {
@@ -238,7 +238,7 @@ fn partial_index_rows<'a>(
 /// Returns the number of indexes actually checked, which is what a caller
 /// asserting the statement did work reads.
 pub fn check_table(
-    table: &mut KvTable,
+    table: &mut TableCommon,
     only_index: Option<&str>,
     context: &RowDecodeContext,
     fast_check: bool,
@@ -448,9 +448,9 @@ pub fn check_table(
 /// what Go's `CompareIndexAndVal` array containment amounts to: an entry
 /// matches its row exactly when the row's expansion produces its key.
 fn check_mv_index(
-    table: &mut KvTable,
-    index: &KvIndex,
-    stored: &[tidb_table::kv_table::IndexEntryForCheck],
+    table: &mut TableCommon,
+    index: &Index,
+    stored: &[tidb_table::tables::IndexEntryForCheck],
     matching_rows: Vec<(i64, &TableHandle, &Vec<Datum>)>,
     context: &RowDecodeContext,
 ) -> Result<(), AdminCheckError> {
@@ -528,7 +528,7 @@ fn check_mv_index(
 /// An `ADMIN CHECK INDEX` with no interval is not this statement at all: it is
 /// the consistency check, and goes through [`check_table`].
 pub fn check_index_ranges(
-    table: &mut KvTable,
+    table: &mut TableCommon,
     index_name: &str,
     ranges: &[tidb_ast::AdminCheckHandleRange],
     context: &RowDecodeContext,
@@ -611,7 +611,7 @@ mod source_tests {
         // pkg/table/tables/mutation_checker_test.go::TestCompareIndexData.
         // Go compares decoded index values with the row after applying each
         // IndexColumn prefix length to the row side. ADMIN CHECK uses the
-        // same cut through KvTable::index_key, so exercise that shared rule.
+        // same cut through TableCommon::index_key, so exercise that shared rule.
         let field_types = [
             FieldType::new(FieldTypeCode::Short),
             FieldType::new(FieldTypeCode::String),

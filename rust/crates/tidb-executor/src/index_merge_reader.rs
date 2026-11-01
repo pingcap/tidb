@@ -144,9 +144,9 @@ use tidb_expr::schema::Schema;
 use crate::access_path::{HandleOutputColumn, HandleSourceExec};
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
-use tidb_table::kv_table::TableHandle;
-use tidb_table::kv_table::RowDecodeContext;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableHandle;
+use tidb_table::tables::RowDecodeContext;
+use tidb_table::tables::TableCommon;
 
 /// Rebuild the retained coprocessor tree around one task's handle scan.
 pub(crate) type TableTaskBuilder =
@@ -668,7 +668,7 @@ impl PartialHandleSource for PartitionedHandleSource {
 /// Go's index-merge process worker.
 pub(crate) struct ExecutorPartialHandleSource {
     executor: Box<dyn Executor>,
-    table: KvTable,
+    table: TableCommon,
     decode_context: RowDecodeContext,
     field_types: Vec<FieldType>,
     handle_columns: PartialHandleColumns,
@@ -688,7 +688,7 @@ impl ExecutorPartialHandleSource {
     #[must_use]
     pub(crate) fn new(
         executor: Box<dyn Executor>,
-        table: KvTable,
+        table: TableCommon,
         decode_context: RowDecodeContext,
         handle_columns: PartialHandleColumns,
         sort_key_columns: Vec<usize>,
@@ -1237,7 +1237,7 @@ struct MergeTableTask {
 pub struct IndexMergeReaderExec {
     meta: ExecutorMeta,
     /// Go `table`.
-    table: KvTable,
+    table: TableCommon,
     /// The statement-class row decoding [`HandleSourceExec`] needs; this tier
     /// carries it where Go reads `sessionctx`.
     decode_context: RowDecodeContext,
@@ -1289,7 +1289,7 @@ impl IndexMergeReaderExec {
     #[must_use]
     pub fn new(
         meta: ExecutorMeta,
-        mut table: KvTable,
+        mut table: TableCommon,
         decode_context: RowDecodeContext,
         partials: Vec<Box<dyn PartialHandleSource>>,
         is_intersection: bool,
@@ -1935,7 +1935,7 @@ mod tests {
     ) -> IndexMergeReaderExec {
         IndexMergeReaderExec::new(
             ExecutorMeta::new(Schema::new(Vec::new()), 1, 32, 1024),
-            KvTable::new(1, Vec::new()),
+            TableCommon::new(1, Vec::new()),
             RowDecodeContext::for_test_query_utc(),
             partials,
             intersection,

@@ -18,7 +18,7 @@
 
 use crate::support::testkit::TestKit;
 use tidb_infoschema::TableEntry;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 
 /// Go `TestCreateClusteredIndex` (`pkg/ddl/primary_key_handle_test.go:262`):
 /// with `@@tidb_enable_clustered_index = ON`,
@@ -34,8 +34,8 @@ use tidb_table::kv_table::KvTable;
 ///
 /// Go reads the flags off `dom.InfoSchema().TableByName(...).Meta()`; the
 /// Rust carriers of the two flags are the predicates
-/// `KvTable::pk_handle_offset().is_some()` (PKIsHandle) and
-/// `!KvTable::common_handle_offsets().is_empty()` (IsCommonHandle).
+/// `TableCommon::pk_handle_offset().is_some()` (PKIsHandle) and
+/// `!TableCommon::common_handle_offsets().is_empty()` (IsCommonHandle).
 #[test]
 fn create_clustered_index_pins_pk_is_handle_and_common_handle_flags() {
     let mut tk = TestKit::new();
@@ -89,7 +89,7 @@ fn create_clustered_index_pins_pk_is_handle_and_common_handle_flags() {
 }
 
 /// Go `dom.InfoSchema().TableByName(ctx, "test", name).Meta()`.
-fn stored_table(tk: &TestKit, name: &str) -> KvTable {
+fn stored_table(tk: &TestKit, name: &str) -> TableCommon {
     match tk.get_table_by_name("test", name) {
         TableEntry::Kv(table) => (*table).clone(),
         _ => panic!("{name} is not a storage-backed table"),

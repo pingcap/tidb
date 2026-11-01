@@ -92,7 +92,7 @@ pub struct ChecksumTableExec {
 impl ChecksumContext {
     /// Go `newChecksumContext`, from the table's metadata.
     #[must_use]
-    pub fn new(db_name: &str, table: &tidb_table::kv_table::KvTable) -> Self {
+    pub fn new(db_name: &str, table: &tidb_table::tables::TableCommon) -> Self {
         Self {
             db_name: db_name.to_owned(),
             table_name: table.name().to_owned(),
@@ -104,7 +104,7 @@ impl ChecksumContext {
                     .map(|definition| definition.id)
                     .collect()
             }),
-            // `KvTable::indexes` holds exactly the public ones; indexes a DDL
+            // `TableCommon::indexes` holds exactly the public ones; indexes a DDL
             // is still adding or dropping live apart.
             public_index_ids: table.indexes().iter().map(|index| index.read().id).collect(),
             is_common_handle: !table.common_handle_offsets().is_empty(),

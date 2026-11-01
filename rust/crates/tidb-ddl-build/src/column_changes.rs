@@ -63,8 +63,8 @@ fn check_column_qualifier_part(
 /// The client error for a failed MODIFY / CHANGE COLUMN data step: Go's own
 /// code and text for a value the new type cannot hold, a NULL under NOT NULL,
 /// or a duplicate the rewritten entries collide on.
-pub fn modify_column_error(error: tidb_table::kv_table::KvTableError) -> MysqlError {
-    use tidb_table::kv_table::KvTableError;
+pub fn modify_column_error(error: tidb_table::tables::KvTableError) -> MysqlError {
+    use tidb_table::tables::KvTableError;
     match error {
         // Go `updateColumnWorker.reformatErrors`' text and code.
         KvTableError::Mysql(error) => error,

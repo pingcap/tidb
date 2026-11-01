@@ -19,13 +19,12 @@ use crate::support::testkit::TestKit;
 use tidb_datatype::{Datum, FieldTypeCode, FieldTypeFlags};
 use tidb_charset::Charset;
 use tidb_infoschema::TableEntry;
-use tidb_table::kv_table::KvColumn;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 use tidb_session::StmtResult;
 
 /// Go `external.GetTableByName(t, tk, db, table).Meta()`: the storage-backed
 /// table as the domain's current schema holds it.
-fn kv_table(tk: &TestKit, database: &str, name: &str) -> KvTable {
+fn kv_table(tk: &TestKit, database: &str, name: &str) -> TableCommon {
     match tk.get_table_by_name(database, name) {
         TableEntry::Kv(table) => (*table).clone(),
         _ => panic!("expected a storage-backed table {database}.{name}"),
@@ -33,7 +32,7 @@ fn kv_table(tk: &TestKit, database: &str, name: &str) -> KvTable {
 }
 
 /// One column of [`kv_table`], Go `tbl.Meta().Columns[i]`.
-fn column(tk: &TestKit, database: &str, table_name: &str, name: &str) -> KvColumn {
+fn column(tk: &TestKit, database: &str, table_name: &str, name: &str) -> tidb_table::column::Column {
     kv_table(tk, database, table_name)
         .columns()
         .iter()

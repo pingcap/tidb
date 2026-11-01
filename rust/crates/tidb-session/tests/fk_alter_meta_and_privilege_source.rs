@@ -22,12 +22,12 @@
 
 use crate::support::testkit::TestKit;
 use tidb_infoschema::TableEntry;
-use tidb_table::kv_table::KvForeignKey;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::KvForeignKey;
+use tidb_table::tables::TableCommon;
 
 /// Go `getTableInfo(t, dom, db, table)`: the storage-backed table as the
 /// domain's current schema holds it.
-fn table_info(tk: &TestKit, db: &str, table: &str) -> KvTable {
+fn table_info(tk: &TestKit, db: &str, table: &str) -> TableCommon {
     match tk.get_table_by_name(db, table) {
         TableEntry::Kv(table) => (*table).clone(),
         other => panic!("expected a storage-backed table {db}.{table}, got {other:?}"),

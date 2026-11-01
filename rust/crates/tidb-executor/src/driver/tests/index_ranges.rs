@@ -7,13 +7,13 @@
 //! `pkg/util/ranger` feeding `pkg/executor`'s index reader.
 
 use super::*;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 use tidb_ranger::types::Range;
 
 fn planner_index_path(
     sql: &str,
     catalog: &Catalog,
-    table: &KvTable,
+    table: &TableCommon,
     visible: &str,
 ) -> Option<(i64, Vec<Range>)> {
     let stmt = tidb_parser::parse(sql).unwrap();
@@ -898,7 +898,7 @@ fn a_unique_index_gets_no_handle_dimension() {
 }
 
 /// An UNSIGNED clustered handle gets no handle dimension, and the rows prove
-/// why: `KvTable::index_key` appends the handle as a SIGNED `Datum::Int`
+/// why: `TableCommon::index_key` appends the handle as a SIGNED `Datum::Int`
 /// whatever the column declares, so `18446744073709551615` is stored behind
 /// the key bytes of `-1` and sorts BELOW `1`. A range of `(1, +inf]` over the
 /// column's own unsigned type would read past it and LOSE the row.

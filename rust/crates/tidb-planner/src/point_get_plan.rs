@@ -28,7 +28,7 @@ use crate::plan_builder::field_name::default_field_display_name;
 use crate::from_scope::{single_table_scope, FromScope, ScopeResolver};
 use crate::point_get_key::point_get_value;
 use tidb_driver_error::DriverError;
-use tidb_table::kv_table::{KvTable, TableHandle};
+use tidb_table::tables::{TableCommon, TableHandle};
 use tidb_hack::GoCaseCompare;
 
 #[derive(Clone, Debug)]
@@ -62,7 +62,7 @@ fn row_checksum_field_type() -> FieldType {
 /// source-column projection whose whole predicate is owned by the point key is
 /// returned here. Every residual operator or unsupported table shape declines
 /// to the ordinary planner below.
-pub fn fast_point_schema(table: &KvTable, output: &FastPointOutput) -> Schema {
+pub fn fast_point_schema(table: &TableCommon, output: &FastPointOutput) -> Schema {
     let columns = output
         .offsets
         .iter()
@@ -593,7 +593,7 @@ fn build_fast_point_physical_plan(
 #[allow(clippy::too_many_arguments)]
 fn overflow_plans_table_dual(
     select: &tidb_ast::SelectStmt,
-    table: &KvTable,
+    table: &TableCommon,
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
     current_db: &str,
@@ -632,7 +632,7 @@ fn overflow_plans_table_dual(
             .any(|index| index.read().unique && index_available(Some(index.read().name.original())))
 }
 
-fn fast_dml_point_output(table: &KvTable) -> FastPointOutput {
+fn fast_dml_point_output(table: &TableCommon) -> FastPointOutput {
     let mut offsets = (0..table.columns().len()).collect::<Vec<_>>();
     let mut columns = table
         .columns()
@@ -739,7 +739,7 @@ pub fn fast_point_output(select: &tidb_ast::SelectStmt, scope: &FromScope) -> Op
 
 fn point_get_consumes_where(
     select: &tidb_ast::SelectStmt,
-    table: &KvTable,
+    table: &TableCommon,
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> bool {
@@ -754,7 +754,7 @@ fn point_get_consumes_where(
 
 pub fn point_get_predicate_is_consumed(
     where_clause: Option<&tidb_ast::Expr>,
-    table: &KvTable,
+    table: &TableCommon,
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
     named_partitions: &[String],
@@ -806,7 +806,7 @@ pub fn point_get_predicate_is_consumed(
 /// `EXPLAIN` fans a static-mode plan out over.
 ///
 /// Two narrowings compose, in either order and both cumulative, exactly as
-/// [`crate::KvTable::restrict_read_to_partitions`] composes them for the read
+/// [`crate::TableCommon::restrict_read_to_partitions`] composes them for the read
 /// itself: the statement's own `PARTITION (p, ...)` list, and whatever the
 /// `WHERE` pruned. Empty for an unpartitioned table.
 ///
@@ -940,9 +940,9 @@ impl BatchPointLookup {
 
     fn index(
         plan_rows: usize,
-        table: &KvTable,
+        table: &TableCommon,
         columns: &[(String, FieldType)],
-        index: &tidb_table::kv_table::KvIndex,
+        index: &tidb_table::tables::Index,
         key_values: Vec<Vec<Datum>>,
     ) -> Self {
         let index_columns = index
@@ -975,7 +975,7 @@ impl BatchPointLookup {
 /// detached rule.
 pub fn try_where_in_2_batch_point_get(
     select: &tidb_ast::SelectStmt,
-    table: &KvTable,
+    table: &TableCommon,
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
     statement: Option<&dyn tidb_exprctx::Columns>,
@@ -1002,7 +1002,7 @@ fn batch_key_value(
 
 pub fn try_batch_point_get_stmt(
     select: &PointPlanStmt<'_>,
-    table: &KvTable,
+    table: &TableCommon,
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
     statement: Option<&dyn tidb_exprctx::Columns>,
@@ -1041,7 +1041,7 @@ pub fn try_batch_point_get_stmt(
             names.push(name);
         }
         // A clustered composite primary key is represented by the common
-        // handle offsets, not by a KvIndex. Its encoded datum key is the
+        // handle offsets, not by a Index. Its encoded datum key is the
         // record handle itself, so it can use the same direct lookup source as
         // a unique index without manufacturing a redundant index entry.
         let common_offsets = table.common_handle_offsets().to_vec();
@@ -1344,7 +1344,7 @@ impl NameValuePair {
     }
 }
 
-fn index_key_part_name(table: &KvTable, offset: usize) -> String {
+fn index_key_part_name(table: &TableCommon, offset: usize) -> String {
     let Some(column) = table.columns().get(offset) else {
         return String::new();
     };
@@ -1508,7 +1508,7 @@ pub struct PointPlanStmt<'a> {
     /// table can't use `_tidb_rowid` to generate PointGet Plan unless one
     /// partition is explicitly specified" -- `len(ds.PartitionNames) != 1`
     /// disables the conversion. What the `WHERE` happened to prune is NOT
-    /// that list, which is why the restricted `KvTable` cannot answer this.
+    /// that list, which is why the restricted `TableCommon` cannot answer this.
     named_partitions: &'a [String],
     /// The single write target Go copies into the SELECT-shaped fast-plan
     /// input. The ordinary write path uses the same table reference when it
@@ -1573,7 +1573,7 @@ pub struct PointGetPin {
 /// silently.
 pub fn try_point_get(
     select: &PointPlanStmt<'_>,
-    table: &KvTable,
+    table: &TableCommon,
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
     statement: Option<&dyn tidb_exprctx::Columns>,
@@ -1753,7 +1753,7 @@ pub fn try_point_get(
     }
 
     // A clustered composite primary key is encoded directly as a common
-    // handle rather than materialized as a secondary `KvIndex`. When every
+    // handle rather than materialized as a secondary `Index`. When every
     // handle column is pinned, it is the same one-row lookup as an integer
     // point get; extra equalities remain in the filter above the source.
     let common_offsets = table.common_handle_offsets().to_vec();

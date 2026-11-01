@@ -22,12 +22,12 @@
 
 use crate::support::testkit::TestKit;
 use tidb_infoschema::TableEntry;
-use tidb_table::kv_table::FkAction;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::FkAction;
+use tidb_table::tables::TableCommon;
 
 /// Go `external.GetTableByName(t, tk, db, name).Meta()`: the storage-backed
 /// table as the domain's current schema holds it.
-fn kv_table(tk: &TestKit, database: &str, name: &str) -> KvTable {
+fn kv_table(tk: &TestKit, database: &str, name: &str) -> TableCommon {
     match tk.get_table_by_name(database, name) {
         TableEntry::Kv(table) => (*table).clone(),
         _ => panic!("expected a storage-backed table {database}.{name}"),

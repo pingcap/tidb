@@ -19,7 +19,7 @@
 //! partition's id does its record key carry? In Go a partition IS a physical
 //! table -- `PartitionDefinition.ID` is the `t{id}` a record key is written
 //! under -- and that is exactly the shape kept here, so a partitioned table
-//! is one [`crate::KvTable`] whose rows are spread over N key prefixes
+//! is one [`crate::TableCommon`] whose rows are spread over N key prefixes
 //! rather than one.
 //!
 //! # Why the unpartitioned table is not a special case

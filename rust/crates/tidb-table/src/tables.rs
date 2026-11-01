@@ -62,8 +62,8 @@ pub use row_decoder::{
     DecodedRow, GeneratedColumnSelection, PreparedPointGetRowDecoder, RowDecoder,
 };
 pub use table_meta::{
-    FkAction, KvColumn,
-    KvForeignKey, KvIndex, NonPublicColumn, PreparedPointGetDecodeContext,
+    FkAction, Column,
+    KvForeignKey, Index, NonPublicColumn, PreparedPointGetDecodeContext,
     RowDecodeContext, TableCharset, TableHandle,
 };
 pub use index_entries::index_key_bounds;
@@ -423,7 +423,7 @@ fn partial_index_condition_flags() -> tidb_parser_format::RestoreFlags {
 /// preserves that narrow seam while still evaluating the compiled expression
 /// through the same `tidb_expr` machinery as CHECK constraints.
 struct IndexConditionContext<'a> {
-    columns: &'a [KvColumn],
+    columns: &'a [crate::column::Column],
     row: &'a [Datum],
     zone: &'a SessionTimeZone,
 }
@@ -454,7 +454,7 @@ pub struct TemporaryTableTxnData {
 
 /// A table whose rows live as TiKV-format bytes in a sorted key/value map.
 #[derive(Clone, Debug)]
-pub struct KvTable {
+pub struct TableCommon {
     /// Go `table.Table.Meta()`: the `TableInfo` this table was loaded from
     /// (`TableFromMeta`), shared like Go's pointer and the one source of the
     /// table's scalar metadata; the fields below are what the loader derived
@@ -479,14 +479,14 @@ pub struct KvTable {
     /// Behind an `Arc`, because this is METADATA and Go shares metadata by
     /// pointer: an `InfoSchema`'s `TableInfo` is immutable and every session
     /// holds the same one, with DDL building a NEW `TableInfo` rather than
-    /// editing in place. Cloning a `KvTable` -- which the narrow tier does
+    /// editing in place. Cloning a `TableCommon` -- which the narrow tier does
     /// per transaction and the wide node per catalog rebuild -- was deep-
     /// copying every column's name and collation strings, and the clone was
     /// the single heaviest write-path frame under sysbench. Mutators go
-    /// through [`KvTable::columns_mut`], whose `Arc::make_mut` is Go's
+    /// through [`TableCommon::columns_mut`], whose `Arc::make_mut` is Go's
     /// build-a-new-TableInfo, one shared metadata copied only when a DDL
     /// actually changes it.
-    pub(crate) columns: std::sync::Arc<Vec<KvColumn>>,
+    pub(crate) columns: std::sync::Arc<Vec<crate::column::Column>>,
     /// The offsets of `columns` whose Go `ColumnInfo.Hidden` is set, read
     /// off [`Self::meta`] whenever it or the column list changes: Go reads
     /// `Hidden` straight off each column, which a per-row lookup into the
@@ -512,7 +512,7 @@ pub struct KvTable {
     pub(crate) pk_handle_offset: Option<usize>,
     /// The table's indexes (Go `TableInfo.Indices`); `Arc`-shared like
     /// `columns`, for the same reason.
-    pub(crate) indexes: std::sync::Arc<Vec<KvIndex>>,
+    pub(crate) indexes: std::sync::Arc<Vec<Index>>,
     /// Indexes a DDL is still adding or dropping; written by state only.
     nonpublic_indexes: std::sync::Arc<Vec<NonPublicIndex>>,
     /// Columns a DDL is adding, dropping or changing. A write row carries
@@ -528,7 +528,7 @@ pub struct KvTable {
     /// An ongoing partition reorganization, whose writes are mirrored.
     partition_reorg: Option<Box<PartitionDoubleWrite>>,
     /// Compiled `WHERE` predicates for partial indexes, keyed by the Go
-    /// `IndexInfo.ID`. Keeping this sidecar separate from [`KvIndex`] avoids
+    /// `IndexInfo.ID`. Keeping this sidecar separate from [`Index`] avoids
     /// widening every source-shaped index fixture while making the predicate
     /// available to every index write and backfill path.
     partial_index_conditions: std::collections::BTreeMap<i64, KvCheckConstraint>,
@@ -579,10 +579,10 @@ pub struct KvTable {
     check_constraint_infos: std::sync::Arc<Vec<tidb_model::table::ConstraintInfo>>,
     /// Go `TableInfo.Partition`: how the table's rows are spread over
     /// physical key prefixes, or `None` for an ordinary table whose rows all
-    /// live under [`KvTable::table_id`].
+    /// live under [`TableCommon::table_id`].
     ///
     /// This is the ONLY branch partitioning adds to the write path: every
-    /// record key goes through [`KvTable::record_physical_id`], which reads
+    /// record key goes through [`TableCommon::record_physical_id`], which reads
     /// this field once and then has no cases left. See
     /// [`crate::partition_routing`].
     pub(crate) partition: Option<Box<crate::partition_routing::PartitionSpec>>,
@@ -606,7 +606,7 @@ pub struct KvTable {
 /// Go PointGetExecutor keeps immutable table metadata and a separate snapshot.
 /// A read owns only the backend handle, never a detached catalog/table image.
 pub struct PointRead<'a> {
-    table: &'a KvTable,
+    table: &'a TableCommon,
     store: Box<dyn TableStorage>,
 }
 
@@ -629,7 +629,7 @@ pub struct PointRowDecoder {
 }
 
 impl PointRowDecoder {
-    pub fn new(table: &KvTable) -> Self {
+    pub fn new(table: &TableCommon) -> Self {
         Self {
             ordinary_columns: !table
                 .columns
@@ -642,7 +642,7 @@ impl PointRowDecoder {
 
     pub fn decode(
         &mut self,
-        table: &KvTable,
+        table: &TableCommon,
         handle: &TableHandle,
         entry: &[u8],
         context: &RowDecodeContext,
@@ -932,7 +932,7 @@ fn compose_row_id_shard(shard_bits: u64, shard: i64, id: i64) -> i64 {
 /// Go `autoid.RowIDBitLength`.
 const ROW_ID_BIT_LENGTH: u64 = 64;
 
-impl KvTable {
+impl TableCommon {
     /// Builds an empty table over the in-process backend.
     #[must_use]
     /// The mutable view a DDL takes of the shared column metadata --
@@ -965,7 +965,7 @@ impl KvTable {
         self.store.mem_buffer_snapshot(ranges)
     }
 
-    pub fn columns_mut(&mut self) -> &mut Vec<KvColumn> {
+    pub fn columns_mut(&mut self) -> &mut Vec<crate::column::Column> {
         std::sync::Arc::make_mut(&mut self.columns)
     }
 
@@ -993,23 +993,23 @@ impl KvTable {
 
     /// The shared column list.
     #[must_use]
-    pub fn columns_arc(&self) -> &std::sync::Arc<Vec<KvColumn>> {
+    pub fn columns_arc(&self) -> &std::sync::Arc<Vec<crate::column::Column>> {
         &self.columns
     }
 
     /// The shared column list, for copy-on-write edits.
-    pub fn columns_arc_mut(&mut self) -> &mut std::sync::Arc<Vec<KvColumn>> {
+    pub fn columns_arc_mut(&mut self) -> &mut std::sync::Arc<Vec<crate::column::Column>> {
         &mut self.columns
     }
 
     /// The shared index list.
     #[must_use]
-    pub fn indexes_arc(&self) -> &std::sync::Arc<Vec<KvIndex>> {
+    pub fn indexes_arc(&self) -> &std::sync::Arc<Vec<Index>> {
         &self.indexes
     }
 
     /// The shared index list, for copy-on-write edits.
-    pub fn indexes_arc_mut(&mut self) -> &mut std::sync::Arc<Vec<KvIndex>> {
+    pub fn indexes_arc_mut(&mut self) -> &mut std::sync::Arc<Vec<Index>> {
         &mut self.indexes
     }
 
@@ -1096,16 +1096,16 @@ impl KvTable {
     /// All table columns in physical offset order, including hidden columns
     /// used by expression indexes, matching `TableInfo.Columns`.
     #[must_use]
-    pub fn columns(&self) -> &[KvColumn] {
+    pub fn columns(&self) -> &[crate::column::Column] {
         &self.columns
     }
 
-    pub fn indexes_mut(&mut self) -> &mut Vec<KvIndex> {
+    pub fn indexes_mut(&mut self) -> &mut Vec<Index> {
         std::sync::Arc::make_mut(&mut self.indexes)
     }
 
-    pub fn new(table_id: i64, columns: Vec<KvColumn>) -> Self {
-        KvTable::with_storage(table_id, columns, Box::new(MemTableStorage::new()))
+    pub fn new(table_id: i64, columns: Vec<crate::column::Column>) -> Self {
+        TableCommon::with_storage(table_id, columns, Box::new(MemTableStorage::new()))
     }
 
     /// Builds an empty table over the given backend.
@@ -1117,7 +1117,7 @@ impl KvTable {
     #[must_use]
     pub fn with_storage(
         table_id: i64,
-        columns: Vec<KvColumn>,
+        columns: Vec<crate::column::Column>,
         store: Box<dyn TableStorage>,
     ) -> Self {
         Self::with_storage_and_collation(table_id, columns, store, new_collation_enabled())
@@ -1132,7 +1132,7 @@ impl KvTable {
     #[must_use]
     pub fn with_storage_and_collation(
         table_id: i64,
-        columns: Vec<KvColumn>,
+        columns: Vec<crate::column::Column>,
         store: Box<dyn TableStorage>,
         use_new_collation: bool,
     ) -> Self {
@@ -1159,7 +1159,7 @@ impl KvTable {
     #[must_use]
     pub fn loaded(
         meta: tidb_model::TableInfo,
-        columns: Vec<KvColumn>,
+        columns: Vec<crate::column::Column>,
         store: Box<dyn TableStorage>,
     ) -> Self {
         Self::over_meta(meta, columns, store, new_collation_enabled())
@@ -1167,12 +1167,12 @@ impl KvTable {
 
     fn over_meta(
         meta: tidb_model::TableInfo,
-        columns: Vec<KvColumn>,
+        columns: Vec<crate::column::Column>,
         store: Box<dyn TableStorage>,
         use_new_collation: bool,
     ) -> Self {
         let table_id = meta.id;
-        let mut table = KvTable {
+        let mut table = TableCommon {
             meta: tidb_model::GoShared::new(meta),
             table_id,
             storage_statistics: (0, 0, 0, 0),
@@ -1575,7 +1575,7 @@ impl KvTable {
     /// table that is the single-element list holding the table id, which is
     /// why the probe needs no unpartitioned special case. When something has
     /// narrowed the read (`PARTITION (p)`, pruning) it is that narrower list;
-    /// see [`KvTable::read_partitions`].
+    /// see [`TableCommon::read_partitions`].
     pub fn record_physical_ids(&self) -> Vec<i64> {
         if let Some(ids) = &self.read_partitions {
             return ids.clone();
@@ -1733,7 +1733,7 @@ impl KvTable {
             .map_err(KvTableError::from)
     }
 
-    /// [`KvTable::stored_record`] without the bytes.
+    /// [`TableCommon::stored_record`] without the bytes.
     fn stored_record_key(&mut self, handle: &TableHandle) -> Result<Option<Key>, KvTableError> {
         Ok(self.stored_record(handle)?.map(|(key, _)| key))
     }
@@ -2821,7 +2821,7 @@ impl KvTable {
         let stage = self.store.staging();
         let result = (|| -> Result<(), KvTableError> {
             for physical_id in physical_ids {
-                let (low, high) = crate::kv_table::index_key_bounds(physical_id, index_id);
+                let (low, high) = crate::tables::index_key_bounds(physical_id, index_id);
                 let mut iterator = self
                     .store
                     .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(high)))?;
@@ -2863,7 +2863,7 @@ impl KvTable {
     /// The columns a user can name or see (Go `table.Cols()` without the
     /// `Hidden` ones), with their offsets in [`Self::columns`].
     #[must_use]
-    pub fn visible_columns(&self) -> Vec<(usize, &KvColumn)> {
+    pub fn visible_columns(&self) -> Vec<(usize, &crate::column::Column)> {
         self.columns
             .iter()
             .enumerate()
@@ -2905,7 +2905,7 @@ impl KvTable {
     /// expression-index columns. Index-join key metadata addresses index
     /// offsets in this complete physical row layout.
     #[must_use]
-    pub fn logical_columns(&self) -> &[KvColumn] {
+    pub fn logical_columns(&self) -> &[crate::column::Column] {
         &self.columns
     }
 
@@ -2948,7 +2948,7 @@ impl KvTable {
             }
         }
         // Go `table.Index` wraps the `IndexInfo` the `TableInfo` holds.
-        let stale_index = |index: &KvIndex| {
+        let stale_index = |index: &Index| {
             meta.find_index_by_id(index.read().id)
                 .is_some_and(|info| !info.ptr_eq(&index.info))
         };
@@ -3011,7 +3011,7 @@ impl KvTable {
     /// Appends a hidden column -- the one an expression index key part is
     /// rewritten into, which Go `AddIndex` appends to `TableInfo.Columns` --
     /// and returns its offset.
-    pub fn add_hidden_column(&mut self, column: KvColumn) -> usize {
+    pub fn add_hidden_column(&mut self, column: crate::column::Column) -> usize {
         self.record_fixture_column(&column, None, true);
         self.columns_mut().push(column);
         self.refresh_from_meta();
@@ -3027,7 +3027,7 @@ impl KvTable {
     /// `position` is the column's place in `TableInfo.Columns` (Go
     /// `LocateOffsetToMove`); one past the end appends it, after any hidden
     /// expression-index column, as Go's `ADD COLUMN` without a position does.
-    pub fn add_column(&mut self, position: usize, column: KvColumn) {
+    pub fn add_column(&mut self, position: usize, column: crate::column::Column) {
         let position = position.min(self.columns.len());
         let before = self.columns.get(position).map(|column| column.read().id);
         self.record_fixture_column(&column, before, false);
@@ -3387,7 +3387,7 @@ impl KvTable {
     /// Adds an index, whose entries every later write maintains. A
     /// `clustered_primary` index is recorded for the planner but skipped by
     /// every entry write: its key IS the record handle.
-    pub fn add_index(&mut self, index: KvIndex, clustered_primary: bool) {
+    pub fn add_index(&mut self, index: Index, clustered_primary: bool) {
         let mut index = index;
         if clustered_primary {
             index.clustered_primary = true;
@@ -3403,7 +3403,7 @@ impl KvTable {
     ///
     /// Go `ADD COLUMN` appends the column and moves it before `before`
     /// (`MoveColumnInfo`); `None` leaves it last.
-    fn record_fixture_column(&mut self, column: &KvColumn, before: Option<i64>, hidden: bool) {
+    fn record_fixture_column(&mut self, column: &crate::column::Column, before: Option<i64>, hidden: bool) {
         let id = column.read().id;
         let meta = self.meta.read();
         if meta.cols().iter_deref().any(|info| info.read().id == id) {
@@ -3430,7 +3430,7 @@ impl KvTable {
 
     /// [`Self::record_fixture_column`] for an index. A fixture's PRIMARY KEY
     /// replaces the one [`Self::set_common_handle_offsets`] recorded for it.
-    fn record_fixture_index(&mut self, index: &KvIndex) {
+    fn record_fixture_index(&mut self, index: &Index) {
         let meta = self.meta.read();
         if meta.indices.iter_deref().any(|info| info.read().id == index.read().id) {
             return;
@@ -3520,7 +3520,7 @@ impl KvTable {
     /// index that is not `StateNone`).
     pub fn add_nonpublic_index(
         &mut self,
-        index: KvIndex,
+        index: Index,
         state: tidb_model::SchemaState,
         backfill_state: tidb_model::BackfillState,
     ) {
@@ -3546,7 +3546,7 @@ impl KvTable {
     /// generation dependencies, which is what the cluster loader reads from
     /// `IndexInfo.MVIndex` and the hidden column's `Dependences`; a local
     /// index and a loaded one then look the same to the planner.
-    pub fn record_mv_key_part_source(&mut self, index: &KvIndex) {
+    pub fn record_mv_key_part_source(&mut self, index: &Index) {
         let Some(generated) = index
             .column_offsets
             .iter()
@@ -3591,7 +3591,7 @@ impl KvTable {
     /// The table's indexes: every one of them, which is what index
     /// maintenance, `SHOW INDEX`, and `information_schema` read.
     #[must_use]
-    pub fn indexes(&self) -> &[KvIndex] {
+    pub fn indexes(&self) -> &[Index] {
         &self.indexes
     }
 
@@ -3653,7 +3653,7 @@ impl KvTable {
     }
 
     /// Removes a predicate when an index backfill fails or the index is
-    /// dropped. The sidecar must never outlive its `KvIndex` owner.
+    /// dropped. The sidecar must never outlive its `Index` owner.
     pub(crate) fn remove_partial_index_condition(&mut self, index_id: i64) {
         self.partial_index_conditions.remove(&index_id);
         self.partial_index_condition_texts.remove(&index_id);
@@ -3669,7 +3669,7 @@ impl KvTable {
 
     pub fn index_condition_holds(
         &self,
-        index: &KvIndex,
+        index: &Index,
         row: &[Datum],
         zone: &SessionTimeZone,
     ) -> Result<bool, KvTableError> {
@@ -3709,7 +3709,7 @@ impl KvTable {
     /// index. Non-partial indexes are safe by definition.
     pub fn partial_index_safe_for_columns(
         &self,
-        index: &KvIndex,
+        index: &Index,
         offsets: &[usize],
     ) -> bool {
         let Some(condition) = self.partial_index_conditions.get(&index.read().id) else {
@@ -3768,7 +3768,7 @@ impl KvTable {
         self.mv_key_part_sources.insert(index_id, source);
     }
 
-    pub fn plan_indexes(&self) -> impl Iterator<Item = &KvIndex> {
+    pub fn plan_indexes(&self) -> impl Iterator<Item = &Index> {
         self.indexes.iter().filter(|index| !index.read().invisible)
     }
 
@@ -3776,7 +3776,7 @@ impl KvTable {
     /// planner-visible one that is not partial (`idxInfo.HasCondition()`),
     /// since a partial index holds only the rows its predicate admits and
     /// the fast plan has no residual to notice a row it never stored.
-    pub fn point_get_indexes(&self) -> impl Iterator<Item = &KvIndex> {
+    pub fn point_get_indexes(&self) -> impl Iterator<Item = &Index> {
         self.plan_indexes()
             .filter(|index| !self.index_has_condition(index.read().id))
     }
@@ -4179,16 +4179,16 @@ impl KvTable {
     /// index through a scan; the consistency check is the one caller that
     /// needs the whole list as metadata.
     #[must_use]
-    pub fn index_list_for_check(&self) -> Vec<KvIndex> {
+    pub fn index_list_for_check(&self) -> Vec<Index> {
         self.indexes.as_ref().clone()
     }
 
-    /// [`KvTable::index_entry_keys`] for the executor's `admin_check`: the entry
+    /// [`TableCommon::index_entry_keys`] for the executor's `admin_check`: the entry
     /// keys one row's values encode to under `index`, each with its
     /// `distinct` flag.
     pub fn index_keys_for_check(
         &mut self,
-        index: &KvIndex,
+        index: &Index,
         row: &[Datum],
         handle: &TableHandle,
         physical_id: i64,
@@ -4217,7 +4217,7 @@ impl KvTable {
     }
 
     /// Removes one row's record entry, leaving its index entries orphaned.
-    /// See [`KvTable::delete_raw_key_for_test`].
+    /// See [`TableCommon::delete_raw_key_for_test`].
     pub fn delete_record_for_test(&mut self, handle: &TableHandle) -> Result<(), KvTableError> {
         let Some(key) = self.stored_record_key(handle)? else {
             return Ok(());
@@ -4770,7 +4770,7 @@ fn routing_error(error: crate::partition_routing::RoutingError) -> KvTableError 
     }
 }
 
-fn clustered_key_text(table: &KvTable, row: &[Datum]) -> String {
+fn clustered_key_text(table: &TableCommon, row: &[Datum]) -> String {
     // Go reports the values the handle holds, so a prefix key column shows
     // only its leading part (`TruncateIndexValues`).
     table
@@ -4894,18 +4894,18 @@ pub fn null_timestamp_substitute(
 /// TiDB exposes this metadata as an index for range building and statistics,
 /// but physically reads its ranges from the table's `_r<common_handle>`
 /// record keys. It is therefore a table path, not a secondary-index path.
-pub fn common_handle_primary(table: &KvTable) -> Option<&KvIndex> {
+pub fn common_handle_primary(table: &TableCommon) -> Option<&Index> {
     table
         .plan_indexes()
         .find(|index| index.read().primary && index.column_offsets == table.common_handle_offsets())
 }
 
 /// The clustered PRIMARY's index METADATA, whether or not the catalog stores
-/// it as a [`KvIndex`].
+/// it as a [`Index`].
 ///
 /// Go's `TableInfo.Indices` always carries the clustered primary `IndexInfo`
 /// (`Primary: true`), and `deriveCommonHandleTablePathStats` builds the table
-/// path's ranges from it. This tier's `CREATE TABLE` stores no `KvIndex` for
+/// path's ranges from it. This tier's `CREATE TABLE` stores no `Index` for
 /// a clustered key -- the record key itself enforces it, and a stored index
 /// would be physically maintained as a duplicate -- so the same metadata is
 /// synthesized here from the handle offsets. Prefix lengths are carried
@@ -4914,9 +4914,9 @@ pub fn common_handle_primary(table: &KvTable) -> Option<&KvIndex> {
 /// it misses and the estimate is the pseudo one -- exactly what Go computes
 /// for an unanalyzed primary.
 ///
-/// The tables that DO store a PRIMARY `KvIndex` (test scaffolding injects one
+/// The tables that DO store a PRIMARY `Index` (test scaffolding injects one
 /// for statistics) keep using it, its id and its declared parts.
-pub fn clustered_primary_metadata(table: &KvTable) -> Option<std::borrow::Cow<'_, KvIndex>> {
+pub fn clustered_primary_metadata(table: &TableCommon) -> Option<std::borrow::Cow<'_, Index>> {
     if table.common_handle_offsets().is_empty() {
         return None;
     }
@@ -4925,7 +4925,7 @@ pub fn clustered_primary_metadata(table: &KvTable) -> Option<std::borrow::Cow<'_
     }
     // Go's clustered table lists its PRIMARY KEY in `TableInfo.Indices`.
     let primary = table.meta().read().get_primary_key()?;
-    Some(std::borrow::Cow::Owned(KvIndex {
+    Some(std::borrow::Cow::Owned(Index {
         info: primary,
         column_offsets: table.common_handle_offsets().to_vec(),
         clustered_primary: false,
@@ -4940,8 +4940,8 @@ pub fn clustered_primary_metadata(table: &KvTable) -> Option<std::borrow::Cow<'_
 pub fn hypo_kv_indexes(
     hypo: &tidb_variable::hypo_index::HypoIndexes,
     database: &str,
-    table: &KvTable,
-) -> Vec<KvIndex> {
+    table: &TableCommon,
+) -> Vec<Index> {
     hypo.table_indexes(database, &table.name())
         .into_iter()
         .filter_map(|index| {

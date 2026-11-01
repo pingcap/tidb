@@ -17,9 +17,9 @@
 use crate::KvTableReader;
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
-use tidb_table::kv_table::TableHandle;
-use tidb_table::kv_table::RowDecodeContext;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableHandle;
+use tidb_table::tables::RowDecodeContext;
+use tidb_table::tables::TableCommon;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;
@@ -56,7 +56,7 @@ pub(crate) struct SampleRange {
 /// forward from its start, as Go's `sampleFetcher` does.
 pub struct TableSampleExec {
     meta: ExecutorMeta,
-    tables: Vec<KvTable>,
+    tables: Vec<TableCommon>,
     ranges: Vec<SampleRange>,
     output_columns: Vec<SampleOutputColumn>,
     decode_context: RowDecodeContext,
@@ -69,7 +69,7 @@ impl TableSampleExec {
     #[must_use]
     pub(crate) fn new(
         meta: ExecutorMeta,
-        tables: Vec<KvTable>,
+        tables: Vec<TableCommon>,
         ranges: Vec<SampleRange>,
         output_columns: Vec<SampleOutputColumn>,
         decode_context: RowDecodeContext,

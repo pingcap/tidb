@@ -13,10 +13,10 @@
 // limitations under the License.
 
 //! The executor's side of a table: Go's reader executors, DDL backfill and
-//! in-process DDL over a [`KvTable`], as extension traits; the table itself is
-//! `tidb_table::kv_table`.
+//! in-process DDL over a [`TableCommon`], as extension traits; the table itself is
+//! `tidb_table::tables`.
 
-use tidb_table::kv_table::*;
+use tidb_table::tables::*;
 
 #[allow(unused_imports)]
 use tidb_hack::GoCaseCompare;
@@ -25,7 +25,7 @@ use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStor
 #[allow(unused_imports)]
 use tidb_autoid::AutoIdAllocator;
 #[allow(unused_imports)]
-use tidb_table::kv_table::row_decoder::fill_handle_columns;
+use tidb_table::tables::row_decoder::fill_handle_columns;
 #[allow(unused_imports)]
 use std::collections::HashSet;
 #[allow(unused_imports)]
@@ -35,7 +35,7 @@ use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
 #[allow(unused_imports)]
 use tidb_expr::expression::Expression;
 #[allow(unused_imports)]
-use tidb_table::kv_table::index_entries::duplicate_value_text;
+use tidb_table::tables::index_entries::duplicate_value_text;
 #[allow(unused_imports)]
 use tidb_hack::GoToLower;
 #[allow(unused_imports)]

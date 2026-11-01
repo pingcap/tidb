@@ -64,7 +64,7 @@ const GO_LIST_COLUMNS: &str = "CREATE TABLE `lc1` (\n  `a` int DEFAULT NULL,\n  
 const GO_KEY: &str = "CREATE TABLE `k1` (\n  `a` int NOT NULL,\n  `b` int DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY KEY (`a`) PARTITIONS 3";
 
 /// How many rows each partition of `table` holds, in definition order. This
-/// is the routing made visible; see `KvTable::partition_row_counts`.
+/// is the routing made visible; see `TableCommon::partition_row_counts`.
 fn partition_counts(session: &mut Session, table: &str) -> Vec<(String, usize)> {
     session
         .with_committed_catalog_mut(|catalog| {
@@ -2093,7 +2093,7 @@ fn plan_access_objects(session: &mut Session, sql: &str) -> Vec<String> {
 ///   Batch_Point_Get  2.00  root  table:t, partition:p1,P2  handle:[1 2], ...
 /// ```
 ///
-/// MUTATION: return an empty vector from `KvTable::handle_partition_names`
+/// MUTATION: return an empty vector from `TableCommon::handle_partition_names`
 /// and the annotation vanishes; sort the ordinals by first appearance instead
 /// of ascending, or lowercase the names, and the text stops matching TiDB's.
 #[test]

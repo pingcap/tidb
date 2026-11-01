@@ -215,10 +215,9 @@ mod tests {
     use tidb_infoschema::{Catalog, DEFAULT_DATABASE};
     use tidb_executor_internal_exec::{Executor, ExecutorMeta};
     use tidb_executor_join::join::{IndexLookupPlan, IndexLookupSource, JoinExec, JoinKind};
-    use tidb_table::kv_table::TableHandle;
-    use tidb_table::kv_table::KvTable;
-    use tidb_table::kv_table::KvIndex;
-    use tidb_table::kv_table::KvColumn;
+    use tidb_table::tables::TableHandle;
+    use tidb_table::tables::TableCommon;
+    use tidb_table::tables::Index;
     use crate::mem_table::MemTableSourceExec;
     use crate::run_prepared_select_for_test;
     use tidb_kv::storage::capture_storage_ops;
@@ -413,8 +412,8 @@ mod tests {
         }
     }
 
-    fn column(name: &str, id: i64) -> KvColumn {
-        KvColumn {
+    fn column(name: &str, id: i64) -> tidb_table::column::Column {
+        tidb_table::column::Column {
             info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                 id: id,
                 name: tidb_ast::CiString::new(name.to_owned()),
@@ -441,7 +440,7 @@ mod tests {
     }
 
     struct Fixture {
-        table: KvTable,
+        table: TableCommon,
         buffer: MutationBuffer,
         snapshot: Arc<Mutex<MockSnapshot>>,
         returned: Arc<AtomicU64>,
@@ -465,7 +464,7 @@ mod tests {
         let mut fixture = fixture_with(None);
         fixture.table.set_common_handle_offsets(vec![0, 1]);
         fixture.table.add_index(
-            KvIndex {
+            Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("PRIMARY"),
@@ -492,7 +491,7 @@ mod tests {
     }
 
     /// A clustered common-handle table whose catalog does not carry a
-    /// physical PRIMARY `KvIndex`. This mirrors the metadata shape produced
+    /// physical PRIMARY `Index`. This mirrors the metadata shape produced
     /// by the real clustered-table loader during a merge, where the handle
     /// offsets are present but the index entry is synthesized by the scan
     /// path.
@@ -506,7 +505,7 @@ mod tests {
         fixture_with_columns(pk_handle_offset, vec![column("a", 1), column("b", 2)])
     }
 
-    fn fixture_with_columns(pk_handle_offset: Option<usize>, columns: Vec<KvColumn>) -> Fixture {
+    fn fixture_with_columns(pk_handle_offset: Option<usize>, columns: Vec<tidb_table::column::Column>) -> Fixture {
         let snapshot = Arc::new(Mutex::new(MockSnapshot::default()));
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
         let buffer = MutationBuffer::new();
@@ -523,7 +522,7 @@ mod tests {
         });
         let storage = ClusterTableStorage::new(buffer.clone(), handle)
             .with_client(Arc::clone(&region) as Arc<dyn tidb_txnkv::Client>);
-        let mut table = KvTable::with_storage(91, columns, Box::new(storage));
+        let mut table = TableCommon::with_storage(91, columns, Box::new(storage));
         if let Some(offset) = pk_handle_offset {
             table.set_pk_handle_offset(offset);
         }
@@ -546,7 +545,7 @@ mod tests {
                 .table
                 .insert_row(&[Datum::Int(a), Datum::Int(a + 10)], &tidb_exprctx::NoColumns)
                 .unwrap();
-            let tidb_table::kv_table::TableHandle::Int(handle) = handle else {
+            let tidb_table::tables::TableHandle::Int(handle) = handle else {
                 unreachable!()
             };
             handles.push(handle);
@@ -906,7 +905,7 @@ mod tests {
             );
             let mut fixture = fixture_with_columns(pk_handle_offset, columns);
             fixture.table.add_index(
-                KvIndex {
+                Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 2,
                         name: tidb_ast::CiString::new("check_stored"),
@@ -952,14 +951,14 @@ mod tests {
                 )
                 .unwrap()
                 .expect("the table probe remains remote");
-            let lookup = KvTable::finish_routed_rows_by_handles(&handles, staged)
+            let lookup = TableCommon::finish_routed_rows_by_handles(&handles, staged)
                 .unwrap()
                 .expect("remote table rows");
             assert_eq!(
                 lookup.0,
                 vec![
-                    (tidb_table::kv_table::TableHandle::Int(3), vec![Datum::Int(13)]),
-                    (tidb_table::kv_table::TableHandle::Int(1), vec![Datum::Int(11)]),
+                    (tidb_table::tables::TableHandle::Int(3), vec![Datum::Int(13)]),
+                    (tidb_table::tables::TableHandle::Int(1), vec![Datum::Int(11)]),
                 ]
             );
             let mut catalog = catalog_of(fixture.table);
@@ -1420,7 +1419,7 @@ mod tests {
         assert_eq!(fixture.region.opened(), 2);
     }
 
-    fn catalog_of(table: KvTable) -> Catalog {
+    fn catalog_of(table: TableCommon) -> Catalog {
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
         catalog
@@ -1467,7 +1466,7 @@ mod tests {
     fn index_probe_readers_retain_network_estimates() {
         let mut secondary = fixture();
         secondary.table.add_index(
-            KvIndex {
+            Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("ia"),
@@ -1566,7 +1565,7 @@ mod tests {
                     )
                     .unwrap()
                     .expect("integer/common handles use the shared table request");
-                let (rows, _, _, _) = KvTable::finish_routed_rows_by_handles(&handles, staged)
+                let (rows, _, _, _) = TableCommon::finish_routed_rows_by_handles(&handles, staged)
                     .unwrap()
                     .expect("remote table rows");
                 assert_eq!(
@@ -1593,7 +1592,7 @@ mod tests {
             fixture_with_columns(None, vec![column("a", 1), column("b", 2), column("c", 3)]);
         fixture.table.set_common_handle_offsets(vec![0, 1]);
         fixture.table.add_index(
-            KvIndex {
+            Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("ib"),
@@ -1683,7 +1682,7 @@ mod tests {
                         desc,
                         true,
                         false,
-                        &tidb_table::kv_table::RowDecodeContext::for_test_query_utc(),
+                        &tidb_table::tables::RowDecodeContext::for_test_query_utc(),
                         &PushdownStatementContext::default(),
                         PushdownReadEngine::TiKv,
                         0,
@@ -1725,7 +1724,7 @@ mod tests {
             .set_partition(table.partition().unwrap().clone());
         for (id, name, offset) in [(1, "ia", 0), (2, "ib", 1)] {
             fixture.table.add_index(
-                KvIndex {
+                Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: id,
                         name: tidb_ast::CiString::new(name),
@@ -1784,7 +1783,7 @@ mod tests {
     fn reader_task_ordinary_lookup_uses_table_width() {
         let mut fixture = fixture();
         fixture.table.add_index(
-            KvIndex {
+            Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("ia"),
@@ -1849,7 +1848,7 @@ mod tests {
         ] {
             for (id, name, offset) in [(1, "ia", 0), (2, "ib", 1)] {
                 fixture.table.add_index(
-                    KvIndex {
+                    Index {
                         info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                             id: id,
                             name: tidb_ast::CiString::new(name),

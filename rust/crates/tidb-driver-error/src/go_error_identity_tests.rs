@@ -16,7 +16,7 @@
 
 use crate::*;
 use tidb_kv::storage::StorageError;
-use tidb_table::kv_table::KvTableError;
+use tidb_table::tables::KvTableError;
 
 #[test]
 fn coprocessor_cot_error_matches_go() {

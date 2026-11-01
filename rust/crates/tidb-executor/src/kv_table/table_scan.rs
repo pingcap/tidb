@@ -29,7 +29,7 @@
 use super::row_decoder::{PreparedPointGetRowDecoder, RowDecoder};
 use tidb_ranger::types::Range;
 use super::{
-    index_entry_handle, KvIndex, KvTable, KvTableError, PreparedPointGetDecodeContext,
+    index_entry_handle, Index, TableCommon, KvTableError, PreparedPointGetDecodeContext,
     RowDecodeContext, TableHandle,
 };
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
@@ -56,9 +56,9 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_txnkv::Key;
 
-/// The read direction of [`KvTable`]: the entry points that open a decoder
+/// The read direction of [`TableCommon`]: the entry points that open a decoder
 /// or a cursor over the stored bytes.
-/// Go's reader executors over a table (`TableReader`, `IndexReader`, `IndexLookUp`, `PointGet`): the executor's reads of a [`KvTable`].
+/// Go's reader executors over a table (`TableReader`, `IndexReader`, `IndexLookUp`, `PointGet`): the executor's reads of a [`TableCommon`].
 pub trait KvTableReader {
     /// Go FKCheckExec's exact/prefix access, shared with cascade selection.
     /// Existence checks request one handle and never decode unrelated rows.
@@ -80,7 +80,7 @@ pub trait KvTableReader {
     ) -> Result<Option<Vec<Datum>>, KvTableError>;
 
     /// The row-decoding metadata, detached from the table and optionally
-    /// narrowed to the columns at `keep` (offsets into [`KvTable::columns`],
+    /// narrowed to the columns at `keep` (offsets into [`TableCommon::columns`],
     /// ascending and unique).
     ///
     /// A cursor holds the storage iterator and must decode without borrowing
@@ -102,7 +102,7 @@ pub trait KvTableReader {
 
     /// A forward cursor over the table's record-key range, in key order.
     ///
-    /// This is the streaming form of [`KvTable::scan_rows_with_handles_with_context`]: the
+    /// This is the streaming form of [`TableCommon::scan_rows_with_handles_with_context`]: the
     /// storage iterator stays open and one row is *decoded* per pull, so the
     /// decoded rows alive at once are the caller's chunk rather than the whole
     /// relation. (How far the laziness reaches below the storage seam is a
@@ -114,7 +114,7 @@ pub trait KvTableReader {
         context: &RowDecodeContext,
     ) -> Result<RowCursor, KvTableError>;
 
-    /// [`KvTable::row_cursor_with_context`] narrowed to the columns at `keep`: the cursor
+    /// [`TableCommon::row_cursor_with_context`] narrowed to the columns at `keep`: the cursor
     /// decodes and yields exactly those columns, in `keep`'s order.
     ///
     /// `handle_ranges` narrows which RECORDS are read, as
@@ -184,7 +184,7 @@ pub trait KvTableReader {
     /// `[start, end)` pairs in ascending key order.
     ///
     /// With no handle ranges this is the ONE range the whole relation lives
-    /// in ([`KvTable::record_key_range`]). With them it is the intervals
+    /// in ([`TableCommon::record_key_range`]). With them it is the intervals
     /// [`crate::handle_range::record_key_ranges`] encodes, which is what
     /// makes a `TableRangeScan` read less than the table. `keep_order`
     /// selects Go's ordered-read half order versus his merged unordered wire
@@ -451,19 +451,19 @@ pub trait KvTableReader {
         context: &RowDecodeContext,
     ) -> Result<Vec<Vec<Datum>>, KvTableError>;
 
-    /// Like [`KvTable::scan_rows_with_context`], but each row carries the record handle its
+    /// Like [`TableCommon::scan_rows_with_context`], but each row carries the record handle its
     /// key encodes, which `UPDATE`/`DELETE` need to address the row again.
     ///
     /// Uses the backend's table reader, merging staged writes, or the local
     /// [`RowCursor`] when the backend cannot serve the table's shape. A caller
     /// that does not need the whole relation in memory should hold a cursor
-    /// instead (see [`KvTable::row_cursor_with_context`]).
+    /// instead (see [`TableCommon::row_cursor_with_context`]).
     fn scan_rows_with_handles_with_context(
         &mut self,
         context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError>;
 
-    /// Like [`KvTable::scan_rows_with_handles_with_context`], retaining the
+    /// Like [`TableCommon::scan_rows_with_handles_with_context`], retaining the
     /// physical table id encoded in every record key.
     ///
     /// DDL rewrites need this identity: a partitioned table can contain the
@@ -483,7 +483,7 @@ pub trait KvTableReader {
         context: &RowDecodeContext,
     ) -> Result<Vec<(i64, TableHandle, Vec<Datum>)>, KvTableError>;
 
-    /// [`KvTable::scan_rows_with_handles_with_context`] narrowed to `handle_ranges`: the
+    /// [`TableCommon::scan_rows_with_handles_with_context`] narrowed to `handle_ranges`: the
     /// same intervals the read side offers a `TableRangeScan` through
     /// [`tidb_executor_internal_exec::table_access::TableAccess::accept_handle_ranges`]. `None`
     /// reads the whole table.
@@ -530,7 +530,7 @@ pub trait KvTableReader {
     ) -> Result<Vec<TableHandle>, KvTableError>;
 
     /// A forward cursor over one index range, in index order -- the streaming
-    /// form of [`KvTable::scan_index_range`].
+    /// form of [`TableCommon::scan_index_range`].
     fn index_range_cursor(
         &mut self,
         index_id: i64,
@@ -607,7 +607,7 @@ pub trait KvTableReader {
     ) -> Result<IndexRangeCursor, KvTableError>;
 }
 
-impl KvTableReader for KvTable {
+impl KvTableReader for TableCommon {
     fn foreign_key_handles(
         &mut self,
         index_id: Option<i64>,
@@ -979,7 +979,7 @@ impl KvTableReader for KvTable {
         let full_unsigned_handle = tidb_ranger::points::full_int_range(true);
         let handle_ranges = if handle_ranges.is_some() {
             handle_ranges
-        } else if tidb_table::kv_table::common_handle_primary(self).is_some() {
+        } else if tidb_table::tables::common_handle_primary(self).is_some() {
             Some(full_common_handle.as_slice())
         } else if self.unsigned_pk_handle() {
             Some(full_unsigned_handle.as_slice())
@@ -1008,7 +1008,7 @@ impl KvTableReader for KvTable {
         let full_unsigned_handle = tidb_ranger::points::full_int_range(true);
         let handle_ranges = if handle_ranges.is_some() {
             handle_ranges
-        } else if tidb_table::kv_table::common_handle_primary(self).is_some() {
+        } else if tidb_table::tables::common_handle_primary(self).is_some() {
             Some(full_common_handle.as_slice())
         } else if self.unsigned_pk_handle() {
             Some(full_unsigned_handle.as_slice())
@@ -1142,7 +1142,7 @@ impl KvTableReader for KvTable {
         precomputed_ranges: Option<&[(Key, Key)]>,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
         let common_handle = !self.common_handle_offsets().is_empty();
-        let common_primary = tidb_table::kv_table::clustered_primary_metadata(self);
+        let common_primary = tidb_table::tables::clustered_primary_metadata(self);
         if common_handle && common_primary.is_none() {
             return Ok(None);
         }
@@ -2041,14 +2041,14 @@ impl KvTableReader for KvTable {
             .collect();
         // Go's PhysicalTableScan.ToPB names the clustered primary's column
         // ids on every table scan over a common-handle table, whether or not
-        // the catalog stores that key as an index. This tier stores no KvIndex
+        // the catalog stores that key as an index. This tier stores no Index
         // for a clustered key, so the stored-index lookup answers None for
         // exactly the tables TiKV then cannot decode: the PK columns live in
         // the record KEY, and with no primary_column_ids TiKV leaves their
         // slots unfilled and rejects the NOT NULL row as corrupted. The
-        // synthesized metadata (see tidb_table::kv_table::clustered_primary_metadata)
+        // synthesized metadata (see tidb_table::tables::clustered_primary_metadata)
         // is the same reconstruction the row-cursor builder above sends.
-        let common_primary = tidb_table::kv_table::clustered_primary_metadata(self);
+        let common_primary = tidb_table::tables::clustered_primary_metadata(self);
         let primary_column_ids: Vec<i64> = common_primary
             .as_ref()
             .into_iter()
@@ -2562,7 +2562,7 @@ impl KvTableReader for KvTable {
         if self.pk_handle_offset().is_none() && self.common_handle_offsets().is_empty() {
             table_offsets.push(None);
         }
-        let common_primary = tidb_table::kv_table::clustered_primary_metadata(self);
+        let common_primary = tidb_table::tables::clustered_primary_metadata(self);
         let column_covered = |position: usize, offset: &Option<usize>, ignore_len: bool| {
             let Some(offset) = offset else {
                 return true;
@@ -3326,7 +3326,7 @@ pub(crate) fn note_decoded_column_ids(ids: impl Iterator<Item = i64>) {
 
 /// A forward cursor over a table's record range, decoding one row per pull.
 ///
-/// See [`KvTable::row_cursor_with_context`]. Over
+/// See [`TableCommon::row_cursor_with_context`]. Over
 /// [`ClusterTableStorage`](tidb_store_driver_txn::cluster_storage::ClusterTableStorage) the
 /// iterator is the merged stream (snapshot plus the session's staged mutation
 /// buffer), so a cursor sees exactly the rows a materializing scan saw.
@@ -3491,7 +3491,7 @@ struct RemoteRowMaterialization {
 
 impl RemoteRowMaterialization {
     fn new(
-        table: &KvTable,
+        table: &TableCommon,
         keep: &[usize],
         context: &RowDecodeContext,
         synthetic_handle: bool,
@@ -4492,7 +4492,7 @@ impl Drop for RemoteIndexHandleCursor {
 
 /// A forward cursor over one index range, yielding row handles in index order.
 ///
-/// See [`KvTable::index_range_cursor`].
+/// See [`TableCommon::index_range_cursor`].
 pub struct IndexRangeCursor {
     iterators: Vec<Box<dyn StorageIterator>>,
     /// The pruned-partition ordinal each iterator reads, parallel to
@@ -4501,7 +4501,7 @@ pub struct IndexRangeCursor {
     next_iterator: usize,
     merge_by_index_key: bool,
     merge_heap: IndexMergeHeap,
-    index: KvIndex,
+    index: Index,
     common_handle: bool,
     /// Selected physical partition ids for a GLOBAL index. Its one logical
     /// keyspace carries the actual id in every value rather than in the key.
@@ -4686,11 +4686,11 @@ impl Drop for IndexRangeCursor {
     }
 }
 
-/// Scans a [`KvTable`]'s record range into chunks -- the storage-backed source
+/// Scans a [`TableCommon`]'s record range into chunks -- the storage-backed source
 /// (Go's table reader over `tablecodec`, minus distsql/coprocessor).
 pub struct TableScanExec {
     meta: ExecutorMeta,
-    table: KvTable,
+    table: TableCommon,
     /// The open storage cursor; `None` before `open` and once exhausted, and
     /// always `None` when the backend served the scan through `remote`.
     cursor: Option<RowCursor>,
@@ -4915,7 +4915,7 @@ impl TableScanExec {
     #[must_use]
     pub fn new_with_context(
         meta: ExecutorMeta,
-        mut table: KvTable,
+        mut table: TableCommon,
         decode_context: RowDecodeContext,
         statement: PushdownStatementContext,
     ) -> Self {
@@ -6340,14 +6340,13 @@ fn close_streams(streams: &mut Vec<Box<dyn tidb_distsql::remote_scan::PushdownRo
 mod remote_cursor_tests {
     use super::*;
     use tidb_datatype::UNSPECIFIED_LENGTH;
-    use crate::kv_table::KvColumn;
     use tidb_kv::storage::{MemTableStorage, StorageError, TableStorage};
 
     #[test]
     fn a_full_width_projection_is_not_necessarily_identity() {
         use tidb_executor_internal_exec::table_access::TableAccess;
         let context = crate::StmtContext::for_query();
-        let mut table = KvTable::new(
+        let mut table = TableCommon::new(
             42,
             vec![
                 bigint_column(1, "a"),
@@ -6542,8 +6541,8 @@ mod remote_cursor_tests {
         }
     }
 
-    fn bigint_column(id: i64, name: &str) -> KvColumn {
-        KvColumn {
+    fn bigint_column(id: i64, name: &str) -> tidb_table::column::Column {
+        tidb_table::column::Column {
             info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                 id: id,
                 name: tidb_ast::CiString::new(name.to_owned()),
@@ -6561,7 +6560,7 @@ mod remote_cursor_tests {
     #[test]
     fn index_selection_remaps_pruned_columns_before_handle_projection() {
         let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             91,
             vec![
                 bigint_column(1, "id"),
@@ -6575,7 +6574,7 @@ mod remote_cursor_tests {
         );
         table.set_pk_handle_offset(0);
         table.add_index(
-            crate::kv_table::KvIndex {
+            crate::kv_table::Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 7,
                     name: tidb_ast::CiString::new("idx_a"),
@@ -6638,10 +6637,10 @@ mod remote_cursor_tests {
         assert_eq!(request.limit(), Some(1));
     }
 
-    fn index_selection_table(capture: RequestCapture, prefix_length: i64) -> KvTable {
+    fn index_selection_table(capture: RequestCapture, prefix_length: i64) -> TableCommon {
         let a = bigint_column(2, "a");
         a.info.write().field_type = FieldType::new(tidb_datatype::FieldTypeCode::Varchar).with_flen(20);
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             91,
             vec![bigint_column(1, "id"), a, bigint_column(3, "v")],
             Box::new(capture),
@@ -6649,7 +6648,7 @@ mod remote_cursor_tests {
         .with_new_collation_mode(true);
         table.set_pk_handle_offset(0);
         table.add_index(
-            crate::kv_table::KvIndex {
+            crate::kv_table::Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 7,
                     name: tidb_ast::CiString::new("idx_a"),
@@ -7124,7 +7123,7 @@ mod remote_cursor_tests {
     fn a_clean_read_requests_only_the_kept_columns() {
         for common_handle in [false, true] {
             let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-            let mut table = KvTable::with_storage(
+            let mut table = TableCommon::with_storage(
                 92,
                 vec![bigint_column(1, "id"), bigint_column(2, "v")],
                 Box::new(PartitionRequestCapture {
@@ -7187,7 +7186,7 @@ mod remote_cursor_tests {
         use tidb_executor_internal_exec::table_access::TableAccess;
         for dirty in [false, true] {
             let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-            let mut table = KvTable::with_storage(
+            let mut table = TableCommon::with_storage(
                 93,
                 vec![bigint_column(1, "id"), bigint_column(2, "v")],
                 Box::new(PartitionRequestCapture {
@@ -7234,7 +7233,7 @@ mod remote_cursor_tests {
     #[test]
     fn partitioned_remote_scan_opens_one_request_per_physical_table() {
         let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             91,
             vec![bigint_column(1, "id")],
             Box::new(PartitionRequestCapture {
@@ -7449,7 +7448,7 @@ mod remote_cursor_tests {
     #[test]
     fn an_index_aggregate_over_a_common_handle_table_names_its_primary_columns() {
         let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             91,
             vec![
                 bigint_column(1, "a"),
@@ -7463,7 +7462,7 @@ mod remote_cursor_tests {
         );
         table.set_common_handle_offsets(vec![0, 1]);
         table.add_index(
-            crate::kv_table::table_meta::KvIndex {
+            crate::kv_table::table_meta::Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 5,
                     name: tidb_ast::CiString::new("idx_c"),
@@ -7579,7 +7578,7 @@ mod remote_cursor_tests {
     #[test]
     fn a_grouped_aggregate_key_the_index_does_not_carry_falls_back_instead_of_erroring() {
         let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             91,
             vec![
                 bigint_column(1, "a"),
@@ -7594,7 +7593,7 @@ mod remote_cursor_tests {
         // idx_a carries only `a` (offset 0); the aggregate below groups by
         // `c` (offset 2), which this index does not carry in any position.
         table.add_index(
-            crate::kv_table::table_meta::KvIndex {
+            crate::kv_table::table_meta::Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 7,
                     name: tidb_ast::CiString::new("idx_a"),
@@ -8331,7 +8330,7 @@ mod remote_cursor_tests {
     #[test]
     fn handle_lookup_groups_ranges_with_go_row_count_hints() {
         let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             91,
             vec![bigint_column(1, "v")],
             Box::new(RequestCapture {
@@ -8387,7 +8386,7 @@ mod remote_cursor_tests {
 
     #[test]
     fn handle_batch_get_preserves_projection_duplicates_and_missing_rows() {
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             91,
             vec![bigint_column(1, "id"), bigint_column(2, "v")],
             Box::new(MemTableStorage::new()),
@@ -8526,7 +8525,7 @@ mod remote_cursor_tests {
                             },
                         ));
                     }
-                    let answer = KvTable::finish_lookup_by_handles(
+                    let answer = TableCommon::finish_lookup_by_handles(
                         &handles,
                         StagedHandlesLookup { parts },
                         allow_chunks,
@@ -8636,7 +8635,7 @@ mod remote_cursor_tests {
                     )],
                 };
                 let Some(FinishedLookup::Chunk(finished)) =
-                    KvTable::finish_lookup_by_handles(&handles, staged, true).unwrap()
+                    TableCommon::finish_lookup_by_handles(&handles, staged, true).unwrap()
                 else {
                     panic!("columnar handle lookup unexpectedly refused");
                 };

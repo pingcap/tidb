@@ -19,7 +19,7 @@
 //! `tidb-server`, not one per session and not one per schema reload -- and
 //! that placement is a correctness property, not a cache. A reserved range
 //! belongs to whoever reserved it, so an allocator rebuilt alongside its
-//! `KvTable` would abandon the ids it still held and reserve a fresh range
+//! `TableCommon` would abandon the ids it still held and reserve a fresh range
 //! from the meta key, leaving a `DEFAULT_AUTO_ID_STEP`-sized hole in the ids
 //! every time the schema version moved. This registry is where the allocator
 //! outlives the table objects, and `Domain` holds exactly
@@ -36,7 +36,7 @@ use tidb_autoid::cluster_auto_id::ClusterAutoIdStore;
 use tidb_autoid::cluster_sequence::ClusterSequenceCounter;
 use tidb_table::sequence::SequenceDef;
 use tidb_autoid::DEFAULT_AUTO_ID_STEP;
-use tidb_table::kv_table::TableAutoId;
+use tidb_table::tables::TableAutoId;
 use tidb_table::sequence::SequenceAllocator;
 use tidb_model::TableInfo;
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
@@ -314,7 +314,7 @@ mod tests {
     use super::*;
     use tidb_ast::CiString;
     use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
-    use tidb_table::kv_table::KvTable;
+    use tidb_table::tables::TableCommon;
     use tidb_model::ColumnInfo;
     struct RefusedLeader;
     impl tidb_autoid::auto_id_client::AutoIdLeader for RefusedLeader {
@@ -341,7 +341,7 @@ mod tests {
     fn next(
         allocator: TableAutoId,
     ) -> Result<Option<i64>, tidb_autoid::AutoIdStoreError> {
-        let mut table = KvTable::new(402, vec![]);
+        let mut table = TableCommon::new(402, vec![]);
         table.set_auto_increment_offset(0);
         table.set_auto_id(allocator);
         table.next_auto_increment_for_show()

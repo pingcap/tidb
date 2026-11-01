@@ -24,7 +24,7 @@ impl Catalog {
     /// wraps the infoschema in a `SessionExtendedInfoSchema` whose
     /// `LocalTemporaryTables` resolve first. Each entry is `(folded
     /// database, folded name, table)`.
-    pub fn attach_local_temporary_tables(&mut self, tables: Vec<(String, String, KvTable)>) {
+    pub fn attach_local_temporary_tables(&mut self, tables: Vec<(String, String, TableCommon)>) {
         // The version bump is gated on an ACTUAL visibility change: this runs
         // around EVERY statement via [`crate::txn`]'s overlay guard, and the
         // common case is a session with NO temporary tables, where attaching
@@ -54,7 +54,7 @@ impl Catalog {
     /// Detaches the session's LOCAL temporary tables -- Go
     /// `temptable.DetachLocalTemporaryTableInfoSchema` -- returning them as
     /// the statement left them.
-    pub fn take_local_temporary_tables(&mut self) -> Vec<(String, String, KvTable)> {
+    pub fn take_local_temporary_tables(&mut self) -> Vec<(String, String, TableCommon)> {
         // A statement that changed no schema leaves the image it found, so
         // detaching restores that image's version.
         let restored = self
@@ -132,7 +132,7 @@ impl Catalog {
         &mut self,
         database: &str,
         name: &str,
-    ) -> Option<&mut KvTable> {
+    ) -> Option<&mut TableCommon> {
         // The row overlay keeps the schema epoch, but this public handle
         // can also change an ID. Never retain a directory across that borrow.
         self.invalidate_table_id_names();

@@ -37,7 +37,7 @@ use tidb_txnkv::{AssertionOp, Key};
 use tidb_kv::storage::StorageError;
 
 use super::index_entries::{convert_handle, duplicate_value_text};
-use super::{KvTable, KvTableError, NonPublicIndex, TableHandle};
+use super::{TableCommon, KvTableError, NonPublicIndex, TableHandle};
 
 /// Go `tablecodec.TempIndexKeyTypeNone`: not a temporary-index write.
 const TEMP_INDEX_KEY_TYPE_NONE: u8 = 0;
@@ -100,7 +100,7 @@ fn txn_handle(handle: &TableHandle) -> Result<tidb_txnkv::Handle, KvTableError> 
     })
 }
 
-impl KvTable {
+impl TableCommon {
     /// Go `getKeyInTxn`: the value the transaction sees, `None` for absent
     /// (or deleted).
     fn get_key_in_txn(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, KvTableError> {

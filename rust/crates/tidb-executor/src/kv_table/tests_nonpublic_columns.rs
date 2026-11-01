@@ -16,11 +16,11 @@ use super::*;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 #[allow(unused_imports)]
-use tidb_table::kv_table::nonpublic_columns::*;
+use tidb_table::tables::nonpublic_columns::*;
 use tidb_datatype::FieldTypeCode;
 
-fn column(name: &str, id: i64, code: FieldTypeCode, origin: Option<Datum>) -> KvColumn {
-    KvColumn {
+fn column(name: &str, id: i64, code: FieldTypeCode, origin: Option<Datum>) -> tidb_table::column::Column {
+    tidb_table::column::Column {
         info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
             id: id,
             name: tidb_ast::CiString::new(name.to_owned()),
@@ -35,7 +35,7 @@ fn column(name: &str, id: i64, code: FieldTypeCode, origin: Option<Datum>) -> Kv
     }
 }
 
-fn stored(table: &mut KvTable, handle: &TableHandle) -> BTreeMap<i64, Datum> {
+fn stored(table: &mut TableCommon, handle: &TableHandle) -> BTreeMap<i64, Datum> {
     let (_, entry) = table.stored_record(handle).unwrap().unwrap();
     let types = [1_i64, 2, 3, 4]
         .into_iter()
@@ -51,7 +51,7 @@ fn stored(table: &mut KvTable, handle: &TableHandle) -> BTreeMap<i64, Datum> {
 /// value.
 #[test]
 fn writes_carry_nonpublic_columns_like_go() {
-    let mut table = KvTable::new(
+    let mut table = TableCommon::new(
         42,
         vec![
             column("a", 1, FieldTypeCode::LongLong, None),

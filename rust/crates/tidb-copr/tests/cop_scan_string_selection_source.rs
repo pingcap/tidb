@@ -46,8 +46,7 @@ use tidb_kv::cluster_storage::{ClusterSnapshot, SnapshotPairs};
 use tidb_store_driver_txn::cluster_storage::{ClusterTableStorage, MutationBuffer};
 use tidb_executor::driver::run_select_on;
 use tidb_infoschema::Catalog;
-use tidb_table::kv_table::KvTable;
-use tidb_table::kv_table::KvColumn;
+use tidb_table::tables::TableCommon;
 use tidb_kv::storage::StorageError;
 use tidb_sessionctx::StmtContext;
 use tidb_proto::tipb::{
@@ -304,7 +303,7 @@ fn fixture(collation: &str) -> (Catalog, Arc<FakeRegion>) {
     let mut text = FieldType::new(FieldTypeCode::Varchar).with_collation_name(collation);
     text.set_flen(20);
     let columns = vec![
-        KvColumn {
+        tidb_table::column::Column {
             info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                 id: 1,
                 name: tidb_ast::CiString::new("id"),
@@ -317,7 +316,7 @@ fn fixture(collation: &str) -> (Catalog, Arc<FakeRegion>) {
             default_value: None,
             origin_default: None,
         },
-        KvColumn {
+        tidb_table::column::Column {
             info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                 id: 2,
                 name: tidb_ast::CiString::new("s"),
@@ -334,7 +333,7 @@ fn fixture(collation: &str) -> (Catalog, Arc<FakeRegion>) {
     let storage = ClusterTableStorage::new(MutationBuffer::new(), snapshot)
         .with_client(client as Arc<dyn tidb_txnkv::Client>);
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    catalog.register_kv("t", KvTable::with_storage(93, columns, Box::new(storage)));
+    catalog.register_kv("t", TableCommon::with_storage(93, columns, Box::new(storage)));
     (catalog, region)
 }
 

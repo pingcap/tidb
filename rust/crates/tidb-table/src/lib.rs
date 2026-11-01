@@ -29,6 +29,6 @@ pub mod partition_fold;
 pub mod partition_metadata;
 pub mod table_from_meta;
 pub mod partition_routing;
-pub mod kv_table;
+pub mod tables;
 pub mod sequence;
 pub mod origin_default;

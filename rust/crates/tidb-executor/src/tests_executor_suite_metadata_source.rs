@@ -36,7 +36,7 @@ fn insert(catalog: &mut Catalog, sql: &str) {
         .unwrap_or_else(|error| panic!("insert {sql:?} failed: {error:?}"));
 }
 
-fn kv_table_of(catalog: &Catalog, name: &str) -> tidb_table::kv_table::KvTable {
+fn kv_table_of(catalog: &Catalog, name: &str) -> tidb_table::tables::TableCommon {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", name) else {
         panic!("table {name} is not stored as bytes");
     };
@@ -50,8 +50,8 @@ fn kv_table_of(catalog: &Catalog, name: &str) -> tidb_table::kv_table::KvTable {
 ///
 /// Go corrupts the table through `idx.Create`/`idx.Delete` on a raw txn; the
 /// same corruption is made here through the raw-key seam
-/// ([`crate::kv_table::KvTable::delete_record_for_test`] /
-/// [`crate::kv_table::KvTable::delete_raw_key_for_test`]), which leaves the
+/// ([`crate::kv_table::TableCommon::delete_record_for_test`] /
+/// [`crate::kv_table::TableCommon::delete_raw_key_for_test`]), which leaves the
 /// store byte-identical to a half-applied write. The contracts pinned:
 /// a consistent table passes under both spellings of the index name, an
 /// unknown index is an error containing Go's "does not exist" wording at the
@@ -99,7 +99,7 @@ fn admin_check_index_reports_each_corruption_shape() {
     // missing record: drop the record of handle 3 and the entry of handle 1.
     insert(&mut catalog, "insert into t (pk, c, c1) values (3, 30, 31)");
     let mut record_lost = kv_table_of(&catalog, "t");
-    let entry_of = |table: &mut tidb_table::kv_table::KvTable, handle: i64| {
+    let entry_of = |table: &mut tidb_table::tables::TableCommon, handle: i64| {
         let index = table
             .index_list_for_check()
             .into_iter()
@@ -110,7 +110,7 @@ fn admin_check_index_reports_each_corruption_shape() {
             .index_entries_for_check(index_id)
             .expect("entries")
             .into_iter()
-            .find(|(_, entry_handle)| *entry_handle == tidb_table::kv_table::TableHandle::Int(handle))
+            .find(|(_, entry_handle)| *entry_handle == tidb_table::tables::TableHandle::Int(handle))
             .map(|(key, _)| key)
             .expect("entry for handle")
     };
@@ -119,7 +119,7 @@ fn admin_check_index_reports_each_corruption_shape() {
         .delete_raw_key_for_test(&drop_key)
         .expect("entry removal");
     record_lost
-        .delete_record_for_test(&tidb_table::kv_table::TableHandle::Int(3))
+        .delete_record_for_test(&tidb_table::tables::TableHandle::Int(3))
         .expect("record removal");
     let inconsistent = admin_check::check_table(&mut record_lost, Some("c"), &context, true)
         .expect_err("orphaned index entry must be an error");

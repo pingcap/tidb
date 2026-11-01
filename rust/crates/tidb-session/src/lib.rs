@@ -478,7 +478,7 @@ pub struct Session {
     /// is both halves: it is swapped into the shared table object for the
     /// statement's duration and CLEARED at each transaction end, which is
     /// what `ON COMMIT DELETE ROWS` means here.
-    global_temporary_data: std::collections::HashMap<i64, tidb_table::kv_table::TemporaryTableTxnData>,
+    global_temporary_data: std::collections::HashMap<i64, tidb_table::tables::TemporaryTableTxnData>,
     /// The session's system and user variables.
     vars: SessionVars,
     /// Go `StmtCtx.StmtHints`: the canonical statement-hint parse result for

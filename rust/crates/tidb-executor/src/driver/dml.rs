@@ -22,9 +22,9 @@ use tidb_planner::physical_plan_cache::RebuildPlanForCache;
 use crate::KvTableReader;
 use super::plan_cache::{CachedPhysicalPlan, PhysicalPlanCacheKey, SessionPlanCache};
 use super::*;
-use tidb_table::kv_table::AutoRandomError;
-use tidb_table::kv_table::AutoRandom;
-use tidb_table::kv_table::AutoIncrement;
+use tidb_table::tables::AutoRandomError;
+use tidb_table::tables::AutoRandom;
+use tidb_table::tables::AutoIncrement;
 use tidb_autoid::AutoIdError;
 
 mod defaults;
@@ -1652,7 +1652,7 @@ fn run_insert_rows(
         catalog: &'a mut Catalog,
         database: &str,
         table_name: &str,
-    ) -> &'a mut tidb_table::kv_table::KvTable {
+    ) -> &'a mut tidb_table::tables::TableCommon {
         match catalog.get_rows_mut_in(database, table_name) {
             Some(TableEntry::Kv(kv)) => std::sync::Arc::make_mut(kv),
             _ => unreachable!("INSERT through a view is refused above"),
@@ -2085,19 +2085,19 @@ fn written_row_id(value: &Datum, ctx: &crate::StmtContext) -> Option<i64> {
 /// carries its own MySQL code (1365 for a zero divisor under
 /// `ERROR_FOR_DIVISION_BY_ZERO`), and rendering it as a generic parse failure
 /// would replace the code an application branches on.
-pub fn kv_write_error(error: tidb_table::kv_table::KvTableError) -> DriverError {
+pub fn kv_write_error(error: tidb_table::tables::KvTableError) -> DriverError {
     match error {
-        tidb_table::kv_table::KvTableError::Storage(error) => error.into(),
-        tidb_table::kv_table::KvTableError::Mysql(error) => {
+        tidb_table::tables::KvTableError::Storage(error) => error.into(),
+        tidb_table::tables::KvTableError::Mysql(error) => {
             DriverError::Exec(crate::ExecError::Mysql(error))
         }
-        tidb_table::kv_table::KvTableError::Generation {
+        tidb_table::tables::KvTableError::Generation {
             eval: Some(eval), ..
         } => DriverError::Exec(crate::ExecError::Eval(eval)),
-        tidb_table::kv_table::KvTableError::PartitionEval(eval) => {
+        tidb_table::tables::KvTableError::PartitionEval(eval) => {
             DriverError::Exec(crate::ExecError::Eval(eval))
         }
-        tidb_table::kv_table::KvTableError::CheckConstraint {
+        tidb_table::tables::KvTableError::CheckConstraint {
             eval: Some(eval), ..
         } => DriverError::Exec(crate::ExecError::Eval(eval)),
         other => DriverError::from(tidb_util::misc::syntax_error(format!(
@@ -2142,9 +2142,9 @@ fn handle_partition_write_error(
 
 /// Renders a table read failure while preserving the storage layer's
 /// retryable-region signal as a transaction error instead of a parse error.
-pub(crate) fn kv_read_error(operation: &str, error: tidb_table::kv_table::KvTableError) -> DriverError {
+pub(crate) fn kv_read_error(operation: &str, error: tidb_table::tables::KvTableError) -> DriverError {
     match error {
-        tidb_table::kv_table::KvTableError::Storage(error) => error.into(),
+        tidb_table::tables::KvTableError::Storage(error) => error.into(),
         // A row that could not be READ is a runtime storage/decode failure;
         // Go surfaces it through its generic 1105 path -- never a 1064, which
         // would tell the client its SQL TEXT was at fault.
@@ -2189,7 +2189,7 @@ struct PreparedOnDuplicate {
 fn apply_on_duplicate(
     catalog: &mut Catalog,
     database: &str,
-    handle: &tidb_table::kv_table::TableHandle,
+    handle: &tidb_table::tables::TableHandle,
     candidate: &[Datum],
     extras: &[Datum],
     prepared: &PreparedOnDuplicate,
@@ -3975,7 +3975,7 @@ struct PhysicalWriteRows {
 /// catalog while the source executor is still delivering the next ones.
 struct PhysicalWriteShape {
     field_types: Vec<FieldType>,
-    table: Arc<tidb_table::kv_table::KvTable>,
+    table: Arc<tidb_table::tables::TableCommon>,
     stored_width: usize,
     expected_width: usize,
     /// Where `_tidb_rowid` sits in a row of this read.
@@ -4057,8 +4057,8 @@ impl PhysicalWriteShape {
         }
         let id = if let Some(offset) = table.pk_handle_offset() {
             match self.cell(&row, offset) {
-                Some(Datum::Int(value)) => tidb_table::kv_table::TableHandle::Int(value),
-                Some(Datum::UInt(value)) => tidb_table::kv_table::TableHandle::Int(value as i64),
+                Some(Datum::Int(value)) => tidb_table::tables::TableHandle::Int(value),
+                Some(Datum::UInt(value)) => tidb_table::tables::TableHandle::Int(value as i64),
                 _ => {
                     return Err(DriverError::unsupported(
                         "a physical write child returned an invalid integer handle",
@@ -4082,8 +4082,8 @@ impl PhysicalWriteShape {
                 .map_err(kv_write_error)?
         } else {
             match row.get(self.extra_position) {
-                Some(Datum::Int(value)) => tidb_table::kv_table::TableHandle::Int(*value),
-                Some(Datum::UInt(value)) => tidb_table::kv_table::TableHandle::Int(*value as i64),
+                Some(Datum::Int(value)) => tidb_table::tables::TableHandle::Int(*value),
+                Some(Datum::UInt(value)) => tidb_table::tables::TableHandle::Int(*value as i64),
                 _ => {
                     return Err(DriverError::unsupported(
                         "a physical write child returned no _tidb_rowid handle",
@@ -4214,7 +4214,7 @@ pub(crate) fn row_chunk(
 /// reports the handle, which is why the same rowid recurs across partitions.
 /// A common handle has no rowid at all, and the leaf never offers the column
 /// for such a table.
-fn extra_handle_value(handle: &tidb_table::kv_table::TableHandle) -> Option<i64> {
+fn extra_handle_value(handle: &tidb_table::tables::TableHandle) -> Option<i64> {
     fn integer(handle: &tidb_tablecodec::table_key::RecordHandle) -> Option<i64> {
         match handle {
             tidb_tablecodec::table_key::RecordHandle::Int(value) => Some(*value),

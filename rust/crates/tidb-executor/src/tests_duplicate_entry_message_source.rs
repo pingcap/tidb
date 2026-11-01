@@ -10,7 +10,7 @@
 //! '<value>' for key '<table>.<key>'` where `<value>` is the NEW row's
 //! stored form joined with `-` across composite key columns
 //! (`pkg/executor/insert_common.go` -> `table.duplicateEntryError`; the Rust
-//! port retains the diagnostic in `KvTable::row_conflicts` with collation-aware
+//! port retains the diagnostic in `TableCommon::row_conflicts` with collation-aware
 //! index entry encoding). The transaction arms are the gap test below.
 
 use crate::{run_create_table_on, run_insert_reporting, Catalog, StmtContext};

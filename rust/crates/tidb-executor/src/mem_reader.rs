@@ -114,7 +114,7 @@
 //! * **`NewRowDecoder`/`rowcodec.NewByteDecoder` construction** (:293) and
 //!   `getColIDAndPkColIDs` (:1150) build the two decoders from the table
 //!   meta. [`crate::kv_table::RowDecoder`] is built by its own constructor
-//!   from a [`crate::kv_table::KvTable`], so the Go builder is not restated;
+//!   from a [`crate::kv_table::TableCommon`], so the Go builder is not restated;
 //!   a `MemTableReader` takes the finished decoder.
 //! * `tracing.StartRegion`, `addedRowsLen`, and the `buf`/`decodeBuff`/
 //!   `resultRows` reuse buffers are instrumentation and allocation reuse with
@@ -131,8 +131,8 @@ use tidb_store_driver_txn::union_iter::UnionIter;
 use tidb_txnkv::{Handle as KvHandle, Key, KvIterator};
 
 use tidb_driver_error::ExecError;
-use tidb_table::kv_table::TableHandle;
-use tidb_table::kv_table::RowDecoder;
+use tidb_table::tables::TableHandle;
+use tidb_table::tables::RowDecoder;
 use tidb_executor_internal_exec::predicate_pushdown::ScanFilterProbe;
 
 /// A half-open `[start, end)` key interval, the crate's spelling of Go

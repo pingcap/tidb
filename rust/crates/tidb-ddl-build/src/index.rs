@@ -36,7 +36,6 @@ use tidb_model::table_info::TableInfo;
 use tidb_hack::GoCaseCompare;
 use tidb_context::WarnErr;
 use tidb_hack::GoToLower;
-use tidb_table::kv_table::KvColumn;
 
 
 /// Go `CheckAndBuildIndexConditionString` (`pkg/ddl/index.go`): the checked
@@ -1009,7 +1008,7 @@ fn go_byte_prefix(text: &str, bytes: usize) -> &str {
 ///
 /// The visibility a statement writes and the `visible` flag the planner reads
 /// are the same fact in two places, so it is resolved here, at the single
-/// point where an `IndexOptions` becomes a `KvIndex` -- a `CREATE INDEX`, an
+/// point where an `IndexOptions` becomes a `Index` -- a `CREATE INDEX`, an
 /// `ALTER TABLE ... ADD INDEX` and a `CREATE TABLE` key all pass through it.
 /// A key with no visibility clause is visible, which is Go's default.
 pub fn is_visible(options: &tidb_ast::IndexOptions) -> bool {
@@ -1018,7 +1017,7 @@ pub fn is_visible(options: &tidb_ast::IndexOptions) -> bool {
 
 /// The in-process table's `checkIndexCondition`.
 pub fn validate_partial_index_condition(
-    columns: &[KvColumn],
+    columns: &[tidb_table::column::Column],
     expression: &tidb_ast::Expr,
     ctx: &tidb_metabuild::Context,
 ) -> Result<(), MysqlError> {

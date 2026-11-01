@@ -5261,8 +5261,8 @@ impl StmtContext {
     }
 
     /// The current transaction's (or, in autocommit, current statement's)
-    /// staged-write tracker, for the table layer's `KvTable::has_dirty_content`
-    /// and `KvTable::record_key_is_staged`.
+    /// staged-write tracker, for the table layer's `TableCommon::has_dirty_content`
+    /// and `TableCommon::record_key_is_staged`.
     #[must_use]
     pub fn staged_writes(&self) -> &tidb_kv::staged_writes::StagedWrites {
         &self.staged_writes

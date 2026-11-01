@@ -19,16 +19,16 @@
 use crate::support::testkit::TestKit;
 use tidb_executor::PartitionKind;
 use tidb_infoschema::TableEntry;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 
 fn drop_table(tk: &mut TestKit, name: &str) {
     tk.must_exec(&format!("drop table if exists {name}"));
 }
 
 /// Go `external.GetTableByName(t, tk, "test", name).Meta()`, read fresh.
-fn kv_table(tk: &TestKit, name: &str) -> KvTable {
+fn kv_table(tk: &TestKit, name: &str) -> TableCommon {
     match tk.get_table_by_name("test", name) {
-        TableEntry::Kv(table) => KvTable::clone(&table),
+        TableEntry::Kv(table) => TableCommon::clone(&table),
         _ => panic!("expected a storage-backed table test.{name}"),
     }
 }

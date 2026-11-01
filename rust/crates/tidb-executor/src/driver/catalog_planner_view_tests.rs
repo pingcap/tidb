@@ -92,7 +92,7 @@
             panic!("pv is not a KV table");
         };
         Arc::make_mut(table).add_index(
-            tidb_table::kv_table::KvIndex {
+            tidb_table::tables::Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 7,
                     name: tidb_ast::CiString::new("ib"),
@@ -233,7 +233,7 @@
     /// must never mix up which write staged which record key. Go answers
     /// this with two entirely separate membuffers; here it is two entirely
     /// separate [`crate::kv_table::StagedWrites`] handles, one per
-    /// [`crate::StmtContext`] -- state that was never on the `KvTable` (or
+    /// [`crate::StmtContext`] -- state that was never on the `TableCommon` (or
     /// any catalog-owned cache of it) to begin with, so a copy-on-write
     /// detach of the table entry has nothing to invalidate.
     #[test]
@@ -269,7 +269,7 @@
             table.record_key_is_staged(
                 ctx.staged_writes(),
                 table.table_id(),
-                &tidb_table::kv_table::TableHandle::Int(handle),
+                &tidb_table::tables::TableHandle::Int(handle),
             )
         };
         assert!(

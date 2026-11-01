@@ -83,7 +83,7 @@ fn table_create_duplicate_drop_truncate_rename_round_trip() {
     // Go: ALTER CACHE / NO CACHE toggles the meta's cache status
     // (checkTableCacheTest / checkTableNoCacheTest read
     // TableCacheStatusEnable / Disable). The table info carries the same
-    // state behind `KvTable::is_cache_table`.
+    // state behind `TableCommon::is_cache_table`.
     tk.must_exec("alter table test_rename_table.tt cache");
     assert!(matches!(
         tk.get_table_by_name("test_rename_table", "tt"),

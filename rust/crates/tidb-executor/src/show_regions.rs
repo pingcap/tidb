@@ -23,7 +23,7 @@
 
 use std::collections::HashSet;
 
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 use tidb_kv::region_map::{RegionMeta, RegionStore};
 use crate::{Catalog, DriverError, MysqlError, TableEntry};
 use tidb_codec::decode_int;
@@ -44,7 +44,7 @@ struct Target<'a> {
     id: i64,
     /// `None` for a view, a sequence or a memory table, which have an id and
     /// nothing else.
-    table: Option<&'a KvTable>,
+    table: Option<&'a TableCommon>,
 }
 
 fn resolve<'a>(
@@ -79,7 +79,7 @@ fn resolve<'a>(
             table: None,
         },
     };
-    if target.table.is_some_and(KvTable::is_temporary) {
+    if target.table.is_some_and(TableCommon::is_temporary) {
         return Err(DriverError::from(
             tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                 .generate_with_stack_by_args(&[what.into()]),
@@ -95,7 +95,7 @@ fn physical_ids(
     target: &Target<'_>,
     partitions: &[String],
 ) -> Result<(Vec<i64>, bool), DriverError> {
-    let Some(partitioning) = target.table.and_then(KvTable::partition) else {
+    let Some(partitioning) = target.table.and_then(TableCommon::partition) else {
         if !partitions.is_empty() {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
@@ -248,7 +248,7 @@ fn table_regions(
         record_prefix: tidb_tablecodec::table_key::gen_table_record_prefix(physical_id),
         index_prefix,
         index_id,
-        unsigned_int_handle: target.table.is_some_and(KvTable::unsigned_pk_handle),
+        unsigned_int_handle: target.table.is_some_and(TableCommon::unsigned_pk_handle),
     };
     collect(
         store,
@@ -257,7 +257,7 @@ fn table_regions(
         seen,
         rows,
     )?;
-    for index in target.table.map_or(&[][..], KvTable::indexes) {
+    for index in target.table.map_or(&[][..], TableCommon::indexes) {
         collect(
             store,
             tidb_tablecodec::get_table_index_key_range(physical_id, index.read().id),
@@ -325,9 +325,9 @@ fn scheduling(
     target: &Target<'_>,
 ) -> Result<std::collections::HashMap<i64, PlacementSettings>, DriverError> {
     let table_placement =
-        get_policy_placement(catalog, target.table.and_then(KvTable::placement_policy).as_ref())?;
+        get_policy_placement(catalog, target.table.and_then(TableCommon::placement_policy).as_ref())?;
     let mut by_id = std::collections::HashMap::new();
-    match target.table.and_then(KvTable::partition) {
+    match target.table.and_then(TableCommon::partition) {
         Some(partitioning) => {
             for definition in &partitioning.definitions {
                 let placement = get_policy_placement(catalog, definition.placement_policy.as_ref())?

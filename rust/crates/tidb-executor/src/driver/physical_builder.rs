@@ -47,8 +47,8 @@ use crate::index_merge_reader::{
 use tidb_executor_join::join::{IndexLookupPlan, IndexLookupSource, IndexProbeKeyDomain, JoinExec, JoinKind};
 use tidb_executor_join::joiner::{new_joiner, JoinType as JoinerType, JoinerChunkSizes};
 use crate::kv_table::TableScanExec;
-use tidb_table::kv_table::TableHandle;
-use tidb_table::kv_table::RowDecodeContext;
+use tidb_table::tables::TableHandle;
+use tidb_table::tables::RowDecodeContext;
 use crate::limit::LimitExec;
 use crate::mem_table::MemTableSourceExec;
 use crate::physical_cte::{
@@ -114,7 +114,7 @@ enum ReaderStorage {
 impl ReaderStorage {
     /// `table` as a reader leaf of this kind reads it, and whether its
     /// storage was separated from the transaction's buffered writes.
-    fn table(&self, table: Arc<crate::KvTable>) -> (Arc<crate::KvTable>, bool) {
+    fn table(&self, table: Arc<crate::TableCommon>) -> (Arc<crate::TableCommon>, bool) {
         let store = match self {
             ReaderStorage::Snapshot => table.snapshot_reader(),
             ReaderStorage::Merged => None,
@@ -1139,7 +1139,7 @@ fn correlated_table_range_rebuilder(
 
 fn table_scan_schema(
     scan: &PhysicalTableScan,
-    table: &crate::KvTable,
+    table: &crate::TableCommon,
 ) -> Result<(Schema, Vec<usize>, Option<usize>, Option<usize>), DriverError> {
     let output = scan
         .base
@@ -2436,7 +2436,7 @@ fn is_extra_handle_column(column: &Column) -> bool {
 fn reader_output_offsets(
     schema: &Schema,
     scan: &PhysicalIndexScan,
-    table: &crate::KvTable,
+    table: &crate::TableCommon,
 ) -> Result<(Schema, Vec<usize>, Option<usize>), DriverError> {
     let extra_handle = schema.columns.iter().position(is_extra_handle_column);
     let mut source_columns = Vec::with_capacity(schema.columns.len());
@@ -2938,7 +2938,7 @@ fn physical_join_output_offsets(
     }
 }
 
-fn physical_table_schema(plan: &PhysicalPlan, table: &crate::KvTable) -> Schema {
+fn physical_table_schema(plan: &PhysicalPlan, table: &crate::TableCommon) -> Schema {
     fn scan_columns(plan: &PhysicalPlan) -> Option<&[Column]> {
         match plan {
             PhysicalPlan::TableScan(scan) => Some(scan.cost_columns.as_slice()),
@@ -2986,7 +2986,7 @@ fn collect_index_inner_filters(
 /// just past the stored columns, which the lookup fills with the row handle.
 fn index_inner_output_offsets(
     schema: &Schema,
-    table: &crate::KvTable,
+    table: &crate::TableCommon,
 ) -> Result<Vec<usize>, DriverError> {
     schema
         .columns
@@ -4583,7 +4583,7 @@ fn retained_table_id(plan: &PhysicalPlan) -> Result<i64, DriverError> {
 
 fn table_output_columns(
     schema: &Schema,
-    table: &crate::KvTable,
+    table: &crate::TableCommon,
 ) -> Result<Vec<HandleOutputColumn>, DriverError> {
     schema
         .columns
@@ -4625,10 +4625,10 @@ fn point_range_values(
 }
 
 fn point_handles(
-    table: &crate::KvTable,
+    table: &crate::TableCommon,
     ranges: &tidb_ranger::types::Ranges,
     ctx: &crate::StmtContext,
-) -> Result<Vec<tidb_table::kv_table::TableHandle>, DriverError> {
+) -> Result<Vec<tidb_table::tables::TableHandle>, DriverError> {
     ranges
         .iter()
         .map(|range| {
@@ -4650,14 +4650,14 @@ fn point_handles(
                 let handle = tidb_txnkv::CommonHandle::new(encoded).map_err(|_| {
                     DriverError::unsupported("a retained point-get common handle is invalid")
                 })?;
-                return Ok(tidb_table::kv_table::TableHandle::Common(
+                return Ok(tidb_table::tables::TableHandle::Common(
                     handle.encoded().to_vec(),
                 ));
             }
             match values {
-                [tidb_datatype::Datum::Int(value)] => Ok(tidb_table::kv_table::TableHandle::Int(*value)),
+                [tidb_datatype::Datum::Int(value)] => Ok(tidb_table::tables::TableHandle::Int(*value)),
                 [tidb_datatype::Datum::UInt(value)] => {
-                    Ok(tidb_table::kv_table::TableHandle::Int(*value as i64))
+                    Ok(tidb_table::tables::TableHandle::Int(*value as i64))
                 }
                 _ => Err(DriverError::unsupported(
                     "a retained point-get range does not name one integer handle",
@@ -4668,7 +4668,7 @@ fn point_handles(
 }
 
 fn unique_index_point_values(
-    table: &crate::KvTable,
+    table: &crate::TableCommon,
     index_id: i64,
     ranges: &tidb_ranger::types::Ranges,
     ctx: &crate::StmtContext,
@@ -4856,7 +4856,7 @@ fn point_partition_id(
 
 /// Go `matchPartitionNames`' id set: the physical ids the PARTITION clause
 /// names, or `None` when it names none.
-fn partition_ids_named(table: &tidb_table::kv_table::KvTable, names: &[String]) -> Option<Vec<i64>> {
+fn partition_ids_named(table: &tidb_table::tables::TableCommon, names: &[String]) -> Option<Vec<i64>> {
     if names.is_empty() {
         return None;
     }
@@ -5313,7 +5313,7 @@ fn build_batch_point_get(
 /// point reader's other snapshot options; the returned handle keeps the
 /// options to restore when the reader closes.
 fn configure_point_snapshot_read(
-    table: &tidb_table::kv_table::KvTable,
+    table: &tidb_table::tables::TableCommon,
     ctx: &crate::StmtContext,
     avg_row_bytes: f64,
     snapshot_stats: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
@@ -5336,7 +5336,7 @@ fn configure_point_snapshot_read(
 
 fn wrap_point_index_usage(
     child: Box<dyn Executor>,
-    table: tidb_table::kv_table::KvTable,
+    table: tidb_table::tables::TableCommon,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     index_id: Option<i64>,
@@ -5378,7 +5378,7 @@ fn schema_column_slot(schema: &Schema, wanted: &Column) -> Option<usize> {
 
 fn partial_handle_columns(
     schema: &Schema,
-    table: &crate::KvTable,
+    table: &crate::TableCommon,
 ) -> Result<PartialHandleColumns, DriverError> {
     let table_column_slot = |offset: usize| {
         let id = table.columns().get(offset)?.read().id;
@@ -5451,7 +5451,7 @@ fn partial_sort_key_columns(
 struct IndexPartialHandleSource {
     source: IndexRangeSourceExec,
     partition_indexes: Vec<usize>,
-    table: crate::KvTable,
+    table: crate::TableCommon,
     stats: Option<tidb_stmtctx::used_stats::UsedStatsInfoForTable>,
     ctx: crate::StmtContext,
     index_id: i64,
@@ -5869,7 +5869,7 @@ fn narrow_scan_ranges(plan: &mut PhysicalPlan, ranges: &tidb_ranger::types::Rang
 
 fn index_merge_partition_indexes(
     plan: &PhysicalPlan,
-    table: &crate::KvTable,
+    table: &crate::TableCommon,
 ) -> Result<Vec<usize>, DriverError> {
     let access = match plan {
         PhysicalPlan::TableScan(scan) => scan.dynamic_partition_access.as_ref(),
@@ -7242,7 +7242,7 @@ struct UnionScanHandleCols {
     types: Vec<FieldType>,
     /// The table, for a common handle (`CommonHandleCols.BuildHandle`);
     /// `None` for an integer handle (`IntHandleCols`).
-    common: Option<Arc<crate::KvTable>>,
+    common: Option<Arc<crate::TableCommon>>,
     zone: tidb_datatype::SessionTimeZone,
 }
 
@@ -7250,9 +7250,9 @@ impl crate::union_scan::HandleColumns for UnionScanHandleCols {
     fn build_handle(
         &self,
         row: tidb_chunk::row::Row<'_>,
-    ) -> Result<tidb_table::kv_table::TableHandle, crate::ExecError> {
+    ) -> Result<tidb_table::tables::TableHandle, crate::ExecError> {
         match &self.common {
-            None => Ok(tidb_table::kv_table::TableHandle::Int(
+            None => Ok(tidb_table::tables::TableHandle::Int(
                 row.get_int64(self.offsets[0]),
             )),
             Some(table) => {
@@ -8554,8 +8554,8 @@ use super::*;
         ));
     }
 
-    fn long_column(name: &str, id: i64) -> tidb_table::kv_table::KvColumn {
-        tidb_table::kv_table::KvColumn {
+    fn long_column(name: &str, id: i64) -> tidb_table::column::Column {
+        tidb_table::column::Column {
             info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                 id: id,
                 name: tidb_ast::CiString::new(name.to_owned()),
@@ -8611,11 +8611,11 @@ use super::*;
             let mut catalog = tidb_infoschema_perfschema::mock_catalog();
             catalog.register_kv(
                 "t",
-                crate::KvTable::new(40, vec![long_column("id", 1), long_column("value", 2)]),
+                crate::TableCommon::new(40, vec![long_column("id", 1), long_column("value", 2)]),
             );
             catalog.register_kv(
                 "other",
-                crate::KvTable::new(41, vec![long_column("id", 1), long_column("value", 2)]),
+                crate::TableCommon::new(41, vec![long_column("id", 1), long_column("value", 2)]),
             );
             let left = table_scan(1, 40, 1, 3);
             let mut right = table_scan(2, right_table, 1, 3);
@@ -8683,7 +8683,7 @@ use super::*;
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv(
             "reader",
-            crate::KvTable::new(
+            crate::TableCommon::new(
                 table_id,
                 vec![long_column("id", 1), long_column("value", 2)],
             ),
@@ -8718,7 +8718,7 @@ use super::*;
 
     #[test]
     fn cached_physical_table_scan_emits_only_extra_handle() {
-        let mut table = crate::KvTable::new(41, vec![long_column("value", 1)]);
+        let mut table = crate::TableCommon::new(41, vec![long_column("value", 1)]);
         for (row_id, value) in [(11, 100), (13, 200)] {
             table
                 .insert_row_with_row_id(
@@ -8762,7 +8762,7 @@ use super::*;
     #[test]
     fn cached_physical_point_get_builds_direct_handle_read() {
         let mut table =
-            crate::KvTable::new(43, vec![long_column("id", 1), long_column("value", 2)]);
+            crate::TableCommon::new(43, vec![long_column("id", 1), long_column("value", 2)]);
         table.set_pk_handle_offset(0);
         for value in 1..=3 {
             table
@@ -8812,11 +8812,11 @@ use super::*;
     #[test]
     fn cached_physical_point_get_resolves_unique_index_before_common_handle() {
         let mut table =
-            crate::KvTable::new(46, vec![long_column("id", 1), long_column("value", 2)]);
+            crate::TableCommon::new(46, vec![long_column("id", 1), long_column("value", 2)]);
         table.set_common_handle_offsets(vec![0, 1]);
         table
             .create_index_with_context(
-                tidb_table::kv_table::KvIndex {
+                tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 8,
                         name: tidb_ast::CiString::new("value_uidx"),
@@ -8885,7 +8885,7 @@ use super::*;
     #[test]
     fn cached_physical_batch_point_get_deduplicates_and_orders_handles() {
         let mut table =
-            crate::KvTable::new(44, vec![long_column("id", 1), long_column("value", 2)]);
+            crate::TableCommon::new(44, vec![long_column("id", 1), long_column("value", 2)]);
         table.set_pk_handle_offset(0);
         for value in 1..=3 {
             table
@@ -8938,11 +8938,11 @@ use super::*;
     #[test]
     fn cached_physical_batch_point_get_uses_batched_unique_index_lookup() {
         let mut table =
-            crate::KvTable::new(45, vec![long_column("id", 1), long_column("value", 2)]);
+            crate::TableCommon::new(45, vec![long_column("id", 1), long_column("value", 2)]);
         table.set_pk_handle_offset(0);
         table
             .create_index_with_context(
-                tidb_table::kv_table::KvIndex {
+                tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 8,
                         name: tidb_ast::CiString::new("value_uidx"),
@@ -9062,7 +9062,7 @@ use super::*;
     #[test]
     fn index_merge_partial_batches_grow_across_chunks_and_reset() {
         let mut table =
-            crate::KvTable::new(42, vec![long_column("id", 1), long_column("value", 2)]);
+            crate::TableCommon::new(42, vec![long_column("id", 1), long_column("value", 2)]);
         table.set_pk_handle_offset(0);
         for id in 1..=19 {
             table
@@ -9076,7 +9076,7 @@ use super::*;
         }
         table
             .create_index_with_context(
-                tidb_table::kv_table::KvIndex {
+                tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 7,
                         name: tidb_ast::CiString::new("value_idx"),
@@ -9260,7 +9260,7 @@ use super::*;
     #[test]
     fn index_merge_partial_limit_counts_handles_before_union_dedup_only() {
         let mut table =
-            crate::KvTable::new(42, vec![long_column("id", 1), long_column("value", 2)]);
+            crate::TableCommon::new(42, vec![long_column("id", 1), long_column("value", 2)]);
         table.set_pk_handle_offset(0);
         for id in 1..=19 {
             table
@@ -9345,7 +9345,7 @@ use super::*;
     #[test]
     fn union_merge_delivers_table_tasks_before_draining_partials() {
         let mut table =
-            crate::KvTable::new(42, vec![long_column("id", 1), long_column("value", 2)]);
+            crate::TableCommon::new(42, vec![long_column("id", 1), long_column("value", 2)]);
         table.set_pk_handle_offset(0);
         for id in 1..=19 {
             table
@@ -9402,7 +9402,7 @@ use super::*;
     #[test]
     fn index_merge_table_tasks_execute_retained_operator_order() {
         let mut table =
-            crate::KvTable::new(42, vec![long_column("id", 1), long_column("value", 2)]);
+            crate::TableCommon::new(42, vec![long_column("id", 1), long_column("value", 2)]);
         table.set_pk_handle_offset(0);
         for id in 1..=6 {
             table
@@ -9511,7 +9511,7 @@ use super::*;
         for (partitioned, global) in [(false, false), (true, false), (true, true)] {
             for handle_kind in ["integer", "common", "heap"] {
                 let mut table =
-                    crate::KvTable::new(42, vec![long_column("id", 1), long_column("value", 2)]);
+                    crate::TableCommon::new(42, vec![long_column("id", 1), long_column("value", 2)]);
                 match handle_kind {
                     "integer" => table.set_pk_handle_offset(0),
                     "common" => table.set_common_handle_offsets(vec![0]),
@@ -9536,7 +9536,7 @@ use super::*;
                 }
                 table
                     .create_index_with_context(
-                        tidb_table::kv_table::KvIndex {
+                        tidb_table::tables::Index {
                             info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                                 id: 7,
                                 name: tidb_ast::CiString::new("value_idx"),

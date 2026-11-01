@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Go `ddl/table_lock.go`'s edits to `TableInfo.Lock`, shared by the
-//! in-process catalog (a `KvTable`'s lock) and the cluster planner (a stored
+//! in-process catalog (a `TableCommon`'s lock) and the cluster planner (a stored
 //! `TableInfo`'s): `checkTableLocked`, `lockTable` (alone, or with the state
 //! steps of `onLockTables` in one), and `unlockTable`.
 

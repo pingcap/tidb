@@ -23,13 +23,13 @@ use tidb_datatype::{
 use tidb_executor::admin_check::check_table;
 use tidb_executor::analyze::{kv::analyze_kv_table, AnalyzeOptions};
 use tidb_sessionctx::StmtContext;
-use tidb_table::kv_table::TableHandle;
-use tidb_table::kv_table::{
-    GeneratedColumnSelection, KvColumn, KvIndex, KvTable, RowDecodeContext, RowDecoder,
+use tidb_table::tables::TableHandle;
+use tidb_table::tables::{
+    GeneratedColumnSelection, Index, TableCommon, RowDecodeContext, RowDecoder,
 };
 
-fn column(id: i64, name: &str, field_type: FieldType) -> KvColumn {
-    KvColumn {
+fn column(id: i64, name: &str, field_type: FieldType) -> tidb_table::column::Column {
+    tidb_table::column::Column {
         info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
             id: id,
             name: tidb_ast::CiString::new(name.to_owned()),
@@ -65,7 +65,7 @@ fn parse_generated_expr(text: &str) -> tidb_ast::Expr {
 fn generated_column(
     text: &str,
     stored: bool,
-    preceding: &[KvColumn],
+    preceding: &[tidb_table::column::Column],
     zone: &SessionTimeZone,
 ) -> tidb_table::generated_column::GeneratedColumn {
     let names = preceding
@@ -98,7 +98,7 @@ fn encode(ids: &[i64], values: &[Datum], new_format: bool, zone: &SessionTimeZon
 /// Run the source fixtures through one reader across multiple small chunks,
 /// including a reopen, so decoder reuse cannot retain a preceding row's data.
 fn assert_point_chunks(
-    mut table: KvTable,
+    mut table: TableCommon,
     rows: &[(TableHandle, Vec<u8>, Vec<Datum>)],
     zone: &SessionTimeZone,
 ) {
@@ -156,7 +156,7 @@ fn assert_point_chunks(
     }
 }
 
-fn source_columns(zone: &SessionTimeZone, unsigned_handle: bool) -> Vec<KvColumn> {
+fn source_columns(zone: &SessionTimeZone, unsigned_handle: bool) -> Vec<tidb_table::column::Column> {
     let mut columns = vec![
         column(1, "c1", FieldType::new(FieldTypeCode::LongLong)),
         column(2, "c2", FieldType::new(FieldTypeCode::Varchar)),
@@ -253,7 +253,7 @@ fn row_decoder_matches_defaults_generated_values_and_integer_handles() {
         if !generated {
             columns[5].generated = None;
         }
-        let mut table = KvTable::new(47, columns);
+        let mut table = TableCommon::new(47, columns);
         table.set_pk_handle_offset(6);
         let rows = [false, true, false, true]
             .into_iter()
@@ -353,7 +353,7 @@ fn row_decoder_matches_temporal_defaults_and_null_rows() {
         assert_eq!(decoded.values(), &[Datum::Null, Datum::Null, Datum::Null]);
     }
     assert_point_chunks(
-        KvTable::new(48, columns),
+        TableCommon::new(48, columns),
         &[
             (
                 TableHandle::Int(1),
@@ -448,7 +448,7 @@ fn restored_common_handle_value_wins_over_its_lossy_sort_key_even_when_fast_path
     assert_eq!(decoded.values()[1], Datum::Int(9));
 
     let statement = StmtContext::for_query().with_time_zone(zone.clone());
-    let mut table = KvTable::new(43, columns.clone());
+    let mut table = TableCommon::new(43, columns.clone());
     table.set_common_handle_offsets(vec![0]);
     table
         .insert_row(&[Datum::new_string("abc"), Datum::Int(9)], &statement)
@@ -466,7 +466,7 @@ fn restored_common_handle_value_wins_over_its_lossy_sort_key_even_when_fast_path
     // typed rowcodec uses the new-collation restored-data policy by default,
     // while Go's table decoder must materialize this handle component when
     // the table explicitly disables new collations.
-    let mut old_collation_table = KvTable::new(44, columns).with_new_collation_mode(false);
+    let mut old_collation_table = TableCommon::new(44, columns).with_new_collation_mode(false);
     old_collation_table.set_common_handle_offsets(vec![0]);
     old_collation_table
         .insert_row(&[Datum::new_string("abc"), Datum::Int(10)], &statement)
@@ -517,7 +517,7 @@ fn projected_row_decoder_keeps_common_handle_component_positions() {
     assert!(!decoded.by_id().contains_key(&3));
 
     let statement = StmtContext::for_query().with_time_zone(zone.clone());
-    let mut table = KvTable::new(42, columns);
+    let mut table = TableCommon::new(42, columns);
     table.set_common_handle_offsets(vec![0, 1]);
     table
         .insert_row(
@@ -733,7 +733,7 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
     let mut generated = column(2, "b", FieldType::new(FieldTypeCode::LongLong));
     generated.generated = Some(generated_column("a + 1", true, &columns, &zone));
     columns.push(generated);
-    let mut table = KvTable::new(42, columns);
+    let mut table = TableCommon::new(42, columns);
     let handle = table
         // Table.AddRecord consumes an already materialized mutation row.
         .insert_row(&[Datum::Int(2), Datum::Int(3)], &statement)
@@ -750,7 +750,7 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
 
     // DDL backfill and ADMIN use the full map and therefore recompute the
     // stored generated column from the current expression.
-    let index = KvIndex {
+    let index = Index {
         info: tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 7,
             name: tidb_ast::CiString::new("b"),
@@ -971,7 +971,7 @@ fn legacy_generated_enum_set_cursor_preserves_members_and_declared_collation() {
             field_type.set_elems(vec!["A".into(), "a".into(), "B".into()]);
             let mut generated = column(2, "generated", field_type);
             generated.generated = Some(generated_column("source", false, &[source.clone()], &zone));
-            let mut table = KvTable::new(42, vec![source, generated]).with_new_collation_mode(mode);
+            let mut table = TableCommon::new(42, vec![source, generated]).with_new_collation_mode(mode);
             table
                 .insert_row(&[Datum::new_string("a"), Datum::Null], &statement)
                 .unwrap();

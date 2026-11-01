@@ -24,7 +24,7 @@ use tidb_stats_handle_usage_indexusage::{new_sample, StmtIndexUsageCollector};
 use tidb_stmtctx::used_stats::UsedStatsInfoForTable;
 use crate::Executor;
 use tidb_driver_error::ExecError;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::TableCommon;
 
 /// Go `IndexUsageReporter`: common reporting rules for coprocessor and point
 /// readers. Request and row counters are supplied by their authoritative
@@ -43,7 +43,7 @@ impl<'a> IndexUsageReporter<'a> {
     /// Go `ReportCopIndexUsageForTable`.
     pub fn report_cop_index_usage_for_table(
         &self,
-        table: &KvTable,
+        table: &TableCommon,
         stats: Option<&UsedStatsInfoForTable>,
         index_id: i64,
         kv_requests: u64,
@@ -80,7 +80,7 @@ impl<'a> IndexUsageReporter<'a> {
     /// Go `ReportPointGetIndexUsageForHandle`.
     pub fn report_point_get_index_usage_for_handle(
         &self,
-        table: &KvTable,
+        table: &TableCommon,
         stats: Option<&UsedStatsInfoForTable>,
         kv_requests: u64,
         rows: u64,
@@ -94,7 +94,7 @@ impl<'a> IndexUsageReporter<'a> {
     /// Resolves Go's logical table identity without retaining the table.
     pub fn report_point_for_table(
         &self,
-        table: &KvTable,
+        table: &TableCommon,
         stats: Option<&UsedStatsInfoForTable>,
         index_id: i64,
         kv_requests: u64,
@@ -136,7 +136,7 @@ fn real_table_row_count(stats: Option<&UsedStatsInfoForTable>) -> Option<u64> {
 }
 
 /// Go `getClusterIndexID`.
-pub fn cluster_index_id(table: &KvTable) -> Option<i64> {
+pub fn cluster_index_id(table: &TableCommon) -> Option<i64> {
     if table.pk_handle_offset().is_some() {
         return Some(0);
     }
@@ -176,7 +176,7 @@ pub struct PointSnapshotStats {
 /// Go point readers report from `Close` after reading SnapshotRuntimeStats.
 pub struct PointIndexUsageExec {
     child: Box<dyn Executor>,
-    table: KvTable,
+    table: TableCommon,
     stats: Option<UsedStatsInfoForTable>,
     collector: Option<Arc<StmtIndexUsageCollector>>,
     index_id: Option<i64>,
@@ -194,7 +194,7 @@ impl PointIndexUsageExec {
     /// Wraps a point executor so it reports its index usage when it closes.
     pub fn new(
         child: Box<dyn Executor>,
-        table: KvTable,
+        table: TableCommon,
         stats: Option<UsedStatsInfoForTable>,
         collector: Option<Arc<StmtIndexUsageCollector>>,
         index_id: Option<i64>,
@@ -496,7 +496,7 @@ mod tests {
         let real = stats_with_count(100, false);
         let pseudo = stats_with_count(100, true);
 
-        reporter.report_point_for_table(&KvTable::new(1, vec![]), Some(&real), 2, 1, 2024);
+        reporter.report_point_for_table(&TableCommon::new(1, vec![]), Some(&real), 2, 1, 2024);
         reporter.report_cop_index_usage(1, 2, Some(&real), 1, 2024);
         reporter.report_cop_index_usage(1, 2, Some(&pseudo), 1, 2024);
         reporter.report_cop_index_usage(1, 2, Some(&real), 0, 0);
@@ -553,7 +553,7 @@ mod tests {
     fn point_get_without_real_stats_uses_smallest_nonzero_bucket() {
         let (global, session, statement) = collectors();
         let reporter = IndexUsageReporter::new(Some(&statement));
-        reporter.report_point_for_table(&KvTable::new(1, vec![]), None, 2, 1, 1);
+        reporter.report_point_for_table(&TableCommon::new(1, vec![]), None, 2, 1, 1);
         session.lock().expect("session collector").flush();
         global.close();
 
@@ -562,8 +562,8 @@ mod tests {
     }
 
     /// The table's column `a`, which a handle fixture keys its rows by.
-    fn handle_column() -> tidb_table::kv_table::KvColumn {
-        tidb_table::kv_table::KvColumn::new(tidb_model::GoShared::new(tidb_model::ColumnInfo {
+    fn handle_column() -> tidb_table::column::Column {
+        tidb_table::column::Column::new(tidb_model::GoShared::new(tidb_model::ColumnInfo {
             id: 1,
             name: tidb_ast::CiString::new("a"),
             field_type: tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
@@ -576,7 +576,7 @@ mod tests {
     fn common_handle_without_primary_uses_zero_index_id() {
         let (global, session, statement) = collectors();
         let reporter = IndexUsageReporter::new(Some(&statement));
-        let mut table = KvTable::new(1, vec![handle_column()]);
+        let mut table = TableCommon::new(1, vec![handle_column()]);
         table.set_common_handle_offsets(vec![0]);
 
         reporter.report_point_get_index_usage_for_handle(
@@ -593,14 +593,14 @@ mod tests {
 
     #[test]
     fn cluster_index_id_matches_go_table_handle_kinds() {
-        let mut integer_handle = KvTable::new(1, vec![handle_column()]);
+        let mut integer_handle = TableCommon::new(1, vec![handle_column()]);
         integer_handle.set_pk_handle_offset(0);
         assert_eq!(cluster_index_id(&integer_handle), Some(0));
 
-        let mut common_handle = KvTable::new(2, vec![handle_column()]);
+        let mut common_handle = TableCommon::new(2, vec![handle_column()]);
         common_handle.set_common_handle_offsets(vec![0]);
         common_handle.add_index(
-            tidb_table::kv_table::KvIndex {
+            tidb_table::tables::Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 7,
                     name: tidb_ast::CiString::new("PRIMARY"),
@@ -624,9 +624,9 @@ mod tests {
         );
         assert_eq!(cluster_index_id(&common_handle), Some(7));
 
-        let mut nonclustered_handle = KvTable::new(3, vec![]);
+        let mut nonclustered_handle = TableCommon::new(3, vec![]);
         nonclustered_handle.add_index(
-            tidb_table::kv_table::KvIndex {
+            tidb_table::tables::Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 8,
                     name: tidb_ast::CiString::new("PRIMARY"),

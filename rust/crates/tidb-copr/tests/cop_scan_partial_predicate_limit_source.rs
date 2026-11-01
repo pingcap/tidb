@@ -41,8 +41,7 @@ use tidb_kv::cluster_storage::{ClusterSnapshot, SnapshotPairs};
 use tidb_store_driver_txn::cluster_storage::{ClusterTableStorage, MutationBuffer};
 use tidb_executor::driver::run_select_on;
 use tidb_infoschema::Catalog;
-use tidb_table::kv_table::KvTable;
-use tidb_table::kv_table::KvColumn;
+use tidb_table::tables::TableCommon;
 use tidb_distsql::remote_scan::PushdownStatementContext;
 use tidb_distsql::remote_scan::PushdownScanRequest;
 use tidb_distsql::remote_scan::PushdownScanColumn;
@@ -317,12 +316,12 @@ impl RealTiKvSessionTransportFactory for FakeFactory {
     }
 }
 
-fn column(name: &str, id: i64, unsigned: bool) -> KvColumn {
+fn column(name: &str, id: i64, unsigned: bool) -> tidb_table::column::Column {
     let mut field_type = FieldType::new(FieldTypeCode::LongLong);
     if unsigned {
         field_type.add_flags(32);
     }
-    KvColumn {
+    tidb_table::column::Column {
         info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
             id: id,
             name: tidb_ast::CiString::new(name.to_owned()),
@@ -357,7 +356,7 @@ fn fixture() -> (Catalog, Arc<FakeRegion>) {
     let storage = ClusterTableStorage::new(MutationBuffer::new(), snapshot)
         .with_client(client as Arc<dyn tidb_txnkv::Client>);
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    catalog.register_kv("t", KvTable::with_storage(91, columns, Box::new(storage)));
+    catalog.register_kv("t", TableCommon::with_storage(91, columns, Box::new(storage)));
     (catalog, region)
 }
 

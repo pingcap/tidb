@@ -33,12 +33,12 @@ pub type StagedKey = smallvec::SmallVec<[u8; 32]>;
 /// the record keys row writes stage, keyed by the logical table id they
 /// belong to.
 ///
-/// This does NOT live on `KvTable`. Go's `HasDirtyContent`/`memBufSnap.Get`
+/// This does NOT live on `TableCommon`. Go's `HasDirtyContent`/`memBufSnap.Get`
 /// answer per table by seeking ONE transaction-scoped structure, never by
 /// storing a flag on the table itself -- a fresh transaction gets a fresh,
 /// EMPTY membuffer and the old one is simply dropped, so there is nothing to
 /// walk or reset at a transaction boundary, ever, regardless of how many
-/// tables the catalog holds. Embedding the equivalent state on `KvTable`
+/// tables the catalog holds. Embedding the equivalent state on `TableCommon`
 /// instead (an earlier shape of this type) forced exactly that walk: every
 /// autocommit statement and `BEGIN` had to visit every kv table in the whole
 /// catalog to reset a mark a committed table might still be carrying from

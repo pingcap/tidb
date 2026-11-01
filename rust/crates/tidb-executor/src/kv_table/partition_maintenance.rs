@@ -14,7 +14,7 @@
 
 use super::*;
 
-/// The per-partition row reads Go's admin check runs over a [`KvTable`].
+/// The per-partition row reads Go's admin check runs over a [`TableCommon`].
 pub trait KvTablePartitionMaintenance {
     /// The rows of each physical table, with their handles and the physical
     /// id they are stored under: Go's per-partition reorg and check workers.
@@ -33,7 +33,7 @@ pub trait KvTablePartitionMaintenance {
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError>;
 }
 
-impl KvTablePartitionMaintenance for KvTable {
+impl KvTablePartitionMaintenance for TableCommon {
     fn scan_physical_rows_with_handles(
         &mut self,
         decode_context: &RowDecodeContext,

@@ -23,17 +23,16 @@ use tidb_store_driver_txn::cluster_storage_test_util::*;
 use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
 use std::sync::{Arc, Mutex};
 use tidb_txnkv::Key;
-    fn mutation_batch_table(store: ClusterTableStorage) -> tidb_table::kv_table::KvTable {
-        use tidb_table::kv_table::KvTable;
-        use tidb_table::kv_table::KvIndex;
-        use tidb_table::kv_table::KvColumn;
+    fn mutation_batch_table(store: ClusterTableStorage) -> tidb_table::tables::TableCommon {
+        use tidb_table::tables::TableCommon;
+        use tidb_table::tables::Index;
         use tidb_datatype::{FieldType, FieldTypeCode};
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             42,
             ["id", "v"]
                 .iter()
                 .enumerate()
-                .map(|(i, name)| KvColumn {
+                .map(|(i, name)| tidb_table::column::Column {
                     info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                         id: i as i64 + 1,
                         name: tidb_ast::CiString::new(name.to_string()),
@@ -51,7 +50,7 @@ use tidb_txnkv::Key;
         );
         table.set_pk_handle_offset(0);
         table.add_index(
-            KvIndex {
+            Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("u"),
@@ -78,7 +77,7 @@ use tidb_txnkv::Key;
 
     #[test]
     fn table_mutation_batch_pessimistic_update_defers_destination_check() {
-        use tidb_table::kv_table::TableHandle;
+        use tidb_table::tables::TableHandle;
         use tidb_datatype::Datum;
         for (pessimistic, ignore, expected_reads) in
             [(true, false, 0), (false, false, 1), (true, true, 1)]
@@ -122,7 +121,7 @@ use tidb_txnkv::Key;
 
     #[test]
     fn table_mutation_batch_moved_primary_defers_check_with_duplicate_hint() {
-        use tidb_table::kv_table::TableHandle;
+        use tidb_table::tables::TableHandle;
         use tidb_datatype::Datum;
         let (store, snapshot, buffer) = storage(&[]);
         let mut table = mutation_batch_table(store);
@@ -158,19 +157,18 @@ use tidb_txnkv::Key;
 
     #[test]
     fn table_mutation_batch_partition_move_preserves_repeated_hidden_handle() {
-        use tidb_table::kv_table::TableHandle;
-        use tidb_table::kv_table::KvTable;
-        use tidb_table::kv_table::KvColumn;
+        use tidb_table::tables::TableHandle;
+        use tidb_table::tables::TableCommon;
         use tidb_table::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::expression::{Column, Expression};
         let (store, _, buffer) = storage(&[]);
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             42,
             ["v", "payload"]
                 .iter()
                 .enumerate()
-                .map(|(i, name)| KvColumn {
+                .map(|(i, name)| tidb_table::column::Column {
                     info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                         id: i as i64 + 1,
                         name: tidb_ast::CiString::new(name.to_string()),
@@ -239,10 +237,9 @@ use tidb_txnkv::Key;
 
     #[test]
     fn table_writes_preserve_go_assertions_through_the_native_buffer() {
-        use tidb_table::kv_table::TableHandle;
-        use tidb_table::kv_table::KvTable;
-        use tidb_table::kv_table::KvIndex;
-        use tidb_table::kv_table::KvColumn;
+        use tidb_table::tables::TableHandle;
+        use tidb_table::tables::TableCommon;
+        use tidb_table::tables::Index;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
         fn flags(buffer: &MutationBuffer, key: &Key) -> tikv_client::kv::KeyFlags {
@@ -265,9 +262,9 @@ use tidb_txnkv::Key;
 
         for (lazy, pessimistic) in [(false, false), (false, true), (true, false), (true, true)] {
             let (store, snapshot, buffer) = storage(&[]);
-            let mut table = KvTable::with_storage(
+            let mut table = TableCommon::with_storage(
                 42,
-                vec![KvColumn {
+                vec![tidb_table::column::Column {
                     info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("a"),
@@ -284,7 +281,7 @@ use tidb_txnkv::Key;
             );
             for (id, unique) in [(1, true), (2, false)] {
                 table.add_index(
-                    KvIndex {
+                    Index {
                         info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                             id: id,
                             name: tidb_ast::CiString::new(format!("idx{id}")),
@@ -443,9 +440,8 @@ use tidb_txnkv::Key;
 
     #[test]
     fn insert_dup_check_is_in_place_eagerly_and_local_only_lazily() {
-        use tidb_table::kv_table::KvTable;
-        use tidb_table::kv_table::KvIndex;
-        use tidb_table::kv_table::KvColumn;
+        use tidb_table::tables::TableCommon;
+        use tidb_table::tables::Index;
         use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
@@ -459,9 +455,9 @@ use tidb_txnkv::Key;
         let snapshot = std::sync::Arc::new(std::sync::Mutex::new(snapshot));
         let buffer = MutationBuffer::new();
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
-        let mut table = KvTable::with_storage(
+        let mut table = TableCommon::with_storage(
             42,
-            vec![KvColumn {
+            vec![tidb_table::column::Column {
                 info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("a"),
@@ -479,7 +475,7 @@ use tidb_txnkv::Key;
         let ctx = crate::StmtContext::default();
         let row = [Datum::Int(7)];
         table.add_index(
-            KvIndex {
+            Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("unique_a"),
@@ -509,7 +505,7 @@ use tidb_txnkv::Key;
             .unwrap_err();
         assert!(matches!(
             error,
-            tidb_table::kv_table::KvTableError::Mysql(ref error)
+            tidb_table::tables::KvTableError::Mysql(ref error)
                 if error.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS)
         ));
         assert!(buffer.take_presume_not_exists().is_empty());
@@ -538,7 +534,7 @@ use tidb_txnkv::Key;
         assert!(
             matches!(
                 table.insert_row_with_row_id_checked(&row, Some(2), 0, &ctx, true),
-                Err(tidb_table::kv_table::KvTableError::Mysql(error))
+                Err(tidb_table::tables::KvTableError::Mysql(error))
                     if error.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS)
                         && error.message.starts_with("Duplicate entry '7' for key")
             ),
@@ -568,7 +564,7 @@ use tidb_txnkv::Key;
             )
             .expect_err("a failed eager index read is not an absent key");
         assert!(
-            matches!(error, tidb_table::kv_table::KvTableError::Storage(StorageError::Backend(detail)) if detail.contains("index read failed"))
+            matches!(error, tidb_table::tables::KvTableError::Storage(StorageError::Backend(detail)) if detail.contains("index read failed"))
         );
         assert!(
             buffer.is_empty(),
@@ -578,10 +574,9 @@ use tidb_txnkv::Key;
 
     #[test]
     fn unique_index_read_failures_are_not_absence() {
-        use tidb_table::kv_table::TableHandle;
-        use tidb_table::kv_table::KvTable;
-        use tidb_table::kv_table::KvIndex;
-        use tidb_table::kv_table::KvColumn;
+        use tidb_table::tables::TableHandle;
+        use tidb_table::tables::TableCommon;
+        use tidb_table::tables::Index;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
         let mut failures = Vec::new();
@@ -598,12 +593,12 @@ use tidb_txnkv::Key;
                 StorageError::Sql(crate::MysqlError::from_terror(&tidb_kv::kv_errors::ERR_WRITE_CONFLICT.generate_with_stack("write conflict"))),
             ] {
                 let (store, snapshot, buffer) = storage(&[]);
-                let mut table = KvTable::with_storage(
+                let mut table = TableCommon::with_storage(
                     42,
                     ["id", "v"]
                         .into_iter()
                         .enumerate()
-                        .map(|(i, name)| KvColumn {
+                        .map(|(i, name)| tidb_table::column::Column {
                             info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
                                 id: i as i64 + 1,
                                 name: tidb_ast::CiString::new(name.to_owned()),
@@ -621,7 +616,7 @@ use tidb_txnkv::Key;
                 );
                 table.set_name("index_errors");
                 table.set_pk_handle_offset(0);
-                let index = KvIndex {
+                let index = Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("unique_v"),
@@ -693,7 +688,7 @@ use tidb_txnkv::Key;
                 match result {
                     Ok(()) => failures.push(format!("{operation}: swallowed {error:?}")),
                     Err(actual) => match (actual, &error) {
-                        (tidb_table::kv_table::KvTableError::Storage(actual), expected)
+                        (tidb_table::tables::KvTableError::Storage(actual), expected)
                             if actual == *expected => {}
                         (actual, expected) => {
                             failures.push(format!("{operation}: {actual:?}, expected {expected:?}"))

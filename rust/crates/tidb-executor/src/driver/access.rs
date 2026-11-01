@@ -98,7 +98,7 @@ pub struct PreparedPointGetPlan {
     /// read ever runs -- the cached shape of Go's `TableDual`.
     contradiction: bool,
     output: FastPointOutput,
-    row_decoder: tidb_table::kv_table::PreparedPointGetRowDecoder,
+    row_decoder: tidb_table::tables::PreparedPointGetRowDecoder,
     cached_keys: std::sync::Mutex<Vec<PreparedPointCacheKey>>,
 }
 
@@ -127,7 +127,7 @@ fn contradiction_plan(
     table_id: i64,
     common_handle_offsets: Vec<usize>,
     handle_offset: Option<usize>,
-    table: &crate::KvTable,
+    table: &crate::TableCommon,
     output: FastPointOutput,
 ) -> Option<PreparedPointGetPlan> {
     Some(PreparedPointGetPlan {
@@ -145,7 +145,7 @@ fn contradiction_plan(
         common_handle_offsets,
         residuals: Vec::new(),
         contradiction: true,
-        row_decoder: tidb_table::kv_table::PreparedPointGetRowDecoder::new_with_handle_prefixes(
+        row_decoder: tidb_table::tables::PreparedPointGetRowDecoder::new_with_handle_prefixes(
             table.columns(),
             handle_offset,
             &[],
@@ -1578,7 +1578,7 @@ pub fn build_prepared_point_get_plan(
             .collect::<Option<Vec<_>>>()?,
         handle_literals,
         target,
-        row_decoder: tidb_table::kv_table::PreparedPointGetRowDecoder::new_with_handle_prefixes(
+        row_decoder: tidb_table::tables::PreparedPointGetRowDecoder::new_with_handle_prefixes(
             table.columns(),
             handle_offset,
             &common_handle_offsets,
@@ -1920,7 +1920,7 @@ fn prepared_primary_index_hint(table_ref: &tidb_ast::TableRef) -> bool {
 pub fn run_prepared_point_get(
     execution: &PreparedPointGetExecution,
     catalog: &Catalog,
-    ctx: &tidb_table::kv_table::PreparedPointGetDecodeContext,
+    ctx: &tidb_table::tables::PreparedPointGetDecodeContext,
     stmt_ctx: &crate::StmtContext,
 ) -> Result<Option<SelectMeta>, DriverError> {
     open_prepared_point_get(execution, catalog, ctx, stmt_ctx)?
@@ -1933,7 +1933,7 @@ pub fn run_prepared_point_get(
 pub fn open_prepared_point_get(
     execution: &PreparedPointGetExecution,
     catalog: &Catalog,
-    ctx: &tidb_table::kv_table::PreparedPointGetDecodeContext,
+    ctx: &tidb_table::tables::PreparedPointGetDecodeContext,
     stmt_ctx: &crate::StmtContext,
 ) -> Result<Option<super::QueryRecordSet>, DriverError> {
     let plan = execution.plan();
@@ -1986,7 +1986,7 @@ struct PreparedPointGetExecutor {
     meta: crate::ExecutorMeta,
     table: Arc<TableEntry>,
     execution: PreparedPointGetExecution,
-    decode: tidb_table::kv_table::PreparedPointGetDecodeContext,
+    decode: tidb_table::tables::PreparedPointGetDecodeContext,
     context: crate::StmtContext,
     done: bool,
 }
@@ -2012,7 +2012,7 @@ impl Executor for PreparedPointGetExecutor {
         };
         let mut reader = table.point_reader();
         let before = reader.point_rpc_counts();
-        let decode_error = |error: tidb_table::kv_table::KvTableError| {
+        let decode_error = |error: tidb_table::tables::KvTableError| {
             ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
         };
         let handle = match plan.target {

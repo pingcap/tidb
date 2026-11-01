@@ -1014,7 +1014,7 @@ fn a_clamped_step_allocates_from_the_clamp_rather_than_dividing_by_zero() {
 /// `errno.ErrAutoincReadFailed` (`1467`), read off `MustGetErrCode` in a
 /// `testkit` capture of the same four statements, NOT `1690`: at `BIGINT`
 /// width the column bound IS the domain end, so the type clamp in
-/// `KvTable::check_auto_increment_fits` can never fire and the allocator's own
+/// `TableCommon::check_auto_increment_fits` can never fire and the allocator's own
 /// exhaustion rule is the only limit here.
 ///
 /// BOTH directions are pinned because the bound is one comparison and either

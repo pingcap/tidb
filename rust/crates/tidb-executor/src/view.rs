@@ -90,10 +90,10 @@ pub fn resolve_view_definition(
     // Go installs the view's `TableInfo` as read back from meta JSON: each
     // byte of the stored body and column names that is not UTF-8 becomes
     // U+FFFD.
-    tidb_table::kv_table::table_meta::go_json_text_round_trip(&mut select_sql);
+    tidb_table::tables::table_meta::go_json_text_round_trip(&mut select_sql);
     let mut columns: Vec<(String, tidb_datatype::FieldType)> = columns;
     for column in columns.iter_mut() {
-        tidb_table::kv_table::table_meta::go_json_text_round_trip(&mut column.0);
+        tidb_table::tables::table_meta::go_json_text_round_trip(&mut column.0);
     }
     let view = ViewDef {
         name: name.clone(),

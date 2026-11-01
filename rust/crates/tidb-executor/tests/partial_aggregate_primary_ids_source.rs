@@ -36,9 +36,8 @@ use tidb_distsql::remote_scan::PushdownPartialAggregate;
 use tidb_proto::tipb::DagRequest;
 use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
 use tidb_ranger::types::Range;
-use tidb_table::kv_table::KvColumn;
-use tidb_table::kv_table::KvIndex;
-use tidb_table::kv_table::KvTable;
+use tidb_table::tables::Index;
+use tidb_table::tables::TableCommon;
 use tidb_txnkv::Key;
 
 const TABLE_ID: i64 = 42;
@@ -150,13 +149,13 @@ impl TableStorage for RecordingStore {
     }
 }
 
-fn binary_pk_column() -> KvColumn {
+fn binary_pk_column() -> tidb_table::column::Column {
     // `binary(16)`'s declared type: MySQL TYPE_STRING under the binary
     // collation. The id matches what this tier's DDL allocates for the first
     // column of a fresh table.
     let mut field_type = FieldType::new(FieldTypeCode::String);
     field_type.set_flen(16);
-    KvColumn {
+    tidb_table::column::Column {
         info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
             id: 2,
             name: tidb_ast::CiString::new("a"),
@@ -171,8 +170,8 @@ fn binary_pk_column() -> KvColumn {
     }
 }
 
-fn plain_column() -> KvColumn {
-    KvColumn {
+fn plain_column() -> tidb_table::column::Column {
+    tidb_table::column::Column {
         info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
             id: 4,
             name: tidb_ast::CiString::new("b"),
@@ -204,7 +203,7 @@ fn count_over_primary() -> PushdownPartialAggregate {
     }
 }
 
-fn capture(table: &mut KvTable, captured: Arc<Mutex<Option<Recorded>>>) {
+fn capture(table: &mut TableCommon, captured: Arc<Mutex<Option<Recorded>>>) {
     let opened = table.pushdown_partial_aggregate_cursor(
         &[0],
         Vec::<tidb_expr::expression::Expression>::new().as_slice(),
@@ -235,13 +234,13 @@ fn recorded(captured: &Arc<Mutex<Option<Recorded>>>) -> Recorded {
         .expect("a request was recorded")
 }
 
-/// This tier's CREATE TABLE stores no PRIMARY `KvIndex` for a clustered key:
+/// This tier's CREATE TABLE stores no PRIMARY `Index` for a clustered key:
 /// the record key itself enforces it. The aggregate pushdown must still name
 /// the primary columns, as Go does from the table info alone.
 #[test]
 fn a_clustered_table_without_a_stored_primary_index_sends_its_primary_ids() {
     let captured = Arc::new(Mutex::new(None));
-    let mut table = KvTable::with_storage(
+    let mut table = TableCommon::with_storage(
         TABLE_ID,
         vec![binary_pk_column(), plain_column()],
         Box::new(RecordingStore {
@@ -266,12 +265,12 @@ fn a_clustered_table_without_a_stored_primary_index_sends_its_primary_ids() {
     assert_eq!(scan.columns[0].column_id, Some(2));
 }
 
-/// A table that DOES store a PRIMARY `KvIndex` keeps the same ids -- the two
+/// A table that DOES store a PRIMARY `Index` keeps the same ids -- the two
 /// metadata shapes must not disagree about one wire field.
 #[test]
 fn a_stored_primary_index_yields_the_same_ids() {
     let captured = Arc::new(Mutex::new(None));
-    let mut table = KvTable::with_storage(
+    let mut table = TableCommon::with_storage(
         TABLE_ID,
         vec![binary_pk_column(), plain_column()],
         Box::new(RecordingStore {
@@ -279,7 +278,7 @@ fn a_stored_primary_index_yields_the_same_ids() {
         }),
     );
     table.set_common_handle_offsets(vec![0]);
-    table.add_index(KvIndex {
+    table.add_index(Index {
         info: tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 1,
             name: tidb_ast::CiString::new("PRIMARY"),

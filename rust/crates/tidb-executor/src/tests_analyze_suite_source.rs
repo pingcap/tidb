@@ -42,7 +42,7 @@ fn insert(catalog: &mut Catalog, sql: &str) {
         .unwrap_or_else(|error| panic!("insert {sql:?} failed: {error:?}"));
 }
 
-fn kv_table_of(catalog: &Catalog, name: &str) -> tidb_table::kv_table::KvTable {
+fn kv_table_of(catalog: &Catalog, name: &str) -> tidb_table::tables::TableCommon {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", name) else {
         panic!("table {name} is not stored as bytes");
     };
