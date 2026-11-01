@@ -333,7 +333,7 @@ fn referred_foreign_keys(
     let mut referred = Vec::new();
     for database in &catalog.databases {
         for child in database.deprecated_tables.iter_deref() {
-                let child = child.read();
+            let child = child.read();
             for fk in child.foreign_keys.iter_deref() {
                 let fk = fk.read();
                 if fk.version < tidb_model::table::FK_VERSION1 {

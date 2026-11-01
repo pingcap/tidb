@@ -3042,7 +3042,7 @@ pub fn system_time_timestamp(value: SystemTime) -> Result<tidb_datatype::Time, S
 pub(crate) fn stats_delta_table(catalog: &ClusterCatalog, physical_id: i64) -> Option<(&str, Option<i64>)> {
     for database in &catalog.databases {
         for table in database.deprecated_tables.iter_deref() {
-                let table = table.read();
+            let table = table.read();
             if table.id == physical_id {
                 return Some((database.name.lowercase(), None));
             }
@@ -3254,7 +3254,7 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueSource
         let mut tables = Vec::new();
         for database in &catalog.databases {
             for table in database.deprecated_tables.iter_deref() {
-                    let table = table.read();
+                let table = table.read();
                 let global_stats = statistics
                     .get(&table.id)
                     .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)

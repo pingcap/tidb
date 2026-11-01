@@ -541,7 +541,7 @@ fn key_column_usage_rows(catalog: &SessionExtendedInfoSchema, visibility: &Schem
             }
         }
 for foreign_key in table.meta().read().foreign_keys.iter_deref() {
-            let foreign_key = foreign_key.read();
+    let foreign_key = foreign_key.read();
             if foreign_key.state != tidb_model::SchemaState::PUBLIC {
                 continue;
             }
@@ -743,7 +743,7 @@ fn table_constraints_rows(catalog: &SessionExtendedInfoSchema, visibility: &Sche
             ));
         }
 for foreign_key in table.meta().read().foreign_keys.iter_deref() {
-            let foreign_key = foreign_key.read();
+    let foreign_key = foreign_key.read();
             if foreign_key.state != tidb_model::SchemaState::PUBLIC {
                 continue;
             }
@@ -768,7 +768,7 @@ fn referential_constraints_rows(
             continue;
         };
 for foreign_key in table.meta().read().foreign_keys.iter_deref() {
-            let foreign_key = foreign_key.read();
+    let foreign_key = foreign_key.read();
             if foreign_key.state != tidb_model::SchemaState::PUBLIC {
                 continue;
             }

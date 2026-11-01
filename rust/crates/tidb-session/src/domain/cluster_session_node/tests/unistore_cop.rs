@@ -4525,7 +4525,7 @@ fn drop_schema_ddl_retires_all_statistics_like_go() {
             .expect("created database is published");
         let mut ids = Vec::new();
         for table in database.deprecated_tables.iter_deref() {
-                let table = table.read();
+            let table = table.read();
             if let Some(partition) = &table.partition {
                 ids.extend(
                     partition

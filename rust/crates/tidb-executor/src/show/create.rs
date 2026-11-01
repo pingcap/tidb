@@ -403,7 +403,7 @@ pub fn construct_result_of_show_create_table(
     // clause, so the three are indistinguishable here -- the one place this
     // engine's collapse of them is visible.
 for foreign_key in table.meta().read().foreign_keys.iter_deref() {
-        let foreign_key = foreign_key.read();
+    let foreign_key = foreign_key.read();
         if foreign_key.state != tidb_model::SchemaState::PUBLIC {
             continue;
         }

@@ -392,7 +392,7 @@ fn the_next_gen_layout_is_what_go_creates() {
             "database {name}"
         );
         for table in database.deprecated_tables.iter_deref() {
-                let table = table.read();
+            let table = table.read();
             let full = format!("{name}.{}", table.name.lowercase());
             let expected = &go["tables"][&full];
             assert_eq!(expected["id"].as_i64(), Some(table.id), "{full} id");

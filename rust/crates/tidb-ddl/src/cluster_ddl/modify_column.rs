@@ -1930,7 +1930,7 @@ fn adjust_foreign_key_children(
     let mut children: Vec<(i64, TableInfo)> = Vec::new();
     for database in &catalog.databases {
         for child in database.deprecated_tables.iter_deref() {
-                let child = child.read();
+            let child = child.read();
             if child.id == info.id {
                 continue;
             }

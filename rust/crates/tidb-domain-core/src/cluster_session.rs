@@ -212,7 +212,7 @@ pub fn cluster_session_catalog_with_templates(
             catalog.set_database_placement_policy(&schema, Some(reference.read().clone()));
         }
         for table in database.deprecated_tables.iter_deref() {
-                let table = table.read();
+            let table = table.read();
             if table.is_view() {
                 let name = table.name.original();
                 match cluster_view(&table) {

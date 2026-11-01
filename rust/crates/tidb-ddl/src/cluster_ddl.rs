@@ -1669,7 +1669,7 @@ fn rebuilt_bundles_for_policy(
     let mut bundles = Vec::new();
     for database in &catalog.databases {
         for table in database.deprecated_tables.iter_deref() {
-                let table = table.read();
+            let table = table.read();
             let definitions = table
                 .partition
                 .as_ref()

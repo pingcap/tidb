@@ -143,7 +143,7 @@ fn replica_tables(catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog) ->
     let mut tables = Vec::new();
     for database in &catalog.databases {
         for stored in database.deprecated_tables.iter_deref() {
-                let stored = stored.read();
+            let stored = stored.read();
             let Some(replica) = &stored.tiflash_replica else {
                 continue;
             };
