@@ -382,8 +382,7 @@ fn an_origin_and_hinted_pair_that_differ_in_more_than_hints_is_refused_with_gos_
 ///
 /// MEASURED DIVERGENCE, and not a binding one: this tier answers a missing
 /// table on the read path with its own `1105 table not found in catalog`
-/// rather than 1146 -- the same cascade `tests_system_schemas` documents and
-/// `integration_diff` carries as its largest single gap. The assertion here
+/// rather than 1146 -- the same cascade `tests_system_schemas` documents. The assertion here
 /// therefore pins the tier's code and names the Go code it should become, so
 /// closing that cascade turns this red at the right place.
 #[test]

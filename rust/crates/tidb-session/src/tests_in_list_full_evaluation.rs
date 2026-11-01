@@ -78,9 +78,7 @@
 //!
 //! # The ordering that identifies the mechanism
 //!
-//! The survey banked TiDB's four in the order `'W'`, `'W'`, `'gO'`, `'gO'`
-//! (`rust/difftests/result-tests/tests/integration_diff.rs`,
-//! `survey_unwatched_warning`). All of one value, then all of the other, is
+//! TiDB raises its four in the order `'W'`, `'W'`, `'gO'`, `'gO'`. All of one value, then all of the other, is
 //! args-outer/rows-inner -- exactly the vectorized loop above. A row-at-a-time
 //! probe would interleave them. So the four are not the scalar `evalInt`
 //! being run twice; they are one vectorized call over a two-row batch with a

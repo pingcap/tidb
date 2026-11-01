@@ -15,19 +15,17 @@
 //! The replay engine: one topic's script replayed statement by statement and
 //! compared with TiDB's recording.
 //!
-//! The engine drives whatever runs SQL through two small traits, so the same
-//! comparison measures more than one engine: [`ReplayBackend`] holds a
-//! topic's connections and honours `connect`/`connection`/`disconnect`, and
-//! [`ReplaySession`] runs one statement. The in-process engine
-//! (`tidb_session::Session` over [`crate::mysqltest_connections::Connections`])
-//! is one backend; the production node over the embedded store is another
-//! (`rust/docs/one-engine-corpus-execplan.md`).
+//! The backend that runs SQL sits behind two small traits: [`ReplayBackend`]
+//! holds a topic's connections and honours `connect`/`connection`/
+//! `disconnect`, and [`ReplaySession`] runs one statement. The production
+//! node over the embedded store implements them (`tidb-server`'s
+//! `production_replay`).
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::integration_plan_property::{access_property, plan_statement, PlanStatement};
+use crate::plan_statement::{plan_statement, PlanStatement};
 use crate::mysqltest_script::{
     align_bytes, parse_test, recording_path, split_warnings_bytes, ConnectionCmd, Item, Stmt,
 };
@@ -87,47 +85,6 @@ pub trait ReplayBackend: Sized {
     fn after_refused_statement(&mut self, _sql: &str) {}
 }
 
-impl ReplaySession for tidb_session::Session {
-    fn split_statements(
-        &mut self,
-        sql: &str,
-        client_multi_statements: bool,
-    ) -> Result<Vec<String>, DriverError> {
-        tidb_session::Session::split_statements(self, sql, client_multi_statements)
-    }
-
-    fn run_with_columns(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
-        tidb_session::Session::run_with_columns(self, sql)
-    }
-
-    fn last_result_output_names(&self) -> Vec<tidb_datatype::FieldNameMetadata> {
-        tidb_session::Session::last_result_output_names(self)
-            .0
-            .to_vec()
-    }
-}
-
-impl ReplayBackend for crate::mysqltest_connections::Connections {
-    fn open(topic: &str) -> Result<Self, String> {
-        crate::mysqltest_connections::Connections::open(topic)
-    }
-
-    fn apply(&mut self, cmd: &ConnectionCmd) -> Result<(), String> {
-        crate::mysqltest_connections::Connections::apply(self, cmd)
-    }
-
-    fn with_current<R>(&mut self, body: &mut dyn FnMut(&mut dyn ReplaySession) -> R) -> R {
-        let command = self.begin_command();
-        let outcome = body(self.current());
-        drop(command);
-        outcome
-    }
-
-    fn after_refused_statement(&mut self, sql: &str) {
-        self.recover_account_row_from_unsupported_create_user(sql);
-    }
-}
-
 /// Why one statement did not produce a comparable outcome. Every skip lands in
 /// exactly one of these, and the totals are printed on every run: a driver
 /// that reports what it skipped is worth more than one that reports a big
@@ -145,10 +102,6 @@ pub enum SkipClass {
     /// The statement does not parse or plan here at all: a capability this
     /// engine does not model.
     OutOfDomain,
-    /// An `EXPLAIN` whose recorded plan carries no extractable access
-    /// property (nothing but shape, which this tier prints differently by
-    /// design).
-    PlanWithoutProperty,
     /// An `EXPLAIN` whose recording is not a text operator tree at all (JSON,
     /// DOT, a binary plan, or `EXPLAIN ANALYZE`'s execution counters).
     PlanFormatNotComparable(&'static str),
@@ -164,6 +117,59 @@ pub fn integrationtest_dir() -> PathBuf {
     difftest::parser_oracle::repo_root().join("tests/integrationtest")
 }
 
+/// Runs `replay` once per topic, `INTEGRATION_JOBS` at a time (half the cores
+/// by default), and answers the results in `topics` order.
+///
+/// Callers replay each topic in a process of its own: a topic opens its own
+/// store, but `SET GLOBAL`, the config and Go's process-wide singletons
+/// (`vardef`, infosync's label rules) are process state, and topics sharing
+/// one process would read each other's. A topic's store runs threads of its
+/// own and a recording is wall-clock sensitive (`unix_timestamp() -
+/// unix_timestamp(c)` across a few ALTERs assumes they finish in seconds), so
+/// the default leaves the other half of the cores to them. The longest
+/// scripts start first: the slowest topic bounds the wall time, so it should
+/// not start last. `INTEGRATION_JOBS=1` replays the topics one after another.
+pub fn run_topics_in_parallel<R: Send>(
+    topics: &[&str],
+    replay: impl Fn(usize, &str) -> R + Sync,
+) -> Vec<R> {
+    let jobs = std::env::var("INTEGRATION_JOBS")
+        .ok()
+        .and_then(|jobs| jobs.parse::<usize>().ok())
+        .filter(|jobs| *jobs > 0)
+        .unwrap_or_else(|| {
+            (std::thread::available_parallelism().map_or(2, usize::from) / 2).max(1)
+        })
+        .min(topics.len().max(1));
+    let dir = integrationtest_dir();
+    let mut order: Vec<usize> = (0..topics.len()).collect();
+    order.sort_by_key(|index| {
+        std::cmp::Reverse(
+            fs::metadata(dir.join(format!("t/{}.test", topics[*index])))
+                .map_or(0, |metadata| metadata.len()),
+        )
+    });
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results: Vec<std::sync::Mutex<Option<R>>> =
+        topics.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    std::thread::scope(|scope| {
+        for _ in 0..jobs {
+            scope.spawn(|| loop {
+                let position = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(&index) = order.get(position) else {
+                    break;
+                };
+                let result = replay(index, topics[index]);
+                *results[index].lock().unwrap() = Some(result);
+            });
+        }
+    });
+    results
+        .into_iter()
+        .map(|result| result.into_inner().unwrap().expect("every topic was replayed"))
+        .collect()
+}
+
 /// What a matched statement proved. The three are different in kind, and a
 /// count that merges them says less than it appears to: a matched row result
 /// compared VALUES, while a matched side effect only agreed that a statement
@@ -172,8 +178,6 @@ pub fn integrationtest_dir() -> PathBuf {
 pub enum MatchKind {
     /// A result set: header and every row compared cell by cell.
     Rows,
-    /// An `EXPLAIN`: the recorded plan's access property compared.
-    PlanProperty,
     /// A statement whose recording is empty, and which this engine also
     /// completed without a result set.
     SideEffect,
@@ -191,8 +195,6 @@ pub struct TopicReport {
     /// One `statement`, `error` pair per statement TiDB answered and this
     /// engine refused (counted as [`SkipClass::OutOfDomain`]).
     pub out_of_domain: Vec<(String, String)>,
-    /// The topic's wall time: store bootstrap and every statement.
-    pub elapsed: std::time::Duration,
     /// Statement count and wall time by [`statement_kind`].
     pub statement_time: BTreeMap<String, (usize, std::time::Duration)>,
 }
@@ -239,106 +241,12 @@ impl TopicReport {
     }
 }
 
-/// [`TopicReport`] as the lines a replay child process hands its parent:
-/// one record per line, tab-separated, each text escaped so a multi-line
-/// divergence stays on its line.
-impl TopicReport {
-    /// The report as [`Self::decode`] reads it back.
-    #[must_use]
-    pub fn encode(&self) -> String {
-        let mut out = String::new();
-        for (kind, count) in &self.matched {
-            out.push_str(&format!("M\t{}\t{count}\n", escape(kind)));
-        }
-        for (class, count) in &self.skipped {
-            out.push_str(&format!("S\t{}\t{count}\n", escape(class)));
-        }
-        for divergence in &self.divergences {
-            out.push_str(&format!("D\t{}\n", escape(divergence)));
-        }
-        for (sql, error) in &self.out_of_domain {
-            out.push_str(&format!("O\t{}\t{}\n", escape(sql), escape(error)));
-        }
-        out.push_str(&format!("E\t{}\n", self.elapsed.as_nanos()));
-        for (kind, (count, spent)) in &self.statement_time {
-            out.push_str(&format!("T\t{}\t{count}\t{}\n", escape(kind), spent.as_nanos()));
-        }
-        out
-    }
-
-    /// Reads back [`Self::encode`].
-    ///
-    /// # Errors
-    ///
-    /// A line that is not one of the records `encode` writes.
-    pub fn decode(text: &str) -> Result<Self, String> {
-        let mut report = TopicReport::default();
-        let nanos = |field: &str| {
-            field
-                .parse::<u64>()
-                .map(std::time::Duration::from_nanos)
-                .map_err(|e| format!("bad duration {field:?}: {e}"))
-        };
-        let count = |field: &str| field.parse::<usize>().map_err(|e| format!("bad count {field:?}: {e}"));
-        for line in text.lines() {
-            let fields: Vec<&str> = line.split('\t').collect();
-            match fields.as_slice() {
-                ["M", kind, n] => {
-                    report.matched.insert(unescape(kind), count(n)?);
-                }
-                ["S", class, n] => {
-                    report.skipped.insert(unescape(class), count(n)?);
-                }
-                ["D", divergence] => report.divergences.push(unescape(divergence)),
-                ["O", sql, error] => report.out_of_domain.push((unescape(sql), unescape(error))),
-                ["E", elapsed] => report.elapsed = nanos(elapsed)?,
-                ["T", kind, n, spent] => {
-                    report.statement_time.insert(unescape(kind), (count(n)?, nanos(spent)?));
-                }
-                _ => return Err(format!("unreadable report line {line:?}")),
-            }
-        }
-        Ok(report)
-    }
-}
-
-fn escape(text: &str) -> String {
-    text.replace('\\', "\\\\").replace('\n', "\\n").replace('\t', "\\t")
-}
-
-fn unescape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('n') => out.push('\n'),
-            Some('t') => out.push('\t'),
-            Some(other) => out.push(other),
-            None => out.push('\\'),
-        }
-    }
-    out
-}
-
 /// Whether to print each out-of-domain statement with the error that refused
 /// it (`INTEGRATION_SHOW_OUT_OF_DOMAIN=1`). This is the work list for the next
 /// capability increment: a topic's skips ARE its remaining gaps.
 fn show_out_of_domain() -> bool {
     static SHOW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *SHOW.get_or_init(|| std::env::var_os("INTEGRATION_SHOW_OUT_OF_DOMAIN").is_some())
-}
-
-/// Renders one result cell the way the recorder writes it: `NULL` for a null,
-/// the value's SQL string otherwise.
-fn cell(value: &Datum) -> String {
-    if value.is_null() {
-        return "NULL".to_owned();
-    }
-    value.sql_string().unwrap_or_else(|_| value.label())
 }
 
 /// One result cell, as the CLIENT receives it.
@@ -458,106 +366,16 @@ fn compare(
             None => Ok(kind),
             Some(detail) => Err(Some(detail)),
         },
-        (Ok(kind), None) => {
-            survey_unwatched_warning(session, stmt);
-            Ok(kind)
-        }
+        (Ok(kind), None) => Ok(kind),
         (outcome, _) => outcome,
     }
-}
-
-/// Records that a statement OUTSIDE the warning gate raised a warning here.
-///
-/// The gate reaches 704 of 21,636 statements
-/// ([`warning_comparison_covers_only_enable_warnings_statements`]); for the
-/// rest the replay compares rows only, so a warning is invisible either way.
-/// This measures one half of that blind spot -- what THIS engine raises where
-/// nothing is checked. `INTEGRATION_SURVEY_UNWATCHED_WARNINGS=1` FIRST printed
-/// 18 such statements: five deprecated-sysvar notices, eleven `Truncated
-/// incorrect DOUBLE value` from string-vs-number comparisons, and a
-/// `tidb_max_chunk_size` clamp. None of the 18 was checked against TiDB by
-/// anything in this suite.
-///
-/// THAT 18 IS THE PRE-`Note` NUMBER AND IS KEPT ONLY AS HISTORY. Giving the
-/// session Go's third warning level turned the whole `IF EXISTS` family from
-/// silence into notes, and the survey went to 155 statements -- 216 of the new
-/// lines being `Note 1051`. The rise is the instrument becoming able to see a
-/// class it had no way to represent, not the engine getting noisier: with two
-/// levels there was nowhere to demote a suppressed error to, so Go's notes were
-/// dropped rather than reported. Read a survey count as a measurement OF THE
-/// TREE THAT PRODUCED IT; it moves whenever this engine's diagnostics do, which
-/// is why it is a survey and not a ratchet.
-///
-/// Every one of the 18 has since been put to `gorun` -- a real TiDB session --
-/// and the answers are banked here, because the suite still cannot ask them:
-///
-/// * The seven `set` sites AGREE exactly, text and level:
-///   `set [global] tidb_enable_table_partition=off` ->
-///   `Warning 1105 tidb_enable_table_partition is always turned on. ...`;
-///   `set [global] tidb_enable_list_partition=on|1` ->
-///   `Warning 1681 tidb_enable_list_partition is deprecated ...`;
-///   `set @@session.tidb_enable_fast_analyze=1` ->
-///   `Warning 1105 the fast analyze feature has already been removed ...`;
-///   `set @@tidb_max_chunk_size=2` ->
-///   `Warning 1292 Truncated incorrect tidb_max_chunk_size value: '2'`.
-///   They are `Warning`, not `Note`: Go reaches them through
-///   `StmtCtx.AppendWarning` (`pkg/sessionctx/variable/sysvar.go`), and
-///   `AppendNote` -- the third level this engine cannot represent -- is never
-///   on that path.
-/// * The two varchar sites AGREE: `select * from t where a > 0` over
-///   `('aaa'),('bbbb'),('ccc'),('dfg'),('kkkk'),('10')` raises five
-///   `Warning 1292 Truncated incorrect DOUBLE value` in both, one per row that
-///   does not parse, and none for `'10'`.
-/// * The three `a > '10ab'` sites DIVERGE ON COUNT. TiDB raises the truncation
-///   TWICE, the same two for `t`, `trange` and `thash` alike, because the
-///   string is folded against the int column ONCE while the comparison is
-///   refined -- it never reaches a row. This engine raises it PER ROW SCANNED:
-///   11, 5 and 11. Same text, same level, wrong multiplicity.
-/// * `select hex(t0.c1) from t0 where 0 in (select t0.c1 from t0)` over a
-///   `blob` holding `'gO'` and `'W'` DIVERGES IN THE OTHER DIRECTION: TiDB
-///   raises FOUR (`'W'`, `'W'`, `'gO'`, `'gO'`), this engine only the two for
-///   `'gO'`. It is the one place in the 18 where TiDB says more than we do.
-///   FIXED: `IN` no longer stops its probe at the first match, because the
-///   coercion the remaining values would run is observable -- see
-///   `tidb_session::tests_in_list_full_evaluation`. The COUNT should now be
-///   four here. The ORDER should still differ: TiDB's `'W'`, `'W'`, `'gO'`,
-///   `'gO'` is the vectorized loop's args-outer/rows-inner grouping, while
-///   this engine evaluates row-at-a-time and interleaves the values. Nothing
-///   in this suite compares warning order, so the survey line is where that
-///   residual is visible.
-///
-/// It is OFF by default, and that is not tidiness. Turning it on moved the
-/// divergence count from 64 to 66: the two `select @@last_plan_from_cache`
-/// statements in `sessionctx/setvar` answered 0 instead of 1, because the
-/// extra `SHOW WARNINGS` ran between the prepared statement and the read and
-/// became the last plan. So `SHOW WARNINGS` is NOT the observationally neutral
-/// probe [`warning_difference`] calls it -- it is neutral only for the 28
-/// statements it happens to be asked on today. Widening the gate has to read
-/// the warning count off the wire instead, and that is a change to the shared
-/// reader, not a line in this survey.
-fn survey_unwatched_warning(session: &mut dyn ReplaySession, stmt: &Stmt) {
-    if std::env::var_os("INTEGRATION_SURVEY_UNWATCHED_WARNINGS").is_none() {
-        return;
-    }
-    let Ok(StmtOutput::Rows { rows, .. }) = session.run_with_columns("SHOW WARNINGS") else {
-        return;
-    };
-    if rows.is_empty() {
-        return;
-    }
-    let texts = rows
-        .iter()
-        .map(|row| row.iter().map(cell).collect::<Vec<_>>().join("\t"))
-        .collect::<Vec<_>>()
-        .join(" / ");
-    eprintln!("UNWATCHED WARNING: {} -> {texts}", stmt.sql);
 }
 
 /// One recorded statement line as mysql-tester sends it: one COM_QUERY,
 /// which the server splits and runs statement by statement (Go
 /// `handleQuery`, `conn.go:1861`), stopping at the first error. A line such
 /// as `truncate t1;truncate t2;` is several statements, admitted by the
-/// connection's `@@tidb_multi_statement_mode` (see `Connections::open`).
+/// connection's `@@tidb_multi_statement_mode` ([`crate::mysql_tester::MYSQL_TESTER_CONNECTION_SETUP`]).
 /// Only the last statement's output reaches the recorder's result block.
 fn run_command(session: &mut dyn ReplaySession, sql: &str) -> Result<StmtOutput, DriverError> {
     let statements = session.split_statements(sql, false)?;
@@ -761,17 +579,7 @@ fn compare_output(
             .first()
             .is_some_and(|line| line.starts_with(b"Error "));
 
-    // A plan statement runs as this tier's own default EXPLAIN whatever format
-    // the recording asked for -- see `PlanStatement::RunDefaultExplain`.
     let plan = plan_statement(stmt_sql);
-    // An EXPLAIN is compared as the WHOLE recorded text -- ids, estimates,
-    // operator info, in the recorded format -- not by each table's access
-    // property alone, which hid hundreds of plan divergences. A mismatch is
-    // tagged so the suite can budget plan-text divergences apart from the rest
-    // (`INTEGRATION_LOOSE_PLANS` restores the access-property reading).
-    let strict_plan = matches!(plan, Some(PlanStatement::RunDefaultExplain(_)))
-        && std::env::var_os("INTEGRATION_LOOSE_PLANS").is_none();
-    let plan = if strict_plan { None } else { plan };
     let sql = match &plan {
         Some(PlanStatement::NotComparable(reason)) if !recorded_error => {
             report.skip(SkipClass::PlanFormatNotComparable(reason));
@@ -786,7 +594,6 @@ fn compare_output(
             report.skip(SkipClass::PlanFormatNotComparable(reason));
             return Err(None);
         }
-        Some(PlanStatement::RunDefaultExplain(sql)) => sql.as_str(),
         _ => stmt_sql,
     };
     // A statement that PANICS takes the process with it, so its identity is
@@ -805,43 +612,38 @@ fn compare_output(
         eprintln!("SQL< {}ms", started.elapsed().as_millis());
     }
     match (outcome, recorded_error) {
-        // TiDB rejected it and so did we. The wording is TiDB's; only the
-        // rejection is asserted, and so is the recorded error CODE -- a
-        // rejection with the wrong code is a real divergence (it hid ~150 of
-        // them while this was an opt-in survey switch).
-        // `INTEGRATION_IGNORE_ERROR_CODES` turns the code comparison off.
+        // TiDB rejected it and so did we. The wording is TiDB's; the
+        // rejection and its code and SQLSTATE are asserted.
         (Err(error), true) => {
-            if std::env::var_os("INTEGRATION_IGNORE_ERROR_CODES").is_none() {
-                let first = recorded.first().map(|line| display_line(line));
-                // The recorder writes `Error <code> (<sqlstate>): <message>`;
-                // both the code and the SQLSTATE reach the client.
-                let want = first.as_deref().and_then(|line| {
-                    let rest = line.strip_prefix("Error ")?;
-                    let code = rest
-                        .split(|c: char| !c.is_ascii_digit())
-                        .next()?
-                        .parse::<u16>()
-                        .ok()?;
-                    let state = rest
-                        .split_once(" (")
-                        .filter(|(_, tail)| tail.get(5..7) == Some("):"))
-                        .and_then(|(_, tail)| tail.get(..5))
-                        .map(str::to_owned);
-                    Some((code, state))
-                });
-                let ours = error.to_mysql_error();
-                let our_state = String::from_utf8_lossy(&ours.state).into_owned();
-                if want.as_ref().is_some_and(|(code, state)| {
-                    *code != ours.code || state.as_ref().is_some_and(|state| *state != our_state)
-                }) {
-                    return Err(Some(format!(
-                        "  tidb: {}\n  rust: Error {} ({}): {}",
-                        first.unwrap_or_default(),
-                        ours.code,
-                        our_state,
-                        ours.message
-                    )));
-                }
+            let first = recorded.first().map(|line| display_line(line));
+            // The recorder writes `Error <code> (<sqlstate>): <message>`;
+            // both the code and the SQLSTATE reach the client.
+            let want = first.as_deref().and_then(|line| {
+                let rest = line.strip_prefix("Error ")?;
+                let code = rest
+                    .split(|c: char| !c.is_ascii_digit())
+                    .next()?
+                    .parse::<u16>()
+                    .ok()?;
+                let state = rest
+                    .split_once(" (")
+                    .filter(|(_, tail)| tail.get(5..7) == Some("):"))
+                    .and_then(|(_, tail)| tail.get(..5))
+                    .map(str::to_owned);
+                Some((code, state))
+            });
+            let ours = error.to_mysql_error();
+            let our_state = String::from_utf8_lossy(&ours.state).into_owned();
+            if want.as_ref().is_some_and(|(code, state)| {
+                *code != ours.code || state.as_ref().is_some_and(|state| *state != our_state)
+            }) {
+                return Err(Some(format!(
+                    "  tidb: {}\n  rust: Error {} ({}): {}",
+                    first.unwrap_or_default(),
+                    ours.code,
+                    our_state,
+                    ours.message
+                )));
             }
             report.skip(SkipClass::BothRejected);
             Err(None)
@@ -873,41 +675,6 @@ fn compare_output(
         (Ok(StmtOutput::Rows { columns, rows }), false) => {
             let mut ours = render_rows(&columns, &output_names, &rows);
             let mut theirs: Vec<Vec<u8>> = recorded.to_vec();
-            if plan.is_some() {
-                // Drop the header on both sides: a plan's columns are fixed,
-                // and only the access rows carry the guarded property.
-                let theirs_text = theirs
-                    .iter()
-                    .map(|line| display_line(line))
-                    .collect::<Vec<_>>();
-                let ours_text = ours
-                    .iter()
-                    .map(|line| display_line(line))
-                    .collect::<Vec<_>>();
-                let want = access_property(&theirs_text[1.min(theirs_text.len())..]);
-                let got = access_property(&ours_text[1..]);
-                // Only the tables THIS side read are asserted, per
-                // `access_property`'s own contract.
-                let mut differences = Vec::new();
-                for (table, ours) in &got {
-                    let theirs = want.get(table);
-                    if theirs != Some(ours) {
-                        differences.push(format!(
-                            "\n  table {table}\n    tidb: {}\n    rust: {}",
-                            theirs.map_or("<not read>".to_owned(), |p| p.join(" + ")),
-                            ours.join(" + ")
-                        ));
-                    }
-                }
-                return match (got.is_empty(), differences.is_empty()) {
-                    (true, _) => {
-                        report.skip(SkipClass::PlanWithoutProperty);
-                        Err(None)
-                    }
-                    (false, true) => Ok(MatchKind::PlanProperty),
-                    (false, false) => Err(Some(differences.join(""))),
-                };
-            }
             // `--sorted_result` means the recorder sorted the row lines under
             // an already-written header, so only the bodies are sorted here.
             if stmt.sorted {
@@ -931,8 +698,7 @@ fn compare_output(
                 Ok(MatchKind::Rows)
             } else {
                 Err(Some(format!(
-                    "{}  tidb: {}\n  rust: {}",
-                    if strict_plan { PLAN_TEXT_TAG } else { "" },
+                    "  tidb: {}\n  rust: {}",
                     display_block(&theirs),
                     display_block(&ours)
                 )))
@@ -947,25 +713,10 @@ fn compare_output(
     }
 }
 
-/// Marks a divergence of an EXPLAIN's full text, so a suite can budget those
-/// separately from every other kind.
-pub const PLAN_TEXT_TAG: &str = "  [plan text]\n";
-
-/// Replays one topic against a fresh session.
-///
-/// The replay runs on `difftest::on_deep_stack` for the same reason
-/// `query_diff` does, and the reason is worth stating precisely because it is
-/// NOT a depth limit: Go runs every statement on a goroutine whose stack GROWS
-/// on demand, so no recursion bound is part of the recorded behaviour --
-/// verified by grep over `pkg/parser`, `pkg/expression` and `pkg/planner`,
-/// which contain no nesting-depth guard at all. This tier recurses on a fixed
-/// OS thread stack, so the harness has to supply the room Go's runtime supplies
-/// itself. TiDB's own suite is far past libtest's default 8MB: `select` writes
-/// `select --------------------1`, `executor/window` has a single `INSERT` with
-/// 175 value rows, and `executor/jointest/join` joins 21 tables -- the last two
-/// are recursion over INPUT SIZE, not over nesting the user wrote. Sizing the
-/// replay thread changes nothing about what a statement EVALUATES to; it only
-/// stops the process from aborting before the comparison happens.
+/// Replays one topic against a fresh backend, on `difftest::on_deep_stack`:
+/// Go runs each statement on a goroutine whose stack grows on demand, and the
+/// corpus recurses past libtest's 8MB over input size (`executor/window`'s
+/// 175-row INSERT, `executor/jointest/join`'s 21 tables).
 pub fn run_topic<B: ReplayBackend>(topic: &str) -> Result<TopicReport, String> {
     let topic = topic.to_owned();
     difftest::on_deep_stack(move || run_topic_on_this_stack::<B>(&topic))
@@ -982,7 +733,6 @@ fn run_topic_on_this_stack<B: ReplayBackend>(topic: &str) -> Result<TopicReport,
     let items = parse_test(&script)?;
     let aligned = align_bytes(&items, &recorded)?;
 
-    let started = std::time::Instant::now();
     let mut report = TopicReport::default();
     let mut connections = B::open(topic)?;
     // `INTEGRATION_SHOW_CONTEXT` lists the statements that ran before each
@@ -1038,6 +788,5 @@ fn run_topic_on_this_stack<B: ReplayBackend>(topic: &str) -> Result<TopicReport,
             }
         }
     }
-    report.elapsed = started.elapsed();
     Ok(report)
 }

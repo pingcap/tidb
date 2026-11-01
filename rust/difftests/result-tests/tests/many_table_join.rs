@@ -49,7 +49,7 @@
 //! # Why the deep stack
 //!
 //! Both tests run on `difftest::on_deep_stack` for the reason
-//! `integration_diff::run_topic` states: a 21-table `FROM` is recursion over
+//! `difftest_result_tests::replay::run_topic` states: a 21-table `FROM` is recursion over
 //! INPUT SIZE, not over nesting the user wrote, and Go runs every statement on
 //! a goroutine whose stack grows on demand. On a libtest thread's fixed 8MB a
 //! debug build overflows at exactly 21 tables and the process aborts -- which

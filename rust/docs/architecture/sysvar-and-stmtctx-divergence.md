@@ -86,7 +86,7 @@ names are `offline_mode`, `read_only`, `super_read_only`,
 
 1. **Error code and text are never compared when both engines reject.**
    `mysqltest_script::Stmt` stores only `expect_error: bool`; the parser drops
-   the code after `--error`. Then `integration_diff::compare_output` takes
+   the code after `--error`. Then `replay::compare_output` takes
    `(Err(_), true)`, records `BothRejected`, and discards both Rust's error and
    TiDB's recorded `Error ...` line. The current replay prints:
 

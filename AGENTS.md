@@ -17,7 +17,7 @@ Guidance for agents working in this repository. MUST is required, SHOULD is the 
 - Do not sit waiting on builds or tests. Start long jobs in the background and keep working; read the result when it lands.
 - Check before running: `cargo check -p <crate> --tests` catches most mistakes in seconds.
 - While iterating, run only the tests that cover the change: `cargo nextest run -p <crate> -E 'test(<name>)'`.
-- Before a commit, run the suites of the crates whose behavior changed. Workspace-wide runs and the replays (`cargo test -p difftest-result-tests --test integration_diff`, `cargo test -p tidb-server --lib production_replay_stays_within_budget -- --ignored`) are milestone checks, not per-commit ones.
+- Before a commit, run the suites of the crates whose behavior changed. Workspace-wide runs and the integration-corpus replay (`cargo test -p tidb-server --lib integration_corpus_matches_recordings -- --ignored`) are milestone checks, not per-commit ones.
 - A pure move or rename (behavior unchanged) is verified by `cargo check --tests` alone; batch several such steps before any test run.
 - Disk is the binding constraint on this machine: build with one setting throughout (`CARGO_INCREMENTAL=0` for checks and tests alike; mixing settings duplicates every artifact). When space runs low, delete `rust/target/debug/incremental` and prune stale `rust/target/debug/build/*/*` directories.
 - A test failure that also fails on the unchanged tip is not yours; confirm that once and move on.

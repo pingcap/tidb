@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Shared support for the result differential suites.
-//! Helper tests run once here; integration binaries retain process isolation.
+//! The integration-corpus replay engine (`tidb-server`'s
+//! `integration_corpus_matches_recordings` runs it over the production
+//! stack) and shared support for the result differential suites.
 
 pub mod enrolled_topics;
-pub mod integration_plan_property;
-pub mod mysqltest_connections;
+pub mod mysql_tester;
 pub mod mysqltest_script;
+pub mod plan_statement;
 pub mod replay;
 pub mod result_label;

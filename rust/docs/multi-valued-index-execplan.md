@@ -95,7 +95,7 @@ All commands run from the repository root `/Users/qiliu/projects/tidb` unless st
 
 Replay one topic and list its divergences:
 
-    cd rust && INTEGRATION_SHOW_DIVERGENCES=1 INTEGRATION_TOPIC=expression/multi_valued_index cargo test -p difftest-result-tests --test integration_diff -- --ignored --nocapture replay_one_topic
+    cd rust && INTEGRATION_SHOW_DIVERGENCES=1 INTEGRATION_TOPIC=expression/multi_valued_index cargo test -p tidb-server --lib replay_topics -- --ignored --nocapture
 
 Run a Go oracle query: add a `zz_*_test.go` file to a Go worktree's `pkg/executor/test/cte/` using the `zzRun` helper there, then
 

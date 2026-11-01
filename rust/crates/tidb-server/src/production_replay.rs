@@ -16,23 +16,21 @@
 //! embedded store -- the stack `tidb-server --store unistore` serves, and the
 //! one Go's own integration runner uses (`mockstore.EmbedUnistoreDriver`).
 //!
-//! The comparison is the corpus harness's own (`difftest_result_tests::replay`);
-//! this module only supplies the backend, so a topic's counts here and from
-//! `difftests/result-tests/tests/integration_diff.rs` measure the two engines
-//! by one rule (`rust/docs/one-engine-corpus-execplan.md`).
-//!
-//!     INTEGRATION_TOPIC=executor/update cargo test -p tidb-server --lib \
-//!         production_replay -- --ignored --nocapture
+//! The comparison is `difftest_result_tests::replay`'s; this module supplies
+//! the backend: each statement goes through the connection's COM_QUERY path
+//! and its rows are read back from the server's own result-set packets.
 
 use tidb_session::domain::cluster_session_node::DomainSessions as _;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use difftest_result_tests::mysqltest_connections::{
+use difftest_result_tests::mysql_tester::{
     recording_server_time_zone, topic_database, MYSQL_TESTER_CONNECTION_SETUP,
 };
 use difftest_result_tests::mysqltest_script::ConnectionCmd;
-use difftest_result_tests::replay::{run_topic, ReplayBackend, ReplaySession};
+use difftest_result_tests::replay::{
+    run_topic, run_topics_in_parallel, ReplayBackend, ReplaySession,
+};
 use tidb_driver_error::DriverError;
 use tidb_terror::MysqlError;
 use tidb_executor::StmtOutput;
@@ -436,11 +434,16 @@ impl ReplayBackend for UnistoreConnections {
 }
 
 /// Replays each topic named by `INTEGRATION_TOPIC` (comma-separated) and
-/// prints the harness's per-topic line, with divergences and hidden failures
-/// under the harness's own switches.
+/// prints one line per topic, with its divergences under
+/// `INTEGRATION_SHOW_DIVERGENCES` and its time per statement kind under
+/// `INTEGRATION_TIMING`. The gate below runs it once per topic; it
+/// is also how to replay a topic by hand:
+///
+///     INTEGRATION_TOPIC=executor/update cargo test -p tidb-server --lib \
+///         replay_topics -- --ignored --nocapture
 #[test]
-#[ignore = "corpus replay over the embedded store; name topics with INTEGRATION_TOPIC"]
-fn replay_corpus_topics_on_unistore() {
+#[ignore = "replays the topics named by INTEGRATION_TOPIC"]
+fn replay_topics() {
     let Ok(topics) = std::env::var("INTEGRATION_TOPIC") else {
         return;
     };
@@ -464,14 +467,21 @@ fn replay_corpus_topics_on_unistore() {
                 if std::env::var_os("INTEGRATION_SHOW_DIVERGENCES").is_some() {
                     eprintln!("{}", report.divergences.join(""));
                 }
-                // One tab-separated line per topic and per divergence for
-                // `production_replay_stays_within_budget`, which runs this
-                // test as its shards.
+                if std::env::var_os("INTEGRATION_TIMING").is_some() {
+                    let mut kinds: Vec<_> = report.statement_time.iter().collect();
+                    kinds.sort_by(|left, right| right.1 .1.cmp(&left.1 .1));
+                    for (kind, (count, spent)) in kinds.iter().take(12) {
+                        eprintln!("  {spent:>9.2?} {count:>6} x {kind}");
+                    }
+                }
+                // Tab-separated lines for the gate: the topic's counts, each
+                // divergence's headline (`--- [topic] sql`), and each
+                // statement refused where TiDB answered (Debug-quoted, so a
+                // statement spanning lines stays one field).
                 eprintln!(
-                    "REPLAY-TOPIC\t{topic}\t{}\t{}\t{}",
-                    report.matched_total(),
+                    "REPLAY-TOPIC\t{topic}\t{}\t{}",
                     report.divergences.len(),
-                    report.skipped.get("OutOfDomain").copied().unwrap_or(0),
+                    report.out_of_domain.len(),
                 );
                 for divergence in &report.divergences {
                     let headline = divergence
@@ -480,8 +490,6 @@ fn replay_corpus_topics_on_unistore() {
                         .unwrap_or("--- <no headline>");
                     eprintln!("REPLAY-DIVERGENCE\t{topic}\t{headline}");
                 }
-                // Debug-quoted, so a statement or error spanning lines stays
-                // one field.
                 for (sql, error) in &report.out_of_domain {
                     eprintln!("REPLAY-OUT-OF-DOMAIN\t{topic}\t{sql:?}\t{error:?}");
                 }
@@ -491,75 +499,81 @@ fn replay_corpus_topics_on_unistore() {
     }
 }
 
-/// The corpus replayed on the production engine, as a gate: every enrolled
-/// topic must run to its end, and the divergence and out-of-domain counts may
-/// only go down. The topics run in child processes of this test binary, eight
-/// shards of [`replay_corpus_topics_on_unistore`], because each topic boots
-/// its own embedded store over process-wide state (`isolate_process_globals`),
-/// so two topics cannot share one process.
+/// Statements whose recording is older than the Go on this branch, each
+/// confirmed by running it through that Go: Go now prints `USE_INDEX(`t`)`
+/// where the recording has `USE_INDEX(`t` )`. Exact: a statement that stops
+/// diverging leaves the list.
+const STALE_RECORDINGS: &[&str] = &[
+    "batch on a limit 10 dry run insert into t1 select /*+ USE_INDEX(t) */ * from t;",
+    "batch on a limit 10 dry run insert into t1 select /*+ USE_INDEX(t) */ * from t on duplicate key update t1.b=t.b;",
+    "batch on a limit 10 dry run delete /*+ USE_INDEX(t) */ from t;",
+];
+
+/// The gate: every enrolled topic replays to its end and matches TiDB's
+/// recording, except [`STALE_RECORDINGS`], and no statement TiDB answered is
+/// refused. Each topic runs in a child process of this test binary
+/// ([`replay_topics`]), because each boots its own embedded store over
+/// process-wide state; [`run_topics_in_parallel`] schedules them.
+/// `INTEGRATION_TIMING=1` prints the slowest topics.
 ///
-///     cargo test -p tidb-server --lib production_replay_stays_within_budget \
+///     cargo test -p tidb-server --lib integration_corpus_matches_recordings \
 ///         -- --ignored --nocapture
 #[test]
-#[ignore = "about seven minutes; the gate script runs it"]
-fn production_replay_stays_within_budget() {
-    // Measured 2026-10-25: only the in-process replay's three known stale
-    // recordings (`session/nontransactional`'s USE_INDEX spacing) remain.
-    // Lower these when a divergence is fixed; never raise them.
-    const DIVERGENCE_BUDGET: usize = 3;
-    const OUT_OF_DOMAIN_BUDGET: usize = 0;
-    const SHARDS: usize = 8;
-
+#[ignore = "several minutes; replays the whole integration corpus"]
+fn integration_corpus_matches_recordings() {
     let topics = difftest_result_tests::enrolled_topics::TOPICS;
-    let mut shards = vec![Vec::new(); SHARDS];
-    for (index, topic) in topics.iter().enumerate() {
-        shards[index % SHARDS].push(*topic);
-    }
     let executable = std::env::current_exe().expect("test binary");
-    let children = shards
-        .iter()
-        .map(|shard| {
-            std::process::Command::new(&executable)
-                .args([
-                    "production_replay::replay_corpus_topics_on_unistore",
-                    "--ignored",
-                    "--nocapture",
-                    "--exact",
-                ])
-                .env("INTEGRATION_TOPIC", shard.join(","))
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .expect("spawn replay shard")
-        })
-        .collect::<Vec<_>>();
+    let started = std::time::Instant::now();
+    let outputs = run_topics_in_parallel(topics, |_, topic| {
+        let started = std::time::Instant::now();
+        let output = std::process::Command::new(&executable)
+            .args([
+                "production_replay::replay_topics",
+                "--ignored",
+                "--nocapture",
+                "--exact",
+            ])
+            .env("INTEGRATION_TOPIC", topic)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .expect("replay a topic");
+        (output, started.elapsed())
+    });
+    if std::env::var_os("INTEGRATION_TIMING").is_some() {
+        let mut by_topic: Vec<_> = topics
+            .iter()
+            .zip(&outputs)
+            .map(|(topic, (_, elapsed))| (*elapsed, *topic))
+            .collect();
+        by_topic.sort_by(|left, right| right.cmp(left));
+        eprintln!(
+            "replay wall time {:.1?}, summed topic time {:.1?}\nslowest topics:",
+            started.elapsed(),
+            by_topic.iter().map(|(elapsed, _)| *elapsed).sum::<std::time::Duration>(),
+        );
+        for (elapsed, topic) in by_topic.iter().take(15) {
+            eprintln!("  {elapsed:>9.2?} {topic}");
+        }
+    }
 
-    let mut reported = BTreeMap::new();
+    let mut finished = BTreeMap::new();
     let mut divergences = Vec::new();
     let mut refused = Vec::new();
     let mut failures = Vec::new();
-    for (index, child) in children.into_iter().enumerate() {
-        let output = child.wait_with_output().expect("replay shard output");
+    for (topic, (output, _)) in topics.iter().zip(outputs) {
         let text = String::from_utf8_lossy(&output.stderr);
         if !output.status.success() {
             let tail: Vec<&str> = text.lines().rev().take(5).collect();
-            failures.push(format!("shard {index} exited {}: {tail:?}", output.status));
+            failures.push(format!("{topic} exited {}: {tail:?}", output.status));
         }
         for line in text.lines() {
             let fields: Vec<&str> = line.split('\t').collect();
             match fields.as_slice() {
-                ["REPLAY-TOPIC", topic, _matched, diverged, out_of_domain] => {
-                    reported.insert(
-                        (*topic).to_owned(),
-                        (
-                            diverged.parse::<usize>().unwrap(),
-                            out_of_domain.parse::<usize>().unwrap(),
-                        ),
-                    );
+                ["REPLAY-TOPIC", topic, ..] => {
+                    finished.insert((*topic).to_owned(), ());
                 }
-                ["REPLAY-DIVERGENCE", topic, headline] => {
-                    divergences.push(format!("[{topic}] {headline}"));
-                }
+                ["REPLAY-DIVERGENCE", _, headline] => divergences.push((*headline).to_owned()),
                 ["REPLAY-OUT-OF-DOMAIN", topic, sql, error] => {
                     refused.push(format!("[{topic}] {sql}\n    {error}"));
                 }
@@ -567,7 +581,7 @@ fn production_replay_stays_within_budget() {
                 // A stored table the session could not build: Go has no such
                 // state, and the topic's later statements would fail on it.
                 _ if line.contains("\"event\":\"table_skipped\"") => {
-                    failures.push(format!("shard {index}: {line}"));
+                    failures.push(format!("{topic}: {line}"));
                 }
                 _ => {}
             }
@@ -576,33 +590,44 @@ fn production_replay_stays_within_budget() {
     let missing: Vec<&str> = topics
         .iter()
         .copied()
-        .filter(|topic| !reported.contains_key(*topic))
+        .filter(|topic| !finished.contains_key(*topic))
         .collect();
     assert!(
         failures.is_empty() && missing.is_empty(),
-        "production replay did not finish every topic: {failures:#?}\nmissing: {missing:?}"
+        "the replay did not finish every topic: {failures:#?}\nmissing: {missing:?}"
     );
-    let diverged: usize = reported.values().map(|(diverged, _)| diverged).sum();
-    let out_of_domain: usize = reported.values().map(|(_, skipped)| skipped).sum();
-    let refusing: Vec<String> = reported
+    let is_stale = |headline: &String| {
+        STALE_RECORDINGS
+            .iter()
+            .any(|sql| headline.ends_with(&format!("] {sql}")))
+    };
+    let real: Vec<&String> = divergences.iter().filter(|headline| !is_stale(headline)).collect();
+    let still_stale = STALE_RECORDINGS
         .iter()
-        .filter(|(_, (_, skipped))| *skipped > 0)
-        .map(|(topic, (_, skipped))| format!("{topic} ({skipped})"))
-        .collect();
+        .filter(|sql| divergences.iter().any(|headline| headline.ends_with(&format!("] {sql}"))))
+        .count();
     eprintln!(
-        "production replay: {} topics, {diverged} diverged, {out_of_domain} out of domain {refusing:?}\n  {}\n  {}",
-        reported.len(),
-        divergences.join("\n  "),
-        refused.join("\n  ")
+        "integration corpus: {} topics, {} divergences ({} stale recordings), {} refused",
+        finished.len(),
+        divergences.len(),
+        still_stale,
+        refused.len(),
     );
     assert!(
-        diverged <= DIVERGENCE_BUDGET,
-        "production replay diverged in {diverged} statements (budget {DIVERGENCE_BUDGET}):\n  {}",
-        divergences.join("\n  ")
+        real.is_empty(),
+        "{} statements diverge from TiDB's recording:\n  {}",
+        real.len(),
+        real.iter().map(|headline| headline.as_str()).collect::<Vec<_>>().join("\n  ")
+    );
+    assert_eq!(
+        still_stale,
+        STALE_RECORDINGS.len(),
+        "a statement on STALE_RECORDINGS no longer diverges: remove it from the list"
     );
     assert!(
-        out_of_domain <= OUT_OF_DOMAIN_BUDGET,
-        "{out_of_domain} statements Go answered were refused (budget {OUT_OF_DOMAIN_BUDGET}):\n  {}",
+        refused.is_empty(),
+        "{} statements TiDB answered were refused:\n  {}",
+        refused.len(),
         refused.join("\n  ")
     );
 }

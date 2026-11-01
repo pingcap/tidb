@@ -45,7 +45,7 @@ The integration topic `expression/json` (`tests/integrationtest/t/expression/jso
 - Observation: decoding a nested `BinaryJSON` element validated it by decoding its whole subtree and then decoded it again, doubling per level.
   Evidence: `length(cast('<20-deep>' as json))` took 680ms, 18-deep 178ms; fixed in `rust/crates/tidb-datatype/src/binary_json.rs::decode_binary_entry`.
 - Observation: the replay harness counts a statement both sides reject as `BothRejected` without comparing error codes, so wrong codes (3140 for 3157) do not show up as divergences.
-  Evidence: `rust/difftests/result-tests/tests/integration_diff.rs`, the `(Err(_), true)` arm.
+  Evidence: `rust/difftests/result-tests/src/replay.rs`, `compare_output`'s `(Err(_), true)` arm.
 - Observation: Go verifies argument TYPES only for 13 function classes; `JSON_SET`, `JSON_INSERT`, `JSON_REPLACE`, `JSON_REMOVE`, `JSON_LENGTH`, `JSON_DEPTH`, `JSON_VALID` accept an integer document (it is cast to a JSON number), while the Rust rewriter refused the modify family.
   Evidence: `select json_set(1, '$', 2)` answers 2 on Go.
 
@@ -110,8 +110,7 @@ From `rust/`:
 
     cargo test -p tidb-expr --lib builtin_ext::json
     cargo test -p tidb-session --lib tests_json
-    cargo test -p difftest-result-tests --test integration_diff --no-run
-    INTEGRATION_SHOW_DIVERGENCES=1 INTEGRATION_TOPIC=expression/json <integration_diff binary> --ignored --nocapture replay_one_topic
+    INTEGRATION_SHOW_DIVERGENCES=1 INTEGRATION_TOPIC=expression/json cargo test -p tidb-server --lib replay_topics -- --ignored --nocapture
 
 Expect the divergence count to fall milestone by milestone, ending at 0 for the rows listed in Purpose.
 

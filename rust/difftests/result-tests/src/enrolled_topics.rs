@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Shared topic order for result and join-shape replay.
+//! The integration topics the corpus gate replays.
 
-/// Every entry is replayed by both comparators; keep names unique.
+/// Each topic once: a duplicate would be replayed and counted twice.
 pub const TOPICS: &[&str] = &[
     "planner/core/join_reorder_through_projection",
     "util/admin",
@@ -169,4 +169,21 @@ pub const TOPICS: &[&str] = &[
     "expression/time",
     "ddl/bdr_mode",
     "ddl/default_as_expression",
+    "ddl/db_integration",
+    "executor/show",
+    "infoschema/tables",
+    "infoschema/infoschema",
 ];
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn each_topic_is_listed_once() {
+        let mut seen = std::collections::BTreeSet::new();
+        let duplicates: Vec<_> = super::TOPICS
+            .iter()
+            .filter(|topic| !seen.insert(**topic))
+            .collect();
+        assert!(duplicates.is_empty(), "listed more than once: {duplicates:?}");
+    }
+}

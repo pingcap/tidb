@@ -20,10 +20,8 @@
 //!
 //! Every row set and every "which tables does the plan read" answer below was
 //! captured from real TiDB with `rust/difftests/gorun` over these exact
-//! fixtures. The plan is read the way the replay gate reads it: the set of
-//! base tables the plan accesses at all, which is the property
-//! `difftests/result-tests/tests/integration_diff.rs` compares and the one an
-//! elimination changes (TiDB prints `<not read>` for the table that is gone).
+//! fixtures. The plan is read as the set of base tables it accesses at all,
+//! the property an elimination changes (TiDB prints `<not read>` for the table that is gone).
 //!
 //! # Why a rows assertion is the point
 //!

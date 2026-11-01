@@ -633,16 +633,12 @@ dependencies = [
  "tidb-datatype",
  "tidb-driver-error",
  "tidb-executor",
- "tidb-expensivequery",
  "tidb-expr",
  "tidb-format-textrow",
  "tidb-memory",
  "tidb-parser",
- "tidb-privilege",
  "tidb-server-internal-column",
  "tidb-session",
- "tidb-sessmgr",
- "tidb-sqlkiller",
  "tidb-util",
 ]
 

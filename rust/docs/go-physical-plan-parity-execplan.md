@@ -2452,7 +2452,7 @@ At completion, run the Ready profile and report exact results:
 
     cd rust
     cargo nextest run --workspace
-    cargo test -p difftest-result-tests --test integration_diff
+    cargo test -p tidb-server --lib integration_corpus_matches_recordings -- --ignored
     cargo test -p tidb-executor --lib
     cargo test -p tidb-session --lib
     cargo test -p tidb-txnkv

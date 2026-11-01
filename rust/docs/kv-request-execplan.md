@@ -28,4 +28,4 @@
 ## Guards
 
 - A test that `open_storage_session`'s storage has `client().is_some()`, mutation-checked against `a_clean_common_handle_range_uses_the_coprocessor`.
-- Pinning tests: `tidb-executor/src/remote_scan.rs` (39), `tidb-exec/src/cop_scan.rs` and its `tests/cop_scan_*`, `checksum.rs` (7), `tiflash_mpp_scan.rs` (39); after step 3 assert on the built `DagRequest`. `production_replay_stays_within_budget` catches a silent local-scan fallback.
+- Pinning tests: `tidb-executor/src/remote_scan.rs` (39), `tidb-exec/src/cop_scan.rs` and its `tests/cop_scan_*`, `checksum.rs` (7), `tiflash_mpp_scan.rs` (39); after step 3 assert on the built `DagRequest`. `integration_corpus_matches_recordings` catches a silent local-scan fallback.

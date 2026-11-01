@@ -471,7 +471,7 @@ like parity (1.11x) when an interleaved probe put the same transaction at
 Correctness gates, every milestone:
 
 - `cargo nextest run --workspace` — no new failures.
-- `cargo test -p difftest-result-tests --test integration_diff` — the corpus
+- `cargo test -p tidb-server --lib integration_corpus_matches_recordings -- --ignored` — the corpus
   ratchet, `KNOWN_DIVERGENCES = 0` over ~9,682 statements. A plan cache that
   returns a stale plan shows up here first.
 
