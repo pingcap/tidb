@@ -646,7 +646,7 @@ pub fn unistore_cluster_session_stack_from(
     );
     let stats_owner: Arc<dyn tidb_owner::Manager> = Arc::new(tidb_owner::MockManager::new(
         tidb_owner::Context::background(),
-        server_info.local_server_info().static_info.id.clone(),
+        server_info.get_local_server_info().static_info.id.clone(),
         // Go Domain.NewOwnerManager supplies store.UUID(). Opener clones
         // share this store authority, while independent embedded stores do not.
         Some(&format!("embedded-authority-{}", opener.authority_id())),
@@ -662,7 +662,7 @@ pub fn unistore_cluster_session_stack_from(
         IN_PROCESS_TIMEOUT,
         Arc::new(tidb_owner::MockManager::new(
             tidb_owner::Context::background(),
-            server_info.local_server_info().static_info.id.clone(),
+            server_info.get_local_server_info().static_info.id.clone(),
             Some(&format!("embedded-authority-{}", opener.authority_id())),
             "/tidb/bindinfo/owner",
         )),
@@ -691,7 +691,7 @@ pub fn unistore_cluster_session_stack_from(
         })?
         // Go's mockstore reports no delete-range support, so the DDL layer
         // emulates it.
-        .with_delete_range_emulator()
+        .new_del_range_manager()
         .map_err(|error| {
             crate::domain::real_tikv_node::RunConfiguredNodeError::Engine(SqlQueryError::unknown(error))
         })?,

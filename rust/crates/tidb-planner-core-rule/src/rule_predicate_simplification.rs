@@ -851,7 +851,7 @@ mod tests {
             .unwrap();
         let result = merge_in_and_not_equal(&ctx, vec![original, not_equal]);
         assert_eq!(result.len(), 1);
-        let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(
+        let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(
             &[FieldType::new(FieldTypeCode::VarString)],
             1,
         );

@@ -26,7 +26,7 @@ pub mod window_numeric;
 
 use input::AggInputMode;
 
-use crate::approx_count_distinct::ApproxCountDistinctSketch;
+use crate::approx_count_distinct::PartialResult4ApproxCountDistinct;
 use tidb_driver_error::ExecError;
 
 use std::cmp::Ordering;
@@ -166,7 +166,7 @@ pub enum AggKind {
         key_is_binary: bool,
     },
     /// `APPROX_COUNT_DISTINCT(a[, b, ...])`: Go's BJKST sketch
-    /// ([`ApproxCountDistinctSketch`]) over the FarmHash `Hash64` of the
+    /// ([`PartialResult4ApproxCountDistinct`]) over the FarmHash `Hash64` of the
     /// encoded argument tuple, skipping any row with a NULL argument. Below
     /// `uniquesHashMaxSize` (65536) distinct values the sketch keeps every
     /// hash and the answer is the exact distinct count; above that
@@ -502,7 +502,7 @@ pub enum Partial {
     JsonObjectAgg(BTreeMap<String, BinaryJSON>, Box<FieldType>, bool),
     /// `APPROX_COUNT_DISTINCT`: the BJKST sketch folding the group's encoded
     /// argument tuples (or serialized partial sketches), and its signature.
-    ApproxCountDistinct(ApproxCountDistinctSketch, ApproxCountDistinctSig),
+    ApproxCountDistinct(PartialResult4ApproxCountDistinct, ApproxCountDistinctSig),
     /// `APPROX_PERCENTILE`: the group's non-NULL values, ranked at finalize.
     /// `percent` is `None` for Go's always-NULL fallback build.
     ApproxPercentile {
@@ -1636,7 +1636,7 @@ impl Partial {
                 *key_is_binary,
             ),
             AggKind::ApproxCountDistinct(sig) => {
-                Partial::ApproxCountDistinct(ApproxCountDistinctSketch::new(), *sig)
+                Partial::ApproxCountDistinct(PartialResult4ApproxCountDistinct::new(), *sig)
             }
             AggKind::ApproxPercentile(percent) => Partial::ApproxPercentile {
                 values: Vec::new(),
@@ -2551,7 +2551,7 @@ pub fn datum_bits(value: &Datum) -> Result<u64, ExecError> {
 /// base-1e9 fraction words to the inferred AVG return scale before appending
 /// the value. Keeping that step here makes HashAgg, StreamAgg, and window AVG
 /// share the same result contract.
-pub fn round_avg_result(kind: &AggKind, output_type: &FieldType, value: Datum) -> Datum {
+pub fn append_final_result_2_chunk(kind: &AggKind, output_type: &FieldType, value: Datum) -> Datum {
     let Datum::Decimal(value) = value else {
         return value;
     };
@@ -2637,7 +2637,7 @@ pub fn finish_agg_value_claiming<C: Columns>(
             .partial
             .finish(&func.order_by, ctx.div_precision_increment())?
     };
-    value = round_avg_result(&func.kind, output_type, value);
+    value = append_final_result_2_chunk(&func.kind, output_type, value);
     if let Datum::Bytes(joined) = &mut value {
         if matches!(func.kind, AggKind::GroupConcat { .. }) {
             let max_len = group_concat_max_len(ctx);
@@ -2662,7 +2662,7 @@ pub fn finish_agg_value_claiming<C: Columns>(
 /// `chk.AppendMyDecimal(&p.val)`), the cell `finish_agg_value` plus
 /// `Chunk::append_datum` would build through the digit-string `Decimal`;
 /// every other state takes that path. The SUM's own rounding to a narrower
-/// output scale (`round_avg_result`) stays on the Datum path.
+/// output scale (`append_final_result_2_chunk`) stays on the Datum path.
 pub fn append_finished_agg_value_claiming<C: Columns>(
     state: &mut AggState,
     func: &AggFunc,

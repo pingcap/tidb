@@ -34,7 +34,7 @@ pub(crate) fn plain_error(message: &str) -> DriverError {
 
 /// Go `ParseOneStmt` over a recorded statement, failing as
 /// `binding failed: <parse error>. Plan Digest: <digest>`.
-pub(crate) fn parse_for_history(sql: &str, plan_digest: &str) -> Result<Stmt, DriverError> {
+pub(crate) fn parse_one_stmt(sql: &str, plan_digest: &str) -> Result<Stmt, DriverError> {
     tidb_parser::parse(sql).map_err(|error| {
         plain_error(&format!(
             "binding failed: {}. Plan Digest: {plan_digest}",
@@ -92,7 +92,7 @@ pub trait SqlBindExec:
         let digest = match &set.target {
             tidb_ast::SetBindingTarget::Statement(target) => {
                 let current_db = self.session_vars().current_db.clone();
-                let (_, digest) = binding::normalize_with_db(target.origin.as_ref(), &current_db);
+                let (_, digest) = binding::normalize_stmt_for_binding(target.origin.as_ref(), &current_db);
                 digest
             }
             tidb_ast::SetBindingTarget::SqlDigest(digest) => digest.clone(),
@@ -148,8 +148,8 @@ pub trait SqlBindExec:
             binding::default_db_of(origin, &current_db)
         };
         self.refuse_binding_on_temporary_table(origin)?;
-        let (original_sql, sql_digest) = binding::normalize_with_db(origin, &current_db);
-        let (hinted_normalized, _) = binding::normalize_with_db(hinted, &current_db);
+        let (original_sql, sql_digest) = binding::normalize_stmt_for_binding(origin, &current_db);
+        let (hinted_normalized, _) = binding::normalize_stmt_for_binding(hinted, &current_db);
         // Go's preprocessor check: erasing the hints must leave two identical
         // statements.
         binding::check_origin_matches_hinted(&original_sql, &hinted_normalized)?;
@@ -350,14 +350,14 @@ pub trait SqlBindExec:
                  limit. Please increase tidb_stmt_summary_max_sql_length. Plan Digest: {plan_digest}"
             )));
         }
-        let origin = parse_for_history(&query, plan_digest)?;
+        let origin = parse_one_stmt(&query, plan_digest)?;
         let (complete, reason) =
             tidb_hint::check_binding_from_history_complete(&origin, &plan_hint);
         let bind_sql = tidb_bindinfo::binding_utils::generate_binding_sql(&origin, &plan_hint, &schema);
-        let hinted = parse_for_history(&bind_sql, plan_digest)?;
+        let hinted = parse_one_stmt(&bind_sql, plan_digest)?;
         let bind_sql = binding::restore_with_default_db(&hinted, &schema);
         let db = binding::default_db_of(&origin, &schema);
-        let (original_sql, sql_digest) = binding::normalize_with_db(&origin, &schema);
+        let (original_sql, sql_digest) = binding::normalize_stmt_for_binding(&origin, &schema);
         if !handled_sql_digests.insert(sql_digest.clone()) {
             self.append_sql_warning(tidb_context::SqlWarn::with_code(tidb_context::WarningLevel::Warning, 1105,
                 format!(
@@ -372,7 +372,7 @@ pub trait SqlBindExec:
                 format!("{reason}. Plan Digest: {plan_digest}"),
             ));
         }
-        let bound = parse_for_history(&bind_sql, plan_digest)?;
+        let bound = parse_one_stmt(&bind_sql, plan_digest)?;
         let now = self.binding_timestamp();
         Ok(Some(Binding {
             original_sql,
@@ -460,7 +460,7 @@ pub trait SqlBindExec:
                     self.refuse_binding_on_temporary_table(target.origin.as_ref())?;
                 }
                 let current_db = self.session_vars().current_db.clone();
-                let (_, digest) = binding::normalize_with_db(target.origin.as_ref(), &current_db);
+                let (_, digest) = binding::normalize_stmt_for_binding(target.origin.as_ref(), &current_db);
                 vec![digest]
             }
             DropBindingTarget::SqlDigests(values) => values
@@ -489,7 +489,7 @@ pub trait SqlBindExec:
         }
         let dropped = digests
             .iter()
-            .filter(|digest| self.session_bindings_mut().drop_digest(digest))
+            .filter(|digest| self.session_bindings_mut().drop_session_binding(digest))
             .count();
         Ok(StmtOutput::Affected(dropped as u64))
     }

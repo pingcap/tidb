@@ -98,7 +98,7 @@ impl KvTable {
     /// [`Self::check_data_for_modify_column`] under the same cast, so a
     /// failure leaves the value as it was rather than inventing an error Go
     /// cannot reach.
-    pub(crate) fn cast_index_part(
+    pub(crate) fn cast_index_values_to_changing_types(
         &self,
         index_id: i64,
         position: usize,

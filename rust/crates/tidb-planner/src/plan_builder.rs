@@ -1893,7 +1893,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         if let (Some(handler), Some(state)) =
             (self.qb_hint_handler.as_mut(), self.qb_hint_state.as_ref())
         {
-            for warning in handler.unused_view_hint_warnings(state) {
+            for warning in handler.handle_unused_view_hints(state) {
                 self.ctx.append_warning(1815, &warning);
             }
             for warning in handler.take_warnings() {
@@ -2709,7 +2709,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         // rollup Expand is restored when the subquery is built.
         let outer_block_expand = self.current_block_expand.take();
         let parent_clause = self.cur_clause;
-        let modified_ctes = self.prepare_cte_check_for_subquery();
+        let modified_ctes = self.prepare_cte_check_for_sub_query();
         // Go `buildSubquery` (`expression_rewriter.go:498-507`): enter the
         // subquery's own ctx and CLEAR the accumulated hint flags, so the
         // inner block's `NO_DECORRELATE`/`SEMI_JOIN_REWRITE` parse against
@@ -3781,7 +3781,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
         }
 
-        if let Some(hinted) = plan_hints.prefer_tiflash(Some(&table)) {
+        if let Some(hinted) = plan_hints.if_prefer_tiflash(Some(&table)) {
             if data_source.prefer_store_type != 0 {
                 self.ctx.append_warning(
                     1815,
@@ -4641,7 +4641,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // generated column the child produces, as its own expression, so
             // `GcSubstituter` can substitute an ORDER BY expression above.
             let mut candidates = Vec::new();
-            crate::rule::rule_generate_column_substitute::collect_candidates(
+            crate::rule::rule_generate_column_substitute::collect_generate_column(
                 &plan,
                 &mut candidates,
                 self.enable_unsafe_substitute,
@@ -5154,7 +5154,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let outer_cte_depth = self.outer_ctes.len();
         let result = match &select.with {
             Some(with) => {
-                let counts = cte::cte_consumer_counts(
+                let counts = cte::update_cte_consumer_count(
                     &tidb_ast::QueryStmt::Select(Box::new(select.clone())),
                     with,
                 );
@@ -5255,7 +5255,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let (keep_mask, drafts) = match self
             .delete_multi
             .take()
-            .and_then(|input| self.multi_delete_layout(&input, &source_schema, &source_names))
+            .and_then(|input| self.prune_and_build_col_position_info_for_delete(&input, &source_schema, &source_names))
         {
             Some((mask, drafts)) => (Some(mask), drafts),
             None => (None, Vec::new()),
@@ -5464,7 +5464,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let current_layer_ctes = match &select.with {
             Some(with) => match self.build_with(
                 with,
-                &cte::cte_consumer_counts(
+                &cte::update_cte_consumer_count(
                     &tidb_ast::QueryStmt::Select(Box::new(select.clone())),
                     with,
                 ),
@@ -5884,7 +5884,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // Go `buildSelect` (`logical_plan_builder.go:4583`): a derived
             // table's ORDER BY is kept only for the top-level query, when the
             // query has a LIMIT, or when `tidb_remove_orderby_in_subquery` is
-            // off. Dropping it lets the aggregate above the join choose a
+            // off. Dropping it lets the aggregate above the join new_row_sample_collector a
             // HashAgg instead of exploiting a meaningless input order.
             let keep_order_by = self.qb_offset.len() == 1
                 || select.limit.is_some()

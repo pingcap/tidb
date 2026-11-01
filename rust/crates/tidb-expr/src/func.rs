@@ -108,7 +108,7 @@ pub(crate) fn eval_func(
     }
     // Go selects these signatures from the argument expression's FieldType
     // while building the function, before EvalString produces a runtime
-    // datum. Keep the same ordering here: source AST type facts choose one
+    // datum. Keep the same ordering here: source AST type facts new_row_sample_collector one
     // immutable evaluator first, then only that evaluator sees the value.
     if args.len() == 1 {
         let function = match name.as_str() {

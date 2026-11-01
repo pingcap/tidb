@@ -568,7 +568,7 @@ impl BaseJoinProbe {
             if self.spill_tmp.is_empty() && spill.spilled_partitions().iter().any(|&part| part) {
                 self.spill_tmp = (0..ctx.partition_number)
                     .map(|_| {
-                        Chunk::new_with_capacity(
+                        Chunk::new_chunk_with_capacity(
                             spill.probe_field_types(),
                             crate::spill::SPILL_CHUNK_SIZE,
                         )
@@ -1010,7 +1010,7 @@ impl BaseJoinProbe {
 
     /// Go `appendBuildRowToCachedBuildRowsV2`: stage an already-formed
     /// [`MatchedRowInfo`], flushing at [`BATCH_BUILD_ROW_SIZE`].
-    pub fn append_build_row_to_cached_build_rows_v2<R: BuildRowSource + ?Sized>(
+    pub fn append_build_row_to_cached_build_rows_v_2<R: BuildRowSource + ?Sized>(
         &mut self,
         ctx: &ProbeContext<'_>,
         rows: &R,
@@ -1396,17 +1396,17 @@ impl BaseJoinProbe {
         // that in test builds; that assertion is dropped (see module header).
         let pre_alloc = |source: &Column, destination: &mut Column| {
             let null_bitmap_delta =
-                destination.null_bitmap_len_delta_for_append_cell_n_times(total_times);
+                destination.calculate_len_delta_for_append_cell_n_times_for_null_bit_map(total_times);
             let (data_delta, offset_delta) = if destination.is_fixed() {
                 (
-                    Column::fixed_len_delta_for_append_cell_n_times(source, total_times),
+                    Column::calculate_len_delta_for_append_cell_n_times_for_fixed_elem(source, total_times),
                     0,
                 )
             } else {
                 let data = runs
                     .iter()
                     .map(|run| {
-                        Column::var_len_delta_for_append_cell_n_times(
+                        Column::calculate_len_delta_for_append_cell_n_times_for_var_elem(
                             source, run.offset, run.length,
                         )
                     })
@@ -1548,7 +1548,7 @@ impl BaseJoinProbe {
     /// the current probe row's chain, honoring the tag short-circuit.
     #[must_use]
     #[inline(always)]
-    pub fn next_matched_row(row: &[u8], tag_helper: &TagPtrHelper, hash_value: u64) -> usize {
+    pub fn get_next_row_address(row: &[u8], tag_helper: &TagPtrHelper, hash_value: u64) -> usize {
         let raw = usize::from_le_bytes(
             row[..SIZE_OF_NEXT_PTR]
                 .try_into()

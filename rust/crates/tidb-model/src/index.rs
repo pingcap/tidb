@@ -84,12 +84,12 @@ pub const GLOBAL_INDEX_VERSION_V2: u8 = 2;
 static GLOBAL_INDEX_V1_SUPPORTED: AtomicBool = AtomicBool::new(false);
 
 /// Go `SetGlobalIndexV1Supported`.
-pub fn set_global_index_v1_supported(supported: bool) {
+pub fn set_global_index_v_1_supported(supported: bool) {
     GLOBAL_INDEX_V1_SUPPORTED.store(supported, Ordering::SeqCst);
 }
 
 /// Go `GetGlobalIndexV1Supported`.
-pub fn get_global_index_v1_supported() -> bool {
+pub fn get_global_index_v_1_supported() -> bool {
     GLOBAL_INDEX_V1_SUPPORTED.load(Ordering::SeqCst)
 }
 
@@ -1109,12 +1109,12 @@ mod tests {
 
     #[test]
     fn global_index_v1_flag() {
-        let prev = get_global_index_v1_supported();
-        set_global_index_v1_supported(true);
-        assert!(get_global_index_v1_supported());
-        set_global_index_v1_supported(false);
-        assert!(!get_global_index_v1_supported());
-        set_global_index_v1_supported(prev);
+        let prev = get_global_index_v_1_supported();
+        set_global_index_v_1_supported(true);
+        assert!(get_global_index_v_1_supported());
+        set_global_index_v_1_supported(false);
+        assert!(!get_global_index_v_1_supported());
+        set_global_index_v_1_supported(prev);
     }
 
     #[test]

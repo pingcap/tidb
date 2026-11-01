@@ -170,7 +170,7 @@ impl RuWindowAggregator {
             .entry(bucket_start)
             .or_insert_with(|| RuPointBucket {
                 start_ts: bucket_start,
-                collecting: Some(RuCollecting::with_caps(
+                collecting: Some(RuCollecting::new_ru_collecting_with_caps(
                     MAX_PRE_TOP_N_USERS,
                     MAX_PRE_TOP_N_SQLS_PER_USER,
                 )),
@@ -308,7 +308,7 @@ pub fn build_report_records(
     let mut merged_output = if single_interval {
         None
     } else {
-        Some(RuCollecting::with_caps(
+        Some(RuCollecting::new_ru_collecting_with_caps(
             merged_pre_cap_users,
             merged_pre_cap_sqls_per_user,
         ))
@@ -317,7 +317,7 @@ pub fn build_report_records(
     let mut interval_start = window_start;
     while interval_start < window_end {
         let mut interval_collecting =
-            RuCollecting::with_caps(interval_pre_cap_users, interval_pre_cap_sqls_per_user);
+            RuCollecting::new_ru_collecting_with_caps(interval_pre_cap_users, interval_pre_cap_sqls_per_user);
         let mut bucket_start = interval_start;
         while bucket_start < interval_start + item_interval {
             if let Some(compacted) = buckets

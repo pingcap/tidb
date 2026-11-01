@@ -89,7 +89,7 @@ impl std::fmt::Debug for List {
 impl List {
     /// Go `NewListWithMemTracker`.
     #[must_use]
-    pub fn new_with_mem_tracker(
+    pub fn new_list_with_mem_tracker(
         field_types: &[FieldType],
         init_chunk_size: usize,
         max_chunk_size: usize,
@@ -110,7 +110,7 @@ impl List {
     /// Go `NewList`: a list with its own unlimited `LabelForChunkList` tracker.
     #[must_use]
     pub fn new(field_types: &[FieldType], init_chunk_size: usize, max_chunk_size: usize) -> Self {
-        Self::new_with_mem_tracker(
+        Self::new_list_with_mem_tracker(
             field_types,
             init_chunk_size,
             max_chunk_size,
@@ -305,7 +305,7 @@ mod tests {
     fn go_test_list() {
         let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
         let mut l = List::new(&fields, 2, 2);
-        let mut src_chunk = Chunk::new_with_capacity(&fields, 32);
+        let mut src_chunk = Chunk::new_chunk_with_capacity(&fields, 32);
         src_chunk.append_int64(0, 1);
 
         // Basic append: 5 rows into capacity-2 chunks is 3 chunks.
@@ -330,7 +330,7 @@ mod tests {
         // Add a whole chunk, then append: the appended row must start a NEW
         // chunk, because the added one is already accounted (`consumedIdx`).
         l.reset();
-        let mut n_chunk = Chunk::new_with_capacity(&fields, 32);
+        let mut n_chunk = Chunk::new_chunk_with_capacity(&fields, 32);
         n_chunk.append_null(0);
         l.add(n_chunk);
         let ptr = l.append_row(src_chunk.get_row(0));
@@ -342,7 +342,7 @@ mod tests {
         // Iteration order.
         l.reset();
         for i in 0..5 {
-            let mut tmp = Chunk::new_with_capacity(&fields, 32);
+            let mut tmp = Chunk::new_chunk_with_capacity(&fields, 32);
             tmp.append_int64(0, i);
             l.append_row(tmp.get_row(0));
         }
@@ -383,7 +383,7 @@ mod tests {
             let duration_obj =
                 MySqlDuration::from_nanoseconds(duration_nanos, 0).expect("representable duration");
             let max_chunk_size = 2;
-            let mut src_chk = Chunk::new_with_capacity(&field_types, max_chunk_size);
+            let mut src_chk = Chunk::new_chunk_with_capacity(&field_types, max_chunk_size);
             src_chk.append_float32(0, 12.4);
             src_chk.append_string(1, "123");
             src_chk.append_json(2, &json_obj);

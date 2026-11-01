@@ -21,7 +21,7 @@ use tidb_terror::MysqlError;
 
 /// Go `checkOperateSameColAndIdx`: a multi-schema change names one column
 /// or index at most once among its actions.
-pub fn check_multi_schema_names(info: &tidb_model::MultiSchemaInfo) -> Result<(), MysqlError> {
+pub fn check_operate_same_col_and_idx(info: &tidb_model::MultiSchemaInfo) -> Result<(), MysqlError> {
     fn check_names(
         names: &[tidb_ast::CiString],
         add_to_seen: bool,

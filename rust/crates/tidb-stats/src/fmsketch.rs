@@ -43,7 +43,7 @@ impl FmSketch {
     /// Go `NewFMSketch`, retaining its signed `int` allocation boundary.
     ///
     /// A negative map capacity panics in Go before a sketch is returned.
-    pub fn new_signed(max_size: isize) -> Self {
+    pub fn new_fm_sketch(max_size: isize) -> Self {
         assert!(max_size >= 0, "FM sketch capacity cannot be negative");
         Self::new(max_size as usize)
     }
@@ -100,7 +100,7 @@ impl FmSketch {
     /// Returns a stable view of retained hashes for persistence owners.
     ///
     /// The source map is intentionally unordered; callers that serialize the
-    /// set must choose and document their own deterministic ordering.
+    /// set must new_row_sample_collector and document their own deterministic ordering.
     #[must_use]
     pub fn contains(&self, hash: u64) -> bool {
         self.hashes.contains(&hash)

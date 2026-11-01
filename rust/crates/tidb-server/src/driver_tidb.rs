@@ -52,7 +52,7 @@ impl QuerySessionFactory for Domain {
     }
 
     fn connection_ids(&self) -> Option<Arc<dyn Allocator + Send + Sync>> {
-        Some(self.connection_id_allocator())
+        Some(self.next_conn_id())
     }
 
     fn session_manager(&self) -> Option<Arc<dyn tidb_sessmgr::processinfo::SessionManager>> {

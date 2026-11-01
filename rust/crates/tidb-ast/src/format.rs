@@ -165,7 +165,7 @@ impl RestoreContext {
 
     /// Go `restoreExprWithBinaryOpParent`: the context a child restores under.
     #[must_use]
-    pub fn with_parent(&self, op: RestoreParentOp, side: RestoreParentSide) -> Self {
+    pub fn restore_expr_with_binary_op_parent(&self, op: RestoreParentOp, side: RestoreParentSide) -> Self {
         let mut context = self.clone();
         context.parent = Some((op, side));
         context
@@ -173,7 +173,7 @@ impl RestoreContext {
 
     /// Go `restoreExprWithUnaryOpParent`.
     #[must_use]
-    pub fn with_unary_parent(&self) -> Self {
+    pub fn restore_expr_with_unary_op_parent(&self) -> Self {
         let mut context = self.clone();
         context.in_unary = true;
         context
@@ -181,7 +181,7 @@ impl RestoreContext {
 
     /// Go `restoreWithResetParentContext`.
     #[must_use]
-    pub fn with_reset_parent(&self) -> Self {
+    pub fn restore_with_reset_parent_context(&self) -> Self {
         let mut context = self.clone();
         context.parent = None;
         context.in_unary = false;

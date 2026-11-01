@@ -156,7 +156,7 @@ impl HintedIndex {
     }
 
     /// Go `HintedIndex.ShouldPushDownIndexLookUp`.
-    pub fn should_push_down_index_lookup(&self) -> bool {
+    pub fn should_push_down_index_look_up(&self) -> bool {
         self.kind == HintedIndexKind::Use && self.push_down_lookup
     }
 
@@ -275,12 +275,12 @@ impl PlanHints {
     }
 
     /// Go `IfPreferBroadcastJoin`.
-    pub fn prefer_broadcast_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
+    pub fn if_prefer_broadcast_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
         Self::match_table_names(tables, &mut self.broadcast_join)
     }
 
     /// Go `IfPreferShuffleJoin`.
-    pub fn prefer_shuffle_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
+    pub fn if_prefer_shuffle_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
         Self::match_table_names(tables, &mut self.shuffle_join)
     }
 
@@ -290,57 +290,57 @@ impl PlanHints {
     }
 
     /// Go `IfPreferNoHashJoin`.
-    pub fn prefer_no_hash_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
+    pub fn if_prefer_no_hash_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
         Self::match_table_names(tables, &mut self.no_hash_join)
     }
 
     /// Go `IfPreferNoMergeJoin`.
-    pub fn prefer_no_merge_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
+    pub fn if_prefer_no_merge_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
         Self::match_table_names(tables, &mut self.no_merge_join)
     }
 
     /// Go `IfPreferHJBuild`.
-    pub fn prefer_hash_join_build(&mut self, tables: &[Option<&HintedTable>]) -> bool {
+    pub fn if_prefer_hj_build(&mut self, tables: &[Option<&HintedTable>]) -> bool {
         Self::match_table_names(tables, &mut self.hash_join_build)
     }
 
     /// Go `IfPreferHJProbe`.
-    pub fn prefer_hash_join_probe(&mut self, tables: &[Option<&HintedTable>]) -> bool {
+    pub fn if_prefer_hj_probe(&mut self, tables: &[Option<&HintedTable>]) -> bool {
         Self::match_table_names(tables, &mut self.hash_join_probe)
     }
 
     /// Go `IfPreferINLJ`.
-    pub fn prefer_index_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
+    pub fn if_prefer_inlj(&mut self, tables: &[Option<&HintedTable>]) -> bool {
         Self::match_table_names(tables, &mut self.index_join.inlj_tables)
     }
 
     /// Go `IfPreferINLHJ`.
-    pub fn prefer_index_hash_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
+    pub fn if_prefer_inlhj(&mut self, tables: &[Option<&HintedTable>]) -> bool {
         Self::match_table_names(tables, &mut self.index_join.inlhj_tables)
     }
 
     /// Go `IfPreferINLMJ`.
-    pub fn prefer_index_merge_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
+    pub fn if_prefer_inlmj(&mut self, tables: &[Option<&HintedTable>]) -> bool {
         Self::match_table_names(tables, &mut self.index_join.inlmj_tables)
     }
 
     /// Go `IfPreferNoIndexJoin`.
-    pub fn prefer_no_index_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
+    pub fn if_prefer_no_index_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
         Self::match_table_names(tables, &mut self.no_index_join.inlj_tables)
     }
 
     /// Go `IfPreferNoIndexHashJoin`.
-    pub fn prefer_no_index_hash_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
+    pub fn if_prefer_no_index_hash_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
         Self::match_table_names(tables, &mut self.no_index_join.inlhj_tables)
     }
 
     /// Go `IfPreferNoIndexMergeJoin`.
-    pub fn prefer_no_index_merge_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
+    pub fn if_prefer_no_index_merge_join(&mut self, tables: &[Option<&HintedTable>]) -> bool {
         Self::match_table_names(tables, &mut self.no_index_join.inlmj_tables)
     }
 
     /// Go `IfPreferTiFlash`, including its returned value-copy behavior.
-    pub fn prefer_tiflash(&mut self, table: Option<&HintedTable>) -> Option<HintedTable> {
+    pub fn if_prefer_tiflash(&mut self, table: Option<&HintedTable>) -> Option<HintedTable> {
         match_storage_table(table, &mut self.tiflash_tables)
     }
 
@@ -690,7 +690,7 @@ fn table_infos(
                 .unwrap_or_else(|| current_database.to_owned()),
             table_name: table.name.clone(),
             partitions: table.partitions.clone(),
-            select_offset: query_blocks.hint_offset(table.qb_name.as_deref(), current_offset),
+            select_offset: query_blocks.get_hint_offset(table.qb_name.as_deref(), current_offset),
             matched: false,
         })
         .collect::<Vec<_>>();
@@ -701,7 +701,7 @@ fn table_infos(
         // the client reads ErrUnknown (1105), not ErrInternal.
         warnings.push(HintWarning::ordinary(format!(
             "Optimizer Hint {} is inapplicable on specified partitions",
-            restore_join_hint(hint_name, &result)
+            restore_2_join_hint(hint_name, &result)
         )));
         Vec::new()
     } else {
@@ -725,7 +725,7 @@ fn join_hint_disallows_partitions(name: &str) -> bool {
 }
 
 /// Go `Restore2JoinHint`.
-pub fn restore_join_hint(hint_type: &str, tables: &[HintedTable]) -> String {
+pub fn restore_2_join_hint(hint_type: &str, tables: &[HintedTable]) -> String {
     if tables.is_empty() {
         return hint_type.to_ascii_uppercase();
     }
@@ -772,7 +772,7 @@ pub fn restore_index_hint(hint_type: &str, hint: &HintedIndex) -> String {
 }
 
 /// Go `Restore2StorageHint`.
-pub fn restore_storage_hint(tiflash: &[HintedTable], tikv: &[HintedTable]) -> String {
+pub fn restore_2_storage_hint(tiflash: &[HintedTable], tikv: &[HintedTable]) -> String {
     let restore_tables = |tables: &[HintedTable]| {
         tables
             .iter()
@@ -884,7 +884,7 @@ pub fn collect_unmatched_hint_warnings(plan: &PlanHints) -> Vec<String> {
         warnings.push(format!(
             "There are no matching table names for ({}) in optimizer hint {}. Maybe you can use the table alias name",
             names.join(", "),
-            restore_storage_hint(&plan.tiflash_tables, &plan.tikv_tables)
+            restore_2_storage_hint(&plan.tiflash_tables, &plan.tikv_tables)
         ));
     }
     warnings
@@ -919,12 +919,12 @@ fn collect_unmatched_join(
     let alias = if alias.is_empty() {
         String::new()
     } else {
-        format!(" or {}", restore_join_hint(alias, tables))
+        format!(" or {}", restore_2_join_hint(alias, tables))
     };
     warnings.push(format!(
         "There are no matching table names for ({}) in optimizer hint {}{alias}. Maybe you can use the table alias name",
         names.join(", "),
-        restore_join_hint(kind, tables)
+        restore_2_join_hint(kind, tables)
     ));
 }
 

@@ -162,7 +162,7 @@ impl LogicalAggregation {
                     collate_id: column
                         .get_static_type()
                         .map(|field_type| {
-                            tidb_planner_property::collate_id_for_partition(
+                            tidb_planner_property::get_collate_id_by_name_for_partition(
                                 field_type.collation_name(),
                             )
                         })
@@ -225,7 +225,7 @@ impl LogicalAggregation {
     /// ARBITRARY input row, so pushing a `HAVING` on a `firstrow()` output back
     /// to base rows would be unsound.
     #[must_use]
-    pub fn agg_funcs_cols_for_first_row(&self, self_schema: &Schema) -> Vec<Column> {
+    pub fn get_agg_funcs_cols_for_first_row(&self, self_schema: &Schema) -> Vec<Column> {
         if self.has_only_const_group_by_items() {
             return Vec::new();
         }
@@ -245,7 +245,7 @@ impl LogicalAggregation {
     /// the outputs whose value equals their single row-independent argument in
     /// every non-empty group, paired with that argument.
     #[must_use]
-    pub fn agg_funcs_cols_for_const_result(
+    pub fn get_agg_funcs_cols_for_const_result(
         &self,
         self_schema: &Schema,
     ) -> (Vec<Column>, Vec<Expression>) {
@@ -303,9 +303,9 @@ impl LogicalAggregation {
             })
             .collect();
         let group_by_columns = Schema::new(self.get_group_by_cols());
-        let agg_first_row_columns = Schema::new(self.agg_funcs_cols_for_first_row(self_schema));
+        let agg_first_row_columns = Schema::new(self.get_agg_funcs_cols_for_first_row(self_schema));
         let (const_result_columns, const_result_exprs) =
-            self.agg_funcs_cols_for_const_result(self_schema);
+            self.get_agg_funcs_cols_for_const_result(self_schema);
         let const_result_schema =
             (!const_result_columns.is_empty()).then(|| Schema::new(const_result_columns));
         let pusher = AggPredicatePusher {

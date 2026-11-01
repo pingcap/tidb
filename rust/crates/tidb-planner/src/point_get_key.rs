@@ -21,7 +21,7 @@
 //! domain, or one longer than its capacity, matches no stored row.
 
 use tidb_datatype::{Datum, FieldType};
-use crate::point_get_value::can_convert_in_point_get;
+use crate::point_get_value::check_can_convert_in_point_get;
 pub use crate::point_get_value::point_get_value;
 
 /// Whether a constant cannot be represented in its column's domain.
@@ -34,7 +34,7 @@ pub use crate::point_get_value::point_get_value;
 /// value, is the signal: `convert_to` clamps to a representable value and
 /// records the overflow.
 pub fn point_get_value_overflowed(column: &FieldType, value: &Datum) -> bool {
-    if value.is_null() || !can_convert_in_point_get(column, value) {
+    if value.is_null() || !check_can_convert_in_point_get(column, value) {
         return false;
     }
     match value.convert_to(column, tidb_datatype::STRICT_FLAGS) {

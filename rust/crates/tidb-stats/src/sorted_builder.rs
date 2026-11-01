@@ -82,7 +82,7 @@ impl SortedHistogramBuilder {
             self.histogram.ndv = self.histogram.ndv.wrapping_add(1);
         } else {
             if self.bucket_index.wrapping_add(1) == self.num_buckets {
-                self.histogram.merge_neighbor_buckets(index);
+                self.histogram.merge_buckets(index);
                 self.values_per_bucket = self.values_per_bucket.wrapping_mul(2);
                 self.bucket_index /= 2;
                 self.last_number = if self.bucket_index == 0 {

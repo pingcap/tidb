@@ -347,7 +347,7 @@ impl KvTable {
     /// drew from the cursor unconditionally shifted every later row's id by
     /// one per explicit id in the batch. Measured against TiDB -- see the
     /// receipt on `RetryAutoIds`.
-    pub fn apply_auto_increment(
+    pub fn adjust_auto_increment_datum(
         &mut self,
         row: &mut [Datum],
         step: (u64, u64),
@@ -387,7 +387,7 @@ impl KvTable {
                 .map_err(AutoIdError::Store)?;
             return Ok(AutoIncrement::Given(current));
         }
-        let (increment, step_offset) = auto_id::increment_and_offset(step.0, step.1);
+        let (increment, step_offset) = auto_id::get_increment_and_offset(step.0, step.1);
         // A replay does not draw from the counter at all: the id it is
         // rewriting was already drawn, and drawing again is exactly the gap
         // that moves `LAST_INSERT_ID()` off the row it names.
@@ -445,7 +445,7 @@ impl KvTable {
     /// Go `CastValue`'s clamp of an out-of-range auto id: the column's own
     /// upper bound, written in its domain, which `setDatumAutoIDAndCast` keeps
     /// when an ON DUPLICATE KEY UPDATE may go on with it.
-    pub fn clamp_auto_increment(&self, row: &mut [Datum]) {
+    pub fn set_datum_auto_id_and_cast(&self, row: &mut [Datum]) {
         let Some(offset) = self.auto_increment_offset else {
             return;
         };
@@ -547,12 +547,12 @@ mod tests {
             let mut table = auto_increment_table(unsigned);
             let mut row = [explicit];
             assert_eq!(
-                table.apply_auto_increment(&mut row, (1, 1), || None),
+                table.adjust_auto_increment_datum(&mut row, (1, 1), || None),
                 Ok(AutoIncrement::Given(pattern))
             );
             let mut row = [Datum::Null];
             assert_eq!(
-                table.apply_auto_increment(&mut row, (1, 1), || None),
+                table.adjust_auto_increment_datum(&mut row, (1, 1), || None),
                 Err(AutoIdError::Exhausted),
                 "unsigned={unsigned}"
             );
@@ -568,12 +568,12 @@ mod tests {
         let mut table = auto_increment_table(true);
         let mut row = [Datum::UInt(1 << 63)];
         assert_eq!(
-            table.apply_auto_increment(&mut row, (1, 1), || None),
+            table.adjust_auto_increment_datum(&mut row, (1, 1), || None),
             Ok(AutoIncrement::Given(1 << 63))
         );
         let mut row = [Datum::Null];
         table
-            .apply_auto_increment(&mut row, (1, 1), || None)
+            .adjust_auto_increment_datum(&mut row, (1, 1), || None)
             .unwrap();
         assert_eq!(row[0], Datum::UInt((1 << 63) + 1));
     }
@@ -586,12 +586,12 @@ mod tests {
         let mut table = auto_increment_table(false);
         let mut row = [Datum::Int(-5)];
         assert_eq!(
-            table.apply_auto_increment(&mut row, (1, 1), || None),
+            table.adjust_auto_increment_datum(&mut row, (1, 1), || None),
             Ok(AutoIncrement::Given(-5_i64 as u64))
         );
         let mut row = [Datum::Null];
         table
-            .apply_auto_increment(&mut row, (1, 1), || None)
+            .adjust_auto_increment_datum(&mut row, (1, 1), || None)
             .unwrap();
         assert_eq!(row[0], Datum::Int(1));
     }

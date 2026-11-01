@@ -1287,7 +1287,7 @@ pub trait EvictedSink: Send {
 }
 
 /// The [`EvictedSink`] for maps built through
-/// [`StmtSummaryByDigestMap::with_sinks`] that keep no rollup: drops
+/// [`StmtSummaryByDigestMap::new_stmt_summary_by_digest_map`] that keep no rollup: drops
 /// everything.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoopEvictedSink;
@@ -1348,7 +1348,7 @@ pub struct StmtSummaryByDigestMap {
     other: Arc<Mutex<Box<dyn EvictedSink>>>,
     /// The same object as `other`, at its concrete type, whenever this map owns
     /// the real `evicted.go` rollup (which Go's `newStmtSummaryByDigestMap`
-    /// always does). `None` only for a map built by [`Self::with_sinks`] with
+    /// always does). `None` only for a map built by [`Self::new_stmt_summary_by_digest_map`] with
     /// some other sink.
     other_evicted: Option<Arc<Mutex<StmtSummaryByDigestEvicted>>>,
     /// Go `currentWindowEvictedCount`: counts LRU evictions observed in the
@@ -1373,7 +1373,7 @@ impl StmtSummaryByDigestMap {
     pub fn new() -> Self {
         // Go's `other: newStmtSummaryByDigestEvicted()`.
         let evicted = Arc::new(Mutex::new(StmtSummaryByDigestEvicted::new()));
-        let mut map = Self::with_sinks(
+        let mut map = Self::new_stmt_summary_by_digest_map(
             Box::new(Arc::clone(&evicted)),
             Box::new(NoopWindowMetricsSink),
         );
@@ -1389,7 +1389,7 @@ impl StmtSummaryByDigestMap {
 
     /// Go `newStmtSummaryByDigestMap` with the two narrowed collaborators
     /// injected.
-    pub fn with_sinks(evicted: Box<dyn EvictedSink>, metrics: Box<dyn WindowMetricsSink>) -> Self {
+    pub fn new_stmt_summary_by_digest_map(evicted: Box<dyn EvictedSink>, metrics: Box<dyn WindowMetricsSink>) -> Self {
         // This initializes the map with "compiled defaults" (which are
         // regrettably duplicated from sessionctx/variable/tidb_vars.go).
         // Unfortunately we need to do this to avoid circular dependencies, but
@@ -1794,7 +1794,7 @@ pub fn avg_float(sum: i64, count: i64) -> f64 {
 }
 
 /// Go `avgFloat4Uint`.
-pub fn avg_float4_uint(sum: u64, count: i64) -> f64 {
+pub fn avg_float_4_uint(sum: u64, count: i64) -> f64 {
     if count > 0 {
         sum as f64 / count as f64
     } else {

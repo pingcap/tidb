@@ -136,7 +136,7 @@ impl KvTableDdl for KvTable {
                 // The same entry value an INSERT writes, restored data and
                 // all -- a backfill that stored a simpler one would leave the
                 // index holding two different formats for the same table.
-                let value = self.index_entry_value(
+                let value = self.gen_index_value(
                     &index,
                     &entry.values,
                     row,
@@ -195,7 +195,7 @@ impl KvTableDdl for KvTable {
             // `index.Create(..., table.WithIgnoreAssertion,
             // table.DupKeyCheckSkip)`: every entry of the row, unchecked.
             for entry in entries {
-                let value = self.index_entry_value(
+                let value = self.gen_index_value(
                     &index,
                     &entry.values,
                     row,

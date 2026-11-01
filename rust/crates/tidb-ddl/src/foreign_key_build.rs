@@ -7,7 +7,7 @@
 //!   `addIndexForForeignKey` (`create_table.go:1740`). Catalog-free.
 //! * [`check_table_foreign_keys_valid`] -- `checkTableForeignKeysValid`
 //!   (`foreign_key.go:151`), the submitter-side check against InfoSchema.
-//! * [`check_table_foreign_keys_valid_in_owner`] -- the owner-side
+//! * [`check_table_foreign_key_valid_in_owner`] -- the owner-side
 //!   `checkTableForeignKeyValidInOwner` (`foreign_key.go:214`) followed by
 //!   `allocateFKIndexID` (`create_table.go:95`).
 
@@ -26,7 +26,7 @@ use tidb_model::table_info::TableInfo;
 /// Go `checkTableForeignKeyValid` (submitter) and, with `in_owner`,
 /// `checkTableForeignKeyValidInOwner` for one key of `table`: the key against
 /// the table it references, which may be `table` itself.
-pub(crate) fn check_foreign_key_valid(
+pub(crate) fn check_table_foreign_key_valid(
     catalog: &ClusterCatalog,
     schema: &str,
     table: &TableInfo,
@@ -103,7 +103,7 @@ fn check_valid(
     let schema_l = schema.go_to_lower();
     for fk in table.foreign_keys.iter_deref() {
         let fk = fk.read();
-        check_foreign_key_valid(catalog, schema, table, &fk, fk_check, in_owner)?;
+        check_table_foreign_key_valid(catalog, schema, table, &fk, fk_check, in_owner)?;
     }
     // Go `is.GetTableReferredForeignKeys`: children created earlier with
     // `foreign_key_checks=0` that reference this (new) table.
@@ -135,7 +135,7 @@ pub fn check_table_foreign_keys_valid(
 
 /// Go `checkTableForeignKeyValidInOwner` then `allocateFKIndexID` for every
 /// key (`create_table.go:87-98`).
-pub fn check_table_foreign_keys_valid_in_owner(
+pub fn check_table_foreign_key_valid_in_owner(
     catalog: &ClusterCatalog,
     schema: &str,
     table: &mut TableInfo,

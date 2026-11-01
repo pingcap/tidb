@@ -38,7 +38,7 @@ const RETRY_COUNT: usize = 1;
 
 /// Go `GetSyncLoadConcurrencyByCPU`.
 #[must_use]
-pub fn concurrency_by_cpu() -> usize {
+pub fn get_sync_load_concurrency_by_cpu() -> usize {
     let cores = std::thread::available_parallelism().map_or(1, usize::from);
     match cores {
         0..=8 => 5,
@@ -95,7 +95,7 @@ impl StatisticsLoadWorkers {
         let performance = &config.performance;
         let concurrency = match performance.stats_load_concurrency {
             configured if configured < 0 => 0,
-            0 => concurrency_by_cpu(),
+            0 => get_sync_load_concurrency_by_cpu(),
             configured => usize::try_from(configured).unwrap_or(usize::MAX),
         };
         let lease = serde_json::from_value::<tidb_config_configtypes::Duration>(
@@ -533,7 +533,7 @@ mod tests {
 
     #[test]
     fn cpu_concurrency_matches_go_thresholds_for_the_current_machine() {
-        assert!(matches!(concurrency_by_cpu(), 5 | 6 | 8 | 10));
+        assert!(matches!(get_sync_load_concurrency_by_cpu(), 5 | 6 | 8 | 10));
     }
 
     #[test]

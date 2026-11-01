@@ -635,7 +635,7 @@ impl BaseFuncDesc {
             return self.type_infer_4_max_min();
         }
         // Merge the type of the first and third argument.
-        let merged = tidb_expr::rewriter::infer_type4_control_funcs(
+        let merged = tidb_expr::rewriter::infer_type_4_control_funcs(
             &self.name,
             &[self.args[0].clone(), self.args[2].clone()],
         );
@@ -738,7 +738,7 @@ impl BaseFuncDesc {
                 }
                 EvalType::Duration => wrap_cast::wrap_with_cast_as_duration(old)?,
                 EvalType::Json => wrap_cast::wrap_with_cast_as_json(old)?,
-                EvalType::VectorFloat32 => wrap_cast::wrap_with_cast_as_vector_float32(old)?,
+                EvalType::VectorFloat32 => wrap_cast::wrap_with_cast_as_vector_float_32(old)?,
             };
             // Go BuildCastFunction folds non-JSON casts with the live build
             // context. Preserve constants for buildLeadLag's default conversion.

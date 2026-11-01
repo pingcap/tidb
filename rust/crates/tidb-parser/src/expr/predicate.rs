@@ -144,7 +144,7 @@ impl Parser {
     /// `chainable` — `IS [NOT] NULL` chains at boolean_primary level
     /// (`true`), while `IS [NOT] TRUE/FALSE/UNKNOWN` sit at expression level
     /// and do NOT chain (`false`, including UNKNOWN despite its Null node).
-    pub(crate) fn parse_is(&mut self, left: Expr) -> PResult<(Expr, bool)> {
+    pub(crate) fn parse_is_expr(&mut self, left: Expr) -> PResult<(Expr, bool)> {
         self.expect_kw("IS")?;
         let not = self.is_kw("NOT");
         if not {

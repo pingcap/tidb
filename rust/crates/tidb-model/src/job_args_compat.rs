@@ -86,7 +86,7 @@ const fn is_zero_i64(value: &i64) -> bool {
 /// exactly like Go's unchecked slice indexing. Extra entries are ignored
 /// because the source iterates only `oldSchemaIDs`.
 #[must_use]
-pub fn rename_tables_args_from_v1(
+pub fn get_rename_tables_args_from_v_1(
     old_schema_ids: &[i64],
     old_schema_names: &[CiString],
     old_table_names: &[CiString],

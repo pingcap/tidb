@@ -977,7 +977,7 @@ pub use column::*;
 #[path = "job_args_compat.rs"]
 mod compat;
 pub use compat::{
-    index_arg_columnar_index_type, rename_tables_args_from_v1, IndexOp, RenameTableArgs,
+    index_arg_columnar_index_type, get_rename_tables_args_from_v_1, IndexOp, RenameTableArgs,
 };
 
 #[cfg(test)]

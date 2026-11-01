@@ -773,7 +773,7 @@ impl ClusterStatsLoader {
 
     /// Go `initStatsHistogramsConcurrently`: load index histogram metadata
     /// and CMSketch while leaving TopN and buckets evicted.
-    pub fn load_table_for_init_stats_histograms<S: MetaSnapshot>(
+    pub fn init_stats_histograms_concurrently<S: MetaSnapshot>(
         &self,
         snapshot: &mut S,
         table_id: i64,
@@ -795,7 +795,7 @@ impl ClusterStatsLoader {
     /// Go `initStatsTopNConcurrently`: add index TopN but do not load
     /// buckets. An index is complete at this stage only when its table has no
     /// stored index bucket rows.
-    pub fn load_table_for_init_stats_topn<S: MetaSnapshot>(
+    pub fn init_stats_top_n_concurrently<S: MetaSnapshot>(
         &self,
         snapshot: &mut S,
         table_id: i64,
@@ -914,7 +914,7 @@ impl ClusterStatsLoader {
         column_type: Option<&FieldType>,
     ) -> Result<Option<Histogram>, SystemTableError> {
         let Some(mut item) =
-            self.load_item(snapshot, table_id, is_index, id, column_type, false)?
+            self.read_stats_for_one_item(snapshot, table_id, is_index, id, column_type, false)?
         else {
             return Ok(None);
         };
@@ -1051,7 +1051,7 @@ impl ClusterStatsLoader {
                     }
                     metadata.to_index(table_id, table_info)
                 } else if current_item.is_none_or(|(_, _, version)| version < hist_version) {
-                    self.load_item(snapshot, table_id, true, metadata.id, None, true)?
+                    self.read_stats_for_one_item(snapshot, table_id, true, metadata.id, None, true)?
                         .and_then(|item| item.to_index(table_id, table_info))
                 } else {
                     None
@@ -1098,7 +1098,7 @@ impl ClusterStatsLoader {
                     }
                     metadata.to_column(table_id, table_info)
                 } else if current_state.is_none_or(|(_, _, version, _)| version < hist_version) {
-                    self.load_item(
+                    self.read_stats_for_one_item(
                         snapshot,
                         table_id,
                         false,
@@ -1185,7 +1185,7 @@ impl ClusterStatsLoader {
         load_fm: bool,
     ) -> Result<Option<ClusterTableStats>, SystemTableError> {
         let Some((version, snapshot_ts, modify_count, row_count, last_stats_hist_version)) =
-            self.load_meta(snapshot, table_id)?
+            self.stats_meta_count_and_modify_count(snapshot, table_id)?
         else {
             return Ok(None);
         };
@@ -1314,7 +1314,7 @@ impl ClusterStatsLoader {
     /// Go `readStatsForOneItem`: load one column or index from its exact
     /// histogram/bucket/TopN key ranges. `full_load=false` is the metadata-only
     /// request used by asynchronous initialization.
-    pub fn load_item<S: MetaSnapshot>(
+    pub fn read_stats_for_one_item<S: MetaSnapshot>(
         &self,
         snapshot: &mut S,
         table_id: i64,
@@ -1346,7 +1346,7 @@ impl ClusterStatsLoader {
         table_info: &TableInfo,
         column_type: &FieldType,
     ) -> Result<Option<Column>, SystemTableError> {
-        let Some(mut item) = self.load_item(
+        let Some(mut item) = self.read_stats_for_one_item(
             snapshot,
             table_id,
             false,
@@ -1550,7 +1550,7 @@ impl ClusterStatsLoader {
     /// or `None` for a table with no row -- the public single-table form of
     /// [`Self::load_stats_meta_rows`], and the read behind
     /// [`Self::load_table`]'s presence check.
-    pub fn load_meta<S: MetaSnapshot>(
+    pub fn stats_meta_count_and_modify_count<S: MetaSnapshot>(
         &self,
         snapshot: &mut S,
         table_id: i64,

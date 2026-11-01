@@ -121,7 +121,7 @@ pub fn build_table_partitioning(
         .partitioning
         .as_ref()
         .map(|partitioning| {
-            build_partitioning(
+            build_table_partition_info(
                 partitioning,
                 names,
                 types,
@@ -137,7 +137,7 @@ pub fn build_table_partitioning(
 /// Go `buildTablePartitionInfo` for one written partition clause, the
 /// CREATE TABLE battery that `ALTER TABLE ... PARTITION BY` and REORGANIZE
 /// PARTITION's `checkReorgPartitionDefs` run as well.
-pub fn build_partitioning(
+pub fn build_table_partition_info(
     partitioning: &tidb_ast::TablePartitioning,
     names: &[String],
     types: &[FieldType],
@@ -226,7 +226,7 @@ fn build_table_partitioning_inner(
                 &ctx.get_expr_ctx().get_eval_ctx().time_zone(),
                 ctx.get_expr_ctx().get_eval_ctx().like_default_escape(),
             )?;
-            unsigned = tidb_table::partition_fold::partition_expression_is_unsigned(&built);
+            unsigned = tidb_table::partition_fold::is_part_expr_unsigned(&built);
         } else if let [path] = method.columns.as_slice() {
             let name = path.last().ok_or_else(|| {
                 tidb_terror::MysqlError::from_terror(
@@ -252,7 +252,7 @@ fn build_table_partitioning_inner(
             column = Some(&types[offset]);
         }
         let definitions =
-            super::partition_interval::expand_interval(partitioning, column, unsigned, ctx)?;
+            super::partition_interval::generate_partition_definitions_from_interval(partitioning, column, unsigned, ctx)?;
         let mut expanded = partitioning.clone();
         expanded.definitions = definitions;
         expanded.method.interval = None;
@@ -398,7 +398,7 @@ fn build_table_partitioning_inner(
             ));
         }
         check_partition_columns_unique(&dependencies)?;
-        super::table_partition_range::check_range_columns_strictly_increasing(
+        super::table_partition_range::check_partition_by_range(
             &less_than,
             &field_types,
         )?;
@@ -508,7 +508,7 @@ fn build_table_partitioning_inner(
         unsigned,
     } = &kind
     {
-        super::table_partition_range::check_strictly_increasing(less_than, *unsigned)?;
+        super::table_partition_range::check_range_partition_value(less_than, *unsigned)?;
     }
     if let Some(duplicate) = deferred {
         return Err(duplicate);
@@ -1731,7 +1731,7 @@ pub fn check_too_long_partition_name(name: &str) -> Result<(), MysqlError> {
 
 /// Go `checkUniqueKeyIncludePartKey`: a partition column is covered only by
 /// a key part over the WHOLE column; a prefix part (`Length > 0`) is not.
-pub fn key_part_covers(offsets: &[usize], prefix_lengths: &[i64], column: usize) -> bool {
+pub fn check_unique_key_include_part_key(offsets: &[usize], prefix_lengths: &[i64], column: usize) -> bool {
     offsets
         .iter()
         .position(|offset| *offset == column)
@@ -1766,7 +1766,7 @@ fn check_unique_keys_include_partition_columns(
         let (offsets, lengths) = index_key_parts(index, names);
         if dependencies
             .iter()
-            .all(|offset| key_part_covers(&offsets, &lengths, *offset))
+            .all(|offset| check_unique_key_include_part_key(&offsets, &lengths, *offset))
         {
             continue;
         }

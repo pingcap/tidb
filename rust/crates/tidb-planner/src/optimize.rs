@@ -406,7 +406,7 @@ fn attach_dynamic_partition_access(
 /// # Errors
 ///
 /// No physical plan found, or a resolution error.
-pub fn optimize_physical<C: OptimizeContext>(
+pub fn physical_optimize<C: OptimizeContext>(
     logical: &LogicalPlan,
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
@@ -508,7 +508,7 @@ pub fn optimize_physical<C: OptimizeContext>(
     crate::post_optimize::merge_continuous_selections(&mut physical);
     // Go postOptimize: eliminateUnionScanAndLock (the UnionScan half).
     let mut physical =
-        crate::post_optimize::eliminate_union_scan_over_point_get(physical, ctx.in_transaction());
+        crate::post_optimize::eliminate_union_scan_and_lock(physical, ctx.in_transaction());
     tidb_planner_core_operator_physicalop::shuffle::install_receivers(&mut physical, plan_ids)?;
     if ctx.enable_parallel_apply() {
         crate::post_optimize::enable_parallel_apply(&mut physical, ctx.executor_concurrency());

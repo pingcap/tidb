@@ -360,7 +360,7 @@ pub fn cluster_session_stack(
         .transpose()
         .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     // Go `initResourceGroupsController`, after the server ID is fetched.
-    let resource_groups_controller = tidb_session::domain::resource_groups_controller::start_resource_groups_controller(
+    let resource_groups_controller = tidb_session::domain::resource_groups_controller::init_resource_groups_controller(
         authority.tikv_store(),
         server_identity.as_ref().map_or(0, |identity| identity.id()),
     )?;
@@ -390,12 +390,12 @@ pub fn cluster_session_stack(
             tidb_owner::Context::background(),
             client as Arc<dyn tidb_owner::OwnerStore>,
             tidb_session::domain::cluster_session_node::STATS_OWNER_PROMPT,
-            server_info.local_server_info().static_info.id,
+            server_info.get_local_server_info().static_info.id,
             tidb_session::domain::cluster_session_node::STATS_OWNER_KEY,
         )),
         None => Arc::new(tidb_owner::MockManager::new(
             tidb_owner::Context::background(),
-            server_info.local_server_info().static_info.id,
+            server_info.get_local_server_info().static_info.id,
             // Match the store-scoped mock DDL owner and Go store.UUID().
             Some(&format!(
                 "embedded-authority-{}",
@@ -414,12 +414,12 @@ pub fn cluster_session_stack(
                 tidb_owner::Context::background(),
                 client as Arc<dyn tidb_owner::OwnerStore>,
                 "bindinfo",
-                server_info.local_server_info().static_info.id.clone(),
+                server_info.get_local_server_info().static_info.id.clone(),
                 "/tidb/bindinfo/owner",
             )),
             None => Arc::new(tidb_owner::MockManager::new(
                 tidb_owner::Context::background(),
-                server_info.local_server_info().static_info.id.clone(),
+                server_info.get_local_server_info().static_info.id.clone(),
                 Some(&format!(
                     "embedded-authority-{}",
                     authority.transaction_opener().authority_id()
@@ -444,7 +444,7 @@ pub fn cluster_session_stack(
                 Arc::clone(&schema_pins),
                 Arc::clone(&min_job_id_refresher),
                 etcd,
-                server_info.local_server_info().static_info.id,
+                server_info.get_local_server_info().static_info.id,
                 Arc::clone(&server_info),
                 Arc::clone(&schema_validator),
                 reloader.waker(),

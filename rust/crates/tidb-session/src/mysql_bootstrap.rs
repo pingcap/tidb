@@ -67,7 +67,7 @@ use tidb_ddl::pre_split::BootstrapSplits;
 use tidb_syssession::advisory_locks::{find_system_table, SystemTableLookupError};
 use tidb_syssession::mysql_system_tables::SYSTEM_DB;
 use tidb_syssession::system_row_write::codec_table_info;
-use tidb_ddl_build::table_info_build::{build_table_info_with_context, DdlAdmissionError};
+use tidb_ddl_build::table_info_build::{build_table_info_from_ast, DdlAdmissionError};
 
 mod jobs;
 mod rows;
@@ -460,8 +460,8 @@ fn build_bootstrap_table(
     // `metabuild.NewContext(WithExprCtx(<ModeNone static context>))`, which
     // is `NewNonStrictContext` spelled inline: every other option at its
     // `NewContext` default (clustered index ON).
-    let mb_ctx = tidb_metabuild::Context::new_non_strict();
-    let mut info = build_table_info_with_context(
+    let mb_ctx = tidb_metabuild::Context::new_non_strict_context();
+    let mut info = build_table_info_from_ast(
         create,
         SYSTEM_DB_CHARSET,
         SYSTEM_DB_COLLATION,

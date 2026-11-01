@@ -310,7 +310,7 @@ impl IndexHashState {
             unordered_candidate_entry: None,
             probe_hash: None,
             outer_row: 0,
-            scratch: Chunk::new_with_capacity(&output.condition_types, 1),
+            scratch: Chunk::new_chunk_with_capacity(&output.condition_types, 1),
             candidate_outer: Vec::new(),
             selected: Vec::new(),
             nulls: Vec::new(),
@@ -618,7 +618,7 @@ impl Drop for IndexHashChunk {
     fn drop(&mut self) {
         self.tracker.consume(-self.bytes);
         if let Some(sender) = self.recycle.take() {
-            let mut chunk = std::mem::replace(&mut self.chunk, Chunk::new_with_capacity(&[], 0));
+            let mut chunk = std::mem::replace(&mut self.chunk, Chunk::new_chunk_with_capacity(&[], 0));
             chunk.reset();
             let _ = sender.try_send(chunk);
         }
@@ -819,7 +819,7 @@ mod tests {
                 right_types: vec![ty.clone()],
                 output_types: vec![ty.clone(), ty.clone()],
             };
-            let mut chunk = Chunk::new_with_capacity(&[ty.clone()], 4);
+            let mut chunk = Chunk::new_chunk_with_capacity(&[ty.clone()], 4);
             for _ in 0..4 {
                 chunk.append_int64(0, 1);
             }
@@ -915,7 +915,7 @@ mod tests {
         let tracker = memory.operator_tracker(1);
         let ty = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
         let mut outer = OuterBatch::new(&[ty.clone()], 1, 1);
-        let mut chunk = Chunk::new_with_capacity(&[ty], 1);
+        let mut chunk = Chunk::new_chunk_with_capacity(&[ty], 1);
         chunk.append_int64(0, 1);
         outer.push(chunk.get_row(0));
         let bytes = outer.settle_bytes();
@@ -964,7 +964,7 @@ mod tests {
                 }];
                 let memory = StatementMemory::default();
                 let tracker = memory.operator_tracker(1);
-                let mut source = Chunk::new_with_capacity(&types, 4);
+                let mut source = Chunk::new_chunk_with_capacity(&types, 4);
                 source.append_null(0);
                 for key in [1, 1, 9] {
                     source.append_int64(0, key);
@@ -974,7 +974,7 @@ mod tests {
                     outer.push(source.get_row(i));
                 }
                 let mut inner = List::new(&types, 4, 1024);
-                let mut chunk = Chunk::new_with_capacity(&types, 4);
+                let mut chunk = Chunk::new_chunk_with_capacity(&types, 4);
                 chunk.append_null(0);
                 for key in [1, 1, 2] {
                     chunk.append_int64(0, key);

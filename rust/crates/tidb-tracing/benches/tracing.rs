@@ -18,7 +18,7 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tidb_tracing::{child_span_from_context, span_from_context, Span, TraceContext, Tracer};
+use tidb_tracing::{child_span_from_contxt, span_from_context, Span, TraceContext, Tracer};
 
 const SAMPLE_WINDOW: Duration = Duration::from_millis(100);
 
@@ -61,6 +61,6 @@ fn main() {
         black_box(span_from_context(&context));
     });
     measure("BenchmarkChildFromContext", || {
-        black_box(child_span_from_context(&context, "child"));
+        black_box(child_span_from_contxt(&context, "child"));
     });
 }

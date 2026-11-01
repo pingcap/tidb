@@ -36,7 +36,7 @@ fn codec_encode_decode_round_trip() {
     let num_rows = 10;
     let col_types = codec_field_types();
 
-    let mut old_chk = Chunk::new_with_capacity(&col_types, num_rows);
+    let mut old_chk = Chunk::new_chunk_with_capacity(&col_types, num_rows);
     for i in 0..num_rows {
         let text = format!("{i}.12345");
         old_chk.append_null(0);
@@ -52,7 +52,7 @@ fn codec_encode_decode_round_trip() {
     let codec = Codec::new(col_types.clone());
     let buffer = codec.encode(&old_chk);
 
-    let mut new_chk = Chunk::new_with_capacity(&col_types, num_rows);
+    let mut new_chk = Chunk::new_chunk_with_capacity(&col_types, num_rows);
     let remained = codec.decode_to_chunk(&buffer, &mut new_chk);
 
     assert!(remained.is_empty());

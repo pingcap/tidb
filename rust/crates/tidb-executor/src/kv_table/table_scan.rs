@@ -4137,7 +4137,7 @@ impl RemoteRowCursor {
             .map_err(KvTableError::from)?
         else {
             self.note_wire_rows();
-            return Ok(Some(Chunk::new_with_capacity(
+            return Ok(Some(Chunk::new_chunk_with_capacity(
                 &self.field_types[..self.width.min(self.field_types.len())],
                 0,
             )));
@@ -7934,7 +7934,7 @@ mod remote_cursor_tests {
     #[test]
     fn clean_remote_cursor_forwards_required_rows_to_the_go_chunk_decoder() {
         let field_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
-        let mut batch = Chunk::new_with_capacity(&field_types, 1);
+        let mut batch = Chunk::new_chunk_with_capacity(&field_types, 1);
         batch.append_int64(0, 7);
         let requested_rows = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let mut cursor = RemoteRowCursor {
@@ -7961,7 +7961,7 @@ mod remote_cursor_tests {
             noted_rows: 0,
             predicates_applied: true,
         };
-        let mut output = Chunk::new_with_capacity(&field_types, 4);
+        let mut output = Chunk::new_chunk_with_capacity(&field_types, 4);
 
         assert_eq!(
             cursor.append_clean_chunk(&mut output, 4, false).unwrap(),
@@ -7978,7 +7978,7 @@ mod remote_cursor_tests {
     #[test]
     fn integer_handle_cursor_reads_chunk_without_row_materialization() {
         let field_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
-        let mut batch = Chunk::new_with_capacity(&field_types, 2);
+        let mut batch = Chunk::new_chunk_with_capacity(&field_types, 2);
         batch.append_int64(0, 7);
         batch.append_int64(0, 8);
         let mut cursor = RemoteIndexHandleCursor {
@@ -8012,7 +8012,7 @@ mod remote_cursor_tests {
                 FieldType::new(tidb_datatype::FieldTypeCode::VarString),
                 FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             ];
-            let mut batch = Chunk::new_with_capacity(&field_types, 1);
+            let mut batch = Chunk::new_chunk_with_capacity(&field_types, 1);
             batch.append_string(0, "indexed");
             batch.append_int64(1, 42);
             RemoteIndexHandleCursor {
@@ -8053,7 +8053,7 @@ mod remote_cursor_tests {
     #[test]
     fn integer_handle_cursor_reuses_large_chunk_for_required_rows() {
         let field_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
-        let mut batch = Chunk::new_with_capacity(&field_types, 2);
+        let mut batch = Chunk::new_chunk_with_capacity(&field_types, 2);
         batch.append_int64(0, 7);
         batch.append_int64(0, 8);
         let mut cursor = RemoteIndexHandleCursor {
@@ -8089,7 +8089,7 @@ mod remote_cursor_tests {
         let field_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
         let mut chunks = std::collections::VecDeque::new();
         for values in [&[7_i64, 8][..], &[9, 10][..], &[11][..]] {
-            let mut chunk = Chunk::new_with_capacity(&field_types, values.len());
+            let mut chunk = Chunk::new_chunk_with_capacity(&field_types, values.len());
             for value in values {
                 chunk.append_int64(0, *value);
             }
@@ -8142,7 +8142,7 @@ mod remote_cursor_tests {
             general_ci(),
             FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
         ];
-        let mut batch = Chunk::new_with_capacity(&field_types, 1);
+        let mut batch = Chunk::new_chunk_with_capacity(&field_types, 1);
         batch.append_string(0, "abc");
         batch.append_int64(1, 1);
         let mut cursor = RemoteIndexHandleCursor {
@@ -8197,7 +8197,7 @@ mod remote_cursor_tests {
             FieldType::new(tidb_datatype::FieldTypeCode::VarString),
             FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
         ];
-        let mut batch = Chunk::new_with_capacity(&field_types, 2);
+        let mut batch = Chunk::new_chunk_with_capacity(&field_types, 2);
         batch.append_string(0, "alpha");
         batch.append_int64(1, 7);
         batch.append_string(0, "beta");
@@ -8285,7 +8285,7 @@ mod remote_cursor_tests {
             FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
         ];
-        let mut batch = Chunk::new_with_capacity(&source_types, 2);
+        let mut batch = Chunk::new_chunk_with_capacity(&source_types, 2);
         batch.append_int64(0, 7);
         batch.append_int64(1, 70);
         batch.append_int64(0, 8);
@@ -8313,7 +8313,7 @@ mod remote_cursor_tests {
             noted_rows: 0,
             predicates_applied: true,
         };
-        let mut output = Chunk::new_with_capacity(&source_types[..1], 2);
+        let mut output = Chunk::new_chunk_with_capacity(&source_types[..1], 2);
 
         assert_eq!(
             cursor.append_clean_chunk(&mut output, 2, false).unwrap(),
@@ -8489,7 +8489,7 @@ mod remote_cursor_tests {
                         let stream: Box<dyn PushdownRowStream> = if chunks {
                             let types =
                                 vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong); 2];
-                            let mut batch = Chunk::new_with_capacity(&types, responses.len());
+                            let mut batch = Chunk::new_chunk_with_capacity(&types, responses.len());
                             for (value, handle) in &responses {
                                 batch.append_int64(0, *value);
                                 batch.append_int64(1, *handle);
@@ -8610,10 +8610,10 @@ mod remote_cursor_tests {
                     FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                     FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                 ];
-                let mut first_batch = Chunk::new_with_capacity(&source_types, 1);
+                let mut first_batch = Chunk::new_chunk_with_capacity(&source_types, 1);
                 first_batch.append_int64(0, 70);
                 first_batch.append_int64(1, 7);
-                let mut second_batch = Chunk::new_with_capacity(&source_types, 1);
+                let mut second_batch = Chunk::new_chunk_with_capacity(&source_types, 1);
                 second_batch.append_int64(0, 80);
                 second_batch.append_int64(1, 8);
                 let cursor = lookup_response_cursor(
@@ -8661,7 +8661,7 @@ mod remote_cursor_tests {
     #[test]
     fn clean_remote_cursor_moves_an_exact_width_batch_into_the_output() {
         let source_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
-        let mut batch = Chunk::new_with_capacity(&source_types, 2);
+        let mut batch = Chunk::new_chunk_with_capacity(&source_types, 2);
         batch.append_int64(0, 7);
         batch.append_int64(0, 8);
         let mut cursor = RemoteRowCursor {
@@ -8687,7 +8687,7 @@ mod remote_cursor_tests {
             noted_rows: 0,
             predicates_applied: true,
         };
-        let mut output = Chunk::new_with_capacity(&source_types, 2);
+        let mut output = Chunk::new_chunk_with_capacity(&source_types, 2);
         assert_eq!(
             cursor.append_clean_chunk(&mut output, 2, false).unwrap(),
             Some(2)
@@ -8704,7 +8704,7 @@ mod remote_cursor_tests {
         let long = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
         let text = FieldType::new(tidb_datatype::FieldTypeCode::VarString);
         let source_types = vec![long.clone(), text.clone(), long.clone()];
-        let mut batch = Chunk::new_with_capacity(&source_types, 4);
+        let mut batch = Chunk::new_chunk_with_capacity(&source_types, 4);
         for (id, name) in [
             (7, Some("seven")),
             (8, None),
@@ -8741,7 +8741,7 @@ mod remote_cursor_tests {
             noted_rows: 0,
             predicates_applied: true,
         };
-        let mut output = Chunk::new_with_capacity(&[long.clone(), text.clone()], 4);
+        let mut output = Chunk::new_chunk_with_capacity(&[long.clone(), text.clone()], 4);
         output.append_int64(0, 1);
         output.append_bytes(1, b"one");
         assert_eq!(
@@ -8785,10 +8785,10 @@ mod remote_cursor_tests {
     #[test]
     fn clean_remote_cursor_moves_a_small_completed_batch_into_the_output() {
         let source_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
-        let mut batch = Chunk::new_with_capacity(&source_types, 1);
+        let mut batch = Chunk::new_chunk_with_capacity(&source_types, 1);
         batch.append_int64(0, 7);
         let source_column = batch.column_handle(0);
-        let mut source_identity = Chunk::new_with_capacity(&source_types, 1);
+        let mut source_identity = Chunk::new_chunk_with_capacity(&source_types, 1);
         source_identity.set_col(0, source_column);
         let mut cursor = RemoteRowCursor {
             stream: Box::new(ChunkStream {
@@ -8813,7 +8813,7 @@ mod remote_cursor_tests {
             noted_rows: 0,
             predicates_applied: true,
         };
-        let mut output = Chunk::new_with_capacity(&source_types, 4);
+        let mut output = Chunk::new_chunk_with_capacity(&source_types, 4);
 
         assert_eq!(
             cursor.append_clean_chunk(&mut output, 4, false).unwrap(),
@@ -8829,7 +8829,7 @@ mod remote_cursor_tests {
     #[test]
     fn clean_remote_cursor_transfers_an_oversized_batch_without_a_limit() {
         let source_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
-        let mut batch = Chunk::new_with_capacity(&source_types, 4);
+        let mut batch = Chunk::new_chunk_with_capacity(&source_types, 4);
         for value in 7..11 {
             batch.append_int64(0, value);
         }
@@ -8856,7 +8856,7 @@ mod remote_cursor_tests {
             noted_rows: 0,
             predicates_applied: true,
         };
-        let mut output = Chunk::new_with_capacity(&source_types, 2);
+        let mut output = Chunk::new_chunk_with_capacity(&source_types, 2);
         assert_eq!(
             cursor.append_clean_chunk(&mut output, 2, true).unwrap(),
             Some(4)
@@ -8868,11 +8868,11 @@ mod remote_cursor_tests {
     #[test]
     fn partial_remote_chunk_handoff_moves_completed_decoder_batches() {
         let source_types = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
-        let mut first = Chunk::new_with_capacity(&source_types, 4);
+        let mut first = Chunk::new_chunk_with_capacity(&source_types, 4);
         for value in 7..11 {
             first.append_int64(0, value);
         }
-        let mut second = Chunk::new_with_capacity(&source_types, 2);
+        let mut second = Chunk::new_chunk_with_capacity(&source_types, 2);
         for value in 11..13 {
             second.append_int64(0, value);
         }
@@ -8883,7 +8883,7 @@ mod remote_cursor_tests {
             returned: 0,
         };
         let mut pending = None;
-        let mut output = Chunk::new_with_capacity(&source_types, 4);
+        let mut output = Chunk::new_chunk_with_capacity(&source_types, 4);
         assert_eq!(
             append_partial_remote_chunk(&mut stream, &mut pending, &mut output, 4).unwrap(),
             Some(4)

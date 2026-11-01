@@ -373,7 +373,7 @@ pub fn row_format(
 /// a span opened earlier first on a tie (a detail tree's spans share their
 /// start).
 #[must_use]
-pub fn log_format(
+pub fn generate_log_result(
     root: &Span,
     started: std::time::SystemTime,
 ) -> (Vec<(String, FieldType)>, Vec<Vec<Datum>>) {
@@ -566,7 +566,7 @@ pub fn render(
     match format.to_lowercase().as_str() {
         "" | "row" => Ok(row_format(root, started)),
         "json" => Ok(json_format(root, started)),
-        "log" => Ok(log_format(root, started)),
+        "log" => Ok(generate_log_result(root, started)),
         _ => Err("trace format should be one of 'row', 'log' or 'json'".to_owned()),
     }
 }
@@ -686,7 +686,7 @@ mod tests {
 
         // Go `generateLogResult` under `ORDER BY time`: a start row per span
         // and a row per event, the events after the spans they follow.
-        let (_, rows) = log_format(&root, started);
+        let (_, rows) = generate_log_result(&root, started);
         let events = rows.iter().map(|row| text(&row[1])).collect::<Vec<_>>();
         assert_eq!(events.len(), 10 + 2);
         assert_eq!(events[0], "--- start span trace ----");
@@ -776,7 +776,7 @@ mod tests {
             shape(&root),
             "trace{ distsql.Select{ regionRequest.SendReqCtx } }"
         );
-        let (_, rows) = log_format(&root, started);
+        let (_, rows) = generate_log_result(&root, started);
         let event = rows
             .iter()
             .find(|row| text(&row[1]).starts_with("send Cop"))

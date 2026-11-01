@@ -210,7 +210,7 @@ impl UsernamePolicy {
 
     /// Go `GetUsernameVariants`: the prefixed spelling of an unprefixed name,
     /// or nothing when the name already carries the prefix.
-    pub fn username_variants(&self, username: &str) -> Vec<String> {
+    pub fn get_username_variants(&self, username: &str) -> Vec<String> {
         let Self::Prefix { user_prefix } = self else {
             return Vec::new();
         };
@@ -222,7 +222,7 @@ impl UsernamePolicy {
 
     /// Go `GetOriginalUsername`: strips the prefix, or answers empty when the
     /// policy does not transform this input.
-    pub fn original_username(&self, username: &str) -> String {
+    pub fn get_original_username(&self, username: &str) -> String {
         let Self::Prefix { user_prefix } = self else {
             return String::new();
         };
@@ -299,8 +299,8 @@ mod tests {
         let policy = UsernamePolicy::Default;
         assert!(policy.validate_username("user").is_ok());
         assert!(policy.validate_username_format("a.b.c"));
-        assert!(policy.username_variants("user").is_empty());
-        assert_eq!(policy.original_username("ks.user"), "");
+        assert!(policy.get_username_variants("user").is_empty());
+        assert_eq!(policy.get_original_username("ks.user"), "");
     }
 
     // Go `TestUsernamePolicy`'s prefix-policy half.
@@ -322,18 +322,18 @@ mod tests {
             "[ddl:1468]User name must start with `ks.` (use `ks.user` instead)"
         );
 
-        assert_eq!(policy.username_variants("user"), vec!["ks.user".to_owned()]);
-        assert!(policy.username_variants("ks.user").is_empty());
+        assert_eq!(policy.get_username_variants("user"), vec!["ks.user".to_owned()]);
+        assert!(policy.get_username_variants("ks.user").is_empty());
         assert_eq!(
-            policy.username_variants("other.user"),
+            policy.get_username_variants("other.user"),
             vec!["ks.other.user".to_owned()]
         );
         assert_eq!(
-            policy.username_variants("other.user.extra"),
+            policy.get_username_variants("other.user.extra"),
             vec!["ks.other.user.extra".to_owned()]
         );
-        assert_eq!(policy.original_username("ks.user"), "user");
-        assert_eq!(policy.original_username("other.user"), "");
+        assert_eq!(policy.get_original_username("ks.user"), "user");
+        assert_eq!(policy.get_original_username("other.user"), "");
     }
 
     // An empty prefix keeps the prefix policy permissive, which is how
@@ -344,7 +344,7 @@ mod tests {
             user_prefix: String::new(),
         };
         assert!(policy.validate_username("user").is_ok());
-        assert!(policy.username_variants("user").is_empty());
-        assert_eq!(policy.original_username("user"), "");
+        assert!(policy.get_username_variants("user").is_empty());
+        assert_eq!(policy.get_original_username("user"), "");
     }
 }

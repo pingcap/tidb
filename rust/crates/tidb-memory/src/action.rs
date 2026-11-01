@@ -140,7 +140,7 @@ impl BaseOomAction {
     }
 
     /// Go `TriggerFallBackAction`.
-    pub fn trigger_fallback_action(&self, tracker: &Arc<Tracker>) {
+    pub fn trigger_fall_back_action(&self, tracker: &Arc<Tracker>) {
         if let Some(fallback) = self.get_fallback() {
             fallback.action(tracker);
         }

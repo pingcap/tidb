@@ -179,7 +179,7 @@ pub(crate) fn derive_access_paths(
             merges.push(DerivedAccessPath::Union(path));
         }
         if let Some(path) =
-            index_merge::prepare_intersection_index_merge_path(source, context, use_plan_cache)?
+            index_merge::generate_and_index_merge_4_normal_index(source, context, use_plan_cache)?
         {
             merges.push(DerivedAccessPath::IndexMerge(path));
         }
@@ -249,7 +249,7 @@ pub(crate) fn derive_access_paths(
         // Go's second and third entry points read `AllConds`: an IndexMerge
         // over one MV index, then an intersection composing MV and ordinary
         // indexes.
-        for path in mv_index::generate_and_index_merge_for_mv_index(
+        for path in mv_index::generate_and_index_merge_4_mv_index(
             source,
             context,
             &source.all_conds,
@@ -257,7 +257,7 @@ pub(crate) fn derive_access_paths(
         )? {
             merges.push(DerivedAccessPath::IndexMerge(path));
         }
-        let composed = mv_index::generate_and_index_merge_for_composed_index(
+        let composed = mv_index::generate_and_index_merge_4_composed_index(
             source,
             context,
             &source.all_conds,

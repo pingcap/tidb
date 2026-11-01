@@ -259,12 +259,12 @@ impl QBHintHandler {
     }
 
     /// Go `GetHintOffset`.
-    pub fn hint_offset(&self, qb_name: Option<&str>, current_offset: i32) -> i32 {
+    pub fn get_hint_offset(&self, qb_name: Option<&str>, current_offset: i32) -> i32 {
         qb_name.map_or(current_offset, |name| self.block_offset(name))
     }
 
     /// Go `checkTableQBName`.
-    pub fn tables_have_valid_qb_names(&self, tables: &[&HintTable]) -> bool {
+    pub fn check_table_qb_name(&self, tables: &[&HintTable]) -> bool {
         tables.iter().all(|table| {
             table
                 .qb_name
@@ -274,7 +274,7 @@ impl QBHintHandler {
     }
 
     /// Go `isHint4View`.
-    pub fn is_hint_for_view(&self, hint: &Hint) -> bool {
+    pub fn is_hint_4_view(&self, hint: &Hint) -> bool {
         if let Some(name) = hint_target_qb_name(hint) {
             return self
                 .view_qb_name_to_table
@@ -299,9 +299,9 @@ impl QBHintHandler {
             if matches!(hint.kind, HintKind::QbName { .. }) {
                 continue;
             }
-            let offset = self.hint_offset(hint_target_qb_name(hint), current_offset);
+            let offset = self.get_hint_offset(hint_target_qb_name(hint), current_offset);
             let tables = hint_tables(hint);
-            if offset < 0 || !self.tables_have_valid_qb_names(&tables) {
+            if offset < 0 || !self.check_table_qb_name(&tables) {
                 self.warn(format!(
                     "Hint {} is ignored due to unknown query block name",
                     restore_table_optimizer_hint(hint)
@@ -358,7 +358,7 @@ impl QBHintHandler {
     }
 
     /// Go `HandleUnusedViewHints`.
-    pub fn unused_view_hint_warnings(&self, state: &QBHintBuildState) -> Vec<String> {
+    pub fn handle_unused_view_hints(&self, state: &QBHintBuildState) -> Vec<String> {
         self.view_qb_name_to_table
             .keys()
             .filter(|name| {
@@ -388,12 +388,12 @@ impl QBHintHandler {
         let mut context = ViewHintContext::default();
         for (qb_name, path) in &self.view_qb_name_to_table {
             let Some(first) = path.first() else { continue };
-            let hint_offset = first
+            let get_hint_offset = first
                 .qb_name
                 .as_deref()
-                .map_or(1, |name| self.hint_offset(Some(name), current_offset));
+                .map_or(1, |name| self.get_hint_offset(Some(name), current_offset));
             if !tidb_mysql::lowercase_equal(&first.name, visible_view_name)
-                || hint_offset != current_offset
+                || get_hint_offset != current_offset
             {
                 continue;
             }
@@ -429,7 +429,7 @@ impl QBHintHandler {
             let offset = if path.is_empty() {
                 1
             } else if path.len() == 1 && path[0].name.is_empty() {
-                handler.hint_offset(path[0].qb_name.as_deref(), -1)
+                handler.get_hint_offset(path[0].qb_name.as_deref(), -1)
             } else {
                 -1
             };

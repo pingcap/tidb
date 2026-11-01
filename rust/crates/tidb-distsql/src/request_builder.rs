@@ -708,7 +708,7 @@ fn int_bits(value: &Datum) -> Option<i64> {
 /// `(unsigned, signed)` for a descending one, because the unsigned half
 /// occupies the LOWER key range.
 #[must_use]
-pub fn split_ranges_across_int64_boundary(
+pub fn split_ranges_across_int_64_boundary(
     ranges: Vec<Range>,
     keep_order: bool,
     desc: bool,
@@ -865,7 +865,7 @@ mod int64_boundary_split_tests {
             low_exclude: false,
             high_exclude: false,
         }];
-        let (first, second) = split_ranges_across_int64_boundary(input, true, false, false);
+        let (first, second) = split_ranges_across_int_64_boundary(input, true, false, false);
         assert_eq!(first.len(), 1);
         assert!(second.is_empty());
     }
@@ -874,7 +874,7 @@ mod int64_boundary_split_tests {
     fn a_common_handle_is_left_alone() {
         // Go's first test: a common handle has no int64 boundary to split at.
         let (first, second) =
-            split_ranges_across_int64_boundary(vec![range(1, MAX + 5)], true, false, true);
+            split_ranges_across_int_64_boundary(vec![range(1, MAX + 5)], true, false, true);
         assert_eq!(bounds(&first), vec![(1, MAX + 5)]);
         assert!(second.is_empty());
     }
@@ -882,7 +882,7 @@ mod int64_boundary_split_tests {
     #[test]
     fn ranges_below_the_boundary_are_left_alone() {
         let (first, second) =
-            split_ranges_across_int64_boundary(vec![range(1, 9), range(20, MAX)], true, false, false);
+            split_ranges_across_int_64_boundary(vec![range(1, 9), range(20, MAX)], true, false, false);
         assert_eq!(bounds(&first), vec![(1, 9), (20, MAX)]);
         assert!(second.is_empty(), "nothing reaches past the boundary");
     }
@@ -890,7 +890,7 @@ mod int64_boundary_split_tests {
     #[test]
     fn a_clean_cut_splits_between_ranges() {
         // No range straddles: the split falls between them.
-        let (signed, unsigned) = split_ranges_across_int64_boundary(
+        let (signed, unsigned) = split_ranges_across_int_64_boundary(
             vec![range(1, 9), range(MAX + 1, MAX + 5)],
             true,
             false,
@@ -903,7 +903,7 @@ mod int64_boundary_split_tests {
     #[test]
     fn a_straddling_range_is_cut_at_the_boundary() {
         let (signed, unsigned) =
-            split_ranges_across_int64_boundary(vec![range(1, MAX + 5)], true, false, false);
+            split_ranges_across_int_64_boundary(vec![range(1, MAX + 5)], true, false, false);
         assert_eq!(
             bounds(&signed),
             vec![(1, MAX)],
@@ -922,7 +922,7 @@ mod int64_boundary_split_tests {
         // i64::MAX, because `(MAX, MAX]` selects nothing.
         let mut input = range(MAX, MAX + 5);
         input.low_exclude = true;
-        let (signed, unsigned) = split_ranges_across_int64_boundary(vec![input], true, false, false);
+        let (signed, unsigned) = split_ranges_across_int_64_boundary(vec![input], true, false, false);
         assert!(signed.is_empty(), "an empty signed piece is omitted");
         assert_eq!(bounds(&unsigned), vec![(MAX + 1, MAX + 5)]);
     }
@@ -932,7 +932,7 @@ mod int64_boundary_split_tests {
         // The mirror image: exclusive at exactly i64::MAX + 1.
         let mut input = range(1, MAX + 1);
         input.high_exclude = true;
-        let (signed, unsigned) = split_ranges_across_int64_boundary(vec![input], true, false, false);
+        let (signed, unsigned) = split_ranges_across_int_64_boundary(vec![input], true, false, false);
         assert_eq!(bounds(&signed), vec![(1, MAX)]);
         assert!(unsigned.is_empty(), "an empty unsigned piece is omitted");
     }
@@ -942,7 +942,7 @@ mod int64_boundary_split_tests {
         // The unsigned half occupies the LOWER key range, so a descending
         // ordered read takes it first.
         let (first, second) =
-            split_ranges_across_int64_boundary(vec![range(1, MAX + 5)], true, true, false);
+            split_ranges_across_int_64_boundary(vec![range(1, MAX + 5)], true, true, false);
         assert_eq!(bounds(&first), vec![(MAX + 1, MAX + 5)]);
         assert_eq!(bounds(&second), vec![(1, MAX)]);
     }
@@ -953,7 +953,7 @@ mod int64_boundary_split_tests {
         // ONE scan covers both halves -- and it puts the unsigned half first
         // because that is where the keys start.
         let (all, second) =
-            split_ranges_across_int64_boundary(vec![range(1, MAX + 5)], false, false, false);
+            split_ranges_across_int_64_boundary(vec![range(1, MAX + 5)], false, false, false);
         assert_eq!(bounds(&all), vec![(MAX + 1, MAX + 5), (1, MAX)]);
         assert!(second.is_empty(), "an unordered read gets a single list");
     }

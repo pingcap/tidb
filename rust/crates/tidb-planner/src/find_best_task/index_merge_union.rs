@@ -902,7 +902,7 @@ fn push_index_partial(
         prop: Some(Box::new(tidb_planner_property::PhysicalProperty::default())),
         pk_is_handle_col: ds.pk_is_handle.then(|| ds.handle_cols.first().cloned()).flatten(),
     }));
-    let global_partition_filter = super::dispatch::global_index_partition_filter(
+    let global_partition_filter = super::dispatch::add_selection_condition_for_global_index(
         ds,
         source_index,
         partial_plans_raw.last().and_then(PhysicalPlan::schema),
@@ -1098,7 +1098,7 @@ fn partial_handle_columns(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::access_path::index_merge::{index_merge_hint_allows, index_merge_hint_specifies, prepare_union_index_merge_path};
+    use crate::access_path::index_merge::{is_in_index_merge_hints, is_specified_in_index_merge_hints, prepare_union_index_merge_path};
 
     #[test]
     fn named_intersection_hint_does_not_make_other_merge_hints_wildcards() {
@@ -1115,9 +1115,9 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(index_merge_hint_allows(&ds, "idx_b"));
-        assert!(index_merge_hint_specifies(&ds, "IDX_A"));
-        assert!(!index_merge_hint_specifies(&ds, "idx_b"));
+        assert!(is_in_index_merge_hints(&ds, "idx_b"));
+        assert!(is_specified_in_index_merge_hints(&ds, "IDX_A"));
+        assert!(!is_specified_in_index_merge_hints(&ds, "idx_b"));
     }
 
     /// Go `isInIndexMergeHints`/`isSpecifiedInIndexMergeHints` compare the
@@ -1136,11 +1136,11 @@ mod tests {
             }],
             ..Default::default()
         };
-        assert!(index_merge_hint_allows(&hinted("SIDX"), "ſidx"));
-        assert!(index_merge_hint_specifies(&hinted("SIDX"), "ſidx"));
-        assert!(index_merge_hint_specifies(&hinted("ÉX"), "éx"));
-        assert!(!index_merge_hint_allows(&hinted("İDX"), "İdx"));
-        assert!(!index_merge_hint_specifies(&hinted("İDX"), "İdx"));
+        assert!(is_in_index_merge_hints(&hinted("SIDX"), "ſidx"));
+        assert!(is_specified_in_index_merge_hints(&hinted("SIDX"), "ſidx"));
+        assert!(is_specified_in_index_merge_hints(&hinted("ÉX"), "éx"));
+        assert!(!is_in_index_merge_hints(&hinted("İDX"), "İdx"));
+        assert!(!is_specified_in_index_merge_hints(&hinted("İDX"), "İdx"));
     }
 
     /// Go PhysicalIndexScan.InitSchema, reached by the union candidates in

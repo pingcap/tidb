@@ -32,7 +32,7 @@ use tidb_store_driver_txn::cluster_storage::BufferCheckpoint;
 use tidb_driver_error::DriverError;
 use tidb_infoschema::Catalog;
 
-use crate::{txn_mode_for_begin, PESSIMISTIC_TXN_MODE};
+use crate::{new_provider_with_request, PESSIMISTIC_TXN_MODE};
 use crate::{Session, SessionTxnMode};
 
 /// A persisted schema image and the storage authority's retained timestamp guard.
@@ -240,7 +240,7 @@ impl TemporaryTableOverlay {
             let incoming = self
                 .global
                 .remove(&id)
-                .unwrap_or_else(|| table.new_temporary_txn_data());
+                .unwrap_or_else(|| table.temp_table_from_meta());
             let outgoing = table.swap_temporary_txn_data(incoming);
             self.global.insert(id, outgoing);
         }
@@ -460,7 +460,7 @@ impl Session {
     /// are the ported `time.Date`), and only then a raw TSO -- a positive
     /// integer or a string of digits. A raw TSO whose physical half is
     /// before 2013-01-01 refuses with Go's own message.
-    pub(crate) fn resolve_as_of_ts(&mut self, expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
+    pub(crate) fn calculate_as_of_ts_expr(&mut self, expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
         const TSO_LOGICAL_BITS: u32 = 18;
         // 2013-01-01 00:00:00 UTC in milliseconds, Go's `minTSO` bound.
         const MIN_PHYSICAL_MS: u64 = 1_356_998_400_000;
@@ -654,7 +654,7 @@ impl Session {
             .vars
             .get_system("tidb_txn_mode")
             .unwrap_or_else(|_| PESSIMISTIC_TXN_MODE.to_owned());
-        txn_mode_for_begin(mode, &variable)
+        new_provider_with_request(mode, &variable)
     }
 
     /// Applies `BEGIN`/`START TRANSACTION`, `COMMIT`, `ROLLBACK` or a
@@ -739,7 +739,7 @@ impl Session {
         // `StartTS` -- which `@@tidb_current_ts` reports -- is that timestamp.
         let as_of = match &begin.as_of {
             Some(expr) => {
-                let ts = self.resolve_as_of_ts(&expr.clone())?;
+                let ts = self.calculate_as_of_ts_expr(&expr.clone())?;
                 if self.vars.txn_read_ts() != 0 {
                     if let Some(provider) = &self.snapshot_schema_provider {
                         provider(ts, self.current_resource_group(), false)?;
@@ -1257,7 +1257,7 @@ impl Session {
     /// The typed autocommit state and transaction presence are the two status
     /// bits this tier owns, in the same order as Go's `ascServerStatus`.
     #[must_use]
-    pub fn status_text(&self) -> String {
+    pub fn server_status_2_str(&self) -> String {
         match (self.txn_ctx.is_some(), self.is_autocommit()) {
             (true, true) => "in transaction; autocommit".to_owned(),
             (true, false) => "in transaction".to_owned(),

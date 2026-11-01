@@ -115,7 +115,7 @@ use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_distsql::select_response::CopResponseSink;
 #[cfg(test)]
 mod tests_generated_column_ddl;
-use tidb_distsql::split_ranges_across_int64_boundary;
+use tidb_distsql::split_ranges_across_int_64_boundary;
 #[cfg(test)]
 mod hash_agg_spill_tests;
 pub mod index_merge_reader;
@@ -252,7 +252,7 @@ use tidb_txnkv::ReplicaReadType;
 /// The level a statement warning carries -- Go's three `contextutil` levels,
 /// re-exported so the session can read the one a `StmtContext` recorded
 /// without depending on `tidb-distsql` directly.
-use tidb_expr::builtin_registry::builtin_list;
+use tidb_expr::builtin_registry::get_builtin_list;
 use tidb_expr::infer_pushdown::{blacklist_name, blacklist_store_mask, ExprPushDownBlacklist};
 use tidb_exprctx::CurrentTso;
 use tidb_exprctx::BlockEncryptionMode;

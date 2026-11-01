@@ -1857,7 +1857,7 @@ where
         keys: Vec<Vec<u8>>,
         wait: tidb_txnkv::transaction::LockWaitTime,
     ) -> Result<LockKeysOutcome, String> {
-        SessionTransaction::lock_keys_with_values_if_exist(self, keys, wait)
+        SessionTransaction::lock_key_if_exists(self, keys, wait)
             .map_err(|error| error.to_string())
     }
 

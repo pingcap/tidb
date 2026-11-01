@@ -90,7 +90,7 @@ pub fn with_charset(charset: impl Into<String>, collation: impl Into<String>) ->
 
 /// Go `WithDefaultCollationForUTF8MB4`.
 #[must_use]
-pub fn with_default_collation_for_utf8mb4(collation: impl Into<String>) -> ExprCtxOption {
+pub fn with_default_collation_for_utf_8_mb_4(collation: impl Into<String>) -> ExprCtxOption {
     let collation = collation.into();
     ExprCtxOption::new(move |state| state.default_collation_for_utf8mb4 = collation)
 }
@@ -417,7 +417,7 @@ impl ExprContext {
                     let (charset, collation) = session_vars.charset_info();
                     opts.push(with_charset(charset, collation));
                 }
-                DEFAULT_COLLATION_FOR_UTF8MB4 => opts.push(with_default_collation_for_utf8mb4(
+                DEFAULT_COLLATION_FOR_UTF8MB4 => opts.push(with_default_collation_for_utf_8_mb_4(
                     session_vars.default_collation_for_utf8mb4(),
                 )),
                 BLOCK_ENCRYPTION_MODE => {
@@ -557,7 +557,7 @@ pub fn make_expr_context_static(ctx: &dyn StaticConvertibleExprContext) -> ExprC
     ExprContext::new([
         with_eval_ctx(Arc::new(static_eval_context)),
         with_charset(charset, collation),
-        with_default_collation_for_utf8mb4(ctx.get_default_collation_for_utf8mb4()),
+        with_default_collation_for_utf_8_mb_4(ctx.get_default_collation_for_utf8mb4()),
         with_block_encryption_mode(ctx.get_block_encryption_mode()),
         with_sysdate_is_now(ctx.get_sysdate_is_now()),
         with_noop_funcs_mode(ctx.get_noop_funcs_mode()),
@@ -629,7 +629,7 @@ mod tests {
         let opts = vec![
             with_eval_ctx(Arc::clone(&state.eval_ctx)),
             with_charset("gbk", "gbk_bin"),
-            with_default_collation_for_utf8mb4("utf8mb4_0900_ai_ci"),
+            with_default_collation_for_utf_8_mb_4("utf8mb4_0900_ai_ci"),
             with_block_encryption_mode("aes-256-cbc"),
             with_sysdate_is_now(true),
             with_noop_funcs_mode(WARN_INT),
@@ -755,7 +755,7 @@ mod tests {
         let obj = ExprContext::new([
             with_eval_ctx(Arc::clone(&eval_ctx)),
             with_charset("a", "b"),
-            with_default_collation_for_utf8mb4("c"),
+            with_default_collation_for_utf_8_mb_4("c"),
             with_block_encryption_mode("d"),
             with_sysdate_is_now(true),
             with_noop_funcs_mode(1),

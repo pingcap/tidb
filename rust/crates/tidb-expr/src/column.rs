@@ -365,7 +365,7 @@ pub(crate) fn expression_equals(left: &Expression, right: &Expression) -> bool {
 /// expression enum owns its variants, so this is the source operation with
 /// the pointer-sharing detail translated into a clone.
 #[must_use]
-pub fn columns_to_expressions(columns: &[Column]) -> Vec<Expression> {
+pub fn column_2_exprs(columns: &[Column]) -> Vec<Expression> {
     columns.iter().cloned().map(Expression::Column).collect()
 }
 
@@ -604,7 +604,7 @@ mod tests {
     #[test]
     fn test_column2_expr() {
         let columns: Vec<_> = (0..5).map(col).collect();
-        let expressions = columns_to_expressions(&columns);
+        let expressions = column_2_exprs(&columns);
         assert_eq!(expressions.len(), columns.len());
         for (column, expression) in columns.iter().zip(&expressions) {
             assert!(column.equal_column(expression));

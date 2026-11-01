@@ -173,7 +173,7 @@ pub fn open_remote_scan(
     // columnar replica; a store without it refuses rather than silently
     // answering from row storage.
     let opened = match request.read_engine {
-        PushdownReadEngine::TiKv => crate::cop_reader::open_cop_scan(client.as_ref(), &request),
+        PushdownReadEngine::TiKv => crate::cop_reader::build_resp(client.as_ref(), &request),
         PushdownReadEngine::TiFlash => match store.mpp_client() {
             Some(mpp) => crate::mpp_coordinator::open_mpp_scan(&mpp, &request),
             None => Err(PushdownScannerError::Backend(tidb_kv::storage::StorageError::Backend(
@@ -1385,7 +1385,7 @@ mod tests {
             crate::RowDecodeContext::for_query(&ctx),
         );
         lookup.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
-        let mut join = JoinExec::new_index_lookup(
+        let mut join = JoinExec::build_index_look_up_join(
             ExecutorMeta::new(schema(1), 0, 32, 1024),
             JoinKind::Semi,
             vec![equality],

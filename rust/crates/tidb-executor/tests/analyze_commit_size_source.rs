@@ -62,7 +62,7 @@ use tidb_syssession::mysql_system_tables::{
     scan_system_table, SystemRow, SystemTableError, SystemTableView,
 };
 use tidb_stats_handle_syncload::real_tikv_stats::{StatsTarget};
-use tidb_stats_handle::bootstrap::{load_initial_stats_snapshot, load_initial_stats_snapshot_with_memory_limits, InitialStatsLoad};
+use tidb_stats_handle::bootstrap::{init_stats_lite, load_initial_stats_snapshot_with_memory_limits, InitialStatsLoad};
 use tidb_executor::analyze::{AnalyzeColumnChoice, AnalyzeOptionOverrides};
 use tidb_model::column::ColumnInfo;
 use tidb_model::index::IndexInfo;
@@ -532,7 +532,7 @@ fn the_analyze_version_round_trips_through_the_stored_row() {
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     assert_eq!(
         loader
-            .load_meta(&mut store, 4242)
+            .stats_meta_count_and_modify_count(&mut store, 4242)
             .expect("the row reads back"),
         Some((
             440_000_000_000_000_000,
@@ -834,7 +834,7 @@ fn analyze_save_reconciles_deltas_committed_after_sampling() {
 
         let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
         assert_eq!(
-            loader.load_meta(&mut store, 4242).expect("meta loads"),
+            loader.stats_meta_count_and_modify_count(&mut store, 4242).expect("meta loads"),
             Some((110, 100, 3, expected_count, 110))
         );
     }
@@ -890,7 +890,7 @@ fn analyze_save_does_not_replace_a_newer_snapshot() {
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     assert_eq!(
-        loader.load_meta(&mut store, 4242).expect("meta loads"),
+        loader.stats_meta_count_and_modify_count(&mut store, 4242).expect("meta loads"),
         Some((120, 110, 4, 8, 120))
     );
 }
@@ -1260,7 +1260,7 @@ fn initial_stats_matches_go_table_scope_and_payload_shapes() {
     let targets = current_ids.map(target);
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
 
-    let one = load_initial_stats_snapshot(
+    let one = init_stats_lite(
         &mut store,
         &loader,
         &targets,
@@ -1270,7 +1270,7 @@ fn initial_stats_matches_go_table_scope_and_payload_shapes() {
     .expect("one lite table loads");
     assert_eq!(one.keys().copied().collect::<Vec<_>>(), [4242]);
 
-    let repeated = load_initial_stats_snapshot(
+    let repeated = init_stats_lite(
         &mut store,
         &loader,
         &targets,
@@ -1281,7 +1281,7 @@ fn initial_stats_matches_go_table_scope_and_payload_shapes() {
     assert_eq!(repeated.keys().copied().collect::<Vec<_>>(), [4242, 4243]);
 
     let lite =
-        load_initial_stats_snapshot(&mut store, &loader, &targets, &[], InitialStatsLoad::Lite)
+        init_stats_lite(&mut store, &loader, &targets, &[], InitialStatsLoad::Lite)
             .expect("all current physical tables load");
     assert_eq!(lite.keys().copied().collect::<Vec<_>>(), current_ids);
     assert!(!lite.contains_key(&dropped_id));
@@ -1319,7 +1319,7 @@ fn initial_stats_matches_go_table_scope_and_payload_shapes() {
     }
 
     let histogram_stage = loader
-        .load_table_for_init_stats_histograms(
+        .init_stats_histograms_concurrently(
             &mut store,
             targets[0].table.id,
             &targets[0].column_types,
@@ -1328,7 +1328,7 @@ fn initial_stats_matches_go_table_scope_and_payload_shapes() {
         .expect("stats_meta exists")
         .to_statistics_table(&targets[0].table);
     let topn_stage = loader
-        .load_table_for_init_stats_topn(&mut store, targets[0].table.id, &targets[0].column_types)
+        .init_stats_top_n_concurrently(&mut store, targets[0].table.id, &targets[0].column_types)
         .expect("TopN stage loads")
         .expect("stats_meta exists")
         .to_statistics_table(&targets[0].table);
@@ -1623,7 +1623,7 @@ fn one_item_load_uses_only_that_items_key_ranges() {
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
     let loaded = loader
-        .load_item(
+        .read_stats_for_one_item(
             &mut store,
             stats.table_id,
             false,
@@ -2327,7 +2327,7 @@ fn loaded_stats_negative_count_preserves_existing_meta_values() {
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     assert_eq!(
-        loader.load_meta(&mut store, table_id).expect("meta loads"),
+        loader.stats_meta_count_and_modify_count(&mut store, table_id).expect("meta loads"),
         Some((
             version,
             initial.snapshot,
@@ -2370,7 +2370,7 @@ fn loaded_stats_final_meta_update_preserves_unnamed_columns() {
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     assert_eq!(
-        loader.load_meta(&mut store, table_id).expect("meta loads"),
+        loader.stats_meta_count_and_modify_count(&mut store, table_id).expect("meta loads"),
         Some((version, initial.snapshot, 3, 55, version))
     );
 }
@@ -2403,7 +2403,7 @@ fn slow_save_version_refresh_changes_only_the_two_go_columns() {
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     assert_eq!(
-        loader.load_meta(&mut store, table_id).expect("meta loads"),
+        loader.stats_meta_count_and_modify_count(&mut store, table_id).expect("meta loads"),
         Some((
             refreshed,
             initial.snapshot,
@@ -2904,7 +2904,7 @@ fn exchange_partition_stats_update_matches_go_clamping_and_locked_rows() {
     apply_mutations(&mut store, &update.mutations);
     let loader = ClusterStatsLoader::locate(&catalog).expect("stats loader locates");
     assert_eq!(
-        loader.load_meta(&mut store, table_id).expect("meta loads"),
+        loader.stats_meta_count_and_modify_count(&mut store, table_id).expect("meta loads"),
         Some((101, 0, 0, 0, 100))
     );
 
@@ -2984,7 +2984,7 @@ fn stats_delta_negative_multirow_insert_keeps_go_duplicate_key_order() {
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     assert_eq!(
-        loader.load_meta(&mut store, table_id).expect("meta loads"),
+        loader.stats_meta_count_and_modify_count(&mut store, table_id).expect("meta loads"),
         Some((101, 0, 7, 2, 0))
     );
 }
@@ -3035,7 +3035,7 @@ fn stats_delta_updates_match_go_positive_negative_and_locked_rows() {
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     assert_eq!(
-        loader.load_meta(&mut store, table_id).expect("meta loads"),
+        loader.stats_meta_count_and_modify_count(&mut store, table_id).expect("meta loads"),
         Some((102, 0, 11, 0, 100))
     );
 
@@ -3102,7 +3102,7 @@ fn stats_delta_batch_assigns_one_transaction_version_to_every_table() {
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     for table_id in [4246, 4247] {
         assert_eq!(
-            loader.load_meta(&mut store, table_id).expect("meta loads"),
+            loader.stats_meta_count_and_modify_count(&mut store, table_id).expect("meta loads"),
             Some((101, 0, 3, 3, 0))
         );
     }
@@ -3138,7 +3138,7 @@ fn stats_delta_update_keeps_go_row_delta_when_modify_count_is_zero() {
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     assert_eq!(
-        loader.load_meta(&mut store, table_id).expect("meta loads"),
+        loader.stats_meta_count_and_modify_count(&mut store, table_id).expect("meta loads"),
         Some((101, 0, 2, 13, 100))
     );
 }

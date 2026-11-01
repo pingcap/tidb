@@ -32,7 +32,7 @@ pub(crate) type Candidate = (Expression, Column);
 
 /// Go `collectGenerateColumn`: every indexed virtual generated column under
 /// `plan` (CTEs and TiFlash-preferring sources excepted) with its expression.
-pub(crate) fn collect_candidates(
+pub(crate) fn collect_generate_column(
     plan: &LogicalPlan,
     candidates: &mut Vec<Candidate>,
     enable_unsafe_substitute: bool,
@@ -41,7 +41,7 @@ pub(crate) fn collect_candidates(
         return;
     }
     for child in plan.base().children() {
-        collect_candidates(child, candidates, enable_unsafe_substitute);
+        collect_generate_column(child, candidates, enable_unsafe_substitute);
     }
     let LogicalPlan::DataSource(source) = plan else {
         return;
@@ -257,7 +257,7 @@ impl LogicalOptRule for GcSubstituter {
         mut plan: LogicalPlan,
     ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
         let mut candidates = Vec::new();
-        collect_candidates(&plan, &mut candidates, context.enable_unsafe_substitute);
+        collect_generate_column(&plan, &mut candidates, context.enable_unsafe_substitute);
         if !candidates.is_empty() {
             substitute_plan(&mut plan, &candidates, context);
         }

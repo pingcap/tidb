@@ -299,7 +299,7 @@ fn index_regions(
 }
 
 /// Go `getPolicyPlacement`.
-pub fn policy_placement(
+pub fn get_policy_placement(
     catalog: &Catalog,
     policy: Option<&tidb_model::PolicyRefInfo>,
 ) -> Result<Option<PlacementSettings>, DriverError> {
@@ -325,12 +325,12 @@ fn scheduling(
     target: &Target<'_>,
 ) -> Result<std::collections::HashMap<i64, PlacementSettings>, DriverError> {
     let table_placement =
-        policy_placement(catalog, target.table.and_then(KvTable::placement_policy).as_ref())?;
+        get_policy_placement(catalog, target.table.and_then(KvTable::placement_policy).as_ref())?;
     let mut by_id = std::collections::HashMap::new();
     match target.table.and_then(KvTable::partition) {
         Some(partitioning) => {
             for definition in &partitioning.definitions {
-                let placement = policy_placement(catalog, definition.placement_policy.as_ref())?
+                let placement = get_policy_placement(catalog, definition.placement_policy.as_ref())?
                     .or_else(|| table_placement.clone());
                 if let Some(placement) = placement {
                     by_id.insert(definition.id, placement);

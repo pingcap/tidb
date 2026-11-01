@@ -694,7 +694,7 @@ use tidb_charset::Collation;
         assert_eq!(standardized.memory_usage(), 481);
 
         let mut merged = varchar(5, 6, 5);
-        merged.merge_neighbor_buckets(4);
+        merged.merge_buckets(4);
         assert_eq!(merged.memory_usage(), 489);
 
         let mut popped = varchar(3, 6, 3);

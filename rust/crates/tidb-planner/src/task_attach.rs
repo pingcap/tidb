@@ -60,10 +60,10 @@ impl TaskAttacher for CoreTaskAttacher {
 /// unionScan`, and anything else is attached as is.
 fn attach_union_scan(mut union_scan: PhysicalPlan, mut task: Task) -> Task {
     let Task::Root(root) = &mut task else {
-        return attach_plan_to_task(union_scan, task);
+        return attach_plan_2_task(union_scan, task);
     };
     let Some(mut child) = root.take_plan() else {
-        return attach_plan_to_task(union_scan, task);
+        return attach_plan_2_task(union_scan, task);
     };
     let stats = child.base().base.stats_info().cloned();
     let is_projection = |plan: &PhysicalPlan| matches!(plan, PhysicalPlan::Projection(_));
@@ -78,7 +78,7 @@ fn attach_union_scan(mut union_scan: PhysicalPlan, mut task: Task) -> Task {
         union_scan.base_mut().set_children(vec![child]);
         union_scan.base_mut().base.set_stats(stats);
         root.set_plan(union_scan);
-        return attach_plan_to_task(projection, task);
+        return attach_plan_2_task(projection, task);
     }
     if is_projection(&child) {
         // Convert unionScan->projection to projection->unionScan.
@@ -86,11 +86,11 @@ fn attach_union_scan(mut union_scan: PhysicalPlan, mut task: Task) -> Task {
         union_scan.base_mut().set_children(projection_children);
         union_scan.base_mut().base.set_stats(stats);
         root.set_plan(union_scan);
-        return attach_plan_to_task(child, task);
+        return attach_plan_2_task(child, task);
     }
     root.set_plan(child);
     union_scan.base_mut().base.set_stats(stats);
-    attach_plan_to_task(union_scan, task)
+    attach_plan_2_task(union_scan, task)
 }
 
 /// Go `attachPlan2Task` (`core/task.go`): wrap the task's plan with `plan`.
@@ -104,7 +104,7 @@ fn attach_union_scan(mut union_scan: PhysicalPlan, mut task: Task) -> Task {
 /// operator above a dynamic index-join probe must describe one probe result,
 /// not retain the cardinality derived for its ordinary full-input subtree.
 #[must_use]
-pub fn attach_plan_to_task(mut plan: PhysicalPlan, mut task: Task) -> Task {
+pub fn attach_plan_2_task(mut plan: PhysicalPlan, mut task: Task) -> Task {
     let feedback = match &task {
         Task::Root(root) => root.index_join_info.is_some(),
         Task::Cop(cop) => cop.index_join_info.is_some(),
@@ -209,9 +209,9 @@ fn attach_hash_agg_to_mpp(
 
     match mode {
         tidb_planner_core_operator_physicalop::AggMppRunMode::NoMpp | tidb_planner_core_operator_physicalop::AggMppRunMode::Mpp1Phase => {
-            let task = attach_plan_to_task(plan, Task::Mpp(mpp));
+            let task = attach_plan_2_task(plan, Task::Mpp(mpp));
             if let Some(projection) = avg_projection.take() {
-                Ok(attach_plan_to_task(
+                Ok(attach_plan_2_task(
                     PhysicalPlan::Projection(projection),
                     task,
                 ))
@@ -238,7 +238,7 @@ fn attach_hash_agg_to_mpp(
             if let PhysicalPlan::HashAgg(partial_hash_agg) = &mut partial {
                 partial_hash_agg.tiflash_pre_agg_mode = tiflash_pre_agg_mode.clone();
             }
-            let task = attach_plan_to_task(partial, Task::Mpp(mpp));
+            let task = attach_plan_2_task(partial, Task::Mpp(mpp));
             let Task::Mpp(mpp) = task else {
                 unreachable!("partial HashAgg attachment must retain MPP task");
             };
@@ -255,7 +255,7 @@ fn attach_hash_agg_to_mpp(
                                 collate_id: column
                                     .get_static_type()
                                     .map(|field_type| {
-                                        tidb_planner_property::collate_id_for_partition(
+                                        tidb_planner_property::get_collate_id_by_name_for_partition(
                                             field_type.collation_name(),
                                         )
                                     })
@@ -282,9 +282,9 @@ fn attach_hash_agg_to_mpp(
                 ..tidb_planner_property::PhysicalProperty::default()
             };
             let mpp = mpp.enforce_exchanger_impl(&required, allocator)?;
-            let task = attach_plan_to_task(final_agg, Task::Mpp(mpp));
+            let task = attach_plan_2_task(final_agg, Task::Mpp(mpp));
             if let Some(projection) = avg_projection.take() {
-                Ok(attach_plan_to_task(
+                Ok(attach_plan_2_task(
                     PhysicalPlan::Projection(projection),
                     task,
                 ))
@@ -306,14 +306,14 @@ fn attach_hash_agg_to_mpp(
                 blacklist,
             )?;
             let task = if let Some(partial) = partial {
-                attach_plan_to_task(partial, Task::Mpp(mpp))
+                attach_plan_2_task(partial, Task::Mpp(mpp))
             } else {
                 Task::Mpp(mpp)
             };
             let task = task.into_root_task_in(allocator, evaluate)?;
-            let task = attach_plan_to_task(final_agg, task);
+            let task = attach_plan_2_task(final_agg, task);
             if let Some(projection) = avg_projection.take() {
-                Ok(attach_plan_to_task(
+                Ok(attach_plan_2_task(
                     PhysicalPlan::Projection(projection),
                     task,
                 ))
@@ -324,7 +324,7 @@ fn attach_hash_agg_to_mpp(
         tidb_planner_core_operator_physicalop::AggMppRunMode::MppScalar => {
             let can_use_three_stage_single = match &plan {
                 PhysicalPlan::HashAgg(hash_agg) => {
-                    tidb_planner_core_operator_physicalop::final_mode_agg::can_use_three_stage_single_distinct(
+                    tidb_planner_core_operator_physicalop::final_mode_agg::can_use_3_stage_4_single_distinct_agg(
                         &hash_agg.agg_funcs,
                         &hash_agg.group_by_items,
                     )
@@ -346,9 +346,9 @@ fn attach_hash_agg_to_mpp(
                 &required,
                 None,
             ) {
-                let task = attach_plan_to_task(plan, Task::Mpp(mpp));
+                let task = attach_plan_2_task(plan, Task::Mpp(mpp));
                 if let Some(projection) = avg_projection.take() {
-                    return Ok(attach_plan_to_task(
+                    return Ok(attach_plan_2_task(
                         PhysicalPlan::Projection(projection),
                         task,
                     ));
@@ -388,13 +388,13 @@ fn attach_hash_agg_to_mpp(
                     else {
                         return Ok(Task::invalid_task());
                     };
-                    let task = attach_plan_to_task(split.expand, Task::Mpp(mpp));
-                    let task = attach_plan_to_task(split.partial_projection, task);
+                    let task = attach_plan_2_task(split.expand, Task::Mpp(mpp));
+                    let task = attach_plan_2_task(split.partial_projection, task);
                     let mut partial = split.partial;
                     if let PhysicalPlan::HashAgg(partial_hash_agg) = &mut partial {
                         partial_hash_agg.tiflash_pre_agg_mode = tiflash_pre_agg_mode.clone();
                     }
-                    let task = attach_plan_to_task(partial, task);
+                    let task = attach_plan_2_task(partial, task);
                     let Task::Mpp(mpp) = task else {
                         unreachable!("multi-distinct partial HashAgg must retain MPP task");
                     };
@@ -406,12 +406,12 @@ fn attach_hash_agg_to_mpp(
                         ..tidb_planner_property::PhysicalProperty::default()
                     };
                     let mpp = mpp.enforce_exchanger(&hash_required, allocator)?;
-                    let task = attach_plan_to_task(split.middle, Task::Mpp(mpp));
+                    let task = attach_plan_2_task(split.middle, Task::Mpp(mpp));
                     let Task::Mpp(mpp) = task else {
                         unreachable!("multi-distinct middle HashAgg must retain MPP task");
                     };
                     let mpp = mpp.enforce_exchanger(&required, allocator)?;
-                    let task = attach_plan_to_task(split.final_agg, Task::Mpp(mpp));
+                    let task = attach_plan_2_task(split.final_agg, Task::Mpp(mpp));
                     return finish_scalar_aggregate_output(
                         task,
                         avg_projection,
@@ -425,7 +425,7 @@ fn attach_hash_agg_to_mpp(
                 else {
                     return Ok(Task::invalid_task());
                 };
-                let task = attach_plan_to_task(split.partial, Task::Mpp(mpp));
+                let task = attach_plan_2_task(split.partial, Task::Mpp(mpp));
                 let Task::Mpp(mpp) = task else {
                     unreachable!("three-stage partial HashAgg must retain MPP task");
                 };
@@ -437,12 +437,12 @@ fn attach_hash_agg_to_mpp(
                     ..tidb_planner_property::PhysicalProperty::default()
                 };
                 let mpp = mpp.enforce_exchanger(&hash_required, allocator)?;
-                let task = attach_plan_to_task(split.middle, Task::Mpp(mpp));
+                let task = attach_plan_2_task(split.middle, Task::Mpp(mpp));
                 let Task::Mpp(mpp) = task else {
                     unreachable!("three-stage middle HashAgg must retain MPP task");
                 };
                 let mpp = mpp.enforce_exchanger(&required, allocator)?;
-                let task = attach_plan_to_task(split.final_agg, Task::Mpp(mpp));
+                let task = attach_plan_2_task(split.final_agg, Task::Mpp(mpp));
                 return finish_scalar_aggregate_output(
                     task,
                     avg_projection,
@@ -451,7 +451,7 @@ fn attach_hash_agg_to_mpp(
                 );
             }
             let mpp = if let Some(partial) = partial {
-                let task = attach_plan_to_task(partial, Task::Mpp(mpp));
+                let task = attach_plan_2_task(partial, Task::Mpp(mpp));
                 let Task::Mpp(mpp) = task else {
                     unreachable!("scalar partial HashAgg must retain MPP task");
                 };
@@ -460,7 +460,7 @@ fn attach_hash_agg_to_mpp(
                 mpp
             };
             let mpp = mpp.enforce_exchanger(&required, allocator)?;
-            let task = attach_plan_to_task(final_agg, Task::Mpp(mpp));
+            let task = attach_plan_2_task(final_agg, Task::Mpp(mpp));
             finish_scalar_aggregate_output(
                 task,
                 avg_projection,
@@ -481,7 +481,7 @@ fn finish_scalar_aggregate_output(
     allocator: &tidb_planner_core_base::PlanIdAllocator,
 ) -> Result<Task, PlanError> {
     if let Some(projection) = avg_projection {
-        return Ok(attach_plan_to_task(
+        return Ok(attach_plan_2_task(
             PhysicalPlan::Projection(projection),
             task,
         ));
@@ -510,7 +510,7 @@ fn finish_scalar_aggregate_output(
         calculate_no_delay: false,
         avoid_column_evaluator: false,
     });
-    Ok(attach_plan_to_task(projection, task))
+    Ok(attach_plan_2_task(projection, task))
 }
 
 /// Go `Attach2Task` per operator — the ROOT-TASK slice.
@@ -762,7 +762,7 @@ fn attach_limit_to_index_merge(
     if sink_into_index_merge(limit, &mut task, allocator) || !limit.partition_by.is_empty() {
         return Ok(task);
     }
-    Ok(attach_plan_to_task(plan, task))
+    Ok(attach_plan_2_task(plan, task))
 }
 
 /// Go `handleAdvisorySortItemsForIndexMerge`: preserve each partial's property
@@ -825,7 +825,7 @@ fn attach_advisory_topn_to_index_merge(
     if !topn.partition_by.is_empty() {
         return Ok(converted);
     }
-    Ok(attach_plan_to_task(
+    Ok(attach_plan_2_task(
         PhysicalPlan::TopN(topn.clone()),
         converted,
     ))
@@ -994,7 +994,7 @@ fn push_limit_down_to_tidb_cop(
         prefix_len: 0,
     })));
     let root = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
-    Ok(Ok(attach_plan_to_task(PhysicalPlan::TopN(topn.clone()), root)))
+    Ok(Ok(attach_plan_2_task(PhysicalPlan::TopN(topn.clone()), root)))
 }
 
 /// The shared cop body of Go `attach2Task4PhysicalStreamAgg` and
@@ -1033,7 +1033,7 @@ fn attach_agg_over_cop(
         // cop-single-read one, whose id the plan then shows) wins a cost tie
         // against the root-task candidate.
         let t = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
-        return Ok(attach_plan_to_task(final_plan, t));
+        return Ok(attach_plan_2_task(final_plan, t));
     };
     {
         if let Some(table_plan) = cop.table_plan.take() {
@@ -1063,7 +1063,7 @@ fn attach_agg_over_cop(
         }
     }
     let t = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
-    Ok(attach_plan_to_task(final_plan, t))
+    Ok(attach_plan_2_task(final_plan, t))
 }
 
 /// Go `completePhysicalIndexJoin`: consume the inner task's access feedback,
@@ -1361,7 +1361,7 @@ pub(crate) fn attach2_task_in(
     match &plan {
         // `attach2Task4PhysicalSort` (`task.go:843`): copy, attach. No
         // conversion — findBestTask only asks a Sort under a root property.
-        PhysicalPlan::Sort(_) => Ok(attach_plan_to_task(plan, first)),
+        PhysicalPlan::Sort(_) => Ok(attach_plan_2_task(plan, first)),
         // `attach2Task4PhysicalSelection` (`task.go:1598`): Go has NO cop
         // push at attach — a cop child CONVERTS and the selection lands at
         // root (pushed filters ride the DataSource's PushedDownConds
@@ -1370,17 +1370,17 @@ pub(crate) fn attach2_task_in(
         PhysicalPlan::Selection(_) => match &first {
             Task::Root(_) | Task::Cop(_) => {
                 let converted = first.into_root_task_in(allocator, evaluate)?;
-                Ok(attach_plan_to_task(plan, converted))
+                Ok(attach_plan_2_task(plan, converted))
             }
             Task::Mpp(_) => {
                 let PhysicalPlan::Selection(selection) = &plan else {
                     unreachable!("the arm matched Selection");
                 };
                 if tidb_expr::infer_pushdown::can_exprs_push_down(&selection.conditions, tidb_kv::store_type::StoreType::TiFlash, blacklist) {
-                    Ok(attach_plan_to_task(plan, first))
+                    Ok(attach_plan_2_task(plan, first))
                 } else {
                     let converted = first.into_root_task_in(allocator, evaluate)?;
-                    Ok(attach_plan_to_task(plan, converted))
+                    Ok(attach_plan_2_task(plan, converted))
                 }
             }
         },
@@ -1396,7 +1396,7 @@ pub(crate) fn attach2_task_in(
         // tier.
         PhysicalPlan::Window(_) | PhysicalPlan::Shuffle(_) | PhysicalPlan::ShuffleReceiver(_) => {
             let converted = first.copy().convert_to_root_task_in(allocator, evaluate)?;
-            Ok(attach_plan_to_task(plan, converted))
+            Ok(attach_plan_2_task(plan, converted))
         }
         // Go attach2Task4PhysicalExpand retains an MPP child on TiFlash;
         // all other children finish their remote reads before root expansion.
@@ -1405,7 +1405,7 @@ pub(crate) fn attach2_task_in(
                 mpp @ Task::Mpp(_) => mpp,
                 other => other.convert_to_root_task_in(allocator, evaluate)?,
             };
-            Ok(attach_plan_to_task(plan, task))
+            Ok(attach_plan_2_task(plan, task))
         }
         // `attach2Task4PhysicalProjection` (`task.go:1506`): the cop arm
         // pushes the projection onto the cop task — staying a COP task —
@@ -1418,7 +1418,7 @@ pub(crate) fn attach2_task_in(
         PhysicalPlan::Projection(_) => match &first {
             Task::Root(_) => {
                 let converted = first.into_root_task_in(allocator, evaluate)?;
-                Ok(attach_plan_to_task(plan, converted))
+                Ok(attach_plan_2_task(plan, converted))
             }
             Task::Cop(cop_ref) => {
                 let PhysicalPlan::Projection(projection) = &plan else {
@@ -1440,10 +1440,10 @@ pub(crate) fn attach2_task_in(
                     {
                         cop.finish_index_plan();
                     }
-                    Ok(attach_plan_to_task(plan, Task::Cop(cop)))
+                    Ok(attach_plan_2_task(plan, Task::Cop(cop)))
                 } else {
                     let converted = first.into_root_task_in(allocator, evaluate)?;
-                    Ok(attach_plan_to_task(plan, converted))
+                    Ok(attach_plan_2_task(plan, converted))
                 }
             }
             Task::Mpp(_) => {
@@ -1451,10 +1451,10 @@ pub(crate) fn attach2_task_in(
                     unreachable!("the arm matched Projection");
                 };
                 if tidb_expr::infer_pushdown::can_exprs_push_down(&projection.exprs, tidb_kv::store_type::StoreType::TiFlash, blacklist) {
-                    Ok(attach_plan_to_task(plan, first))
+                    Ok(attach_plan_2_task(plan, first))
                 } else {
                     let converted = first.into_root_task_in(allocator, evaluate)?;
-                    Ok(attach_plan_to_task(plan, converted))
+                    Ok(attach_plan_2_task(plan, converted))
                 }
             }
         },
@@ -1507,7 +1507,7 @@ pub(crate) fn attach2_task_in(
                             prefix_col: None,
                             prefix_len: 0,
                         });
-                        let Task::Cop(pushed_cop) = attach_plan_to_task(pushed, Task::Cop(cop))
+                        let Task::Cop(pushed_cop) = attach_plan_2_task(pushed, Task::Cop(cop))
                         else {
                             unreachable!("attaching onto a cop task answers a cop task");
                         };
@@ -1544,7 +1544,7 @@ pub(crate) fn attach2_task_in(
                         prefix_col: None,
                         prefix_len: 0,
                     });
-                    let mut pushed_task = attach_plan_to_task(pushed, Task::Mpp(mpp));
+                    let mut pushed_task = attach_plan_2_task(pushed, Task::Mpp(mpp));
                     // Go sets the pushed Limit schema from its child after
                     // attachment so generated columns retain the exact child
                     // schema object.
@@ -1564,7 +1564,7 @@ pub(crate) fn attach2_task_in(
             if !limit.partition_by.is_empty() {
                 return Ok(t);
             }
-            Ok(attach_plan_to_task(plan, t))
+            Ok(attach_plan_2_task(plan, t))
         }
         // `PhysicalMaxOneRow` has no override: `BasePhysicalPlan.Attach2Task`
         // (`base_physical_plan.go:202`) is convert-to-root then attach, on
@@ -1572,19 +1572,19 @@ pub(crate) fn attach2_task_in(
         // `convert_to_root_task`'s reader-building refusal.
         PhysicalPlan::MaxOneRow(_) => {
             let converted = first.into_root_task_in(allocator, evaluate)?;
-            Ok(attach_plan_to_task(plan, converted))
+            Ok(attach_plan_2_task(plan, converted))
         }
         // An ExchangeSender is born at root conversion (and at MPP fragment
         // generation), never as an attach parent.
         PhysicalPlan::ExchangeSender(_) => Err(PlanError::internal(
             "attach2_task: an ExchangeSender is never an attach parent",
         )),
-        PhysicalPlan::ExchangeReceiver(_) => Ok(attach_plan_to_task(plan, first)),
+        PhysicalPlan::ExchangeReceiver(_) => Ok(attach_plan_2_task(plan, first)),
         // `PhysicalLock` has no override: the default convert-then-attach
         // body, exactly as `PhysicalMaxOneRow`'s arm above.
         PhysicalPlan::Lock(_) => {
             let converted = first.into_root_task_in(allocator, evaluate)?;
-            Ok(attach_plan_to_task(plan, converted))
+            Ok(attach_plan_2_task(plan, converted))
         }
         // `attach2Task4PhysicalUnionAll` (`task.go:1573`): convert EVERY
         // child task to root and wire the multi-child plan into a fresh
@@ -1698,7 +1698,7 @@ pub(crate) fn attach2_task_in(
             if op.only_column {
                 return Ok(first);
             }
-            Ok(attach_plan_to_task(plan, first))
+            Ok(attach_plan_2_task(plan, first))
         }
         // `attach2Task4PhysicalSequence` (`task.go:2259`): when ANY child
         // task is not MPP, the sequence VANISHES — the last child's task is
@@ -1812,7 +1812,7 @@ pub(crate) fn attach2_task_in(
                     }
 
                     let converted = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
-                    return Ok(attach_plan_to_task(
+                    return Ok(attach_plan_2_task(
                         PhysicalPlan::TopN(partial_topn),
                         converted,
                     ));
@@ -1861,7 +1861,7 @@ pub(crate) fn attach2_task_in(
                             if !topn.partition_by.is_empty() {
                                 return Ok(converted);
                             }
-                            return Ok(attach_plan_to_task(plan, converted));
+                            return Ok(attach_plan_2_task(plan, converted));
                         }
                         if let Some((projection, pushed, global)) = heavy_topn_split(
                             topn,
@@ -1870,9 +1870,9 @@ pub(crate) fn attach2_task_in(
                             column_ids,
                             allocator,
                         ) {
-                            let pushed_task = attach_plan_to_task(
+                            let pushed_task = attach_plan_2_task(
                                 PhysicalPlan::TopN(pushed),
-                                attach_plan_to_task(
+                                attach_plan_2_task(
                                     PhysicalPlan::Projection(projection),
                                     Task::Cop(cop),
                                 ),
@@ -1881,7 +1881,7 @@ pub(crate) fn attach2_task_in(
                                 return Ok(pushed_task);
                             }
                             let converted = pushed_task.into_root_task_in(allocator, evaluate)?;
-                            return Ok(attach_plan_to_task(
+                            return Ok(attach_plan_2_task(
                                 PhysicalPlan::TopN(global),
                                 converted,
                             ));
@@ -1910,7 +1910,7 @@ pub(crate) fn attach2_task_in(
                             allow_projection_push_down: topn.allow_projection_push_down,
                             heavy_function_optimize: topn.heavy_function_optimize,
                         });
-                        let Task::Cop(pushed_cop) = attach_plan_to_task(pushed, Task::Cop(cop))
+                        let Task::Cop(pushed_cop) = attach_plan_2_task(pushed, Task::Cop(cop))
                         else {
                             unreachable!("attaching onto a cop task answers a cop task");
                         };
@@ -1942,9 +1942,9 @@ pub(crate) fn attach2_task_in(
                             column_ids,
                             allocator,
                         ) {
-                            let pushed_task = attach_plan_to_task(
+                            let pushed_task = attach_plan_2_task(
                                 PhysicalPlan::TopN(pushed),
-                                attach_plan_to_task(
+                                attach_plan_2_task(
                                     PhysicalPlan::Projection(projection),
                                     Task::Mpp(mpp),
                                 ),
@@ -1953,7 +1953,7 @@ pub(crate) fn attach2_task_in(
                                 return Ok(pushed_task);
                             }
                             let converted = pushed_task.into_root_task_in(allocator, evaluate)?;
-                            return Ok(attach_plan_to_task(
+                            return Ok(attach_plan_2_task(
                                 PhysicalPlan::TopN(global),
                                 converted,
                             ));
@@ -1984,7 +1984,7 @@ pub(crate) fn attach2_task_in(
                             allow_projection_push_down: topn.allow_projection_push_down,
                             heavy_function_optimize: topn.heavy_function_optimize,
                         });
-                        let mut pushed_task = attach_plan_to_task(pushed, Task::Mpp(mpp));
+                        let mut pushed_task = attach_plan_2_task(pushed, Task::Mpp(mpp));
                         if let Some(PhysicalPlan::TopN(pushed_topn)) = pushed_task.plan_mut() {
                             let child_schema = pushed_topn
                                 .base
@@ -2003,7 +2003,7 @@ pub(crate) fn attach2_task_in(
             if !topn.partition_by.is_empty() {
                 return Ok(t);
             }
-            Ok(attach_plan_to_task(plan, t))
+            Ok(attach_plan_2_task(plan, t))
         }
         // `attach2Task4PhysicalStreamAgg` (`task.go:1653`): a cop child
         // takes the partial/final split UNLESS the aggregate must not cross
@@ -2017,16 +2017,16 @@ pub(crate) fn attach2_task_in(
                     || !cop.idx_merge_part_plans.is_empty()
                 {
                     let t = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
-                    Ok(attach_plan_to_task(plan, t))
+                    Ok(attach_plan_2_task(plan, t))
                 } else {
                     attach_agg_over_cop(plan, cop, column_ids, allocator, evaluate, blacklist)
                 }
             }
             Task::Mpp(mpp) => {
                 let converted = Task::Mpp(mpp).into_root_task_in(allocator, evaluate)?;
-                Ok(attach_plan_to_task(plan, converted))
+                Ok(attach_plan_2_task(plan, converted))
             }
-            root @ Task::Root(_) => Ok(attach_plan_to_task(plan, root.into_root_task_in(allocator, evaluate)?)),
+            root @ Task::Root(_) => Ok(attach_plan_2_task(plan, root.into_root_task_in(allocator, evaluate)?)),
         },
         // `attach2Task4PhysicalHashAgg` (`task.go:2162`): same split, gated
         // only on root-side filters and index merge.
@@ -2036,7 +2036,7 @@ pub(crate) fn attach2_task_in(
                     attach_agg_over_cop(plan, cop, column_ids, allocator, evaluate, blacklist)
                 } else {
                     let t = Task::Cop(cop).into_root_task_in(allocator, evaluate)?;
-                    Ok(attach_plan_to_task(plan, t))
+                    Ok(attach_plan_2_task(plan, t))
                 }
             }
             Task::Mpp(mpp) => attach_hash_agg_to_mpp(
@@ -2048,7 +2048,7 @@ pub(crate) fn attach2_task_in(
                 group_ndv_skew_ratio,
                 blacklist,
             ),
-            root @ Task::Root(_) => Ok(attach_plan_to_task(plan, root.into_root_task_in(allocator, evaluate)?)),
+            root @ Task::Root(_) => Ok(attach_plan_2_task(plan, root.into_root_task_in(allocator, evaluate)?)),
         },
         // `attach2Task4PhysicalHashJoin` (`task.go:211`): convert BOTH
         // children — Go converts the RIGHT one first — wire them in, and

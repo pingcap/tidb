@@ -16,11 +16,11 @@
 //!
 //! Every production symbol of that file is here: `sysVarCache`
 //! ([`SysVarCache`]), `rebuildSysVarCacheIfNeeded`
-//! ([`SysVarCache::rebuild_if_needed`]), `GetSessionCache`
+//! ([`SysVarCache::rebuild_sys_var_cache_if_needed`]), `GetSessionCache`
 //! ([`SysVarCache::get_session_cache`]), `GetGlobalVar`
 //! ([`SysVarCache::get_global_var`]), `fetchTableValues`
 //! ([`fetch_table_values`]), `overrideSysVarWithConfig`
-//! ([`override_sysvar_with_config`]), and `rebuildSysVarCache`
+//! ([`override_sys_var_with_config`]), and `rebuildSysVarCache`
 //! ([`SysVarCache::rebuild`]).
 //!
 //! The cache replaces the old `GlobalVariableCache`: it holds every system
@@ -265,7 +265,7 @@ pub fn fetch_table_values<E: RestrictedSqlExecutor + ?Sized>(
 /// `mysql.global_variables` row for `max_allowed_packet` is required before
 /// the config value can win. An absent key stays absent, so the compiled-in
 /// `SysVar.Value` is used later instead.
-pub fn override_sysvar_with_config(
+pub fn override_sys_var_with_config(
     table_content: &mut HashMap<String, String>,
     max_allowed_packet: u64,
 ) {
@@ -311,7 +311,7 @@ impl SysVarCache {
     ///
     /// # Errors
     /// Whatever [`SysVarCache::rebuild`] reports.
-    pub fn rebuild_if_needed<D: SysVarCacheDeps + ?Sized>(
+    pub fn rebuild_sys_var_cache_if_needed<D: SysVarCacheDeps + ?Sized>(
         &self,
         deps: &D,
     ) -> Result<(), SysVarCacheError> {
@@ -339,7 +339,7 @@ impl SysVarCache {
         &self,
         deps: &D,
     ) -> Result<HashMap<String, String>, SysVarCacheError> {
-        self.rebuild_if_needed(deps)?;
+        self.rebuild_sys_var_cache_if_needed(deps)?;
         Ok(self.read_maps().session.clone())
     }
 
@@ -354,7 +354,7 @@ impl SysVarCache {
         deps: &D,
         name: &str,
     ) -> Result<String, SysVarCacheError> {
-        self.rebuild_if_needed(deps)?;
+        self.rebuild_sys_var_cache_if_needed(deps)?;
         let maps = self.read_maps();
         match maps.global.get(name) {
             Some(val) => Ok(val.clone()),
@@ -384,7 +384,7 @@ impl SysVarCache {
         let mut table_contents = fetch_table_values(deps)?;
 
         if deps.is_starter() {
-            override_sysvar_with_config(&mut table_contents, deps.max_allowed_packet());
+            override_sys_var_with_config(&mut table_contents, deps.max_allowed_packet());
         }
 
         for sv in deps.sys_vars() {
@@ -573,14 +573,14 @@ mod tests {
     #[test]
     fn override_only_fires_when_the_row_exists() {
         let mut absent = HashMap::new();
-        override_sysvar_with_config(&mut absent, 4096);
+        override_sys_var_with_config(&mut absent, 4096);
         assert!(absent.is_empty());
 
         let mut present: HashMap<String, String> =
             [(MAX_ALLOWED_PACKET.to_owned(), "1024".to_owned())]
                 .into_iter()
                 .collect();
-        override_sysvar_with_config(&mut present, 4096);
+        override_sys_var_with_config(&mut present, 4096);
         assert_eq!(present[MAX_ALLOWED_PACKET], "4096");
     }
 

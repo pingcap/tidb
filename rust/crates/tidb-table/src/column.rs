@@ -202,7 +202,7 @@ pub fn cast_table_value_with_flags(
     } else {
         field_type
     };
-    let mut cast = cast_value_with_flags(
+    let mut cast = cast_column_value(
         value,
         conversion_type,
         column,
@@ -326,7 +326,7 @@ impl CastCompletion for RawCast {
 #[allow(clippy::too_many_arguments)]
 /// Go `castColumnValue`, with `completion` completing its diagnostics for
 /// the statement caller.
-pub fn cast_value_with_flags(
+pub fn cast_column_value(
     value: Datum,
     field_type: &FieldType,
     column: &str,
@@ -370,7 +370,7 @@ pub fn cast_value_with_flags(
         } else {
             Datum::new_collation_string(converted_bytes, field_type.collation())
         };
-        return Ok(truncate_char_trailing_spaces(converted, field_type));
+        return Ok(truncate_trailing_spaces(converted, field_type));
     }
     cast_contextual_value(
         value,
@@ -525,7 +525,7 @@ fn cast_contextual_value(
             }
         }
     }
-    Ok(truncate_char_trailing_spaces(converted.value, field))
+    Ok(truncate_trailing_spaces(converted.value, field))
 }
 
 /// Runs the exact charset conversion Go performs before producing a string
@@ -549,7 +549,7 @@ fn invalid_string_conversion(
 /// Go `table.truncateTrailingSpaces`: a non-binary `CHAR(M)` drops every
 /// trailing ASCII space after width handling, including a retained space that
 /// fitted inside `M`. Other string families and binary CHAR keep their bytes.
-pub fn truncate_char_trailing_spaces(value: Datum, field_type: &FieldType) -> Datum {
+pub fn truncate_trailing_spaces(value: Datum, field_type: &FieldType) -> Datum {
     if field_type.code() != tidb_datatype::FieldTypeCode::String || field_type.is_binary_string() {
         return value;
     }

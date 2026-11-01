@@ -1170,7 +1170,7 @@ fn agg_func_desc_for_window_func_reuses_the_inferred_signature() {
     )
     .unwrap()
     .unwrap();
-    let agg = AggFuncDesc::new_for_window_func(&window, true);
+    let agg = AggFuncDesc::new_agg_func_desc_for_window_func(&window, true);
     assert_eq!(agg.name(), names::FIRST_VALUE);
     assert!(agg.has_distinct);
     assert!(agg.ret_type().equal(&window.base.ret_type));

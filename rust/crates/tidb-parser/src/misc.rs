@@ -126,7 +126,7 @@ impl Parser {
     /// Go `parseRecommendStmt` (`misc_stmt_parser.go`): `INDEX` is optional,
     /// an `APPLY`/`IGNORE` id too, and a sub-command the parser does not know
     /// is recorded (lower-cased) for the planner to refuse.
-    pub(crate) fn parse_recommend_index(&mut self) -> PResult<RecommendIndexStmt> {
+    pub(crate) fn parse_recommend_stmt(&mut self) -> PResult<RecommendIndexStmt> {
         self.expect_kw("RECOMMEND")?;
         if self.is_kw("INDEX") {
             self.bump();

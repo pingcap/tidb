@@ -460,7 +460,7 @@ fn drop_placement_policy_in_use_reports_8241_even_under_if_exists() {
 /// exists and only succeeds after the last one goes; afterwards the policy
 /// is gone from the schema. Go's per-table dependency list comes from the
 /// meta KV (`testGetPolicyDependency`); here the current schema's own
-/// reference tracking (`policy_in_use`) stands in for it, which is the same
+/// reference tracking (`check_placement_policy_not_in_use_from_info_schema`) stands in for it, which is the same
 /// information.
 #[test]
 fn policy_cache_and_dependency_alter_seen_by_tables_drop_blocked_until_last_use() {
@@ -504,14 +504,14 @@ fn policy_cache_and_dependency_alter_seen_by_tables_drop_blocked_until_last_use(
 
     // Drop the first dependent: still in use because of t2.
     tk.must_exec("drop table if exists t");
-    assert!(tk.info_schema().policy_in_use("x"));
+    assert!(tk.info_schema().check_placement_policy_not_in_use_from_info_schema("x"));
     tk.must_get_err_code("drop placement policy x", 8241);
     assert!(policy_exists(&tk, "x"), "the policy object survives the failed drops");
 
     // Drop the last dependent: the policy becomes droppable, and after the
     // drop it is gone.
     tk.must_exec("drop table if exists t2");
-    assert!(!tk.info_schema().policy_in_use("x"));
+    assert!(!tk.info_schema().check_placement_policy_not_in_use_from_info_schema("x"));
     tk.must_exec("drop placement policy x");
     assert!(!policy_exists(&tk, "x"));
 }
@@ -600,7 +600,7 @@ fn drop_partition_with_placement_frees_the_policy_only_after_the_partition_goes(
     tk.must_exec("alter table tp drop partition p0");
 
     // And with the partition gone, the policy is free.
-    assert!(!tk.info_schema().policy_in_use("p2"));
+    assert!(!tk.info_schema().check_placement_policy_not_in_use_from_info_schema("p2"));
     tk.must_exec("drop placement policy p2");
 }
 
@@ -642,8 +642,8 @@ fn truncate_table_with_placement_keeps_table_and_partition_refs() {
 
     // Both policies are still referenced, so neither drops.
     let schema = tk.info_schema();
-    assert!(schema.policy_in_use("p1"));
-    assert!(schema.policy_in_use("p2"));
+    assert!(schema.check_placement_policy_not_in_use_from_info_schema("p1"));
+    assert!(schema.check_placement_policy_not_in_use_from_info_schema("p2"));
 }
 
 /// Go `AlterSchema`: ENCRYPTION is ignored, and the charset change and the

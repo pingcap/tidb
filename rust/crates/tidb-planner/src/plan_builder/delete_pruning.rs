@@ -157,7 +157,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// says where its columns and handle sit in the pruned row. Returns the
     /// per-column keep decision over `schema`, and a function from the kept
     /// positions to the finished layouts.
-    pub(super) fn multi_delete_layout(
+    pub(super) fn prune_and_build_col_position_info_for_delete(
         &self,
         input: &DeleteMultiInput,
         schema: &tidb_expr::schema::Schema,

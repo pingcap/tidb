@@ -134,7 +134,7 @@ fn skip_grant_table_bypasses_rows_and_passwords_but_not_secure_transport() {
     assert!(!identity.in_sandbox_mode());
     assert_eq!(
         store
-            .match_identity_plugin("unknown", "192.0.2.7")
+            .match_identity("unknown", "192.0.2.7")
             .as_deref(),
         Some("mysql_native_password")
     );

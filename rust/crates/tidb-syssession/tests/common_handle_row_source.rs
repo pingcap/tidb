@@ -66,7 +66,7 @@ fn row(info: &tidb_model::TableInfo) -> RowValues {
 
 #[test]
 fn a_common_handle_row_is_what_go_stores() {
-    tidb_datatype::set_new_collation_enabled(true);
+    tidb_datatype::set_new_collation_enabled_for_test(true);
     let info = table();
     let mutations = store_clustered_row(&info, None, &row(&info)).expect("the row encodes");
     let stored: Vec<(String, String)> = mutations
@@ -99,7 +99,7 @@ fn a_common_handle_row_is_what_go_stores() {
 /// other handle columns from the key.
 #[test]
 fn a_common_handle_row_reads_back_whole() {
-    tidb_datatype::set_new_collation_enabled(true);
+    tidb_datatype::set_new_collation_enabled_for_test(true);
     let info = table();
     let wanted = row(&info);
     let mutations = store_clustered_row(&info, None, &wanted).expect("the row encodes");

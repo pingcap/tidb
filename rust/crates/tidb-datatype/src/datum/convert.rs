@@ -269,9 +269,9 @@ impl Datum {
                     ),
                 ));
             }
-            Self::Real(value) => (MyDecimal::from_float64(*value), *value),
+            Self::Real(value) => (MyDecimal::from_float_64(*value), *value),
             Self::Float32(value) => (
-                MyDecimal::from_float64(f64::from(*value as f32)),
+                MyDecimal::from_float_64(f64::from(*value as f32)),
                 f64::from(*value as f32),
             ),
             Self::BinaryLiteral(value) | Self::Bit(value) => {

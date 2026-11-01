@@ -119,7 +119,7 @@ where
     }
 
     /// Go `NewAsyncOperatorWithTransform`.
-    pub fn with_transform(
+    pub fn new_async_operator_with_transform(
         context: Arc<Context>,
         name: impl Into<String>,
         worker_num: i32,

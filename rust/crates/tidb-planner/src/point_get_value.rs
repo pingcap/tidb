@@ -38,7 +38,7 @@ use tidb_exprctx::Columns;
 /// Go `checkCanConvertInPointGet`: pairings whose conversion is meaningful
 /// for storage but wrong for key equality, so no point plan may be built.
 #[must_use]
-pub fn can_convert_in_point_get(column: &FieldType, value: &Datum) -> bool {
+pub fn check_can_convert_in_point_get(column: &FieldType, value: &Datum) -> bool {
     if column.eval_type() == tidb_datatype::EvalType::String
         && matches!(
             value,
@@ -61,7 +61,7 @@ pub fn can_convert_in_point_get(column: &FieldType, value: &Datum) -> bool {
 ///
 /// Conversion runs under strict flags with no warning sink, so a truncated
 /// string keeps its best-effort value silently. The fast-plan builders use
-/// [`name_value_pair_value`] and [`statement_point_get_value`], which apply
+/// [`name_value_pair_value`] and [`get_point_get_value`], which apply
 /// the statement's type context as Go does; this one serves callers that
 /// reuse the rule outside planning (a cached plan's parameters, join probe
 /// keys).
@@ -70,7 +70,7 @@ pub fn point_get_value(column: &FieldType, value: &Datum) -> Option<Datum> {
     if value.is_null() {
         return None;
     }
-    if !can_convert_in_point_get(column, value) {
+    if !check_can_convert_in_point_get(column, value) {
         return None;
     }
     let value = &*in_column_collation(column, value);
@@ -127,7 +127,7 @@ pub enum NameValuePairValue {
 /// Go `getNameValuePairs`'s conversion of one pair's constant, under the
 /// statement's own type context (`evalCtx.TypeCtx()`).
 ///
-/// It differs from [`statement_point_get_value`] exactly where Go's two
+/// It differs from [`get_point_get_value`] exactly where Go's two
 /// functions differ: a `CHAR`/`BINARY` column of the binary collation keeps
 /// the constant unconverted, `ErrOverflow` is
 /// [`NameValuePairValue::TableDual`], and `ErrTruncatedWrongVal` -- what the
@@ -150,7 +150,7 @@ pub fn name_value_pair_value(
         return NameValuePairValue::Decline;
     }
     let value = in_column_collation(column, value);
-    if !can_convert_in_point_get(column, &value) {
+    if !check_can_convert_in_point_get(column, &value) {
         return NameValuePairValue::Decline;
     }
     // "This type we needn't to pad `\0` in here": Go keeps the constant as
@@ -196,12 +196,12 @@ pub fn name_value_pair_value(
 /// every `IN` list element. Any conversion error declines, and so does a
 /// value that does not survive the round trip; diagnostics are reported as
 /// in [`name_value_pair_value`].
-pub fn statement_point_get_value(
+pub fn get_point_get_value(
     ctx: &dyn Columns,
     column: &FieldType,
     value: &Datum,
 ) -> Option<Datum> {
-    if value.is_null() || !can_convert_in_point_get(column, value) {
+    if value.is_null() || !check_can_convert_in_point_get(column, value) {
         return None;
     }
     let value = in_column_collation(column, value);

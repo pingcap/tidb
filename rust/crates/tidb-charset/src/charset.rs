@@ -574,7 +574,7 @@ pub fn new_collation_enabled() -> bool {
 
 /// Go `collate.SetNewCollationEnabledForTest` and its
 /// `switchDefaultCollation`. Callers must serialize changes.
-pub fn set_new_collation_enabled(enabled: bool) {
+pub fn set_new_collation_enabled_for_test(enabled: bool) {
     set_new_collation_defaults(enabled);
     NEW_COLLATION_ENABLED.store(enabled, AtomicOrdering::SeqCst);
 }

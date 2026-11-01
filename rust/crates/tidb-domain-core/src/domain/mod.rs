@@ -551,7 +551,7 @@ impl tidb_stats_handle_syncload::sync_load::StatisticsItemLoader for ClusterStat
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
             let started = std::time::Instant::now();
             let loaded = loader
-                .load_item(
+                .read_stats_for_one_item(
                     &mut snapshot,
                     item.table_id,
                     item.is_index,
@@ -1089,7 +1089,7 @@ impl Domain {
             .server_info
             .as_ref()
             .ok_or_else(|| "server info is not initialized".to_owned())?;
-        let local = syncer.local_server_info();
+        let local = syncer.get_local_server_info();
         let instance = tidb_domain_serverinfo::serverinfo_syncer::join_host_port(
             &local.static_info.ip,
             local.static_info.port,
@@ -1407,7 +1407,7 @@ impl Domain {
         row_ids: &Arc<dyn TableAutoIds>,
     ) -> Result<(), String> {
         let mut pending = stats_usage.session_stats_list().begin_table_delta_dump();
-        let table_ids = pending.pending_table_ids(target_table_ids);
+        let table_ids = pending.collect_pending_stats_delta_table_ids(target_table_ids);
         for batch in table_ids.chunks(tidb_stats_handle_usage::DUMP_DELTA_BATCH_SIZE) {
             let batch_time = SystemTime::now();
             let catalog = catalog_store.load();
@@ -1789,7 +1789,7 @@ impl Domain {
 
     /// Go `Domain.NextConnID` / `ReleaseConnID`, over the node's one
     /// connection-ID allocator.
-    pub fn connection_id_allocator(
+    pub fn next_conn_id(
         &self,
     ) -> Arc<dyn tidb_globalconn::Allocator + Send + Sync> {
         Arc::clone(&self.connection_ids)
@@ -1804,7 +1804,7 @@ impl Domain {
         // Go `ddl.Start`: `variable.RegisterStatistics(d)`, whose id is this
         // server's.
         self.register_statistics(Arc::new(tidb_ddl::stat::DdlStatistics {
-            id: syncer.local_server_info().static_info.id.clone(),
+            id: syncer.get_local_server_info().static_info.id.clone(),
             catalog: Arc::clone(&self.catalog),
         }));
         self.server_info = Some(syncer);
@@ -3395,7 +3395,7 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext
                 // `ReleaseConnID` as its auto-analyze process-ID generator, so
                 // the ID names this node's server ID and `KILL` routes it here.
                 let factory = self.factory().map_err(stats_session_error)?;
-                let ids = factory.connection_id_allocator();
+                let ids = factory.next_conn_id();
                 let released = Arc::clone(&ids);
                 let generator = tidb_stats_handle_util::Generator::new(
                     move || ids.next_id(),

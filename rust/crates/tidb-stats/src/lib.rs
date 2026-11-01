@@ -69,17 +69,17 @@ pub use analyze_jobs::{
 };
 pub use analyze_version_policy::analyze_version_matches;
 pub use builder::{
-    build_column, build_column_histogram, build_hist_and_topn, try_build_column_histogram,
-    try_build_column_histogram_in_place, try_build_hist_and_topn, try_build_hist_and_topn_in_place,
+    build_column, build_column_hist, build_hist_and_topn, try_build_column_histogram,
+    try_build_column_histogram_in_place, try_build_hist_and_topn, build_hist_and_top_n,
     try_build_hist_and_topn_tracked, BuildOptions, BuilderMemoryBuffer, ComparedBytesResult,
     HistogramAndTopN, HistogramBuildError, SampleCollector, SampleItem, SequentialRangeChecker,
 };
 pub use cmsketch::{
-    check_empty_topns, cmsketch_and_topn_from_proto, decode_cmsketch,
+    check_empty_topns, cm_sketch_and_top_n_from_proto, decode_cmsketch,
     decode_cmsketch_and_embedded_topn, decode_cmsketch_and_topn, decode_topn_rows,
-    encode_cmsketch_and_topn, encode_cmsketch_without_topn, find_topn,
+    encode_cmsketch_and_topn, encode_cmsketch_without_topn, find_top_n,
     get_merged_topn_from_sorted_slice, merge_topn, merge_topn_and_update_cmsketch,
-    new_cmsketch_and_topn, new_cmsketch_and_topn_with_tie_stabilization, query_topn,
+    new_cmsketch_and_topn, new_cmsketch_and_topn_with_tie_stabilization, query_top_n,
     sort_topn_meta, topn_between_count, topn_lower_bound, topn_meta_compare, topn_min_count,
     topn_total_count, CodecError,
 };
@@ -103,7 +103,7 @@ pub use fmsketch_codec::{
 };
 pub use histogram::{Bucket, Histogram, HistogramAllocation};
 pub use independent_index_analyze::{
-    merge_independent_index_fragments, IndependentIndexAnalyze, IndependentIndexFragment,
+    update_index_result, IndependentIndexAnalyze, IndependentIndexFragment,
     IndependentIndexMergeError, IndependentIndexStatistics, DEFAULT_INDEX_CMS_DEPTH,
     DEFAULT_INDEX_CMS_WIDTH,
 };
@@ -113,7 +113,7 @@ pub use memory_usage::{ColumnMemUsage, IndexMemUsage};
 pub use overlap_geometry::{left_overlap_percent, right_overlap_percent};
 pub use row_estimate::{calculate_skew_ratio_counts, default_row_est, RowEstimate};
 pub use row_sample_collector::{
-    adjusted_sample_rate, RowSampleCollector, RowSampleCollectorProto, RowSampleProto,
+    get_adjusted_sample_rate, RowSampleCollector, RowSampleCollectorProto, RowSampleProto,
     SamplePolicy, SampledRow, ScannedRow, SlotStats, SlotValue, DEF_ROWS_FOR_SAMPLE_RATE,
 };
 pub use sample_bytes::{

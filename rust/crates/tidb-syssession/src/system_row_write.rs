@@ -1338,11 +1338,11 @@ mod tests {
             let DdlStmt::CreateTable(create) = ddl.as_ref() else {
                 continue;
             };
-            let mut table = tidb_ddl_build::table_info_build::build_table_info_with_context(
+            let mut table = tidb_ddl_build::table_info_build::build_table_info_from_ast(
                 create,
                 "utf8mb4",
                 "utf8mb4_bin",
-                &tidb_metabuild::Context::new_non_strict(),
+                &tidb_metabuild::Context::new_non_strict_context(),
                 false,
             )
             .unwrap_or_else(|error| panic!("mysql.{}: {error:?}", bootstrap.name));

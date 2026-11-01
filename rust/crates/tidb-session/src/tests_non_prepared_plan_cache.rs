@@ -749,7 +749,7 @@ fn a_duplicated_in_list_hits_and_still_returns_its_own_rows() {
     assert_eq!(hit(&mut session), "1");
 }
 
-/// Go `lookupPlanCache`'s defer observes `plan_cache_lookup_duration` ONLY
+/// Go `lookupPlanCache`'s defer observes `get_plan_cache_lookup_duration` ONLY
 /// when the lookup hit: the first execution of a statement (a miss that
 /// re-plans) records the miss counter and nothing on the histogram; the
 /// second execution (a hit) observes exactly once.
@@ -760,7 +760,7 @@ fn a_duplicated_in_list_hits_and_still_returns_its_own_rows() {
 #[test]
 fn the_plan_cache_lookup_duration_histogram_observes_on_hits() {
     let mut session = cache_session();
-    let histogram = tidb_planner_core_metrics::plan_cache_lookup_duration(false);
+    let histogram = tidb_planner_core_metrics::get_plan_cache_lookup_duration(false);
     // First execution: miss → replan → the cache is now warm for the key.
     let _ = rows(&mut session, "select a from t where a = 1");
     let before = histogram.get_sample_count();
@@ -784,7 +784,7 @@ fn the_plan_cache_lookup_duration_histogram_observes_on_hits() {
 #[ignore = "needs --test-threads=1: process-global prometheus counters"]
 fn the_plan_cache_lookup_duration_histogram_miss_records_nothing_serial() {
     let mut session = cache_session();
-    let histogram = tidb_planner_core_metrics::plan_cache_lookup_duration(false);
+    let histogram = tidb_planner_core_metrics::get_plan_cache_lookup_duration(false);
     let before = histogram.get_sample_count();
     let _ = rows(&mut session, "select a from t where a = 1");
     assert_eq!(

@@ -27,7 +27,7 @@ use tidb_ast::{
 use crate::go_duration::format_go_duration;
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::go_json_field_matches;
-use crate::setting_builder::{write_setting_integer, write_setting_item, write_setting_string};
+use crate::setting_builder::{write_setting_integer_to_builder, write_setting_item_to_builder, write_setting_string_to_builder};
 
 /// Go `unlimitedRURate`: the RU-rate sentinel meaning unlimited.
 pub(crate) const UNLIMITED_RU_RATE: u64 = i32::MAX as u64;
@@ -296,18 +296,18 @@ impl std::fmt::Display for ResourceGroupSettings {
         let separator = Some(", ");
         let mut builder = String::new();
         if self.ru_rate != 0 {
-            write_setting_integer(&mut builder, "RU_PER_SEC", self.ru_rate, separator);
+            write_setting_integer_to_builder(&mut builder, "RU_PER_SEC", self.ru_rate, separator);
         }
-        write_setting_item(
+        write_setting_item_to_builder(
             &mut builder,
             &format!("PRIORITY={}", priority_value_to_name(self.priority)),
             separator,
         );
         if !self.cpu_limiter.is_empty() {
-            write_setting_string(&mut builder, "CPU", &self.cpu_limiter, separator);
+            write_setting_string_to_builder(&mut builder, "CPU", &self.cpu_limiter, separator);
         }
         if !self.io_read_bandwidth.is_empty() {
-            write_setting_string(
+            write_setting_string_to_builder(
                 &mut builder,
                 "IO_READ_BANDWIDTH",
                 &self.io_read_bandwidth,
@@ -315,7 +315,7 @@ impl std::fmt::Display for ResourceGroupSettings {
             );
         }
         if !self.io_write_bandwidth.is_empty() {
-            write_setting_string(
+            write_setting_string_to_builder(
                 &mut builder,
                 "IO_WRITE_BANDWIDTH",
                 &self.io_write_bandwidth,
@@ -323,8 +323,8 @@ impl std::fmt::Display for ResourceGroupSettings {
             );
         }
         match self.burst_limit {
-            -2 => write_setting_item(&mut builder, "BURSTABLE(MODERATED)", separator),
-            -1 => write_setting_item(&mut builder, "BURSTABLE(UNLIMITED)", separator),
+            -2 => write_setting_item_to_builder(&mut builder, "BURSTABLE(MODERATED)", separator),
+            -1 => write_setting_item_to_builder(&mut builder, "BURSTABLE(UNLIMITED)", separator),
             _ => {}
         }
         if let Some(runaway) = &self.runaway {
@@ -353,7 +353,7 @@ impl std::fmt::Display for ResourceGroupSettings {
                 let _ = write!(builder, "RU={}", runaway.request_unit);
             }
             if runaway.action == ResourceGroupRunawayAction::SWITCH_GROUP {
-                write_setting_item(
+                write_setting_item_to_builder(
                     &mut builder,
                     &format!(
                         "ACTION={}({})",
@@ -363,27 +363,27 @@ impl std::fmt::Display for ResourceGroupSettings {
                     None,
                 );
             } else {
-                write_setting_item(
+                write_setting_item_to_builder(
                     &mut builder,
                     &format!("ACTION={}", runaway.action.sql()),
                     None,
                 );
             }
             if runaway.watch_type != ResourceGroupRunawayWatch::NONE {
-                write_setting_item(
+                write_setting_item_to_builder(
                     &mut builder,
                     &format!("WATCH={}", runaway.watch_type.sql()),
                     None,
                 );
                 if runaway.watch_duration_ms > 0 {
-                    write_setting_string(
+                    write_setting_string_to_builder(
                         &mut builder,
                         "DURATION",
                         &go_duration_from_i64_ms(runaway.watch_duration_ms),
                         None,
                     );
                 } else {
-                    write_setting_item(&mut builder, "DURATION=UNLIMITED", None);
+                    write_setting_item_to_builder(&mut builder, "DURATION=UNLIMITED", None);
                 }
             }
             builder.push(')');

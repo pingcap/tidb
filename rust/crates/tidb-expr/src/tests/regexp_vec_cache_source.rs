@@ -280,10 +280,10 @@ fn regexp_constant_pattern_corpus_matches_scalar_evaluation() {
 #[test]
 fn regexp_cache_identity_by_statement_context() {
     use crate::builtin_ext::BuiltinFuncCache;
-    use crate::regexp::{get_cached_regexp, CachedRegexp};
+    use crate::regexp::{get_cached_regexp, RegexpMemorizedSig};
     use std::sync::Arc;
 
-    let cache = BuiltinFuncCache::<CachedRegexp>::default();
+    let cache = BuiltinFuncCache::<RegexpMemorizedSig>::default();
     assert!(get_cached_regexp(&cache, 7, false, "uncached", "").is_ok());
     assert!(cache.get_cache(7).is_none());
 
@@ -314,7 +314,7 @@ fn regexp_cache_identity_by_statement_context() {
     let clone = cache.clone();
     assert!(clone.get_cache(9).is_none());
 
-    let regexp_cache = BuiltinFuncCache::<CachedRegexp>::default();
+    let regexp_cache = BuiltinFuncCache::<RegexpMemorizedSig>::default();
     let replacement_cache = BuiltinFuncCache::default();
     let first = crate::builtin_ext::regexp::dispatch_with_cache(
         "REGEXP_REPLACE",

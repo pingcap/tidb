@@ -404,7 +404,7 @@ impl SortPartition {
             Arc::clone(&self.spill_storage),
         );
         in_disk.disk_tracker().attach_to(&self.disk_tracker);
-        let mut tmp = Chunk::new_with_capacity(&self.field_types, self.spill_chunk_size);
+        let mut tmp = Chunk::new_chunk_with_capacity(&self.field_types, self.spill_chunk_size);
         for &(chunk_index, row_index) in &self.rows {
             tmp.append_row(self.chunks[chunk_index].get_row(row_index));
             if tmp.num_rows() >= self.spill_chunk_size {

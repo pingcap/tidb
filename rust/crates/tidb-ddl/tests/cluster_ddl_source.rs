@@ -38,7 +38,7 @@ use tidb_ddl_systable::ddl_job_table::DdlJobTable;
 use tidb_ddl_systable::{SystemTableManager, SystemTableManagerError};
 use tidb_syssession::mysql_system_tables::{SystemRow, SystemTableView};
 use tidb_syssession::system_row_write::store_clustered_row;
-use tidb_ddl_build::table_info_build::{build_table_info, build_table_info_with_context};
+use tidb_ddl_build::table_info_build::{build_table_info, build_table_info_from_ast};
 use tidb_meta::{key, value};
 use tidb_model::{ActionType, DBInfo, GoAnyView, GoShared, Job, JobState, JobVersion, SchemaState};
 use tidb_txnkv::transaction::{BufferMutation, BufferMutationOp};
@@ -225,7 +225,7 @@ pub(crate) fn bootstrapped() -> MetaStore {
         let tidb_ast::DdlStmt::CreateTable(create) = ddl.as_ref() else {
             panic!("the {system_table_name} definition creates a table")
         };
-        let mut info = build_table_info_with_context(
+        let mut info = build_table_info_from_ast(
             create,
             "utf8mb4",
             "utf8mb4_bin",
@@ -3580,8 +3580,8 @@ fn create_table_stages_the_go_notifier_row_in_the_catalog_transaction() {
     };
     let event: SchemaChangeEvent =
         serde_json::from_slice(encoded_event).expect("the Go-shaped event JSON decodes");
-    assert_eq!(event.create_table_info().id, write.created_id.unwrap());
-    assert_eq!(event.create_table_info().name.original(), "notified");
+    assert_eq!(event.get_create_table_info().id, write.created_id.unwrap());
+    assert_eq!(event.get_create_table_info().name.original(), "notified");
     // Go's internal INSERT allocates the `_tidb_rowid` from the node's
     // allocator, whose reservation commits on its own: the DDL's write set
     // never moves the counter.
@@ -6147,7 +6147,7 @@ fn persisted_job_errors_carry_the_go_class() {
 fn int_only_context() -> tidb_metabuild::Context {
     tidb_metabuild::Context::new([
         tidb_metabuild::with_expr_ctx(std::sync::Arc::clone(
-            tidb_metabuild::Context::new_non_strict().get_expr_ctx(),
+            tidb_metabuild::Context::new_non_strict_context().get_expr_ctx(),
         )),
         tidb_metabuild::with_clustered_index_def_mode(
             tidb_vardef::modes::ClusteredIndexDefMode::INT_ONLY,

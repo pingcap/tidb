@@ -139,7 +139,7 @@ fn mark_cluster_table(
     name: &str,
 ) {
     if !database.go_lower_eq(crate::infoschema_meta::INFORMATION_SCHEMA)
-        || !crate::infoschema_meta::is_cluster_table_name(name)
+        || !crate::infoschema_meta::is_cluster_table_by_name(name)
     {
         return;
     }

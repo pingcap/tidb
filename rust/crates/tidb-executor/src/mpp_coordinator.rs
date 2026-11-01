@@ -41,7 +41,7 @@ use tidb_proto::tipb::{
     Executor, TableScan,
 };
 
-use crate::cop_reader::scan_column;
+use crate::cop_reader::column_to_proto;
 use crate::dag_request::{column_to_pb, DagRequestContext, DEFAULT_DIV_PRECISION_INCREMENT};
 use tidb_distsql::remote_scan::PushdownStatementContext;
 use tidb_distsql::remote_scan::PushdownScannerError;
@@ -129,7 +129,7 @@ pub fn mpp_task_metadata(
 /// sender over the scan, every column as the output offset, and TypeChunk
 /// encoding for the coordinator's own fragment. The sender targets
 /// `receiver_meta`, the coordinator's pseudo task.
-pub fn root_fragment_dag(
+pub fn append_mpp_dispatch_req(
     request: &PushdownScanRequest,
     receiver_meta: &TaskMeta,
 ) -> Result<DagRequest, String> {
@@ -144,7 +144,7 @@ pub fn root_fragment_dag(
     let mut columns = request
         .columns
         .iter()
-        .map(scan_column)
+        .map(column_to_proto)
         .collect::<Option<Vec<tidb_planner_core_operator_logicalop::tikv_scan_spec::ScanColumnInfo>>>()
         .ok_or_else(|| "a column has no bounded coprocessor descriptor".to_owned())?;
     // Go `util.ColumnToProto` rewrites EVERY column's collation id for
@@ -363,7 +363,7 @@ fn open_gather(
         }
         meta.address.clone_from(&task.address);
         let address = task.address.clone();
-        let dag = root_fragment_dag(request, &receiver_meta).map_err(refuse)?;
+        let dag = append_mpp_dispatch_req(request, &receiver_meta).map_err(refuse)?;
         client.dispatch_mpp_task(
             &ctx,
             task,

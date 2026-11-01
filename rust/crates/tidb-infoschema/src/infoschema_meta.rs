@@ -8583,7 +8583,7 @@ pub const CLUSTER_TABLES: &[(&str, &str)] = &[
 
 /// Go `infoschema.IsClusterTableByName`: the CLUSTER_* tables plus
 /// `TIFLASH_REPLICA`, whose cop request goes to the DDL owner.
-pub fn is_cluster_table_name(name: &str) -> bool {
+pub fn is_cluster_table_by_name(name: &str) -> bool {
     cluster_table_source(name).is_some() || name.go_lower_eq("TIFLASH_REPLICA")
 }
 

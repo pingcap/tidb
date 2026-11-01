@@ -29,7 +29,7 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_executor_join::base_join_probe::{is_key_matched, new_join_probe, BaseJoinProbe, ProbeContext};
 use tidb_executor_join::probe_worker::{ProbeWorkerEvent, ProbeWorkerV2};
 use tidb_executor_join::{
-    new_join_build_worker_v2, AntiLeftOuterSemiJoinProbe, AntiSemiJoinProbe, BuildTask,
+    new_join_build_worker_v_2, AntiLeftOuterSemiJoinProbe, AntiSemiJoinProbe, BuildTask,
     HashJoinCtxV2, HashJoinV2Exec, HashTableContext, InnerJoinProbe, LeftOuterSemiJoinProbe,
     OuterJoinProbe, ProbeV2, SemiJoinProbe, LABEL_FOR_HASH_TABLE_IN_HASH_JOIN_V2,
 };
@@ -254,7 +254,7 @@ fn native_build_partition_spill_source() {
             let chunks: Vec<_> = (0..64)
                 .map(|batch| {
                     let mut chunk =
-                        Chunk::new_with_capacity(&[FieldType::new(FieldTypeCode::LongLong)], 128);
+                        Chunk::new_chunk_with_capacity(&[FieldType::new(FieldTypeCode::LongLong)], 128);
                     for row in 0..128 {
                         if row % 19 == 0 {
                             chunk.append_null(0);
@@ -354,7 +354,7 @@ fn native_build_partition_spill_source() {
                                 FieldType::new(FieldTypeCode::Bit),
                                 FieldType::new(FieldTypeCode::LongLong),
                             ];
-                            let mut chunk = Chunk::new_with_capacity(&types, 1);
+                            let mut chunk = Chunk::new_chunk_with_capacity(&types, 1);
                             for &id in spilled_ids {
                                 chunk.reset();
                                 chunk.append_uint64(0, (id as u64) << shift);
@@ -484,7 +484,7 @@ fn native_hash_join_recursive_restore_source() {
                     let source = |side: usize| {
                         let chunks = (0..64)
                             .map(|batch| {
-                                let mut chunk = Chunk::new_with_capacity(&fields, 128);
+                                let mut chunk = Chunk::new_chunk_with_capacity(&fields, 128);
                                 for row in 0..128 {
                                     let value = batch * 128 + row;
                                     if value % 19 == 0 {
@@ -932,7 +932,7 @@ fn run_worker_stage(
                           pending: &mut Vec<usize>,
                           sender: &crossbeam_channel::Sender<Chunk>| {
                 *pending = (0..chunk.num_cols())
-                    .map(|i| chunk.column(i).data_capacity())
+                    .map(|i| chunk.column(i).get_data_cap())
                     .collect();
                 sender.send(chunk).unwrap();
             };
@@ -952,7 +952,7 @@ fn run_worker_stage(
                         assert_eq!(chunk.num_rows(), 0);
                         assert_eq!(
                             (0..chunk.num_cols())
-                                .map(|i| chunk.column(i).data_capacity())
+                                .map(|i| chunk.column(i).get_data_cap())
                                 .collect::<Vec<_>>(),
                             pending_capacity
                         );
@@ -1059,7 +1059,7 @@ fn type_null_key_layout() -> RowLayoutMeta {
 }
 
 fn type_null_build_chunk() -> Chunk {
-    let mut chunk = Chunk::new_with_capacity(&[FieldType::new(FieldTypeCode::Null)], 1);
+    let mut chunk = Chunk::new_chunk_with_capacity(&[FieldType::new(FieldTypeCode::Null)], 1);
     chunk.append_null(0);
     chunk
 }
@@ -1093,7 +1093,7 @@ fn built_exec(
 
 /// Every build key that the finished hash table matches for `key`, found the
 /// way a per-join-type probe finds them: bucket head from
-/// `SetChunkForProbe`, then [`BaseJoinProbe::next_matched_row`] down the
+/// `SetChunkForProbe`, then [`BaseJoinProbe::get_next_row_address`] down the
 /// chain with [`is_key_matched`] at each link.
 fn matches_for(exec: &HashJoinV2Exec, layout: &RowLayoutMeta, keys: &[i64]) -> Vec<Vec<i64>> {
     let hash_table = &exec.hash_table_context.hash_table;
@@ -1137,7 +1137,7 @@ fn matches_for(exec: &HashJoinV2Exec, layout: &RowLayoutMeta, keys: &[i64]) -> V
                     bytes.copy_from_slice(&layout.get_key_bytes(row)[..8]);
                     matched.push(i64::from_le_bytes(bytes));
                 }
-                current = BaseJoinProbe::next_matched_row(row, &ctx.tag_helper, hash_value);
+                current = BaseJoinProbe::get_next_row_address(row, &ctx.tag_helper, hash_value);
             }
             matched.sort_unstable();
             matched
@@ -2166,10 +2166,10 @@ fn a_build_side_with_no_rows_leaves_every_partition_hash_table_empty() {
 #[test]
 fn a_build_worker_has_a_nullable_key_when_any_key_column_is_nullable() {
     // Go: hasNullableKey is true as soon as one key column lacks NOT NULL.
-    let worker = new_join_build_worker_v2(0, vec![0, 2], &[true, false, true]);
+    let worker = new_join_build_worker_v_2(0, vec![0, 2], &[true, false, true]);
     assert!(!worker.has_nullable_key, "both key columns are NOT NULL");
 
-    let worker = new_join_build_worker_v2(1, vec![0, 2], &[true, true, false]);
+    let worker = new_join_build_worker_v_2(1, vec![0, 2], &[true, true, false]);
     assert!(worker.has_nullable_key);
     assert_eq!(worker.worker_id, 1);
     assert!(worker.builder.is_none(), "the builder is created later");
@@ -2269,7 +2269,7 @@ fn check_semi_family(
     .take(91)
     .collect();
     let make_input = |values: &[(Option<i64>, Option<i64>)]| {
-        let mut chunk = Chunk::new_with_capacity(&types, values.len());
+        let mut chunk = Chunk::new_chunk_with_capacity(&types, values.len());
         for &(key, cmp) in values {
             for (index, value) in [key, cmp].into_iter().enumerate() {
                 if let Some(value) = value {
@@ -2506,7 +2506,7 @@ fn assert_probe_canceled(probe: &mut dyn ProbeV2, input: Chunk, new_output: &dyn
     assert!(matches!(probe.probe(&mut output, &killer),
         Err(tidb_executor_join::base_join_probe::ProbeError::Killed(ref error)) if error.code == 1317));
     assert!(
-        !output.is_incomplete_chunk(),
+        !output.is_in_complete_chunk(),
         "Go defer restores the output shape on error"
     );
     if probe.need_scan_row_table() {
@@ -2559,7 +2559,7 @@ fn native_hash_join_executor_lifecycle_source() {
                     let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
                     let int = FieldType::new(FieldTypeCode::LongLong);
                     let make_chunk = |values: &[Option<i64>]| {
-                        let mut chunk = Chunk::new_with_capacity(&[int.clone()], values.len() + 1);
+                        let mut chunk = Chunk::new_chunk_with_capacity(&[int.clone()], values.len() + 1);
                         for &value in values {
                             match value {
                                 Some(value) => chunk.append_int64(0, value),
@@ -3190,7 +3190,7 @@ fn check_join_other_condition(join_type: JoinType, residual: bool, filtered: boo
     let all_types: Vec<_> = left_types.iter().chain(&right_types).cloned().collect();
     let make_input =
         |types: &[FieldType], side: &str, values: &[(Option<i64>, Option<i64>)], cmp: usize| {
-            let mut chunk = Chunk::new_with_capacity(types, values.len());
+            let mut chunk = Chunk::new_chunk_with_capacity(types, values.len());
             for (row, &(key, comparison)) in values.iter().enumerate() {
                 for (column, field) in types.iter().enumerate() {
                     if column == 0 {
@@ -3667,7 +3667,7 @@ use tidb_charset::Collation;
     let mut key_sets: Vec<Vec<usize>> = (0..id).map(|index| vec![index]).collect();
     key_sets.extend([vec![1, 2], vec![12, 1], vec![1, 12], (0..id).collect()]);
     for nullable in [false, true] {
-        let mut input = Chunk::new_with_capacity(&fields, 4);
+        let mut input = Chunk::new_chunk_with_capacity(&fields, 4);
         for row in 0..4 {
             for (column, (_, _, a, b)) in cases.iter().enumerate() {
                 if row == 3 {

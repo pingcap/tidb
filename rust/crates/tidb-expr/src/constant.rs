@@ -901,14 +901,14 @@ mod tests {
             (Datum::Int(-2), Some(-225000)),
         ] {
             let ctx = Parameters(vec![value]);
-            let mut input = Chunk::new_with_capacity(&[decimal.clone(), decimal.clone()], 1);
+            let mut input = Chunk::new_chunk_with_capacity(&[decimal.clone(), decimal.clone()], 1);
             input.append_datum(0, &Datum::Decimal(Decimal::from_scaled_i128(1000, 2)));
             input.append_datum(1, &Datum::Decimal(Decimal::from_scaled_i128(25, 2)));
             let expected = coefficient.map_or(Datum::Null, |value| {
                 Datum::Decimal(Decimal::from_scaled_i128(value, 4))
             });
             assert_eq!(expression.eval(&ctx, input.get_row(0)).unwrap(), expected);
-            let mut output = Chunk::new_with_capacity(std::slice::from_ref(&decimal), 1);
+            let mut output = Chunk::new_chunk_with_capacity(std::slice::from_ref(&decimal), 1);
             suite.run(&ctx, &mut input, &mut output).unwrap();
             assert_eq!(output.get_row(0).get_datum(0, &decimal), expected);
         }

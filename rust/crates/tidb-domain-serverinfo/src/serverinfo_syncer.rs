@@ -221,7 +221,7 @@ impl Syncer {
         };
         let key = format!(
             "/tidb/server/minstartts/{}",
-            self.local_server_info().static_info.id
+            self.get_local_server_info().static_info.id
         );
         let value = start_ts.to_string();
         let lease = self
@@ -240,7 +240,7 @@ impl Syncer {
         if let Some(etcd) = &self.etcd {
             let key = format!(
                 "/tidb/server/minstartts/{}",
-                self.local_server_info().static_info.id
+                self.get_local_server_info().static_info.id
             );
             if let Err(error) = etcd.delete(&key) {
                 tracing::warn!(%error, "remove min start TS failed");
@@ -256,7 +256,7 @@ impl Syncer {
 
     /// Go `GetLocalServerInfo`.
     #[must_use]
-    pub fn local_server_info(&self) -> ServerInfo {
+    pub fn get_local_server_info(&self) -> ServerInfo {
         self.info.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
@@ -362,7 +362,7 @@ impl Syncer {
         if self.etcd.is_none() {
             return Ok(());
         }
-        let mut candidate = self.local_server_info();
+        let mut candidate = self.get_local_server_info();
         let mut changed = false;
         for (key, value) in labels {
             if candidate.dynamic_info.labels.get(key) != Some(value) {
@@ -397,7 +397,7 @@ impl Syncer {
     /// single-node answer.
     pub fn all_server_info(&self) -> Result<HashMap<String, ServerInfo>, String> {
         let Some(etcd) = self.etcd.as_ref() else {
-            let info = self.local_server_info();
+            let info = self.get_local_server_info();
             return Ok(HashMap::from([(info.static_info.id.clone(), info)]));
         };
         let entries = etcd.get_prefix(SERVER_INFORMATION_PATH)?;
@@ -424,8 +424,8 @@ impl Syncer {
     /// Go `GetServerInfoByID`: the local info for this node's own id (no
     /// etcd read at all), otherwise the peer's entry -- and a MISSING peer
     /// is an error, not a `None`, exactly as Go's `get %s failed`.
-    pub fn server_info_by_id(&self, id: &str) -> Result<ServerInfo, String> {
-        let local = self.local_server_info();
+    pub fn get_server_info_by_id(&self, id: &str) -> Result<ServerInfo, String> {
+        let local = self.get_local_server_info();
         let Some(etcd) = self.etcd.as_ref() else {
             return Ok(local);
         };
@@ -466,7 +466,7 @@ impl Syncer {
     /// joined by Go's `net.JoinHostPort` (see [`join_host_port`]).
     #[must_use]
     pub fn topology_prefix(&self) -> String {
-        let info = self.local_server_info();
+        let info = self.get_local_server_info();
         format!(
             "{TOPOLOGY_INFORMATION_PATH}/{}",
             join_host_port(&info.static_info.ip, info.static_info.port)
@@ -497,7 +497,7 @@ impl Syncer {
             return Ok(());
         };
         let prefix = self.topology_prefix();
-        let topology = self.local_server_info().to_topology_info();
+        let topology = self.get_local_server_info().to_topology_info();
         let bytes = serde_json::to_vec(&topology).map_err(|error| error.to_string())?;
         etcd.put(&format!("{prefix}/info"), &bytes)?;
         self.update_topology_aliveness()
@@ -527,7 +527,7 @@ impl Syncer {
     /// Go `GetAllTiDBTopology`: every `/info` key under the topology path
     /// -- the `/ttl` siblings are SKIPPED by suffix, which is why a
     /// prefix read alone is not the answer.
-    pub fn all_tidb_topology(&self) -> Result<Vec<TopologyInfo>, String> {
+    pub fn get_all_tidb_topology(&self) -> Result<Vec<TopologyInfo>, String> {
         let Some(etcd) = self.etcd.as_ref() else {
             return Ok(Vec::new());
         };
@@ -573,7 +573,7 @@ impl Syncer {
         let Some(etcd) = self.etcd.as_ref() else {
             return;
         };
-        let info = self.local_server_info();
+        let info = self.get_local_server_info();
         let Ok(entries) = etcd.get_prefix(SERVER_INFORMATION_PATH) else {
             return;
         };
@@ -1069,14 +1069,14 @@ mod tests {
         assert_eq!(all["uuid-1"].static_info.ip, "10.0.0.1");
 
         assert_eq!(
-            syncer.server_info_by_id("uuid-1").unwrap().static_info.port,
+            syncer.get_server_info_by_id("uuid-1").unwrap().static_info.port,
             4000
         );
         assert_eq!(
-            syncer.server_info_by_id("peer").unwrap().static_info.ip,
+            syncer.get_server_info_by_id("peer").unwrap().static_info.ip,
             "10.0.0.2"
         );
-        assert!(syncer.server_info_by_id("absent").is_err());
+        assert!(syncer.get_server_info_by_id("absent").is_err());
     }
 
     /// An unchanged label set writes NOTHING; a changed one republishes
@@ -1104,7 +1104,7 @@ mod tests {
         decoded.unmarshal(&updated).unwrap();
         assert_eq!(decoded.dynamic_info.labels["zone"], "east");
         assert_eq!(
-            syncer.local_server_info().dynamic_info.labels["zone"],
+            syncer.get_local_server_info().dynamic_info.labels["zone"],
             "east",
             "the local copy follows the successful PUT"
         );
@@ -1208,7 +1208,7 @@ mod tests {
         let peer = Syncer::new(info_at("uuid-2", "10.0.0.2", 4000), Some(etcd.clone()));
         peer.new_topology_session_and_store_server_info().unwrap();
 
-        let mut topologies = syncer.all_tidb_topology().unwrap();
+        let mut topologies = syncer.get_all_tidb_topology().unwrap();
         topologies.sort_by(|left, right| left.ip.cmp(&right.ip));
         assert_eq!(topologies.len(), 2, "two /info keys, four keys in total");
         assert_eq!(topologies[0].ip, "10.0.0.1");
@@ -1424,12 +1424,12 @@ mod tests {
         syncer.new_topology_session_and_store_server_info().unwrap();
         syncer.update_topology_aliveness().unwrap();
         syncer.remove_topology_info();
-        assert!(syncer.all_tidb_topology().unwrap().is_empty());
+        assert!(syncer.get_all_tidb_topology().unwrap().is_empty());
         let all = syncer.all_server_info().unwrap();
         assert_eq!(all.len(), 1);
         assert!(all.contains_key("uuid-1"));
         assert_eq!(
-            syncer.server_info_by_id("anything").unwrap().static_info.id,
+            syncer.get_server_info_by_id("anything").unwrap().static_info.id,
             "uuid-1",
             "with no client every id answers the local info"
         );

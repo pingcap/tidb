@@ -123,7 +123,7 @@ pub(super) fn equality_facts(detached: &tidb_ranger::detacher::DetachRangeResult
 
 /// Go `getIndexCandidate`: read both coverage maps and estimate stages from
 /// the logically filled path. Missing facts must not eliminate a competitor.
-pub(crate) fn index_candidate_metrics(
+pub(crate) fn get_index_candidate(
     source: &tidb_planner_core_operator_logicalop::DataSource,
     index: &tidb_infoschema::table_source::SourceIndex,
     path: &tidb_planner_util::path::IndexPathState,
@@ -497,7 +497,7 @@ mod skyline_tests {
             }),
             ..Default::default()
         };
-        let facts = index_candidate_metrics(&source, &index, &path, false, false).unwrap();
+        let facts = get_index_candidate(&source, &index, &path, false, false).unwrap();
         assert_eq!(facts.access_columns, Col2Len::from_pairs([(1, -1)]));
         assert_eq!(facts.index_columns, Col2Len::from_pairs([(1, -1), (3, 4)]));
         assert_eq!(
@@ -516,7 +516,7 @@ mod skyline_tests {
             info.columns.delete_go(2, len);
         }
         assert!(
-            index_candidate_metrics(&source, &two_keys, &path, false, false)
+            get_index_candidate(&source, &two_keys, &path, false, false)
                 .unwrap()
                 .full_index_match,
             "non-DNF full match includes index filters, as in Go"
@@ -533,7 +533,7 @@ mod skyline_tests {
                 func("and", vec![eq(&a), eq(&c)]),
             ],
         )];
-        let facts = index_candidate_metrics(&source, &two_keys, &path, false, false).unwrap();
+        let facts = get_index_candidate(&source, &two_keys, &path, false, false).unwrap();
         assert_eq!(facts.eq_or_in_count, 2);
         assert!(facts.full_index_match);
         path.filled
@@ -542,12 +542,12 @@ mod skyline_tests {
             .detached
             .access_conds
             .push(func("not", vec![eq(&c)]));
-        let facts = index_candidate_metrics(&source, &two_keys, &path, false, false).unwrap();
+        let facts = get_index_candidate(&source, &two_keys, &path, false, false).unwrap();
         assert_eq!(facts.eq_or_in_count, 1);
         assert!(!facts.full_index_match);
         path.filled.as_mut().unwrap().count_after_index = None;
         assert!(
-            index_candidate_metrics(&source, &index, &path, false, false).is_none(),
+            get_index_candidate(&source, &index, &path, false, false).is_none(),
             "unavailable filter estimates cannot justify eliminating a candidate"
         );
     }

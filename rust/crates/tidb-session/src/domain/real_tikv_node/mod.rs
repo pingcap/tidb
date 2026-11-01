@@ -358,7 +358,7 @@ mod tests {
         let users = configured_account_store(&config, GlobalSysvars::new())
             .expect("skip-grant-table does not read the nonexistent auth file");
         assert_eq!(
-            users.match_identity_plugin("no-row", "127.0.0.1").as_deref(),
+            users.match_identity("no-row", "127.0.0.1").as_deref(),
             Some("mysql_native_password")
         );
         let identity = users

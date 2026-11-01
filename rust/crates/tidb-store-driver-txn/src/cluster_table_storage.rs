@@ -1014,7 +1014,7 @@ impl<S: StoreClient> SessionTransaction<S> {
 
     /// Go `lockKeyIfExists` under read committed: locks only the keys that
     /// exist, caching every key's returned value for the statement's reads.
-    pub fn lock_keys_with_values_if_exist(
+    pub fn lock_key_if_exists(
         &self,
         keys: Vec<Vec<u8>>,
         wait: LockWaitTime,

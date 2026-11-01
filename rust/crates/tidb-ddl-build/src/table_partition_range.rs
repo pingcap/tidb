@@ -43,7 +43,7 @@ use tidb_datatype::FieldType;
 use tidb_table::partition_routing::{RangeBound, RangeColumnBound};
 use tidb_terror::MysqlError;
 
-use tidb_table::partition_fold::partition_expression_is_unsigned;
+use tidb_table::partition_fold::is_part_expr_unsigned;
 use tidb_hack::GoCaseCompare;
 
 /// The DDL-owned metadata that becomes one routed `RANGE COLUMNS` spec.
@@ -74,7 +74,7 @@ pub fn build_range_bounds(
     if definitions.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(&tidb_ast::ast_errors::ERR_PARTITIONS_MUST_BE_DEFINED.generate_with_stack_by_args(&["RANGE".into()])));
     }
-    let unsigned = partition_expression_is_unsigned(built);
+    let unsigned = is_part_expr_unsigned(built);
     let bounds =
         build_range_bounds_with_unsigned(definitions, unsigned, ctx, definition_tail)?;
     Ok((bounds, unsigned))
@@ -249,7 +249,7 @@ pub fn build_range_columns_bounds(
 /// (1652) checks -- so a statement wrong in two ways reports the one Go
 /// reports. Folding it into the per-definition loop above made 1493 win over
 /// all three.
-pub fn check_range_columns_strictly_increasing(
+pub fn check_partition_by_range(
     less_than: &[Vec<RangeColumnBound>],
     field_types: &[FieldType],
 ) -> Result<(), MysqlError> {
@@ -311,7 +311,7 @@ pub fn fold_range_bound(
 
 /// Go `checkRangePartitionValue`: the bounds must strictly increase, with a
 /// trailing `MAXVALUE` exempt because it is above all of them by definition.
-pub fn check_strictly_increasing(
+pub fn check_range_partition_value(
     bounds: &[RangeBound],
     unsigned: bool,
 ) -> Result<(), MysqlError> {
@@ -373,7 +373,7 @@ mod tests {
     /// the end never reaches it, because 1481 fires first.
     #[test]
     fn only_strictly_increasing_bounds_are_accepted() {
-        assert!(check_strictly_increasing(
+        assert!(check_range_partition_value(
             &[
                 RangeBound::Value(10),
                 RangeBound::Value(20),
@@ -383,21 +383,21 @@ mod tests {
         )
         .is_ok());
         assert!(
-            check_strictly_increasing(&[RangeBound::Value(10), RangeBound::Value(5)], false)
+            check_range_partition_value(&[RangeBound::Value(10), RangeBound::Value(5)], false)
                 .is_err()
         );
         assert!(
-            check_strictly_increasing(&[RangeBound::Value(10), RangeBound::Value(10)], false)
+            check_range_partition_value(&[RangeBound::Value(10), RangeBound::Value(10)], false)
                 .is_err()
         );
         // Read as unsigned, the pattern -1 is ABOVE 10 and the same pair is
         // increasing rather than not.
         assert!(
-            check_strictly_increasing(&[RangeBound::Value(10), RangeBound::Value(-1)], true)
+            check_range_partition_value(&[RangeBound::Value(10), RangeBound::Value(-1)], true)
                 .is_ok()
         );
         assert!(
-            check_strictly_increasing(&[RangeBound::Value(10), RangeBound::Value(-1)], false)
+            check_range_partition_value(&[RangeBound::Value(10), RangeBound::Value(-1)], false)
                 .is_err()
         );
     }

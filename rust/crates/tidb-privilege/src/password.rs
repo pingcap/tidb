@@ -84,7 +84,7 @@ pub fn is_valid_hash(plugin: &str, authentication_string: &str) -> bool {
 /// empty string means the OS user maps one-to-one; an invalid hash is Go's
 /// error, which `checkAuthPlugin` only logs, so it has none either.
 #[must_use]
-pub fn auth_plugin_for_connection<'a>(plugin: &'a str, authentication_string: &str) -> &'a str {
+pub fn get_auth_plugin_for_connection<'a>(plugin: &'a str, authentication_string: &str) -> &'a str {
     if plugin == AuthTiDBAuthToken || plugin == AuthLDAPSASL || plugin == AuthLDAPSimple {
         return plugin;
     }

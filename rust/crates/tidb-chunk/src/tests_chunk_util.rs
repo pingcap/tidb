@@ -44,7 +44,7 @@ fn zero_datetime() -> Time {
 /// Go's `selected` mask (`j % 7 != 0`).
 fn get_chk(is_last_3_col_the_same: bool) -> (Chunk, Vec<bool>) {
     let fields = util_fields();
-    let mut src_chk = Chunk::new_with_capacity(&fields, NUM_ROWS);
+    let mut src_chk = Chunk::new_chunk_with_capacity(&fields, NUM_ROWS);
     let mut selected = vec![false; NUM_ROWS];
     for j in 0..NUM_ROWS {
         let third = if j % 7 == 0 {
@@ -90,11 +90,11 @@ fn copy_selected_join_rows() {
     let fields = util_fields();
 
     // Row-by-row reference result.
-    let mut dst_chk = Chunk::new_with_capacity(&fields, NUM_ROWS);
+    let mut dst_chk = Chunk::new_chunk_with_capacity(&fields, NUM_ROWS);
     append_all_selected(&src_chk, &selected, &mut dst_chk);
 
     // Batch copy.
-    let mut dst_chk2 = Chunk::new_with_capacity(&fields, NUM_ROWS);
+    let mut dst_chk2 = Chunk::new_chunk_with_capacity(&fields, NUM_ROWS);
     copy_selected_join_rows_with_same_outer_rows(&src_chk, 0, 3, 3, 3, &selected, &mut dst_chk2)
         .expect("no selection vectors");
 
@@ -109,10 +109,10 @@ fn copy_selected_join_rows_without_same_outers() {
     let (src_chk, selected) = get_chk(false);
     let fields = util_fields();
 
-    let mut dst_chk = Chunk::new_with_capacity(&fields, NUM_ROWS);
+    let mut dst_chk = Chunk::new_chunk_with_capacity(&fields, NUM_ROWS);
     append_all_selected(&src_chk, &selected, &mut dst_chk);
 
-    let mut dst_chk2 = Chunk::new_with_capacity(&fields, NUM_ROWS);
+    let mut dst_chk2 = Chunk::new_chunk_with_capacity(&fields, NUM_ROWS);
     copy_selected_join_rows_with_same_outer_rows(&src_chk, 0, 6, 0, 0, &selected, &mut dst_chk2)
         .expect("no selection vectors");
 
@@ -126,10 +126,10 @@ fn copy_selected_join_rows_direct_matches_row_by_row_copy() {
     let (src_chk, selected) = get_chk(false);
     let fields = util_fields();
 
-    let mut dst_chk = Chunk::new_with_capacity(&fields, NUM_ROWS);
+    let mut dst_chk = Chunk::new_chunk_with_capacity(&fields, NUM_ROWS);
     append_all_selected(&src_chk, &selected, &mut dst_chk);
 
-    let mut dst_chk2 = Chunk::new_with_capacity(&fields, NUM_ROWS);
+    let mut dst_chk2 = Chunk::new_chunk_with_capacity(&fields, NUM_ROWS);
     copy_selected_join_rows_direct(&src_chk, &selected, &mut dst_chk2)
         .expect("no selection vectors");
 
@@ -164,7 +164,7 @@ fn copy_selected_virtual_num() {
     for i in 0..3i64 {
         src_chk.append_int64(0, i);
     }
-    let mut dst_chk = Chunk::new_with_capacity(&fields, 0);
+    let mut dst_chk = Chunk::new_chunk_with_capacity(&fields, 0);
     let ok =
         copy_selected_join_rows_with_same_outer_rows(&src_chk, 0, 1, 1, 0, &selected, &mut dst_chk)
             .expect("no selections");
@@ -179,7 +179,7 @@ fn copy_selected_virtual_num() {
     for _ in 0..3 {
         src_chk.append_int64(0, 3);
     }
-    let mut dst_chk = Chunk::new_with_capacity(&fields, 0);
+    let mut dst_chk = Chunk::new_chunk_with_capacity(&fields, 0);
     let ok =
         copy_selected_join_rows_with_same_outer_rows(&src_chk, 1, 0, 0, 1, &selected, &mut dst_chk)
             .expect("no selections");

@@ -49,7 +49,7 @@ fn int_hash64(mut x: u64) -> u64 {
 
 /// Go `partialResult4ApproxCountDistinct`, the BJKST sketch's mutable state.
 #[derive(Clone, Debug)]
-pub struct ApproxCountDistinctSketch {
+pub struct PartialResult4ApproxCountDistinct {
     size: u32,
     size_degree: u8,
     skip_degree: u8,
@@ -57,16 +57,16 @@ pub struct ApproxCountDistinctSketch {
     buf: Vec<u32>,
 }
 
-impl Default for ApproxCountDistinctSketch {
+impl Default for PartialResult4ApproxCountDistinct {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ApproxCountDistinctSketch {
+impl PartialResult4ApproxCountDistinct {
     /// Go `NewPartialResult4ApproxCountDistinct`.
     pub fn new() -> Self {
-        let mut sketch = ApproxCountDistinctSketch {
+        let mut sketch = PartialResult4ApproxCountDistinct {
             size: 0,
             size_degree: 0,
             skip_degree: 0,
@@ -224,7 +224,7 @@ impl ApproxCountDistinctSketch {
     }
 
     /// Go `merge`: folds another sketch's surviving elements into `self`.
-    pub fn merge(&mut self, other: &ApproxCountDistinctSketch) {
+    pub fn merge(&mut self, other: &PartialResult4ApproxCountDistinct) {
         if other.skip_degree > self.skip_degree {
             self.skip_degree = other.skip_degree;
             self.rehash();
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn exact_below_threshold() {
-        let mut sketch = ApproxCountDistinctSketch::new();
+        let mut sketch = PartialResult4ApproxCountDistinct::new();
         for i in 0..1000i64 {
             sketch.insert(&i.to_le_bytes());
         }
@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn duplicate_insert_does_not_double_count() {
-        let mut sketch = ApproxCountDistinctSketch::new();
+        let mut sketch = PartialResult4ApproxCountDistinct::new();
         for _ in 0..5 {
             sketch.insert(&7i64.to_le_bytes());
         }
@@ -381,13 +381,13 @@ mod tests {
     /// bit-for-bit faithful -- Go got 101048 and 70697.
     #[test]
     fn large_cardinality_matches_go_capture() {
-        let mut hundred_k = ApproxCountDistinctSketch::new();
+        let mut hundred_k = PartialResult4ApproxCountDistinct::new();
         for i in 0..100_000i64 {
             hundred_k.insert(&i.to_le_bytes());
         }
         assert_eq!(hundred_k.fixed_size(), 101048);
 
-        let mut seventy_k = ApproxCountDistinctSketch::new();
+        let mut seventy_k = PartialResult4ApproxCountDistinct::new();
         for i in 0..70_000i64 {
             seventy_k.insert(&i.to_le_bytes());
         }
@@ -396,11 +396,11 @@ mod tests {
 
     #[test]
     fn merge_of_disjoint_sketches_below_threshold() {
-        let mut left = ApproxCountDistinctSketch::new();
+        let mut left = PartialResult4ApproxCountDistinct::new();
         for i in 0..500i64 {
             left.insert(&i.to_le_bytes());
         }
-        let mut right = ApproxCountDistinctSketch::new();
+        let mut right = PartialResult4ApproxCountDistinct::new();
         for i in 500..900i64 {
             right.insert(&i.to_le_bytes());
         }

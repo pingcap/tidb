@@ -21,7 +21,7 @@
 //! `dropForeignKey`.
 
 use super::add_index::{
-    action_step, table_step, AddIndexReorg, AddIndexSubmission, ReorgOutcome, ReorgResult,
+    action_step, update_version_and_table_info, AddIndexReorg, AddIndexSubmission, ReorgOutcome, ReorgResult,
     ReorgStageRequest,
 };
 use super::*;
@@ -68,7 +68,7 @@ pub fn prepare_add_foreign_key_job_submission<S: MetaSnapshot>(
     } else {
         // The key's `createIndex` set `StmtCtx.MultiSchemaInfo`, so
         // `AlterTable` ends with `multiSchemaChange`.
-        let job = super::multi_schema::build_multi_schema_job(
+        let job = super::multi_schema::append_to_sub_jobs(
             &catalog,
             schema,
             table,
@@ -222,7 +222,7 @@ fn check_add_foreign_key_valid_in_owner(
     if !tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst) {
         return Ok(());
     }
-    crate::foreign_key_build::check_foreign_key_valid(catalog, schema, info, fk, fk_check, true)
+    crate::foreign_key_build::check_table_foreign_key_valid(catalog, schema, info, fk, fk_check, true)
         .map_err(DdlPlanError::Admission)?;
     // The key's columns need an index.
     let cols = fk.cols.snapshot();
@@ -262,7 +262,7 @@ fn checked_outcome(
 }
 
 /// Go `onCreateForeignKey`.
-pub(super) fn plan_persisted_add_foreign_key_job_step(
+pub(super) fn on_create_foreign_key(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -306,7 +306,7 @@ pub(super) fn plan_persisted_add_foreign_key_job_step(
                 fk.id = info.max_foreign_key_id;
             }
             info.foreign_keys.push_go(fk.read().clone_like_go());
-            let write = table_step(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
             active.job.schema_state = SchemaState::WRITE_ONLY;
             Ok(action_step(write))
         }
@@ -328,7 +328,7 @@ pub(super) fn plan_persisted_add_foreign_key_job_step(
                 info.foreign_keys.get(last).expect("in range").write().state =
                     SchemaState::WRITE_REORGANIZATION;
             }
-            let write = table_step(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
             active.job.schema_state = SchemaState::WRITE_REORGANIZATION;
             Ok(action_step(write))
         }
@@ -336,7 +336,7 @@ pub(super) fn plan_persisted_add_foreign_key_job_step(
             if let Some(last) = last(&info) {
                 info.foreign_keys.get(last).expect("in range").write().state = SchemaState::PUBLIC;
             }
-            let write = table_step(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
             active.job.schema_state = SchemaState::PUBLIC;
             active.job.finish_table_job(
                 JobState::DONE,
@@ -455,7 +455,7 @@ fn drop_foreign_key_step(
         return Err(cancel_ddl_job(active, error));
     }
     let database_id = active.job.schema_id;
-    let write = table_step(catalog, active, database_id, &info, true, start_ts)?;
+    let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
     let state = if active.job.is_rollingback() {
         JobState::ROLLBACK_DONE
     } else {

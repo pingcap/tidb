@@ -484,7 +484,7 @@ impl Expr {
             }
             Expr::Unary(op, e) => {
                 out.push_str(op.restore());
-                e.restore_into_with_context(out, &context.with_unary_parent());
+                e.restore_into_with_context(out, &context.restore_expr_with_unary_op_parent());
             }
             Expr::Binary(op, l, r) => {
                 let bracket = context.flags().has_bracket_around_binary_operation();
@@ -495,7 +495,7 @@ impl Expr {
                 restore_binary_operand(
                     out,
                     l,
-                    &context.with_parent(parent, RestoreParentSide::Left),
+                    &context.restore_expr_with_binary_op_parent(parent, RestoreParentSide::Left),
                     bracket,
                 );
                 if context.flags().has_spaces_around_binary_operation() {
@@ -508,7 +508,7 @@ impl Expr {
                 restore_binary_operand(
                     out,
                     r,
-                    &context.with_parent(parent, RestoreParentSide::Right),
+                    &context.restore_expr_with_binary_op_parent(parent, RestoreParentSide::Right),
                     bracket,
                 );
                 if bracket {
@@ -527,7 +527,7 @@ impl Expr {
                     return;
                 }
                 out.push('(');
-                e.restore_into_with_context(out, &context.with_reset_parent());
+                e.restore_into_with_context(out, &context.restore_with_reset_parent_context());
                 out.push(')');
             }
             Expr::Row(values) => {
@@ -544,12 +544,12 @@ impl Expr {
                 if name.eq_ignore_ascii_case("JSON_MEMBEROF") && args.len() == 2 {
                     args[0].restore_into_with_context(
                         out,
-                        &context.with_parent(RestoreParentOp::MemberOf, RestoreParentSide::Left),
+                        &context.restore_expr_with_binary_op_parent(RestoreParentOp::MemberOf, RestoreParentSide::Left),
                     );
                     out.push_str(" MEMBER OF (");
                     args[1].restore_into_with_context(
                         out,
-                        &context.with_parent(RestoreParentOp::MemberOf, RestoreParentSide::Right),
+                        &context.restore_expr_with_binary_op_parent(RestoreParentOp::MemberOf, RestoreParentSide::Right),
                     );
                     out.push(')');
                     return;
@@ -779,7 +779,7 @@ impl Expr {
             Expr::In { expr, list, not } => {
                 expr.restore_into_with_context(
                     out,
-                    &context.with_parent(RestoreParentOp::In, RestoreParentSide::Left),
+                    &context.restore_expr_with_binary_op_parent(RestoreParentOp::In, RestoreParentSide::Left),
                 );
                 out.push_str(if *not { " NOT IN (" } else { " IN (" });
                 for (i, e) in list.iter().enumerate() {
@@ -798,10 +798,10 @@ impl Expr {
             } => {
                 expr.restore_into_with_context(
                     out,
-                    &context.with_parent(RestoreParentOp::Between, RestoreParentSide::Left),
+                    &context.restore_expr_with_binary_op_parent(RestoreParentOp::Between, RestoreParentSide::Left),
                 );
                 out.push_str(if *not { " NOT BETWEEN " } else { " BETWEEN " });
-                let right = context.with_parent(RestoreParentOp::Between, RestoreParentSide::Right);
+                let right = context.restore_expr_with_binary_op_parent(RestoreParentOp::Between, RestoreParentSide::Right);
                 low.restore_into_with_context(out, &right);
                 out.push_str(" AND ");
                 high.restore_into_with_context(out, &right);
@@ -815,7 +815,7 @@ impl Expr {
             } => {
                 expr.restore_into_with_context(
                     out,
-                    &context.with_parent(RestoreParentOp::Like, RestoreParentSide::Left),
+                    &context.restore_expr_with_binary_op_parent(RestoreParentOp::Like, RestoreParentSide::Left),
                 );
                 out.push_str(match (*not, *ilike) {
                     (true, true) => " NOT ILIKE ",
@@ -825,7 +825,7 @@ impl Expr {
                 });
                 pattern.restore_into_with_context(
                     out,
-                    &context.with_parent(RestoreParentOp::Like, RestoreParentSide::Right),
+                    &context.restore_expr_with_binary_op_parent(RestoreParentOp::Like, RestoreParentSide::Right),
                 );
                 // Go restores an explicit `ESCAPE '\'` as if it were
                 // omitted -- see this variant's own doc.
@@ -840,18 +840,18 @@ impl Expr {
             Expr::Regexp { expr, pattern, not } => {
                 expr.restore_into_with_context(
                     out,
-                    &context.with_parent(RestoreParentOp::Regexp, RestoreParentSide::Left),
+                    &context.restore_expr_with_binary_op_parent(RestoreParentOp::Regexp, RestoreParentSide::Left),
                 );
                 out.push_str(if *not { " NOT REGEXP " } else { " REGEXP " });
                 pattern.restore_into_with_context(
                     out,
-                    &context.with_parent(RestoreParentOp::Regexp, RestoreParentSide::Right),
+                    &context.restore_expr_with_binary_op_parent(RestoreParentOp::Regexp, RestoreParentSide::Right),
                 );
             }
             Expr::Is { expr, target, not } => {
                 expr.restore_into_with_context(
                     out,
-                    &context.with_parent(is_parent_op(*target), RestoreParentSide::Left),
+                    &context.restore_expr_with_binary_op_parent(is_parent_op(*target), RestoreParentSide::Left),
                 );
                 out.push_str(" IS ");
                 if *not {
@@ -866,7 +866,7 @@ impl Expr {
             }
             Expr::Subquery(s) => {
                 out.push('(');
-                s.restore_into_with_context(out, &context.with_reset_parent());
+                s.restore_into_with_context(out, &context.restore_with_reset_parent_context());
                 out.push(')');
             }
             Expr::Exists { subquery, not } => {
@@ -874,7 +874,7 @@ impl Expr {
                     out.push_str("NOT ");
                 }
                 out.push_str("EXISTS (");
-                subquery.restore_into_with_context(out, &context.with_reset_parent());
+                subquery.restore_into_with_context(out, &context.restore_with_reset_parent_context());
                 out.push(')');
             }
             Expr::InSubquery {
@@ -884,10 +884,10 @@ impl Expr {
             } => {
                 expr.restore_into_with_context(
                     out,
-                    &context.with_parent(RestoreParentOp::In, RestoreParentSide::Left),
+                    &context.restore_expr_with_binary_op_parent(RestoreParentOp::In, RestoreParentSide::Left),
                 );
                 out.push_str(if *not { " NOT IN (" } else { " IN (" });
-                subquery.restore_into_with_context(out, &context.with_reset_parent());
+                subquery.restore_into_with_context(out, &context.restore_with_reset_parent_context());
                 out.push(')');
             }
             Expr::CompareSubquery {
@@ -898,11 +898,11 @@ impl Expr {
             } => {
                 left.restore_into_with_context(
                     out,
-                    &context.with_parent(RestoreParentOp::Binary(*op), RestoreParentSide::Left),
+                    &context.restore_expr_with_binary_op_parent(RestoreParentOp::Binary(*op), RestoreParentSide::Left),
                 );
                 out.push_str(op.restore());
                 out.push_str(if *all { "ALL (" } else { "ANY (" });
-                subquery.restore_into_with_context(out, &context.with_reset_parent());
+                subquery.restore_into_with_context(out, &context.restore_with_reset_parent_context());
                 out.push(')');
             }
             Expr::Case {
@@ -966,7 +966,7 @@ impl Expr {
                 CastStyle::BinaryOperator => {
                     out.push_str("BINARY ");
                     cast.expr
-                        .restore_into_with_context(out, &context.with_unary_parent());
+                        .restore_into_with_context(out, &context.restore_expr_with_unary_op_parent());
                 }
                 CastStyle::DateLiteral => restore_typed_literal("DATE", &cast.expr, out),
                 CastStyle::TimeLiteral => restore_typed_literal("TIME", &cast.expr, out),
@@ -992,7 +992,7 @@ impl Expr {
             Expr::Collate { expr, collation } => {
                 expr.restore_into_with_context(
                     out,
-                    &context.with_parent(RestoreParentOp::Collate, RestoreParentSide::Left),
+                    &context.restore_expr_with_binary_op_parent(RestoreParentOp::Collate, RestoreParentSide::Left),
                 );
                 out.push_str(" COLLATE ");
                 out.push_str(collation);
@@ -1021,12 +1021,12 @@ impl Expr {
             Expr::MemberOf { expr, array } => {
                 expr.restore_into_with_context(
                     out,
-                    &context.with_parent(RestoreParentOp::MemberOf, RestoreParentSide::Left),
+                    &context.restore_expr_with_binary_op_parent(RestoreParentOp::MemberOf, RestoreParentSide::Left),
                 );
                 out.push_str(" MEMBER OF (");
                 array.restore_into_with_context(
                     out,
-                    &context.with_parent(RestoreParentOp::MemberOf, RestoreParentSide::Right),
+                    &context.restore_expr_with_binary_op_parent(RestoreParentOp::MemberOf, RestoreParentSide::Right),
                 );
                 out.push(')');
             }

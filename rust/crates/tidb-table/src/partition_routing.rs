@@ -427,7 +427,7 @@ impl PartitionSpec {
                 )
                 .map_err(RoutingError::Eval)?;
                 match kind {
-                    PartitionKind::Hash => hash_partition_index(&value, self.num()),
+                    PartitionKind::Hash => locate_hash_partition(&value, self.num()),
                     PartitionKind::Key => unreachable!("matched above"),
                     PartitionKind::Range {
                         less_than,
@@ -767,7 +767,7 @@ fn range_bound_exceeds(bound: RangeBound, value: i64, unsigned: bool) -> bool {
 /// [`RoutingError::ValueOverflowsBigint`] when the conversion has no exact
 /// signed reading, which is Go returning `ConvertTo`'s error from
 /// `locateHashPartition` and failing the write.
-pub fn hash_partition_index(value: &Datum, num: u64) -> Result<usize, RoutingError> {
+pub fn locate_hash_partition(value: &Datum, num: u64) -> Result<usize, RoutingError> {
     let bits = match value {
         Datum::Int(value) => *value,
         Datum::UInt(value) => *value as i64,
@@ -903,18 +903,18 @@ mod tests {
             (i64::MIN, 0),
         ] {
             assert_eq!(
-                hash_partition_index(&Datum::Int(value), 4).unwrap(),
+                locate_hash_partition(&Datum::Int(value), 4).unwrap(),
                 expected,
                 "hash({value}) over 4 partitions"
             );
         }
-        assert_eq!(hash_partition_index(&Datum::Null, 4).unwrap(), 0);
+        assert_eq!(locate_hash_partition(&Datum::Null, 4).unwrap(), 0);
         // The unsigned captures, which only agree if the value is read as a
         // 64-bit pattern: u64::MAX is -1, and 9223372036854775809 is
         // -9223372036854775807.
-        assert_eq!(hash_partition_index(&Datum::UInt(u64::MAX), 4).unwrap(), 1);
+        assert_eq!(locate_hash_partition(&Datum::UInt(u64::MAX), 4).unwrap(), 1);
         assert_eq!(
-            hash_partition_index(&Datum::UInt(9_223_372_036_854_775_809), 4).unwrap(),
+            locate_hash_partition(&Datum::UInt(9_223_372_036_854_775_809), 4).unwrap(),
             3
         );
     }
@@ -936,7 +936,7 @@ mod tests {
                 None,
             ));
             assert_eq!(
-                hash_partition_index(&value, 3).unwrap(),
+                locate_hash_partition(&value, 3).unwrap(),
                 expected,
                 "hash(bit {bits}) over 3 partitions"
             );
@@ -952,7 +952,7 @@ mod tests {
     #[test]
     fn a_bit_value_with_no_signed_reading_is_rejected() {
         let value = Datum::Bit(tidb_datatype::BinaryLiteral::from_uint(u64::MAX, None));
-        match hash_partition_index(&value, 3) {
+        match locate_hash_partition(&value, 3) {
             Err(RoutingError::ValueOverflowsBigint(text)) => {
                 assert_eq!(text, "18446744073709551615");
             }
@@ -1079,9 +1079,9 @@ mod tests {
     /// `-1 + -1 -> p2`).
     #[test]
     fn hash_routing_is_not_a_power_of_two_special_case() {
-        assert_eq!(hash_partition_index(&Datum::Int(2), 3).unwrap(), 2);
-        assert_eq!(hash_partition_index(&Datum::Int(3), 3).unwrap(), 0);
-        assert_eq!(hash_partition_index(&Datum::Int(-2), 3).unwrap(), 2);
+        assert_eq!(locate_hash_partition(&Datum::Int(2), 3).unwrap(), 2);
+        assert_eq!(locate_hash_partition(&Datum::Int(3), 3).unwrap(), 0);
+        assert_eq!(locate_hash_partition(&Datum::Int(-2), 3).unwrap(), 2);
     }
 }
 

@@ -77,7 +77,7 @@ fn build_side(keys: &[i64], layout: &RowLayoutMeta) -> (RowTable, u8) {
     let key_serializer = key_columns(FieldTypeCode::LongLong);
     let mut context = BuildContext::new(layout, partition, &key_serializer);
 
-    let mut chunk = Chunk::new_with_capacity(&int_fields(1), keys.len().max(1));
+    let mut chunk = Chunk::new_chunk_with_capacity(&int_fields(1), keys.len().max(1));
     for &key in keys {
         chunk.append_int64(0, key);
     }
@@ -618,7 +618,7 @@ fn a_bucket_chain_walks_every_row_that_shares_a_hash_bucket() {
         } else {
             probe.record_probe_collision();
         }
-        current = BaseJoinProbe::next_matched_row(row, &fixture.tag_helper, hash_value);
+        current = BaseJoinProbe::get_next_row_address(row, &fixture.tag_helper, hash_value);
     }
     assert_eq!(matched, 3, "every duplicate key is reachable from the head");
     assert_eq!(probe.get_probe_collision(), 0);
@@ -711,7 +711,7 @@ fn reconstruction_reads_rows_from_any_build_row_source() {
 
     let mut out = Chunk::new(&int_fields(2), 8, 1024);
     for index in 0..2 {
-        probe.append_build_row_to_cached_build_rows_v2(
+        probe.append_build_row_to_cached_build_rows_v_2(
             &ctx,
             &rows,
             MatchedRowInfo {

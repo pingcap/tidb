@@ -498,7 +498,7 @@ fn rename_one(
 }
 
 /// Go `onRenameTable` / `onRenameTables` and their finishing steps.
-pub(super) fn plan_persisted_rename_table_job_step(
+pub(super) fn on_rename_table(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     _start_ts: u64,

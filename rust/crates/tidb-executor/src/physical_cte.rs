@@ -304,7 +304,7 @@ impl CteProducer {
         if !self.is_distinct {
             return Ok(chunk.copy_construct_sel());
         }
-        let mut result = Chunk::new_with_capacity(&self.output_types, chunk.num_rows());
+        let mut result = Chunk::new_chunk_with_capacity(&self.output_types, chunk.num_rows());
         for row_index in 0..chunk.num_rows() {
             let values = chunk.get_row(row_index).get_datum_row(&self.output_types);
             if self.seen.insert(self.row_key(&values)?) {

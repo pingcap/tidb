@@ -42,13 +42,13 @@ mod fold_mode;
 pub(crate) mod signature_args;
 pub(crate) mod result_type;
 
-pub use control_type::{infer_type4_control_funcs, set_numeric_len_from_args};
+pub use control_type::{infer_type_4_control_funcs, set_numeric_len_from_args};
 use fold_mode::FoldModeResolver;
 pub(crate) use result_type::adjust_ret_ft_for_cast_string;
 pub(crate) use result_type::builtin_return_type;
 use result_type::{
     binary_literal_type, cast_target, decimal_literal_type, int_literal_type,
-    returns_binary_string, set_binary_charset, validate_cast_type, validate_name_const_args,
+    returns_binary_string, set_binary_charset, check_func_cast_expr, validate_name_const_args,
 };
 
 /// Resolves a dotted column path to an output column, standing in for the
@@ -513,7 +513,7 @@ fn constant_string(text: &str) -> Expression {
 /// implicit `from_binary`, but only at the positions the function class
 /// declares `ETString` ([`string_declared_args`]): an integer argument also
 /// carries the binary charset and is never wrapped.
-pub(crate) fn wrap_binary_literals(
+pub(crate) fn handle_binary_literal(
     name: &str,
     result_charset: &str,
     result_collation: &str,
@@ -652,7 +652,7 @@ pub(crate) fn wrap_implicit_from_binary(
         crate::collation_derive::repertoire_of(&arg),
     );
     let mut wrapped =
-        Expression::ScalarFunction(ScalarFunction::new_from_binary(arg, ret_type, false));
+        Expression::ScalarFunction(ScalarFunction::build_from_binary_function(arg, ret_type, false));
     pin_result_collation(&mut wrapped, coer, repe);
     wrapped
 }
@@ -752,7 +752,7 @@ pub(crate) fn wrap_cast_as_string_arg(
             crate::collation_derive::repertoire_of(&arg),
         );
         let mut wrapped =
-            Expression::ScalarFunction(ScalarFunction::new_from_binary(arg, ret_type, true));
+            Expression::ScalarFunction(ScalarFunction::build_from_binary_function(arg, ret_type, true));
         pin_result_collation(&mut wrapped, coer, repe);
         // Go `BuildFromBinaryFunction` folds the new node.
         fold(&mut wrapped);
@@ -869,7 +869,7 @@ fn wrap_power_arguments(
                 return Ok(arg);
             }
             let ret_type = arg.static_type().map_or_else(
-                || crate::builtin_arithmetic::new_return_field_type(tidb_datatype::EvalType::Real),
+                || crate::builtin_arithmetic::new_return_field_type_for_base_builtin_func(tidb_datatype::EvalType::Real),
                 |source| crate::builtin_arithmetic::real_argument_type(source).into_owned(),
             );
             if let Expression::Constant(constant) = &arg {
@@ -1005,7 +1005,7 @@ fn wrap_declared_string_args(
             Ok(wrapped)
         })
         .collect::<Result<Vec<_>, EvalError>>()?;
-    Ok(wrap_binary_literals(
+    Ok(handle_binary_literal(
         name,
         &derived.charset,
         &derived.collation,
@@ -1713,7 +1713,7 @@ fn rewrite_cast_array(
                 .into(),
         ));
     }
-    validate_cast_type(cast)?;
+    check_func_cast_expr(cast)?;
     let (_, element) = resolved_cast_target(cast, resolver)?;
     let arg = rewrite_expr_resolved(&cast.expr, resolver)?;
     // `verifyArgs`: "args[0].GetType(ctx).EvalType() != types.ETJson".
@@ -1759,7 +1759,7 @@ fn rewrite_json_sum_crc32(
     cast: &tidb_ast::CastExpr,
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
-    validate_cast_type(cast)?;
+    check_func_cast_expr(cast)?;
     let (_, element) = resolved_cast_target(cast, resolver)?;
     let arg = rewrite_expr_resolved(&cast.expr, resolver)?;
     let mut array_type = element.clone().with_array(true);
@@ -3136,7 +3136,7 @@ fn finish_function_call(
     )?;
     ret_type.set_charset_name(derived.charset.clone());
     ret_type.set_collation_name(derived.collation.clone());
-    let rewritten = wrap_binary_literals(
+    let rewritten = handle_binary_literal(
         &lowered,
         &derived.charset,
         &derived.collation,
@@ -3520,7 +3520,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             if cast.array {
                 return rewrite_cast_array(cast, resolver);
             }
-            validate_cast_type(cast)?;
+            check_func_cast_expr(cast)?;
             let (name, ret_type) = resolved_cast_target(cast, resolver)?;
             let arg = rewrite_expr_resolved(&cast.expr, resolver)?;
             // Go `Leave(*ast.FuncCastExpr)`.
@@ -3610,7 +3610,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             ret_type.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
             // Go `convertFunctionClass.getFunction`: `bf.tp.SetFlen(mysql.MaxBlobWidth)`.
             ret_type.set_flen(16_777_216);
-            result_type::promote_wide_string_result(&mut ret_type);
+            result_type::get_ret_tp(&mut ret_type);
             if charset == "binary" {
                 set_binary_charset(&mut ret_type);
             } else {

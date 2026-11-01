@@ -94,7 +94,7 @@ impl AccountState {
                 .current_identity()
                 .is_some_and(|(current_user, current_host)| {
                     registry
-                        .effective_roles(
+                        .find_all_user_effective_roles(
                             &(current_user.to_owned(), current_host.to_owned()),
                             self.active_roles(),
                         )
@@ -181,7 +181,7 @@ impl AccountState {
     /// account-visibility rules before exposing the virtual rows. The query
     /// runs as Go's restricted SQL on an internal session, reading committed
     /// rows; its error is the table's error (`infoschema_reader.go:382`).
-    pub(crate) fn user_attributes_rows(
+    pub(crate) fn set_data_for_user_attributes(
         &self,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         let rows = tidb_executor::memtable_reader::exec_restricted_sql_over(
@@ -280,7 +280,7 @@ impl VariablesState {
     /// CURRENT_VALUE is `GetSessionOrGlobalSystemVar` ("" when that read
     /// fails), MIN/MAX are reported only for the numeric types, and
     /// POSSIBLE_VALUES only for an enum.
-    pub(crate) fn variables_info_rows(&self) -> Vec<Vec<tidb_datatype::Datum>> {
+    pub(crate) fn set_data_for_variables_info(&self) -> Vec<Vec<tidb_datatype::Datum>> {
         use tidb_datatype::Datum;
         let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
         let mut rows = Vec::with_capacity(sysvar::SYS_VARS.len());
@@ -330,7 +330,7 @@ impl VariablesState {
     /// `performance_schema.session_variables`: every variable the viewer may
     /// see, with `GetSessionOrGlobalSystemVar`'s value. Unlike
     /// `VARIABLES_INFO`, a value that cannot be read fails the statement.
-    pub(crate) fn session_variables_rows(&self) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+    pub(crate) fn get_data_from_session_variables(&self) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         let text = |value: &str| tidb_datatype::Datum::Bytes(value.as_bytes().to_vec());
         let mut rows = Vec::with_capacity(sysvar::SYS_VARS.len());
         for definition in sysvar::SYS_VARS {
@@ -379,7 +379,7 @@ impl MemTableRetriever for AccountRetriever {
         Ok(if read.table_name.go_lower_eq("USER_PRIVILEGES") {
             self.account.user_privileges_rows()
         } else {
-            self.account.user_attributes_rows()?
+            self.account.set_data_for_user_attributes()?
         })
     }
 }
@@ -419,12 +419,12 @@ impl MemTableRetriever for VariablesRetriever {
         _ctx: &tidb_sessionctx::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         if read.table_name.go_lower_eq("VARIABLES_INFO") {
-            return Ok(self.state.variables_info_rows());
+            return Ok(self.state.set_data_for_variables_info());
         }
         if read.table_name.go_lower_eq("SESSION_VARIABLES") {
-            return self.state.session_variables_rows();
+            return self.state.get_data_from_session_variables();
         }
-        Ok(tidb_executor::memtable_retrievers::pseudo_profiling_rows(
+        Ok(tidb_executor::memtable_retrievers::set_data_for_pseudo_profiling(
             tidb_vardef::option_values::tidb_opt_on(
                 &self.state.vars.get_system("profiling").unwrap_or_default(),
             ),

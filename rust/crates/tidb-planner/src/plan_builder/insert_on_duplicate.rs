@@ -196,7 +196,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         {
             return None;
         }
-        let (_, target_names) = self.insert_mock_schema(target);
+        let (_, target_names) = self.table_info_2_schema_and_names(target);
         let mut references = References::default();
         for assignment in &insert.on_duplicate {
             collect_references(&assignment.value, &mut references);
@@ -232,13 +232,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// every assignment is rewritten once, at plan time, whether or not an
     /// inserted row eventually conflicts. `select` is the built source of an
     /// `INSERT ... SELECT`, with its output `schema`.
-    pub fn build_on_duplicate(
+    pub fn resolve_on_duplicate(
         &mut self,
         insert: &InsertStmt,
         target: &InsertTarget,
         select: Option<(&Schema, &InsertSelectOutput)>,
     ) -> Result<Vec<OnDuplicateAssign>, PlanError> {
-        let (table_schema, table_names) = self.insert_mock_schema(target);
+        let (table_schema, table_names) = self.table_info_2_schema_and_names(target);
         let target_len = table_names.len();
         // Go `Schema4OnDuplicate` / `Names4OnDuplicate`.
         let mut schema = table_schema.clone();
@@ -347,12 +347,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// Go `Insert.buildOnDuplicateUpdateColumns`: the columns the resolved
     /// ON DUPLICATE assignments write (a dropped generated DEFAULT is none),
     /// which decide the foreign key triggers.
-    pub fn on_duplicate_columns(
+    pub fn build_on_duplicate_update_columns(
         &self,
         insert: &InsertStmt,
         target: &InsertTarget,
     ) -> Result<Vec<String>, PlanError> {
-        let (_, names) = self.insert_mock_schema(target);
+        let (_, names) = self.table_info_2_schema_and_names(target);
         let mut columns = Vec::new();
         for assignment in &insert.on_duplicate {
             if let Some(offset) = Self::resolve_on_duplicate_target(assignment, target, &names)? {

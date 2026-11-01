@@ -64,7 +64,7 @@ fn go_eval(name: &str, args: &[Datum]) -> Result<Datum, crate::EvalError> {
     let function =
         crate::scalar_function::ScalarFunction::new(tidb_ast::CiString::new(name), ret_type, exprs);
     let cols = tidb_exprctx::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
-    let empty = tidb_chunk::chunk::Chunk::new_with_capacity(&[], 1);
+    let empty = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[], 1);
     function.eval(&cols, empty.get_row(0))
 }
 
@@ -589,7 +589,7 @@ use tidb_charset::Collation;
                     output,
                     vec![left, right],
                 ));
-                let mut input = tidb_chunk::chunk::Chunk::new_with_capacity(&[field, integer], 1);
+                let mut input = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[field, integer], 1);
                 input.append_datum(0, &value);
                 input.append_datum(1, &right_value);
                 let result = if vectorized {
@@ -673,7 +673,7 @@ fn hybrid_arithmetic_preserves_null_and_selection_order() {
                     vec![left, right],
                 ));
                 let mut input =
-                    tidb_chunk::chunk::Chunk::new_with_capacity(&[field.clone(), field.clone()], 2);
+                    tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[field.clone(), field.clone()], 2);
                 input.append_null(0);
                 input.append_datum(1, &datum(u64::MAX));
                 if selected {
@@ -761,7 +761,7 @@ fn temporal_json_arithmetic_uses_go_numeric_casts() {
                         vec![left, right],
                     ));
                     let mut input =
-                        tidb_chunk::chunk::Chunk::new_with_capacity(&[field.clone(), integer], 1);
+                        tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[field.clone(), integer], 1);
                     input.append_datum(0, &value);
                     input.append_int64(1, if name == "json_int" { 1 } else { 2 });
                     let result = if vectorized {
@@ -1177,7 +1177,7 @@ fn arithmetic_constant_casts_fold_before_evaluation_and_shape_result_metadata() 
                         "{name}/{op}: wrong construction warnings {build_warnings:?}"
                     ));
                 }
-                let mut input = tidb_chunk::chunk::Chunk::new_with_capacity(&[integer], 2);
+                let mut input = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[integer], 2);
                 for _ in 0..2 {
                     input.append_int64(0, if name == "json_int" { 1 } else { 2 });
                 }
@@ -1349,7 +1349,7 @@ fn strict_scalar_decimal_precision_probes_preserve_runtime_evaluation() {
                     expected_build,
                     "{name}/{op}/{strict}"
                 );
-                let mut input = tidb_chunk::chunk::Chunk::new_with_capacity(&[integer], 1);
+                let mut input = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[integer], 1);
                 input.append_int64(0, 2);
                 for _ in 0..2 {
                     let result = expr
@@ -1432,7 +1432,7 @@ fn json_cast_arithmetic_batches_preserve_go_operand_passes() {
                     .unwrap();
                     assert!(context.0.borrow().is_empty());
                     let mut input =
-                        tidb_chunk::chunk::Chunk::new_with_capacity(&[string.clone(), string], 2);
+                        tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[string.clone(), string], 2);
                     input.append_datum(0, &Datum::new_string(r#""2tail""#));
                     input.append_datum(1, &Datum::new_string(r#""3tail""#));
                     input.append_datum(
@@ -1559,7 +1559,7 @@ fn json_cast_arithmetic_batches_preserve_go_operand_passes() {
                         vec![cast, right],
                     )
                     .unwrap();
-                    let mut input = tidb_chunk::chunk::Chunk::new_with_capacity(&[string], 2);
+                    let mut input = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[string], 2);
                     input.append_datum(0, &Datum::new_string("2"));
                     input.append_null(0);
                     let values = if vectorized {
@@ -1722,7 +1722,7 @@ use tidb_charset::Collation;
                         }),
                         vec![Expression::Column(column)],
                     ));
-                    let mut input = tidb_chunk::chunk::Chunk::new_with_capacity(
+                    let mut input = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(
                         std::slice::from_ref(&field),
                         2,
                     );
@@ -1779,7 +1779,7 @@ use tidb_charset::Collation;
         FieldType::new(C::Json),
         vec![Expression::Column(column)],
     ));
-    let mut input = tidb_chunk::chunk::Chunk::new_with_capacity(&[vector], 1);
+    let mut input = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[vector], 1);
     input.append_null(0);
     let result = expression.eval(&crate::NoColumns, input.get_row(0));
     if result

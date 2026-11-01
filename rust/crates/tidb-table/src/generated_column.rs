@@ -382,7 +382,7 @@ pub fn eval_over_row(
     row: &[Datum],
     ctx: &dyn tidb_exprctx::Columns,
 ) -> Result<Datum, tidb_exprctx::EvalError> {
-    let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(types, 1);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(types, 1);
     for (index, value) in row.iter().enumerate() {
         chunk.append_datum(index, value);
     }

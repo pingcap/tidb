@@ -32,7 +32,7 @@ const RESOURCE_GROUP_MAX_WAIT_DURATION: Duration = Duration::from_secs(30);
 /// with the server ID as its client ID and the store's keyspace -- none, so
 /// `NullKeyspaceID`), started and installed as client-rust's resource-control
 /// interceptor (`tikv.SetResourceControlInterceptor`).
-pub fn start_resource_groups_controller(
+pub fn init_resource_groups_controller(
     store: &tidb_txnkv::driver::tikv_store::TikvStore,
     server_id: u64,
 ) -> Result<
@@ -42,7 +42,7 @@ pub fn start_resource_groups_controller(
     start_resource_groups_controller_over(store, server_id, store.store().pd_client())
 }
 
-/// [`start_resource_groups_controller`] over any store and resource-manager
+/// [`init_resource_groups_controller`] over any store and resource-manager
 /// provider: Go takes the provider from `store.GetPDClient()`, which for
 /// unistore is its mock `pdClient`.
 pub fn start_resource_groups_controller_over<PdC: tikv_client::PdClient>(

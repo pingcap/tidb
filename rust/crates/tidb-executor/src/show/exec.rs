@@ -373,7 +373,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         name => name,
                     };
                     Ok((
-                        crate::show::create::show_create_table_text(&database, &stored, table, &ctx)?,
+                        crate::show::create::construct_result_of_show_create_table(&database, &stored, table, &ctx)?,
                         stored,
                         None,
                     ))
@@ -525,7 +525,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             T::HistogramsInFlight => {
                 let count =
                     self.with_catalog_mut(|catalog| Ok(catalog.clean_needed_statistics_items(&stats_handle)))?;
-                vec![crate::show_stats::histograms_in_flight_row(count)]
+                vec![crate::show_stats::fetch_show_histograms_in_flight(count)]
             }
             T::AnalyzeStatus => self.analyze_status_rows()?,
             // Go `fetchShowBind` (LIKE is a case-sensitive selection on
@@ -690,7 +690,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                 self.warning_rows(contents.count_warnings_or_errors, contents.tp == T::Errors)
             }
             // Go `fetchShowBuiltins` over `expression.GetBuiltinList`.
-            T::Builtins => strings(crate::builtin_list()),
+            T::Builtins => strings(crate::get_builtin_list()),
             other => {
                 return Err(DriverError::unsupported(format!(
                     "SHOW {other:?} is not planned"
@@ -787,7 +787,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             listed
                 .into_iter()
                 .filter(|(_, candidate)| admits(candidate.read().name.original()))
-                .map(|(offset, candidate)| crate::show::columns::column_description(candidate, offset, table, full, &ctx))
+                .map(|(offset, candidate)| crate::show::columns::new_col_desc(candidate, offset, table, full, &ctx))
                 .collect::<Result<Vec<_>, _>>()
         })?;
         Ok(rows)
@@ -871,7 +871,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         let zone = self.session_time_zone();
         let stats_handle = self.stats_handle();
         self.with_catalog_mut(|catalog| {
-            analyze_status_rows_of(
+            data_for_analyze_status_helper(
                 provider.as_deref(),
                 &resource_group,
                 &visibility,
@@ -949,7 +949,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         let Some(statistics) = catalog.table_statistics_in(&stats_handle, target.physical_id) else {
                             continue;
                         };
-                        if let Some(row) = crate::show_stats::table_statistics_meta_row(
+                        if let Some(row) = crate::show_stats::append_table_for_stats_meta(
                             &database,
                             &name,
                             &target.label,
@@ -965,7 +965,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         })?;
         Ok(rows
             .into_iter()
-            .filter(|row| stats_row_admitted(extractor, row))
+            .filter(|row| fetch_show_stats_meta(extractor, row))
             .collect())
     }
 
@@ -1020,7 +1020,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                 .into_iter()
                 .filter(|(physical_id, _)| locked.contains(physical_id))
                 .map(|(_, (database, table, partition))| {
-                    crate::show_stats::stats_locked_row(&database, &table, &partition)
+                    crate::show_stats::append_table_for_stats_locked(&database, &table, &partition)
                 })
                 .collect()
         };
@@ -1077,7 +1077,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         let Some(statistics) = catalog.table_statistics_in(&stats_handle, target.physical_id) else {
                             continue;
                         };
-                        if let Some(row) = crate::show_stats::healthy_row(
+                        if let Some(row) = crate::show_stats::append_table_for_stats_healthy(
                             &database,
                             &name,
                             &target.label,
@@ -1092,7 +1092,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         })?;
         Ok(rows
             .into_iter()
-            .filter(|row| stats_row_admitted(extractor, row))
+            .filter(|row| fetch_show_stats_meta(extractor, row))
             .collect())
     }
 
@@ -1548,9 +1548,9 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                     else {
                         return Err(unknown());
                     };
-                    let table_placement = crate::show_regions::policy_placement(catalog, table.placement_policy().as_ref())?;
+                    let table_placement = crate::show_regions::get_policy_placement(catalog, table.placement_policy().as_ref())?;
                     let placement =
-                        crate::show_regions::policy_placement(catalog, definition.placement_policy.as_ref())?
+                        crate::show_regions::get_policy_placement(catalog, definition.placement_policy.as_ref())?
                             .or(table_placement);
                     Ok(placement
                         .map(|placement| {
@@ -1571,7 +1571,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             // the store-status retriever's plain error.
             tidb_ast::ShowStmtType::PlacementLabels => {
                 let store = self.region_store();
-                crate::memtable_retrievers::show_placement_labels_rows(store.as_ref()).map_err(
+                crate::memtable_retrievers::fetch_show_placement_labels(store.as_ref()).map_err(
                     |message| DriverError::Mysql(crate::MysqlError::unknown(message)),
                 )
             }

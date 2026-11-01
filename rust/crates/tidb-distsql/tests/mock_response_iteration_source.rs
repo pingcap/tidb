@@ -94,7 +94,7 @@ impl tidb_txnkv::Response for MockSelectResponse {
         self.remaining -= num_rows;
         let response = if self.chunk_rpc {
             let field_types = four_longlong_columns();
-            let mut chk = DecodedChunk::new_with_capacity(&field_types, num_rows);
+            let mut chk = DecodedChunk::new_chunk_with_capacity(&field_types, num_rows);
             for _row in 0..num_rows {
                 for column in 0..field_types.len() {
                     chk.append_int64(column, 123);
@@ -383,7 +383,7 @@ fn fixture_chunk(
             }
         }
         EncodeType::TypeChunk => {
-            let mut chk = DecodedChunk::new_with_capacity(col_types, rows.len());
+            let mut chk = DecodedChunk::new_chunk_with_capacity(col_types, rows.len());
             for (text, value, when) in rows {
                 chk.append_string(0, text.as_bytes());
                 chk.append_int64(1, *value);

@@ -234,7 +234,7 @@ impl Context {
     /// non-strict mode — `mysql.ModeNone` avoids special values like the
     /// datetime `0000-00-00 00:00:00`.
     #[must_use]
-    pub fn new_non_strict() -> Context {
+    pub fn new_non_strict_context() -> Context {
         // Go `exprstatic.NewExprContext(WithEvalCtx(
         // exprstatic.NewEvalContext(WithSQLMode(mysql.ModeNone))))`.
         let eval_ctx = tidb_exprstatic::EvalContext::new([tidb_exprstatic::with_sql_mode(
@@ -470,7 +470,7 @@ mod tests {
     // honest.
     #[test]
     fn non_strict_context_uses_mode_none() {
-        let ctx = Context::new_non_strict();
+        let ctx = Context::new_non_strict_context();
         assert_eq!(tidb_mysql::consts::ModeNone, ctx.get_sql_mode());
     }
 }

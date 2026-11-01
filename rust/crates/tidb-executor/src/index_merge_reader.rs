@@ -281,7 +281,7 @@ impl From<Vec<Vec<Datum>>> for MergeSortKeys {
 impl MergeSortKeys {
     fn typed(fields: Vec<FieldType>, capacity: usize) -> Self {
         Self::Typed {
-            chunk: Chunk::new_with_capacity(&fields, capacity),
+            chunk: Chunk::new_chunk_with_capacity(&fields, capacity),
             fields,
         }
     }
@@ -1978,14 +1978,14 @@ mod tests {
             let memory = crate::StatementMemory::new(quota, crate::OomAction::Cancel, 7);
             let context = crate::StmtContext::for_query_with_memory(memory.clone());
             let fields = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
-            let mut chunk = Chunk::new_with_capacity(&fields, 8);
+            let mut chunk = Chunk::new_chunk_with_capacity(&fields, 8);
             chunk.append_datum(0, &Datum::Int(1));
             chunk.append_datum(0, &Datum::Int(2));
             let chunk_bytes = chunk.memory_usage();
             let partial = || -> Box<dyn PartialHandleSource> {
                 // Build producer chunks at their declared capacity. Chunk's
                 // deep Clone may compact backing vectors to populated length.
-                let mut chunk = Chunk::new_with_capacity(&fields, 8);
+                let mut chunk = Chunk::new_chunk_with_capacity(&fields, 8);
                 chunk.append_datum(0, &Datum::Int(1));
                 chunk.append_datum(0, &Datum::Int(2));
                 Box::new(MaterializedHandleSource::new(vec![PartialHandleBatch {
@@ -2032,9 +2032,9 @@ mod tests {
         let memory = crate::StatementMemory::default();
         let context = crate::StmtContext::for_query_with_memory(memory.clone());
         let fields = vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)];
-        let bytes = Chunk::new_with_capacity(&fields, 8).memory_usage();
+        let bytes = Chunk::new_chunk_with_capacity(&fields, 8).memory_usage();
         let partial = |id: i64| -> Box<dyn PartialHandleSource> {
-            let mut chunk = Chunk::new_with_capacity(&fields, 8);
+            let mut chunk = Chunk::new_chunk_with_capacity(&fields, 8);
             chunk.append_datum(0, &Datum::Int(id));
             Box::new(MaterializedHandleSource::new(vec![PartialHandleBatch {
                 handles: int_handles(&[id]),
@@ -2074,7 +2074,7 @@ mod tests {
             Datum::new_string("é"),
             Datum::new_string("z".repeat(512)),
         ];
-        let mut chunk = Chunk::new_with_capacity(&fields, values.len());
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, values.len());
         for value in &values {
             chunk.append_datum(0, value);
         }
@@ -2110,7 +2110,7 @@ mod tests {
     fn ordered_partition_merge_preserves_typed_key_chunks() {
         let field = FieldType::new(tidb_datatype::FieldTypeCode::VarString);
         let source = |ids: &[i64], values: &[Datum]| -> Box<dyn PartialHandleSource> {
-            let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 8);
+            let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 8);
             for value in values {
                 chunk.append_datum(0, value);
             }

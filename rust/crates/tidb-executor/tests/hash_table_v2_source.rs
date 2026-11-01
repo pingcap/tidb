@@ -135,7 +135,7 @@ fn create_row_table(rows: usize) -> (RowTable, u8) {
         let chunk_rows = remaining.min(chunk_size);
         remaining -= chunk_rows;
         let mut chunk =
-            Chunk::new_with_capacity(&[FieldType::new(FieldTypeCode::LongLong)], chunk_rows);
+            Chunk::new_chunk_with_capacity(&[FieldType::new(FieldTypeCode::LongLong)], chunk_rows);
         for _ in 0..chunk_rows {
             chunk.append_int64(0, rng.next_u64() as i64);
         }

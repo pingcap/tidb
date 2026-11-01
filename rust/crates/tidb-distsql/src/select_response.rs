@@ -1110,14 +1110,14 @@ mod tests {
     #[test]
     fn typed_chunk_large_result_reuses_the_empty_output_chunk() {
         let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
-        let mut source = DecodedChunk::new_with_capacity(&fields, 2);
+        let mut source = DecodedChunk::new_chunk_with_capacity(&fields, 2);
         source.append_int64(0, 11);
         source.append_int64(0, 22);
         let mut decoded = DecodedChannel::TypeChunk {
             chunk: source,
             next_row_index: 0,
         };
-        let mut output = DecodedChunk::new_with_capacity(&fields, 1);
+        let mut output = DecodedChunk::new_chunk_with_capacity(&fields, 1);
 
         assert!(decoded.fill_chunk(&mut output, 1).expect("fill chunk"));
         assert_eq!(output.num_rows(), 2);

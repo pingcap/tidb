@@ -14,7 +14,7 @@
 
 //! SET grammar translated from `pkg/parser/set_explain_parser.go`. The
 //! statement router takes `SET BINDING` and `SET CONFIG` first; every other
-//! SET enters [`Parser::parse_set_statement`], Go's `parseSetStmt`.
+//! SET enters [`Parser::parse_set_stmt`], Go's `parseSetStmt`.
 
 use tidb_ast::{
     DefaultRoleSelection, Expr, RoleSpec, SessionStmt, SetDefaultRoleStmt, SetPasswordStmt,
@@ -28,7 +28,7 @@ use crate::{prec, PResult, Parser};
 impl Parser {
     /// Go `parseSetStmt`: the one-shot forms first, then the generic loop
     /// of `NAMES`, `CHARSET` and variable assignments, mixed in any order.
-    pub(crate) fn parse_set_statement(&mut self) -> PResult<SessionStmt> {
+    pub(crate) fn parse_set_stmt(&mut self) -> PResult<SessionStmt> {
         self.expect_kw("SET")?;
         if self.is_kw("TRANSACTION") {
             return Ok(set_stmt(self.parse_set_transaction(false, false)?));

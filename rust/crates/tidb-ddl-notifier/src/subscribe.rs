@@ -143,7 +143,7 @@ pub trait Store: Send + Sync + 'static {
 }
 
 /// Go `PubSchemeChangeToStore` (the misspelling is not carried into Rust).
-pub fn publish_schema_change_to_store(
+pub fn pub_scheme_change_to_store(
     session: &mut dyn NotifierSession,
     ddl_job_id: i64,
     sub_job_id: i64,
@@ -568,14 +568,14 @@ mod tests {
                 if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
                     return Err(NotifierError::NotReadyRetryLater);
                 }
-                seen.lock().unwrap().push(event.create_table_info().id);
+                seen.lock().unwrap().push(event.get_create_table_info().id);
                 Ok(())
             })
         };
         notifier.register_handler(TEST_HANDLER_ID, handler);
         let mut publish = pool.get().unwrap();
         for id in 1..=3 {
-            publish_schema_change_to_store(publish.as_mut(), id, -1, event(id), store.as_ref())
+            pub_scheme_change_to_store(publish.as_mut(), id, -1, event(id), store.as_ref())
                 .unwrap();
         }
         pool.put(publish);
@@ -620,7 +620,7 @@ mod tests {
         notifier.register_handler(TEST_HANDLER_ID, Arc::new(|_, _| Err("boom".into())));
         notifier.register_handler(TEST_HANDLER_ID, Arc::new(|_, _| Ok(())));
         let mut publish = pool.get().unwrap();
-        publish_schema_change_to_store(publish.as_mut(), 7, -1, event(7), store.as_ref()).unwrap();
+        pub_scheme_change_to_store(publish.as_mut(), 7, -1, event(7), store.as_ref()).unwrap();
         pool.put(publish);
         let handlers = notifier.handlers.lock().unwrap().clone();
         process_events(pool.as_ref(), store.as_ref(), &handlers).unwrap();
@@ -655,7 +655,7 @@ mod tests {
         );
         notifier.register_handler(HandlerId(2), Arc::new(|_, _| Ok(())));
         let mut publish = pool.get().unwrap();
-        publish_schema_change_to_store(publish.as_mut(), 1, -1, event(1), store.as_ref()).unwrap();
+        pub_scheme_change_to_store(publish.as_mut(), 1, -1, event(1), store.as_ref()).unwrap();
         pool.put(publish);
 
         let handlers = notifier.handlers.lock().unwrap().clone();
@@ -668,7 +668,7 @@ mod tests {
     fn commit_failure_keeps_the_processed_bit_and_handler_write_uncommitted() {
         let store = MockStore::default();
         let mut publish = MockSession::default();
-        publish_schema_change_to_store(&mut publish, 1, -1, event(1), &store).unwrap();
+        pub_scheme_change_to_store(&mut publish, 1, -1, event(1), &store).unwrap();
         let handler_writes = Arc::new(AtomicUsize::new(0));
         let handler: Handler = {
             let handler_writes = Arc::clone(&handler_writes);
@@ -704,7 +704,7 @@ mod tests {
     fn competing_owner_cas_loss_rolls_back_handler_write() {
         let store = MockStore::default();
         let mut publish = MockSession::default();
-        publish_schema_change_to_store(&mut publish, 1, -1, event(1), &store).unwrap();
+        pub_scheme_change_to_store(&mut publish, 1, -1, event(1), &store).unwrap();
         let handler_writes = Arc::new(AtomicUsize::new(0));
         let rows = Arc::clone(&store.rows);
         let handler: Handler = {

@@ -249,7 +249,7 @@ impl SamplingSchema {
             .columns
             .iter()
             .map(|column| {
-                crate::cop_reader::scan_column(column)
+                crate::cop_reader::column_to_proto(column)
                     .map(|column| crate::dag_request::column_to_pb(&column))
                     .ok_or_else(|| {
                         AnalyzeError::unsupported(format!(
@@ -317,7 +317,7 @@ fn analyze_handle_ranges(table: &TableInfo) -> tidb_ranger::types::Ranges {
         None => full_int_range(false),
     };
     if unsigned_pk.is_some() {
-        crate::split_ranges_across_int64_boundary(ranges, false, false, false).0
+        crate::split_ranges_across_int_64_boundary(ranges, false, false, false).0
     } else {
         ranges
     }
@@ -442,7 +442,7 @@ where
     let schema = SamplingSchema::new(table, &plan)?;
     let options = &statement.options;
     let rate = options.sample_rate.unwrap_or_else(|| {
-        tidb_stats::row_sample_collector::adjusted_sample_rate(realtime_count, None)
+        tidb_stats::row_sample_collector::get_adjusted_sample_rate(realtime_count, None)
     });
     let request = schema.request(
         &plan,
@@ -592,7 +592,7 @@ where
         .as_ref()
         .and_then(|r| r.sample_rate)
         .unwrap_or_default();
-    let policy = SamplePolicy::choose(options.num_samples, rate)
+    let policy = SamplePolicy::new_row_sample_collector(options.num_samples, rate)
         .ok_or_else(|| error("invalid ANALYZE sample policy".to_owned()))?;
     let transport = native_transport(opener, timeout).map_err(error)?;
     let (read_ts, isolation) = read_policy(snapshot_enabled, snapshot);

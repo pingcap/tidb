@@ -120,7 +120,7 @@ pub enum HashManagement<'a> {
 /// (1505), AFFINITY (8200), a COALESCE on another method (1509), a count
 /// below one (1515) or one removing the last partition (1508), and a value
 /// clause on an added definition (1480).
-pub fn plan_hash_partition_management(
+pub fn hash_partition_management(
     table: &PartitionedTable<'_>,
     change: HashManagement<'_>,
     ctx: &tidb_metabuild::Context,
@@ -351,7 +351,7 @@ pub fn plan_partition_change(
             }
         }
         tidb_ast::AlterPartitionAction::FirstPartitionLessThan { expr, .. } => {
-            let (ordinals, rewrite) = plan_first_partition_less_than(table, expr, ctx)?;
+            let (ordinals, rewrite) = drop_table_partition(table, expr, ctx)?;
             drop_partitions(&mut partition, &ordinals);
             query_rewrite = Some(rewrite);
         }
@@ -963,7 +963,7 @@ pub fn plan_add_partitions(
                 // THEMSELVES were accepted.
                 let mut combined = less_than.clone();
                 combined.extend(added_bounds.iter().cloned());
-                crate::table_partition_range::check_range_columns_strictly_increasing(
+                crate::table_partition_range::check_partition_by_range(
                     &combined,
                     field_types,
                 )?;
@@ -1060,7 +1060,7 @@ pub fn plan_add_partitions(
 /// `table`: the ordinals of the partitions the INTERVAL names below the new
 /// first one. Go's job-query rewrite (the clause becomes the names) is left
 /// on `ctx`.
-pub fn plan_first_partition_less_than(
+pub fn drop_table_partition(
     table: &PartitionedTable<'_>,
     bound: &tidb_ast::NodeBox<tidb_ast::Expr>,
     ctx: &tidb_metabuild::Context,
@@ -1077,12 +1077,12 @@ pub fn plan_first_partition_less_than(
                 .generate_with_stack_by_args(&[message.into()]),
         )
     };
-    let Some(interval) = crate::partition_interval::interval_from_table(partition, ctx) else {
+    let Some(interval) = crate::partition_interval::get_partition_interval_from_table(partition, ctx) else {
         return Err(unsupported(
             "FIRST PARTITION, does not seem like an INTERVAL partitioned table",
         ));
     };
-    let generated = crate::partition_interval::generate_from_interval(
+    let generated = crate::partition_interval::generate_part_defs_from_interval(
         &interval.interval(),
         crate::partition_interval::IntervalStatement::DropFirst(bound),
         interval.column.as_ref(),
@@ -1161,7 +1161,7 @@ pub fn plan_last_partition_less_than(
         }
         _ => {}
     }
-    let Some(interval) = crate::partition_interval::interval_from_table(partition, ctx) else {
+    let Some(interval) = crate::partition_interval::get_partition_interval_from_table(partition, ctx) else {
         return Err(unsupported(
             "LAST PARTITION, does not seem like an INTERVAL partitioned table",
         ));
@@ -1169,7 +1169,7 @@ pub fn plan_last_partition_less_than(
     if interval.maxvalue_partition {
         return Err(unsupported("LAST PARTITION when MAXVALUE partition exists"));
     }
-    let definitions = crate::partition_interval::generate_from_interval(
+    let definitions = crate::partition_interval::generate_part_defs_from_interval(
         &interval.interval(),
         crate::partition_interval::IntervalStatement::AddLast(bound),
         interval.column.as_ref(),
@@ -1206,7 +1206,7 @@ fn assign_partition_storage_classes(
     definitions: &mut [PartitionDef],
     ctx: &tidb_metabuild::Context,
 ) -> Result<(), MysqlError> {
-    let Some(settings) = crate::storage_class::storage_class_settings_of(&table.meta.engine_attribute)?
+    let Some(settings) = crate::storage_class::get_storage_class_settings_from_table_info(&table.meta.engine_attribute)?
     else {
         return Ok(());
     };
@@ -1499,7 +1499,7 @@ pub fn plan_reorganize_partition(
             .iter()
             .map(|slot| slot.map_or(0, |definition| definition.id))
             .collect::<std::collections::VecDeque<_>>();
-        let mut spec = table_partition::build_partitioning(
+        let mut spec = table_partition::build_table_partition_info(
             &clause,
             &names,
             &types,
@@ -1621,7 +1621,7 @@ fn range_columns_bounds_equal(
 /// Go `AlterTablePartitioning`, planned against `table`: the table is
 /// repartitioned as `CREATE TABLE ... PARTITION BY` would partition it, and
 /// takes a new table id.
-pub fn plan_alter_table_partitioning(
+pub fn alter_table_partitioning(
     table: &PartitionedTable<'_>,
     partitioning: &TablePartitioning,
     ctx: &tidb_metabuild::Context,
@@ -1631,7 +1631,7 @@ pub fn plan_alter_table_partitioning(
         refuse_affinity(table, "ALTER TABLE PARTITIONING")?;
         let (names, types) = visible_names_and_types(table);
         let handle_offsets = handle_offsets(table);
-        let mut spec = table_partition::build_partitioning(
+        let mut spec = table_partition::build_table_partition_info(
             partitioning,
             &names,
             &types,

@@ -531,7 +531,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> HashJoinV2Executor<C> {
                     worker.run(probe.as_mut(), memory);
                 } else {
                     let mut lane = runtime.restored[worker_id].lock().unwrap();
-                    let chunk = Chunk::new_with_capacity(
+                    let chunk = Chunk::new_chunk_with_capacity(
                         build_state.spill.probe_field_types(),
                         SPILL_CHUNK_SIZE,
                     );

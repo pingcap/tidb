@@ -20,7 +20,7 @@
 //! through `onCreateTable`. `ALTER SEQUENCE` queues `ActionAlterSequence`,
 //! applied by `onAlterSequence`.
 
-use super::add_index::{action_step, table_step, AddIndexSubmission};
+use super::add_index::{action_step, update_version_and_table_info, AddIndexSubmission};
 use super::*;
 
 /// Go `OnExist`: what `createTableWithInfoJob` does when the name is taken.
@@ -79,7 +79,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
             } else {
                 OnExist::Error
             };
-            build_create_table_with_info_job(
+            create_table_with_info_job(
                 &catalog,
                 schema,
                 (**info).clone(),
@@ -100,7 +100,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
             } else {
                 OnExist::Error
             };
-            build_create_table_with_info_job(
+            create_table_with_info_job(
                 &catalog,
                 schema,
                 (**info).clone(),
@@ -121,7 +121,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
                 } else {
                     OnExist::Error
                 };
-                build_create_table_with_info_job(
+                create_table_with_info_job(
                     &catalog,
                     schema,
                     info,
@@ -155,7 +155,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
 }
 
 /// Go `executor.createTableWithInfoJob`.
-pub(super) fn build_create_table_with_info_job(
+pub(super) fn create_table_with_info_job(
     catalog: &ClusterCatalog,
     schema: &str,
     info: TableInfo,
@@ -223,7 +223,7 @@ pub(super) fn build_create_table_with_info_job(
     job.schema_id = database.info.id;
     job.schema_name = database.info.name.lowercase().to_owned().into();
     job.table_name = info.name.lowercase().to_owned().into();
-    let shared = create_table::shared_involving_schema_info(&info);
+    let shared = create_table::get_shared_involving_schema_info(&info);
     if !shared.is_empty() {
         let mut involving = vec![tidb_model::InvolvingSchemaInfo {
             database: job.schema_name.clone(),
@@ -376,7 +376,7 @@ pub fn build_session_temporary_table_info(
             create.on_commit_delete,
         )
         .map_err(DdlPlanError::Admission)?,
-        None => tidb_ddl_build::table_info_build::build_table_info_in_schema(
+        None => tidb_ddl_build::table_info_build::build_table_info_with_stmt(
             create,
             database.name.original(),
             &database.charset,
@@ -486,7 +486,7 @@ fn object_step(
 }
 
 /// Go `onCreateView`.
-pub(super) fn plan_persisted_create_view_job_step<S: MetaSnapshot>(
+pub(super) fn on_create_view<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
@@ -549,7 +549,7 @@ pub(super) fn plan_persisted_create_view_job_step<S: MetaSnapshot>(
 }
 
 /// Go `onCreateSequence`.
-pub(super) fn plan_persisted_create_sequence_job_step(
+pub(super) fn on_create_sequence(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -678,7 +678,7 @@ fn build_alter_sequence_job(
 }
 
 /// Go `onAlterSequence`.
-pub(super) fn plan_persisted_alter_sequence_job_step(
+pub(super) fn on_alter_sequence(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -738,7 +738,7 @@ pub(super) fn plan_persisted_alter_sequence_job_step(
             value::encode_int_value(sequence_base_for(increment, value)),
         )?);
     }
-    let mut write = table_step(catalog, active, database_id, &info, true, start_ts)?;
+    let mut write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
     write.mutations.extend(restart_write);
     active.job.finish_table_job(
         JobState::DONE,

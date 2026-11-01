@@ -104,7 +104,7 @@ pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
     let tidb_zone = tidb_zone.unwrap_or_default();
     let mut budget = RegionBackoffBudget::new(COP_BUILD_TASK_MAX_BACKOFF);
     loop {
-        let tasks = crate::mpp_client::locate_mpp_regions(store, ranges, memory.as_ref(), kv_context)?;
+        let tasks = crate::mpp_client::split_key_ranges_by_locations(store, ranges, memory.as_ref(), kv_context)?;
         let mut rpc_stores = Vec::with_capacity(tasks.len());
         let mut used_tiflash_stores = Vec::with_capacity(tasks.len());
         let mut used_tiflash_stores_map = BTreeSet::new();

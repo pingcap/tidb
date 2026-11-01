@@ -537,8 +537,8 @@ pub trait PreparedAstCompile: super::CompilerSession {
                 // Go `GetPlanFromPlanCache`'s hit arm (prepared label).
                 // `lookupPlanCache`'s defer observes the lookup duration on
                 // hits only, for the prepared and non-prepared paths alike.
-                tidb_planner_core_metrics::plan_cache_hit_counter(false).inc();
-                tidb_planner_core_metrics::plan_cache_lookup_duration(
+                tidb_planner_core_metrics::get_plan_cache_hit_counter(false).inc();
+                tidb_planner_core_metrics::get_plan_cache_lookup_duration(
                     self.physical_plan_cache().uses_instance(),
                 )
                 .observe(lookup_start.elapsed().as_secs_f64());
@@ -623,8 +623,8 @@ pub trait PreparedAstCompile: super::CompilerSession {
                 // Go `GetPlanFromPlanCache`'s hit arm
                 // (plan_cache.go:351, prepared label); the lookup-duration
                 // observation is hits-only per `lookupPlanCache`'s defer.
-                tidb_planner_core_metrics::plan_cache_hit_counter(false).inc();
-                tidb_planner_core_metrics::plan_cache_lookup_duration(
+                tidb_planner_core_metrics::get_plan_cache_hit_counter(false).inc();
+                tidb_planner_core_metrics::get_plan_cache_lookup_duration(
                     self.physical_plan_cache().uses_instance(),
                 )
                 .observe(lookup_start.elapsed().as_secs_f64());

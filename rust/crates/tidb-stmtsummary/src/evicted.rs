@@ -243,7 +243,7 @@ impl StmtSummaryByDigestMap {
     /// Go `(*stmtSummaryByDigestMap).ToEvictedCountDatum`.
     ///
     /// Returns no rows when the map was built by
-    /// [`StmtSummaryByDigestMap::with_sinks`] with a sink other than the
+    /// [`StmtSummaryByDigestMap::new_stmt_summary_by_digest_map`] with a sink other than the
     /// `evicted.go` rollup.
     pub fn to_evicted_count_datum(&self) -> Vec<Vec<Datum>> {
         self.evicted().map_or_else(Vec::new, |evicted| {

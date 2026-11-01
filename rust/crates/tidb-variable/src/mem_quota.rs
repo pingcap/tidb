@@ -667,7 +667,7 @@ impl StatementMemory {
     pub fn persistent_operator_tracker(&self, label: i64) -> Arc<Tracker> {
         self.lifetime
             .stmt
-            .search_tracker(label)
+            .search_tracker_without_lock(label)
             .filter(|tracker| tracker.label() == label && !Arc::ptr_eq(tracker, &self.lifetime.stmt))
             .unwrap_or_else(|| self.operator_tracker(label))
     }

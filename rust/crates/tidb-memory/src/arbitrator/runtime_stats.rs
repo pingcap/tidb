@@ -222,7 +222,7 @@ impl MemArbitrator {
     }
 
     /// Go `GetAwaitFreeBudgets`: runs `f` with the budget shard for `uid`.
-    pub fn with_await_free_budget<R>(
+    pub fn get_await_free_budgets<R>(
         &self,
         uid: u64,
         f: impl FnOnce(&TrackedConcurrentBudget) -> R,
@@ -235,13 +235,13 @@ impl MemArbitrator {
     /// Go `ConsumeQuotaFromAwaitFreePool`.
     pub fn consume_quota_from_await_free_pool(&self, uid: u64, req: i64) -> bool {
         let utime = self.approx_unix_time_sec();
-        self.with_await_free_budget(uid, |b| b.budget.consume_quota(utime, req).is_ok())
+        self.get_await_free_budgets(uid, |b| b.budget.consume_quota(utime, req).is_ok())
             .unwrap_or(false)
     }
 
     /// Go `ReportHeapInuseToAwaitFreePool`.
     pub fn report_heap_inuse_to_await_free_pool(&self, uid: u64, req: i64) {
-        self.with_await_free_budget(uid, |b| b.report_heap_inuse(req));
+        self.get_await_free_budgets(uid, |b| b.report_heap_inuse(req));
     }
 
     /// Go `awaitFreePoolCap` (metrics surface).

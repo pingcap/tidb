@@ -85,7 +85,7 @@ pub fn prepare_create_table_job_submission<S: MetaSnapshot>(
     .into();
     // Go `getSharedInvolvingSchemaInfo`: the referenced parents and the
     // placement policy, shared, behind the table itself.
-    let shared = shared_involving_schema_info(&info);
+    let shared = get_shared_involving_schema_info(&info);
     if !shared.is_empty() {
         let mut involving = vec![tidb_model::InvolvingSchemaInfo {
             database: job.schema_name.clone(),
@@ -118,7 +118,7 @@ pub fn prepare_create_table_job_submission<S: MetaSnapshot>(
 }
 
 /// Go `getSharedInvolvingSchemaInfo`.
-pub(super) fn shared_involving_schema_info(
+pub(super) fn get_shared_involving_schema_info(
     info: &TableInfo,
 ) -> Vec<tidb_model::InvolvingSchemaInfo> {
     let mut involving: Vec<_> = info
@@ -145,7 +145,7 @@ pub(super) fn shared_involving_schema_info(
 }
 
 /// Go `onCreateTable`.
-pub(super) fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
+pub(super) fn on_create_table<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
@@ -236,7 +236,7 @@ pub(super) fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
                     ));
                 }
             }
-            crate::foreign_key_build::check_table_foreign_keys_valid_in_owner(
+            crate::foreign_key_build::check_table_foreign_key_valid_in_owner(
                 catalog, &schema, &mut info, fk_check,
             )
             .map_err(|error| cancel_ddl_job(active, DdlPlanError::Admission(error)))?;

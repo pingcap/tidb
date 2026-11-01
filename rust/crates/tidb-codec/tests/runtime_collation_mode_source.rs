@@ -20,14 +20,14 @@
 
 use tidb_codec::{convert_by_collation, encode_hash_datum, COMPACT_BYTES_FLAG};
 use tidb_datatype::{
-    new_collation_enabled, set_new_collation_enabled, Datum, FieldType, FieldTypeCode,
+    new_collation_enabled, set_new_collation_enabled_for_test, Datum, FieldType, FieldTypeCode,
 };
 
 struct RestoreCollationMode(bool);
 
 impl Drop for RestoreCollationMode {
     fn drop(&mut self) {
-        set_new_collation_enabled(self.0);
+        set_new_collation_enabled_for_test(self.0);
     }
 }
 
@@ -37,7 +37,7 @@ fn operational_keys_follow_exact_name_and_process_mode() {
     let canonical =
         FieldType::new(FieldTypeCode::Varchar).with_collation_name("utf8mb4_general_ci");
 
-    set_new_collation_enabled(true);
+    set_new_collation_enabled_for_test(true);
     assert_eq!(
         convert_by_collation(b"a", &canonical),
         convert_by_collation(b"A ", &canonical)
@@ -47,7 +47,7 @@ fn operational_keys_follow_exact_name_and_process_mode() {
         encode_hash_datum(&Datum::new_string("A "), &canonical).unwrap()
     );
 
-    set_new_collation_enabled(false);
+    set_new_collation_enabled_for_test(false);
     assert_eq!(convert_by_collation(b"A ", &canonical), b"A ".to_vec());
     assert_ne!(
         convert_by_collation(b"a", &canonical),

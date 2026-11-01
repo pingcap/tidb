@@ -18,7 +18,7 @@
 //! scan source above it. A row cap sent alongside a predicate that only partly
 //! travelled makes TiKV count its `limit` rows against a *weaker* filter, and
 //! the local pass then removes some of them -- a silently short answer. This
-//! drives the real coprocessor reader ([`open_cop_scan`]) against a
+//! drives the real coprocessor reader ([`build_resp`]) against a
 //! coprocessor fake and asserts the rows the `SELECT` returns, because a
 //! DAG-shape assertion would pass for a request that still answers wrongly.
 
@@ -35,7 +35,7 @@ use tidb_copr::query_transport::QueryOperation;
 use tidb_copr::query_transport::QueryTransport;
 use tidb_txnkv::TransportRequest;
 use tidb_copr::cop_client::CopClient;
-use tidb_executor::cop_reader::open_cop_scan;
+use tidb_executor::cop_reader::build_resp;
 use tidb_copr::cop_client::RealTiKvSessionTransportFactory;
 use tidb_kv::cluster_storage::{ClusterSnapshot, SnapshotPairs};
 use tidb_store_driver_txn::cluster_storage::{ClusterTableStorage, MutationBuffer};
@@ -656,7 +656,7 @@ fn count_star_lowers_to_count_with_one_constant_child() {
                 ..PushdownStatementContext::default()
             },
         };
-        let mut stream = open_cop_scan(&client, &request)
+        let mut stream = build_resp(&client, &request)
             .expect("the partial count is served by the coprocessor");
         assert_eq!(
             stream.next_row().expect("the partial count row"),
@@ -737,7 +737,7 @@ fn a_descending_scan_marks_both_the_dag_and_dist_sql_request() {
         range_hints: Vec::new(),
         statement: PushdownStatementContext::default(),
     };
-    let mut stream = open_cop_scan(&client, &request)
+    let mut stream = build_resp(&client, &request)
         .expect("the descending scan is served by the coprocessor");
     assert!(stream.next_row().expect("the first row").is_some());
     stream.close();

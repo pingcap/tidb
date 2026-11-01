@@ -62,27 +62,27 @@ fn list_operations_cover_push_pop_index_set_clear_and_snapshot_refusal() {
     let mut tx = TxStructure::new(&mut transaction, &[0x00]);
 
     let key = b"a";
-    tx.lpush(key, &[b"3", b"2", b"1"]).unwrap();
+    tx.l_push(key, &[b"3", b"2", b"1"]).unwrap();
 
     // Test LGetAll.
-    tx.lpush(key, &[b"11"]).unwrap();
+    tx.l_push(key, &[b"11"]).unwrap();
     assert_eq!(
-        tx.lget_all(key).unwrap(),
+        tx.l_get_all(key).unwrap(),
         vec![b"3".to_vec(), b"2".to_vec(), b"1".to_vec(), b"11".to_vec()]
     );
-    assert_eq!(tx.lpop(key).unwrap().as_deref(), Some(b"11".as_slice()));
+    assert_eq!(tx.l_pop(key).unwrap().as_deref(), Some(b"11".as_slice()));
 
     assert_eq!(tx.llen(key).unwrap(), 3);
 
     assert_eq!(tx.lindex(key, 1).unwrap().as_deref(), Some(b"2".as_slice()));
 
-    tx.lset(key, 1, b"4").unwrap();
+    tx.l_set(key, 1, b"4").unwrap();
     assert_eq!(tx.lindex(key, 1).unwrap().as_deref(), Some(b"4".as_slice()));
-    tx.lset(key, 1, b"2").unwrap();
+    tx.l_set(key, 1, b"2").unwrap();
 
     // Go `LSet(key, 100, ...)`: the error reports the adjusted index.
     assert_eq!(
-        tx.lset(key, 100, b"2"),
+        tx.l_set(key, 100, b"2"),
         Err(MetaError::Structure(StructureError::InvalidListIndex(97)))
     );
 
@@ -91,30 +91,30 @@ fn list_operations_cover_push_pop_index_set_clear_and_snapshot_refusal() {
         Some(b"3".as_slice())
     );
 
-    assert_eq!(tx.lpop(key).unwrap().as_deref(), Some(b"1".as_slice()));
+    assert_eq!(tx.l_pop(key).unwrap().as_deref(), Some(b"1".as_slice()));
     assert_eq!(tx.llen(key).unwrap(), 2);
 
-    tx.rpush(key, &[b"4"]).unwrap();
+    tx.r_push(key, &[b"4"]).unwrap();
     assert_eq!(tx.llen(key).unwrap(), 3);
     assert_eq!(
         tx.lindex(key, -1).unwrap().as_deref(),
         Some(b"4".as_slice())
     );
 
-    assert_eq!(tx.rpop(key).unwrap().as_deref(), Some(b"4".as_slice()));
-    assert_eq!(tx.rpop(key).unwrap().as_deref(), Some(b"3".as_slice()));
-    assert_eq!(tx.rpop(key).unwrap().as_deref(), Some(b"2".as_slice()));
+    assert_eq!(tx.r_pop(key).unwrap().as_deref(), Some(b"4".as_slice()));
+    assert_eq!(tx.r_pop(key).unwrap().as_deref(), Some(b"3".as_slice()));
+    assert_eq!(tx.r_pop(key).unwrap().as_deref(), Some(b"2".as_slice()));
     assert_eq!(tx.llen(key).unwrap(), 0);
 
-    tx.lpush(key, &[b"1"]).unwrap();
-    tx.lclear(key).unwrap();
+    tx.l_push(key, &[b"1"]).unwrap();
+    tx.l_clear(key).unwrap();
     assert_eq!(tx.llen(key).unwrap(), 0);
 
     let mut tx1 = TxStructure::read_only(&mut transaction, &[0x01]);
-    assert_eq!(tx1.lpush(key, &[b"1"]), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
-    assert_eq!(tx1.rpop(key), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
-    assert_eq!(tx1.lset(key, 1, b"2"), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
-    assert_eq!(tx1.lclear(key), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
+    assert_eq!(tx1.l_push(key, &[b"1"]), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
+    assert_eq!(tx1.r_pop(key), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
+    assert_eq!(tx1.l_set(key, 1, b"2"), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
+    assert_eq!(tx1.l_clear(key), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
 }
 
 // Go `TestHash`.
@@ -127,18 +127,18 @@ fn hash_operations_cover_set_get_iterate_last_n_inc_del_clear_and_nil_values() {
 
     let _ = tx.encode_hash_auto_id_key_value(key, key, 5);
 
-    tx.hset(key, b"1", b"1").unwrap();
-    tx.hset(key, b"2", b"2").unwrap();
+    tx.h_set(key, b"1", b"1").unwrap();
+    tx.h_set(key, b"2", b"2").unwrap();
 
     assert_eq!(
-        tx.hget(key, b"1").unwrap().as_deref(),
+        tx.h_get(key, b"1").unwrap().as_deref(),
         Some(b"1".as_slice())
     );
-    assert_eq!(tx.hget(key, b"fake").unwrap(), None);
+    assert_eq!(tx.h_get(key, b"fake").unwrap(), None);
 
-    assert_eq!(tx.hkeys(key).unwrap(), vec![b"1".to_vec(), b"2".to_vec()]);
+    assert_eq!(tx.h_keys(key).unwrap(), vec![b"1".to_vec(), b"2".to_vec()]);
 
-    let all = tx.hget_all(key).unwrap();
+    let all = tx.h_get_all(key).unwrap();
     assert_eq!(
         all,
         vec![
@@ -154,24 +154,24 @@ fn hash_operations_cover_set_get_iterate_last_n_inc_del_clear_and_nil_values() {
     );
 
     let mut index = 0;
-    tx.hget_iter(key, &mut |pair| {
+    tx.h_get_iter(key, &mut |pair| {
         assert!(index < 2);
         assert_eq!(all[index], pair);
         index += 1;
         Ok(())
     })
     .unwrap();
-    assert_eq!(tx.hget_len(key).unwrap(), 2);
+    assert_eq!(tx.h_get_len(key).unwrap(), 2);
 
     assert_eq!(
-        tx.hget_last_n(key, 1).unwrap(),
+        tx.h_get_last_n(key, 1).unwrap(),
         vec![HashPair {
             field: b"2".to_vec(),
             value: b"2".to_vec()
         }]
     );
     assert_eq!(
-        tx.hget_last_n(key, 2).unwrap(),
+        tx.h_get_last_n(key, 2).unwrap(),
         vec![
             HashPair {
                 field: b"2".to_vec(),
@@ -184,55 +184,55 @@ fn hash_operations_cover_set_get_iterate_last_n_inc_del_clear_and_nil_values() {
         ]
     );
 
-    tx.hdel(key, &[b"1"]).unwrap();
-    assert_eq!(tx.hget(key, b"1").unwrap(), None);
+    tx.h_del(key, &[b"1"]).unwrap();
+    assert_eq!(tx.h_get(key, b"1").unwrap(), None);
 
-    assert_eq!(tx.hinc(key, b"1", 1).unwrap(), 1);
+    assert_eq!(tx.h_inc(key, b"1", 1).unwrap(), 1);
 
     // Test set new value which equals to old value.
     assert_eq!(
-        tx.hget(key, b"1").unwrap().as_deref(),
+        tx.h_get(key, b"1").unwrap().as_deref(),
         Some(b"1".as_slice())
     );
-    tx.hset(key, b"1", b"1").unwrap();
+    tx.h_set(key, b"1", b"1").unwrap();
     assert_eq!(
-        tx.hget(key, b"1").unwrap().as_deref(),
+        tx.h_get(key, b"1").unwrap().as_deref(),
         Some(b"1".as_slice())
     );
 
-    assert_eq!(tx.hinc(key, b"1", 1).unwrap(), 2);
-    assert_eq!(tx.hinc(key, b"1", 1).unwrap(), 3);
-    assert_eq!(tx.hget_int64(key, b"1").unwrap(), 3);
+    assert_eq!(tx.h_inc(key, b"1", 1).unwrap(), 2);
+    assert_eq!(tx.h_inc(key, b"1", 1).unwrap(), 3);
+    assert_eq!(tx.h_get_int_64(key, b"1").unwrap(), 3);
 
-    tx.hclear(key).unwrap();
-    tx.hdel(key, &[b"fake_key"]).unwrap();
+    tx.h_clear(key).unwrap();
+    tx.h_del(key, &[b"fake_key"]).unwrap();
 
     // Test set nil value.
-    assert_eq!(tx.hget(key, b"nil_key").unwrap(), None);
-    tx.hset(key, b"nil_key", b"").unwrap();
-    tx.hset(key, b"nil_key", b"1").unwrap();
+    assert_eq!(tx.h_get(key, b"nil_key").unwrap(), None);
+    tx.h_set(key, b"nil_key", b"").unwrap();
+    tx.h_set(key, b"nil_key", b"1").unwrap();
     assert_eq!(
-        tx.hget(key, b"nil_key").unwrap().as_deref(),
+        tx.h_get(key, b"nil_key").unwrap().as_deref(),
         Some(b"1".as_slice())
     );
     // Writing nil over a stored value reaches Go's kv layer and fails there.
     assert_eq!(
-        tx.hset(key, b"nil_key", b""),
+        tx.h_set(key, b"nil_key", b""),
         Err(MetaError::CannotSetNilValue)
     );
     assert_eq!(
-        tx.hget(key, b"nil_key").unwrap().as_deref(),
+        tx.h_get(key, b"nil_key").unwrap().as_deref(),
         Some(b"1".as_slice())
     );
-    tx.hset(key, b"nil_key", b"2").unwrap();
+    tx.h_set(key, b"nil_key", b"2").unwrap();
     assert_eq!(
-        tx.hget(key, b"nil_key").unwrap().as_deref(),
+        tx.h_get(key, b"nil_key").unwrap().as_deref(),
         Some(b"2".as_slice())
     );
 
     let mut tx1 = TxStructure::read_only(&mut transaction, &[0x01]);
-    assert_eq!(tx1.hinc(key, b"1", 1), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
-    assert_eq!(tx1.hdel(key, &[b"1"]), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
+    assert_eq!(tx1.h_inc(key, b"1", 1), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
+    assert_eq!(tx1.h_del(key, &[b"1"]), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
 
     // Go commits and reuses the store in a fresh transaction.
     let mut new_transaction = MemoryTransaction::default();
@@ -249,12 +249,12 @@ fn hash_clear_on_a_read_only_snapshot_panics_like_go() {
     let key = b"a";
     {
         let mut tx = TxStructure::new(&mut transaction, &[0x00]);
-        tx.hset(key, b"field", b"value").unwrap();
+        tx.h_set(key, b"field", b"value").unwrap();
     }
 
     let mut snapshot = TxStructure::read_only(&mut transaction, &[0x00]);
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = snapshot.hclear(key);
+        let _ = snapshot.h_clear(key);
     }))
     .is_err());
 }
@@ -283,10 +283,10 @@ fn bounded_hash_iteration_skips_undecodable_keys() {
 
     let meta_aa = tx.encode_hash_meta_key(b"aa");
     tx.set(&meta_aa, b"meta").unwrap();
-    tx.hset(b"b", b"", b"value1").unwrap();
+    tx.h_set(b"b", b"", b"value1").unwrap();
     let meta_c = tx.encode_hash_meta_key(b"c");
     tx.set(&meta_c, b"meta").unwrap();
-    tx.hset(b"d", b"", b"value2").unwrap();
+    tx.h_set(b"d", b"", b"value2").unwrap();
     let meta_dd = tx.encode_hash_meta_key(b"dd");
     tx.set(&meta_dd, b"meta").unwrap();
 

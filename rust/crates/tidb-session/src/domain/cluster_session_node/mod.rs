@@ -1232,23 +1232,23 @@ impl<'s> ClusterServerSession<'s> {
 
         match event.action_type() {
             ActionType::ACTION_CREATE_TABLE => {
-                let table = event.create_table_info();
+                let table = event.get_create_table_info();
                 let ids = stats_physical_ids(table, self.dynamic_partition_pruning()?);
                 self.stage_stats_table_change(table, None, &ids, &[], false)
             }
             ActionType::ACTION_TRUNCATE_TABLE => {
-                let (table, old_table) = event.truncate_table_info();
+                let (table, old_table) = event.get_truncate_table_info();
                 let new_ids = stats_physical_ids(table, self.dynamic_partition_pruning()?);
                 let old_ids = stats_physical_ids(old_table, self.dynamic_partition_pruning()?);
                 self.stage_stats_table_change(table, None, &new_ids, &old_ids, false)
             }
             ActionType::ACTION_DROP_TABLE => {
-                let table = event.drop_table_info();
+                let table = event.get_drop_table_info();
                 let old_ids = stats_physical_ids(table, self.dynamic_partition_pruning()?);
                 self.stage_stats_table_change(table, None, &[], &old_ids, false)
             }
             ActionType::ACTION_ADD_COLUMN => {
-                let (table, columns) = event.add_column_info();
+                let (table, columns) = event.get_add_column_info();
                 self.stage_stats_columns(table, columns)
             }
             ActionType::ACTION_MODIFY_COLUMN => {
@@ -1260,7 +1260,7 @@ impl<'s> ClusterServerSession<'s> {
                 }
             }
             ActionType::ACTION_ADD_TABLE_PARTITION => {
-                let (table, added) = event.add_partition_info();
+                let (table, added) = event.get_add_partition_info();
                 let ids = added
                     .definitions
                     .snapshot()
@@ -1270,7 +1270,7 @@ impl<'s> ClusterServerSession<'s> {
                 self.stage_stats_table_change(table, Some(table.id), &ids, &[], false)
             }
             ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
-                let (table, added, dropped) = event.truncate_partition_info();
+                let (table, added, dropped) = event.get_truncate_partition_info();
                 let inserted = added
                     .definitions
                     .snapshot()
@@ -1286,7 +1286,7 @@ impl<'s> ClusterServerSession<'s> {
                 self.stage_stats_table_change(table, Some(table.id), &inserted, &retired, true)
             }
             ActionType::ACTION_DROP_TABLE_PARTITION => {
-                let (table, dropped) = event.drop_partition_info();
+                let (table, dropped) = event.get_drop_partition_info();
                 let retired = dropped
                     .definitions
                     .snapshot()
@@ -1308,7 +1308,7 @@ impl<'s> ClusterServerSession<'s> {
                 self.stage_exchange_partition_stats(table.id, partition_id, standalone.id)
             }
             ActionType::ACTION_REORGANIZE_PARTITION => {
-                let (table, added, dropped) = event.reorganize_partition_info();
+                let (table, added, dropped) = event.get_reorganize_partition_info();
                 let inserted = added
                     .definitions
                     .snapshot()
@@ -1324,7 +1324,7 @@ impl<'s> ClusterServerSession<'s> {
                 self.stage_stats_table_change(table, Some(table.id), &inserted, &retired, false)
             }
             ActionType::ACTION_ALTER_TABLE_PARTITIONING => {
-                let (old_table_id, table, added) = event.add_partitioning_info();
+                let (old_table_id, table, added) = event.get_add_partitioning_info();
                 let inserted = added
                     .definitions
                     .snapshot()
@@ -1335,7 +1335,7 @@ impl<'s> ClusterServerSession<'s> {
                 self.stage_change_global_stats_id(old_table_id, table.id)
             }
             ActionType::ACTION_REMOVE_PARTITIONING => {
-                let (old_table_id, table, dropped) = event.remove_partitioning_info();
+                let (old_table_id, table, dropped) = event.get_remove_partitioning_info();
                 self.stage_change_global_stats_id(old_table_id, table.id)?;
                 let retired = dropped
                     .definitions
@@ -1347,7 +1347,7 @@ impl<'s> ClusterServerSession<'s> {
             }
             ActionType::ACTION_DROP_SCHEMA => {
                 let mut ids = Vec::new();
-                for table in &event.drop_schema_info().tables {
+                for table in &event.get_drop_schema_info().tables {
                     ids.extend(table.partitions.iter().map(|partition| partition.id));
                     ids.push(table.id);
                 }
@@ -1441,7 +1441,7 @@ impl<'s> ClusterServerSession<'s> {
                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                 count = count.wrapping_add(
                     loader
-                        .load_meta(&mut snapshot, old_id)
+                        .stats_meta_count_and_modify_count(&mut snapshot, old_id)
                         .map_err(|error| SqlQueryError::unknown(error.to_string()))?
                         .map_or(0, |(_, _, _, count, _)| count as i64),
                 );
@@ -1572,10 +1572,10 @@ impl<'s> ClusterServerSession<'s> {
         let loader = ClusterStatsLoader::locate(&catalog)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let partition = loader
-            .load_meta(&mut snapshot, partition_id)
+            .stats_meta_count_and_modify_count(&mut snapshot, partition_id)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let standalone = loader
-            .load_meta(&mut snapshot, standalone_table_id)
+            .stats_meta_count_and_modify_count(&mut snapshot, standalone_table_id)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let (partition_modify, partition_count) = partition
             .map(|(_, _, modify, count, _)| (modify, count as i64))
@@ -1656,7 +1656,7 @@ impl<'s> ClusterServerSession<'s> {
             );
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
             let Some((_, _, _, count, _)) = loader
-                .load_meta(&mut snapshot, physical_id)
+                .stats_meta_count_and_modify_count(&mut snapshot, physical_id)
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?
             else {
                 continue;
@@ -2418,7 +2418,7 @@ impl<'s> ClusterServerSession<'s> {
         let effective = effective_template.as_deref();
         // Plan-cache validation must see the current schema before the read
         // policy is declared. Rebuilding only inside the statement lifecycle
-        // would let a stale row-handle plan choose MaxTS and then fall back to
+        // would let a stale row-handle plan new_row_sample_collector MaxTS and then fall back to
         // a newly rebuilt, potentially multi-read plan.
         self.rebuild_catalog_if_stale();
         let resource_group = match effective {
@@ -2516,7 +2516,7 @@ impl<'s> ClusterServerSession<'s> {
         };
         if effective.is_some_and(|stmt| matches!(stmt, Stmt::Query(_))) {
             // Go `executePlanCacheStmt`'s `ContextWithInitializedExecDetails`.
-            self.session.initialize_statement_exec_details(&sql);
+            self.session.context_with_initialized_exec_details(&sql);
             let result = self.open_statement_result(shape, &resource_group, |session| {
                 session.set_binary_prepared_execution(true);
                 let opened = (|| {
@@ -2695,7 +2695,7 @@ impl<'s> ClusterServerSession<'s> {
         // The executor is built against the current schema, as the write
         // door builds every statement.
         self.rebuild_catalog_if_stale();
-        self.session.accept_local_infile(stmt).map_err(map_error)
+        self.session.preprocess_load_data_local(stmt).map_err(map_error)
     }
 
     pub(crate) fn execute_local_infile_parsed(
@@ -2966,7 +2966,7 @@ impl<'s> ClusterServerSession<'s> {
         // Go `handleStmt`'s `ContextWithInitializedExecDetails`, before the
         // statement below can reach storage -- and before `ExecuteStmt`
         // publishes the process info, which takes the digest computed here.
-        self.session.initialize_statement_exec_details(sql);
+        self.session.context_with_initialized_exec_details(sql);
         let process_statement = match self.session.pending_statement_digest(sql) {
             Some(digest) => self
                 .session

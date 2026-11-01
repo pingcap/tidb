@@ -44,9 +44,9 @@
 //!   flattens into a `Mutex<BTreeMap<String, i64>>` (sorted iteration matches
 //!   Go's sort-before-render).
 //! - Go nil-receiver methods and nil-argument functions become free functions
-//!   over `Option<&RuV2Metrics>` ([`total_ru`], [`update_ruv2_metrics_from_ruv2`],
-//!   [`sync_ruv2_metrics_from_ru_details`],
-//!   [`update_ruv2_metrics_from_commit_details`], [`format_ruv2_summary`]);
+//!   over `Option<&RuV2Metrics>` ([`total_ru`], [`update_ruv_2_metrics_from_ruv_2`],
+//!   [`sync_ruv_2_metrics_from_ru_details`],
+//!   [`update_ruv_2_metrics_from_commit_details`], [`format_ruv_2_summary`]);
 //!   Go `Clone` (nil returns nil) becomes `impl Clone` on the non-nil case.
 //! - Test narrowings: Go `defaultRUV2WeightsForTest` reads
 //!   `config.DefaultRUV2Config()`; its weight values are copied here as exact
@@ -613,7 +613,7 @@ impl RuV2Metrics {
 
     /// Go `AddExecutorL5InsertRows`: records insert rows multiplied by
     /// inserted column count for RUv2 accounting.
-    pub fn add_executor_l5_insert_rows(&self, delta: i64) {
+    pub fn add_executor_l_5_insert_rows(&self, delta: i64) {
         if self.bypass() {
             return;
         }
@@ -1220,7 +1220,7 @@ pub fn total_ru(
 
 /// Go `UpdateRUV2MetricsFromRUV2`: adds raw RUv2 counters into the
 /// statement-level metrics snapshot.
-pub fn update_ruv2_metrics_from_ruv2(metrics: Option<&RuV2Metrics>, ru: Option<&Ruv2>) {
+pub fn update_ruv_2_metrics_from_ruv_2(metrics: Option<&RuV2Metrics>, ru: Option<&Ruv2>) {
     let (Some(metrics), Some(ru)) = (metrics, ru) else {
         return;
     };
@@ -1234,7 +1234,7 @@ pub fn update_ruv2_metrics_from_ruv2(metrics: Option<&RuV2Metrics>, ru: Option<&
 /// accumulated in `RUDetails` since the last drain and adds them into the
 /// statement-level metrics. Safe to call multiple times; each call transfers
 /// only the delta.
-pub fn sync_ruv2_metrics_from_ru_details(
+pub fn sync_ruv_2_metrics_from_ru_details(
     metrics: Option<&RuV2Metrics>,
     ru_details: Option<&RuDetails>,
 ) {
@@ -1244,12 +1244,12 @@ pub fn sync_ruv2_metrics_from_ru_details(
     if metrics.bypass() {
         return;
     }
-    update_ruv2_metrics_from_ruv2(Some(metrics), ru_details.drain_ru_v2().as_ref());
+    update_ruv_2_metrics_from_ruv_2(Some(metrics), ru_details.drain_ru_v2().as_ref());
 }
 
 /// Go `UpdateRUV2MetricsFromCommitDetails`: adds commit write counters into
 /// RUv2 metrics.
-pub fn update_ruv2_metrics_from_commit_details(
+pub fn update_ruv_2_metrics_from_commit_details(
     metrics: Option<&RuV2Metrics>,
     commit_details: Option<&CommitDetails>,
 ) {
@@ -1334,7 +1334,7 @@ fn format_ruv2_label_map(values: &BTreeMap<String, i64>) -> String {
 
 /// Go `FormatRUV2Summary`: formats the RUv2 total and detailed metrics in
 /// one pass over the live metrics.
-pub fn format_ruv2_summary(
+pub fn format_ruv_2_summary(
     metrics: Option<&RuV2Metrics>,
     weights: RuV2Weights,
     tikv_ru: f64,
@@ -1450,23 +1450,23 @@ pub fn format_ruv2_summary(
 }
 
 /// Go `FormatRUV2Total`: formats the RUv2 total into a slow log string.
-pub fn format_ruv2_total(
+pub fn format_ruv_2_total(
     metrics: Option<&RuV2Metrics>,
     weights: RuV2Weights,
     tikv_ru: f64,
     tiflash_ru: f64,
 ) -> String {
-    format_ruv2_summary(metrics, weights, tikv_ru, tiflash_ru).0
+    format_ruv_2_summary(metrics, weights, tikv_ru, tiflash_ru).0
 }
 
 /// Go `FormatRUV2Metrics`: formats RUv2 metrics into a compact detail string.
-pub fn format_ruv2_metrics(
+pub fn format_ruv_2_metrics(
     metrics: Option<&RuV2Metrics>,
     weights: RuV2Weights,
     tikv_ru: f64,
     tiflash_ru: f64,
 ) -> String {
-    format_ruv2_summary(metrics, weights, tikv_ru, tiflash_ru).1
+    format_ruv_2_summary(metrics, weights, tikv_ru, tiflash_ru).1
 }
 
 /// Go `RURuntimeStats` (`runtime_stats.go`): the RU details and
@@ -1680,7 +1680,7 @@ mod tests {
         metrics.add_executor_metric(1, "Projection", 7);
         metrics.add_executor_metric(2, "Selection", 11);
         metrics.add_executor_metric(3, "HashJoin", 13);
-        metrics.add_executor_l5_insert_rows(17);
+        metrics.add_executor_l_5_insert_rows(17);
         metrics.add_plan_cnt(19);
         metrics.add_plan_derive_stats_paths(23);
         metrics.add_resource_manager_read_cnt(29);
@@ -1726,7 +1726,7 @@ mod tests {
 
         assert_eq!(0.0, bypassed.calculate_ru_values(weights));
         assert_eq!(0.0, total_ru(Some(&bypassed), weights, tikv_ru, tiflash_ru));
-        let (total, detail) = format_ruv2_summary(Some(&bypassed), weights, tikv_ru, tiflash_ru);
+        let (total, detail) = format_ruv_2_summary(Some(&bypassed), weights, tikv_ru, tiflash_ru);
         assert!(total.is_empty());
         assert!(detail.is_empty());
 
@@ -1737,7 +1737,7 @@ mod tests {
         );
     }
 
-    /// The remaining `format_ruv2_summary` arms Go's fixture leaves cold:
+    /// The remaining `format_ruv_2_summary` arms Go's fixture leaves cold:
     /// nil metrics with zero RU renders nothing, bypass renders nothing,
     /// and non-zero counters render weighted tidb_ru plus the int and
     /// label-map arms in Go's arm order.
@@ -1750,21 +1750,21 @@ mod tests {
         };
         assert_eq!(
             (String::new(), String::new()),
-            format_ruv2_summary(None, weights, 0.0, 0.0)
+            format_ruv_2_summary(None, weights, 0.0, 0.0)
         );
 
         let bypassed = RuV2Metrics::new();
         bypassed.set_bypass(true);
         assert_eq!(
             (String::new(), String::new()),
-            format_ruv2_summary(Some(&bypassed), weights, 3.0, 0.0)
+            format_ruv_2_summary(Some(&bypassed), weights, 3.0, 0.0)
         );
 
         let metrics = RuV2Metrics::new();
         metrics.add_plan_cnt(5);
         metrics.add_executor_metric(1, "TableReader", 3);
         metrics.add_executor_metric(1, "Zero", 0);
-        let (total, detail) = format_ruv2_summary(Some(&metrics), weights, 1.0, 0.5);
+        let (total, detail) = format_ruv_2_summary(Some(&metrics), weights, 1.0, 0.5);
         assert_eq!("11.50", total);
         assert_eq!(
             "total_ru:11.50, tidb_ru:10.00, tikv_ru:1.00, tiflash_ru:0.50, \
@@ -1780,7 +1780,7 @@ mod tests {
         let weights = default_ruv2_weights_for_test();
         let before_ru = metrics.calculate_ru_values(weights);
 
-        update_ruv2_metrics_from_commit_details(
+        update_ruv_2_metrics_from_commit_details(
             Some(&metrics),
             Some(&CommitDetails {
                 write_keys: 3,
@@ -1797,13 +1797,13 @@ mod tests {
             0.01,
         );
 
-        let detail = format_ruv2_metrics(Some(&metrics), weights, 0.0, 0.0);
+        let detail = format_ruv_2_metrics(Some(&metrics), weights, 0.0, 0.0);
         assert!(detail.contains("write_keys:3"), "detail: {detail}");
         assert!(detail.contains("write_size:66"), "detail: {detail}");
 
         let bypassed = RuV2Metrics::new();
         bypassed.set_bypass(true);
-        update_ruv2_metrics_from_commit_details(
+        update_ruv_2_metrics_from_commit_details(
             Some(&bypassed),
             Some(&CommitDetails {
                 write_keys: 1,
@@ -1836,7 +1836,7 @@ mod tests {
     #[test]
     fn update_ruv2_metrics_from_ruv2_test() {
         let metrics = RuV2Metrics::new();
-        update_ruv2_metrics_from_ruv2(
+        update_ruv_2_metrics_from_ruv_2(
             Some(&metrics),
             Some(&Ruv2 {
                 read_rpc_count: 2,
@@ -1867,7 +1867,7 @@ mod tests {
         assert_eq!(17, metrics.tikv_storage_processed_keys_batch_get());
         assert_eq!(19, metrics.tikv_storage_processed_keys_get());
 
-        let detail = format_ruv2_metrics(Some(&metrics), default_ruv2_weights_for_test(), 0.0, 0.0);
+        let detail = format_ruv_2_metrics(Some(&metrics), default_ruv2_weights_for_test(), 0.0, 0.0);
         assert!(
             detail.contains("resource_manager_read_cnt:2"),
             "detail: {detail}"
@@ -1908,7 +1908,7 @@ mod tests {
         }));
 
         // First drain picks up all counters.
-        sync_ruv2_metrics_from_ru_details(Some(&metrics), Some(&ru_details));
+        sync_ruv_2_metrics_from_ru_details(Some(&metrics), Some(&ru_details));
         assert_eq!(2, metrics.resource_manager_read_cnt());
         assert_eq!(3, metrics.resource_manager_write_cnt());
         assert_eq!(5, metrics.tikv_kv_engine_cache_miss());
@@ -1917,7 +1917,7 @@ mod tests {
         assert_eq!(19, metrics.tikv_storage_processed_keys_get());
 
         // Second drain without new data is a no-op.
-        sync_ruv2_metrics_from_ru_details(Some(&metrics), Some(&ru_details));
+        sync_ruv_2_metrics_from_ru_details(Some(&metrics), Some(&ru_details));
         assert_eq!(2, metrics.resource_manager_read_cnt());
         assert_eq!(3, metrics.resource_manager_write_cnt());
 
@@ -1927,11 +1927,11 @@ mod tests {
             storage_processed_keys_batch_get: 100,
             ..Ruv2::default()
         }));
-        sync_ruv2_metrics_from_ru_details(Some(&metrics), Some(&ru_details));
+        sync_ruv_2_metrics_from_ru_details(Some(&metrics), Some(&ru_details));
         assert_eq!(12, metrics.resource_manager_read_cnt());
         assert_eq!(107, metrics.tikv_storage_processed_keys_batch_get());
 
-        let detail = format_ruv2_metrics(Some(&metrics), default_ruv2_weights_for_test(), 0.0, 0.0);
+        let detail = format_ruv_2_metrics(Some(&metrics), default_ruv2_weights_for_test(), 0.0, 0.0);
         assert!(
             detail.contains("resource_manager_read_cnt:12"),
             "detail: {detail}"
@@ -1963,7 +1963,7 @@ mod tests {
             ..Ruv2::default()
         }));
 
-        sync_ruv2_metrics_from_ru_details(Some(&metrics), Some(&ru_details));
+        sync_ruv_2_metrics_from_ru_details(Some(&metrics), Some(&ru_details));
         assert_eq!(0, metrics.resource_manager_read_cnt());
         assert_eq!(0, metrics.resource_manager_write_cnt());
         assert_eq!(0, metrics.tikv_storage_processed_keys_batch_get());
@@ -1974,7 +1974,7 @@ mod tests {
     fn update_ruv2_metrics_from_ruv2_bypass() {
         let metrics = RuV2Metrics::new();
         metrics.set_bypass(true);
-        update_ruv2_metrics_from_ruv2(
+        update_ruv_2_metrics_from_ruv_2(
             Some(&metrics),
             Some(&Ruv2 {
                 read_rpc_count: 1,
@@ -2027,16 +2027,16 @@ mod tests {
         metrics.add_result_chunk_cells(1000);
         metrics.add_resource_manager_write_cnt(20);
         metrics.add_tikv_coprocessor_work_total("BatchTopN", 10);
-        let (total, formatted) = format_ruv2_summary(Some(&metrics), weights, 10987.0, 246.0);
+        let (total, formatted) = format_ruv_2_summary(Some(&metrics), weights, 10987.0, 246.0);
 
         assert_eq!("11236.09", total);
         assert_eq!(
             total,
-            format_ruv2_total(Some(&metrics), weights, 10987.0, 246.0)
+            format_ruv_2_total(Some(&metrics), weights, 10987.0, 246.0)
         );
         assert_eq!(
             formatted,
-            format_ruv2_metrics(Some(&metrics), weights, 10987.0, 246.0)
+            format_ruv_2_metrics(Some(&metrics), weights, 10987.0, 246.0)
         );
         assert!(formatted.contains("tidb_ru:"));
         assert!(formatted.contains("tikv_ru:"));

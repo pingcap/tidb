@@ -63,7 +63,7 @@ use tidb_stats::builder::{build_hist_and_topn, BuildOptions, SampleCollector, Sa
 use tidb_stats::cmsketch::TopN;
 use tidb_stats::histogram::Histogram;
 use tidb_stats::row_sample_collector::{
-    adjusted_sample_rate, RowSampleCollector, SamplePolicy, ScannedRow, SlotValue,
+    get_adjusted_sample_rate, RowSampleCollector, SamplePolicy, ScannedRow, SlotValue,
 };
 use tidb_stats::sample_bytes::MAX_SAMPLE_VALUE_LENGTH;
 
@@ -1016,8 +1016,8 @@ impl<'a> AnalyzeRun<'a> {
     ) -> Result<Self, AnalyzeError> {
         let sample_rate = options
             .sample_rate
-            .unwrap_or_else(|| adjusted_sample_rate(realtime_count, None));
-        let policy = SamplePolicy::choose(options.num_samples, sample_rate).ok_or_else(|| {
+            .unwrap_or_else(|| get_adjusted_sample_rate(realtime_count, None));
+        let policy = SamplePolicy::new_row_sample_collector(options.num_samples, sample_rate).ok_or_else(|| {
             AnalyzeError::Unsupported(
                 "ANALYZE TABLE needs a positive SAMPLES count or a positive SAMPLERATE".to_owned(),
             )

@@ -135,7 +135,7 @@ fn parse_release_version(text: &str) -> Option<(u64, u64, u64)> {
 /// Whether Go's detection has nothing left to wait for.
 fn job_version_settled() -> bool {
     tidb_model::get_job_ver_in_use() == tidb_model::JobVersion::V2
-        && tidb_model::index::get_global_index_v1_supported()
+        && tidb_model::index::get_global_index_v_1_supported()
 }
 
 /// Go `ddl.detectAndUpdateJobVersionOnce`: job version 2 once every TiDB in
@@ -179,8 +179,8 @@ fn detect_and_update_job_version_once(
     if tidb_model::get_job_ver_in_use() != target {
         tidb_model::set_job_ver_in_use(target);
     }
-    if tidb_model::index::get_global_index_v1_supported() != all_support_global_idx_v1 {
-        tidb_model::index::set_global_index_v1_supported(all_support_global_idx_v1);
+    if tidb_model::index::get_global_index_v_1_supported() != all_support_global_idx_v1 {
+        tidb_model::index::set_global_index_v_1_supported(all_support_global_idx_v1);
     }
     Ok(())
 }
@@ -194,7 +194,7 @@ fn detect_and_update_job_version(
 ) -> Option<(Sender<()>, JoinHandle<()>)> {
     if !has_etcd {
         tidb_model::set_job_ver_in_use(tidb_model::JobVersion::V2);
-        tidb_model::index::set_global_index_v1_supported(true);
+        tidb_model::index::set_global_index_v_1_supported(true);
         return None;
     }
     if let Err(error) = detect_and_update_job_version_once(server_info) {
@@ -630,7 +630,7 @@ where
     /// Go `newDelRangeManager` for a store without delete-range support
     /// (`SupportDeleteRange` false, the embedded store): the owner works off
     /// `mysql.gc_delete_range` itself.
-    pub fn with_delete_range_emulator(self) -> Result<Self, String> {
+    pub fn new_del_range_manager(self) -> Result<Self, String> {
         let emulator = crate::real_tikv_ddl::delete_range::start_del_range_emulator(
             Arc::clone(&self.opener),
             self.timeout,
@@ -691,7 +691,7 @@ where
         session_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
         row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
     ) -> Result<Self, String> {
-        let owner_id = server_info.local_server_info().static_info.id;
+        let owner_id = server_info.get_local_server_info().static_info.id;
         // Go `ddl.Start`: on the classic kernel, settle the job version and
         // the global index V1 key format before any job is submitted.
         let job_version_detector = if tidb_config_kerneltype::is_classic() {
@@ -2308,7 +2308,7 @@ mod schema_sync_tests {
             mutations.extend(
                 DdlReorgTable::locate(&catalog)
                     .unwrap()
-                    .init_mutations(
+                    .init_ddl_reorg_handle(
                         &[],
                         job.id,
                         &crate::cluster_ddl::add_index::ReorgHandle {

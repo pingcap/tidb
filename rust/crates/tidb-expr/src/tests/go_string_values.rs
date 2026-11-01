@@ -50,7 +50,7 @@ fn eval_string_sig(name: &str, args: Vec<Datum>) -> Result<Datum, crate::EvalErr
         args.into_iter().map(const_arg).collect(),
     );
     let cols = tidb_exprctx::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
-    let empty = tidb_chunk::chunk::Chunk::new_with_capacity(&[], 1);
+    let empty = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[], 1);
     function.eval(&cols, empty.get_row(0))
 }
 
@@ -61,7 +61,7 @@ fn eval_int_sig(name: &str, args: Vec<Datum>) -> Result<Datum, crate::EvalError>
         args.into_iter().map(const_arg).collect(),
     );
     let cols = tidb_exprctx::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
-    let empty = tidb_chunk::chunk::Chunk::new_with_capacity(&[], 1);
+    let empty = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[], 1);
     function.eval(&cols, empty.get_row(0))
 }
 
@@ -173,7 +173,7 @@ fn go_test_repeat() {
             FieldType::new(C::VarString),
             vec![const_arg(s("a")), const_arg(i(10_001))],
         );
-        let empty = tidb_chunk::chunk::Chunk::new_with_capacity(&[], 1);
+        let empty = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[], 1);
         let value = function
             .eval(&SmallPacket, empty.get_row(0))
             .unwrap_or_else(|e| panic!("repeat over packet: {e:?}"));

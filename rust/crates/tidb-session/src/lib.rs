@@ -39,7 +39,7 @@ use tidb_infoschema::Catalog;
 use tidb_driver_error::DriverError;
 use tidb_mathutil::MysqlRng;
 pub use load_stats_arm::ClientLocalFileReader;
-use txn_mode::txn_mode_for_begin;
+use txn_mode::new_provider_with_request;
 use tidb_vardef::txn_mode::{SessionTxnMode, PESSIMISTIC_TXN_MODE};
 
 /// Go `approxParseSQLTokenCnt`: estimates the token count used to reserve
@@ -49,7 +49,7 @@ use tidb_vardef::txn_mode::{SessionTxnMode, PESSIMISTIC_TXN_MODE};
 /// scan, including its core-DML admission rule, comment skipping, ten-byte
 /// keyword buffer, and treating quoted strings/identifiers as one token.
 #[must_use]
-pub fn approx_parse_sql_token_count(sql: &str) -> i64 {
+pub fn approx_parse_sql_token_cnt(sql: &str) -> i64 {
     const CORE: u8 = 1;
     const BYPASS: u8 = 2;
     const SELECT: u8 = 4;
@@ -169,7 +169,7 @@ pub fn approx_parse_sql_token_count(sql: &str) -> i64 {
 /// Go `approxCompilePlanTokenCnt`: estimates the token count of normalized
 /// SQL used to reserve optimizer memory.
 #[must_use]
-pub fn approx_compile_plan_token_count(sql: &str, has_select: bool) -> i64 {
+pub fn approx_compile_plan_token_cnt(sql: &str, has_select: bool) -> i64 {
     const FROM: &str = "from";
 
     let mut token_count = 0_i64;
@@ -702,7 +702,7 @@ pub struct Session {
     stats_handle: Arc<tidb_stats_handle::StatsHandle>,
     /// The parser warnings of the statement now running, with where they
     /// start in [`Self::warnings`]; see
-    /// [`Self::move_parse_warnings_behind_execution`].
+    /// [`Self::handle_stmt`].
     pub(crate) parse_warnings: Option<(usize, Vec<SqlWarn>)>,
     /// Go `ExecStmt.OutputNames` of the statement's materialized query
     /// result, one per column; empty for any other result. With
@@ -1283,7 +1283,7 @@ impl Session {
         &mut self,
         syncer: std::sync::Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>,
     ) {
-        let info = syncer.local_server_info();
+        let info = syncer.get_local_server_info();
         self.server_id_getter = info.static_info.server_id_getter.unwrap_or_else(|| {
             let id = info.static_info.json_server_id;
             Arc::new(move || id)
@@ -1355,7 +1355,7 @@ impl Session {
         self.server_info_syncer.as_ref().map_or_else(
             || "unknown".to_owned(),
             |syncer| {
-                let info = syncer.local_server_info();
+                let info = syncer.get_local_server_info();
                 tidb_domain_serverinfo::serverinfo_syncer::join_host_port(
                     &info.static_info.ip,
                     info.static_info.port,
@@ -1674,7 +1674,7 @@ impl Session {
         let (id, address) = self.server_info_syncer.as_ref().map_or_else(
             || (String::new(), String::new()),
             |syncer| {
-                let info = syncer.local_server_info();
+                let info = syncer.get_local_server_info();
                 (
                     info.static_info.id.clone(),
                     tidb_domain_serverinfo::serverinfo_syncer::join_host_port(
@@ -1730,7 +1730,7 @@ impl Session {
     pub(crate) fn tidb_servers_info_table_rows(
         &self,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-        self.viewer_state().tidb_servers_info_rows()
+        self.viewer_state().set_data_for_servers_info()
     }
 
     /// A fresh session over a freshly booted embedded store, as Go's
@@ -1830,7 +1830,7 @@ impl Session {
         if let Some(guard) = &self.process {
             guard
                 .registry()
-                .statement_finished(guard.id(), &self.vars.current_db, &self.status_text());
+                .statement_finished(guard.id(), &self.vars.current_db, &self.server_status_2_str());
         }
         Ok(())
     }
@@ -1845,7 +1845,7 @@ impl Session {
         if let Some(guard) = &self.process {
             guard
                 .registry()
-                .statement_finished(guard.id(), &self.vars.current_db, &self.status_text());
+                .statement_finished(guard.id(), &self.vars.current_db, &self.server_status_2_str());
         }
     }
 
@@ -2582,7 +2582,7 @@ impl Session {
                     guard.id(),
                     &text,
                     digest.as_deref(),
-                    &self.status_text(),
+                    &self.server_status_2_str(),
                 );
             }
             // Go reads these off typed `SessionVars` fields; the snapshot is
@@ -2709,7 +2709,7 @@ impl Session {
     }
 
     fn finish_statement_state(&mut self, result: &Result<StatementCompletion, DriverError>) {
-        self.move_parse_warnings_behind_execution(result.is_ok());
+        self.handle_stmt(result.is_ok());
         // Go ExecStmt.FinishExecuteStmt clears MPPQueryInfo only at completion.
         // Retained readers are detached from the next statement's counters;
         // ordinary completion reuses the allocation. Retries never reset it.
@@ -2739,7 +2739,7 @@ impl Session {
                 guard.registry().statement_finished(
                     guard.id(),
                     &self.vars.current_db,
-                    &self.status_text(),
+                    &self.server_status_2_str(),
                 );
             }
         }
@@ -2825,7 +2825,7 @@ mod session_source_tests {
     use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
     use tidb_executor::compiler::PreparedAstCompile;
     use super::{
-        approx_compile_plan_token_count, approx_parse_sql_token_count, DomainMap,
+        approx_compile_plan_token_cnt, approx_parse_sql_token_cnt, DomainMap,
         NoAvailableDomain, Session,
     };
 
@@ -2851,44 +2851,44 @@ mod session_source_tests {
     #[test]
     fn test_mem_arbitrator_session() {
         assert_eq!(
-            approx_parse_sql_token_count(
+            approx_parse_sql_token_cnt(
                 "/*select * from **/SELECT x FROM `t\\`` # abc \nwhere a = 1.23 and b = 'abc\"d\\'e' -- abc \nand c_1_2 in \"abc'd\\\"e\" # (1,2,3)\n"
             ),
             15
         );
-        assert_eq!(approx_parse_sql_token_count("select @@version @a"), 0);
-        assert_eq!(approx_parse_sql_token_count("set @a=1"), 0);
-        assert_eq!(approx_parse_sql_token_count("desc analyze table t"), 0);
-        assert_eq!(approx_parse_sql_token_count("analyze table t"), 0);
+        assert_eq!(approx_parse_sql_token_cnt("select @@version @a"), 0);
+        assert_eq!(approx_parse_sql_token_cnt("set @a=1"), 0);
+        assert_eq!(approx_parse_sql_token_cnt("desc analyze table t"), 0);
+        assert_eq!(approx_parse_sql_token_cnt("analyze table t"), 0);
         assert_eq!(
-            approx_parse_sql_token_count("/*select * from **/explain show warnings"),
+            approx_parse_sql_token_cnt("/*select * from **/explain show warnings"),
             0
         );
         assert_eq!(
-            approx_parse_sql_token_count("/*select * from **/desc show columns from t"),
+            approx_parse_sql_token_cnt("/*select * from **/desc show columns from t"),
             0
         );
-        assert_eq!(approx_parse_sql_token_count("insert into t values 1"), 5);
-        assert_eq!(approx_parse_sql_token_count("update t set a=1"), 5);
-        assert_eq!(approx_parse_sql_token_count("delete from t where a=1"), 6);
-        assert_eq!(approx_parse_sql_token_count("replace into t values 1"), 5);
+        assert_eq!(approx_parse_sql_token_cnt("insert into t values 1"), 5);
+        assert_eq!(approx_parse_sql_token_cnt("update t set a=1"), 5);
+        assert_eq!(approx_parse_sql_token_cnt("delete from t where a=1"), 6);
+        assert_eq!(approx_parse_sql_token_cnt("replace into t values 1"), 5);
         assert_eq!(
-            approx_parse_sql_token_count("prepare stmt1 from 'select * from t where a=? and b=?'"),
+            approx_parse_sql_token_cnt("prepare stmt1 from 'select * from t where a=? and b=?'"),
             0
         );
         assert_eq!(
-            approx_parse_sql_token_count("execute stmt1 using @a,@b,@c"),
+            approx_parse_sql_token_cnt("execute stmt1 using @a,@b,@c"),
             0
         );
         let normalized = "select * from `a_1`.`b_2` where c1 = ? and c2 = ?";
-        assert_eq!(approx_parse_sql_token_count(normalized), 10);
-        assert_eq!(approx_compile_plan_token_count(normalized, true), 9);
+        assert_eq!(approx_parse_sql_token_cnt(normalized), 10);
+        assert_eq!(approx_compile_plan_token_cnt(normalized, true), 9);
         assert_eq!(
-            approx_compile_plan_token_count("select @@version @a", true),
+            approx_compile_plan_token_cnt("select @@version @a", true),
             0
         );
         assert_eq!(
-            approx_compile_plan_token_count("select @@version @a", false),
+            approx_compile_plan_token_cnt("select @@version @a", false),
             3
         );
 
@@ -3409,6 +3409,6 @@ impl tidb_executor::sessionctx::PrivilegeManager for Session {
         self.account_statement_privilege_cache
             .as_ref()
             .or(self.privileges.as_ref())
-            .is_some_and(|cache| cache.has_role(user, role))
+            .is_some_and(|cache| cache.find_role(user, role))
     }
 }

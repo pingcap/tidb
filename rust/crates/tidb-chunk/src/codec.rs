@@ -547,7 +547,7 @@ impl Decoder {
 
     /// Go `Decoder.ReuseIntermChk`: normalize the remaining variable offsets,
     /// then swap the intermediate columns directly into an empty target.
-    pub fn reuse_intermediate_chunk(&mut self, target: &mut Chunk) {
+    pub fn reuse_interm_chk(&mut self, target: &mut Chunk) {
         for (ordinal, column) in self.intermediate.columns.iter_mut().enumerate() {
             let mut column = column.write();
             column.length = self.remained_rows;
@@ -642,7 +642,7 @@ mod tests {
 
     fn int64_with_null() -> (Vec<FieldType>, Chunk) {
         let fields = vec![ft(C::LongLong)];
-        let mut chunk = Chunk::new_with_capacity(&fields, 8);
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, 8);
         chunk.append_int64(0, 1);
         chunk.append_null(0);
         chunk.append_int64(0, -2);
@@ -651,7 +651,7 @@ mod tests {
 
     fn varchar_with_null() -> (Vec<FieldType>, Chunk) {
         let fields = vec![ft(C::Varchar)];
-        let mut chunk = Chunk::new_with_capacity(&fields, 8);
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, 8);
         chunk.append_string(0, "ab");
         chunk.append_null(0);
         chunk.append_string(0, "");
@@ -661,7 +661,7 @@ mod tests {
 
     fn no_nulls() -> (Vec<FieldType>, Chunk) {
         let fields = vec![ft(C::LongLong)];
-        let mut chunk = Chunk::new_with_capacity(&fields, 8);
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, 8);
         for i in 0..5i64 {
             chunk.append_int64(0, i);
         }
@@ -670,7 +670,7 @@ mod tests {
 
     fn all_null_two_bitmap_bytes() -> (Vec<FieldType>, Chunk) {
         let fields = vec![ft(C::Varchar)];
-        let mut chunk = Chunk::new_with_capacity(&fields, 16);
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, 16);
         for _ in 0..9 {
             chunk.append_null(0);
         }
@@ -679,7 +679,7 @@ mod tests {
 
     fn zero_rows() -> (Vec<FieldType>, Chunk) {
         let fields = vec![ft(C::LongLong), ft(C::Varchar)];
-        let chunk = Chunk::new_with_capacity(&fields, 8);
+        let chunk = Chunk::new_chunk_with_capacity(&fields, 8);
         (fields, chunk)
     }
 
@@ -699,7 +699,7 @@ mod tests {
             ft(C::Set),
             ft(C::Bit),
         ];
-        let mut chunk = Chunk::new_with_capacity(&fields, 8);
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, 8);
         for i in 0..3usize {
             let k = i as i64;
             chunk.append_int64(0, k);
@@ -796,7 +796,7 @@ mod tests {
     #[test]
     fn decode_to_chunk_fills_existing_columns() {
         let (fields, source) = all_shapes();
-        let mut target = Chunk::new_with_capacity(&fields, 8);
+        let mut target = Chunk::new_chunk_with_capacity(&fields, 8);
         let image = go_bytes("all_shapes");
         let remained = Codec::new(fields.clone()).decode_to_chunk(&image, &mut target);
         assert!(remained.is_empty());
@@ -917,7 +917,7 @@ mod tests {
 
     fn decoder_source(rows: usize) -> (Vec<FieldType>, Chunk) {
         let fields = vec![ft(C::LongLong), ft(C::Varchar)];
-        let mut chunk = Chunk::new_with_capacity(&fields, rows);
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, rows);
         for row in 0..rows {
             if row % 5 == 1 {
                 chunk.append_null(0);
@@ -940,7 +940,7 @@ mod tests {
     fn incremental_decoder_rounds_batches_and_merges_unaligned_bitmaps() {
         let (fields, source) = decoder_source(19);
         let image = Codec::new(fields.clone()).encode(&source);
-        let intermediate = Chunk::new_with_capacity(&fields, 0);
+        let intermediate = Chunk::new_chunk_with_capacity(&fields, 0);
         let mut decoder = Decoder::new(intermediate, fields.clone());
         decoder.reset(&image);
         assert_eq!(decoder.remained_rows(), 19);
@@ -990,7 +990,7 @@ mod tests {
     fn decoder_reuse_normalizes_consumed_variable_offsets() {
         let (fields, source) = decoder_source(19);
         let image = Codec::new(fields.clone()).encode(&source);
-        let mut decoder = Decoder::new(Chunk::new_with_capacity(&fields, 0), fields.clone());
+        let mut decoder = Decoder::new(Chunk::new_chunk_with_capacity(&fields, 0), fields.clone());
         decoder.reset(&image);
 
         for _ in 0..2 {
@@ -1002,7 +1002,7 @@ mod tests {
         assert!(decoder.intermediate_chunk().column(1).offsets[0] > 0);
 
         let mut target = Chunk::new(&fields, 0, 64);
-        decoder.reuse_intermediate_chunk(&mut target);
+        decoder.reuse_interm_chk(&mut target);
         assert!(decoder.is_finished());
         assert_eq!(target.required_rows(), 64);
         assert_eq!(target.num_rows(), 3);
@@ -1024,7 +1024,7 @@ mod tests {
         let (fields, first) = decoder_source(3);
         let (_, second) = decoder_source(9);
         let codec = Codec::new(fields.clone());
-        let mut decoder = Decoder::new(Chunk::new_with_capacity(&fields, 0), fields.clone());
+        let mut decoder = Decoder::new(Chunk::new_chunk_with_capacity(&fields, 0), fields.clone());
 
         decoder.reset(&codec.encode(&first));
         let mut first_target = Chunk::new(&fields, 3, 3);
@@ -1043,7 +1043,7 @@ mod tests {
     fn decoder_full_target_consumes_nothing_and_masks_padding() {
         let (fields, source) = decoder_source(1);
         let image = Codec::new(fields.clone()).encode(&source);
-        let mut decoder = Decoder::new(Chunk::new_with_capacity(&fields, 0), fields.clone());
+        let mut decoder = Decoder::new(Chunk::new_chunk_with_capacity(&fields, 0), fields.clone());
         decoder.reset(&image);
         let mut full = Chunk::new(&fields, 1, 1);
         full.append_int64(0, 1);
@@ -1065,7 +1065,7 @@ mod tests {
         for prefix in 0..=8 {
             for deficit in [1usize, 7, 8, 9] {
                 let mut decoder =
-                    Decoder::new(Chunk::new_with_capacity(&fields, 0), fields.clone());
+                    Decoder::new(Chunk::new_chunk_with_capacity(&fields, 0), fields.clone());
                 decoder.reset(&image);
                 let mut target = Chunk::new(&fields, prefix, prefix + deficit);
                 for row in 0..prefix {
@@ -1094,7 +1094,7 @@ mod tests {
         let (fields, source) = decoder_source(3);
         let mut image = Codec::new(fields.clone()).encode(&source);
         image.extend_from_slice(&[0xaa, 0xbb, 0xcc]);
-        let mut decoder = Decoder::new(Chunk::new_with_capacity(&fields, 0), fields.clone());
+        let mut decoder = Decoder::new(Chunk::new_chunk_with_capacity(&fields, 0), fields.clone());
         decoder.reset(&image);
         assert_eq!(decoder.remained_rows(), 3);
         let intermediate = decoder.into_intermediate_chunk();
@@ -1146,7 +1146,7 @@ mod tests {
         ];
         let num_rows = 10usize;
 
-        let mut old_chk = Chunk::new_with_capacity(&col_types, num_rows);
+        let mut old_chk = Chunk::new_chunk_with_capacity(&col_types, num_rows);
         for i in 0..num_rows {
             let text = format!("{i}.12345");
             let (decimal, error) = MyDecimal::from_string(text.as_bytes());
@@ -1162,7 +1162,7 @@ mod tests {
         let codec = Codec::new(col_types.clone());
         let buffer = codec.encode(&old_chk);
 
-        let mut new_chk = Chunk::new_with_capacity(&col_types, num_rows);
+        let mut new_chk = Chunk::new_chunk_with_capacity(&col_types, num_rows);
         let remained = codec.decode_to_chunk(&buffer, &mut new_chk);
 
         assert!(remained.is_empty());

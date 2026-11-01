@@ -56,7 +56,7 @@ where
         let mut storage = MetaTxnStorage::new(&self.opener, self.timeout);
         let mut transaction = storage.begin().map_err(|error| error.to_string())?;
         let history = (|| {
-            let mut iterator = Mutator::new(&mut transaction).last_history_ddl_jobs::<Job>()?;
+            let mut iterator = Mutator::new(&mut transaction).get_last_history_ddl_jobs_iterator::<Job>()?;
             let mut history = Vec::new();
             loop {
                 let mut page = Vec::new();

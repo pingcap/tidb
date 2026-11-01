@@ -101,7 +101,7 @@ impl PoolColumnAllocator {
         if let Some(column) = self.pool.get_mut(&type_size).and_then(ColumnList::pop) {
             // This intentionally mirrors Go's comparison against `count`, not
             // `count*typeSize`.
-            if column.data_capacity() >= count {
+            if column.get_data_cap() >= count {
                 return column;
             }
         }
@@ -112,7 +112,7 @@ impl PoolColumnAllocator {
         if !check_column_type(expected_type_size, &column) {
             return;
         }
-        if column.data_capacity() >= MAX_CACHED_LEN.load(Ordering::Relaxed) {
+        if column.get_data_cap() >= MAX_CACHED_LEN.load(Ordering::Relaxed) {
             // `poolColumnAllocator.put` uses `< MaxCachedLen`; `Reset` also
             // rejects variable columns with `> MaxCachedLen`. The stricter
             // insertion boundary wins at equality in the source.
@@ -143,7 +143,7 @@ fn check_column_type(expected_type_size: i64, column: &Column) -> bool {
     }
     if expected_type_size == VAR_ELEM_LEN {
         return !column.is_fixed()
-            && column.data_capacity() <= MAX_CACHED_LEN.load(Ordering::Relaxed);
+            && column.get_data_cap() <= MAX_CACHED_LEN.load(Ordering::Relaxed);
     }
     column.is_fixed() && expected_type_size == column.elem_buffer_capacity() as i64
 }
@@ -151,7 +151,7 @@ fn check_column_type(expected_type_size: i64, column: &Column) -> bool {
 fn can_register_allocated_column(expected_type_size: i64, column: &Column) -> bool {
     !column.avoid_reusing
         && (expected_type_size > 0 || expected_type_size == VAR_ELEM_LEN)
-        && column.data_capacity() < MAX_CACHED_LEN.load(Ordering::Relaxed)
+        && column.get_data_cap() < MAX_CACHED_LEN.load(Ordering::Relaxed)
 }
 
 #[derive(Debug)]
@@ -682,8 +682,8 @@ mod tests {
             assert_eq!(chunk.column(2).type_size(), 4);
             assert_eq!(chunk.column(3).type_size(), 40);
             assert_eq!(chunk.column(4).type_size(), 8);
-            assert_eq!(chunk.column(2).data_capacity(), 20);
-            assert_eq!(chunk.column(3).data_capacity(), 200);
+            assert_eq!(chunk.column(2).get_data_cap(), 20);
+            assert_eq!(chunk.column(3).get_data_cap(), 200);
         }
         allocator.reset();
         assert_eq!(allocator.cached_chunks(), 1);
@@ -870,7 +870,7 @@ mod tests {
         let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
         let mut source = allocator.alloc(&fields, 1, 1);
         source.append_int64(0, 17);
-        let mut destination = Chunk::new_with_capacity(&fields, 1);
+        let mut destination = Chunk::new_chunk_with_capacity(&fields, 1);
         destination
             .make_ref_to(0, &mut source, 0)
             .expect("neither chunk has a selection");
@@ -1071,9 +1071,9 @@ mod tests {
         let buf = codec.encode(&chk);
 
         let mut decoder =
-            crate::codec::Decoder::new(Chunk::new_with_capacity(&fields(), 0), fields());
+            crate::codec::Decoder::new(Chunk::new_chunk_with_capacity(&fields(), 0), fields());
         decoder.reset(&buf);
-        decoder.reuse_intermediate_chunk(&mut chk);
+        decoder.reuse_interm_chk(&mut chk);
         for index in 0..chk.num_cols() {
             assert!(chk.column(index).avoid_reusing);
         }
@@ -1181,7 +1181,7 @@ mod tests {
             }
             for index in 2..8 {
                 assert_eq!(
-                    chunk.column(index).data_capacity(),
+                    chunk.column(index).get_data_cap(),
                     init_cap * chunk.column(index).type_size() as usize
                 );
             }

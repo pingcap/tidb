@@ -83,7 +83,7 @@ pub(crate) fn materialize_generated_for_write(
                 ctx,
                 ctx.ignore_err(),
             ),
-            GeneratedWrite::Update { row_index } => cast_value_for_update_assignment(
+            GeneratedWrite::Update { row_index } => handle_update_error(
                 value,
                 &column.read().field_type,
                 column.read().name.original(),
@@ -339,7 +339,7 @@ pub fn cast_value_shaped(
     force_ignore_truncate: bool,
 ) -> Result<Datum, CastError> {
     let flags = ctx.write_conversion_flags();
-    cast_value_with_flags(
+    cast_column_value(
         value,
         field_type,
         column,
@@ -493,7 +493,7 @@ fn complete_typed_cast(
 /// FUNCTION before this conversion runs (`point_update_assignment`), and
 /// `getValidIntPrefix`'s `isFuncCast` arm names `INTEGER` where the
 /// table-cast arm names `DOUBLE`.
-pub fn cast_value_for_update_assignment(
+pub fn handle_update_error(
     value: Datum,
     field_type: &FieldType,
     column: &str,
@@ -850,7 +850,7 @@ use tidb_charset::Collation;
                 &ctx.session_zone(),
             )
             .unwrap();
-        converted.value = truncate_char_trailing_spaces(converted.value, field_type);
+        converted.value = truncate_trailing_spaces(converted.value, field_type);
         let conversion_failed = converted.event.as_ref().is_some_and(|event| {
             !matches!(event, tidb_datatype::ScalarConversionEvent::RoundedToScale)
         });

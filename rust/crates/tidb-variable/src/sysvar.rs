@@ -1000,7 +1000,7 @@ pub struct Validated {
 /// `HH:MM` value and preserving an explicitly supplied numeric offset. The
 /// registry-level validator uses UTC; GLOBAL SQL writes call this helper again
 /// with the issuing session's location before the value reaches the hook.
-pub fn normalize_time_value(
+pub fn check_time_system_var(
     value: &str,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<String, ValidationError> {
@@ -1166,7 +1166,7 @@ impl SysVarDef {
             VarType::Float => self.check_float(value),
             VarType::Enum => self.check_enum(value),
             VarType::Time => Ok(Validated {
-                value: normalize_time_value(value, &tidb_datatype::SessionTimeZone::utc())?,
+                value: check_time_system_var(value, &tidb_datatype::SessionTimeZone::utc())?,
                 truncated: false,
             }),
             VarType::Duration => self.check_duration(value),
@@ -2398,7 +2398,7 @@ impl SysVarDef {
     /// `1`/`0` of `TiDBOptOn` as `LONGLONG BINARY`; everything else stays the
     /// stored string as `VAR_STRING` with no flags.
     #[must_use]
-    pub fn native_val_type(
+    pub fn get_native_val_type(
         &self,
         val: &str,
     ) -> (
@@ -2612,7 +2612,7 @@ mod variable_core_tests {
     #[test]
     fn native_val_types_follow_the_registry_type() {
         let boolean = sysvar_of_type(VarType::Bool);
-        let (val, code, flags) = boolean.native_val_type("ON");
+        let (val, code, flags) = boolean.get_native_val_type("ON");
         assert_eq!(val, Datum::Int(1));
         assert_eq!(code, FieldTypeCode::LongLong);
         assert_eq!(
@@ -2622,12 +2622,12 @@ mod variable_core_tests {
                 binary: true
             }
         );
-        assert_eq!(boolean.native_val_type("OFF").0, Datum::Int(0));
-        assert_eq!(boolean.native_val_type("bogus").0, Datum::Int(0));
-        assert_eq!(boolean.native_val_type("1").0, Datum::Int(1));
+        assert_eq!(boolean.get_native_val_type("OFF").0, Datum::Int(0));
+        assert_eq!(boolean.get_native_val_type("bogus").0, Datum::Int(0));
+        assert_eq!(boolean.get_native_val_type("1").0, Datum::Int(1));
 
         let unsigned = sysvar_of_type(VarType::Unsigned);
-        let (val, code, flags) = unsigned.native_val_type("1234");
+        let (val, code, flags) = unsigned.get_native_val_type("1234");
         assert_eq!(val, Datum::UInt(1234));
         assert_eq!(code, FieldTypeCode::LongLong);
         assert_eq!(
@@ -2638,10 +2638,10 @@ mod variable_core_tests {
             }
         );
         // Unparsable converts to zero.
-        assert_eq!(unsigned.native_val_type("bogus").0, Datum::UInt(0));
+        assert_eq!(unsigned.get_native_val_type("bogus").0, Datum::UInt(0));
 
         let string = sysvar_of_type(VarType::Str);
-        let (val, code, flags) = string.native_val_type("1234");
+        let (val, code, flags) = string.get_native_val_type("1234");
         assert_eq!(val, Datum::new_string(b"1234".to_vec()));
         assert_eq!(code, FieldTypeCode::VarString);
         assert_eq!(flags, NativeValFlags::default());

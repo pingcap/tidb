@@ -24,7 +24,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::ColumnResolver;
 use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::{
-    column_infos_to_columns_and_names_with_collate, compose_dnf_condition, extract_columns,
+    column_infos_2_columns_and_names_with_collate, compose_dnf_condition, extract_columns,
     parse_simple_expr, BuildOptions, ColumnInfoSource, SimpleExprError,
 };
 use tidb_model::column::{EXTRA_HANDLE_ID, EXTRA_HANDLE_NAME};
@@ -389,7 +389,7 @@ fn new_cop_context_base<'a>(
         .iter()
         .map(|column| ColumnView::from_column(&column.read()))
         .collect::<Vec<_>>();
-    let (expr_column_infos, _) = column_infos_to_columns_and_names_with_collate(
+    let (expr_column_infos, _) = column_infos_2_columns_and_names_with_collate(
         expr_context.resolver,
         expr_context.column_ids,
         &IdentifierMetadata::default(),
@@ -425,7 +425,7 @@ fn build_condition(
     if !index_info.has_condition() {
         return Ok(None);
     }
-    let (schema, names) = base.schema_and_names();
+    let (schema, names) = base.get_schema_and_names();
     let options = BuildOptions::new()
         .with_input_schema_and_names(schema, names)
         .with_use_new_collate(base.use_new_collate);
@@ -445,7 +445,7 @@ fn build_condition(
 
 impl CopContextBase<'_> {
     /// Go `GetSchemaAndNames`.
-    pub fn schema_and_names(&self) -> (Schema, Vec<FieldName>) {
+    pub fn get_schema_and_names(&self) -> (Schema, Vec<FieldName>) {
         let table = self.table_info.read();
         let table_name =
             IdentifierMetadata::from_parts(table.name.original(), table.name.lowercase());
@@ -494,7 +494,7 @@ fn extract_columns_from_condition(
         .iter()
         .map(|column| ColumnView::from_column(&column.read()))
         .collect::<Vec<_>>();
-    let (columns, names) = column_infos_to_columns_and_names_with_collate(
+    let (columns, names) = column_infos_2_columns_and_names_with_collate(
         expr_context.resolver,
         expr_context.column_ids,
         &IdentifierMetadata::default(),

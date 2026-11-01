@@ -254,7 +254,7 @@ mod round_truncate_type_source_tests {
             assert_eq!(result.flen(), 10, "{name}");
             assert_eq!(result.decimal(), 2, "{name}");
 
-            let mut chunk = Chunk::new_with_capacity(
+            let mut chunk = Chunk::new_chunk_with_capacity(
                 &[
                     value.static_type().unwrap().clone(),
                     scale.static_type().unwrap().clone(),
@@ -344,7 +344,7 @@ mod ceil_floor_type_source_tests {
                 [(narrow_arg, narrow, false), (wide_arg, wide, true)]
             {
                 let mut chunk =
-                    Chunk::new_with_capacity(&[argument.static_type().unwrap().clone()], 1);
+                    Chunk::new_chunk_with_capacity(&[argument.static_type().unwrap().clone()], 1);
                 chunk.append_datum(
                     0,
                     &Datum::Decimal(tidb_datatype::Decimal::from_literal("-1.23")),

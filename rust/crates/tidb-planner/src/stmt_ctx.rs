@@ -331,7 +331,7 @@ mod tests {
         let explain = StmtContext::for_query()
             .with_optimizer_cost_env(env.clone())
             .with_in_explain_stmt(true);
-        explain.append_mpp_warning("explain refusal");
+        explain.raise_warning_when_mpp_enforced("explain refusal");
         assert_eq!(
             explain.take_warnings().iter().map(tidb_context::SqlWarn::parts).collect::<Vec<_>>(),
             vec![(
@@ -343,7 +343,7 @@ mod tests {
         assert!(explain.take_extra_warnings().is_empty());
 
         let ordinary = StmtContext::for_query().with_optimizer_cost_env(env);
-        ordinary.append_mpp_warning("ordinary refusal");
+        ordinary.raise_warning_when_mpp_enforced("ordinary refusal");
         assert!(ordinary.take_warnings().is_empty());
         assert_eq!(
             ordinary.take_extra_warnings().iter().map(tidb_context::SqlWarn::parts).collect::<Vec<_>>(),
@@ -355,7 +355,7 @@ mod tests {
         );
 
         let unenforced = StmtContext::for_query();
-        unenforced.append_mpp_warning("ignored refusal");
+        unenforced.raise_warning_when_mpp_enforced("ignored refusal");
         assert!(unenforced.take_warnings().is_empty());
         assert!(unenforced.take_extra_warnings().is_empty());
     }

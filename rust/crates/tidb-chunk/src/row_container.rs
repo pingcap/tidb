@@ -1600,7 +1600,7 @@ impl<'a> Iterator4RowContainer<'a> {
             return;
         }
         let ptr = RowPtr::new(self.chk_idx as u32, self.row_idx as u32);
-        let mut chk = Chunk::new_with_capacity(&self.c.field_types(), 1);
+        let mut chk = Chunk::new_chunk_with_capacity(&self.c.field_types(), 1);
         match self.c.get_row_and_always_append_to_chunk(ptr, &mut chk) {
             Ok(_) => self.scratch = Some(chk),
             Err(error) => {

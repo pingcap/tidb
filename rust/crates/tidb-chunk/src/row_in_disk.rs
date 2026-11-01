@@ -357,7 +357,7 @@ impl DataInDiskByRows {
     /// loop is serial here.
     pub fn get_chunk(&self, chk_idx: usize) -> Result<Chunk, DiskError> {
         let chk_size = self.num_rows_of_each_chunk[chk_idx];
-        let mut chk = Chunk::new_with_capacity(&self.field_types, chk_size);
+        let mut chk = Chunk::new_chunk_with_capacity(&self.field_types, chk_size);
         let mut offset = self.get_offset(chk_idx as u32, 0)?;
         let mut format = DiskFormatRow::default();
         for _ in 0..chk_size {
@@ -389,7 +389,7 @@ impl DataInDiskByRows {
                 })
             }
             _ => {
-                let mut replacement = Chunk::new_with_capacity(&self.field_types, 1024);
+                let mut replacement = Chunk::new_chunk_with_capacity(&self.field_types, 1024);
                 let row_index = format.to_row(&mut replacement);
                 Ok(AppendedDiskRow {
                     chunk: AppendedRowChunk::Replacement(replacement),
@@ -608,7 +608,7 @@ mod tests {
         let (num_chk, num_row) = (3usize, 8usize);
         let mut chunks = Vec::new();
         for chk_idx in 0..num_chk {
-            let mut chk = Chunk::new_with_capacity(&fields, num_row);
+            let mut chk = Chunk::new_chunk_with_capacity(&fields, num_row);
             for row_idx in 0..num_row {
                 chk.append_string(0, "西xi瓜gua".repeat(row_idx + 1));
                 chk.append_null(1);
@@ -628,7 +628,7 @@ mod tests {
     /// Go generator case `int64_with_null`.
     fn int64_case() -> (Vec<FieldType>, Vec<Chunk>) {
         let fields = vec![FieldType::new(C::LongLong)];
-        let mut chk = Chunk::new_with_capacity(&fields, 4);
+        let mut chk = Chunk::new_chunk_with_capacity(&fields, 4);
         chk.append_int64(0, 1);
         chk.append_null(0);
         chk.append_int64(0, -2);
@@ -640,7 +640,7 @@ mod tests {
         let fields = vec![FieldType::new(C::Varchar), FieldType::new(C::LongLong)];
         let mut chunks = Vec::new();
         for chk_idx in 0..4usize {
-            let mut chk = Chunk::new_with_capacity(&fields, 50);
+            let mut chk = Chunk::new_chunk_with_capacity(&fields, 50);
             for row_idx in 0..50usize {
                 let n = chk_idx * 50 + row_idx;
                 chk.append_string(0, "z".repeat(n % 17));
@@ -655,7 +655,7 @@ mod tests {
         let fields = vec![FieldType::new(C::Varchar), FieldType::new(C::LongLong)];
         let mut chunks = Vec::new();
         for chunk_idx in 0..9usize {
-            let mut chk = Chunk::new_with_capacity(&fields, 32);
+            let mut chk = Chunk::new_chunk_with_capacity(&fields, 32);
             for row_idx in 0..32usize {
                 let ordinal = chunk_idx * 32 + row_idx;
                 chk.append_string(0, "x".repeat(ordinal % 31 + 1));
@@ -1037,7 +1037,7 @@ mod tests {
         let fields = vec![FieldType::new(C::LongLong)];
         let mut container = DataInDiskByRows::new(fields.clone(), Arc::clone(&storage));
         let error = container
-            .add(&Chunk::new_with_capacity(&fields, 4))
+            .add(&Chunk::new_chunk_with_capacity(&fields, 4))
             .expect_err("a zero-row chunk must be refused");
         assert_eq!(
             error.to_string(),

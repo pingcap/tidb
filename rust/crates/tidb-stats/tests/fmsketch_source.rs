@@ -131,15 +131,15 @@ fn source_copy_and_memory_shape_are_independent() {
 
 #[test]
 fn source_signed_constructor_and_nil_receiver_boundaries_match() {
-    let negative = std::panic::catch_unwind(|| tidb_stats::fmsketch::FmSketch::new_signed(-1));
+    let negative = std::panic::catch_unwind(|| tidb_stats::fmsketch::FmSketch::new_fm_sketch(-1));
     assert!(negative.is_err(), "Go make(map, negative) panics");
-    assert!(FmSketch::new_signed(0).is_empty());
+    assert!(FmSketch::new_fm_sketch(0).is_empty());
 
     assert_eq!(copy_fm_sketch(None), None);
     assert_eq!(fm_sketch_ndv(None), 0);
     merge_fm_sketch(None, None);
 
-    let mut destination = FmSketch::new_signed(2);
+    let mut destination = FmSketch::new_fm_sketch(2);
     destination.insert_hash(2);
     let before = destination.clone();
     merge_fm_sketch(Some(&mut destination), None);
@@ -280,13 +280,13 @@ fn source_statement_error_policy_controls_partial_hashing_and_row_continuation()
     assert_eq!(warned_hash, tidb_stats::hash_bytes(&[]).h1);
 
     let values = [Datum::Int(1), raw, Datum::Int(2)];
-    let row_hash = hash_row_with_error_policy(&Utc, &values, |_, _| {
+    let hash_chunk_selected = hash_row_with_error_policy(&Utc, &values, |_, _| {
         Ok::<_, std::convert::Infallible>(Vec::new())
     })
     .unwrap();
     let mut expected = tidb_codec::encode_value(&values[..1]).unwrap();
     expected.extend_from_slice(&tidb_codec::encode_value(&values[2..]).unwrap());
-    assert_eq!(row_hash, tidb_stats::hash_bytes(&expected).h1);
+    assert_eq!(hash_chunk_selected, tidb_stats::hash_bytes(&expected).h1);
 
     let strict: Result<u64, &str> = hash_row_with_error_policy(&Utc, &values, |_, _| Err("strict"));
     assert_eq!(strict, Err("strict"));

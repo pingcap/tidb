@@ -1059,7 +1059,7 @@ fn columnar_index_type_preserves_all_source_boundaries() {
 
 #[test]
 fn rename_parallel_slices_keep_source_order_and_json_boundaries() {
-    let args = rename_tables_args_from_v1(
+    let args = get_rename_tables_args_from_v_1(
         &[11, i64::MIN],
         &[CiString::new("OldDB"), CiString::new("Σ")],
         &[CiString::new("OldT"), CiString::new("İ")],
@@ -1088,7 +1088,7 @@ fn rename_parallel_slices_keep_source_order_and_json_boundaries() {
 
 #[test]
 fn rename_empty_and_mismatched_parallel_slices_match_go() {
-    assert!(rename_tables_args_from_v1(&[], &[], &[], &[], &[], &[]).is_empty());
+    assert!(get_rename_tables_args_from_v_1(&[], &[], &[], &[], &[], &[]).is_empty());
     let name = CiString::new("x");
     for missing in 0..5 {
         let old_schema_names = (missing != 0)
@@ -1106,7 +1106,7 @@ fn rename_empty_and_mismatched_parallel_slices_match_go() {
             .collect::<Vec<_>>();
         let table_ids = (missing != 4).then_some(3).into_iter().collect::<Vec<_>>();
         let missing_parallel = std::panic::catch_unwind(|| {
-            rename_tables_args_from_v1(
+            get_rename_tables_args_from_v_1(
                 &[1],
                 &old_schema_names,
                 &old_table_names,

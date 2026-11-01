@@ -22,7 +22,7 @@ use std::sync::{Arc, RwLock};
 
 use tidb_driver_error::DriverError;
 
-use crate::binding::{cross_db_match, Binding};
+use crate::binding::{cross_db_match_bindings, Binding};
 
 /// Go `Binding.size()` (`pkg/bindinfo/binding.go:97`): the byte cost this
 /// cache charges for one binding.
@@ -342,7 +342,7 @@ impl BindingCache {
             .iter()
             .filter_map(|digest| self.get_binding(digest))
             .collect();
-        let matched = cross_db_match(
+        let matched = cross_db_match_bindings(
             candidates.iter().map(Arc::as_ref),
             table_names,
             current_db,

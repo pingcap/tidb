@@ -18,7 +18,7 @@
 //! leaving the entries to the delete range the finished job records.
 
 use super::add_index::{
-    action_step, partition_ids, remove_index_and_hidden_columns, table_step, AddIndexSubmission,
+    action_step, partition_ids, remove_index_and_hidden_columns, update_version_and_table_info, AddIndexSubmission,
 };
 use super::*;
 
@@ -210,7 +210,7 @@ fn check_drop_index(
 }
 
 /// Go `onDropIndex` for a DROP INDEX / DROP PRIMARY KEY job.
-pub(super) fn plan_persisted_drop_index_job_step(
+pub(super) fn on_drop_index(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -243,7 +243,7 @@ pub(super) fn plan_persisted_drop_index_job_step(
     if !active.job.is_rollingback() && is_revertible_sub_job(&active.job) {
         active.job.mark_non_revertible();
         active.job.schema_state = original_state;
-        let write = table_step(catalog, active, database_id, &info, false, start_ts)?;
+        let write = update_version_and_table_info(catalog, active, database_id, &info, false, start_ts)?;
         return Ok(action_step(write));
     }
     let next = match original_state {
@@ -265,7 +265,7 @@ pub(super) fn plan_persisted_drop_index_job_step(
             index.write().state = next;
         }
         active.job.schema_state = next;
-        let write = table_step(catalog, active, database_id, &info, true, start_ts)?;
+        let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
         return Ok(action_step(write));
     }
     // Delete-reorganization -> absent.
@@ -276,7 +276,7 @@ pub(super) fn plan_persisted_drop_index_job_step(
         index_ids.push(removed.id);
         remove_index_and_hidden_columns(&mut info, &removed);
     }
-    let write = table_step(catalog, active, database_id, &info, true, start_ts)?;
+    let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
     active.job.finish_table_job(
         JobState::DONE,
         SchemaState::NONE,
@@ -314,7 +314,7 @@ pub(super) fn plan_persisted_drop_index_job_step(
 
 /// Go `rollingbackDropIndex`: only a job whose index is still public can be
 /// cancelled; past that the drop runs on.
-pub(super) fn plan_cancel_drop_index(
+pub(super) fn rollingback_drop_index(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {

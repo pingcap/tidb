@@ -116,7 +116,7 @@ impl CreateTableBuild {
         context: &DdlContext,
     ) -> Result<Self, DdlAdmissionError> {
         let mb_ctx = context.metabuild_context();
-        let mut template = tidb_ddl_build::table_info_build::build_table_info_in_schema(
+        let mut template = tidb_ddl_build::table_info_build::build_table_info_with_stmt(
             create,
             schema,
             CATALOG_CHARSET,
@@ -156,7 +156,7 @@ impl CreateTableBuild {
             return Ok(self.template.clone());
         }
         let mb_ctx = self.context.with_isolated_warnings().metabuild_context();
-        let mut info = tidb_ddl_build::table_info_build::build_table_info_in_schema(
+        let mut info = tidb_ddl_build::table_info_build::build_table_info_with_stmt(
             &self.create,
             &self.schema,
             charset,
@@ -1729,7 +1729,7 @@ fn load_policies<S: MetaSnapshot>(snapshot: &mut S) -> Result<SnapshotPolicies, 
     let mut policies = Vec::new();
     for (_, encoded) in snapshot.scan_prefix(&key::policies_kv_prefix())? {
         policies.push(
-            value::parse_policy_info(&encoded)
+            value::list_policies(&encoded)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
         );
     }
@@ -1769,7 +1769,7 @@ fn find_policy<S: MetaSnapshot>(
 ) -> Result<Option<tidb_model::PolicyInfo>, DdlPlanError> {
     let folded = CiString::new(name.to_owned());
     for (_, encoded) in snapshot.scan_prefix(&key::policies_kv_prefix())? {
-        let policy = value::parse_policy_info(&encoded)
+        let policy = value::list_policies(&encoded)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
         if policy.name.lowercase() == folded.lowercase() {
             return Ok(Some(policy));
@@ -2086,7 +2086,7 @@ fn lower_alter_table_catalog(
         fn admission(error: impl Into<tidb_terror::MysqlError>) -> DdlAdmissionError {
             DdlAdmissionError::from_mysql_error(error.into())
         }
-        tidb_ddl_build::storage_class::check_storage_class_conflict_in_alter_specs(
+        tidb_ddl_build::storage_class::check_storage_class_conflict_in_alter_table_specs(
             alter
                 .actions
                 .iter()
@@ -2259,7 +2259,7 @@ fn lower_alter_table_catalog(
                             // has no multi-schema sub-job here yet.
                             tidb_ast::TableOption::EngineAttribute(_)
                             | tidb_ast::TableOption::StorageClass(_) => {
-                                tidb_ddl_build::storage_class::engine_attribute_from_table_options(
+                                tidb_ddl_build::storage_class::get_engine_attribute_from_storage_class_table_options(
                                     options,
                                 )
                                 .map_err(admission)?;
@@ -2584,7 +2584,7 @@ fn lower_alter_table_catalog(
                 })
             {
                 let engine_attribute =
-                    tidb_ddl_build::storage_class::engine_attribute_from_table_options(options)
+                    tidb_ddl_build::storage_class::get_engine_attribute_from_storage_class_table_options(options)
                         .map_err(DdlAdmissionError::from_mysql_error)?
                         .expect("the options are all storage-class options");
                 let (schema, table) = split_name(&alter.name, default_schema, "table")?;
@@ -2619,7 +2619,7 @@ fn lower_alter_table_catalog(
             | tidb_ast::TableOption::StorageClass(_) = option
             {
                 let engine_attribute =
-                    tidb_ddl_build::storage_class::engine_attribute_from_table_options(options)
+                    tidb_ddl_build::storage_class::get_engine_attribute_from_storage_class_table_options(options)
                         .map_err(DdlAdmissionError::from_mysql_error)?
                         .expect("the one option is a storage-class option");
                 let (schema, table) = split_name(&alter.name, default_schema, "table")?;
@@ -3765,7 +3765,7 @@ fn apply_set_column_default(
         ));
     }
     let mut target = target.write();
-    tidb_ddl_build::table_info_build::set_column_default(column, &mut target, default_value, &context.metabuild_context())
+    tidb_ddl_build::table_info_build::alter_column(column, &mut target, default_value, &context.metabuild_context())
         .map_err(DdlPlanError::Admission)
 }
 
@@ -5130,62 +5130,62 @@ fn plan_persisted_action<S: MetaSnapshot>(
             plan_persisted_check_constraint_job_step(catalog, active, start_ts)
         }
         ActionType::ACTION_CREATE_SCHEMA => plan_persisted_create_schema_job_step(catalog, active),
-        ActionType::ACTION_CREATE_TABLE => create_table::plan_persisted_create_table_job_step(
+        ActionType::ACTION_CREATE_TABLE => create_table::on_create_table(
             snapshot, catalog, active, start_ts, row_ids,
         ),
         ActionType::ACTION_CREATE_TABLES => {
             plan_persisted_create_tables_job_step(catalog, active, start_ts)
         }
         ActionType::ACTION_CREATE_VIEW => {
-            create_object::plan_persisted_create_view_job_step(snapshot, catalog, active, start_ts)
+            create_object::on_create_view(snapshot, catalog, active, start_ts)
         }
         ActionType::ACTION_CREATE_SEQUENCE => {
-            create_object::plan_persisted_create_sequence_job_step(catalog, active, start_ts)
+            create_object::on_create_sequence(catalog, active, start_ts)
         }
         ActionType::ACTION_ALTER_SEQUENCE => {
-            create_object::plan_persisted_alter_sequence_job_step(catalog, active, start_ts)
+            create_object::on_alter_sequence(catalog, active, start_ts)
         }
         ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE
         | ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT => {
-            alter_schema::plan_persisted_alter_schema_job_step(snapshot, catalog, active)
+            alter_schema::on_modify_schema_charset_and_collate(snapshot, catalog, active)
         }
         ActionType::ACTION_CREATE_PLACEMENT_POLICY => {
-            placement_policy::plan_persisted_create_placement_policy_job_step(
+            placement_policy::on_create_placement_policy(
                 snapshot, catalog, active,
             )
         }
         ActionType::ACTION_ALTER_PLACEMENT_POLICY => {
-            placement_policy::plan_persisted_alter_placement_policy_job_step(
+            placement_policy::on_alter_placement_policy(
                 snapshot, catalog, active,
             )
         }
         ActionType::ACTION_DROP_PLACEMENT_POLICY => {
-            placement_policy::plan_persisted_drop_placement_policy_job_step(
+            placement_policy::on_drop_placement_policy(
                 snapshot, catalog, active,
             )
         }
         ActionType::ACTION_CREATE_RESOURCE_GROUP => {
-            resource_group::plan_persisted_create_resource_group_job_step(catalog, active)
+            resource_group::on_create_resource_group(catalog, active)
         }
         ActionType::ACTION_ALTER_RESOURCE_GROUP => {
-            resource_group::plan_persisted_alter_resource_group_job_step(catalog, active)
+            resource_group::on_alter_resource_group(catalog, active)
         }
         ActionType::ACTION_DROP_RESOURCE_GROUP => {
-            resource_group::plan_persisted_drop_resource_group_job_step(catalog, active)
+            resource_group::on_drop_resource_group(catalog, active)
         }
         ActionType::ACTION_LOCK_TABLE => {
-            table_lock::plan_persisted_lock_tables_job_step(catalog, active, start_ts)
+            table_lock::on_lock_tables(catalog, active, start_ts)
         }
         ActionType::ACTION_UNLOCK_TABLE => {
-            table_lock::plan_persisted_unlock_tables_job_step(catalog, active, start_ts)
+            table_lock::on_unlock_tables(catalog, active, start_ts)
         }
         ActionType::ACTION_ADD_TABLE_PARTITION => {
-            partition::plan_persisted_add_table_partition_job_step(
+            partition::on_add_table_partition(
                 snapshot, catalog, active, start_ts, row_ids,
             )
         }
         ActionType::ACTION_DROP_TABLE_PARTITION => {
-            partition::plan_persisted_drop_table_partition_job_step(
+            partition::on_drop_table_partition(
                 snapshot,
                 catalog,
                 active,
@@ -5197,7 +5197,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
         ActionType::ACTION_REORGANIZE_PARTITION
         | ActionType::ACTION_ALTER_TABLE_PARTITIONING
         | ActionType::ACTION_REMOVE_PARTITIONING => {
-            reorganize_partition::plan_persisted_reorganize_partition_job_step(
+            reorganize_partition::on_reorganize_partition(
                 snapshot,
                 catalog,
                 active,
@@ -5207,7 +5207,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
             )
         }
         ActionType::ACTION_EXCHANGE_TABLE_PARTITION => {
-            exchange_partition::plan_persisted_exchange_partition_job_step(
+            exchange_partition::on_exchange_table_partition(
                 snapshot,
                 catalog,
                 active,
@@ -5217,7 +5217,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
             )
         }
         ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
-            partition::plan_persisted_truncate_table_partition_job_step(
+            partition::on_truncate_table_partition(
                 snapshot,
                 catalog,
                 active,
@@ -5227,7 +5227,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
             )
         }
         ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES => {
-            rename_table::plan_persisted_rename_table_job_step(catalog, active, start_ts)
+            rename_table::on_rename_table(catalog, active, start_ts)
         }
         ActionType::ACTION_DROP_SCHEMA => {
             plan_persisted_drop_schema_job_step(snapshot, catalog, active, row_ids)
@@ -5248,19 +5248,19 @@ fn plan_persisted_action<S: MetaSnapshot>(
             )
         }
         ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY => {
-            drop_index::plan_persisted_drop_index_job_step(catalog, active, start_ts)
+            drop_index::on_drop_index(catalog, active, start_ts)
         }
-        ActionType::ACTION_TRUNCATE_TABLE => truncate::plan_persisted_truncate_table_job_step(
+        ActionType::ACTION_TRUNCATE_TABLE => truncate::on_truncate_table(
             snapshot, catalog, active, start_ts, row_ids,
         ),
         ActionType::ACTION_ADD_COLUMN => {
-            add_column::plan_persisted_add_column_job_step(catalog, active, start_ts, row_ids)
+            add_column::on_add_column(catalog, active, start_ts, row_ids)
         }
         ActionType::ACTION_DROP_COLUMN => {
-            drop_column::plan_persisted_drop_column_job_step(catalog, active, start_ts)
+            drop_column::on_drop_column(catalog, active, start_ts)
         }
         ActionType::ACTION_MULTI_SCHEMA_CHANGE => {
-            multi_schema::plan_persisted_multi_schema_job_step(
+            multi_schema::on_multi_schema_change(
                 snapshot,
                 catalog,
                 active,
@@ -5269,13 +5269,13 @@ fn plan_persisted_action<S: MetaSnapshot>(
                 row_ids,
             )
         }
-        ActionType::ACTION_ADD_FOREIGN_KEY => foreign_key::plan_persisted_add_foreign_key_job_step(
+        ActionType::ACTION_ADD_FOREIGN_KEY => foreign_key::on_create_foreign_key(
             catalog,
             active,
             start_ts,
             reorg_outcome,
         ),
-        ActionType::ACTION_MODIFY_COLUMN => modify_column::plan_persisted_modify_column_job_step(
+        ActionType::ACTION_MODIFY_COLUMN => modify_column::on_modify_column(
             snapshot,
             catalog,
             active,
@@ -5362,7 +5362,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
                     let bytes = snapshot.get(&key::schema_diff_kv_key(version))?;
                     let diff = bytes
                         .as_deref()
-                        .map(value::parse_schema_diff)
+                        .map(value::get_schema_diff)
                         .transpose()
                         .map_err(|error| DdlPlanError::Encode(error.to_string()))?
                         .flatten();
@@ -5529,7 +5529,7 @@ fn finish_persisted_ddl_job<S: MetaSnapshot>(
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     // Go `finishDDLJob` -> `addDelRangeJob`: the keys the job left behind,
     // recorded before it moves to history.
-    let mut mutations = crate::ddl_delete_range::add_del_range_job_mutations(
+    let mut mutations = crate::ddl_delete_range::finish_ddl_job(
         snapshot,
         catalog,
         &active.job,
@@ -6230,7 +6230,7 @@ fn plan_persisted_create_tables_job_step(
         ..crate::ddl_affinity::AffinityGroupUpdate::default()
     };
     for info in &table_infos {
-        affinity_groups.create_for(info).map_err(|error| {
+        affinity_groups.create_table_affinity_groups_in_pd(info).map_err(|error| {
             cancel_ddl_job(
                 active,
                 pd_step_error(Some(CREATE_TABLE_AFFINITY_ERROR), error),
@@ -6379,7 +6379,7 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
             .unwrap_or_default();
         // Go `onDropSchema`'s `batchDeleteTableAffinityGroups`.
         for table in &tables {
-            affinity_groups.delete_for(table, None);
+            affinity_groups.delete_table_affinity_groups_in_pd(table, None);
         }
         // Go splits the drop-schema events, 100 tables each (500 past
         // 100,000 tables), under sub-job ids 0, 1, ...
@@ -6576,7 +6576,7 @@ fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
             )?;
         }
         // Go `onDropTableOrView`'s `deleteTableAffinityGroupsInPD`.
-        affinity_groups.delete_for(&table, None);
+        affinity_groups.delete_table_affinity_groups_in_pd(&table, None);
         let old_partition_ids = add_index::partition_ids(&table);
         let codec = tidb_ddl_label::CodecV1;
         let schema_name = active.job.schema_name.to_string();
@@ -6878,43 +6878,43 @@ fn plan_cancel_persisted_ddl_job(
             return plan_persisted_check_constraint_job_step(catalog, active, start_ts);
         }
         ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY => {
-            return add_index::plan_cancel_add_index(catalog, active, start_ts);
+            return add_index::rollingback_add_index(catalog, active, start_ts);
         }
         ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY => {
-            return drop_index::plan_cancel_drop_index(catalog, active);
+            return drop_index::rollingback_drop_index(catalog, active);
         }
         ActionType::ACTION_ADD_COLUMN => {
-            return add_column::plan_cancel_add_column(catalog, active, start_ts);
+            return add_column::rollingback_add_column(catalog, active, start_ts);
         }
         ActionType::ACTION_DROP_COLUMN => {
-            return drop_column::plan_cancel_drop_column(catalog, active);
+            return drop_column::rollingback_drop_column(catalog, active);
         }
         ActionType::ACTION_MODIFY_COLUMN => {
-            return modify_column::plan_cancel_modify_column(catalog, active);
+            return modify_column::rollingback_modify_column(catalog, active);
         }
         ActionType::ACTION_ADD_FOREIGN_KEY => {
             return foreign_key::plan_cancel_add_foreign_key(active);
         }
         ActionType::ACTION_MULTI_SCHEMA_CHANGE => {
-            return multi_schema::plan_cancel_multi_schema(active);
+            return multi_schema::rolling_back_multi_schema_change(active);
         }
         ActionType::ACTION_ADD_TABLE_PARTITION
         | ActionType::ACTION_DROP_TABLE_PARTITION
         | ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
-            return partition::plan_cancel_partition(catalog, active, start_ts);
+            return partition::rollingback_add_table_partition(catalog, active, start_ts);
         }
         ActionType::ACTION_EXCHANGE_TABLE_PARTITION => {
-            return exchange_partition::plan_cancel_exchange_partition(catalog, active, start_ts);
+            return exchange_partition::rollingback_exchange_table_partition(catalog, active, start_ts);
         }
         ActionType::ACTION_REORGANIZE_PARTITION
         | ActionType::ACTION_ALTER_TABLE_PARTITIONING
         | ActionType::ACTION_REMOVE_PARTITIONING => {
-            return reorganize_partition::plan_cancel_reorganize_partition(
+            return reorganize_partition::on_rollback_reorganize_partition(
                 catalog, active, start_ts,
             );
         }
         action if alter_table::ALTER_TABLE_ACTIONS.contains(&action) => {
-            return alter_table::plan_cancel_alter_table(catalog, active);
+            return alter_table::convert_job_2_rollback_job(catalog, active);
         }
         // Go `rollingbackTruncateTable`: `cancelOnlyNotHandledJob` at
         // `StateNone`, after `GetTableInfoAndCancelFaultJob`.
@@ -8190,7 +8190,7 @@ fn apply_create_table<S: MetaSnapshot>(
     // placement bundles and wrapped as Go wraps it.
     affinity_groups.create_error_context = Some(CREATE_TABLE_AFFINITY_ERROR);
     affinity_groups
-        .create_for(info)
+        .create_table_affinity_groups_in_pd(info)
         .map_err(|error| pd_step_error(Some(CREATE_TABLE_AFFINITY_ERROR), error))?;
     info.update_ts = start_ts;
     let encoded = value::serialize_table_info(info)
@@ -8313,11 +8313,11 @@ fn apply_truncate_table<S: MetaSnapshot>(
     // fails when PD refuses), then the old table's, best-effort.
     if info.affinity.is_some() {
         affinity_groups
-            .create_for(&info)
+            .create_table_affinity_groups_in_pd(&info)
             .map_err(|error| pd_step_error(None, error))?;
     }
     if stored.affinity.is_some() {
-        affinity_groups.delete_for(stored, None);
+        affinity_groups.delete_table_affinity_groups_in_pd(stored, None);
     }
     // Go `onTruncateTable`: the rules named for the table and its
     // partitions re-range over the new IDs.
@@ -8629,7 +8629,7 @@ fn create_foreign_key(
     )
     .map_err(admission)?;
     // Go `checkAddForeignKeyValid`.
-    crate::foreign_key_build::check_foreign_key_valid(
+    crate::foreign_key_build::check_table_foreign_key_valid(
         catalog,
         schema,
         stored,
@@ -8945,8 +8945,8 @@ mod global_index_version_tests {
 
     #[test]
     fn set_global_index_version_matches_go_shape_rules() {
-        let previous = tidb_model::index::get_global_index_v1_supported();
-        tidb_model::index::set_global_index_v1_supported(true);
+        let previous = tidb_model::index::get_global_index_v_1_supported();
+        tidb_model::index::set_global_index_v_1_supported(true);
 
         let nullable_column = tidb_model::column::ColumnInfo {
             id: 1,
@@ -9015,14 +9015,14 @@ mod global_index_version_tests {
             tidb_model::index::GLOBAL_INDEX_VERSION_LEGACY
         );
 
-        tidb_model::index::set_global_index_v1_supported(false);
+        tidb_model::index::set_global_index_v_1_supported(false);
         let mut unsupported = index(false);
         set_global_index_version(&table(nullable_column), &mut unsupported);
         assert_eq!(
             unsupported.global_index_version,
             tidb_model::index::GLOBAL_INDEX_VERSION_LEGACY
         );
-        tidb_model::index::set_global_index_v1_supported(previous);
+        tidb_model::index::set_global_index_v_1_supported(previous);
     }
 }
 

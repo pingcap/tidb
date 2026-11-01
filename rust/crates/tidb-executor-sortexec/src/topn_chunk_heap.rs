@@ -41,7 +41,7 @@
 //! `container/heap` -- therefore now pins `tidb_goruntime::go_heap`, unchanged.
 //!
 //! Why the sift rules are ported rather than delegated to [`std::collections::BinaryHeap`]:
-//! [`TopNChunkHeap::greater_keys`] returns FALSE for equal keys, so a tie never
+//! [`TopNChunkHeap::greater_row`] returns FALSE for equal keys, so a tie never
 //! evicts the incumbent, and WHICH of several tied rows survives at the `count`
 //! boundary depends on the heap's exact shape. Reproducing Go's `down`/`up`
 //! makes a query with ties at the boundary return the rows Go returns.
@@ -77,7 +77,7 @@ use tidb_chunk::row::Row;
 use tidb_datatype::{Datum, FieldType};
 
 use tidb_driver_error::ExecError;
-use crate::{less_by_items, SortByItem};
+use crate::{less_row, SortByItem};
 
 /// Go `chunk.RowPtr`: `(chunk index, row index)` into the heap's row store.
 pub type RowPtr = (usize, usize);
@@ -302,7 +302,7 @@ impl TopNChunkHeap {
 
     /// Go `compareRow` on two evaluated keys.
     fn compare_keys(&mut self, a: &[Datum], b: &[Datum]) -> Ordering {
-        match less_by_items(&self.by_items, a, b) {
+        match less_row(&self.by_items, a, b) {
             Ok(cmp) => cmp,
             Err(err) => {
                 if self.cmp_err.is_none() {
@@ -315,7 +315,7 @@ impl TopNChunkHeap {
 
     /// Go `TopNExec.greaterRow`: strictly greater in by-item order. EQUAL is
     /// FALSE, which is what keeps a tie from evicting the incumbent.
-    pub fn greater_keys(&mut self, a: &[Datum], b: &[Datum]) -> bool {
+    pub fn greater_row(&mut self, a: &[Datum], b: &[Datum]) -> bool {
         self.compare_keys(a, b) == Ordering::Greater
     }
 
@@ -404,7 +404,7 @@ impl TopNChunkHeap {
     /// the root is sifted back down.
     pub fn update(&mut self, new_row: Row<'_>, new_key: Vec<Datum>) {
         let heap_max_key = self.key_at(self.row_ptrs[0]);
-        if self.greater_keys(&heap_max_key, &new_key) {
+        if self.greater_row(&heap_max_key, &new_key) {
             // Evict heap max, keep the next row.
             let ptr = self.append_row(new_row, new_key);
             self.row_ptrs[0] = ptr;
@@ -455,7 +455,7 @@ impl TopNChunkHeap {
         // Go `slices.SortFunc(rowPtrs, keyColumnsCompare)`: the unstable
         // pdqsort, whose tie layout beyond 12 rows is its own.
         tidb_goruntime::go_pdqsort::go_sort_func_by(&mut order, |&a, &b| {
-            match less_by_items(by_items, &keys[a], &keys[b]) {
+            match less_row(by_items, &keys[a], &keys[b]) {
                 Ok(cmp) => cmp,
                 Err(err) => {
                     if sort_err.is_none() {
@@ -657,7 +657,7 @@ use tidb_goruntime::GoString;
 
     #[test]
     fn an_equal_row_does_not_evict_the_incumbent() {
-        // `greater_keys` is FALSE on ties, so a duplicate of the current max is
+        // `greater_row` is FALSE on ties, so a duplicate of the current max is
         // dropped rather than stored.
         let fields = vec![long()];
         let mut heap = heap_of(2, fields.clone(), asc(0, long()));

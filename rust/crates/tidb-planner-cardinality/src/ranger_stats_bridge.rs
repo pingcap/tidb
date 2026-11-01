@@ -51,7 +51,7 @@ fn datum_to_scalar(datum: &Datum) -> Option<f64> {
 /// Go `getPseudoRowCountByIndexRanges` (`cardinality/pseudo.go:173`,
 /// unexported) over this port's range model.
 #[must_use]
-pub fn pseudo_count_by_ranges(ranges: &tidb_ranger::types::Ranges, table_row_count: f64) -> f64 {
+pub fn get_pseudo_row_count_by_index_ranges(ranges: &tidb_ranger::types::Ranges, table_row_count: f64) -> f64 {
     pseudo_count_by_index_ranges(ranges, table_row_count, None)
 }
 
@@ -104,7 +104,7 @@ pub fn pseudo_count_by_index_ranges(
 /// over one ordinary (non-handle) pseudo column. Unlike an index point,
 /// an equality is not unique: it estimates `RealtimeCount / 1000`.
 #[must_use]
-pub fn pseudo_count_by_column_ranges(
+pub fn get_pseudo_row_count_by_column_ranges(
     ranges: &tidb_ranger::types::Ranges,
     table_row_count: f64,
 ) -> f64 {

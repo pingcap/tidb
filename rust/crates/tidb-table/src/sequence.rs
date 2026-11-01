@@ -268,7 +268,7 @@ impl SequenceAllocator {
 
     /// Go `GetSequenceBaseEndRound`, exposed for tests that pin the cache.
     #[must_use]
-    pub fn base_end_round(&self) -> (i64, i64, i64) {
+    pub fn get_sequence_base_end_round(&self) -> (i64, i64, i64) {
         let state = self.state.lock().expect("sequence state");
         (state.base, state.end, state.round)
     }

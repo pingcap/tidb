@@ -607,15 +607,15 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             );
         }
         let process_time_nanos = response.process_time_nanos();
-        let mut runtime_sample = response.runtime_sample(&address);
-        runtime_sample.resp_time = cost_time;
-        runtime_sample.request_rpc_stats_present = req_stats.rpc_type_count() > 0;
-        runtime_sample.req_stats = Some(tidb_txnkv::RequestStatsSample(req_stats));
+        let mut collect_cop_runtime_stats = response.collect_cop_runtime_stats(&address);
+        collect_cop_runtime_stats.resp_time = cost_time;
+        collect_cop_runtime_stats.request_rpc_stats_present = req_stats.rpc_type_count() > 0;
+        collect_cop_runtime_stats.req_stats = Some(tidb_txnkv::RequestStatsSample(req_stats));
         let accepted = self.runtime.accept_response_with_runtime(
             attempt_id,
             response,
             process_time_nanos,
-            Some(runtime_sample),
+            Some(collect_cop_runtime_stats),
             observation_time(),
         )?;
         if let Some(update) = accepted.buckets_update {

@@ -502,7 +502,7 @@ impl HashJoinV2Exec {
                         build_context.memory_tracker = Some(tracker);
                         build_context.sql_killer = Some(memory.sql_killer());
                         let mut restored_index = 0;
-                        let mut restored_chunk = disk.as_ref().map(|_| Chunk::new_with_capacity(fields, super::spill::SPILL_CHUNK_SIZE));
+                        let mut restored_chunk = disk.as_ref().map(|_| Chunk::new_chunk_with_capacity(fields, super::spill::SPILL_CHUNK_SIZE));
                         loop {
                             if disk.as_ref().is_some_and(|disk| restored_index == disk.num_chunks()) { return Ok(()); }
                             let mut chunk = select_biased! {

@@ -1123,7 +1123,7 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
             return Ok((plan, column));
         }
         let original_id = plan.id();
-        tidb_planner_core_operator_logicalop::rewrite::ensure_join_projection(self.context, &mut plan)?;
+        tidb_planner_core_operator_logicalop::rewrite::get_proj(self.context, &mut plan)?;
         let projection_id = plan.id();
         let LogicalPlan::Projection(projection) = &plan else {
             return Err(PlanError::internal(
@@ -1152,7 +1152,7 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
                 return Ok((plan, schema.columns[index].clone()));
             }
         }
-        let column = tidb_planner_core_operator_logicalop::rewrite::append_join_projection_expr(
+        let column = tidb_planner_core_operator_logicalop::rewrite::append_expr(
             self.context,
             &mut plan,
             expression,

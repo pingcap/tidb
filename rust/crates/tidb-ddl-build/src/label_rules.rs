@@ -435,7 +435,7 @@ pub fn partition_attributes_rule(
 /// with no labels (`ATTRIBUTES=DEFAULT`, or an empty list) deletes the rule
 /// ID; any other replaces the stored rule.
 #[must_use]
-pub fn attributes_rule_write(rule: Rule) -> LabelRuleWrite {
+pub fn on_alter_table_attributes(rule: Rule) -> LabelRuleWrite {
     if rule.labels.with_visible(<[_]>::is_empty) {
         return LabelRuleWrite::Patch(ddl_label::new_rule_patch(Vec::new(), vec![rule.id]));
     }

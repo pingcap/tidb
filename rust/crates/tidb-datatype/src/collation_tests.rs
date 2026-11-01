@@ -23,7 +23,7 @@ use crate::{
     get_collator, get_collator_by_id, get_collator_with_mode, get_supported_collation_by_name,
     is_bin_collation, is_ci_collation, is_default_collation_for_utf8mb4, is_pad_space_collation,
     new_collation_enabled, proto_to_collation, restore_collation_id_if_needed,
-    rewrite_new_collation_id_if_needed, set_new_collation_enabled,
+    rewrite_new_collation_id_if_needed, set_new_collation_enabled_for_test,
     substitute_missing_collation_to_default, supported_collations, Collation, Collator,
 };
 
@@ -42,7 +42,7 @@ impl NewCollationModeGuard {
             .lock()
             .expect("charset test lock poisoned");
         let original = new_collation_enabled();
-        set_new_collation_enabled(enabled);
+        set_new_collation_enabled_for_test(enabled);
         Self {
             original,
             _registry_guard: registry_guard,
@@ -52,7 +52,7 @@ impl NewCollationModeGuard {
 
 impl Drop for NewCollationModeGuard {
     fn drop(&mut self) {
-        set_new_collation_enabled(self.original);
+        set_new_collation_enabled_for_test(self.original);
     }
 }
 
@@ -323,7 +323,7 @@ fn test_get_collator() {
         Collator::New(Collation::Utf8Mb4Bin)
     );
 
-    set_new_collation_enabled(false);
+    set_new_collation_enabled_for_test(false);
     for name in [
         "binary",
         "utf8mb4_bin",
@@ -401,7 +401,7 @@ fn test_rewrite_and_restore_collation_id() {
     assert_eq!(restore_collation_id_if_needed(5), 5);
     assert_eq!(restore_collation_id_if_needed(i32::MIN), i32::MIN);
 
-    set_new_collation_enabled(false);
+    set_new_collation_enabled_for_test(false);
     assert_eq!(rewrite_new_collation_id_if_needed(5), 5);
     assert_eq!(rewrite_new_collation_id_if_needed(-5), -5);
     assert_eq!(restore_collation_id_if_needed(5), 5);
@@ -418,7 +418,7 @@ fn mode_id_and_helper_functions_follow_source() {
     assert_eq!(collation_to_proto("utf8mb4_bin"), -46);
     assert_eq!(proto_to_collation(-46), "utf8mb4_bin");
 
-    set_new_collation_enabled(false);
+    set_new_collation_enabled_for_test(false);
     assert_eq!(
         get_charset_info("gbk").unwrap().default_collation,
         "gbk_bin"
@@ -427,7 +427,7 @@ fn mode_id_and_helper_functions_follow_source() {
         get_collator_with_mode(false, "binary"),
         Collator::DerivedBinary
     );
-    set_new_collation_enabled(true);
+    set_new_collation_enabled_for_test(true);
 
     assert!(compatible_collate("utf8_general_ci", "utf8mb4_general_ci"));
     assert!(compatible_collate("latin1_bin", "utf8mb4_bin"));

@@ -395,7 +395,7 @@ fn the_handle_range_corpus_matches_go() {
         // CLASSIFIED DIVERGENCE, in the direction of Go rather than away from
         // it. Go settles a `WHERE` that PINS handles before costing and
         // prints `Batch_Point_Get ... handle:[-1 2 150]`; this tier's
-        // `try_batch_point_get` does not claim these two shapes, so before
+        // `try_where_in_2_batch_point_get` does not claim these two shapes, so before
         // the handle range they fell all the way through to a
         // `TableFullScan` over 10000 rows. They now read the three (and two)
         // point ranges the handles name -- and Go master takes the batch

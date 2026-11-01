@@ -288,7 +288,7 @@ pub fn tls_policy_of(
                     }
                 }
                 T::San(_) => {
-                    tidb_privilege::parse_policy_sans(value).map_err(invalid)?;
+                    tidb_privilege::parse_and_check_san(value).map_err(invalid)?;
                 }
 
                 _ => {}
@@ -1186,7 +1186,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 // FLUSH PRIVILEGES (asked of the Go server: 3530 before it).
                 let cache = self.account_statement_privilege_cache()
                     .unwrap_or(registry);
-                if cache.has_role(account, &role) {
+                if cache.find_role(account, &role) {
                     Ok(role)
                 } else {
                     Err(DriverError::from(
@@ -2254,7 +2254,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         // account (`FindEdge`).
         let account = (user.clone(), host.clone());
         for role in &roles {
-            if !registry.has_role(&account, role) {
+            if !registry.find_role(&account, role) {
                 return Err(DriverError::from(
                     tidb_exeerrors::ERR_ROLE_NOT_GRANTED
                         .generate_with_stack_by_args(&[

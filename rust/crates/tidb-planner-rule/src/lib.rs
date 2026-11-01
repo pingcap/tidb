@@ -58,7 +58,7 @@ use tidb_hack::GoCaseCompare;
 /// The name, when the table has no such partition -- Go's
 /// `ErrUnknownPartition` (1735), captured as
 /// `Unknown partition 'nosuch' in table 'ok1'`.
-pub fn ids_for_selected_partitions(
+pub fn find_by_name(
     spec: &PartitionSpec,
     names: &[String],
 ) -> Result<Vec<i64>, String> {
@@ -835,7 +835,7 @@ fn prune_hash_ids(
                 // be evaluated; another ranger point may still be usable.
                 continue;
             };
-            let Ok(index) = tidb_table::partition_routing::hash_partition_index(&value, spec.num())
+            let Ok(index) = tidb_table::partition_routing::locate_hash_partition(&value, spec.num())
             else {
                 continue;
             };
@@ -1962,11 +1962,11 @@ use tidb_charset::Collation;
     fn an_explicit_selection_resolves_to_its_ids() {
         let spec = range_table();
         assert_eq!(
-            ids_for_selected_partitions(&spec, &["PM".to_owned(), "p0".to_owned()]),
+            find_by_name(&spec, &["PM".to_owned(), "p0".to_owned()]),
             Ok(vec![101, 103])
         );
         assert_eq!(
-            ids_for_selected_partitions(&spec, &["nosuch".to_owned()]),
+            find_by_name(&spec, &["nosuch".to_owned()]),
             Err("nosuch".to_owned())
         );
     }

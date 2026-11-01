@@ -114,7 +114,7 @@ impl Session {
         // Session bindings shadow global ones, which is Go's order in
         // `planner.optimize`: `getBindingFromSession` first, the domain
         // handle only on a miss.
-        let (hints, bind_sql) = match self.session_bindings.match_statement(
+        let (hints, bind_sql) = match self.session_bindings.match_session_binding(
             &no_db_digest,
             &table_names,
             &self.vars.current_db,
@@ -141,7 +141,7 @@ impl Session {
             }
             None => {
                 let global = self.load_global_bindings().ok()?;
-                let matched = global.match_statement(
+                let matched = global.match_session_binding(
                     &no_db_digest,
                     &table_names,
                     &self.vars.current_db,

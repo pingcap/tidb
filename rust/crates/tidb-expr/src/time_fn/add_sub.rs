@@ -54,7 +54,7 @@
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 use super::duration_parse::{
-    self, fsp_for_time_add_sub, get_fsp, is_duration, parse_datetime, parse_duration, GoDateTime,
+    self, get_fsp_4_time_add_sub, get_fsp, is_duration, parse_datetime, parse_duration, GoDateTime,
     GoDuration, Truncated, MAX_FSP, MIN_FSP,
 };
 use crate::coerce::coerce_str;
@@ -286,7 +286,7 @@ pub(crate) fn add_sub_time(
                 _ => {
                     // `builtinAddStringAndStringSig`: the second argument's
                     // fsp comes from `getFsp4TimeAddSub`, not `GetFsp`.
-                    match parse_duration(&right, fsp_for_time_add_sub(&right)) {
+                    match parse_duration(&right, get_fsp_4_time_add_sub(&right)) {
                         Ok(delta) => delta,
                         Err(Truncated) => {
                             // go's binary-literal arguments parse as
@@ -346,7 +346,7 @@ fn second_as_duration(
         return Ok(None);
     }
     let fsp = if date_string_fsp && kind != TemporalKind::Duration {
-        fsp_for_time_add_sub(text)
+        get_fsp_4_time_add_sub(text)
     } else {
         get_fsp(text)
     };

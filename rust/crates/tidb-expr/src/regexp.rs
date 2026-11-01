@@ -22,7 +22,7 @@ use crate::EvalError;
 /// Go `regexpMemorizedSig`: a cached pattern retains either its compiled
 /// expression or the compile error produced for this statement context.
 #[derive(Clone, Debug)]
-pub(crate) struct CachedRegexp {
+pub(crate) struct RegexpMemorizedSig {
     pub(crate) result: Result<Regex, EvalError>,
 }
 
@@ -137,7 +137,7 @@ pub(crate) fn regexp_match_type_with_collation(
 /// The `Result` itself is cached so an invalid pattern is reported repeatedly
 /// without recompiling, matching `regexpMemorizedSig.memorizedErr`.
 pub(crate) fn get_cached_regexp(
-    cache: &crate::builtin_ext::BuiltinFuncCache<CachedRegexp>,
+    cache: &crate::builtin_ext::BuiltinFuncCache<RegexpMemorizedSig>,
     context_id: u64,
     cache_enabled: bool,
     pattern: &str,
@@ -147,7 +147,7 @@ pub(crate) fn get_cached_regexp(
         return compile_regexp(pattern, match_type);
     }
     let cached = cache.get_or_init_cache(context_id, || {
-        Ok::<_, EvalError>(CachedRegexp {
+        Ok::<_, EvalError>(RegexpMemorizedSig {
             result: compile_regexp(pattern, match_type),
         })
     })?;

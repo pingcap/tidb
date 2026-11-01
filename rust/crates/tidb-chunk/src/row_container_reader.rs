@@ -158,7 +158,7 @@ mod tests {
         let mut rc = RowContainer::new(&fields, chk_count, crate::test_temp_storage::storage());
         let mut all_rows = Vec::new();
         for c in 0..chk_count {
-            let mut chk = Chunk::new_with_capacity(&fields, row_per_chk);
+            let mut chk = Chunk::new_chunk_with_capacity(&fields, row_per_chk);
             for r in 0..row_per_chk {
                 let n = c * row_per_chk + r;
                 let bytes: Vec<u8> = (0..(n % 97)).map(|i| (n + i) as u8).collect();
@@ -211,12 +211,12 @@ mod tests {
     fn the_reader_snapshots_its_chunk_extent_at_construction() {
         let fields = vec![FieldType::new(C::LongLong)];
         let mut rc = RowContainer::new(&fields, 2, crate::test_temp_storage::storage());
-        let mut first = Chunk::new_with_capacity(&fields, 1);
+        let mut first = Chunk::new_chunk_with_capacity(&fields, 1);
         first.append_int64(0, 11);
         rc.add(first).expect("first chunk");
 
         let mut reader = RowContainerReader::new(&rc);
-        let mut appended_later = Chunk::new_with_capacity(&fields, 1);
+        let mut appended_later = Chunk::new_chunk_with_capacity(&fields, 1);
         appended_later.append_int64(0, 22);
         rc.add(appended_later).expect("later chunk");
 

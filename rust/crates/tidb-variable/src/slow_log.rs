@@ -918,7 +918,7 @@ pub fn slow_log_format(vars: &SlowLogSessionVars, items: &SlowQueryLogItems) -> 
     let (tikv_ru, tiflash_ru) = ru_details.map_or((0.0, 0.0), |details| {
         (details.tikv_ru_v2(), details.tiflash_ru())
     });
-    let (total, formatted) = tidb_execdetails::ruv2_metrics::format_ruv2_summary(
+    let (total, formatted) = tidb_execdetails::ruv2_metrics::format_ruv_2_summary(
         items.ruv2_metrics.as_ref(),
         vars.ruv2_weights,
         tikv_ru,

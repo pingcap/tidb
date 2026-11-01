@@ -142,7 +142,7 @@ mod tests {
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
     fn chunk(start: i64, len: usize) -> Chunk {
-        let mut chunk = Chunk::new_with_capacity(&[FieldType::new(FieldTypeCode::LongLong)], len);
+        let mut chunk = Chunk::new_chunk_with_capacity(&[FieldType::new(FieldTypeCode::LongLong)], len);
         for index in 0..len {
             chunk.append_int64(0, start + index as i64);
         }

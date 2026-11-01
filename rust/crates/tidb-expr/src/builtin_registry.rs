@@ -548,7 +548,7 @@ pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> 
 /// with a `'tidb`.(` prefix (this port has no such entries, and the guard is
 /// kept so a future one is skipped for the same reason Go skips it).
 #[must_use]
-pub fn builtin_list() -> Vec<String> {
+pub fn get_builtin_list() -> Vec<String> {
     const NOT_IMPLEMENTED: [&str; 2] = ["row", "istrue_with_null"];
     let mut names: Vec<String> = FUNCTION_CLASSES
         .iter()

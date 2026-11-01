@@ -271,7 +271,7 @@ fn column(index: usize, field_type: &FieldType) -> Expression {
 /// `c_address` and `c_comment`.
 fn wide_chunk(rows: usize, groups: i64) -> Chunk {
     let types = wide_types();
-    let mut chunk = Chunk::new_with_capacity(&types, rows);
+    let mut chunk = Chunk::new_chunk_with_capacity(&types, rows);
     for row in 0..rows {
         chunk.append_int64(0, (row as i64) % groups);
         chunk.append_int64(1, row as i64);
@@ -309,7 +309,7 @@ fn bench_row_copy() {
     let rows = source.num_rows() as f64;
     for (label, col_idxs) in shapes {
         let out_types: Vec<FieldType> = col_idxs.iter().map(|i| types[*i].clone()).collect();
-        let mut out = Chunk::new_with_capacity(&out_types, CHUNK);
+        let mut out = Chunk::new_chunk_with_capacity(&out_types, CHUNK);
         let mut pass = || {
             for index in 0..source.num_rows() {
                 if out.num_rows() == CHUNK {
@@ -376,7 +376,7 @@ impl Executor for Replay {
     }
 
     fn new_chunk(&self) -> Chunk {
-        Chunk::new_with_capacity(self.meta.ret_field_types(), self.meta.init_cap())
+        Chunk::new_chunk_with_capacity(self.meta.ret_field_types(), self.meta.init_cap())
     }
 }
 
@@ -571,7 +571,7 @@ use tidb_exprctx::NoColumns;
             };
             Expression::Constant(Constant::new(value, field))
         };
-        let mut input = Chunk::new_with_capacity(std::slice::from_ref(&field), CHUNK);
+        let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), CHUNK);
         for row in 0..CHUNK {
             input.append_datum(0, &value((row % 100) as i64));
         }
@@ -597,7 +597,7 @@ use tidb_exprctx::NoColumns;
             vec![column(0, &field), right],
         ));
         let suite = EvaluatorSuite::new(vec![expression], false);
-        let mut output = Chunk::new_with_capacity(&[output_field], CHUNK);
+        let mut output = Chunk::new_chunk_with_capacity(&[output_field], CHUNK);
         let mut pass = || {
             output.reset();
             suite.run(&NoColumns, &mut input, &mut output).unwrap();
@@ -631,7 +631,7 @@ fn bench_unsigned_comparison_projection() {
         if not_null {
             field.add_flags(FieldTypeFlags::NOT_NULL);
         }
-        let mut input = Chunk::new_with_capacity(std::slice::from_ref(&field), CHUNK);
+        let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), CHUNK);
         for row in 0..CHUNK {
             input.append_datum(0, &Datum::UInt(row as u64));
         }
@@ -652,7 +652,7 @@ fn bench_unsigned_comparison_projection() {
             tidb_expr::constant_fold::ConstantFoldMode::Normal,
         );
         let suite = EvaluatorSuite::new(vec![expression], false);
-        let mut output = Chunk::new_with_capacity(&[output_field.clone()], CHUNK);
+        let mut output = Chunk::new_chunk_with_capacity(&[output_field.clone()], CHUNK);
         suite.run(&NoColumns, &mut input, &mut output).unwrap();
         for row in 0..CHUNK {
             assert_eq!(
@@ -685,7 +685,7 @@ use tidb_exprctx::NoColumns;
     ] {
         let field = FieldType::new(FieldTypeCode::Tiny);
         let result_field = FieldType::new(FieldTypeCode::LongLong);
-        let mut input = Chunk::new_with_capacity(std::slice::from_ref(&field), CHUNK);
+        let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), CHUNK);
         for row in 0..CHUNK {
             input.append_datum(
                 0,
@@ -710,7 +710,7 @@ use tidb_exprctx::NoColumns;
         )
         .unwrap();
         let suite = EvaluatorSuite::new(vec![expression], false);
-        let mut output = Chunk::new_with_capacity(std::slice::from_ref(&result_field), CHUNK);
+        let mut output = Chunk::new_chunk_with_capacity(std::slice::from_ref(&result_field), CHUNK);
         suite.run(&NoColumns, &mut input, &mut output).unwrap();
         for row in 0..CHUNK {
             let expected = if row % 13 == 0 {
@@ -745,7 +745,7 @@ use tidb_exprctx::NoColumns;
         ("numeric_json_intdiv", "intdiv", FieldTypeCode::LongLong),
     ] {
         let string = FieldType::new(FieldTypeCode::VarString);
-        let mut input = Chunk::new_with_capacity(std::slice::from_ref(&string), CHUNK);
+        let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&string), CHUNK);
         for row in 0..CHUNK {
             input.append_datum(0, &Datum::new_string((row % 100).to_string()));
         }
@@ -771,7 +771,7 @@ use tidb_exprctx::NoColumns;
             ],
         ));
         let suite = EvaluatorSuite::new(vec![expression], false);
-        let mut output = Chunk::new_with_capacity(&[output_field], CHUNK);
+        let mut output = Chunk::new_chunk_with_capacity(&[output_field], CHUNK);
         let mut pass = || {
             output.reset();
             suite.run(&NoColumns, &mut input, &mut output).unwrap();
@@ -803,7 +803,7 @@ fn bench_stream_grouping() {
         ),
     ] {
         let types = vec![FieldType::new(FieldTypeCode::VarString).with_collation(collation)];
-        let mut template = Chunk::new_with_capacity(&types, CHUNK);
+        let mut template = Chunk::new_chunk_with_capacity(&types, CHUNK);
         for row in 0..CHUNK {
             let prefix = if collation == Collation::Utf8Mb4GeneralCi && row % 2 == 0 {
                 'G'
@@ -1052,7 +1052,7 @@ impl Executor for Sequence {
         &self.types
     }
     fn new_chunk(&self) -> Chunk {
-        Chunk::new_with_capacity(&self.types, CHUNK)
+        Chunk::new_chunk_with_capacity(&self.types, CHUNK)
     }
     fn init_cap(&self) -> usize {
         self.meta.init_cap()
@@ -1299,7 +1299,7 @@ fn bench_cell_append() {
     ];
     let decimal = MyDecimal::from_int(1_234_567);
     for (label, field_type) in shapes {
-        let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field_type), CHUNK);
+        let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field_type), CHUNK);
         let payload = vec![b'x'; 128];
         let width = match label {
             "append_bytes_8" => 8,

@@ -26,7 +26,7 @@ use regex::{Captures, Regex};
 
 use super::BuiltinFuncCache;
 use crate::coerce::coerce_str;
-use crate::regexp::{compile_regexp, CachedRegexp};
+use crate::regexp::{compile_regexp, RegexpMemorizedSig};
 use crate::{Datum, EvalError};
 
 const INVALID_INDEX: &str = "Index out of bounds in regular expression search";
@@ -56,7 +56,7 @@ pub(crate) fn dispatch_with_cache(
     cache_pattern: bool,
     cache_replacement: bool,
     collation: tidb_charset::Collation,
-    regexp_cache: &BuiltinFuncCache<CachedRegexp>,
+    regexp_cache: &BuiltinFuncCache<RegexpMemorizedSig>,
     replacement_cache: &BuiltinFuncCache<Vec<ReplacementPart>>,
 ) -> Option<Result<Datum, EvalError>> {
     let compile = |pattern: &str, match_type: &str| {
@@ -67,7 +67,7 @@ pub(crate) fn dispatch_with_cache(
             return compile_regexp(pattern, match_type);
         }
         let cached = regexp_cache.get_or_init_cache(context_id, || {
-            Ok::<_, EvalError>(CachedRegexp {
+            Ok::<_, EvalError>(RegexpMemorizedSig {
                 result: compile_regexp(pattern, match_type),
             })
         });

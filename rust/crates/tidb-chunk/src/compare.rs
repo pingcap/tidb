@@ -580,7 +580,7 @@ mod tests {
     #[test]
     fn go_test_compare() {
         let all_types = new_all_types();
-        let mut chk = Chunk::new_with_capacity(&all_types, 32);
+        let mut chk = Chunk::new_chunk_with_capacity(&all_types, 32);
         for i in 0..all_types.len() {
             chk.append_null(i);
         }
@@ -708,7 +708,7 @@ mod tests {
     #[test]
     fn go_test_copy_to() {
         let all_types = new_all_types();
-        let mut chk = Chunk::new_with_capacity(&all_types, 101);
+        let mut chk = Chunk::new_chunk_with_capacity(&all_types, 101);
         for i in 0..all_types.len() {
             chk.append_null(i);
         }
@@ -732,7 +732,7 @@ mod tests {
         use tidb_datatype::VectorFloat32;
 
         let field = FieldType::new(FieldTypeCode::VectorFloat32);
-        let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 4);
+        let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 4);
         chunk.append_null(0);
         chunk.append_vector_float32(0, &VectorFloat32::default());
         chunk.append_vector_float32(0, &VectorFloat32::must_create(vec![1.0, 2.0]));

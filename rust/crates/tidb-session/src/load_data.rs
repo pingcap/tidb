@@ -17,7 +17,7 @@
 //! `LoadDataExec`, over [`tidb_executor::load_data`].
 //!
 //! A LOCAL load is two steps on the wire. The connection first asks
-//! [`crate::Session::accept_local_infile`], which runs everything Go runs
+//! [`crate::Session::preprocess_load_data_local`], which runs everything Go runs
 //! before `LoadDataExec.Open` sends the `0xfb` file request; it then hands
 //! the client's bytes to [`crate::Session::set_local_infile_data`] and runs
 //! the statement, whose dispatch arm takes them.
@@ -35,7 +35,7 @@ impl crate::Session {
     /// client can send files) and the executor was built: on success the
     /// connection may request the file. A failure is the statement's error,
     /// recorded as Go records one after its statement context reset.
-    pub fn accept_local_infile(&mut self, stmt: &Stmt) -> Result<(), DriverError> {
+    pub fn preprocess_load_data_local(&mut self, stmt: &Stmt) -> Result<(), DriverError> {
         let Stmt::Dml(dml) = stmt else {
             return Ok(());
         };

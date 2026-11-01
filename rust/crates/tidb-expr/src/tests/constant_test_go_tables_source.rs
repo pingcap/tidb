@@ -774,11 +774,11 @@ fn vectorized_constant_fills_whole_output_chunks() {
         Datum::Int(2333),
         int_type.clone(),
     ))] {
-        let mut input = Chunk::new_with_capacity(std::slice::from_ref(&int_type), rows);
+        let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&int_type), rows);
         for row in 0..rows as i64 {
             input.append_datum(0, &Datum::Int(row));
         }
-        let mut output = Chunk::new_with_capacity(std::slice::from_ref(&int_type), rows);
+        let mut output = Chunk::new_chunk_with_capacity(std::slice::from_ref(&int_type), rows);
         EvaluatorSuite::new(vec![expression], false)
             .run(&NoColumns, &mut input, &mut output)
             .expect("constant vector fill");
@@ -798,11 +798,11 @@ fn vectorized_constant_fills_whole_output_chunks() {
         string_type.clone(),
     ));
     let int_input_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-    let mut input = Chunk::new_with_capacity(std::slice::from_ref(&int_input_type), rows);
+    let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&int_input_type), rows);
     for row in 0..rows as i64 {
         input.append_datum(0, &Datum::Int(row));
     }
-    let mut output = Chunk::new_with_capacity(std::slice::from_ref(&string_type), rows);
+    let mut output = Chunk::new_chunk_with_capacity(std::slice::from_ref(&string_type), rows);
     EvaluatorSuite::new(vec![expression], false)
         .run(&NoColumns, &mut input, &mut output)
         .expect("string constant vector fill");

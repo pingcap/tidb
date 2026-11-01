@@ -199,10 +199,10 @@ fn test_options() {
     let update = UpdateRecordOptions::new();
     assert!(update.context().is_none());
     assert!(!update.skip_write_untouched_indices());
-    let generated = update.add_record_options();
+    let generated = update.get_add_record_opt();
     assert!(generated.is_update());
     assert!(generated.generate_record_id());
-    let kept = update.add_record_options_keep_record_id();
+    let kept = update.get_add_record_opt_keep_record_id();
     assert!(kept.is_update());
     assert!(!kept.generate_record_id());
     assert!(update.create_index_options().context().is_none());
@@ -210,12 +210,12 @@ fn test_options() {
     let update = UpdateRecordOptions::new().with_context(context.clone());
     assert!(std::rc::Rc::ptr_eq(update.context().unwrap(), &context));
     assert!(std::rc::Rc::ptr_eq(
-        update.add_record_options().context().unwrap(),
+        update.get_add_record_opt().context().unwrap(),
         &context
     ));
     assert!(std::rc::Rc::ptr_eq(
         update
-            .add_record_options_keep_record_id()
+            .get_add_record_opt_keep_record_id()
             .context()
             .unwrap(),
         &context
@@ -249,7 +249,7 @@ fn test_options() {
     );
     assert_eq!(
         update
-            .add_record_options()
+            .get_add_record_opt()
             .context()
             .unwrap()
             .warning_count(),

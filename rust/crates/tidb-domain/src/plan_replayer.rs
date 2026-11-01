@@ -28,7 +28,7 @@
 //!
 //! `parseTime` ([`parse_time`]), `dumpFileGcChecker` ([`DumpFileGcChecker`]),
 //! `GCDumpFiles` ([`DumpFileGcChecker::gc_dump_files`]), `setupSctx`
-//! ([`DumpFileGcChecker::setup_status_hook`]), `gcDumpFilesByPath`
+//! ([`DumpFileGcChecker::setup_sctx`]), `gcDumpFilesByPath`
 //! ([`DumpFileGcChecker::gc_dump_files_by_path`]),
 //! `deletePlanReplayerStatus` ([`delete_plan_replayer_status`]),
 //! `insertPlanReplayerStatus` ([`insert_plan_replayer_status`]),
@@ -47,7 +47,7 @@
 //! ([`PlanReplayerTaskDumpHandle`]) with `GetTaskStatus`,
 //! `take_receiver` (standing in for Go `GetWorker`), `Close` and
 //! `DrainTask`, `checkUnHandledReplayerTask`
-//! ([`check_unhandled_replayer_task`]), `CheckPlanReplayerTaskExists`
+//! ([`check_un_handled_replayer_task`]), `CheckPlanReplayerTaskExists`
 //! ([`check_plan_replayer_task_exists`]), `PlanReplayerStatusRecord`, and
 //! `PlanReplayerDumpTask`.
 //!
@@ -463,7 +463,7 @@ impl<S: RestrictedSqlExecutor> DumpFileGcChecker<S> {
 
     /// Go `setupSctx` (`plan_replayer.go:84`), which also implies the status
     /// handle — see [`GcStatusHook`].
-    pub fn setup_status_hook(&mut self, hook: GcStatusHook<S>) {
+    pub fn setup_sctx(&mut self, hook: GcStatusHook<S>) {
         self.status_hook = Some(hook);
     }
 
@@ -681,7 +681,7 @@ pub fn check_plan_replayer_task_exists_sql(sql_digest: &str, plan_digest: &str) 
 ///
 /// # Errors
 /// Whatever the executor reports.
-pub fn check_unhandled_replayer_task<E: InternalSqlExecutor + ?Sized>(
+pub fn check_un_handled_replayer_task<E: InternalSqlExecutor + ?Sized>(
     exec: &E,
     task: &PlanReplayerTaskKey,
 ) -> Result<bool, PlanReplayerError> {
@@ -735,7 +735,7 @@ impl PlanReplayerDumpTaskStatus {
 
     /// Go `GetRunningTaskStatusLen` — "used for unit test".
     #[must_use]
-    pub fn running_task_status_len(&self) -> usize {
+    pub fn get_running_task_status_len(&self) -> usize {
         self.read(&self.running_tasks).len()
     }
 
@@ -748,7 +748,7 @@ impl PlanReplayerDumpTaskStatus {
 
     /// Go `GetFinishedTaskStatusLen` — "used for unit test".
     #[must_use]
-    pub fn finished_task_status_len(&self) -> usize {
+    pub fn get_finished_task_status_len(&self) -> usize {
         self.read(&self.finished_task).len()
     }
 
@@ -832,7 +832,7 @@ impl<E: InternalSqlExecutor> PlanReplayerTaskCollectorHandle<E> {
         for key in all_keys {
             // boundary: Go logs "collect plan replayer task failed" and
             // returns the error, dropping the keys gathered so far.
-            if check_unhandled_replayer_task(&self.sctx, &key)? {
+            if check_un_handled_replayer_task(&self.sctx, &key)? {
                 tasks.push(key);
             }
         }
@@ -1003,7 +1003,7 @@ impl<E: InternalSqlExecutor, D: PlanReplayerDumper> PlanReplayerTaskDumpWorker<E
     }
 
     fn dump(&self, task: &PlanReplayerDumpTask) -> bool {
-        let unhandled = match check_unhandled_replayer_task(&self.sctx, &task.key) {
+        let unhandled = match check_un_handled_replayer_task(&self.sctx, &task.key) {
             Ok(unhandled) => unhandled,
             // boundary: Go logs "check task failed".
             Err(_) => return false,
@@ -1436,7 +1436,7 @@ mod tests {
         });
         let mut checker: DumpFileGcChecker<MockExec> =
             DumpFileGcChecker::new(chrono::Duration::zero(), vec!["replayer".to_owned()]);
-        checker.setup_status_hook(GcStatusHook {
+        checker.setup_sctx(GcStatusHook {
             sctx: MockExec::default(),
             task_status: Arc::clone(&status),
         });
@@ -1452,7 +1452,7 @@ mod tests {
             .unwrap();
 
         assert!(storage.files.borrow().is_empty());
-        assert_eq!(status.finished_task_status_len(), 0);
+        assert_eq!(status.get_finished_task_status_len(), 0);
         let hook = checker.status_hook.as_ref().unwrap();
         let stmts = hook.sctx.statements.borrow();
         assert_eq!(
@@ -1476,7 +1476,7 @@ mod tests {
         };
         let mut checker: DumpFileGcChecker<MockExec> =
             DumpFileGcChecker::new(chrono::Duration::zero(), vec!["replayer".to_owned()]);
-        checker.setup_status_hook(GcStatusHook {
+        checker.setup_sctx(GcStatusHook {
             sctx: MockExec::default(),
             task_status: Arc::new(PlanReplayerDumpTaskStatus::new()),
         });
@@ -1673,7 +1673,7 @@ mod tests {
             ..MockExec::default()
         };
         assert_eq!(
-            check_unhandled_replayer_task(&exec, &task_key("a", "b")),
+            check_un_handled_replayer_task(&exec, &task_key("a", "b")),
             Ok(true)
         );
         assert_eq!(check_plan_replayer_task_exists(&exec, "a", "b"), Ok(false));
@@ -1687,11 +1687,11 @@ mod tests {
             ..MockExec::default()
         };
         assert_eq!(
-            check_unhandled_replayer_task(&exec, &task_key("a", "b")),
+            check_un_handled_replayer_task(&exec, &task_key("a", "b")),
             Ok(false)
         );
         assert_eq!(
-            check_unhandled_replayer_task(&exec, &task_key("z", "b")),
+            check_un_handled_replayer_task(&exec, &task_key("z", "b")),
             Ok(true)
         );
         assert_eq!(check_plan_replayer_task_exists(&exec, "a", "b"), Ok(true));
@@ -1785,9 +1785,9 @@ mod tests {
         };
         assert!(status.occupy_running_task_key(&task));
         assert!(!status.occupy_running_task_key(&task));
-        assert_eq!(status.running_task_status_len(), 1);
+        assert_eq!(status.get_running_task_status_len(), 1);
         status.release_running_task_key(&task);
-        assert_eq!(status.running_task_status_len(), 0);
+        assert_eq!(status.get_running_task_status_len(), 0);
         assert!(status.occupy_running_task_key(&task));
     }
 
@@ -1802,12 +1802,12 @@ mod tests {
         assert!(!status.check_task_key_finished_before(&task));
         status.set_task_finished(&task);
         assert!(status.check_task_key_finished_before(&task));
-        assert_eq!(status.finished_task_status_len(), 1);
+        assert_eq!(status.get_finished_task_status_len(), 1);
         status.clean_finished_task_status();
-        assert_eq!(status.finished_task_status_len(), 0);
+        assert_eq!(status.get_finished_task_status_len(), 0);
         status.set_task_finished(&task);
         status.clear_finished_task();
-        assert_eq!(status.finished_task_status_len(), 0);
+        assert_eq!(status.get_finished_task_status_len(), 0);
     }
 
     struct MockDumper {
@@ -1877,7 +1877,7 @@ mod tests {
         };
         w.status.set_task_finished(&task);
         assert_eq!(w.handle_task(&task), (false, true, true));
-        assert_eq!(w.status.running_task_status_len(), 0);
+        assert_eq!(w.status.get_running_task_status_len(), 0);
         assert!(w.dumper.dumped.borrow().is_empty());
     }
 
@@ -1892,7 +1892,7 @@ mod tests {
         };
         assert!(w.status.occupy_running_task_key(&task));
         assert_eq!(w.handle_task(&task), (true, false, true));
-        assert_eq!(w.status.running_task_status_len(), 1);
+        assert_eq!(w.status.get_running_task_status_len(), 1);
     }
 
     /// WRITTEN. A successful continuous capture is marked finished; a
@@ -1906,8 +1906,8 @@ mod tests {
             ..PlanReplayerDumpTask::default()
         };
         assert_eq!(w.handle_task(&one_shot), (true, true, true));
-        assert_eq!(w.status.finished_task_status_len(), 0);
-        assert_eq!(w.status.running_task_status_len(), 0);
+        assert_eq!(w.status.get_finished_task_status_len(), 0);
+        assert_eq!(w.status.get_running_task_status_len(), 0);
 
         let continuous = PlanReplayerDumpTask {
             key: task_key("s2", "p2"),
@@ -1915,7 +1915,7 @@ mod tests {
             ..PlanReplayerDumpTask::default()
         };
         assert_eq!(w.handle_task(&continuous), (true, true, true));
-        assert_eq!(w.status.finished_task_status_len(), 1);
+        assert_eq!(w.status.get_finished_task_status_len(), 1);
     }
 
     /// WRITTEN. Module doc behavior 8: an already-handled task reports
@@ -1934,7 +1934,7 @@ mod tests {
         };
         assert_eq!(w.handle_task(&task), (true, true, true));
         assert!(w.dumper.dumped.borrow().is_empty());
-        assert_eq!(w.status.finished_task_status_len(), 1);
+        assert_eq!(w.status.get_finished_task_status_len(), 1);
     }
 
     /// WRITTEN. Each failure path answers false and leaves the key
@@ -1971,8 +1971,8 @@ mod tests {
                 ..PlanReplayerDumpTask::default()
             };
             assert_eq!(w.handle_task(&task), (true, true, false));
-            assert_eq!(w.status.finished_task_status_len(), 0);
-            assert_eq!(w.status.running_task_status_len(), 0);
+            assert_eq!(w.status.get_finished_task_status_len(), 0);
+            assert_eq!(w.status.get_running_task_status_len(), 0);
         }
     }
 
@@ -2040,11 +2040,11 @@ mod tests {
             let drained = h.dump_handle.drain_task().expect("queued task");
             assert_eq!(&drained.key, key);
             assert_eq!(worker.handle_task(&drained), (true, true, true));
-            assert_eq!(status.running_task_status_len(), 0);
+            assert_eq!(status.get_running_task_status_len(), 0);
             assert_eq!(h.collector.get_tasks(), vec![continuous.clone()]);
         }
         status.clean_finished_task_status();
-        assert_eq!(status.finished_task_status_len(), 0);
+        assert_eq!(status.get_finished_task_status_len(), 0);
 
         // A discarded task is not removed either: the channel is the gate.
         let full =

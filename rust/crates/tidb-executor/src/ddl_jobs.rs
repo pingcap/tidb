@@ -23,7 +23,7 @@ use crate::Catalog;
 
 /// Go `ts2Time` over a TSO: its physical milliseconds in the process's
 /// local zone.
-pub fn tso_local_time(timestamp: u64) -> Time {
+pub fn ts_2_time(timestamp: u64) -> Time {
     use chrono::TimeZone;
     let milliseconds = i64::try_from(timestamp >> 18).unwrap_or(0);
     let utc = chrono::Utc
@@ -98,12 +98,12 @@ pub fn ddl_job_rows(job: &Job, in_show_stmt: bool, catalog: &Catalog) -> Vec<Vec
     let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
     let time_or_null = |ts: u64| {
         if ts > 0 {
-            Datum::Time(tso_local_time(ts))
+            Datum::Time(ts_2_time(ts))
         } else {
             Datum::Null
         }
     };
-    let create_time = Datum::Time(tso_local_time(job.start_ts));
+    let create_time = Datum::Time(ts_2_time(job.start_ts));
     let finish_time = time_or_null(finish_ts);
     let last_column = |comment: String| {
         if in_show_stmt {

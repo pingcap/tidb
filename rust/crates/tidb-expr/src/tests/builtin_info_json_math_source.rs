@@ -1481,7 +1481,7 @@ fn json_schema_valid() {
 fn json_schema_valid_cache() {
     let args = vec![const_arg(json_s("{}")), const_arg(json_s("{}"))];
     let function = ScalarFunction::new(CiString::new("json_schema_valid"), int_ft(), args);
-    let empty = tidb_chunk::chunk::Chunk::new_with_capacity(&[], 1);
+    let empty = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[], 1);
     assert_eq!(
         function.eval(&NoColumns, empty.get_row(0)).unwrap(),
         Datum::Int(1)

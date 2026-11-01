@@ -1762,7 +1762,7 @@ fn test_notify_gcv2_after_gc_for_dedicated_worker() {
             recycle: Mutex::new(Vec::new()),
         });
         let s = create_gc_worker_suite_full(None, Vec::new(), Some(manager.clone()));
-        s.job().notify_gcv2_after_gc(SAFE_POINT);
+        s.job().notify_gcv_2_after_gc(SAFE_POINT);
         assert_eq!(0, *manager.register_count.lock().unwrap(), "{name}");
         let recycle = manager.recycle.lock().unwrap();
         assert_eq!(want_recycle, recycle.len(), "{name}");

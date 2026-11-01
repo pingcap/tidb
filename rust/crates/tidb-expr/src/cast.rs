@@ -54,7 +54,7 @@ pub(crate) fn eval_string_cast_with_type(
         &warnings,
     );
     let converted =
-        tidb_datatype::produce_string_with_type_in_context(bytes, target, false, &context)
+        tidb_datatype::produce_str_with_specified_tp(bytes, target, false, &context)
             .map_err(|_| EvalError::Unsupported("protobuf string production"))?;
     if let Some(error) = converted.error {
         return Err(EvalError::Conversion(error));
@@ -149,7 +149,7 @@ pub(crate) fn eval_numeric_cast_with_type(
                 handle(error)?;
                 Decimal::from_my_decimal(&decimal)
             } else if let Datum::Real(value) | Datum::Float32(value) = value {
-                let (decimal, error) = MyDecimal::from_float64(value);
+                let (decimal, error) = MyDecimal::from_float_64(value);
                 match error {
                     // The cast signature explicitly ignores fraction loss.
                     None | Some(DecimalError::Truncated) => {}
@@ -180,7 +180,7 @@ pub(crate) fn eval_numeric_cast_with_type(
                                 decimal
                                 };
                                 let result =
-                                tidb_datatype::produce_decimal_with_type_in_context(decimal, target, &context);
+                                tidb_datatype::produce_dec_with_specified_tp(decimal, target, &context);
                                 handle(result.error)?;
                                 Ok(result.value)
                                 }
@@ -318,7 +318,7 @@ pub(crate) fn eval_numeric_cast_with_type(
                                 /// element type. A scalar is a one-element array; an object is refused.
                                 /// Conversions run under Go's `fakeSctx` (`StrictFlags`), so any truncation
                                 /// or overflow is an error rather than a warning.
-                                pub(crate) fn eval_cast_json_as_array(
+                                pub(crate) fn eval_json(
                                 value: Datum,
                                 ret_type: &FieldType,
                                 ) -> Result<Datum, EvalError> {
@@ -356,10 +356,10 @@ pub(crate) fn eval_numeric_cast_with_type(
                 .array_get(position)
                 .map_err(json_eval_error)?
                 .ok_or(EvalError::Unsupported("a JSON array element is missing"))?;
-            values.push(array_element_json(convert_json_to_type(&item, &element)?)?);
+            values.push(array_element_json(convert_json_2_tp(&item, &element)?)?);
         }
     } else {
-        values.push(array_element_json(convert_json_to_type(&json, &element)?)?);
+        values.push(array_element_json(convert_json_2_tp(&json, &element)?)?);
     }
     tidb_datatype::BinaryJSON::from_typed_value(&tidb_datatype::BinaryJSONValue::Array(values))
         .map(Datum::Json)
@@ -371,7 +371,7 @@ pub(crate) fn eval_numeric_cast_with_type(
 /// planner turns a `json_contains`/`json_overlaps` element into a range point.
 /// A target whose evaluation type has no conversion, or a JSON value of the
 /// wrong type, is Go's `ErrInvalidJSONForFuncIndex`.
-pub fn convert_json_to_type(
+pub fn convert_json_2_tp(
     item: &tidb_datatype::BinaryJSON,
     target: &FieldType,
 ) -> Result<Datum, EvalError> {
@@ -518,7 +518,7 @@ pub(crate) fn eval_json_sum_crc32(
             .array_get(position)
             .map_err(json_eval_error)?
             .ok_or(EvalError::Unsupported("a JSON array element is missing"))?;
-        let converted = convert_json_to_type(&item, &element).map_err(|error| {
+        let converted = convert_json_2_tp(&item, &element).map_err(|error| {
             if is_invalid_json_for_func_index(&error) {
                 EvalError::Conversion(tidb_terror::TerrorError::compatible(
                     tidb_terror::TerrorCode::new(1105),

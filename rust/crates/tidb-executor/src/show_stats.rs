@@ -37,7 +37,7 @@
 //!
 //! * [`Table`] is the shared production statistics object used by
 //!   the SHOW paths. Its `stats_healthy` method owns Go's
-//!   `GetStatsHealthy` calculation for the wired [`healthy_row`].
+//!   `GetStatsHealthy` calculation for the wired [`append_table_for_stats_healthy`].
 //! * [`tidb_stats::Histogram`] and [`tidb_stats::Bucket`] ARE Go
 //!   `statistics.Histogram` / `Bucket`, so [`histogram_row`] and
 //!   [`buckets_to_rows`] read the same fields Go's do.
@@ -68,7 +68,7 @@
 //! * `fetchShowHistogramsInFlight` (:535) is one row holding
 //!   `statsStorage.CleanFakeItemsForShowHistInFlights(statsHandle)`, a
 //!   cache-mutating counter read. Only its row shape is ported
-//!   ([`histograms_in_flight_row`]); the counter itself is a handle call.
+//!   ([`fetch_show_histograms_in_flight`]); the counter itself is a handle call.
 //! * `fetchShowAnalyzeStatus` (:540) delegates wholesale to
 //!   `dataForAnalyzeStatusHelper`. The session owns that persisted-row and
 //!   privilege traversal; [`analyze_progress`] below owns the helper's pure
@@ -265,7 +265,7 @@ impl MetaFilters {
 /// the delta-tracking path maintains without any `ANALYZE`), but reports NULL
 /// rather than a fabricated `last_analyze_time`.
 #[must_use]
-pub fn table_statistics_meta_row<TZ: chrono::TimeZone>(
+pub fn append_table_for_stats_meta<TZ: chrono::TimeZone>(
     db_name: &str,
     table_name: &str,
     partition: &PartitionLabel,
@@ -302,7 +302,7 @@ pub fn table_statistics_meta_row<TZ: chrono::TimeZone>(
 /// order would be Go's randomised map order. A caller reproducing
 /// `fetchShowStatsLocked` must sort by physical ID, not by name.
 #[must_use]
-pub fn stats_locked_row(db_name: &str, table_name: &str, partition: &PartitionLabel) -> Vec<Datum> {
+pub fn append_table_for_stats_locked(db_name: &str, table_name: &str, partition: &PartitionLabel) -> Vec<Datum> {
     vec![
         Datum::new_string(db_name.as_bytes().to_vec()),
         Datum::new_string(table_name.as_bytes().to_vec()),
@@ -500,7 +500,7 @@ pub fn topn_to_rows<E>(
 /// zero means "statistics exist and are entirely stale" -- two different
 /// states that must not be conflated.
 #[must_use]
-pub fn healthy_row(
+pub fn append_table_for_stats_healthy(
     db_name: &str,
     table_name: &str,
     partition: &PartitionLabel,
@@ -526,7 +526,7 @@ pub fn healthy_row(
 /// produces the count, and does so by SWEEPING the sync-load queue as a side
 /// effect, so it is a handle call rather than a readable counter.
 #[must_use]
-pub fn histograms_in_flight_row(in_flight: i64) -> Vec<Datum> {
+pub fn fetch_show_histograms_in_flight(in_flight: i64) -> Vec<Datum> {
     vec![Datum::Int(in_flight)]
 }
 
@@ -735,7 +735,7 @@ mod tests {
         stats.hist_coll.realtime_count = 100;
         stats.last_analyze_version = 0;
 
-        let row = table_statistics_meta_row("d", "t", &PartitionLabel::None, &stats, &chrono::Utc)
+        let row = append_table_for_stats_meta("d", "t", &PartitionLabel::None, &stats, &chrono::Utc)
             .expect("a non-pseudo table produces a row");
         assert_eq!(row.len(), 7);
         assert_eq!(row[4], Datum::Int(5));
@@ -744,14 +744,14 @@ mod tests {
         assert_eq!(row[6], Datum::Null);
 
         stats.last_analyze_version = version;
-        let row = table_statistics_meta_row("d", "t", &PartitionLabel::None, &stats, &chrono::Utc)
+        let row = append_table_for_stats_meta("d", "t", &PartitionLabel::None, &stats, &chrono::Utc)
             .unwrap();
         assert!(matches!(row[6], Datum::Time(_)));
 
         // A pseudo table produces no row at all.
         stats.hist_coll.pseudo = true;
         assert!(
-            table_statistics_meta_row("d", "t", &PartitionLabel::None, &stats, &chrono::Utc)
+            append_table_for_stats_meta("d", "t", &PartitionLabel::None, &stats, &chrono::Utc)
                 .is_none()
         );
     }
@@ -759,7 +759,7 @@ mod tests {
     // WRITTEN test for :135-142.
     #[test]
     fn locked_row_always_says_locked() {
-        let row = stats_locked_row("d", "t", &PartitionLabel::Definition("p0".to_owned()));
+        let row = append_table_for_stats_locked("d", "t", &PartitionLabel::Definition("p0".to_owned()));
         assert_eq!(row.len(), 4);
         assert_eq!(row[2], Datum::new_string(b"p0".to_vec()));
         assert_eq!(row[3], Datum::new_string(b"locked".to_vec()));
@@ -913,16 +913,16 @@ mod tests {
     fn healthy_row_distinguishes_absent_from_zero() {
         let mut stats = Table::default();
         stats.hist_coll.pseudo = true;
-        assert!(healthy_row("d", "t", &PartitionLabel::None, &stats).is_none());
+        assert!(append_table_for_stats_healthy("d", "t", &PartitionLabel::None, &stats).is_none());
 
         // A real cache table may still use pseudo estimates in the planner.
         // Never analyzed: a real row holding 0.
         stats.hist_coll.pseudo = false;
-        let row = healthy_row("d", "t", &PartitionLabel::None, &stats).unwrap();
+        let row = append_table_for_stats_healthy("d", "t", &PartitionLabel::None, &stats).unwrap();
         assert_eq!(row.len(), 4);
         assert_eq!(row[3], Datum::Int(0));
         stats.last_analyze_version = 42;
-        let row = healthy_row("d", "t", &PartitionLabel::None, &stats).unwrap();
+        let row = append_table_for_stats_healthy("d", "t", &PartitionLabel::None, &stats).unwrap();
         assert_eq!(row[3], Datum::Int(100));
     }
 
@@ -948,6 +948,6 @@ mod tests {
     // WRITTEN test for :535-538.
     #[test]
     fn histograms_in_flight_is_one_column() {
-        assert_eq!(histograms_in_flight_row(3), vec![Datum::Int(3)]);
+        assert_eq!(fetch_show_histograms_in_flight(3), vec![Datum::Int(3)]);
     }
 }

@@ -470,11 +470,11 @@ pub fn selectivity(
             min_selectivity = min_selectivity.min(ctx.options.selectivity_factor);
         }
         if !not_covered_str_match.is_empty() {
-            min_selectivity = min_selectivity.min(ctx.options.str_match_default_selectivity());
+            min_selectivity = min_selectivity.min(ctx.options.get_str_match_default_selectivity());
         }
         if !not_covered_negate_str_match.is_empty() {
             min_selectivity =
-                min_selectivity.min(ctx.options.negate_str_match_default_selectivity());
+                min_selectivity.min(ctx.options.get_negate_str_match_default_selectivity());
         }
         ret *= min_selectivity;
     }

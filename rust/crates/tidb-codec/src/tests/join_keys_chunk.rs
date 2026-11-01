@@ -37,7 +37,7 @@ fn serialize_keys_reads_shared_and_response_backed_columns() {
         FieldType::new(FieldTypeCode::NewDecimal),
         FieldType::new(FieldTypeCode::Json),
     ];
-    let mut old_chk = Chunk::new_with_capacity(&col_types, num_rows);
+    let mut old_chk = Chunk::new_chunk_with_capacity(&col_types, num_rows);
     for i in 0..num_rows {
         let text = format!("{i}.12345");
         old_chk.append_null(0);
@@ -49,12 +49,12 @@ fn serialize_keys_reads_shared_and_response_backed_columns() {
     }
     let codec = Codec::new(col_types.clone());
     let buffer = codec.encode(&old_chk);
-    let mut new_chk = Chunk::new_with_capacity(&col_types, num_rows);
+    let mut new_chk = Chunk::new_chunk_with_capacity(&col_types, num_rows);
     assert!(codec.decode_to_chunk(&buffer, &mut new_chk).is_empty());
     let mut shared = old_chk.clone();
     let mut alias = tidb_chunk::mutrow::MutRow::from_types(&col_types);
     alias.shallow_copy_partial_row(0, &mut shared, 0);
-    let mut frozen = Chunk::new_with_capacity(&col_types, num_rows);
+    let mut frozen = Chunk::new_chunk_with_capacity(&col_types, num_rows);
     assert!(codec
         .try_decode_bytes_to_chunk(&::bytes::Bytes::from(buffer), &mut frozen)
         .unwrap()
@@ -102,7 +102,7 @@ fn serialize_keys_reads_shared_and_response_backed_columns() {
             for &physical in &used {
                 assert_eq!(nulls[physical], indices.contains(&0));
             }
-            let mut saved = Chunk::new_with_capacity(&[FieldType::new(FieldTypeCode::Blob)], 3);
+            let mut saved = Chunk::new_chunk_with_capacity(&[FieldType::new(FieldTypeCode::Blob)], 3);
             for key in keys.iter() {
                 saved.append_bytes(0, key);
             }

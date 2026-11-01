@@ -26,8 +26,8 @@ use tidb_datatype::Datum;
 use tidb_log::{Field, Value};
 use tidb_resolve::ResultFieldRef;
 use tidb_sqlexec::{
-    analyze_snapshot_option, exec_option_analyze_ver2, exec_option_use_current_session,
-    partition_prune_mode_option, sys_proc_track_option, OptionFuncAlias, SqlExecError,
+    get_analyze_snapshot_option, exec_option_analyze_ver2, exec_option_use_current_session,
+    get_partition_prune_mode_option, exec_option_with_sys_proc_track, OptionFuncAlias, SqlExecError,
     TrackSysProc, UntrackSysProc,
 };
 use tidb_stats_handle_util::{AutoAnalyzeProcIdGenerator, AutoAnalyzeTracker, STATS_CONTEXT};
@@ -116,10 +116,10 @@ fn exec_options<C: AutoAnalyzeSessionContext + ?Sized>(
         process_id,
         vec![
             Arc::new(exec_option_analyze_ver2),
-            analyze_snapshot_option(context.enable_analyze_snapshot()),
-            partition_prune_mode_option(context.partition_prune_mode()),
+            get_analyze_snapshot_option(context.enable_analyze_snapshot()),
+            get_partition_prune_mode_option(context.partition_prune_mode()),
             Arc::new(exec_option_use_current_session),
-            sys_proc_track_option(process_id, track, untrack),
+            exec_option_with_sys_proc_track(process_id, track, untrack),
         ],
     )
 }

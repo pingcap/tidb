@@ -130,12 +130,12 @@ impl<C: Columns> ProjectionExec<C> {
         child: Box<dyn Executor>,
         ctx: C,
     ) -> Self {
-        Self::with_column_evaluator(meta, exprs, child, ctx, false)
+        Self::new_projection_exec(meta, exprs, child, ctx, false)
     }
 
     /// Go `newProjectionExec`: the physical plan controls column swapping.
     #[must_use]
-    pub fn with_column_evaluator(
+    pub fn new_projection_exec(
         meta: ExecutorMeta,
         exprs: Vec<Expression>,
         child: Box<dyn Executor>,
@@ -536,7 +536,7 @@ mod tests {
                         for _ in 0..16 {
                             let mut input = Chunk::new_empty(&[]);
                             input.set_num_virtual_rows(3);
-                            let mut output = Chunk::new_with_capacity(&[long()], 3);
+                            let mut output = Chunk::new_chunk_with_capacity(&[long()], 3);
                             suite.run(&cloned, &mut input, &mut output).unwrap();
                             for row in 0..3 {
                                 assert_eq!(output.get_row(row).get_datum(0, &long()), value);
@@ -1109,7 +1109,7 @@ mod tests {
     /// an input row whose column 0 is 41 produces 42.
     #[test]
     fn projection_reads_child_column() {
-        let mut input = Chunk::new_with_capacity(std::slice::from_ref(&long()), 1);
+        let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&long()), 1);
         input.append_int64(0, 41);
 
         let mut col = Column::new(7, long());

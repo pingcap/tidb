@@ -36,7 +36,7 @@
 //! while the live builder answered `-10`.
 
 use tidb_datatype::FieldTypeFlags;
-use tidb_ddl_build::table_info_build::build_table_info_with_context;
+use tidb_ddl_build::table_info_build::build_table_info_from_ast;
 
 /// Every column shape whose flags come from the TYPE, from a DECLARED
 /// modifier, or from neither -- so a builder that ran the pass on only some of
@@ -54,7 +54,7 @@ fn both_create_table_builders_stamp_the_same_type_flags() {
         panic!("the fixture is a CREATE TABLE");
     };
 
-    let cluster = build_table_info_with_context(
+    let cluster = build_table_info_from_ast(
         create,
         "utf8mb4",
         "utf8mb4_bin",
@@ -134,7 +134,7 @@ fn both_create_table_builders_stamp_the_same_type_flags() {
 fn int_only_context() -> tidb_metabuild::Context {
     tidb_metabuild::Context::new([
         tidb_metabuild::with_expr_ctx(std::sync::Arc::clone(
-            tidb_metabuild::Context::new_non_strict().get_expr_ctx(),
+            tidb_metabuild::Context::new_non_strict_context().get_expr_ctx(),
         )),
         tidb_metabuild::with_clustered_index_def_mode(
             tidb_vardef::modes::ClusteredIndexDefMode::INT_ONLY,

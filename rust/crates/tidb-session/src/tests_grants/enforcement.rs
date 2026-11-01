@@ -222,7 +222,7 @@ fn role_grants_need_role_admin() {
         denied(&mut bob, "REVOKE 'r1'@'%' FROM 'bob'@'%'"),
         specific("SUPER or ROLE_ADMIN")
     );
-    assert!(!privs.has_role(
+    assert!(!privs.find_role(
         &("bob".to_owned(), "%".to_owned()),
         &("r1".to_owned(), "%".to_owned())
     ));
@@ -231,7 +231,7 @@ fn role_grants_need_role_admin() {
     // privilege anywhere.
     boot.run("GRANT ROLE_ADMIN ON *.* TO 'bob'@'%'").unwrap();
     bob.run("GRANT 'r1'@'%' TO 'bob'@'%'").unwrap();
-    assert!(privs.has_role(
+    assert!(privs.find_role(
         &("bob".to_owned(), "%".to_owned()),
         &("r1".to_owned(), "%".to_owned())
     ));

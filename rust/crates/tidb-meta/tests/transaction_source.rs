@@ -23,9 +23,9 @@ use chrono::{TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use tidb_ast::CiString;
 use tidb_meta::transaction::{
-    default_resource_group_for_test, extract_schema_and_table_name_from_job,
-    fast_unmarshal_table_name_info, iter_all_tables, job_matches, oldest_schema_version,
-    split_range_int64_max, table_info_must_load, unescape_name, unescape_name_bytes, AutoIdGroup,
+    default_group_meta_4_test, extract_schema_and_table_name_from_job,
+    fast_unmarshal_table_name_info, iter_all_tables, is_job_match, get_oldest_schema_version,
+    split_range_int_64_max, table_info_must_load, unescape_name, unescape_name_bytes, AutoIdGroup,
     DailyRuStats, DdlJobCodec, DdlTableVersion, GroupRuStats, MemoryTransaction, MetaSnapshotStore,
     MustLoadFilterAttr, Mutator, MutatorOption, MvccInfo, MvccReader, MvccWrite,
     NextGenBootTableVersion, RuConsumption, RuStats,
@@ -202,7 +202,7 @@ fn global_id_zero_limit_error_and_signed_wrap_match_go_mutation_order() {
     assert_eq!(meta.gen_placement_policy_id().unwrap(), 1);
     assert_eq!(meta.policy_id().unwrap(), 1);
     assert_eq!(meta.gen_masking_policy_id().unwrap(), 1);
-    assert_eq!(meta.masking_policy_id().unwrap(), 1);
+    assert_eq!(meta.get_masking_policy_id().unwrap(), 1);
 }
 
 #[test]
@@ -293,7 +293,7 @@ fn database_and_table_lifecycle_preserves_go_order_and_partial_mutation() {
         listed.iter().map(|table| table.id).collect::<Vec<_>>(),
         [1, 2]
     );
-    let simple = meta.simple_tables(1).unwrap();
+    let simple = meta.list_simple_tables(1).unwrap();
     assert_eq!(
         simple
             .iter()
@@ -338,7 +338,7 @@ fn database_and_table_lifecycle_preserves_go_order_and_partial_mutation() {
         [1]
     );
     assert_eq!(
-        meta.simple_tables(1)
+        meta.list_simple_tables(1)
             .unwrap()
             .into_iter()
             .map(|table| table.id)
@@ -412,7 +412,7 @@ fn raw_storage_failures_propagate_and_keep_go_partial_mutation_order() {
     ));
     let scan_error = Mutator::new(base.clone().with_iteration_error("database hash scan"));
     assert!(matches!(
-        scan_error.metas_by_database_id(1),
+        scan_error.get_metas_by_dbid(1),
         Err(MetaError::Storage(message)) if message == "database hash scan"
     ));
 
@@ -533,13 +533,13 @@ fn catalog_fast_paths_cover_metas_names_attributes_cancellation_and_corruption()
     }
     meta.auto_ids(1, 10).row_id().put(7).unwrap();
 
-    let metas = meta.metas_by_database_id(1).unwrap();
+    let metas = meta.get_metas_by_dbid(1).unwrap();
     assert_eq!(metas.len(), 3);
     assert!(metas
         .iter()
         .any(|pair| pair.field == key::auto_table_id_key(10) && pair.value == b"7"));
 
-    let (names, must_load) = meta.all_name_to_id_and_must_loaded_table_info(1).unwrap();
+    let (names, must_load) = meta.get_all_name_to_id_and_the_must_loaded_table_info(1).unwrap();
     assert_eq!(names.get(b"ordinary".as_slice()), Some(&10));
     assert_eq!(names.get(b"Special".as_slice()), Some(&11));
     assert_eq!(
@@ -548,7 +548,7 @@ fn catalog_fast_paths_cover_metas_names_attributes_cancellation_and_corruption()
     );
 
     let selected = meta
-        .table_info_with_attributes(
+        .get_table_info_with_attributes(
             1,
             &[MustLoadFilterAttr {
                 attr: br#""affinity":{"#,
@@ -563,7 +563,7 @@ fn catalog_fast_paths_cover_metas_names_attributes_cancellation_and_corruption()
 
     let mut cancellation_checks = 0;
     assert!(matches!(
-        meta.tables_with_cancel(1, || {
+        meta.list_tables(1, || {
             cancellation_checks += 1;
             true
         }),
@@ -575,7 +575,7 @@ fn catalog_fast_paths_cover_metas_names_attributes_cancellation_and_corruption()
     );
 
     assert_eq!(
-        meta.metas_by_database_id(99),
+        meta.get_metas_by_dbid(99),
         Err(MetaError::DatabaseNotExists)
     );
 
@@ -586,11 +586,11 @@ fn catalog_fast_paths_cover_metas_names_attributes_cancellation_and_corruption()
     let corrupted = Mutator::new(corrupted);
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         corrupted
-            .all_name_to_id_and_must_loaded_table_info(1)
+            .get_all_name_to_id_and_the_must_loaded_table_info(1)
             .unwrap();
     }))
     .is_err());
-    assert!(corrupted.simple_tables(1).is_err());
+    assert!(corrupted.list_simple_tables(1).is_err());
 }
 
 #[test]
@@ -776,7 +776,7 @@ fn policies_masking_policies_and_resource_groups_preserve_source_lifecycle() {
     masking.name = CiString::new("m2");
     meta.update_masking_policy(&masking).unwrap();
     assert_eq!(meta.masking_policy(9).unwrap(), masking);
-    assert_eq!(meta.masking_policies().unwrap(), [masking.clone()]);
+    assert_eq!(meta.list_masking_policies().unwrap(), [masking.clone()]);
     let reopened = Mutator::new(meta.inspect(Clone::clone).unwrap());
     assert_eq!(reopened.masking_policy(9).unwrap(), masking);
     assert_eq!(
@@ -790,7 +790,7 @@ fn policies_masking_policies_and_resource_groups_preserve_source_lifecycle() {
     meta.drop_masking_policy(9).unwrap();
     meta.drop_masking_policy(9).unwrap();
 
-    let default = default_resource_group_for_test();
+    let default = default_group_meta_4_test();
     let default_read = meta.resource_group(1).unwrap();
     assert!(Arc::ptr_eq(&default, &default_read));
     assert_eq!(default.settings.as_ref().unwrap().ru_rate, i32::MAX as u64);
@@ -911,7 +911,7 @@ fn policy_masking_and_resource_reads_preserve_magic_json_and_empty_panics() {
     );
     assert!(matches!(
         with_hash_value(key::MASKING_POLICIES, &key::masking_policy_key(8), b"\x00{")
-            .masking_policies(),
+            .list_masking_policies(),
         Err(MetaError::InvalidJson(_))
     ));
 
@@ -1000,16 +1000,16 @@ fn declared_meta_errors_keep_source_codes_and_context_messages() {
 #[test]
 fn bootstrap_schema_diff_and_raw_bdr_role_round_trip() {
     let meta = Mutator::new(MemoryTransaction::default());
-    assert_eq!(meta.bootstrap_version().unwrap(), 0);
+    assert_eq!(meta.get_bootstrap_version().unwrap(), 0);
     meta.finish_bootstrap(1).unwrap();
-    assert_eq!(meta.bootstrap_version().unwrap(), 1);
+    assert_eq!(meta.get_bootstrap_version().unwrap(), 1);
     meta.finish_bootstrap(10).unwrap();
-    assert_eq!(meta.bootstrap_version().unwrap(), 10);
-    assert_eq!(meta.starter_bootstrap_version().unwrap(), 0);
+    assert_eq!(meta.get_bootstrap_version().unwrap(), 10);
+    assert_eq!(meta.get_starter_bootstrap_version().unwrap(), 0);
     meta.finish_starter_bootstrap(1).unwrap();
-    assert_eq!(meta.starter_bootstrap_version().unwrap(), 1);
+    assert_eq!(meta.get_starter_bootstrap_version().unwrap(), 1);
     meta.finish_starter_bootstrap(10).unwrap();
-    assert_eq!(meta.starter_bootstrap_version().unwrap(), 10);
+    assert_eq!(meta.get_starter_bootstrap_version().unwrap(), 10);
 
     let diff = SchemaDiff {
         version: 100,
@@ -1107,7 +1107,7 @@ fn composed_auto_id_sequence_and_schema_diff_methods_preserve_source_order() {
     .unwrap();
     assert_eq!(meta.auto_ids(1, 3).row_id().get().unwrap(), 123);
     assert_eq!(
-        meta.auto_table_id_key_value(1, 3, 1234),
+        meta.gen_auto_table_id_key_value(1, 3, 1234),
         (key::auto_table_id_kv_key(1, 3), b"1234".to_vec())
     );
 
@@ -1158,7 +1158,7 @@ fn composed_auto_id_sequence_and_schema_diff_methods_preserve_source_order() {
         name: CiString::new("seq"),
         ..Default::default()
     };
-    meta.create_sequence_and_set_value(1, &sequence, 50)
+    meta.create_sequence_and_set_seq_value(1, &sequence, 50)
         .unwrap();
     assert_eq!(meta.auto_ids(1, 4).sequence_value().get().unwrap(), 50);
     meta.restart_sequence_value(1, &sequence, -9).unwrap();
@@ -1185,7 +1185,7 @@ fn composed_auto_id_sequence_and_schema_diff_methods_preserve_source_order() {
     meta.set_schema_diff(&diff).unwrap();
     assert_eq!(meta.schema_version_with_non_empty_diff().unwrap(), 1);
     assert_eq!(
-        meta.encoded_schema_diff_key(1),
+        meta.encode_schema_diff_key(1),
         tidb_structure::encode_string_data_key(META_PREFIX, b"Diff:1")
     );
 }
@@ -1221,18 +1221,18 @@ fn scalar_settings_preserve_absence_formatting_and_non_boolean_lock_bytes() {
     meta.set_schema_cache_size(u64::MAX).unwrap();
     assert_eq!(meta.schema_cache_size().unwrap(), Some(u64::MAX));
 
-    assert_eq!(meta.ingest_max_batch_split_ranges().unwrap(), None);
+    assert_eq!(meta.get_ingest_max_batch_split_ranges().unwrap(), None);
     meta.set_ingest_max_batch_split_ranges(-7).unwrap();
-    assert_eq!(meta.ingest_max_batch_split_ranges().unwrap(), Some(-7));
+    assert_eq!(meta.get_ingest_max_batch_split_ranges().unwrap(), Some(-7));
     meta.set_ingest_max_inflight(i64::MAX).unwrap();
-    assert_eq!(meta.ingest_max_inflight().unwrap(), Some(i64::MAX));
+    assert_eq!(meta.get_ingest_max_inflight().unwrap(), Some(i64::MAX));
 
     meta.set_ingest_max_per_sec(1.005).unwrap();
-    assert_eq!(meta.ingest_max_per_sec().unwrap(), Some(1.0));
+    assert_eq!(meta.get_ingest_max_per_sec().unwrap(), Some(1.0));
     meta.set_ingest_max_split_ranges_per_sec(f64::INFINITY)
         .unwrap();
     assert_eq!(
-        meta.ingest_max_split_ranges_per_sec().unwrap(),
+        meta.get_ingest_max_split_ranges_per_sec().unwrap(),
         Some(f64::INFINITY)
     );
     for (input, expected) in [
@@ -1249,7 +1249,7 @@ fn scalar_settings_preserve_absence_formatting_and_non_boolean_lock_bytes() {
                 .unwrap(),
             expected.as_bytes()
         );
-        let got = meta.ingest_max_per_sec().unwrap().unwrap();
+        let got = meta.get_ingest_max_per_sec().unwrap().unwrap();
         if input.is_nan() {
             assert!(got.is_nan());
         } else {
@@ -1278,12 +1278,12 @@ fn malformed_scalar_storage_returns_the_source_parse_error_class() {
                 as fn(&Mutator<MemoryTransaction>) -> Result<i64>,
         ),
         (key::POLICY_GLOBAL_ID, Mutator::policy_id),
-        (key::MASKING_POLICY_GLOBAL_ID, Mutator::masking_policy_id),
+        (key::MASKING_POLICY_GLOBAL_ID, Mutator::get_masking_policy_id),
         (key::SCHEMA_VERSION, Mutator::schema_version),
-        (key::BOOTSTRAP, Mutator::bootstrap_version),
+        (key::BOOTSTRAP, Mutator::get_bootstrap_version),
         (
             key::STARTER_BOOTSTRAP,
-            Mutator::starter_bootstrap_version,
+            Mutator::get_starter_bootstrap_version,
         ),
     ] {
         assert_eq!(
@@ -1312,10 +1312,10 @@ fn malformed_scalar_storage_returns_the_source_parse_error_class() {
     for (logical_key, getter) in [
         (
             key::INGEST_MAX_BATCH_SPLIT_RANGES,
-            Mutator::<MemoryTransaction>::ingest_max_batch_split_ranges
+            Mutator::<MemoryTransaction>::get_ingest_max_batch_split_ranges
                 as fn(&Mutator<MemoryTransaction>) -> Result<Option<i64>>,
         ),
-        (key::INGEST_MAX_INFLIGHT, Mutator::ingest_max_inflight),
+        (key::INGEST_MAX_INFLIGHT, Mutator::get_ingest_max_inflight),
     ] {
         assert_eq!(
             getter(&with_string_value(logical_key, b"one")),
@@ -1331,10 +1331,10 @@ fn malformed_scalar_storage_returns_the_source_parse_error_class() {
     for (logical_key, getter) in [
         (
             key::INGEST_MAX_SPLIT_RANGES_PER_SEC,
-            Mutator::<MemoryTransaction>::ingest_max_split_ranges_per_sec
+            Mutator::<MemoryTransaction>::get_ingest_max_split_ranges_per_sec
                 as fn(&Mutator<MemoryTransaction>) -> Result<Option<f64>>,
         ),
-        (key::INGEST_MAX_PER_SEC, Mutator::ingest_max_per_sec),
+        (key::INGEST_MAX_PER_SEC, Mutator::get_ingest_max_per_sec),
     ] {
         for malformed in [b"one".as_slice(), b"", &[0xff]] {
             assert_eq!(
@@ -1353,14 +1353,14 @@ fn malformed_scalar_storage_returns_the_source_parse_error_class() {
 #[test]
 fn source_range_partial_json_and_filter_boundaries() {
     assert_eq!(
-        split_range_int64_max(1),
+        split_range_int_64_max(1),
         [("0".to_owned(), "9999999999999999999".to_owned())]
     );
-    let ranges = split_range_int64_max(15);
+    let ranges = split_range_int_64_max(15);
     assert_eq!(ranges.len(), 15);
     assert_eq!(ranges[0].0, "0");
     assert_eq!(ranges.last().unwrap().1.len(), 19);
-    assert!(std::panic::catch_unwind(|| split_range_int64_max(0)).is_err());
+    assert!(std::panic::catch_unwind(|| split_range_int_64_max(0)).is_err());
 
     let compact = br#"{"id":7,"name":{"O":"t","L":"t"}} trailing garbage"#;
     let table = fast_unmarshal_table_name_info(compact).unwrap();
@@ -1681,16 +1681,16 @@ fn job_name_filter_keeps_go_operator_precedence() {
         ("s".to_owned(), "t".to_owned())
     );
     let empty = BTreeSet::new();
-    assert!(job_matches(b"not json", &empty, &empty).unwrap());
+    assert!(is_job_match(b"not json", &empty, &empty).unwrap());
 
     let schemas = BTreeSet::from(["other".to_owned()]);
     let tables = BTreeSet::from(["t".to_owned()]);
-    assert!(job_matches(job, &schemas, &tables).unwrap());
+    assert!(is_job_match(job, &schemas, &tables).unwrap());
 
     let schemas = BTreeSet::from(["s".to_owned()]);
     let tables = BTreeSet::from(["other".to_owned()]);
-    assert!(!job_matches(job, &schemas, &tables).unwrap());
-    assert!(job_matches(job, &schemas, &empty).unwrap());
+    assert!(!is_job_match(job, &schemas, &tables).unwrap());
+    assert!(is_job_match(job, &schemas, &empty).unwrap());
 
     for (schema, table) in [
         ("", ""),
@@ -1800,9 +1800,9 @@ fn ddl_history_is_big_endian_reverse_inclusive_and_filtered_before_decode() {
     meta.add_history_ddl_job(&mut three, false).unwrap();
     meta.add_history_ddl_job(&mut two, false).unwrap();
     assert!(one.update_raw_args_seen);
-    assert_eq!(meta.history_ddl_count().unwrap(), 3);
+    assert_eq!(meta.get_history_ddl_count().unwrap(), 3);
     let job_two_key =
-        tidb_tablecodec::table_key::encode_meta_key(key::DDL_JOB_HISTORY, &key::ddl_job_id_key(2));
+        tidb_tablecodec::table_key::encode_meta_key(key::DDL_JOB_HISTORY, &key::job_id_key(2));
     assert!(
         meta.inspect(|transaction| transaction.entries().contains_key(&job_two_key))
             .unwrap(),
@@ -1819,24 +1819,24 @@ fn ddl_history_is_big_endian_reverse_inclusive_and_filtered_before_decode() {
     );
 
     assert_eq!(
-        meta.history_ddl_job::<RecordedJob>(2).unwrap().unwrap().id,
+        meta.get_history_ddl_job::<RecordedJob>(2).unwrap().unwrap().id,
         2
     );
-    assert!(meta.history_ddl_job::<RecordedJob>(9).unwrap().is_none());
+    assert!(meta.get_history_ddl_job::<RecordedJob>(9).unwrap().is_none());
 
-    let mut all = meta.last_history_ddl_jobs::<RecordedJob>().unwrap();
+    let mut all = meta.get_last_history_ddl_jobs_iterator::<RecordedJob>().unwrap();
     let mut jobs = Vec::new();
     all.get_last_jobs(2, &mut jobs).unwrap();
     assert_eq!(jobs.iter().map(|job| job.id).collect::<Vec<_>>(), [3, 2]);
     all.get_last_jobs(2, &mut jobs).unwrap();
     assert_eq!(jobs.iter().map(|job| job.id).collect::<Vec<_>>(), [1]);
 
-    let mut from_two = meta.history_ddl_jobs::<RecordedJob>(2).unwrap();
+    let mut from_two = meta.get_history_ddl_jobs_iterator::<RecordedJob>(2).unwrap();
     from_two.get_last_jobs(9, &mut jobs).unwrap();
     assert_eq!(jobs.iter().map(|job| job.id).collect::<Vec<_>>(), [2, 1]);
 
     let mut filtered = meta
-        .last_history_ddl_jobs_with_filter::<RecordedJob>(
+        .get_last_history_ddl_jobs_iterator_with_filter::<RecordedJob>(
             BTreeSet::from(["does-not-match".to_owned()]),
             BTreeSet::from(["t2".to_owned()]),
         )
@@ -1865,7 +1865,7 @@ fn ddl_history_count_buffer_filter_and_decode_error_edges_match_go() {
         meta.add_history_ddl_job(&mut job, false).unwrap();
     }
 
-    let mut iterator = meta.last_history_ddl_jobs::<PoisonJob>().unwrap();
+    let mut iterator = meta.get_last_history_ddl_jobs_iterator::<PoisonJob>().unwrap();
     let mut jobs = vec![PoisonJob {
         id: 99,
         schema_name: String::new(),
@@ -1895,7 +1895,7 @@ fn ddl_history_count_buffer_filter_and_decode_error_edges_match_go() {
     );
 
     let mut filtered = meta
-        .last_history_ddl_jobs_with_filter::<PoisonJob>(
+        .get_last_history_ddl_jobs_iterator_with_filter::<PoisonJob>(
             BTreeSet::new(),
             BTreeSet::from(["ok".to_owned()]),
         )
@@ -1918,7 +1918,7 @@ fn ddl_history_preserves_constructor_and_both_next_error_boundaries() {
             .with_iteration_error("new reverse iterator"),
     );
     assert!(matches!(
-        constructor_error.last_history_ddl_jobs::<RecordedJob>(),
+        constructor_error.get_last_history_ddl_jobs_iterator::<RecordedJob>(),
         Err(MetaError::Storage(message)) if message == "new reverse iterator"
     ));
 
@@ -1929,7 +1929,7 @@ fn ddl_history_preserves_constructor_and_both_next_error_boundaries() {
             .with_reverse_next_error(0, "next matching job"),
     );
     let mut iterator = matching_next_error
-        .last_history_ddl_jobs::<RecordedJob>()
+        .get_last_history_ddl_jobs_iterator::<RecordedJob>()
         .unwrap();
     let mut jobs = vec![job(99, "old", "old")];
     assert_eq!(
@@ -1950,7 +1950,7 @@ fn ddl_history_preserves_constructor_and_both_next_error_boundaries() {
             .with_reverse_next_error(0, "next filtered job"),
     );
     let mut iterator = filtered_next_error
-        .last_history_ddl_jobs_with_filter::<RecordedJob>(
+        .get_last_history_ddl_jobs_iterator_with_filter::<RecordedJob>(
             BTreeSet::from(["does-not-match".to_owned()]),
             BTreeSet::new(),
         )
@@ -1973,8 +1973,8 @@ fn dxf_and_ru_stats_match_go_json_shapes_including_null() {
         .inspect(|transaction| transaction.entries()[&dxf_key].clone())
         .unwrap();
     assert_eq!(dxf, br#"{"expire_time":"0001-01-01T00:00:00Z"}"#);
-    assert_eq!(meta.dxf_schedule_tune_factors("ks").unwrap(), Some(factors));
-    assert_eq!(meta.dxf_schedule_tune_factors("missing").unwrap(), None);
+    assert_eq!(meta.get_dxf_schedule_tune_factors("ks").unwrap(), Some(factors));
+    assert_eq!(meta.get_dxf_schedule_tune_factors("missing").unwrap(), None);
 
     let factors = tidb_dxf::schstatus::TtlTuneFactors {
         ttl_info: tidb_dxf::schstatus::TtlInfo {
@@ -1993,7 +1993,7 @@ fn dxf_and_ru_stats_match_go_json_shapes_including_null() {
         br#"{"ttl":3600000000000,"expire_time":"0001-01-01T00:00:00Z","amplify_factor":1.5}"#
     );
     assert_eq!(
-        meta.dxf_schedule_tune_factors("ks2").unwrap(),
+        meta.get_dxf_schedule_tune_factors("ks2").unwrap(),
         Some(factors)
     );
 
@@ -2037,7 +2037,7 @@ fn dxf_and_ru_stats_match_go_json_shapes_including_null() {
         )
         .unwrap();
     assert!(matches!(
-        Mutator::new(corrupt_dxf).dxf_schedule_tune_factors("bad"),
+        Mutator::new(corrupt_dxf).get_dxf_schedule_tune_factors("bad"),
         Err(MetaError::InvalidJson(_))
     ));
 
@@ -2089,17 +2089,17 @@ fn oldest_schema_version_reads_the_last_mvcc_short_value_at_max_ts() {
         }),
         ..Default::default()
     };
-    assert_eq!(oldest_schema_version(&mut reader).unwrap(), 10);
+    assert_eq!(get_oldest_schema_version(&mut reader).unwrap(), 10);
     assert_eq!(reader.requested_timestamp, Some(u64::MAX));
 
     reader.result = Some(MvccInfo::default());
     assert_eq!(
-        oldest_schema_version(&mut reader),
+        get_oldest_schema_version(&mut reader),
         Err(MetaError::NoSchemaVersionWrite)
     );
     reader.result = None;
     assert_eq!(
-        oldest_schema_version(&mut reader),
+        get_oldest_schema_version(&mut reader),
         Err(MetaError::NoSchemaVersionWrite)
     );
 
@@ -2109,13 +2109,13 @@ fn oldest_schema_version_reads_the_last_mvcc_short_value_at_max_ts() {
         }],
     });
     assert_eq!(
-        oldest_schema_version(&mut reader),
+        get_oldest_schema_version(&mut reader),
         Err(MetaError::Structure(StructureError::InvalidIntValue))
     );
 
     reader.error = Some(MetaError::Storage("mvcc unavailable".to_owned()));
     assert_eq!(
-        oldest_schema_version(&mut reader),
+        get_oldest_schema_version(&mut reader),
         Err(MetaError::Storage("mvcc unavailable".to_owned()))
     );
 }

@@ -326,7 +326,7 @@ impl KvHandler {
         let ctx = req_ctx.read_context();
         match self
             .store
-            .get_with_commit_ts(&ctx, &req.key, req.version, req.need_commit_ts)
+            .get_pair(&ctx, &req.key, req.version, req.need_commit_ts)
         {
             Ok((value, commit_ts)) => kvrpcpb::GetResponse {
                 value: value.unwrap_or_default(),

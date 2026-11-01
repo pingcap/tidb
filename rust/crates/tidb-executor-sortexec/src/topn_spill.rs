@@ -194,7 +194,7 @@ impl SpilledRun {
         disk_tracker.attach_to(parent);
         let mut in_disk = DataInDiskByChunks::new(field_types.to_vec(), "", spill_storage);
         in_disk.disk_tracker().attach_to(&disk_tracker);
-        let mut tmp = Chunk::new_with_capacity(field_types, spill_chunk_size);
+        let mut tmp = Chunk::new_chunk_with_capacity(field_types, spill_chunk_size);
         for (relative_index, &(chunk_index, row_index)) in row_ptrs.iter().enumerate() {
             // Go's `topNSpillHelper.spillHeap` polls `SQLKiller` every 100
             // heap positions, before appending that position's row. Keep the

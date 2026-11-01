@@ -23,7 +23,7 @@ use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 
 use crate::modify::ModifyParam;
-use crate::step::{step2str, Step};
+use crate::step::{step_2_str, Step};
 
 go_string_type! {
     /// Go `TaskState`: the state of a task.
@@ -327,7 +327,7 @@ impl fmt::Display for TaskBase {
             self.key,
             self.tp,
             self.state,
-            step2str(&self.tp, self.step),
+            step_2_str(&self.tp, self.step),
             self.priority,
             self.required_slots,
             self.target_scope,

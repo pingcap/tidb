@@ -215,7 +215,7 @@ pub fn is_safe_point_get_path_4_plan_cache(
 /// Go `isPlanCacheable` over the physical operators represented by this
 /// planner. Every represented refusal is checked
 /// recursively, including reader-owned subplans.
-pub fn plan_cacheable(plan: &PhysicalPlan, context: PlanCacheabilityContext) -> Result<(), String> {
+pub fn is_plan_cacheable(plan: &PhysicalPlan, context: PlanCacheabilityContext) -> Result<(), String> {
     let physical = match plan {
         PhysicalPlan::Dml(dml) => match dml.select_plan.as_deref() {
             Some(select) => select,

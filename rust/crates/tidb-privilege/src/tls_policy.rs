@@ -27,7 +27,7 @@ pub struct TlsPeerIdentity {
 
 /// Go `util.ParseAndCheckSAN` over a stored policy's `san` text: each SAN type with its
 /// alternatives.
-pub fn parse_policy_sans(raw: &str) -> Result<BTreeMap<String, Vec<String>>, String> {
+pub fn parse_and_check_san(raw: &str) -> Result<BTreeMap<String, Vec<String>>, String> {
     let mut result = BTreeMap::<String, Vec<String>>::new();
     for item in raw.split(',') {
         let (kind, value) = item

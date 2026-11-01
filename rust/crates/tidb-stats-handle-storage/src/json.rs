@@ -70,7 +70,7 @@ use tidb_datatype::{
     DEFAULT_STATEMENT_FLAGS,
 };
 use tidb_stats::cmsketch::{
-    cmsketch_and_topn_from_proto, CmsSketchProto, CmsSketchProtoRow, CmsSketchProtoTopN,
+    cm_sketch_and_top_n_from_proto, CmsSketchProto, CmsSketchProtoRow, CmsSketchProtoTopN,
 };
 use tidb_stats::histogram::Histogram;
 use tidb_stats::{fm_sketch_from_proto, ColAndIdxExistenceMap, Column, FmSketchProto, HistColl, Index, StatsLoadedStatus, Table};
@@ -432,7 +432,7 @@ static EMPTY_BUCKET: JsonBucket = JsonBucket {
 };
 
 /// The dumped `tipb.CMSketch` handed to the shared
-/// [`cmsketch_and_topn_from_proto`] conversion -- the same code path Go's
+/// [`cm_sketch_and_top_n_from_proto`] conversion -- the same code path Go's
 /// `CMSketchAndTopNFromProto` is, so a sketch loads exactly as one decoded
 /// from `mysql.stats_histograms` would, TopN sort included. That final
 /// `topN.Sort()` matters: the estimator binary-searches the TopN
@@ -482,7 +482,7 @@ fn cmsketch_from_json(
         top_n,
         default_value: proto.default_value,
     };
-    Ok(cmsketch_and_topn_from_proto(Some(&native)))
+    Ok(cm_sketch_and_top_n_from_proto(Some(&native)))
 }
 
 /// Go `statistics.FMSketchFromProto` for the JSON proto-shaped value.

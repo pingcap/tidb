@@ -120,7 +120,7 @@ pub fn create_table_in_catalog(
             )
             .map_err(refused)?
         }
-        None => tidb_ddl_build::table_info_build::build_table_info_in_schema(
+        None => tidb_ddl_build::table_info_build::build_table_info_with_stmt(
             create,
             &database,
             charset.charset.name(),
@@ -269,7 +269,7 @@ use tidb_charset::Collation;
     /// `KvIndex`, so an `INVISIBLE` key is maintained (it is in `indexes()`)
     /// and hidden from every access path (it is not in `plan_indexes()`),
     /// which is Go's rule. Hardcoding `visible: true` -- as all three sites
-    /// did -- made the planner choose an index Go never chooses. The
+    /// did -- made the planner new_row_sample_collector an index Go never chooses. The
     /// `CREATE INDEX` and `ADD INDEX` sites are the session's
     /// (`tidb-session/tests/index_ddl_prefix_and_visibility_source.rs`).
     #[test]

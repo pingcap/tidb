@@ -215,7 +215,7 @@ fn set_get_dxf_schedule_tune_factors_round_trips() {
 
     // Not set yet.
     let fresh = Mutator::new(MemoryTransaction::default());
-    assert_eq!(fresh.dxf_schedule_tune_factors(keyspace).unwrap(), None);
+    assert_eq!(fresh.get_dxf_schedule_tune_factors(keyspace).unwrap(), None);
 
     // Set it, then read it back (a `Mutator` handle shares the transaction,
     // matching Go's committed-value read).
@@ -223,7 +223,7 @@ fn set_get_dxf_schedule_tune_factors_round_trips() {
         .set_dxf_schedule_tune_factors(keyspace, &factors)
         .unwrap();
     let got = fresh
-        .dxf_schedule_tune_factors(keyspace)
+        .get_dxf_schedule_tune_factors(keyspace)
         .unwrap()
         .unwrap();
     assert_eq!(got, factors);

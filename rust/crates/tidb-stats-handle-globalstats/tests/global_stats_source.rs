@@ -19,7 +19,7 @@ use tidb_codec::encode_key;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_stats::histogram::{Bucket, Histogram};
 use tidb_stats::{CmsSketch, FmSketch, TopN, MAX_SKETCH_SIZE};
-use tidb_stats_handle_globalstats::{merge_partition_stats_item, merge_partition_topn, merge_partition_topn_concurrently, GlobalStatsMergeError, GlobalStatsMergeMode, PartitionStatsItem, MAX_PARTITION_MERGE_BATCH_SIZE};
+use tidb_stats_handle_globalstats::{merge_partition_stats_item, merge_part_top_n_2_global_top_n, merge_global_stats_top_n_by_concurrency, GlobalStatsMergeError, GlobalStatsMergeMode, PartitionStatsItem, MAX_PARTITION_MERGE_BATCH_SIZE};
 use tidb_sqlkiller::{KillSignal, SqlKiller};
 
 fn encoded(value: i64) -> Vec<u8> {
@@ -48,7 +48,7 @@ fn source_merge_partition_topn_without_histograms() {
         })
         .collect::<Vec<_>>();
     let refs = topns.iter().map(Some).collect::<Vec<_>>();
-    let (global, remainder, _) = merge_partition_topn(
+    let (global, remainder, _) = merge_part_top_n_2_global_top_n(
         Some(&Utc),
         1,
         &refs,
@@ -108,7 +108,7 @@ fn source_merge_partition_topn_counts_and_removes_histogram_values() {
             ..Default::default()
         })
         .collect();
-    let (global, remainder, _) = merge_partition_topn(
+    let (global, remainder, _) = merge_part_top_n_2_global_top_n(
         Some(&Utc),
         1,
         &refs,
@@ -319,7 +319,7 @@ fn source_sequential_topn_merge_preserves_the_kill_error() {
     killer.send_kill_signal(KillSignal::QueryInterrupted);
     let mut topn = TopN::new(1);
     topn.append(&encoded(1), 1);
-    let error = merge_partition_topn(
+    let error = merge_part_top_n_2_global_top_n(
         Some(&Utc),
         2,
         &[Some(&topn)],
@@ -374,7 +374,7 @@ fn exported_topn_workers_poll_killer_before_skipping_an_empty_topn() {
     let histogram = partition_item([]).histogram;
 
     assert!(matches!(
-        merge_partition_topn(
+        merge_part_top_n_2_global_top_n(
             Some(&Utc),
             2,
             &[Some(&empty)],
@@ -387,7 +387,7 @@ fn exported_topn_workers_poll_killer_before_skipping_an_empty_topn() {
         Err(GlobalStatsMergeError::Killed(_))
     ));
     assert!(matches!(
-        merge_partition_topn_concurrently(
+        merge_global_stats_top_n_by_concurrency(
             Some(&Utc),
             2,
             &[Some(&empty)],

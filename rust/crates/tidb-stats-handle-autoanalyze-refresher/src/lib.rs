@@ -253,7 +253,7 @@ impl Refresher {
     }
 
     /// Go `IsQueueInitializedForTest`.
-    pub fn is_queue_initialized(&self) -> bool {
+    pub fn is_queue_initialized_for_test(&self) -> bool {
         self.jobs.is_initialized()
     }
 
@@ -263,7 +263,7 @@ impl Refresher {
     }
 
     /// Go `WaitAutoAnalyzeFinishedForTest`.
-    pub fn wait_auto_analyze_finished(&self) {
+    pub fn wait_auto_analyze_finished_for_test(&self) {
         self.worker.stop();
     }
 
@@ -478,7 +478,7 @@ mod tests {
         outside.start_time = format!("{minute} +0000");
         outside.end_time = outside.start_time.clone();
         assert!(!refresher.analyze_highest_priority_tables(&outside));
-        assert!(refresher.is_queue_initialized());
+        assert!(refresher.is_queue_initialized_for_test());
         assert_eq!(source.inventory_reads.load(Ordering::SeqCst), 1);
 
         let mut changed = parameters();
@@ -501,7 +501,7 @@ mod tests {
         let mut invalid = parameters();
         invalid.start_time = "invalid".to_owned();
         assert!(!refresher.analyze_highest_priority_tables(&invalid));
-        assert!(refresher.is_queue_initialized());
+        assert!(refresher.is_queue_initialized_for_test());
         refresher.close();
     }
 }

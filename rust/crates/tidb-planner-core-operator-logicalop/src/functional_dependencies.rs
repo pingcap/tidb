@@ -110,7 +110,7 @@ fn fd_object_id(
         Expression::ScalarFunction(_) => {
             let mut expression = expression.clone();
             let hash = expression.hash_code().to_vec();
-            if let Some(id) = fds.registered_unique_id(&hash) {
+            if let Some(id) = fds.is_hash_code_registered(&hash) {
                 return Some(id);
             }
             let mut next = context.alloc_column_id();
@@ -259,7 +259,7 @@ impl LogicalPlan {
                         .collect::<Vec<_>>();
                     if !primary.is_empty() {
                         let primary = FastIntSet::new(primary);
-                        fds.add_strict(primary.clone(), all_columns.clone());
+                        fds.add_strict_functional_dependency(primary.clone(), all_columns.clone());
                         fds.make_not_null(primary);
                     }
                 }
@@ -270,11 +270,11 @@ impl LogicalPlan {
                     let (strict_keys, lax_keys) = source.index_keys(schema);
                     for key in strict_keys {
                         let key = FastIntSet::new(key.iter().map(|column| column.unique_id));
-                        fds.add_strict(key.clone(), all_columns.clone());
+                        fds.add_strict_functional_dependency(key.clone(), all_columns.clone());
                         fds.make_not_null(key);
                     }
                     for key in lax_keys {
-                        fds.add_lax(
+                        fds.add_lax_functional_dependency(
                             FastIntSet::new(key.iter().map(|column| column.unique_id)),
                             all_columns.clone(),
                         );
@@ -287,7 +287,7 @@ impl LogicalPlan {
                         declared_not_null.insert(column.unique_id);
                     }
                     if let Some(generated) = column.virtual_expr.as_deref() {
-                        fds.add_strict(
+                        fds.add_strict_functional_dependency(
                             FastIntSet::new(
                                 extract_columns(generated).iter().map(|base| base.unique_id),
                             ),
@@ -329,7 +329,7 @@ impl LogicalPlan {
                         Expression::Constant(_) => {
                             let mut expression = expression.clone();
                             let hash = expression.hash_code().to_vec();
-                            let id = fds.registered_unique_id(&hash).unwrap_or(output.unique_id);
+                            let id = fds.is_hash_code_registered(&hash).unwrap_or(output.unique_id);
                             fds.register_unique_id(hash, id);
                             fds.add_constants(FastIntSet::new([id]));
                         }
@@ -337,12 +337,12 @@ impl LogicalPlan {
                             let mut expression = expression.clone();
                             let hash = expression.hash_code().to_vec();
                             if tidb_expr::expr_util::check_non_deterministic(&expression) {
-                                if fds.registered_unique_id(&hash).is_none() {
+                                if fds.is_hash_code_registered(&hash).is_none() {
                                     fds.register_unique_id(hash, 0);
                                 }
                                 continue;
                             }
-                            let id = fds.registered_unique_id(&hash).unwrap_or(output.unique_id);
+                            let id = fds.is_hash_code_registered(&hash).unwrap_or(output.unique_id);
                             fds.register_unique_id(hash, id);
                             let determinants = expression_determinants(&expression);
                             projected.union_with(&determinants);
@@ -351,7 +351,7 @@ impl LogicalPlan {
                             {
                                 expression_not_null.insert(id);
                             }
-                            fds.add_strict(determinants, FastIntSet::new([id]));
+                            fds.add_strict_functional_dependency(determinants, FastIntSet::new([id]));
                             if id != output.unique_id {
                                 fds.add_equivalence(
                                     FastIntSet::new([id]),
@@ -612,7 +612,7 @@ impl LogicalPlan {
                         Expression::ScalarFunction(_) => {
                             let mut expression_for_hash = expression.clone();
                             let hash = expression_for_hash.hash_code().to_vec();
-                            let id = if let Some(id) = fds.registered_unique_id(&hash) {
+                            let id = if let Some(id) = fds.is_hash_code_registered(&hash) {
                                 id
                             } else if let Some(id) =
                                 context.projected_expression_ids.get(&hash).copied()
@@ -631,7 +631,7 @@ impl LogicalPlan {
                             {
                                 expression_not_null.insert(id);
                             }
-                            fds.add_strict(determinants, FastIntSet::new([id]));
+                            fds.add_strict_functional_dependency(determinants, FastIntSet::new([id]));
                         }
                         _ => {}
                     }
@@ -642,7 +642,7 @@ impl LogicalPlan {
                 if let Some(schema) = self.schema() {
                     for (function, output) in aggregation.agg_funcs.iter().zip(&schema.columns) {
                         if function.name() != AGG_FUNC_FIRST_ROW {
-                            fds.add_strict(group_by.clone(), FastIntSet::new([output.unique_id]));
+                            fds.add_strict_functional_dependency(group_by.clone(), FastIntSet::new([output.unique_id]));
                         }
                     }
                     if !aggregation.group_by_items.is_empty() {

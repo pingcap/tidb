@@ -615,7 +615,7 @@ use tidb_exprctx::NoColumns;
             FieldTypeCode::Blob,
         ] {
             let field = FieldType::new(code).with_collation(Collation::Utf8Mb4GeneralCi);
-            let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 6);
+            let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 6);
             for value in [Some("b"), None, Some("a "), Some("A"), None, Some("c")] {
                 if let Some(value) = value {
                     chunk.append_string(0, value);
@@ -647,7 +647,7 @@ use tidb_exprctx::NoColumns;
             let field = FieldType::new(FieldTypeCode::LongLong);
             let constant =
                 Expression::Constant(Constant::new(Datum::new_string("12tail"), field.clone()));
-            let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 4);
+            let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 4);
             for value in [1, 1, 2, 2] {
                 chunk.append_int64(0, value);
             }
@@ -707,7 +707,7 @@ use tidb_exprctx::NoColumns;
                     ));
                     let integer = FieldType::new(FieldTypeCode::LongLong);
                     let mut chunk =
-                        Chunk::new_with_capacity(&[field.clone(), field, integer.clone()], 3);
+                        Chunk::new_chunk_with_capacity(&[field.clone(), field, integer.clone()], 3);
                     for i in 0..3 {
                         if i == 1 {
                             chunk.append_null(0);
@@ -823,7 +823,7 @@ use tidb_exprctx::NoColumns;
                     output,
                     vec![column(0, left.clone()), column(1, right.clone())],
                 ));
-                let mut chunk = Chunk::new_with_capacity(&[left, right], 1);
+                let mut chunk = Chunk::new_chunk_with_capacity(&[left, right], 1);
                 chunk.append_datum(0, &value(a, lu));
                 chunk.append_datum(1, &value(b, ru));
                 let ctx = tidb_sessionctx::StmtContext::default();
@@ -906,7 +906,7 @@ use tidb_exprctx::NoColumns;
                 let ctx = tidb_sessionctx::StmtContext::default()
                     .with_enable_vectorized_expression(vectorized)
                     .with_truncate_level(tidb_exprctx::ErrorLevel::Warn);
-                let mut input = Chunk::new_with_capacity(&[field], 4);
+                let mut input = Chunk::new_chunk_with_capacity(&[field], 4);
                 for value in [1, 1, 2, 2] {
                     input.append_int64(0, value);
                 }
@@ -987,7 +987,7 @@ use tidb_exprctx::NoColumns;
                 let ctx = tidb_sessionctx::StmtContext::default()
                     .with_enable_vectorized_expression(vectorized)
                     .with_truncate_level(tidb_exprctx::ErrorLevel::Warn);
-                let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 4);
+                let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 4);
                 for value in [1, 1, 2, 2] {
                     chunk.append_int64(0, value);
                 }
@@ -1044,7 +1044,7 @@ use tidb_exprctx::NoColumns;
         let child_type = FieldType::new(FieldTypeCode::NewDecimal);
         let mut constant = Constant::new(Datum::Null, child_type.clone().with_decimal(3));
         constant.deferred_expr = Some(Box::new(column(0, child_type.clone())));
-        let mut chunk = Chunk::new_with_capacity(&[child_type], 3);
+        let mut chunk = Chunk::new_chunk_with_capacity(&[child_type], 3);
         for text in ["0", &"9".repeat(81), "1"] {
             chunk.append_datum(0, &Datum::Decimal(Decimal::from_literal(text)));
         }
@@ -1074,7 +1074,7 @@ use tidb_exprctx::NoColumns;
             let ctx = tidb_sessionctx::StmtContext::default()
                 .with_enable_vectorized_expression(vectorized);
             let field = FieldType::new(FieldTypeCode::LongLong);
-            let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 4);
+            let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 4);
             for value in [1, 1, 2, 2] {
                 chunk.append_int64(0, value);
             }
@@ -1134,7 +1134,7 @@ use tidb_exprctx::ErrorLevel;
                 "0604038100c8",
             ),
         ];
-        let mut chunk = Chunk::new_with_capacity(&[FieldType::new(FieldTypeCode::LongLong)], 2);
+        let mut chunk = Chunk::new_chunk_with_capacity(&[FieldType::new(FieldTypeCode::LongLong)], 2);
         chunk.append_int64(0, 1);
         chunk.append_int64(0, 2);
         for level in [ErrorLevel::Error, ErrorLevel::Warn, ErrorLevel::Ignore] {
@@ -1295,7 +1295,7 @@ use tidb_exprctx::ErrorLevel;
                 None,
             ),
         ];
-        let mut chunk = Chunk::new_with_capacity(&[FieldType::new(FieldTypeCode::LongLong)], 2);
+        let mut chunk = Chunk::new_chunk_with_capacity(&[FieldType::new(FieldTypeCode::LongLong)], 2);
         chunk.append_int64(0, 0);
         chunk.append_int64(0, 1);
         let mut mismatches = Vec::new();
@@ -1387,7 +1387,7 @@ use tidb_exprctx::ErrorLevel;
             return;
         }
         for enabled in [false, true] {
-            tidb_datatype::set_new_collation_enabled(enabled);
+            tidb_datatype::set_new_collation_enabled_for_test(enabled);
             for name in [
                 "utf8mb4_general_ci",
                 "UTF8MB4_GENERAL_CI",
@@ -1395,7 +1395,7 @@ use tidb_exprctx::ErrorLevel;
                 "utf8mb4_bin",
             ] {
                 let field = FieldType::new(FieldTypeCode::VarString).with_collation_name(name);
-                let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 4);
+                let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 4);
                 for value in ["A", "A ", "a", "b"] {
                     chunk.append_string(0, value);
                 }
@@ -1465,7 +1465,7 @@ use tidb_exprctx::ErrorLevel;
                     warnings: Default::default(),
                 };
                 let field = FieldType::new(FieldTypeCode::Timestamp);
-                let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 2);
+                let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 2);
                 for day in [1, 2] {
                     chunk.append_datum(
                         0,
@@ -1708,7 +1708,7 @@ use tidb_exprctx::ErrorLevel;
             let mut field = FieldType::new(code);
             field.add_flags(flags);
             field.set_collation(Collation::Utf8Mb4GeneralCi);
-            let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 4);
+            let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 4);
             chunk.append_null(0);
             for value in &values {
                 chunk.append_datum(0, value);
@@ -1749,7 +1749,7 @@ use tidb_exprctx::ErrorLevel;
                     values[2].clone(),
                 );
                 let integer = FieldType::new(FieldTypeCode::LongLong);
-                let mut input = Chunk::new_with_capacity(std::slice::from_ref(&integer), 4);
+                let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&integer), 4);
                 for value in [1, 1, 2, 2] {
                     input.append_int64(0, value);
                 }
@@ -1814,7 +1814,7 @@ use tidb_exprctx::ErrorLevel;
                 warnings: Default::default(),
             };
             let field = FieldType::new(FieldTypeCode::Bit);
-            let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 2);
+            let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 2);
             let value = Datum::Bit(tidb_datatype::BinaryLiteral::from(vec![
                 1, 0, 0, 0, 0, 0, 0, 0, 0,
             ]));
@@ -1858,7 +1858,7 @@ use tidb_exprctx::ErrorLevel;
             FieldTypeCode::Year,
         ] {
             let field = FieldType::new(code);
-            let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 7);
+            let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 7);
             for value in [Some(7), None, Some(2), Some(2), None, Some(1), Some(1)] {
                 match value {
                     Some(value) => chunk.append_int64(0, value),
@@ -1879,7 +1879,7 @@ use tidb_exprctx::ErrorLevel;
     fn groups_continue_across_chunk_boundaries() {
         let field = FieldType::new(FieldTypeCode::LongLong);
         let mut checker = VecGroupChecker::new(vec![column(0, field.clone())]);
-        let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 4);
+        let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 4);
         for value in [1, 1, 2, 2] {
             chunk.append_int64(0, value);
         }
@@ -1887,7 +1887,7 @@ use tidb_exprctx::ErrorLevel;
         assert_eq!(checker.group_count(), 2);
         assert_eq!(ranges(&mut checker), [(0, 2), (2, 4)]);
 
-        let mut next = Chunk::new_with_capacity(&[field], 3);
+        let mut next = Chunk::new_chunk_with_capacity(&[field], 3);
         for value in [2, 3, 3] {
             next.append_int64(0, value);
         }
@@ -1913,7 +1913,7 @@ use tidb_exprctx::ErrorLevel;
             FieldType::new(FieldTypeCode::LongLong),
             vec![column(0, field.clone())],
         ));
-        let mut chunk = Chunk::new_with_capacity(&[field], 32);
+        let mut chunk = Chunk::new_chunk_with_capacity(&[field], 32);
         for _ in 0..32 {
             chunk.append_string(0, "1bad");
         }
@@ -1950,7 +1950,7 @@ use tidb_exprctx::ErrorLevel;
             let mut global_row = 0usize;
             let mut groups = 0usize;
             for (chunk_index, rows) in chunk_rows.iter().copied().enumerate() {
-                let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), rows);
+                let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), rows);
                 for _ in 0..rows {
                     chunk.append_int64(0, (global_row / same_rows) as i64);
                     global_row += 1;
@@ -2003,14 +2003,14 @@ use tidb_exprctx::ErrorLevel;
     fn previous_key_owns_variable_length_values() {
         let field = FieldType::new(FieldTypeCode::VarString);
         let mut checker = VecGroupChecker::new(vec![column(0, field.clone())]);
-        let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 1);
+        let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 1);
         chunk.append_string(0, "abc");
         checker.split_into_groups(&NoColumns, &chunk).unwrap();
 
         chunk.reset();
         chunk.append_string(0, "replacement that grows the source buffer");
 
-        let mut next = Chunk::new_with_capacity(&[field], 1);
+        let mut next = Chunk::new_chunk_with_capacity(&[field], 1);
         next.append_string(0, "abc");
         assert!(checker.split_into_groups(&NoColumns, &next).unwrap());
     }
@@ -2081,7 +2081,7 @@ use tidb_exprctx::ErrorLevel;
     fn cross_chunk_float_identity_uses_the_source_encoded_key() {
         let field = FieldType::new(FieldTypeCode::Double);
         let chunk = |values: &[f64]| {
-            let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), values.len());
+            let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), values.len());
             for value in values {
                 chunk.append_float64(0, *value);
             }
@@ -2117,7 +2117,7 @@ use tidb_exprctx::ErrorLevel;
     #[test]
     fn empty_items_and_reset_match_the_internal_contract() {
         let field = FieldType::new(FieldTypeCode::LongLong);
-        let mut chunk = Chunk::new_with_capacity(&[field], 2);
+        let mut chunk = Chunk::new_chunk_with_capacity(&[field], 2);
         chunk.append_int64(0, 1);
         chunk.append_int64(0, 2);
         let mut checker = VecGroupChecker::new(Vec::new());

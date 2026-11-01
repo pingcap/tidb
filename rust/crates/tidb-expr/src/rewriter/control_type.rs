@@ -72,7 +72,7 @@ fn maxlen(lhs: i64, rhs: i64) -> i64 {
 /// `resultFieldType.EvalType()`. Go passes the former to both setters
 /// (`builtin_control.go:271-278`) and only reads the latter afterwards, for
 /// the scale fixups.
-pub fn set_len_from_args(result: &mut FieldType, eval_type: EvalType, args: &[&FieldType]) {
+pub fn set_decimal_from_args(result: &mut FieldType, eval_type: EvalType, args: &[&FieldType]) {
     // setDecimalFromArgs: ETInt has no scale; otherwise the widest argument
     // scale, or unspecified as soon as one argument's is unspecified.
     if eval_type == EvalType::Int {
@@ -149,7 +149,7 @@ pub fn set_len_from_args(result: &mut FieldType, eval_type: EvalType, args: &[&F
     }
 }
 
-/// [`set_len_from_args`] for a caller that has only the merged type to read
+/// [`set_decimal_from_args`] for a caller that has only the merged type to read
 /// an eval type from.
 ///
 /// `tidb_executor_windows`'s `LAG`/`LEAD` inference is the one such caller:
@@ -157,7 +157,7 @@ pub fn set_len_from_args(result: &mut FieldType, eval_type: EvalType, args: &[&F
 /// `AggregateEvalType` answer of its own to pass.
 pub fn set_numeric_len_from_args(result: &mut FieldType, args: &[&FieldType]) {
     let eval_type = result.eval_type();
-    set_len_from_args(result, eval_type, args);
+    set_decimal_from_args(result, eval_type, args);
 }
 
 /// Go `types.SetBinChsClnFlag`.
@@ -214,7 +214,7 @@ fn add_result_flags(name: &str, result: &mut FieldType, args: &[&FieldType]) {
 /// `None` only when an argument carries no static type at all -- Go always
 /// has one, so that is this tier's "I could not type the arguments", never a
 /// judgement that Go would refuse the call.
-pub fn infer_type4_control_funcs(name: &str, args: &[Expression]) -> Option<FieldType> {
+pub fn infer_type_4_control_funcs(name: &str, args: &[Expression]) -> Option<FieldType> {
     let all: Vec<&FieldType> = args
         .iter()
         .map(Expression::static_type)
@@ -253,7 +253,7 @@ pub fn infer_type4_control_funcs(name: &str, args: &[Expression]) -> Option<Fiel
         let mut flags = 0_u32;
         let eval_type = aggregate_eval_type(&owned, &mut flags);
         merged.set_flags(flags);
-        set_len_from_args(&mut merged, eval_type, &not_null_fields);
+        set_decimal_from_args(&mut merged, eval_type, &not_null_fields);
         merged
     };
 
@@ -310,7 +310,7 @@ mod tests {
     /// `IF(1,1,'a')` -> `STR:1`.
     #[test]
     fn an_integer_branch_beside_a_string_one_is_a_string_result() {
-        let ft = infer_type4_control_funcs(
+        let ft = infer_type_4_control_funcs(
             "ifnull",
             &[
                 arg(FieldTypeCode::LongLong, 1, 0),
@@ -340,7 +340,7 @@ mod tests {
         unsigned.set_flen(10);
         unsigned.set_decimal(0);
         unsigned.add_flags(FieldTypeFlags::UNSIGNED);
-        let ft = infer_type4_control_funcs(
+        let ft = infer_type_4_control_funcs(
             "ifnull",
             &[
                 typed(FieldTypeCode::Null),
@@ -357,7 +357,7 @@ mod tests {
     // string result.
     #[test]
     fn test_issue_46475() {
-        let ft = infer_type4_control_funcs(
+        let ft = infer_type_4_control_funcs(
             "coalesce",
             &[
                 typed(FieldTypeCode::Null),
@@ -375,7 +375,7 @@ mod tests {
     /// `select if(A, null,b)=1 from t` over `b enum("b")`.
     #[test]
     fn a_lone_enum_branch_reports_the_varchar_its_signature_returns() {
-        let ft = infer_type4_control_funcs(
+        let ft = infer_type_4_control_funcs(
             "if",
             &[typed(FieldTypeCode::Null), arg(FieldTypeCode::Enum, 1, 0)],
         )
@@ -406,20 +406,20 @@ mod tests {
             not_null(FieldTypeCode::LongLong),
             not_null(FieldTypeCode::LongLong),
         ];
-        let ft = infer_type4_control_funcs("if", &branches).expect("typed");
+        let ft = infer_type_4_control_funcs("if", &branches).expect("typed");
         assert!(!ft.has_flag(FieldTypeFlags::NOT_NULL));
         // The same two branches under IFNULL DO carry it (`builtin_control.go`
         // `:526`), which is what makes `IFNULL(1, NULL)` a NOT NULL column.
-        let ft = infer_type4_control_funcs("ifnull", &branches).expect("typed");
+        let ft = infer_type_4_control_funcs("ifnull", &branches).expect("typed");
         assert!(ft.has_flag(FieldTypeFlags::NOT_NULL));
         let with_null = [
             not_null(FieldTypeCode::LongLong),
             typed(FieldTypeCode::Null),
         ];
-        let ft = infer_type4_control_funcs("ifnull", &with_null).expect("typed");
+        let ft = infer_type_4_control_funcs("ifnull", &with_null).expect("typed");
         assert!(ft.has_flag(FieldTypeFlags::NOT_NULL));
         // CASE WHEN clears it unconditionally (`:330-333`).
-        let ft = infer_type4_control_funcs("case", &branches).expect("typed");
+        let ft = infer_type_4_control_funcs("case", &branches).expect("typed");
         assert!(!ft.has_flag(FieldTypeFlags::NOT_NULL));
     }
 
@@ -435,7 +435,7 @@ mod tests {
     /// temporal.
     #[test]
     fn the_width_arm_is_chosen_by_the_aggregate_eval_type() {
-        let ft = infer_type4_control_funcs(
+        let ft = infer_type_4_control_funcs(
             "ifnull",
             &[
                 arg(FieldTypeCode::Duration, 10, 0),
@@ -450,7 +450,7 @@ mod tests {
     /// Every branch NULL: a NULL column, width and scale zeroed.
     #[test]
     fn every_branch_null_is_a_null_column() {
-        let ft = infer_type4_control_funcs(
+        let ft = infer_type_4_control_funcs(
             "ifnull",
             &[typed(FieldTypeCode::Null), typed(FieldTypeCode::Null)],
         )
@@ -464,7 +464,7 @@ mod tests {
     /// reported type to VARCHAR because `builtinIfStringSig` is what runs.
     #[test]
     fn an_enum_pair_reports_the_varchar_its_signature_returns() {
-        let ft = infer_type4_control_funcs(
+        let ft = infer_type_4_control_funcs(
             "ifnull",
             &[
                 arg(FieldTypeCode::Enum, 1, 0),
@@ -481,7 +481,7 @@ mod tests {
     /// `RS:1|1.0|1.0|1|1|1`.
     #[test]
     fn a_decimal_branch_widens_the_integer_branchs_scale() {
-        let ft = infer_type4_control_funcs(
+        let ft = infer_type_4_control_funcs(
             "ifnull",
             &[
                 arg(FieldTypeCode::LongLong, 1, 0),
@@ -500,7 +500,7 @@ mod tests {
     /// A DATETIME result takes its canonical width, never a branch's.
     #[test]
     fn a_datetime_result_takes_its_canonical_width() {
-        let ft = infer_type4_control_funcs(
+        let ft = infer_type_4_control_funcs(
             "ifnull",
             &[
                 arg(FieldTypeCode::Datetime, 3, 0),

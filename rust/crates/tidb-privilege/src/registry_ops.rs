@@ -588,7 +588,7 @@ impl PrivilegeRegistry {
     /// `activeRoles` down to whichever are still found in the reloaded role
     /// graph on every check, silently dropping the rest, rather than the
     /// reload reaching into live sessions to deactivate them. Because this
-    /// registry's own [`Self::effective_roles`] performs exactly that same
+    /// registry's own [`Self::find_all_user_effective_roles`] performs exactly that same
     /// filter against `role_edges`, a role dropped elsewhere stops granting
     /// anything the moment this call removes its edges -- the active-role
     /// list is no longer changed, but it stops mattering.
@@ -1060,7 +1060,7 @@ impl PrivilegeRegistry {
     /// `INSERT IGNORE` makes a repeat grant a silent no-op, and nothing
     /// rejects a self-grant or a cycle (captured: `GRANT r1 TO r1` reports
     /// OK), so neither is special-cased here -- the breadth-first walk in
-    /// [`Self::effective_roles`] terminates on visited nodes regardless.
+    /// [`Self::find_all_user_effective_roles`] terminates on visited nodes regardless.
     pub fn grant_role(&self, role: &Account, grantee: &Account) {
         self.lock_role_edges()
             .entry(grantee.clone())
@@ -1108,7 +1108,7 @@ impl PrivilegeRegistry {
     /// is why naming an indirectly-held role reports `ErrRoleNotGranted`
     /// (3530) rather than activating it.
     #[must_use]
-    pub fn has_role(&self, account: &Account, role: &Account) -> bool {
+    pub fn find_role(&self, account: &Account, role: &Account) -> bool {
         self.lock_role_edges()
             .get(account)
             .is_some_and(|roles| roles.contains(role))
@@ -1123,7 +1123,7 @@ impl PrivilegeRegistry {
     /// This is deliberately NOT [`Self::granted_roles`]: activation is
     /// direct-only, but INHERITANCE through an activated role is transitive.
     #[must_use]
-    pub fn effective_roles(&self, account: &Account, active: &[Account]) -> Vec<Account> {
+    pub fn find_all_user_effective_roles(&self, account: &Account, active: &[Account]) -> Vec<Account> {
         let _view = self.read_view();
         let edges = self.lock_role_edges();
         let granted = edges.get(account);
@@ -1247,7 +1247,7 @@ impl PrivilegeRegistry {
     ) -> Vec<Account> {
         let account = (user.to_owned(), host.to_owned());
         let mut identities = vec![account.clone()];
-        identities.extend(self.effective_roles(&account, active_roles));
+        identities.extend(self.find_all_user_effective_roles(&account, active_roles));
         identities
     }
 
@@ -1290,7 +1290,7 @@ impl PrivilegeRegistry {
     /// with no SUPER fallback. `with_grant` additionally requires the row's
     /// `with_grant_option`.
     #[must_use]
-    pub fn has_explicit_dynamic_priv(
+    pub fn has_explicitly_granted_dynamic_privilege(
         &self,
         user: &str,
         host: &str,
@@ -1318,7 +1318,7 @@ impl PrivilegeRegistry {
     #[must_use]
     pub fn has_dynamic_priv(&self, user: &str, host: &str, name: &str, with_grant: bool) -> bool {
         let name = go_to_upper(name);
-        if self.has_explicit_dynamic_priv(user, host, &name, with_grant) {
+        if self.has_explicitly_granted_dynamic_privilege(user, host, &name, with_grant) {
             return true;
         }
         if tidb_sem_compat::is_enabled()
@@ -1367,7 +1367,7 @@ impl PrivilegeRegistry {
             .collect::<Vec<_>>();
         let mut identities = vec![(user.to_owned(), host.to_owned())];
         if let Some(account) = self.matching_account(user, host) {
-            identities.extend(self.effective_roles(&account, &defaults));
+            identities.extend(self.find_all_user_effective_roles(&account, &defaults));
         }
         let name = go_to_upper(name);
         {
@@ -1641,7 +1641,7 @@ impl PrivilegeRegistry {
         if san.is_empty() {
             return true;
         }
-        let Ok(required) = parse_policy_sans(san) else {
+        let Ok(required) = parse_and_check_san(san) else {
             return false;
         };
         required.iter().all(|(kind, alternatives)| {
@@ -2440,7 +2440,7 @@ fn global_ssl_type(json: &str) -> Option<SslType> {
         .and_then(serde_json::Value::as_str)
         .filter(|san| !san.is_empty())
     {
-        parse_policy_sans(san).ok()?;
+        parse_and_check_san(san).ok()?;
     }
     match object.get("ssl_type").map_or(Some(0), |value| {
         if value.is_null() {

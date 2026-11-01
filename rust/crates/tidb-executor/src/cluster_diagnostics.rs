@@ -327,7 +327,7 @@ impl ClusterDiagnosticsClient {
     /// Go `FetchClusterServerInfoWithoutPrivilegeCheck` with statement
     /// warnings: every server is asked concurrently with a ten-second limit;
     /// a failed server becomes a warning and the others keep their order.
-    pub fn fetch_server_info(
+    pub fn fetch_cluster_server_info_without_privilege_check(
         &self,
         servers: &[ClusterServer],
         tp: pb::ServerInfoType,
@@ -591,7 +591,7 @@ mod tests {
             ..dead.clone()
         };
         let mut warnings = Vec::new();
-        let rows = client.fetch_server_info(
+        let rows = client.fetch_cluster_server_info_without_privilege_check(
             &[tidb.clone(), dead.clone()],
             pb::ServerInfoType::SystemInfo,
             &mut warnings,

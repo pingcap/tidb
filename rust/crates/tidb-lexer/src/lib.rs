@@ -169,16 +169,16 @@ pub fn skip_rune_len(enc: Encoding, rest: &str) -> usize {
     }
     let mut raw = [0u8; 4];
     let mut ends = [0usize; 4];
-    let mut raw_len = 0;
+    let mut get_raw_length = 0;
     'chars: for (index, character) in rest.char_indices() {
         let mut buffer = [0u8; 4];
         for byte in raw_bytes::str_to_bytes(character.encode_utf8(&mut buffer)).iter() {
-            if raw_len == raw.len() {
+            if get_raw_length == raw.len() {
                 break 'chars;
             }
-            raw[raw_len] = *byte;
-            ends[raw_len] = index + character.len_utf8();
-            raw_len += 1;
+            raw[get_raw_length] = *byte;
+            ends[get_raw_length] = index + character.len_utf8();
+            get_raw_length += 1;
         }
     }
     // A tail shorter than four bytes stays padded with NUL, which no encoding

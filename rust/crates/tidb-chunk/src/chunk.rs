@@ -96,7 +96,7 @@ impl Chunk {
     }
 
     /// Go `NewChunkWithCapacity`.
-    pub fn new_with_capacity(fields: &[FieldType], capacity: usize) -> Self {
+    pub fn new_chunk_with_capacity(fields: &[FieldType], capacity: usize) -> Self {
         Chunk::new(fields, capacity, capacity)
     }
 
@@ -196,12 +196,12 @@ impl Chunk {
     }
 
     /// Go `SetInCompleteChunk`.
-    pub fn set_incomplete_chunk(&mut self, incomplete: bool) {
+    pub fn set_in_complete_chunk(&mut self, incomplete: bool) {
         self.in_complete_chunk = incomplete;
     }
 
     /// Go `IsInCompleteChunk`.
-    pub fn is_incomplete_chunk(&self) -> bool {
+    pub fn is_in_complete_chunk(&self) -> bool {
         self.in_complete_chunk
     }
 
@@ -1120,7 +1120,7 @@ mod tests {
         )
         .expect("the zero datetime is representable");
 
-        let mut chk = Chunk::new_with_capacity(&field_types, 2);
+        let mut chk = Chunk::new_chunk_with_capacity(&field_types, 2);
         chk.append_float32(0, 1.0);
         chk.append_float64(1, 1.0);
         chk.append_string(2, "1");
@@ -1233,7 +1233,7 @@ mod tests {
     #[test]
     fn build_and_read_rows() {
         let fields = int_str_fields();
-        let mut chk = Chunk::new_with_capacity(&fields, 8);
+        let mut chk = Chunk::new_chunk_with_capacity(&fields, 8);
         assert_eq!(chk.num_cols(), 2);
         assert_eq!(chk.num_rows(), 0);
 
@@ -1257,11 +1257,11 @@ mod tests {
     #[test]
     fn append_row_copies_between_chunks() {
         let fields = int_str_fields();
-        let mut src = Chunk::new_with_capacity(&fields, 4);
+        let mut src = Chunk::new_chunk_with_capacity(&fields, 4);
         src.append_int64(0, 7);
         src.append_string(1, "hi");
 
-        let mut dst = Chunk::new_with_capacity(&fields, 4);
+        let mut dst = Chunk::new_chunk_with_capacity(&fields, 4);
         dst.append_row(src.get_row(0));
         assert_eq!(dst.num_rows(), 1);
         let r = dst.get_row(0);
@@ -1272,7 +1272,7 @@ mod tests {
     #[test]
     fn reset_reuses_columns() {
         let fields = int_str_fields();
-        let mut chk = Chunk::new_with_capacity(&fields, 4);
+        let mut chk = Chunk::new_chunk_with_capacity(&fields, 4);
         chk.append_int64(0, 1);
         chk.append_string(1, "x");
         chk.reset();
@@ -1290,7 +1290,7 @@ mod tests {
             FieldType::new(FieldTypeCode::VarString),
             FieldType::new(FieldTypeCode::Double),
         ];
-        let mut chk = Chunk::new_with_capacity(&fields, 4);
+        let mut chk = Chunk::new_chunk_with_capacity(&fields, 4);
         chk.append_int64(0, 42);
         chk.append_string(1, "hi");
         chk.append_float64(2, 2.5);
@@ -1417,7 +1417,7 @@ mod tests {
     fn decimal_cells_round_trip_as_raw_struct_bytes() {
         use tidb_datatype::{FieldTypeCode, MyDecimal};
         let ft = FieldType::new(FieldTypeCode::NewDecimal);
-        let mut chk = Chunk::new_with_capacity(std::slice::from_ref(&ft), 4);
+        let mut chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&ft), 4);
         let a = MyDecimal::from_int(12345);
         let b = MyDecimal::from_int(-7);
         chk.append_my_decimal(0, &a);
@@ -1445,7 +1445,7 @@ mod tests {
                 .with_decimal(4),
             FieldType::new(FieldTypeCode::NewDecimal).with_flen(10),
         ];
-        let mut chunk = Chunk::new_with_capacity(&fields, 1);
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, 1);
         chunk.append_my_decimal(0, &MyDecimal::from_string(b"12.3").0);
         chunk.append_my_decimal(1, &MyDecimal::from_string(b"12.340").0);
 
@@ -1463,7 +1463,7 @@ mod tests {
         let mut raw = MyDecimal::from_string(b"1.234567890").0.to_raw_bytes();
         raw[2] = 7;
         let stored = MyDecimal::from_raw_bytes(raw).expect("valid decimal layout");
-        let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 1);
+        let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 1);
         chunk.append_my_decimal(0, &stored);
 
         match chunk.get_row(0).get_datum(0, &field) {
@@ -1484,7 +1484,7 @@ mod tests {
                 .with_flen(10)
                 .with_decimal(4),
         ];
-        let mut chunk = Chunk::new_with_capacity(&fields, 1);
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, 1);
         chunk.append_int64(0, 7);
         chunk.append_my_decimal(1, &MyDecimal::from_string(b"12.3").0);
 
@@ -1521,7 +1521,7 @@ mod tests {
         .unwrap();
         let d = MySqlDuration::new(1, 2, 3, 400_000, 3).unwrap();
 
-        let mut chk = Chunk::new_with_capacity(&fields, 4);
+        let mut chk = Chunk::new_chunk_with_capacity(&fields, 4);
         chk.append_datum(0, &Datum::Time(t));
         chk.append_datum(1, &Datum::Duration(d));
         chk.append_datum(0, &Datum::Null);
@@ -1717,7 +1717,7 @@ mod tests {
     #[test]
     fn selection_append_copy_reconstruct_and_truncate_match_go() {
         let fields = int_str_fields();
-        let mut chunk = Chunk::new_with_capacity(&fields, 8);
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, 8);
         for row in 0..4 {
             chunk.append_int64(0, row);
             chunk.append_string(1, format!("s{row}"));
@@ -1745,13 +1745,13 @@ mod tests {
     #[test]
     fn append_ranges_rows_and_projection_preserve_width_and_order() {
         let fields = int_str_fields();
-        let mut source = Chunk::new_with_capacity(&fields, 6);
+        let mut source = Chunk::new_chunk_with_capacity(&fields, 6);
         for row in 0..3 {
             source.append_int64(0, row);
             source.append_string(1, format!("s{row}"));
         }
 
-        let mut range = Chunk::new_with_capacity(&fields, 8);
+        let mut range = Chunk::new_chunk_with_capacity(&fields, 8);
         range.append_range_from(&source, 1, 3);
         assert_eq!(range.num_rows(), 2);
         assert_eq!(range.get_row(0).get_int64(0), 1);
@@ -1760,7 +1760,7 @@ mod tests {
         assert_eq!(range.get_row(3).get_bytes(1), b"s2");
 
         let rows = [source.get_row(2), source.get_row(0)];
-        let mut projected = Chunk::new_with_capacity(
+        let mut projected = Chunk::new_chunk_with_capacity(
             &[
                 FieldType::new(FieldTypeCode::VarString),
                 FieldType::new(FieldTypeCode::LongLong),
@@ -1795,13 +1795,13 @@ mod tests {
     #[test]
     fn append_range_ignores_source_selection() {
         let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
-        let mut source = Chunk::new_with_capacity(&fields, 3);
+        let mut source = Chunk::new_chunk_with_capacity(&fields, 3);
         for value in [10, 20, 30] {
             source.append_int64(0, value);
         }
         source.set_sel(Some(vec![2, 0]));
 
-        let mut target = Chunk::new_with_capacity(&fields, 2);
+        let mut target = Chunk::new_chunk_with_capacity(&fields, 2);
         target.append_range_from(&source, 0, 2);
         assert_eq!(target.get_row(0).get_int64(0), 10);
         assert_eq!(target.get_row(1).get_int64(0), 20);
@@ -1817,7 +1817,7 @@ mod tests {
     #[test]
     fn append_range_from_keeps_shared_columns_batched() {
         let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
-        let mut source = Chunk::new_with_capacity(&fields, 16);
+        let mut source = Chunk::new_chunk_with_capacity(&fields, 16);
         for row in 0..16 {
             if row % 4 == 0 {
                 source.append_null(0);
@@ -1827,7 +1827,7 @@ mod tests {
         }
         let shared = source.prune(&[0]);
 
-        let mut target = Chunk::new_with_capacity(&fields, 16);
+        let mut target = Chunk::new_chunk_with_capacity(&fields, 16);
         target.append_range_from(&shared, 1, 15);
         assert_eq!(target.num_rows(), 14);
         for (actual, expected) in (1..15).enumerate() {
@@ -1844,7 +1844,7 @@ mod tests {
     #[test]
     fn raw_datum_appends_as_a_variable_cell() {
         let field = FieldType::new(FieldTypeCode::VarString);
-        let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 1);
+        let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 1);
         chunk.append_datum(0, &Datum::Raw(vec![0, 255]));
         assert_eq!(chunk.get_row(0).get_bytes(0), &[0, 255]);
     }
@@ -1853,11 +1853,11 @@ mod tests {
     fn partial_row_limited_ignores_hidden_source_columns() {
         let source_fields = vec![FieldType::new(FieldTypeCode::LongLong); 4];
         let target_fields = vec![FieldType::new(FieldTypeCode::LongLong); 3];
-        let mut source = Chunk::new_with_capacity(&source_fields, 1);
+        let mut source = Chunk::new_chunk_with_capacity(&source_fields, 1);
         for (column, value) in [10, 20, 30, 40].into_iter().enumerate() {
             source.append_int64(column, value);
         }
-        let mut target = Chunk::new_with_capacity(&target_fields, 1);
+        let mut target = Chunk::new_chunk_with_capacity(&target_fields, 1);
         target.append_partial_row_limited(0, source.get_row(0), target_fields.len());
 
         let row = target.get_row(0);
@@ -1870,7 +1870,7 @@ mod tests {
     #[test]
     fn vector_float32_cell_and_datum_round_trip() {
         let field = FieldType::new(FieldTypeCode::VectorFloat32);
-        let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 3);
+        let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 3);
         let empty = VectorFloat32::default();
         let values = VectorFloat32::must_create(vec![-1.25, 0.0, 3.5]);
         chunk.append_vector_float32(0, &empty);
@@ -1901,9 +1901,9 @@ fn new_chunk_with_elem_lens(elem_lens: &[i64]) -> Chunk {
         .iter()
         .map(|&l| {
             if l > 0 {
-                Column::new_fixed_len(l as usize, 0)
+                Column::new_fixed_len_column(l as usize, 0)
             } else {
-                Column::new_var_len(0)
+                Column::new_var_len_column(0)
             }
         })
         .collect();
@@ -2000,8 +2000,8 @@ fn go_test_append_row() {
     // AppendPartialRow can append a row with different number of columns.
     let fields_two = vec![FieldType::new(FieldTypeCode::LongLong); 2];
     let fields_one = vec![FieldType::new(FieldTypeCode::LongLong)];
-    let mut chk = Chunk::new_with_capacity(&fields_two, 2);
-    let mut chk2 = Chunk::new_with_capacity(&fields_one, 2);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields_two, 2);
+    let mut chk2 = Chunk::new_chunk_with_capacity(&fields_one, 2);
     chk2.append_int64(0, 1);
     chk2.append_int64(0, -1);
     chk.append_partial_row(0, chk2.get_row(0));
@@ -2012,8 +2012,8 @@ fn go_test_append_row() {
 
     // AppendRowByColIdxs and AppendPartialRowByColIdxs can do projection.
     let fields_four = vec![FieldType::new(FieldTypeCode::LongLong); 4];
-    let mut chk = Chunk::new_with_capacity(&fields_two, 8);
-    let mut source = Chunk::new_with_capacity(&fields_four, 4);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields_two, 8);
+    let mut source = Chunk::new_chunk_with_capacity(&fields_four, 4);
     for column in 0..4usize {
         source.append_int64(column, column as i64);
     }
@@ -2041,7 +2041,7 @@ fn go_test_append_row() {
 
     // Test Reset.
     let fields_str = vec![FieldType::new(FieldTypeCode::VarString)];
-    let mut chk = Chunk::new_with_capacity(&fields_str, 0);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields_str, 0);
     chk.append_string(0, "abcd");
     chk.reset();
     chk.append_string(0, "def");
@@ -2050,7 +2050,7 @@ fn go_test_append_row() {
 
     // Test float32.
     let fields_f32 = vec![FieldType::new(FieldTypeCode::Float)];
-    let mut chk = Chunk::new_with_capacity(&fields_f32, 0);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields_f32, 0);
     chk.append_float32(0, 1.0);
     chk.append_float32(0, 1.0);
     chk.append_float32(0, 1.0);
@@ -2069,8 +2069,8 @@ fn go_test_append_chunk() {
     let json_obj = tidb_datatype::BinaryJSON::parse("{\"k1\":\"v1\"}").expect("valid JSON");
     let encoded_len = json_obj.encoded().len();
 
-    let mut src = Chunk::new_with_capacity(&field_types, 32);
-    let mut dst = Chunk::new_with_capacity(&field_types, 32);
+    let mut src = Chunk::new_chunk_with_capacity(&field_types, 32);
+    let mut dst = Chunk::new_chunk_with_capacity(&field_types, 32);
 
     for _ in 0..2 {
         src.append_float32(0, 12.8);
@@ -2144,7 +2144,7 @@ fn go_test_truncate_to() {
     let json_obj = tidb_datatype::BinaryJSON::parse("{\"k1\":\"v1\"}").expect("valid JSON");
     let encoded_len = json_obj.encoded().len();
 
-    let mut src = Chunk::new_with_capacity(&field_types, 32);
+    let mut src = Chunk::new_chunk_with_capacity(&field_types, 32);
     for _ in 0..8 {
         src.append_float32(0, 12.8);
         src.append_string(1, "abc");
@@ -2199,7 +2199,7 @@ fn go_test_truncate_to() {
     }
 
     let fields_float = vec![FieldType::new(FieldTypeCode::Float)];
-    let mut chk = Chunk::new_with_capacity(&fields_float, 1);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields_float, 1);
     chk.append_float32(0, 1.0);
     chk.append_float32(0, 1.0);
     chk.truncate_to(1);
@@ -2284,7 +2284,7 @@ fn go_test_get_decimal_datum() {
     };
 
     let fields = vec![dec_type.clone()];
-    let mut chk = Chunk::new_with_capacity(&fields, 32);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, 32);
     chk.append_my_decimal(
         0,
         &dec_datum.to_my_decimal().expect("round-trips to MyDecimal"),
@@ -2314,7 +2314,7 @@ fn go_test_chunk_memory_usage() {
         FieldType::new(FieldTypeCode::Duration),
     ];
     let init_cap = 10usize;
-    let chk = Chunk::new_with_capacity(&field_types, init_cap);
+    let chk = Chunk::new_chunk_with_capacity(&field_types, init_cap);
 
     // cap(c.nullBitmap) + cap(c.offsets)*8 + cap(c.data) + cap(c.elemBuf).
     let column_usage = |column: &crate::column::Column| -> i64 {
@@ -2387,12 +2387,12 @@ fn go_test_swap_column() {
     let field_types = vec![FieldType::new(FieldTypeCode::Float); 3];
 
     // chk1: column 1 refers to column 0.
-    let mut chk1 = Chunk::new_with_capacity(&field_types, 1);
+    let mut chk1 = Chunk::new_chunk_with_capacity(&field_types, 1);
     chk1.append_float32(0, 1.0);
     chk1.make_ref(0, 1);
     chk1.append_float32(2, 3.0);
 
-    let mut chk2 = Chunk::new_with_capacity(&field_types, 1);
+    let mut chk2 = Chunk::new_chunk_with_capacity(&field_types, 1);
     chk2.append_float32(0, 1.0);
     chk2.make_ref(0, 1);
     chk2.append_float32(2, 3.0);
@@ -2438,7 +2438,7 @@ fn go_test_swap_column() {
 #[test]
 fn go_test_append_sel() {
     let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
-    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, 1024);
     let mut sel = Vec::with_capacity(512);
     for i in 0..512i64 {
         chk.append_int64(0, i);
@@ -2459,11 +2459,11 @@ fn go_test_append_sel() {
 fn go_test_make_ref_to() {
     let fields = vec![FieldType::new(FieldTypeCode::Float); 2];
 
-    let mut chk1 = Chunk::new_with_capacity(&fields, 1);
+    let mut chk1 = Chunk::new_chunk_with_capacity(&fields, 1);
     chk1.append_float32(0, 1.0);
     chk1.append_float32(1, 3.0);
 
-    let mut chk2 = Chunk::new_with_capacity(&fields, 1);
+    let mut chk2 = Chunk::new_chunk_with_capacity(&fields, 1);
     chk2.make_ref_to(0, &mut chk1, 1).expect("no selections");
     chk2.make_ref_to(1, &mut chk1, 0).expect("no selections");
 
@@ -2577,7 +2577,7 @@ fn go_test_to_string() {
         FieldType::new(FieldTypeCode::LongLong),
     ];
 
-    let mut chk = Chunk::new_with_capacity(&field_types, 2);
+    let mut chk = Chunk::new_chunk_with_capacity(&field_types, 2);
     let zero_date = Time::new(CoreTime::default(), TimeType::Date, 0).unwrap();
     let zero_datetime = Time::new(CoreTime::default(), TimeType::DateTime, 0).unwrap();
 

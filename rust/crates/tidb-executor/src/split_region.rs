@@ -41,7 +41,7 @@ const MIN_REGION_STEP_VALUE: i64 = 1000;
 /// `SCATTER_FINISH_RATIO`, both built by `buildColumnWithName`, which marks a
 /// numeric column UNSIGNED and binary.
 #[must_use]
-pub fn split_region_columns() -> Vec<(String, FieldType)> {
+pub fn build_split_regions_schema() -> Vec<(String, FieldType)> {
     let column = |code: FieldTypeCode, flen: i64| {
         let mut field_type = FieldType::new(code);
         field_type.set_flen(flen);

@@ -58,7 +58,7 @@ fn execute(
         .iter()
         .map(|c| (c.column_id(), field_type_from_pb_column(c)))
         .collect();
-    let policy = SamplePolicy::choose(columns.sample_size() as usize, columns.sample_rate())
+    let policy = SamplePolicy::new_row_sample_collector(columns.sample_size() as usize, columns.sample_rate())
         .ok_or_else(|| other_error("invalid sample policy"))?;
     let mut collector = RowSampleCollector::with_memory_quota_and_fm_sketch_size(
         columns.columns_info.len() + columns.column_groups.len(),

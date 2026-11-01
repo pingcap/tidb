@@ -65,7 +65,7 @@ fn install_cardinality_mock_statistics_for_table(
         // Go TestOrderingIdxSelectivityRatioForApply deliberately installs
         // one-component histogram keys even for its composite ibc index.
         let (ndv, repeat) = columns[index.column_offsets[0]];
-        statistics.put_analyzed_index(
+        statistics.set_idx(
             index.read().id,
             tidb_stats::index::Index {
                 histogram: histogram(index.read().id, ndv, repeat, true),
@@ -4273,7 +4273,7 @@ fn a_like_underscore_excludes_its_low_bound_only_on_a_non_pad_collation() {
 /// the FIRST index column gets this: `appendPoints2Ranges` (`:295`) passes
 /// `false`, because a NULL there is a real key byte inside a wider range.
 ///
-/// This tier's `points_to_ranges` had no nullability input at all, so
+/// This tier's `points_2_ranges` had no nullability input at all, so
 /// `a IS NULL` on a `NOT NULL` key scanned `[NULL,NULL]` -- a range no row can
 /// live in, read anyway. Captured:
 ///

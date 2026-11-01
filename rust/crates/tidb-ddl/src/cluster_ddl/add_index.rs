@@ -396,7 +396,7 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
     }
     warn_missing_region_split_policy(stored, &name, &context.0);
 
-    let reorg_meta = new_add_index_reorg_meta(&context.0, schema, store_count);
+    let reorg_meta = new_ddl_reorg_meta(&context.0, schema, store_count);
     // Go `createIndex`: a partial index needs a fast reorganization.
     if !added.condition_expr_string.is_empty() && !reorg_meta.is_fast_reorg {
         return Err(unsupported_partial_index());
@@ -522,7 +522,7 @@ pub(super) fn unsupported_partial_index() -> DdlPlanError {
 
 /// Go `NewDDLReorgMeta` + `initJobReorgMetaFromVariables` for ADD INDEX on
 /// the classic kernel.
-pub(super) fn new_add_index_reorg_meta(
+pub(super) fn new_ddl_reorg_meta(
     context: &dyn DdlSessionContext,
     schema: &str,
     store_count: usize,
@@ -638,7 +638,7 @@ pub(super) fn pick_backfill_type(job: &Job) -> tidb_model::ReorgType {
 
 /// Go `updateVersionAndTableInfo`: the table write and, when the state moved,
 /// the version bump with its diff.
-pub(super) fn table_step(
+pub(super) fn update_version_and_table_info(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     database_id: i64,
@@ -657,7 +657,7 @@ pub(super) fn table_step(
     )
 }
 
-/// [`table_step`] whose diff `fill` completes, as Go's `updateSchemaVersion`
+/// [`update_version_and_table_info`] whose diff `fill` completes, as Go's `updateSchemaVersion`
 /// does per action (the affected physical tables of a partition job).
 pub(super) fn table_step_with_diff(
     catalog: &ClusterCatalog,
@@ -962,7 +962,7 @@ pub(super) fn plan_persisted_add_index_job_step<S: MetaSnapshot>(
                 index.state = SchemaState::DELETE_ONLY;
             }
             active.job.schema_state = SchemaState::DELETE_ONLY;
-            let write = table_step(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
             Ok(action_step(write))
         }
         SchemaState::DELETE_ONLY | SchemaState::WRITE_ONLY => {
@@ -982,7 +982,7 @@ pub(super) fn plan_persisted_add_index_job_step<S: MetaSnapshot>(
                 active.job.snapshot_version = 0;
             }
             active.job.schema_state = next;
-            let write = table_step(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
             Ok(action_step(write))
         }
         SchemaState::WRITE_REORGANIZATION => plan_write_reorganization(
@@ -1060,7 +1060,7 @@ fn plan_write_reorganization<S: MetaSnapshot>(
             meta.write().analyze_state = tidb_model::reorg::analyze_state::SKIPPED;
         }
         check_and_mark_non_revertible(&mut active.job);
-        let write = table_step(catalog, active, database_id, &info, true, start_ts)?;
+        let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
         return Ok(action_step(write));
     }
     // Analyze done or skipped: public.
@@ -1080,7 +1080,7 @@ fn plan_write_reorganization<S: MetaSnapshot>(
             }
         }
     }
-    let mut write = table_step(catalog, active, database_id, &info, true, start_ts)?;
+    let mut write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
     // Go `asyncNotifyEvent(NewAddIndexEvent(...))`, skipped for the memory
     // and system databases.
     if !tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string().go_to_lower()) {
@@ -1181,7 +1181,7 @@ pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
             index.write().backfill_state = tidb_model::BackfillState::MERGING;
         }
         active.job.snapshot_version = 0;
-        let write = table_step(catalog, active, database_id, info, true, start_ts)?;
+        let write = update_version_and_table_info(catalog, active, database_id, info, true, start_ts)?;
         return Ok(CreateIndexReorg::Step(action_step(write)));
     }
     let request =
@@ -1213,7 +1213,7 @@ pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
             return Ok(CreateIndexReorg::Step(action_step(write)));
         }
         None | Some(ReorgResult::Interrupted) => {
-            let handle = load_reorg_handle(snapshot, catalog, active)?;
+            let handle = get_ddl_reorg_handle(snapshot, catalog, active)?;
             let reorg = request(active, ReorgStageRequest::Run(handle));
             return Ok(CreateIndexReorg::Step(reorg_step(&active.job, reorg)));
         }
@@ -1251,7 +1251,7 @@ pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
             for index in indexes {
                 index.write().backfill_state = tidb_model::BackfillState::READY_TO_MERGE;
             }
-            let write = table_step(catalog, active, database_id, info, true, start_ts)?;
+            let write = update_version_and_table_info(catalog, active, database_id, info, true, start_ts)?;
             return Ok(CreateIndexReorg::Step(action_step(write)));
         }
         // The merge finished: no more double writes.
@@ -1359,7 +1359,7 @@ fn plan_rollback_add_index(
                 index.write().state = next;
             }
             active.job.schema_state = next;
-            let write = table_step(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
             Ok(action_step(write))
         }
         SchemaState::DELETE_REORGANIZATION => {
@@ -1369,7 +1369,7 @@ fn plan_rollback_add_index(
                 index_ids.push(removed.id);
                 remove_index_and_hidden_columns(&mut info, &removed);
             }
-            let write = table_step(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
             let finished = GoShared::new(tidb_model::ModifyIndexArgs {
                 partition_ids: args.read().partition_ids.clone(),
                 op_type: tidb_model::IndexOp::ADD_INDEX,
@@ -1502,7 +1502,7 @@ fn drop_index_column_flag(info: &TableInfo, index: &IndexInfo) {
 
 /// Go `rollingbackAddIndex` for `ADMIN CANCEL DDL JOB`: the job turns into
 /// its rollback, from wherever it stood.
-pub(super) fn plan_cancel_add_index(
+pub(super) fn rollingback_add_index(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -1543,7 +1543,7 @@ pub(super) fn plan_cancel_add_index(
 }
 
 /// Go `getDDLReorgHandle`: the job's `mysql.tidb_ddl_reorg` row.
-pub(super) fn load_reorg_handle<S: MetaSnapshot>(
+pub(super) fn get_ddl_reorg_handle<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,

@@ -119,7 +119,7 @@ pub struct AffinityGroupUpdate {
 impl AffinityGroupUpdate {
     /// Go `createTableAffinityGroupsInPD`: nothing for a table without
     /// affinity.
-    pub fn create_for(&mut self, table: &TableInfo) -> Result<(), String> {
+    pub fn create_table_affinity_groups_in_pd(&mut self, table: &TableInfo) -> Result<(), String> {
         self.create
             .extend(build_affinity_group_definitions(table, None)?);
         Ok(())
@@ -128,7 +128,7 @@ impl AffinityGroupUpdate {
     /// Go `deleteTableAffinityGroupsInPD`: the groups of `table`, or of the
     /// given partitions of it. A definition error is logged as Go's
     /// best-effort callers log it.
-    pub fn delete_for(
+    pub fn delete_table_affinity_groups_in_pd(
         &mut self,
         table: &TableInfo,
         partition_defs: Option<&[PartitionDefinition]>,

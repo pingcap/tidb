@@ -19,7 +19,7 @@
 //! into other session tests.
 
 use serde_json::Value;
-use tidb_datatype::{new_collation_enabled, set_new_collation_enabled};
+use tidb_datatype::{new_collation_enabled, set_new_collation_enabled_for_test};
 use tidb_session::{Session, StmtResult};
 
 const GO_INPUT: &str =
@@ -31,7 +31,7 @@ struct RestoreCollationMode(bool);
 
 impl Drop for RestoreCollationMode {
     fn drop(&mut self) {
-        set_new_collation_enabled(self.0);
+        set_new_collation_enabled_for_test(self.0);
     }
 }
 
@@ -69,7 +69,7 @@ fn fixture_cases<'a>(fixture: &'a Value, section_name: &str, key: &str) -> &'a [
 }
 
 fn run_collation_column_fixture(input: &Value, output: &Value) {
-    set_new_collation_enabled(true);
+    set_new_collation_enabled_for_test(true);
     let mut session = Session::new();
     for sql in [
         "CREATE TABLE t(a VARCHAR(20) COLLATE utf8mb4_general_ci)",
@@ -99,7 +99,7 @@ fn run_collation_column_fixture(input: &Value, output: &Value) {
 }
 
 fn run_topn_fixture(enabled: bool, input: &Value, output: &Value) {
-    set_new_collation_enabled(enabled);
+    set_new_collation_enabled_for_test(enabled);
     let mut session = Session::new();
     session
         .run("SET tidb_default_string_match_selectivity = 0")

@@ -289,7 +289,7 @@ impl KvTable {
             .map(|(position, offset)| {
                 // Go `castIndexValuesToChangingTypes` before
                 // `TruncateIndexValues`, which cuts by the part's type.
-                let mut value = self.cast_index_part(
+                let mut value = self.cast_index_values_to_changing_types(
                     index.read().id,
                     position,
                     *offset,
@@ -322,7 +322,7 @@ impl KvTable {
     /// multi-valued index files one tuple per DISTINCT element of its array
     /// part (deduplicated by `BinaryJSON.HashValue`), one tuple holding the
     /// NULL when the array is NULL, and nothing for an empty array.
-    pub fn indexed_value_tuples(
+    pub fn get_indexed_value(
         &self,
         index: &KvIndex,
         values: Vec<Datum>,
@@ -391,7 +391,7 @@ impl KvTable {
         physical_id: i64,
         zone: &SessionTimeZone,
     ) -> Result<Vec<IndexEntryKey>, KvTableError> {
-        self.indexed_value_tuples(index, self.index_values(index, row))?
+        self.get_indexed_value(index, self.index_values(index, row))?
             .into_iter()
             .map(|values| {
                 let (key, distinct) =
@@ -609,7 +609,7 @@ impl KvTable {
     /// is self-consistent and still feeds a Go reader -- an index-only scan,
     /// `ADMIN CHECK INDEX`, a DDL backfill -- case-folded or space-stripped
     /// data.
-    pub fn index_entry_value(
+    pub fn gen_index_value(
         &self,
         index: &KvIndex,
         values: &[Datum],
@@ -631,7 +631,7 @@ impl KvTable {
         )
     }
 
-    /// [`Self::index_entry_value`] with Go's `untouched` flag
+    /// [`Self::gen_index_value`] with Go's `untouched` flag
     /// (`UncommittedIndexKVFlag`), which marks an entry an UPDATE rewrote
     /// without changing and which the commit then drops.
     fn index_entry_value_marked(
@@ -745,7 +745,7 @@ impl KvTable {
         // reports the whole array (`'["y"]'`).
         let duplicate_value = duplicate_value_text(&self.index_values(index, row));
         for entry in self.index_entry_keys(index, row, handle, physical_id, zone)? {
-            let value = self.index_entry_value(
+            let value = self.gen_index_value(
                 index,
                 &entry.values,
                 row,
@@ -902,7 +902,7 @@ impl KvTable {
         // Go's untouched rewrite exists only where the commit drops it.
         let write_untouched = write_untouched && self.store.filters_untouched_index_values();
         let (indexes, nonpublic) = self.partition_index_sets(physical_id);
-        self.rewrite_nonpublic_index_entries(
+        self.rebuild_update_record_indices(
             &nonpublic,
             old_row,
             new_row,
@@ -986,7 +986,7 @@ impl KvTable {
             let (new_key, new_distinct) =
                 self.index_key_of_values(index, new_values.clone(), handle, physical_id, zone)?;
             if old_key == new_key && old_distinct == new_distinct {
-                let old_value = self.index_entry_value(
+                let old_value = self.gen_index_value(
                     index,
                     &old_values,
                     old_row,
@@ -995,7 +995,7 @@ impl KvTable {
                     physical_id,
                     zone,
                 )?;
-                let new_value = self.index_entry_value(
+                let new_value = self.gen_index_value(
                     index,
                     &new_values,
                     new_row,
@@ -1038,7 +1038,7 @@ impl KvTable {
                     .map_err(KvTableError::from)?;
                 continue;
             }
-            let value = self.index_entry_value(
+            let value = self.gen_index_value(
                 index,
                 &new_values,
                 new_row,
@@ -1141,7 +1141,7 @@ impl KvTable {
     /// Go `EncodeUniqueIndexKey` for a unique-index point read's values: the
     /// index keys the read gets, which a locking read locks
     /// (`PointGetExecutor.Next`). Empty when the read has no unique key.
-    pub fn unique_point_lock_keys(
+    pub fn encode_unique_index_key(
         &self,
         index_id: i64,
         values: &[Datum],

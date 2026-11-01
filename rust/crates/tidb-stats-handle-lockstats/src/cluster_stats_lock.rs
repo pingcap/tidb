@@ -436,7 +436,7 @@ mod statement_tests {
         store.apply(&insert);
         let loader = ClusterStatsLoader::locate(&catalog).unwrap();
         assert_eq!(
-            loader.load_meta(&mut store, TABLE_ID).unwrap(),
+            loader.stats_meta_count_and_modify_count(&mut store, TABLE_ID).unwrap(),
             Some((10, 0, 2, 5, 10))
         );
 
@@ -444,7 +444,7 @@ mod statement_tests {
         assert!(!version.is_empty());
         store.apply(&version);
         assert_eq!(
-            loader.load_meta(&mut store, TABLE_ID).unwrap(),
+            loader.stats_meta_count_and_modify_count(&mut store, TABLE_ID).unwrap(),
             Some((11, 0, 2, 5, 10))
         );
 

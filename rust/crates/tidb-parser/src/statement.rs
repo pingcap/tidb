@@ -60,7 +60,7 @@ impl Parser {
             ))))
         } else if self.is_kw("RECOMMEND") && self.is_kw_at(1, "INDEX") {
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(
-                AdminStmt::RecommendIndex(Box::new(self.parse_recommend_index()?)),
+                AdminStmt::RecommendIndex(Box::new(self.parse_recommend_stmt()?)),
             )))
         } else if self.is_kw("SHUTDOWN") || self.is_kw("RESTART") || self.is_kw("HELP") {
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(
@@ -610,7 +610,7 @@ impl Parser {
             ))))
         } else if self.is_kw("SET") {
             Ok(Stmt::Session(tidb_ast::NodeBox::new(
-                self.parse_set_statement()?,
+                self.parse_set_stmt()?,
             )))
         } else if self.is_kw("BEGIN") {
             self.bump();

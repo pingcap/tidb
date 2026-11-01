@@ -58,11 +58,11 @@ struct TrackerState {
 
 /// Go `unSyncedJobTracker`.
 #[derive(Default)]
-pub struct UnsyncedJobTracker {
+pub struct UnSyncedJobTracker {
     state: RwLock<TrackerState>,
 }
 
-impl UnsyncedJobTracker {
+impl UnSyncedJobTracker {
     /// Go `newUnSyncedJobTracker`.
     #[must_use]
     pub fn new() -> Self {
@@ -75,7 +75,7 @@ impl UnsyncedJobTracker {
     }
 
     /// Go `addUnSynced`.
-    pub fn add_unsynced(&self, job_id: i64) {
+    pub fn add_un_synced(&self, job_id: i64) {
         self.state
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -85,7 +85,7 @@ impl UnsyncedJobTracker {
 
     /// Go `isUnSynced`.
     #[must_use]
-    pub fn is_unsynced(&self, job_id: i64) -> bool {
+    pub fn is_un_synced(&self, job_id: i64) -> bool {
         self.state
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -94,7 +94,7 @@ impl UnsyncedJobTracker {
     }
 
     /// Go `removeUnSynced`.
-    pub fn remove_unsynced(&self, job_id: i64) {
+    pub fn remove_un_synced(&self, job_id: i64) {
         self.state
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

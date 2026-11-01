@@ -105,7 +105,7 @@ impl AggFuncDesc {
     /// be built through inference. The re-inference fallback is therefore not
     /// reproduced.
     #[must_use]
-    pub fn new_for_window_func(desc: &WindowFuncDesc, has_distinct: bool) -> Self {
+    pub fn new_agg_func_desc_for_window_func(desc: &WindowFuncDesc, has_distinct: bool) -> Self {
         AggFuncDesc {
             base: desc.base.clone(),
             mode: AggFunctionMode::Complete,

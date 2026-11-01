@@ -67,7 +67,7 @@ impl Session {
             own_process_id: self.process.as_ref().map(|guard| guard.id()),
             process_user: self.process_list_user(),
             current_db: self.vars.current_db.clone(),
-            status: self.status_text(),
+            status: self.server_status_2_str(),
             resource_group: self.active_resource_group.clone(),
             login_user: self.vars.login_user.clone(),
             auth_identity: self

@@ -179,7 +179,7 @@ fn optimize_recursive(
         LogicalPlan::DataSource(data_source) => Ok((
             false,
             !order_columns.is_empty()
-                && tidb_planner_core_joinorder::data_source_satisfies_ordering(
+                && tidb_planner_core_joinorder::ds_satisfies_ordering(
                     data_source,
                     order_columns,
                     middle_filters,

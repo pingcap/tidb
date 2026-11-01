@@ -1398,7 +1398,7 @@ mod tests {
         let mut constant = Constant::new(Datum::Int(99), field_type.clone());
         constant.deferred_expr = Some(Box::new(Expression::Column(column)));
         let expression = Expression::Constant(constant);
-        let mut input = Chunk::new_with_capacity(&[field_type], 2);
+        let mut input = Chunk::new_chunk_with_capacity(&[field_type], 2);
         input.append_int64(0, 7);
         input.append_int64(0, -3);
         for (row, expected) in [7, -3].into_iter().enumerate() {
@@ -1412,7 +1412,7 @@ mod tests {
     #[test]
     fn eval_constant_column_and_unsupported() {
         let ft = FieldType::new(FieldTypeCode::Long);
-        let mut chk = Chunk::new_with_capacity(std::slice::from_ref(&ft), 1);
+        let mut chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&ft), 1);
         chk.append_int64(0, 99);
         let row = chk.get_row(0);
 

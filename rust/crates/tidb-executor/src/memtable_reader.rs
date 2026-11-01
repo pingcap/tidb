@@ -95,7 +95,7 @@ impl ViewerState {
     /// Go `setDataForProcessList`: "If you have the PROCESS privilege, you
     /// can see all threads. Otherwise, you can see only your own threads";
     /// an internal session with no login user is not filtered at all.
-    pub fn filter_process_rows(
+    pub fn set_data_for_process_list(
         &self,
         rows: Vec<process::ProcessRow>,
     ) -> Vec<process::ProcessRow> {
@@ -129,12 +129,12 @@ impl ViewerState {
                 ..process::ProcessRow::default()
             }],
         };
-        self.filter_process_rows(rows)
+        self.set_data_for_process_list(rows)
     }
 
     /// Go `setDataForTrxSummary`: the transaction history, for a viewer that
     /// holds PROCESS.
-    pub fn transaction_summary_rows(
+    pub fn set_data_for_trx_summary(
         &self,
         registry: Option<&process::ProcessRegistry>,
     ) -> Vec<Vec<Datum>> {
@@ -346,7 +346,7 @@ impl MemTableRetriever for InstanceStateRetriever {
             ));
         }
         if table.go_lower_eq("ANALYZE_STATUS") {
-            return crate::show::stats::analyze_status_rows_of(
+            return crate::show::stats::data_for_analyze_status_helper(
                 self.viewer.analyze_status.as_deref(),
                 &self.viewer.resource_group,
                 &self.viewer.visibility,
@@ -399,7 +399,7 @@ impl MemTableRetriever for InstanceStateRetriever {
             ));
         }
         if table.go_lower_eq("TRX_SUMMARY") {
-            return Ok(self.viewer.transaction_summary_rows(None));
+            return Ok(self.viewer.set_data_for_trx_summary(None));
         }
         if table.go_lower_eq("MEMORY_USAGE") {
             return Ok(memory_usage_table_rows());
@@ -408,7 +408,7 @@ impl MemTableRetriever for InstanceStateRetriever {
             return Ok(tidb_servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER.get_rows());
         }
         if table.go_lower_eq("TIDB_INDEX_USAGE") {
-            return Ok(crate::infoschema_reader::tidb_index_usage_rows(
+            return Ok(crate::infoschema_reader::set_data_from_index_usage(
                 catalog,
                 &self.viewer.visibility,
                 self.viewer.index_usage.as_ref(),
@@ -931,7 +931,7 @@ pub fn peer_cluster_table_rows(
     let Some(syncer) = syncer else {
         return Ok((rows, Vec::new()));
     };
-    let local_id = syncer.local_server_info().static_info.id;
+    let local_id = syncer.get_local_server_info().static_info.id;
     let discovered = syncer.all_server_info().map_err(DriverError::unsupported)?;
     if !discovered
         .values()

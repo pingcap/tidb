@@ -19,7 +19,7 @@
 //! `onDropForeignKey`, `onModifyTableCharsetAndCollate`, `onSetDefaultValue`,
 //! `onShardRowID` and `onModifyTableAutoIDCache`.
 
-use super::add_index::{action_step, table_step, AddIndexSubmission};
+use super::add_index::{action_step, update_version_and_table_info, AddIndexSubmission};
 use super::*;
 use tidb_model::JobArgs;
 
@@ -920,7 +920,7 @@ fn label_rule_step(rule: &serde_json::Value) -> Result<LabelRuleStep, DdlPlanErr
     let rule: tidb_ddl_label::Rule = serde_json::from_value(rule.clone())
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     Ok(LabelRuleStep {
-        write: label_rules::attributes_rule_write(rule),
+        write: label_rules::on_alter_table_attributes(rule),
         error_context: Some(LABEL_RULES_NOTIFY_ERROR),
     })
 }
@@ -990,7 +990,7 @@ fn find_partition_id(table: &TableInfo, partition: &str) -> Result<i64, DdlPlanE
 
 /// Go `checkPlacementPolicyRefValidAndCanNonValidJob`: the policy a job
 /// names must still exist.
-pub(super) fn check_placement_policy_ref_valid<S: MetaSnapshot>(
+pub(super) fn check_placement_policy_ref_valid_and_can_non_valid_job<S: MetaSnapshot>(
     snapshot: &mut S,
     reference: &Option<GoShared<tidb_model::PolicyRefInfo>>,
 ) -> Result<(), DdlPlanError> {
@@ -1172,7 +1172,7 @@ fn revertible_point_with_table(
         check_table_info_valid(info)?;
     }
     let schema_id = active.job.schema_id;
-    let write = table_step(catalog, active, schema_id, info, false, start_ts)?;
+    let write = update_version_and_table_info(catalog, active, schema_id, info, false, start_ts)?;
     Ok(Some(action_step(write)))
 }
 
@@ -1241,7 +1241,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                 .ok_or_else(|| nil_args(active))?;
             let engine_attribute = args.read().engine_attribute.get().to_string();
             let settings =
-                tidb_ddl_build::storage_class::storage_class_settings_of(&engine_attribute)
+                tidb_ddl_build::storage_class::get_storage_class_settings_from_table_info(&engine_attribute)
                     .map_err(|error| cancel_ddl_job(active, driver_refusal(error)))?;
             if let Some(step) = revertible_point(active) {
                 return Ok(step);
@@ -1265,7 +1265,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                             &settings,
                             &spec.kind,
                             &definitions,
-                            &tidb_metabuild::Context::new_non_strict(),
+                            &tidb_metabuild::Context::new_non_strict_context(),
                         )
                         .map_err(|error| cancel_ddl_job(active, driver_refusal(error)))?;
                     let partition = info.partition.as_ref().expect("checked above").read();
@@ -1539,7 +1539,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                 .map_err(|error| args_error(active, error))?
                 .ok_or_else(|| nil_args(active))?;
             let reference = args.read().placement_policy_ref.clone();
-            check_placement_policy_ref_valid(snapshot, &reference)
+            check_placement_policy_ref_valid_and_can_non_valid_job(snapshot, &reference)
                 .map_err(|error| cancel_ddl_job(active, error))?;
             let old_enables_placement = info.placement_policy_ref.is_some();
             info.placement_policy_ref = reference;
@@ -1581,7 +1581,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                 definition = Some(def.clone());
             });
             let definition = definition.expect("the partition was found above");
-            check_placement_policy_ref_valid(snapshot, &reference)
+            check_placement_policy_ref_valid_and_can_non_valid_job(snapshot, &reference)
                 .map_err(|error| cancel_ddl_job(active, error))?;
             let policies = load_policies(snapshot)?;
             match tidb_placement::new_partition_bundle(&policies, &definition)
@@ -1644,7 +1644,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
             info.affinity = affinity.map(GoShared::new);
             if info.affinity.is_some() {
                 affinity_groups
-                    .create_for(&info)
+                    .create_table_affinity_groups_in_pd(&info)
                     .map_err(|error| cancel_ddl_job(active, pd_step_error(None, error)))?;
             }
             if let Some(previous) = old.affinity.as_ref() {
@@ -1653,7 +1653,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                     .as_ref()
                     .is_none_or(|new| new.read().level != previous.read().level);
                 if level_changed {
-                    affinity_groups.delete_for(&old, None);
+                    affinity_groups.delete_table_affinity_groups_in_pd(&old, None);
                 }
             }
         }
@@ -1809,7 +1809,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
             if info.table_cache_status_type == from {
                 info.table_cache_status_type = tidb_model::TableCacheStatusType::SWITCHING;
                 check_table_info_valid(&info)?;
-                let write = table_step(catalog, active, schema_id, &info, true, start_ts)?;
+                let write = update_version_and_table_info(catalog, active, schema_id, &info, true, start_ts)?;
                 return Ok(action_step(write));
             }
             if info.table_cache_status_type != tidb_model::TableCacheStatusType::SWITCHING {
@@ -1836,7 +1836,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
     if with_check {
         check_table_info_valid(&info)?;
     }
-    let mut write = table_step(catalog, active, schema_id, &info, true, start_ts)?;
+    let mut write = update_version_and_table_info(catalog, active, schema_id, &info, true, start_ts)?;
     write.mutations.extend(counter_writes);
     write.placement_bundles = bundles;
     write.label_rules = label_steps;
@@ -1851,7 +1851,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
 }
 
 /// Go `convertJob2RollbackJob` for these actions.
-pub(super) fn plan_cancel_alter_table(
+pub(super) fn convert_job_2_rollback_job(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {

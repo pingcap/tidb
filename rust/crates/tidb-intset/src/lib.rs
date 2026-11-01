@@ -72,7 +72,7 @@ impl FastIntSet {
     }
 
     /// Go `Only1Zero`.
-    pub fn only1_zero(&self) -> bool {
+    pub fn only_1_zero(&self) -> bool {
         self.len() == 1 && self.has(0)
     }
 

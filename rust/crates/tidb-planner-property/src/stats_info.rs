@@ -96,7 +96,7 @@ pub fn loaded_hist_coll_for_test(
     indexes: impl IntoIterator<Item = (i64, tidb_stats::index::Index, Vec<i64>)>,
 ) -> Arc<HistColl> {
     let mut index_columns = Vec::new();
-    let mut coll = HistColl::new_with_cols_and_idxs(
+    let mut coll = HistColl::new_hist_coll_with_cols_and_idxs(
         0,
         realtime_count,
         modify_count,
@@ -521,7 +521,7 @@ impl StatsInfo {
     }
 
     /// Go `GetGroupNDV4Cols`: exact match after sorting requested column IDs.
-    pub fn group_ndv_for_cols(&self, cols: &[tidb_expr::column::Column]) -> Option<&GroupNdv> {
+    pub fn get_group_ndv_4_cols(&self, cols: &[tidb_expr::column::Column]) -> Option<&GroupNdv> {
         if cols.is_empty() || self.group_ndvs.is_empty() {
             return None;
         }
@@ -706,12 +706,12 @@ mod tests {
         seven.unique_id = 7;
         assert_eq!(
             profile
-                .group_ndv_for_cols(&[nine.clone(), seven])
+                .get_group_ndv_4_cols(&[nine.clone(), seven])
                 .map(|g| g.ndv),
             Some(12.0)
         );
-        assert!(profile.group_ndv_for_cols(&[nine]).is_none());
-        assert!(profile.group_ndv_for_cols(&[]).is_none());
+        assert!(profile.get_group_ndv_4_cols(&[nine]).is_none());
+        assert!(profile.get_group_ndv_4_cols(&[]).is_none());
     }
 
     #[test]

@@ -27,7 +27,7 @@ use crate::charset::{
     get_supported_collations as charset_supported_collations,
 };
 pub use tidb_charset::charset::{
-    exact_new_collation, is_bin_collation, new_collation_enabled, set_new_collation_enabled,
+    exact_new_collation, is_bin_collation, new_collation_enabled, set_new_collation_enabled_for_test,
 };
 use crate::{CharsetError, Collation, CollationInfo, Encoding, TransformOp};
 

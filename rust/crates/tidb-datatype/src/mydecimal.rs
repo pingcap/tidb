@@ -1295,7 +1295,7 @@ impl MyDecimal {
 
     /// Go `FromFloat64`: `strconv.FormatFloat(f, 'g', -1, 64)` fed to
     /// `FromString`, so the exponent spellings go through the same path.
-    pub fn from_float64(f: f64) -> (MyDecimal, Option<DecimalError>) {
+    pub fn from_float_64(f: f64) -> (MyDecimal, Option<DecimalError>) {
         MyDecimal::from_string(format_float_g_shortest(f).as_bytes())
     }
 
@@ -2685,7 +2685,7 @@ mod tests {
             ),
         ] {
             assert_eq!(format_float_g_shortest(input), formatted, "{input}");
-            let (value, err) = MyDecimal::from_float64(input);
+            let (value, err) = MyDecimal::from_float_64(input);
             assert_eq!(err, None, "{input}");
             assert_eq!(
                 String::from_utf8(value.to_string_bytes()).unwrap(),

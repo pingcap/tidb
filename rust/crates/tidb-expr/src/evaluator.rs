@@ -594,10 +594,10 @@ mod tests {
                         value: Ok(value.clone()),
                         reads: Cell::new(0),
                     };
-                    let mut input = Chunk::new_with_capacity(&[], rows);
+                    let mut input = Chunk::new_chunk_with_capacity(&[], rows);
                     input.set_num_virtual_rows(rows);
                     let mut output =
-                        Chunk::new_with_capacity(std::slice::from_ref(&field_type), rows);
+                        Chunk::new_chunk_with_capacity(std::slice::from_ref(&field_type), rows);
                     suite.run(&ctx, &mut input, &mut output).unwrap();
                     assert_eq!(ctx.reads.get(), usize::from(rows != 0));
                     assert_eq!(output.num_rows(), rows);
@@ -621,11 +621,11 @@ mod tests {
         let mut deferred = Constant::new(Datum::Int(99), long());
         deferred.deferred_expr = Some(Box::new(input_column(0)));
         let suite = EvaluatorSuite::new(vec![Expression::Constant(deferred)], false);
-        let mut input = Chunk::new_with_capacity(&[long()], 3);
+        let mut input = Chunk::new_chunk_with_capacity(&[long()], 3);
         for value in [3, 7, 11] {
             input.append_int64(0, value);
         }
-        let mut output = Chunk::new_with_capacity(&[long()], 3);
+        let mut output = Chunk::new_chunk_with_capacity(&[long()], 3);
         suite.run(&NoColumns, &mut input, &mut output).unwrap();
         for (row, expected) in [3, 7, 11].into_iter().enumerate() {
             assert_eq!(output.get_row(row).get_int64(0), expected);
@@ -643,7 +643,7 @@ mod tests {
             value: Ok(Datum::Int(8)),
             reads: Cell::new(0),
         };
-        let mut output = Chunk::new_with_capacity(&[long(), long()], 3);
+        let mut output = Chunk::new_chunk_with_capacity(&[long(), long()], 3);
         suite.run(&ctx, &mut input, &mut output).unwrap();
         assert_eq!(ctx.reads.get(), 3);
         for row in 0..3 {
@@ -661,12 +661,12 @@ mod tests {
                 value: Err(error.clone()),
                 reads: Cell::new(0),
             };
-            let mut input = Chunk::new_with_capacity(&[long()], rows);
+            let mut input = Chunk::new_chunk_with_capacity(&[long()], rows);
             for _ in 0..rows {
                 input.append_int64(0, 7);
             }
             let input_owner = input.column_handle(0);
-            let mut output = Chunk::new_with_capacity(&[long(), long()], rows);
+            let mut output = Chunk::new_chunk_with_capacity(&[long(), long()], rows);
             let result = suite.run(&ctx, &mut input, &mut output);
             assert_eq!(ctx.reads.get(), usize::from(rows != 0));
             if rows == 0 {
@@ -705,13 +705,13 @@ mod tests {
                         out_type.clone(),
                         vec![Expression::Column(left), Expression::Column(right)],
                     ));
-                    let mut input = Chunk::new_with_capacity(&[left_type, right_type], 3);
+                    let mut input = Chunk::new_chunk_with_capacity(&[left_type, right_type], 3);
                     for (left, right) in [(5, 2), (6, 3), (7, 4)] {
                         input.append_int64(0, left);
                         input.append_int64(1, right);
                     }
                     input.set_sel(Some(vec![2, 0]));
-                    let mut output = Chunk::new_with_capacity(&[out_type.clone()], 2);
+                    let mut output = Chunk::new_chunk_with_capacity(&[out_type.clone()], 2);
                     EvaluatorSuite::new(vec![expression], false)
                         .run(&crate::NoColumns, &mut input, &mut output)
                         .unwrap();
@@ -745,7 +745,7 @@ mod tests {
             long(),
             vec![parameter(long()), unsupported],
         ));
-        let mut input = Chunk::new_with_capacity(&[long()], 1);
+        let mut input = Chunk::new_chunk_with_capacity(&[long()], 1);
         input.append_int64(0, 1);
         assert_eq!(
             crate::scalar_function::try_eval_numeric_batch(&expression, &ctx, &input).unwrap(),
@@ -780,7 +780,7 @@ mod tests {
         unsigned.add_flags(FieldTypeFlags::UNSIGNED);
         let mut column = Column::new(1, unsigned.clone());
         column.index = 0;
-        let mut input = Chunk::new_with_capacity(&[unsigned], 2);
+        let mut input = Chunk::new_chunk_with_capacity(&[unsigned], 2);
         input.append_int64(0, -1); // UINT64_MAX, not signed -1.
         input.append_null(0);
         input.set_sel(Some(vec![1, 0]));
@@ -854,10 +854,10 @@ mod tests {
             vec![input_column(0), nested],
         ));
         for vectorized in [false, true] {
-            let mut input = Chunk::new_with_capacity(&[long(), long()], 1);
+            let mut input = Chunk::new_chunk_with_capacity(&[long(), long()], 1);
             input.append_null(0);
             input.append_int64(1, i64::MAX);
-            let mut output = Chunk::new_with_capacity(&[long()], 1);
+            let mut output = Chunk::new_chunk_with_capacity(&[long()], 1);
             let result = EvaluatorSuite::new(vec![expression.clone()], false).run(
                 &Context(vectorized),
                 &mut input,
@@ -906,11 +906,11 @@ mod tests {
         let suite = EvaluatorSuite::new(vec![setvar, getvar], false);
         assert!(!suite.vectorizable());
 
-        let mut input = Chunk::new_with_capacity(std::slice::from_ref(&string()), 3);
+        let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&string()), 3);
         input.append_string(0, "a");
         input.append_string(0, "b");
         input.append_string(0, "c");
-        let mut output = Chunk::new_with_capacity(&[string(), string()], 3);
+        let mut output = Chunk::new_chunk_with_capacity(&[string(), string()], 3);
 
         suite
             .run(&UserVariables::default(), &mut input, &mut output)
@@ -960,8 +960,8 @@ mod tests {
     fn vectorized_filter_preserves_selection_and_null_mask() {
         for incomplete in [false, true] {
             let mut input =
-                Chunk::new_with_capacity(&if incomplete { vec![long()] } else { vec![] }, 5);
-            input.set_incomplete_chunk(incomplete);
+                Chunk::new_chunk_with_capacity(&if incomplete { vec![long()] } else { vec![] }, 5);
+            input.set_in_complete_chunk(incomplete);
             input.set_num_virtual_rows(5);
             input.set_sel(Some(vec![4, 2]));
             for vectorized in [false, true] {
@@ -983,7 +983,7 @@ mod tests {
         // then intersect the output with the original selection. Even an empty
         // selection must not suppress an expression error in a physical row.
         for vectorized in [false, true] {
-            let mut input = Chunk::new_with_capacity(&[long()], 1);
+            let mut input = Chunk::new_chunk_with_capacity(&[long()], 1);
             input.append_int64(0, 1);
             input.set_sel(Some(vec![]));
             let ctx = CountedParameter {
@@ -1003,7 +1003,7 @@ mod tests {
             );
             assert_eq!(input.sel(), Some([].as_slice()));
         }
-        let mut input = Chunk::new_with_capacity(std::slice::from_ref(&long()), 5);
+        let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&long()), 5);
         for value in [0, 1, 2, 3] {
             input.append_int64(0, value);
         }
@@ -1060,7 +1060,7 @@ mod tests {
 
     #[test]
     fn calculated_columns_finish_before_direct_owners_move() {
-        let mut input = Chunk::new_with_capacity(&[long(), long()], 2);
+        let mut input = Chunk::new_chunk_with_capacity(&[long(), long()], 2);
         input.append_int64(0, 10);
         input.append_int64(1, 20);
         input.append_int64(0, 30);
@@ -1073,7 +1073,7 @@ mod tests {
             vec![input_column(1), int_const(1)],
         ));
         let suite = EvaluatorSuite::new(vec![input_column(0), plus_one, input_column(0)], false);
-        let mut output = Chunk::new_with_capacity(&[long(), long(), long()], 2);
+        let mut output = Chunk::new_chunk_with_capacity(&[long(), long(), long()], 2);
 
         suite.run(&NoColumns, &mut input, &mut output).unwrap();
 
@@ -1091,9 +1091,9 @@ mod tests {
 
     #[test]
     fn expression_error_does_not_move_a_direct_column_owner() {
-        let mut input = Chunk::new_with_capacity(std::slice::from_ref(&long()), 1);
+        let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&long()), 1);
         input.append_int64(0, 7);
-        let mut output = Chunk::new_with_capacity(&[long(), long()], 1);
+        let mut output = Chunk::new_chunk_with_capacity(&[long(), long()], 1);
         let input_before = input.column_handle(0);
         let output_before = output.column_handle(0);
         let unsupported = Expression::ScalarFunction(ScalarFunction::new(
@@ -1119,9 +1119,9 @@ mod tests {
 
     #[test]
     fn avoiding_column_evaluator_copies_without_transferring() {
-        let mut input = Chunk::new_with_capacity(std::slice::from_ref(&long()), 1);
+        let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&long()), 1);
         input.append_int64(0, 9);
-        let mut output = Chunk::new_with_capacity(std::slice::from_ref(&long()), 1);
+        let mut output = Chunk::new_chunk_with_capacity(std::slice::from_ref(&long()), 1);
         let input_before = input.column_handle(0);
         let suite = EvaluatorSuite::new(vec![input_column(0)], true);
 
@@ -1151,14 +1151,14 @@ mod tests {
         ));
         let suite = EvaluatorSuite::new(vec![revenue], false);
 
-        let mut input = Chunk::new_with_capacity(&[decimal.clone(), decimal.clone()], 3);
+        let mut input = Chunk::new_chunk_with_capacity(&[decimal.clone(), decimal.clone()], 3);
         for (price, discount) in [("100.00", "0.10"), ("12.50", "0.20")] {
             input.append_datum(0, &Datum::Decimal(Decimal::from_literal(price)));
             input.append_datum(1, &Datum::Decimal(Decimal::from_literal(discount)));
         }
         input.append_null(0);
         input.append_datum(1, &Datum::Decimal(Decimal::from_literal("0.15")));
-        let mut output = Chunk::new_with_capacity(std::slice::from_ref(&decimal), 3);
+        let mut output = Chunk::new_chunk_with_capacity(std::slice::from_ref(&decimal), 3);
 
         suite.run(&NoColumns, &mut input, &mut output).unwrap();
 
@@ -1191,7 +1191,7 @@ mod tests {
     /// above `MaxInt64` is greater than any signed one).
     #[test]
     fn vector_filter_compares_integer_columns_column_wise() {
-        let mut input = Chunk::new_with_capacity(&[long(), unsigned_long()], 4);
+        let mut input = Chunk::new_chunk_with_capacity(&[long(), unsigned_long()], 4);
         for value in [1, 5, 7] {
             input.append_int64(0, value);
             input.append_uint64(1, u64::MAX);
@@ -1257,7 +1257,7 @@ mod tests {
         result_type.set_flen(21);
         result_type.set_decimal(4);
         let mut input =
-            Chunk::new_with_capacity(&[price_type.clone(), price_type.clone(), long()], 8);
+            Chunk::new_chunk_with_capacity(&[price_type.clone(), price_type.clone(), long()], 8);
         let rows: [(Option<&str>, Option<&str>, Option<i64>); 8] = [
             (Some("36901.00"), Some("0.04"), Some(17)),
             (Some("-9999999.99"), Some("1.00"), Some(-3)),
@@ -1329,14 +1329,14 @@ mod tests {
             let Expression::ScalarFunction(function) = expression else {
                 unreachable!()
             };
-            let mut expected = Chunk::new_with_capacity(
+            let mut expected = Chunk::new_chunk_with_capacity(
                 std::slice::from_ref(function.get_static_type().unwrap()),
                 8,
             );
             for row in 0..input.num_rows() {
                 expected.append_datum(0, &expression.eval(&ctx, input.get_row(row)).unwrap());
             }
-            let mut output = Chunk::new_with_capacity(
+            let mut output = Chunk::new_chunk_with_capacity(
                 std::slice::from_ref(function.get_static_type().unwrap()),
                 8,
             );
@@ -1346,14 +1346,14 @@ mod tests {
             assert_eq!(output, expected);
             // A selection on the input is honored.
             input.set_sel(Some(vec![1, 3, 6]));
-            let mut expected = Chunk::new_with_capacity(
+            let mut expected = Chunk::new_chunk_with_capacity(
                 std::slice::from_ref(function.get_static_type().unwrap()),
                 3,
             );
             for row in 0..input.num_rows() {
                 expected.append_datum(0, &expression.eval(&ctx, input.get_row(row)).unwrap());
             }
-            let mut output = Chunk::new_with_capacity(
+            let mut output = Chunk::new_chunk_with_capacity(
                 std::slice::from_ref(function.get_static_type().unwrap()),
                 3,
             );
@@ -1384,14 +1384,14 @@ mod tests {
             let Expression::ScalarFunction(function) = &product else {
                 unreachable!()
             };
-            let mut expected = Chunk::new_with_capacity(
+            let mut expected = Chunk::new_chunk_with_capacity(
                 std::slice::from_ref(function.get_static_type().unwrap()),
                 8,
             );
             for row in 0..input.num_rows() {
                 expected.append_datum(0, &product.eval(&ctx, input.get_row(row)).unwrap());
             }
-            let mut output = Chunk::new_with_capacity(
+            let mut output = Chunk::new_chunk_with_capacity(
                 std::slice::from_ref(function.get_static_type().unwrap()),
                 8,
             );
@@ -1415,7 +1415,7 @@ mod tests {
         ) else {
             unreachable!()
         };
-        let mut output = Chunk::new_with_capacity(&[result_type.clone()], 8);
+        let mut output = Chunk::new_chunk_with_capacity(&[result_type.clone()], 8);
         assert!(!clamping
             .vec_eval_decimal_arithmetic(&input, &mut output, 0)
             .unwrap());
@@ -1426,7 +1426,7 @@ mod tests {
         else {
             unreachable!()
         };
-        let mut output = Chunk::new_with_capacity(&[result_type.clone()], 8);
+        let mut output = Chunk::new_chunk_with_capacity(&[result_type.clone()], 8);
         assert!(!ints
             .vec_eval_decimal_arithmetic(&input, &mut output, 0)
             .unwrap());
@@ -1441,7 +1441,7 @@ mod tests {
         let mut decimal_type = FieldType::new(FieldTypeCode::NewDecimal);
         decimal_type.set_flen(15);
         decimal_type.set_decimal(2);
-        let mut input = Chunk::new_with_capacity(&[decimal_type.clone(), long()], 4);
+        let mut input = Chunk::new_chunk_with_capacity(&[decimal_type.clone(), long()], 4);
         for (value, int_value) in [("313.99", 313), ("314.00", 314), ("314.01", 315)] {
             input.append_my_decimal(0, &Decimal::from_literal(value).to_my_decimal().unwrap());
             input.append_int64(1, int_value);
@@ -1513,7 +1513,7 @@ mod tests {
         let mut decimal_type = FieldType::new(FieldTypeCode::NewDecimal);
         decimal_type.set_flen(15);
         decimal_type.set_decimal(2);
-        let mut input = Chunk::new_with_capacity(&[decimal_type.clone(), long()], 5);
+        let mut input = Chunk::new_chunk_with_capacity(&[decimal_type.clone(), long()], 5);
         for (value, int_value) in [
             (Some("0.00"), Some(0)),
             (None, Some(5)),

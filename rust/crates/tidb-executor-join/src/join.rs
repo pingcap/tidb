@@ -156,7 +156,7 @@ use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use crate::hash_join::{
     equi_keys_equal_chunk_rows, equi_keys_equal_row, exact_int_key_chunk, exact_int_keys_chunk,
-    row_hash, row_hash_chunk, row_hash_chunk_batched, row_key, row_key_by, BuildError, BuildTable,
+    hash_chunk_selected, row_hash_chunk, row_hash_chunk_batched, row_key, row_key_by, BuildError, BuildTable,
     Chain, EquiKey, KeyClass, KeyError,
 };
 use tidb_executor_internal_exec::fast_bytes_map::FastBytesMap;
@@ -364,8 +364,8 @@ struct ProbeBatchScratch {
 impl ProbeBatchScratch {
     fn new(build_types: &[FieldType], condition_types: &[FieldType]) -> Self {
         Self {
-            build_buf: Chunk::new_with_capacity(build_types, 1),
-            condition_chunk: Chunk::new_with_capacity(condition_types, 1),
+            build_buf: Chunk::new_chunk_with_capacity(build_types, 1),
+            condition_chunk: Chunk::new_chunk_with_capacity(condition_types, 1),
             exact_keys: Vec::new(),
             home_slots: Vec::new(),
             exact_found: Vec::new(),
@@ -490,7 +490,7 @@ impl MergeInnerGroup {
         let rows = RowContainer::new(&types, chunk_size, memory.spill_storage());
         rows.mem_tracker().attach_to(tracker);
         rows.disk_tracker().attach_to(disk_tracker);
-        let read_back = Chunk::new_with_capacity(&types, 1);
+        let read_back = Chunk::new_chunk_with_capacity(&types, 1);
         Self {
             rows,
             child_start: 0,
@@ -1542,7 +1542,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         let keys = split.keys;
         let condition_types: Vec<FieldType> =
             left_types.iter().chain(&right_types).cloned().collect();
-        let condition_chunk = Chunk::new_with_capacity(&condition_types, 1);
+        let condition_chunk = Chunk::new_chunk_with_capacity(&condition_types, 1);
         let tracker = memory.operator_tracker(meta.id());
         let disk_tracker = memory.operator_disk_tracker(meta.id());
         let output = JoinOutput::all(kind, left_width, right_types.len());
@@ -1605,7 +1605,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// The inner physical subtree is represented by `plan.source` and is
     /// reseeded for every outer lookup task.
     #[allow(clippy::too_many_arguments)]
-    pub fn new_index_lookup(
+    pub fn build_index_look_up_join(
         meta: ExecutorMeta,
         kind: JoinKind,
         conditions: Vec<Expression>,
@@ -1934,7 +1934,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             return Ok((true, false));
         }
         self.condition_evals.set(self.condition_evals.get() + 1);
-        let mut chunk = Chunk::new_with_capacity(&self.condition_types, 1);
+        let mut chunk = Chunk::new_chunk_with_capacity(&self.condition_types, 1);
         for (i, value) in joined.iter().enumerate() {
             chunk.append_datum(i, value);
         }
@@ -2246,7 +2246,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 cursor: 0,
                 probe: None,
                 condition_scratch: (self.keys.is_empty() || !self.residual_conditions.is_empty())
-                    .then(|| Chunk::new_with_capacity(&self.condition_types, 1)),
+                    .then(|| Chunk::new_chunk_with_capacity(&self.condition_types, 1)),
                 inner: List::new(
                     &inner_types,
                     self.meta.init_cap(),
@@ -4827,7 +4827,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         self.build_spilled = table.already_spilled();
         self.spilled_bytes = self.disk_tracker.bytes_consumed();
         let parallel_exact_int_enabled = table.exact_int_is_unique();
-        let build_buf = Chunk::new_with_capacity(&build_types, 1);
+        let build_buf = Chunk::new_chunk_with_capacity(&build_types, 1);
         let unmatched_build_scan = track_matches.then(|| table.first_ptr()).flatten();
         // Go `wait4BuildSide` (`hash_join_base.go:119-121`) with the v2
         // `canSkipProbeIfHashTableIsEmpty` rule (`hash_join_v2.go:763-775`;
@@ -4877,7 +4877,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         }
         // Move the chunk out so the probe child can be borrowed mutably
         // alongside it; it goes straight back below.
-        let mut chunk = std::mem::replace(&mut hash.probe_chunk, Chunk::new_with_capacity(&[], 0));
+        let mut chunk = std::mem::replace(&mut hash.probe_chunk, Chunk::new_chunk_with_capacity(&[], 0));
         let probe: &mut dyn Executor = if !self.hash_build_is_left() {
             self.left_exec_mut()
         } else {
@@ -4955,7 +4955,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 continue;
             }
             let key = if selected {
-                row_hash(&self.keys, &probe_row, offset).map_err(key_error)?
+                hash_chunk_selected(&self.keys, &probe_row, offset).map_err(key_error)?
             } else {
                 None
             };
@@ -5249,7 +5249,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
         probe_is_left: bool,
     ) -> Result<bool, ExecError> {
         let offset = |key: &EquiKey| if probe_is_left { key.left } else { key.right };
-        let Some(probe_key) = row_hash(&self.na_keys, probe_row, offset).map_err(key_error)? else {
+        let Some(probe_key) = hash_chunk_selected(&self.na_keys, probe_row, offset).map_err(key_error)? else {
             // A NaN key: Go's own hash never buckets one either, so there is
             // nothing here to find -- the same fallback an ordinary equi-key
             // NaN already gets.
@@ -5372,7 +5372,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             .collect();
         let ptrs: Vec<RowPtr> = {
             let hash = self.hash.as_ref().expect("hash state exists");
-            hash.table.na_all_hash_bucket_ptrs()
+            hash.table.get_all_matched_rows()
         };
         for ptr in ptrs {
             let key_matches = {
@@ -5448,7 +5448,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             self.join_rows(&build_row, probe_row)
         };
         self.condition_evals.set(self.condition_evals.get() + 1);
-        let mut chunk = Chunk::new_with_capacity(&self.condition_types, 1);
+        let mut chunk = Chunk::new_chunk_with_capacity(&self.condition_types, 1);
         for (index, value) in joined.iter().enumerate() {
             chunk.append_datum(index, value);
         }

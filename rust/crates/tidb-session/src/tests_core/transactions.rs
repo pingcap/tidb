@@ -492,18 +492,18 @@ fn autocommit_off_puts_a_statement_in_a_transaction() {
 #[test]
 fn process_status_uses_the_typed_autocommit_and_transaction_bits() {
     let mut session = Session::new();
-    assert_eq!(session.status_text(), "autocommit");
+    assert_eq!(session.server_status_2_str(), "autocommit");
 
     session.run("SET autocommit = 0").unwrap();
-    assert_eq!(session.status_text(), "");
+    assert_eq!(session.server_status_2_str(), "");
 
     session.control_transaction("BEGIN").unwrap();
-    assert_eq!(session.status_text(), "in transaction");
+    assert_eq!(session.server_status_2_str(), "in transaction");
     session.control_transaction("ROLLBACK").unwrap();
-    assert_eq!(session.status_text(), "");
+    assert_eq!(session.server_status_2_str(), "");
 
     session.run("SET autocommit = 1").unwrap();
-    assert_eq!(session.status_text(), "autocommit");
+    assert_eq!(session.server_status_2_str(), "autocommit");
 }
 
 /// A session that has pinned `tidb_snapshot` must not be answered from the

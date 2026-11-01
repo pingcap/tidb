@@ -29,7 +29,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::rc::Rc;
 
 use tidb_expr::expr_util::RealFunctionBuilder;
-use tidb_expr::expr_util::normal_form::extract_filters_from_dnfs;
+use tidb_expr::expr_util::normal_form::extract_filters_from_dn_fs;
 use tidb_expr::expression::Expression;
 use tidb_expr::simple_expr::compose_dnf_condition;
 use tidb_hack::{GoCaseCompare, GoToLower};
@@ -807,7 +807,7 @@ pub(super) fn logical_from_plan(
     // Go `buildUpdate`/`buildDelete` build the statement's `WITH` before its
     // table refs, so a CTE name in the FROM resolves to the CTE.
     if let Some(with) = with {
-        let counts = tidb_planner::plan_builder::cte::cte_consumer_counts(
+        let counts = tidb_planner::plan_builder::cte::update_cte_consumer_count(
             &super::multi_dml::multi_dml_select(Some(with), &[], join, None, &[], None),
             with,
         );
@@ -1412,7 +1412,7 @@ pub(crate) fn physical_plan_for_logical_with_update_refs(
     ctx: &crate::StmtContext,
     col_ref_from_update_plan: &std::collections::BTreeSet<i64>,
 ) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
-    tidb_planner::optimize::optimize_physical(
+    tidb_planner::optimize::physical_optimize(
         logical,
         plan_ids,
         column_ids,
@@ -1481,7 +1481,7 @@ impl DriverCteOptimizer<'_> {
         // extracts common conjuncts, and puts that Selection above the seed
         // before running the CTE's own optimizer pass.
         if let Some(dnf) = compose_dnf_condition(predicates) {
-            let conditions = extract_filters_from_dnfs(vec![dnf]);
+            let conditions = extract_filters_from_dn_fs(vec![dnf]);
             let query_block_offset = seed.base().base.query_block_offset();
             let mut selection = LogicalSelection::new(
                 BaseLogicalPlan::new(self.plan_ids, LogicalSelection::TYPE, query_block_offset),
@@ -2440,7 +2440,7 @@ pub(crate) fn plan_insert_expressions(
     builder.add_opt_flag(tidb_planner_core_rule::flags::PRUNE_COLUMNS);
     let target = builder.resolve_insert_target(insert)?;
     let values = if insert.source.is_none() {
-        builder.build_insert_values(insert, &target)?
+        builder.build_values_list_of_insert(insert, &target)?
     } else {
         tidb_planner::plan_builder::insert_values::InsertValues::default()
     };
@@ -2448,7 +2448,7 @@ pub(crate) fn plan_insert_expressions(
         // Go counts the SELECT's own outputs when it was extended.
         builder.check_insert_select(&target, output.actual_col_len.unwrap_or(schema.len()))?;
     }
-    let on_duplicate = builder.build_on_duplicate(insert, &target, select)?;
+    let on_duplicate = builder.resolve_on_duplicate(insert, &target, select)?;
     // Go `resolveGeneratedColumns`, after the assignments.
     let generated = builder.resolve_generated_columns(&target)?;
     Ok((values, on_duplicate, generated))
@@ -2541,7 +2541,7 @@ pub(crate) fn insert_on_duplicate_columns(
     let column_ids = ColumnIdAllocator::new();
     let builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone());
     let target = builder.resolve_insert_target(insert)?;
-    builder.on_duplicate_columns(insert, &target)
+    builder.build_on_duplicate_update_columns(insert, &target)
 }
 
 /// Go `getAffectCols` of `buildInsert`: the columns an INSERT writes.
@@ -3280,7 +3280,7 @@ pub(crate) fn cached_physical_query_plan(
     // (`HandleConstant` / `IndexConstants`) so a hit rebuilds its keys.
     let fast = match query {
         tidb_ast::QueryStmt::Select(select) => {
-            super::point_get_plan::try_fast_point_physical_plan(select, catalog, current_database, ctx)
+            super::point_get_plan::try_fast_plan(select, catalog, current_database, ctx)
                 .ok()?
         }
         tidb_ast::QueryStmt::SetOpr(_) => None,
@@ -3298,7 +3298,7 @@ pub(crate) fn cached_physical_query_plan(
     }
     // Go `generateNewPlan`: an uncacheable physical plan still executes, and
     // `SetSkipPlanCache` says why.
-    if let Err(reason) = tidb_planner::physical_plan_cache::plan_cacheable(&physical, cacheability) {
+    if let Err(reason) = tidb_planner::physical_plan_cache::is_plan_cacheable(&physical, cacheability) {
         ctx.set_skip_plan_cache(reason);
         return Some((physical, false));
     }

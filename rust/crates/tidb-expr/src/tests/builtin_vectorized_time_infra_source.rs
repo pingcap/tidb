@@ -246,7 +246,7 @@ fn elementwise_plus_over_columns_matches_the_mock_contract() {
     const ROWS: usize = 1024;
     let long_long = || FieldType::new(FieldTypeCode::LongLong);
 
-    let mut input = Chunk::new_with_capacity(&[long_long(), long_long()], ROWS);
+    let mut input = Chunk::new_chunk_with_capacity(&[long_long(), long_long()], ROWS);
     for i in 0..ROWS {
         input.append_datum(0, &Datum::Int(i as i64));
         input.append_datum(1, &Datum::Int(i as i64));
@@ -265,7 +265,7 @@ fn elementwise_plus_over_columns_matches_the_mock_contract() {
 
     for repeat in 0..2 {
         let suite = EvaluatorSuite::new(vec![plus.clone()], false);
-        let mut output = Chunk::new_with_capacity(&[long_long()], ROWS);
+        let mut output = Chunk::new_chunk_with_capacity(&[long_long()], ROWS);
         suite
             .run(&NoColumns, &mut input.clone(), &mut output)
             .expect("elementwise plus succeeds");
@@ -295,7 +295,7 @@ fn double_evaluation_reproduces_the_projected_column_exactly() {
 
     const ROWS: usize = 256;
     let decimal_type = FieldType::new(FieldTypeCode::NewDecimal);
-    let mut input = Chunk::new_with_capacity(std::slice::from_ref(&decimal_type), ROWS);
+    let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&decimal_type), ROWS);
     for row in 0..ROWS {
         if row % 7 == 3 {
             input.append_null(0);
@@ -311,9 +311,9 @@ fn double_evaluation_reproduces_the_projected_column_exactly() {
     let transfer_suite = EvaluatorSuite::new(vec![expression.clone()], false);
     let cell_by_cell_suite = EvaluatorSuite::new(vec![expression], true);
 
-    let mut first = Chunk::new_with_capacity(std::slice::from_ref(&decimal_type), ROWS);
-    let mut second = Chunk::new_with_capacity(std::slice::from_ref(&decimal_type), ROWS);
-    let mut recalculated = Chunk::new_with_capacity(std::slice::from_ref(&decimal_type), ROWS);
+    let mut first = Chunk::new_chunk_with_capacity(std::slice::from_ref(&decimal_type), ROWS);
+    let mut second = Chunk::new_chunk_with_capacity(std::slice::from_ref(&decimal_type), ROWS);
+    let mut recalculated = Chunk::new_chunk_with_capacity(std::slice::from_ref(&decimal_type), ROWS);
     transfer_suite
         .run(&NoColumns, &mut input.clone(), &mut first)
         .expect("first transfer");

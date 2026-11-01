@@ -188,12 +188,12 @@ impl IndependentIndexAnalyze {
         let bucket_count = self.bucket_count;
         let topn_count = self.topn_count;
         let fragment = self.finish_fragment();
-        merge_independent_index_fragments(index_id, bucket_count, topn_count, [fragment])
+        update_index_result(index_id, bucket_count, topn_count, [fragment])
     }
 }
 
 /// Go `updateIndexResult` plus `buildStatsFromResult`'s final normalization.
-pub fn merge_independent_index_fragments(
+pub fn update_index_result(
     index_id: i64,
     bucket_count: usize,
     topn_count: usize,
@@ -312,7 +312,7 @@ mod tests {
         right.push(std::slice::from_ref(&two)).unwrap();
         right.push(std::slice::from_ref(&two)).unwrap();
 
-        let built = merge_independent_index_fragments(
+        let built = update_index_result(
             11,
             2,
             1,

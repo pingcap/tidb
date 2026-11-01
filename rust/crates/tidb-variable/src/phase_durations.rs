@@ -102,7 +102,7 @@ impl SessionPhaseDurations {
     /// Go `ResetContextOfStmt`: `vars.DurationWaitTS = 0`. The optimizer
     /// clocks a failed statement left running are abandoned too, as Go's
     /// `optimize` frame ends with the statement.
-    pub fn reset_for_statement(&self) {
+    pub fn reset_context_of_stmt(&self) {
         let mut state = self.state();
         state.durations.duration_wait_ts = Duration::ZERO;
         state.begin_optimize = None;
@@ -213,7 +213,7 @@ mod tests {
         let total = durations.snapshot().duration_optimizer.total;
         assert!(total >= Duration::from_millis(2), "{total:?}");
         // The value outlives the statement until another optimization.
-        durations.reset_for_statement();
+        durations.reset_context_of_stmt();
         durations.finish_optimize();
         assert_eq!(durations.snapshot().duration_optimizer.total, total);
     }
@@ -233,7 +233,7 @@ mod tests {
         );
         assert_eq!(snapshot.duration_wait_ts, Duration::from_nanos(7));
         durations.reset_rewrite_phase_info();
-        durations.reset_for_statement();
+        durations.reset_context_of_stmt();
         let snapshot = durations.snapshot();
         assert_eq!(snapshot.rewrite_phase_info, RewritePhaseInfo::default());
         assert_eq!(snapshot.duration_wait_ts, Duration::ZERO);

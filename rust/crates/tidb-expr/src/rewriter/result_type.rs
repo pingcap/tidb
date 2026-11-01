@@ -82,7 +82,7 @@ pub(super) fn set_binary_charset(ft: &mut FieldType) {
 /// Go `preprocessor.checkFuncCastExpr` plus the duration precision check in
 /// `expressionRewriter.checkTimePrecision`. These reject the statement before
 /// the cast argument is evaluated.
-pub(super) fn validate_cast_type(cast: &tidb_ast::CastExpr) -> Result<(), crate::EvalError> {
+pub(super) fn check_func_cast_expr(cast: &tidb_ast::CastExpr) -> Result<(), crate::EvalError> {
     use tidb_ast::CastType;
 
     let invalid = |code, message| crate::EvalError::InvalidTypeDeclaration { code, message };
@@ -549,7 +549,7 @@ pub(super) fn binary_literal_type(byte_len: usize, unsigned: bool) -> FieldType 
 ///
 pub(crate) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
     let mut ft = builtin_return_type_before_ret_tp(name, args)?;
-    promote_wide_string_result(&mut ft);
+    get_ret_tp(&mut ft);
     stamp_builtin_return_flags(name, args, &mut ft);
     Some(ft)
 }
@@ -601,7 +601,7 @@ pub(crate) fn stamp_builtin_return_flags(name: &str, args: &[Expression], ft: &m
 ///
 /// Both thresholds are `>=`, and both are Go's own constants:
 /// `mysql.MaxBlobWidth` and the bare 65536 `getRetTp` spells out.
-pub(crate) fn promote_wide_string_result(ft: &mut FieldType) {
+pub(crate) fn get_ret_tp(ft: &mut FieldType) {
     /// Go's literal `65536` in `getRetTp` -- one past `mysql.MaxBlobSize`.
     const MEDIUM_BLOB_BOUNDARY: i64 = 65536;
     if ft.eval_type() != tidb_datatype::EvalType::String {
@@ -1291,7 +1291,7 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         //
         // Go sizes each of these from its ARGUMENTS, and the width reaches the
         // client as the result set's `ColumnLength`. It also decides, through
-        // [`promote_wide_string_result`], whether the result is still a
+        // [`get_ret_tp`], whether the result is still a
         // `var_string` or has become a MEDIUM/LONG blob -- which is what
         // `pkg/ddl/index.go`'s `checkIndexColumn` reads when it refuses an
         // expression index. Every number below is Go's own, cross-checked
@@ -1597,7 +1597,7 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         }
         "sqrt" | "pow" | "power" | "exp" | "ln" | "log" | "log2" | "log10" | "sin"
         | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2" | "cot" | "radians" | "degrees"
-        | "rand" => crate::builtin_arithmetic::new_return_field_type(tidb_datatype::EvalType::Real),
+        | "rand" => crate::builtin_arithmetic::new_return_field_type_for_base_builtin_func(tidb_datatype::EvalType::Real),
         "sign" | "crc32" => int(),
         // The JSON family's value slice: JSON evaluated as VALUES. Go types
         // the first group `MysqlJson` and the second group as strings/ints.
@@ -2119,9 +2119,9 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         // its flattened `cond, result, ..., else` list to the THEN/ELSE
         // branches (the `Expr::Case` arm of `rewrite_expr_resolved`), which
         // is Go's own `thenArgs`.
-        "if" if args.len() == 3 => super::control_type::infer_type4_control_funcs("if", &args[1..])?,
+        "if" if args.len() == 3 => super::control_type::infer_type_4_control_funcs("if", &args[1..])?,
         "case" | "ifnull" | "coalesce" => {
-            super::control_type::infer_type4_control_funcs(name, args)?
+            super::control_type::infer_type_4_control_funcs(name, args)?
         }
         _ => return None,
     })
@@ -2358,7 +2358,7 @@ fn concat_flen(args: &[Expression], skip: usize) -> i64 {
 /// `None` means an argument carries no static type here, which is this tier's
 /// "I cannot name Go's signature", never a claim that Go would refuse the
 /// call.
-pub fn gl_signature(args: &[Expression]) -> Option<GlSignature> {
+pub fn resolve_type_4_extremum(args: &[Expression]) -> Option<GlSignature> {
     let typed: Vec<FieldType> = args
         .iter()
         .filter_map(|arg| arg.static_type().cloned())

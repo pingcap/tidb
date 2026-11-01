@@ -24,7 +24,7 @@ use crate::DriverError;
 use tidb_hack::GoCaseCompare;
 
 /// Go `dataForAnalyzeStatusHelper` over the recorded jobs.
-pub fn analyze_status_rows_of(
+pub fn data_for_analyze_status_helper(
     provider: Option<&dyn AnalyzeStatusProvider>,
     resource_group: &str,
     visibility: &crate::infoschema_reader::SchemaVisibility,
@@ -166,7 +166,7 @@ pub fn analyze_status_rows_of(
 /// Go `fetchShowStatsMeta` / `fetchShowStatsHealthy`'s filters on one row:
 /// `buildShow`'s `ShowBaseExtractor` on the lowercased database name, or the
 /// `db_name` / `table_name` sets `PredicatePushDown` gave STATS_META.
-pub(crate) fn stats_row_admitted(
+pub(crate) fn fetch_show_stats_meta(
     extractor: Option<&dyn tidb_planner_core_base::ShowPredicateExtractor>,
     row: &[Datum],
 ) -> bool {

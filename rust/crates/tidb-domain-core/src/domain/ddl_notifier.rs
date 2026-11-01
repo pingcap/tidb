@@ -198,23 +198,23 @@ pub fn build_notifier(factory: &Arc<Domain>, stats_lease: Duration) -> Arc<DdlNo
 
         let queue_event = match event.action_type() {
             ActionType::ACTION_ADD_INDEX => {
-                let (table, _, analyzed) = event.add_index_info();
+                let (table, _, analyzed) = event.get_add_index_info();
                 PriorityQueueDdlEvent::AddIndex {
                     table_id: table.id,
                     analyzed,
                 }
             }
             ActionType::ACTION_TRUNCATE_TABLE => {
-                let (_, dropped) = event.truncate_table_info();
+                let (_, dropped) = event.get_truncate_table_info();
                 PriorityQueueDdlEvent::TruncateTable {
                     dropped_ids: table_and_partition_ids(dropped),
                 }
             }
             ActionType::ACTION_DROP_TABLE => PriorityQueueDdlEvent::DropTable {
-                dropped_ids: table_and_partition_ids(event.drop_table_info()),
+                dropped_ids: table_and_partition_ids(event.get_drop_table_info()),
             },
             ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
-                let (table, _, dropped) = event.truncate_partition_info();
+                let (table, _, dropped) = event.get_truncate_partition_info();
                 PriorityQueueDdlEvent::TruncatePartition {
                     table_id: table.id,
                     dropped_partition_ids: dropped
@@ -226,7 +226,7 @@ pub fn build_notifier(factory: &Arc<Domain>, stats_lease: Duration) -> Arc<DdlNo
                 }
             }
             ActionType::ACTION_DROP_TABLE_PARTITION => {
-                let (table, dropped) = event.drop_partition_info();
+                let (table, dropped) = event.get_drop_partition_info();
                 PriorityQueueDdlEvent::DropPartition {
                     table_id: table.id,
                     dropped_partition_ids: dropped
@@ -238,7 +238,7 @@ pub fn build_notifier(factory: &Arc<Domain>, stats_lease: Duration) -> Arc<DdlNo
                 }
             }
             ActionType::ACTION_REORGANIZE_PARTITION => {
-                let (table, _, dropped) = event.reorganize_partition_info();
+                let (table, _, dropped) = event.get_reorganize_partition_info();
                 PriorityQueueDdlEvent::ReorganizePartition {
                     table_id: table.id,
                     dropped_partition_ids: dropped
@@ -250,14 +250,14 @@ pub fn build_notifier(factory: &Arc<Domain>, stats_lease: Duration) -> Arc<DdlNo
                 }
             }
             ActionType::ACTION_ALTER_TABLE_PARTITIONING => {
-                let (old_table_id, table, _) = event.add_partitioning_info();
+                let (old_table_id, table, _) = event.get_add_partitioning_info();
                 PriorityQueueDdlEvent::AlterTablePartitioning {
                     old_table_id,
                     new_table_id: table.id,
                 }
             }
             ActionType::ACTION_REMOVE_PARTITIONING => {
-                let (old_table_id, table, dropped) = event.remove_partitioning_info();
+                let (old_table_id, table, dropped) = event.get_remove_partitioning_info();
                 PriorityQueueDdlEvent::RemovePartitioning {
                     old_table_id,
                     dropped_partition_ids: dropped
@@ -286,7 +286,7 @@ pub fn build_notifier(factory: &Arc<Domain>, stats_lease: Duration) -> Arc<DdlNo
             }
             ActionType::ACTION_DROP_SCHEMA => {
                 let mut dropped_ids = Vec::new();
-                for table in &event.drop_schema_info().tables {
+                for table in &event.get_drop_schema_info().tables {
                     dropped_ids.extend(table.partitions.iter().map(|partition| partition.id));
                     dropped_ids.push(table.id);
                 }

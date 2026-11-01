@@ -383,7 +383,7 @@ impl KvTableBackfill for KvTable {
             }
             batch.locks.push(row_key.clone());
             for entry in pending {
-                let value = self.index_entry_value(
+                let value = self.gen_index_value(
                     &index,
                     &entry.values,
                     row,
@@ -710,13 +710,13 @@ impl KvTableBackfill for KvTable {
                 Err(error) => {
                     let reported = error.to_mysql_error();
                     failure = Some(KvTableError::Mysql(
-                        crate::reorg_errors::reformat_reorg_error(reported, &old_name, &old_value),
+                        crate::reorg_errors::reformat_errors(reported, &old_name, &old_value),
                     ));
                     break;
                 }
             };
             if let Some(warning) = cast_context.take_warnings().into_iter().next() {
-                let warning = crate::reorg_errors::reformat_reorg_error(
+                let warning = crate::reorg_errors::reformat_errors(
                     tidb_terror::MysqlError::sql_error(warning.code(), warning.message()),
                     &old_name,
                     &old_value,

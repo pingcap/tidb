@@ -1637,7 +1637,7 @@ fn across_endpoints<T>(
     Err(last.unwrap_or(EtcdError::NoEndpoint))
 }
 
-/// Let etcd-client choose its transport from the configured TLS options, just
+/// Let etcd-client new_row_sample_collector its transport from the configured TLS options, just
 /// as Go does. Strip either advertised scheme while preserving the authority.
 fn strip_scheme(endpoint: &str) -> &str {
     endpoint

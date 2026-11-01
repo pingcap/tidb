@@ -55,7 +55,7 @@ fn unlimited_memory() -> StatementMemory {
 
 fn int_chunk(size: usize) -> Chunk {
     let field_types = [int_type()];
-    let mut chunk = Chunk::new_with_capacity(&field_types, size);
+    let mut chunk = Chunk::new_chunk_with_capacity(&field_types, size);
     for value in 0..size {
         chunk.append_datum(0, &Datum::Int(value as i64));
     }
@@ -193,7 +193,7 @@ fn test_swap_data() {
     let string_type = FieldType::new(FieldTypeCode::VarString);
     let mut strings = CteStorage::new(vec![string_type.clone()], 10, unlimited_memory());
     strings.open_and_ref().unwrap();
-    let mut string_chunk = Chunk::new_with_capacity(std::slice::from_ref(&string_type), 10);
+    let mut string_chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&string_type), 10);
     for value in 0..10 {
         string_chunk.append_datum(0, &Datum::new_string(value.to_string()));
     }

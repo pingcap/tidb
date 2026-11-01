@@ -331,7 +331,7 @@ fn source_id_to_unique_id_rekeys_only_requested_columns_and_shares_payloads() {
     coll.set_column(2, column(2, 20, StatsLoadedStatus::full_load()));
     coll.set_index(3, index(3, 30, false, StatsLoadedStatus::full_load()));
     coll.pseudo = true;
-    let mapped = coll.id_to_unique_id(&[planner_column(2, 102), planner_column(99, 199)]);
+    let mapped = coll.id_2_unique_id(&[planner_column(2, 102), planner_column(99, 199)]);
     assert_eq!(mapped.physical_id, 8);
     assert_eq!(mapped.realtime_count, 90);
     assert_eq!(mapped.modify_count, 4);
@@ -379,7 +379,7 @@ fn source_generate_query_maps_keeps_partial_prefix_and_sorts_index_ids() {
         .into(),
         ..tidb_model::TableInfo::default()
     };
-    let mapped = coll.generate_from_column_info(
+    let mapped = coll.generate_hist_coll_from_column_info(
         &table_info,
         &[planner_column(10, 100)],
         |_, index, columns| index.mv_index.then(|| vec![(*columns[&10]).clone()]),

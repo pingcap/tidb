@@ -2043,11 +2043,11 @@ fn physical_explain_operator(
         let label = i64::from(plan.id());
         operator.memory_info = memory
             .stmt_tracker()
-            .search_tracker(label)
+            .search_tracker_without_lock(label)
             .map(|tracker| tidb_memory::format_bytes(tracker.max_consumed()));
         operator.disk_info = memory
             .stmt_disk_tracker()
-            .search_tracker(label)
+            .search_tracker_without_lock(label)
             .map(|tracker| tidb_memory::format_bytes(tracker.max_consumed()));
     }
     // Go `getRuntimeInfoStr`: a pushed operator reports what the cop tasks
@@ -3136,7 +3136,7 @@ fn physical_normalized_info(
 /// sha256 of the text. A DML contributes its select plan only; a plan without
 /// one, or an empty rendering, has no digest.
 #[must_use]
-pub fn normalize_physical_plan(
+pub fn normalize_flat_plan(
     statement_context: &crate::StmtContext,
     physical: &PhysicalPlan,
     catalog: &Catalog,
@@ -3358,9 +3358,9 @@ pub fn process_plan_info_with_brief(
     };
     let (normalized_plan, plan_digest) = match statement_context.cached_plan_digest() {
         Some(cached) => cached
-            .get_or_init(|| normalize_physical_plan(statement_context, physical, catalog))
+            .get_or_init(|| normalize_flat_plan(statement_context, physical, catalog))
             .clone(),
-        None => normalize_physical_plan(statement_context, physical, catalog),
+        None => normalize_flat_plan(statement_context, physical, catalog),
     };
     let fast_candidate = match physical {
         PhysicalPlan::Projection(projection) => {
@@ -4062,7 +4062,7 @@ pub fn explain_update_stmt(
     let source = crate::driver::update_source_query(update).ok_or_else(|| {
         DriverError::unsupported("UPDATE has no single-table source")
     })?;
-    let fk_spec = crate::driver::fk_spec_for_update(update, current_db)?;
+    let fk_spec = crate::driver::build_tbl_2_update_columns(update, current_db)?;
     let physical = crate::driver::physical_dml_plan(
         "Update",
         Some(&source),
@@ -4141,7 +4141,7 @@ pub fn explain_analyze_update_stmt(
                 catalog,
                 current_db,
                 ctx,
-                &crate::driver::fk_spec_for_update(update, current_db)?,
+                &crate::driver::build_tbl_2_update_columns(update, current_db)?,
             )?
         }
     };

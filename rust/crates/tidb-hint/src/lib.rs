@@ -24,14 +24,14 @@ mod statement;
 pub use plan::{
     join_hint_flags,
     collect_unmatched_hint_warnings, extract_unmatched_tables, parse_plan_hints,
-    remove_duplicated_hints, restore_index_hint, restore_join_hint, restore_storage_hint,
+    remove_duplicated_hints, restore_index_hint, restore_2_join_hint, restore_2_storage_hint,
     HintedIndex, HintedIndexKind, HintedTable, IndexJoinHints, PlanHints, HINT_FLAG_NO_DECORRELATE,
     HINT_FLAG_SEMI_JOIN_REWRITE, PREFER_HASH_AGG, PREFER_MPP_1_PHASE_AGG, PREFER_MPP_2_PHASE_AGG,
     PREFER_STREAM_AGG,
 };
 pub use processor::{
     bind_hint, check_binding_from_history_complete, collect_hint, contain_table_hint_in_stmt_node,
-    extract_table_hints_from_stmt_node, node_type_for_stmt, parse_hints_set,
+    extract_table_hints_from_stmt_node, node_type_4_stmt, parse_hints_set,
     restore_index_hint as restore_ast_index_hint, restore_optimizer_hints,
     restore_table_optimizer_hint, HintsSet,
 };

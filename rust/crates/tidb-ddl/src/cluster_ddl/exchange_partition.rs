@@ -274,7 +274,7 @@ fn exchange_step(
 }
 
 /// Go `onExchangeTablePartition`.
-pub(super) fn plan_persisted_exchange_partition_job_step<S: MetaSnapshot>(
+pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
@@ -656,7 +656,7 @@ fn rollback_exchange_table_partition(
 }
 
 /// Go `rollingbackExchangeTablePartition`.
-pub(super) fn plan_cancel_exchange_partition(
+pub(super) fn rollingback_exchange_table_partition(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,

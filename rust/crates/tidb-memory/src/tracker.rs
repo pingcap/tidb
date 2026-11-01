@@ -241,7 +241,7 @@ impl TrackerArbitration {
             return true;
         };
         let used = (*used).max(0);
-        self.arbitrator.with_await_free_budget(self.uid, |small| {
+        self.arbitrator.get_await_free_budgets(self.uid, |small| {
             small.report_heap_inuse(-used);
             let _ = small.budget.consume_quota(Self::now_unix_sec(), -used);
         });
@@ -337,7 +337,7 @@ impl TrackerArbitration {
         match &mut *state {
             TrackerArbitrationBudget::Small { used } => {
                 *used += delta;
-                let mut exhausted = self.arbitrator.with_await_free_budget(self.uid, |small| {
+                let mut exhausted = self.arbitrator.get_await_free_budgets(self.uid, |small| {
                     small.report_heap_inuse(delta);
                     small
                         .budget
@@ -367,7 +367,7 @@ impl TrackerArbitration {
         match &mut *state {
             TrackerArbitrationBudget::Small { used } => {
                 let used = *used;
-                self.arbitrator.with_await_free_budget(self.uid, |small| {
+                self.arbitrator.get_await_free_budgets(self.uid, |small| {
                     small.report_heap_inuse(-used);
                     let _ = small.budget.consume_quota(Self::now_unix_sec(), -used);
                 });
@@ -893,7 +893,7 @@ impl Tracker {
     }
 
     /// Go `SearchTrackerWithoutLock` (self or first child with the label).
-    pub fn search_tracker(self: &Arc<Self>, label: i64) -> Option<Arc<Tracker>> {
+    pub fn search_tracker_without_lock(self: &Arc<Self>, label: i64) -> Option<Arc<Tracker>> {
         if self.label() == label {
             return Some(Arc::clone(self));
         }
@@ -905,7 +905,7 @@ impl Tracker {
     }
 
     /// Go `SearchTrackerConsumedMoreThanNBytes`.
-    pub fn search_tracker_consumed_more_than(&self, limit: i64) -> Vec<Arc<Tracker>> {
+    pub fn search_tracker_consumed_more_than_n_bytes(&self, limit: i64) -> Vec<Arc<Tracker>> {
         let children = self.children.lock().unwrap();
         let mut res = Vec::new();
         for list in children.values() {

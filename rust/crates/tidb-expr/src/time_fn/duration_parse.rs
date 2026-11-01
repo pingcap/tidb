@@ -241,7 +241,7 @@ pub(crate) fn is_duration(value: &str) -> bool {
 
 /// Go `expression.getFsp4TimeAddSub`: `MaxFsp` when the string carries a
 /// non-zero fractional part, `MinFsp` otherwise.
-pub(crate) fn fsp_for_time_add_sub(value: &str) -> i32 {
+pub(crate) fn get_fsp_4_time_add_sub(value: &str) -> i32 {
     match value.find('.') {
         None => MIN_FSP,
         Some(dot) => {
@@ -420,7 +420,7 @@ fn match_duration(value: &str, fsp: i32) -> Result<GoDuration, Truncated> {
 }
 
 /// Go `canFallbackToDateTime`.
-pub(crate) fn can_fall_back_to_datetime(value: &str) -> bool {
+pub(crate) fn can_fallback_to_date_time(value: &str) -> bool {
     let Some((_, rest)) = number(value) else {
         return false;
     };
@@ -460,7 +460,7 @@ pub(crate) fn parse_duration(value: &str, fsp: i32) -> Result<GoDuration, Trunca
     match match_duration(rest, fsp) {
         Ok(duration) => Ok(duration),
         Err(Truncated) => {
-            if !can_fall_back_to_datetime(rest) {
+            if !can_fallback_to_date_time(rest) {
                 return Err(Truncated);
             }
             let datetime = parse_datetime(rest).ok_or(Truncated)?;

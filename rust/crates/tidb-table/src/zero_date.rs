@@ -18,7 +18,7 @@
 //! Mirrors Go `pkg/table/column.go`'s `handleZeroDatetime`. The conversion
 //! flags the statement derives from the SQL mode (`pkg/util/misc.go`'s
 //! `GetTypeFlagsForInsert`, `pkg/executor/select.go`'s `ResetUpdateStmtCtx`)
-//! are `tidb_util::misc::write_date_flags`.
+//! are `tidb_util::misc::get_type_flags_for_insert`.
 //!
 //! # Four inputs, and none of them is "strict mode" alone
 //!

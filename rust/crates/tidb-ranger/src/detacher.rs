@@ -896,7 +896,7 @@ impl RangeDetacher<'_> {
                 self.new_tp_slice[i].clone()
             };
             let (new_ranges, fallback) = if i == 0 {
-                super::ranger::points_to_ranges(
+                super::ranger::points_2_ranges(
                     point,
                     &tmp_new_tp,
                     self.range_max_size,
@@ -904,7 +904,7 @@ impl RangeDetacher<'_> {
                     &mut self.skip_plan_cache_reason,
                 )?
             } else {
-                super::ranger::append_points_to_ranges(
+                super::ranger::append_points_2_ranges(
                     ranges,
                     point,
                     &tmp_new_tp,
@@ -948,7 +948,7 @@ impl RangeDetacher<'_> {
                 self.new_tp_slice[eq_and_in_count].clone()
             };
             let (new_ranges, fallback) = if eq_and_in_count == 0 {
-                super::ranger::points_to_ranges(
+                super::ranger::points_2_ranges(
                     range_points,
                     &tmp_new_tp,
                     self.range_max_size,
@@ -956,7 +956,7 @@ impl RangeDetacher<'_> {
                     &mut self.skip_plan_cache_reason,
                 )?
             } else {
-                super::ranger::append_points_to_ranges(
+                super::ranger::append_points_2_ranges(
                     ranges,
                     range_points,
                     &tmp_new_tp,
@@ -1519,7 +1519,7 @@ impl RangeDetacher<'_> {
                 return Ok(DetachRangeResult::default());
             }
             if !tail_res.access_conds.is_empty() {
-                let (new_ranges, range_fallback) = super::ranger::append_ranges_to_point_ranges(
+                let (new_ranges, range_fallback) = super::ranger::append_ranges_2_point_ranges(
                     point_ranges.clone(),
                     &tail_res.ranges,
                     self.range_max_size,
@@ -1707,7 +1707,7 @@ impl RangeDetacher<'_> {
                     self.lengths[0],
                     self.convert_to_sort_key,
                 );
-                let (ranges, fallback) = super::ranger::points_to_ranges(
+                let (ranges, fallback) = super::ranger::points_2_ranges(
                     points,
                     &first_new_tp,
                     self.range_max_size,

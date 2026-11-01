@@ -28,7 +28,7 @@
 //!
 //! Analyze v2's default is the Bernoulli one, because `AnalyzeOptionDefault`
 //! sets `AnalyzeOptNumSamples` to `0` and lets the rate be derived from the
-//! table's row count ([`adjusted_sample_rate`]). Both are ported, because
+//! table's row count ([`get_adjusted_sample_rate`]). Both are ported, because
 //! `WITH n SAMPLES` is a statement a user writes.
 //!
 //! # What is counted over every row, not every sample
@@ -150,7 +150,7 @@ impl SamplePolicy {
     /// Go `NewRowSampleCollector`: a positive `WITH n SAMPLES` wins, a
     /// positive rate is the fallback, and neither is Go's `nil` collector.
     #[must_use]
-    pub fn choose(max_sample_size: usize, sample_rate: f64) -> Option<Self> {
+    pub fn new_row_sample_collector(max_sample_size: usize, sample_rate: f64) -> Option<Self> {
         if max_sample_size > 0 {
             return Some(Self::Reservoir { max_sample_size });
         }
@@ -167,7 +167,7 @@ impl SamplePolicy {
 /// has no row there at all; `approximate_count` is PD's region-derived
 /// estimate, `None` when PD/storage could not provide one. The branches are
 /// Go's, in Go's order.
-pub fn adjusted_sample_rate(realtime_count: Option<i64>, approximate_count: Option<f64>) -> f64 {
+pub fn get_adjusted_sample_rate(realtime_count: Option<i64>, approximate_count: Option<f64>) -> f64 {
     if realtime_count.is_none() && approximate_count.is_none() {
         return 0.001;
     }
@@ -191,14 +191,14 @@ pub fn adjusted_sample_rate(realtime_count: Option<i64>, approximate_count: Opti
 
 #[cfg(test)]
 mod adjusted_sample_rate_tests {
-    use super::adjusted_sample_rate;
+    use super::get_adjusted_sample_rate;
 
     #[test]
     fn follows_go_row_count_fallbacks_and_stale_stats_rule() {
-        assert_eq!(adjusted_sample_rate(None, None), 0.001);
-        assert_eq!(adjusted_sample_rate(Some(0), None), 1.0);
-        assert_eq!(adjusted_sample_rate(Some(10_000), Some(1_000_000.0)), 0.15);
-        assert_eq!(adjusted_sample_rate(Some(10_000), Some(40_000.0)), 1.0);
+        assert_eq!(get_adjusted_sample_rate(None, None), 0.001);
+        assert_eq!(get_adjusted_sample_rate(Some(0), None), 1.0);
+        assert_eq!(get_adjusted_sample_rate(Some(10_000), Some(1_000_000.0)), 0.15);
+        assert_eq!(get_adjusted_sample_rate(Some(10_000), Some(40_000.0)), 1.0);
     }
 }
 
@@ -777,7 +777,7 @@ mod special_index_tests {
     use super::*;
     #[test]
     fn special_index_overrides_only_ndv_and_nulls() {
-        let mut collector = RowSampleCollector::new(1, SamplePolicy::choose(10, 0.0).unwrap());
+        let mut collector = RowSampleCollector::new(1, SamplePolicy::new_row_sample_collector(10, 0.0).unwrap());
         let mut sketch = FmSketch::new(1000);
         sketch.insert_hash(17);
         collector.replace_special_index_stats(0, 2, sketch);

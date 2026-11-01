@@ -31,7 +31,7 @@ fn long() -> FieldType {
 #[test]
 fn index_inner_null_selection_preserves_chunk_rows() {
     let types = [long(), FieldType::new(FieldTypeCode::VarString)];
-    let mut chunk = Chunk::new_with_capacity(&types, 4);
+    let mut chunk = Chunk::new_chunk_with_capacity(&types, 4);
     for key in [Some(1), None, Some(3), None] {
         match key {
             Some(key) => chunk.append_int64(0, key),
@@ -117,7 +117,7 @@ fn index_join_resumes_one_outer_rows_matches_across_requested_chunks() {
         }
         let mut join = join_of(kind, conditions, vec![], vec![], 2);
         join.index_hash = hash_order;
-        let mut outer_chunk = Chunk::new_with_capacity(&types, 2);
+        let mut outer_chunk = Chunk::new_chunk_with_capacity(&types, 2);
         for (key, value) in [(1, 77), (2, 88)] {
             outer_chunk.append_int64(0, key);
             outer_chunk.append_int64(1, value);
@@ -127,7 +127,7 @@ fn index_join_resumes_one_outer_rows_matches_across_requested_chunks() {
             outer.push(outer_chunk.get_row(index));
         }
         let mut inner = List::new(&types, 2, CHUNK);
-        let mut input = Chunk::new_with_capacity(&types, 9);
+        let mut input = Chunk::new_chunk_with_capacity(&types, 9);
         for value in 0..9 {
             input.append_int64(0, 1);
             input.append_int64(1, value);
@@ -207,7 +207,7 @@ fn index_join_resumes_one_outer_rows_matches_across_requested_chunks() {
             cursor: 0,
             probe: None,
             condition_scratch: residual_limit
-                .map(|_| Chunk::new_with_capacity(&join.condition_types, 1)),
+                .map(|_| Chunk::new_chunk_with_capacity(&join.condition_types, 1)),
             inner,
             inner_bytes: 0,
             matched,
@@ -260,7 +260,7 @@ fn index_hash_join_builds_outer_and_probes_inner_rows() {
         join.index_hash = Some(ordered);
         let types = [long()];
         let mut outer = OuterBatch::new(&types, 2, CHUNK);
-        let mut outer_chunk = Chunk::new_with_capacity(&types, 2);
+        let mut outer_chunk = Chunk::new_chunk_with_capacity(&types, 2);
         for key in [1, 2] {
             outer_chunk.append_int64(0, key);
         }
@@ -268,7 +268,7 @@ fn index_hash_join_builds_outer_and_probes_inner_rows() {
             outer.push(outer_chunk.get_row(index));
         }
         let mut inner = List::new(&types, 2, CHUNK);
-        let mut chunk = Chunk::new_with_capacity(&types, 2);
+        let mut chunk = Chunk::new_chunk_with_capacity(&types, 2);
         for key in [2, 1] {
             chunk.append_int64(0, key);
         }
@@ -310,7 +310,7 @@ fn index_hash_join_builds_outer_and_probes_inner_rows() {
 #[test]
 fn index_lookup_probe_collection_batches_sort_and_dedup() {
     let types = [long()];
-    let mut source = Chunk::new_with_capacity(&types, 3);
+    let mut source = Chunk::new_chunk_with_capacity(&types, 3);
     for key in [2, 1, 2] {
         source.append_int64(0, key);
     }
@@ -474,7 +474,7 @@ fn index_hash_worker_streams_bounded_output_and_releases_on_close() {
             let types = [long()];
             shared.inner_types = types.to_vec();
             let mut outer = OuterBatch::new(&types, 2, CHUNK);
-            let mut outer_chunk = Chunk::new_with_capacity(&types, 2);
+            let mut outer_chunk = Chunk::new_chunk_with_capacity(&types, 2);
             for key in [1, 1, 2] {
                 outer_chunk.append_int64(0, key);
             }
@@ -657,7 +657,7 @@ fn index_hash_worker_fetch_error_does_not_emit_unmatched_rows() {
         fetch_index_inner(&shared, &mut source, Some(4096), None).unwrap();
     assert!(!done);
     let mut outer = OuterBatch::new(&[long()], 2, CHUNK);
-    let mut chunk = Chunk::new_with_capacity(&[long()], 2);
+    let mut chunk = Chunk::new_chunk_with_capacity(&[long()], 2);
     chunk.append_int64(0, 1);
     chunk.append_int64(0, 2);
     for i in 0..2 {
@@ -726,12 +726,12 @@ fn index_worker_preparation_does_not_evaluate_join_residuals() {
     );
     let types = [long(), long()];
     let mut outer = OuterBatch::new(&types, 1, CHUNK);
-    let mut input = Chunk::new_with_capacity(&types, 1);
+    let mut input = Chunk::new_chunk_with_capacity(&types, 1);
     input.append_int64(0, 1);
     input.append_int64(1, 1);
     outer.push(input.get_row(0));
     let shared = index_task_shared_for_test(&join);
-    let mut input = Chunk::new_with_capacity(&types, 2);
+    let mut input = Chunk::new_chunk_with_capacity(&types, 2);
     for value in [1, i64::MIN] {
         input.append_int64(0, 1);
         input.append_int64(1, value);
@@ -762,11 +762,11 @@ fn index_worker_preparation_does_not_evaluate_join_residuals() {
         outer,
         cursor: 0,
         probe: None,
-        condition_scratch: Some(Chunk::new_with_capacity(&join.condition_types, 1)),
+        condition_scratch: Some(Chunk::new_chunk_with_capacity(&join.condition_types, 1)),
         inner: List::new(&types, 1, CHUNK),
         inner_bytes: 0,
         matched: FastBytesMap::default(),
-        outer_chunk: Chunk::new_with_capacity(&types, 1),
+        outer_chunk: Chunk::new_chunk_with_capacity(&types, 1),
         outer_row: 0,
         outer_done: true,
         batch_size: CHUNK,
@@ -790,7 +790,7 @@ fn index_worker_preparation_does_not_evaluate_join_residuals() {
     // Failed workers must return the outer batch that owns the pending
     // task's charge, so the consumer's Close path can release it.
     let mut outer = OuterBatch::new(&types, 1, CHUNK);
-    let mut input = Chunk::new_with_capacity(&types, 1);
+    let mut input = Chunk::new_chunk_with_capacity(&types, 1);
     input.append_int64(0, 1);
     input.append_int64(1, 1);
     outer.push(input.get_row(0));
@@ -1203,7 +1203,7 @@ fn fixture(n: i64, modulus: i64) -> Vec<Vec<Datum>> {
 fn exact_integer_build_table_detects_duplicate_buckets() {
     let types = vec![long(), long()];
     let rows = fixture(200, 5);
-    let mut chunk = Chunk::new_with_capacity(&types, rows.len());
+    let mut chunk = Chunk::new_chunk_with_capacity(&types, rows.len());
     for row in &rows {
         for (column, datum) in row.iter().enumerate() {
             chunk.append_datum(column, datum);

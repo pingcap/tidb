@@ -603,14 +603,14 @@ impl Datum {
     ) -> Result<Converted<Self>, DatumValueError> {
         use crate::MyDecimal;
         let parsed = match self {
-            Self::Real(value) => Some(MyDecimal::from_float64(*value)),
-            Self::Float32(value) => Some(MyDecimal::from_float64(f64::from(*value as f32))),
+            Self::Real(value) => Some(MyDecimal::from_float_64(*value)),
+            Self::Float32(value) => Some(MyDecimal::from_float_64(f64::from(*value as f32))),
             Self::String(value) => Some(MyDecimal::from_string(value.bytes())),
             Self::Bytes(value) => Some(MyDecimal::from_string(value)),
             // Datum.ConvertTo uses ToNumber (float64), unlike ToDecimal's
             // direct unsigned conversion used by other callers.
-            Self::Enum(value, _) => Some(MyDecimal::from_float64(value.value() as f64)),
-            Self::Set(value, _) => Some(MyDecimal::from_float64(value.value() as f64)),
+            Self::Enum(value, _) => Some(MyDecimal::from_float_64(value.value() as f64)),
+            Self::Set(value, _) => Some(MyDecimal::from_float_64(value.value() as f64)),
             _ => None,
         };
         let converted = if let Some((value, error)) = parsed {
@@ -1271,7 +1271,7 @@ impl Datum {
 
 /// Go `ProduceDecWithSpecifiedTp`, distinct from `Datum.ConvertTo(DECIMAL)`.
 /// Scale loss is a direct warning; overflow is returned for statement policy.
-pub fn produce_decimal_with_type_in_context(
+pub fn produce_dec_with_specified_tp(
     value: Decimal,
     target: &FieldType,
     context: &crate::ConversionContext<'_>,
@@ -1424,9 +1424,9 @@ pub fn produce_string_with_type(
 }
 
 /// Go `ProduceStrWithSpecifiedTp` with statement diagnostics, without the
-/// charset conversion performed by general `Datum.ConvertTo`. Callers choose
+/// charset conversion performed by general `Datum.ConvertTo`. Callers new_row_sample_collector
 /// whether fixed binary targets should be padded after checking allocation limits.
-pub fn produce_string_with_type_in_context(
+pub fn produce_str_with_specified_tp(
     value: Vec<u8>,
     target: &FieldType,
     pad_zero: bool,

@@ -421,7 +421,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let result = (|| {
             if let Some(with) = &select.with {
                 let query = tidb_ast::QueryStmt::Select(Box::new(select.clone()));
-                self.build_with(with, &super::cte::cte_consumer_counts(&query, with))?;
+                self.build_with(with, &super::cte::update_cte_consumer_count(&query, with))?;
             }
             self.build_table_refs(select.from.as_ref())
         })();

@@ -445,7 +445,7 @@ impl ConfiguredUserStore {
     /// empty for "no user plugin set, assuming MySQL Native Password". In
     /// skip-grant mode every request is native password.
     #[must_use]
-    pub fn match_identity_plugin(&self, username: &str, remote_host: &str) -> Option<String> {
+    pub fn match_identity(&self, username: &str, remote_host: &str) -> Option<String> {
         if self.identity_policy.skip_with_grant() {
             return Some(DEFAULT_AUTH_PLUGIN.to_owned());
         }
@@ -463,7 +463,7 @@ impl ConfiguredUserStore {
             .accounts
             .login_credentials(identity.username(), identity.host())?;
         Some(
-            tidb_privilege::auth_plugin_for_connection(&plugin, &authentication_string)
+            tidb_privilege::get_auth_plugin_for_connection(&plugin, &authentication_string)
                 .to_owned(),
         )
     }

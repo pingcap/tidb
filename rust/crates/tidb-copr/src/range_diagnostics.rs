@@ -112,7 +112,7 @@ pub fn range_issues_for_key_ranges(ranges: &KeyRanges) -> RangeIssueStats {
 
 /// Go `minStartAndMaxEndKeyOfKeyRanges`.
 #[must_use]
-pub fn min_start_and_max_end_key(ranges: &KeyRanges) -> Option<(Key, Key)> {
+pub fn min_start_and_max_end_key_of_key_ranges(ranges: &KeyRanges) -> Option<(Key, Key)> {
     let first = ranges.get(0)?;
     let mut min_start = first.start_key.clone();
     let mut max_end = first.end_key.clone();
@@ -143,7 +143,7 @@ pub enum OutOfBoundReason {
 
 /// Go `firstOutOfBoundKeyRangeInLocation`.
 #[must_use]
-pub fn first_out_of_bound_key_range(
+pub fn first_out_of_bound_key_range_in_location(
     ranges: &KeyRanges,
     location_start: &Key,
     location_end: &Key,
@@ -217,11 +217,11 @@ mod tests {
     #[test]
     fn bounds_and_minmax_treat_empty_end_as_infinity() {
         let ranges = KeyRanges::new(vec![range(b"b", b"d"), range(b"e", b"")]);
-        let (start, end) = min_start_and_max_end_key(&ranges).unwrap();
+        let (start, end) = min_start_and_max_end_key_of_key_ranges(&ranges).unwrap();
         assert_eq!(start.as_bytes(), b"b");
         assert!(end.is_empty());
         assert_eq!(
-            first_out_of_bound_key_range(
+            first_out_of_bound_key_range_in_location(
                 &ranges,
                 &Key::from(b"a".as_slice()),
                 &Key::from(b"z".as_slice())

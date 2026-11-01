@@ -299,7 +299,7 @@ impl PushedScanFilter {
     /// Go `corColInDistPlan` over these conditions: whether one reads a
     /// correlated column, whose value changes with every Apply iteration.
     #[must_use]
-    pub fn has_correlated_columns(&self) -> bool {
+    pub fn cor_col_in_dist_plan(&self) -> bool {
         self.filters
             .iter()
             .any(|filter| !tidb_expr::simple_expr::extract_cor_columns(filter).is_empty())
@@ -827,7 +827,7 @@ impl ScanFilterProbe {
     /// reads a correlated column, so the request carries this iteration's
     /// binding. Returns whether the descriptions were rebuilt.
     pub fn redescribe_correlated(&mut self) -> bool {
-        if !self.filter.has_correlated_columns() {
+        if !self.filter.cor_col_in_dist_plan() {
             return false;
         }
         self.filter.redescribe(&self.ctx);

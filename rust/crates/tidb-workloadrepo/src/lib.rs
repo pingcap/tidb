@@ -545,7 +545,7 @@ impl Worker {
     }
 
     /// Go `changeSamplingInterval`.
-    pub fn set_sampling_interval(&self, value: &str) -> Result<(), String> {
+    pub fn change_sampling_interval(&self, value: &str) -> Result<(), String> {
         // Go's `errWrongValueForVar.GenWithStackByArgs(name, value)` renders
         // errno 1231 with both arguments.
         let value = value.parse::<u64>().map_err(|_| {
@@ -561,7 +561,7 @@ impl Worker {
     }
 
     /// Go `changeSnapshotInterval`.
-    pub fn set_snapshot_interval(&self, value: &str) -> Result<(), String> {
+    pub fn change_snapshot_interval(&self, value: &str) -> Result<(), String> {
         let value = value.parse::<u64>().map_err(|_| {
             format!(
                 "Variable '{REPOSITORY_SNAPSHOT_INTERVAL}' can't be set to the value of '{value}'"

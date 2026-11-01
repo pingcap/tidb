@@ -535,8 +535,8 @@ fn test_global_worker() {
         worker.take_snapshot().unwrap_err(),
         "Workload repository is not enabled"
     );
-    worker.set_sampling_interval("1").unwrap();
-    worker.set_snapshot_interval("3600").unwrap();
+    worker.change_sampling_interval("1").unwrap();
+    worker.change_snapshot_interval("3600").unwrap();
     worker.set_repository_dest("table").unwrap();
     wait_until(Duration::from_secs(3), || {
         worker.check_tables_exist(Local::now())
@@ -563,8 +563,8 @@ fn test_admin_workload_repo() {
     let (cluster, store, pool) = test_cluster();
     let worker = test_worker("worker", &cluster, store, pool.clone());
     assert!(worker.take_snapshot().is_err());
-    worker.set_sampling_interval("600").unwrap();
-    worker.set_snapshot_interval("5000").unwrap();
+    worker.change_sampling_interval("600").unwrap();
+    worker.change_snapshot_interval("5000").unwrap();
     worker.start().unwrap();
     wait_until(Duration::from_secs(3), || {
         worker.check_tables_exist(Local::now())
@@ -586,8 +586,8 @@ fn test_admin_workload_repo() {
 fn test_sampling_timing_worker() {
     let (cluster, store, pool) = test_cluster();
     let worker = test_worker("worker", &cluster, store, pool.clone());
-    worker.set_sampling_interval("1").unwrap();
-    worker.set_snapshot_interval("3600").unwrap();
+    worker.change_sampling_interval("1").unwrap();
+    worker.change_snapshot_interval("3600").unwrap();
     worker.start().unwrap();
     wait_until(Duration::from_secs(5), || {
         pool.database
@@ -615,7 +615,7 @@ fn test_sampling_timing_worker() {
         .iter()
         .all(|capture| { capture.args == [SqlArg::String("worker".to_owned())] }));
 
-    worker.set_sampling_interval("2").unwrap();
+    worker.change_sampling_interval("2").unwrap();
     let before = first.len();
     wait_until(Duration::from_secs(6), || {
         pool.database
@@ -662,8 +662,8 @@ fn test_snapshot_timing_worker() {
         ..tables[1].clone()
     });
     *worker.tables.lock().unwrap() = tables;
-    worker.set_sampling_interval("600").unwrap();
-    worker.set_snapshot_interval("1").unwrap();
+    worker.change_sampling_interval("600").unwrap();
+    worker.change_snapshot_interval("1").unwrap();
     worker.start().unwrap();
     wait_until(Duration::from_secs(5), || {
         let database = pool.database.lock().unwrap();
@@ -707,8 +707,8 @@ fn test_multiple_worker() {
     let first = test_worker("worker1", &cluster, Arc::clone(&store), pool.clone());
     let second = test_worker("worker2", &cluster, store, pool.clone());
     for worker in [&first, &second] {
-        worker.set_sampling_interval("1").unwrap();
-        worker.set_snapshot_interval("3600").unwrap();
+        worker.change_sampling_interval("1").unwrap();
+        worker.change_snapshot_interval("3600").unwrap();
     }
     first.start().unwrap();
     wait_until(Duration::from_secs(4), || worker_is_owner(&first));
@@ -819,8 +819,8 @@ fn test_owner_random_down() {
                 Arc::clone(&store),
                 pool.clone(),
             );
-            worker.set_sampling_interval("600").unwrap();
-            worker.set_snapshot_interval("1").unwrap();
+            worker.change_sampling_interval("600").unwrap();
+            worker.change_snapshot_interval("1").unwrap();
             worker.start().unwrap();
             worker
         })
@@ -870,8 +870,8 @@ fn test_owner_random_down() {
 fn test_stopping_and_restarting_worker() {
     let (cluster, store, pool) = test_cluster();
     let worker = test_worker("worker", &cluster, store, pool.clone());
-    worker.set_sampling_interval("1").unwrap();
-    worker.set_snapshot_interval("1").unwrap();
+    worker.change_sampling_interval("1").unwrap();
+    worker.change_snapshot_interval("1").unwrap();
     worker.set_repository_dest("table").unwrap();
     wait_until(Duration::from_secs(4), || {
         let database = pool.database.lock().unwrap();
@@ -932,11 +932,11 @@ fn build_create_query_comment(comment: &str) -> String {
 fn test_interval_rejection_messages_match_go() {
     let worker = Worker::new(None, None, None, "msg");
     assert_eq!(
-        worker.set_sampling_interval("abc").unwrap_err(),
+        worker.change_sampling_interval("abc").unwrap_err(),
         "Variable 'tidb_workload_repository_active_sampling_interval' can't be set to the value of 'abc'"
     );
     assert_eq!(
-        worker.set_snapshot_interval("abc").unwrap_err(),
+        worker.change_snapshot_interval("abc").unwrap_err(),
         "Variable 'tidb_workload_repository_snapshot_interval' can't be set to the value of 'abc'"
     );
     assert_eq!(

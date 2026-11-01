@@ -183,7 +183,7 @@ impl RuRecord {
     }
 
     /// Go `newOthersRURecord`.
-    pub fn new_others() -> Self {
+    pub fn new_others_ru_record() -> Self {
         Self::new(BinaryDigest::default(), BinaryDigest::default())
     }
 
@@ -282,12 +282,12 @@ pub struct UserRuCollecting {
 impl UserRuCollecting {
     /// Go `newUserRUCollecting`.
     pub fn new(user: &str) -> Self {
-        Self::with_cap(user, MAX_PRE_TOP_N_SQLS_PER_USER)
+        Self::new_user_ru_collecting_with_cap(user, MAX_PRE_TOP_N_SQLS_PER_USER)
     }
 
     /// Go `newUserRUCollectingWithCap`. Go's `<= 0` guard becomes a zero
     /// guard, `usize` having no negatives.
-    pub fn with_cap(user: &str, pre_top_n_sqls_per_user: usize) -> Self {
+    pub fn new_user_ru_collecting_with_cap(user: &str, pre_top_n_sqls_per_user: usize) -> Self {
         let pre_top_n_sqls_per_user = if pre_top_n_sqls_per_user == 0 {
             MAX_PRE_TOP_N_SQLS_PER_USER
         } else {
@@ -303,8 +303,8 @@ impl UserRuCollecting {
     }
 
     /// Go `newOthersUserRUCollectingWithCap`.
-    pub fn new_others_user(pre_top_n_sqls_per_user: usize) -> Self {
-        Self::with_cap("", pre_top_n_sqls_per_user)
+    pub fn new_others_user_ru_collecting_with_cap(pre_top_n_sqls_per_user: usize) -> Self {
+        Self::new_user_ru_collecting_with_cap("", pre_top_n_sqls_per_user)
     }
 
     /// Go `userRUCollecting.add`: adds RU increments for one SQL. At the
@@ -345,7 +345,7 @@ impl UserRuCollecting {
     /// use.
     pub fn add_others(&mut self, timestamp: u64, incr: &RuIncrement) {
         if self.others_rec.is_none() {
-            let mut others = RuRecord::new_others();
+            let mut others = RuRecord::new_others_ru_record();
             // Compatibility: fold any legacy nil-digest record into othersRec.
             if let Some(rec) = self.records.remove(&others_key()) {
                 others.merge(&rec);
@@ -364,7 +364,7 @@ impl UserRuCollecting {
     ///
     /// Go hands out the receiver's `*ruRecord` pointers; here the records are
     /// moved out, which is the same transfer without the aliasing.
-    pub fn into_report_records_with_limit(mut self, top_n_sqls_per_user: usize) -> Vec<RuRecord> {
+    pub fn get_report_records_with_limit(mut self, top_n_sqls_per_user: usize) -> Vec<RuRecord> {
         let top_n_sqls_per_user = if top_n_sqls_per_user == 0 {
             MAX_TOP_SQLS_PER_USER
         } else {
@@ -386,7 +386,7 @@ impl UserRuCollecting {
         // Start with the pre-aggregated "others" from the collection phase.
         let mut others_rec = self.others_rec.take();
         if !evicted.is_empty() {
-            let others = others_rec.get_or_insert_with(RuRecord::new_others);
+            let others = others_rec.get_or_insert_with(RuRecord::new_others_ru_record);
             for rec in &evicted {
                 others.merge(rec);
             }
@@ -413,7 +413,7 @@ impl UserRuCollecting {
 
         // "others SQL" path.
         if is_others_key(key) {
-            let mut others = self.others_rec.take().unwrap_or_else(RuRecord::new_others);
+            let mut others = self.others_rec.take().unwrap_or_else(RuRecord::new_others_ru_record);
             Self::merge_record_into(&mut others, src_rec, target_ts, rewrite_ts);
             self.others_rec = Some(others);
             self.total_ru += src_rec.total_ru;
@@ -424,7 +424,7 @@ impl UserRuCollecting {
         if !self.records.contains_key(key) {
             // Check the pre-Top-N cap before adding a new SQL.
             if self.records.len() >= self.pre_top_n_sqls_per_user {
-                let mut others = self.others_rec.take().unwrap_or_else(RuRecord::new_others);
+                let mut others = self.others_rec.take().unwrap_or_else(RuRecord::new_others_ru_record);
                 Self::merge_record_into(&mut others, src_rec, target_ts, rewrite_ts);
                 self.others_rec = Some(others);
                 self.total_ru += src_rec.total_ru;
@@ -522,11 +522,11 @@ pub struct RuCollecting {
 impl RuCollecting {
     /// Go `newRUCollecting`.
     pub fn new() -> Self {
-        Self::with_caps(MAX_PRE_TOP_N_USERS, MAX_PRE_TOP_N_SQLS_PER_USER)
+        Self::new_ru_collecting_with_caps(MAX_PRE_TOP_N_USERS, MAX_PRE_TOP_N_SQLS_PER_USER)
     }
 
     /// Go `newRUCollectingWithCaps`.
-    pub fn with_caps(pre_top_n_users: usize, pre_top_n_sqls_per_user: usize) -> Self {
+    pub fn new_ru_collecting_with_caps(pre_top_n_users: usize, pre_top_n_sqls_per_user: usize) -> Self {
         let pre_top_n_users = if pre_top_n_users == 0 {
             MAX_PRE_TOP_N_USERS
         } else {
@@ -555,7 +555,7 @@ impl RuCollecting {
                 return;
             }
             let user_collecting =
-                UserRuCollecting::with_cap(&key.user, self.pre_top_n_sqls_per_user);
+                UserRuCollecting::new_user_ru_collecting_with_cap(&key.user, self.pre_top_n_sqls_per_user);
             self.users.insert(key.user.clone(), user_collecting);
         }
         if let Some(user_collecting) = self.users.get_mut(&key.user) {
@@ -697,11 +697,11 @@ impl RuCollecting {
         let (top_users, evicted_users) = user_ru_collectings_top_n(all_users, max_users);
 
         // Build the result snapshot with the top users.
-        let mut result = RuCollecting::with_caps(max_users, max_sqls_per_user);
+        let mut result = RuCollecting::new_ru_collecting_with_caps(max_users, max_sqls_per_user);
         for user_collecting in top_users {
             let user = user_collecting.user.clone();
-            let user_records = user_collecting.into_report_records_with_limit(max_sqls_per_user);
-            let mut compacted_user = UserRuCollecting::with_cap(&user, max_sqls_per_user);
+            let user_records = user_collecting.get_report_records_with_limit(max_sqls_per_user);
+            let mut compacted_user = UserRuCollecting::new_user_ru_collecting_with_cap(&user, max_sqls_per_user);
             for rec in user_records {
                 let total_ru = rec.total_ru;
                 if rec.sql_digest.0.is_empty() && rec.plan_digest.0.is_empty() {
@@ -725,13 +725,13 @@ impl RuCollecting {
         // Merge evicted users into "others user".
         let mut others_user = None;
         if let Some(src_others_user) = self.others_user.as_ref() {
-            let mut dst = UserRuCollecting::new_others_user(max_sqls_per_user);
+            let mut dst = UserRuCollecting::new_others_user_ru_collecting_with_cap(max_sqls_per_user);
             merge_user_into_others(&mut dst, src_others_user);
             others_user = Some(dst);
         }
         if !evicted_users.is_empty() {
             let dst = others_user
-                .get_or_insert_with(|| UserRuCollecting::new_others_user(max_sqls_per_user));
+                .get_or_insert_with(|| UserRuCollecting::new_others_user_ru_collecting_with_cap(max_sqls_per_user));
             for evicted_user in &evicted_users {
                 merge_user_into_others(dst, evicted_user);
             }
@@ -747,12 +747,12 @@ impl RuCollecting {
     /// Go returns `(*userRUCollecting, overflow bool)`; returning whether the
     /// user is now present keeps the borrow of `self.users` out of the return
     /// value, so the overflow branch can still reach `self`.
-    pub fn ensure_user(&mut self, user: &str) -> bool {
+    pub fn get_or_create_user(&mut self, user: &str) -> bool {
         if !self.users.contains_key(user) {
             if self.users.len() >= self.pre_top_n_users {
                 return false;
             }
-            let collecting = UserRuCollecting::with_cap(user, self.pre_top_n_sqls_per_user);
+            let collecting = UserRuCollecting::new_user_ru_collecting_with_cap(user, self.pre_top_n_sqls_per_user);
             self.users.insert(user.to_owned(), collecting);
         }
         true
@@ -762,7 +762,7 @@ impl RuCollecting {
     pub fn get_or_create_others_user(&mut self) -> &mut UserRuCollecting {
         let pre_top_n_sqls_per_user = self.pre_top_n_sqls_per_user;
         self.others_user
-            .get_or_insert_with(|| UserRuCollecting::new_others_user(pre_top_n_sqls_per_user))
+            .get_or_insert_with(|| UserRuCollecting::new_others_user_ru_collecting_with_cap(pre_top_n_sqls_per_user))
     }
 
     /// Go `ruCollecting.mergeFrom`: merges `src` into `self`, rewriting every
@@ -776,7 +776,7 @@ impl RuCollecting {
     ) {
         // Merge regular users.
         for src_user in src.users.values() {
-            if self.ensure_user(&src_user.user) {
+            if self.get_or_create_user(&src_user.user) {
                 if let Some(dst_user) = self.users.get_mut(&src_user.user) {
                     for src_rec in src_user.records.values() {
                         let key = make_key(src_rec.sql_digest.clone(), src_rec.plan_digest.clone());
@@ -950,7 +950,7 @@ mod tests {
         }
         assert_eq!(num_sqls, user.records.len());
 
-        let report_records = user.into_report_records_with_limit(MAX_TOP_SQLS_PER_USER);
+        let report_records = user.get_report_records_with_limit(MAX_TOP_SQLS_PER_USER);
         assert_eq!(MAX_TOP_SQLS_PER_USER + 1, report_records.len());
 
         let mut others_rec = None;
@@ -1009,7 +1009,7 @@ mod tests {
     #[test]
     fn test_user_ru_collecting_empty_digests_go_to_others_rec() {
         // Both empty digests are reserved for the aggregated "others SQL".
-        let mut user = UserRuCollecting::with_cap("user1", 10);
+        let mut user = UserRuCollecting::new_user_ru_collecting_with_cap("user1", 10);
 
         user.add(
             1000,
@@ -1032,9 +1032,9 @@ mod tests {
     #[test]
     fn test_user_ru_collecting_add_others_folds_legacy_others_key() {
         // Legacy shape: "others SQL" may have been stored in records[othersKey].
-        let mut user = UserRuCollecting::with_cap("user1", 10);
+        let mut user = UserRuCollecting::new_user_ru_collecting_with_cap("user1", 10);
 
-        let mut legacy = RuRecord::new_others();
+        let mut legacy = RuRecord::new_others_ru_record();
         legacy.add(1000, 3.0, 1, 10);
         user.total_ru = legacy.total_ru;
         user.records.insert(others_key(), legacy);
@@ -1093,7 +1093,7 @@ mod tests {
 
     #[test]
     fn test_ru_collecting_others_wire_label_no_collision_with_runtime_user_shape() {
-        let mut collecting = RuCollecting::with_caps(1, 1);
+        let mut collecting = RuCollecting::new_ru_collecting_with_caps(1, 1);
         let runtime_user = "app@127.0.0.1";
 
         collecting.add(
@@ -1132,7 +1132,7 @@ mod tests {
 
     #[test]
     fn test_ru_collecting_empty_user_and_global_others_remain_distinct() {
-        let mut collecting = RuCollecting::with_caps(1, 1);
+        let mut collecting = RuCollecting::new_ru_collecting_with_caps(1, 1);
 
         // The empty user is a valid runtime user shape.
         collecting.add(
@@ -1170,7 +1170,7 @@ mod tests {
 
     #[test]
     fn test_ru_collecting_merge_from_keeps_empty_user_distinct_from_global_others() {
-        let mut dst = RuCollecting::with_caps(1, 1);
+        let mut dst = RuCollecting::new_ru_collecting_with_caps(1, 1);
         dst.add(
             1000,
             &ru_key("", "sql-empty-top", "plan-empty-top"),
@@ -1182,7 +1182,7 @@ mod tests {
             &incr(8.0, 1, 10),
         );
 
-        let mut src = RuCollecting::with_caps(1, 1);
+        let mut src = RuCollecting::new_ru_collecting_with_caps(1, 1);
         src.add(
             1002,
             &ru_key("other@127.0.0.1", "sql-other-top", "plan-other-top"),
@@ -1301,8 +1301,8 @@ mod tests {
     fn test_compact_with_limits_pre_existing_others_rec_and_evicted_sql() {
         // Precondition: the user already has othersRec, then one SQL is
         // evicted by the per-user top-1 limit.
-        let mut collecting = RuCollecting::with_caps(10, 10);
-        let mut u1 = UserRuCollecting::with_cap("u1", 10);
+        let mut collecting = RuCollecting::new_ru_collecting_with_caps(10, 10);
+        let mut u1 = UserRuCollecting::new_user_ru_collecting_with_cap("u1", 10);
         u1.add(
             1000,
             digest("sql-top"),
@@ -1338,9 +1338,9 @@ mod tests {
     #[test]
     fn test_compact_with_limits_others_user_and_evicted_users_both_present() {
         // Precondition: both a pre-existing othersUser and newly evicted users.
-        let mut collecting = RuCollecting::with_caps(10, 10);
+        let mut collecting = RuCollecting::new_ru_collecting_with_caps(10, 10);
 
-        let mut u1 = UserRuCollecting::with_cap("u1", 10);
+        let mut u1 = UserRuCollecting::new_user_ru_collecting_with_cap("u1", 10);
         u1.add(
             2000,
             digest("sql-top"),
@@ -1349,7 +1349,7 @@ mod tests {
         );
         collecting.users.insert("u1".to_owned(), u1);
 
-        let mut u2 = UserRuCollecting::with_cap("u2", 10);
+        let mut u2 = UserRuCollecting::new_user_ru_collecting_with_cap("u2", 10);
         u2.add(
             2000,
             digest("sql-u2"),
@@ -1358,7 +1358,7 @@ mod tests {
         );
         collecting.users.insert("u2".to_owned(), u2);
 
-        let mut pre_others = UserRuCollecting::new_others_user(10);
+        let mut pre_others = UserRuCollecting::new_others_user_ru_collecting_with_cap(10);
         pre_others.add(
             2000,
             digest("sql-pre-others"),
@@ -1385,8 +1385,8 @@ mod tests {
     #[test]
     fn test_compact_with_limits_only_others_user_non_empty() {
         // Precondition: only othersUser.othersRec has data.
-        let mut collecting = RuCollecting::with_caps(10, 10);
-        let mut others_user = UserRuCollecting::new_others_user(10);
+        let mut collecting = RuCollecting::new_ru_collecting_with_caps(10, 10);
+        let mut others_user = UserRuCollecting::new_others_user_ru_collecting_with_cap(10);
         others_user.add_others(3000, &incr(11.0, 1, 10));
         collecting.others_user = Some(others_user);
 
@@ -1407,8 +1407,8 @@ mod tests {
     #[test]
     fn test_compact_with_limits_single_user_single_sql() {
         // Precondition: a single user with a single SQL.
-        let mut collecting = RuCollecting::with_caps(10, 10);
-        let mut u1 = UserRuCollecting::with_cap("u1", 10);
+        let mut collecting = RuCollecting::new_ru_collecting_with_caps(10, 10);
+        let mut u1 = UserRuCollecting::new_user_ru_collecting_with_cap("u1", 10);
         u1.add(
             4000,
             digest("sql-only"),
@@ -1430,9 +1430,9 @@ mod tests {
     fn test_compact_with_limits_only_others_user_legacy_records() {
         // Precondition: legacy others data sits in othersUser.records with
         // empty digests.
-        let mut collecting = RuCollecting::with_caps(10, 10);
-        let mut legacy_others = UserRuCollecting::new_others_user(10);
-        let mut legacy_rec = RuRecord::new_others();
+        let mut collecting = RuCollecting::new_ru_collecting_with_caps(10, 10);
+        let mut legacy_others = UserRuCollecting::new_others_user_ru_collecting_with_cap(10);
+        let mut legacy_rec = RuRecord::new_others_ru_record();
         legacy_rec.add(5000, 13.0, 2, 30);
         legacy_others.total_ru = legacy_rec.total_ru;
         legacy_others.records.insert(others_key(), legacy_rec);

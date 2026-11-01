@@ -87,7 +87,7 @@ const KEYSPACE_AUTO_ID_LEADER_PATH: &str = "/tidb/autoid/leader";
 /// Nullspace uses the path as-is. A keyspace-scoped etcd client already has
 /// the `/keyspaces/tidb/<id>` namespace, so its relative key starts with `/`.
 #[must_use]
-pub const fn auto_id_service_leader_etcd_path(keyspace_id: u32) -> &'static str {
+pub const fn get_auto_id_service_leader_etcd_path(keyspace_id: u32) -> &'static str {
     if keyspace_id == u32::MAX {
         AUTO_ID_LEADER_PATH
     } else {
@@ -1003,10 +1003,10 @@ mod tests {
     #[test]
     fn test_get_auto_id_service_leader_etcd_path() {
         assert_eq!(
-            auto_id_service_leader_etcd_path(u32::MAX),
+            get_auto_id_service_leader_etcd_path(u32::MAX),
             AUTO_ID_LEADER_PATH
         );
-        assert_eq!(auto_id_service_leader_etcd_path(1), "/tidb/autoid/leader");
+        assert_eq!(get_auto_id_service_leader_etcd_path(1), "/tidb/autoid/leader");
     }
 
     /// Source:

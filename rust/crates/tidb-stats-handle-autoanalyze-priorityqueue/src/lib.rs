@@ -396,7 +396,7 @@ impl AnalysisJob {
     }
 
     /// Go `IsDynamicPartitionedTableAnalysisJob`.
-    pub const fn is_dynamic_partitioned(&self) -> bool {
+    pub const fn is_dynamic_partitioned_table_analysis_job(&self) -> bool {
         matches!(self, Self::DynamicPartitioned(_))
     }
 
@@ -548,11 +548,11 @@ impl PriorityCalculator {
             + ANALYSIS_INTERVAL_WEIGHT
                 * (1.0 + ((indicators.last_analysis_duration as f64) / 1_000_000_000.0).sqrt())
                     .log10()
-            + self.special_event(job)
+            + self.get_special_event(job)
     }
 
     /// Go `GetSpecialEvent`.
-    pub fn special_event(self, job: &AnalysisJob) -> f64 {
+    pub fn get_special_event(self, job: &AnalysisJob) -> f64 {
         if job.has_newly_added_index() {
             EVENT_NEW_INDEX
         } else {
@@ -563,7 +563,7 @@ impl PriorityCalculator {
 
 /// Go `pqHeapImpl`, a keyed max heap.
 #[derive(Debug, Default)]
-pub struct JobHeap {
+pub struct PqHeapImpl {
     items: HashMap<i64, AnalysisJob>,
     queue: Vec<i64>,
     positions: HashMap<i64, usize>,
@@ -618,7 +618,7 @@ impl fmt::Display for QueueError {
 
 impl std::error::Error for QueueError {}
 
-impl JobHeap {
+impl PqHeapImpl {
     /// Go `newHeap`.
     pub fn new() -> Self {
         Self::default()
@@ -913,7 +913,7 @@ impl QueueInventory {
 #[derive(Debug, Default)]
 struct QueueState {
     initialized: bool,
-    heap: JobHeap,
+    heap: PqHeapImpl,
     running_jobs: HashSet<i64>,
     must_retry_jobs: HashSet<i64>,
     last_dml_update_fetch_timestamp: u64,
@@ -995,7 +995,7 @@ impl AnalysisPriorityQueue {
             .source
             .queue_inventory()
             .map_err(QueueRuntimeError::Source)?;
-        state.heap = JobHeap::new();
+        state.heap = PqHeapImpl::new();
         state.running_jobs = HashSet::new();
         state.must_retry_jobs = HashSet::new();
         Self::build_jobs(&self.calculator, &mut state, &inventory);
@@ -1020,7 +1020,7 @@ impl AnalysisPriorityQueue {
     pub fn rebuild(&self) -> Result<(), QueueRuntimeError> {
         let mut state = self.lock_state();
         Self::require_initialized(&state)?;
-        state.heap = JobHeap::new();
+        state.heap = PqHeapImpl::new();
         let next_check_version = self.source.next_check_version_with_offset();
         let inventory = self
             .source
@@ -1431,14 +1431,14 @@ impl AnalysisPriorityQueue {
                 (false, _) => entry
                     .global_stats
                     .as_ref()
-                    .and_then(|stats| factory.create_non_partitioned(&entry.table, stats)),
+                    .and_then(|stats| factory.create_non_partitioned_table_analysis_job(&entry.table, stats)),
                 (true, PartitionPruneMode::Static) => {
                     for (partition, stats) in &entry.partition_stats {
                         if inventory.locked_table_ids.contains(&partition.id) {
                             continue;
                         }
                         let job =
-                            factory.create_static_partition(&entry.table, partition.id, stats);
+                            factory.create_static_partition_analysis_job(&entry.table, partition.id, stats);
                         Self::push_locked(calculator, state, job);
                     }
                     None
@@ -1454,7 +1454,7 @@ impl AnalysisPriorityQueue {
                             })
                             .map(|(partition, stats)| (partition.clone(), stats.clone()))
                             .collect();
-                        factory.create_dynamic_partitioned(&entry.table, global, &partitions)
+                        factory.create_dynamic_partitioned_table_analysis_job(&entry.table, global, &partitions)
                     })
                 }
             };
@@ -1551,7 +1551,7 @@ impl AnalysisPriorityQueue {
             return entry
                 .global_stats
                 .as_ref()
-                .and_then(|stats| factory.create_non_partitioned(&entry.table, stats));
+                .and_then(|stats| factory.create_non_partitioned_table_analysis_job(&entry.table, stats));
         }
         match inventory.prune_mode {
             PartitionPruneMode::Static => {
@@ -1565,7 +1565,7 @@ impl AnalysisPriorityQueue {
                     .find_map(|(partition, stats)| {
                         (partition.id == partition_id).then_some(stats)
                     })?;
-                factory.create_static_partition(&entry.table, partition_id, stats)
+                factory.create_static_partition_analysis_job(&entry.table, partition_id, stats)
             }
             PartitionPruneMode::Dynamic => {
                 if inventory.locked_table_ids.contains(&entry.table.id) {
@@ -1578,7 +1578,7 @@ impl AnalysisPriorityQueue {
                     .filter(|(partition, _)| !inventory.locked_table_ids.contains(&partition.id))
                     .map(|(partition, stats)| (partition.clone(), stats.clone()))
                     .collect();
-                factory.create_dynamic_partitioned(&entry.table, global, &partitions)
+                factory.create_dynamic_partitioned_table_analysis_job(&entry.table, global, &partitions)
             }
         }
     }
@@ -1650,7 +1650,7 @@ impl AnalysisJobFactory {
 
     /// Go `CreateNonPartitionedTableAnalysisJob`.
     #[must_use]
-    pub fn create_non_partitioned(self, table: &TableInfo, stats: &Table) -> Option<AnalysisJob> {
+    pub fn create_non_partitioned_table_analysis_job(self, table: &TableInfo, stats: &Table) -> Option<AnalysisJob> {
         if !stats.is_eligible_for_analysis(self.auto_analyze_min_count) {
             return None;
         }
@@ -1680,13 +1680,13 @@ impl AnalysisJobFactory {
 
     /// Go `CreateStaticPartitionAnalysisJob`.
     #[must_use]
-    pub fn create_static_partition(
+    pub fn create_static_partition_analysis_job(
         self,
         table: &TableInfo,
         partition_id: i64,
         stats: &Table,
     ) -> Option<AnalysisJob> {
-        let AnalysisJob::NonPartitioned(job) = self.create_non_partitioned(table, stats)? else {
+        let AnalysisJob::NonPartitioned(job) = self.create_non_partitioned_table_analysis_job(table, stats)? else {
             unreachable!()
         };
         Some(AnalysisJob::StaticPartitioned(
@@ -1704,7 +1704,7 @@ impl AnalysisJobFactory {
 
     /// Go `CreateDynamicPartitionedTableAnalysisJob`.
     #[must_use]
-    pub fn create_dynamic_partitioned(
+    pub fn create_dynamic_partitioned_table_analysis_job(
         self,
         table: &TableInfo,
         global_stats: &Table,
@@ -1719,7 +1719,7 @@ impl AnalysisJobFactory {
             .map(|(partition, stats)| (partition.clone(), stats.clone()))
             .collect::<HashMap<_, _>>();
         let (indicators, partition_ids) =
-            self.partition_indicators(global_stats, &eligible_partition_stats);
+            self.calculate_indicators_for_partitions(global_stats, &eligible_partition_stats);
         let partition_index_ids =
             partition_indexes_needing_analyze(table, &eligible_partition_stats);
         if partition_ids.is_empty() && partition_index_ids.is_empty() {
@@ -1787,7 +1787,7 @@ impl AnalysisJobFactory {
     }
 
     /// Go `CalculateIndicatorsForPartitions`.
-    pub fn partition_indicators(
+    pub fn calculate_indicators_for_partitions(
         self,
         global_stats: &Table,
         partition_stats: &HashMap<PartitionIdAndName, Table>,
@@ -2027,7 +2027,7 @@ impl NonPartitionedTableAnalysisJob {
 
     fn analyze<C: AnalysisJobContext + ?Sized>(&self, context: &C) -> bool {
         if self.index_ids.is_empty() {
-            let (sql, arguments) = self.analyze_table_sql();
+            let (sql, arguments) = self.gen_sql_for_analyze_table();
             return context.auto_analyze(
                 self.table_stats_version,
                 self.need_version_rewrite_warning,
@@ -2038,7 +2038,7 @@ impl NonPartitionedTableAnalysisJob {
         let Some(index) = self.index_names.first() else {
             return true;
         };
-        let (sql, arguments) = self.analyze_index_sql(index);
+        let (sql, arguments) = self.gen_sql_for_analyze_index(index);
         context.auto_analyze(
             self.table_stats_version,
             self.need_version_rewrite_warning,
@@ -2048,7 +2048,7 @@ impl NonPartitionedTableAnalysisJob {
     }
 
     /// Go `GenSQLForAnalyzeTable`.
-    pub fn analyze_table_sql(&self) -> (&'static str, Vec<String>) {
+    pub fn gen_sql_for_analyze_table(&self) -> (&'static str, Vec<String>) {
         (
             "analyze table %n.%n",
             vec![self.schema_name.clone(), self.table_name.clone()],
@@ -2056,7 +2056,7 @@ impl NonPartitionedTableAnalysisJob {
     }
 
     /// Go `GenSQLForAnalyzeIndex`.
-    pub fn analyze_index_sql(&self, index: &str) -> (&'static str, Vec<String>) {
+    pub fn gen_sql_for_analyze_index(&self, index: &str) -> (&'static str, Vec<String>) {
         (
             "analyze table %n.%n index %n",
             vec![
@@ -2111,7 +2111,7 @@ impl StaticPartitionedTableAnalysisJob {
 
     fn analyze<C: AnalysisJobContext + ?Sized>(&self, context: &C) -> bool {
         if self.index_ids.is_empty() {
-            let (sql, arguments) = self.analyze_partition_sql();
+            let (sql, arguments) = self.gen_sql_for_analyze_static_partition();
             return context.auto_analyze(
                 self.table_stats_version,
                 self.need_version_rewrite_warning,
@@ -2122,7 +2122,7 @@ impl StaticPartitionedTableAnalysisJob {
         let Some(index) = self.index_names.first() else {
             return true;
         };
-        let (sql, arguments) = self.analyze_partition_index_sql(index);
+        let (sql, arguments) = self.gen_sql_for_analyze_static_partition_index(index);
         context.auto_analyze(
             self.table_stats_version,
             self.need_version_rewrite_warning,
@@ -2132,7 +2132,7 @@ impl StaticPartitionedTableAnalysisJob {
     }
 
     /// Go `GenSQLForAnalyzeStaticPartition`.
-    pub fn analyze_partition_sql(&self) -> (&'static str, Vec<String>) {
+    pub fn gen_sql_for_analyze_static_partition(&self) -> (&'static str, Vec<String>) {
         (
             "analyze table %n.%n partition %n",
             vec![
@@ -2144,7 +2144,7 @@ impl StaticPartitionedTableAnalysisJob {
     }
 
     /// Go `GenSQLForAnalyzeStaticPartitionIndex`.
-    pub fn analyze_partition_index_sql(&self, index: &str) -> (&'static str, Vec<String>) {
+    pub fn gen_sql_for_analyze_static_partition_index(&self, index: &str) -> (&'static str, Vec<String>) {
         (
             "analyze table %n.%n partition %n index %n",
             vec![
@@ -2219,7 +2219,7 @@ impl DynamicPartitionedTableAnalysisJob {
         assert_ne!(partition_batch_size, 0, "auto analyze partition batch size");
         if self.partition_index_ids.is_empty() {
             for partitions in self.partition_names.chunks(partition_batch_size) {
-                let sql = partition_sql("analyze table %n.%n partition", "", partitions.len());
+                let sql = get_partition_sql("analyze table %n.%n partition", "", partitions.len());
                 let mut arguments = vec![self.schema_name.clone(), self.global_table_name.clone()];
                 arguments.extend_from_slice(partitions);
                 if !context.auto_analyze(
@@ -2237,7 +2237,7 @@ impl DynamicPartitionedTableAnalysisJob {
             return false;
         };
         for partitions in partitions.chunks(partition_batch_size) {
-            let sql = partition_sql(
+            let sql = get_partition_sql(
                 "analyze table %n.%n partition",
                 " index %n",
                 partitions.len(),
@@ -2304,7 +2304,7 @@ fn validate_analysis_interval<C: AnalysisJobContext + ?Sized>(
 }
 
 /// Go `getPartitionSQL`.
-pub fn partition_sql(prefix: &str, suffix: &str, partition_count: usize) -> String {
+pub fn get_partition_sql(prefix: &str, suffix: &str, partition_count: usize) -> String {
     let mut sql = prefix.to_owned();
     for index in 0..partition_count {
         if index != 0 {
@@ -2549,7 +2549,7 @@ mod tests {
 
     #[test]
     fn source_heap_add_update_delete_peek_and_pop() {
-        let mut heap = JobHeap::new();
+        let mut heap = PqHeapImpl::new();
         for item in [job(1, 10.0), job(2, 1.0), job(3, 11.0), job(4, 30.0)] {
             heap.add_or_update(item);
         }
@@ -2688,7 +2688,7 @@ mod tests {
             ..NonPartitionedTableAnalysisJob::default()
         };
         assert_eq!(
-            ordinary.analyze_table_sql(),
+            ordinary.gen_sql_for_analyze_table(),
             (
                 "analyze table %n.%n",
                 vec!["test".to_owned(), "t".to_owned()]
@@ -2751,7 +2751,7 @@ mod tests {
             assert!(serde_json::to_string(&json_value(weight)).is_err());
         }
         assert_eq!(
-            partition_sql("analyze table %n.%n partition", " index %n", 2),
+            get_partition_sql("analyze table %n.%n partition", " index %n", 2),
             "analyze table %n.%n partition %n, %n index %n"
         );
     }
@@ -3169,7 +3169,7 @@ mod tests {
         table_stats.hist_coll.stats_version = 1;
         let disabled = AnalysisJobFactory::new(0.0, 10 << 18, 2, 0);
         let job = disabled
-            .create_non_partitioned(&table, &table_stats)
+            .create_non_partitioned_table_analysis_job(&table, &table_stats)
             .unwrap();
         assert_eq!(job.indicators().change_percentage, 0.0);
         assert_eq!(job.as_json().index_ids, [7]);
@@ -3184,11 +3184,11 @@ mod tests {
 
         table.indices = GoSharedPointerSlice::default();
         assert!(disabled
-            .create_non_partitioned(&table, &table_stats)
+            .create_non_partitioned_table_analysis_job(&table, &table_stats)
             .is_none());
         table_stats.last_analyze_version = 0;
         let unanalyzed = disabled
-            .create_non_partitioned(&table, &table_stats)
+            .create_non_partitioned_table_analysis_job(&table, &table_stats)
             .unwrap();
         assert_eq!(unanalyzed.indicators().change_percentage, 1.0);
         assert_eq!(
@@ -3199,12 +3199,12 @@ mod tests {
         let threshold = AnalysisJobFactory::new(0.4, 10 << 18, 2, 0);
         table_stats.last_analyze_version = 1;
         assert!(threshold
-            .create_non_partitioned(&table, &table_stats)
+            .create_non_partitioned_table_analysis_job(&table, &table_stats)
             .is_none());
         table_stats.hist_coll.modify_count = 41;
         assert_eq!(
             threshold
-                .create_non_partitioned(&table, &table_stats)
+                .create_non_partitioned_table_analysis_job(&table, &table_stats)
                 .unwrap()
                 .indicators()
                 .change_percentage,

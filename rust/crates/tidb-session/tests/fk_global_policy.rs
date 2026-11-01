@@ -185,7 +185,7 @@ fn foreign_key_global_policy_batch() {
 
     use tidb_ddl::cluster_ddl::DdlStatement;
     use tidb_ddl::foreign_key_build::{
-        check_table_foreign_keys_valid, check_table_foreign_keys_valid_in_owner,
+        check_table_foreign_keys_valid, check_table_foreign_key_valid_in_owner,
     };
     let parsed = tidb_parser::parse(
         "CREATE TABLE test.persisted(id INT, FOREIGN KEY fk(id) REFERENCES absent(id))",
@@ -205,7 +205,7 @@ fn foreign_key_global_policy_batch() {
         databases: vec![],
     };
     check_table_foreign_keys_valid(&catalog, "test", &table, true).unwrap();
-    check_table_foreign_keys_valid_in_owner(&catalog, "test", &mut table, true).unwrap();
+    check_table_foreign_key_valid_in_owner(&catalog, "test", &mut table, true).unwrap();
     assert_eq!(
         table.max_foreign_key_id, 1,
         "legacy metadata still gets an ID"

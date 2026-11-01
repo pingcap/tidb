@@ -172,7 +172,7 @@ static SELECTION_CACHE: Mutex<Option<SelectionCache>> = Mutex::new(None);
 /// Every request shape this lowering does not build into the DAG is refused
 /// BY NAME ([`PushdownScannerError::Unsupported`]), never ignored, and the
 /// caller then answers from the byte-level cursor.
-pub fn open_cop_scan(
+pub fn build_resp(
     client: &dyn tidb_txnkv::Client,
     request: &PushdownScanRequest,
 ) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError> {
@@ -197,7 +197,7 @@ pub fn open_cop_scan(
     let columns = request
         .columns
         .iter()
-        .map(scan_column)
+        .map(column_to_proto)
         .collect::<Option<Vec<_>>>()
         .ok_or_else(|| refuse("a column has no bounded coprocessor descriptor"))?;
     let mut field_types: Vec<FieldType> = request
@@ -1108,7 +1108,7 @@ impl Drop for CopRowStream {
 
 /// Go `util.ColumnToProto`: the coprocessor descriptor of one scanned column,
 /// or `None` for a type with no stable TiPB interpretation.
-pub fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
+pub fn column_to_proto(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
     let code = column.field_type.code();
     // `FieldTypeCode::Unknown` and `Unspecified` have no stable TiPB
     // interpretation. Every named code below is accepted by Go's
@@ -1252,7 +1252,7 @@ fn lower_aggregate_function(
         val: None,
         children,
         sig: Some(ScalarFuncSig::Unspecified as i32),
-        field_type: Some(tidb_expr::pushdown_catalog::field_type_to_pb(output_type)?),
+        field_type: Some(tidb_expr::pushdown_catalog::to_pb_field_type(output_type)?),
         has_distinct: Some(false),
         agg_func_mode: Some(tidb_proto::tipb::AggFunctionMode::Partial1Mode as i32),
         ..Default::default()

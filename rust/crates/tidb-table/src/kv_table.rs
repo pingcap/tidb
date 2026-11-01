@@ -72,7 +72,7 @@ use table_meta::NonPublicIndex;
 use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use tidb_autoid::AutoIdAllocator;
 use row_decoder::fill_handle_columns;
-pub use row_decoder::row_checksum;
+pub use row_decoder::fill_row_checksum;
 use std::collections::HashSet;
 pub use table_meta::NOT_NULL_FLAG;
 use tidb_tablecodec::table_key::{encode_row_key_with_handle, get_table_handle_key_range};
@@ -308,7 +308,7 @@ impl UpdateRecordOptions {
 
     /// Go `UpdateRecordOpt.GetAddRecordOpt`.
     #[must_use]
-    pub fn add_record_options(&self) -> AddRecordOptions {
+    pub fn get_add_record_opt(&self) -> AddRecordOptions {
         AddRecordOptions {
             common: self.common.clone(),
             is_update: true,
@@ -319,7 +319,7 @@ impl UpdateRecordOptions {
 
     /// Go `UpdateRecordOpt.GetAddRecordOptKeepRecordID`.
     #[must_use]
-    pub fn add_record_options_keep_record_id(&self) -> AddRecordOptions {
+    pub fn get_add_record_opt_keep_record_id(&self) -> AddRecordOptions {
         AddRecordOptions {
             common: self.common.clone(),
             is_update: true,
@@ -1883,7 +1883,7 @@ impl KvTable {
     /// A transaction starts both afresh, which is why its first id is 1
     /// again.
     #[must_use]
-    pub fn new_temporary_txn_data(&self) -> TemporaryTableTxnData {
+    pub fn temp_table_from_meta(&self) -> TemporaryTableTxnData {
         TemporaryTableTxnData {
             store: Box::new(MemTableStorage::new()),
             auto_id: AutoIdAllocator::temporary(self.auto_id.unsigned, self.meta.read().auto_inc_id),
@@ -1900,7 +1900,7 @@ impl KvTable {
     }
 
     /// Exchanges this table's rows and allocators for a session's
-    /// transaction-scoped ones (see [`Self::new_temporary_txn_data`]),
+    /// transaction-scoped ones (see [`Self::temp_table_from_meta`]),
     /// returning what it held. The session's GLOBAL temporary table overlay
     /// swaps them in for a statement and back out afterwards, as
     /// [`Self::swap_storage`] does for the rows alone.
@@ -2424,7 +2424,7 @@ impl KvTable {
     }
 
     /// Go `CheckRowConstraintWithDatum` over this table's writable constraints.
-    pub fn validate_check_constraints(
+    pub fn check_row_constraint_with_datum(
         &self,
         row: &[Datum],
         ctx: &dyn tidb_exprctx::Columns,
@@ -4062,7 +4062,7 @@ impl KvTable {
         // Go AddRecord receives a row completed by the mutation executor.
         // Re-evaluation here would duplicate warnings and could replace its
         // converted/NULL-substituted generated values before index encoding.
-        self.validate_check_constraints(row, ctx)?;
+        self.check_row_constraint_with_datum(row, ctx)?;
         self.check_data_for_modify_column(row, stats_ctx)?;
         // Go `AddRecord` writes `WritableCols`: past the public columns, the
         // ones a DDL is adding or changing.
@@ -4304,7 +4304,7 @@ impl KvTable {
     ) -> Result<(), KvTableError> {
         let zone = ctx.session_zone();
         // The shared update owner has already completed generated values.
-        self.validate_check_constraints(row, ctx)?;
+        self.check_row_constraint_with_datum(row, ctx)?;
         self.check_data_for_modify_column(row, Some(ctx))?;
         // Go reads `WritableCols` for an UPDATE: the old and new rows carry
         // the columns a DDL holds in an intermediate state.

@@ -277,7 +277,7 @@ impl MutateContext for StaticMutateContext {
 
     /// Go `util.GetTypeFlagsForInsert`.
     fn write_conversion_flags(&self) -> ConversionFlags {
-        tidb_util::misc::write_date_flags(
+        tidb_util::misc::get_type_flags_for_insert(
             tidb_datatype::DEFAULT_STATEMENT_FLAGS
                 .with_allow_negative_to_unsigned(false)
                 .with_ignore_truncate_err(self.truncate == ErrorLevel::Ignore)

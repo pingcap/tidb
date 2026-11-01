@@ -144,7 +144,7 @@ impl Column {
     /// Go `newFixedLenColumn`: a fixed-length column whose elements are
     /// `elem_len` bytes, with initial data capacity for `capacity` rows.
     #[must_use]
-    pub fn new_fixed_len(elem_len: usize, capacity: usize) -> Self {
+    pub fn new_fixed_len_column(elem_len: usize, capacity: usize) -> Self {
         Column {
             elem_buf: Some(vec![0; elem_len]),
             data: SharedBytes::with_capacity(elem_len * capacity),
@@ -159,8 +159,8 @@ impl Column {
     /// for `capacity` rows.
     pub fn new_column(field_type: &FieldType, capacity: usize) -> Self {
         match get_fixed_len(field_type) {
-            VAR_ELEM_LEN => Column::new_var_len(capacity),
-            elem_len => Column::new_fixed_len(elem_len as usize, capacity),
+            VAR_ELEM_LEN => Column::new_var_len_column(capacity),
+            elem_len => Column::new_fixed_len_column(elem_len as usize, capacity),
         }
     }
 
@@ -172,9 +172,9 @@ impl Column {
     #[must_use]
     pub fn new_column_with_type_size(type_size: i64, capacity: usize) -> Self {
         if type_size == VAR_ELEM_LEN {
-            Column::new_var_len(capacity)
+            Column::new_var_len_column(capacity)
         } else {
-            Column::new_fixed_len(type_size as usize, capacity)
+            Column::new_fixed_len_column(type_size as usize, capacity)
         }
     }
 
@@ -196,15 +196,15 @@ impl Column {
     /// Go `newVarLenColumn`: a variable-length column. The leading `0` offset is
     /// always present so slicing `data` is uniform.
     #[must_use]
-    pub fn new_var_len(capacity: usize) -> Self {
+    pub fn new_var_len_column(capacity: usize) -> Self {
         let mut offsets = Vec::with_capacity(capacity + 1);
         offsets.push(0);
-        let data_capacity = ESTIMATED_ELEM_LEN
+        let get_data_cap = ESTIMATED_ELEM_LEN
             .checked_mul(capacity)
             .expect("variable-length column capacity overflow");
         Column {
             elem_buf: None,
-            data: SharedBytes::with_capacity(data_capacity),
+            data: SharedBytes::with_capacity(get_data_cap),
             null_bitmap: Vec::with_capacity((capacity + 7) >> 3),
             offsets,
             length: 0,
@@ -227,17 +227,17 @@ impl Column {
     }
 
     /// Go `GetNullBitmapCap`.
-    pub fn null_bitmap_capacity(&self) -> usize {
+    pub fn get_null_bitmap_cap(&self) -> usize {
         self.null_bitmap.capacity()
     }
 
     /// Go `GetOffsetCap`.
-    pub fn offset_capacity(&self) -> usize {
+    pub fn get_offset_cap(&self) -> usize {
         self.offsets.capacity()
     }
 
     /// Go `GetDataCap`.
-    pub fn data_capacity(&self) -> usize {
+    pub fn get_data_cap(&self) -> usize {
         self.data.capacity()
     }
 
@@ -277,17 +277,17 @@ impl Column {
     }
 
     /// Go `CalculateLenDeltaForAppendCellNTimesForNullBitMap`.
-    pub fn null_bitmap_len_delta_for_append_cell_n_times(&self, times: usize) -> usize {
+    pub fn calculate_len_delta_for_append_cell_n_times_for_null_bit_map(&self, times: usize) -> usize {
         ((self.length + times + 7) >> 3).saturating_sub(self.null_bitmap.len())
     }
 
     /// Go `CalculateLenDeltaForAppendCellNTimesForFixedElem`.
-    pub fn fixed_len_delta_for_append_cell_n_times(src: &Column, times: usize) -> usize {
+    pub fn calculate_len_delta_for_append_cell_n_times_for_fixed_elem(src: &Column, times: usize) -> usize {
         src.elem_buffer_len().saturating_mul(times)
     }
 
     /// Go `CalculateLenDeltaForAppendCellNTimesForVarElem`.
-    pub fn var_len_delta_for_append_cell_n_times(src: &Column, row: usize, times: usize) -> usize {
+    pub fn calculate_len_delta_for_append_cell_n_times_for_var_elem(src: &Column, row: usize, times: usize) -> usize {
         let cell_len = usize::try_from(src.offsets[row + 1] - src.offsets[row])
             .expect("column offsets are non-decreasing");
         cell_len.saturating_mul(times)
@@ -510,14 +510,14 @@ impl Column {
     /// element shape for the requested evaluation type.
     pub fn reset_for_eval_type(&mut self, eval_type: EvalType) {
         match eval_type {
-            EvalType::Int => self.resize_int64(0, false),
-            EvalType::Real => self.resize_float64(0, false),
+            EvalType::Int => self.resize_int_64(0, false),
+            EvalType::Real => self.resize_float_64(0, false),
             EvalType::Decimal => self.resize_decimal(0, false),
             EvalType::String => self.reserve_string(0),
             EvalType::Datetime | EvalType::Timestamp => self.resize_time(0, false),
             EvalType::Duration => self.resize_go_duration(0, false),
             EvalType::Json => self.reserve_json(0),
-            EvalType::VectorFloat32 => self.reserve_vector_float32(0),
+            EvalType::VectorFloat32 => self.reserve_vector_float_32(0),
         }
     }
 
@@ -846,7 +846,7 @@ impl Column {
     }
 
     /// Go `GetRawLength`.
-    pub fn raw_len(&self, row_id: usize) -> usize {
+    pub fn get_raw_length(&self, row_id: usize) -> usize {
         if self.is_fixed() {
             self.elem_buffer_len()
         } else {
@@ -1048,11 +1048,11 @@ impl Column {
 
     /// Go `reserve`, shared by variable-width Reserve* helpers.
     fn reserve_var(&mut self, n: usize, estimated_size: usize) {
-        let data_capacity = n
+        let get_data_cap = n
             .checked_mul(estimated_size)
             .expect("column reserve size overflow");
-        if self.data.capacity() < data_capacity {
-            self.data = SharedBytes::with_capacity(data_capacity);
+        if self.data.capacity() < get_data_cap {
+            self.data = SharedBytes::with_capacity(get_data_cap);
         } else {
             self.data.reset();
         }
@@ -1062,9 +1062,9 @@ impl Column {
         } else {
             self.null_bitmap.clear();
         }
-        let offset_capacity = n.checked_add(1).expect("offset capacity overflow");
-        if self.offsets.capacity() < offset_capacity {
-            self.offsets = Vec::with_capacity(offset_capacity);
+        let get_offset_cap = n.checked_add(1).expect("offset capacity overflow");
+        if self.offsets.capacity() < get_offset_cap {
+            self.offsets = Vec::with_capacity(get_offset_cap);
         }
         if self.offsets.is_empty() {
             self.offsets.push(0);
@@ -1078,22 +1078,22 @@ impl Column {
     }
 
     /// Go `ResizeInt64`.
-    pub fn resize_int64(&mut self, n: usize, is_null: bool) {
+    pub fn resize_int_64(&mut self, n: usize, is_null: bool) {
         self.resize_fixed(n, 8, is_null);
     }
 
     /// Go `ResizeUint64`.
-    pub fn resize_uint64(&mut self, n: usize, is_null: bool) {
+    pub fn resize_uint_64(&mut self, n: usize, is_null: bool) {
         self.resize_fixed(n, 8, is_null);
     }
 
     /// Go `ResizeFloat32`.
-    pub fn resize_float32(&mut self, n: usize, is_null: bool) {
+    pub fn resize_float_32(&mut self, n: usize, is_null: bool) {
         self.resize_fixed(n, 4, is_null);
     }
 
     /// Go `ResizeFloat64`.
-    pub fn resize_float64(&mut self, n: usize, is_null: bool) {
+    pub fn resize_float_64(&mut self, n: usize, is_null: bool) {
         self.resize_fixed(n, 8, is_null);
     }
 
@@ -1133,7 +1133,7 @@ impl Column {
     }
 
     /// Go `ReserveVectorFloat32`.
-    pub fn reserve_vector_float32(&mut self, n: usize) {
+    pub fn reserve_vector_float_32(&mut self, n: usize) {
         self.reserve_var(n, ESTIMATED_ELEM_LEN);
     }
 

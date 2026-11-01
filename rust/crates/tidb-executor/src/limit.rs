@@ -476,7 +476,7 @@ mod tests {
 
     /// A limit over a single source chunk holding col0 = 1..=n.
     fn limit_over(n: i64, offset: u64, count: u64) -> LimitExec {
-        let mut data = Chunk::new_with_capacity(std::slice::from_ref(&long()), n as usize);
+        let mut data = Chunk::new_chunk_with_capacity(std::slice::from_ref(&long()), n as usize);
         for v in 1..=n {
             data.append_int64(0, v);
         }

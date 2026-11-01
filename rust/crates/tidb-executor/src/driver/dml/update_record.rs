@@ -191,9 +191,9 @@ impl<'a> UpdateRecords<'a> {
         // `partitionedTableUpdateRecord`'s constraint check for a row moving
         // into the exchanged partition.
         if let Some(check) = &exchange_check {
-            check.check_standalone_row(new, ctx)?;
+            check.check_row_for_exchange_partition(new, ctx)?;
             if let TableEntry::Kv(kv) = entry {
-                check.check_partitioned_row(kv, new, ctx)?;
+                check.check_constraint_for_exchange_partition(kv, new, ctx)?;
             }
         }
         if let (TableEntry::Kv(kv), Some(partitions)) = (entry, partitions) {

@@ -128,7 +128,7 @@ pub struct Interval<'a> {
 /// in INTERVAL steps up to and including the statement's end value, named
 /// `P_LT_<bound>`. `existing` counts the table's definitions toward the
 /// partition limit.
-pub fn generate_from_interval(
+pub fn generate_part_defs_from_interval(
     interval: &Interval<'_>,
     statement: IntervalStatement<'_>,
     column: Option<&FieldType>,
@@ -242,7 +242,7 @@ fn lower_bound_int(column: &FieldType) -> i64 {
 ///
 /// `column` is the RANGE COLUMNS column's type; `unsigned` is
 /// `isPartExprUnsigned` for the expression form.
-pub fn expand_interval(
+pub fn generate_partition_definitions_from_interval(
     partitioning: &TablePartitioning,
     column: Option<&FieldType>,
     unsigned: bool,
@@ -322,7 +322,7 @@ pub fn expand_interval(
             sub_partitions: Vec::new(),
         });
     }
-    let generated = generate_from_interval(
+    let generated = generate_part_defs_from_interval(
         &Interval {
             step: &interval.expr,
             unit: interval.unit.as_deref(),
@@ -476,7 +476,7 @@ impl TableInterval {
 /// Go `getPartitionIntervalFromTable`: whether the table's definitions are
 /// what an INTERVAL would have generated, and if so which one. `None` for
 /// anything else, as Go answers nil.
-pub fn interval_from_table(
+pub fn get_partition_interval_from_table(
     partition: &tidb_table::partition_routing::PartitionSpec,
     ctx: &tidb_metabuild::Context,
 ) -> Option<TableInterval> {
@@ -597,7 +597,7 @@ pub fn interval_from_table(
     if null_partition {
         generated.push(None);
     }
-    for definition in generate_from_interval(
+    for definition in generate_part_defs_from_interval(
         &found.interval(),
         IntervalStatement::Create,
         found.column.as_ref(),

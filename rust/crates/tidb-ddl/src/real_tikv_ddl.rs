@@ -1243,7 +1243,7 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
         | DdlStatement::DropView { .. }
         | DdlStatement::DropSequence { .. }
         | DdlStatement::DropDatabase { .. } => {
-            crate::cluster_ddl::drop_object::prepare_drop_object_job_submission(
+            crate::cluster_ddl::drop_object::drop_table_object(
                 snapshot,
                 statement,
                 job_context,

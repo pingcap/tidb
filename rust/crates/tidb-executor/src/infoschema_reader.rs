@@ -214,7 +214,7 @@ fn visible_tables(
 /// every table visible to the current account, joined with the Domain's
 /// node-global usage counters. Integer primary-key handles use synthetic
 /// index ID zero because Go does not keep them in `TableInfo.Indices`.
-pub fn tidb_index_usage_rows(
+pub fn set_data_from_index_usage(
     catalog: &Catalog,
     visibility: &SchemaVisibility,
     collector: &tidb_stats_handle_usage_indexusage::Collector,
@@ -1158,7 +1158,7 @@ fn information_schema_tables_rows(zone: &tidb_datatype::SessionTimeZone) -> Vec<
 /// Go `memtableRetriever.setDataForAttributes`: each label rule naming a
 /// table or partition that still exists, and whose table the session may
 /// SELECT from. A malformed rule is skipped (Go logs it).
-pub fn attributes_rows(
+pub fn set_data_for_attributes(
     catalog: &Catalog,
     visibility: &SchemaVisibility,
 ) -> Result<Vec<Vec<Datum>>, crate::DriverError> {

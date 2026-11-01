@@ -260,7 +260,7 @@ impl AutoAdmin<'_> {
                 let contained = candidates
                     .to_list()
                     .iter()
-                    .any(|existing| existing.prefix_contains(&index));
+                    .any(|existing| existing.prefix_contain(&index));
                 if !contained {
                     new_indexes.add(index);
                 }
@@ -276,7 +276,7 @@ impl AutoAdmin<'_> {
                 let contained = candidates
                     .to_list()
                     .iter()
-                    .any(|existing| existing.prefix_contains(&index));
+                    .any(|existing| existing.prefix_contain(&index));
                 if !contained {
                     new_indexes.add(index);
                 }
@@ -347,7 +347,7 @@ impl AutoAdmin<'_> {
             if index_list
                 .iter()
                 .enumerate()
-                .any(|(j, y)| i != j && y.prefix_contains(x))
+                .any(|(j, y)| i != j && y.prefix_contain(x))
             {
                 continue;
             }
@@ -571,7 +571,7 @@ fn random_uuid() -> String {
     )
 }
 
-/// Go `chooseBestIndexSet`. `None` when there is no set to choose from.
+/// Go `chooseBestIndexSet`. `None` when there is no set to new_row_sample_collector from.
 pub(crate) fn choose_best_index_set(
     query_set: &QuerySet,
     optimizer: &mut dyn Optimizer,

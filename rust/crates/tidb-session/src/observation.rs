@@ -27,7 +27,7 @@ use tidb_topsql_stmtstats::{ExecFinishInfo, StatementObserver};
 
 
 
-/// The exec details [`Session::initialize_statement_exec_details`] created
+/// The exec details [`Session::context_with_initialized_exec_details`] created
 /// for the statement the session is about to run, with the digest it
 /// computed for them.
 pub(crate) struct PendingStatementExecDetails {
@@ -351,7 +351,7 @@ impl Session {
             ruv2_metrics.add_session_parser_total(pending_parses);
         }
         // Go `ResetContextOfStmt`: `vars.DurationWaitTS = 0`.
-        self.phase_durations.reset_for_statement();
+        self.phase_durations.reset_context_of_stmt();
         // Go `clientConn.dispatch`: `SQLCPUUsages.ResetCPUTimes()`.
         self.sql_cpu_usages.reset_cpu_times();
         // Go `ResetContextOfStmt`: `vars.MemTracker.ResetMaxConsumed()` and
@@ -477,7 +477,7 @@ impl Session {
     /// statement (Go `PointGetExecutor.getAndLock`'s fold) is charged and
     /// tagged as the statement's own. The statement's observation adopts
     /// these details when it starts.
-    pub fn initialize_statement_exec_details(&mut self, sql: &str) {
+    pub fn context_with_initialized_exec_details(&mut self, sql: &str) {
         if self.routed_statement_observation_depth != 0 {
             return;
         }
@@ -494,7 +494,7 @@ impl Session {
         });
     }
 
-    /// The digest [`Self::initialize_statement_exec_details`] computed for
+    /// The digest [`Self::context_with_initialized_exec_details`] computed for
     /// the statement about to run, so its process info reuses it.
     pub(crate) fn pending_statement_digest(&self, sql: &str) -> Option<String> {
         self.pending_statement_exec_details
@@ -598,7 +598,7 @@ impl Session {
                         tidb_hint::extract_table_hints_from_stmt_node(&handled).0;
                 }
                 (observation.binding_sql, observation.binding_digest) =
-                    tidb_bindinfo::binding::normalize_with_db(stmt, &self.vars.current_db);
+                    tidb_bindinfo::binding::normalize_stmt_for_binding(stmt, &self.vars.current_db);
             }
             observation.prepared |= prepared;
             // Go's ExecuteStmt node records whatever it executes.
@@ -653,7 +653,7 @@ impl Session {
                     guard.id(),
                     &self.statement_text(sql),
                     digest.as_deref(),
-                    &self.status_text(),
+                    &self.server_status_2_str(),
                 );
             }
         }
@@ -753,7 +753,7 @@ impl Session {
         // Go `finalizeStatementRUV2Metrics`, before the slow log and the
         // summary read the metrics: the raw TiKV RU v2 counters the
         // statement's RPCs left in its `RUDetails`.
-        tidb_execdetails::ruv2_metrics::sync_ruv2_metrics_from_ru_details(
+        tidb_execdetails::ruv2_metrics::sync_ruv_2_metrics_from_ru_details(
             Some(&observation.ruv2_metrics),
             Some(&observation.ru_details),
         );
@@ -810,7 +810,7 @@ impl Session {
     /// text normalized, plus the execution's arguments unless redaction is
     /// fully on.
     #[must_use]
-    pub fn dispatch_failure_prepared_sql(&self, sql: &str) -> String {
+    pub fn prepared_stmt_2_string(&self, sql: &str) -> String {
         let mode = self.redact_log_mode();
         let mut text = tidb_parser::normalize(sql, self.redact_mode());
         if mode != "ON" {
@@ -825,7 +825,7 @@ impl Session {
     /// Go `SessionVars.GetReadableTxnMode`: `@@tidb_txn_mode`, `OPTIMISTIC`
     /// when empty.
     #[must_use]
-    pub fn readable_txn_mode(&self) -> String {
+    pub fn get_readable_txn_mode(&self) -> String {
         match self.vars.get_system("tidb_txn_mode") {
             Ok(mode) if !mode.is_empty() => mode,
             _ => "OPTIMISTIC".to_owned(),

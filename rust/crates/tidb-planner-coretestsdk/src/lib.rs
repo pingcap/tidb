@@ -764,7 +764,7 @@ impl PlannerSuite {
     }
 
     /// Go `GetSCtx`.
-    pub const fn get_sctx(&self) -> &MockContext {
+    pub const fn get_s_ctx(&self) -> &MockContext {
         &self.context
     }
 
@@ -1127,7 +1127,7 @@ mod tests {
     #[test]
     fn suite_reassigns_table_and_partition_ids_in_source_order() {
         let mut suite = create_planner_suite_elems();
-        assert!(std::ptr::eq(suite.get_sctx(), suite.get_ctx()));
+        assert!(std::ptr::eq(suite.get_s_ctx(), suite.get_ctx()));
         assert_eq!(suite.get_ctx().current_database(), "test");
         assert_eq!(suite.get_ctx().div_precision_increment(), 4);
         let ids: Vec<_> = suite

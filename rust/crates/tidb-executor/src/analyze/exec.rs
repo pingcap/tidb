@@ -1023,7 +1023,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
                 let approximate = has_pd.then_some(approximate);
                 let realtime = realtime_count(options.physical_id);
                 let rate =
-                    tidb_stats::row_sample_collector::adjusted_sample_rate(realtime, approximate);
+                    tidb_stats::row_sample_collector::get_adjusted_sample_rate(realtime, approximate);
                 let reason =
                     crate::analyze::sample_rate_reason(realtime, approximate, rate);
                 options.effective.sample_rate = Some(rate);

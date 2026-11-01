@@ -41,7 +41,7 @@ impl<'a> IndexUsageReporter<'a> {
     }
 
     /// Go `ReportCopIndexUsageForTable`.
-    pub fn report_cop_for_table(
+    pub fn report_cop_index_usage_for_table(
         &self,
         table: &KvTable,
         stats: Option<&UsedStatsInfoForTable>,
@@ -49,11 +49,11 @@ impl<'a> IndexUsageReporter<'a> {
         kv_requests: u64,
         accessed_rows: u64,
     ) {
-        self.report_cop(table.table_id(), index_id, stats, kv_requests, accessed_rows);
+        self.report_cop_index_usage(table.table_id(), index_id, stats, kv_requests, accessed_rows);
     }
 
     /// Go `ReportCopIndexUsage`.
-    pub fn report_cop(
+    pub fn report_cop_index_usage(
         &self,
         logical_table_id: i64,
         index_id: i64,
@@ -78,7 +78,7 @@ impl<'a> IndexUsageReporter<'a> {
     }
 
     /// Go `ReportPointGetIndexUsageForHandle`.
-    pub fn report_point_for_handle(
+    pub fn report_point_get_index_usage_for_handle(
         &self,
         table: &KvTable,
         stats: Option<&UsedStatsInfoForTable>,
@@ -100,12 +100,12 @@ impl<'a> IndexUsageReporter<'a> {
         kv_requests: u64,
         rows: u64,
     ) {
-        self.report_point(table.table_id(), stats, index_id, kv_requests, rows);
+        self.report_point_get_index_usage(table.table_id(), stats, index_id, kv_requests, rows);
     }
 
     /// Go `ReportPointGetIndexUsage`: reporting owns IDs and counters, not
     /// a copy of the table or its storage handle.
-    pub fn report_point(
+    pub fn report_point_get_index_usage(
         &self,
         logical_table_id: i64,
         stats: Option<&UsedStatsInfoForTable>,
@@ -245,7 +245,7 @@ impl PointIndexUsageExec {
                 kv_requests,
                 self.rows,
             ),
-            None => reporter.report_point_for_handle(
+            None => reporter.report_point_get_index_usage_for_handle(
                 &self.table,
                 self.stats.as_ref(),
                 kv_requests,
@@ -361,7 +361,7 @@ impl CopIndexUsageExec {
         }
         let reporter = IndexUsageReporter::new(self.collector.as_ref());
         if let Some(index_id) = self.index_id {
-            reporter.report_cop(
+            reporter.report_cop_index_usage(
                 self.logical_table_id,
                 index_id,
                 self.stats.as_ref(),
@@ -497,9 +497,9 @@ mod tests {
         let pseudo = stats_with_count(100, true);
 
         reporter.report_point_for_table(&KvTable::new(1, vec![]), Some(&real), 2, 1, 2024);
-        reporter.report_cop(1, 2, Some(&real), 1, 2024);
-        reporter.report_cop(1, 2, Some(&pseudo), 1, 2024);
-        reporter.report_cop(1, 2, Some(&real), 0, 0);
+        reporter.report_cop_index_usage(1, 2, Some(&real), 1, 2024);
+        reporter.report_cop_index_usage(1, 2, Some(&pseudo), 1, 2024);
+        reporter.report_cop_index_usage(1, 2, Some(&real), 0, 0);
         session.lock().expect("session collector").flush();
         global.close();
 
@@ -541,8 +541,8 @@ mod tests {
         let reporter = IndexUsageReporter::new(None);
         let stats = stats_with_count(100, false);
 
-        reporter.report_point(1, Some(&stats), 2, 1, 1);
-        reporter.report_cop(1, 2, Some(&stats), 1, 1);
+        reporter.report_point_get_index_usage(1, Some(&stats), 2, 1, 1);
+        reporter.report_cop_index_usage(1, 2, Some(&stats), 1, 1);
         session.lock().expect("session collector").flush();
         global.close();
 
@@ -579,7 +579,7 @@ mod tests {
         let mut table = KvTable::new(1, vec![handle_column()]);
         table.set_common_handle_offsets(vec![0]);
 
-        reporter.report_point_for_handle(
+        reporter.report_point_get_index_usage_for_handle(
             &table,
             Some(&stats_with_count(100, false)),
             1,

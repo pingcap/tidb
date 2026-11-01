@@ -84,7 +84,7 @@ pub mod verification;
 pub mod cluster_privilege_load;
 pub mod cluster_account_write;
 use tls_policy::match_uri_with_wildcard;
-pub use tls_policy::parse_policy_sans;
+pub use tls_policy::parse_and_check_san;
 pub use tls_policy::{certificate_uri, TlsPeerIdentity};
 
 pub use export::*;
@@ -817,9 +817,9 @@ mod tests {
 
         // The session's own active-role list still names `r1` -- nothing in
         // `replace_from` reached into it -- but the role no longer grants
-        // anything, because `effective_roles` filters `active_roles` against
+        // anything, because `find_all_user_effective_roles` filters `active_roles` against
         // the (now empty) role_edges on every check.
         assert!(!live.has_global_priv_with_roles("bridge", "%", &active_roles, tidb_mysql::SelectPriv));
-        assert!(live.effective_roles(&bridge, &active_roles).is_empty());
+        assert!(live.find_all_user_effective_roles(&bridge, &active_roles).is_empty());
     }
 }

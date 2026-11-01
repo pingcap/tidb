@@ -450,7 +450,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 (_, Some(alias)) => alias.clone(),
                 (Expr::Column(path), None) => path.last().cloned().unwrap_or_default(),
                 (expr, None) => match written_index {
-                    Some(index) => super::field_name::expression_field_display_name(
+                    Some(index) => super::field_name::build_projection_field_name_from_expressions(
                         &select.fields,
                         index,
                         expr,

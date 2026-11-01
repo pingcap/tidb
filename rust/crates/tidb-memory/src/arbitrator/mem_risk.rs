@@ -303,7 +303,7 @@ impl MemArbitrator {
             false
         } else if !self.is_mem_safe() {
             self.do_reclaim_non_blocking_tasks();
-            self.enter_mem_risk();
+            self.into_mem_risk();
             false
         } else {
             true
@@ -311,7 +311,7 @@ impl MemArbitrator {
     }
 
     /// Go `intoMemRisk`.
-    pub(crate) fn enter_mem_risk(&self) {
+    pub(crate) fn into_mem_risk(&self) {
         let now = self.inner_time();
         {
             let mut risk = self.hc_mem_risk.lock().unwrap();

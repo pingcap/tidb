@@ -38,7 +38,7 @@ pub const PD_HTTP_CLIENT_UNAVAILABLE: &str = "pd http client unavailable";
 
 /// Go `helper.TryGetPDHTTPClient`: the store's PD HTTP client tagged with
 /// the helper's caller ID, `None` for a store without PD.
-pub fn try_get_pd_http_client(store: &dyn RegionStore) -> Option<pd_http::Client> {
+pub fn try_get_pdhttp_client(store: &dyn RegionStore) -> Option<pd_http::Client> {
     store
         .pd_http_client()
         .map(|client| client.with_caller_id("tidb-store-helper"))

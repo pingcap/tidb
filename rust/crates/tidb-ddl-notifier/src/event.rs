@@ -152,7 +152,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetCreateTableInfo`.
-    pub fn create_table_info(&self) -> &TableInfo {
+    pub fn get_create_table_info(&self) -> &TableInfo {
         self.assert_type(ActionType::ACTION_CREATE_TABLE);
         self.table_info()
     }
@@ -170,7 +170,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetTruncateTableInfo`.
-    pub fn truncate_table_info(&self) -> (&TableInfo, &TableInfo) {
+    pub fn get_truncate_table_info(&self) -> (&TableInfo, &TableInfo) {
         self.assert_type(ActionType::ACTION_TRUNCATE_TABLE);
         (self.table_info(), self.old_table_info())
     }
@@ -187,7 +187,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetDropTableInfo`.
-    pub fn drop_table_info(&self) -> &TableInfo {
+    pub fn get_drop_table_info(&self) -> &TableInfo {
         self.assert_type(ActionType::ACTION_DROP_TABLE);
         self.old_table_info()
     }
@@ -198,7 +198,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetAddColumnInfo`.
-    pub fn add_column_info(&self) -> (&TableInfo, &[ColumnInfo]) {
+    pub fn get_add_column_info(&self) -> (&TableInfo, &[ColumnInfo]) {
         self.assert_type(ActionType::ACTION_ADD_COLUMN);
         (self.table_info(), &self.inner.columns)
     }
@@ -215,7 +215,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `NewAddPartitionEvent`.
-    pub fn add_partitions(table: TableInfo, added: PartitionInfo) -> Self {
+    pub fn new_add_partition_event(table: TableInfo, added: PartitionInfo) -> Self {
         Self::with_partitions(
             ActionType::ACTION_ADD_TABLE_PARTITION,
             table,
@@ -225,13 +225,13 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetAddPartitionInfo`.
-    pub fn add_partition_info(&self) -> (&TableInfo, &PartitionInfo) {
+    pub fn get_add_partition_info(&self) -> (&TableInfo, &PartitionInfo) {
         self.assert_type(ActionType::ACTION_ADD_TABLE_PARTITION);
         (self.table_info(), self.added_partition_info())
     }
 
     /// Go `NewTruncatePartitionEvent`.
-    pub fn truncate_partitions(
+    pub fn new_truncate_partition_event(
         table: TableInfo,
         added: PartitionInfo,
         dropped: PartitionInfo,
@@ -245,7 +245,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetTruncatePartitionInfo`.
-    pub fn truncate_partition_info(&self) -> (&TableInfo, &PartitionInfo, &PartitionInfo) {
+    pub fn get_truncate_partition_info(&self) -> (&TableInfo, &PartitionInfo, &PartitionInfo) {
         self.assert_type(ActionType::ACTION_TRUNCATE_TABLE_PARTITION);
         (
             self.table_info(),
@@ -265,7 +265,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetDropPartitionInfo`.
-    pub fn drop_partition_info(&self) -> (&TableInfo, &PartitionInfo) {
+    pub fn get_drop_partition_info(&self) -> (&TableInfo, &PartitionInfo) {
         self.assert_type(ActionType::ACTION_DROP_TABLE_PARTITION);
         (self.table_info(), self.dropped_partition_info())
     }
@@ -311,7 +311,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetReorganizePartitionInfo`.
-    pub fn reorganize_partition_info(&self) -> (&TableInfo, &PartitionInfo, &PartitionInfo) {
+    pub fn get_reorganize_partition_info(&self) -> (&TableInfo, &PartitionInfo, &PartitionInfo) {
         self.assert_type(ActionType::ACTION_REORGANIZE_PARTITION);
         (
             self.table_info(),
@@ -321,7 +321,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `NewAddPartitioningEvent`.
-    pub fn add_partitioning(old_table_id: i64, table: TableInfo, added: PartitionInfo) -> Self {
+    pub fn new_add_partitioning_event(old_table_id: i64, table: TableInfo, added: PartitionInfo) -> Self {
         let mut event = Self::with_partitions(
             ActionType::ACTION_ALTER_TABLE_PARTITIONING,
             table,
@@ -333,7 +333,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetAddPartitioningInfo`.
-    pub fn add_partitioning_info(&self) -> (i64, &TableInfo, &PartitionInfo) {
+    pub fn get_add_partitioning_info(&self) -> (i64, &TableInfo, &PartitionInfo) {
         self.assert_type(ActionType::ACTION_ALTER_TABLE_PARTITIONING);
         (
             self.inner.old_table_id_for_partition,
@@ -359,7 +359,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetRemovePartitioningInfo`.
-    pub fn remove_partitioning_info(&self) -> (i64, &TableInfo, &PartitionInfo) {
+    pub fn get_remove_partitioning_info(&self) -> (i64, &TableInfo, &PartitionInfo) {
         self.assert_type(ActionType::ACTION_REMOVE_PARTITIONING);
         (
             self.inner.old_table_id_for_partition,
@@ -382,7 +382,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetAddIndexInfo`.
-    pub fn add_index_info(&self) -> (&TableInfo, &[IndexInfo], bool) {
+    pub fn get_add_index_info(&self) -> (&TableInfo, &[IndexInfo], bool) {
         self.assert_type(ActionType::ACTION_ADD_INDEX);
         (self.table_info(), &self.inner.indexes, self.inner.analyzed)
     }
@@ -459,7 +459,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetDropSchemaInfo`.
-    pub fn drop_schema_info(&self) -> &MiniDbInfoForSchemaEvent {
+    pub fn get_drop_schema_info(&self) -> &MiniDbInfoForSchemaEvent {
         self.assert_type(ActionType::ACTION_DROP_SCHEMA);
         self.inner
             .mini_db_info
@@ -650,8 +650,8 @@ mod tests {
         let bytes = serde_json::to_vec(&event).unwrap();
         assert!(String::from_utf8_lossy(&bytes).contains("\"type\":3"));
         let decoded: SchemaChangeEvent = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(decoded.create_table_info().id, 1000);
-        assert_eq!(decoded.create_table_info().name.original(), "t1");
+        assert_eq!(decoded.get_create_table_info().id, 1000);
+        assert_eq!(decoded.get_create_table_info().name.original(), "t1");
     }
 
     #[test]
@@ -692,19 +692,19 @@ mod tests {
         };
 
         let event = round_trip(SchemaChangeEvent::create_table(table(1)));
-        assert_eq!(event.create_table_info().id, 1);
+        assert_eq!(event.get_create_table_info().id, 1);
 
         let event = round_trip(SchemaChangeEvent::truncate_table(table(2), table(1)));
         assert_eq!(
             (
-                event.truncate_table_info().0.id,
-                event.truncate_table_info().1.id
+                event.get_truncate_table_info().0.id,
+                event.get_truncate_table_info().1.id
             ),
             (2, 1)
         );
 
         let event = round_trip(SchemaChangeEvent::drop_table(table(2)));
-        assert_eq!(event.drop_table_info().id, 2);
+        assert_eq!(event.get_drop_table_info().id, 2);
 
         let event = round_trip(SchemaChangeEvent::add_columns(
             table(3),
@@ -712,8 +712,8 @@ mod tests {
         ));
         assert_eq!(
             (
-                event.add_column_info().0.id,
-                event.add_column_info().1[0].id
+                event.get_add_column_info().0.id,
+                event.get_add_column_info().1[0].id
             ),
             (3, 11)
         );
@@ -726,21 +726,21 @@ mod tests {
         let (modified_table, columns, analyzed) = event.modify_column_info();
         assert_eq!((modified_table.id, columns[0].id, analyzed), (3, 11, true));
 
-        let event = round_trip(SchemaChangeEvent::add_partitions(table(4), partition(41)));
+        let event = round_trip(SchemaChangeEvent::new_add_partition_event(table(4), partition(41)));
         assert_eq!(
             (
-                event.add_partition_info().0.id,
-                event.add_partition_info().1.definitions.snapshot()[0].id,
+                event.get_add_partition_info().0.id,
+                event.get_add_partition_info().1.definitions.snapshot()[0].id,
             ),
             (4, 41)
         );
 
-        let event = round_trip(SchemaChangeEvent::truncate_partitions(
+        let event = round_trip(SchemaChangeEvent::new_truncate_partition_event(
             table(4),
             partition(42),
             partition(41),
         ));
-        let (partitioned, added, dropped) = event.truncate_partition_info();
+        let (partitioned, added, dropped) = event.get_truncate_partition_info();
         assert_eq!(
             (
                 partitioned.id,
@@ -753,8 +753,8 @@ mod tests {
         let event = round_trip(SchemaChangeEvent::drop_partitions(table(4), partition(42)));
         assert_eq!(
             (
-                event.drop_partition_info().0.id,
-                event.drop_partition_info().1.definitions.snapshot()[0].id,
+                event.get_drop_partition_info().0.id,
+                event.get_drop_partition_info().1.definitions.snapshot()[0].id,
             ),
             (4, 42)
         );
@@ -779,7 +779,7 @@ mod tests {
             partition(44),
             partition(43),
         ));
-        let (partitioned, added, dropped) = event.reorganize_partition_info();
+        let (partitioned, added, dropped) = event.get_reorganize_partition_info();
         assert_eq!(
             (
                 partitioned.id,
@@ -789,12 +789,12 @@ mod tests {
             (4, 44, 43)
         );
 
-        let event = round_trip(SchemaChangeEvent::add_partitioning(
+        let event = round_trip(SchemaChangeEvent::new_add_partitioning_event(
             6,
             table(7),
             partition(71),
         ));
-        let (old_table_id, partitioned, added) = event.add_partitioning_info();
+        let (old_table_id, partitioned, added) = event.get_add_partitioning_info();
         assert_eq!(
             (
                 old_table_id,
@@ -809,7 +809,7 @@ mod tests {
             table(8),
             partition(71),
         ));
-        let (old_table_id, standalone, dropped) = event.remove_partitioning_info();
+        let (old_table_id, standalone, dropped) = event.get_remove_partitioning_info();
         assert_eq!(
             (
                 old_table_id,
@@ -820,14 +820,14 @@ mod tests {
         );
 
         let event = round_trip(SchemaChangeEvent::add_indexes(table(9), vec![index], true));
-        let (indexed, indexes, analyzed) = event.add_index_info();
+        let (indexed, indexes, analyzed) = event.get_add_index_info();
         assert_eq!((indexed.id, indexes[0].id, analyzed), (9, 12, true));
 
         let event = round_trip(SchemaChangeEvent::flashback_cluster());
         assert_eq!(event.action_type(), ActionType::ACTION_FLASHBACK_CLUSTER);
 
         let event = round_trip(SchemaChangeEvent::drop_schema(&database, &[table(10)]));
-        assert_eq!(event.drop_schema_info().id, 13);
-        assert_eq!(event.drop_schema_info().tables[0].id, 10);
+        assert_eq!(event.get_drop_schema_info().id, 13);
+        assert_eq!(event.get_drop_schema_info().tables[0].id, 10);
     }
 }

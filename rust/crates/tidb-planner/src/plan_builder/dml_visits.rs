@@ -73,8 +73,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if let Ok(target) = target {
             match insert.source.as_deref() {
                 None => {
-                    let _ = self.build_insert_values(insert, &target);
-                    let _ = self.build_on_duplicate(insert, &target, None);
+                    let _ = self.build_values_list_of_insert(insert, &target);
+                    let _ = self.resolve_on_duplicate(insert, &target, None);
                 }
                 Some(source) => {
                     let extended = self.extend_insert_select(insert, &target);
@@ -89,7 +89,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                             names,
                             actual_col_len,
                         };
-                        let _ = self.build_on_duplicate(insert, &target, Some((&schema, &output)));
+                        let _ = self.resolve_on_duplicate(insert, &target, Some((&schema, &output)));
                     }
                 }
             }

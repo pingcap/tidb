@@ -1236,7 +1236,7 @@ impl WindowMetricsSink for RecordingWindowMetricsSink {
 fn map_with_recorded_metrics() -> (StmtSummaryByDigestMap, RecordingWindowMetricsSink) {
     let evicted = Arc::new(Mutex::new(StmtSummaryByDigestEvicted::new()));
     let recorder = RecordingWindowMetricsSink::default();
-    let ss_map = StmtSummaryByDigestMap::with_sinks(Box::new(evicted), Box::new(recorder.clone()));
+    let ss_map = StmtSummaryByDigestMap::new_stmt_summary_by_digest_map(Box::new(evicted), Box::new(recorder.clone()));
     (ss_map, recorder)
 }
 

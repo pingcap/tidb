@@ -1024,7 +1024,7 @@ impl Session {
     pub fn retain_process_statement(&self, sql: &str) -> Option<process::ProcessStatementGuard> {
         let text = self.statement_text(sql);
         self.process.as_ref().map(|guard| {
-            guard.statement_started(&text, self.vars.current_db.clone(), self.status_text())
+            guard.statement_started(&text, self.vars.current_db.clone(), self.server_status_2_str())
         })
     }
 
@@ -1050,7 +1050,7 @@ impl Session {
                 &text,
                 Some(digest),
                 self.vars.current_db.clone(),
-                self.status_text(),
+                self.server_status_2_str(),
             )
         })
     }

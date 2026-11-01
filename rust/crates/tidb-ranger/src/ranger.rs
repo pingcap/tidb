@@ -153,7 +153,7 @@ fn estimate_mem_usage_for_points_to_ranges(range_points: &[Point]) -> i64 {
 
 /// Go `points2Ranges`: one column's points into ranges. The second return
 /// says the memory fallback fired and the FULL range came back instead.
-pub fn points_to_ranges(
+pub fn points_2_ranges(
     range_points: Vec<Point>,
     new_tp: &FieldType,
     range_max_size: i64,
@@ -227,7 +227,7 @@ pub fn points_to_ranges(
 
 /// Go `points2TableRanges`: nulls drop, sentinels become the concrete int
 /// bounds a table's kv range needs.
-pub fn points_to_table_ranges(
+pub fn points_2_table_ranges(
     range_points: Vec<Point>,
     new_tp: &FieldType,
     range_max_size: i64,
@@ -400,7 +400,7 @@ fn append_points_to_index_range(origin: &Range, range_points: &[Point], ft: &Fie
 /// Go `appendPoints2Ranges`: the additional column's points append only to
 /// POINT ranges — `(a > 1, b = 2)` cannot conjoin on an index `(a, b)` —
 /// non-point ranges pass through unchanged.
-pub fn append_points_to_ranges(
+pub fn append_points_2_ranges(
     origin: Ranges,
     range_points: Vec<Point>,
     new_tp: &FieldType,
@@ -450,7 +450,7 @@ pub fn append_points_to_ranges(
 /// range, or the point ranges UNCHANGED with `true` when Go's estimate
 /// (`estimateMemUsageForAppendRanges2PointRanges`) exceeds the quota.
 #[must_use]
-pub fn append_ranges_to_point_ranges(
+pub fn append_ranges_2_point_ranges(
     point_ranges: super::types::Ranges,
     ranges: &super::types::Ranges,
     range_max_size: i64,
@@ -534,7 +534,7 @@ fn build_column_range_impl<'a, E: std::borrow::Borrow<Expression>>(
     let new_tp = convert_string_ft_to_binary_collate(&new_tp);
     let mut skip_reason = builder.skip_plan_cache_reason.take();
     let (ranges, range_fallback) = if table_range {
-        points_to_table_ranges(
+        points_2_table_ranges(
             range_points,
             &new_tp,
             range_max_size,
@@ -542,7 +542,7 @@ fn build_column_range_impl<'a, E: std::borrow::Borrow<Expression>>(
             &mut skip_reason,
         )?
     } else {
-        points_to_ranges(
+        points_2_ranges(
             range_points,
             &new_tp,
             range_max_size,

@@ -417,7 +417,7 @@ impl BuiltinSignature {
 /// the temporal and JSON return arms use the full `ToPBFieldType` path.
 fn temporal_field_type(code: FieldTypeCode, flags: u32) -> tidb_proto::tipb::FieldType {
     let field_type = FieldType::new(code).with_flags(flags);
-    field_type_to_pb(&field_type).expect("supported temporal/json result type")
+    to_pb_field_type(&field_type).expect("supported temporal/json result type")
 }
 
 // DATE_ADD/SUB take Go's three arguments: the date, the interval and the
@@ -3294,7 +3294,7 @@ fn metadata_expression(scalar: &PbScalar) -> Option<Expression> {
                 .iter()
                 .map(|arg| {
                     Some(Expr {
-                        field_type: Some(field_type_to_pb(arg.static_type()?)?),
+                        field_type: Some(to_pb_field_type(arg.static_type()?)?),
                         ..Default::default()
                     })
                 })
@@ -3369,7 +3369,7 @@ fn control_expression(name: &str, args: &[PbScalar]) -> Option<Expression> {
             .collect(),
         _ => return None,
     };
-    let field = crate::rewriter::infer_type4_control_funcs(name, &values)?;
+    let field = crate::rewriter::infer_type_4_control_funcs(name, &values)?;
     let collation =
         crate::collation_derive::derive_collation(name, &arguments, field.eval_type()).ok()?;
     let mut expression = Expression::ScalarFunction(crate::scalar_function::ScalarFunction::new(
@@ -3856,13 +3856,13 @@ pub fn expression_to_pb_in(
             }
         }
     }
-    encoded.field_type = Some(field_type_to_pb(&field_type)?);
+    encoded.field_type = Some(to_pb_field_type(&field_type)?);
     Some(encoded)
 }
 
 /// Go `ToPBFieldType` for a type used by this bounded expression closure.
 #[must_use]
-pub fn field_type_to_pb(field_type: &FieldType) -> Option<tidb_proto::tipb::FieldType> {
+pub fn to_pb_field_type(field_type: &FieldType) -> Option<tidb_proto::tipb::FieldType> {
     if !leaf_column_family(field_type.code()) {
         return None;
     }
@@ -3978,7 +3978,7 @@ pub fn to_pb_in(
             Some(leaf(
                 ExprType::ColumnRef,
                 encode_signed(i64::from(*offset)),
-                field_type_to_pb(&pb_type)?,
+                to_pb_field_type(&pb_type)?,
             ))
         }
         PbScalar::NullLiteral { field_type } => Some(Expr {
@@ -3986,7 +3986,7 @@ pub fn to_pb_in(
             val: None,
             children: Vec::new(),
             sig: Some(ScalarFuncSig::Unspecified as i32),
-            field_type: Some(field_type_to_pb(field_type)?),
+            field_type: Some(to_pb_field_type(field_type)?),
             has_distinct: Some(false),
             agg_func_mode: None,
             ..Default::default()
@@ -4007,7 +4007,7 @@ pub fn to_pb_in(
             Some(leaf(
                 ExprType::Uint64,
                 encoded,
-                field_type_to_pb(field_type)?,
+                to_pb_field_type(field_type)?,
             ))
         }
         PbScalar::DecimalLiteral { value, field_type } => {
@@ -4016,7 +4016,7 @@ pub fn to_pb_in(
             Some(leaf(
                 ExprType::MysqlDecimal,
                 encoded,
-                field_type_to_pb(field_type)?,
+                to_pb_field_type(field_type)?,
             ))
         }
         PbScalar::RealLiteral { value, field_type }
@@ -4033,23 +4033,23 @@ pub fn to_pb_in(
                     ExprType::Float64
                 },
                 encoded,
-                field_type_to_pb(field_type)?,
+                to_pb_field_type(field_type)?,
             ))
         }
         PbScalar::StringLiteral { value, field_type } => Some(leaf(
             ExprType::String,
             value.clone(),
-            field_type_to_pb(field_type)?,
+            to_pb_field_type(field_type)?,
         )),
         PbScalar::BytesLiteral { value, field_type } => Some(leaf(
             ExprType::Bytes,
             value.clone(),
-            field_type_to_pb(field_type)?,
+            to_pb_field_type(field_type)?,
         )),
         PbScalar::BitLiteral { value, field_type } => Some(leaf(
             ExprType::MysqlBit,
             value.as_bytes().to_vec(),
-            field_type_to_pb(field_type)?,
+            to_pb_field_type(field_type)?,
         )),
         PbScalar::EnumLiteral { value, field_type } => {
             let mut encoded = Vec::new();
@@ -4057,7 +4057,7 @@ pub fn to_pb_in(
             Some(leaf(
                 ExprType::MysqlEnum,
                 encoded,
-                field_type_to_pb(field_type)?,
+                to_pb_field_type(field_type)?,
             ))
         }
         PbScalar::TimeLiteral { value, field_type } => {
@@ -4071,19 +4071,19 @@ pub fn to_pb_in(
             Some(leaf(
                 ExprType::MysqlTime,
                 encoded,
-                field_type_to_pb(field_type)?,
+                to_pb_field_type(field_type)?,
             ))
         }
         PbScalar::DurationLiteral { value, field_type } => Some(leaf(
             ExprType::MysqlDuration,
             encode_signed(value.nanoseconds()),
-            field_type_to_pb(field_type)?,
+            to_pb_field_type(field_type)?,
         )),
         PbScalar::JsonLiteral { .. } => None,
         PbScalar::VectorLiteral { value, field_type } => Some(leaf(
             ExprType::TiDbVectorFloat32,
             value.serialize(),
-            field_type_to_pb(field_type)?,
+            to_pb_field_type(field_type)?,
         )),
         PbScalar::Cast {
             signature,
@@ -4093,7 +4093,7 @@ pub fn to_pb_in(
             tp: Some(ExprType::ScalarFunc as i32),
             sig: Some(*signature as i32),
             children: vec![to_pb_in(arg, columns, zone)?],
-            field_type: Some(field_type_to_pb(field_type)?),
+            field_type: Some(to_pb_field_type(field_type)?),
             ..Default::default()
         }),
         PbScalar::Call {
@@ -4118,7 +4118,7 @@ pub fn to_pb_in(
                     )
                 }) {
                     let mut child = to_pb_in(argument, columns, zone)?;
-                    let target = field_type_to_pb(field)?;
+                    let target = to_pb_field_type(field)?;
                     if child.field_type.as_ref() != Some(&target) {
                         let cast = match (argument.eval_type(), required) {
                             (EvalType::Decimal, EvalType::Decimal) => {
@@ -4147,7 +4147,7 @@ pub fn to_pb_in(
                 }
             }
             let return_field_type = if let Some(field) = control_field.or(ret_type.as_ref()) {
-                field_type_to_pb(field)?
+                to_pb_field_type(field)?
             } else {
                 signature.return_field_type(scalar.is_unsigned(), &children)?
             };
@@ -4365,7 +4365,7 @@ fn cast_target_field_type(
             .with_collation_name("utf8mb4_bin"),
         _ => return None,
     };
-    field_type_to_pb(&field_type)
+    to_pb_field_type(&field_type)
 }
 
 /// The flags `WrapWithCastAsReal`/`WrapWithCastAsInt` copy onto the cast's own

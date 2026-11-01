@@ -35,9 +35,9 @@
 use crate::wrap_cast::{
     wrap_with_cast_as_decimal, wrap_with_cast_as_duration, wrap_with_cast_as_int,
     wrap_with_cast_as_json, wrap_with_cast_as_real, wrap_with_cast_as_string,
-    wrap_with_cast_as_time, wrap_with_cast_as_vector_float32,
+    wrap_with_cast_as_time, wrap_with_cast_as_vector_float_32,
 };
-use crate::builtin_arithmetic::new_return_field_type;
+use crate::builtin_arithmetic::new_return_field_type_for_base_builtin_func;
 use crate::constant::Constant;
 use tidb_exprctx::context::{Columns, EvalError};
 use crate::expression::Expression;
@@ -50,7 +50,7 @@ use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode, FieldTypeFlags};
 pub fn infer_compare_type(name: &str) -> Option<FieldType> {
     match name {
         "eq" | "nulleq" | "ne" | "lt" | "le" | "gt" | "ge" => {
-            let mut ret = new_return_field_type(EvalType::Int);
+            let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Int);
             // generateCmpSigs: bf.tp.SetFlen(1).
             ret.set_flen(1);
             // All comparison names are in Go's booleanFunctions map.
@@ -752,7 +752,7 @@ fn refine_comparison_core(expr: &mut Expression, ctx: &dyn Columns) -> Result<bo
 
 /// Go `compareFunctionClass.generateCmpSigs`: cast both operands to the
 /// comparison domain chosen by `GetAccurateCmpType`.
-pub(crate) fn wrap_comparison_arguments(
+pub(crate) fn generate_cmp_sigs(
     arguments: &mut Vec<Expression>,
     connection: (&str, &str),
 ) -> Result<(), EvalError> {
@@ -792,7 +792,7 @@ pub(crate) fn wrap_comparison_arguments(
             crate::expr_util::predicates::disable_parse_json_flag_4_expr(&mut wrapped);
             wrapped
         }),
-        EvalType::VectorFloat32 => wrap_with_cast_as_vector_float32(expression),
+        EvalType::VectorFloat32 => wrap_with_cast_as_vector_float_32(expression),
     };
     // Go derives the comparison collation before the casts and hands it to
     // `HandleBinaryLiteral` for every ETString argument: a binary operand
@@ -855,7 +855,7 @@ pub(crate) fn wrap_comparison_arguments_with_fold(
     connection: (&str, &str),
     mut fold: impl FnMut(&mut Expression),
 ) -> Result<(), EvalError> {
-    wrap_comparison_arguments(arguments, connection)?;
+    generate_cmp_sigs(arguments, connection)?;
     // `BuildCastFunction` folds its newly-built cast in the statement
     // context. This is observable for temporal and numeric constants: the
     // comparison receives a `Constant`, not a Rust-only cast node, and

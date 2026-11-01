@@ -55,11 +55,11 @@ pub fn generate_subtask_exec_id(syncer: &Syncer, id: &str) -> String {
     let Ok(server_infos) = syncer.all_server_info() else {
         return String::new();
     };
-    generate_subtask_exec_id_for_test(&server_infos, id)
+    generate_subtask_exec_id_4_test(&server_infos, id)
 }
 
 /// Go `GenerateSubtaskExecID4Test`: resolves `id` from mock server state.
-pub fn generate_subtask_exec_id_for_test(
+pub fn generate_subtask_exec_id_4_test(
     server_infos: &HashMap<String, ServerInfo>,
     id: &str,
 ) -> String {

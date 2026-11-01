@@ -143,7 +143,7 @@ impl HashAggContext for tidb_exprctx::NoColumns {
     const PARALLEL_WORKERS_MAY_EVAL: bool = true;
 
     fn run_parallel_pipeline_bridge(exec: &mut HashAggExec<Self>) -> Option<Result<(), ExecError>> {
-        Some(exec.execute_parallel_pipeline())
+        Some(exec.prepare_4_parallel_exec())
     }
 }
 
@@ -159,7 +159,7 @@ impl HashAggContext for tidb_sessionctx::StmtContext {
     }
 
     fn run_parallel_pipeline_bridge(exec: &mut HashAggExec<Self>) -> Option<Result<(), ExecError>> {
-        Some(exec.execute_parallel_pipeline())
+        Some(exec.prepare_4_parallel_exec())
     }
 }
 
@@ -980,7 +980,7 @@ fn read_partial(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<Partial,
                 hashes.push(reader.u32()?);
             }
             Partial::ApproxCountDistinct(
-                ApproxCountDistinctSketch::from_spill_state(skip_degree, has_zero, &hashes)
+                PartialResult4ApproxCountDistinct::from_spill_state(skip_degree, has_zero, &hashes)
                     .map_err(ExecError::SpillFailed)?,
                 *sig,
             )
@@ -1179,7 +1179,7 @@ impl ParallelSpillPartitions {
             return;
         }
         self.chunks = (0..SPILLED_PARTITION_NUM)
-            .map(|_| Chunk::new_with_capacity(&self.field_types, SPILL_CHUNK_SIZE))
+            .map(|_| Chunk::new_chunk_with_capacity(&self.field_types, SPILL_CHUNK_SIZE))
             .collect();
         self.files = (0..SPILLED_PARTITION_NUM).map(|_| None).collect();
     }
@@ -1538,7 +1538,7 @@ impl<C: Columns + Send + Sync + Clone + 'static> Drop for PartialWorker<C> {
     fn drop(&mut self) {
         // Go `updateWorkerTime(w.stats, start)` when the worker exits.
         if let Some((stat, started, _)) = &self.agg_stat {
-            stat.add_worker_time(*started);
+            stat.update_worker_time(*started);
         }
     }
 }
@@ -1570,7 +1570,7 @@ impl<C: Columns + Send + Sync + Clone + 'static> PartialWorker<C> {
         // Go `updateWaitTime`: the worker waited for this chunk since it
         // last finished one.
         if let Some((stat, _, idle)) = &self.agg_stat {
-            stat.add_wait(*idle);
+            stat.update_wait_time(*idle);
         }
         let exec_started = std::time::Instant::now();
         self.current.swap_columns(&mut input);
@@ -1606,7 +1606,7 @@ impl<C: Columns + Send + Sync + Clone + 'static> PartialWorker<C> {
         // Go `TaskNum++` and `updateExecTime`.
         if let Some((stat, _, idle)) = &mut self.agg_stat {
             stat.add_task();
-            stat.add_exec(exec_started);
+            stat.update_exec_time(exec_started);
             *idle = std::time::Instant::now();
         }
     }
@@ -1957,7 +1957,7 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
     /// final-bucket maps and return those maps after the partial-worker barrier;
     /// final workers stream reusable result chunks across subsequent Next
     /// calls, restoring separate spill partitions concurrently when needed.
-    pub(super) fn execute_parallel_pipeline(&mut self) -> Result<(), ExecError> {
+    pub(super) fn prepare_4_parallel_exec(&mut self) -> Result<(), ExecError> {
         #[cfg(test)]
         let stats = Arc::clone(
             self.pipeline_stats
@@ -2361,7 +2361,7 @@ impl<C: Columns + Send + Sync + Clone + 'static> Drop for FinalWorker<C> {
     fn drop(&mut self) {
         // Go `updateWorkerTime(w.stats, start)` when the worker exits.
         if let (Some(stat), Some(started)) = (&self.agg_stat, self._completion.agg_stat) {
-            stat.add_worker_time(started);
+            stat.update_worker_time(started);
         }
     }
 }
@@ -2410,7 +2410,7 @@ impl<C: Columns + Send + Sync + Clone + 'static> FinalWorker<C> {
         let exec_started = std::time::Instant::now();
         let result = self.fill_inner(current);
         if let Some(stat) = &self.agg_stat {
-            stat.add_exec(exec_started);
+            stat.update_exec_time(exec_started);
         }
         result
     }
@@ -3212,7 +3212,7 @@ mod tests {
         let ctx = Reads::default();
         let memory = StatementMemory::default();
         let tracker = memory.operator_tracker(0);
-        let mut chunk = Chunk::new_with_capacity(&[long()], 3);
+        let mut chunk = Chunk::new_chunk_with_capacity(&[long()], 3);
         for value in 0..3 {
             chunk.append_int64(0, value);
         }
@@ -3279,7 +3279,7 @@ mod tests {
                     Expression::Column(column)
                 })
                 .collect();
-            let mut chunk = Chunk::new_with_capacity(&fields, 4);
+            let mut chunk = Chunk::new_chunk_with_capacity(&fields, 4);
             for (signed, unsigned, text) in [(-7, u64::MAX, "Á "), (0, 0, "a"), (7, 7, "")] {
                 chunk.append_int64(0, signed);
                 chunk.append_uint64(1, unsigned);
@@ -3380,7 +3380,7 @@ mod tests {
             selected: bool,
         ) -> Box<dyn Executor> {
             let fields = vec![long(), long()];
-            let mut data = Chunk::new_with_capacity(&fields, rows.len().max(1));
+            let mut data = Chunk::new_chunk_with_capacity(&fields, rows.len().max(1));
             for (g, v) in rows {
                 data.append_int64(0, *g);
                 data.append_int64(1, *v);
@@ -3439,7 +3439,7 @@ mod tests {
             self.meta.max_chunk_size()
         }
         fn new_chunk(&self) -> Chunk {
-            Chunk::new_with_capacity(&self.fields, self.chunk_size)
+            Chunk::new_chunk_with_capacity(&self.fields, self.chunk_size)
         }
     }
 
@@ -3836,7 +3836,7 @@ mod tests {
     impl IntNullSource {
         fn new(rows: &[(i64, Option<i64>)], chunk_size: usize) -> Box<dyn Executor> {
             let fields = vec![long(), long()];
-            let mut data = Chunk::new_with_capacity(&fields, rows.len().max(1));
+            let mut data = Chunk::new_chunk_with_capacity(&fields, rows.len().max(1));
             for (group, value) in rows {
                 data.append_int64(0, *group);
                 match value {
@@ -3887,7 +3887,7 @@ mod tests {
             self.meta.max_chunk_size()
         }
         fn new_chunk(&self) -> Chunk {
-            Chunk::new_with_capacity(&self.fields, self.chunk_size)
+            Chunk::new_chunk_with_capacity(&self.fields, self.chunk_size)
         }
     }
 
@@ -4252,7 +4252,7 @@ mod tests {
 
         fn new(rows: &[(i64, Option<(i64, u32)>)], chunk_size: usize) -> Box<dyn Executor> {
             let fields = vec![long(), Self::field_type()];
-            let mut data = Chunk::new_with_capacity(&fields, rows.len().max(1));
+            let mut data = Chunk::new_chunk_with_capacity(&fields, rows.len().max(1));
             for (group, cell) in rows {
                 data.append_int64(0, *group);
                 match cell {
@@ -4311,7 +4311,7 @@ mod tests {
             self.meta.max_chunk_size()
         }
         fn new_chunk(&self) -> Chunk {
-            Chunk::new_with_capacity(&self.fields, self.chunk_size)
+            Chunk::new_chunk_with_capacity(&self.fields, self.chunk_size)
         }
     }
 
@@ -4449,7 +4449,7 @@ mod tests {
         fn run_parallel_pipeline_bridge(
             exec: &mut HashAggExec<Self>,
         ) -> Option<Result<(), ExecError>> {
-            Some(exec.execute_parallel_pipeline())
+            Some(exec.prepare_4_parallel_exec())
         }
     }
 

@@ -828,7 +828,7 @@ pub fn row_key_by(
 /// bucket without retaining a temporary byte slice. The bucket hit is only a
 /// candidate; [`equi_keys_equal`] performs Go's `matchJoinKey` collision
 /// check before any row is emitted.
-pub fn row_hash(
+pub fn hash_chunk_selected(
     keys: &[EquiKey],
     row: &[Datum],
     offset: impl Fn(&EquiKey) -> usize,
@@ -1062,7 +1062,7 @@ pub fn row_hash_chunk_batched(
 }
 
 /// Hash one already-selected physical cell while retaining the comparison
-/// framing used by [`row_hash_chunk`] and [`row_hash`]. The helper is kept
+/// framing used by [`row_hash_chunk`] and [`hash_chunk_selected`]. The helper is kept
 /// inline so the two selection-specialized loops above compile to the same
 /// straight-line typed reads without duplicating their match arms.
 #[inline(always)]
@@ -1689,7 +1689,7 @@ impl BuildTable {
     /// to call in null-aware mode, where [`Self::index_chunk_selected`]'s
     /// `na_mode` guarantees the exact-int fast path never shares this same
     /// chain slab.
-    pub fn na_all_hash_bucket_ptrs(&self) -> Vec<RowPtr> {
+    pub fn get_all_matched_rows(&self) -> Vec<RowPtr> {
         self.chains.entries.iter().map(|entry| entry.ptr).collect()
     }
 
@@ -2138,7 +2138,7 @@ mod tests {
     #[test]
     fn typed_chunk_key_equality_matches_materialized_key_equality() {
         let types = vec![FieldType::new(FieldTypeCode::Long)];
-        let mut chunk = Chunk::new_with_capacity(&types, 1);
+        let mut chunk = Chunk::new_chunk_with_capacity(&types, 1);
         chunk.append_int64(0, 7);
         let key = EquiKey {
             left: 0,
@@ -2173,7 +2173,7 @@ mod tests {
             "1.51",
         ];
         let types = vec![FieldType::new(FieldTypeCode::NewDecimal)];
-        let mut chunk = Chunk::new_with_capacity(&types, cells.len());
+        let mut chunk = Chunk::new_chunk_with_capacity(&types, cells.len());
         for cell in cells {
             let value = tidb_datatype::MyDecimal::from_string(cell.as_bytes()).0;
             chunk.append_my_decimal(0, &value);
@@ -2182,7 +2182,7 @@ mod tests {
             let left_datum = Datum::Decimal(Decimal::from_signed_literal(left_text));
             assert_eq!(
                 row_hash_chunk(&[key], chunk.get_row(left_at), &types, |key| key.left).unwrap(),
-                row_hash(&[key], std::slice::from_ref(&left_datum), |key| key.left).unwrap(),
+                hash_chunk_selected(&[key], std::slice::from_ref(&left_datum), |key| key.left).unwrap(),
                 "{left_text}: chunk hash differs from the datum hash"
             );
             for (right_at, right_text) in cells.iter().enumerate() {
@@ -2240,7 +2240,7 @@ mod tests {
         let mut expected = FastBytesHasher::default();
         expected.write(&encoded);
         assert_eq!(
-            row_hash(&keys, &row, |key| key.left).unwrap(),
+            hash_chunk_selected(&keys, &row, |key| key.left).unwrap(),
             Some(expected.finish())
         );
     }
@@ -2254,7 +2254,7 @@ mod tests {
             null_safe: false,
         };
         let types = vec![FieldType::new(FieldTypeCode::LongLong).with_unsigned(true)];
-        let mut chunk = Chunk::new_with_capacity(&types, 2);
+        let mut chunk = Chunk::new_chunk_with_capacity(&types, 2);
         chunk.append_uint64(0, 7);
         chunk.append_uint64(0, u64::MAX);
         assert!(

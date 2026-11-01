@@ -379,37 +379,37 @@ fn a_user_chosen_topn_size_is_honoured() {
 fn test_sequential_range_checker_matches_go_boundaries() {
     let ranges = [(5, 8), (12, 15), (20, 22)];
     let mut checker = SequentialRangeChecker::from_ranges(&ranges);
-    assert!(!checker.is_index_in_topn_range(4));
-    assert!(checker.is_index_in_topn_range(5));
-    assert!(checker.is_index_in_topn_range(8));
-    assert!(!checker.is_index_in_topn_range(10));
-    assert!(checker.is_index_in_topn_range(12));
-    assert!(checker.is_index_in_topn_range(15));
-    assert!(checker.is_index_in_topn_range(20));
-    assert!(checker.is_index_in_topn_range(22));
-    assert!(!checker.is_index_in_topn_range(25));
+    assert!(!checker.is_index_in_top_n_range(4));
+    assert!(checker.is_index_in_top_n_range(5));
+    assert!(checker.is_index_in_top_n_range(8));
+    assert!(!checker.is_index_in_top_n_range(10));
+    assert!(checker.is_index_in_top_n_range(12));
+    assert!(checker.is_index_in_top_n_range(15));
+    assert!(checker.is_index_in_top_n_range(20));
+    assert!(checker.is_index_in_top_n_range(22));
+    assert!(!checker.is_index_in_top_n_range(25));
 
     let mut empty = SequentialRangeChecker::from_ranges(&[]);
-    assert!(!empty.is_index_in_topn_range(0));
+    assert!(!empty.is_index_in_top_n_range(0));
 
     let mut input = [(20, 22), (5, 8), (12, 15)];
     let mut unsorted =
-        tidb_stats::builder::SequentialRangeChecker::from_ranges_in_place(&mut input);
+        tidb_stats::builder::SequentialRangeChecker::new_sequential_range_checker(&mut input);
     assert_eq!(input, [(5, 8), (12, 15), (20, 22)]);
-    assert!(unsorted.is_index_in_topn_range(6));
-    assert!(unsorted.is_index_in_topn_range(13));
-    assert!(unsorted.is_index_in_topn_range(21));
+    assert!(unsorted.is_index_in_top_n_range(6));
+    assert!(unsorted.is_index_in_top_n_range(13));
+    assert!(unsorted.is_index_in_top_n_range(21));
 
     // The source is deliberately sequential: after advancing past one range,
     // a backwards probe does not rewind the cursor.
-    assert!(!unsorted.is_index_in_topn_range(6));
+    assert!(!unsorted.is_index_in_top_n_range(6));
 }
 
 #[test]
 fn build_hist_and_topn_sorts_the_callers_samples_in_place() {
     let mut collected = collector(&[3, 1, 2]);
     let mut codec_calls = 0;
-    let result = tidb_stats::builder::try_build_hist_and_topn_in_place(
+    let result = tidb_stats::builder::build_hist_and_top_n(
         1,
         &mut collected,
         BuildOptions {
@@ -442,7 +442,7 @@ fn build_hist_and_topn_sorts_the_callers_samples_in_place() {
 #[test]
 fn negative_sizes_keep_go_empty_and_nonempty_boundaries() {
     let mut empty = collector(&[]);
-    let empty_result = tidb_stats::builder::try_build_hist_and_topn_in_place(
+    let empty_result = tidb_stats::builder::build_hist_and_top_n(
         1,
         &mut empty,
         BuildOptions {
@@ -459,7 +459,7 @@ fn negative_sizes_keep_go_empty_and_nonempty_boundaries() {
 
     let mut nonempty = collector(&[2, 1]);
     let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        tidb_stats::builder::try_build_hist_and_topn_in_place(
+        tidb_stats::builder::build_hist_and_top_n(
             1,
             &mut nonempty,
             BuildOptions {
@@ -490,7 +490,7 @@ fn negative_histogram_capacity_panics_after_sort_before_topn_or_codec() {
     let mut nonempty = collector(&[3, 1, 2]);
     let mut codec_calls = 0;
     let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        tidb_stats::builder::try_build_hist_and_topn_in_place(
+        tidb_stats::builder::build_hist_and_top_n(
             1,
             &mut nonempty,
             BuildOptions {
@@ -572,7 +572,7 @@ fn sort_error_wins_before_negative_bucket_panic() {
         ..SampleCollector::default()
     };
     let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        tidb_stats::builder::try_build_hist_and_topn_in_place(
+        tidb_stats::builder::build_hist_and_top_n(
             1,
             &mut collected,
             BuildOptions {

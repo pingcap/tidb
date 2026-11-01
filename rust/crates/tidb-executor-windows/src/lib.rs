@@ -195,7 +195,7 @@ impl<C: Columns> WindowExec<C> {
         if child.num_rows() == 0 {
             return Ok(false);
         }
-        let mut result = Chunk::new_with_capacity(self.meta.ret_field_types(), child.num_rows());
+        let mut result = Chunk::new_chunk_with_capacity(self.meta.ret_field_types(), child.num_rows());
         for (destination, column) in self.meta.schema().columns[..self.child_width]
             .iter()
             .enumerate()

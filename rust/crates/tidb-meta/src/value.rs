@@ -120,25 +120,25 @@ pub fn serialize_table_info(table: &TableInfo) -> Result<Vec<u8>> {
 /// schema version committed but the one running the DDL job did not, so the
 /// version carries no change. Callers must distinguish that from "not read
 /// yet", so absence is modelled as `None` rather than a default diff.
-pub fn parse_schema_diff(value: &[u8]) -> Result<Option<SchemaDiff>> {
+pub fn get_schema_diff(value: &[u8]) -> Result<Option<SchemaDiff>> {
     if value.is_empty() {
         return Ok(None);
     }
     from_json(value).map(Some)
 }
 
-/// The write side of [`parse_schema_diff`]. Go `Mutator.SetSchemaDiff`.
+/// The write side of [`get_schema_diff`]. Go `Mutator.SetSchemaDiff`.
 pub fn serialize_schema_diff(diff: &SchemaDiff) -> Result<Vec<u8>> {
     to_json(diff)
 }
 
 /// Go `ListPolicies`: JSON behind the magic byte.
-pub fn parse_policy_info(value: &[u8]) -> Result<PolicyInfo> {
+pub fn list_policies(value: &[u8]) -> Result<PolicyInfo> {
     let data = detach_magic_byte(value)?;
     from_json(data)
 }
 
-/// The write side of [`parse_policy_info`]. Go `Mutator.CreatePolicy`.
+/// The write side of [`list_policies`]. Go `Mutator.CreatePolicy`.
 pub fn serialize_policy_info(policy: &PolicyInfo) -> Result<Vec<u8>> {
     Ok(attach_magic_byte(&to_json(policy)?))
 }

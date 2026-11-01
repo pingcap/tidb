@@ -31,7 +31,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use super::index_merge::{enumerated_indexes, estimate_partial_index_ranges, index_merge_hint_allows};
+use super::index_merge::{enumerated_indexes, estimate_partial_index_ranges, is_in_index_merge_hints};
 
 use tidb_planner_util::path::{IndexMergePartial, IndexMergePath};
 use super::AccessPathDerivationContext;
@@ -158,7 +158,7 @@ fn json_value_to_expr(
     value: &tidb_datatype::BinaryJSON,
     target_type: &FieldType,
 ) -> Option<Expression> {
-    let datum = tidb_expr::convert_json_to_type(value, target_type).ok()?;
+    let datum = tidb_expr::convert_json_2_tp(value, target_type).ok()?;
     Some(Expression::Constant(tidb_expr::constant::Constant::new(
         datum,
         target_type.clone(),
@@ -218,7 +218,7 @@ fn mv_column_values(
 
 /// Go `checkAccessFilter4IdxCol`: whether `filter` can access `idx_col`, and
 /// how.
-pub(crate) fn check_access_filter_for_idx_col(
+pub(crate) fn check_access_filter_4_idx_col(
     evaluate: &ExpressionEvaluator<'_>,
     filter: &Expression,
     idx_col: &Column,
@@ -291,7 +291,7 @@ fn is_mv_virtual_column(column: &Column) -> bool {
 /// Go `collectFilters4MVIndex`: for `idx(x, cast(a as array), z)`, the
 /// leading run of index columns each matched by one filter becomes the
 /// access filters; the rest remain.
-pub(crate) fn collect_filters_for_mv_index(
+pub(crate) fn collect_filters_4_mv_index(
     evaluate: &ExpressionEvaluator<'_>,
     filters: &[Expression],
     idx_cols: &[Column],
@@ -305,7 +305,7 @@ pub(crate) fn collect_filters_for_mv_index(
             if used_as_access[position] {
                 continue;
             }
-            if let Some(filter_type) = check_access_filter_for_idx_col(evaluate, filter, column) {
+            if let Some(filter_type) = check_access_filter_4_idx_col(evaluate, filter, column) {
                 access_filters.push(filter.clone());
                 used_as_access[position] = true;
                 found = true;
@@ -330,7 +330,7 @@ pub(crate) fn collect_filters_for_mv_index(
 }
 
 /// Go `CollectFilters4MVIndexMutations`: like
-/// [`collect_filters_for_mv_index`], but every filter on the MV column is a
+/// [`collect_filters_4_mv_index`], but every filter on the MV column is a
 /// separate mutation of its access slot (`(2 member of a) and (1 member of
 /// a)` can only be combined at run time by intersecting handles).
 fn collect_filters_for_mv_index_mutations(
@@ -348,7 +348,7 @@ fn collect_filters_for_mv_index_mutations(
             if used_as_access[position] {
                 continue;
             }
-            if check_access_filter_for_idx_col(evaluate, filter, column).is_none() {
+            if check_access_filter_4_idx_col(evaluate, filter, column).is_none() {
                 continue;
             }
             if is_mv_virtual_column(column) {
@@ -612,7 +612,7 @@ fn split_index_filter_conditions(
 /// The enumerated MV indexes an IndexMerge may read, in path order.
 fn possible_mv_indexes(ds: &DataSource) -> Vec<&tidb_infoschema::table_source::SourceIndex> {
     enumerated_indexes(ds)
-        .filter(|index| index.read().mv_index && index_merge_hint_allows(ds, index.read().name.original()))
+        .filter(|index| index.read().mv_index && is_in_index_merge_hints(ds, index.read().name.original()))
         .collect()
 }
 
@@ -627,7 +627,7 @@ fn possible_mv_indexes(ds: &DataSource) -> Vec<&tidb_infoschema::table_source::S
 ///     IndexRangeScan(a, [3,3])
 ///     TableRowIdScan(t)
 /// ```
-pub(crate) fn generate_and_index_merge_for_mv_index(
+pub(crate) fn generate_and_index_merge_4_mv_index(
     ds: &DataSource,
     ctx: &AccessPathDerivationContext<'_>,
     filters: &[Expression],
@@ -639,7 +639,7 @@ pub(crate) fn generate_and_index_merge_for_mv_index(
         else {
             continue;
         };
-        let (access_filters, remaining, _) = collect_filters_for_mv_index(ctx.expression_evaluator, filters, &idx_cols);
+        let (access_filters, remaining, _) = collect_filters_4_mv_index(ctx.expression_evaluator, filters, &idx_cols);
         if access_filters.is_empty() {
             continue;
         }
@@ -773,7 +773,7 @@ fn generate_mv_index_merge_partial_paths_for_and(
 ///   IndexRangeScan(non-mv-index-if-any)(?)
 ///   TableRowIdScan(t)
 /// ```
-pub(crate) fn generate_and_index_merge_for_composed_index(
+pub(crate) fn generate_and_index_merge_4_composed_index(
     ds: &DataSource,
     ctx: &AccessPathDerivationContext<'_>,
     filters: &[Expression],
@@ -794,7 +794,7 @@ pub(crate) fn generate_and_index_merge_for_composed_index(
         return Ok(None);
     }
     let normal_partials =
-        super::index_merge::generate_normal_index_partial_paths_for_and(ds, ctx, &mut used_access);
+        super::index_merge::generate_normal_index_partial_path_4_and(ds, ctx, &mut used_access);
     // A multi-normal-index merge was handled before; this is a multi-MV or a
     // mixed one.
     let composed =
@@ -863,7 +863,7 @@ pub(crate) fn clean_access_path_for_mv_index_hint(
 }
 
 /// Go `unfinishedAccessPath` for one MV index candidate of one OR branch.
-pub(crate) struct UnfinishedMvPath {
+pub(crate) struct UnfinishedAccessPath {
     usable_filters: Vec<Expression>,
     need_keep_filter: bool,
 }
@@ -872,12 +872,12 @@ pub(crate) struct UnfinishedMvPath {
 /// (`collectFilters4MVIndex` yields an OR or single-value access) or case 3
 /// (one usable filter per index column, gathered column by column). `None`
 /// when no filter is usable.
-pub(crate) fn init_unfinished_mv_path(
+pub(crate) fn init_unfinished_paths_from_expr(
     ds: &DataSource,
     ctx: &AccessPathDerivationContext<'_>,
     index: &tidb_infoschema::table_source::SourceIndex,
     expr: &Expression,
-) -> Option<UnfinishedMvPath> {
+) -> Option<UnfinishedAccessPath> {
     let idx_cols = prepare_idx_cols_and_unwrap_array_type(ds, index, false)?;
     let cnf_items = tidb_expr::expr_util::normal_form::split_cnf_items(expr);
     let unpushable = cnf_items.iter().any(|item| {
@@ -888,14 +888,14 @@ pub(crate) fn init_unfinished_mv_path(
         )
     });
     // Case 2: the previous logic, which must build a valid range at once.
-    let (access, remaining, access_type) = collect_filters_for_mv_index(ctx.expression_evaluator, &cnf_items, &idx_cols);
+    let (access, remaining, access_type) = collect_filters_4_mv_index(ctx.expression_evaluator, &cnf_items, &idx_cols);
     if !access.is_empty()
         && matches!(
             access_type,
             Some(AccessFilterType::MultiValuesOrOnMvCol | AccessFilterType::SingleValueOnMvCol)
         )
     {
-        return Some(UnfinishedMvPath {
+        return Some(UnfinishedAccessPath {
             usable_filters: access,
             need_keep_filter: !remaining.is_empty(),
         });
@@ -911,7 +911,7 @@ pub(crate) fn init_unfinished_mv_path(
                 continue;
             }
             if matches!(
-                check_access_filter_for_idx_col(ctx.expression_evaluator, item, column),
+                check_access_filter_4_idx_col(ctx.expression_evaluator, item, column),
                 Some(
                     AccessFilterType::EqOrInOnNonMvCol
                         | AccessFilterType::MultiValuesOrOnMvCol
@@ -925,16 +925,16 @@ pub(crate) fn init_unfinished_mv_path(
             }
         }
     }
-    has_usable_filter.then(|| UnfinishedMvPath {
+    has_usable_filter.then(|| UnfinishedAccessPath {
         usable_filters,
         need_keep_filter: unpushable || collected.contains(&false),
     })
 }
 
-impl UnfinishedMvPath {
+impl UnfinishedAccessPath {
     /// Go `mergeANDItemIntoUnfinishedIndexMergePath`: a top-level AND item's
     /// usable filters for the same candidate join this branch's.
-    pub(crate) fn merge_and_item(&mut self, item: UnfinishedMvPath) {
+    pub(crate) fn merge_and_item_into_unfinished_index_merge_path(&mut self, item: UnfinishedAccessPath) {
         self.usable_filters.extend(item.usable_filters);
     }
 }
@@ -945,7 +945,7 @@ pub(crate) fn build_mv_alternative(
     ds: &DataSource,
     ctx: &AccessPathDerivationContext<'_>,
     index: &tidb_infoschema::table_source::SourceIndex,
-    unfinished: &UnfinishedMvPath,
+    unfinished: &UnfinishedAccessPath,
     use_plan_cache: bool,
 ) -> Result<Option<(Vec<IndexMergePartial>, bool)>, PlanError> {
     let Some(idx_cols) = prepare_idx_cols_and_unwrap_array_type(ds, index, true)
@@ -953,7 +953,7 @@ pub(crate) fn build_mv_alternative(
         return Ok(None);
     };
     let (access, remaining, _) =
-        collect_filters_for_mv_index(ctx.expression_evaluator, &unfinished.usable_filters, &idx_cols);
+        collect_filters_4_mv_index(ctx.expression_evaluator, &unfinished.usable_filters, &idx_cols);
     if access.is_empty() {
         return Ok(None);
     }
@@ -1005,7 +1005,7 @@ impl tidb_planner_cardinality::selectivity::MvIndexFilters for PlannerMvIndexFil
         filters: &[Expression],
         idx_cols: &[Column],
     ) -> Vec<Expression> {
-        collect_filters_for_mv_index(evaluate, filters, idx_cols).0
+        collect_filters_4_mv_index(evaluate, filters, idx_cols).0
     }
 
     fn partial_access_filters(

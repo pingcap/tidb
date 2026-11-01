@@ -117,7 +117,7 @@ fn index_part_text(
 /// charset differs prints `CHARACTER SET <cs> COLLATE <coll>`, one that only
 /// differs in collation prints `COLLATE <coll>`, and a binary-charset column
 /// (`varbinary`, `blob`) prints neither because its type name already says so.
-pub fn show_create_table_text(
+pub fn construct_result_of_show_create_table(
     database: &str,
     name: &str,
     table: &crate::KvTable,
@@ -476,7 +476,7 @@ pub fn show_create_table_text(
     // `STORAGE_CLASS` sugar when that loses nothing.
     let engine_attribute = table.engine_attribute();
     if !engine_attribute.is_empty() {
-        match tidb_ddl_build::storage_class::simple_table_storage_class_for_show_create(
+        match tidb_ddl_build::storage_class::get_simple_table_storage_class_for_show_create(
             &engine_attribute,
         )? {
             Some(tier) => out.push_str(&format!(" STORAGE_CLASS='{tier}'")),

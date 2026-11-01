@@ -26,7 +26,7 @@ use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
     FatalSeed, NullNoopSeed, ValueMergeSeed,
 };
-use crate::setting_builder::{write_setting_integer, write_setting_string};
+use crate::setting_builder::{write_setting_integer_to_builder, write_setting_string_to_builder};
 
 /// Go `PolicyRefInfo`: a reference to a placement policy by ID and name.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -220,19 +220,19 @@ impl std::fmt::Display for PlacementSettings {
         // Reproduces Go's PlacementSettings.String() field order and format.
         let mut sb = String::new();
         if !self.primary_region.is_empty() {
-            write_setting_string(&mut sb, "PRIMARY_REGION", &self.primary_region, None);
+            write_setting_string_to_builder(&mut sb, "PRIMARY_REGION", &self.primary_region, None);
         }
         if !self.regions.is_empty() {
-            write_setting_string(&mut sb, "REGIONS", &self.regions, None);
+            write_setting_string_to_builder(&mut sb, "REGIONS", &self.regions, None);
         }
         if !self.schedule.is_empty() {
-            write_setting_string(&mut sb, "SCHEDULE", &self.schedule, None);
+            write_setting_string_to_builder(&mut sb, "SCHEDULE", &self.schedule, None);
         }
         if !self.constraints.is_empty() {
-            write_setting_string(&mut sb, "CONSTRAINTS", &self.constraints, None);
+            write_setting_string_to_builder(&mut sb, "CONSTRAINTS", &self.constraints, None);
         }
         if !self.leader_constraints.is_empty() {
-            write_setting_string(
+            write_setting_string_to_builder(
                 &mut sb,
                 "LEADER_CONSTRAINTS",
                 &self.leader_constraints,
@@ -240,16 +240,16 @@ impl std::fmt::Display for PlacementSettings {
             );
         }
         if self.voters > 0 {
-            write_setting_integer(&mut sb, "VOTERS", self.voters, None);
+            write_setting_integer_to_builder(&mut sb, "VOTERS", self.voters, None);
         }
         if !self.voter_constraints.is_empty() {
-            write_setting_string(&mut sb, "VOTER_CONSTRAINTS", &self.voter_constraints, None);
+            write_setting_string_to_builder(&mut sb, "VOTER_CONSTRAINTS", &self.voter_constraints, None);
         }
         if self.followers > 0 {
-            write_setting_integer(&mut sb, "FOLLOWERS", self.followers, None);
+            write_setting_integer_to_builder(&mut sb, "FOLLOWERS", self.followers, None);
         }
         if !self.follower_constraints.is_empty() {
-            write_setting_string(
+            write_setting_string_to_builder(
                 &mut sb,
                 "FOLLOWER_CONSTRAINTS",
                 &self.follower_constraints,
@@ -257,10 +257,10 @@ impl std::fmt::Display for PlacementSettings {
             );
         }
         if self.learners > 0 {
-            write_setting_integer(&mut sb, "LEARNERS", self.learners, None);
+            write_setting_integer_to_builder(&mut sb, "LEARNERS", self.learners, None);
         }
         if !self.learner_constraints.is_empty() {
-            write_setting_string(
+            write_setting_string_to_builder(
                 &mut sb,
                 "LEARNER_CONSTRAINTS",
                 &self.learner_constraints,
@@ -268,7 +268,7 @@ impl std::fmt::Display for PlacementSettings {
             );
         }
         if !self.survival_preferences.is_empty() {
-            write_setting_string(
+            write_setting_string_to_builder(
                 &mut sb,
                 "SURVIVAL_PREFERENCES",
                 &self.survival_preferences,

@@ -165,7 +165,7 @@ fn all_join_leaf_schemas(node: &LogicalPlan) -> Vec<Schema> {
 
 /// Go `LogicalJoin.getProj`: make a child projection that initially exposes
 /// the child's complete schema through identity expressions.
-pub fn ensure_join_projection(
+pub fn get_proj(
     ctx: &RuleContext<'_>,
     child: &mut LogicalPlan,
 ) -> Result<(), PlanError> {
@@ -197,7 +197,7 @@ pub fn ensure_join_projection(
 }
 
 /// Go `LogicalProjection.AppendExpr`, used only by `updateEQCond`.
-pub fn append_join_projection_expr(
+pub fn append_expr(
     ctx: &RuleContext<'_>,
     child: &mut LogicalPlan,
     expression: Expression,
@@ -244,7 +244,7 @@ pub fn append_join_projection_expr(
 
 /// Go `logicalop.InjectExpr`: make sure `plan` is a projection and append a
 /// non-column expression in the child's expression space.
-pub fn inject_join_expression(
+pub fn inject_expr(
     ctx: &RuleContext<'_>,
     mut plan: LogicalPlan,
     expression: Expression,
@@ -252,8 +252,8 @@ pub fn inject_join_expression(
     if let Expression::Column(column) = expression {
         return Ok((plan, column));
     }
-    ensure_join_projection(ctx, &mut plan)?;
-    let column = append_join_projection_expr(ctx, &mut plan, expression)?;
+    get_proj(ctx, &mut plan)?;
+    let column = append_expr(ctx, &mut plan, expression)?;
     Ok((plan, column))
 }
 
@@ -404,17 +404,17 @@ fn adjust_key_form(
         .iter()
         .any(|(_, right)| !matches!(right, Expression::Column(_)));
     if left_projection {
-        ensure_join_projection(ctx, &mut join.base.children_mut()[0])?;
+        get_proj(ctx, &mut join.base.children_mut()[0])?;
     }
     if right_projection {
-        ensure_join_projection(ctx, &mut join.base.children_mut()[1])?;
+        get_proj(ctx, &mut join.base.children_mut()[1])?;
     }
 
     for (left_expression, right_expression) in extracted {
         let keep_as_other =
             is_mutable_effects_expr(&left_expression) || is_mutable_effects_expr(&right_expression);
         let mut left_key = if left_projection {
-            append_join_projection_expr(ctx, &mut join.base.children_mut()[0], left_expression)?
+            append_expr(ctx, &mut join.base.children_mut()[0], left_expression)?
         } else {
             let Expression::Column(column) = left_expression else {
                 unreachable!("projection need was computed from every extracted key")
@@ -422,7 +422,7 @@ fn adjust_key_form(
             column
         };
         let mut right_key = if right_projection {
-            append_join_projection_expr(ctx, &mut join.base.children_mut()[1], right_expression)?
+            append_expr(ctx, &mut join.base.children_mut()[1], right_expression)?
         } else {
             let Expression::Column(column) = right_expression else {
                 unreachable!("projection need was computed from every extracted key")
@@ -433,10 +433,10 @@ fn adjust_key_form(
         let mut equality = build_join_equality(ctx, left_key.clone(), right_key.clone())?;
         if !matches!(equality.args.first(), Some(Expression::Column(_))) {
             if !left_projection {
-                ensure_join_projection(ctx, &mut join.base.children_mut()[0])?;
+                get_proj(ctx, &mut join.base.children_mut()[0])?;
                 left_projection = true;
             }
-            left_key = append_join_projection_expr(
+            left_key = append_expr(
                 ctx,
                 &mut join.base.children_mut()[0],
                 equality.args[0].clone(),
@@ -446,10 +446,10 @@ fn adjust_key_form(
         }
         if !matches!(equality.args.get(1), Some(Expression::Column(_))) {
             if !right_projection {
-                ensure_join_projection(ctx, &mut join.base.children_mut()[1])?;
+                get_proj(ctx, &mut join.base.children_mut()[1])?;
                 right_projection = true;
             }
-            right_key = append_join_projection_expr(
+            right_key = append_expr(
                 ctx,
                 &mut join.base.children_mut()[1],
                 equality.args[1].clone(),
@@ -770,7 +770,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
             LogicalPlan::DataSource(op) => {
                 let predicates = apply_predicate_simplification(self.ctx, predicates, true, None);
                 // Go adds the `tidb_shard()` prefix for shard indexes here.
-                let predicates = op.add_prefix4_shard_indexes(
+                let predicates = op.add_prefix_4_shard_indexes(
                     predicates,
                     self.ctx.estimator_options.regard_null_as_point,
                 );
@@ -1525,7 +1525,7 @@ impl OwnedRewrite for PushDownTopN<'_> {
             // incoming TopN from above re-attaches here. The limit operator
             // itself never survives.
             LogicalPlan::Limit(op) => {
-                let converted = op.convert_to_topn(self.allocator);
+                let converted = op.convert_to_top_n(self.allocator);
                 // Go returns the CONVERTED-and-pushed CHILD in every case —
                 // the limit operator itself never survives.
                 self.stash.push(PendingTopN::ReplaceWithChild(topn));

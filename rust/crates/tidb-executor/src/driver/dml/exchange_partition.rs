@@ -89,7 +89,7 @@ pub(crate) fn exchange_partition_check(
 impl ExchangePartitionCheck {
     /// Go `checkRowForExchangePartition` for the standalone table's row,
     /// before its generated columns are filled.
-    pub(crate) fn check_standalone_row(
+    pub(crate) fn check_row_for_exchange_partition(
         &self,
         row: &[Datum],
         ctx: &crate::StmtContext,
@@ -114,7 +114,7 @@ impl ExchangePartitionCheck {
         }
         if ctx.enable_check_constraint() {
             partitioned
-                .validate_check_constraints(row, ctx)
+                .check_row_constraint_with_datum(row, ctx)
                 .map_err(super::kv_write_error)?;
         }
         Ok(())
@@ -122,7 +122,7 @@ impl ExchangePartitionCheck {
 
     /// Go `checkConstraintForExchangePartition` for a row the partitioned
     /// table `table` writes into the exchanged partition.
-    pub(crate) fn check_partitioned_row(
+    pub(crate) fn check_constraint_for_exchange_partition(
         &self,
         table: &KvTable,
         row: &[Datum],
@@ -145,7 +145,7 @@ impl ExchangePartitionCheck {
             return Ok(());
         }
         standalone
-            .validate_check_constraints(row, ctx)
+            .check_row_constraint_with_datum(row, ctx)
             .map_err(super::kv_write_error)
     }
 }

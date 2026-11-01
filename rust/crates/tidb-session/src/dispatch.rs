@@ -409,7 +409,7 @@ impl Session {
     ) -> Result<StmtOutput, DriverError> {
         let ctx = self.statement_context(false);
         let result = self.with_planning_catalog(|catalog| {
-            tidb_executor::compact_table::execute_compact_table(
+            tidb_executor::compact_table::build_compact_table(
                 compact,
                 catalog,
                 &self.vars.current_db,
@@ -1220,7 +1220,7 @@ impl Session {
         }
         let mut resolved: Option<u64> = None;
         for expr in &visitor.taken {
-            let ts = self.resolve_as_of_ts(expr)?;
+            let ts = self.calculate_as_of_ts_expr(expr)?;
             match resolved {
                 None => resolved = Some(ts),
                 Some(previous) if previous == ts => {}
@@ -2292,7 +2292,7 @@ impl Session {
             args: vec![tidb_ast::Expr::Int("6".into())],
             origin_position: 0,
         })?;
-        let ts = self.resolve_as_of_ts(&tidb_ast::Expr::String(
+        let ts = self.calculate_as_of_ts_expr(&tidb_ast::Expr::String(
             now.sql_string().unwrap_or_default(),
         ))?;
         Ok(Some(

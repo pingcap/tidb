@@ -32,7 +32,7 @@
 //! the *args* (istrue_with_null wrappers), not the result type, and is not
 //! ported.
 
-use crate::builtin_arithmetic::new_return_field_type;
+use crate::builtin_arithmetic::new_return_field_type_for_base_builtin_func;
 use crate::expression::Expression;
 use tidb_datatype::{EvalType, FieldType, FieldTypeFlags};
 
@@ -44,7 +44,7 @@ use tidb_datatype::{EvalType, FieldType, FieldTypeFlags};
 pub fn infer_op_type(name: &str) -> Option<FieldType> {
     match name {
         "and" | "or" | "xor" => {
-            let mut ret = new_return_field_type(EvalType::Int);
+            let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Int);
             // logicAnd/logicOr/logicXor getFunction: SetFlen(1).
             ret.set_flen(1);
             // ast.LogicAnd/LogicOr/LogicXor are in Go's booleanFunctions map.
@@ -52,7 +52,7 @@ pub fn infer_op_type(name: &str) -> Option<FieldType> {
             Some(ret)
         }
         "bitand" | "bitor" | "bitxor" | "leftshift" | "rightshift" => {
-            let mut ret = new_return_field_type(EvalType::Int);
+            let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Int);
             // bitAnd/bitOr/bitXor/leftShift/rightShift getFunction:
             // AddFlag(mysql.UnsignedFlag).
             ret.add_flags(FieldTypeFlags::UNSIGNED);
@@ -103,7 +103,7 @@ fn int_negation_overflows(arg: &Expression, arg_ft: &FieldType) -> bool {
 pub fn infer_unary_op_type(name: &str, arg: &Expression) -> Option<FieldType> {
     match name {
         "not" => {
-            let mut ret = new_return_field_type(EvalType::Int);
+            let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Int);
             // unaryNotFunctionClass getFunction: SetFlen(1).
             ret.set_flen(1);
             // ast.UnaryNot is in Go's booleanFunctions map.
@@ -111,7 +111,7 @@ pub fn infer_unary_op_type(name: &str, arg: &Expression) -> Option<FieldType> {
             Some(ret)
         }
         "bitneg" => {
-            let mut ret = new_return_field_type(EvalType::Int);
+            let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Int);
             // bitNegFunctionClass getFunction: AddFlag(mysql.UnsignedFlag).
             ret.add_flags(FieldTypeFlags::UNSIGNED);
             Some(ret)
@@ -126,18 +126,18 @@ pub fn infer_unary_op_type(name: &str, arg: &Expression) -> Option<FieldType> {
                 // `SELECT --9223372036854775808` is the decimal
                 // 9223372036854775808 and not a clamped `BIGINT`.
                 EvalType::Int if int_overflow => {
-                    let mut ret = new_return_field_type(EvalType::Decimal);
+                    let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Decimal);
                     // `bf.tp.SetDecimal(0)` runs for BOTH arms of Go's
                     // `case types.ETInt`.
                     ret.set_decimal(0);
                     ret
                 }
                 EvalType::Int => {
-                    let mut ret = new_return_field_type(EvalType::Int);
+                    let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Int);
                     ret.set_decimal(0);
                     ret
                 }
-                EvalType::Real => new_return_field_type(EvalType::Real),
+                EvalType::Real => new_return_field_type_for_base_builtin_func(EvalType::Real),
                 // Go's default arm: a decimal argument -- and a temporal one,
                 // which it converts through decimal -- keeps the decimal
                 // domain with the argument's own scale; everything else
@@ -153,11 +153,11 @@ pub fn infer_unary_op_type(name: &str, arg: &Expression) -> Option<FieldType> {
                                 | tidb_datatype::FieldTypeCode::Duration
                         );
                     if as_decimal {
-                        let mut ret = new_return_field_type(EvalType::Decimal);
+                        let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Decimal);
                         ret.set_decimal_under_limit(arg_ft.decimal());
                         ret
                     } else {
-                        new_return_field_type(EvalType::Real)
+                        new_return_field_type_for_base_builtin_func(EvalType::Real)
                     }
                 }
             };

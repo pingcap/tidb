@@ -703,7 +703,7 @@ impl TopN {
     }
 
     /// Go `AppendTopN` without an implicit byte copy.
-    pub fn append_shared(&mut self, encoded: SharedTopNBytes, count: u64) {
+    pub fn append_top_n(&mut self, encoded: SharedTopNBytes, count: u64) {
         let snapshot = encoded
             .read()
             .expect("shared TopN bytes lock poisoned")
@@ -773,14 +773,14 @@ impl TopN {
     /// Returns the index of an exact entry, or `None` if absent.
     #[must_use]
     pub fn find(&self, encoded: &[u8]) -> Option<usize> {
-        find_topn(Some(self), encoded)
+        find_top_n(Some(self), encoded)
     }
 
     /// Returns the exact TopN count, or `None` when the encoded value is not
     /// represented by TopN.
     #[must_use]
     pub fn query_bytes(&self, encoded: &[u8]) -> Option<u64> {
-        query_topn(Some(self), encoded)
+        query_top_n(Some(self), encoded)
     }
 
     /// Returns the half-open interval count for encoded bytes `[left, right)`.
@@ -970,16 +970,16 @@ impl TopN {
 /// Go `(*TopN).QueryTopN`, including the nil receiver and its `(0, false)`
 /// result represented as `None`.
 #[must_use]
-pub fn query_topn(topn: Option<&TopN>, encoded: &[u8]) -> Option<u64> {
+pub fn query_top_n(topn: Option<&TopN>, encoded: &[u8]) -> Option<u64> {
     let topn = topn?;
-    let index = find_topn(Some(topn), encoded)?;
+    let index = find_top_n(Some(topn), encoded)?;
     Some(topn.entries[index].count)
 }
 
 /// Go `(*TopN).FindTopN`, including nil, empty, singleton, boundary, and
 /// lower-bound paths. `None` is the native counterpart of source index `-1`.
 #[must_use]
-pub fn find_topn(topn: Option<&TopN>, encoded: &[u8]) -> Option<usize> {
+pub fn find_top_n(topn: Option<&TopN>, encoded: &[u8]) -> Option<usize> {
     let topn = topn?;
     if topn.entries.is_empty() {
         return None;
@@ -1471,7 +1471,7 @@ fn sketch_from_rows(
 /// allocated empty value, and uses Go 1.25.10 `slices.SortFunc` ordering.
 /// The first row fixes width; shorter rows zero-fill, a longer row panics, and
 /// total count is reset to the sum of each row in turn.
-pub fn cmsketch_and_topn_from_proto(
+pub fn cm_sketch_and_top_n_from_proto(
     proto: Option<&CmsSketchProto>,
 ) -> (Option<CmsSketch>, Option<TopN>) {
     let Some(proto) = proto else {
@@ -1529,7 +1529,7 @@ pub fn decode_cmsketch(data: &[u8]) -> Result<Option<CmsSketch>, CodecError> {
 /// Decodes the complete tipb CMSketch message, including embedded TopN.
 ///
 /// This wire adapter validates the entire message before reconstructing its
-/// objects. Use [`cmsketch_and_topn_from_proto`] for the exact nullable native
+/// objects. Use [`cm_sketch_and_top_n_from_proto`] for the exact nullable native
 /// conversion boundary. The persistence-oriented [`decode_cmsketch_and_topn`]
 /// below continues loading TopN from separate storage rows.
 pub fn decode_cmsketch_and_embedded_topn(

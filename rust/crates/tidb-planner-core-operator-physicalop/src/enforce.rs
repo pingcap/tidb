@@ -239,7 +239,7 @@ pub fn enforce_property_in(
 /// The statement context is where Go's `RaiseWarningWhenMPPEnforced` writes.
 impl MppWarningSink for tidb_sessionctx::StmtContext {
     fn raise_mpp_warning(&self, message: &str) {
-        tidb_sessionctx::StmtContext::append_mpp_warning(self, message);
+        tidb_sessionctx::StmtContext::raise_warning_when_mpp_enforced(self, message);
     }
 
     fn set_hint_warning(&self, message: &str) {

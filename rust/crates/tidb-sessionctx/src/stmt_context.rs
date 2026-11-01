@@ -208,12 +208,12 @@ impl RetryAutoIds {
     }
 
     /// Go `GetCurrAutoRandomID` for the next auto-random row.
-    pub fn reuse_random(&mut self) -> Option<u64> {
+    pub fn get_curr_auto_random_id(&mut self) -> Option<u64> {
         self.random.reuse()
     }
 
     /// Go `AddAutoRandomID` for one completed row assignment.
-    pub fn record_random(&mut self, id: u64) {
+    pub fn add_auto_random_id(&mut self, id: u64) {
         self.random.record(id);
     }
 }
@@ -3002,12 +3002,12 @@ impl StmtContext {
     ///
     /// A `SELECT` gets the literal `true` its `ResetContextOfStmt` arm
     /// writes; every other class gets `GetTypeFlagsForInsert`'s mode rule,
-    /// which [`tidb_util::misc::write_date_flags`] already owns.
+    /// which [`tidb_util::misc::get_type_flags_for_insert`] already owns.
     fn ignore_zero_in_date(&self) -> bool {
         if self.statement_class == StatementClass::Select {
             return true;
         }
-        tidb_util::misc::write_date_flags(
+        tidb_util::misc::get_type_flags_for_insert(
             tidb_datatype::ConversionFlags::default(),
             self.date_modes(),
             self.strict,
@@ -3567,7 +3567,7 @@ impl StmtContext {
 
     /// Go `recordTableRuntimeStats`: retain one entry for every visited
     /// logical table, including `None` when the table has no loaded stats.
-    pub fn record_table_runtime_statistics_any(
+    pub fn record_table_runtime_stats(
         &self,
         table_ids: impl IntoIterator<Item = i64>,
         mut get: impl FnMut(i64) -> Option<RuntimeTableStats>,
@@ -4954,7 +4954,7 @@ impl StmtContext {
     /// `handleZeroDatetime`, which decides from `NO_ZERO_DATE` alone.
     #[must_use]
     pub fn write_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
-        tidb_util::misc::write_date_flags(
+        tidb_util::misc::get_type_flags_for_insert(
             self.statement_string_flags(tidb_datatype::DEFAULT_STATEMENT_FLAGS)
                 .with_allow_negative_to_unsigned(false)
                 .with_ignore_truncate_err(self.truncate == ErrorLevel::Ignore)
@@ -5081,7 +5081,7 @@ impl StmtContext {
     /// Go `SessionVars.RaiseWarningWhenMPPEnforced`: only an actually
     /// enforced MPP statement raises, and EXPLAIN routes to ordinary warnings
     /// while every other statement uses the extra-warning handler.
-    pub fn append_mpp_warning(&self, message: &str) {
+    pub fn raise_warning_when_mpp_enforced(&self, message: &str) {
         if !self.cost_session.mpp_enforced {
             return;
         }
@@ -5207,7 +5207,7 @@ impl StmtContext {
         self.retry_auto_ids
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .reuse_random()
+            .get_curr_auto_random_id()
     }
 
     /// Records one complete AUTO_RANDOM id for a possible statement replay.
@@ -5215,7 +5215,7 @@ impl StmtContext {
         self.retry_auto_ids
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .record_random(id);
+            .add_auto_random_id(id);
     }
 
     /// Go `GetRowIDShardGenerator().GetCurrentShard(count)`: the shard

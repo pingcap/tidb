@@ -347,7 +347,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
 
     /// Go `TxStructure.HSet`: the write is skipped when the new value equals
     /// the stored one, which is also how writing nil over nothing succeeds.
-    pub fn hset(&mut self, key: &[u8], field: &[u8], value: &[u8]) -> Result<(), T::Error> {
+    pub fn h_set(&mut self, key: &[u8], field: &[u8], value: &[u8]) -> Result<(), T::Error> {
         self.require_writable()?;
         let encoded = self.hash_data_key(key, field);
         let old = self.transaction.get(&encoded)?;
@@ -358,7 +358,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.HGet`: a missing field is `None`, not an error.
-    pub fn hget(&mut self, key: &[u8], field: &[u8]) -> Result<Option<Vec<u8>>, T::Error> {
+    pub fn h_get(&mut self, key: &[u8], field: &[u8]) -> Result<Option<Vec<u8>>, T::Error> {
         self.transaction.get(&self.hash_data_key(key, field))
     }
 
@@ -376,7 +376,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.HInc`.
-    pub fn hinc(&mut self, key: &[u8], field: &[u8], step: i64) -> Result<i64, T::Error> {
+    pub fn h_inc(&mut self, key: &[u8], field: &[u8], step: i64) -> Result<i64, T::Error> {
         self.require_writable()?;
         let encoded = self.hash_data_key(key, field);
         let old = self.transaction.get(&encoded)?;
@@ -392,12 +392,12 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.HGetInt64`: a missing field is zero.
-    pub fn hget_int64(&mut self, key: &[u8], field: &[u8]) -> Result<i64, T::Error> {
-        Ok(self.hget(key, field)?.map_or(Ok(0), |stored| parse_int_value(&stored))?)
+    pub fn h_get_int_64(&mut self, key: &[u8], field: &[u8]) -> Result<i64, T::Error> {
+        Ok(self.h_get(key, field)?.map_or(Ok(0), |stored| parse_int_value(&stored))?)
     }
 
     /// Go `TxStructure.HDel`: only stored fields are deleted.
-    pub fn hdel(&mut self, key: &[u8], fields: &[&[u8]]) -> Result<(), T::Error> {
+    pub fn h_del(&mut self, key: &[u8], fields: &[&[u8]]) -> Result<(), T::Error> {
         self.require_writable()?;
         for field in fields {
             let encoded = self.hash_data_key(key, field);
@@ -409,7 +409,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.HKeys`.
-    pub fn hkeys(&mut self, key: &[u8]) -> Result<Vec<Vec<u8>>, T::Error> {
+    pub fn h_keys(&mut self, key: &[u8]) -> Result<Vec<Vec<u8>>, T::Error> {
         let mut keys = Vec::new();
         self.iterate_hash(key, &mut |field, _| {
             keys.push(field.to_vec());
@@ -419,7 +419,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.HGetAll`.
-    pub fn hget_all(&mut self, key: &[u8]) -> Result<Vec<HashPair>, T::Error> {
+    pub fn h_get_all(&mut self, key: &[u8]) -> Result<Vec<HashPair>, T::Error> {
         let mut pairs = Vec::new();
         self.iterate_hash(key, &mut |field, stored| {
             pairs.push(HashPair {
@@ -432,7 +432,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.HGetIter`.
-    pub fn hget_iter(
+    pub fn h_get_iter(
         &mut self,
         key: &[u8],
         visit: &mut dyn FnMut(HashPair) -> Result<(), T::Error>,
@@ -446,7 +446,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.HGetLen`.
-    pub fn hget_len(&mut self, key: &[u8]) -> Result<u64, T::Error> {
+    pub fn h_get_len(&mut self, key: &[u8]) -> Result<u64, T::Error> {
         let mut length: u64 = 0;
         self.iterate_hash(key, &mut |_, _| {
             length += 1;
@@ -456,7 +456,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.HGetLastN`: the latest `num` pairs, newest first.
-    pub fn hget_last_n(&mut self, key: &[u8], num: usize) -> Result<Vec<HashPair>, T::Error> {
+    pub fn h_get_last_n(&mut self, key: &[u8], num: usize) -> Result<Vec<HashPair>, T::Error> {
         let mut pairs = Vec::with_capacity(num);
         let data_prefix = self.hash_data_key_prefix(key);
         let mut iterator = self.transaction.reverse_scan_prefix(&data_prefix, None)?;
@@ -475,7 +475,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.HClear`: collects the stored fields, then deletes them.
-    pub fn hclear(&mut self, key: &[u8]) -> Result<(), T::Error> {
+    pub fn h_clear(&mut self, key: &[u8]) -> Result<(), T::Error> {
         let mut keys = Vec::new();
         let data_prefix = self.hash_data_key_prefix(key);
         self.iterate_hash(key, &mut |field, _| {
@@ -535,7 +535,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `structure.NewHashReverseIterBeginWithField`.
-    pub fn hash_reverse_iter_begin_with_field(
+    pub fn new_hash_reverse_iter_begin_with_field(
         &mut self,
         key: &[u8],
         field: &[u8],
@@ -569,12 +569,12 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     // List operations (Go `pkg/structure/list.go`).
 
     /// Go `TxStructure.LPush`.
-    pub fn lpush(&mut self, key: &[u8], values: &[&[u8]]) -> Result<(), T::Error> {
+    pub fn l_push(&mut self, key: &[u8], values: &[&[u8]]) -> Result<(), T::Error> {
         self.list_push(key, true, values)
     }
 
     /// Go `TxStructure.RPush`.
-    pub fn rpush(&mut self, key: &[u8], values: &[&[u8]]) -> Result<(), T::Error> {
+    pub fn r_push(&mut self, key: &[u8], values: &[&[u8]]) -> Result<(), T::Error> {
         self.list_push(key, false, values)
     }
 
@@ -601,12 +601,12 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.LPop`: `None` when the list is empty.
-    pub fn lpop(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, T::Error> {
+    pub fn l_pop(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, T::Error> {
         self.list_pop(key, true)
     }
 
     /// Go `TxStructure.RPop`: `None` when the list is empty.
-    pub fn rpop(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, T::Error> {
+    pub fn r_pop(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, T::Error> {
         self.list_pop(key, false)
     }
 
@@ -648,7 +648,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.LGetAll`: every element, in order from right to left.
-    pub fn lget_all(&mut self, key: &[u8]) -> Result<Vec<Vec<u8>>, T::Error> {
+    pub fn l_get_all(&mut self, key: &[u8]) -> Result<Vec<Vec<u8>>, T::Error> {
         let meta_key = self.list_meta_key(key);
         let meta = self.load_list_meta(&meta_key)?;
         if meta.is_empty() {
@@ -689,7 +689,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.LSet`: an out-of-range adjusted index is an error.
-    pub fn lset(&mut self, key: &[u8], index: i64, value: &[u8]) -> Result<(), T::Error> {
+    pub fn l_set(&mut self, key: &[u8], index: i64, value: &[u8]) -> Result<(), T::Error> {
         self.require_writable()?;
         let meta_key = self.list_meta_key(key);
         let meta = self.load_list_meta(&meta_key)?;
@@ -706,7 +706,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.LClear`.
-    pub fn lclear(&mut self, key: &[u8]) -> Result<(), T::Error> {
+    pub fn l_clear(&mut self, key: &[u8]) -> Result<(), T::Error> {
         self.require_writable()?;
         let meta_key = self.list_meta_key(key);
         let meta = self.load_list_meta(&meta_key)?;

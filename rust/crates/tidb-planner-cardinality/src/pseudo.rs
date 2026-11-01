@@ -491,7 +491,7 @@ pub fn pseudo_selectivity(
 /// and unique-key flag, or `None` when the collection has no entry — and the
 /// source charges an equality's rate BEFORE that nil check, which
 /// [`pseudo_selectivity`] reproduces.
-pub fn classify_pseudo_predicate(
+pub fn get_constant_column_id(
     expr: &tidb_expr::expression::Expression,
     resolve: &dyn Fn(i64) -> Option<PseudoColumn>,
 ) -> PseudoPredicate {
@@ -532,7 +532,7 @@ pub fn hist_coll_pseudo_selectivity(
     let resolve = |unique_id: i64| hist_coll.column_info(unique_id);
     let predicates: Vec<PseudoPredicate> = conditions
         .iter()
-        .map(|condition| classify_pseudo_predicate(condition, &resolve))
+        .map(|condition| get_constant_column_id(condition, &resolve))
         .collect();
     let indexes: Vec<PseudoIndex> = hist_coll
         .index_infos()
@@ -567,7 +567,7 @@ pub fn hist_coll_pseudo_selectivity(
 /// The histogram-backed slice of `Selectivity` is the statistics handle's
 /// work and stays a named boundary at the caller.
 #[must_use]
-pub fn derive_stats_by_filter_pseudo(
+pub fn derive_stats_by_filter(
     table_stats: &tidb_planner_property::stats_info::StatsInfo,
     conds: &[tidb_expr::expression::Expression],
     resolve: &dyn Fn(i64) -> Option<PseudoColumn>,
@@ -581,7 +581,7 @@ pub fn derive_stats_by_filter_pseudo(
     } else {
         let predicates: Vec<PseudoPredicate> = conds
             .iter()
-            .map(|cond| classify_pseudo_predicate(cond, resolve))
+            .map(|cond| get_constant_column_id(cond, resolve))
             .collect();
         pseudo_selectivity(
             &predicates,

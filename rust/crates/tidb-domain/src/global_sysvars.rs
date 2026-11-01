@@ -932,7 +932,7 @@ impl GlobalSysvars {
         }
         let value = match get_sys_var(name) {
             Some(def) if def.var_type == tidb_variable::sysvar::VarType::Time => {
-                tidb_variable::sysvar::normalize_time_value(&value, zone)
+                tidb_variable::sysvar::check_time_system_var(&value, zone)
                     .map_err(|error| validation_var_error(name, &value, error))?
             }
             _ => value,
@@ -1092,7 +1092,7 @@ impl GlobalSysvars {
             REQUIRE_SECURE_TRANSPORT => tidb_tls::REQUIRE_SECURE_TRANSPORT
                 .store(!tidb_config_deploymode::is_starter() && on, SeqCst),
             PERFORMANCE_SCHEMA_SESSION_CONNECT_ATTRS_SIZE => tidb_vardef::CONNECT_ATTRS_SIZE.store(
-                tidb_variable::varsutil::tidb_opt_int64(
+                tidb_variable::varsutil::tidb_opt_int_64(
                     value,
                     tidb_vardef::defaults::DEF_CONNECT_ATTRS_SIZE,
                 ),

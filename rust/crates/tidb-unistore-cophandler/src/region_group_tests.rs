@@ -38,7 +38,7 @@ fn region_group_matches_go_coprocessor_responses() {
     .unwrap();
     assert_eq!(data.lines().count(), 11232);
     let previous = tidb_datatype::new_collation_enabled();
-    tidb_datatype::set_new_collation_enabled(true);
+    tidb_datatype::set_new_collation_enabled_for_test(true);
     let mut store = MvccStore::new();
     let mut loaded = std::collections::HashSet::new();
     let mut differences = Vec::new();
@@ -93,7 +93,7 @@ fn region_group_matches_go_coprocessor_responses() {
             ));
         }
     }
-    tidb_datatype::set_new_collation_enabled(previous);
+    tidb_datatype::set_new_collation_enabled_for_test(previous);
     assert!(
         differences.is_empty(),
         "{} differences: {:#?}",

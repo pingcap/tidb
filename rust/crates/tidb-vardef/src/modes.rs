@@ -65,7 +65,7 @@ impl ExchangeCompressionMode {
     /// High-compression ratio (Go `ExchangeCompressionModeHC`;
     /// `tipb.CompressionMode_HIGH_COMPRESSION`).
     pub const HC: ExchangeCompressionMode = ExchangeCompressionMode(2);
-    /// Unspecified; let TiDB choose (Go `ExchangeCompressionModeUnspecified`).
+    /// Unspecified; let TiDB new_row_sample_collector (Go `ExchangeCompressionModeUnspecified`).
     pub const UNSPECIFIED: ExchangeCompressionMode = ExchangeCompressionMode(3);
 
     /// Go `RecommendedExchangeCompressionMode` = `ExchangeCompressionModeFast`.
@@ -93,7 +93,7 @@ impl ExchangeCompressionMode {
 
     /// Go `(ExchangeCompressionMode).ToTipbCompressionMode`, returning the
     /// `tipb.CompressionMode` integer value (NONE for anything but FAST/HC).
-    pub fn to_tipb_compression_value(self) -> i32 {
+    pub fn to_tipb_compression_mode(self) -> i32 {
         match self {
             Self::FAST => 1,
             Self::HC => 2,
@@ -159,7 +159,7 @@ mod tests {
         // Go: `RecommendedExchangeCompressionMode.ToTipbCompressionMode() ==
         // tipb.CompressionMode_FAST` (version_test.go:97).
         assert_eq!(
-            ExchangeCompressionMode::RECOMMENDED.to_tipb_compression_value(),
+            ExchangeCompressionMode::RECOMMENDED.to_tipb_compression_mode(),
             1
         );
     }
@@ -172,7 +172,7 @@ mod tests {
             ExchangeCompressionMode::FAST,
             ExchangeCompressionMode::HC,
         ] {
-            assert_eq!(i64::from(m.to_tipb_compression_value()), m.0);
+            assert_eq!(i64::from(m.to_tipb_compression_mode()), m.0);
         }
         assert_eq!(
             to_exchange_compression_mode("fast"),

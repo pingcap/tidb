@@ -150,7 +150,7 @@ impl ViewerState {
             return Ok(Vec::new());
         };
         let mut warnings: Vec<String> = Vec::new();
-        let rows = client.fetch_server_info(&servers, tp, &mut warnings);
+        let rows = client.fetch_cluster_server_info_without_privilege_check(&servers, tp, &mut warnings);
         for warning in warnings {
             ctx.append_warning_parts(1105, &warning);
         }
@@ -287,7 +287,7 @@ impl ViewerState {
         let Some(syncer) = self.server_info_syncer.as_ref() else {
             return String::new();
         };
-        let info = syncer.local_server_info();
+        let info = syncer.get_local_server_info();
         if self.hides_cluster_metadata {
             info.static_info.id.clone()
         } else {
@@ -309,7 +309,7 @@ impl ViewerState {
     ///
     /// The rows are ordered by id so the table reads deterministically;
     /// Go's map iteration leaves the order unspecified.
-    pub fn tidb_servers_info_rows(
+    pub fn set_data_for_servers_info(
         &self,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use tidb_datatype::Datum;
@@ -364,14 +364,14 @@ impl ViewerState {
             "PROCESSLIST" => {
                 if let Some(registry) = registry {
                     crate::memtable_reader::format_process_rows(
-                        self.filter_process_rows(registry.snapshot()),
+                        self.set_data_for_process_list(registry.snapshot()),
                         zone,
                     )
                 } else {
                     crate::memtable_reader::format_process_rows(self.visible_process_rows(true), zone)
                 }
             }
-            "TRX_SUMMARY" => self.transaction_summary_rows(registry),
+            "TRX_SUMMARY" => self.set_data_for_trx_summary(registry),
             "STATEMENTS_SUMMARY"
             | "STATEMENTS_SUMMARY_HISTORY"
             | "STATEMENTS_SUMMARY_EVICTED"
@@ -436,7 +436,7 @@ impl ViewerState {
             "MEMORY_USAGE_OPS_HISTORY" => {
                 tidb_servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER.get_rows()
             }
-            "TIDB_INDEX_USAGE" => crate::infoschema_reader::tidb_index_usage_rows(
+            "TIDB_INDEX_USAGE" => crate::infoschema_reader::set_data_from_index_usage(
                 catalog,
                 &self.visibility,
                 self.index_usage.as_ref(),
@@ -1061,7 +1061,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for ClusterTablesRetriever {
             return self.viewer.cluster_config_rows(ctx, &filters);
         }
         if table.go_lower_eq("TIDB_SERVERS_INFO") {
-            return self.viewer.tidb_servers_info_rows();
+            return self.viewer.set_data_for_servers_info();
         }
         // CLUSTER_INFO: Go `memtableRetriever.retrieve` needs PROCESS.
         if !self.viewer.process_scoped {

@@ -895,7 +895,7 @@ fn a_complete_common_handle_equality_is_a_point_get() {
 /// merge join over that stream would advance past groups the input never
 /// separated and silently DROP rows.
 ///
-/// The shared planner must therefore choose a physical tree whose required
+/// The shared planner must therefore new_row_sample_collector a physical tree whose required
 /// properties are satisfied. The executor verifies that receipt before
 /// lowering it. The assertion below pins the complete row set.
 #[test]

@@ -109,7 +109,7 @@ fn closed_point_ranges(keys: &[Vec<Datum>]) -> tidb_ranger::types::Ranges {
 /// physical root later consumed by `executorBuilder.build`. This is the
 /// optimizer stage; it never drains a source or constructs a separate
 /// executor pipeline.
-pub fn try_fast_point_physical_plan(
+pub fn try_fast_plan(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
@@ -311,7 +311,7 @@ fn build_fast_point_physical_plan(
     };
     let schema = fast_point_schema(table, &output);
 
-    let mut batch = try_batch_point_get(select, table, &columns, &scope.zone, Some(ctx))?;
+    let mut batch = try_where_in_2_batch_point_get(select, table, &columns, &scope.zone, Some(ctx))?;
     if batch.as_ref().is_some_and(|batch| !batch.ignores_hints()) {
         batch = batch.filter(|batch| {
             let index_name = match batch.index.as_ref() {
@@ -618,7 +618,7 @@ fn overflow_plans_table_dual(
     let mut pairs = Vec::new();
     let single_pair = where_clause.is_some_and(|expr| {
         matches!(expr, tidb_ast::Expr::Binary(tidb_ast::BinaryOp::Eq, _, _))
-            && name_value_pairs(expr, &mut pairs, zone)
+            && get_name_value_pairs(expr, &mut pairs, zone)
     });
     if let Some(handle_offset) = table.pk_handle_offset() {
         let handle_column = &columns[handle_offset].0;
@@ -763,7 +763,7 @@ pub fn point_get_predicate_is_consumed(
         return false;
     };
     let mut pairs = Vec::new();
-    if !name_value_pairs(where_clause, &mut pairs, zone) || pairs.is_empty() {
+    if !get_name_value_pairs(where_clause, &mut pairs, zone) || pairs.is_empty() {
         return false;
     }
     let key_matches = |offsets: &[usize]| {
@@ -973,7 +973,7 @@ impl BatchPointLookup {
 /// Go `tryWhereIn2BatchPointGet`. `statement` is the statement whose type
 /// context converts the list (see [`batch_key_value`]); `None` applies the
 /// detached rule.
-pub fn try_batch_point_get(
+pub fn try_where_in_2_batch_point_get(
     select: &tidb_ast::SelectStmt,
     table: &KvTable,
     columns: &[(String, FieldType)],
@@ -995,7 +995,7 @@ fn batch_key_value(
     value: &Datum,
 ) -> Option<Datum> {
     match statement {
-        Some(ctx) => crate::point_get_value::statement_point_get_value(ctx, column, value),
+        Some(ctx) => crate::point_get_value::get_point_get_value(ctx, column, value),
         None => point_get_value(column, value),
     }
 }
@@ -1362,7 +1362,7 @@ fn index_key_part_name(table: &KvTable, offset: usize) -> String {
 /// through `AND`; anything else (an `OR`, a comparison, a function call)
 /// makes the statement ineligible for a point get, which is what returning
 /// `None` means here.
-pub fn name_value_pairs(
+pub fn get_name_value_pairs(
     expr: &tidb_ast::Expr,
     pairs: &mut Vec<NameValuePair>,
     zone: &tidb_datatype::SessionTimeZone,
@@ -1370,7 +1370,7 @@ pub fn name_value_pairs(
     point_equal_pairs(expr, pairs, zone, &[])
 }
 
-/// [`Self::name_value_pairs`]-shaped walker that ALSO resolves `?` markers
+/// [`Self::get_name_value_pairs`]-shaped walker that ALSO resolves `?` markers
 /// against EXECUTE parameters, so one implementation decides the point-pin
 /// rule for a bound tree and for a PREPARE template alike. A template whose
 /// marker position is unfilled refuses, exactly like a non-literal.
@@ -1424,7 +1424,7 @@ fn point_equal_pairs_visiting(
             // A `?` marker IS a literal once its parameter arrived (Go
             // `ParamMarkerExpression` reads the value the marker carries);
             // every other shape must resolve to a constant exactly as
-            // [`name_value_pairs`] demands — anything needing evaluation
+            // [`get_name_value_pairs`] demands — anything needing evaluation
             // against a row is not a point-get key.
             let (value, marker) = if let Expr::ParamMarker {
                 order,
@@ -1639,7 +1639,7 @@ pub fn try_point_get(
                 }
             })
         }
-        None => name_value_pairs(where_clause, &mut pairs, zone),
+        None => get_name_value_pairs(where_clause, &mut pairs, zone),
     };
     if !walked || pairs.is_empty() {
         return Ok(None);

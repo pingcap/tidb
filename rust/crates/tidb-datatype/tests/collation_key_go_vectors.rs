@@ -67,7 +67,7 @@ fn fixture_key(collation: &str, index: usize) -> Vec<u8> {
 fn collation_sort_keys_match_go_byte_for_byte() {
     // Go's generator ran under the default new-collation configuration,
     // which is this suite's default too. Nothing is toggled here:
-    // `set_new_collation_enabled` re-runs the defaults initialization and
+    // `set_new_collation_enabled_for_test` re-runs the defaults initialization and
     // sibling suites read the same global.
     assert!(tidb_datatype::new_collation_enabled());
     for (collation, id) in COLLATIONS {

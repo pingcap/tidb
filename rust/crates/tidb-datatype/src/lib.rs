@@ -111,7 +111,7 @@ pub use collation::{
     get_collator, get_collator_by_id, get_collator_with_mode, get_supported_collation_by_name,
     is_bin_collation, is_ci_collation, is_default_collation_for_utf8mb4, is_pad_space_collation,
     new_collation_enabled, proto_to_collation, restore_collation_id_if_needed,
-    rewrite_new_collation_id_if_needed, set_new_collation_enabled,
+    rewrite_new_collation_id_if_needed, set_new_collation_enabled_for_test,
     substitute_missing_collation_to_default, supported_collations, CollationError, Collator,
     WildcardPattern, DEFAULT_LEN,
 };
@@ -143,9 +143,9 @@ pub use datum::{
 };
 pub use datum_convert::{
     change_reverse_result_by_bound, get_max_value, get_min_value,
-    produce_decimal_with_type_in_context, produce_float_with_type,
+    produce_dec_with_specified_tp, produce_float_with_type,
     produce_float_with_type_in_context, produce_string_with_type,
-    produce_string_with_type_in_context, DatumConversion, RoundingType,
+    produce_str_with_specified_tp, DatumConversion, RoundingType,
 };
 pub use datum_eval::{compute_plus, DatumArithmeticError};
 pub use decimal::{

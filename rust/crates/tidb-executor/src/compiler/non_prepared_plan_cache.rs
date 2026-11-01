@@ -33,7 +33,7 @@ use tidb_charset::Collation;
 use crate::{Catalog, PreparedDmlPlan, PreparedSelectPlan};
 use tidb_hack::GoCaseCompare;
 use tidb_mysql::to_lowercase as go_simple_lowercase;
-use tidb_planner_core_metrics::non_prep_plan_cache_unsupported_counter;
+use tidb_planner_core_metrics::get_non_prep_plan_cache_unsupported_counter;
 use tidb_filter::is_system_schema;
 use tidb_kvcache::SimpleLruCache;
 
@@ -355,7 +355,7 @@ impl Walk<'_> {
 /// Go `GetParamSQLFromAST`: clone the admitted statement, replace its filter
 /// literals with ordered markers, and retain the literal datums for physical
 /// planning and later recursive rebuilds.
-pub fn parameterize_select(
+pub fn get_param_sql_from_ast(
     stmt: &Stmt,
     catalog: &Catalog,
     current_db: &str,
@@ -1005,7 +1005,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         let catalog = domain
             .lock()
             .map_err(|_| Refusal::fast("the catalog is unavailable"))?;
-        parameterize_select(
+        get_param_sql_from_ast(
             stmt,
             &catalog,
             &self.session_vars().current_db,
@@ -1019,7 +1019,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
             // only checker-walk refusals count; clause-level fast-check
             // refusals return their reason without touching the counter.
             if refusal.counted {
-                non_prep_plan_cache_unsupported_counter().inc();
+                get_non_prep_plan_cache_unsupported_counter().inc();
             }
         })
     }
@@ -1123,8 +1123,8 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
             ) {
                 // Go `GetPlanFromPlanCache`'s hit arm; `lookupPlanCache`'s
                 // defer observes the lookup duration on hits only.
-                tidb_planner_core_metrics::plan_cache_hit_counter(true).inc();
-                tidb_planner_core_metrics::plan_cache_lookup_duration(
+                tidb_planner_core_metrics::get_plan_cache_hit_counter(true).inc();
+                tidb_planner_core_metrics::get_plan_cache_lookup_duration(
                     self.physical_plan_cache().uses_instance(),
                 )
                 .observe(lookup_start.elapsed().as_secs_f64());
@@ -1204,7 +1204,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         };
         self.configure_session_plan_cache();
         let observe = |start: std::time::Instant| {
-            tidb_planner_core_metrics::plan_cache_lookup_duration(
+            tidb_planner_core_metrics::get_plan_cache_lookup_duration(
                 self.physical_plan_cache().uses_instance(),
             )
             .observe(start.elapsed().as_secs_f64());
@@ -1223,7 +1223,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
                 // Go `GetPlanFromPlanCache`'s hit arm. Go's `lookupPlanCache`
                 // defer observes the lookup duration ONLY when it hit; a
                 // miss/re-plan records the miss counter and nothing else.
-                tidb_planner_core_metrics::plan_cache_hit_counter(true).inc();
+                tidb_planner_core_metrics::get_plan_cache_hit_counter(true).inc();
                 observe(lookup_start);
                 return Some(execution);
             }

@@ -260,7 +260,7 @@ fn both_ways(
     let hash_rows = drain(&mut hashed, &types);
 
     let ctx = crate::StmtContext::for_query();
-    let mut looked_up = JoinExec::new_index_lookup(
+    let mut looked_up = JoinExec::build_index_look_up_join(
         meta(),
         kind,
         conditions,
@@ -530,7 +530,7 @@ fn one_key_repeated_across_a_batch_is_probed_once() {
     let source = lookup_source(&table, LookupObject::Index(1), inner_width);
     let produced = source.produced_rows();
     let ctx = crate::StmtContext::for_query();
-    let mut exec = JoinExec::new_index_lookup(
+    let mut exec = JoinExec::build_index_look_up_join(
         ExecutorMeta::new(schema_of(4), 0, INIT_CAP, CHUNK),
         JoinKind::Inner,
         vec![equality(1, 1, 2)],

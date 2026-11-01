@@ -569,7 +569,7 @@ mod tests {
                 vec![Expression::Column(one_long_col_schema().columns[0].clone())],
             ))],
         ));
-        let mut data = Chunk::new_with_capacity(&[long()], 1);
+        let mut data = Chunk::new_chunk_with_capacity(&[long()], 1);
         data.append_int64(0, 1);
         let nexts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let count = || nexts.load(std::sync::atomic::Ordering::SeqCst);
@@ -627,7 +627,7 @@ mod tests {
                     long(),
                     args,
                 ));
-                let mut data = Chunk::new_with_capacity(&[long()], 1);
+                let mut data = Chunk::new_chunk_with_capacity(&[long()], 1);
                 if is_null {
                     data.append_null(0);
                 } else {
@@ -683,7 +683,7 @@ mod tests {
                     long(),
                     args,
                 ));
-                let mut data = Chunk::new_with_capacity(&[long()], 1);
+                let mut data = Chunk::new_chunk_with_capacity(&[long()], 1);
                 data.append_int64(0, 1);
                 let source = OneChunkSource {
                     meta: ExecutorMeta::new(one_long_col_schema(), 0, 1, 8),
@@ -725,7 +725,7 @@ mod tests {
     #[test]
     fn selection_keeps_rows_passing_predicate() {
         // Source rows: col0 in {1, 2, 3}.
-        let mut data = Chunk::new_with_capacity(std::slice::from_ref(&long()), 3);
+        let mut data = Chunk::new_chunk_with_capacity(std::slice::from_ref(&long()), 3);
         for v in [1, 2, 3] {
             data.append_int64(0, v);
         }
@@ -769,7 +769,7 @@ mod tests {
 
     #[test]
     fn null_and_false_filters_reject_rows() {
-        let mut data = Chunk::new_with_capacity(std::slice::from_ref(&long()), 2);
+        let mut data = Chunk::new_chunk_with_capacity(std::slice::from_ref(&long()), 2);
         data.append_int64(0, 5);
         data.append_null(0); // col0 IS NULL -> gt is NULL -> rejected
         let source = OneChunkSource {
@@ -802,7 +802,7 @@ mod tests {
 
     #[test]
     fn selection_preserves_filtered_rows_across_requested_batches() {
-        let mut data = Chunk::new_with_capacity(std::slice::from_ref(&long()), 8);
+        let mut data = Chunk::new_chunk_with_capacity(std::slice::from_ref(&long()), 8);
         for value in 1..=8 {
             data.append_int64(0, value);
         }
@@ -852,7 +852,7 @@ mod tests {
 
     #[test]
     fn selection_accounts_cached_child_chunk_against_query_quota() {
-        let mut data = Chunk::new_with_capacity(std::slice::from_ref(&long()), 64);
+        let mut data = Chunk::new_chunk_with_capacity(std::slice::from_ref(&long()), 64);
         for value in 0..64 {
             data.append_int64(0, value);
         }
@@ -891,7 +891,7 @@ mod tests {
 
     #[test]
     fn side_effecting_filter_returns_one_row_before_projection_observes_it() {
-        let mut data = Chunk::new_with_capacity(std::slice::from_ref(&long()), 3);
+        let mut data = Chunk::new_chunk_with_capacity(std::slice::from_ref(&long()), 3);
         for value in 1..=3 {
             data.append_int64(0, value);
         }

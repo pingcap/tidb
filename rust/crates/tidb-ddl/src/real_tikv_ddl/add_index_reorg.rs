@@ -415,7 +415,7 @@ where
         })?;
         let mutations = tables
             .reorg
-            .init_mutations(&existing, reorg.job_id, &handle, row_id)
+            .init_ddl_reorg_handle(&existing, reorg.job_id, &handle, row_id)
             .map_err(ClusterDdlError::Backfill)?;
         Ok((ReorgResult::Initialized(start_ts), mutations))
     })
@@ -657,7 +657,7 @@ where
                 mutations.extend(
                     tables
                         .reorg
-                        .update_mutation(row, &next)
+                        .update_ddl_reorg_handle(row, &next)
                         .map_err(ClusterDdlError::Backfill)?,
                 );
             }

@@ -18,7 +18,7 @@
 //! indexes that go with it to the delete range. A rolling-back ADD COLUMN
 //! runs the same steps from delete-only.
 
-use super::add_index::{action_step, partition_ids, table_step, AddIndexSubmission};
+use super::add_index::{action_step, partition_ids, update_version_and_table_info, AddIndexSubmission};
 use super::*;
 
 /// Go `executor.DropColumn` up to `doDDLJob2`. `None` for any other
@@ -175,7 +175,7 @@ fn check_drop_column_in_owner(
 
 /// Go `onDropColumn` for a DROP COLUMN job, and for an ADD COLUMN job
 /// rolling back.
-pub(super) fn plan_persisted_drop_column_job_step(
+pub(super) fn on_drop_column(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -209,7 +209,7 @@ pub(super) fn plan_persisted_drop_column_job_step(
         active.job.mark_non_revertible();
         active.job.schema_state = original_state;
         check_table_info_valid(&info)?;
-        let write = table_step(catalog, active, database_id, &info, false, start_ts)?;
+        let write = update_version_and_table_info(catalog, active, database_id, &info, false, start_ts)?;
         return Ok(action_step(write));
     }
     let move_to_back = |info: &mut TableInfo| {
@@ -225,7 +225,7 @@ pub(super) fn plan_persisted_drop_column_job_step(
                 index.write().state = SchemaState::WRITE_ONLY;
             }
             move_to_back(&mut info);
-            tidb_ddl_build::table_info_build::stamp_dropped_column_origin_default(&mut column.write())
+            tidb_ddl_build::table_info_build::check_drop_column_for_state_public(&mut column.write())
                 .map_err(DdlPlanError::Admission)?;
             check_table_info_valid(&info)?;
         }
@@ -271,7 +271,7 @@ pub(super) fn plan_persisted_drop_column_job_step(
         }
     }
     let new_state = column.read().state;
-    let write = table_step(
+    let write = update_version_and_table_info(
         catalog,
         active,
         database_id,
@@ -304,7 +304,7 @@ pub(super) fn plan_persisted_drop_column_job_step(
 
 /// Go `rollingbackDropColumn`: cancellable only before the job has run; past
 /// that the drop runs on.
-pub(super) fn plan_cancel_drop_column(
+pub(super) fn rollingback_drop_column(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {

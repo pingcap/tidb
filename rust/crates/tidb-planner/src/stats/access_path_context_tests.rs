@@ -69,7 +69,7 @@ fn logical_range_derivation_uses_current_statement_parameters() {
         // Go `initStats` attaches `PseudoTable`'s collection, whose
         // handle column is `IsHandle`.
         table_stats: Some(StatsInfo::new(10_000.0, [(1, 10_000.0)]).with_hist_coll({
-            let mut coll = tidb_planner_property::stats_info::HistColl::new_with_cols_and_idxs(
+            let mut coll = tidb_planner_property::stats_info::HistColl::new_hist_coll_with_cols_and_idxs(
                 0,
                 10_000,
                 0,

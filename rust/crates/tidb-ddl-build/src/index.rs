@@ -409,7 +409,7 @@ pub fn global_index_version(
     unique: bool,
     part_types: &[tidb_datatype::FieldType],
 ) -> u8 {
-    if !tidb_model::index::get_global_index_v1_supported() || !global || clustered {
+    if !tidb_model::index::get_global_index_v_1_supported() || !global || clustered {
         return tidb_model::index::GLOBAL_INDEX_VERSION_LEGACY;
     }
     let nullable = part_types.iter().any(|field_type| {
@@ -1118,7 +1118,7 @@ pub fn check_create_global_index(
     if let Some(partition_offsets) = partition_offsets.filter(|_| unique && !global) {
         if !partition_offsets
             .iter()
-            .all(|offset| crate::table_partition::key_part_covers(offsets, prefix_lengths, *offset))
+            .all(|offset| crate::table_partition::check_unique_key_include_part_key(offsets, prefix_lengths, *offset))
         {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_GLOBAL_INDEX_NOT_EXPLICITLY_SET

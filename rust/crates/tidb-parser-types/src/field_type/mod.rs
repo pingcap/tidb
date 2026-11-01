@@ -493,13 +493,13 @@ impl FieldTypeCode {
     /// runs enabled (the bootstrap freezes
     /// `new_collations_enabled_on_first_bootstrap` true), so the gate is a
     /// constant here and named rather than threaded.
-    pub const fn converts_between_char_and_varchar(self, to: Self) -> bool {
+    pub const fn convert_between_char_and_varchar(self, to: Self) -> bool {
         (self.is_type_varchar() && matches!(to, Self::String))
             || (matches!(self, Self::String) && to.is_type_varchar())
     }
 }
 
-/// The source-backed `FieldType` metadata required to choose binary versus
+/// The source-backed `FieldType` metadata required to new_row_sample_collector binary versus
 /// character string signatures during expression construction.
 ///
 /// The UTF-8 parser-owned charset and collation spellings are independent,

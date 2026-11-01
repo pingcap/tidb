@@ -29,7 +29,7 @@ use std::time::Duration;
 
 use tidb_datatype::{Datum, MySqlDuration};
 use tidb_ddl_notifier::{
-    publish_schema_change_to_store, DdlNotifier, Handler, SchemaChangeEvent, SessionPool, Store,
+    pub_scheme_change_to_store, DdlNotifier, Handler, SchemaChangeEvent, SessionPool, Store,
     TEST_HANDLER_ID,
 };
 use tidb_goruntime::go_runtime::GoSharedSlice;
@@ -2417,7 +2417,7 @@ fn ddl_notifier_table_store_delivers_in_order_and_cleans_up() {
     let store = Arc::new(ClusterNotifierTableStore);
     let mut publisher = pool.get().expect("publisher session");
     for (job_id, table_name) in [(1, "t1"), (2, "t2#special-char?in'name"), (3, "t3")] {
-        publish_schema_change_to_store(
+        pub_scheme_change_to_store(
             publisher.as_mut(),
             job_id,
             -1,
@@ -2436,9 +2436,9 @@ fn ddl_notifier_table_store_delivers_in_order_and_cleans_up() {
     let mut list = store.list(reader.as_mut()).expect("list starts");
     let listed = list.read(reader.as_mut(), 2).expect("first page");
     assert_eq!(listed.len(), 2);
-    assert_eq!(listed[0].event.create_table_info().name.original(), "t1");
+    assert_eq!(listed[0].event.get_create_table_info().name.original(), "t1");
     assert_eq!(
-        listed[1].event.create_table_info().name.original(),
+        listed[1].event.get_create_table_info().name.original(),
         "t2#special-char?in'name"
     );
     let listed = list.read(reader.as_mut(), 2).expect("second page");
@@ -2449,7 +2449,7 @@ fn ddl_notifier_table_store_delivers_in_order_and_cleans_up() {
             .collect::<Vec<_>>(),
         [(3, -1)]
     );
-    assert_eq!(listed[0].event.create_table_info().name.original(), "t3");
+    assert_eq!(listed[0].event.get_create_table_info().name.original(), "t3");
     list.close(reader.as_mut());
     pool.put(reader);
 
@@ -2457,7 +2457,7 @@ fn ddl_notifier_table_store_delivers_in_order_and_cleans_up() {
     let handler: Handler = {
         let seen = Arc::clone(&seen);
         Arc::new(move |_, event| {
-            seen.lock().unwrap().push(event.create_table_info().id);
+            seen.lock().unwrap().push(event.get_create_table_info().id);
             Ok(())
         })
     };
@@ -2536,7 +2536,7 @@ fn stats_notifier_uses_a_real_internal_transaction_like_go() {
         factory.advanced_sys_session_pool(),
     ));
     let mut publisher = pool.get().expect("publisher session");
-    publish_schema_change_to_store(
+    pub_scheme_change_to_store(
         publisher.as_mut(),
         9_001,
         -1,
@@ -2939,7 +2939,7 @@ fn run_tracked_auto_analyze(kill: Option<bool>) {
     // Go's auto-analyze process ID is `Domain.NextConnID()`: it names this
     // node's server ID, so `KILL` routes it to this node
     // (`executeKillStmt` compares `gcid.ServerID` with `sm.ServerID()`).
-    let process_id = factory.connection_id_allocator().next_id();
+    let process_id = factory.next_conn_id().next_id();
     let observed = Arc::new(AtomicBool::new(false));
     let interrupted = Arc::new(AtomicBool::new(false));
     let tracked = Arc::new(AtomicBool::new(false));
@@ -3237,7 +3237,7 @@ fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path()
     let refresher = refresher
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    refresher.wait_auto_analyze_finished();
+    refresher.wait_auto_analyze_finished_for_test();
     assert!(refresher.running_jobs().is_empty());
     assert_eq!(refresher.len(), 0);
     drop(refresher);
@@ -3276,7 +3276,7 @@ fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path()
     refresher
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .wait_auto_analyze_finished();
+        .wait_auto_analyze_finished_for_test();
     assert_eq!(
         displayed(rows(
             &mut session,
@@ -3345,7 +3345,7 @@ fn auto_analyze_skips_configured_column_types_like_go() {
         .auto_analyze_refresher(Duration::ZERO)
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .wait_auto_analyze_finished();
+        .wait_auto_analyze_finished_for_test();
     assert_eq!(
         displayed(rows(
             &mut session,
@@ -3431,7 +3431,7 @@ fn auto_analyze_fills_missing_partition_statistics_like_go() {
     refresher
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .wait_auto_analyze_finished();
+        .wait_auto_analyze_finished_for_test();
 
     let meta = displayed(rows(
         &mut session,
@@ -4237,7 +4237,7 @@ fn add_and_remove_partitioning_events_move_statistics_like_go() {
     let added = partition_payload(&partition_ids);
     handle_stats_schema_change(
         &mut session,
-        &SchemaChangeEvent::add_partitioning(old_table_id, partitioned, added.clone_like_go()),
+        &SchemaChangeEvent::new_add_partitioning_event(old_table_id, partitioned, added.clone_like_go()),
     );
 
     assert_eq!(
@@ -5391,7 +5391,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
         .server_info
         .as_ref()
         .expect("server info")
-        .local_server_info();
+        .get_local_server_info();
     let local_instance = tidb_domain_serverinfo::serverinfo_syncer::join_host_port(
         &local.static_info.ip,
         local.static_info.port,
@@ -8660,7 +8660,7 @@ fn concurrent_global_statistics_and_session_bindings_match_go() {
 }
 
 /// Pinned `globalstats.TestGlobalStatsAndSQLBinding` and its concurrency-two
-/// twin: global statistics choose the index for hash, range, and list
+/// twin: global statistics new_row_sample_collector the index for hash, range, and list
 /// partitions, while a matching session binding's `IGNORE INDEX` moves the
 /// same statements to table scans until the binding is dropped.
 fn assert_global_statistics_and_session_bindings_match_go(

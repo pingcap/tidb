@@ -112,7 +112,7 @@ pub struct MultiDistinctThreeStageAggSplit {
 /// column arguments only. Unsupported shapes stay on Go's ordinary scalar
 /// two-stage path.
 #[must_use]
-pub fn can_use_three_stage_single_distinct(
+pub fn can_use_3_stage_4_single_distinct_agg(
     agg_funcs: &[AggFuncDesc],
     group_by_items: &[Expression],
 ) -> bool {
@@ -347,7 +347,7 @@ pub fn adjust_three_stage_single_distinct(
         let collate_id = column
             .get_static_type()
             .map(|field_type| {
-                tidb_planner_property::collate_id_for_partition(field_type.collation_name())
+                tidb_planner_property::get_collate_id_by_name_for_partition(field_type.collation_name())
             })
             .unwrap_or(-1);
         partition_cols.push(tidb_planner_property::MppPartitionColumn {
@@ -360,7 +360,7 @@ pub fn adjust_three_stage_single_distinct(
     }
 
     // The source Clone allocates a fresh plan identity for the middle phase;
-    // its child is attached later by `attach_plan_to_task`.
+    // its child is attached later by `attach_plan_2_task`.
     let mut middle_hash = PhysicalHashAgg {
         base: final_hash.base.clone(),
         agg_funcs: final_hash.agg_funcs.clone(),
@@ -686,7 +686,7 @@ pub fn adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
                 collate_id: column
                     .get_static_type()
                     .map(|field_type| {
-                        tidb_planner_property::collate_id_for_partition(
+                        tidb_planner_property::get_collate_id_by_name_for_partition(
                             field_type.collation_name(),
                         )
                     })

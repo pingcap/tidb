@@ -247,7 +247,7 @@ impl HistColl {
 
     /// Go `NewHistCollWithColsAndIdxs`.
     #[must_use]
-    pub fn new_with_cols_and_idxs(
+    pub fn new_hist_coll_with_cols_and_idxs(
         physical_id: i64,
         realtime_count: i64,
         modify_count: i64,
@@ -407,7 +407,7 @@ impl HistColl {
 
     /// Go `ID2UniqueID`. Statistics payloads remain shared; only the column
     /// map and its keys are rebuilt.
-    pub fn id_to_unique_id(&self, columns: &[tidb_expr::column::Column]) -> Self {
+    pub fn id_2_unique_id(&self, columns: &[tidb_expr::column::Column]) -> Self {
         let source_columns = read(&self.columns);
         let mapped = columns
             .iter()
@@ -431,7 +431,7 @@ impl HistColl {
 
     /// Go `GenerateHistCollFromColumnInfo`. `prepare_mv_columns` is Go's
     /// `PrepareCols4MVIndex`, which the planner injects.
-    pub fn generate_from_column_info(
+    pub fn generate_hist_coll_from_column_info(
         &self,
         table_info: &tidb_model::TableInfo,
         columns: &[tidb_expr::column::Column],
@@ -593,7 +593,7 @@ impl Table {
             table.put_analyzed_column(id, column);
         }
         for (id, index) in indexes {
-            table.put_analyzed_index(id, index);
+            table.set_idx(id, index);
         }
         table
     }
@@ -612,7 +612,7 @@ impl Table {
 
     /// Go `HistColl.SetIdx` of an analyzed, fully loaded index, recorded in
     /// `ColAndIdxExistenceMap` as analyzed; `StatsVer` follows the item's.
-    pub fn put_analyzed_index(&mut self, id: i64, mut index: Index) {
+    pub fn set_idx(&mut self, id: i64, mut index: Index) {
         index.stats_loaded_status = StatsLoadedStatus::full_load();
         self.hist_coll.stats_version = self
             .hist_coll

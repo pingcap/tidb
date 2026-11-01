@@ -45,19 +45,19 @@ impl AggWorkerStat {
     }
 
     /// Go `updateWaitTime`.
-    pub fn add_wait(&self, since: Instant) {
+    pub fn update_wait_time(&self, since: Instant) {
         self.wait_time
             .fetch_add(nanos(since.elapsed()), Ordering::Relaxed);
     }
 
     /// Go `updateExecTime`.
-    pub fn add_exec(&self, since: Instant) {
+    pub fn update_exec_time(&self, since: Instant) {
         self.exec_time
             .fetch_add(nanos(since.elapsed()), Ordering::Relaxed);
     }
 
     /// Go `updateWorkerTime`.
-    pub fn add_worker_time(&self, since: Instant) {
+    pub fn update_worker_time(&self, since: Instant) {
         self.worker_time
             .fetch_add(nanos(since.elapsed()), Ordering::Relaxed);
     }

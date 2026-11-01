@@ -197,7 +197,7 @@ pub fn build_list_values(
                 .generate_with_stack_by_args(&["LIST".into()]),
         ));
     }
-    let unsigned = partition_expression_is_unsigned(built);
+    let unsigned = is_part_expr_unsigned(built);
     build_list_values_with_unsigned(definitions, unsigned, ctx, definition_tail)
 }
 
@@ -375,7 +375,7 @@ fn fold_list_value(
 /// knows the answer, and asking it is both exact and unable to refuse --
 /// which matters most on the LOAD path, where the refusal made a table a Go
 /// cluster serves unreadable here.
-pub fn partition_expression_is_unsigned(built: &tidb_expr::expression::Expression) -> bool {
+pub fn is_part_expr_unsigned(built: &tidb_expr::expression::Expression) -> bool {
     built.static_type().is_some_and(FieldType::is_unsigned)
 }
 

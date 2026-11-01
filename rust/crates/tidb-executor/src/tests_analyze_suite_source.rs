@@ -503,12 +503,12 @@ fn analyze_full_sampling_on_virtual_or_prefix_column_index() {
 /// (`RealtimeCount == 0`) reads every row.
 #[test]
 fn analyze_auto_adjusted_sample_rate_boundaries() {
-    use tidb_stats::row_sample_collector::adjusted_sample_rate;
-    assert_eq!(adjusted_sample_rate(Some(220_000), None), 0.5);
-    assert_eq!(adjusted_sample_rate(Some(10_000), None), 1.0);
-    assert_eq!(adjusted_sample_rate(Some(3), None), 1.0);
-    assert_eq!(adjusted_sample_rate(Some(0), None), 1.0);
-    assert_eq!(adjusted_sample_rate(None, None), 0.001);
+    use tidb_stats::row_sample_collector::get_adjusted_sample_rate;
+    assert_eq!(get_adjusted_sample_rate(Some(220_000), None), 0.5);
+    assert_eq!(get_adjusted_sample_rate(Some(10_000), None), 1.0);
+    assert_eq!(get_adjusted_sample_rate(Some(3), None), 1.0);
+    assert_eq!(get_adjusted_sample_rate(Some(0), None), 1.0);
+    assert_eq!(get_adjusted_sample_rate(None, None), 0.001);
 }
 
 /// Go `analyze_test.go:509::TestIssue20874`: utf8mb4_unicode_ci /

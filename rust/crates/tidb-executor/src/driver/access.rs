@@ -2052,7 +2052,7 @@ impl Executor for PreparedPointGetExecutor {
             // Go's fast point plan never runs `initStats`, and a PointGet
             // builds its reporter without `LoadTableStats`: no `UsedStatsInfo`
             // entry, so the read counts against `math.MaxInt32` rows.
-            .report_point(
+            .report_point_get_index_usage(
                 table.table_id(),
                 None,
                 index_id,
@@ -2143,6 +2143,6 @@ pub fn fast_point_process_plan_info(
     let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
         return None;
     };
-    let physical = try_fast_point_physical_plan(select, catalog, current_database, ctx).ok()??;
+    let physical = try_fast_plan(select, catalog, current_database, ctx).ok()??;
     Some(crate::explain::process_plan_info(ctx, &physical, catalog))
 }

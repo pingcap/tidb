@@ -37,7 +37,7 @@ pub fn setup_repository(factory: &Arc<Domain>) -> Arc<Worker> {
         .map(|client| Arc::clone(client) as Arc<dyn RepositoryStore>);
     let instance_id = factory
         .server_info()
-        .map(|server_info| server_info.local_server_info().static_info.id.clone())
+        .map(|server_info| server_info.get_local_server_info().static_info.id.clone())
         .unwrap_or_default();
     let owner_factory = etcd.as_ref().map(|client| {
         let client = Arc::clone(client);
@@ -63,9 +63,9 @@ pub fn setup_repository(factory: &Arc<Domain>) -> Arc<Worker> {
     for (name, apply) in [
         (
             crate::REPOSITORY_SAMPLING_INTERVAL,
-            Worker::set_sampling_interval as fn(&Worker, &str) -> Result<(), String>,
+            Worker::change_sampling_interval as fn(&Worker, &str) -> Result<(), String>,
         ),
-        (crate::REPOSITORY_SNAPSHOT_INTERVAL, Worker::set_snapshot_interval),
+        (crate::REPOSITORY_SNAPSHOT_INTERVAL, Worker::change_snapshot_interval),
         (crate::REPOSITORY_RETENTION_DAYS, Worker::set_retention_days),
     ] {
         if let Ok(value) = globals.get(name) {
@@ -106,11 +106,11 @@ pub fn register_sysvar_hooks(globals: &GlobalSysvars, worker: &Arc<Worker>) {
     );
     globals.register_set_global_hook(
         crate::REPOSITORY_SAMPLING_INTERVAL,
-        hook(|worker, value| worker.set_sampling_interval(value)),
+        hook(|worker, value| worker.change_sampling_interval(value)),
     );
     globals.register_set_global_hook(
         crate::REPOSITORY_SNAPSHOT_INTERVAL,
-        hook(|worker, value| worker.set_snapshot_interval(value)),
+        hook(|worker, value| worker.change_snapshot_interval(value)),
     );
 }
 

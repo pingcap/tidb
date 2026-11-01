@@ -42,7 +42,7 @@ use tidb_expr::column::Column;
 use tidb_expr::expr_util::extract::is_col_op_col;
 use tidb_expr::expr_util::normal_form::expr_from_schema;
 use tidb_expr::expr_util::normal_form::{
-    derive_relaxed_filters_from_dnf, extract_filters_from_dnfs,
+    derive_relaxed_filters_from_dnf, extract_filters_from_dn_fs,
 };
 use tidb_expr::expr_util::predicates::is_mutable_effects_expr;
 use tidb_expr::expr_util::push_not::push_down_not;
@@ -761,7 +761,7 @@ impl LogicalJoin {
                 if !predicates.is_empty() {
                     result.dual_conditions = Some(predicates.clone());
                 }
-                let predicates = extract_filters_from_dnfs(predicates);
+                let predicates = extract_filters_from_dn_fs(predicates);
                 // Only the LEFT where-condition may be derived: a filter on the
                 // null-supplying side would change which rows are preserved.
                 let split = self.extract_on_condition(
@@ -812,7 +812,7 @@ impl LogicalJoin {
                 if !predicates.is_empty() {
                     result.dual_conditions = Some(predicates.clone());
                 }
-                let predicates = extract_filters_from_dnfs(predicates);
+                let predicates = extract_filters_from_dn_fs(predicates);
                 let split = self.extract_on_condition(
                     &predicates,
                     left_schema,
@@ -860,7 +860,7 @@ impl LogicalJoin {
                 temp_cond.extend(scalar_funcs_to_exprs(&self.equal_conditions));
                 temp_cond.extend(self.other_conditions.iter().cloned());
                 temp_cond.extend(predicates);
-                let temp_cond = simplify(extract_filters_from_dnfs(temp_cond), true, Some(&valid));
+                let temp_cond = simplify(extract_filters_from_dn_fs(temp_cond), true, Some(&valid));
                 if !temp_cond.is_empty() {
                     result.dual_conditions = Some(temp_cond.clone());
                 }

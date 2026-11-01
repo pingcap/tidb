@@ -401,7 +401,7 @@ fn physical_dml_plan_with_cache_mode(
             let multi_update = update
                 .filter(|update| matches!(update.kind, tidb_ast::UpdateKind::Multi { .. }));
             let allow_fast_plan = multi_update.is_none()
-                && update.is_none_or(|update| update_allows_fast_plan(update));
+                && update.is_none_or(|update| try_update_point_plan(update));
             let fast = (!use_plan_cache && allow_fast_plan)
                 .then(|| {
                     super::point_get_plan::try_fast_dml_point_physical_plan_with_allocator(
@@ -561,7 +561,7 @@ pub(crate) fn fk_spec_for_insert(
 }
 
 /// Go `buildTbl2UpdateColumns` narrowed to the SET column names.
-pub(crate) fn fk_spec_for_update(
+pub(crate) fn build_tbl_2_update_columns(
     update: &tidb_ast::UpdateStmt,
     current_db: &str,
 ) -> Result<fk_trigger_plan::FkPlanSpec, DriverError> {
@@ -871,7 +871,7 @@ pub struct LoadDataCounts {
 /// REPLACE, `addRecord` otherwise -- and answers Go's counters and the
 /// first allocated id. `insert` names the table, the insert columns and the
 /// duplicate action; it has no values of its own.
-pub fn run_load_data_insert(
+pub fn check_and_insert_one_batch(
     insert: &tidb_ast::InsertStmt,
     rows: LoadDataRows<'_>,
     catalog: &mut Catalog,
@@ -1034,7 +1034,7 @@ fn run_insert_rows(
             ));
         };
         Some(
-            tidb_planner_rule::ids_for_selected_partitions(spec, &insert.partitions)
+            tidb_planner_rule::find_by_name(spec, &insert.partitions)
                 .map_err(|partition| {
                     DriverError::from(
                         tidb_table::table_errors::ERR_UNKNOWN_PARTITION
@@ -1418,7 +1418,7 @@ fn run_insert_rows(
         // Go `getRow`: an exchanged standalone table's row is checked before
         // its generated columns are filled.
         if let Some(check) = &exchange_check {
-            check.check_standalone_row(&row, ctx)?;
+            check.check_row_for_exchange_partition(&row, ctx)?;
         }
         {
             // The generated columns are computed from the finished row, so
@@ -1444,7 +1444,7 @@ fn run_insert_rows(
         // Go `partitionedTableAddRecord`: a row into the exchanged partition
         // passes the standalone table's constraints.
         if let Some(check) = &exchange_check {
-            check.check_partitioned_row(kv, &row, ctx)?;
+            check.check_constraint_for_exchange_partition(kv, &row, ctx)?;
         }
         new_rows.push(row);
         index += 1;
@@ -1538,7 +1538,7 @@ fn run_insert_rows(
                 // gave it (`RetryInfo`); outside a replay there is nothing to
                 // hand back and the counter is drawn from as usual. The cursor
                 // is read lazily so that a row carrying its OWN id does not
-                // consume from it -- see `apply_auto_increment`.
+                // consume from it -- see `adjust_auto_increment_datum`.
                 // Go fills a selected row's id as it reads the row
                 // (`adjustAutoIncrementDatum`, `lazyFillAutoID` off):
                 // `table.AllocAutoIncrementValue` per row. A VALUES list
@@ -1601,7 +1601,7 @@ fn run_insert_rows(
                                     ));
                                     return Ok((0, None));
                                 }
-                                kv.clamp_auto_increment(&mut new_rows[*index]);
+                                kv.set_datum_auto_id_and_cast(&mut new_rows[*index]);
                                 AutoIncrement::Allocated(value.parse::<i64>().unwrap_or_else(
                                     |_| value.parse::<u64>().map_or(0, |id| id as i64),
                                 ))
@@ -2426,7 +2426,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
                 catalog,
                 current_db,
                 ctx,
-                &fk_spec_for_update(update, current_db)?,
+                &build_tbl_2_update_columns(update, current_db)?,
             ),
             tidb_ast::UpdateKind::Multi { .. } => super::multi_dml::multi_dml_physical_plan(
                 super::multi_dml::MultiDmlRef::Update(update),
@@ -2503,7 +2503,7 @@ pub(crate) fn update_source_query(update: &tidb_ast::UpdateStmt) -> Option<tidb_
 /// Go `tryUpdatePointPlan` declines the complete fast DML plan when any SET
 /// expression contains a subquery. The ordinary builder must then attach the
 /// subquery plan while rewriting the assignment.
-pub(crate) fn update_allows_fast_plan(update: &tidb_ast::UpdateStmt) -> bool {
+pub(crate) fn try_update_point_plan(update: &tidb_ast::UpdateStmt) -> bool {
     !update
         .assignments
         .iter()
@@ -2728,7 +2728,7 @@ impl PreparedDmlPlan {
 
     /// Binds one EXECUTE's values and checks Go's schema, session, and
     /// parameter-type cache key. A different key is a cache miss, not a
-    /// reason to choose a different executor implementation.
+    /// reason to new_row_sample_collector a different executor implementation.
     #[must_use]
     pub fn bind(
         self: &Arc<Self>,
@@ -3059,7 +3059,7 @@ fn cached_dml_physical_plan(
         tidb_ast::DmlStmt::Insert(insert) => {
             fk_spec_for_insert(insert, catalog, current_database, ctx)
         }
-        tidb_ast::DmlStmt::Update(update) => fk_spec_for_update(update, current_database),
+        tidb_ast::DmlStmt::Update(update) => build_tbl_2_update_columns(update, current_database),
         tidb_ast::DmlStmt::Delete(delete) => fk_spec_for_delete(delete, current_database),
         _ => return None,
     }
@@ -3087,7 +3087,7 @@ fn cached_dml_physical_plan(
     if ctx.skip_plan_cache() {
         return Some((root, false));
     }
-    tidb_planner::physical_plan_cache::plan_cacheable(&root, cacheability).ok()?;
+    tidb_planner::physical_plan_cache::is_plan_cacheable(&root, cacheability).ok()?;
     Some((root, true))
 }
 
@@ -3376,7 +3376,7 @@ fn run_update_with_physical(
         .as_deref()
         .is_some_and(physical_plan_contains_point_get);
     let fast_source_query =
-        if physical_kv_source && update_allows_fast_plan(update) && !retained_point_source {
+        if physical_kv_source && try_update_point_plan(update) && !retained_point_source {
             update_source_query(update)
         } else {
             None
@@ -3408,7 +3408,7 @@ fn run_update_with_physical(
     // Go's fast plan (`tryUpdatePointPlan`) reads through a bare point plan,
     // and its `buildOrderedList` casts every assignment to the target column.
     if !fast_update_list
-        && update_allows_fast_plan(update)
+        && try_update_point_plan(update)
         && physical_source.as_deref().is_some_and(|plan| {
             matches!(
                 plan,
@@ -3440,7 +3440,7 @@ fn run_update_with_physical(
                 ));
             };
             Some(
-                tidb_planner_rule::ids_for_selected_partitions(spec, &table_ref.partitions)
+                tidb_planner_rule::find_by_name(spec, &table_ref.partitions)
                     .map_err(|partition| {
                         DriverError::from(
                             tidb_table::table_errors::ERR_UNKNOWN_PARTITION
@@ -3668,7 +3668,7 @@ impl UpdateRowEvaluator<'_> {
             if self.stored_handle_slot == Some(*offset) {
                 continue;
             }
-            new_row[*offset] = cast_value_for_update_assignment(
+            new_row[*offset] = handle_update_error(
                 value,
                 &self.stored_meta[*offset].field_type,
                 &self.stored_meta[*offset].name,
@@ -4195,7 +4195,7 @@ pub(crate) fn row_chunk(
     row: &[Datum],
     field_types: &[FieldType],
 ) -> Result<tidb_chunk::chunk::Chunk, DriverError> {
-    let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(field_types, 1);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(field_types, 1);
     for (i, value) in row.iter().take(field_types.len()).enumerate() {
         chunk.append_datum(i, value);
     }

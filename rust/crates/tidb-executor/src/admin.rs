@@ -190,7 +190,7 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
             }
         })?;
         Ok(StmtOutput::Rows {
-            columns: crate::split_region::split_region_columns(),
+            columns: crate::split_region::build_split_regions_schema(),
             rows: vec![row],
         })
     }

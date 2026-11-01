@@ -313,7 +313,7 @@ pub(crate) fn wrap_int_args(
 ///    can hold. Captured over `enum('{}','[1]','x')` holding `'{}'`:
 ///    `greatest(e,2)` is `{}` and `least(e,2)` is `2`. That signature-
 ///    selection rung has since LANDED, in
-///    `crate::rewriter::result_type::gl_signature` feeding
+///    `crate::rewriter::result_type::resolve_type_4_extremum` feeding
 ///    `builtin_ext::extremum_with_signature`; the entry stays here as the
 ///    measurement that sent it there, not as work outstanding.
 ///

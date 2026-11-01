@@ -229,7 +229,7 @@ fn stored_policy<S: MetaSnapshot>(
 ) -> Result<tidb_model::PolicyInfo, DdlPlanError> {
     let stored = snapshot
         .get(&key::policy_kv_key(policy_id))?
-        .map(|bytes| value::parse_policy_info(&bytes))
+        .map(|bytes| value::list_policies(&bytes))
         .transpose()
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     stored.ok_or_else(|| {
@@ -296,7 +296,7 @@ fn update_exist_placement_policy(
 }
 
 /// Go `onCreatePlacementPolicy`.
-pub(super) fn plan_persisted_create_placement_policy_job_step<S: MetaSnapshot>(
+pub(super) fn on_create_placement_policy<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
@@ -365,7 +365,7 @@ pub(super) fn plan_persisted_create_placement_policy_job_step<S: MetaSnapshot>(
 }
 
 /// Go `onAlterPlacementPolicy`.
-pub(super) fn plan_persisted_alter_placement_policy_job_step<S: MetaSnapshot>(
+pub(super) fn on_alter_placement_policy<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
@@ -398,7 +398,7 @@ pub(super) fn plan_persisted_alter_placement_policy_job_step<S: MetaSnapshot>(
 }
 
 /// Go `onDropPlacementPolicy`.
-pub(super) fn plan_persisted_drop_placement_policy_job_step<S: MetaSnapshot>(
+pub(super) fn on_drop_placement_policy<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,

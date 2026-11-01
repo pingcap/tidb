@@ -211,7 +211,7 @@ fn is_index_prefix_covered_prefix_matrix_and_fk_partial_conditions() {
 #[test]
 fn global_index_v1_supported_for_next_gen() {
     if tidb_config_kerneltype::is_next_gen() {
-        assert!(tidb_model::index::get_global_index_v1_supported());
+        assert!(tidb_model::index::get_global_index_v_1_supported());
     }
 }
 

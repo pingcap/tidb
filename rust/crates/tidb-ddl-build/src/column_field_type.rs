@@ -391,7 +391,7 @@ pub fn process_column_flags(field_type: &mut FieldType) {
 /// Go `checkTooBigFieldLengthAndTryAutoConvert` (issue #30328): outside
 /// strict mode a VARCHAR longer than its charset allows becomes the BLOB or
 /// TEXT that holds it. Returns the 1246 warning naming the conversion.
-pub fn try_auto_convert_too_big_varchar(
+pub fn check_too_big_field_length_and_try_auto_convert(
     field_type: &mut FieldType,
     name: &str,
     strict: bool,

@@ -328,7 +328,7 @@ fn test_arithmetic_overflow_error_message_with_column_name() {
             const_typed(Datum::Int(-1), int_ft()),
         ],
     );
-    let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(&[int_ft()], 1);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[int_ft()], 1);
     chunk.append_datum(0, &Datum::Int(i64::MIN));
 
     let error = function
@@ -361,7 +361,7 @@ fn test_arithmetic_overflow_error_message_with_column_name() {
             const_typed(Datum::Int(i64::MAX), int_ft()),
         ],
     );
-    let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(&[int_ft(), int_ft()], 1);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[int_ft(), int_ft()], 1);
     chunk.append_datum(0, &Datum::Int(2));
     chunk.append_datum(1, &Datum::Int(1));
     let error = multiply
@@ -2292,7 +2292,7 @@ fn test_cast_string_as_decimal_sig_with_unsigned_flag_in_union() {
     target.add_flags(FieldTypeFlags::UNSIGNED);
     for (text, want) in [("1", "1"), ("-1", "0")] {
         let source = const_typed(Datum::new_string(text.to_owned()), source_type.clone());
-        let wrapped = crate::wrap_cast::build_cast_to_in_union(source, target.clone())
+        let wrapped = crate::wrap_cast::build_cast_function_4_union(source, target.clone())
             .expect("string UNION decimal cast builds");
         let ctx = WarningCtx::default();
         assert_eq!(
@@ -2344,7 +2344,7 @@ fn json_numeric_batch_scalar_and_vector_casts_share_warnings_and_nulls() {
             target,
             vec![Expression::Column(col)],
         ));
-        let mut input = tidb_chunk::chunk::Chunk::new_with_capacity(&[field], 2);
+        let mut input = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[field], 2);
         input.append_datum(0, &Datum::Json(BinaryJSON::parse("\"3.5tail\"").unwrap()));
         input.append_null(0);
         input.set_sel(Some(vec![1, 0]));

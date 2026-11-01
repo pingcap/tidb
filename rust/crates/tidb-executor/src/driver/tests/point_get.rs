@@ -1464,7 +1464,7 @@ fn batch_point_get_accepts_row_in_on_a_composite_key() {
         panic!("not a SELECT");
     };
     assert!(
-        try_batch_point_get(
+        try_where_in_2_batch_point_get(
             select,
             table,
             &columns,
@@ -1583,7 +1583,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         let QueryStmt::Select(select) = &**query else {
             panic!("not a select")
         };
-        try_fast_point_physical_plan(
+        try_fast_plan(
             select,
             &catalog,
             DEFAULT_DATABASE,
@@ -2075,7 +2075,7 @@ fn try_fast_plan_accepts_a_primary_key_point_read() {
         panic!("not a SELECT");
     };
     assert!(
-        tidb_planner::point_get_plan::try_fast_point_physical_plan(select, &catalog, "test", &ctx,)
+        tidb_planner::point_get_plan::try_fast_plan(select, &catalog, "test", &ctx,)
             .unwrap()
             .is_some()
     );
@@ -2167,7 +2167,7 @@ fn fast_point_get_uses_gos_smaller_index_hint_check() {
         let QueryStmt::Select(select) = &**query else {
             panic!("not a SELECT");
         };
-        tidb_planner::point_get_plan::try_fast_point_physical_plan(select, &catalog, "test", &ctx).unwrap()
+        tidb_planner::point_get_plan::try_fast_plan(select, &catalog, "test", &ctx).unwrap()
     };
     let unique_sql =
         "SELECT /*+ USE_INDEX(fast_hint, code) */ id FROM fast_hint WHERE code = 'one'";

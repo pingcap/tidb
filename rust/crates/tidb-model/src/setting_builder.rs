@@ -55,12 +55,12 @@ fn with_fixed_separator(sb: &mut String, item: &str, separator: Option<&str>) {
 
 /// Go `writeSettingItemToBuilder`: append `item`, preceded by the separator
 /// when the builder is non-empty (`sep` defaults to a single space).
-pub(crate) fn write_setting_item(sb: &mut String, item: &str, sep: Option<&str>) {
+pub(crate) fn write_setting_item_to_builder(sb: &mut String, item: &str, sep: Option<&str>) {
     with_fixed_separator(sb, item, sep);
 }
 
 /// Go `writeSettingStringToBuilder`: `ITEM="value"` with `"` escaped to `\"`.
-pub(crate) fn write_setting_string(sb: &mut String, item: &str, value: &str, sep: Option<&str>) {
+pub(crate) fn write_setting_string_to_builder(sb: &mut String, item: &str, value: &str, sep: Option<&str>) {
     match sep {
         None => write_setting_string_with_separators(sb, item, value, &mut []),
         Some(separator) => {
@@ -82,7 +82,7 @@ pub(crate) fn write_setting_string_with_separators(
 }
 
 /// Go `writeSettingIntegerToBuilder`: `ITEM=value`.
-pub(crate) fn write_setting_integer(sb: &mut String, item: &str, value: u64, sep: Option<&str>) {
+pub(crate) fn write_setting_integer_to_builder(sb: &mut String, item: &str, value: u64, sep: Option<&str>) {
     match sep {
         None => write_setting_integer_with_separators(sb, item, value, &mut []),
         Some(separator) => {
@@ -156,9 +156,9 @@ mod tests {
     #[test]
     fn default_fixed_and_duration_separators_match_go() {
         let mut builder = String::new();
-        write_setting_item(&mut builder, "A=1", None);
-        write_setting_item(&mut builder, "B=2", None);
-        write_setting_item(&mut builder, "C=3", Some(", "));
+        write_setting_item_to_builder(&mut builder, "A=1", None);
+        write_setting_item_to_builder(&mut builder, "B=2", None);
+        write_setting_item_to_builder(&mut builder, "C=3", Some(", "));
         assert_eq!(builder, "A=1 B=2, C=3");
 
         let mut duration = "A=1".to_owned();

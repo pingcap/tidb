@@ -92,7 +92,7 @@ pub fn pseudo_estimation_outdate() -> &'static Counter {
 }
 
 /// Go `GetPlanCacheHitCounter`.
-pub fn plan_cache_hit_counter(is_non_prepared: bool) -> &'static Counter {
+pub fn get_plan_cache_hit_counter(is_non_prepared: bool) -> &'static Counter {
     if is_non_prepared {
         &CHILDREN.non_prepared_hit
     } else {
@@ -110,12 +110,12 @@ pub fn plan_cache_miss_counter(is_non_prepared: bool) -> &'static Counter {
 }
 
 /// Go `GetNonPrepPlanCacheUnsupportedCounter`.
-pub fn non_prep_plan_cache_unsupported_counter() -> &'static Counter {
+pub fn get_non_prep_plan_cache_unsupported_counter() -> &'static Counter {
     &CHILDREN.non_prepared_unsupported
 }
 
 /// Go `GetPlanCacheInstanceNumCounter`.
-pub fn plan_cache_instance_num_counter(instance_plan_cache: bool) -> &'static Gauge {
+pub fn get_plan_cache_instance_num_counter(instance_plan_cache: bool) -> &'static Gauge {
     if instance_plan_cache {
         &CHILDREN.instance_plan_num
     } else {
@@ -133,12 +133,12 @@ pub fn plan_cache_instance_memory_usage(instance_plan_cache: bool) -> &'static G
 }
 
 /// Go `GetPlanCacheInstanceEvict`.
-pub fn plan_cache_instance_evict() -> &'static Gauge {
+pub fn get_plan_cache_instance_evict() -> &'static Gauge {
     &CHILDREN.instance_evict
 }
 
 /// Go `GetPlanCacheLookupDuration`.
-pub fn plan_cache_lookup_duration(instance_plan_cache: bool) -> &'static Histogram {
+pub fn get_plan_cache_lookup_duration(instance_plan_cache: bool) -> &'static Histogram {
     if instance_plan_cache {
         &CHILDREN.instance_lookup
     } else {
@@ -147,7 +147,7 @@ pub fn plan_cache_lookup_duration(instance_plan_cache: bool) -> &'static Histogr
 }
 
 /// Go `GetPlanCacheCloneDuration`.
-pub fn plan_cache_clone_duration() -> &'static Histogram {
+pub fn get_plan_cache_clone_duration() -> &'static Histogram {
     &CHILDREN.instance_clone
 }
 
@@ -161,38 +161,38 @@ mod tests {
     #[test]
     fn accessors_route_prepared_and_non_prepared_to_distinct_children() {
         assert!(
-            std::ptr::eq(plan_cache_hit_counter(false), plan_cache_hit_counter(false)),
+            std::ptr::eq(get_plan_cache_hit_counter(false), get_plan_cache_hit_counter(false)),
             "the same child is handed out per kind"
         );
         assert!(!std::ptr::eq(
-            plan_cache_hit_counter(false),
-            plan_cache_hit_counter(true)
+            get_plan_cache_hit_counter(false),
+            get_plan_cache_hit_counter(true)
         ));
         assert!(!std::ptr::eq(
             plan_cache_miss_counter(false),
             plan_cache_miss_counter(true)
         ));
         assert!(!std::ptr::eq(
-            plan_cache_instance_num_counter(false),
-            plan_cache_instance_num_counter(true)
+            get_plan_cache_instance_num_counter(false),
+            get_plan_cache_instance_num_counter(true)
         ));
         assert!(!std::ptr::eq(
             plan_cache_instance_memory_usage(false),
             plan_cache_instance_memory_usage(true)
         ));
         assert!(!std::ptr::eq(
-            plan_cache_lookup_duration(false),
-            plan_cache_lookup_duration(true)
+            get_plan_cache_lookup_duration(false),
+            get_plan_cache_lookup_duration(true)
         ));
         // The unsupported counter is single and the clone/evict faces have
         // their own children.
         assert!(!std::ptr::eq(
-            non_prep_plan_cache_unsupported_counter(),
+            get_non_prep_plan_cache_unsupported_counter(),
             plan_cache_miss_counter(true)
         ));
         assert!(!std::ptr::eq(
-            plan_cache_instance_evict(),
-            plan_cache_instance_num_counter(true)
+            get_plan_cache_instance_evict(),
+            get_plan_cache_instance_num_counter(true)
         ));
         assert!(!std::ptr::eq(
             pseudo_estimation_not_available(),

@@ -17,7 +17,7 @@ use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalPlan, Phys
 use tidb_planner_property::PhysicalProperty;
 use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 use tidb_planner_core_operator_physicalop::task::Task;
-use crate::task_attach::attach_plan_to_task;
+use crate::task_attach::attach_plan_2_task;
 use tidb_expr::expression::Expression;
 
 /// Resolved session inputs for Go's shuffle rewrite.
@@ -155,7 +155,7 @@ pub(crate) fn optimize_by_shuffle_in(
         by_item_arrays: arrays,
         ..Default::default()
     });
-    Ok(attach_plan_to_task(
+    Ok(attach_plan_2_task(
         shuffle,
         task.into_root_task_in(allocator, evaluate)?,
     ))

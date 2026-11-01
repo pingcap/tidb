@@ -777,7 +777,7 @@ impl Catalog {
     /// (8241), because dropping it would leave those objects naming a policy
     /// that no longer exists.
     #[must_use]
-    pub fn policy_in_use(&self, name: &str) -> bool {
+    pub fn check_placement_policy_not_in_use_from_info_schema(&self, name: &str) -> bool {
         let folded = tidb_ast::CiString::new(name).lowercase().to_owned();
         self.schema.databases.values().any(|database| {
             // Go `checkPlacementPolicyNotInUseFromInfoSchema` checks each

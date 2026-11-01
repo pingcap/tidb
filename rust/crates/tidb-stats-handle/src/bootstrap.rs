@@ -61,7 +61,7 @@ pub fn load_stats_snapshot_and_loader<S: StoreClient>(
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)?;
         let loader = ClusterStatsLoader::locate(&catalog)?;
-        let result = load_initial_stats_snapshot(&mut snapshot, &loader, tables, table_ids, mode)?;
+        let result = init_stats_lite(&mut snapshot, &loader, tables, table_ids, mode)?;
         Ok((result, loader))
     };
     transaction
@@ -74,7 +74,7 @@ pub fn load_stats_snapshot_and_loader<S: StoreClient>(
 /// metadata snapshot. An empty `table_ids` slice loads every current target;
 /// otherwise only the named physical IDs are admitted. Consequently stale
 /// statistics rows for dropped tables cannot enter the returned cache.
-pub fn load_initial_stats_snapshot<S: MetaSnapshot>(
+pub fn init_stats_lite<S: MetaSnapshot>(
     snapshot: &mut S,
     loader: &ClusterStatsLoader,
     tables: &[StatsTarget],
@@ -130,7 +130,7 @@ pub fn load_initial_stats_snapshot_with_memory_limits<S: MetaSnapshot>(
         let loaded = if initial_stats_cache_is_full(consumed, total_memory, memory_quota) {
             loader.load_table_lite(snapshot, target.physical_id, &target.column_types)?
         } else {
-            loader.load_table_for_init_stats_histograms(
+            loader.init_stats_histograms_concurrently(
                 snapshot,
                 target.physical_id,
                 &target.column_types,
@@ -144,7 +144,7 @@ pub fn load_initial_stats_snapshot_with_memory_limits<S: MetaSnapshot>(
         if initial_stats_cache_is_full(consumed, total_memory, memory_quota) {
             break;
         }
-        let loaded = loader.load_table_for_init_stats_topn(
+        let loaded = loader.init_stats_top_n_concurrently(
             snapshot,
             target.physical_id,
             &target.column_types,

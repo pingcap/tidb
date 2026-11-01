@@ -166,7 +166,7 @@ use tidb_exprctx::NoColumns;
         }
         let mut parameter = Constant::new(Datum::Null, long());
         parameter.param_marker = Some(ParamMarker { order: 0 });
-        let mut chunk = Chunk::new_with_capacity(&[long()], 100);
+        let mut chunk = Chunk::new_chunk_with_capacity(&[long()], 100);
         for _ in 0..100 {
             chunk.append_null(0);
         }
@@ -207,7 +207,7 @@ use tidb_exprctx::NoColumns;
 
     #[test]
     fn extrema_expire_nulls_disjoint_and_empty_frames() {
-        let mut chunk = Chunk::new_with_capacity(&[long()], 6);
+        let mut chunk = Chunk::new_chunk_with_capacity(&[long()], 6);
         for value in [Some(3), None, Some(2), Some(5), None, Some(1)] {
             chunk.append_datum(0, &value.map_or(Datum::Null, Datum::Int));
         }
@@ -259,7 +259,7 @@ use tidb_exprctx::NoColumns;
     #[test]
     fn extrema_use_go_nan_and_signed_zero_order() {
         let ty = FieldType::new(FieldTypeCode::Double);
-        let mut chunk = Chunk::new_with_capacity(&[ty.clone()], 4);
+        let mut chunk = Chunk::new_chunk_with_capacity(&[ty.clone()], 4);
         for value in [f64::NAN, 1.0, 0.0, -0.0] {
             chunk.append_datum(0, &Datum::Real(value));
         }

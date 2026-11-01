@@ -107,13 +107,13 @@ pub fn exec_option_analyze_ver2(option: &mut ExecOption) {
 }
 
 /// Go `GetPartitionPruneModeOption`.
-pub fn partition_prune_mode_option(mode: impl Into<String>) -> OptionFuncAlias {
+pub fn get_partition_prune_mode_option(mode: impl Into<String>) -> OptionFuncAlias {
     let mode = mode.into();
     Arc::new(move |option| option.partition_prune_mode.clone_from(&mode))
 }
 
 /// Go `GetAnalyzeSnapshotOption`.
-pub fn analyze_snapshot_option(analyze_snapshot: bool) -> OptionFuncAlias {
+pub fn get_analyze_snapshot_option(analyze_snapshot: bool) -> OptionFuncAlias {
     Arc::new(move |option| option.analyze_snapshot = Some(analyze_snapshot))
 }
 
@@ -128,12 +128,12 @@ pub fn exec_option_use_session_pool(option: &mut ExecOption) {
 }
 
 /// Go `ExecOptionWithSnapshot`.
-pub fn snapshot_option(snapshot_ts: u64) -> OptionFuncAlias {
+pub fn exec_option_with_snapshot(snapshot_ts: u64) -> OptionFuncAlias {
     Arc::new(move |option| option.snapshot_ts = snapshot_ts)
 }
 
 /// Go `ExecOptionWithSysProcTrack`.
-pub fn sys_proc_track_option(
+pub fn exec_option_with_sys_proc_track(
     process_id: u64,
     track: TrackSysProc,
     untrack: UntrackSysProc,

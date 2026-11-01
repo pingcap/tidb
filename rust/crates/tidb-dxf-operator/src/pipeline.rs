@@ -85,7 +85,7 @@ impl AsyncPipeline {
     }
 
     /// Go `GetReaderAndWriter`.
-    pub fn reader_and_writer(
+    pub fn get_reader_and_writer(
         &self,
     ) -> (Option<&dyn TunableOperator>, Option<&dyn TunableOperator>) {
         if self.operators.len() != 4 {

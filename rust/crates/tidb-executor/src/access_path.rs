@@ -281,7 +281,7 @@ pub fn statement_read_shape(
     // helpers, so a statement this predicate accepts is a statement that arm
     // accepts. It reads nothing: both helpers walk the AST only.
     let mut pairs = Vec::new();
-    if !tidb_planner::point_get_plan::name_value_pairs(where_clause, &mut pairs, zone) {
+    if !tidb_planner::point_get_plan::get_name_value_pairs(where_clause, &mut pairs, zone) {
         return StatementReadShape::Unknown;
     }
     if !tidb_planner::point_get_plan::convert_pairs_to_column_domain(&mut pairs, &columns) {
@@ -956,7 +956,7 @@ impl HandleSourceExec {
                                 "a row checksum needs the encoded row value of a point get",
                             )
                         })?;
-                        let checksum = tidb_table::kv_table::row_checksum(
+                        let checksum = tidb_table::kv_table::fill_row_checksum(
                             &self.table,
                             handle,
                             stored_value,
@@ -1208,7 +1208,7 @@ impl UniqueIndexPointSourceExec {
             if let Some(lock) = self.lock.clone() {
                 let keys = self
                     .table
-                    .unique_point_lock_keys(self.index_id, values, self.decode_context.zone())
+                    .encode_unique_index_key(self.index_id, values, self.decode_context.zone())
                     .map_err(|error| {
                         ExecError::unsupported(format!(
                             "unique index key encoding failed: {error:?}"
@@ -6040,7 +6040,7 @@ impl IndexJoinLookupExec {
                 let cursor = self.remote_cursor.as_mut().expect("checked above");
                 let mut scratch = match self.lookup_chunk.take() {
                     Some(chunk) if chunk.num_cols() == cursor.field_types().len() => chunk,
-                    _ => Chunk::new_with_capacity(cursor.field_types(), cap),
+                    _ => Chunk::new_chunk_with_capacity(cursor.field_types(), cap),
                 };
                 scratch.reset();
                 let want = cap - req.num_rows();
@@ -7116,7 +7116,7 @@ use std::collections::HashMap;
                         );
                     }
                     if !covering {
-                        let mut batch = Chunk::new_with_capacity(&[long(), long()], 2);
+                        let mut batch = Chunk::new_chunk_with_capacity(&[long(), long()], 2);
                         for value in [20, 10] {
                             batch.append_int64(0, value);
                             batch.append_int64(1, 7);

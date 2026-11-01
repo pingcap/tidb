@@ -47,7 +47,7 @@ const UNKNOWN_STEP_PREFIX: &str = "unknown step";
 /// Go `Step2Str`: converts a step to a string.
 ///
 /// It is too bad that Go defines step as an int 🙃.
-pub fn step2str(t: &TaskType, s: Step) -> String {
+pub fn step_2_str(t: &TaskType, s: Step) -> String {
     // StepInit, StepDone and StepPrepared are special steps, we don't check
     // task type for them.
     match s {
@@ -69,7 +69,7 @@ pub fn step2str(t: &TaskType, s: Step) -> String {
 
 /// Go `IsValidStep`: whether the step is valid for the task type.
 pub fn is_valid_step(t: &TaskType, s: Step) -> bool {
-    !step2str(t, s).contains(UNKNOWN_STEP_PREFIX)
+    !step_2_str(t, s).contains(UNKNOWN_STEP_PREFIX)
 }
 
 /// Go `IsValidBusinessStep`: whether the step is a business step valid for the
@@ -191,56 +191,56 @@ mod tests {
     #[test]
     fn test_step() {
         // backfill
-        assert_eq!(step2str(&BACKFILL, STEP_INIT), "init");
-        assert_eq!(step2str(&BACKFILL, BACKFILL_STEP_READ_INDEX), "read-index");
-        assert_eq!(step2str(&BACKFILL, BACKFILL_STEP_MERGE_SORT), "merge-sort");
+        assert_eq!(step_2_str(&BACKFILL, STEP_INIT), "init");
+        assert_eq!(step_2_str(&BACKFILL, BACKFILL_STEP_READ_INDEX), "read-index");
+        assert_eq!(step_2_str(&BACKFILL, BACKFILL_STEP_MERGE_SORT), "merge-sort");
         assert_eq!(
-            step2str(&BACKFILL, BACKFILL_STEP_WRITE_AND_INGEST),
+            step_2_str(&BACKFILL, BACKFILL_STEP_WRITE_AND_INGEST),
             "ingest"
         );
-        assert_eq!(step2str(&BACKFILL, STEP_PREPARED), "prepared");
-        assert_eq!(step2str(&BACKFILL, STEP_DONE), "done");
-        assert_eq!(step2str(&BACKFILL, Step(111)), "unknown step 111");
+        assert_eq!(step_2_str(&BACKFILL, STEP_PREPARED), "prepared");
+        assert_eq!(step_2_str(&BACKFILL, STEP_DONE), "done");
+        assert_eq!(step_2_str(&BACKFILL, Step(111)), "unknown step 111");
 
         // import into
-        assert_eq!(step2str(&IMPORT_INTO, STEP_INIT), "init");
-        assert_eq!(step2str(&IMPORT_INTO, IMPORT_STEP_IMPORT), "import");
+        assert_eq!(step_2_str(&IMPORT_INTO, STEP_INIT), "init");
+        assert_eq!(step_2_str(&IMPORT_INTO, IMPORT_STEP_IMPORT), "import");
         assert_eq!(
-            step2str(&IMPORT_INTO, IMPORT_STEP_POST_PROCESS),
+            step_2_str(&IMPORT_INTO, IMPORT_STEP_POST_PROCESS),
             "post-process"
         );
-        assert_eq!(step2str(&IMPORT_INTO, IMPORT_STEP_MERGE_SORT), "merge-sort");
+        assert_eq!(step_2_str(&IMPORT_INTO, IMPORT_STEP_MERGE_SORT), "merge-sort");
         assert_eq!(
-            step2str(&IMPORT_INTO, IMPORT_STEP_ENCODE_AND_SORT),
+            step_2_str(&IMPORT_INTO, IMPORT_STEP_ENCODE_AND_SORT),
             "encode"
         );
         assert_eq!(
-            step2str(&IMPORT_INTO, IMPORT_STEP_WRITE_AND_INGEST),
+            step_2_str(&IMPORT_INTO, IMPORT_STEP_WRITE_AND_INGEST),
             "ingest"
         );
         assert_eq!(
-            step2str(&IMPORT_INTO, IMPORT_STEP_COLLECT_CONFLICTS),
+            step_2_str(&IMPORT_INTO, IMPORT_STEP_COLLECT_CONFLICTS),
             "collect-conflicts"
         );
         assert_eq!(
-            step2str(&IMPORT_INTO, IMPORT_STEP_CONFLICT_RESOLUTION),
+            step_2_str(&IMPORT_INTO, IMPORT_STEP_CONFLICT_RESOLUTION),
             "conflict-resolution"
         );
-        assert_eq!(step2str(&IMPORT_INTO, STEP_PREPARED), "prepared");
-        assert_eq!(step2str(&IMPORT_INTO, STEP_DONE), "done");
-        assert_eq!(step2str(&IMPORT_INTO, Step(123)), "unknown step 123");
+        assert_eq!(step_2_str(&IMPORT_INTO, STEP_PREPARED), "prepared");
+        assert_eq!(step_2_str(&IMPORT_INTO, STEP_DONE), "done");
+        assert_eq!(step_2_str(&IMPORT_INTO, Step(123)), "unknown step 123");
 
         // example type
-        assert_eq!(step2str(&TASK_TYPE_EXAMPLE, STEP_INIT), "init");
-        assert_eq!(step2str(&TASK_TYPE_EXAMPLE, STEP_ONE), "one");
-        assert_eq!(step2str(&TASK_TYPE_EXAMPLE, STEP_TWO), "two");
-        assert_eq!(step2str(&TASK_TYPE_EXAMPLE, STEP_PREPARED), "prepared");
-        assert_eq!(step2str(&TASK_TYPE_EXAMPLE, STEP_DONE), "done");
-        assert_eq!(step2str(&TASK_TYPE_EXAMPLE, Step(333)), "unknown step 333");
+        assert_eq!(step_2_str(&TASK_TYPE_EXAMPLE, STEP_INIT), "init");
+        assert_eq!(step_2_str(&TASK_TYPE_EXAMPLE, STEP_ONE), "one");
+        assert_eq!(step_2_str(&TASK_TYPE_EXAMPLE, STEP_TWO), "two");
+        assert_eq!(step_2_str(&TASK_TYPE_EXAMPLE, STEP_PREPARED), "prepared");
+        assert_eq!(step_2_str(&TASK_TYPE_EXAMPLE, STEP_DONE), "done");
+        assert_eq!(step_2_str(&TASK_TYPE_EXAMPLE, Step(333)), "unknown step 333");
 
         // unknown type
         assert_eq!(
-            step2str(&TaskType::new("123"), Step(123)),
+            step_2_str(&TaskType::new("123"), Step(123)),
             "unknown type 123"
         );
     }

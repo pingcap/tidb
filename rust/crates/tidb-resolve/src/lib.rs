@@ -60,7 +60,7 @@ impl<N> NodeW<N> {
     }
 
     /// Go `GetResolveContext`.
-    pub fn resolve_context(&self) -> GoShared<Context> {
+    pub fn get_resolve_context(&self) -> GoShared<Context> {
         self.resolve_ctx.clone()
     }
 }

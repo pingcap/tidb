@@ -1,5 +1,5 @@
 /// Go `splitRangeInt64Max`.
-pub fn split_range_int64_max(count: i64) -> Vec<(String, String)> {
+pub fn split_range_int_64_max(count: i64) -> Vec<(String, String)> {
     assert!(count >= 0, "negative split range count");
     let mut ranges = Vec::with_capacity(count as usize);
     // Go reaches this division after successfully allocating a zero-length
@@ -37,7 +37,7 @@ where
     F: FnMut(&TableInfo) -> Result<()> + Send,
 {
     let concurrency = concurrency.clamp(1, 15);
-    let ranges = split_range_int64_max(i64::from(concurrency));
+    let ranges = split_range_int_64_max(i64::from(concurrency));
     let callback = Mutex::new(visit);
     let stop = AtomicBool::new(false);
     let first_error = Mutex::new(None::<MetaError>);
@@ -229,7 +229,7 @@ pub fn extract_schema_and_table_name_from_job(data: &[u8]) -> Result<(String, St
 }
 
 /// Go `IsJobMatch`, including the source expression's `&&`/`||` precedence.
-pub fn job_matches(
+pub fn is_job_match(
     job: &[u8],
     schema_names: &BTreeSet<String>,
     table_names: &BTreeSet<String>,
@@ -246,7 +246,7 @@ pub fn job_matches(
 }
 
 /// Go `DefaultGroupMeta4Test`.
-pub fn default_resource_group_for_test() -> Arc<ResourceGroupInfo> {
+pub fn default_group_meta_4_test() -> Arc<ResourceGroupInfo> {
     Arc::clone(DEFAULT_RESOURCE_GROUP.get_or_init(|| {
         Arc::new(ResourceGroupInfo {
             settings: Some(Box::new(ResourceGroupSettings {
@@ -272,7 +272,7 @@ fn decode_resource_group(encoded: &[u8]) -> Result<ResourceGroupInfo> {
 }
 
 /// Go `GetOldestSchemaVersion`.
-pub fn oldest_schema_version(reader: &mut impl MvccReader) -> Result<i64> {
+pub fn get_oldest_schema_version(reader: &mut impl MvccReader) -> Result<i64> {
     let info = reader
         .mvcc_by_encoded_key(&key::schema_version_kv_key(), u64::MAX)?
         .ok_or(MetaError::NoSchemaVersionWrite)?;

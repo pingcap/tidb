@@ -310,7 +310,7 @@ fn engine_attribute_and_storage_class_conflict() -> MysqlError {
 /// `ENGINE_ATTRIBUTE` of one option list, with `STORAGE_CLASS = tier`
 /// rewritten into its JSON form. Every written value is validated, not only
 /// the last one, which is the one that takes effect.
-pub fn engine_attribute_from_table_options(
+pub fn get_engine_attribute_from_storage_class_table_options(
     options: &[TableOption],
 ) -> Result<Option<String>, MysqlError> {
     let mut last = None;
@@ -370,7 +370,7 @@ fn validate_engine_attribute_table_option(input: &str) -> Result<(), MysqlError>
 
 /// Go `CheckStorageClassConflictInAlterTableSpecs`: one ALTER may not mix
 /// `ENGINE_ATTRIBUTE` and `STORAGE_CLASS` across its specifications.
-pub fn check_storage_class_conflict_in_alter_specs<'a>(
+pub fn check_storage_class_conflict_in_alter_table_specs<'a>(
     options: impl IntoIterator<Item = &'a TableOption>,
 ) -> Result<(), MysqlError> {
     let (mut has_engine_attribute, mut has_storage_class) = (false, false);
@@ -389,7 +389,7 @@ pub fn check_storage_class_conflict_in_alter_specs<'a>(
 
 /// Go `getStorageClassSettingsFromTableInfo`: `None` when the attribute
 /// names no storage class.
-pub fn storage_class_settings_of(
+pub fn get_storage_class_settings_from_table_info(
     engine_attribute: &str,
 ) -> Result<Option<Vec<StorageClassDef>>, MysqlError> {
     let attribute = parse_engine_attribute(engine_attribute)?;
@@ -402,7 +402,7 @@ pub fn storage_class_settings_of(
 /// Go `GetSimpleTableStorageClassForShowCreate`: the table-level tier when
 /// `SHOW CREATE TABLE` can print the attribute as `STORAGE_CLASS='tier'`
 /// without losing anything.
-pub fn simple_table_storage_class_for_show_create(
+pub fn get_simple_table_storage_class_for_show_create(
     engine_attribute: &str,
 ) -> Result<Option<String>, MysqlError> {
     if engine_attribute.is_empty() {
@@ -461,7 +461,7 @@ pub fn partition_storage_classes(
     partition: &tidb_table::partition_routing::PartitionSpec,
     ctx: &tidb_metabuild::Context,
 ) -> Result<Option<Vec<StorageClass>>, MysqlError> {
-    let Some(settings) = storage_class_settings_of(engine_attribute)? else {
+    let Some(settings) = get_storage_class_settings_from_table_info(engine_attribute)? else {
         return Ok(None);
     };
     let definitions = partition.definitions.iter().collect::<Vec<_>>();
@@ -835,7 +835,7 @@ mod tests {
     #[test]
     fn options_and_show_create_follow_go() {
         let attribute = |options: Vec<TableOption>| {
-            engine_attribute_from_table_options(&options)
+            get_engine_attribute_from_storage_class_table_options(&options)
                 .map_err(|error| error.message)
         };
         assert_eq!(
@@ -855,11 +855,11 @@ mod tests {
             "Storage engine does not support ENGINE_ATTRIBUTE."
         );
         assert_eq!(
-            simple_table_storage_class_for_show_create(r#"{"storage_class": "ia"}"#).unwrap(),
+            get_simple_table_storage_class_for_show_create(r#"{"storage_class": "ia"}"#).unwrap(),
             Some("IA".to_owned())
         );
         assert_eq!(
-            simple_table_storage_class_for_show_create(
+            get_simple_table_storage_class_for_show_create(
                 r#"{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":30}]}}"#
             )
             .unwrap(),

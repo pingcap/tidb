@@ -55,7 +55,7 @@ fn options_from_getter<V: AsRef<str>>(
 }
 
 /// Go `SetOptionsOnTxnActive`: capture the validated session values once.
-pub fn transaction_options(vars: &tidb_variable::SessionVars) -> SessionTransactionOptions {
+pub fn set_options_on_txn_active(vars: &tidb_variable::SessionVars) -> SessionTransactionOptions {
     use tidb_variable::varsutil::{tidb_opt_assertion_level, AssertionLevel};
     use tidb_vardef::tidb_vars::{
         TIDB_ENABLE1_PC, TIDB_ENABLE_ASYNC_COMMIT, TIDB_TXN_ASSERTION_LEVEL,

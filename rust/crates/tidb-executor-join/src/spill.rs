@@ -231,7 +231,7 @@ impl HashJoinSpill {
                     .files
                     .iter()
                     .flatten()
-                    .map(|files| files.build.total_bytes_in_disk())
+                    .map(|files| files.build.get_total_bytes_in_disk())
                     .sum::<i64>()
             })
             .sum()
@@ -246,7 +246,7 @@ impl HashJoinSpill {
                     .files
                     .iter()
                     .flatten()
-                    .map(|files| files.probe.total_bytes_in_disk())
+                    .map(|files| files.probe.get_total_bytes_in_disk())
                     .sum::<i64>()
             })
             .sum()

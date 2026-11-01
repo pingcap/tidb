@@ -1068,7 +1068,7 @@ fn check_auth_plugin(
     if client_plugin == AuthTiDBSessionToken {
         return Ok(AuthPluginDecision::Keep);
     }
-    let Some(user_plugin) = users.match_identity_plugin(user, &peer.host()) else {
+    let Some(user_plugin) = users.match_identity(user, &peer.host()) else {
         return Err(AuthPluginRefusal::AccessDenied);
     };
     if user_plugin == AuthSocket {
@@ -1894,7 +1894,7 @@ fn log_dispatch_failure<S: QuerySession>(
     // Go `getLastStmtInConn.String`. A session-less engine (the protocol
     // tests' fakes) has no redaction or length settings to apply.
     let statement_text = |sql: &str, prepared: bool| match session {
-        Some(session) if prepared => session.dispatch_failure_prepared_sql(sql),
+        Some(session) if prepared => session.prepared_stmt_2_string(sql),
         Some(session) => session.dispatch_failure_sql(sql),
         None => tidb_variable::slow_log::query_replacer(sql),
     };
@@ -1959,7 +1959,7 @@ fn log_dispatch_failure<S: QuerySession>(
             "txn_mode",
             tidb_log::Value::Str(session.map_or_else(
                 || "OPTIMISTIC".to_owned(),
-                |session| session.readable_txn_mode(),
+                |session| session.get_readable_txn_mode(),
             )),
         ),
         tidb_log::Field::new(

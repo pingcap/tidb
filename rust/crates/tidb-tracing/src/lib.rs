@@ -705,7 +705,7 @@ impl TraceContext {
 
     /// Go `ContextWithTraceInfo`. A `None` info returns the context unchanged,
     /// exactly as Go returns the original context for a nil info.
-    pub fn with_trace_info(&self, info: Option<Arc<TraceInfo>>) -> Self {
+    pub fn context_with_trace_info(&self, info: Option<Arc<TraceInfo>>) -> Self {
         match info {
             None => self.clone(),
             Some(info) => {
@@ -747,7 +747,7 @@ pub fn span_from_context(context: &TraceContext) -> Span {
 /// Go `ChildSpanFromContxt` (Go's spelling): a child of the context's span
 /// plus the context carrying it. A missing or no-op parent yields a no-op
 /// span and the original context.
-pub fn child_span_from_context(context: &TraceContext, operation: &str) -> (Span, TraceContext) {
+pub fn child_span_from_contxt(context: &TraceContext, operation: &str) -> (Span, TraceContext) {
     if let Some(parent) = context.span() {
         if !parent.is_noop() {
             let child = global_tracer().start_span_child_of(operation, parent.context());
@@ -1097,14 +1097,14 @@ mod tests {
     fn child_span_from_context_records_the_child() {
         let _guard = lock_global_state();
         let context = TraceContext::background();
-        let (noop, _) = child_span_from_context(&context, "");
+        let (noop, _) = child_span_from_contxt(&context, "");
         assert!(noop.is_noop());
 
         let (collected, callback) = recorder();
         let span = new_recorded_trace("test", callback);
         span.finish();
         let context = context.with_span(span);
-        let (child, _) = child_span_from_context(&context, "test_child");
+        let (child, _) = child_span_from_contxt(&context, "test_child");
         child.finish();
 
         let spans = collected.lock().unwrap();
@@ -1150,8 +1150,8 @@ mod tests {
         let root = new_recorded_trace("test", callback);
         let context = TraceContext::background().with_span(root.clone());
 
-        let (parent, parent_context) = child_span_from_context(&context, "parent");
-        let (child, _) = child_span_from_context(&parent_context, "child");
+        let (parent, parent_context) = child_span_from_contxt(&context, "parent");
+        let (child, _) = child_span_from_contxt(&parent_context, "child");
 
         root.finish();
         parent.finish();
@@ -1283,9 +1283,9 @@ mod tests {
         let context = TraceContext::background();
         assert!(context.trace_info().is_none());
         // A nil info leaves the context untouched.
-        assert!(context.with_trace_info(None).trace_info().is_none());
+        assert!(context.context_with_trace_info(None).trace_info().is_none());
 
-        let context = context.with_trace_info(Some(Arc::new(TraceInfo {
+        let context = context.context_with_trace_info(Some(Arc::new(TraceInfo {
             connection_id: 12345,
             session_alias: "alias1".to_owned(),
             trace_id: Vec::new(),

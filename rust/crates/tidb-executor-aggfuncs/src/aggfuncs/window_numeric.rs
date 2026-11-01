@@ -217,7 +217,7 @@ use tidb_exprctx::EvalError;
     fn decimal_sum_avg_slide_nulls_and_empty_frames() {
         let ty = decimal_type(2);
         let values = [None, Some("1.25"), Some("-0.25"), None, None, Some("2.50")];
-        let mut chunk = Chunk::new_with_capacity(&[ty.clone()], values.len());
+        let mut chunk = Chunk::new_chunk_with_capacity(&[ty.clone()], values.len());
         for value in values {
             chunk.append_datum(
                 0,
@@ -287,7 +287,7 @@ use tidb_exprctx::EvalError;
         let ty = decimal_type(2);
         let mut input = Constant::new(Datum::Null, ty.clone());
         input.param_marker = Some(ParamMarker { order: 0 });
-        let mut chunk = Chunk::new_with_capacity(&[ty.clone()], 100);
+        let mut chunk = Chunk::new_chunk_with_capacity(&[ty.clone()], 100);
         for _ in 0..100 {
             chunk.append_null(0);
         }
@@ -316,7 +316,7 @@ use tidb_exprctx::EvalError;
     #[test]
     fn decimal_sum_rounds_the_retained_partial_result() {
         let ty = decimal_type(2);
-        let mut chunk = Chunk::new_with_capacity(&[ty.clone()], 2);
+        let mut chunk = Chunk::new_chunk_with_capacity(&[ty.clone()], 2);
         for value in ["0.14", "0.16"] {
             chunk.append_datum(0, &Datum::Decimal(Decimal::from_literal(value)));
         }
@@ -338,7 +338,7 @@ use tidb_exprctx::EvalError;
     #[test]
     fn decimal_slide_reports_arrival_overflow_before_departure() {
         let ty = decimal_type(0);
-        let mut chunk = Chunk::new_with_capacity(&[ty.clone()], 2);
+        let mut chunk = Chunk::new_chunk_with_capacity(&[ty.clone()], 2);
         // Each value fits; adding the arrival before removing the old value overflows.
         for _ in 0..2 {
             chunk.append_datum(

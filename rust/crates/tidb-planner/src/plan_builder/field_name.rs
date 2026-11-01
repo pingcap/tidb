@@ -63,7 +63,7 @@ pub fn default_field_display_name(
     if let tidb_ast::Expr::Column(path) = inner_field_expr(expr) {
         return path.last().cloned().unwrap_or_default();
     }
-    expression_field_display_name(fields, index, expr)
+    build_projection_field_name_from_expressions(fields, index, expr)
 }
 
 /// Go `buildProjectionFieldNameFromExpressions`: the name of a field that is
@@ -72,7 +72,7 @@ pub fn default_field_display_name(
 /// (`buildProjectionField(.., nil)`), so a parenthesised or unary-plus column
 /// is named by its source text there: `select +x` names the view column `+x`
 /// although the same select names its result column `x`.
-pub fn expression_field_display_name(
+pub fn build_projection_field_name_from_expressions(
     fields: &SelectFieldList,
     index: usize,
     expr: &tidb_ast::Expr,

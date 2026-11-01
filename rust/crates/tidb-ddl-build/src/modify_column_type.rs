@@ -358,7 +358,7 @@ fn modify_type_needs_reorganization(origin: &FieldType, to: &FieldType) -> bool 
         return true;
     }
 
-    if origin.code().converts_between_char_and_varchar(to.code()) {
+    if origin.code().convert_between_char_and_varchar(to.code()) {
         return true;
     }
 

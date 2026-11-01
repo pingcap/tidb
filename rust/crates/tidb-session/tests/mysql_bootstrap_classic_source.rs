@@ -197,7 +197,7 @@ fn ids_and_versions_are_the_classic_go_ones() {
         .get(&key::schema_diff_kv_key(1))
         .unwrap()
         .expect("version 1 has a diff");
-    let first_diff = tidb_meta::value::parse_schema_diff(&first_diff)
+    let first_diff = tidb_meta::value::get_schema_diff(&first_diff)
         .unwrap()
         .expect("a stored diff");
     assert_eq!(first_diff.schema_id, 2);

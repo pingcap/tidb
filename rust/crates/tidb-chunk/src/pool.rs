@@ -207,9 +207,9 @@ mod tests {
         for index in 4..8 {
             assert_eq!(chunk.column(index).type_size(), 8);
         }
-        assert_eq!(chunk.column(2).data_capacity(), capacity * 4);
-        assert_eq!(chunk.column(3).data_capacity(), capacity * 40);
-        assert_eq!(chunk.column(4).data_capacity(), capacity * 8);
+        assert_eq!(chunk.column(2).get_data_cap(), capacity * 4);
+        assert_eq!(chunk.column(3).get_data_cap(), capacity * 40);
+        assert_eq!(chunk.column(4).get_data_cap(), capacity * 8);
     }
 
     /// Go `TestPoolPutChunk`: putting removes the chunk's column references;
@@ -222,7 +222,7 @@ mod tests {
         chunk.append_string(0, "keep capacity");
         chunk.append_int64(5, 7);
         assert_eq!(chunk.get_row(0).get_int64(5), 7);
-        let data_capacity = chunk.column(0).data_capacity();
+        let get_data_cap = chunk.column(0).get_data_cap();
         pool.put_chunk(&fields, &mut chunk);
         assert_eq!(chunk.num_cols(), 0);
         assert_eq!(pool.variable.len(), 2);
@@ -232,7 +232,7 @@ mod tests {
 
         let reused = pool.get_chunk(&fields);
         assert_eq!(reused.num_rows(), 0);
-        assert_eq!(reused.column(0).data_capacity(), data_capacity);
+        assert_eq!(reused.column(0).get_data_cap(), get_data_cap);
     }
 
     #[test]
@@ -266,8 +266,8 @@ mod tests {
         let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
         let mut small = new_chunk_from_pool_with_capacity(&fields, 3);
         let mut large = new_chunk_from_pool_with_capacity(&fields, 11);
-        assert_eq!(small.column(0).data_capacity(), 24);
-        assert_eq!(large.column(0).data_capacity(), 88);
+        assert_eq!(small.column(0).get_data_cap(), 24);
+        assert_eq!(large.column(0).get_data_cap(), 88);
         small.destroy(3, &fields);
         large.destroy(11, &fields);
         assert_eq!(small.num_cols(), 0);
@@ -275,8 +275,8 @@ mod tests {
 
         let small_again = new_chunk_from_pool_with_capacity(&fields, 3);
         let large_again = new_chunk_from_pool_with_capacity(&fields, 11);
-        assert_eq!(small_again.column(0).data_capacity(), 24);
-        assert_eq!(large_again.column(0).data_capacity(), 88);
+        assert_eq!(small_again.column(0).get_data_cap(), 24);
+        assert_eq!(large_again.column(0).get_data_cap(), 88);
     }
 
     /// Go's benchmark is parallel; this correctness anchor exercises the same
@@ -323,7 +323,7 @@ mod tests {
         }
         for index in 2..6 {
             assert_eq!(
-                chk.column(index).data_capacity(),
+                chk.column(index).get_data_cap(),
                 init_cap * get_fixed_len(&field_types[index]) as usize
             );
         }
@@ -344,9 +344,9 @@ mod tests {
         // (`8 * initCap`), so only the fixed widths have an exact answer.
         for type_size in [4i64, 8, 16, 40] {
             let column = pool.bucket(type_size).get_or_create(type_size, 1024);
-            assert_eq!(column.data_capacity(), 1024 * type_size as usize);
+            assert_eq!(column.get_data_cap(), 1024 * type_size as usize);
         }
         let variable = pool.bucket(VAR_ELEM_LEN).get_or_create(VAR_ELEM_LEN, 1024);
-        assert!(variable.data_capacity() >= 8 * 1024);
+        assert!(variable.get_data_cap() >= 8 * 1024);
     }
 }

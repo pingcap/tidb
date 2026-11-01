@@ -38,7 +38,7 @@ fn region_aggregate_matches_go_wire_fixture() {
         s.iter().map(|b| format!("{b:02x}")).collect()
     }
     let previous = tidb_datatype::new_collation_enabled();
-    tidb_datatype::set_new_collation_enabled(true);
+    tidb_datatype::set_new_collation_enabled_for_test(true);
     use std::io::Read;
     let mut data = String::new();
     flate2::read::GzDecoder::new(
@@ -114,7 +114,7 @@ fn region_aggregate_matches_go_wire_fixture() {
             ));
         }
     }
-    tidb_datatype::set_new_collation_enabled(previous);
+    tidb_datatype::set_new_collation_enabled_for_test(previous);
     assert!(
         differences.is_empty(),
         "{} differences: {:#?}",

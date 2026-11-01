@@ -22,7 +22,7 @@ pub use event::{
     SchemaChangeEvent,
 };
 pub use subscribe::{
-    publish_schema_change_to_store, DdlNotifier, Handler, HandlerId, ListResult, NotifierError,
+    pub_scheme_change_to_store, DdlNotifier, Handler, HandlerId, ListResult, NotifierError,
     NotifierSession, SchemaChange, SessionPool, Store, PRIORITY_QUEUE_HANDLER_ID,
     PROCESS_EVENTS_BATCH_SIZE, STATS_META_HANDLER_ID, TEST_HANDLER_ID,
 };

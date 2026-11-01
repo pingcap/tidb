@@ -142,7 +142,7 @@ impl From<HistogramMergeError> for GlobalStatsMergeError {
 /// occurrence of a candidate, every partition that does not contain it in
 /// TopN contributes its histogram equality estimate, and that contribution is
 /// removed from the histogram before the later global-histogram merge.
-pub fn merge_partition_topn<TZ: TimeZone>(
+pub fn merge_part_top_n_2_global_top_n<TZ: TimeZone>(
     timezone: Option<&TZ>,
     analyze_version: i64,
     topns: &[Option<&TopN>],
@@ -221,7 +221,7 @@ pub fn merge_partition_topn<TZ: TimeZone>(
 ///
 /// The caller supplies the already bounded batch size, just as the exported
 /// Go worker boundary does.
-pub fn merge_partition_topn_concurrently<TZ: TimeZone + Sync>(
+pub fn merge_global_stats_top_n_by_concurrency<TZ: TimeZone + Sync>(
     timezone: Option<&TZ>,
     analyze_version: i64,
     topns: &[Option<&TopN>],
@@ -494,7 +494,7 @@ pub fn merge_partition_histogram_topn<TZ: TimeZone + Sync>(
     let (topn, remainder, histograms) = if tidb_stats::cmsketch::check_empty_topns(&topns) {
         (None, Vec::new(), histograms)
     } else if merge_concurrency < 2 {
-        merge_partition_topn(
+        merge_part_top_n_2_global_top_n(
             timezone,
             analyze_version,
             &topns,
@@ -506,7 +506,7 @@ pub fn merge_partition_histogram_topn<TZ: TimeZone + Sync>(
         )?
     } else {
         let batch_size = (topns.len() / merge_concurrency).clamp(1, MAX_PARTITION_MERGE_BATCH_SIZE);
-        merge_partition_topn_concurrently(
+        merge_global_stats_top_n_by_concurrency(
             timezone,
             analyze_version,
             &topns,

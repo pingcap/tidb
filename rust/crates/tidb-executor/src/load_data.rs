@@ -21,7 +21,7 @@
 //! [`prepare_load_data`] is everything Go decides before `LoadDataExec.Open`
 //! asks the client for its file; [`run_load_data`] is `Next` over the
 //! file's bytes. Rows are written by the INSERT executor
-//! ([`crate::driver::run_load_data_insert`]), in Go's batches of 1000, inside
+//! ([`crate::driver::check_and_insert_one_batch`]), in Go's batches of 1000, inside
 //! the statement's own transaction.
 
 
@@ -611,7 +611,7 @@ pub fn run_load_data(
                 }
             }
         };
-        let (counts, allocated) = crate::driver::run_load_data_insert(
+        let (counts, allocated) = crate::driver::check_and_insert_one_batch(
             &insert,
             crate::driver::LoadDataRows {
                 next_row: &mut next_row,

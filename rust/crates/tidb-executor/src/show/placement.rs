@@ -20,7 +20,7 @@
 //! all never asks, so it stays at the accumulator's start, `SCHEDULED`.
 
 use tidb_datatype::Datum;
-use crate::show_regions::policy_placement;
+use crate::show_regions::get_policy_placement;
 use crate::{Catalog, TableEntry};
 use tidb_hack::GoCaseCompare;
 use tidb_model::PlacementSettings;
@@ -51,14 +51,14 @@ pub fn table_rows(
     let TableEntry::Kv(table) = entry else {
         return Ok((None, Vec::new()));
     };
-    let table_placement = policy_placement(catalog, table.placement_policy().as_ref())?;
+    let table_placement = get_policy_placement(catalog, table.placement_policy().as_ref())?;
     let own = table_placement
         .as_ref()
         .map(|placement| row(format!("TABLE {database}.{table_name}"), placement, PENDING));
     let mut rows = Vec::new();
     if let Some(partitioning) = table.partition() {
         for definition in &partitioning.definitions {
-            let placement = policy_placement(catalog, definition.placement_policy.as_ref())?
+            let placement = get_policy_placement(catalog, definition.placement_policy.as_ref())?
                 .or_else(|| table_placement.clone());
             if let Some(placement) = placement {
                 rows.push(row(
@@ -78,7 +78,7 @@ pub fn table_rows(
 /// The schema's own placement row, if it has a policy. Its state is
 /// `PENDING` while any table exists.
 pub fn database_rows(catalog: &Catalog, database: &str) -> Result<Option<Vec<Datum>>, DriverError> {
-    let Some(placement) = policy_placement(catalog, catalog.database_placement_policy(database))?
+    let Some(placement) = get_policy_placement(catalog, catalog.database_placement_policy(database))?
     else {
         return Ok(None);
     };

@@ -66,7 +66,7 @@ fn json_comparison_parses_an_explicit_cast_string_as_a_document() {
     };
     let rewritten = rewrite_expr_resolved(expr, &JsonColumn).expect("rewrite");
     let field_type = FieldType::new(FieldTypeCode::Json);
-    let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(&[field_type], 1);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[field_type], 1);
     chunk.append_json(0, &BinaryJSON::parse(r#""1""#).expect("JSON string"));
 
     // The syntactic `CAST('1' AS JSON)` PARSES its operand in a comparison
@@ -164,7 +164,7 @@ fn eval_over_date_column(sql: &str, code: tidb_datatype::FieldTypeCode, literal:
             Ok(rewritten) => rewritten,
             Err(err) => return format!("{err:?}"),
         };
-    let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(&[field_type], 1);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[field_type], 1);
     chunk.append_time(0, parsed.time);
     match rewritten.eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0)) {
         Ok(value) => value.label(),

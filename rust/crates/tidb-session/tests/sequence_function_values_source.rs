@@ -42,7 +42,7 @@ fn sequence_cache(tk: &TestKit) -> (i64, i64, i64) {
         .sequence_in("test", "seq")
         .expect("test.seq sequence exists")
         .allocator
-        .base_end_round()
+        .get_sequence_base_end_round()
 }
 
 /// Go rows `pkg/ddl/sequence_test.go:100-108`: the four spellings -- unqualified

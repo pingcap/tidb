@@ -398,7 +398,7 @@ mod tests {
     fn get_chk(is_last3_col_the_same: bool) -> (Chunk, Chunk, Vec<bool>) {
         let num_rows = 1024;
         let fields = chk_fields();
-        let mut src_chk = Chunk::new_with_capacity(&fields, num_rows);
+        let mut src_chk = Chunk::new_chunk_with_capacity(&fields, num_rows);
         // Go sets `selected[j] = true` for every row it does not make the
         // "7th row" special case.
         let selected: Vec<bool> = (0..num_rows).map(|j| j % 7 != 0).collect();
@@ -428,7 +428,7 @@ mod tests {
         }
         // Go builds `srcChk` with `AppendPartialRow(0, row)`, which does not
         // bump `numVirtualRows`; the cell-by-cell appends above match that.
-        let dst_chk = Chunk::new_with_capacity(&fields, num_rows);
+        let dst_chk = Chunk::new_chunk_with_capacity(&fields, num_rows);
         (src_chk, dst_chk, selected)
     }
 
@@ -450,7 +450,7 @@ mod tests {
         append_row_by_row(&src_chk, &selected, &mut dst_chk);
 
         // batch copy
-        let mut dst_chk2 = Chunk::new_with_capacity(&chk_fields(), num_rows);
+        let mut dst_chk2 = Chunk::new_chunk_with_capacity(&chk_fields(), num_rows);
         copy_selected_join_rows_with_same_outer_rows(
             &src_chk,
             0,
@@ -476,7 +476,7 @@ mod tests {
         let num_rows = src_chk.num_rows();
         append_row_by_row(&src_chk, &selected, &mut dst_chk);
 
-        let mut dst_chk2 = Chunk::new_with_capacity(&chk_fields(), num_rows);
+        let mut dst_chk2 = Chunk::new_chunk_with_capacity(&chk_fields(), num_rows);
         copy_selected_join_rows_with_same_outer_rows(
             &src_chk,
             0,
@@ -501,7 +501,7 @@ mod tests {
         let num_rows = src_chk.num_rows();
         append_row_by_row(&src_chk, &selected, &mut dst_chk);
 
-        let mut dst_chk2 = Chunk::new_with_capacity(&chk_fields(), num_rows);
+        let mut dst_chk2 = Chunk::new_chunk_with_capacity(&chk_fields(), num_rows);
         copy_selected_join_rows_direct(&src_chk, &selected, &mut dst_chk2)
             .expect("neither chunk carries a selection");
 
@@ -516,9 +516,9 @@ mod tests {
     #[test]
     fn copy_selected_virtual_num() {
         // srcChk does not contain columns
-        let mut src_chk = Chunk::new_with_capacity(&[], 0);
+        let mut src_chk = Chunk::new_chunk_with_capacity(&[], 0);
         src_chk.set_num_virtual_rows(3);
-        let mut dst_chk = Chunk::new_with_capacity(&[], 0);
+        let mut dst_chk = Chunk::new_chunk_with_capacity(&[], 0);
         let selected = vec![true, false, true];
 
         let ok = copy_selected_join_rows_direct(&src_chk, &selected, &mut dst_chk)
@@ -526,7 +526,7 @@ mod tests {
         assert!(ok);
         assert_eq!(dst_chk.num_virtual_rows(), 2);
 
-        let mut dst_chk2 = Chunk::new_with_capacity(&[], 0);
+        let mut dst_chk2 = Chunk::new_chunk_with_capacity(&[], 0);
         let ok = copy_selected_join_rows_with_same_outer_rows(
             &src_chk,
             0,

@@ -278,7 +278,7 @@ fn test_column_substitute_grouping_cleans_hash_code() {
         expected.canonical_hash_code()
     );
 
-    let mut input = tidb_chunk::chunk::Chunk::new_with_capacity(&[longlong_type()], 2);
+    let mut input = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[longlong_type()], 2);
     input.append_int64(0, 1);
     input.append_int64(0, 0);
     assert_eq!(

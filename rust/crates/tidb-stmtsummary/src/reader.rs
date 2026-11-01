@@ -25,7 +25,7 @@ use tidb_model::ColumnInfo;
 use tidb_parser::auth::UserIdentity;
 
 use crate::statement_summary::{
-    avg_float, avg_float4_uint, avg_int, avg_sum_float, convert_empty_to_nil, format_backoff_types,
+    avg_float, avg_float_4_uint, avg_int, avg_sum_float, convert_empty_to_nil, format_backoff_types,
     StmtSummaryByDigest, StmtSummaryByDigestElement, StmtSummaryByDigestMap, StmtSummaryStats,
     STMT_SUMMARY_BY_DIGEST_MAP,
 };
@@ -286,7 +286,7 @@ impl StmtSummaryReader<'_> {
     /// Go `(*stmtSummaryReader).getStmtEvictedOtherRow`.
     ///
     /// Go reads `ssMap.other`, which is always the `evicted.go` rollup; a map
-    /// built by [`StmtSummaryByDigestMap::with_sinks`] with a different sink
+    /// built by [`StmtSummaryByDigestMap::new_stmt_summary_by_digest_map`] with a different sink
     /// has no rollup to read and yields no row. Evicted summaries are lazy
     /// expired just like regular summaries, so a rollup whose interval
     /// predates `begin_time_for_cur_interval` is not exposed (Go
@@ -900,7 +900,7 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
             |_, _, _, stats| Datum::new_real(stats.sum_rocksdb_delete_skipped_count as f64)
         }
         AVG_ROCKSDB_DELETE_SKIPPED_COUNT_STR => |_, _, _, stats| {
-            Datum::new_real(avg_float4_uint(
+            Datum::new_real(avg_float_4_uint(
                 stats.sum_rocksdb_delete_skipped_count,
                 stats.exec_count,
             ))
@@ -912,7 +912,7 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
             |_, _, _, stats| Datum::new_real(stats.sum_rocksdb_key_skipped_count as f64)
         }
         AVG_ROCKSDB_KEY_SKIPPED_COUNT_STR => |_, _, _, stats| {
-            Datum::new_real(avg_float4_uint(
+            Datum::new_real(avg_float_4_uint(
                 stats.sum_rocksdb_key_skipped_count,
                 stats.exec_count,
             ))
@@ -924,7 +924,7 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
             |_, _, _, stats| Datum::new_real(stats.sum_rocksdb_block_cache_hit_count as f64)
         }
         AVG_ROCKSDB_BLOCK_CACHE_HIT_COUNT_STR => |_, _, _, stats| {
-            Datum::new_real(avg_float4_uint(
+            Datum::new_real(avg_float_4_uint(
                 stats.sum_rocksdb_block_cache_hit_count,
                 stats.exec_count,
             ))
@@ -936,7 +936,7 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
             |_, _, _, stats| Datum::new_real(stats.sum_rocksdb_block_read_count as f64)
         }
         AVG_ROCKSDB_BLOCK_READ_COUNT_STR => |_, _, _, stats| {
-            Datum::new_real(avg_float4_uint(
+            Datum::new_real(avg_float_4_uint(
                 stats.sum_rocksdb_block_read_count,
                 stats.exec_count,
             ))
@@ -948,7 +948,7 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
             |_, _, _, stats| Datum::new_real(stats.sum_rocksdb_block_read_byte as f64)
         }
         AVG_ROCKSDB_BLOCK_READ_BYTE_STR => |_, _, _, stats| {
-            Datum::new_real(avg_float4_uint(
+            Datum::new_real(avg_float_4_uint(
                 stats.sum_rocksdb_block_read_byte,
                 stats.exec_count,
             ))
@@ -958,7 +958,7 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
         }
         IA_EXEC_COUNT_STR => |_, _, _, stats| Datum::new_int(stats.ia_exec_count),
         AVG_IA_REMOTE_READ_SEGMENT_COUNT_STR => |_, _, _, stats| {
-            Datum::new_real(avg_float4_uint(
+            Datum::new_real(avg_float_4_uint(
                 stats.sum_ia_remote_read_segment_count,
                 stats.exec_count,
             ))
@@ -967,7 +967,7 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
             |_, _, _, stats| Datum::new_uint(stats.max_ia_remote_read_segment_count)
         }
         AVG_IA_REMOTE_READ_SEGMENT_SIZE_STR => |_, _, _, stats| {
-            Datum::new_real(avg_float4_uint(
+            Datum::new_real(avg_float_4_uint(
                 stats.sum_ia_remote_read_segment_size,
                 stats.exec_count,
             ))
@@ -1111,7 +1111,7 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
         }
         PREPARED_STR => |_, _, _, stats| bool_datum(stats.prepared),
         AVG_AFFECTED_ROWS_STR => |_, _, _, stats| {
-            Datum::new_real(avg_float4_uint(stats.sum_affected_rows, stats.exec_count))
+            Datum::new_real(avg_float_4_uint(stats.sum_affected_rows, stats.exec_count))
         },
         FIRST_SEEN_STR => {
             |reader, _, _, stats| timestamp_datum(stats.first_seen.with_timezone(&reader.tz))

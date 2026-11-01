@@ -53,10 +53,10 @@ use super::*;
 /// checked, and every plain term except that list's last one must put its own
 /// `ORDER BY`/`LIMIT` inside parentheses. `INTO` is incompatible with UNION
 /// even when that term is parenthesized.
-pub(super) fn validate_set_opr_usage(stmt: &tidb_ast::SetOprStmt) -> Result<(), DriverError> {
+pub(super) fn check_set_opr_select_list(stmt: &tidb_ast::SetOprStmt) -> Result<(), DriverError> {
     for (index, term) in stmt.terms.iter().enumerate() {
         match &term.body {
-            tidb_ast::SetOprTermBody::Nested(nested) => validate_set_opr_usage(nested)?,
+            tidb_ast::SetOprTermBody::Nested(nested) => check_set_opr_select_list(nested)?,
             tidb_ast::SetOprTermBody::Select(select) if index + 1 < stmt.terms.len() => {
                 if select.into_outfile.is_some() {
                     return Err(DriverError::from(
@@ -122,7 +122,7 @@ pub(crate) fn validate_query_usage(
                 }
             }
             if let Some(set_opr) = node.downcast_ref::<tidb_ast::SetOprStmt>() {
-                if let Err(error) = validate_set_opr_usage(set_opr) {
+                if let Err(error) = check_set_opr_select_list(set_opr) {
                     self.error = Some(error);
                     return true;
                 }

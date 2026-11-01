@@ -124,7 +124,7 @@ fn replace_column_of_expr_inner(
 
 /// Go `IsColsAllFromOuterTable`.
 #[must_use]
-pub fn are_all_columns_from_outer(columns: &[Column], outer_ids: &BTreeSet<i64>) -> bool {
+pub fn is_cols_all_from_outer_table(columns: &[Column], outer_ids: &BTreeSet<i64>) -> bool {
     !columns.is_empty()
         && columns
             .iter()
@@ -133,7 +133,7 @@ pub fn are_all_columns_from_outer(columns: &[Column], outer_ids: &BTreeSet<i64>)
 
 /// Go `IsColFromInnerTable`.
 #[must_use]
-pub fn has_column_from_inner(columns: &[Column], inner_ids: &BTreeSet<i64>) -> bool {
+pub fn is_col_from_inner_table(columns: &[Column], inner_ids: &BTreeSet<i64>) -> bool {
     columns
         .iter()
         .any(|column| inner_ids.contains(&column.unique_id))

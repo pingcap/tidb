@@ -614,7 +614,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             self.building_lateral_subquery = true;
         }
 
-        let modified_ctes = self.prepare_cte_check_for_subquery();
+        let modified_ctes = self.prepare_cte_check_for_sub_query();
         let built = match subquery {
             QueryStmt::Select(select) => {
                 // `:482` "b.optFlag |= rule.FlagConstantPropagation".

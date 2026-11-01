@@ -15,7 +15,7 @@
 //! Go `executorBuilder.build`: instantiate a retained physical SELECT tree.
 //!
 //! Fresh plans and plans rebuilt by `RebuildPlan4CachedPlan` enter the same
-//! constructor switch. This module must not inspect the SQL AST to choose
+//! constructor switch. This module must not inspect the SQL AST to new_row_sample_collector
 //! access, aggregation, join, sort, or reader policy; the AST is used only
 //! for client-visible result-column labels.
 
@@ -1926,7 +1926,7 @@ fn build_window(
                         .base
                         .args
                         .get(1)
-                        .and_then(|arg| tidb_expr::expr_util::get_uint64_from_constant(arg, ctx))
+                        .and_then(|arg| tidb_expr::expr_util::get_uint_64_from_constant(arg, ctx))
                         .ok_or(DriverError::from(
                             tidb_plannererrors::ERR_WRONG_ARGUMENTS
                                 .generate_with_stack_by_args(&["nth_value".into()]),
@@ -1945,7 +1945,7 @@ fn build_window(
                 let args = &descriptor.base.args;
                 let offset = match args.get(1) {
                     Some(arg) => {
-                        tidb_expr::expr_util::get_uint64_from_constant(arg, ctx)
+                        tidb_expr::expr_util::get_uint_64_from_constant(arg, ctx)
                             .filter(|(_, is_null)| !is_null)
                             .ok_or(DriverError::from(
                                 tidb_plannererrors::ERR_WRONG_ARGUMENTS
@@ -1987,7 +1987,7 @@ fn build_window(
                     .base
                     .args
                     .first()
-                    .and_then(|arg| tidb_expr::expr_util::get_uint64_from_constant(arg, ctx))
+                    .and_then(|arg| tidb_expr::expr_util::get_uint_64_from_constant(arg, ctx))
                     .ok_or(DriverError::from(
                         tidb_plannererrors::ERR_WRONG_ARGUMENTS
                             .generate_with_stack_by_args(&["ntile".into()]),
@@ -1995,7 +1995,7 @@ fn build_window(
                 WindowFunction::Ntile((!value.1).then_some(value.0))
             }
             _ => {
-                let descriptor = AggFuncDesc::new_for_window_func(descriptor, false);
+                let descriptor = AggFuncDesc::new_agg_func_desc_for_window_func(descriptor, false);
                 WindowFunction::Aggregate(aggregate_function(&descriptor, &child_schema, ctx)?)
             }
         };
@@ -3826,7 +3826,7 @@ fn build_index_join(
         inner_not_null: Vec::new(),
         probe_bounds,
     };
-    let mut executor = JoinExec::new_index_lookup(
+    let mut executor = JoinExec::build_index_look_up_join(
         meta(ctx, plan, plan_schema(plan)?),
         join_kind(join.join_type)?,
         conditions,
@@ -4350,7 +4350,7 @@ fn build_apply(
             for _ in 0..apply.concurrency {
                 let mut cloned = tidb_planner_core_operator_physicalop::clone_for_apply_worker(inner_plan);
                 let columns =
-                    tidb_planner_core_operator_physicalop::rebind_correlated_columns_by_schema_4_physical_plan(
+                    tidb_planner_core_operator_physicalop::extract_cor_columns_by_schema_4_physical_plan(
                         &mut cloned,
                         outer.schema(),
                     );
@@ -5096,7 +5096,7 @@ fn with_select_lock(
 /// point plan locks its record keys with inside `Next`, before reading them.
 /// `None` outside a pessimistic transaction's statement (which has no
 /// selected-lock owner) and for a plan that does not lock. A locking
-/// SELECT's own `NOWAIT` / `WAIT n` choose the wait.
+/// SELECT's own `NOWAIT` / `WAIT n` new_row_sample_collector the wait.
 fn point_lock(
     lock: bool,
     select_lock: Option<(tidb_planner_core_operator_logicalop::SelectLockType, u64)>,
@@ -5511,7 +5511,7 @@ impl PartialHandleSource for IndexPartialHandleSource {
                 tidb_executor_internal_exec::index_usage_reporter::IndexUsageReporter::new(
                     self.ctx.index_usage_collector(),
                 )
-                .report_cop_for_table(
+                .report_cop_index_usage_for_table(
                     &self.table,
                     self.stats.as_ref(),
                     self.index_id,
@@ -6058,7 +6058,7 @@ fn prepare_execution_plan_node(
         };
         let outer_schema = plan_schema(outer)?;
         apply.outer_schema =
-            tidb_planner_core_operator_physicalop::rebind_correlated_columns_by_schema_4_physical_plan(
+            tidb_planner_core_operator_physicalop::extract_cor_columns_by_schema_4_physical_plan(
                 inner,
                 &outer_schema,
             );
@@ -6516,7 +6516,7 @@ fn build_range_grouped_reader(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Box::new(
-        crate::range_group_merge::RangeGroupMergeExec::new(
+        crate::range_group_merge::SortedSelectResults::new(
             meta(ctx, plan, schema),
             by_items,
             children,

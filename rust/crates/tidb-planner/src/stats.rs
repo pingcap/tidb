@@ -240,7 +240,7 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                     );
                     let stats = range_selectivity.map_or_else(
                         || {
-                            tidb_planner_cardinality::pseudo::derive_stats_by_filter_pseudo(
+                            tidb_planner_cardinality::pseudo::derive_stats_by_filter(
                                 &table_stats,
                                 &op.pushed_down_conds,
                                 &resolve,
@@ -342,7 +342,7 @@ mod analyzed_filter_selectivity_tests {
             })),
             ..tidb_stats::column::Column::default()
         };
-        std::sync::Arc::new(tidb_planner_property::stats_info::HistColl::new_with_cols_and_idxs(
+        std::sync::Arc::new(tidb_planner_property::stats_info::HistColl::new_hist_coll_with_cols_and_idxs(
             0,
             realtime_count,
             0,

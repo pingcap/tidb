@@ -192,7 +192,7 @@ pub fn parse_db_key(field: &[u8]) -> Result<i64> {
 }
 
 /// Go `IsDBkey`.
-pub fn is_db_key(field: &[u8]) -> bool {
+pub fn is_d_bkey(field: &[u8]) -> bool {
     has_prefix(DB_PREFIX, field)
 }
 
@@ -321,13 +321,13 @@ pub fn resource_group_key(group_id: i64) -> Vec<u8> {
 }
 
 /// Go `Mutator.jobIDKey`: signed ID reinterpreted as big-endian uint64.
-pub fn ddl_job_id_key(job_id: i64) -> [u8; 8] {
+pub fn job_id_key(job_id: i64) -> [u8; 8] {
     (job_id as u64).to_be_bytes()
 }
 
 /// Go test-only `DDLJobHistoryKey`.
 pub fn ddl_job_history_kv_key(job_id: i64) -> Vec<u8> {
-    encode_meta_key(DDL_JOB_HISTORY, &ddl_job_id_key(job_id))
+    encode_meta_key(DDL_JOB_HISTORY, &job_id_key(job_id))
 }
 
 /// The raw KV key holding `NextGlobalID`. Go `Mutator.GlobalIDKey`.

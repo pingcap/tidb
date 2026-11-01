@@ -102,7 +102,7 @@ impl Parser {
                 if no_more_is || min_prec > prec::COMPARISON {
                     break;
                 }
-                let (expr, chainable) = self.parse_is(left)?;
+                let (expr, chainable) = self.parse_is_expr(left)?;
                 left = expr;
                 // `IS [NOT] TRUE/FALSE/UNKNOWN` doesn't chain with IS, but
                 // AND/OR/XOR should still bind.

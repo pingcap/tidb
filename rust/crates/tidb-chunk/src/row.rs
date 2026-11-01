@@ -450,7 +450,7 @@ impl<'a> Row<'a> {
 
     /// Go `GetRawLen`: the encoded cell width for either column kind.
     pub fn get_raw_len(&self, col_idx: usize) -> usize {
-        self.expect_chunk().column(col_idx).raw_len(self.idx)
+        self.expect_chunk().column(col_idx).get_raw_length(self.idx)
     }
 
     /// Go `GetRaw`: the raw element bytes for either column kind.

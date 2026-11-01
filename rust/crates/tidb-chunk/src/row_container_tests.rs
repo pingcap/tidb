@@ -25,7 +25,7 @@ fn int64_fields() -> Vec<FieldType> {
 
 fn int64_chunk(sz: usize) -> Chunk {
     let fields = int64_fields();
-    let mut chk = Chunk::new_with_capacity(&fields, sz);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, sz);
     for i in 0..sz {
         chk.append_int64(0, i as i64);
     }
@@ -128,7 +128,7 @@ fn conditional_row_read_materializes_only_after_spill() {
     let fields = int64_fields();
     let mut rc = RowContainer::new(&fields, 4, crate::test_temp_storage::storage());
     rc.add(int64_chunk(2)).expect("add rows");
-    let mut scratch = Chunk::new_with_capacity(&fields, 1);
+    let mut scratch = Chunk::new_chunk_with_capacity(&fields, 1);
 
     {
         let loaded = rc
@@ -175,7 +175,7 @@ fn a_selection_vector_survives_the_spill() {
     let sz = 4usize;
     let n = 64usize;
     let mut rc = RowContainer::new(&fields, sz, crate::test_temp_storage::storage());
-    let mut chk = Chunk::new_with_capacity(&fields, sz);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, sz);
     let mut num_rows = 0;
     for i in 0..(n - sz) {
         chk.append_int64(0, i as i64);
@@ -183,7 +183,7 @@ fn a_selection_vector_survives_the_spill() {
             chk.set_sel(Some(vec![0, 2]));
             num_rows += 2;
             rc.add(chk).expect("add");
-            chk = Chunk::new_with_capacity(&fields, sz);
+            chk = Chunk::new_chunk_with_capacity(&fields, sz);
         }
     }
     assert_eq!(rc.num_chunks(), num_rows / 2);
@@ -735,7 +735,7 @@ fn a_kill_signal_stops_a_spill_in_progress() {
         error.contains("1317") || error.to_lowercase().contains("interrupt"),
         "{error}"
     );
-    let mut chk = Chunk::new_with_capacity(&fields, 1);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, 1);
     assert!(rc
         .get_row_and_always_append_to_chunk(RowPtr::new(0, 0), &mut chk)
         .is_err());
@@ -775,7 +775,7 @@ fn disk_quota_failure_is_sticky_for_reads_and_later_adds() {
     );
     assert!(rc.already_spilled(), "the disk authority was installed");
 
-    let mut scratch = Chunk::new_with_capacity(&fields, 1);
+    let mut scratch = Chunk::new_chunk_with_capacity(&fields, 1);
     let conditional =
         match rc.get_row_and_append_to_chunk_if_in_disk(RowPtr::new(0, 0), &mut scratch) {
             Ok(_) => panic!("conditional reads must replay the spill failure"),

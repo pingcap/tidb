@@ -164,7 +164,7 @@ fn super_is_the_fallback_for_every_dynamic_privilege() {
             "SUPER satisfies {name}"
         );
         assert!(
-            !registry.has_explicit_dynamic_priv("su", "%", name, false),
+            !registry.has_explicitly_granted_dynamic_privilege("su", "%", name, false),
             "{name} is not explicitly granted"
         );
     }
@@ -192,12 +192,12 @@ fn super_is_the_fallback_for_every_dynamic_privilege() {
     session
         .run("GRANT BACKUP_ADMIN ON *.* TO 'plain'@'%' WITH GRANT OPTION")
         .unwrap();
-    assert!(registry.has_explicit_dynamic_priv("plain", "%", "BACKUP_ADMIN", true));
+    assert!(registry.has_explicitly_granted_dynamic_privilege("plain", "%", "BACKUP_ADMIN", true));
     session
         .run("GRANT BACKUP_ADMIN ON *.* TO 'plain'@'%'")
         .unwrap();
-    assert!(!registry.has_explicit_dynamic_priv("plain", "%", "BACKUP_ADMIN", true));
-    assert!(registry.has_explicit_dynamic_priv("plain", "%", "BACKUP_ADMIN", false));
+    assert!(!registry.has_explicitly_granted_dynamic_privilege("plain", "%", "BACKUP_ADMIN", true));
+    assert!(registry.has_explicitly_granted_dynamic_privilege("plain", "%", "BACKUP_ADMIN", false));
 }
 
 /// `information_schema.USER_PRIVILEGES` -- the one member of the

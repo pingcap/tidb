@@ -176,7 +176,7 @@ impl SystemTableManager {
     }
 
     /// Go `GetJobBytesByIDWithSe`.
-    pub fn get_job_bytes_by_id<S: MetaSnapshot>(
+    pub fn get_job_bytes_by_id_with_se<S: MetaSnapshot>(
         &self,
         snapshot: &mut S,
         job_id: i64,
@@ -192,7 +192,7 @@ impl SystemTableManager {
         snapshot: &mut S,
         job_id: i64,
     ) -> Result<JobW, SystemTableManagerError> {
-        let bytes = self.get_job_bytes_by_id(snapshot, job_id)?;
+        let bytes = self.get_job_bytes_by_id_with_se(snapshot, job_id)?;
         let mut job = Job::default();
         job.decode(&bytes)?;
         Ok(JobW::new(
@@ -255,7 +255,7 @@ impl Manager for SystemTableManager {
         snapshot: &mut dyn MetaSnapshot,
         job_id: i64,
     ) -> Result<Vec<u8>, SystemTableManagerError> {
-        self.get_job_bytes_by_id(&mut SnapshotRef(snapshot), job_id)
+        self.get_job_bytes_by_id_with_se(&mut SnapshotRef(snapshot), job_id)
     }
 
     fn get_mdl_version(

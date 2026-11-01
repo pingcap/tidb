@@ -120,7 +120,7 @@
 //! error when `col.Hidden` is set: 3761 for 1167, 3753 for 3152, 3757 for
 //! 1170. [`crate::index::check_index_column`] is that function, and
 //! [`crate::index::build_index_columns`] runs it over the hidden column the
-//! caller appends, after [`build_hidden_columns`] -- where Go runs it.
+//! caller appends, after [`build_hidden_column_info`] -- where Go runs it.
 //!
 //! What makes it a rule of its own rather than a widening of the function
 //! gate is that it reads a TYPE. Fifteen GA functions are refused by it --
@@ -156,7 +156,7 @@
 //! JSON with `IsArray` set -- which is exactly why the 3753 arm tests
 //! `!col.FieldType.IsArray()`. The cast is legal only as the whole key part
 //! (Go `illegalFunctionChecker`); the write path then files one entry per
-//! array element (`KvTable::indexed_value_tuples`).
+//! array element (`KvTable::get_indexed_value`).
 //!
 //! Two smaller residuals, both the safe direction (this tier refuses what Go
 //! accepts, never the reverse): `MATCH ... AGAINST` and `DEFAULT(a)` are
@@ -619,7 +619,7 @@ pub fn check_illegal_fn_4_generated(
 /// Returns one entry per expression part, paired with that part's position in
 /// `parts` so the caller can put the hidden column's offset back in the right
 /// key slot.
-pub fn build_hidden_columns(
+pub fn build_hidden_column_info(
     index_name: &str,
     parts: &[IndexPart],
     names: &[String],
@@ -637,7 +637,7 @@ pub fn build_hidden_columns(
     )
 }
 
-/// Statement-aware form of [`build_hidden_columns`]. `connection_charset` is
+/// Statement-aware form of [`build_hidden_column_info`]. `connection_charset` is
 /// the DDL session's `character_set_connection`: Go's parser gave each plain
 /// string literal of the key part that charset, so the hidden column's
 /// stored expression writes it as the `_charset` introducer.

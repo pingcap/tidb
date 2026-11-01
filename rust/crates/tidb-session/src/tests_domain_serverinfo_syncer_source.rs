@@ -199,7 +199,7 @@ fn topology_repairs_itself_after_key_loss() {
     let topology = get_topology_from_etcd(&syncer, &fake);
     assert_eq!(topology.start_timestamp, 1_282_967_700);
     assert_eq!(topology.labels["foo"], "bar");
-    assert_eq!(syncer.local_server_info().to_topology_info(), topology);
+    assert_eq!(syncer.get_local_server_info().to_topology_info(), topology);
 
     let info_key = format!("{}/info", syncer.topology_prefix());
     let ttl_key = format!("{}/ttl", syncer.topology_prefix());
@@ -220,7 +220,7 @@ fn topology_repairs_itself_after_key_loss() {
         "deploy path is the executable's directory"
     );
     assert_eq!(topology.start_timestamp, 1_282_967_700);
-    assert_eq!(syncer.local_server_info().to_topology_info(), topology);
+    assert_eq!(syncer.get_local_server_info().to_topology_info(), topology);
 
     // Check ttl key: present, then deleted, then rewritten by aliveness.
     assert!(ttl_key_exists(&syncer, &fake));
@@ -281,7 +281,7 @@ fn startup_cleans_the_stale_server_info_at_this_address() {
         mock_server_info_at(new_id, "1.1.1.1", 4000),
         Some(fake.clone()),
     );
-    let new_info = syncer.local_server_info();
+    let new_info = syncer.get_local_server_info();
     assert_eq!(new_info.static_info.ip, "1.1.1.1");
     assert_eq!(new_info.static_info.port, 4000);
     syncer
@@ -378,7 +378,7 @@ fn stale_ddl_owner_key_is_deleted_too() {
 fn assumed_server_info_syncer_current_keyspace_arm() {
     // current ks
     let syncer = Syncer::new(mock_server_info_at("1", "", 0), None);
-    let info = syncer.local_server_info();
+    let info = syncer.get_local_server_info();
     assert!(!info.static_info.is_assumed());
     assert!(info.static_info.assumed_keyspace.is_empty());
 

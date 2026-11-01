@@ -189,11 +189,11 @@ pub fn metrics_summary_rows(
 /// 1105 'pd http client unavailable' (oracle-captured); the Eval wrap marks
 /// that error evaluation-origin, which the statement completion door treats
 /// as buffer-invisible.
-pub fn tikv_store_status_rows(
+pub fn data_for_tikv_store_status(
     store: &dyn RegionStore,
     sem_redacts: bool,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
-    let Some(client) = store_helper::try_get_pd_http_client(store) else {
+    let Some(client) = store_helper::try_get_pdhttp_client(store) else {
         return Err(DriverError::Exec(crate::ExecError::Eval(
             crate::EvalError::Unsupported(PD_HTTP_CLIENT_UNAVAILABLE),
         )));
@@ -317,10 +317,10 @@ impl ShowPlacementLabelsResultBuilder {
 /// `LABEL` cells directly (the internal session is never SEM-redacted, and
 /// the builder's sets make `DISTINCT` moot). A failure is the retriever's
 /// error text.
-pub fn show_placement_labels_rows(
+pub fn fetch_show_placement_labels(
     store: &dyn RegionStore,
 ) -> Result<Vec<Vec<Datum>>, String> {
-    let client = store_helper::try_get_pd_http_client(store)
+    let client = store_helper::try_get_pdhttp_client(store)
         .ok_or_else(|| PD_HTTP_CLIENT_UNAVAILABLE.to_owned())?;
     let stores_stat = store_helper::block_on_pd(client.get_stores())?;
     let mut builder = ShowPlacementLabelsResultBuilder::default();
@@ -342,7 +342,7 @@ pub fn tikv_region_peers_rows(
     if extractor.skip_request {
         return Ok(Vec::new());
     }
-    let client = store_helper::try_get_pd_http_client(store)
+    let client = store_helper::try_get_pdhttp_client(store)
         .ok_or_else(|| plain_error(PD_HTTP_CLIENT_UNAVAILABLE))?;
     let mut store_map = HashSet::new();
     if extractor.store_ids.is_empty() && extractor.region_ids.is_empty() {
@@ -452,7 +452,7 @@ fn regions_info_for_table(
 ) -> Result<pd_http::RegionsInfo, String> {
     // Go `getRegionsInfoForSingleTable`.
     let single_table = |table_id: i64| {
-        let client = store_helper::try_get_pd_http_client(store)
+        let client = store_helper::try_get_pdhttp_client(store)
             .ok_or_else(|| PD_HTTP_CLIENT_UNAVAILABLE.to_owned())?;
         store_helper::get_regions_by_table_prefix(&client, table_id)
     };
@@ -469,7 +469,7 @@ fn regions_info_for_table(
 /// whole store, each read once per table, partition or index its key range
 /// covers that is not in a memory schema and that the session may see. A
 /// region covering nothing reads one row without table cells.
-pub fn tikv_region_status_rows(
+pub fn set_data_for_tikv_region_status(
     extractor: Option<&TiKVRegionStatusExtractor>,
     catalog: &Catalog,
     store: &dyn RegionStore,
@@ -478,7 +478,7 @@ pub fn tikv_region_status_rows(
     let schemas = all_schemas(catalog);
     let extractor_table_ids = extractor.map_or(&[][..], |extractor| extractor.tables_id.as_slice());
     let all_regions_info = if extractor_table_ids.is_empty() {
-        let client = store_helper::try_get_pd_http_client(store)
+        let client = store_helper::try_get_pdhttp_client(store)
             .ok_or_else(|| plain_error(PD_HTTP_CLIENT_UNAVAILABLE))?;
         Some(store_helper::get_regions(&client).map_err(|error| plain_error(&error))?)
     } else {
@@ -510,7 +510,7 @@ pub fn tikv_region_status_rows(
     for region in &all_regions_info.regions {
         let region_table_list = table_infos.get(&region.id).map_or(&[][..], Vec::as_slice);
         if region_table_list.is_empty() {
-            rows.push(new_tikv_region_status_row(region, None));
+            rows.push(set_new_tikv_region_status_col(region, None));
         }
         for region_table in region_table_list {
             // Exclude virtual schemas.
@@ -527,7 +527,7 @@ pub fn tikv_region_status_rows(
             if extractor_table_ids.is_empty()
                 || extractor_table_ids.contains(&region_table.table_id)
             {
-                rows.push(new_tikv_region_status_row(region, Some(region_table)));
+                rows.push(set_new_tikv_region_status_col(region, Some(region_table)));
             }
         }
     }
@@ -535,7 +535,7 @@ pub fn tikv_region_status_rows(
 }
 
 /// Go `memtableRetriever.setNewTiKVRegionStatusCol`.
-pub fn new_tikv_region_status_row(
+pub fn set_new_tikv_region_status_col(
     region: &pd_http::RegionInfo,
     table: Option<&store_helper::TableInfo>,
 ) -> Vec<Datum> {
@@ -576,11 +576,11 @@ pub fn new_tikv_region_status_row(
 /// Go `memtableRetriever.setDataForTiDBHotRegions`: the hot read regions,
 /// then the hot write regions (Go `Helper.ScrapeHotInfo`), each with the
 /// table or index its range covers.
-pub fn tidb_hot_regions_rows(
+pub fn set_data_for_tidb_hot_regions(
     catalog: &Catalog,
     store: &dyn RegionStore,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
-    let client = store_helper::try_get_pd_http_client(store)
+    let client = store_helper::try_get_pdhttp_client(store)
         .ok_or_else(|| plain_error(PD_HTTP_CLIENT_UNAVAILABLE))?;
     let schemas = all_schemas(catalog);
     let mut rows = Vec::new();
@@ -592,13 +592,13 @@ pub fn tidb_hot_regions_rows(
             .map_err(|error| plain_error(&error))?;
         let hot_tables = store_helper::fetch_region_table_index(store, &metrics, &schemas)
             .map_err(|error| plain_error(&error))?;
-        rows.extend(hot_region_rows_by_metrics(&hot_tables, tp));
+        rows.extend(set_data_for_hot_region_by_metrics(&hot_tables, tp));
     }
     Ok(rows)
 }
 
 /// Go `memtableRetriever.setDataForHotRegionByMetrics`.
-pub fn hot_region_rows_by_metrics(
+pub fn set_data_for_hot_region_by_metrics(
     metrics: &[store_helper::HotTableIndex],
     tp: &str,
 ) -> Vec<Vec<Datum>> {
@@ -719,7 +719,7 @@ pub fn tidb_hot_regions_history_rows(
             break;
         };
         if let Some(his_hot_region) = results[min_index].pop_front() {
-            final_rows.extend(hot_region_row_with_schema_info(&his_hot_region, &tables));
+            final_rows.extend(get_hot_region_row_with_schema_info(&his_hot_region, &tables));
         }
         if results[min_index].is_empty() {
             results.remove(min_index);
@@ -731,7 +731,7 @@ pub fn tidb_hot_regions_history_rows(
 /// Go `hotRegionsHistoryRetriver.getHotRegionRowWithSchemaInfo`. Go builds
 /// the update time with `time.UnixMilli` in the process's local zone (its
 /// `In(tz)` result is discarded), as a `TIMESTAMP` of fsp 0.
-pub fn hot_region_row_with_schema_info(
+pub fn get_hot_region_row_with_schema_info(
     his_hot_region: &pd_http::HistoryHotRegion,
     tables: &[store_helper::TableInfoWithKeyRange],
 ) -> Vec<Vec<Datum>> {
@@ -849,7 +849,7 @@ pub fn table_storage_stats_rows(
         }
     }
     // Go `helper.GetPDAddr`: a store without PD addresses fails.
-    let Some(client) = store_helper::try_get_pd_http_client(store) else {
+    let Some(client) = store_helper::try_get_pdhttp_client(store) else {
         return Err(plain_error("pd unavailable"));
     };
     let mut rows = Vec::new();
@@ -877,7 +877,7 @@ pub fn table_storage_stats_rows(
 
 /// Go `setDataForPseudoProfiling`: one all-zero row while the session's
 /// `profiling` is on, none otherwise.
-pub fn pseudo_profiling_rows(profiling: bool) -> Vec<Vec<Datum>> {
+pub fn set_data_for_pseudo_profiling(profiling: bool) -> Vec<Vec<Datum>> {
     if !profiling {
         return Vec::new();
     }
@@ -906,7 +906,7 @@ pub fn pseudo_profiling_rows(profiling: bool) -> Vec<Vec<Datum>> {
 
 /// Go `setDataForKeyspaceMeta` for a store without keyspace meta: one row of
 /// an empty name and ID and Go's zero `BinaryJSON` config.
-pub fn keyspace_meta_rows() -> Vec<Vec<Datum>> {
+pub fn set_data_for_keyspace_meta() -> Vec<Vec<Datum>> {
     vec![vec![
         text(""),
         text(""),
@@ -917,7 +917,7 @@ pub fn keyspace_meta_rows() -> Vec<Vec<Datum>> {
 /// Go `setDataFromPlacementPolicies`: every placement policy, a `FOLLOWERS`
 /// of zero (unset) shown as the default two. Go walks its policy map in
 /// random order; this lists the policies by name.
-pub fn placement_policies_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
+pub fn set_data_from_placement_policies(catalog: &Catalog) -> Vec<Vec<Datum>> {
     let mut policies = catalog.policies().collect::<Vec<_>>();
     policies.sort_by(|left, right| left.name.lowercase().cmp(right.name.lowercase()));
     policies
@@ -1149,7 +1149,7 @@ mod tests {
             approximate_keys: 2,
             ..pd_http::RegionInfo::default()
         };
-        let bare = new_tikv_region_status_row(&region, None)
+        let bare = set_new_tikv_region_status_col(&region, None)
             .iter()
             .map(cell)
             .collect::<Vec<_>>();
@@ -1174,7 +1174,7 @@ mod tests {
                 global: false,
             }),
         };
-        let row = new_tikv_region_status_row(&region, Some(&table))
+        let row = set_new_tikv_region_status_col(&region, Some(&table))
             .iter()
             .map(cell)
             .collect::<Vec<_>>();
@@ -1217,7 +1217,7 @@ mod tests {
             end_key: String::new(),
             ..pd_http::HistoryHotRegion::default()
         };
-        let rows = hot_region_row_with_schema_info(&hot, &tables)
+        let rows = get_hot_region_row_with_schema_info(&hot, &tables)
             .iter()
             .map(|row| row[1..].iter().map(cell).collect::<Vec<_>>().join(" "))
             .collect::<Vec<_>>();
@@ -1232,7 +1232,7 @@ mod tests {
             start_key: "7A".to_owned(),
             ..hot
         };
-        assert!(hot_region_row_with_schema_info(&elsewhere, &tables).is_empty());
+        assert!(get_hot_region_row_with_schema_info(&elsewhere, &tables).is_empty());
     }
 }
 
@@ -1324,7 +1324,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for InformationSchemaRetrieve
         // Go `updateStatsCacheIfNeed`: the size columns of TABLES and
         // PARTITIONS are read from the table-size cache, refreshed first.
         let sized;
-        let catalog = if read.needs_table_storage_statistics() {
+        let catalog = if read.update_stats_cache_if_need() {
             sized = table_storage_statistics_catalog_of(
                 catalog.clone(),
                 ctx.stats_handle(),
@@ -1391,19 +1391,19 @@ impl crate::mem_table_retrieval::MemTableRetriever for CatalogTablesRetriever {
         let table = read.table_name.as_str();
         let store = ctx.region_store();
         if table.go_lower_eq("TIKV_STORE_STATUS") {
-            return tikv_store_status_rows(store.as_ref(), self.hides_cluster_metadata);
+            return data_for_tikv_store_status(store.as_ref(), self.hides_cluster_metadata);
         }
         if table.go_lower_eq("ATTRIBUTES") {
-            return crate::infoschema_reader::attributes_rows(catalog, &self.visibility);
+            return crate::infoschema_reader::set_data_for_attributes(catalog, &self.visibility);
         }
         if table.go_lower_eq("PLACEMENT_POLICIES") {
-            return Ok(placement_policies_rows(catalog));
+            return Ok(set_data_from_placement_policies(catalog));
         }
         if table.go_lower_eq("KEYSPACE_META") {
-            return Ok(keyspace_meta_rows());
+            return Ok(set_data_for_keyspace_meta());
         }
         if table.go_lower_eq("TIDB_HOT_REGIONS") {
-            return tidb_hot_regions_rows(catalog, store.as_ref());
+            return set_data_for_tidb_hot_regions(catalog, store.as_ref());
         }
         if table.go_lower_eq("TABLE_STORAGE_STATS") {
             return match &read.extractor {
@@ -1425,7 +1425,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for CatalogTablesRetriever {
             Some(Extractor::TiKVRegionStatus(extractor)) => Some(extractor),
             _ => None,
         };
-        tikv_region_status_rows(extractor, catalog, store.as_ref(), &self.visibility)
+        set_data_for_tikv_region_status(extractor, catalog, store.as_ref(), &self.visibility)
     }
 }
 

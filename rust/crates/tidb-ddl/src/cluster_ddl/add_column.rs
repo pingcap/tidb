@@ -18,7 +18,7 @@
 //! moving it to its position and publishing it. Cancelled, it rolls back
 //! through `onDropColumn` (`rollingbackAddColumn`).
 
-use super::add_index::{action_step, table_step, AddIndexSubmission};
+use super::add_index::{action_step, update_version_and_table_info, AddIndexSubmission};
 use super::*;
 
 /// Go `executor.AddColumn` up to `doDDLJob2`. `None` for any other
@@ -204,14 +204,14 @@ fn check_unsupported_charset_for_tiflash(
 }
 
 /// Go `onAddColumn`.
-pub(super) fn plan_persisted_add_column_job_step(
+pub(super) fn on_add_column(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     if active.job.is_rollingback() {
-        return drop_column::plan_persisted_drop_column_job_step(catalog, active, start_ts);
+        return drop_column::on_drop_column(catalog, active, start_ts);
     }
     let AddColumnTarget {
         mut info,
@@ -290,7 +290,7 @@ pub(super) fn plan_persisted_add_column_job_step(
     if matches!(next, SchemaState::DELETE_ONLY | SchemaState::PUBLIC) {
         check_table_info_valid(&info)?;
     }
-    let mut write = table_step(catalog, active, database_id, &info, true, start_ts)?;
+    let mut write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
     if next != SchemaState::PUBLIC {
         active.job.schema_state = next;
         if next == SchemaState::WRITE_REORGANIZATION {
@@ -324,7 +324,7 @@ pub(super) fn plan_persisted_add_column_job_step(
 
 /// Go `rollingbackAddColumn`: before the column exists the job is
 /// cancelled; afterwards it turns delete-only and rolls back as a drop.
-pub(super) fn plan_cancel_add_column(
+pub(super) fn rollingback_add_column(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -349,7 +349,7 @@ pub(super) fn plan_cancel_add_column(
         },
     );
     let database_id = active.job.schema_id;
-    let write = table_step(
+    let write = update_version_and_table_info(
         catalog,
         active,
         database_id,

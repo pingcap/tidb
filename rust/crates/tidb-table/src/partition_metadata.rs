@@ -368,7 +368,7 @@ pub fn partition_spec_from_metadata(
                     // Go routes a row through the built `UpperBounds`
                     // comparisons, which use the expression's real type.
                     let unsigned =
-                        crate::partition_fold::partition_expression_is_unsigned(&built);
+                        crate::partition_fold::is_part_expr_unsigned(&built);
                     let less_than = match stored {
                         Some(less_than) => less_than,
                         None => load_range_bounds(&ast_definitions()?, ctx)?,

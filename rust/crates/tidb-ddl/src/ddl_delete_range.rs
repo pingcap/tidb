@@ -138,7 +138,7 @@ pub fn job_need_gc(job: &Job) -> bool {
 
 /// Go `AddDelRangeJobInternal`: the ranges a finished job left behind, each
 /// with its element id.
-pub fn delete_ranges_for_job(job: &Job) -> Result<Vec<DelRangeTask>, DdlPlanError> {
+pub fn add_del_range_job_internal(job: &Job) -> Result<Vec<DelRangeTask>, DdlPlanError> {
     let mut alloc = ElementIdAlloc::default();
     let mut ranges = Vec::new();
     if let Some(info) = &job.multi_schema_info {
@@ -599,7 +599,7 @@ impl DelRangeTable {
 
 /// Go `finishDDLJob` -> `addDelRangeJob`: the `gc_delete_range` rows a
 /// finished job owes, allocated from the node's row-ID allocators.
-pub fn add_del_range_job_mutations<S: MetaSnapshot>(
+pub fn finish_ddl_job<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     job: &Job,
@@ -609,7 +609,7 @@ pub fn add_del_range_job_mutations<S: MetaSnapshot>(
     if !job_need_gc(job) {
         return Ok(Vec::new());
     }
-    let ranges = delete_ranges_for_job(job)?;
+    let ranges = add_del_range_job_internal(job)?;
     del_range_rows_mutations(snapshot, catalog, &ranges, ts, row_ids)
 }
 

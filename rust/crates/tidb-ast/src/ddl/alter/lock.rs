@@ -20,7 +20,7 @@
 /// Requested ALTER TABLE metadata-lock level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlterTableLockMode {
-    /// Let TiDB choose the default lock level.
+    /// Let TiDB new_row_sample_collector the default lock level.
     Default,
     /// Permit concurrent reads and writes where supported.
     None,

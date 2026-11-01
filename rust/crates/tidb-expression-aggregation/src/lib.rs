@@ -53,7 +53,7 @@
 //! | `base_func.go` | `WrapCastForAggArgs` | 478 | [`BaseFuncDesc::wrap_cast_for_agg_args`] |
 //! | `descriptor.go` | `AggFuncDesc` | 33 | [`AggFuncDesc`] |
 //! | `descriptor.go` | `NewAggFuncDesc` | 47 | [`AggFuncDesc::new`] |
-//! | `descriptor.go` | `NewAggFuncDescForWindowFunc` | 56 | [`AggFuncDesc::new_for_window_func`] |
+//! | `descriptor.go` | `NewAggFuncDescForWindowFunc` | 56 | [`AggFuncDesc::new_agg_func_desc_for_window_func`] |
 //! | `descriptor.go` | `AggFuncDesc.Equals` | 75 | [`AggFuncDesc::equals`] |
 //! | `descriptor.go` | `AggFuncDesc.Equal` | 122 | [`AggFuncDesc::equal`] |
 //! | `descriptor.go` | `AggFuncDesc.Clone` | 138 | `#[derive(Clone)]` |
@@ -154,7 +154,7 @@
 //!   is a plain `FieldType`; the nil arms of `Equals`/`Hash64` are therefore
 //!   not reproduced. This also makes `NewAggFuncDescForWindowFunc`'s
 //!   `desc.RetTp == nil` safety check (`descriptor.go:57`) unreachable, and
-//!   [`AggFuncDesc::new_for_window_func`] documents it as such.
+//!   [`AggFuncDesc::new_agg_func_desc_for_window_func`] documents it as such.
 //! - **`Hash64` is not ported.** Go's `base.Hasher` lives in
 //!   `pkg/planner/cascades/base` and hashes through `Expression.Hash64`,
 //!   which this crate does not have (only `HashCode`). The identity that

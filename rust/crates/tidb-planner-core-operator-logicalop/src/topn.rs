@@ -187,7 +187,7 @@ impl LogicalTopN {
     ///   skipped past the end — and the TopN disappears;
     /// * with no `ByItems` this is a bare limit, so a [`LogicalLimit`] takes its
     ///   place, carrying `PartitionBy` across (which
-    ///   [`LogicalLimit::convert_to_topn`] does NOT do in the other direction);
+    ///   [`LogicalLimit::convert_to_top_n`] does NOT do in the other direction);
     /// * otherwise `p` simply becomes this TopN's child.
     ///
     /// Go's comment for why this exists rather than `SetChild`: "AttachChild

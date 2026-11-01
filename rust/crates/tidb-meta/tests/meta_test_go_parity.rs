@@ -25,9 +25,9 @@ use tidb_meta::transaction::{MemoryTransaction, Mutator};
 #[test]
 fn meta_starter_bootstrap_round_trip() {
     let meta = Mutator::new(MemoryTransaction::default());
-    assert_eq!(meta.starter_bootstrap_version().unwrap(), 0);
+    assert_eq!(meta.get_starter_bootstrap_version().unwrap(), 0);
     meta.finish_starter_bootstrap(1).unwrap();
-    assert_eq!(meta.starter_bootstrap_version().unwrap(), 1);
+    assert_eq!(meta.get_starter_bootstrap_version().unwrap(), 1);
     meta.finish_starter_bootstrap(10).unwrap();
-    assert_eq!(meta.starter_bootstrap_version().unwrap(), 10);
+    assert_eq!(meta.get_starter_bootstrap_version().unwrap(), 10);
 }

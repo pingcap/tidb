@@ -99,7 +99,7 @@ fn truncate_referenced(referred: &tidb_model::table::ReferredFKInfo) -> DdlPlanE
 }
 
 /// Go `onTruncateTable`.
-pub(super) fn plan_persisted_truncate_table_job_step<S: MetaSnapshot>(
+pub(super) fn on_truncate_table<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,

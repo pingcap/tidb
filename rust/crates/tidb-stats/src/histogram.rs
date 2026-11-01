@@ -594,7 +594,7 @@ impl Histogram {
     }
 
     /// Go `mergeBuckets`.
-    pub(crate) fn merge_neighbor_buckets(&mut self, bucket_index: usize) {
+    pub(crate) fn merge_buckets(&mut self, bucket_index: usize) {
         let tracking = self.allocation.is_tracking(self.buckets.len());
         let mut merged = Vec::with_capacity(bucket_index / 2 + 1);
         let mut index = 0_usize;
@@ -1087,14 +1087,14 @@ pub fn merge_histograms(
 
     while left.len() > bucket_size {
         let last = left.len() - 1;
-        left.merge_neighbor_buckets(last);
+        left.merge_buckets(last);
     }
     if right.is_empty() {
         return Ok(left);
     }
     while right.len() > bucket_size {
         let last = right.len() - 1;
-        right.merge_neighbor_buckets(last);
+        right.merge_buckets(last);
     }
 
     let left_count = left.buckets[left.len() - 1].count;
@@ -1103,12 +1103,12 @@ pub fn merge_histograms(
     let mut right_average = right_count as f64 / right.len() as f64;
     while left.len() > 1 && left_average * 2.0 <= right_average {
         let last = left.len() - 1;
-        left.merge_neighbor_buckets(last);
+        left.merge_buckets(last);
         left_average *= 2.0;
     }
     while right.len() > 1 && right_average * 2.0 <= left_average {
         let last = right.len() - 1;
-        right.merge_neighbor_buckets(last);
+        right.merge_buckets(last);
         right_average *= 2.0;
     }
     for bucket in right.buckets {
@@ -1127,7 +1127,7 @@ pub fn merge_histograms(
     }
     while left.len() > bucket_size {
         let last = left.len() - 1;
-        left.merge_neighbor_buckets(last);
+        left.merge_buckets(last);
     }
     Ok(left)
 }

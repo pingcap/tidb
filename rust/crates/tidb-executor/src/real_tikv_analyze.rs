@@ -33,7 +33,7 @@ use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone, UNSPECIFIED_LENGT
 use tidb_mysql::errors::SqlError;
 use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use tidb_stats::histogram::Histogram;
-use tidb_stats::row_sample_collector::adjusted_sample_rate;
+use tidb_stats::row_sample_collector::get_adjusted_sample_rate;
 use tidb_stats::fm_sketch_ndv;
 use tidb_stats::merge_fm_sketch;
 use tidb_stats_handle_globalstats::merge_partition_histogram_topn;
@@ -622,7 +622,7 @@ fn automatic_sample_rate(
         table,
         partition,
     );
-    let rate = adjusted_sample_rate(realtime_count, has_pd.then_some(approximate_count));
+    let rate = get_adjusted_sample_rate(realtime_count, has_pd.then_some(approximate_count));
     let reason = sample_rate_reason(realtime_count, has_pd.then_some(approximate_count), rate);
     (rate, reason)
 }
@@ -1694,7 +1694,7 @@ fn prepare_async_global_partitions<S: tidb_infoschema::cluster_catalog::MetaSnap
     let mut partitions = Vec::new();
     for (id, name) in definitions {
         let meta = loader
-            .load_meta(snapshot, id)
+            .stats_meta_count_and_modify_count(snapshot, id)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let (modify_count, row_count) = match meta {
             Some((_, _, modify_count, row_count, _)) => (
@@ -1774,7 +1774,7 @@ where
                 }
                 let column_type = (!is_index).then_some(&field_type);
                 let exists = loader
-                    .load_item(snapshot, partition.id, is_index, id, column_type, false)
+                    .read_stats_for_one_item(snapshot, partition.id, is_index, id, column_type, false)
                     .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
                     .is_some();
                 if !exists {
@@ -3186,7 +3186,7 @@ mod tests {
     }
     use tidb_model::SchemaState;
     use tidb_stats::histogram::{Bucket, Histogram};
-    use tidb_stats::row_sample_collector::adjusted_sample_rate;
+    use tidb_stats::row_sample_collector::get_adjusted_sample_rate;
     use tidb_stats::FmSketch;
     use tidb_stats_handle_globalstats::GlobalStatsMergeMode;
     use tidb_stats::StatsLoadedStatus;
@@ -3820,11 +3820,11 @@ mod tests {
         // 110000/i64::MAX and keep nothing, while the FM sketch still reported
         // NDVs from the full scan.
         assert!(
-            adjusted_sample_rate(Some(realtime_count_of(u64::MAX)), None)
-                > adjusted_sample_rate(Some(i64::MAX), None)
+            get_adjusted_sample_rate(Some(realtime_count_of(u64::MAX)), None)
+                > get_adjusted_sample_rate(Some(i64::MAX), None)
         );
         assert!(
-            (adjusted_sample_rate(Some(realtime_count_of(u64::MAX)), None) - 1.0).abs()
+            (get_adjusted_sample_rate(Some(realtime_count_of(u64::MAX)), None) - 1.0).abs()
                 < f64::EPSILON
         );
     }

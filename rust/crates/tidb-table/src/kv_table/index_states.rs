@@ -182,7 +182,7 @@ impl KvTable {
         let kv_index = &index.index;
         let duplicate_value = duplicate_value_text(&self.index_values(kv_index, row));
         for entry in self.index_entry_keys(kv_index, row, handle, physical_id, zone)? {
-            let value = self.index_entry_value(
+            let value = self.gen_index_value(
                 kv_index,
                 &entry.values,
                 row,
@@ -354,7 +354,7 @@ impl KvTable {
     /// untouched; otherwise every deletable index drops the old entry and
     /// every writable one files the new.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn rewrite_nonpublic_index_entries(
+    pub(crate) fn rebuild_update_record_indices(
         &mut self,
         indexes: &[NonPublicIndex],
         old_row: &[Datum],

@@ -18,7 +18,7 @@ use tidb_datatype::{BinaryJSON, BinaryJSONValue, BinaryLiteral, CoreTime, Datum,
 
 use crate::DriverError;
 use tidb_datatype::{FieldTypeBuilder, FieldTypeFlags};
-use tidb_model::column::check_column_infos_once;
+use tidb_model::column::check_once;
 use tidb_model::{ColumnInfo, GoShared, GoSharedPointerSlice};
 
 fn field(code: FieldTypeCode, flen: i64, charset: &str, collation: &str) -> FieldType {
@@ -79,7 +79,7 @@ fn test_check() {
     let column = GoShared::new(column);
     let duplicate =
         GoSharedPointerSlice::from_handles(vec![Some(column.clone()), Some(column.clone())]);
-    assert!(check_column_infos_once(&duplicate).is_err());
+    assert!(check_once(&duplicate).is_err());
 
     let columns = GoSharedPointerSlice::from_handles(vec![Some(column.clone())]);
     let context = crate::StmtContext::default();
@@ -97,7 +97,7 @@ fn test_check() {
         handle_bad_null(&mut Datum::Null, &not_null, "a", NullLevel::Error, &context,).is_err()
     );
 
-    assert!(check_column_infos_once(&GoSharedPointerSlice::default()).is_ok());
+    assert!(check_once(&GoSharedPointerSlice::default()).is_ok());
 }
 
 #[test]

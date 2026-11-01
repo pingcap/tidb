@@ -585,12 +585,12 @@ fn aggregation_first_row_cols_refuse_constant_groups() {
         vec![desc.clone()],
         vec![col_expr(2)],
     );
-    assert_eq!(real.agg_funcs_cols_for_first_row(&output).len(), 1);
+    assert_eq!(real.get_agg_funcs_cols_for_first_row(&output).len(), 1);
 
     let constant_group =
         LogicalAggregation::new(BaseLogicalPlan::default(), vec![desc], vec![one()]);
     assert!(constant_group
-        .agg_funcs_cols_for_first_row(&output)
+        .get_agg_funcs_cols_for_first_row(&output)
         .is_empty());
 }
 
@@ -1594,7 +1594,7 @@ fn limit_converts_to_a_topn_that_is_still_a_limit() {
     let limit_id = limit.base.base.id();
     limit.prefer_limit_to_cop = true;
     limit.partition_by = vec![tidb_planner_property::SortItem::new(1, false)];
-    let topn = limit.convert_to_topn(&allocator);
+    let topn = limit.convert_to_top_n(&allocator);
     assert!(topn.is_limit());
     assert_eq!(topn.offset, 2);
     assert_eq!(topn.count, 9);
@@ -4131,7 +4131,7 @@ fn first_row_columns_panics_when_the_schema_outgrows_the_aggs_like_go() {
     );
     let schema = schema(&[9, 10]);
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        aggregation.agg_funcs_cols_for_first_row(&schema);
+        aggregation.get_agg_funcs_cols_for_first_row(&schema);
     }))
     .is_err());
 }
@@ -4145,7 +4145,7 @@ fn first_row_columns_panics_on_an_argument_less_firstrow_like_go() {
     );
     let schema = schema(&[9]);
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        aggregation.agg_funcs_cols_for_first_row(&schema);
+        aggregation.get_agg_funcs_cols_for_first_row(&schema);
     }))
     .is_err());
 }
@@ -4177,7 +4177,7 @@ fn const_result_columns_keeps_gos_explicit_length_guard() {
         vec![col_expr(2)],
     );
     let schema = schema(&[9, 10]);
-    let (cols, exprs) = aggregation.agg_funcs_cols_for_const_result(&schema);
+    let (cols, exprs) = aggregation.get_agg_funcs_cols_for_const_result(&schema);
     assert!(cols.is_empty() && exprs.is_empty());
 }
 

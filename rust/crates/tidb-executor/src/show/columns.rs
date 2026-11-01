@@ -124,7 +124,7 @@ const FULL_COL_DESC_PRIVILEGES: &str = "select,insert,update,references";
 /// `Extra` follows Go `NewColDesc`'s ordered precedence: auto increment,
 /// ON UPDATE CURRENT_TIMESTAMP, generated-column kind, then expression
 /// default.
-pub fn column_description(
+pub fn new_col_desc(
     column: &crate::KvColumn,
     offset: usize,
     table: &crate::KvTable,

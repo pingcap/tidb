@@ -628,7 +628,7 @@ pub(crate) fn to_days(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalE
     let [value] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    let Some(time) = super::checked_date_arg(value, cols, tidb_datatype::Time::invalid_zero)?
+    let Some(time) = super::eval_time(value, cols, tidb_datatype::Time::invalid_zero)?
     else {
         return Ok(Datum::Null);
     };
@@ -653,7 +653,7 @@ pub(crate) fn to_seconds(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Ev
     let [value] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    let Some(time) = super::checked_date_arg(value, cols, tidb_datatype::Time::invalid_zero)?
+    let Some(time) = super::eval_time(value, cols, tidb_datatype::Time::invalid_zero)?
     else {
         return Ok(Datum::Null);
     };
@@ -695,7 +695,7 @@ pub(crate) fn date_add(
 /// `FieldType`s while building the function. A string/numeric date result is
 /// different: its string signature prints no fraction for a whole-second
 /// answer and six digits otherwise, so it returns `None` here and lets the
-/// value choose that final rendering.
+/// value new_row_sample_collector that final rendering.
 pub(crate) fn date_add_result_fsp(
     unit: &str,
     date_type: Option<&tidb_datatype::FieldType>,

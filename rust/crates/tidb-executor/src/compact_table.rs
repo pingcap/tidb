@@ -29,7 +29,7 @@ use crate::{Catalog, DriverError, StmtContext, TableEntry};
 ///
 /// A missing table (the preprocessor's 1146), a TiKV replica kind, a
 /// partition list over an unpartitioned table, or an unknown partition.
-pub fn execute_compact_table(
+pub fn build_compact_table(
     compact: &CompactTableStmt,
     catalog: &Catalog,
     current_db: &str,

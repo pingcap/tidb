@@ -337,7 +337,7 @@ pub struct TableDeltaDump<'a> {
 
 impl TableDeltaDump<'_> {
     /// Go `collectPendingStatsDeltaTableIDs`.
-    pub fn pending_table_ids(&self, target_table_ids: &[i64]) -> Vec<i64> {
+    pub fn collect_pending_stats_delta_table_ids(&self, target_table_ids: &[i64]) -> Vec<i64> {
         let mut table_ids = if target_table_ids.is_empty() {
             self.delta.keys().copied().collect::<Vec<_>>()
         } else {
@@ -629,7 +629,7 @@ mod tests {
             target: &deltas,
             delta: deltas.get_delta_and_reset(),
         };
-        assert_eq!(pending.pending_table_ids(&[3, 2, 3, 1]), vec![1, 3]);
+        assert_eq!(pending.collect_pending_stats_delta_table_ids(&[3, 2, 3, 1]), vec![1, 3]);
     }
 
     #[test]

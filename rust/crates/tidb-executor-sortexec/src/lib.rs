@@ -84,7 +84,7 @@ pub fn eval_sort_key<C: Columns>(
             // Go's `buildKeyColumns` omits constants, so even a deferred
             // constant is never evaluated while sorting or merging rows.
             // Keep a positional placeholder for callers that zip keys with
-            // by-items; `less_by_items` skips this slot below.
+            // by-items; `less_row` skips this slot below.
             Expression::Constant(_) => key.push(Datum::Null),
             _ => return Err(ExecError::unsupported("Get unexpected expression")),
         }
@@ -95,7 +95,7 @@ pub fn eval_sort_key<C: Columns>(
 /// Go `SortExec.buildKeyColumns`: only direct child columns and constants are
 /// valid executor sort keys. Planner expressions must be materialized by a
 /// projection before they reach this operator.
-pub fn validate_by_items(by_items: &[SortByItem]) -> Result<(), ExecError> {
+pub fn build_key_columns(by_items: &[SortByItem]) -> Result<(), ExecError> {
     if by_items
         .iter()
         .any(|item| !matches!(&item.expr, Expression::Column(_) | Expression::Constant(_)))
@@ -110,7 +110,7 @@ pub fn validate_by_items(by_items: &[SortByItem]) -> Result<(), ExecError> {
 /// Each key compares under ITS OWN derived collation (Go builds `keyCmpFuncs`
 /// from the by-item's `RetType`): `ORDER BY ci_col` orders `a, A, b, B`, not
 /// the byte order `A, B, a, b`.
-pub fn less_by_items(
+pub fn less_row(
     by_items: &[SortByItem],
     a: &[Datum],
     b: &[Datum],
@@ -348,7 +348,7 @@ where
     /// Go `fetchChunksUnparallel` + `storeChunk`: drain the child into sorted
     /// runs, spilling whenever the memory action says to.
     fn fetch_and_sort(&mut self) -> Result<(), ExecError> {
-        validate_by_items(&self.by_items)?;
+        build_key_columns(&self.by_items)?;
 
         let fields: Vec<FieldType> = self.meta.ret_field_types().to_vec();
         let mut current = self.new_partition(&fields);
@@ -443,7 +443,7 @@ where
                 }
                 let mut compare_error = None;
                 tidb_goruntime::go_heap::init(&mut self.merge_heads, &mut |left, right| {
-                    match less_by_items(&self.by_items, &left.key, &right.key) {
+                    match less_row(&self.by_items, &left.key, &right.key) {
                         Ok(ordering) => ordering == Ordering::Less,
                         Err(error) => {
                             if compare_error.is_none() {
@@ -471,7 +471,7 @@ where
                     tidb_goruntime::go_heap::fix(
                         &mut self.merge_heads,
                         0,
-                        &mut |left, right| match less_by_items(
+                        &mut |left, right| match less_row(
                             &self.by_items,
                             &left.key,
                             &right.key,
@@ -493,7 +493,7 @@ where
                     tidb_goruntime::go_heap::remove(
                         &mut self.merge_heads,
                         0,
-                        &mut |left, right| match less_by_items(
+                        &mut |left, right| match less_row(
                             &self.by_items,
                             &left.key,
                             &right.key,
@@ -721,7 +721,7 @@ mod tests {
     fn sort_over(rows: &[Vec<Option<i64>>], by: Vec<SortByItem>) -> SortExec<NoColumns> {
         let n_cols = rows.first().map_or(1, Vec::len);
         let fields: Vec<FieldType> = (0..n_cols).map(|_| long()).collect();
-        let mut data = Chunk::new_with_capacity(&fields, rows.len().max(1));
+        let mut data = Chunk::new_chunk_with_capacity(&fields, rows.len().max(1));
         for row in rows {
             for (c, v) in row.iter().enumerate() {
                 match v {
@@ -752,7 +752,7 @@ mod tests {
         memory: StatementMemory,
     ) -> SortExec<NoColumns> {
         let fields: Vec<FieldType> = (0..n_cols).map(|_| long()).collect();
-        let mut data = Chunk::new_with_capacity(&fields, rows.len().max(1));
+        let mut data = Chunk::new_chunk_with_capacity(&fields, rows.len().max(1));
         for row in rows {
             for (c, v) in row.iter().enumerate() {
                 match v {
@@ -941,13 +941,13 @@ mod tests {
             desc: false,
         }];
         let fields = vec![long()];
-        let mut chunk = Chunk::new_with_capacity(&fields, 1);
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, 1);
         chunk.append_int64(0, 1);
 
         let key = eval_sort_key(&by, &NoColumns, chunk.get_row(0)).unwrap();
         assert_eq!(key, vec![Datum::Null]);
         assert_eq!(
-            less_by_items(&by, &[Datum::Null], &[Datum::Int(9)]).unwrap(),
+            less_row(&by, &[Datum::Null], &[Datum::Int(9)]).unwrap(),
             Ordering::Equal
         );
     }
@@ -1130,7 +1130,7 @@ mod tests {
         let parent = Tracker::new(1, -1);
         let mut partition = SortPartition::new(fields.clone(), &parent, memory.spill_storage());
         let batch_size = 8192usize;
-        let mut chunk = Chunk::new_with_capacity(&fields, batch_size);
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, batch_size);
         for row in 0..batch_size {
             let value = ((row * 7919) % batch_size) as i64;
             chunk.append_int64(0, value);

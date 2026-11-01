@@ -100,7 +100,7 @@ impl StatsStmtCtx for StmtContext {
         table_ids: impl IntoIterator<Item = i64>,
         mut get: impl FnMut(i64) -> Option<Arc<Table>>,
     ) {
-        self.record_table_runtime_statistics_any(table_ids, |table_id| {
+        self.record_table_runtime_stats(table_ids, |table_id| {
             get(table_id).map(|stats| stats as Arc<dyn std::any::Any + Send + Sync>)
         });
     }

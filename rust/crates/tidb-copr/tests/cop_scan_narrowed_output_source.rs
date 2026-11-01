@@ -28,7 +28,7 @@ use tidb_copr::query_transport::QueryOperation;
 use tidb_copr::query_transport::QueryTransport;
 use tidb_txnkv::TransportRequest;
 use tidb_copr::cop_client::CopClient;
-use tidb_executor::cop_reader::open_cop_scan;
+use tidb_executor::cop_reader::build_resp;
 use tidb_copr::cop_client::RealTiKvSessionTransportFactory;
 use tidb_distsql::remote_scan::PushdownStatementContext;
 use tidb_distsql::remote_scan::PushdownScanRequest;
@@ -305,7 +305,7 @@ fn request_over(
 #[test]
 fn a_fully_lowered_projected_scan_sends_its_output_offsets_and_reads_narrow_rows() {
     let region = Arc::new(FakeRegion::default());
-    let mut stream = open_cop_scan(&client(&region), &request(vec![lowered_conjunct()], Some(vec![1])))
+    let mut stream = build_resp(&client(&region), &request(vec![lowered_conjunct()], Some(vec![1])))
         .expect("the narrowing travels when every predicate lowers");
     assert!(
         stream.predicates_applied(),
@@ -369,7 +369,7 @@ fn prefix_limit_wire_key_uses_the_input_schema_before_output_projection() {
         count: 2,
         column_offset: 1,
     });
-    let mut stream = open_cop_scan(&client(&region), &scan).expect("prefix Limit lowers");
+    let mut stream = build_resp(&client(&region), &scan).expect("prefix Limit lowers");
     // This fake observes transport fields; native SQL tests cover tied rows.
     assert!(stream.next_row().unwrap().is_some());
     stream.close();
@@ -393,10 +393,10 @@ fn prefix_limit_wire_key_uses_the_input_schema_before_output_projection() {
     drop(observations);
 
     scan.prefix_limit.as_mut().unwrap().column_offset = 3;
-    assert!(open_cop_scan(&client(&region), &scan).is_err());
+    assert!(build_resp(&client(&region), &scan).is_err());
     scan.prefix_limit.as_mut().unwrap().column_offset = 1;
     scan.limit = Some(1);
-    assert!(open_cop_scan(&client(&region), &scan).is_err());
+    assert!(build_resp(&client(&region), &scan).is_err());
 }
 
 #[test]
@@ -424,7 +424,7 @@ fn index_topn_filters_and_orders_input_columns_before_returning_only_handles() {
         }],
         limit: 2,
     });
-    let mut stream = open_cop_scan(&client(&region), &scan)
+    let mut stream = build_resp(&client(&region), &scan)
         .expect("index TopN can return only handles");
     assert!(stream.predicates_applied());
     let mut handles = Vec::new();

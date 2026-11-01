@@ -124,7 +124,7 @@ fn attach_pseudo_collection(op: &mut DataSource) {
             )
         })
         .collect::<Vec<_>>();
-    let mut coll = tidb_planner_property::stats_info::HistColl::new_with_cols_and_idxs(
+    let mut coll = tidb_planner_property::stats_info::HistColl::new_hist_coll_with_cols_and_idxs(
         0,
         rows as i64,
         0,

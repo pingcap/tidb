@@ -85,7 +85,7 @@ impl KvChecksum {
     }
 
     /// Go `MakeKVChecksumWithKeyspace`.
-    pub fn make_with_keyspace(keyspace: &[u8], bytes: u64, kvs: u64, checksum: u64) -> Self {
+    pub fn make_kv_checksum_with_keyspace(keyspace: &[u8], bytes: u64, kvs: u64, checksum: u64) -> Self {
         Self {
             base: crc64_ecma_update(0, keyspace),
             prefix_len: keyspace.len() as isize,
@@ -214,7 +214,7 @@ impl<'a> KvGroupChecksum<'a> {
 
     /// Go `NewKVGroupChecksumForAdd`. It cannot be used with
     /// [`Self::update_one_data_kv`] or [`Self::update_one_index_kv`].
-    pub fn for_add() -> Self {
+    pub fn new_kv_group_checksum_for_add() -> Self {
         let mut m = HashMap::with_capacity(8);
         m.insert(DATA_KV_GROUP_ID, KvChecksum::new());
         Self { m, keyspace: &[] }
@@ -286,7 +286,7 @@ impl<'a> KvGroupChecksum<'a> {
 
     /// Go `KVGroupChecksum.GetInnerChecksums`: a cloned map of index ID to its
     /// checksum.
-    pub fn inner_checksums(&self) -> HashMap<i64, KvChecksum> {
+    pub fn get_inner_checksums(&self) -> HashMap<i64, KvChecksum> {
         self.m.clone()
     }
 
@@ -398,7 +398,7 @@ mod tests {
         let mut c = KvGroupChecksum::with_keyspace(b"");
         c.update_one_data_kv(&kv_pair);
         c.update_one_index_kv(1, &kv_pair2);
-        let inner = c.inner_checksums();
+        let inner = c.get_inner_checksums();
         assert_eq!(inner.len(), 2);
         assert_eq!(inner[&1].sum_kvs(), 1);
         assert_eq!(inner[&DATA_KV_GROUP_ID].sum_kvs(), 1);
@@ -406,7 +406,7 @@ mod tests {
         let mut keyspace_c = KvGroupChecksum::with_keyspace(b"keyspace");
         keyspace_c.update_one_data_kv(&kv_pair);
         keyspace_c.update_one_index_kv(1, &kv_pair2);
-        let keyspace_inner = keyspace_c.inner_checksums();
+        let keyspace_inner = keyspace_c.get_inner_checksums();
         assert!(inner != keyspace_inner);
 
         // Go passes a nil keyspace here, which is the empty keyspace.
@@ -414,7 +414,7 @@ mod tests {
         c2.update_one_index_kv(1, &kv_pair);
         c2.update_one_index_kv(2, &kv_pair2);
         c.add(&c2);
-        let inner = c.inner_checksums();
+        let inner = c.get_inner_checksums();
         assert_eq!(inner.len(), 3);
         assert_eq!(inner[&1].sum_kvs(), 2);
         assert_eq!(inner[&2].sum_kvs(), 1);

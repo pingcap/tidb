@@ -903,7 +903,7 @@ pub(crate) fn ceil_floor_with_result_domain(
         }
         Datum::Real(f) => Datum::Real(if ceiling { f.ceil() } else { f.floor() }),
         Datum::Float32(f) => Datum::Float32(if ceiling { f.ceil() } else { f.floor() }),
-        // `ceilFunctionClass`/`floorFunctionClass` choose their real
+        // `ceilFunctionClass`/`floorFunctionClass` new_row_sample_collector their real
         // signatures for strings. Preserve the resulting FLOAT type in
         // addition to the numeric-prefix coercion: CEIL('1.23') is 2.0,
         // unlike CEIL(Decimal('1.23')) which has a DECIMAL signature.

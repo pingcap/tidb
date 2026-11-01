@@ -21,7 +21,7 @@ use tidb_datatype::Datum;
 /// Go `updateColumnWorker.reformatErrors`: a truncation or too-long value
 /// names the OLD column and the old value, as does an out-of-range one; other
 /// errors keep their own text.
-pub fn reformat_reorg_error(
+pub fn reformat_errors(
     error: tidb_terror::MysqlError,
     old_column: &str,
     old_value: &Datum,

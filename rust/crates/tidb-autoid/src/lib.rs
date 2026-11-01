@@ -39,7 +39,7 @@
 //! which ids are issued, which explicit value rebases, when the domain is
 //! exhausted -- exist once and be the same rules on both.
 //!
-//! The callers that drive the allocator -- `KvTable::apply_auto_increment`,
+//! The callers that drive the allocator -- `KvTable::adjust_auto_increment_datum`,
 //! `rebase_auto_increment`, `truncate` -- stay with the table in
 //! `tidb-table` (Go `pkg/table/tables`), above this package.
 
@@ -336,7 +336,7 @@ pub const fn headroom(last: u64, unsigned: bool) -> u128 {
 /// modulo the increment. `increment = 6, offset = 6` is not greater, so it
 /// stands and yields `6, 12, 18`.
 #[must_use]
-pub const fn increment_and_offset(increment: u64, offset: u64) -> (u64, u64) {
+pub const fn get_increment_and_offset(increment: u64, offset: u64) -> (u64, u64) {
     if offset > increment {
         (increment, 1)
     } else {
@@ -1003,7 +1003,7 @@ impl CachedAutoIdAllocator {
     /// allocator then never issues twice.
     /// `increment` and `offset` are `@@auto_increment_increment` and
     /// `@@auto_increment_offset` as the caller already resolved them (see
-    /// [`increment_and_offset`]); the default `1, 1` reduces the seek to
+    /// [`get_increment_and_offset`]); the default `1, 1` reduces the seek to
     /// `base + 1`, so the stepped and the ordinary case are the same code.
     pub fn alloc(&self, increment: u64, offset: u64) -> Result<u64, AutoIdError> {
         self.alloc_batch(1, increment, offset)

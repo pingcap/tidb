@@ -56,7 +56,7 @@
 //! That capture defines the metadata target; it does not authorize a live
 //! session path to reuse `ModeNone`. [`build_table_info`] is the explicit
 //! bootstrap/fixture entrypoint, while live callers pass their statement
-//! context through [`build_table_info_with_context`].
+//! context through [`build_table_info_from_ast`].
 //!
 //! **What is refused rather than guessed.** Validity checks Go performs on top
 //! of the metadata (index length limits, too-long identifiers, generated-column
@@ -80,7 +80,7 @@ use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
 // `CREATE TABLE` builder; see `column_field_type`'s module doc for why.
 use crate::column_field_type::{
     build_field_type as build_shared_field_type,
-    process_column_flags, try_auto_convert_too_big_varchar, ColumnTypeError,
+    process_column_flags, check_too_big_field_length_and_try_auto_convert, ColumnTypeError,
 };
 use tidb_hack::GoCaseCompare;
 use tidb_model::column::{
@@ -208,30 +208,30 @@ type Refusal<T> = Result<T, DdlAdmissionError>;
 /// `db_charset`/`db_collate` are the owning database's, which a table with no
 /// charset option of its own inherits. The returned table carries no ID and no
 /// `update_ts`: those belong to the transaction that publishes it. Live DDL
-/// must call [`build_table_info_in_schema`] with the issuing session's
+/// must call [`build_table_info_with_stmt`] with the issuing session's
 /// context instead.
 pub fn build_table_info(
     create: &CreateTableStmt,
     db_charset: &str,
     db_collate: &str,
 ) -> Refusal<TableInfo> {
-    build_table_info_with_context(
+    build_table_info_from_ast(
         create,
         db_charset,
         db_collate,
-        &tidb_metabuild::Context::new_non_strict(),
+        &tidb_metabuild::Context::new_non_strict_context(),
         tidb_vardef::ENABLE_CHECK_CONSTRAINT.load(Ordering::SeqCst),
     )
 }
 
 /// Go `BuildTableInfoFromAST` -> `buildTableInfoWithCheck` under `context`:
-/// [`build_table_info_in_schema`] (`BuildTableInfoWithStmt`), then
+/// [`build_table_info_with_stmt`] (`BuildTableInfoWithStmt`), then
 /// [`check_table_info_valid_with_stmt`] and [`check_table_info_valid_extra`]
 /// -- the statement-free build bootstrap uses for its system tables.
 ///
 /// `enable_check_constraint` is Go's `vardef.EnableCheckConstraint.Load()`
-/// as the caller's node holds it (see [`build_table_info_in_schema`]).
-pub fn build_table_info_with_context(
+/// as the caller's node holds it (see [`build_table_info_with_stmt`]).
+pub fn build_table_info_from_ast(
     create: &CreateTableStmt,
     db_charset: &str,
     db_collate: &str,
@@ -242,7 +242,7 @@ pub fn build_table_info_with_context(
         [schema, _] => schema.clone(),
         _ => String::new(),
     };
-    let tb_info = build_table_info_in_schema(
+    let tb_info = build_table_info_with_stmt(
         create,
         &schema,
         db_charset,
@@ -274,7 +274,7 @@ pub fn build_table_info_with_context(
 /// which `buildTableInfo` and `columnDefToCol` read. This port keeps that
 /// process-wide value per node (`GlobalSysvars::enable_check_constraint`,
 /// which a statement context carries), so the caller supplies it.
-pub fn build_table_info_in_schema(
+pub fn build_table_info_with_stmt(
     create: &CreateTableStmt,
     schema: &str,
     db_charset: &str,
@@ -317,7 +317,7 @@ pub fn build_table_info_in_schema(
 
     // Go `handleTableOptions` validates ENGINE_ATTRIBUTE and its
     // STORAGE_CLASS sugar before it looks at any other option.
-    let engine_attribute = crate::storage_class::engine_attribute_from_table_options(
+    let engine_attribute = crate::storage_class::get_engine_attribute_from_storage_class_table_options(
         &create.table_options,
     )
     .map_err(default_admission_error)?;
@@ -637,7 +637,7 @@ pub fn build_table_info_in_schema(
     }
     if let Some(engine_attribute) = engine_attribute {
         if let Some(settings) =
-            crate::storage_class::storage_class_settings_of(&engine_attribute)
+            crate::storage_class::get_storage_class_settings_from_table_info(&engine_attribute)
                 .map_err(default_admission_error)?
         {
             let (tier, transitions) =
@@ -868,7 +868,7 @@ pub fn set_create_table_split_policies(
 /// built `TableInfo` of a CREATE TABLE -- written out or copied by `LIKE`.
 ///
 /// Two of its steps are enforced where this port builds what they read:
-/// `checkGeneratedColumn` by [`build_table_info_in_schema`]'s generated
+/// `checkGeneratedColumn` by [`build_table_info_with_stmt`]'s generated
 /// column build, and the partition checks (`checkPartitionDefinitionConstraints`,
 /// `rebuildStorageClassForPartitions`, `checkPartitionFuncType`,
 /// `checkPartitioningKeysConstraints`) by its partition build. A `LIKE` copy
@@ -2070,7 +2070,7 @@ pub fn stamp_modified_origin_default(
 /// Go `checkDropColumnForStatePublic`: a NOT NULL column without an origin
 /// default gets one -- `generateOriginDefaultValue(col, nil, true)` -- so a
 /// row written while the column is write-only still reads a value.
-pub fn stamp_dropped_column_origin_default(info: &mut ColumnInfo) -> Refusal<()> {
+pub fn check_drop_column_for_state_public(info: &mut ColumnInfo) -> Refusal<()> {
     if !info.get_origin_default_value().is_nil()
         || !info.field_type.has_flag(FieldTypeFlags::NOT_NULL)
     {
@@ -2089,12 +2089,12 @@ pub fn stamp_dropped_column_origin_default(info: &mut ColumnInfo) -> Refusal<()>
             .set_default_value(tidb_model::GoAny::nil())
             .map_err(|error| DdlAdmissionError::plain(error.to_string()))?;
         probe.default_is_expr = false;
-        stamp_origin_default(&mut probe, &tidb_metabuild::Context::new_non_strict(), true)?;
+        stamp_origin_default(&mut probe, &tidb_metabuild::Context::new_non_strict_context(), true)?;
         info.origin_default_value = probe.origin_default_value.clone();
         info.origin_default_value_bit = probe.origin_default_value_bit.clone();
         return Ok(());
     }
-    stamp_origin_default(info, &tidb_metabuild::Context::new_non_strict(), true)
+    stamp_origin_default(info, &tidb_metabuild::Context::new_non_strict_context(), true)
 }
 
 /// Go `generateOriginDefaultValue`'s `DefaultIsExpr` arm: with
@@ -2400,7 +2400,7 @@ fn build_column_field_type(
     // that carries no charset, so the resolved pair above is only an input.
     let mut field_type = build_field_type(name, &column.ty, &charset, &collate)?;
     if let Some(warning) =
-        try_auto_convert_too_big_varchar(&mut field_type, name, context.get_sql_mode().has_strict_mode())?
+        check_too_big_field_length_and_try_auto_convert(&mut field_type, name, context.get_sql_mode().has_strict_mode())?
     {
         context.append_warning(WarnErr::Terror(
             tidb_dbterror::ERR_AUTO_CONVERT.generate(warning),
@@ -2836,7 +2836,7 @@ fn generated_column_admission_error(
 /// no value and setting `NoDefaultValueFlag`; anything else goes through the
 /// same staging and validation the column's own definition went through, so
 /// an `ALTER` and a `CREATE` cannot disagree about what a spelling means.
-pub fn set_column_default(
+pub fn alter_column(
     name: &str,
     info: &mut ColumnInfo,
     default_value: Option<&Expr>,
@@ -2905,7 +2905,7 @@ pub fn recheck_column_default_in_reorg_context(info: &ColumnInfo) -> Refusal<()>
         value.clone(),
         &info.field_type,
         name,
-        &tidb_metabuild::Context::new_non_strict(),
+        &tidb_metabuild::Context::new_non_strict_context(),
         &zone,
     )
     .map_err(default_admission_error)?;
@@ -2921,7 +2921,7 @@ pub fn recheck_column_default_in_reorg_context(info: &ColumnInfo) -> Refusal<()>
     if info.field_type.has_flag(FieldTypeFlags::NO_DEFAULT_VALUE) {
         return Ok(());
     }
-    crate::column_defaults::validate_column_default(
+    crate::column_defaults::check_default_value(
         &value,
         &info.field_type,
         name,
@@ -3405,7 +3405,7 @@ fn persist_column_default(
                 ));
             }
             let zone = context.get_expr_ctx().get_eval_ctx().time_zone();
-            crate::column_defaults::validate_column_default(
+            crate::column_defaults::check_default_value(
                 &settled.stored,
                 &info.field_type,
                 name,
@@ -3458,7 +3458,7 @@ fn describe_column_option(option: &ColumnOption) -> &'static str {
 /// callers.
 ///
 /// Live statement paths must pass their own context through
-/// [`build_table_info_with_context`]. Keeping this constructor explicit makes
+/// [`build_table_info_from_ast`]. Keeping this constructor explicit makes
 /// the legacy live wrappers deterministic without leaking bootstrap's
 /// `ModeNone` into user DDL.
 pub fn default_ddl_statement_context() -> tidb_sessionctx::StmtContext {

@@ -46,7 +46,7 @@ impl HintsSet {
     /// Go `HintsSet.ContainTableHint`: `HintName.String() == hint`, the
     /// name as written, so a `/*+ USE_PLAN_CACHE() */` written uppercase is
     /// missed by callers that pass the lowercase constant.
-    pub fn contains_table_hint(&self, name: &str) -> bool {
+    pub fn contain_table_hint(&self, name: &str) -> bool {
         self.table_hints
             .iter()
             .flatten()
@@ -290,7 +290,7 @@ pub fn restore_index_hint(hint: &IndexHint) -> String {
 }
 
 /// Go `nodeType4Stmt`.
-pub fn node_type_for_stmt(statement: &Stmt) -> NodeType {
+pub fn node_type_4_stmt(statement: &Stmt) -> NodeType {
     match statement {
         Stmt::Query(_) => NodeType::Select,
         Stmt::Dml(dml) => match dml.as_ref() {
@@ -319,7 +319,7 @@ pub fn parse_hints_set(
     let mut statement = statements.remove(0);
     let mut hints = collect_hint(&statement);
     let query_blocks = QBHintHandler::build(&mut statement);
-    let top_node_type = node_type_for_stmt(&statement);
+    let top_node_type = node_type_4_stmt(&statement);
     for (block_offset, block_hints) in hints.table_hints.iter_mut().enumerate() {
         let mut normalized = Vec::with_capacity(block_hints.len());
         let mut current_offset = block_offset as i32 + 1;
@@ -333,13 +333,13 @@ pub fn parse_hints_set(
                 }
                 continue;
             }
-            if query_blocks.is_hint_for_view(&hint) {
+            if query_blocks.is_hint_4_view(&hint) {
                 normalized.push(hint);
                 continue;
             }
-            let offset = query_blocks.hint_offset(hint_qb_name(&hint), current_offset);
+            let offset = query_blocks.get_hint_offset(hint_qb_name(&hint), current_offset);
             let table_refs = crate::query_block::hint_tables(&hint);
-            if offset < 0 || !query_blocks.tables_have_valid_qb_names(&table_refs) {
+            if offset < 0 || !query_blocks.check_table_qb_name(&table_refs) {
                 return Err(format!(
                     "Unknown query block name in hint {}",
                     restore_table_optimizer_hint(&hint)

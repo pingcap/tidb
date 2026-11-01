@@ -139,14 +139,14 @@ fn vec_group_checker_datarace_owns_variable_length_and_complex_values() {
     for (original, replacement) in cases {
         let field = tidb_datatype::infer_param_type_from_datum(&original);
         let mut checker = VecGroupChecker::new(vec![grouping_column(0, field.clone())]);
-        let mut source = Chunk::new_with_capacity(std::slice::from_ref(&field), 1);
+        let mut source = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 1);
         source.append_datum(0, &original);
         checker
             .split_into_groups(&NoColumns, &source)
             .expect("first key evaluates");
         source.reset();
         source.append_datum(0, &replacement);
-        let mut next = Chunk::new_with_capacity(&[field], 1);
+        let mut next = Chunk::new_chunk_with_capacity(&[field], 1);
         next.append_datum(0, &original);
         assert!(checker
             .split_into_groups(&NoColumns, &next)
@@ -175,7 +175,7 @@ fn vec_group_checker_four_group_count_matrix_matches_go() {
         let mut global_row = 0usize;
         let mut group_count = 0usize;
         for (chunk_index, rows) in chunk_rows.iter().copied().enumerate() {
-            let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), rows);
+            let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), rows);
             for _ in 0..rows {
                 chunk.append_int64(0, (global_row / same_rows) as i64);
                 global_row += 1;
@@ -207,7 +207,7 @@ fn vec_group_checker_matches_collation_and_padding() {
     ] {
         let field = FieldType::new(FieldTypeCode::Varchar).with_collation(collation);
         let mut checker = VecGroupChecker::new(vec![grouping_column(0, field.clone())]);
-        let mut input = Chunk::new_with_capacity(&[field], 6);
+        let mut input = Chunk::new_chunk_with_capacity(&[field], 6);
         for value in ["aaa", "AAA", "😜", "😃", "À", "A"] {
             input.append_string(0, value);
         }
@@ -220,7 +220,7 @@ fn vec_group_checker_matches_collation_and_padding() {
         .with_collation(Collation::Utf8Mb4Bin)
         .with_flen(6);
     let mut checker = VecGroupChecker::new(vec![grouping_column(0, field.clone())]);
-    let mut input = Chunk::new_with_capacity(&[field], 3);
+    let mut input = Chunk::new_chunk_with_capacity(&[field], 3);
     for value in ["a", "a  ", "a    "] {
         input.append_string(0, value);
     }
@@ -238,7 +238,7 @@ fn vec_group_checker_matches_collation_and_padding() {
 fn issue_53867_reset_discards_unconsumed_groups() {
     let field = FieldType::new(FieldTypeCode::LongLong);
     let mut checker = VecGroupChecker::new(vec![grouping_column(0, field.clone())]);
-    let mut input = Chunk::new_with_capacity(&[field], 2);
+    let mut input = Chunk::new_chunk_with_capacity(&[field], 2);
     input.append_int64(0, 1);
     input.append_int64(0, 2);
     checker

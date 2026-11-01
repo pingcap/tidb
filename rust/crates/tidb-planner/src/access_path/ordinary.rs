@@ -52,7 +52,7 @@ pub(crate) fn fill_index_path(
     prefix_single_scan: bool,
     correlated_access: bool,
 ) -> Result<FilledIndexPath, PlanError> {
-    let mut full_columns = source.declared_index_columns(index);
+    let mut full_columns = source.index_info_2_full_cols(index);
     let mut columns = full_columns
         .iter()
         .map_while(Clone::clone)

@@ -416,7 +416,7 @@ fn type_chunk_rows_use_the_complete_chunk_datum_domain() {
     ];
     let json = BinaryJSON::parse(r#"{"n":7}"#).unwrap();
     let vector = VectorFloat32::must_create(vec![-1.25, 0.0, 3.5]);
-    let mut decoded = DecodedChunk::new_with_capacity(&fields, 2);
+    let mut decoded = DecodedChunk::new_chunk_with_capacity(&fields, 2);
     decoded.append_json(0, &json);
     decoded.append_vector_float32(1, &vector);
     decoded.append_null(0);

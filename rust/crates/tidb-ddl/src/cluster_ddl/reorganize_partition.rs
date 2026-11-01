@@ -21,7 +21,7 @@
 //! into the new partitions and their indexes built) -> delete-reorganization
 //! -> public -> none, DML double writing both partition sets meanwhile.
 
-use super::add_index::{action_step, job_batch_size, load_reorg_handle, reorg_step, reorg_sub_job, table_step_with_diff, AddIndexReorg, AddIndexSubmission, PartitionReorgPhase, ReorgOutcome, ReorgResult, ReorgStageRequest, COLUMN_ELEMENT_KEY};
+use super::add_index::{action_step, job_batch_size, get_ddl_reorg_handle, reorg_step, reorg_sub_job, table_step_with_diff, AddIndexReorg, AddIndexSubmission, PartitionReorgPhase, ReorgOutcome, ReorgResult, ReorgStageRequest, COLUMN_ELEMENT_KEY};
 use tidb_ddl_build::session_pool::ReorgSessionVars;
 use super::*;
 use tidb_hack::GoCaseCompare;
@@ -128,7 +128,7 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
             &mut host,
         ),
         tidb_ast::AlterPartitionAction::Repartition(partitioning) => {
-            tidb_ddl_build::partition_ddl::plan_alter_table_partitioning(
+            tidb_ddl_build::partition_ddl::alter_table_partitioning(
                 &kv,
                 partitioning,
                 &ctx,
@@ -139,7 +139,7 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
             tidb_ddl_build::partition_ddl::plan_remove_partitioning(&kv)
         }
         tidb_ast::AlterPartitionAction::Coalesce { count, .. } => {
-            tidb_ddl_build::partition_ddl::plan_hash_partition_management(
+            tidb_ddl_build::partition_ddl::hash_partition_management(
                 &kv,
                 tidb_ddl_build::partition_ddl::HashManagement::Coalesce(*count),
                 &ctx,
@@ -161,7 +161,7 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
                     }
                 }
             };
-            tidb_ddl_build::partition_ddl::plan_hash_partition_management(
+            tidb_ddl_build::partition_ddl::hash_partition_management(
                 &kv, change, &ctx, &mut host,
             )
         }
@@ -518,7 +518,7 @@ fn reorg_table_step(
 }
 
 /// Go `onReorganizePartition`.
-pub(super) fn plan_persisted_reorganize_partition_job_step<S: MetaSnapshot>(
+pub(super) fn on_reorganize_partition<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
@@ -612,7 +612,7 @@ pub(super) fn plan_persisted_reorganize_partition_job_step<S: MetaSnapshot>(
                 partition.dropping_definitions = dropping.into();
             }
             for definition in &adding {
-                alter_table::check_placement_policy_ref_valid(
+                alter_table::check_placement_policy_ref_valid_and_can_non_valid_job(
                     snapshot,
                     &definition.placement_policy_ref,
                 )
@@ -917,7 +917,7 @@ pub(super) fn plan_persisted_reorganize_partition_job_step<S: MetaSnapshot>(
                         )
                     }
                     ActionType::ACTION_ALTER_TABLE_PARTITIONING => {
-                        SchemaChangeEvent::add_partitioning(
+                        SchemaChangeEvent::new_add_partitioning_event(
                             old_table_id,
                             info.clone_like_go(),
                             event_partition_info(added),
@@ -1096,7 +1096,7 @@ fn do_partition_reorg_work<S: MetaSnapshot>(
             ))))
         }
         None | Some((ReorgResult::Interrupted, _)) => {
-            let handle = load_reorg_handle(snapshot, catalog, active)?;
+            let handle = get_ddl_reorg_handle(snapshot, catalog, active)?;
             // The handle names the phase it is in.
             let adding = phase_scope(info, PartitionReorgPhase::AddingIndexes).0;
             let phase = if handle.element_type == COLUMN_ELEMENT_KEY {
@@ -1258,7 +1258,7 @@ fn rollback_reorganize_partition_with_err(
 
 /// Go `onRollbackReorganizePartition`: past public the old indexes are being
 /// destroyed, so the job rolls on.
-pub(super) fn plan_cancel_reorganize_partition(
+pub(super) fn on_rollback_reorganize_partition(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,

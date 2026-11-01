@@ -282,7 +282,7 @@ fn merge_join_child_props(
 
 /// Go `getHashJoins`: shared build-side enumeration after resolving hints
 /// and whether the selected runtime supports building a semi join's outer side.
-pub(crate) fn hash_join_shapes(
+pub(crate) fn get_hash_joins(
     join_type: LogicalJoinType,
     force_left: bool,
     force_right: bool,
@@ -728,7 +728,7 @@ fn hash_join_candidates(
     // rather than the 1.5M orders). A forced build side (already resolved
     // by `resolve_hash_join_hints`) enumerates only its own shapes.
     let semi_outer_build = semi_outer_build(join, use_hash_join_v2);
-    for shape in hash_join_shapes(join.join_type, force_left, force_right, semi_outer_build) {
+    for shape in get_hash_joins(join.join_type, force_left, force_right, semi_outer_build) {
         if let Some(runtime) = &prop.index_join_prop {
             // Go `getHashJoin`: for a parent index-join runtime property,
             // enumerate one candidate per child that may contain the target

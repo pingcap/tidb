@@ -125,7 +125,7 @@ pub fn prepare_alter_schema_job_submission<S: MetaSnapshot>(
 }
 
 /// Go `onModifySchemaCharsetAndCollate` / `onModifySchemaDefaultPlacement`.
-pub(super) fn plan_persisted_alter_schema_job_step<S: MetaSnapshot>(
+pub(super) fn on_modify_schema_charset_and_collate<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,

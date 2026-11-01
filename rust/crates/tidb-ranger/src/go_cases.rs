@@ -2456,7 +2456,7 @@ fn append_ranges_to_point_ranges_matches_go() {
         int_range(&[50, 70], &[50, 80]),
     ];
     let (appended, fallback) =
-        super::ranger::append_ranges_to_point_ranges(point_ranges, &tail_ranges, 0);
+        super::ranger::append_ranges_2_point_ranges(point_ranges, &tail_ranges, 0);
     assert!(!fallback);
     assert_eq!(
         ranges_to_go_string(&appended),

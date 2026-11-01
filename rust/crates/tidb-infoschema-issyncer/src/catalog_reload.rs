@@ -195,7 +195,7 @@ fn read_schema_diff<S: MetaSnapshot>(
     let Some(stored) = snapshot.get(&key::schema_diff_kv_key(version))? else {
         return Ok(None);
     };
-    value::parse_schema_diff(&stored)
+    value::get_schema_diff(&stored)
         .map_err(|error| ClusterCatalogError::Decode(format!("Diff:{version}: {error}")))
 }
 
@@ -430,7 +430,7 @@ fn apply_schema_diff<S: MetaSnapshot>(
             let Some(stored) = snapshot.get(&key::policy_kv_key(diff.schema_id))? else {
                 return Ok(Err(missing(version, format!("policy {}", diff.schema_id))));
             };
-            let policy = value::parse_policy_info(&stored)
+            let policy = value::list_policies(&stored)
                 .map_err(|error| ClusterCatalogError::Decode(format!("PolicyInfo: {error}")))?;
             catalog.policies.retain(|existing| existing.id != policy.id);
             catalog.policies.push(policy);

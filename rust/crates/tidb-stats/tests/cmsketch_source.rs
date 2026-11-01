@@ -27,11 +27,11 @@ use chrono::Utc;
 use tidb_datatype::Datum;
 use tidb_stats::cmsketch::encode_integer_datum_value;
 use tidb_stats::{
-    cmsketch_and_topn_from_proto, decode_cmsketch,
+    cm_sketch_and_top_n_from_proto, decode_cmsketch,
     decode_cmsketch_and_embedded_topn, decode_cmsketch_and_topn, encode_cmsketch_and_topn,
-    encode_cmsketch_without_topn, find_topn, get_merged_topn_from_sorted_slice, hash_bytes,
+    encode_cmsketch_without_topn, find_top_n, get_merged_topn_from_sorted_slice, hash_bytes,
     merge_topn, merge_topn_and_update_cmsketch, new_cmsketch_and_topn,
-    new_cmsketch_and_topn_with_tie_stabilization, query_topn, query_value, sort_topn_meta,
+    new_cmsketch_and_topn_with_tie_stabilization, query_top_n, query_value, sort_topn_meta,
     topn_between_count, topn_decoded_string, topn_display_string, topn_lower_bound,
     topn_meta_compare, topn_min_count, topn_total_count, CmsSketch, CmsSketchProto,
     CmsSketchProtoRow, CmsSketchProtoTopN, CodecError, Hash128, MergeError, SharedTopNBytes, TopN,
@@ -909,25 +909,25 @@ fn source_merge_requires_equal_dimensions_and_clone_is_deep() {
 
 #[test]
 fn source_topn_lookup_and_between_count_preserve_nil_and_lower_bound_contract() {
-    assert_eq!(query_topn(None, b"a"), None);
-    assert_eq!(find_topn(None, b"a"), None);
+    assert_eq!(query_top_n(None, b"a"), None);
+    assert_eq!(find_top_n(None, b"a"), None);
     assert_eq!(topn_lower_bound(None, b"a"), (0, false));
     assert_eq!(topn_between_count(None, b"a", b"z"), 0);
 
     let empty = TopN::new(0);
-    assert_eq!(find_topn(Some(&empty), b"a"), None);
+    assert_eq!(find_top_n(Some(&empty), b"a"), None);
     assert_eq!(topn_lower_bound(Some(&empty), b"a"), (0, false));
     assert_eq!(topn_between_count(Some(&empty), b"a", b"z"), 0);
 
     let mut singleton = TopN::new(1);
     singleton.append(b"m", 11);
-    assert_eq!(find_topn(Some(&singleton), b"m"), Some(0));
-    assert_eq!(find_topn(Some(&singleton), b"l"), None);
-    assert_eq!(query_topn(Some(&singleton), b"m"), Some(11));
+    assert_eq!(find_top_n(Some(&singleton), b"m"), Some(0));
+    assert_eq!(find_top_n(Some(&singleton), b"l"), None);
+    assert_eq!(query_top_n(Some(&singleton), b"m"), Some(11));
 
     let mut zero_count = TopN::new(1);
     zero_count.append(b"q", 0);
-    assert_eq!(query_topn(Some(&zero_count), b"q"), Some(0));
+    assert_eq!(query_top_n(Some(&zero_count), b"q"), Some(0));
 
     let mut topn = TopN::new(3);
     topn.append(b"d", 4);
@@ -935,12 +935,12 @@ fn source_topn_lookup_and_between_count_preserve_nil_and_lower_bound_contract() 
     topn.append(b"f", 8);
     topn.sort();
 
-    assert_eq!(find_topn(Some(&topn), b"a"), None);
-    assert_eq!(find_topn(Some(&topn), b"z"), None);
-    assert_eq!(find_topn(Some(&topn), b"c"), None);
-    assert_eq!(find_topn(Some(&topn), b"d"), Some(1));
-    assert_eq!(query_topn(Some(&topn), b"d"), Some(4));
-    assert_eq!(query_topn(Some(&topn), b"missing"), None);
+    assert_eq!(find_top_n(Some(&topn), b"a"), None);
+    assert_eq!(find_top_n(Some(&topn), b"z"), None);
+    assert_eq!(find_top_n(Some(&topn), b"c"), None);
+    assert_eq!(find_top_n(Some(&topn), b"d"), Some(1));
+    assert_eq!(query_top_n(Some(&topn), b"d"), Some(4));
+    assert_eq!(query_top_n(Some(&topn), b"missing"), None);
     assert_eq!(topn_lower_bound(Some(&topn), b"d"), (1, true));
     assert_eq!(topn_lower_bound(Some(&topn), b"c"), (1, false));
 
@@ -950,8 +950,8 @@ fn source_topn_lookup_and_between_count_preserve_nil_and_lower_bound_contract() 
     duplicates.append(b"a", 3);
     duplicates.append(b"b", 4);
     assert_eq!(topn_lower_bound(Some(&duplicates), b"a"), (0, true));
-    assert_eq!(find_topn(Some(&duplicates), b"a"), Some(0));
-    assert_eq!(query_topn(Some(&duplicates), b"a"), Some(1));
+    assert_eq!(find_top_n(Some(&duplicates), b"a"), Some(0));
+    assert_eq!(query_top_n(Some(&duplicates), b"a"), Some(1));
     assert_eq!(topn_between_count(Some(&duplicates), b"a", b"b"), 6);
     assert_eq!(topn_between_count(Some(&duplicates), b"b", b"b"), 0);
     assert_eq!(topn_between_count(Some(&duplicates), b"b", b"a"), 0);
@@ -1131,7 +1131,7 @@ fn source_topn_sort_matches_go_1_25_10_pdqsort_duplicate_permutations() {
 fn source_append_topn_aliases_the_callers_bytes() {
     let encoded: SharedTopNBytes = Arc::new(RwLock::new(b"a".to_vec()));
     let mut topn = TopN::new(1);
-    topn.append_shared(Arc::clone(&encoded), 5);
+    topn.append_top_n(Arc::clone(&encoded), 5);
     topn.sort();
     assert_eq!(topn.query_bytes(b"a"), Some(5));
 
@@ -1353,9 +1353,9 @@ fn cmsketch_proto_small_vectors_and_nil_message_match_generated_go_wire() {
 
 #[test]
 fn source_cmsketch_and_topn_from_proto_preserves_graph_and_ordering_semantics() {
-    assert_eq!(cmsketch_and_topn_from_proto(None), (None, None));
+    assert_eq!(cm_sketch_and_top_n_from_proto(None), (None, None));
     assert_eq!(
-        cmsketch_and_topn_from_proto(Some(&CmsSketchProto {
+        cm_sketch_and_top_n_from_proto(Some(&CmsSketchProto {
             rows: Some(Vec::new()),
             top_n: Some(Vec::new()),
             default_value: 9,
@@ -1380,7 +1380,7 @@ fn source_cmsketch_and_topn_from_proto_preserves_graph_and_ordering_semantics() 
         top_n: Some(proto_topn),
         default_value: 7,
     };
-    let (sketch, topn) = cmsketch_and_topn_from_proto(Some(&no_rows));
+    let (sketch, topn) = cm_sketch_and_top_n_from_proto(Some(&no_rows));
     assert!(sketch.is_none());
     let topn = topn.expect("TopN is converted before the empty-row return");
     assert_eq!(
@@ -1414,7 +1414,7 @@ fn source_cmsketch_and_topn_from_proto_preserves_graph_and_ordering_semantics() 
         ]),
         default_value: 0,
     };
-    let (_, normalized) = cmsketch_and_topn_from_proto(Some(&nil_and_empty_data));
+    let (_, normalized) = cm_sketch_and_top_n_from_proto(Some(&nil_and_empty_data));
     let normalized = normalized.expect("two TopN entries");
     assert_eq!(
         normalized
@@ -1444,7 +1444,7 @@ fn source_cmsketch_and_topn_from_proto_preserves_graph_and_ordering_semantics() 
         top_n: None,
         default_value: 9,
     };
-    let (sketch, topn) = cmsketch_and_topn_from_proto(Some(&rows));
+    let (sketch, topn) = cm_sketch_and_top_n_from_proto(Some(&rows));
     assert!(topn.is_none());
     let sketch = sketch.expect("rows reconstruct a sketch");
     assert_eq!((sketch.depth(), sketch.width()), (2, 2));
@@ -1455,7 +1455,7 @@ fn source_cmsketch_and_topn_from_proto_preserves_graph_and_ordering_semantics() 
     assert_eq!(sketch.total_count(), 3);
     assert_eq!(sketch.default_value(), 9);
 
-    let empty_row = cmsketch_and_topn_from_proto(Some(&CmsSketchProto {
+    let empty_row = cm_sketch_and_top_n_from_proto(Some(&CmsSketchProto {
         rows: Some(vec![Some(CmsSketchProtoRow { counters: None })]),
         top_n: None,
         default_value: 7,
@@ -1477,14 +1477,14 @@ fn source_cmsketch_and_topn_from_proto_preserves_graph_and_ordering_semantics() 
         top_n: None,
         default_value: 0,
     };
-    assert!(std::panic::catch_unwind(|| cmsketch_and_topn_from_proto(Some(&longer))).is_err());
+    assert!(std::panic::catch_unwind(|| cm_sketch_and_top_n_from_proto(Some(&longer))).is_err());
 
     let nil_elements = CmsSketchProto {
         rows: Some(vec![None]),
         top_n: Some(vec![None]),
         default_value: 0,
     };
-    let panic = std::panic::catch_unwind(|| cmsketch_and_topn_from_proto(Some(&nil_elements)))
+    let panic = std::panic::catch_unwind(|| cm_sketch_and_top_n_from_proto(Some(&nil_elements)))
         .expect_err("TopN nil element panics before the row nil element");
     let message = panic
         .downcast_ref::<&str>()
@@ -1501,7 +1501,7 @@ fn source_cmsketch_and_topn_from_proto_preserves_graph_and_ordering_semantics() 
         default_value: 0,
     };
     let panic =
-        std::panic::catch_unwind(|| cmsketch_and_topn_from_proto(Some(&nil_row_after_topn)))
+        std::panic::catch_unwind(|| cm_sketch_and_top_n_from_proto(Some(&nil_row_after_topn)))
             .expect_err("row nil element panics after TopN construction");
     let message = panic
         .downcast_ref::<&str>()
@@ -1519,7 +1519,7 @@ fn source_cmsketch_and_topn_from_proto_preserves_graph_and_ordering_semantics() 
         top_n: None,
         default_value: 0,
     };
-    let panic = std::panic::catch_unwind(|| cmsketch_and_topn_from_proto(Some(&nil_second_row)))
+    let panic = std::panic::catch_unwind(|| cm_sketch_and_top_n_from_proto(Some(&nil_second_row)))
         .expect_err("later nil row panics after allocating and filling earlier rows");
     let message = panic
         .downcast_ref::<&str>()

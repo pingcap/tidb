@@ -1615,7 +1615,7 @@ fn insert_values_are_expressions_over_the_target() {
         let insert = parse(sql);
         let mut builder = harness.builder().with_insert_default_evaluator(&default);
         let target = builder.resolve_insert_target(&insert)?;
-        let values = builder.build_insert_values(&insert, &target)?;
+        let values = builder.build_values_list_of_insert(&insert, &target)?;
         Ok::<_, tidb_planner_core_base::PlanError>((target, values))
     };
     let harness = Harness::new();
@@ -1674,7 +1674,7 @@ fn insert_on_duplicate_assignments_resolve_over_schema4_on_duplicate() {
         let insert = parse(sql);
         let mut builder = harness.builder().with_default_evaluator(&default);
         let target = builder.resolve_insert_target(&insert)?;
-        builder.build_on_duplicate(&insert, &target, None)
+        builder.resolve_on_duplicate(&insert, &target, None)
     };
     let harness = Harness::new();
     let assigns = build(
@@ -1796,7 +1796,7 @@ fn insert_on_duplicate_columns_follow_the_resolved_assignments() {
     let builder = generated.builder();
     let target = builder.resolve_insert_target(&insert).unwrap();
     assert_eq!(
-        builder.on_duplicate_columns(&insert, &target).unwrap(),
+        builder.build_on_duplicate_update_columns(&insert, &target).unwrap(),
         vec!["b".to_owned()]
     );
 }

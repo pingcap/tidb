@@ -372,7 +372,7 @@ pub fn new_function_impl(
         )?;
     }
     if let Some(derived) = &derived {
-        function.args = crate::rewriter::wrap_binary_literals(
+        function.args = crate::rewriter::handle_binary_literal(
             func_name,
             &derived.charset,
             &derived.collation,

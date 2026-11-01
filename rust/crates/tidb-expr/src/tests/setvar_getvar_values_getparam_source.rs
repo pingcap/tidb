@@ -392,7 +392,7 @@ fn setvar_from_column_snapshots_the_row_value() {
 
     let build_chunk = |value: &str| {
         let mut chunk =
-            tidb_chunk::chunk::Chunk::new_with_capacity(std::slice::from_ref(&string_ft()), 1);
+            tidb_chunk::chunk::Chunk::new_chunk_with_capacity(std::slice::from_ref(&string_ft()), 1);
         chunk.append_datum(0, &Datum::new_string(value.to_owned()));
         chunk
     };

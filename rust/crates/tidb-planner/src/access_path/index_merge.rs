@@ -23,7 +23,7 @@ use tidb_expr::expression::Expression;
 
 /// Go `isInIndexMergeHints`. Go passes the index's `Name.L` and compares
 /// with `strings.EqualFold` against each hint name as written.
-pub(crate) fn index_merge_hint_allows(ds: &DataSource, index_name: &str) -> bool {
+pub(crate) fn is_in_index_merge_hints(ds: &DataSource, index_name: &str) -> bool {
     if ds.index_merge_hints.is_empty() {
         return true;
     }
@@ -40,7 +40,7 @@ pub(crate) fn index_merge_hint_allows(ds: &DataSource, index_name: &str) -> bool
 /// Go `isSpecifiedInIndexMergeHints`: the normal-index intersection path only
 /// considers indexes named by a USE_INDEX_MERGE hint, even if another merge
 /// hint has no explicit index list.
-pub(crate) fn index_merge_hint_specifies(ds: &DataSource, index_name: &str) -> bool {
+pub(crate) fn is_specified_in_index_merge_hints(ds: &DataSource, index_name: &str) -> bool {
     let index_name = tidb_mysql::to_lowercase(index_name);
     ds.index_merge_hints.iter().any(|hint| {
         !hint.index_names.is_empty()
@@ -137,7 +137,7 @@ fn prepare_union_index_merge_path_for_or(
             } if ds.is_common_handle => Some(Some(primary)),
             _ => None,
         });
-        if let Some(primary) = table_primary.filter(|_| index_merge_hint_allows(ds, "primary")) {
+        if let Some(primary) = table_primary.filter(|_| is_in_index_merge_hints(ds, "primary")) {
             let primary_index = primary;
             let collected = collect_unfinished_filters(ds, primary_index, disjunct, ctx);
             if let Some((mut usable, keep_branch_filter)) = collected {
@@ -212,21 +212,21 @@ fn prepare_union_index_merge_path_for_or(
                 continue;
             }
             if source_index.read().mv_index {
-                if !index_merge_hint_allows(ds, source_index.read().name.original()) {
+                if !is_in_index_merge_hints(ds, source_index.read().name.original()) {
                     continue;
                 }
                 // Go initUnfinishedPathsFromExpr, then handleTopLevelANDList,
                 // then buildIntoAccessPath, for an MV candidate.
                 let Some(mut unfinished) =
-                    super::mv_index::init_unfinished_mv_path(ds, ctx, source_index, disjunct)
+                    super::mv_index::init_unfinished_paths_from_expr(ds, ctx, source_index, disjunct)
                 else {
                     continue;
                 };
                 for filter in &table_filters {
                     if let Some(item) =
-                        super::mv_index::init_unfinished_mv_path(ds, ctx, source_index, filter)
+                        super::mv_index::init_unfinished_paths_from_expr(ds, ctx, source_index, filter)
                     {
-                        unfinished.merge_and_item(item);
+                        unfinished.merge_and_item_into_unfinished_index_merge_path(item);
                     }
                 }
                 if let Some((paths, keep_source_filter)) = super::mv_index::build_mv_alternative(
@@ -250,7 +250,7 @@ fn prepare_union_index_merge_path_for_or(
             if source_index.read().primary && (ds.handle_is_int || ds.is_common_handle) {
                 continue;
             }
-            if !index_merge_hint_allows(ds, source_index.read().name.original()) {
+            if !is_in_index_merge_hints(ds, source_index.read().name.original()) {
                 continue;
             }
             let Some((mut usable, keep_branch_filter)) =
@@ -637,7 +637,7 @@ pub(super) fn estimate_index_ranges(
 }
 
 /// Go `generateNormalIndexPartialPath4And`.
-pub(crate) fn generate_normal_index_partial_paths_for_and(
+pub(crate) fn generate_normal_index_partial_path_4_and(
     ds: &DataSource,
     ctx: &AccessPathDerivationContext<'_>,
     used_access: &mut std::collections::HashMap<Vec<u8>, Expression>,
@@ -651,7 +651,7 @@ pub(crate) fn generate_normal_index_partial_paths_for_and(
 /// ordinary indexes. Composed with MV partials (`used_access` non-empty), a
 /// path whose access conditions an MV partial already covers is skipped and
 /// one path suffices.
-pub(crate) fn prepare_intersection_index_merge_path(
+pub(crate) fn generate_and_index_merge_4_normal_index(
     ds: &DataSource,
     ctx: &AccessPathDerivationContext<'_>,
     use_plan_cache: bool,
@@ -688,7 +688,7 @@ fn generate_and_index_merge_for_normal_index(
         if index.read().mv_index
             || index.read().is_columnar_index()
             || !index.read().condition_expr_string.is_empty()
-            || !index_merge_hint_specifies(ds, index.read().name.original())
+            || !is_specified_in_index_merge_hints(ds, index.read().name.original())
         {
             continue;
         }

@@ -30,7 +30,7 @@ use tidb_vardef::txn_mode::{txn_mode_variable, SessionTxnMode};
 /// from TiDB: with `tidb_txn_mode = 'optimistic'`, `BEGIN PESSIMISTIC` still
 /// takes row locks, and vice versa.
 #[must_use]
-pub fn txn_mode_for_begin(mode: TransactionMode, txn_mode_var: &str) -> SessionTxnMode {
+pub fn new_provider_with_request(mode: TransactionMode, txn_mode_var: &str) -> SessionTxnMode {
     match mode {
         TransactionMode::Optimistic => SessionTxnMode::Optimistic,
         TransactionMode::Pessimistic => SessionTxnMode::Pessimistic,
@@ -94,7 +94,7 @@ pub fn txn_mode_for_statement(inputs: StatementTxnModeInputs<'_>) -> SessionTxnM
 
 #[cfg(test)]
 mod tests {
-    use super::{txn_mode_for_begin, txn_mode_for_statement, StatementTxnModeInputs};
+    use super::{new_provider_with_request, txn_mode_for_statement, StatementTxnModeInputs};
     use tidb_vardef::txn_mode::SessionTxnMode;
     use tidb_ast::TransactionMode;
 
@@ -111,19 +111,19 @@ mod tests {
     #[test]
     fn an_explicit_begin_mode_overrides_the_variable() {
         assert_eq!(
-            txn_mode_for_begin(TransactionMode::Pessimistic, "optimistic"),
+            new_provider_with_request(TransactionMode::Pessimistic, "optimistic"),
             SessionTxnMode::Pessimistic
         );
         assert_eq!(
-            txn_mode_for_begin(TransactionMode::Optimistic, "pessimistic"),
+            new_provider_with_request(TransactionMode::Optimistic, "pessimistic"),
             SessionTxnMode::Optimistic
         );
         assert_eq!(
-            txn_mode_for_begin(TransactionMode::Default, "pessimistic"),
+            new_provider_with_request(TransactionMode::Default, "pessimistic"),
             SessionTxnMode::Pessimistic
         );
         assert_eq!(
-            txn_mode_for_begin(TransactionMode::Default, ""),
+            new_provider_with_request(TransactionMode::Default, ""),
             SessionTxnMode::Optimistic
         );
     }

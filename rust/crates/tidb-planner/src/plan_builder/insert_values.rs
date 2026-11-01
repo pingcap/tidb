@@ -257,7 +257,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// Go `buildValuesListOfInsert`: the arity checks and every value
     /// rewritten as `getInsertColExpr` does. An uncorrelated scalar subquery
     /// is evaluated here, while the INSERT is planned.
-    pub fn build_insert_values(
+    pub fn build_values_list_of_insert(
         &mut self,
         insert: &InsertStmt,
         target: &InsertTarget,
@@ -275,7 +275,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 )
             })?
             .clone();
-        let (schema, names) = self.insert_mock_schema(target);
+        let (schema, names) = self.table_info_2_schema_and_names(target);
         let mut values = InsertValues::default();
         let mut previous_width = target.offsets.len();
         for (index, row) in insert.rows.iter().enumerate() {
@@ -308,7 +308,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     }
 
     /// Go `TableInfo2SchemaAndNames`, as `mockTablePlan` carries it.
-    pub(super) fn insert_mock_schema(&self, target: &InsertTarget) -> (Schema, Vec<FieldName>) {
+    pub(super) fn table_info_2_schema_and_names(&self, target: &InsertTarget) -> (Schema, Vec<FieldName>) {
         let mut schema = Schema::default();
         let mut names = Vec::with_capacity(target.columns.len());
         for (name, field_type) in &target.columns {

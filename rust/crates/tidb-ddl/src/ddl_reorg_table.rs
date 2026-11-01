@@ -119,7 +119,7 @@ impl DdlReorgTable {
     }
 
     /// Go `initDDLReorgHandle`: the job's rows replaced by one at `row_id`.
-    pub fn init_mutations(
+    pub fn init_ddl_reorg_handle(
         &self,
         existing: &[StoredReorgRow],
         job_id: i64,
@@ -162,7 +162,7 @@ impl DdlReorgTable {
     }
 
     /// Go `updateDDLReorgHandle`: the row's element, keys and physical table.
-    pub fn update_mutation(
+    pub fn update_ddl_reorg_handle(
         &self,
         row: &StoredReorgRow,
         handle: &ReorgHandle,

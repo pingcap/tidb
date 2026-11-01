@@ -101,7 +101,7 @@ fn eval_in_column(j: Option<&str>, vc: Option<&str>) -> Result<Datum, EvalError>
     )?;
     let json_ft = FieldType::new(FieldTypeCode::Json);
     let var_ft = FieldType::new(FieldTypeCode::VarString);
-    let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(&[json_ft, var_ft], 1);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[json_ft, var_ft], 1);
     match j {
         // A document inserted into a JSON column arrives pre-parsed; an
         // invalid document could never have entered this column at all.

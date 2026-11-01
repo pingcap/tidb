@@ -113,7 +113,7 @@ impl Index {
     }
 
     /// Go `PrefixContain`: whether `other` is a prefix of this index.
-    pub(crate) fn prefix_contains(&self, other: &Self) -> bool {
+    pub(crate) fn prefix_contain(&self, other: &Self) -> bool {
         if self.schema_name != other.schema_name
             || self.table_name != other.table_name
             || self.columns.len() < other.columns.len()

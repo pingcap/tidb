@@ -238,7 +238,7 @@ fn test_eval_expr_column_projected_through_both_modes_agrees() {
     ];
 
     for (index, (field_type, filler)) in cases.iter().enumerate() {
-        let mut input = Chunk::new_with_capacity(std::slice::from_ref(field_type), ROWS);
+        let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(field_type), ROWS);
         filler(&mut input);
 
         // The projected expression: Column{Index: 0} typed by eType2FieldType.
@@ -251,8 +251,8 @@ fn test_eval_expr_column_projected_through_both_modes_agrees() {
         let transfer_suite = EvaluatorSuite::new(vec![expression.clone()], false);
         let cell_by_cell_suite = EvaluatorSuite::new(vec![expression], true);
 
-        let mut transferred = Chunk::new_with_capacity(std::slice::from_ref(field_type), ROWS);
-        let mut recalculated = Chunk::new_with_capacity(std::slice::from_ref(field_type), ROWS);
+        let mut transferred = Chunk::new_chunk_with_capacity(std::slice::from_ref(field_type), ROWS);
+        let mut recalculated = Chunk::new_chunk_with_capacity(std::slice::from_ref(field_type), ROWS);
         transfer_suite
             .run(&NoColumns, &mut input.clone(), &mut transferred)
             .expect("transfer evaluation must succeed");

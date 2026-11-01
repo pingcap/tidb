@@ -579,7 +579,7 @@ fn decimal_comparison(
     };
     let literal_operand = DecimalPbOperand::Literal {
         value: value.clone(),
-        field_type: tidb_expr::pushdown_catalog::field_type_to_pb(&comparison.literal_type)
+        field_type: tidb_expr::pushdown_catalog::to_pb_field_type(&comparison.literal_type)
             .ok_or(WideScanSelectionError::UnsupportedLiteral { offset })?,
     };
     let (lhs, rhs) = if comparison.column_on_left {
@@ -617,7 +617,7 @@ fn time_comparison(
     };
     let literal_operand = TimePbOperand::Literal {
         value: *value,
-        field_type: tidb_expr::pushdown_catalog::field_type_to_pb(&comparison.literal_type)
+        field_type: tidb_expr::pushdown_catalog::to_pb_field_type(&comparison.literal_type)
             .ok_or(WideScanSelectionError::UnsupportedLiteral { offset })?,
     };
     let (lhs, rhs) = if comparison.column_on_left {
@@ -654,7 +654,7 @@ fn scan_field_type(
         .with_decimal(i64::from(column.decimal))
         .with_charset_name(charset)
         .with_collation_name(collation);
-    tidb_expr::pushdown_catalog::field_type_to_pb(&field_type)
+    tidb_expr::pushdown_catalog::to_pb_field_type(&field_type)
         .ok_or(WideScanSelectionError::UnsupportedColumnType { offset })
 }
 

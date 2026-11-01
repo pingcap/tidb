@@ -366,7 +366,7 @@ pub struct ScalarFunction {
     json_modify_path_cache:
         crate::builtin_ext::BuiltinFuncCache<Option<Vec<tidb_datatype::JSONPathExpression>>>,
     find_in_set_cache: crate::builtin_ext::BuiltinFuncCache<crate::builtin_ext::FindInSetLookup>,
-    regexp_cache: crate::builtin_ext::BuiltinFuncCache<crate::regexp::CachedRegexp>,
+    regexp_cache: crate::builtin_ext::BuiltinFuncCache<crate::regexp::RegexpMemorizedSig>,
     regexp_replace_instruction_cache:
         crate::builtin_ext::BuiltinFuncCache<Vec<crate::builtin_ext::regexp::ReplacementPart>>,
     like_pattern_cache: crate::builtin_ext::BuiltinFuncCache<crate::like::CompiledLikePattern>,
@@ -726,7 +726,7 @@ impl ScalarFunction {
 
     /// Go `BuildFromBinaryFunction` before its `FoldConstant`: decodes the
     /// binary `arg` into `ret_type`'s charset.
-    pub fn new_from_binary(
+    pub fn build_from_binary_function(
         arg: Expression,
         ret_type: FieldType,
         cannot_convert_string_as_warning: bool,
@@ -1635,7 +1635,7 @@ impl ScalarFunction {
         }
     }
 
-    /// [`implicit_numeric_value`] for one operand of a binary operator: Go
+    /// [`can_implicit_eval_int`] for one operand of a binary operator: Go
     /// casts a bit operator's operands to INT, a comparison of a string with
     /// a number compares as REAL (`getBaseCmpType`), and a logical operator
     /// tests truth through `EvalBool`.
@@ -1668,7 +1668,7 @@ impl ScalarFunction {
             }
             _ => return value,
         };
-        implicit_numeric_value(&self.args[index], &value, target).unwrap_or(value)
+        can_implicit_eval_int(&self.args[index], &value, target).unwrap_or(value)
     }
 
     fn eval_binary_values(
@@ -2071,7 +2071,7 @@ impl ScalarFunction {
                 } else {
                     EvalType::Real
                 };
-                let v = implicit_numeric_value(&self.args[0], &v, target).unwrap_or(v);
+                let v = can_implicit_eval_int(&self.args[0], &v, target).unwrap_or(v);
                 return crate::ops::eval_unary(
                     op,
                     v,
@@ -2547,7 +2547,7 @@ impl ScalarFunction {
             let ret_type = self
                 .get_static_type()
                 .ok_or(EvalError::Unsupported("a cast with no result type"))?;
-            return crate::cast::eval_cast_json_as_array(value, ret_type);
+            return crate::cast::eval_json(value, ret_type);
         }
         if let Some(target) = name.strip_prefix("cast_") {
             if self.args.len() == 1 {
@@ -2573,7 +2573,7 @@ impl ScalarFunction {
                 let ret_type = self
                     .get_static_type()
                     .ok_or(EvalError::Unsupported("a cast with no result type"))?;
-                let value = implicit_numeric_value(&self.args[0], &value, ret_type.eval_type())
+                let value = can_implicit_eval_int(&self.args[0], &value, ret_type.eval_type())
                     .unwrap_or(value);
                 return crate::cast::eval_cast(
                     &cast_type_of(target, ret_type)?,
@@ -3075,7 +3075,7 @@ impl ScalarFunction {
                     return crate::builtin_ext::extremum_with_signature(
                         &vals,
                         want,
-                        crate::rewriter::result_type::gl_signature(&self.args),
+                        crate::rewriter::result_type::resolve_type_4_extremum(&self.args),
                         &arg_decimals,
                         all_constant,
                         collation,
@@ -4018,7 +4018,7 @@ fn numeric_argument_domain(source: EvalType, target: EvalType) -> bool {
 /// (`EvalBool`), rather than as the number its name would parse to.
 /// `Some` is that number for a `DAYNAME()` value; `None` leaves the value
 /// to the ordinary cast.
-pub(crate) fn implicit_numeric_value(
+pub(crate) fn can_implicit_eval_int(
     expression: &Expression,
     value: &Datum,
     target: EvalType,
@@ -4073,7 +4073,7 @@ fn cast_numeric_argument_in_mode(
     if value.is_null() || field.eval_type() == target {
         return Ok(value);
     }
-    if let Some(number) = implicit_numeric_value(expression, &value, target) {
+    if let Some(number) = can_implicit_eval_int(expression, &value, target) {
         return Ok(number);
     }
     let value = match value {
@@ -4147,7 +4147,7 @@ fn cast_numeric_argument_in_mode(
                 convert_numeric_datum(value, &target, ctx)
             };
         }
-        let (decimal, error) = tidb_datatype::MyDecimal::from_float64(*real);
+        let (decimal, error) = tidb_datatype::MyDecimal::from_float_64(*real);
         match error {
             Some(tidb_datatype::DecimalError::Overflow) => {
                 if ctx.truncate_level() == tidb_exprctx::context::ErrorLevel::Error {
@@ -5064,7 +5064,7 @@ mod tests {
                         FieldType::new(FieldTypeCode::LongLong),
                         args,
                     ));
-                    let mut chunk = Chunk::new_with_capacity(&[field.clone(), field], 1);
+                    let mut chunk = Chunk::new_chunk_with_capacity(&[field.clone(), field], 1);
                     chunk.append_datum(0, &Datum::new_string(text));
                     chunk.append_datum(1, &Datum::new_string("1"));
                     let result = if vectorized {
@@ -5169,7 +5169,7 @@ mod tests {
                         output,
                         args,
                     ));
-                    let mut chunk = Chunk::new_with_capacity(&[field.clone(), field], 2);
+                    let mut chunk = Chunk::new_chunk_with_capacity(&[field.clone(), field], 2);
                     let rows = match mode {
                         "warnings" => [[Some("1x"), Some("3z")], [Some("2y"), Some("4w")]],
                         "nulls" => [[None, Some("3z")], [Some("2y"), None]],
@@ -5309,7 +5309,7 @@ mod tests {
             let Datum::Decimal(actual) = actual else {
                 panic!("expected decimal");
             };
-            let (expected, error) = tidb_datatype::MyDecimal::from_float64(value);
+            let (expected, error) = tidb_datatype::MyDecimal::from_float_64(value);
             assert!(error.is_none() || error == Some(tidb_datatype::DecimalError::Truncated));
             let expected = tidb_datatype::Decimal::from_my_decimal(&expected);
             assert_eq!(
@@ -5643,7 +5643,7 @@ mod tests {
         use tidb_exprctx::context::NoColumns;
         use tidb_chunk::chunk::Chunk;
 
-        let chk = Chunk::new_with_capacity(std::slice::from_ref(&ft()), 1);
+        let chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&ft()), 1);
         let mut chk = chk;
         chk.append_int64(0, 0);
         let row = chk.get_row(0);
@@ -5693,7 +5693,7 @@ mod tests {
         // A column argument feeds the builtin from the chunk row: ABS(col).
         let mut col = Column::new(1, ft());
         col.index = 0;
-        let mut chk2 = Chunk::new_with_capacity(std::slice::from_ref(&ft()), 1);
+        let mut chk2 = Chunk::new_chunk_with_capacity(std::slice::from_ref(&ft()), 1);
         chk2.append_int64(0, -9);
         let abs_col =
             ScalarFunction::new(CiString::new("abs"), ft(), vec![Expression::Column(col)]);
@@ -5745,7 +5745,7 @@ use tidb_charset::Collation;
         let varbinary_type =
             FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary);
         let json_text_type = text_ft();
-        let mut chk = Chunk::new_with_capacity(std::slice::from_ref(&varbinary_type), 1);
+        let mut chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&varbinary_type), 1);
         chk.append_bytes(0, b"ab");
         let row = chk.get_row(0);
 
@@ -5800,7 +5800,7 @@ use tidb_charset::Collation;
             }
         }
 
-        let chk = Chunk::new_with_capacity(std::slice::from_ref(&ft()), 1);
+        let chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&ft()), 1);
         let row = chk.get_row(0);
         let konst = |d: Datum| Expression::Constant(Constant::new(d, ft()));
         let rand_five =
@@ -5843,7 +5843,7 @@ use tidb_charset::Collation;
             }
         }
 
-        let chk = Chunk::new_with_capacity(std::slice::from_ref(&ft()), 1);
+        let chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&ft()), 1);
         let row = chk.get_row(0);
         let rand = ScalarFunction::new(CiString::new("rand"), real_ft(), vec![]);
         let columns = SeqColumns {
@@ -5882,7 +5882,7 @@ use tidb_charset::Collation;
 
         assert_eq!(function.in_string_hash_set.as_ref().unwrap().len(), 2);
         assert!(function.in_string_non_const_args.is_empty());
-        let chunk = Chunk::new_with_capacity(&[], 1);
+        let chunk = Chunk::new_chunk_with_capacity(&[], 1);
         assert_eq!(
             function.eval(&crate::NoColumns, chunk.get_row(0)).unwrap(),
             Datum::Int(1)
@@ -5896,7 +5896,7 @@ use tidb_charset::Collation;
 
         let string =
             |value: &str| Expression::Constant(Constant::new(Datum::new_string(value), text_ft()));
-        let chunk = Chunk::new_with_capacity(&[], 1);
+        let chunk = Chunk::new_chunk_with_capacity(&[], 1);
 
         // Go's `builtinInStringSig.buildHashMapForConstArgs` stores the
         // `collator.Key` result and `evalInt` probes the same key. Binary and
@@ -5976,7 +5976,7 @@ use tidb_charset::Collation;
             vec![probe_col(), Expression::ScalarFunction(inner)],
         );
 
-        let mut above = Chunk::new_with_capacity(&[ft(), ft()], 1);
+        let mut above = Chunk::new_chunk_with_capacity(&[ft(), ft()], 1);
         above.append_int64(0, 100);
         above.append_int64(1, 105);
         assert_eq!(
@@ -5984,7 +5984,7 @@ use tidb_charset::Collation;
             Datum::Int(1)
         );
 
-        let mut below = Chunk::new_with_capacity(&[ft(), ft()], 1);
+        let mut below = Chunk::new_chunk_with_capacity(&[ft(), ft()], 1);
         below.append_int64(0, 84);
         below.append_int64(1, 105);
         assert_eq!(
@@ -6001,7 +6001,7 @@ use tidb_charset::Collation;
         use tidb_exprctx::context::NoColumns;
         use tidb_chunk::chunk::Chunk;
 
-        let chk = Chunk::new_with_capacity(std::slice::from_ref(&ft()), 1);
+        let chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&ft()), 1);
         let mut chk = chk;
         chk.append_int64(0, 7);
         let row = chk.get_row(0);
@@ -6044,11 +6044,11 @@ use tidb_charset::Collation;
         let unsigned_type = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
         assert!(unsigned_type.is_unsigned());
 
-        let mut signed_chk = Chunk::new_with_capacity(std::slice::from_ref(&signed_type), 1);
+        let mut signed_chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&signed_type), 1);
         signed_chk.append_int64(0, -1);
         let signed_row = signed_chk.get_row(0);
 
-        let unsigned_chk = Chunk::new_with_capacity(std::slice::from_ref(&unsigned_type), 1);
+        let unsigned_chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&unsigned_type), 1);
         let mut unsigned_chk = unsigned_chk;
         unsigned_chk.append_uint64(0, 1);
         let unsigned_row = unsigned_chk.get_row(0);
@@ -6067,7 +6067,7 @@ use tidb_charset::Collation;
         // The joined rows are assembled left-then-right in one scratch chunk:
         // column 0 reads the SIGNED value, column 1 the UNSIGNED one. Build
         // that exact two-column row and compare across it.
-        let mut joined = Chunk::new_with_capacity(&[signed_type, unsigned_type], 1);
+        let mut joined = Chunk::new_chunk_with_capacity(&[signed_type, unsigned_type], 1);
         joined.append_int64(0, -1);
         joined.append_uint64(1, 1);
         let joined_row = joined.get_row(0);
@@ -6103,7 +6103,7 @@ use tidb_charset::Collation;
 
         let unsigned_type = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
 
-        let mut chk = Chunk::new_with_capacity(std::slice::from_ref(&unsigned_type), 1);
+        let mut chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&unsigned_type), 1);
         chk.append_uint64(0, 1);
         let row = chk.get_row(0);
         let mut col = Column::new(1, unsigned_type.clone());
@@ -6138,7 +6138,7 @@ use tidb_charset::Collation;
         use tidb_chunk::chunk::Chunk;
 
         let string_type = text_ft();
-        let chk = Chunk::new_with_capacity(std::slice::from_ref(&string_type), 1);
+        let chk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&string_type), 1);
         let mut chk = chk;
         chk.append_string(0, b"a".as_slice());
         let row = chk.get_row(0);
@@ -6180,7 +6180,7 @@ use tidb_charset::Collation;
         ));
 
         let mut chunk =
-            tidb_chunk::chunk::Chunk::new_with_capacity(&[int_ft.clone(), dec_ft.clone()], 1);
+            tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[int_ft.clone(), dec_ft.clone()], 1);
         chunk.append_datum(0, &Datum::Int(-5));
         chunk.append_datum(
             1,
@@ -6206,7 +6206,7 @@ use tidb_charset::Collation;
                 Expression::Column(col_d),
             ],
         ));
-        let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(&[dec_ft], 1);
+        let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[dec_ft], 1);
         chunk.append_datum(
             0,
             &Datum::Decimal(tidb_datatype::Decimal::from_literal("2.500")),

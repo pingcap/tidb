@@ -186,7 +186,7 @@ impl Clone for StmtHints {
 
 impl StmtHints {
     /// Go `StmtHints.TaskMapNeedBackUp`.
-    pub fn task_map_need_backup(&self) -> bool {
+    pub fn task_map_need_back_up(&self) -> bool {
         self.force_nth_plan != -1
     }
 
@@ -547,7 +547,7 @@ mod tests {
         let (stmt_hints, _, _) =
             parse_stmt_hints(&hints, &mut accept_set_var, &mut reject_column, "test", 0);
         assert_eq!(-1, stmt_hints.force_nth_plan);
-        assert!(!stmt_hints.task_map_need_backup());
+        assert!(!stmt_hints.task_map_need_back_up());
     }
 
     /// Go keys HYPO_INDEX on `DBName.L` (hint.go:364): the checker input and

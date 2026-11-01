@@ -221,7 +221,7 @@ impl StringDatum {
     /// Decodes the payload as UTF-8 without replacement.
     ///
     /// The datum remains byte-preserving when this fails. Callers that need
-    /// character semantics must choose how the resulting error or warning is
+    /// character semantics must new_row_sample_collector how the resulting error or warning is
     /// exposed; this representation layer never silently changes octets.
     pub fn as_utf8(&self) -> Result<&str, std::str::Utf8Error> {
         std::str::from_utf8(&self.bytes)

@@ -183,7 +183,7 @@ impl EstimatorOptions {
     /// Go `SessionVars.GetStrMatchDefaultSelectivity`: 0 selects 0.1 and
     /// enables TopN-assisted estimation.
     #[must_use]
-    pub fn str_match_default_selectivity(&self) -> f64 {
+    pub fn get_str_match_default_selectivity(&self) -> f64 {
         if self.default_str_match_selectivity == 0.0 {
             0.1
         } else {
@@ -193,11 +193,11 @@ impl EstimatorOptions {
 
     /// Go `SessionVars.GetNegateStrMatchDefaultSelectivity`.
     #[must_use]
-    pub fn negate_str_match_default_selectivity(&self) -> f64 {
+    pub fn get_negate_str_match_default_selectivity(&self) -> f64 {
         if self.default_str_match_selectivity == tidb_vardef::defaults::DEF_OPT_SELECTIVITY_FACTOR {
             tidb_vardef::defaults::DEF_OPT_SELECTIVITY_FACTOR
         } else {
-            1.0 - self.str_match_default_selectivity()
+            1.0 - self.get_str_match_default_selectivity()
         }
     }
 }

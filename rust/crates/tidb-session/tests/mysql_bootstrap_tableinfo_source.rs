@@ -47,7 +47,7 @@
 use std::collections::BTreeMap;
 
 use tidb_ast::{DdlStmt, Stmt};
-use tidb_ddl_build::table_info_build::build_table_info_with_context;
+use tidb_ddl_build::table_info_build::build_table_info_from_ast;
 use tidb_metadef::BOOTSTRAP_TABLES;
 use tidb_model::table_info::TableInfo;
 
@@ -66,7 +66,7 @@ fn lower(create_sql: &str) -> TableInfo {
     let DdlStmt::CreateTable(create) = ddl.as_ref() else {
         panic!("a metadef statement is a CREATE TABLE");
     };
-    build_table_info_with_context(
+    build_table_info_from_ast(
         create,
         "utf8mb4",
         "utf8mb4_bin",
@@ -300,7 +300,7 @@ fn bootstrap_mode_none_is_not_replaced_by_the_live_ddl_mode() {
 
     // Classic bootstrap deliberately uses ModeNone, so this still runs the
     // ordinary BLOB/TEXT default checker but takes its non-strict warning arm.
-    let bootstrap = build_table_info_with_context(
+    let bootstrap = build_table_info_from_ast(
         create,
         "utf8mb4",
         "utf8mb4_bin",
@@ -325,7 +325,7 @@ fn bootstrap_mode_none_is_not_replaced_by_the_live_ddl_mode() {
         .with_strict(true)
         .with_date_modes(tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE)
         .with_time_zone(tidb_datatype::SessionTimeZone::utc());
-    let error = build_table_info_with_context(
+    let error = build_table_info_from_ast(
         create,
         "utf8mb4",
         "utf8mb4_bin",
@@ -345,7 +345,7 @@ fn bootstrap_mode_none_is_not_replaced_by_the_live_ddl_mode() {
 fn int_only_context() -> tidb_metabuild::Context {
     tidb_metabuild::Context::new([
         tidb_metabuild::with_expr_ctx(std::sync::Arc::clone(
-            tidb_metabuild::Context::new_non_strict().get_expr_ctx(),
+            tidb_metabuild::Context::new_non_strict_context().get_expr_ctx(),
         )),
         tidb_metabuild::with_clustered_index_def_mode(
             tidb_vardef::modes::ClusteredIndexDefMode::INT_ONLY,

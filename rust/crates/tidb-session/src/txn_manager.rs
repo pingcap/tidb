@@ -27,7 +27,7 @@
 //! the catalog a write-conflict message is rewritten against -- as
 //! [`CommitHooks`], the way Go's commit reads them off the session.
 
-use tidb_domain_core::session_transaction::transaction_options;
+use tidb_domain_core::session_transaction::set_options_on_txn_active;
 use std::sync::Arc;
 
 use tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions;
@@ -194,7 +194,7 @@ impl TxnManager {
     /// the statement ctx the transaction's requests report through.
     #[must_use]
     pub fn statement_transaction_options(session: &Session) -> SessionTransactionOptions {
-        transaction_options(session.vars())
+        set_options_on_txn_active(session.vars())
             .with_statement_kv_context(session.statement_kv_context_cell())
     }
 

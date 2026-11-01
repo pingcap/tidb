@@ -208,7 +208,7 @@ impl KvTable {
     }
 
     /// Go `removeRecord` on the other side of a reorganization.
-    pub fn remove_partition_copy(
+    pub fn remove_record(
         &mut self,
         physical_id: i64,
         row: &[Datum],
@@ -303,11 +303,11 @@ impl KvTable {
         };
         let zone = ctx.session_zone();
         if self.clustered() {
-            return self.remove_partition_copy(target, row, handle, &zone);
+            return self.remove_record(target, row, handle, &zone);
         }
         if let Some(copy) = self.partition_copy(target, handle)? {
             if self.copy_equals_row(handle, &copy, row, ctx)? {
-                return self.remove_partition_copy(target, row, handle, &zone);
+                return self.remove_record(target, row, handle, &zone);
             }
         }
         Ok(())
@@ -414,7 +414,7 @@ impl KvTable {
     ) -> Result<(), KvTableError> {
         let zone = ctx.session_zone();
         if let Some(from) = plan.remove_from {
-            self.remove_partition_copy(from, old_row, handle, &zone)?;
+            self.remove_record(from, old_row, handle, &zone)?;
         }
         if let Some(to) = plan.add_to {
             self.add_partition_copy(

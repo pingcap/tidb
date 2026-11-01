@@ -302,7 +302,7 @@ impl DataInDiskByChunks {
 
     /// Go `GetTotalBytesInDisk`.
     #[must_use]
-    pub fn total_bytes_in_disk(&self) -> i64 {
+    pub fn get_total_bytes_in_disk(&self) -> i64 {
         self.total_data_size
     }
 
@@ -526,7 +526,7 @@ mod tests {
     }
 
     fn int64_chunk() -> Chunk {
-        let mut chk = Chunk::new_with_capacity(&int64_fields(), 8);
+        let mut chk = Chunk::new_chunk_with_capacity(&int64_fields(), 8);
         chk.append_int64(0, 1);
         chk.append_null(0);
         chk.append_int64(0, -2);
@@ -534,7 +534,7 @@ mod tests {
     }
 
     fn varchar_chunk() -> Chunk {
-        let mut chk = Chunk::new_with_capacity(&[FieldType::new(FieldTypeCode::Varchar)], 8);
+        let mut chk = Chunk::new_chunk_with_capacity(&[FieldType::new(FieldTypeCode::Varchar)], 8);
         chk.append_string(0, "ab");
         chk.append_null(0);
         chk.append_string(0, "cdefg");
@@ -542,7 +542,7 @@ mod tests {
     }
 
     fn mixed_sel_chunk() -> Chunk {
-        let mut chk = Chunk::new_with_capacity(&mixed_fields(), 8);
+        let mut chk = Chunk::new_chunk_with_capacity(&mixed_fields(), 8);
         for i in 0..5i64 {
             chk.append_int64(0, i * 1000);
             chk.append_string(1, format!("s{i}"));
@@ -563,7 +563,7 @@ mod tests {
             ("mixed_sel", mixed_sel_chunk(), GO_MIXED_SEL),
             (
                 "zero_rows",
-                Chunk::new_with_capacity(&int64_fields(), 8),
+                Chunk::new_chunk_with_capacity(&int64_fields(), 8),
                 GO_ZERO_ROWS,
             ),
         ] {
@@ -604,7 +604,7 @@ mod tests {
 
     /// Builds chunk `c` of `chunks` chunks x `rows` rows, deterministically.
     fn payload_chunk(fields: &[FieldType], c: usize, rows: usize) -> Chunk {
-        let mut chk = Chunk::new_with_capacity(fields, rows);
+        let mut chk = Chunk::new_chunk_with_capacity(fields, rows);
         for r in 0..rows {
             let n = (c * 1000 + r) as i64;
             chk.append_int64(0, n);
@@ -625,7 +625,7 @@ mod tests {
         ];
         let mut chunks = Vec::new();
         for chunk_idx in 0..9usize {
-            let mut chk = Chunk::new_with_capacity(&fields, 32);
+            let mut chk = Chunk::new_chunk_with_capacity(&fields, 32);
             for row_idx in 0..32usize {
                 let ordinal = chunk_idx * 32 + row_idx;
                 chk.append_string(0, "x".repeat(ordinal % 31 + 1));
@@ -684,10 +684,10 @@ mod tests {
         assert!(on_disk > 0, "spill file must not be empty");
         assert_eq!(container.num_chunks(), num_chunks);
         assert_eq!(container.num_rows() as usize, num_chunks * num_rows);
-        assert!(container.total_bytes_in_disk() > 0);
+        assert!(container.get_total_bytes_in_disk() > 0);
         assert_eq!(
             container.disk_tracker().bytes_consumed(),
-            container.total_bytes_in_disk()
+            container.get_total_bytes_in_disk()
         );
 
         // Every row comes back, in order, with the right values -- including
@@ -777,7 +777,7 @@ mod tests {
         let fields = int64_fields();
         let mut container = DataInDiskByChunks::new(fields.clone(), "empty", Arc::clone(&storage));
         let error = container
-            .add(&Chunk::new_with_capacity(&fields, 4))
+            .add(&Chunk::new_chunk_with_capacity(&fields, 4))
             .expect_err("a zero-row chunk must be refused");
         assert_eq!(
             error.to_string(),
@@ -865,7 +865,7 @@ mod tests {
 
         let mut chunks = Vec::with_capacity(num_chk);
         for chk_idx in 0..num_chk {
-            let mut chk = Chunk::new_with_capacity(&fields, num_row);
+            let mut chk = Chunk::new_chunk_with_capacity(&fields, num_row);
             for row_idx in 0..num_row {
                 let data = (chk_idx * num_row + row_idx) as i64;
                 chk.append_string(0, gen_string((next() % 5) as usize));

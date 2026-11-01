@@ -16,7 +16,7 @@
 //! the note in `tidb_planner_core_operator_logicalop::tests`.
 
 use crate::physical_plan_cache::RebuildPlanForCache;
-use crate::post_optimize::{eliminate_physical_projection, eliminate_union_scan_over_point_get, remove_union_scans};
+use crate::post_optimize::{eliminate_physical_projection, eliminate_union_scan_and_lock, remove_union_scans};
 use crate::resolve_indices::ResolveIndices;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
@@ -247,7 +247,7 @@ fn cached_index_lookup_rebuilds_only_gos_index_plan() {
 
 #[test]
 fn physical_plan_cache_admission_matches_go_refusals() {
-    use crate::physical_plan_cache::{plan_cacheable, PlanCacheabilityContext};
+    use crate::physical_plan_cache::{is_plan_cacheable, PlanCacheabilityContext};
 
     let context = PlanCacheabilityContext {
         parameter_count: 1,
@@ -259,7 +259,7 @@ fn physical_plan_cache_admission_matches_go_refusals() {
         row_count: 0,
     });
     assert_eq!(
-        plan_cacheable(&dual, context),
+        is_plan_cacheable(&dual, context),
         Err("get a TableDual plan".to_owned())
     );
 
@@ -269,7 +269,7 @@ fn physical_plan_cache_admission_matches_go_refusals() {
         ..PhysicalTableReader::default()
     });
     assert_eq!(
-        plan_cacheable(&tiflash, context),
+        is_plan_cacheable(&tiflash, context),
         Err("TiFlash plan is un-cacheable".to_owned())
     );
 
@@ -283,14 +283,14 @@ fn physical_plan_cache_admission_matches_go_refusals() {
         ..PhysicalIndexMergeReader::default()
     });
     assert_eq!(
-        plan_cacheable(&index_merge, context),
+        is_plan_cacheable(&index_merge, context),
         Err("IndexMerge plan with full-scan is un-cacheable".to_owned())
     );
 }
 
 #[test]
 fn physical_plan_cache_reads_noncacheable_reason_and_size() {
-    use crate::physical_plan_cache::{plan_cacheable, PlanCacheabilityContext};
+    use crate::physical_plan_cache::{is_plan_cacheable, PlanCacheabilityContext};
 
     let mut plan = selection(920, scan(921, &[1]));
     plan.base_mut()
@@ -302,13 +302,13 @@ fn physical_plan_cache_reads_noncacheable_reason_and_size() {
         max_plan_size: 0,
     };
     assert_eq!(
-        plan_cacheable(&plan, unlimited),
+        is_plan_cacheable(&plan, unlimited),
         Err("planner marked this shape unsafe".to_owned())
     );
 
     plan.base_mut().base = BasePlan::with_id(920, "Selection", 0);
     assert_eq!(
-        plan_cacheable(
+        is_plan_cacheable(
             &plan,
             PlanCacheabilityContext {
                 max_plan_size: 1,
@@ -870,11 +870,11 @@ fn stats_propagate_and_stats_count_reads_the_row_count() {
     tree.set_stats(Some(StatsInfo::new(17.0, [(1_i64, 4.0)])));
     assert_eq!(tree.stats_count(), Some(17.0));
     // With no probe parents the display count is the raw count.
-    assert_eq!(tree.est_row_count_for_display(), Some(17.0));
+    assert_eq!(tree.get_est_row_count_for_display(), Some(17.0));
     assert_eq!(tree.actual_probe_cnt(), Some(1));
 
     tree.set_probe_parents(vec![99]);
-    assert!(tree.est_row_count_for_display().is_none());
+    assert!(tree.get_est_row_count_for_display().is_none());
     assert!(tree.actual_probe_cnt().is_none());
     tree.dismantle();
 }
@@ -2043,7 +2043,7 @@ fn physical_correlated_rebind_reaches_readers_and_shares_one_outer_cell() {
     });
 
     let outer_schema = Schema::new(vec![outer_column]);
-    let rebound = rebind_correlated_columns_by_schema_4_physical_plan(&mut inner, &outer_schema);
+    let rebound = extract_cor_columns_by_schema_4_physical_plan(&mut inner, &outer_schema);
     assert_eq!(rebound.len(), 1);
     assert_eq!(rebound[0].column.index, 0);
     rebound[0].bind(Datum::Int(17));
@@ -2210,7 +2210,7 @@ fn shuffle_resolves_partition_keys_against_source_not_worker_output() {
     );
     assert!(cloned.referenced_plan(999).is_err());
     assert_eq!(
-        crate::physical_plan_cache::plan_cacheable(
+        crate::physical_plan_cache::is_plan_cacheable(
             &plan,
             crate::physical_plan_cache::PlanCacheabilityContext {
                 parameter_count: 0,
@@ -2446,7 +2446,7 @@ fn apply_window_arguments_and_frame_bounds_rebind_to_worker_owned_cells() {
     });
     assert_eq!(source.extract_correlated_cols().len(), 2);
     let mut worker = clone_for_apply_worker(&source);
-    let bindings = rebind_correlated_columns_by_schema_4_physical_plan(
+    let bindings = extract_cor_columns_by_schema_4_physical_plan(
         &mut worker,
         &Schema::new(vec![column]),
     );
@@ -2573,7 +2573,7 @@ fn point_get(id: i32) -> PhysicalPlan {
 fn union_scan_over_a_point_get_is_eliminated() {
     // Go `eliminateUnionScanAndLock`: the point get reads the transaction's
     // own rows, so the union scan above it (even through a selection) goes.
-    let plan = eliminate_union_scan_over_point_get(selection(3, union_scan(2, point_get(1))), false);
+    let plan = eliminate_union_scan_and_lock(selection(3, union_scan(2, point_get(1))), false);
     assert!(matches!(&plan, PhysicalPlan::Selection(_)));
     assert!(matches!(plan.children()[0], PhysicalPlan::PointGet(_)));
     plan.dismantle();
@@ -2581,7 +2581,7 @@ fn union_scan_over_a_point_get_is_eliminated() {
 
 #[test]
 fn union_scan_over_a_reader_is_kept() {
-    let plan = eliminate_union_scan_over_point_get(union_scan(2, scan(1, &[1])), false);
+    let plan = eliminate_union_scan_and_lock(union_scan(2, scan(1, &[1])), false);
     assert!(matches!(&plan, PhysicalPlan::UnionScan(_)));
     plan.dismantle();
 }
@@ -2590,7 +2590,7 @@ fn union_scan_over_a_reader_is_kept() {
 fn union_scan_elimination_stops_at_a_multi_child_operator() {
     // Go's walk does not look inside a node with several children, so a point
     // get under a join does not strip the union scan above the join.
-    let plan = eliminate_union_scan_over_point_get(
+    let plan = eliminate_union_scan_and_lock(
         union_scan(4, hash_join(3, point_get(1), scan(2, &[2]))),
         false,
     );
@@ -2649,7 +2649,7 @@ fn a_select_lock_over_a_point_get_becomes_the_point_gets_lock() {
     use tidb_planner_core_operator_logicalop::SelectLockType;
     // Go `eliminateUnionScanAndLock`: inside a transaction the point get
     // takes the lock and both the lock and the union scan above it vanish.
-    let plan = eliminate_union_scan_over_point_get(
+    let plan = eliminate_union_scan_and_lock(
         lock_over(3, union_scan(2, point_get(1)), SelectLockType::ForUpdateNoWait),
         true,
     );
@@ -2661,14 +2661,14 @@ fn a_select_lock_over_a_point_get_becomes_the_point_gets_lock() {
     plan.dismantle();
     // Outside one the lock is dropped and the point get does not lock.
     let plan =
-        eliminate_union_scan_over_point_get(lock_over(3, point_get(1), SelectLockType::ForUpdate), false);
+        eliminate_union_scan_and_lock(lock_over(3, point_get(1), SelectLockType::ForUpdate), false);
     let PhysicalPlan::PointGet(point) = &plan else {
         panic!("the point get is the root: {:?}", plan.tp());
     };
     assert!(!point.lock && point.select_lock.is_none());
     plan.dismantle();
     // A lock over anything but a point get stays.
-    let plan = eliminate_union_scan_over_point_get(
+    let plan = eliminate_union_scan_and_lock(
         lock_over(3, scan(1, &[1]), SelectLockType::ForUpdate),
         true,
     );

@@ -378,7 +378,7 @@ pub(crate) fn analyze_independent_index_with_progress<S: RegionPagedMetaSnapshot
         progress(i64::try_from(row_count).unwrap_or(i64::MAX));
         fragments.push(processor.finish_fragment());
     }
-    let built = tidb_stats::merge_independent_index_fragments(
+    let built = tidb_stats::update_index_result(
         index.id,
         bucket_count,
         topn_count,

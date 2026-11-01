@@ -341,7 +341,7 @@ impl DataSource {
     /// Go `IndexInfo2FullCols`: retain unresolved positions and normalize
     /// full-length prefixes before either pruning or range construction.
     #[must_use]
-    pub fn declared_index_columns(
+    pub fn index_info_2_full_cols(
         &self,
         index: &tidb_infoschema::table_source::SourceIndex,
     ) -> Vec<Option<(Column, i64)>> {
@@ -381,7 +381,7 @@ impl DataSource {
                 _ => continue,
             };
             let index = &index;
-            let columns = self.declared_index_columns(index);
+            let columns = self.index_info_2_full_cols(index);
             // Go `buildDataSource` (`logical_plan_builder.go:5316`): only a
             // unique secondary index of more than one column whose first
             // column is a `tidb_shard()` generated column.
@@ -405,7 +405,7 @@ impl DataSource {
     /// `tidb_shard(a) = tidb_shard(10)` and `a IN (10, 20)` becomes the
     /// OR of such pairs. A failed rewrite keeps the original conditions.
     #[must_use]
-    pub fn add_prefix4_shard_indexes(
+    pub fn add_prefix_4_shard_indexes(
         &self,
         conds: Vec<Expression>,
         regard_null_as_point: bool,
@@ -442,7 +442,7 @@ impl DataSource {
         regard_null_as_point: bool,
     ) -> Result<Vec<Expression>, tidb_ranger::points::PointBuilderError> {
         let idx_cols: Vec<Column> = self
-            .declared_index_columns(index)
+            .index_info_2_full_cols(index)
             .into_iter()
             .map_while(|column| column.map(|(column, _)| column))
             .collect();
@@ -585,7 +585,7 @@ impl DataSource {
         index: &tidb_infoschema::table_source::SourceIndex,
     ) -> Vec<(Column, i64)> {
         let mut columns = self
-            .declared_index_columns(index)
+            .index_info_2_full_cols(index)
             .into_iter()
             .map_while(std::convert::identity)
             .collect::<Vec<_>>();

@@ -1102,13 +1102,13 @@ impl GcJobContext {
             return Err(error);
         }
 
-        self.notify_gcv2_after_gc(gc_safe_point);
+        self.notify_gcv_2_after_gc(gc_safe_point);
         gc_histogram(STAGE_TOTAL, start.elapsed().as_secs_f64());
         Ok(())
     }
 
     /// Go `notifyGCV2AfterGC`.
-    pub(crate) fn notify_gcv2_after_gc(&self, safe_point: u64) {
+    pub(crate) fn notify_gcv_2_after_gc(&self, safe_point: u64) {
         let Some(manager) = &self.deps.gcv2 else {
             return;
         };

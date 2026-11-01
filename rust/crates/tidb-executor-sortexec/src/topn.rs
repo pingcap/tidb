@@ -26,7 +26,7 @@
 //!    least `offset + count` rows (or the child is exhausted), then take a
 //!    row pointer per stored row.
 //! 2. `executeTopN`: `heap.Init` over those pointers as a MAX-heap ordered by
-//!    [`TopNChunkHeap::greater_keys`], `heap.Pop` down to exactly
+//!    [`TopNChunkHeap::greater_row`], `heap.Pop` down to exactly
 //!    `offset + count`, then stream the rest of the child through
 //!    [`TopNChunkHeap::process_chk`]: a row strictly smaller than the heap's
 //!    max replaces it and the heap is fixed.
@@ -46,7 +46,7 @@
 //! `the_heap_retains_the_rows_gos_heap_retains`, the recorded probe of Go's own
 //! `container/heap`) now pin the ported heap through this operator.
 //!
-//! [`crate::topn_chunk_heap::TopNChunkHeap::greater_keys`] returns FALSE for
+//! [`crate::topn_chunk_heap::TopNChunkHeap::greater_row`] returns FALSE for
 //! equal keys, so a tie never evicts the incumbent. Which of several tied rows
 //! survives at the `count` boundary is therefore decided by arrival order AND by
 //! the shape of the heap, so the sift rules are reproduced from Go's
@@ -84,7 +84,7 @@ use tidb_exprctx::Columns;
 use tidb_memory::{ArcAction, Tracker};
 
 use tidb_variable::mem_quota::StatementMemory;
-use crate::{eval_sort_key, less_by_items, validate_by_items, SortByItem};
+use crate::{eval_sort_key, less_row, build_key_columns, SortByItem};
 use tidb_driver_error::panic_recovery::recover_worker_panic;
 use crate::topn_chunk_heap::TopNChunkHeap;
 use crate::topn_spill::{SpilledRun, TopNSpillAction, SPILL_CHUNK_SIZE};
@@ -634,7 +634,7 @@ where
         if self.count == 0 {
             return Ok(());
         }
-        validate_by_items(&self.by_items)?;
+        build_key_columns(&self.by_items)?;
 
         if self.rank_prefix.is_some() {
             return self.fetch_rank_topn();
@@ -963,7 +963,7 @@ where
                 }
                 let mut compare_error = None;
                 tidb_goruntime::go_heap::init(&mut self.merge_heads, &mut |left, right| {
-                    match less_by_items(&self.by_items, &left.key, &right.key) {
+                    match less_row(&self.by_items, &left.key, &right.key) {
                         Ok(ordering) => ordering == Ordering::Less,
                         Err(error) => {
                             if compare_error.is_none() {
@@ -996,7 +996,7 @@ where
                     tidb_goruntime::go_heap::fix(
                         &mut self.merge_heads,
                         0,
-                        &mut |left, right| match less_by_items(
+                        &mut |left, right| match less_row(
                             &self.by_items,
                             &left.key,
                             &right.key,
@@ -1018,7 +1018,7 @@ where
                     tidb_goruntime::go_heap::remove(
                         &mut self.merge_heads,
                         0,
-                        &mut |left, right| match less_by_items(
+                        &mut |left, right| match less_row(
                             &self.by_items,
                             &left.key,
                             &right.key,
@@ -1598,7 +1598,7 @@ mod tests {
             StatementMemory::default(),
         )
         .with_rank_prefix(0, 3, field_type.clone());
-        let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field_type), 2);
+        let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field_type), 2);
         chunk.append_string(0, "abcXYZ");
         chunk.append_string(0, "abcxyz");
 

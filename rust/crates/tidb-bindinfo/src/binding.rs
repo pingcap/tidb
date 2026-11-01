@@ -81,7 +81,7 @@ pub fn restore_without_db(stmt: &Stmt) -> String {
 
 /// Go `bindinfo.NormalizeStmtForBinding`, the with-DB half: the normalized
 /// text and its digest.
-pub fn normalize_with_db(stmt: &Stmt, default_db: &str) -> (String, String) {
+pub fn normalize_stmt_for_binding(stmt: &Stmt, default_db: &str) -> (String, String) {
     let (normalized, digest) =
         tidb_parser::normalize_digest_for_binding(&restore_with_default_db(stmt, default_db));
     (normalized, digest.as_str().to_owned())
@@ -423,7 +423,7 @@ impl SessionBindings {
     /// Go `DropSessionBinding`. Deleting an absent digest is not an error
     /// there and is not one here (measured: a `DROP SESSION BINDING` for a
     /// statement with no binding answers OK on real TiDB).
-    pub fn drop_digest(&mut self, digest: &str) -> bool {
+    pub fn drop_session_binding(&mut self, digest: &str) -> bool {
         self.bindings.remove(digest).is_some()
     }
 
@@ -446,7 +446,7 @@ impl SessionBindings {
 
     /// Go `MatchSessionBinding`: every binding sharing the statement's no-DB
     /// digest is a candidate, and `crossDBMatchBindings` picks among them.
-    pub fn match_statement(
+    pub fn match_session_binding(
         &self,
         no_db_digest: &str,
         table_names: &[(String, String)],
@@ -457,7 +457,7 @@ impl SessionBindings {
             .bindings
             .values()
             .filter(|binding| binding.no_db_digest == no_db_digest);
-        cross_db_match(candidates, table_names, current_db, fuzzy_enabled)
+        cross_db_match_bindings(candidates, table_names, current_db, fuzzy_enabled)
     }
 }
 
@@ -467,7 +467,7 @@ impl SessionBindings {
 /// the same wildcard binding answers `@@last_plan_from_binding` 1 with the
 /// switch on and 0 with it off, flipping live with `SET`. Among the
 /// candidates the fewest-wildcards binding wins, Go's own tie-break.
-pub fn cross_db_match<'a>(
+pub fn cross_db_match_bindings<'a>(
     candidates: impl Iterator<Item = &'a Binding>,
     table_names: &[(String, String)],
     current_db: &str,

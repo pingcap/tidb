@@ -159,7 +159,7 @@ pub(crate) fn index_join_path_build(
         index_join_path_remove_useless_eq_in(&mut tmp, idx_cols, not_key_eq_and_in);
     let matched_key_cnt = tmp.cur_possible_used_keys.len();
     // "If no join key is matched while join keys actually are not empty. We
-    // don't choose index join for now."
+    // don't new_row_sample_collector index join for now."
     if matched_key_cnt == 0 && !info.inner_join_keys.is_empty() {
         return Ok(IndexJoinPathOutcome::NotApplicable);
     }
@@ -540,7 +540,7 @@ fn index_join_path_build_tmp_range(
                 });
             }
             let fallback;
-            (ranges, fallback) = tidb_ranger::ranger::append_ranges_to_point_ranges(
+            (ranges, fallback) = tidb_ranger::ranger::append_ranges_2_point_ranges(
                 ranges,
                 &built.ranges,
                 env.range_max_size,
@@ -559,7 +559,7 @@ fn index_join_path_build_tmp_range(
     }
     if let Some(next_col_range) = next_col_range.filter(|ranges| !ranges.is_empty()) {
         let fallback;
-        (ranges, fallback) = tidb_ranger::ranger::append_ranges_to_point_ranges(
+        (ranges, fallback) = tidb_ranger::ranger::append_ranges_2_point_ranges(
             ranges,
             next_col_range,
             env.range_max_size,

@@ -934,7 +934,7 @@ pub fn find_column_info_by_id(
 
 /// Go `table.FindCols`: resolves names in order, retaining the original
 /// column pointers, or returns the first missing name.
-pub fn find_column_infos(
+pub fn find_cols(
     cols: &GoSharedPointerSlice<ColumnInfo>,
     names: &[&str],
     pk_is_handle: bool,
@@ -960,7 +960,7 @@ pub fn find_column_infos(
 /// Go `table.FindOnUpdateCols`: retains every source pointer carrying the
 /// `ON UPDATE CURRENT_TIMESTAMP` flag, in source order.
 #[must_use]
-pub fn find_on_update_column_infos(
+pub fn find_on_update_cols(
     cols: &GoSharedPointerSlice<ColumnInfo>,
 ) -> GoSharedPointerSlice<ColumnInfo> {
     GoSharedPointerSlice::from_handles(
@@ -1007,7 +1007,7 @@ impl std::error::Error for DuplicateColumnError {}
 
 /// Go `table.CheckOnce`: checks the case-insensitive column-name namespace
 /// and stops at the first duplicate.
-pub fn check_column_infos_once(
+pub fn check_once(
     cols: &GoSharedPointerSlice<ColumnInfo>,
 ) -> Result<(), DuplicateColumnError> {
     let mut names = HashSet::with_capacity(cols.len());
@@ -1169,13 +1169,13 @@ mod tests {
         ]
         .into();
 
-        let (found, missing) = find_column_infos(&cols, &["a"], true);
+        let (found, missing) = find_cols(&cols, &["a"], true);
         let found = found.expect("a is present");
         assert_eq!(missing, "");
         assert_eq!(found.len(), 1);
         assert!(found.get(0).unwrap().ptr_eq(&cols.get(0).unwrap()));
 
-        let (found, missing) = find_column_infos(&cols, &["d"], true);
+        let (found, missing) = find_cols(&cols, &["d"], true);
         assert!(found.is_none());
         assert_eq!(missing, "d");
 
@@ -1183,7 +1183,7 @@ mod tests {
             .unwrap()
             .write()
             .add_flag(u64::from(FieldTypeFlags::ON_UPDATE_NOW));
-        let on_update = find_on_update_column_infos(&cols);
+        let on_update = find_on_update_cols(&cols);
         assert_eq!(on_update.len(), 1);
         assert!(on_update.get(0).unwrap().ptr_eq(&cols.get(0).unwrap()));
     }
@@ -1193,12 +1193,12 @@ mod tests {
         let column = GoShared::new(col("a", FieldTypeCode::Long));
         let duplicate =
             GoSharedPointerSlice::from_handles(vec![Some(column.clone()), Some(column.clone())]);
-        let error = check_column_infos_once(&duplicate).unwrap_err();
+        let error = check_once(&duplicate).unwrap_err();
         assert_eq!(error.name().original(), "a");
         assert_eq!(error.code(), 1110);
         assert_eq!(error.to_string(), "Column 'a' specified twice");
 
-        assert!(check_column_infos_once(&GoSharedPointerSlice::default()).is_ok());
+        assert!(check_once(&GoSharedPointerSlice::default()).is_ok());
     }
 
     // Go TestDefaultValue: plain and BIT columns plus JSON round trips,

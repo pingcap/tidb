@@ -121,7 +121,7 @@ pub fn init_stats(
             &pseudo
         }
     };
-    let mut hist_coll = table.hist_coll.generate_from_column_info(
+    let mut hist_coll = table.hist_coll.generate_hist_coll_from_column_info(
         table_info,
         &source.table_columns,
         // Go `statistics.PrepareCols4MVIndex`, which the planner injects.
@@ -143,7 +143,7 @@ pub fn init_stats(
         };
         if has_possible_path && columns.len() == index.read().columns.len() {
             let declared = source
-                .declared_index_columns(index)
+                .index_info_2_full_cols(index)
                 .into_iter()
                 .map_while(|column| column)
                 .collect::<Vec<_>>();

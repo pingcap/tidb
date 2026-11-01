@@ -101,7 +101,7 @@ pub use job_args::{
     get_set_default_value_args, get_set_tiflash_replica_args, get_shard_row_id_args,
     get_table_column_args, get_table_partition_args, get_truncate_table_args,
     get_update_tiflash_replica_status_args, index_arg_columnar_index_type,
-    rename_tables_args_from_v1, AddCheckConstraintArgs, AddForeignKeyArgs,
+    get_rename_tables_args_from_v_1, AddCheckConstraintArgs, AddForeignKeyArgs,
     AlterIndexVisibilityArgs, AlterSequenceArgs, AlterTTLInfoArgs, AlterTableAffinityArgs,
     AlterTableAttributesArgs, AlterTableModeArgs, AlterTablePartitionArgs, AlterTablePlacementArgs,
     AlterTableSetRegionSplitPolicyArgs, BatchCreateTableArgs, CheckConstraintArgs,

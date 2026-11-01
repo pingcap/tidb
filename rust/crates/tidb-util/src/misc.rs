@@ -28,7 +28,7 @@ use tidb_datatype::DateModes;
 /// a conversion failure -- which is what makes `NO_ZERO_IN_DATE` alone a
 /// warning rather than an error.
 #[must_use]
-pub fn write_date_flags(
+pub fn get_type_flags_for_insert(
     base: tidb_datatype::ConversionFlags,
     modes: DateModes,
     strict: bool,

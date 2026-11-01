@@ -19,7 +19,7 @@
 //! release the session's earlier locks one table per step, then take each
 //! new lock through `none -> pre-lock -> public`, a schema version each step.
 
-use super::add_index::{action_step, table_step, AddIndexSubmission};
+use super::add_index::{action_step, update_version_and_table_info, AddIndexSubmission};
 use super::*;
 
 /// Go's executor halves up to `doDDLJob2`: the session already checked the
@@ -181,7 +181,7 @@ fn unlock_tables(
                 Some(next) => {
                     let mut info = stored.clone_like_go();
                     info.lock = next.map(GoShared::new);
-                    table_step(catalog, active, target.schema_id, &info, true, start_ts)?
+                    update_version_and_table_info(catalog, active, target.schema_id, &info, true, start_ts)?
                 }
             }
         }
@@ -204,7 +204,7 @@ fn job_table<'a>(
 }
 
 /// Go `onLockTables`.
-pub(super) fn plan_persisted_lock_tables_job_step(
+pub(super) fn on_lock_tables(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -274,7 +274,7 @@ pub(super) fn plan_persisted_lock_tables_job_step(
     };
     lock.ts = start_ts;
     info.lock = Some(GoShared::new(lock));
-    let write = table_step(catalog, active, target.schema_id, &info, true, start_ts)?;
+    let write = update_version_and_table_info(catalog, active, target.schema_id, &info, true, start_ts)?;
     if finished {
         args.index_of_lock += 1;
         active.job.fill_args(Some(GoShared::new(args.clone())));
@@ -291,7 +291,7 @@ pub(super) fn plan_persisted_lock_tables_job_step(
 }
 
 /// Go `onUnlockTables`.
-pub(super) fn plan_persisted_unlock_tables_job_step(
+pub(super) fn on_unlock_tables(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,

@@ -290,18 +290,18 @@ impl FdSet {
     }
 
     /// Go `FDSet.AddStrictFunctionalDependency`.
-    pub fn add_strict(&mut self, from: FastIntSet, to: FastIntSet) {
+    pub fn add_strict_functional_dependency(&mut self, from: FastIntSet, to: FastIntSet) {
         self.add_functional_dependency(from, to, true, false);
     }
 
     /// Go `FDSet.AddLaxFunctionalDependency`.
-    pub fn add_lax(&mut self, from: FastIntSet, to: FastIntSet) {
+    pub fn add_lax_functional_dependency(&mut self, from: FastIntSet, to: FastIntSet) {
         self.add_functional_dependency(from, to, false, false);
     }
 
     /// Go `FDSet.AddNCFunctionalDependency`: retain an edge until a later
     /// null-rejecting predicate makes its condition visible.
-    pub fn add_conditional(
+    pub fn add_nc_functional_dependency(
         &mut self,
         from: FastIntSet,
         to: FastIntSet,
@@ -547,7 +547,7 @@ impl FdSet {
                 let (from, to) = (edge.from.clone(), edge.to.clone());
                 // Adding the strict form rebuilds the edge list (the lax one
                 // is implied by it and drops out), so restart the scan.
-                self.add_strict(from, to);
+                self.add_strict_functional_dependency(from, to);
                 index = 0;
                 continue;
             }
@@ -594,7 +594,7 @@ impl FdSet {
     }
 
     /// Go `FDSet.IsHashCodeRegistered`.
-    pub fn registered_unique_id(&self, hash_code: &[u8]) -> Option<i64> {
+    pub fn is_hash_code_registered(&self, hash_code: &[u8]) -> Option<i64> {
         self.hash_code_to_unique_id.get(hash_code).copied()
     }
 
@@ -704,7 +704,7 @@ impl FdSet {
                     false,
                 );
             } else {
-                self.add_lax(edge.from.clone(), edge.to.clone());
+                self.add_lax_functional_dependency(edge.from.clone(), edge.to.clone());
             }
         }
         self.conditional_edges
@@ -714,7 +714,7 @@ impl FdSet {
         let mut combined_to = FastIntSet::default();
         for edge in &filter.edges {
             if edge.is_constant() {
-                self.add_conditional(
+                self.add_nc_functional_dependency(
                     edge.from.clone(),
                     edge.to.clone(),
                     inner_cols.clone(),
@@ -742,7 +742,7 @@ impl FdSet {
             if right_all.subset_of(&original_right.closure_of_strict(&right_equiv))
                 && left_all.subset_of(&original_left.closure_of_strict(&left_equiv))
             {
-                self.add_strict(
+                self.add_strict_functional_dependency(
                     original_left.reduce_cols(&left_equiv),
                     right_all.union(&left_all),
                 );
@@ -752,18 +752,18 @@ impl FdSet {
             // value one column at a time.
             right_equiv.for_each(|right| {
                 left_equiv.for_each(|left| {
-                    self.add_lax(FastIntSet::new([right]), FastIntSet::new([left]));
+                    self.add_lax_functional_dependency(FastIntSet::new([right]), FastIntSet::new([left]));
                 });
             });
-            self.add_conditional(left_equiv, right_equiv, inner_cols.clone(), true, true);
+            self.add_nc_functional_dependency(left_equiv, right_equiv, inner_cols.clone(), true, true);
         }
 
         if !options.skip_rule_331 {
-            self.add_strict(combined_from, combined_to);
+            self.add_strict_functional_dependency(combined_from, combined_to);
         }
 
         if let (Some(left), Some(right)) = (left_key, right_key) {
-            self.add_strict(left.union(&right), outer_cols.union(inner_cols));
+            self.add_strict_functional_dependency(left.union(&right), outer_cols.union(inner_cols));
         }
 
         if options.only_inner_filter {
@@ -892,7 +892,7 @@ mod tests {
             let mut fd = FdSet::new();
             for which in order {
                 let (from, to) = &inputs[which];
-                fd.add_strict(FastIntSet::new(from.clone()), FastIntSet::new(to.clone()));
+                fd.add_strict_functional_dependency(FastIntSet::new(from.clone()), FastIntSet::new(to.clone()));
             }
             assert_eq!(fd.edges.len(), 1);
             assert_eq!(sorted(&fd.edges[0].from), vec![1, 2]);
@@ -973,14 +973,14 @@ mod tests {
         assert_eq!(fd.edges[0].to.to_string(), "(1-3)");
         assert_eq!(fd.constant_cols().to_string(), "(1-3)");
 
-        fd.add_strict(FastIntSet::new([3, 4]), FastIntSet::new([5, 6]));
+        fd.add_strict_functional_dependency(FastIntSet::new([3, 4]), FastIntSet::new([5, 6]));
         assert_eq!(fd.edges.len(), 2);
         assert_eq!(fd.edges[0].to.to_string(), "(1-3)");
         // The constant `3` is dropped from the determinant.
         assert_eq!(fd.edges[1].from.to_string(), "(4)");
         assert_eq!(fd.edges[1].to.to_string(), "(5,6)");
 
-        fd.add_lax(FastIntSet::new([7]), FastIntSet::new([5, 6]));
+        fd.add_lax_functional_dependency(FastIntSet::new([7]), FastIntSet::new([5, 6]));
         assert_eq!(fd.edges.len(), 3);
         assert!(!fd.edges[2].strict && !fd.edges[2].equiv);
         assert_eq!(fd.edges[2].from.to_string(), "(7)");
@@ -1000,23 +1000,23 @@ mod tests {
     #[test]
     fn lax_implies_only_on_equal_dependency_side() {
         let mut fd = FdSet::new();
-        fd.add_lax(FastIntSet::new([1]), FastIntSet::new([2, 3]));
-        fd.add_lax(FastIntSet::new([1]), FastIntSet::new([2]));
+        fd.add_lax_functional_dependency(FastIntSet::new([1]), FastIntSet::new([2, 3]));
+        fd.add_lax_functional_dependency(FastIntSet::new([1]), FastIntSet::new([2]));
         assert_eq!(fd.to_string(), "(1)~~>(2,3), (1)~~>(2)");
 
         let mut fd = FdSet::new();
-        fd.add_lax(FastIntSet::new([1]), FastIntSet::new([2]));
-        fd.add_lax(FastIntSet::new([1]), FastIntSet::new([2, 3]));
+        fd.add_lax_functional_dependency(FastIntSet::new([1]), FastIntSet::new([2]));
+        fd.add_lax_functional_dependency(FastIntSet::new([1]), FastIntSet::new([2, 3]));
         assert_eq!(fd.to_string(), "(1)~~>(2), (1)~~>(2,3)");
 
         let mut fd = FdSet::new();
-        fd.add_lax(FastIntSet::new([1]), FastIntSet::new([3]));
-        fd.add_lax(FastIntSet::new([1, 2]), FastIntSet::new([3]));
+        fd.add_lax_functional_dependency(FastIntSet::new([1]), FastIntSet::new([3]));
+        fd.add_lax_functional_dependency(FastIntSet::new([1, 2]), FastIntSet::new([3]));
         assert_eq!(fd.to_string(), "(1)~~>(3)");
 
         let mut fd = FdSet::new();
-        fd.add_lax(FastIntSet::new([1]), FastIntSet::new([3, 4]));
-        fd.add_lax(FastIntSet::new([1, 2]), FastIntSet::new([3]));
+        fd.add_lax_functional_dependency(FastIntSet::new([1]), FastIntSet::new([3, 4]));
+        fd.add_lax_functional_dependency(FastIntSet::new([1, 2]), FastIntSet::new([3]));
         assert_eq!(fd.to_string(), "(1)~~>(3,4), (1,2)~~>(3)");
     }
 
@@ -1048,7 +1048,7 @@ mod tests {
         assert_eq!(fd.edges[2].to.to_string(), "(3-5)");
         assert_eq!(fd.constant_cols().to_string(), "(3-5)");
 
-        fd.add_strict(FastIntSet::new([2, 3]), FastIntSet::new([5, 6]));
+        fd.add_strict_functional_dependency(FastIntSet::new([2, 3]), FastIntSet::new([5, 6]));
         assert_eq!(fd.edges.len(), 4);
         assert!(fd.edges[3].strict && !fd.edges[3].equiv);
         assert_eq!(fd.edges[3].from.to_string(), "(2)");
@@ -1072,7 +1072,7 @@ mod tests {
         // the key is lax, and `b`'s declared NOT NULL alone does not promote
         // it -- the WHOLE determinant has to be non-null.
         let mut fd = FdSet::new();
-        fd.add_lax(FastIntSet::new([1, 2]), FastIntSet::new([1, 2, 3]));
+        fd.add_lax_functional_dependency(FastIntSet::new([1, 2]), FastIntSet::new([1, 2, 3]));
         fd.make_not_null(FastIntSet::new([2]));
         assert!(!FastIntSet::new([3]).subset_of(&fd.closure_of_strict(&FastIntSet::new([1, 2]))));
         // The lax step alone already reaches it, which is why the checker must
@@ -1087,9 +1087,9 @@ mod tests {
     #[test]
     fn add_from_merges_every_go_fd_kind_and_not_null_fact() {
         let mut left = FdSet::new();
-        left.add_strict(FastIntSet::new([1]), FastIntSet::new([2]));
+        left.add_strict_functional_dependency(FastIntSet::new([1]), FastIntSet::new([2]));
         let mut right = FdSet::new();
-        right.add_lax(FastIntSet::new([3]), FastIntSet::new([4]));
+        right.add_lax_functional_dependency(FastIntSet::new([3]), FastIntSet::new([4]));
         right.add_equivalence_union(FastIntSet::new([5, 6]));
         right.add_constants(FastIntSet::new([7]));
         right.make_not_null(FastIntSet::new([3]));
@@ -1106,7 +1106,7 @@ mod tests {
     #[test]
     fn max_one_row_keeps_equivalence_and_makes_outputs_constant() {
         let mut fd = FdSet::new();
-        fd.add_strict(FastIntSet::new([1]), FastIntSet::new([2, 3]));
+        fd.add_strict_functional_dependency(FastIntSet::new([1]), FastIntSet::new([2, 3]));
         fd.add_equivalence_union(FastIntSet::new([1, 2]));
 
         fd.max_one_row(FastIntSet::new([1, 3]));
@@ -1117,13 +1117,13 @@ mod tests {
     #[test]
     fn project_cols_preserves_transitive_and_equivalent_determinants() {
         let mut transitive = FdSet::new();
-        transitive.add_strict(FastIntSet::new([1]), FastIntSet::new([2]));
-        transitive.add_strict(FastIntSet::new([2]), FastIntSet::new([3]));
+        transitive.add_strict_functional_dependency(FastIntSet::new([1]), FastIntSet::new([2]));
+        transitive.add_strict_functional_dependency(FastIntSet::new([2]), FastIntSet::new([3]));
         transitive.project_cols(&FastIntSet::new([1, 3]));
         assert!(FastIntSet::new([3]).subset_of(&transitive.closure_of_strict(&FastIntSet::new([1]))));
 
         let mut substituted = FdSet::new();
-        substituted.add_strict(FastIntSet::new([1]), FastIntSet::new([3]));
+        substituted.add_strict_functional_dependency(FastIntSet::new([1]), FastIntSet::new([3]));
         substituted.add_equivalence_union(FastIntSet::new([1, 2]));
         substituted.project_cols(&FastIntSet::new([2, 3]));
         assert!(FastIntSet::new([3]).subset_of(&substituted.closure_of_strict(&FastIntSet::new([2]))));
@@ -1141,7 +1141,7 @@ mod tests {
     #[test]
     fn conditional_equivalence_becomes_visible_after_null_rejection() {
         let mut fd = FdSet::new();
-        fd.add_conditional(
+        fd.add_nc_functional_dependency(
             FastIntSet::new([1]),
             FastIntSet::new([2]),
             FastIntSet::new([2]),
@@ -1162,10 +1162,10 @@ mod tests {
     #[test]
     fn outer_join_without_a_filter_keeps_both_keys_as_a_combined_key() {
         let mut outer = FdSet::new();
-        outer.add_strict(FastIntSet::new([1]), FastIntSet::new([2]));
+        outer.add_strict_functional_dependency(FastIntSet::new([1]), FastIntSet::new([2]));
         outer.make_not_null(FastIntSet::new([1]));
         let mut inner = FdSet::new();
-        inner.add_strict(FastIntSet::new([10]), FastIntSet::new([11]));
+        inner.add_strict_functional_dependency(FastIntSet::new([10]), FastIntSet::new([11]));
         inner.make_not_null(FastIntSet::new([10]));
         outer.make_outer_join(
             &inner,
@@ -1199,8 +1199,8 @@ mod tests {
             &FastIntSet::new([10]),
             OuterJoinOptions::default(),
         );
-        assert_eq!(outer.registered_unique_id(b"hash-a"), Some(2));
-        assert_eq!(outer.registered_unique_id(b"hash-b"), Some(3));
+        assert_eq!(outer.is_hash_code_registered(b"hash-a"), Some(2));
+        assert_eq!(outer.is_hash_code_registered(b"hash-b"), Some(3));
     }
 
     /// Go `TestFindCommonEquivClasses`.

@@ -21,7 +21,7 @@
 //! sorts by `HashCode`, and pins `StringifyExpressionsWithCtx` output
 //! (`expression.go:1334`). The Rust side carries the two pure transforms in
 //! this crate (`expr_util::push_not::push_down_not`,
-//! `expr_util::normal_form::extract_filters_from_dnfs`), so each Go case is
+//! `expr_util::normal_form::extract_filters_from_dn_fs`), so each Go case is
 //! rebuilt here as an already-resolved tree over the same three columns
 //! (`test.t.a/b/c`) — the plan-building steps the Go harness performs are what
 //! this evaluator cannot see, not the transforms under test.
@@ -29,7 +29,7 @@
 use crate::column::Column;
 use crate::constant::Constant;
 use crate::expr_util::builder::PreservingFunctionBuilder;
-use crate::expr_util::normal_form::extract_filters_from_dnfs;
+use crate::expr_util::normal_form::extract_filters_from_dn_fs;
 use crate::expr_util::push_not::push_down_not;
 use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
@@ -122,7 +122,7 @@ fn render_list(exprs: &[Expression]) -> String {
 fn push_down_extract_and_render(condition: Expression) -> String {
     let builder = PreservingFunctionBuilder;
     let pushed = push_down_not(&condition, &builder);
-    let mut after = extract_filters_from_dnfs(vec![pushed]);
+    let mut after = extract_filters_from_dn_fs(vec![pushed]);
     // Go's HashCode is `[retType + operands...]`; Rust's [`Expression::hash_code`
     // mirrors it but borrows mutably (it caches), so take a mutable copy.
     after.sort_by_key(|expr| {

@@ -480,7 +480,7 @@ fn tpch_q1_grouped_partial_aggregation_keeps_functions_and_group_keys_on_the_wir
             children: Vec::new(),
             sig: Some(ScalarFuncSig::Unspecified as i32),
             field_type: Some(
-                tidb_expr::pushdown_catalog::field_type_to_pb(field_type)
+                tidb_expr::pushdown_catalog::to_pb_field_type(field_type)
                     .expect("numeric q1 field type lowers"),
             ),
             has_distinct: Some(false),
@@ -494,7 +494,7 @@ fn tpch_q1_grouped_partial_aggregation_keeps_functions_and_group_keys_on_the_wir
         children: vec![child],
         sig: Some(ScalarFuncSig::Unspecified as i32),
         field_type: Some(
-            tidb_expr::pushdown_catalog::field_type_to_pb(field_type)
+            tidb_expr::pushdown_catalog::to_pb_field_type(field_type)
                 .expect("numeric q1 aggregate type lowers"),
         ),
         has_distinct: Some(false),
@@ -655,7 +655,7 @@ fn the_wide_lowering_preserves_integer_types_and_rejects_invalid_descriptors() {
 }
 
 /// A `VARCHAR` column in a named collation, as a scan descriptor states it:
-/// the REWRITTEN protocol id, which is what `cop_reader::scan_column` puts there.
+/// the REWRITTEN protocol id, which is what `cop_reader::column_to_proto` puts there.
 fn string_column(collation: &str) -> ScanColumnInfo {
     ScanColumnInfo {
         collation: tidb_datatype::collation_to_proto(collation),

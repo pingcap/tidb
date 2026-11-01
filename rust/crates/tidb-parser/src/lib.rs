@@ -1450,7 +1450,7 @@ impl Parser {
         Ok(exprs)
     }
 
-    /// Shared string-literal primitive. Source-owned callers choose the
+    /// Shared string-literal primitive. Source-owned callers new_row_sample_collector the
     /// diagnostic; this helper owns no authentication or DDL policy.
     fn parse_string_literal(&mut self, message: &str) -> PResult<String> {
         if self.peek().kind != TokenKind::Str {

@@ -153,7 +153,7 @@ fn group_step(
 }
 
 /// Go `onCreateResourceGroup`.
-pub(super) fn plan_persisted_create_resource_group_job_step(
+pub(super) fn on_create_resource_group(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -175,7 +175,7 @@ pub(super) fn plan_persisted_create_resource_group_job_step(
 }
 
 /// Go `onAlterResourceGroup`.
-pub(super) fn plan_persisted_alter_resource_group_job_step(
+pub(super) fn on_alter_resource_group(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -197,7 +197,7 @@ pub(super) fn plan_persisted_alter_resource_group_job_step(
 }
 
 /// Go `onDropResourceGroup`: public -> none in one step.
-pub(super) fn plan_persisted_drop_resource_group_job_step(
+pub(super) fn on_drop_resource_group(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {

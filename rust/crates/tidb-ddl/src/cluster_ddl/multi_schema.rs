@@ -21,7 +21,7 @@
 //! version; then finishes them one by one. A sub-job that fails before that
 //! point rolls every sub-job back in reverse order.
 
-use super::add_index::{action_step, table_step, AddIndexSubmission, ReorgOutcome};
+use super::add_index::{action_step, update_version_and_table_info, AddIndexSubmission, ReorgOutcome};
 use super::*;
 use tidb_infoschema::cluster_catalog::MetaPairs;
 use tidb_model::{GoAny, JobArgs, MultiSchemaInfo, SubJob};
@@ -495,7 +495,7 @@ pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
             warnings: Vec::new(),
         }));
     }
-    let job = build_multi_schema_job(&catalog, schema, table, specs, job_context, store_count)?;
+    let job = append_to_sub_jobs(&catalog, schema, table, specs, job_context, store_count)?;
     submit_built_job(
         snapshot,
         &catalog,
@@ -508,7 +508,7 @@ pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
 
 /// Go `appendToSubJobs` for each built job, then `multiSchemaChange`: the
 /// parent job, `checkMultiSchemaInfo` and `mergeAddIndex`.
-pub(super) fn build_multi_schema_job(
+pub(super) fn append_to_sub_jobs(
     catalog: &ClusterCatalog,
     schema: &str,
     table: &str,
@@ -763,7 +763,7 @@ impl MultiSchemaNames {
             ..MultiSchemaInfo::default()
         };
         // Go `checkOperateSameColAndIdx`.
-        tidb_ddl_build::multi_schema_change::check_multi_schema_names(&names)
+        tidb_ddl_build::multi_schema_change::check_operate_same_col_and_idx(&names)
             .map_err(DdlPlanError::from_mysql_error)?;
         check_visible_column_cnt(stored, self.add_columns.len(), self.drop_columns.len())?;
         check_operate_drop_index_use_by_foreign_key(
@@ -958,7 +958,7 @@ fn flush_cancelling(sub_jobs: &[GoShared<SubJob>]) {
 }
 
 /// Go `onMultiSchemaChange`.
-pub(super) fn plan_persisted_multi_schema_job_step<S: MetaSnapshot>(
+pub(super) fn on_multi_schema_change<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
@@ -1075,7 +1075,7 @@ pub(super) fn plan_persisted_multi_schema_job_step<S: MetaSnapshot>(
             if meta.read().analyze_state == tidb_model::reorg::analyze_state::NONE {
                 meta.write().analyze_state = tidb_model::reorg::analyze_state::SKIPPED;
                 let schema_id = active.job.schema_id;
-                let write = table_step(catalog, active, schema_id, &saved_info, true, start_ts)?;
+                let write = update_version_and_table_info(catalog, active, schema_id, &saved_info, true, start_ts)?;
                 return Ok(action_step(write));
             }
         }
@@ -1127,7 +1127,7 @@ pub(super) fn plan_persisted_multi_schema_job_step<S: MetaSnapshot>(
                 );
                 // The table goes back to how it stood, under a new version.
                 let schema_id = active.job.schema_id;
-                let write = table_step(catalog, active, schema_id, &saved_info, true, start_ts)?;
+                let write = update_version_and_table_info(catalog, active, schema_id, &saved_info, true, start_ts)?;
                 return Ok(action_step(write));
             }
             overlay.stage(&step.write.mutations);
@@ -1234,7 +1234,7 @@ fn finish_multi_schema_job(
 
 /// Go `rollingBackMultiSchemaChange`: past the revertible point the job runs
 /// on; before it, every sub-job turns cancelling.
-pub(super) fn plan_cancel_multi_schema(
+pub(super) fn rolling_back_multi_schema_change(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let Some(info) = active.job.multi_schema_info.clone() else {

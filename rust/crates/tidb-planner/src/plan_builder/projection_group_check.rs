@@ -55,7 +55,7 @@ pub(super) fn check(
                     continue;
                 }
                 let mut scratch = expr.clone();
-                let Some(id) = fds.registered_unique_id(scratch.hash_code()) else {
+                let Some(id) = fds.is_hash_code_registered(scratch.hash_code()) else {
                     // Go skips expressions absent from its registration map.
                     continue;
                 };

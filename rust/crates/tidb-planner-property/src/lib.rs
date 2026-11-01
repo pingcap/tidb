@@ -232,12 +232,12 @@ pub fn choose_partition_keys(
 }
 
 /// Go `GetCollateIDByNameForPartition`.
-pub fn collate_id_for_partition(name: &str) -> i32 {
+pub fn get_collate_id_by_name_for_partition(name: &str) -> i32 {
     tidb_datatype::rewrite_new_collation_id_if_needed(tidb_datatype::collation_name_to_id(name))
 }
 
 /// Go `GetCollateNameByIDForPartition`.
-pub fn collate_name_for_partition(id: i32) -> String {
+pub fn get_collate_name_by_id_for_partition(id: i32) -> String {
     tidb_datatype::collation_id_to_name(tidb_datatype::restore_collation_id_if_needed(id))
 }
 
@@ -518,7 +518,7 @@ pub fn explain_column_list(columns: &[MppPartitionColumn]) -> Vec<u8> {
         .iter()
         .map(|column| {
             let collate = if tidb_datatype::new_collation_enabled() {
-                collate_name_for_partition(column.collate_id)
+                get_collate_name_by_id_for_partition(column.collate_id)
             } else {
                 "N/A".to_owned()
             };
@@ -623,7 +623,7 @@ impl PhysicalProperty {
     }
 
     /// Go `NewPhysicalProperty`, retaining complete column values.
-    pub fn new_from_columns(
+    pub fn new_physical_property(
         task_tp: TaskType,
         cols: &[tidb_expr::column::Column],
         desc: bool,
@@ -631,7 +631,7 @@ impl PhysicalProperty {
         enforced: bool,
     ) -> Self {
         Self {
-            sort_items: sort_items_from_columns(cols, desc),
+            sort_items: sort_items_from_cols(cols, desc),
             task_tp,
             expected_cnt,
             can_add_enforcer: enforced,
@@ -717,7 +717,7 @@ impl PhysicalProperty {
     }
 
     /// Go `GetAllPossibleChildTaskTypes`.
-    pub fn all_possible_child_task_types(&self) -> Vec<TaskType> {
+    pub fn get_all_possible_child_task_types(&self) -> Vec<TaskType> {
         if self.task_tp == TaskType::Root {
             vec![
                 TaskType::CopSingleRead,
@@ -789,7 +789,7 @@ impl PhysicalProperty {
     }
 
     /// Go `GetSortItemsForKeepOrder`, prioritizing partial order.
-    pub fn sort_items_for_keep_order(&self) -> Vec<SortItem> {
+    pub fn get_sort_items_for_keep_order(&self) -> Vec<SortItem> {
         self.partial_order_info
             .as_ref()
             .filter(|partial| !partial.sort_items.is_empty())
@@ -887,7 +887,7 @@ impl PhysicalProperty {
 }
 
 /// Go `SortItemsFromCols`.
-pub fn sort_items_from_columns(columns: &[tidb_expr::column::Column], desc: bool) -> Vec<SortItem> {
+pub fn sort_items_from_cols(columns: &[tidb_expr::column::Column], desc: bool) -> Vec<SortItem> {
     columns
         .iter()
         .cloned()
@@ -991,10 +991,10 @@ mod required_property_tests {
     fn tpch_q3_fd() -> FdSet {
         let mut fd = FdSet::new();
         fd.add_equivalence(cols(&[1, 10]), cols(&[1, 10]));
-        fd.add_strict(cols(&[1]), cols(&[2, 3, 4, 5, 6, 8]));
-        fd.add_strict(cols(&[]), cols(&[7]));
-        fd.add_strict(cols(&[9]), cols(&[10, 11, 12, 13, 14, 15, 16, 17]));
-        fd.add_strict(
+        fd.add_strict_functional_dependency(cols(&[1]), cols(&[2, 3, 4, 5, 6, 8]));
+        fd.add_strict_functional_dependency(cols(&[]), cols(&[7]));
+        fd.add_strict_functional_dependency(cols(&[9]), cols(&[10, 11, 12, 13, 14, 15, 16, 17]));
+        fd.add_strict_functional_dependency(
             cols(&[10, 21]),
             cols(&[19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]),
         );
@@ -1141,7 +1141,7 @@ mod required_property_tests {
         };
         assert!(prop.need_keep_order());
         assert!(prop.sort_desc_for_keep_order());
-        assert_eq!(prop.sort_items_for_keep_order()[0].col.unique_id, 2);
+        assert_eq!(prop.get_sort_items_for_keep_order()[0].col.unique_id, 2);
         assert!(prop.clone_essential_fields().partial_order_info.is_some());
     }
 

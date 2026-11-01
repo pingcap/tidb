@@ -102,7 +102,7 @@ pub(crate) fn numeric_context_result_type(expr: &Expression) -> EvalType {
 /// the base result type for an Int/Real/Decimal/Vector signature. The Go function's
 /// trailing `booleanFunctions` check is applied by the callers that need it
 /// (none of the arithmetic classes are boolean functions).
-pub(crate) fn new_return_field_type(ret: EvalType) -> FieldType {
+pub(crate) fn new_return_field_type_for_base_builtin_func(ret: EvalType) -> FieldType {
     let mut ft = match ret {
         EvalType::Int => FieldTypeBuilder::new()
             .with_code(FieldTypeCode::LongLong)
@@ -140,7 +140,7 @@ pub(crate) fn real_argument_type(source: &FieldType) -> std::borrow::Cow<'_, Fie
         return std::borrow::Cow::Borrowed(source);
     }
     std::borrow::Cow::Owned(
-        new_return_field_type(EvalType::Real).with_added_flags(
+        new_return_field_type_for_base_builtin_func(EvalType::Real).with_added_flags(
             source.flags() & (FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL),
         ),
     )
@@ -339,13 +339,13 @@ pub fn infer_arithmetic_type_with_context(
         return match name {
             // Go's function classes select `ETVectorFloat32` for BOTH
             // arguments and the result as soon as either operand is vector.
-            "plus" | "minus" | "mul" => Some(new_return_field_type(EvalType::VectorFloat32)),
+            "plus" | "minus" | "mul" => Some(new_return_field_type_for_base_builtin_func(EvalType::VectorFloat32)),
             _ => None,
         };
     }
     let real_or_decimal = |is_multiply: bool| -> FieldType {
         if lhs_tp == EvalType::Real || rhs_tp == EvalType::Real {
-            let mut ret = new_return_field_type(EvalType::Real);
+            let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Real);
             if let (Some(a), Some(b)) = (a, b) {
                 let a = real_argument_type(a);
                 let b = real_argument_type(b);
@@ -353,7 +353,7 @@ pub fn infer_arithmetic_type_with_context(
             }
             ret
         } else {
-            let mut ret = new_return_field_type(EvalType::Decimal);
+            let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Decimal);
             if let (Some(a), Some(b)) = (a, b) {
                 set_flen_decimal4_real_or_decimal(&mut ret, a, b, false, is_multiply);
             }
@@ -368,7 +368,7 @@ pub fn infer_arithmetic_type_with_context(
     Some(match name {
         "plus" | "minus" => {
             if int_result {
-                let mut ret = new_return_field_type(EvalType::Int);
+                let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Int);
                 if (name != "minus" || !no_unsigned_subtraction) && (unsigned(a) || unsigned(b)) {
                     ret.add_flags(FieldTypeFlags::UNSIGNED);
                 }
@@ -379,7 +379,7 @@ pub fn infer_arithmetic_type_with_context(
         }
         "mul" => {
             if int_result {
-                let mut ret = new_return_field_type(EvalType::Int);
+                let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Int);
                 if unsigned(a) || unsigned(b) {
                     ret.add_flags(FieldTypeFlags::UNSIGNED);
                 }
@@ -391,11 +391,11 @@ pub fn infer_arithmetic_type_with_context(
         "div" => {
             // `/` never yields Int: Real if either side is real, else Decimal.
             if lhs_tp == EvalType::Real || rhs_tp == EvalType::Real {
-                let mut ret = new_return_field_type(EvalType::Real);
+                let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Real);
                 set_type4_div_real(&mut ret);
                 ret
             } else {
-                let mut ret = new_return_field_type(EvalType::Decimal);
+                let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Decimal);
                 if let (Some(a), Some(b)) = (a, b) {
                     set_type4_div_decimal(&mut ret, a, b, i64::from(div_precision_increment));
                 }
@@ -407,7 +407,7 @@ pub fn infer_arithmetic_type_with_context(
         }
         "intdiv" => {
             // `DIV` always yields Int; unsigned if either side is unsigned.
-            let mut ret = new_return_field_type(EvalType::Int);
+            let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Int);
             if unsigned(a) || unsigned(b) {
                 ret.add_flags(FieldTypeFlags::UNSIGNED);
             }
@@ -415,7 +415,7 @@ pub fn infer_arithmetic_type_with_context(
         }
         "mod" => {
             if lhs_tp == EvalType::Real || rhs_tp == EvalType::Real {
-                let mut ret = new_return_field_type(EvalType::Real);
+                let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Real);
                 if let (Some(a), Some(b)) = (a, b) {
                     set_type4_mod_real_or_decimal(&mut ret, a, b, false);
                 }
@@ -424,7 +424,7 @@ pub fn infer_arithmetic_type_with_context(
                 }
                 ret
             } else if lhs_tp == EvalType::Decimal || rhs_tp == EvalType::Decimal {
-                let mut ret = new_return_field_type(EvalType::Decimal);
+                let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Decimal);
                 if let (Some(a), Some(b)) = (a, b) {
                     set_type4_mod_real_or_decimal(&mut ret, a, b, true);
                 }
@@ -434,7 +434,7 @@ pub fn infer_arithmetic_type_with_context(
                 ret
             } else {
                 // Mod's int result is unsigned iff the LHS is unsigned.
-                let mut ret = new_return_field_type(EvalType::Int);
+                let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Int);
                 if unsigned(a) {
                     ret.add_flags(FieldTypeFlags::UNSIGNED);
                 }

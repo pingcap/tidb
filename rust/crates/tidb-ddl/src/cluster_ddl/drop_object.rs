@@ -57,7 +57,7 @@ fn submission<S: MetaSnapshot>(
 /// `executor.DropSchema`, up to `doDDLJob2`. `None` for any other statement.
 /// `targets` are every `(schema, table)` the statement names (empty: just
 /// this one), Go's `DropTableArgs.Identifiers`.
-pub fn prepare_drop_object_job_submission<S: MetaSnapshot>(
+pub fn drop_table_object<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,

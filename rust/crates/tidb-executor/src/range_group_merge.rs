@@ -24,7 +24,7 @@
 
 use std::cmp::Ordering;
 
-use tidb_executor_sortexec::{eval_sort_key, less_by_items, validate_by_items, SortByItem};
+use tidb_executor_sortexec::{eval_sort_key, less_row, build_key_columns, SortByItem};
 use tidb_goruntime::go_heap;
 use crate::ExecError;
 use crate::Executor;
@@ -43,7 +43,7 @@ struct HeapRow {
 }
 
 /// Go `distsql.sortedSelectResults` over already-built group readers.
-pub struct RangeGroupMergeExec<C: Columns> {
+pub struct SortedSelectResults<C: Columns> {
     meta: ExecutorMeta,
     by_items: Vec<SortByItem>,
     children: Vec<Box<dyn Executor>>,
@@ -53,7 +53,7 @@ pub struct RangeGroupMergeExec<C: Columns> {
     heap: Vec<HeapRow>,
 }
 
-impl<C> RangeGroupMergeExec<C>
+impl<C> SortedSelectResults<C>
 where
     C: Columns + Clone + Send + Sync + 'static,
 {
@@ -65,7 +65,7 @@ where
         children: Vec<Box<dyn Executor>>,
         ctx: C,
     ) -> Result<Self, ExecError> {
-        validate_by_items(&by_items)?;
+        build_key_columns(&by_items)?;
         let cached = children.iter().map(|_| None).collect();
         Ok(Self {
             meta,
@@ -91,7 +91,7 @@ where
         self.heap.push(element);
         let last = self.heap.len() - 1;
         go_heap::up(&mut self.heap, last, &mut |left, right| {
-            ordering_is_less(less_by_items(by_items, &left.key, &right.key), &mut error)
+            ordering_is_less(less_row(by_items, &left.key, &right.key), &mut error)
         });
         error.map_or(Ok(()), Err)
     }
@@ -101,7 +101,7 @@ where
         let by_items = &self.by_items;
         let mut error = None;
         let head = go_heap::pop(&mut self.heap, &mut |left, right| {
-            ordering_is_less(less_by_items(by_items, &left.key, &right.key), &mut error)
+            ordering_is_less(less_row(by_items, &left.key, &right.key), &mut error)
         });
         error.map_or(Ok(head), Err)
     }
@@ -133,7 +133,7 @@ fn ordering_is_less(result: Result<Ordering, ExecError>, error: &mut Option<Exec
     }
 }
 
-impl<C> Executor for RangeGroupMergeExec<C>
+impl<C> Executor for SortedSelectResults<C>
 where
     C: Columns + Clone + Send + Sync + 'static,
 {

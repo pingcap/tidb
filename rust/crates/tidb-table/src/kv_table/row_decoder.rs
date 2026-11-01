@@ -1048,7 +1048,7 @@ fn fill_handle_columns_if(
 /// column sorted by ID -- the stored values (`DecodeRowWithMapNew`), the
 /// handle columns the value does not carry (`DecodeHandleToDatumMap`), and
 /// each still-missing column's `GetColOriginDefaultValue`.
-pub fn row_checksum(
+pub fn fill_row_checksum(
     table: &super::KvTable,
     handle: &TableHandle,
     value: &[u8],

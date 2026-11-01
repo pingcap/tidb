@@ -97,7 +97,7 @@ struct CacheState {
 impl CacheState {
     fn account(&self, previous_size: usize, previous_memory: i64) {
         if self.plans.size() != previous_size {
-            tidb_planner_core_metrics::plan_cache_instance_num_counter(false)
+            tidb_planner_core_metrics::get_plan_cache_instance_num_counter(false)
                 .add(self.plans.size() as f64 - previous_size as f64);
         }
         if self.monitor_memory && self.plans.memory_usage() != previous_memory {
@@ -205,7 +205,7 @@ impl PlanCacheInvalidation {
                         }
                         let (soft, hard) = instance_limits();
                         cache.set_limits(soft, hard);
-                        tidb_planner_core_metrics::plan_cache_instance_num_counter(true)
+                        tidb_planner_core_metrics::get_plan_cache_instance_num_counter(true)
                             .set(cache.size() as f64);
                         tidb_planner_core_metrics::plan_cache_instance_memory_usage(true)
                             .set(cache.memory_usage() as f64);
@@ -214,7 +214,7 @@ impl PlanCacheInvalidation {
                             let disabled = !tidb_vardef::ENABLE_INSTANCE_PLAN_CACHE
                                 .load(std::sync::atomic::Ordering::Acquire);
                             let removed = cache.evict(disabled);
-                            tidb_planner_core_metrics::plan_cache_instance_evict().set(removed as f64);
+                            tidb_planner_core_metrics::get_plan_cache_instance_evict().set(removed as f64);
                         }
                     }
                 })
@@ -401,7 +401,7 @@ impl SessionPlanCache {
             let value = instance.get(&self.instance_key(key), parameter_types)?;
             let begin = std::time::Instant::now();
             let plan = value.plan.clone_for_execution();
-            tidb_planner_core_metrics::plan_cache_clone_duration()
+            tidb_planner_core_metrics::get_plan_cache_clone_duration()
                 .observe(begin.elapsed().as_secs_f64());
             return Some(plan);
         }

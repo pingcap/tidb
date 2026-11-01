@@ -593,7 +593,7 @@ impl<'a> DispatchContext<'a> {
 
     /// Go `SessionVars.GetAllowPreferRangeScan()`.
     #[must_use]
-    pub const fn with_prefer_range_scan(mut self, value: bool) -> Self {
+    pub const fn get_allow_prefer_range_scan(mut self, value: bool) -> Self {
         self.prefer_range_scan = value;
         self
     }
@@ -734,7 +734,7 @@ fn exhaust_physical_plans(
             // Go's two preference slices, in order: the TopN operators
             // (`getPhysTopN`), then the LIMIT half (`getPhysLimits`).
             let mut slices = Vec::with_capacity(2);
-            let topns = tidb_planner_core_operator_physicalop::get_phys_topn(
+            let topns = tidb_planner_core_operator_physicalop::get_phys_top_n(
                 op,
                 prop,
                 ctx.allocator,
@@ -2013,7 +2013,7 @@ pub(super) fn index_path_matches_order(
     if !index.read().unique
         && !index.read().primary
         && !ds.common_handle_cols.is_empty()
-        && ds.declared_index_columns(index).iter().all(Option::is_some)
+        && ds.index_info_2_full_cols(index).iter().all(Option::is_some)
         && !has_v0_new_collation_string_handle(ds)
     {
         for (handle, length) in ds.common_handle_cols.iter().zip(&ds.common_handle_lens) {
@@ -2075,7 +2075,7 @@ fn has_v0_new_collation_string_handle(ds: &tidb_planner_core_operator_logicalop:
 /// `in(_tidb_tid, ids)` over the partition id each entry records, or the
 /// impossible id -1 when none survive. A full partition set adds nothing
 /// (no partition here is hidden by an in-flight DDL).
-pub(super) fn global_index_partition_filter(
+pub(super) fn add_selection_condition_for_global_index(
     ds: &tidb_planner_core_operator_logicalop::DataSource,
     index: &tidb_infoschema::table_source::SourceIndex,
     scan_schema: Option<&tidb_expr::schema::Schema>,
@@ -2303,7 +2303,7 @@ fn build_index_join_path_result(
         // Go `fillIndexPath` appends the handle to `FullIdxCols` exactly when
         // it appends it to `IdxCols`.
         Some(index) => {
-            let mut full = ds.declared_index_columns(index);
+            let mut full = ds.index_info_2_full_cols(index);
             let prefix = full.iter().cloned().map_while(std::convert::identity).collect::<Vec<_>>();
             full.extend(ds.handle_cols_to_append(index, &prefix).into_iter().map(Some));
             full
@@ -2389,7 +2389,7 @@ fn index_join_candidate(
             let single_scan = state.is_single_scan.unwrap_or_else(|| {
                 index_path_is_single_scan(ds, source_index, ctx.opt_prefix_index_single_scan)
             });
-            crate::find_best_task::candidate::index_candidate_metrics(
+            crate::find_best_task::candidate::get_index_candidate(
                 ds,
                 source_index,
                 state,
@@ -3113,7 +3113,7 @@ fn find_best_task_4_logical_data_source_paths(
     let mut best = Task::invalid_task();
     let mut ordinary_candidates = Vec::new();
     // Go `getBestIndexJoinInnerTaskByProp`: an index-join probe prices only
-    // the path its rules choose -- the common handle path or the integer
+    // the path its rules new_row_sample_collector -- the common handle path or the integer
     // handle for a table-range probe, the `indexJoinPathCompare` winner of
     // the index paths otherwise.
     let index_join_result = prop.index_join_prop.as_ref().and_then(|runtime| {
@@ -4115,7 +4115,7 @@ fn find_best_task_4_logical_data_source_paths(
                         // A GLOBAL index is stored in the logical table's
                         // keyspace and carries each row's partition ID, so a
                         // unique-key point read does not need static pruning
-                        // to choose one physical table first.
+                        // to new_row_sample_collector one physical table first.
                         || source_index.read().global
                         // Go `find_best_task.go:2214`: a partitioned table
                         // still converts, one range at a time (a batch
@@ -4277,7 +4277,7 @@ fn find_best_task_4_logical_data_source_paths(
                                 } else {
                                     ranges.clone()
                                 };
-                            Some(tidb_planner_cardinality::ranger_stats_bridge::pseudo_count_by_ranges(
+                            Some(tidb_planner_cardinality::ranger_stats_bridge::get_pseudo_row_count_by_index_ranges(
                                 &estimate_ranges,
                                 base_stats.row_count(),
                             ))
@@ -4469,7 +4469,7 @@ fn find_best_task_4_logical_data_source_paths(
                             || order_match.result
                                 == tidb_planner_property::PhysicalPropMatchResult::MatchedNeedMergeSort)
                     {
-                        sort_items_to_by_items(&prop.sort_items_for_keep_order())
+                        sort_items_to_by_items(&prop.get_sort_items_for_keep_order())
                     } else {
                         Vec::new()
                     },
@@ -4505,7 +4505,7 @@ fn find_best_task_4_logical_data_source_paths(
                 let has_root_filters = !virtual_table_filters.is_empty()
                     || !rejected_index_filters.is_empty() || !rejected_table_filters.is_empty();
                 let global_partition_filter =
-                    global_index_partition_filter(ds, source_index, scan.schema());
+                    add_selection_condition_for_global_index(ds, source_index, scan.schema());
                 // Go `(*CopTask).finishIndexPlan`: the lookup's table side
                 // takes the INDEX PLAN's stats -- the index Selection's when
                 // one exists, else the scan's.
@@ -5216,18 +5216,18 @@ fn record_index_join_hint_warnings(
     let mut message = if join.prefer_any(&[hint::LEFT_AS_INLJ_INNER, hint::RIGHT_AS_INLJ_INNER]) {
         format!(
             "Optimizer Hint {} or {} is inapplicable",
-            tidb_hint::restore_join_hint("inl_join", &canonical.inlj_tables),
-            tidb_hint::restore_join_hint("tidb_inlj", &canonical.inlj_tables),
+            tidb_hint::restore_2_join_hint("inl_join", &canonical.inlj_tables),
+            tidb_hint::restore_2_join_hint("tidb_inlj", &canonical.inlj_tables),
         )
     } else if join.prefer_any(&[hint::LEFT_AS_INLHJ_INNER, hint::RIGHT_AS_INLHJ_INNER]) {
         format!(
             "Optimizer Hint {} is inapplicable",
-            tidb_hint::restore_join_hint("inl_hash_join", &canonical.inlhj_tables),
+            tidb_hint::restore_2_join_hint("inl_hash_join", &canonical.inlhj_tables),
         )
     } else {
         format!(
             "Optimizer Hint {} is inapplicable",
-            tidb_hint::restore_join_hint("inl_merge_join", &canonical.inlmj_tables),
+            tidb_hint::restore_2_join_hint("inl_merge_join", &canonical.inlmj_tables),
         )
     };
     // "Append inapplicable reason."

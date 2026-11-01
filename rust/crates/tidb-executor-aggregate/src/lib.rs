@@ -110,7 +110,7 @@ use tidb_set::{
 };
 
 use tidb_executor_aggfuncs::aggfuncs::*;
-use tidb_executor_aggfuncs::approx_count_distinct::ApproxCountDistinctSketch;
+use tidb_executor_aggfuncs::approx_count_distinct::PartialResult4ApproxCountDistinct;
 use tidb_executor_aggfuncs::aggfuncs::input::AggInputMode;
 
 /// Go `StreamAggExec` for a global aggregate (an empty group-by list).
@@ -118,7 +118,7 @@ use tidb_executor_aggfuncs::aggfuncs::input::AggInputMode;
 /// A global aggregate is already one ordered group, so no hash table or row
 /// materialization is needed: each child row is folded into the one vector of
 /// partial results and that vector emits exactly once, including for empty
-/// input. The driver selects this executor only for Go plan shapes that choose
+/// input. The driver selects this executor only for Go plan shapes that new_row_sample_collector
 /// StreamAgg; grouped input continues through [`HashAggExec`].
 pub struct StreamAggExec<C: Columns> {
     meta: ExecutorMeta,
@@ -1102,7 +1102,7 @@ mod tests {
         let fields = vec![long(), long()];
         let mut chunks = Vec::new();
         for batch in rows.chunks(1024) {
-            let mut data = Chunk::new_with_capacity(&fields, batch.len().max(1));
+            let mut data = Chunk::new_chunk_with_capacity(&fields, batch.len().max(1));
             for (g, v) in batch {
                 data.append_int64(0, *g);
                 match v {
@@ -1150,7 +1150,7 @@ mod tests {
     #[test]
     fn integer_group_key_fast_path_matches_go_hash_group_key_encoding() {
         let types = [long(), long().with_unsigned(true)];
-        let mut chunk = Chunk::new_with_capacity(&types, 2);
+        let mut chunk = Chunk::new_chunk_with_capacity(&types, 2);
         chunk.append_int64(0, -7);
         chunk.append_uint64(1, 7);
         chunk.append_null(0);
@@ -1204,7 +1204,7 @@ mod tests {
 
     fn binary_string_source(values: &[Option<&[u8]>]) -> Box<dyn Executor> {
         let field_type = binary_varchar();
-        let mut data = Chunk::new_with_capacity(std::slice::from_ref(&field_type), values.len());
+        let mut data = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field_type), values.len());
         for value in values {
             match value {
                 Some(value) => data.append_bytes(0, value),
@@ -1260,7 +1260,7 @@ mod tests {
         ];
         let make_source = || {
             let mut data =
-                Chunk::new_with_capacity(std::slice::from_ref(&field_type), values.len());
+                Chunk::new_chunk_with_capacity(std::slice::from_ref(&field_type), values.len());
             for value in values {
                 match value {
                     Some(value) => data.append_float64(0, value),
@@ -1418,7 +1418,7 @@ mod tests {
         let sum_type = decimal_with_shape(20, 2);
         let count_type = long();
         let fields = [group_type.clone(), sum_type.clone(), count_type.clone()];
-        let mut data = Chunk::new_with_capacity(&fields, 3);
+        let mut data = Chunk::new_chunk_with_capacity(&fields, 3);
         for (group, sum, count) in [
             (b"a".as_slice(), "1.00", 2),
             (b"a", "2.50", 3),
@@ -1487,7 +1487,7 @@ mod tests {
         let count_type = long();
         let fields = [group_type.clone(), sum_type.clone(), count_type.clone()];
         let make_chunk = |rows: &[(&[u8], &str, i64)]| {
-            let mut chunk = Chunk::new_with_capacity(&fields, rows.len());
+            let mut chunk = Chunk::new_chunk_with_capacity(&fields, rows.len());
             for (group, sum, count) in rows {
                 chunk.append_bytes(0, group);
                 chunk.append_datum(
@@ -1589,7 +1589,7 @@ mod tests {
 
     fn decimal_source(rows: &[Option<&str>], field_type: &FieldType) -> Box<dyn Executor> {
         let mut data =
-            Chunk::new_with_capacity(std::slice::from_ref(field_type), rows.len().max(1));
+            Chunk::new_chunk_with_capacity(std::slice::from_ref(field_type), rows.len().max(1));
         for value in rows {
             match value {
                 Some(value) => data.append_datum(
@@ -1613,7 +1613,7 @@ mod tests {
         // Chunk like a real child so the parallel pipeline admits more than
         // one lane (one lane per chunk).
         let mut chunks = Vec::new();
-        let mut data = Chunk::new_with_capacity(&fields, 1024);
+        let mut data = Chunk::new_chunk_with_capacity(&fields, 1024);
         for group in 0..groups {
             for (count, value) in [(2, "3.00"), (1, "4.00")] {
                 data.append_int64(0, group);
@@ -1625,7 +1625,7 @@ mod tests {
                 if data.num_rows() >= 1024 {
                     chunks.push(std::mem::replace(
                         &mut data,
-                        Chunk::new_with_capacity(&fields, 1024),
+                        Chunk::new_chunk_with_capacity(&fields, 1024),
                     ));
                 }
             }
@@ -1768,7 +1768,7 @@ mod tests {
     fn grouped_stream_agg_stops_at_required_rows_at_a_chunk_boundary() {
         let field = long();
         let chunks = [[1, 1], [2, 3]].map(|values| {
-            let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 2);
+            let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 2);
             for value in values {
                 chunk.append_int64(0, value);
             }
@@ -2005,13 +2005,13 @@ mod tests {
         // so filling the source's chunk GROWS it: the charge the fetcher
         // updates include allocation growth as well as the initial buffers.
         let values: Vec<Vec<u8>> = (0..64u8).map(|i| vec![b'a' + i % 2; 40]).collect();
-        let mut data = Chunk::new_with_capacity(std::slice::from_ref(&field_type), values.len());
+        let mut data = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field_type), values.len());
         for value in &values {
             data.append_bytes(0, value);
         }
         {
             let mut probe =
-                Chunk::new_with_capacity(std::slice::from_ref(&field_type), values.len());
+                Chunk::new_chunk_with_capacity(std::slice::from_ref(&field_type), values.len());
             let before = probe.memory_usage();
             for r in 0..data.num_rows() {
                 probe.append_row(data.get_row(r));
@@ -2360,7 +2360,7 @@ mod tests {
             ("unsigned overflow", unsigned.clone(), vec![Some(-1_i64)]),
             ("all null", signed.clone(), vec![None, None]),
         ] {
-            let mut chunk = Chunk::new_with_capacity(&[field_type.clone()], values.len());
+            let mut chunk = Chunk::new_chunk_with_capacity(&[field_type.clone()], values.len());
             for value in &values {
                 match value {
                     Some(value) => chunk.append_int64(0, *value),
@@ -2405,7 +2405,7 @@ mod tests {
         // A non-integer column keeps the complete path, so the unsupported
         // partial-result error is still raised rather than silently skipped.
         let func = AggFunc::new(AggKind::FinalCount, Some(typed_col(0, text.clone())));
-        let mut chunk = Chunk::new_with_capacity(&[text], 1);
+        let mut chunk = Chunk::new_chunk_with_capacity(&[text], 1);
         chunk.append_bytes(0, b"3");
         assert!(
             matches!(AggInputMode::new(&func), AggInputMode::Expression),
@@ -2722,7 +2722,7 @@ mod tests {
         /// BJKST sketch exactly as `Partial::ApproxCountDistinct` does, and
         /// returns the resulting distinct count.
         fn distinct_count(values: &[Datum]) -> u64 {
-            let mut sketch = ApproxCountDistinctSketch::new();
+            let mut sketch = PartialResult4ApproxCountDistinct::new();
             for value in values {
                 let encoded = approx_count_distinct_encode(value, Collation::Binary).unwrap();
                 sketch.insert(&encoded);
@@ -2773,7 +2773,7 @@ mod tests {
                     Collation::Utf8Mb4GeneralCi,
                 )),
             ];
-            let mut sketch = ApproxCountDistinctSketch::new();
+            let mut sketch = PartialResult4ApproxCountDistinct::new();
             for value in &values {
                 sketch.insert(
                     &approx_count_distinct_encode(value, Collation::Utf8Mb4GeneralCi).unwrap(),
@@ -2855,7 +2855,7 @@ mod tests {
                 encoded
             }
             let dt = || datetime_micros(0, 0);
-            let mut sketch = ApproxCountDistinctSketch::new();
+            let mut sketch = PartialResult4ApproxCountDistinct::new();
             for row in [
                 tuple_bytes(1, dt(), json(&BinaryJSONValue::Int64(1))),
                 tuple_bytes(1, dt(), json(&BinaryJSONValue::Int64(1))),

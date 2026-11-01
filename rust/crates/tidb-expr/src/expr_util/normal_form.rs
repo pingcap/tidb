@@ -270,7 +270,7 @@ fn extract_filters_from_dnf(dnf_func: &ScalarFunction) -> (Vec<Expression>, Opti
 /// not-yet-visited index; the same loop is kept here for the same reason, and
 /// because it also fixes the order the extracted filters are appended in.
 #[must_use]
-pub fn extract_filters_from_dnfs(mut conditions: Vec<Expression>) -> Vec<Expression> {
+pub fn extract_filters_from_dn_fs(mut conditions: Vec<Expression>) -> Vec<Expression> {
     let mut all_extracted = Vec::new();
     for index in (0..conditions.len()).rev() {
         let Expression::ScalarFunction(function) = &conditions[index] else {

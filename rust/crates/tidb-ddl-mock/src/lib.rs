@@ -280,7 +280,7 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    use tidb_ddl::ddl_job_scheduler::{must_reload_schemas, UnsyncedJobTracker};
+    use tidb_ddl::ddl_job_scheduler::{must_reload_schemas, UnSyncedJobTracker};
 
     use super::*;
 
@@ -306,10 +306,10 @@ mod tests {
 
     #[test]
     fn unsynced_job_tracker_contract() {
-        let tracker = UnsyncedJobTracker::new();
-        tracker.add_unsynced(1);
-        assert!(tracker.is_unsynced(1));
-        tracker.remove_unsynced(1);
-        assert!(!tracker.is_unsynced(1));
+        let tracker = UnSyncedJobTracker::new();
+        tracker.add_un_synced(1);
+        assert!(tracker.is_un_synced(1));
+        tracker.remove_un_synced(1);
+        assert!(!tracker.is_un_synced(1));
     }
 }

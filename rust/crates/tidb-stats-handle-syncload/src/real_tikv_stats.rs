@@ -96,7 +96,7 @@ pub fn load_stats_item_from_cluster<S: StoreClient>(
         .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
     let loaded = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        loader.load_item(
+        loader.read_stats_for_one_item(
             &mut snapshot,
             table_id,
             is_index,
@@ -117,7 +117,7 @@ pub fn load_stats_item_from_cluster<S: StoreClient>(
 /// transaction, so a concurrent `ANALYZE` cannot splice two generations into
 /// one column distribution.  This is a direct foreground read and does not
 /// publish anything to the shared statistics cache.
-pub fn read_column_distribution_stats_from_cluster<S: StoreClient>(
+pub fn read_column_distribution_stats<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
     loader: &ClusterStatsLoader,

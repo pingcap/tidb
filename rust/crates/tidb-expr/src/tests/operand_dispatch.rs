@@ -70,7 +70,7 @@ fn over_columns(sql: &str, columns: &[(&str, FieldType, Datum)]) -> String {
         Ok(rewritten) => rewritten,
         Err(err) => return format!("{err:?}"),
     };
-    let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(&field_types, 1);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&field_types, 1);
     for (index, (_, _, value)) in columns.iter().enumerate() {
         chunk.append_datum(index, value);
     }

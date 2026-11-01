@@ -65,7 +65,7 @@ fn in_decimal_across_scales_compares_numerically() {
         }
     }
 
-    let mut input = Chunk::new_with_capacity(&[ft.clone(), ft.clone()], left.len());
+    let mut input = Chunk::new_chunk_with_capacity(&[ft.clone(), ft.clone()], left.len());
     let mut column = Column::new(0, ft.clone());
     column.index = 0;
     let lhs = Expression::Column(column);

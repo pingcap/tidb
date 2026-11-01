@@ -30,14 +30,14 @@
 //! and is now built on [`crate::new_function`]:
 //!
 //! - `BuildFTSToILikeExpression` (Go lines 165-202) ->
-//!   [`build_fts_to_ilike_expression`]
+//!   [`build_fts_to_i_like_expression`]
 //! - `ftsZeroIntConst` (Go lines 207-212) -> [`fts_zero_int_const`]
 //! - `buildFTSBooleanModeILikeExpression` (Go lines 218-314) ->
 //!   `build_fts_boolean_mode_ilike_expression`
 //! - `buildFTSNaturalLanguageModeILikeExpression` (Go lines 319-345) ->
 //!   `build_fts_natural_language_mode_ilike_expression`
 //! - `BuildFTSToILikeExpressionFromBuiltin` (Go lines 362-397) ->
-//!   [`build_fts_to_ilike_expression_from_builtin`]
+//!   [`build_fts_to_i_like_expression_from_builtin`]
 //! - `buildFTSILikePredicate` (Go lines 401-438) ->
 //!   `build_fts_ilike_predicate`
 //!
@@ -64,7 +64,7 @@
 //!   `SetFTSMysqlMatchAgainstModifier`), and
 //!   `BuildFTSToILikeExpressionFromBuiltin` recovers it by downcasting
 //!   `fts.Function`. This crate's [`ScalarFunction`] carries no per-signature
-//!   object, so [`build_fts_to_ilike_expression_from_builtin`] takes the
+//!   object, so [`build_fts_to_i_like_expression_from_builtin`] takes the
 //!   modifier as an explicit argument instead. Every Go caller reaches that
 //!   function through code that set the modifier itself, so no caller loses
 //!   information; what IS lost is Go's "unexpected builtin signature" error
@@ -276,7 +276,7 @@ pub enum FtsBuildError {
     NotSupportedYet(FtsLikeFallbackError),
     /// An error raised while building a node, i.e. out of Go's `NewFunction`
     /// or one of the `errors.Errorf` guards in
-    /// [`build_fts_to_ilike_expression_from_builtin`].
+    /// [`build_fts_to_i_like_expression_from_builtin`].
     Build(EvalError),
 }
 
@@ -497,7 +497,7 @@ fn build_fts_natural_language_mode_ilike_expression(
 /// [`validate_fts_search_string_for_like_fallback`] rejects, or a modifier
 /// that is neither boolean nor natural-language mode. Callers wanting a
 /// graceful fallback should call the validator directly and react to it.
-pub fn build_fts_to_ilike_expression(
+pub fn build_fts_to_i_like_expression(
     ctx: &impl Columns,
     columns: &[Expression],
     search_text: &str,
@@ -532,7 +532,7 @@ pub fn build_fts_to_ilike_expression(
 
 /// Go `BuildFTSToILikeExpressionFromBuiltin`
 /// (`pkg/expression/fts_to_like.go:362`): pulls the search string out of a
-/// `fts_match_word` node and delegates to [`build_fts_to_ilike_expression`].
+/// `fts_match_word` node and delegates to [`build_fts_to_i_like_expression`].
 /// This is the entry point for selectivity estimation, where the FTS scalar
 /// function is otherwise opaque to the estimator.
 ///
@@ -556,8 +556,8 @@ pub fn build_fts_to_ilike_expression(
 /// [`FtsBuildError::Build`] for a wrong function name or too few arguments,
 /// and [`FtsBuildError::NotSupportedYet`] for multi-column MATCH, a
 /// non-constant or non-string search argument, or anything
-/// [`build_fts_to_ilike_expression`] rejects.
-pub fn build_fts_to_ilike_expression_from_builtin(
+/// [`build_fts_to_i_like_expression`] rejects.
+pub fn build_fts_to_i_like_expression_from_builtin(
     ctx: &impl Columns,
     fts: &ScalarFunction,
     modifier: MatchModifier,
@@ -600,7 +600,7 @@ pub fn build_fts_to_ilike_expression_from_builtin(
         ));
     };
     let search_text = String::from_utf8_lossy(search_text).into_owned();
-    build_fts_to_ilike_expression(ctx, &args[1..], &search_text, modifier)
+    build_fts_to_i_like_expression(ctx, &args[1..], &search_text, modifier)
 }
 
 #[cfg(test)]
@@ -902,7 +902,7 @@ mod tests {
             vec![varchar_column(0)],
         );
         let error =
-            build_fts_to_ilike_expression_from_builtin(&NoColumns, &other, MatchModifier::None)
+            build_fts_to_i_like_expression_from_builtin(&NoColumns, &other, MatchModifier::None)
                 .expect_err("a non-FTS function is rejected");
         assert!(
             error.to_string().contains("fts_match_word"),
@@ -913,7 +913,7 @@ mod tests {
         // function and is NOT the untranslated opaque FTS builtin.
         let single = fts_match_against("mysql", 1);
         let built =
-            build_fts_to_ilike_expression_from_builtin(&NoColumns, &single, MatchModifier::None)
+            build_fts_to_i_like_expression_from_builtin(&NoColumns, &single, MatchModifier::None)
                 .expect("a single-column natural-language MATCH translates");
         assert_ne!(func_name_of(&built), "fts_match_word");
         assert_eq!(func_name_of(&built), "ifnull");
@@ -921,7 +921,7 @@ mod tests {
         // "multi-column rejected for selectivity substitution".
         let multi = fts_match_against("mysql", 2);
         let error =
-            build_fts_to_ilike_expression_from_builtin(&NoColumns, &multi, MatchModifier::None)
+            build_fts_to_i_like_expression_from_builtin(&NoColumns, &multi, MatchModifier::None)
                 .expect_err("multi-column MATCH is refused");
         assert!(
             error.to_string().contains("multi-column"),
@@ -941,7 +941,7 @@ mod tests {
                 varchar_column(0),
             ],
         );
-        let built = build_fts_to_ilike_expression_from_builtin(
+        let built = build_fts_to_i_like_expression_from_builtin(
             &NoColumns,
             &null_search,
             MatchModifier::None,
@@ -956,7 +956,7 @@ mod tests {
         // fails the validator and propagates.
         let bad = fts_match_against("xx-yy", 1);
         assert!(
-            build_fts_to_ilike_expression_from_builtin(&NoColumns, &bad, MatchModifier::None)
+            build_fts_to_i_like_expression_from_builtin(&NoColumns, &bad, MatchModifier::None)
                 .is_err()
         );
     }
@@ -969,11 +969,11 @@ mod tests {
     fn build_fts_to_ilike_expression_rejects_the_unsupported_shapes() {
         let columns = [varchar_column(0)];
         assert!(matches!(
-            build_fts_to_ilike_expression(&NoColumns, &[], "mysql", MatchModifier::None),
+            build_fts_to_i_like_expression(&NoColumns, &[], "mysql", MatchModifier::None),
             Err(FtsBuildError::NotSupportedYet(_))
         ));
         assert!(matches!(
-            build_fts_to_ilike_expression(
+            build_fts_to_i_like_expression(
                 &NoColumns,
                 &columns,
                 "mysql",
@@ -983,7 +983,7 @@ mod tests {
         ));
         // An empty search string can match nothing, so it short-circuits to 0
         // rather than erroring.
-        let empty = build_fts_to_ilike_expression(&NoColumns, &columns, "", MatchModifier::None)
+        let empty = build_fts_to_i_like_expression(&NoColumns, &columns, "", MatchModifier::None)
             .expect("an empty search string short-circuits");
         match empty {
             Expression::Constant(constant) => assert_eq!(constant.value, Datum::Int(0)),
@@ -998,7 +998,7 @@ mod tests {
     fn natural_language_mode_ors_every_column_and_word() {
         let columns = [varchar_column(0), varchar_column(1)];
         let built =
-            build_fts_to_ilike_expression(&NoColumns, &columns, "alpha beta", MatchModifier::None)
+            build_fts_to_i_like_expression(&NoColumns, &columns, "alpha beta", MatchModifier::None)
                 .expect("a two-word, two-column natural-language MATCH translates");
         assert_eq!(func_name_of(&built), "or");
         // Two columns x two words = four `%word%` patterns.
@@ -1017,19 +1017,19 @@ mod tests {
         let boolean = MatchModifier::BooleanMode;
 
         // Required terms are ANDed together.
-        let required = build_fts_to_ilike_expression(&NoColumns, &columns, "+alpha +beta", boolean)
+        let required = build_fts_to_i_like_expression(&NoColumns, &columns, "+alpha +beta", boolean)
             .expect("two required terms translate");
         assert_eq!(func_name_of(&required), "and");
         assert_eq!(patterns_of(&required), vec!["%alpha%", "%beta%"]);
 
         // A required term suppresses optionals entirely -- LIKE cannot rank,
         // so an optional term must not widen an anchored result.
-        let anchored = build_fts_to_ilike_expression(&NoColumns, &columns, "+alpha beta", boolean)
+        let anchored = build_fts_to_i_like_expression(&NoColumns, &columns, "+alpha beta", boolean)
             .expect("a required plus an optional term translates");
         assert_eq!(patterns_of(&anchored), vec!["%alpha%"]);
 
         // Only-excluded terms can match no row at all.
-        let only_excluded = build_fts_to_ilike_expression(&NoColumns, &columns, "-alpha", boolean)
+        let only_excluded = build_fts_to_i_like_expression(&NoColumns, &columns, "-alpha", boolean)
             .expect("an only-excluded query translates");
         match only_excluded {
             Expression::Constant(constant) => assert_eq!(constant.value, Datum::Int(0)),
@@ -1038,14 +1038,14 @@ mod tests {
 
         // An excluded term alongside an optional one becomes NOT(...) ANDed
         // with the optional DNF.
-        let mixed = build_fts_to_ilike_expression(&NoColumns, &columns, "alpha -beta", boolean)
+        let mixed = build_fts_to_i_like_expression(&NoColumns, &columns, "alpha -beta", boolean)
             .expect("an optional plus an excluded term translates");
         assert_eq!(func_name_of(&mixed), "and");
         assert_eq!(patterns_of(&mixed), vec!["%alpha%", "%beta%"]);
 
         // A purely optional query is the DNF of its terms.
         let optional_only =
-            build_fts_to_ilike_expression(&NoColumns, &columns, "alpha beta", boolean)
+            build_fts_to_i_like_expression(&NoColumns, &columns, "alpha beta", boolean)
                 .expect("a purely optional query translates");
         assert_eq!(func_name_of(&optional_only), "or");
         assert_eq!(patterns_of(&optional_only), vec!["%alpha%", "%beta%"]);
@@ -1059,7 +1059,7 @@ mod tests {
     #[test]
     fn a_single_predicate_is_ifnull_over_ilike_with_an_escaped_pattern() {
         let columns = [varchar_column(0)];
-        let built = build_fts_to_ilike_expression(&NoColumns, &columns, "abc", MatchModifier::None)
+        let built = build_fts_to_i_like_expression(&NoColumns, &columns, "abc", MatchModifier::None)
             .expect("a one-word MATCH translates");
         assert_eq!(func_name_of(&built), "ifnull");
         let Expression::ScalarFunction(ifnull) = &built else {

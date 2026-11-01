@@ -543,7 +543,7 @@ fn locate_mpp_region_infos<S: tikv_client::PdClient>(
 /// Go `SplitKeyRangesByLocations` for a batch task: every region covering
 /// `ranges`, with the ranges inside it, located under the task building's
 /// ctx `kv_context`.
-pub(crate) fn locate_mpp_regions<S: tikv_client::PdClient>(
+pub(crate) fn split_key_ranges_by_locations<S: tikv_client::PdClient>(
     store: &TikvStore<S>,
     ranges: &[(tidb_txnkv::Key, tidb_txnkv::Key)],
     memory: &dyn MppContext,

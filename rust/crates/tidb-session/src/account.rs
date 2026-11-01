@@ -28,7 +28,7 @@ impl Session {
     /// in place.
     /// Installs the announcement FLUSH PRIVILEGES makes to the cluster's
     /// other nodes after reloading this one.
-    pub fn set_privilege_change_notifier(&mut self, notifier: Arc<dyn Fn() + Send + Sync>) {
+    pub fn check_password_reuse_policy(&mut self, notifier: Arc<dyn Fn() + Send + Sync>) {
         self.privilege_change_notifier = Some(notifier);
     }
 

@@ -943,7 +943,7 @@ use tidb_charset::Collation;
             ft(C::Datetime),
             ft(C::Varchar),
         ];
-        let mut chunk = Chunk::new_with_capacity(&types, 4);
+        let mut chunk = Chunk::new_chunk_with_capacity(&types, 4);
         chunk.append_int64(0, 1234);
         chunk.append_string(1, "row-source-value");
         chunk.append_time(2, a_time());
@@ -965,7 +965,7 @@ use tidb_charset::Collation;
     #[test]
     fn shallow_copy_partial_row_matches_go() {
         let source_types = vec![ft(C::LongLong), ft(C::Varchar), ft(C::Varchar)];
-        let mut chunk = Chunk::new_with_capacity(&source_types, 4);
+        let mut chunk = Chunk::new_chunk_with_capacity(&source_types, 4);
         chunk.append_int64(0, -5);
         chunk.append_string(1, "shallow");
         chunk.append_null(2);
@@ -1120,7 +1120,7 @@ use tidb_charset::Collation;
         .expect("the zero timestamp is representable");
 
         let mut mut_row = MutRow::from_types(&col_types);
-        let mut row_chunk = Chunk::new_with_capacity(&col_types, 1);
+        let mut row_chunk = Chunk::new_chunk_with_capacity(&col_types, 1);
         row_chunk.append_string(0, "abc");
         row_chunk.append_int64(1, 123);
         row_chunk.append_time(2, zero_timestamp);

@@ -29,7 +29,7 @@
 //! | [`PlanBuilder::compute_cte_inline_flag`] | `computeCTEInlineFlag` (:4875) |
 //! | [`PlanBuilder::build_data_source_from_cte_merge`] | `buildDataSourceFromCTEMerge` (:4903) |
 //! | [`PlanBuilder::try_to_build_sequence`] | `tryToBuildSequence` (:4624) |
-//! | [`PlanBuilder::prepare_cte_check_for_subquery`] | `prepareCTECheckForSubQuery` (:7948) |
+//! | [`PlanBuilder::prepare_cte_check_for_sub_query`] | `prepareCTECheckForSubQuery` (:7948) |
 //! | [`PlanBuilder::reset_cte_check_for_subquery`] | `resetCTECheckForSubQuery` (:7961) |
 //! | [`PlanBuilder::gen_cte_table_name_for_error`] | `genCTETableNameForError` (:7969) |
 //! | [`PlanBuilder::build_query_stmt`] | `buildResultSetNode`'s `*ast.SelectStmt` / `*ast.SetOprStmt` arms (:577-580) |
@@ -282,7 +282,7 @@ impl Visitor for CteConsumerCounter<'_> {
 /// Definitions are visited in declaration order; a non-recursive definition
 /// sees only earlier definitions, while `WITH RECURSIVE` also sees itself.
 #[must_use]
-pub fn cte_consumer_counts(query: &QueryStmt, with: &WithClause) -> Vec<i32> {
+pub fn update_cte_consumer_count(query: &QueryStmt, with: &WithClause) -> Vec<i32> {
     let mut counts = vec![0; with.ctes.len()];
     for (index, cte) in with.ctes.iter().enumerate() {
         let mut definition = cte.query.clone();
@@ -397,7 +397,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         node: &tidb_resolve::NodeW<QueryStmt>,
         is_cte: bool,
     ) -> Result<LogicalPlan, PlanError> {
-        self.resolve_ctx = node.resolve_context();
+        self.resolve_ctx = node.get_resolve_context();
         self.add_opt_flag(tidb_planner_core_rule::flags::PRUNE_COLUMNS);
         self.build_query_stmt(&node.node, is_cte)
     }
@@ -575,7 +575,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             ..(**set_opr).clone()
         };
         if let Some(with) = &set_opr.with {
-            let counts = cte_consumer_counts(query, with);
+            let counts = update_cte_consumer_count(query, with);
             if let Err(error) = self.build_with(with, &counts) {
                 self.outer_ctes.truncate(outer_depth);
                 return Err(error);
@@ -890,7 +890,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // `BuildCastFunction4Union` path, including its `inUnion`
                 // evaluation marker.
                 exprs.push(
-                    tidb_expr::wrap_cast::build_cast_to_in_union(
+                    tidb_expr::wrap_cast::build_cast_function_4_union(
                         tidb_expr::expression::Expression::Column(column.clone()),
                         target,
                     )
@@ -1292,7 +1292,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ///
     /// Returns the indices whose flag this call SET, which is what
     /// [`Self::reset_cte_check_for_subquery`] clears again.
-    pub fn prepare_cte_check_for_subquery(&mut self) -> Vec<usize> {
+    pub fn prepare_cte_check_for_sub_query(&mut self) -> Vec<usize> {
         let mut modified = Vec::new();
         for index in 0..self.outer_ctes.len() {
             let cte = &mut self.outer_ctes[index];

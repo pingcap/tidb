@@ -372,7 +372,7 @@ fn pkg_meta_model_job_runtime_representation() {
 
 #[test]
 fn pkg_meta_model_process_hooks() {
-    assert!(!tidb_model::index::get_global_index_v1_supported());
+    assert!(!tidb_model::index::get_global_index_v_1_supported());
     assert_eq!(tidb_model::get_job_ver_in_use(), tidb_model::JobVersion::V1);
     assert_eq!(
         tidb_model::table::TTLInfo::default()

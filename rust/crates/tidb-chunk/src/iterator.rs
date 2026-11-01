@@ -904,14 +904,14 @@ mod tests {
         let fields = long_long_fields();
         let mut container = RowContainer::new(&fields, 4, crate::test_temp_storage::storage());
         for base in (0..60i64).step_by(4) {
-            let mut chunk = Chunk::new_with_capacity(&fields, 4);
+            let mut chunk = Chunk::new_chunk_with_capacity(&fields, 4);
             for value in base..base + 4 {
                 chunk.append_int64(0, value);
             }
             chunk.set_sel(Some(vec![0, 2]));
             container.add(chunk).unwrap();
         }
-        let mut trailing = Chunk::new_with_capacity(&fields, 4);
+        let mut trailing = Chunk::new_chunk_with_capacity(&fields, 4);
         for value in 60..64 {
             trailing.append_int64(0, value);
         }
@@ -946,7 +946,7 @@ mod tests {
     fn a_row_container_error_is_latched_before_the_following_source() {
         let fields = long_long_fields();
         let mut container = RowContainer::new(&fields, 4, crate::test_temp_storage::storage());
-        let mut stored = Chunk::new_with_capacity(&fields, 4);
+        let mut stored = Chunk::new_chunk_with_capacity(&fields, 4);
         stored.append_int64(0, 1);
         container.add(stored).unwrap();
         container.spill_to_disk();
@@ -956,7 +956,7 @@ mod tests {
             Some("injected iterator spill failure")
         );
 
-        let mut trailing = Chunk::new_with_capacity(&fields, 1);
+        let mut trailing = Chunk::new_chunk_with_capacity(&fields, 1);
         trailing.append_int64(0, 99);
         let mut iterator = LendingMultiIterator::new(vec![
             LendingIterator::row_container(&container),
@@ -979,7 +979,7 @@ mod tests {
         let container = RowContainer::new(&fields, 4, crate::test_temp_storage::storage());
         container.set_spill_error_for_test("historical spill failure");
 
-        let mut trailing = Chunk::new_with_capacity(&fields, 1);
+        let mut trailing = Chunk::new_chunk_with_capacity(&fields, 1);
         trailing.append_int64(0, 99);
         let mut iterator = LendingMultiIterator::new(vec![
             LendingIterator::row_container(&container),

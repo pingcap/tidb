@@ -118,7 +118,7 @@ impl KvTablePartitionReorg for KvTable {
                     }
                     // Go `RemoveRecord` + `AddRecord` in the source
                     // partition, which gives the row a fresh handle.
-                    self.remove_partition_copy(physical_id, &row, &handle, &zone)?;
+                    self.remove_record(physical_id, &row, &handle, &zone)?;
                     let shard = if self.shard_row_id_bits() > 0 {
                         ctx.next_row_id_shard(1) as i64
                     } else {

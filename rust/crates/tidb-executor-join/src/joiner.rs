@@ -1614,11 +1614,11 @@ pub fn new_joiner<C: Columns + Clone + Send + 'static>(
 
     match join_type {
         JoinType::SemiJoin => {
-            base.shallow_row = Some(Chunk::new_with_capacity(&shallow_row_type, 1));
+            base.shallow_row = Some(Chunk::new_chunk_with_capacity(&shallow_row_type, 1));
             Box::new(SemiJoiner { base })
         }
         JoinType::AntiSemiJoin => {
-            base.shallow_row = Some(Chunk::new_with_capacity(&shallow_row_type, 1));
+            base.shallow_row = Some(Chunk::new_chunk_with_capacity(&shallow_row_type, 1));
             if is_na {
                 Box::new(NullAwareAntiSemiJoiner { base })
             } else {
@@ -1626,11 +1626,11 @@ pub fn new_joiner<C: Columns + Clone + Send + 'static>(
             }
         }
         JoinType::LeftOuterSemiJoin => {
-            base.shallow_row = Some(Chunk::new_with_capacity(&shallow_row_type, 1));
+            base.shallow_row = Some(Chunk::new_chunk_with_capacity(&shallow_row_type, 1));
             Box::new(LeftOuterSemiJoiner { base })
         }
         JoinType::AntiLeftOuterSemiJoin => {
-            base.shallow_row = Some(Chunk::new_with_capacity(&shallow_row_type, 1));
+            base.shallow_row = Some(Chunk::new_chunk_with_capacity(&shallow_row_type, 1));
             if is_na {
                 Box::new(NullAwareAntiLeftOuterSemiJoiner { base })
             } else {

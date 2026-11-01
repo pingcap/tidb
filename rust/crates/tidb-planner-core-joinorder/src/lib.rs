@@ -374,7 +374,7 @@ impl CheckConnectionResult {
 
     /// Go `NoEQEdge`.
     #[must_use]
-    pub fn no_equal_edge(&self) -> bool {
+    pub fn no_eq_edge(&self) -> bool {
         !self.has_equal_condition
     }
 }
@@ -851,7 +851,7 @@ impl ConflictDetector {
 
     /// Go `TryCreateCartesianCheckResult`.
     #[must_use]
-    pub fn try_create_cartesian_result(
+    pub fn try_create_cartesian_check_result(
         &mut self,
         left: &Node,
         right: &Node,
@@ -945,12 +945,12 @@ fn align_equal_conditions(
             let mut right_argument = first.clone();
             if !matches!(left_argument, Expression::Column(_)) {
                 let (new_left, column) =
-                    tidb_planner_core_operator_logicalop::rewrite::inject_join_expression(context, left, left_argument)?;
+                    tidb_planner_core_operator_logicalop::rewrite::inject_expr(context, left, left_argument)?;
                 left = new_left;
                 left_argument = Expression::Column(column);
             }
             if !matches!(right_argument, Expression::Column(_)) {
-                let (new_right, column) = tidb_planner_core_operator_logicalop::rewrite::inject_join_expression(
+                let (new_right, column) = tidb_planner_core_operator_logicalop::rewrite::inject_expr(
                     context,
                     right,
                     right_argument,
@@ -1428,7 +1428,7 @@ fn check_connection_and_make_join(
         if !allow_no_equal_condition {
             return Ok(None);
         }
-        let Some(cartesian) = detector.try_create_cartesian_result(left, right) else {
+        let Some(cartesian) = detector.try_create_cartesian_check_result(left, right) else {
             return Ok(None);
         };
         result = cartesian;
@@ -1470,7 +1470,7 @@ fn greedy_connect_join_nodes(
                 else {
                     continue;
                 };
-                if connection.no_equal_edge() {
+                if connection.no_eq_edge() {
                     if !allow_no_equal_condition {
                         continue;
                     }
@@ -1509,7 +1509,7 @@ fn make_join_with_detector(
     let mut connection = detector.check_connection(left, right)?;
     if !connection.connected() {
         connection = detector
-            .try_create_cartesian_result(left, right)
+            .try_create_cartesian_check_result(left, right)
             .ok_or_else(|| {
                 PlanError::internal("failed to construct bushy tree: no valid join edge found")
             })?;
@@ -1841,7 +1841,7 @@ fn optimize_dp(
                         &group.vertex_hints,
                         true,
                     )? {
-                        if connection.no_equal_edge() {
+                        if connection.no_eq_edge() {
                             candidate.cumulative_cost = apply_cartesian_factor(
                                 candidate.cumulative_cost,
                                 context.cartesian_join_order_threshold,
@@ -2176,7 +2176,7 @@ pub fn outer_join_side_filters_touch_multiple_leaves(
 
 /// Go `DsSatisfiesOrdering`.
 #[must_use]
-pub fn data_source_satisfies_ordering(
+pub fn ds_satisfies_ordering(
     data_source: &tidb_planner_core_operator_logicalop::data_source::DataSource,
     ordering_columns: &[Column],
     parent_filters: &[Expression],
@@ -2688,12 +2688,12 @@ mod tests {
             ..tidb_model::IndexInfo::default()
         })];
 
-        assert!(data_source_satisfies_ordering(
+        assert!(ds_satisfies_ordering(
             &data_source,
             &[column(1), column(2)],
             &[]
         ));
-        assert!(!data_source_satisfies_ordering(
+        assert!(!ds_satisfies_ordering(
             &data_source,
             &[column(2)],
             &[]
@@ -2709,19 +2709,19 @@ mod tests {
                 )),
             ],
         );
-        assert!(data_source_satisfies_ordering(
+        assert!(ds_satisfies_ordering(
             &data_source,
             &[column(2), column(3)],
             &[fixed_prefix]
         ));
-        assert!(!data_source_satisfies_ordering(
+        assert!(!ds_satisfies_ordering(
             &data_source,
             &[column(1), column(3)],
             &[]
         ));
 
         data_source.indexes[0].write().invisible = true;
-        assert!(!data_source_satisfies_ordering(
+        assert!(!ds_satisfies_ordering(
             &data_source,
             &[column(1)],
             &[]
@@ -2812,7 +2812,7 @@ mod tests {
         };
         let result = detector.check_connection(&node(&[1]), &node(&[0])).unwrap();
         assert!(result.connected());
-        assert!(result.no_equal_edge());
+        assert!(result.no_eq_edge());
         assert!(result.node1.bit_set.has(0));
         assert!(result.node2.bit_set.has(1));
     }
@@ -2841,10 +2841,10 @@ mod tests {
             ..ConflictDetector::default()
         };
         let cartesian = detector
-            .try_create_cartesian_result(&node(&[0]), &node(&[1]))
+            .try_create_cartesian_check_result(&node(&[0]), &node(&[1]))
             .unwrap();
         assert!(cartesian.connected());
-        assert!(cartesian.no_equal_edge());
+        assert!(cartesian.no_eq_edge());
         assert!(!detector.has_remaining_edges(&BTreeSet::new()));
 
         let mut detector = ConflictDetector {
@@ -2852,7 +2852,7 @@ mod tests {
             ..ConflictDetector::default()
         };
         assert!(detector
-            .try_create_cartesian_result(&node(&[0]), &node(&[1]))
+            .try_create_cartesian_check_result(&node(&[0]), &node(&[1]))
             .is_none());
     }
 
@@ -3020,7 +3020,7 @@ mod tests {
         assert_eq!(nodes[1].cumulative_cost, 20.0);
         let connection = detector.check_connection(&nodes[0], &nodes[1]).unwrap();
         assert!(connection.connected());
-        assert!(!connection.no_equal_edge());
+        assert!(!connection.no_eq_edge());
 
         let allocator = tidb_planner_core_base::PlanIdAllocator::new();
         let context = test_context(&allocator);

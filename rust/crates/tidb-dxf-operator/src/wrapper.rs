@@ -190,7 +190,7 @@ impl<T: TaskMayPanic<OperatorError>, R: Send + 'static> SimpleOperator<T, R> {
         concurrency: i32,
     ) -> Self {
         Self {
-            inner: AsyncOperator::with_transform(context, "simple", concurrency, transform),
+            inner: AsyncOperator::new_async_operator_with_transform(context, "simple", concurrency, transform),
         }
     }
 }

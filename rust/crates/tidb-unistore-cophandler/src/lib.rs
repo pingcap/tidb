@@ -269,7 +269,7 @@ fn handle_cop_dag_request(
 /// refuses by name until its course lands.
 fn exec_dag(store: &dyn tidb_unistore_dbreader::DbReader, context: &DagContext) -> coprocessor::Response {
     let started = std::time::Instant::now();
-    validate_executor_list(&context.dag_req.executors);
+    executor_lists_to_tree(&context.dag_req.executors);
     // Go validates every request range while clipping it against the region
     // (`extractKVRanges`, `cop_handler.go:675`); the whole-keyspace engine
     // has no region bounds to clip to, but the malformed-range rejection is
@@ -804,7 +804,7 @@ fn encode_select_rows(
     let chunks = rows
         .chunks(GO_MPP_DEFAULT_BATCH_SIZE)
         .map(|batch| {
-            let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(field_types, batch.len());
+            let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(field_types, batch.len());
             for row in batch {
                 for (column, value) in row.iter().enumerate() {
                     chunk.append_datum(column, value);
@@ -1762,7 +1762,7 @@ pub fn build_dag(req: &coprocessor::Request) -> Result<DagContext, String> {
 /// Panics carry Go's exact `invalid parentIdx` message; the leaf check
 /// mirrors what `buildClosureExecutor` requires — the first executor is the
 /// scan and the only scan.
-pub fn validate_executor_list(executors: &[tipb::Executor]) {
+pub fn executor_lists_to_tree(executors: &[tipb::Executor]) {
     let len = executors.len();
     for (i, executor) in executors.iter().enumerate() {
         let tp = executor.tp();
@@ -2237,7 +2237,7 @@ mod tests {
             tp: Some(tipb::ExecType::TypeLimit as i32),
             ..tipb::Executor::default()
         };
-        validate_executor_list(&[scan, selection, limit]);
+        executor_lists_to_tree(&[scan, selection, limit]);
     }
 
     #[test]
@@ -2256,7 +2256,7 @@ mod tests {
             tp: Some(tipb::ExecType::TypeLimit as i32),
             ..tipb::Executor::default()
         };
-        validate_executor_list(&[scan, selection, limit]);
+        executor_lists_to_tree(&[scan, selection, limit]);
     }
 
     #[test]
@@ -2270,7 +2270,7 @@ mod tests {
             tp: Some(tipb::ExecType::TypeTableScan as i32),
             ..tipb::Executor::default()
         };
-        validate_executor_list(&[selection, scan]);
+        executor_lists_to_tree(&[selection, scan]);
     }
 
     #[test]

@@ -215,7 +215,7 @@ fn append_range_from_matches_cell_appends_for_all_bitmap_alignments() {
 
 #[test]
 fn fixed_int64_append_get_null() {
-    let mut c = Column::new_fixed_len(8, 4);
+    let mut c = Column::new_fixed_len_column(8, 4);
     assert!(c.is_fixed());
     assert_eq!(c.type_size(), 8);
     c.append_int64(10);
@@ -231,7 +231,7 @@ fn fixed_int64_append_get_null() {
 
 #[test]
 fn null_bitmap_spans_multiple_bytes() {
-    let mut c = Column::new_fixed_len(8, 16);
+    let mut c = Column::new_fixed_len_column(8, 16);
     for i in 0..10 {
         if i % 2 == 0 {
             c.append_int64(i);
@@ -247,24 +247,24 @@ fn null_bitmap_spans_multiple_bytes() {
 
 #[test]
 fn float_and_uint_roundtrip() {
-    let mut f = Column::new_fixed_len(8, 2);
+    let mut f = Column::new_fixed_len_column(8, 2);
     f.append_float64(3.5);
     f.append_float64(-1.25);
     assert_eq!(f.get_float64(0), 3.5);
     assert_eq!(f.get_float64(1), -1.25);
 
-    let mut f32c = Column::new_fixed_len(4, 1);
+    let mut f32c = Column::new_fixed_len_column(4, 1);
     f32c.append_float32(2.5);
     assert_eq!(f32c.get_float32(0), 2.5);
 
-    let mut u = Column::new_fixed_len(8, 1);
+    let mut u = Column::new_fixed_len_column(8, 1);
     u.append_uint64(u64::MAX);
     assert_eq!(u.get_uint64(0), u64::MAX);
 }
 
 #[test]
 fn reset_clears_rows_keeps_kind() {
-    let mut c = Column::new_fixed_len(8, 2);
+    let mut c = Column::new_fixed_len_column(8, 2);
     c.append_int64(7);
     c.reset();
     assert_eq!(c.rows(), 0);
@@ -275,14 +275,14 @@ fn reset_clears_rows_keeps_kind() {
 
 #[test]
 fn var_len_column_shape() {
-    let c = Column::new_var_len(4);
+    let c = Column::new_var_len_column(4);
     assert!(!c.is_fixed());
     assert_eq!(c.type_size(), VAR_ELEM_LEN);
 }
 
 #[test]
 fn var_len_append_get_string_bytes_null() {
-    let mut c = Column::new_var_len(4);
+    let mut c = Column::new_var_len_column(4);
     c.append_string("hello");
     c.append_null();
     c.append_bytes(&[0x00, 0xff, 0x10]); // non-UTF8 binary
@@ -360,18 +360,18 @@ fn enum_and_set_cells_round_trip_including_the_empty_and_null_ones() {
 
 #[test]
 fn get_raw_fixed_and_var() {
-    let mut f = Column::new_fixed_len(8, 1);
+    let mut f = Column::new_fixed_len_column(8, 1);
     f.append_int64(0x0102_0304_0506_0708);
     assert_eq!(f.get_raw(0), &0x0102_0304_0506_0708i64.to_ne_bytes());
 
-    let mut v = Column::new_var_len(1);
+    let mut v = Column::new_var_len_column(1);
     v.append_bytes(b"abc");
     assert_eq!(v.get_raw(0), b"abc");
 }
 
 #[test]
 fn copy_construct_is_deep() {
-    let mut c = Column::new_fixed_len(8, 2);
+    let mut c = Column::new_fixed_len_column(8, 2);
     c.append_int64(42);
     let d = c.copy_construct();
     assert_eq!(d.rows(), 1);
@@ -476,7 +476,7 @@ fn new_column_from_field_type() {
 
 #[test]
 fn copy_construct_owns_buffers_and_clears_zero_copy_reuse_guard() {
-    let mut source = Column::new_var_len(2);
+    let mut source = Column::new_var_len_column(2);
     source.append_string("owned value");
     source.avoid_reusing = true;
 
@@ -489,15 +489,15 @@ fn copy_construct_owns_buffers_and_clears_zero_copy_reuse_guard() {
 #[test]
 fn resize_reserve_and_eval_type_reset_match_go_shapes() {
     let mut column = Column::new_column(&FieldType::new(FieldTypeCode::LongLong), 2);
-    column.resize_int64(4, false);
+    column.resize_int_64(4, false);
     assert_eq!(column.rows(), 4);
     assert_eq!(column.null_bitmap, vec![0x0f]);
     assert_eq!(column.data.len(), 32);
     assert!(column.data.read().iter().all(|byte| *byte == 0));
 
-    column.resize_uint64(11, false);
+    column.resize_uint_64(11, false);
     assert_eq!(column.null_bitmap, vec![0xff, 0x07]);
-    column.resize_uint64(7, true);
+    column.resize_uint_64(7, true);
     assert_eq!(column.null_bitmap, vec![0]);
 
     column.reset_for_eval_type(EvalType::Duration);
@@ -519,17 +519,17 @@ fn resize_reserve_and_eval_type_reset_match_go_shapes() {
 /// observable after an evaluation-type transition.
 #[test]
 fn resize_preserves_scratch_and_offset_headers() {
-    let mut fixed = Column::new_fixed_len(8, 2);
+    let mut fixed = Column::new_fixed_len_column(8, 2);
     let scratch = 0x0102_0304_0506_0708_i64;
     fixed.append_int64(scratch);
-    fixed.resize_int64(0, false);
+    fixed.resize_int_64(0, false);
     fixed.append_null();
     assert!(fixed.is_null(0));
     assert_eq!(fixed.get_raw(0), &scratch.to_ne_bytes());
 
-    let mut changing = Column::new_var_len(2);
+    let mut changing = Column::new_var_len_column(2);
     changing.offsets = vec![7, 9];
-    changing.resize_int64(0, false);
+    changing.resize_int_64(0, false);
     assert_eq!(changing.offsets, vec![7, 9]);
     changing.reserve_string(1);
     assert_eq!(changing.offsets, vec![7]);
@@ -537,7 +537,7 @@ fn resize_preserves_scratch_and_offset_headers() {
 
 #[test]
 fn reserve_preserves_content_and_typed_reserve_clears_rows() {
-    let mut column = Column::new_var_len(0);
+    let mut column = Column::new_var_len_column(0);
     column.append_string("alpha");
     let bitmap = column.null_bitmap.clone();
     let offsets = column.offsets.clone();
@@ -553,19 +553,19 @@ fn reserve_preserves_content_and_typed_reserve_clears_rows() {
     column.reserve_string_with_size_hint(9, 36);
     assert_eq!(column.rows(), 0);
     assert_eq!(column.offsets, vec![0]);
-    assert!(column.data_capacity() >= 9 * 36);
-    assert!(column.offset_capacity() >= 10);
-    assert!(column.null_bitmap_capacity() >= 2);
+    assert!(column.get_data_cap() >= 9 * 36);
+    assert!(column.get_offset_cap() >= 10);
+    assert!(column.get_null_bitmap_cap() >= 2);
 }
 
 #[test]
 fn append_cell_n_times_and_copy_reconstruct_cover_fixed_var_and_null() {
-    let mut fixed = Column::new_fixed_len(8, 4);
+    let mut fixed = Column::new_fixed_len_column(8, 4);
     fixed.append_int64(11);
     fixed.append_null();
     fixed.append_int64(33);
 
-    let mut fixed_copy = Column::new_fixed_len(8, 0);
+    let mut fixed_copy = Column::new_fixed_len_column(8, 0);
     fixed_copy.append_cell_n_times(&fixed, 0, 3);
     fixed_copy.append_cell_n_times(&fixed, 1, 2);
     assert_eq!(fixed_copy.rows(), 5);
@@ -574,7 +574,7 @@ fn append_cell_n_times_and_copy_reconstruct_cover_fixed_var_and_null() {
     assert!(fixed_copy.is_null(3));
     assert!(fixed_copy.is_null(4));
 
-    let mut variable = Column::new_var_len(4);
+    let mut variable = Column::new_var_len_column(4);
     variable.append_string("a");
     variable.append_null();
     variable.append_string("ccc");
@@ -589,9 +589,9 @@ fn append_cell_n_times_and_copy_reconstruct_cover_fixed_var_and_null() {
     let runs = [(2, 1), (1, 7), (0, 3), (2, 0), (2, 17), (1, 1)];
     for width in [0, 1, 4, 8, 16, 40] {
         let mut source = if width == 0 {
-            Column::new_var_len(3)
+            Column::new_var_len_column(3)
         } else {
-            Column::new_fixed_len(width, 3)
+            Column::new_fixed_len_column(width, 3)
         };
         for row in 0..3 {
             if row == 1 {
@@ -645,7 +645,7 @@ fn append_cell_n_times_and_copy_reconstruct_cover_fixed_var_and_null() {
 
 #[test]
 fn bulk_row_id_copies_match_go_scalar_order_for_fixed_and_var() {
-    let mut fixed_source = Column::new_fixed_len(8, 8);
+    let mut fixed_source = Column::new_fixed_len_column(8, 8);
     for row in 0..8 {
         if row % 3 == 1 {
             fixed_source.append_null();
@@ -656,29 +656,29 @@ fn bulk_row_id_copies_match_go_scalar_order_for_fixed_and_var() {
     let selected = [false, true, true, false, true, false, true, true];
     let row_ids = [6, 2, 5, 1, 7, 0, 3, 4];
 
-    let mut fixed_expected = Column::new_fixed_len(8, 8);
+    let mut fixed_expected = Column::new_fixed_len_column(8, 8);
     fixed_expected.append_int64(-1);
     for (i, &is_selected) in selected.iter().enumerate().take(7).skip(1) {
         if is_selected {
             fixed_expected.append_cell_from(&fixed_source, row_ids[i]);
         }
     }
-    let mut fixed_actual = Column::new_fixed_len(8, 8);
+    let mut fixed_actual = Column::new_fixed_len_column(8, 8);
     fixed_actual.append_int64(-1);
     fixed_actual
         .copy_expected_rows_with_row_id_func(&fixed_source, &selected, true, 1, 7, |i| row_ids[i]);
     assert_eq!(fixed_actual, fixed_expected);
 
     let copied_rows = [7, 0, 4, 2];
-    let mut fixed_rows_expected = Column::new_fixed_len(8, 4);
+    let mut fixed_rows_expected = Column::new_fixed_len_column(8, 4);
     for &row in &copied_rows {
         fixed_rows_expected.append_cell_from(&fixed_source, row);
     }
-    let mut fixed_rows_actual = Column::new_fixed_len(8, 4);
+    let mut fixed_rows_actual = Column::new_fixed_len_column(8, 4);
     fixed_rows_actual.copy_rows_from(&fixed_source, &copied_rows);
     assert_eq!(fixed_rows_actual, fixed_rows_expected);
 
-    let mut variable_source = Column::new_var_len(8);
+    let mut variable_source = Column::new_var_len_column(8);
     variable_source.append_string("zero");
     variable_source.append_null();
     variable_source.append_bytes(b"");
@@ -688,14 +688,14 @@ fn bulk_row_id_copies_match_go_scalar_order_for_fixed_and_var() {
     variable_source.append_string("six");
     variable_source.append_bytes(b"last");
 
-    let mut variable_expected = Column::new_var_len(8);
+    let mut variable_expected = Column::new_var_len_column(8);
     variable_expected.append_string("prefix");
     for (i, &is_selected) in selected.iter().enumerate().take(8).skip(1) {
         if is_selected {
             variable_expected.append_cell_from(&variable_source, row_ids[i]);
         }
     }
-    let mut variable_actual = Column::new_var_len(8);
+    let mut variable_actual = Column::new_var_len_column(8);
     variable_actual.append_string("prefix");
     variable_actual.copy_expected_rows_with_row_id_func(
         &variable_source,
@@ -709,11 +709,11 @@ fn bulk_row_id_copies_match_go_scalar_order_for_fixed_and_var() {
 
     // A frozen destination must take the same scalar copy-on-write fallback
     // as Go's append path while producing identical offsets and null bits.
-    let mut frozen_actual = Column::new_var_len(8);
+    let mut frozen_actual = Column::new_var_len_column(8);
     frozen_actual.append_string("prefix");
     frozen_actual.data = SharedBytes::from_bytes(bytes::Bytes::from(frozen_actual.data.snapshot()));
     frozen_actual.copy_rows_from(&variable_source, &copied_rows);
-    let mut frozen_expected = Column::new_var_len(8);
+    let mut frozen_expected = Column::new_var_len_column(8);
     frozen_expected.append_string("prefix");
     for &row in &copied_rows {
         frozen_expected.append_cell_from(&variable_source, row);
@@ -723,7 +723,7 @@ fn bulk_row_id_copies_match_go_scalar_order_for_fixed_and_var() {
 
 #[test]
 fn copy_reconstruct_reuses_destination_and_preserves_avoid_reusing() {
-    let mut fixed = Column::new_fixed_len(8, 3);
+    let mut fixed = Column::new_fixed_len_column(8, 3);
     fixed.append_int64(10);
     fixed.append_int64(20);
     fixed.append_int64(30);
@@ -735,18 +735,18 @@ fn copy_reconstruct_reuses_destination_and_preserves_avoid_reusing() {
     assert!(!owned.avoid_reusing);
     assert_eq!(owned.data, borrowed.data);
 
-    let mut destination = Column::new_var_len(16);
+    let mut destination = Column::new_var_len_column(16);
     destination.append_string("old");
     destination.avoid_reusing = true;
-    let original_data_capacity = destination.data_capacity();
+    let original_data_capacity = destination.get_data_cap();
     let full = fixed.copy_reconstruct(None, Some(destination));
     assert!(full.avoid_reusing);
     assert_eq!(full.rows(), 3);
     assert_eq!(full.get_int64(1), 20);
-    assert!(full.data_capacity() >= original_data_capacity);
+    assert!(full.get_data_cap() >= original_data_capacity);
     assert!(full.offsets.is_empty());
 
-    let mut destination = Column::new_var_len(8);
+    let mut destination = Column::new_var_len_column(8);
     destination.avoid_reusing = true;
     let selected = fixed.copy_reconstruct(Some(&[2, 0]), Some(destination));
     assert!(selected.avoid_reusing);
@@ -760,25 +760,25 @@ fn copy_reconstruct_reuses_destination_and_preserves_avoid_reusing() {
 
 #[test]
 fn direct_string_json_and_raw_join_cell_surfaces_match_go() {
-    let mut strings = Column::new_var_len(2);
+    let mut strings = Column::new_var_len_column(2);
     strings.append_string("hello");
     strings.append_bytes(&[0, 255]);
     assert_eq!(strings.get_string(0).as_bytes(), b"hello");
     assert_eq!(strings.get_string(1).as_bytes(), &[0, 255]);
 
     let json = tidb_datatype::BinaryJSON::parse(r#"{"a": 1}"#).expect("JSON");
-    let mut json_column = Column::new_var_len(1);
+    let mut json_column = Column::new_var_len_column(1);
     json_column.append_json(&json);
     assert_eq!(json_column.get_json(0), json);
 
-    let mut fixed = Column::new_fixed_len(8, 1);
+    let mut fixed = Column::new_fixed_len_column(8, 1);
     fixed.append_null_bitmap(true);
     let mut fixed_stream = vec![9, 8, 7];
     fixed_stream.extend_from_slice(&123_i64.to_ne_bytes());
     assert_eq!(append_cell_from_raw_data(&mut fixed, &fixed_stream, 3), 11);
     assert_eq!(fixed.get_int64(0), 123);
 
-    let mut variable = Column::new_var_len(1);
+    let mut variable = Column::new_var_len_column(1);
     variable.append_null_bitmap(true);
     let mut variable_stream = vec![9, 8, 7];
     variable_stream.extend_from_slice(&5_u32.to_ne_bytes());
@@ -792,12 +792,12 @@ fn direct_string_json_and_raw_join_cell_surfaces_match_go() {
 
 #[test]
 fn set_null_ranges_and_merge_nulls_match_rowwise_and() {
-    let mut left = Column::new_fixed_len(8, 16);
-    let mut right = Column::new_fixed_len(8, 16);
-    let mut result = Column::new_fixed_len(8, 16);
-    left.resize_int64(11, false);
-    right.resize_int64(11, false);
-    result.resize_int64(11, false);
+    let mut left = Column::new_fixed_len_column(8, 16);
+    let mut right = Column::new_fixed_len_column(8, 16);
+    let mut result = Column::new_fixed_len_column(8, 16);
+    left.resize_int_64(11, false);
+    right.resize_int_64(11, false);
+    result.resize_int_64(11, false);
     left.set_nulls(1, 4, true);
     right.set_nulls(3, 8, true);
     result.merge_nulls(&[&left, &right]);
@@ -817,7 +817,7 @@ fn set_null_ranges_and_merge_nulls_match_rowwise_and() {
 /// silently wrap.
 #[test]
 fn go_test_large_string_column_offset() {
-    let mut col = Column::new_var_len(1);
+    let mut col = Column::new_var_len_column(1);
     col.offsets[0] = 6 << 30;
     assert_eq!(col.offsets[0], 6_i64 << 30);
 }
@@ -828,7 +828,7 @@ fn go_test_large_string_column_offset() {
 #[test]
 fn go_test_json_column() {
     let field = FieldType::new(FieldTypeCode::Json);
-    let mut chk = crate::chunk::Chunk::new_with_capacity(&[field], 1024);
+    let mut chk = crate::chunk::Chunk::new_chunk_with_capacity(&[field], 1024);
     for i in 0..1024 {
         let json = tidb_datatype::BinaryJSON::parse(&format!("{{\"{i}\":{i}}}"))
             .expect("valid JSON object");
@@ -851,7 +851,7 @@ fn go_test_json_column() {
 
 #[test]
 fn memory_usage_uses_the_public_go_payload_constant() {
-    let column = Column::new_fixed_len(8, 17);
+    let column = Column::new_fixed_len_column(8, 17);
     let expected = 112
         + column.null_bitmap.capacity() as i64
         + (column.offsets.capacity() * 8) as i64
@@ -862,7 +862,7 @@ fn memory_usage_uses_the_public_go_payload_constant() {
 
 #[test]
 fn append_string_accepts_arbitrary_bytes_and_set_raw_copies_to_cell_width() {
-    let mut column = Column::new_var_len(2);
+    let mut column = Column::new_var_len_column(2);
     column.append_string(&[0xff, 0x00][..]);
     column.append_bytes(b"abcde");
     assert_eq!(column.get_bytes(0), &[0xff, 0x00]);
@@ -877,7 +877,7 @@ fn append_string_accepts_arbitrary_bytes_and_set_raw_copies_to_cell_width() {
 
 #[test]
 fn guarded_cell_mutation_and_clone_isolation_are_immediate() {
-    let mut source = Column::new_var_len(1);
+    let mut source = Column::new_var_len_column(1);
     source.append_bytes(b"abc");
     let mut copy = source.clone();
 
@@ -892,7 +892,7 @@ fn guarded_cell_mutation_and_clone_isolation_are_immediate() {
 
 #[test]
 fn typed_mutation_callbacks_write_through_without_unsafe_casts() {
-    let mut ints = Column::new_fixed_len(8, 2);
+    let mut ints = Column::new_fixed_len_column(8, 2);
     ints.append_int64(1);
     ints.append_int64(2);
     ints.with_int64s_mut(|values| values.copy_from_slice(&[-3, 4]));
@@ -903,17 +903,17 @@ fn typed_mutation_callbacks_write_through_without_unsafe_casts() {
     ints.with_go_durations_mut(|values| values[1] = 77);
     assert_eq!(ints.get_int64(1), 77);
 
-    let mut float32s = Column::new_fixed_len(4, 1);
+    let mut float32s = Column::new_fixed_len_column(4, 1);
     float32s.append_float32(1.0);
     float32s.with_float32s_mut(|values| values[0] = -2.5);
     assert_eq!(float32s.get_float32(0), -2.5);
 
-    let mut float64s = Column::new_fixed_len(8, 1);
+    let mut float64s = Column::new_fixed_len_column(8, 1);
     float64s.append_float64(1.0);
     float64s.with_float64s_mut(|values| values[0] = 3.25);
     assert_eq!(float64s.get_float64(0), 3.25);
 
-    let mut decimals = Column::new_fixed_len(MYDECIMAL_STRUCT_SIZE, 1);
+    let mut decimals = Column::new_fixed_len_column(MYDECIMAL_STRUCT_SIZE, 1);
     decimals.append_my_decimal(&MyDecimal::from_int(1));
     decimals.with_decimals_mut(|values| values[0] = MyDecimal::from_int(8));
     assert_eq!(decimals.get_my_decimal(0), MyDecimal::from_int(8));
@@ -931,7 +931,7 @@ fn typed_mutation_callbacks_write_through_without_unsafe_casts() {
         0,
     )
     .unwrap();
-    let mut times = Column::new_fixed_len(SIZE_TIME as usize, 1);
+    let mut times = Column::new_fixed_len_column(SIZE_TIME as usize, 1);
     times.append_time(first);
     times.with_times_mut(|values| values[0] = second);
     assert_eq!(times.get_time(0), second);
@@ -942,7 +942,7 @@ fn vector_decoder_accepts_a_valid_image_with_a_suffix() {
     let expected = VectorFloat32::must_create(vec![1.0, -2.5]);
     let mut encoded = expected.serialize();
     encoded.extend_from_slice(b"ignored suffix");
-    let mut column = Column::new_var_len(1);
+    let mut column = Column::new_var_len_column(1);
     column.append_bytes(&encoded);
     assert_eq!(column.get_vector_float32(0), expected);
 }
@@ -951,7 +951,7 @@ fn vector_decoder_accepts_a_valid_image_with_a_suffix() {
 /// is an equal deep copy, and `CopyConstruct(dst)` reuses the destination.
 #[test]
 fn go_test_column_copy() {
-    let mut col = Column::new_fixed_len(8, 10);
+    let mut col = Column::new_fixed_len_column(8, 10);
     for i in 0..10i64 {
         col.append_int64(i);
     }
@@ -959,7 +959,7 @@ fn go_test_column_copy() {
     let c1 = col.copy_construct();
     assert_eq!(col, c1);
 
-    let c2 = col.copy_reconstruct(None, Some(Column::new_fixed_len(8, 10)));
+    let c2 = col.copy_reconstruct(None, Some(Column::new_fixed_len_column(8, 10)));
     assert_eq!(col, c2);
 }
 
@@ -1100,7 +1100,7 @@ fn go_test_column_copy_reconstruct_var_len() {
 #[test]
 fn go_test_i64_column() {
     let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
-    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, 1024);
     for i in 0..1024i64 {
         chk.column_mut(0).append_int64(i);
     }
@@ -1128,7 +1128,7 @@ fn go_test_i64_column() {
 #[test]
 fn go_test_f64_column() {
     let fields = vec![FieldType::new(FieldTypeCode::Double)];
-    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, 1024);
     for i in 0..1024i64 {
         chk.column_mut(0).append_float64(i as f64);
     }
@@ -1154,7 +1154,7 @@ fn go_test_f64_column() {
 #[test]
 fn go_test_f32_column() {
     let fields = vec![FieldType::new(FieldTypeCode::Float)];
-    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, 1024);
     for i in 0..1024i64 {
         chk.column_mut(0).append_float32(i as f32);
     }
@@ -1181,7 +1181,7 @@ fn go_test_f32_column() {
 #[test]
 fn go_test_duration_slice_column() {
     let fields = vec![FieldType::new(FieldTypeCode::Duration)];
-    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, 1024);
     for i in 0..1024i64 {
         let d = MySqlDuration::from_nanoseconds(i, 0).expect("valid duration");
         chk.column_mut(0).append_duration(d);
@@ -1216,15 +1216,15 @@ fn go_test_duration_slice_column() {
 #[test]
 fn go_test_my_decimal() {
     let fields = vec![FieldType::new(FieldTypeCode::NewDecimal)];
-    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, 1024);
     for i in 0..1024i64 {
-        let (d, error) = MyDecimal::from_float64(i as f64 * 1.1);
+        let (d, error) = MyDecimal::from_float_64(i as f64 * 1.1);
         assert!(error.is_none());
         chk.column_mut(0).append_my_decimal(&d);
     }
 
     for i in 0..1024usize {
-        let (d, error) = MyDecimal::from_float64(i as f64 * 1.1);
+        let (d, error) = MyDecimal::from_float_64(i as f64 * 1.1);
         assert!(error.is_none());
         assert_eq!(
             d.compare(&chk.column(0).get_my_decimal(i)),
@@ -1236,7 +1236,7 @@ fn go_test_my_decimal() {
     // types.DecimalAdd(&ds[i], d, &ds[i]) doubles every stored decimal.
     chk.column_mut(0).with_decimals_mut(|ds| {
         for (i, cell) in ds.iter_mut().enumerate() {
-            let (d, error) = MyDecimal::from_float64(i as f64 * 1.1);
+            let (d, error) = MyDecimal::from_float_64(i as f64 * 1.1);
             assert!(error.is_none());
             let (sum, warning) =
                 Decimal::from_my_decimal(cell).add_mysql(&Decimal::from_my_decimal(&d));
@@ -1249,7 +1249,7 @@ fn go_test_my_decimal() {
     let mut i = 0i64;
     let mut row = it.begin();
     while row != it.end() {
-        let (d, error) = MyDecimal::from_float64(i as f64 * 1.1 * 2.0);
+        let (d, error) = MyDecimal::from_float_64(i as f64 * 1.1 * 2.0);
         assert!(error.is_none());
         // Go: delta := DecimalSub(d, row.GetMyDecimal(0), fDelta); InDelta(0, fDelta, 0.0001).
         let got = row.expect("not end").get_my_decimal(0);
@@ -1266,7 +1266,7 @@ fn go_test_my_decimal() {
 #[test]
 fn go_test_string_column() {
     let fields = vec![FieldType::new(FieldTypeCode::VarString)];
-    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, 1024);
     for i in 0..1024usize {
         chk.column_mut(0)
             .append_string((i * i).to_string().as_str());
@@ -1291,7 +1291,7 @@ fn go_test_string_column() {
 #[test]
 fn go_test_set_column() {
     let fields = vec![FieldType::new(FieldTypeCode::Set)];
-    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, 1024);
     for i in 0..1024u64 {
         chk.column_mut(0)
             .append_set(&MysqlSet::new(i.to_string(), i));
@@ -1318,7 +1318,7 @@ fn go_test_set_column() {
 fn go_test_time_column() {
     use tidb_datatype::CoreTime;
     let fields = vec![FieldType::new(FieldTypeCode::Datetime)];
-    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, 1024);
     let mut times = Vec::with_capacity(1024);
     for i in 0..1024i64 {
         let t = Time::new(
@@ -1348,7 +1348,7 @@ fn go_test_time_column() {
 #[test]
 fn go_test_duration_column() {
     let fields = vec![FieldType::new(FieldTypeCode::Duration)];
-    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, 1024);
     for i in 0..1024i64 {
         chk.column_mut(0)
             .append_duration(MySqlDuration::from_raw_parts(i * 1_000_000_000, 0));
@@ -1373,7 +1373,7 @@ fn go_test_duration_column() {
 #[test]
 fn go_test_enum_column() {
     let fields = vec![FieldType::new(FieldTypeCode::Enum)];
-    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, 1024);
     for i in 0..1024u64 {
         chk.column_mut(0)
             .append_enum(&MysqlEnum::new(i.to_string(), i));
@@ -1399,7 +1399,7 @@ fn go_test_enum_column() {
 #[test]
 fn go_test_nulls_column() {
     let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
-    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, 1024);
     for i in 0..1024usize {
         if i % 2 == 0 {
             chk.column_mut(0).append_null();
@@ -1429,7 +1429,7 @@ fn go_test_nulls_column() {
 #[test]
 fn go_test_pre_alloc_int64() {
     let mut col = Column::new_column(&FieldType::new(FieldTypeCode::LongLong), 128);
-    col.resize_int64(256, true);
+    col.resize_int_64(256, true);
     assert_eq!(col.with_int64s_mut(|values| values.len()), 256);
     for i in 0..256 {
         assert!(col.is_null(i));
@@ -1447,7 +1447,7 @@ fn go_test_pre_alloc_int64() {
 fn go_test_pre_alloc_uint64() {
     let tll = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
     let mut col = Column::new_column(&tll, 128);
-    col.resize_uint64(256, true);
+    col.resize_uint_64(256, true);
     assert_eq!(col.with_uint64s_mut(|values| values.len()), 256);
     for i in 0..256 {
         assert!(col.is_null(i));
@@ -1463,8 +1463,8 @@ fn go_test_pre_alloc_uint64() {
 /// Go `TestPreAllocFloat32`.
 #[test]
 fn go_test_pre_alloc_float32() {
-    let mut col = Column::new_fixed_len(4, 128);
-    col.resize_float32(256, true);
+    let mut col = Column::new_fixed_len_column(4, 128);
+    col.resize_float_32(256, true);
     assert_eq!(col.with_float32s_mut(|values| values.len()), 256);
     for i in 0..256 {
         assert!(col.is_null(i));
@@ -1480,8 +1480,8 @@ fn go_test_pre_alloc_float32() {
 /// Go `TestPreAllocFloat64`.
 #[test]
 fn go_test_pre_alloc_float64() {
-    let mut col = Column::new_fixed_len(8, 128);
-    col.resize_float64(256, true);
+    let mut col = Column::new_fixed_len_column(8, 128);
+    col.resize_float_64(256, true);
     assert_eq!(col.with_float64s_mut(|values| values.len()), 256);
     for i in 0..256 {
         assert!(col.is_null(i));
@@ -1499,7 +1499,7 @@ fn go_test_pre_alloc_float64() {
 /// port asserts the same row count through the type-checked decimals view.
 #[test]
 fn go_test_pre_alloc_decimal() {
-    let mut col = Column::new_fixed_len(MYDECIMAL_STRUCT_SIZE as usize, 128);
+    let mut col = Column::new_fixed_len_column(MYDECIMAL_STRUCT_SIZE as usize, 128);
     col.resize_decimal(256, true);
     assert_eq!(col.with_decimals_mut(|values| values.len()), 256);
     for i in 0..256 {
@@ -1513,7 +1513,7 @@ fn go_test_pre_alloc_decimal() {
 /// Go `TestPreAllocTime`.
 #[test]
 fn go_test_pre_alloc_time() {
-    let mut col = Column::new_fixed_len(SIZE_TIME as usize, 128);
+    let mut col = Column::new_fixed_len_column(SIZE_TIME as usize, 128);
     col.resize_time(256, true);
     assert_eq!(col.with_times_mut(|values| values.len()), 256);
     for i in 0..256 {
@@ -1535,8 +1535,8 @@ fn go_test_pre_alloc_time() {
 /// then the exact `SetNulls`/`SetNull` counts on small resizes.
 #[test]
 fn go_test_null() {
-    let mut col = Column::new_fixed_len(8, 32);
-    col.resize_float64(1024, true);
+    let mut col = Column::new_fixed_len_column(8, 32);
+    col.resize_float_64(1024, true);
     assert_eq!(col.null_count(), 1024);
 
     // Go draws 512 distinct-ish random indices; the same xorshift generator
@@ -1554,16 +1554,16 @@ fn go_test_null() {
         assert!(!col.is_null(idx));
     }
 
-    col.resize_float64(8, true);
+    col.resize_float_64(8, true);
     col.set_nulls(0, 8, true);
     col.set_null(7, false);
     assert_eq!(col.null_count(), 7);
 
-    col.resize_float64(8, true);
+    col.resize_float_64(8, true);
     col.set_nulls(0, 8, true);
     assert_eq!(col.null_count(), 8);
 
-    col.resize_float64(9, true);
+    col.resize_float_64(9, true);
     col.set_nulls(0, 9, true);
     col.set_null(8, false);
     assert_eq!(col.null_count(), 8);
@@ -1573,8 +1573,8 @@ fn go_test_null() {
 /// index set.
 #[test]
 fn go_test_set_nulls() {
-    let mut col = Column::new_fixed_len(8, 32);
-    col.resize_float64(1024, true);
+    let mut col = Column::new_fixed_len_column(8, 32);
+    col.resize_float_64(1024, true);
     assert_eq!(col.null_count(), 1024);
 
     col.set_nulls(0, 1024, false);
@@ -1603,19 +1603,19 @@ fn go_test_set_nulls() {
 #[test]
 fn go_test_resize_reserve() {
     let mut rng = Rng(13);
-    let mut c_i64s = Column::new_fixed_len(8, 0);
+    let mut c_i64s = Column::new_fixed_len_column(8, 0);
     assert_eq!(c_i64s.length(), 0);
     for _ in 0..100 {
         let n = (rng.next_u64() % 1024) as usize;
-        c_i64s.resize_int64(n, true);
+        c_i64s.resize_int_64(n, true);
         assert_eq!(c_i64s.length(), n);
         assert_eq!(c_i64s.with_int64s_mut(|values| values.len()), n);
     }
-    c_i64s.resize_int64(0, true);
+    c_i64s.resize_int_64(0, true);
     assert_eq!(c_i64s.length(), 0);
     assert_eq!(c_i64s.with_int64s_mut(|values| values.len()), 0);
 
-    let mut c_strs = Column::new_var_len(0);
+    let mut c_strs = Column::new_var_len_column(0);
     for _ in 0..100 {
         let n = (rng.next_u64() % 1024) as usize;
         c_strs.reserve_string(n);
@@ -1630,7 +1630,7 @@ fn go_test_resize_reserve() {
 #[test]
 fn go_test_get_raw() {
     let fields = vec![FieldType::new(FieldTypeCode::Float)];
-    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, 1024);
     for i in 0..1024i64 {
         chk.column_mut(0).append_float32(i as f32);
     }
@@ -1646,7 +1646,7 @@ fn go_test_get_raw() {
     }
 
     let fields = vec![FieldType::new(FieldTypeCode::VarString)];
-    let mut chk = Chunk::new_with_capacity(&fields, 1024);
+    let mut chk = Chunk::new_chunk_with_capacity(&fields, 1024);
     for i in 0..1024usize {
         chk.column_mut(0).append_string(i.to_string().as_str());
     }
@@ -1669,7 +1669,7 @@ fn go_test_resize() {
     for i in 0..1024i64 {
         col.append_int64(i);
     }
-    col.resize_int64(1024, false);
+    col.resize_int_64(1024, false);
     for i in 0..1024 {
         assert_eq!(col.with_int64s_mut(|values| values[i]), 0);
     }
@@ -1678,7 +1678,7 @@ fn go_test_resize() {
     for i in 0..1024i64 {
         col.append_float32(i as f32);
     }
-    col.resize_float32(1024, false);
+    col.resize_float_32(1024, false);
     for i in 0..1024 {
         assert_eq!(col.with_float32s_mut(|values| values[i]), 0.0);
     }
@@ -1687,7 +1687,7 @@ fn go_test_resize() {
     for i in 0..1024i64 {
         col.append_float64(i as f64);
     }
-    col.resize_float64(1024, false);
+    col.resize_float_64(1024, false);
     for i in 0..1024 {
         assert_eq!(col.with_float64s_mut(|values| values[i]), 0.0);
     }
@@ -1748,13 +1748,13 @@ fn go_test_resize() {
 #[test]
 fn go_test_reserve() {
     let mut col = Column::new_column(&FieldType::new(FieldTypeCode::VarString), 0);
-    assert_eq!(col.data_capacity(), 0);
-    assert!(col.offset_capacity() >= 1);
-    assert_eq!(col.null_bitmap_capacity(), 0);
+    assert_eq!(col.get_data_cap(), 0);
+    assert!(col.get_offset_cap() >= 1);
+    assert_eq!(col.get_null_bitmap_cap(), 0);
     col.reserve(10, 10, 10);
-    assert!(col.data_capacity() >= 10);
-    assert!(col.offset_capacity() - col.offsets.len() >= 10);
-    assert!(col.null_bitmap_capacity() >= (10 + 7) >> 3);
+    assert!(col.get_data_cap() >= 10);
+    assert!(col.get_offset_cap() - col.offsets.len() >= 10);
+    assert!(col.get_null_bitmap_cap() >= (10 + 7) >> 3);
 
     // Go appends into the raw slices directly; this port writes through the
     // same raw buffers with the crate's cell primitives.
@@ -1770,8 +1770,8 @@ fn go_test_reserve() {
     // Go's assertions lean on `slices.Grow` overshoot (`>=105` spare); this
     // port pins the documented `Grow` guarantee instead: at least the
     // requested number of spare entries beyond the stored bytes.
-    assert!(col.data_capacity() - col.data.len() >= 100);
-    assert!(col.offset_capacity() - col.offsets.len() >= 100);
+    assert!(col.get_data_cap() - col.data.len() >= 100);
+    assert!(col.get_offset_cap() - col.offsets.len() >= 100);
     assert!(
         col.null_bitmap.capacity() - col.null_bitmap.len() >= 100,
         "null bitmap spare"
@@ -1796,7 +1796,7 @@ fn go_test_vectorized_nulls() {
         let mut cols: Vec<Column> = Vec::with_capacity(4);
         for _ in 0..4 {
             let mut c = Column::new_column(&FieldType::new(FieldTypeCode::LongLong), 1024);
-            c.resize_int64(1024, false);
+            c.resize_int_64(1024, false);
             for j in 0..1024 {
                 if rng.intn10() < 5 {
                     c.set_null(j, true);
@@ -1845,17 +1845,17 @@ fn go_test_column_resize_int64() {
     col.append_uint64(11);
     col.append_uint64(11);
 
-    col.resize_int64(4, false);
+    col.resize_int_64(4, false);
     assert_eq!(col.null_bitmap, vec![0b1111]);
     col.append_uint64(11);
     assert_eq!(col.null_bitmap, vec![0b1111_1]);
     col.append_null();
     assert_eq!(col.null_bitmap, vec![0b0111_11]);
 
-    col.resize_uint64(11, false);
+    col.resize_uint_64(11, false);
     assert_eq!(col.null_bitmap, vec![0b1111_1111, 0b111]);
 
-    col.resize_uint64(7, true);
+    col.resize_uint_64(7, true);
     assert_eq!(col.null_bitmap, vec![0]);
 
     col.append_uint64(32);

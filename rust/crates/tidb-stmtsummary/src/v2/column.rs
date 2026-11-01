@@ -72,7 +72,7 @@ use tidb_model::ColumnInfo;
 use tidb_plancodec::decode_plan;
 
 use crate::statement_summary::{
-    avg_float, avg_float4_uint, avg_int, avg_sum_float, convert_empty_to_nil, format_backoff_types,
+    avg_float, avg_float_4_uint, avg_int, avg_sum_float, convert_empty_to_nil, format_backoff_types,
 };
 use crate::v2::record::StmtRecord;
 
@@ -254,7 +254,7 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
         }
         MAX_PROCESSED_KEYS_STR => |_, record| Datum::new_int(record.max_processed_keys),
         AVG_ROCKSDB_DELETE_SKIPPED_COUNT_STR => |_, record| {
-            Datum::new_real(avg_float4_uint(
+            Datum::new_real(avg_float_4_uint(
                 record.sum_rocksdb_delete_skipped_count,
                 record.exec_count,
             ))
@@ -263,7 +263,7 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
             |_, record| Datum::new_uint(record.max_rocksdb_delete_skipped_count)
         }
         AVG_ROCKSDB_KEY_SKIPPED_COUNT_STR => |_, record| {
-            Datum::new_real(avg_float4_uint(
+            Datum::new_real(avg_float_4_uint(
                 record.sum_rocksdb_key_skipped_count,
                 record.exec_count,
             ))
@@ -272,7 +272,7 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
             |_, record| Datum::new_uint(record.max_rocksdb_key_skipped_count)
         }
         AVG_ROCKSDB_BLOCK_CACHE_HIT_COUNT_STR => |_, record| {
-            Datum::new_real(avg_float4_uint(
+            Datum::new_real(avg_float_4_uint(
                 record.sum_rocksdb_block_cache_hit_count,
                 record.exec_count,
             ))
@@ -281,7 +281,7 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
             |_, record| Datum::new_uint(record.max_rocksdb_block_cache_hit_count)
         }
         AVG_ROCKSDB_BLOCK_READ_COUNT_STR => |_, record| {
-            Datum::new_real(avg_float4_uint(
+            Datum::new_real(avg_float_4_uint(
                 record.sum_rocksdb_block_read_count,
                 record.exec_count,
             ))
@@ -290,7 +290,7 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
             |_, record| Datum::new_uint(record.max_rocksdb_block_read_count)
         }
         AVG_ROCKSDB_BLOCK_READ_BYTE_STR => |_, record| {
-            Datum::new_real(avg_float4_uint(
+            Datum::new_real(avg_float_4_uint(
                 record.sum_rocksdb_block_read_byte,
                 record.exec_count,
             ))
@@ -300,7 +300,7 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
         }
         IA_EXEC_COUNT_STR => |_, record| Datum::new_int(record.ia_exec_count),
         AVG_IA_REMOTE_READ_SEGMENT_COUNT_STR => |_, record| {
-            Datum::new_real(avg_float4_uint(
+            Datum::new_real(avg_float_4_uint(
                 record.sum_ia_remote_read_segment_count,
                 record.exec_count,
             ))
@@ -309,7 +309,7 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
             |_, record| Datum::new_uint(record.max_ia_remote_read_segment_count)
         }
         AVG_IA_REMOTE_READ_SEGMENT_SIZE_STR => |_, record| {
-            Datum::new_real(avg_float4_uint(
+            Datum::new_real(avg_float_4_uint(
                 record.sum_ia_remote_read_segment_size,
                 record.exec_count,
             ))
@@ -428,7 +428,7 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
         }
         PREPARED_STR => |_, record| bool_datum(record.prepared),
         AVG_AFFECTED_ROWS_STR => |_, record| {
-            Datum::new_real(avg_float4_uint(record.sum_affected_rows, record.exec_count))
+            Datum::new_real(avg_float_4_uint(record.sum_affected_rows, record.exec_count))
         },
         FIRST_SEEN_STR => {
             |info, record| timestamp_datum(record.first_seen.with_timezone(&info.time_location()))

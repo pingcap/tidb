@@ -42,7 +42,7 @@
 //! [`statement_summary::StmtSummaryByDigestMap::new`] wires that implementation
 //! in, as Go's `newStmtSummaryByDigestMap` does.
 //! [`statement_summary::NoopEvictedSink`] remains for maps built through
-//! [`statement_summary::StmtSummaryByDigestMap::with_sinks`].
+//! [`statement_summary::StmtSummaryByDigestMap::new_stmt_summary_by_digest_map`].
 //!
 //! Narrowings applied to `statement_summary.go` itself:
 //!
@@ -115,7 +115,7 @@
 //!   factories under test reads.
 //! - `TestStmtSummaryMetrics` and `TestStmtSummaryMetricsAfterCapacityChange`
 //!   read Go's process-global Prometheus gauges; here the map is built by
-//!   [`statement_summary::StmtSummaryByDigestMap::with_sinks`] over a
+//!   [`statement_summary::StmtSummaryByDigestMap::new_stmt_summary_by_digest_map`] over a
 //!   [`statement_summary::WindowMetricsSink`] that keeps the last values
 //!   published.
 //! - Go shares one reader across the goroutines of the parallel tests; the

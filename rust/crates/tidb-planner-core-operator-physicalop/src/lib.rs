@@ -3107,7 +3107,7 @@ impl Default for PhysicalTopN {
 /// advisory-sort-items and prefix-index partial-order candidates narrow
 /// with ranger, each named in `physical_topn.go`.
 #[must_use]
-pub fn get_phys_topn(
+pub fn get_phys_top_n(
     topn: &tidb_planner_core_operator_logicalop::LogicalTopN,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
@@ -4573,7 +4573,7 @@ impl PhysicalPlan {
     /// parents' own stats. With no probe parents the factor is 1, so that
     /// case is answered rather than deferred.
     #[must_use]
-    pub fn est_row_count_for_display(&self) -> Option<f64> {
+    pub fn get_est_row_count_for_display(&self) -> Option<f64> {
         if self.base().probe_parents().is_empty() {
             return self.stats_count();
         }
@@ -5293,7 +5293,7 @@ fn visit_physical_correlated_columns_mut(
 /// plan's correlated columns, allocate one shared datum cell per matching
 /// outer-schema position, point every occurrence at that cell, and resolve
 /// the returned correlated columns to their outer-row offsets.
-pub fn rebind_correlated_columns_by_schema_4_physical_plan(
+pub fn extract_cor_columns_by_schema_4_physical_plan(
     plan: &mut PhysicalPlan,
     schema: &Schema,
 ) -> Vec<CorrelatedColumn> {

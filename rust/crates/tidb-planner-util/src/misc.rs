@@ -174,22 +174,22 @@ impl JoinHints {
             let tables = [Some(&table)];
             let mut canonical = canonical.borrow_mut();
             return match flag {
-                tidb_hint::join_hint_flags::INLJ => canonical.prefer_index_join(&tables),
-                tidb_hint::join_hint_flags::INLHJ => canonical.prefer_index_hash_join(&tables),
-                tidb_hint::join_hint_flags::INLMJ => canonical.prefer_index_merge_join(&tables),
-                tidb_hint::join_hint_flags::HJ_BUILD => canonical.prefer_hash_join_build(&tables),
-                tidb_hint::join_hint_flags::HJ_PROBE => canonical.prefer_hash_join_probe(&tables),
+                tidb_hint::join_hint_flags::INLJ => canonical.if_prefer_inlj(&tables),
+                tidb_hint::join_hint_flags::INLHJ => canonical.if_prefer_inlhj(&tables),
+                tidb_hint::join_hint_flags::INLMJ => canonical.if_prefer_inlmj(&tables),
+                tidb_hint::join_hint_flags::HJ_BUILD => canonical.if_prefer_hj_build(&tables),
+                tidb_hint::join_hint_flags::HJ_PROBE => canonical.if_prefer_hj_probe(&tables),
                 tidb_hint::join_hint_flags::HASH_JOIN => canonical.prefer_hash_join(&tables),
-                tidb_hint::join_hint_flags::NO_HASH_JOIN => canonical.prefer_no_hash_join(&tables),
+                tidb_hint::join_hint_flags::NO_HASH_JOIN => canonical.if_prefer_no_hash_join(&tables),
                 tidb_hint::join_hint_flags::MERGE_JOIN => canonical.prefer_merge_join(&tables),
-                tidb_hint::join_hint_flags::NO_MERGE_JOIN => canonical.prefer_no_merge_join(&tables),
-                tidb_hint::join_hint_flags::NO_INDEX_JOIN => canonical.prefer_no_index_join(&tables),
-                tidb_hint::join_hint_flags::NO_INDEX_HASH_JOIN => canonical.prefer_no_index_hash_join(&tables),
+                tidb_hint::join_hint_flags::NO_MERGE_JOIN => canonical.if_prefer_no_merge_join(&tables),
+                tidb_hint::join_hint_flags::NO_INDEX_JOIN => canonical.if_prefer_no_index_join(&tables),
+                tidb_hint::join_hint_flags::NO_INDEX_HASH_JOIN => canonical.if_prefer_no_index_hash_join(&tables),
                 tidb_hint::join_hint_flags::NO_INDEX_MERGE_JOIN => {
-                    canonical.prefer_no_index_merge_join(&tables)
+                    canonical.if_prefer_no_index_merge_join(&tables)
                 }
-                tidb_hint::join_hint_flags::BC_JOIN => canonical.prefer_broadcast_join(&tables),
-                tidb_hint::join_hint_flags::SHUFFLE_JOIN => canonical.prefer_shuffle_join(&tables),
+                tidb_hint::join_hint_flags::BC_JOIN => canonical.if_prefer_broadcast_join(&tables),
+                tidb_hint::join_hint_flags::SHUFFLE_JOIN => canonical.if_prefer_shuffle_join(&tables),
                 _ => false,
             };
         }

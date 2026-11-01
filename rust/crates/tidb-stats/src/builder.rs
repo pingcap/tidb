@@ -24,7 +24,7 @@
 //!
 //! Go's builder holds a `getComparedBytes` closure that is `codec.EncodeKey`
 //! for a column and the identity for an index, because an index sample's
-//! value already *is* an index key. [`try_build_hist_and_topn_in_place`] keeps
+//! value already *is* an index key. [`build_hist_and_top_n`] keeps
 //! that boundary caller-owned and fallible; [`build_hist_and_topn`] is only a
 //! convenience adapter for samples that already carry their encoding.
 //!
@@ -259,12 +259,12 @@ impl SequentialRangeChecker {
     /// sorts an unsorted input by its start index.
     pub fn from_ranges(ranges: &[(i64, i64)]) -> Self {
         let mut ranges = ranges.to_vec();
-        Self::from_ranges_in_place(&mut ranges)
+        Self::new_sequential_range_checker(&mut ranges)
     }
 
     /// Go `NewSequentialRangeChecker` sorts the caller's slice in place.
     #[must_use]
-    pub fn from_ranges_in_place(ranges: &mut [(i64, i64)]) -> Self {
+    pub fn new_sequential_range_checker(ranges: &mut [(i64, i64)]) -> Self {
         ranges.sort_by_key(|(start, _)| *start);
         Self {
             ranges: ranges.to_vec(),
@@ -282,7 +282,7 @@ impl SequentialRangeChecker {
 
     /// Go `IsIndexInTopNRange`. Calls are intentionally stateful and assume
     /// sequential indices, so querying an earlier completed range stays false.
-    pub fn is_index_in_topn_range(&mut self, idx: i64) -> bool {
+    pub fn is_index_in_top_n_range(&mut self, idx: i64) -> bool {
         self.contains(idx)
     }
 
@@ -404,7 +404,7 @@ pub fn build_hist_and_topn(
     .expect("pre-encoded samples must remain comparable")
 }
 
-/// Value-oriented convenience around [`try_build_hist_and_topn_in_place`].
+/// Value-oriented convenience around [`build_hist_and_top_n`].
 ///
 /// Go sorts `collector.Samples` itself. This adapter deliberately clones for
 /// callers that only need the value; use the in-place entrypoint when the Go
@@ -417,7 +417,7 @@ pub fn try_build_hist_and_topn<E>(
     mut compared_bytes: impl FnMut(&SampleItem, bool) -> Result<Vec<u8>, E>,
 ) -> Result<HistogramAndTopN, HistogramBuildError<E>> {
     let mut collector = collector.clone();
-    try_build_hist_and_topn_in_place(
+    build_hist_and_top_n(
         id,
         &mut collector,
         options,
@@ -432,7 +432,7 @@ pub fn try_build_hist_and_topn<E>(
 /// Go `BuildHistAndTopN`, including its in-place stable sort, fallible datum
 /// comparisons, fallible codec boundary, and optional temporary-memory
 /// tracker.
-pub fn try_build_hist_and_topn_in_place<E>(
+pub fn build_hist_and_top_n<E>(
     id: i64,
     collector: &mut SampleCollector,
     options: BuildOptions,
@@ -442,7 +442,7 @@ pub fn try_build_hist_and_topn_in_place<E>(
     try_build_hist_and_topn_tracked(id, collector, options, is_column, None, compared_bytes)
 }
 
-/// Tracker-bearing form of [`try_build_hist_and_topn_in_place`].
+/// Tracker-bearing form of [`build_hist_and_top_n`].
 pub fn try_build_hist_and_topn_tracked<E>(
     id: i64,
     collector: &mut SampleCollector,
@@ -650,7 +650,7 @@ pub fn try_build_hist_and_topn_tracked<E>(
 
 /// Go `BuildColumnHist`, using the caller-supplied whole-table count, NDV,
 /// and NULL count rather than the collector's FM-sketch summary.
-pub fn build_column_histogram(
+pub fn build_column_hist(
     id: i64,
     collector: &SampleCollector,
     num_buckets: i64,
@@ -730,7 +730,7 @@ pub fn try_build_column_histogram_in_place(
 
 /// Go `BuildColumn`, forwarding the collector's whole-scan summary.
 pub fn build_column(id: i64, collector: &SampleCollector, num_buckets: i64) -> Histogram {
-    build_column_histogram(
+    build_column_hist(
         id,
         collector,
         num_buckets,

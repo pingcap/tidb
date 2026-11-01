@@ -122,7 +122,7 @@ fn column_metadata_survives_the_table_backed_rewrite_path() {
     let field_type =
         FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Utf8Mb4GeneralCi);
     let resolver = Resolver(field_type.clone());
-    let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(&[field_type], 1);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[field_type], 1);
     chunk.append_string(0, "ignored row value");
 
     let evaluate = |sql_expr: &str| {

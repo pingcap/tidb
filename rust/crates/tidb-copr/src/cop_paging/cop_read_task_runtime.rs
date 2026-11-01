@@ -233,7 +233,7 @@ impl CopReadTaskResponse {
     /// deprecated `ExecDetails` contributes its time detail and the write
     /// column family's scan counts.
     #[must_use]
-    pub fn runtime_sample(&self, callee_address: &str) -> tidb_txnkv::ResponseRuntimeStats {
+    pub fn collect_cop_runtime_stats(&self, callee_address: &str) -> tidb_txnkv::ResponseRuntimeStats {
         let mut scan = tikv_client::util::ScanDetail::default();
         let mut time = tikv_client::util::TimeDetail::default();
         if let Some(details) = &self.response.exec_details_v2 {
@@ -1179,7 +1179,7 @@ impl CopReadTaskRuntime {
                     return Err(CopReadTaskError::MaxKeysRead);
                 }
             }
-            let runtime = CopReadTaskResponse::success(child).runtime_sample(callee_address);
+            let runtime = CopReadTaskResponse::success(child).collect_cop_runtime_stats(callee_address);
             self.tasks[logical_task_index]
                 .paging
                 .accept_batched_child(batch.data.clone(), Some(runtime))?;

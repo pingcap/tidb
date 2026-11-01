@@ -42,8 +42,8 @@
 //!   [`extract_columns`], [`extract_cor_columns`] and
 //!   [`extract_columns_from_expressions`].
 //! - **Column-info conversion** (`expression.go:1109`, `:1115`):
-//!   [`column_infos_to_columns_and_names`] and
-//!   [`column_infos_to_columns_and_names_with_collate`], over the
+//!   [`column_infos_2_columns_and_names`] and
+//!   [`column_infos_2_columns_and_names_with_collate`], over the
 //!   [`ColumnInfoSource`] view described below, plus the `ResolveIndices`
 //!   walk they finish a virtual generated column with,
 //!   [`resolve_indices_in_place`].
@@ -277,7 +277,7 @@ impl BuildOptions {
     ) -> Result<Self, SimpleExprError> {
         self.source_table_db = IdentifierMetadata::from_parts(db, CiString::new(db).lowercase());
         if self.input_schema.is_none() {
-            let (columns, names) = column_infos_to_columns_and_names(
+            let (columns, names) = column_infos_2_columns_and_names(
                 ctx,
                 ids,
                 &self.source_table_db,
@@ -815,7 +815,7 @@ pub fn try_push_cast_into_control_function_for_hybrid_type(
             }
             crate::rewriter::builtin_return_type("elt", &args)
         }
-        _ => crate::rewriter::infer_type4_control_funcs("if", &args),
+        _ => crate::rewriter::infer_type_4_control_funcs("if", &args),
     };
     // Inference failure keeps the unpushed node, which is Go's own
     // `return expr` on error.
@@ -1029,16 +1029,16 @@ pub fn resolve_indices_in_place(
 }
 
 /// Go `ColumnInfos2ColumnsAndNames` (`expression.go:1109`):
-/// [`column_infos_to_columns_and_names_with_collate`] under the process-wide
+/// [`column_infos_2_columns_and_names_with_collate`] under the process-wide
 /// collation mode.
-pub fn column_infos_to_columns_and_names<C: ColumnInfoSource>(
+pub fn column_infos_2_columns_and_names<C: ColumnInfoSource>(
     ctx: &dyn ColumnResolver,
     ids: &dyn PlanColumnIdAllocator,
     db_name: &IdentifierMetadata,
     tbl_name: &CiString,
     col_infos: &[C],
 ) -> Result<(Vec<Column>, Vec<FieldName>), SimpleExprError> {
-    column_infos_to_columns_and_names_with_collate(
+    column_infos_2_columns_and_names_with_collate(
         ctx,
         ids,
         db_name,
@@ -1055,7 +1055,7 @@ pub fn column_infos_to_columns_and_names<C: ColumnInfoSource>(
 /// The two-pass shape is Go's and is load-bearing: a generated column may name
 /// a column that appears after it, so every column must exist before any
 /// expression is built.
-pub fn column_infos_to_columns_and_names_with_collate<C: ColumnInfoSource>(
+pub fn column_infos_2_columns_and_names_with_collate<C: ColumnInfoSource>(
     ctx: &dyn ColumnResolver,
     ids: &dyn PlanColumnIdAllocator,
     db_name: &IdentifierMetadata,
@@ -1181,7 +1181,7 @@ mod tests {
     }
 
     fn eval_row(expr: &Expression, types: &[FieldType], values: &[Datum]) -> Datum {
-        let mut chunk = Chunk::new_with_capacity(types, 1);
+        let mut chunk = Chunk::new_chunk_with_capacity(types, 1);
         for (index, value) in values.iter().enumerate() {
             chunk.append_datum(index, value);
         }
@@ -1241,7 +1241,7 @@ mod tests {
     fn build_expression_with_input_schema_and_names() {
         let table = test_table();
         let ids = SimplePlanColumnIdAllocator::new(0);
-        let (columns, names) = column_infos_to_columns_and_names(
+        let (columns, names) = column_infos_2_columns_and_names(
             &NoResolver,
             &ids,
             &IdentifierMetadata::default(),
@@ -2058,7 +2058,7 @@ mod tests {
             TestColumnInfo::new("c", 2, FieldTypeCode::LongLong).generated("a + b"),
         ];
         let ids = SimplePlanColumnIdAllocator::new(0);
-        let (columns, names) = column_infos_to_columns_and_names_with_collate(
+        let (columns, names) = column_infos_2_columns_and_names_with_collate(
             &NoResolver,
             &ids,
             &IdentifierMetadata::new("test"),
@@ -2128,7 +2128,7 @@ mod tests {
             TestColumnInfo::new("c", 2, FieldTypeCode::LongLong).generated("a + b"),
         ];
         let ids = SimplePlanColumnIdAllocator::new(0);
-        let (columns, names) = column_infos_to_columns_and_names(
+        let (columns, names) = column_infos_2_columns_and_names(
             &NoResolver,
             &ids,
             &IdentifierMetadata::new("test"),

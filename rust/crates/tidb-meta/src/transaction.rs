@@ -413,7 +413,7 @@ impl<J: DdlJobCodec> HistoryDdlJobIterator<J> {
         }
         while self.iterator.valid() && jobs.len() < count as usize {
             let matches =
-                match job_matches(self.iterator.value(), &self.schema_names, &self.table_names) {
+                match is_job_match(self.iterator.value(), &self.schema_names, &self.table_names) {
                     Ok(matches) => matches,
                     Err(error) => {
                         jobs.clear();
@@ -760,7 +760,7 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GetMaskingPolicyID`.
-    pub fn masking_policy_id(&self) -> Result<i64> {
+    pub fn get_masking_policy_id(&self) -> Result<i64> {
         let mut transaction = self.lock()?;
         meta_structure(&mut *transaction).get_int64(key::MASKING_POLICY_GLOBAL_ID)
     }
@@ -792,7 +792,7 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.EncodeSchemaDiffKey`.
-    pub fn encoded_schema_diff_key(&self, schema_version: i64) -> Vec<u8> {
+    pub fn encode_schema_diff_key(&self, schema_version: i64) -> Vec<u8> {
         key::schema_diff_kv_key(schema_version)
     }
 
@@ -801,17 +801,17 @@ impl<T: MetaTransaction> Mutator<T> {
         let mut transaction = self.lock()?;
         let mut structure = meta_structure(&mut *transaction);
         let field = key::db_key(database.id);
-        if structure.hget(key::DBS, &field)?.is_some() {
+        if structure.h_get(key::DBS, &field)?.is_some() {
             return Err(MetaError::DatabaseExists);
         }
-        structure.hset(key::DBS, &field, &value::serialize_db_info(database)?)
+        structure.h_set(key::DBS, &field, &value::serialize_db_info(database)?)
     }
 
     /// Go `Mutator.IsDatabaseExist`.
     pub fn database_exists(&self, database_id: i64) -> Result<bool> {
         let mut transaction = self.lock()?;
         meta_structure(&mut *transaction)
-            .hget(key::DBS, &key::db_key(database_id))
+            .h_get(key::DBS, &key::db_key(database_id))
             .map(|stored| stored.is_some())
     }
 
@@ -820,17 +820,17 @@ impl<T: MetaTransaction> Mutator<T> {
         let mut transaction = self.lock()?;
         let mut structure = meta_structure(&mut *transaction);
         let field = key::db_key(database.id);
-        if structure.hget(key::DBS, &field)?.is_none() {
+        if structure.h_get(key::DBS, &field)?.is_none() {
             return Err(MetaError::DatabaseNotExists);
         }
-        structure.hset(key::DBS, &field, &value::serialize_db_info(database)?)
+        structure.h_set(key::DBS, &field, &value::serialize_db_info(database)?)
     }
 
     /// Go `Mutator.GetDatabase`.
     pub fn database(&self, database_id: i64) -> Result<Option<DBInfo>> {
         let mut transaction = self.lock()?;
         meta_structure(&mut *transaction)
-            .hget(key::DBS, &key::db_key(database_id))?
+            .h_get(key::DBS, &key::db_key(database_id))?
             .map(|stored| value::parse_db_info(&stored))
             .transpose()
     }
@@ -839,7 +839,7 @@ impl<T: MetaTransaction> Mutator<T> {
     pub fn databases(&self) -> Result<Vec<DBInfo>> {
         let mut transaction = self.lock()?;
         meta_structure(&mut *transaction)
-            .hget_all(key::DBS)?
+            .h_get_all(key::DBS)?
             .into_iter()
             .map(|pair| value::parse_db_info(&pair.value))
             .collect()
@@ -848,7 +848,7 @@ impl<T: MetaTransaction> Mutator<T> {
     /// Go `Mutator.IterDatabases`, stopping at the first callback error.
     pub fn iter_databases(&self, mut visit: impl FnMut(&DBInfo) -> Result<()>) -> Result<()> {
         let mut transaction = self.lock()?;
-        meta_structure(&mut *transaction).hget_iter(key::DBS, &mut |pair| {
+        meta_structure(&mut *transaction).h_get_iter(key::DBS, &mut |pair| {
             let database = value::parse_db_info(&pair.value)?;
             visit(&database)
         })
@@ -907,10 +907,10 @@ impl<T: MetaTransaction> Mutator<T> {
         let mut transaction = self.lock()?;
         let mut structure = meta_structure(&mut *transaction);
         let field = key::policy_key(policy.id);
-        if structure.hget(key::POLICIES, &field)?.is_some() {
+        if structure.h_get(key::POLICIES, &field)?.is_some() {
             return Err(MetaError::PolicyExists);
         }
-        structure.hset(
+        structure.h_set(
             key::POLICIES,
             &field,
             &value::serialize_policy_info(policy)?,
@@ -922,10 +922,10 @@ impl<T: MetaTransaction> Mutator<T> {
         let mut transaction = self.lock()?;
         let mut structure = meta_structure(&mut *transaction);
         let field = key::policy_key(policy.id);
-        if structure.hget(key::POLICIES, &field)?.is_none() {
+        if structure.h_get(key::POLICIES, &field)?.is_none() {
             return Err(MetaError::PolicyNotExists);
         }
-        structure.hset(
+        structure.h_set(
             key::POLICIES,
             &field,
             &value::serialize_policy_info(policy)?,
@@ -936,18 +936,18 @@ impl<T: MetaTransaction> Mutator<T> {
     pub fn policy(&self, policy_id: i64) -> Result<PolicyInfo> {
         let mut transaction = self.lock()?;
         let stored = meta_structure(&mut *transaction)
-            .hget(key::POLICIES, &key::policy_key(policy_id))?
+            .h_get(key::POLICIES, &key::policy_key(policy_id))?
             .ok_or(MetaError::PolicyIdNotExists(policy_id))?;
-        value::parse_policy_info(&stored)
+        value::list_policies(&stored)
     }
 
     /// Go `Mutator.ListPolicies` in encoded field order.
     pub fn policies(&self) -> Result<Vec<PolicyInfo>> {
         let mut transaction = self.lock()?;
         meta_structure(&mut *transaction)
-            .hget_all(key::POLICIES)?
+            .h_get_all(key::POLICIES)?
             .into_iter()
-            .map(|pair| value::parse_policy_info(&pair.value))
+            .map(|pair| value::list_policies(&pair.value))
             .collect()
     }
 
@@ -956,8 +956,8 @@ impl<T: MetaTransaction> Mutator<T> {
         let mut transaction = self.lock()?;
         let mut structure = meta_structure(&mut *transaction);
         let field = key::policy_key(policy_id);
-        structure.hclear(&field)?;
-        structure.hdel(key::POLICIES, &[&field])
+        structure.h_clear(&field)?;
+        structure.h_del(key::POLICIES, &[&field])
     }
 
     /// Go `Mutator.CreateMaskingPolicy`.
@@ -968,12 +968,12 @@ impl<T: MetaTransaction> Mutator<T> {
         let mut transaction = self.lock()?;
         let mut structure = meta_structure(&mut *transaction);
         let field = key::masking_policy_key(policy.id);
-        if structure.hget(key::MASKING_POLICIES, &field)?.is_some() {
+        if structure.h_get(key::MASKING_POLICIES, &field)?.is_some() {
             return Err(MetaError::MaskingPolicyIdExists(policy.id));
         }
         let encoded = tidb_model::serde_helpers::to_go_json(policy)
             .map_err(|error| MetaError::InvalidJson(error.to_string()))?;
-        structure.hset(
+        structure.h_set(
             key::MASKING_POLICIES,
             &field,
             &value::attach_magic_byte(&encoded),
@@ -985,12 +985,12 @@ impl<T: MetaTransaction> Mutator<T> {
         let mut transaction = self.lock()?;
         let mut structure = meta_structure(&mut *transaction);
         let field = key::masking_policy_key(policy.id);
-        if structure.hget(key::MASKING_POLICIES, &field)?.is_none() {
+        if structure.h_get(key::MASKING_POLICIES, &field)?.is_none() {
             return Err(MetaError::MaskingPolicyIdNotExists(policy.id));
         }
         let encoded = tidb_model::serde_helpers::to_go_json(policy)
             .map_err(|error| MetaError::InvalidJson(error.to_string()))?;
-        structure.hset(
+        structure.h_set(
             key::MASKING_POLICIES,
             &field,
             &value::attach_magic_byte(&encoded),
@@ -1001,17 +1001,17 @@ impl<T: MetaTransaction> Mutator<T> {
     pub fn masking_policy(&self, policy_id: i64) -> Result<MaskingPolicyInfo> {
         let mut transaction = self.lock()?;
         let stored = meta_structure(&mut *transaction)
-            .hget(key::MASKING_POLICIES, &key::masking_policy_key(policy_id))?
+            .h_get(key::MASKING_POLICIES, &key::masking_policy_key(policy_id))?
             .ok_or(MetaError::MaskingPolicyIdNotExists(policy_id))?;
         serde_json::from_slice(value::detach_magic_byte(&stored)?)
             .map_err(|error| MetaError::InvalidJson(error.to_string()))
     }
 
     /// Go `Mutator.ListMaskingPolicies` in encoded field order.
-    pub fn masking_policies(&self) -> Result<Vec<MaskingPolicyInfo>> {
+    pub fn list_masking_policies(&self) -> Result<Vec<MaskingPolicyInfo>> {
         let mut transaction = self.lock()?;
         meta_structure(&mut *transaction)
-            .hget_all(key::MASKING_POLICIES)?
+            .h_get_all(key::MASKING_POLICIES)?
             .into_iter()
             .map(|pair| {
                 serde_json::from_slice(value::detach_magic_byte(&pair.value)?)
@@ -1025,8 +1025,8 @@ impl<T: MetaTransaction> Mutator<T> {
         let mut transaction = self.lock()?;
         let mut structure = meta_structure(&mut *transaction);
         let field = key::masking_policy_key(policy_id);
-        structure.hclear(&field)?;
-        structure.hdel(key::MASKING_POLICIES, &[&field])
+        structure.h_clear(&field)?;
+        structure.h_del(key::MASKING_POLICIES, &[&field])
     }
 
     /// Go `Mutator.AddResourceGroup`.
@@ -1037,10 +1037,10 @@ impl<T: MetaTransaction> Mutator<T> {
         let mut transaction = self.lock()?;
         let mut structure = meta_structure(&mut *transaction);
         let field = key::resource_group_key(group.id);
-        if structure.hget(key::RESOURCE_GROUPS, &field)?.is_some() {
+        if structure.h_get(key::RESOURCE_GROUPS, &field)?.is_some() {
             return Err(MetaError::ResourceGroupExists);
         }
-        structure.hset(
+        structure.h_set(
             key::RESOURCE_GROUPS,
             &field,
             &value::attach_magic_byte(&encode_resource_group(group)?),
@@ -1054,11 +1054,11 @@ impl<T: MetaTransaction> Mutator<T> {
         let mut structure = meta_structure(&mut *transaction);
         let field = key::resource_group_key(group.id);
         if group.id != DEFAULT_RESOURCE_GROUP_ID
-            && structure.hget(key::RESOURCE_GROUPS, &field)?.is_none()
+            && structure.h_get(key::RESOURCE_GROUPS, &field)?.is_none()
         {
             return Err(MetaError::ResourceGroupNotExists);
         }
-        structure.hset(
+        structure.h_set(
             key::RESOURCE_GROUPS,
             &field,
             &value::attach_magic_byte(&encode_resource_group(group)?),
@@ -1069,17 +1069,17 @@ impl<T: MetaTransaction> Mutator<T> {
     pub fn drop_resource_group(&self, group_id: i64) -> Result<()> {
         let mut transaction = self.lock()?;
         meta_structure(&mut *transaction)
-            .hdel(key::RESOURCE_GROUPS, &[&key::resource_group_key(group_id)])
+            .h_del(key::RESOURCE_GROUPS, &[&key::resource_group_key(group_id)])
     }
 
     /// Go `Mutator.GetResourceGroup`.
     pub fn resource_group(&self, group_id: i64) -> Result<Arc<ResourceGroupInfo>> {
         let mut transaction = self.lock()?;
         let stored = meta_structure(&mut *transaction)
-            .hget(key::RESOURCE_GROUPS, &key::resource_group_key(group_id))?;
+            .h_get(key::RESOURCE_GROUPS, &key::resource_group_key(group_id))?;
         match stored {
             Some(stored) => decode_resource_group(value::detach_magic_byte(&stored)?).map(Arc::new),
-            None if group_id == DEFAULT_RESOURCE_GROUP_ID => Ok(default_resource_group_for_test()),
+            None if group_id == DEFAULT_RESOURCE_GROUP_ID => Ok(default_group_meta_4_test()),
             None => Err(MetaError::ResourceGroupIdNotExists(group_id)),
         }
     }
@@ -1089,7 +1089,7 @@ impl<T: MetaTransaction> Mutator<T> {
     pub fn resource_groups(&self) -> Result<Vec<Arc<ResourceGroupInfo>>> {
         let mut transaction = self.lock()?;
         let mut groups = meta_structure(&mut *transaction)
-            .hget_all(key::RESOURCE_GROUPS)?
+            .h_get_all(key::RESOURCE_GROUPS)?
             .into_iter()
             .map(|pair| decode_resource_group(value::detach_magic_byte(&pair.value)?).map(Arc::new))
             .collect::<Result<Vec<_>>>()?;
@@ -1097,7 +1097,7 @@ impl<T: MetaTransaction> Mutator<T> {
             .iter()
             .any(|group| group.name.lowercase() == "default")
         {
-            groups.push(default_resource_group_for_test());
+            groups.push(default_group_meta_4_test());
         }
         Ok(groups)
     }
@@ -1107,14 +1107,14 @@ impl<T: MetaTransaction> Mutator<T> {
         let mut transaction = self.lock()?;
         let mut structure = meta_structure(&mut *transaction);
         let database_field = key::db_key(database_id);
-        if structure.hget(key::DBS, &database_field)?.is_none() {
+        if structure.h_get(key::DBS, &database_field)?.is_none() {
             return Err(MetaError::DatabaseNotExists);
         }
         let table_field = key::table_key(table.id);
-        if structure.hget(&database_field, &table_field)?.is_some() {
+        if structure.h_get(&database_field, &table_field)?.is_some() {
             return Err(MetaError::TableExists);
         }
-        structure.hset(
+        structure.h_set(
             &database_field,
             &table_field,
             &value::serialize_table_info(table)?,
@@ -1122,7 +1122,7 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GenAutoTableIDKeyValue`.
-    pub fn auto_table_id_key_value(
+    pub fn gen_auto_table_id_key_value(
         &self,
         database_id: i64,
         table_id: i64,
@@ -1168,7 +1168,7 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.CreateSequenceAndSetSeqValue`.
-    pub fn create_sequence_and_set_value(
+    pub fn create_sequence_and_set_seq_value(
         &self,
         database_id: i64,
         table: &TableInfo,
@@ -1191,16 +1191,16 @@ impl<T: MetaTransaction> Mutator<T> {
         let mut transaction = self.lock()?;
         let mut structure = meta_structure(&mut *transaction);
         let database_field = key::db_key(database_id);
-        if structure.hget(key::DBS, &database_field)?.is_none() {
+        if structure.h_get(key::DBS, &database_field)?.is_none() {
             return Err(MetaError::DatabaseNotExists);
         }
         if structure
-            .hget(&database_field, &key::table_key(table.id))?
+            .h_get(&database_field, &key::table_key(table.id))?
             .is_none()
         {
             return Err(MetaError::TableNotExists);
         }
-        structure.hset(
+        structure.h_set(
             &database_field,
             &key::sequence_key(table.id),
             &value::encode_int_value(sequence_value),
@@ -1212,11 +1212,11 @@ impl<T: MetaTransaction> Mutator<T> {
         let mut transaction = self.lock()?;
         let mut structure = meta_structure(&mut *transaction);
         let database_field = key::db_key(database_id);
-        if structure.hget(key::DBS, &database_field)?.is_none() {
+        if structure.h_get(key::DBS, &database_field)?.is_none() {
             return Err(MetaError::DatabaseNotExists);
         }
         structure
-            .hget(&database_field, &key::table_key(table_id))?
+            .h_get(&database_field, &key::table_key(table_id))?
             .map(|stored| value::parse_table_info(&stored, database_id))
             .transpose()
     }
@@ -1233,15 +1233,15 @@ impl<T: MetaTransaction> Mutator<T> {
         let mut transaction = self.lock()?;
         let mut structure = meta_structure(&mut *transaction);
         let database_field = key::db_key(database_id);
-        if structure.hget(key::DBS, &database_field)?.is_none() {
+        if structure.h_get(key::DBS, &database_field)?.is_none() {
             return Err(MetaError::DatabaseNotExists);
         }
         let table_field = key::table_key(table.id);
-        if structure.hget(&database_field, &table_field)?.is_none() {
+        if structure.h_get(&database_field, &table_field)?.is_none() {
             return Err(MetaError::TableNotExists);
         }
         table.revision = table.revision.wrapping_add(1);
-        structure.hset(
+        structure.h_set(
             &database_field,
             &table_field,
             &value::serialize_table_info(table)?,
@@ -1251,16 +1251,16 @@ impl<T: MetaTransaction> Mutator<T> {
     /// Go `Mutator.ListTables`, filtering non-table fields from the database
     /// hash and preserving encoded field order.
     pub fn tables(&self, database_id: i64) -> Result<Vec<TableInfo>> {
-        self.tables_with_cancel(database_id, || false)
+        self.list_tables(database_id, || false)
     }
 
     /// Go `Mutator.ListTables`, with an explicit context-cancellation probe.
-    pub fn tables_with_cancel(
+    pub fn list_tables(
         &self,
         database_id: i64,
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<Vec<TableInfo>> {
-        let pairs = self.metas_by_database_id(database_id)?;
+        let pairs = self.get_metas_by_dbid(database_id)?;
         let mut tables = Vec::with_capacity(pairs.len() / 2);
         for pair in pairs {
             if !pair.field.starts_with(key::TABLE_PREFIX.as_bytes()) {
@@ -1283,10 +1283,10 @@ impl<T: MetaTransaction> Mutator<T> {
         let mut transaction = self.lock()?;
         let mut structure = meta_structure(&mut *transaction);
         let database_field = key::db_key(database_id);
-        if structure.hget(key::DBS, &database_field)?.is_none() {
+        if structure.h_get(key::DBS, &database_field)?.is_none() {
             return Err(MetaError::DatabaseNotExists);
         }
-        structure.hget_iter(&database_field, &mut |pair| {
+        structure.h_get_iter(&database_field, &mut |pair| {
             if !pair.field.starts_with(key::TABLE_PREFIX.as_bytes()) {
                 return Ok(());
             }
@@ -1296,19 +1296,19 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GetMetasByDBID`.
-    pub fn metas_by_database_id(&self, database_id: i64) -> Result<Vec<HashPair>> {
+    pub fn get_metas_by_dbid(&self, database_id: i64) -> Result<Vec<HashPair>> {
         let mut transaction = self.lock()?;
         let mut structure = meta_structure(&mut *transaction);
         let database_field = key::db_key(database_id);
-        if structure.hget(key::DBS, &database_field)?.is_none() {
+        if structure.h_get(key::DBS, &database_field)?.is_none() {
             return Err(MetaError::DatabaseNotExists);
         }
-        structure.hget_all(&database_field)
+        structure.h_get_all(&database_field)
     }
 
     /// Go `Mutator.ListSimpleTables`.
-    pub fn simple_tables(&self, database_id: i64) -> Result<Vec<TableNameInfo>> {
-        self.metas_by_database_id(database_id)?
+    pub fn list_simple_tables(&self, database_id: i64) -> Result<Vec<TableNameInfo>> {
+        self.get_metas_by_dbid(database_id)?
             .into_iter()
             .filter(|pair| pair.field.starts_with(key::TABLE_PREFIX.as_bytes()))
             .map(|pair| fast_unmarshal_table_name_info(&pair.value))
@@ -1316,12 +1316,12 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `GetTableInfoWithAttributes`.
-    pub fn table_info_with_attributes(
+    pub fn get_table_info_with_attributes(
         &self,
         database_id: i64,
         filters: &[MustLoadFilterAttr<'_>],
     ) -> Result<Vec<TableInfo>> {
-        self.metas_by_database_id(database_id)?
+        self.get_metas_by_dbid(database_id)?
             .into_iter()
             .filter(|pair| pair.field.starts_with(b"Table"))
             .filter(|pair| table_info_must_load_with_filters(&pair.value, false, filters))
@@ -1330,7 +1330,7 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GetAllNameToIDAndTheMustLoadedTableInfo`.
-    pub fn all_name_to_id_and_must_loaded_table_info(
+    pub fn get_all_name_to_id_and_the_must_loaded_table_info(
         &self,
         database_id: i64,
     ) -> Result<NameToIdAndMustLoadedTableInfo> {
@@ -1340,7 +1340,7 @@ impl<T: MetaTransaction> Mutator<T> {
             .map_err(|error| MetaError::InvalidJson(error.to_string()))?;
         let mut names = BTreeMap::new();
         let mut must_load = Vec::new();
-        for pair in self.metas_by_database_id(database_id)? {
+        for pair in self.get_metas_by_dbid(database_id)? {
             if !pair.field.starts_with(b"Table") {
                 continue;
             }
@@ -1362,14 +1362,14 @@ impl<T: MetaTransaction> Mutator<T> {
         let mut transaction = self.lock()?;
         let mut structure = meta_structure(&mut *transaction);
         let database_field = key::db_key(database_id);
-        if structure.hget(key::DBS, &database_field)?.is_none() {
+        if structure.h_get(key::DBS, &database_field)?.is_none() {
             return Err(MetaError::DatabaseNotExists);
         }
         let table_field = key::table_key(table_id);
-        if structure.hget(&database_field, &table_field)?.is_none() {
+        if structure.h_get(&database_field, &table_field)?.is_none() {
             return Err(MetaError::TableNotExists);
         }
-        structure.hdel(&database_field, &[&table_field])
+        structure.h_del(&database_field, &[&table_field])
     }
 
     /// Go `Mutator.DropSequence`.
@@ -1386,8 +1386,8 @@ impl<T: MetaTransaction> Mutator<T> {
         let mut transaction = self.lock()?;
         let mut structure = meta_structure(&mut *transaction);
         let database_field = key::db_key(database_id);
-        structure.hclear(&database_field)?;
-        structure.hdel(key::DBS, &[&database_field])
+        structure.h_clear(&database_field)?;
+        structure.h_del(key::DBS, &[&database_field])
     }
 
     /// Go `Mutator.SetBDRRole`.
@@ -1496,7 +1496,7 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GetIngestMaxBatchSplitRanges`.
-    pub fn ingest_max_batch_split_ranges(&self) -> Result<Option<i64>> {
+    pub fn get_ingest_max_batch_split_ranges(&self) -> Result<Option<i64>> {
         self.decimal_setting(key::INGEST_MAX_BATCH_SPLIT_RANGES)
     }
 
@@ -1506,7 +1506,7 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GetIngestMaxInflight`.
-    pub fn ingest_max_inflight(&self) -> Result<Option<i64>> {
+    pub fn get_ingest_max_inflight(&self) -> Result<Option<i64>> {
         self.decimal_setting(key::INGEST_MAX_INFLIGHT)
     }
 
@@ -1529,7 +1529,7 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GetIngestMaxSplitRangesPerSec`.
-    pub fn ingest_max_split_ranges_per_sec(&self) -> Result<Option<f64>> {
+    pub fn get_ingest_max_split_ranges_per_sec(&self) -> Result<Option<f64>> {
         self.float_setting(key::INGEST_MAX_SPLIT_RANGES_PER_SEC)
     }
 
@@ -1539,7 +1539,7 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GetIngestMaxPerSec`.
-    pub fn ingest_max_per_sec(&self) -> Result<Option<f64>> {
+    pub fn get_ingest_max_per_sec(&self) -> Result<Option<f64>> {
         self.float_setting(key::INGEST_MAX_PER_SEC)
     }
 
@@ -1571,7 +1571,7 @@ impl<T: MetaTransaction> Mutator<T> {
         let encoded = tidb_model::serde_helpers::to_go_json(factors)
             .map_err(|error| MetaError::InvalidJson(error.to_string()))?;
         let mut transaction = self.lock()?;
-        meta_structure(&mut *transaction).hset(
+        meta_structure(&mut *transaction).h_set(
             key::DXF_SCHEDULE_TUNE,
             keyspace.as_bytes(),
             &encoded,
@@ -1579,10 +1579,10 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GetDXFScheduleTuneFactors`.
-    pub fn dxf_schedule_tune_factors(&self, keyspace: &str) -> Result<Option<TtlTuneFactors>> {
+    pub fn get_dxf_schedule_tune_factors(&self, keyspace: &str) -> Result<Option<TtlTuneFactors>> {
         let mut transaction = self.lock()?;
         meta_structure(&mut *transaction)
-            .hget(key::DXF_SCHEDULE_TUNE, keyspace.as_bytes())?
+            .h_get(key::DXF_SCHEDULE_TUNE, keyspace.as_bytes())?
             .map(|encoded| {
                 serde_json::from_slice(&encoded)
                     .map_err(|error| MetaError::InvalidJson(error.to_string()))
@@ -1611,7 +1611,7 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GetBootstrapVersion`.
-    pub fn bootstrap_version(&self) -> Result<i64> {
+    pub fn get_bootstrap_version(&self) -> Result<i64> {
         let mut transaction = self.lock()?;
         meta_structure(&mut *transaction).get_int64(key::BOOTSTRAP)
     }
@@ -1623,7 +1623,7 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GetStarterBootstrapVersion`.
-    pub fn starter_bootstrap_version(&self) -> Result<i64> {
+    pub fn get_starter_bootstrap_version(&self) -> Result<i64> {
         let mut transaction = self.lock()?;
         meta_structure(&mut *transaction).get_int64(key::STARTER_BOOTSTRAP)
     }
@@ -1641,7 +1641,7 @@ impl<T: MetaTransaction> Mutator<T> {
         let stored = meta_structure(&mut *transaction)
             .get(&key::schema_diff_key(schema_version))?
             .unwrap_or_default();
-        value::parse_schema_diff(&stored)
+        value::get_schema_diff(&stored)
     }
 
     /// Go `Mutator.SetSchemaDiff`.
@@ -1666,38 +1666,38 @@ impl<T: MetaTransaction> Mutator<T> {
     ) -> Result<()> {
         let encoded = job.encode(update_raw_args)?;
         let mut transaction = self.lock()?;
-        meta_structure(&mut *transaction).hset(
+        meta_structure(&mut *transaction).h_set(
             key::DDL_JOB_HISTORY,
-            &key::ddl_job_id_key(job.id()),
+            &key::job_id_key(job.id()),
             &encoded,
         )
     }
 
     /// Go `Mutator.getHistoryDDLJob` / `GetHistoryDDLJob`.
-    pub fn history_ddl_job<J: DdlJobCodec>(&self, job_id: i64) -> Result<Option<J>> {
+    pub fn get_history_ddl_job<J: DdlJobCodec>(&self, job_id: i64) -> Result<Option<J>> {
         let mut transaction = self.lock()?;
         meta_structure(&mut *transaction)
-            .hget(key::DDL_JOB_HISTORY, &key::ddl_job_id_key(job_id))?
+            .h_get(key::DDL_JOB_HISTORY, &key::job_id_key(job_id))?
             .map(|encoded| J::decode(&encoded))
             .transpose()
     }
 
     /// Go `Mutator.GetHistoryDDLCount`.
-    pub fn history_ddl_count(&self) -> Result<u64> {
+    pub fn get_history_ddl_count(&self) -> Result<u64> {
         let mut transaction = self.lock()?;
         let count = meta_structure(&mut *transaction)
-            .hget_all(key::DDL_JOB_HISTORY)?
+            .h_get_all(key::DDL_JOB_HISTORY)?
             .len();
         u64::try_from(count).map_err(|_| MetaError::Storage("history count overflow".to_owned()))
     }
 
     /// Go `Mutator.GetLastHistoryDDLJobsIterator`.
-    pub fn last_history_ddl_jobs<J: DdlJobCodec>(&self) -> Result<HistoryDdlJobIterator<J>> {
+    pub fn get_last_history_ddl_jobs_iterator<J: DdlJobCodec>(&self) -> Result<HistoryDdlJobIterator<J>> {
         self.history_ddl_jobs_from_field(None, BTreeSet::new(), BTreeSet::new())
     }
 
     /// Go `Mutator.GetLastHistoryDDLJobsIteratorWithFilter`.
-    pub fn last_history_ddl_jobs_with_filter<J: DdlJobCodec>(
+    pub fn get_last_history_ddl_jobs_iterator_with_filter<J: DdlJobCodec>(
         &self,
         schema_names: BTreeSet<String>,
         table_names: BTreeSet<String>,
@@ -1706,12 +1706,12 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GetHistoryDDLJobsIterator`, inclusive of `start_job_id`.
-    pub fn history_ddl_jobs<J: DdlJobCodec>(
+    pub fn get_history_ddl_jobs_iterator<J: DdlJobCodec>(
         &self,
         start_job_id: i64,
     ) -> Result<HistoryDdlJobIterator<J>> {
         self.history_ddl_jobs_from_field(
-            Some(key::ddl_job_id_key(start_job_id)),
+            Some(key::job_id_key(start_job_id)),
             BTreeSet::new(),
             BTreeSet::new(),
         )
@@ -1741,7 +1741,7 @@ impl<T: MetaTransaction> Mutator<T> {
     /// reached through Go `GetAutoIDAccessors(...).RowID().Inc(...)`.
     pub fn increment_row_id(&self, database_id: i64, table_id: i64, step: i64) -> Result<i64> {
         let mut transaction = self.lock()?;
-        meta_structure(&mut *transaction).hinc(
+        meta_structure(&mut *transaction).h_inc(
             &key::db_key(database_id),
             &key::auto_table_id_key(table_id),
             step,
@@ -1752,13 +1752,13 @@ impl<T: MetaTransaction> Mutator<T> {
     pub fn row_id(&self, database_id: i64, table_id: i64) -> Result<i64> {
         let mut transaction = self.lock()?;
         meta_structure(&mut *transaction)
-            .hget_int64(&key::db_key(database_id), &key::auto_table_id_key(table_id))
+            .h_get_int_64(&key::db_key(database_id), &key::auto_table_id_key(table_id))
     }
 
     /// Deletes one row-ID allocator field.
     pub fn delete_row_id(&self, database_id: i64, table_id: i64) -> Result<()> {
         let mut transaction = self.lock()?;
-        meta_structure(&mut *transaction).hdel(
+        meta_structure(&mut *transaction).h_del(
             &key::db_key(database_id),
             &[&key::auto_table_id_key(table_id)],
         )
@@ -1871,13 +1871,13 @@ impl<T: MetaTransaction> AutoIdAccessor<T> {
     pub fn get(&self) -> Result<i64> {
         let mut transaction = self.meta.lock()?;
         meta_structure(&mut *transaction)
-            .hget_int64(&key::db_key(self.database_id), &self.field())
+            .h_get_int_64(&key::db_key(self.database_id), &self.field())
     }
 
     /// Go `AutoIDAccessor.Put`.
     pub fn put(&self, value: i64) -> Result<()> {
         let mut transaction = self.meta.lock()?;
-        meta_structure(&mut *transaction).hset(
+        meta_structure(&mut *transaction).h_set(
             &key::db_key(self.database_id),
             &self.field(),
             &value::encode_int_value(value),
@@ -1888,7 +1888,7 @@ impl<T: MetaTransaction> AutoIdAccessor<T> {
     /// not checked because rename races make those checks invalid in Go.
     pub fn increment(&self, step: i64) -> Result<i64> {
         let mut transaction = self.meta.lock()?;
-        meta_structure(&mut *transaction).hinc(
+        meta_structure(&mut *transaction).h_inc(
             &key::db_key(self.database_id),
             &self.field(),
             step,
@@ -1909,7 +1909,7 @@ impl<T: MetaTransaction> AutoIdAccessor<T> {
             AutoIdKind::SequenceCycle => key::sequence_cycle_key(table_id),
         };
         let mut transaction = self.meta.lock()?;
-        meta_structure(&mut *transaction).hset(
+        meta_structure(&mut *transaction).h_set(
             &key::db_key(database_id),
             &field,
             &value::encode_int_value(current),
@@ -1919,7 +1919,7 @@ impl<T: MetaTransaction> AutoIdAccessor<T> {
     /// Go `AutoIDAccessor.Del`.
     pub fn delete(&self) -> Result<()> {
         let mut transaction = self.meta.lock()?;
-        meta_structure(&mut *transaction).hdel(&key::db_key(self.database_id), &[&self.field()])
+        meta_structure(&mut *transaction).h_del(&key::db_key(self.database_id), &[&self.field()])
     }
 }
 

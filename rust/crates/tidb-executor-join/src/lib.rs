@@ -558,7 +558,7 @@ pub struct BuildWorkerV2 {
 /// `build_column_not_null[i]` is Go's
 /// `mysql.HasNotNullFlag(buildTypes[i].GetFlag())`.
 #[must_use]
-pub fn new_join_build_worker_v2(
+pub fn new_join_build_worker_v_2(
     worker_id: usize,
     build_key_col_idx: Vec<usize>,
     build_column_not_null: &[bool],
@@ -1069,9 +1069,9 @@ fn collect_outer_join_candidates_mode<
     mut remain_cap: usize,
     killer: &SqlKiller,
 ) -> Result<(), ProbeError> {
-    let was_incomplete = output.is_incomplete_chunk();
+    let was_incomplete = output.is_in_complete_chunk();
     output.set_num_virtual_rows(output.num_rows());
-    output.set_incomplete_chunk(true);
+    output.set_in_complete_chunk(true);
     while remain_cap > 0 && !base.is_current_chunk_probe_done() {
         let probe_row = base.current_probe_row();
         let header = base.matched_rows_headers()[probe_row];
@@ -1132,7 +1132,7 @@ fn collect_outer_join_candidates_mode<
     if result.is_ok() {
         base.finish_current_lookup_loop(ctx, ctx.hash_table, output);
     }
-    output.set_incomplete_chunk(was_incomplete);
+    output.set_in_complete_chunk(was_incomplete);
     result
 }
 
@@ -1160,7 +1160,7 @@ impl<'a> JoinOtherCondition<'a> {
             tidb_chunk::chunk::INITIAL_CAPACITY,
             max_chunk_size,
         );
-        chunk.set_incomplete_chunk(true);
+        chunk.set_in_complete_chunk(true);
         Self {
             chunk,
             evaluate: Box::new(move |chunk, selected, nulls, consider_null| {
@@ -1372,7 +1372,7 @@ impl HashJoinV2Exec {
     ) -> Self {
         let build_workers = (0..ctx.concurrency)
             .map(|worker_id| {
-                new_join_build_worker_v2(
+                new_join_build_worker_v_2(
                     worker_id,
                     build_key_col_idx.to_vec(),
                     build_column_not_null,
@@ -1542,9 +1542,9 @@ fn collect_inner_join_candidates(
     for_other_condition: bool,
     killer: &SqlKiller,
 ) -> Result<(), ProbeError> {
-    let was_incomplete = joined_chk.is_incomplete_chunk();
+    let was_incomplete = joined_chk.is_in_complete_chunk();
     joined_chk.set_num_virtual_rows(joined_chk.num_rows());
-    joined_chk.set_incomplete_chunk(true);
+    joined_chk.set_in_complete_chunk(true);
 
     while remain_cap > 0 && !base.is_current_chunk_probe_done() {
         remain_cap -= base.collect_inner_candidate_batch(ctx, remain_cap);
@@ -1563,6 +1563,6 @@ fn collect_inner_join_candidates(
     if result.is_ok() {
         base.finish_current_lookup_loop(ctx, ctx.hash_table, joined_chk);
     }
-    joined_chk.set_incomplete_chunk(was_incomplete);
+    joined_chk.set_in_complete_chunk(was_incomplete);
     result
 }

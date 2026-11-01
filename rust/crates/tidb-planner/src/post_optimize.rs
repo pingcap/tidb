@@ -85,7 +85,7 @@ pub(crate) fn set_point_get_lock(plan: &mut PhysicalPlan, lock: (tidb_planner_co
 /// (Go `getLockWaitTime`: inside a transaction, for a supported lock type);
 /// otherwise the lock is simply dropped.
 #[must_use]
-pub fn eliminate_union_scan_over_point_get(plan: PhysicalPlan, lock_eligible: bool) -> PhysicalPlan {
+pub fn eliminate_union_scan_and_lock(plan: PhysicalPlan, lock_eligible: bool) -> PhysicalPlan {
     let mut has_point_get = false;
     let mut has_union_scan = false;
     let mut lock = None;

@@ -71,9 +71,9 @@ fn certificate_time(unix_seconds: i64) -> String {
 }
 
 /// Go `compressionStats`: the connection's protocol compression.
-pub(crate) struct CompressionStatistics;
+pub(crate) struct CompressionStats;
 
-impl Statistics for CompressionStatistics {
+impl Statistics for CompressionStats {
     fn get_scope(&self, _status: &str) -> u8 {
         tidb_variable::sysvar::SCOPE_SESSION
     }
@@ -118,7 +118,7 @@ impl Drop for RegisteredStatistics {
 pub(crate) fn register_compression_statistics() {
     static REGISTERED: std::sync::Once = std::sync::Once::new();
     REGISTERED.call_once(|| {
-        tidb_variable::statusvar::register_statistics(Arc::new(CompressionStatistics));
+        tidb_variable::statusvar::register_statistics(Arc::new(CompressionStats));
     });
 }
 
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn compression_statuses_follow_the_session() {
         let mut vars = SessionVars::new();
-        let stats = |vars: &SessionVars| CompressionStatistics.stats(Some(vars)).unwrap();
+        let stats = |vars: &SessionVars| CompressionStats.stats(Some(vars)).unwrap();
         assert_eq!(stats(&vars)["Compression"], "OFF");
         assert_eq!(stats(&vars)["Compression_algorithm"], "");
         assert_eq!(stats(&vars)["Compression_level"], "0");

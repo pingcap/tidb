@@ -94,7 +94,7 @@ impl ClusterTopology {
         if !global_replica_read.eq_ignore_ascii_case("closest-adaptive") {
             return Ok(());
         }
-        let local = self.syncer.local_server_info();
+        let local = self.syncer.get_local_server_info();
         let zone = local
             .dynamic_info
             .labels

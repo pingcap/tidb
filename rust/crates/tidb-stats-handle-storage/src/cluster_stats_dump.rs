@@ -138,7 +138,7 @@ pub fn table_stats_to_json_from_loaded<S: MetaSnapshot>(
 ) -> Result<Option<JsonTable>, StatsDumpError> {
     let loader = ClusterStatsLoader::locate(catalog)?;
     let (version, _, modify_count, count, _) =
-        loader.load_meta(snapshot, physical_id)?.unwrap_or_default();
+        loader.stats_meta_count_and_modify_count(snapshot, physical_id)?.unwrap_or_default();
     table.version = version;
     table.hist_coll.modify_count = modify_count;
     table.hist_coll.realtime_count = i64::try_from(count).unwrap_or(i64::MAX);

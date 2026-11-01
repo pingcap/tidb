@@ -950,7 +950,7 @@ impl MvccStore {
         key: &[u8],
         version: u64,
     ) -> Result<Option<Vec<u8>>, KvError> {
-        Ok(self.get_with_commit_ts(ctx, key, version, false)?.0)
+        Ok(self.get_pair(ctx, key, version, false)?.0)
     }
 
     /// Go `GetPair` (`mvcc.go:1826`) under `requestCtx.returnCommitTS`
@@ -959,7 +959,7 @@ impl MvccStore {
     /// `committedLocks` "to make sure all KvPair has CommitTS", so a lock
     /// only the shortcut knew about errors instead of answering a value
     /// whose commit ts cannot be known.
-    pub fn get_with_commit_ts(
+    pub fn get_pair(
         &self,
         ctx: &ReadContext,
         key: &[u8],
@@ -1498,7 +1498,7 @@ impl MvccStore {
     /// Go `BatchGet` (`mvcc.go:1866`) under `requestCtx.returnCommitTS`
     /// (`server.go:533`): every answered pair carries its version's commit
     /// ts, and the committed-lock shortcut is disabled exactly as
-    /// [`MvccStore::get_with_commit_ts`] documents.
+    /// [`MvccStore::get_pair`] documents.
     pub fn batch_get_with_commit_ts(
         &self,
         ctx: &ReadContext,
@@ -5387,12 +5387,12 @@ mod tests {
         let ctx = ReadContext::default();
         let key = b"t0";
         let (value, commit_ts) = store
-            .get_with_commit_ts(&ctx, key, 40, true)
+            .get_pair(&ctx, key, 40, true)
             .expect("reads");
         assert_eq!(value.as_deref(), Some(b"v0".as_slice()));
         assert_eq!(commit_ts, 20);
         let (value, commit_ts) = store
-            .get_with_commit_ts(&ctx, key, 40, false)
+            .get_pair(&ctx, key, 40, false)
             .expect("reads");
         assert_eq!(value.as_deref(), Some(b"v0".as_slice()));
         assert_eq!(commit_ts, 0);
@@ -5409,7 +5409,7 @@ mod tests {
         };
         // The shortcut answers the lock's own value, without a commit ts.
         let (value, commit_ts) = store
-            .get_with_commit_ts(&ctx, key, 60, false)
+            .get_pair(&ctx, key, 60, false)
             .expect("committed lock answers");
         assert_eq!(value.as_deref(), Some(b"v1".as_slice()));
         assert_eq!(commit_ts, 0);
@@ -5417,7 +5417,7 @@ mod tests {
         // the lock stops being shortcut and reports as locked, since a
         // commit ts cannot be known for a value only the shortcut saw.
         let err = store
-            .get_with_commit_ts(&ctx, key, 60, true)
+            .get_pair(&ctx, key, 60, true)
             .expect_err("the shortcut cannot answer a commit ts");
         assert!(matches!(err, KvError::Locked(_)));
     }

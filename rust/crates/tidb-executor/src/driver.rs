@@ -351,7 +351,7 @@ pub(crate) fn optimize_query_stmt_with_scalar_subqueries(
     DriverError,
 > {
     if let QueryStmt::Select(select) = query {
-        if let Some(plan) = point_get_plan::try_fast_point_physical_plan(select, catalog, current_db, ctx)?
+        if let Some(plan) = point_get_plan::try_fast_plan(select, catalog, current_db, ctx)?
         {
             return Ok((plan, Vec::new()));
         }

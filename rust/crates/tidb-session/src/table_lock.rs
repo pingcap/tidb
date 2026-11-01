@@ -104,7 +104,7 @@ impl Session {
         // Go's DDL takes one uuid when the process starts its domain.
         static DDL_UUID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         let server_id = match &self.server_info_syncer {
-            Some(syncer) => syncer.local_server_info().static_info.id,
+            Some(syncer) => syncer.get_local_server_info().static_info.id,
             None => DDL_UUID
                 .get_or_init(tidb_domain_serverinfo::serverinfo_syncer::new_node_id)
                 .clone(),
