@@ -51,7 +51,7 @@ use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, Table
 use crate::bdr_role_store;
 use crate::cluster_account_seam::ClusterAccountWriter;
 use crate::cluster_session::{
-    cluster_session_catalog, detached_storage, KvTableTemplates, SkippedTable,
+    cluster_session_catalog, detached_storage, SessionCatalogs, SkippedTable,
 };
 use tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock;
 use crate::cluster_sysvar_seam::ClusterSysvarWriter;
@@ -687,12 +687,10 @@ pub struct Domain {
     pub statistics_view: Arc<tidb_stats_handle::StatisticsView>,
     /// Go Domain starts one statistics-load pool, shared by user and internal sessions.
     pub stats_load_workers: std::sync::OnceLock<Arc<tidb_stats_handle_syncload::sync_load::StatisticsLoadWorkers>>,
-    /// Fully built tables of one schema version, shared by every session
-    /// opened against it -- Go's one `table.Table` per `TableInfo` inside the
-    /// shared `infoschema`. A session clones its table and swaps in its own
-    /// storage seam, so building ~700 restored tables happens once per DDL
-    /// instead of once per CONNECTION (~30MB retained each before this).
-    pub session_kv_cache: Arc<Mutex<KvTableTemplates>>,
+    /// The session catalog of the latest schema version, built once and
+    /// shared by every session -- Go's one `infoschema` per schema version
+    /// (see [`SessionCatalogs`]).
+    pub session_catalogs: Arc<Mutex<SessionCatalogs>>,
     /// The store's regions every session of this node reads (Go
     /// `kv.SplittableStore` and the region cache).
     pub region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
@@ -914,7 +912,7 @@ impl Domain {
             schema_pins: Arc::new(tidb_ddl::schema_sync::SchemaPinRegistry::default()),
             schema_validator: None,
             stats_load_workers: std::sync::OnceLock::new(),
-            session_kv_cache: Arc::new(Mutex::new(KvTableTemplates::default())),
+            session_catalogs: Arc::new(Mutex::new(SessionCatalogs::default())),
             region_store: None,
             take_snapshot: std::sync::OnceLock::new(),
             etcd_client: std::sync::OnceLock::new(),

@@ -41,8 +41,6 @@ use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_stats_handle_syncload::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_store_driver_txn::cluster_storage::ClusterTableStorage;
 use tidb_infoschema::{SessionExtendedInfoSchema, ViewDef};
-use tidb_table::tables::TableCommon;
-use tidb_kv::storage::TableStorage;
 #[cfg(test)]
 use tidb_model::GoShared;
 use tidb_model::{SchemaState, TableInfo};
@@ -66,7 +64,7 @@ pub struct SkippedTable {
 }
 
 /// One session's catalog over cluster storage, plus every table left out.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ClusterSessionCatalog {
     /// The driver's catalog: databases and tables backed by `storage`.
     pub catalog: SessionExtendedInfoSchema,
@@ -95,7 +93,6 @@ pub fn cluster_session_catalog(
         Some(snapshot_statistics_view(stats)),
         auto_ids,
         storage,
-        None,
     )
 }
 
@@ -122,45 +119,28 @@ impl tidb_stats_handle::StatisticsSource for SnapshotStatisticsSource {
     }
 }
 
-/// One schema version's worth of fully built [`TableCommon`]s, reused by every
-/// session opened against it.
-///
-/// Building a loaded table means materializing every column's owned name,
-/// default and collation strings plus its index entries -- measured at ~30MB
-/// retained across the hzbank schema's ~700 tables, PER CONNECTION, which is
-/// what ran a busy node into its container memory ceiling. Go builds one
-/// `table.Table` per `TableInfo` inside the shared `infoschema` and sessions
-/// hold pointers; this cache is that single build. The cached tables are
-/// never executed: a session CLONES its table (columns/indexes are already
-/// `Arc`-shared) and swaps in its own storage seam through
-/// [`TableCommon::replace_storage`], so staging stays session-private exactly as
-/// before.
-///
-/// The set belongs to ONE schema version; [`KvTableTemplates::reuse`] drops
-/// it whenever the reloader publishes a different one.
+/// Go's one `infoschema` per schema version, shared by every session: the
+/// node builds a version's session catalog once, over neutral storage, and
+/// each session takes a clone (its database maps are `Arc`-shared, copied
+/// only by a session's own copy-on-write change). A table is metadata; a
+/// session's statements read and write through `sctx.Txn()`.
 #[derive(Default)]
-pub struct KvTableTemplates {
-    schema_version: i64,
-    tables: std::collections::HashMap<(String, String), TableCommon>,
+pub struct SessionCatalogs {
+    built: Option<(i64, ClusterSessionCatalog)>,
 }
 
-impl KvTableTemplates {
-    /// Drops the cache unless `loaded` is the schema version it was built
-    /// from. Call once per catalog build, before any lookup.
-    pub fn reuse(&mut self, loaded: &ClusterCatalog) {
-        if self.schema_version != loaded.schema_version {
-            self.tables.clear();
-            self.schema_version = loaded.schema_version;
+impl SessionCatalogs {
+    /// The session catalog of `loaded`'s schema version, built at most once.
+    pub fn get(&mut self, loaded: &ClusterCatalog, auto_ids: &dyn TableAutoIds) -> ClusterSessionCatalog {
+        if let Some((version, built)) = &self.built {
+            if *version == loaded.schema_version {
+                return built.clone();
+            }
         }
-    }
-
-    fn get(&self, schema: &str, name: &str) -> Option<&TableCommon> {
-        self.tables.get(&(schema.to_owned(), name.to_owned()))
-    }
-
-    fn insert(&mut self, schema: &str, name: &str, table: TableCommon) {
-        self.tables
-            .insert((schema.to_owned(), name.to_owned()), table);
+        let built =
+            cluster_session_catalog_with_templates(loaded, None, auto_ids, &detached_storage());
+        self.built = Some((loaded.schema_version, built.clone()));
+        built
     }
 }
 
@@ -176,7 +156,6 @@ pub fn cluster_session_catalog_with_templates(
     // Neutral storage over which CACHED-MISS tables are built for the
     // template set; sessions rebind their own seam afterwards either way.
     template_storage: &ClusterTableStorage,
-    mut kv_templates: Option<&mut KvTableTemplates>,
 ) -> ClusterSessionCatalog {
     let mut catalog = tidb_infoschema_perfschema::catalog();
     let mut skipped = Vec::new();
@@ -246,19 +225,7 @@ pub fn cluster_session_catalog_with_templates(
             };
             // A cached template clone carries neutral storage and valid
             // process-wide allocator handles; only the store needs rebinding.
-            let built = match kv_templates
-                .as_ref()
-                .and_then(|c| c.get(&schema, table.name.original()))
-            {
-                Some(template) => Ok(template.clone()),
-                None => {
-                    let fresh = cluster_table(&table, template_storage, &auto);
-                    if let (Ok(fresh), Some(cache)) = (&fresh, kv_templates.as_deref_mut()) {
-                        cache.insert(&schema, table.name.original(), fresh.clone());
-                    }
-                    fresh
-                }
-            };
+            let built = cluster_table(&table, template_storage, &auto);
             match built {
                 Ok(kv_table) => {
                     // Go: a table is metadata; the session's statements read
@@ -888,11 +855,11 @@ use tidb_table::table_from_meta::kv_index;
                 )
             };
             assert!(
-                loaded.stored_raw_value(&key(3, main)).is_some(),
+                loaded.stored_raw_value(&mut storage.clone(), &key(3, main)).is_some(),
                 "{state:?} main"
             );
             assert!(
-                loaded.stored_raw_value(&key(3, copy)).is_some(),
+                loaded.stored_raw_value(&mut storage.clone(), &key(3, copy)).is_some(),
                 "{state:?} copy"
             );
             // A clustered key change within the partition: the copy moves to
@@ -902,11 +869,11 @@ use tidb_table::table_from_meta::kv_index;
                 .with_own_store(|table, store| table.update_row_with_context(store, &handle, &[Datum::Int(5)], &ctx))
                 .expect("the update succeeds");
             assert!(
-                loaded.stored_raw_value(&key(3, copy)).is_none(),
+                loaded.stored_raw_value(&mut storage.clone(), &key(3, copy)).is_none(),
                 "{state:?} old copy"
             );
             assert!(
-                loaded.stored_raw_value(&key(5, copy)).is_some(),
+                loaded.stored_raw_value(&mut storage.clone(), &key(5, copy)).is_some(),
                 "{state:?} new copy"
             );
             let moved = tidb_table::tables::TableHandle::Int(5);
@@ -914,11 +881,11 @@ use tidb_table::table_from_meta::kv_index;
                 .with_own_store(|table, store| table.delete_row_with_context(store, &moved, &ctx))
                 .expect("the delete succeeds");
             assert!(
-                loaded.stored_raw_value(&key(5, main)).is_none(),
+                loaded.stored_raw_value(&mut storage.clone(), &key(5, main)).is_none(),
                 "{state:?} main"
             );
             assert!(
-                loaded.stored_raw_value(&key(5, copy)).is_none(),
+                loaded.stored_raw_value(&mut storage.clone(), &key(5, copy)).is_none(),
                 "{state:?} copy"
             );
         }

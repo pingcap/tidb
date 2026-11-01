@@ -111,7 +111,7 @@ fn admin_check_detects_generated_column_index_value_corruption() {
         .expect("the wrong-value key encodes")
         .remove(0);
     table
-        .delete_raw_key_for_test(&old_entry_key)
+        .with_own_store(|table, store| table.delete_raw_key_for_test(store, &old_entry_key))
         .expect("old entry dropped");
     let mut storage = table.swap_storage(Box::new(tidb_kv::storage::MemTableStorage::default()));
     let crafted_handle = tidb_txnkv::Handle::Int(tidb_txnkv::IntHandle::new(match handle {

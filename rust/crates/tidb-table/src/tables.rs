@@ -1375,7 +1375,7 @@ impl TableCommon {
     /// # Errors
     ///
     /// [`KvTableError::Storage`] when the backend refuses a scan.
-    pub fn partition_row_counts(&mut self) -> Result<Vec<(String, usize)>, KvTableError> {
+    pub fn partition_row_counts(&self, store: &mut dyn TableStorage) -> Result<Vec<(String, usize)>, KvTableError> {
         if self.partition.is_none() {
             return Ok(Vec::new());
         }
@@ -1388,8 +1388,7 @@ impl TableCommon {
             let (low, high) = get_table_handle_key_range(definition.id);
             let mut upper = high;
             upper.push(0);
-            let mut iterator = self
-                .store
+            let mut iterator = store
                 .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(upper)))
                 .map_err(KvTableError::from)?;
             let mut rows = 0;
@@ -1409,21 +1408,21 @@ impl TableCommon {
     /// this real count with the pseudo distribution (Go
     /// `GetStatsTable` rule 3), so the planner needs the same number the
     /// flushed delta would have produced.
-    pub fn stats_row_count(&mut self) -> Result<i64, KvTableError> {
-        self.stats_row_count_for_physical_id(self.table_id)
+    pub fn stats_row_count(&self, store: &mut dyn TableStorage) -> Result<i64, KvTableError> {
+        self.stats_row_count_for_physical_id(store, self.table_id)
     }
 
     /// Reads the record count for one physical table ID, including a single
     /// partition's keyspace. Stats-meta rows are keyed by these IDs.
     pub fn stats_row_count_for_physical_id(
-        &mut self,
+        &self,
+        store: &mut dyn TableStorage,
         physical_table_id: i64,
     ) -> Result<i64, KvTableError> {
         let (low, high) = get_table_handle_key_range(physical_table_id);
         let mut upper = high;
         upper.push(0);
-        let mut iterator = self
-            .store
+        let mut iterator = store
             .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(upper)))
             .map_err(KvTableError::from)?;
         let mut rows = 0i64;
@@ -4036,8 +4035,8 @@ impl TableCommon {
     /// The bytes `key` holds in this table's store, if any: COMMIT's check
     /// of a key an INSERT presumed absent.
     #[must_use]
-    pub fn stored_raw_value(&mut self, key: &[u8]) -> Option<Vec<u8>> {
-        self.store
+    pub fn stored_raw_value(&self, store: &mut dyn TableStorage, key: &[u8]) -> Option<Vec<u8>> {
+        store
             .get(&Key::from_bytes(key.to_vec()))
             .ok()
             .filter(|value| !value.is_empty())
@@ -4285,19 +4284,19 @@ impl TableCommon {
     /// it is deliberately the crudest possible one: a raw `Delete` against
     /// the storage seam, exactly what a lost region replica or a half-applied
     /// index backfill leaves behind.
-    pub fn delete_raw_key_for_test(&mut self, key: &[u8]) -> Result<(), KvTableError> {
-        self.store
+    pub fn delete_raw_key_for_test(&mut self, store: &mut dyn TableStorage, key: &[u8]) -> Result<(), KvTableError> {
+        store
             .delete(Key::from_bytes(key.to_vec()))
             .map_err(KvTableError::from)
     }
 
     /// Removes one row's record entry, leaving its index entries orphaned.
     /// See [`TableCommon::delete_raw_key_for_test`].
-    pub fn delete_record_for_test(&mut self, handle: &TableHandle) -> Result<(), KvTableError> {
-        let Some(key) = self.with_own_store(|table, store| table.stored_record_key(store, handle))? else {
+    pub fn delete_record_for_test(&mut self, store: &mut dyn TableStorage, handle: &TableHandle) -> Result<(), KvTableError> {
+        let Some(key) = self.stored_record_key(store, handle)? else {
             return Ok(());
         };
-        self.delete_raw_key_for_test(key.as_bytes())
+        self.delete_raw_key_for_test(store, key.as_bytes())
     }
 
     /// The row stored under `handle`, decoded, or `None` when absent -- the

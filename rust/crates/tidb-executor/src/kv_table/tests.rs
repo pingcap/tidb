@@ -803,12 +803,12 @@ fn a_nonpublic_index_is_written_by_its_backfill_state() {
         let mut temp_key = key.clone();
         tidb_tablecodec::index_key_to_temp_index_key(&mut temp_key).unwrap();
         assert_eq!(
-            table.stored_raw_value(&key).is_some(),
+            table.with_own_store(|table, store| table.stored_raw_value(store, &key)).is_some(),
             index_written,
             "{state:?} {backfill:?}"
         );
         let history = table
-            .stored_raw_value(&temp_key)
+            .with_own_store(|table, store| table.stored_raw_value(store, &temp_key))
             .map(|raw| tidb_tablecodec::decode_temp_index_value(&raw).unwrap());
         assert_eq!(
             history
@@ -821,12 +821,12 @@ fn a_nonpublic_index_is_written_by_its_backfill_state() {
             .with_own_store(|table, store| table.delete_row_with_context(store, &handle, &crate::StmtContext::for_dml(false, false, false)))
             .unwrap();
         assert!(
-            table.stored_raw_value(&key).is_none(),
+            table.with_own_store(|table, store| table.stored_raw_value(store, &key)).is_none(),
             "{state:?} {backfill:?}"
         );
         if backfill != BackfillState::INAPPLICABLE {
             let history = tidb_tablecodec::decode_temp_index_value(
-                &table.stored_raw_value(&temp_key).unwrap(),
+                &table.with_own_store(|table, store| table.stored_raw_value(store, &temp_key)).unwrap(),
             )
             .unwrap();
             assert!(history.last().unwrap().delete, "{state:?} {backfill:?}");

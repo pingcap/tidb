@@ -161,22 +161,13 @@ impl DomainSessions for Domain {
             storage = storage.with_client(Arc::clone(client));
         }
         let loaded = self.catalog.get_latest();
-        // One fully built table set per schema version, shared the same way:
-        // each session clones its tables (columns/indexes are Arc-shared) and
-        // swaps in only its own storage seam below.
-        let template_storage = detached_storage();
-        let mut kv_templates = self
-            .session_kv_cache
+        // Go's one infoschema per schema version: the node builds it once
+        // and every session takes a clone.
+        let mut built = self
+            .session_catalogs
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        kv_templates.reuse(&loaded);
-        let mut built = cluster_session_catalog_with_templates(
-            &loaded,
-            None,
-            self.auto_ids.as_ref(),
-            &template_storage,
-            Some(&mut kv_templates),
-        );
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&loaded, self.auto_ids.as_ref());
         let statistics_loading = ClusterStatisticsLoading {
             view: Arc::clone(&self.statistics_view),
             loader: Arc::new(ClusterStatisticsItemLoader {
@@ -206,7 +197,7 @@ impl DomainSessions for Domain {
             slot: Arc::clone(&slot),
             follower: catalog_follower::CatalogFollower::new(
                 Arc::clone(&self.catalog),
-                storage.clone(),
+                Arc::clone(&self.session_catalogs),
                 Arc::clone(&self.auto_ids),
                 loaded.schema_version,
                 built.skipped,
@@ -284,7 +275,6 @@ impl DomainSessions for Domain {
                         Some(Arc::clone(&statistics_view)),
                         auto_ids.as_ref(),
                         &historical_storage,
-                        None,
                     );
                     (built.catalog, metadata.into_snapshot())
                 };
@@ -335,7 +325,6 @@ impl DomainSessions for Domain {
                     Some(Arc::clone(&statistics_view)),
                     auto_ids.as_ref(),
                     &connection_storage,
-                    None,
                 );
                 drop(metadata);
                 drop(hold);

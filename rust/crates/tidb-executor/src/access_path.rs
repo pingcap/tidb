@@ -8332,7 +8332,7 @@ use std::collections::HashMap;
             panic!("test table must be byte-backed");
         };
         Arc::make_mut(table)
-            .delete_record_for_test(&TableHandle::Int(1))
+            .with_own_store(|table, store| table.delete_record_for_test(store, &TableHandle::Int(1)))
             .unwrap();
         entries.store(0, Ordering::Relaxed);
         gets.store(0, Ordering::Relaxed);

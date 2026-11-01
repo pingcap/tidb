@@ -154,13 +154,14 @@ impl TableCommon {
     /// wrong. Ordinary writes cannot create this corruption.
     pub fn move_raw_value_for_test(
         &mut self,
+        store: &mut dyn TableStorage,
         old_key: &[u8],
         new_key: Vec<u8>,
     ) -> Result<(), KvTableError> {
         let old_key = tidb_txnkv::Key::from_bytes(old_key.to_vec());
-        let value = self.store.get(&old_key).map_err(KvTableError::from)?;
-        self.store.delete(old_key).map_err(KvTableError::from)?;
-        self.store
+        let value = store.get(&old_key).map_err(KvTableError::from)?;
+        store.delete(old_key).map_err(KvTableError::from)?;
+        store
             .set(tidb_txnkv::Key::from_bytes(new_key), value)
             .map_err(KvTableError::from)
     }
@@ -258,17 +259,18 @@ impl TableCommon {
     /// state because index maintenance updates keys and values atomically.
     pub fn swap_raw_values_for_test(
         &mut self,
+        store: &mut dyn TableStorage,
         left: &[u8],
         right: &[u8],
     ) -> Result<(), KvTableError> {
         let left_key = tidb_txnkv::Key::from_bytes(left.to_vec());
         let right_key = tidb_txnkv::Key::from_bytes(right.to_vec());
-        let left_value = self.store.get(&left_key).map_err(KvTableError::from)?;
-        let right_value = self.store.get(&right_key).map_err(KvTableError::from)?;
-        self.store
+        let left_value = store.get(&left_key).map_err(KvTableError::from)?;
+        let right_value = store.get(&right_key).map_err(KvTableError::from)?;
+        store
             .set(left_key, right_value)
             .map_err(KvTableError::from)?;
-        self.store
+        store
             .set(right_key, left_value)
             .map_err(KvTableError::from)
     }

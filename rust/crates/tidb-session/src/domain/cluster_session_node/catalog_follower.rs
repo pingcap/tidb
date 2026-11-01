@@ -41,7 +41,7 @@ pub(super) struct CatalogFollower {
     /// The handles every table of the session was built over, kept so the
     /// connection's catalog can be rebuilt after a DDL without disturbing the
     /// snapshot slot or the staged writes.
-    storage: ClusterTableStorage,
+    session_catalogs: Arc<std::sync::Mutex<tidb_domain_core::cluster_session::SessionCatalogs>>,
     /// The node's auto-increment allocators, needed on every rebuild so the
     /// rebuilt tables keep the ranges the old ones had reserved.
     auto_ids: Arc<dyn TableAutoIds>,
@@ -56,14 +56,14 @@ pub(super) struct CatalogFollower {
 impl CatalogFollower {
     pub(super) fn new(
         catalog: Arc<InfoCache>,
-        storage: ClusterTableStorage,
+        session_catalogs: Arc<std::sync::Mutex<tidb_domain_core::cluster_session::SessionCatalogs>>,
         auto_ids: Arc<dyn TableAutoIds>,
         schema_version: i64,
         skipped: Vec<SkippedTable>,
     ) -> Self {
         Self {
             catalog,
-            storage,
+            session_catalogs,
             auto_ids,
             schema_version,
             skipped,
@@ -94,13 +94,11 @@ impl CatalogFollower {
         if loaded.schema_version == self.schema_version {
             return;
         }
-        let mut built = cluster_session_catalog_with_templates(
-            &loaded,
-            None,
-            self.auto_ids.as_ref(),
-            &self.storage,
-            None,
-        );
+        let built = self
+            .session_catalogs
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .get(&loaded, self.auto_ids.as_ref());
         let shared = session.shared_catalog();
         let mut catalog = shared.lock().unwrap_or_else(|poison| poison.into_inner());
         *catalog = built.catalog;

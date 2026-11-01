@@ -116,10 +116,10 @@ fn admin_check_index_reports_each_corruption_shape() {
     };
     let drop_key = entry_of(&mut record_lost, 1);
     record_lost
-        .delete_raw_key_for_test(&drop_key)
+        .with_own_store(|table, store| table.delete_raw_key_for_test(store, &drop_key))
         .expect("entry removal");
     record_lost
-        .delete_record_for_test(&tidb_table::tables::TableHandle::Int(3))
+        .with_own_store(|table, store| table.delete_record_for_test(store, &tidb_table::tables::TableHandle::Int(3)))
         .expect("record removal");
     let inconsistent = { let mut store = record_lost.store().clone_box(); admin_check::check_table(&mut record_lost, &mut *store, Some("c"), &context, true) }
         .expect_err("orphaned index entry must be an error");
@@ -155,7 +155,7 @@ fn admin_check_index_reports_each_corruption_shape() {
         .expect("index entries");
     assert_eq!(entries.len(), 3, "one entry per row");
     entry_lost
-        .delete_raw_key_for_test(&entries[1].0)
+        .with_own_store(|table, store| table.delete_raw_key_for_test(store, &entries[1].0))
         .expect("raw entry removal");
     let mismatch = { let mut store = entry_lost.store().clone_box(); admin_check::check_table(&mut entry_lost, &mut *store, Some("c"), &context, true) }
         .expect_err("missing entry must be an error");

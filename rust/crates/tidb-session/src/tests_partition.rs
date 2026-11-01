@@ -66,6 +66,7 @@ const GO_KEY: &str = "CREATE TABLE `k1` (\n  `a` int NOT NULL,\n  `b` int DEFAUL
 /// How many rows each partition of `table` holds, in definition order. This
 /// is the routing made visible; see `TableCommon::partition_row_counts`.
 fn partition_counts(session: &mut Session, table: &str) -> Vec<(String, usize)> {
+    let mut store = session.transaction_store().expect("a node session has a store");
     session
         .with_committed_catalog_mut(|catalog| {
             let Some(tidb_infoschema::TableEntry::Kv(kv)) = catalog.table_mut_in("test", table)
@@ -73,7 +74,7 @@ fn partition_counts(session: &mut Session, table: &str) -> Vec<(String, usize)> 
                 panic!("{table} is not stored as bytes");
             };
             Ok(std::sync::Arc::make_mut(kv)
-                .partition_row_counts()
+                .partition_row_counts(&mut *store)
                 .expect("partition row counts"))
         })
         .expect("catalog")

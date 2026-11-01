@@ -30,6 +30,7 @@ fn error_text(session: &mut Session, sql: &str) -> String {
 
 /// The stored entry count of one index of `test.<table>`.
 fn index_entry_count(session: &mut Session, table: &str, index: &str) -> usize {
+    let mut store = session.transaction_store().expect("a node session has a store");
     session
         .with_committed_catalog_mut(|catalog| {
             let Some(tidb_infoschema::TableEntry::Kv(stored)) = catalog.table_mut_in("test", table)
@@ -43,8 +44,7 @@ fn index_entry_count(session: &mut Session, table: &str, index: &str) -> usize {
                 .find(|candidate| candidate.read().name.original().eq_ignore_ascii_case(index))
                 .expect("the index exists");
             let id = index.read().id;
-            Ok(stored
-                .with_own_store(|table, store| table.index_entries_for_check(store, id))
+            Ok(stored.index_entries_for_check(&mut *store, id)
                 .expect("entries readable")
                 .len())
         })

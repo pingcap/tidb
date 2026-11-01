@@ -347,6 +347,7 @@ fn a_corrupted_index_is_caught() {
     assert_check_passes(&mut session, "admin check table t");
 
     // Drop ONE entry of `idx_b`, leaving the rows untouched.
+    let mut store = session.transaction_store().expect("a node session has a store");
     let entry = session
         .with_committed_catalog_mut(|catalog| {
             let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
@@ -359,7 +360,7 @@ fn a_corrupted_index_is_caught() {
                 .into_iter()
                 .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_b"))
                 .expect("idx_b");
-            let entries = table.with_own_store(|table, store| table.index_entries_for_check(store, index.read().id)).expect("entries");
+            let entries = table.index_entries_for_check(&mut *store, index.read().id).expect("entries");
             assert_eq!(entries.len(), 3, "three rows, three entries");
             Ok(entries[0].0.clone())
         })
@@ -402,6 +403,7 @@ fn an_orphaned_index_entry_is_caught() {
         .run("insert into t values (1, 'aa'), (2, 'bb'), (3, 'cc')")
         .unwrap();
 
+    let mut store = session.transaction_store().expect("a node session has a store");
     session
         .with_committed_catalog_mut(|catalog| {
             let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
@@ -409,7 +411,7 @@ fn an_orphaned_index_entry_is_caught() {
                 panic!("t is not stored as bytes");
             };
             std::sync::Arc::make_mut(table)
-                .delete_record_for_test(&tidb_table::tables::TableHandle::Int(2))
+                .delete_record_for_test(&mut *store, &tidb_table::tables::TableHandle::Int(2))
                 .expect("delete the row");
             Ok(())
         })
@@ -434,6 +436,7 @@ fn a_unique_index_entry_naming_the_wrong_row_reports_both_records() {
         .run("insert into t values (1, 10), (2, 20)")
         .unwrap();
 
+    let mut store = session.transaction_store().expect("a node session has a store");
     session
         .with_committed_catalog_mut(|catalog| {
             let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
@@ -446,10 +449,10 @@ fn a_unique_index_entry_naming_the_wrong_row_reports_both_records() {
                 .into_iter()
                 .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_b"))
                 .expect("idx_b");
-            let entries = table.with_own_store(|table, store| table.index_entries_for_check(store, index.read().id)).expect("entries");
+            let entries = table.index_entries_for_check(&mut *store, index.read().id).expect("entries");
             assert_eq!(entries.len(), 2);
             table
-                .swap_raw_values_for_test(&entries[0].0, &entries[1].0)
+                .swap_raw_values_for_test(&mut *store, &entries[0].0, &entries[1].0)
                 .expect("swap the unique-index handles");
             Ok(())
         })
@@ -482,6 +485,7 @@ fn an_index_value_mismatch_reports_the_column_and_both_values() {
         .run("insert into t values (1, 10), (2, 20)")
         .unwrap();
 
+    let mut store = session.transaction_store().expect("a node session has a store");
     session
         .with_committed_catalog_mut(|catalog| {
             let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
@@ -494,7 +498,7 @@ fn an_index_value_mismatch_reports_the_column_and_both_values() {
                 .into_iter()
                 .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_b"))
                 .expect("idx_b");
-            let entries = table.with_own_store(|table, store| table.index_entries_for_check(store, index.read().id)).expect("entries");
+            let entries = table.index_entries_for_check(&mut *store, index.read().id).expect("entries");
             let (old_key, _) = entries
                 .iter()
                 .find(|(_, handle)| *handle == tidb_table::tables::TableHandle::Int(2))
@@ -511,7 +515,7 @@ fn an_index_value_mismatch_reports_the_column_and_both_values() {
                 .expect("wrong index key")
                 .remove(0);
             table
-                .move_raw_value_for_test(old_key, new_key)
+                .move_raw_value_for_test(&mut *store, old_key, new_key)
                 .expect("move the index entry");
             Ok(())
         })
@@ -590,6 +594,7 @@ fn recover_and_cleanup_index_repair_what_check_finds() {
         .run("insert into t values (1, 'aa'), (2, 'bb'), (3, 'cc')")
         .unwrap();
     let corrupt = |session: &mut Session, drop_entry: bool| {
+        let mut store = session.transaction_store().expect("a node session has a store");
         let key = session
             .with_committed_catalog_mut(|catalog| {
                 let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
@@ -603,7 +608,7 @@ fn recover_and_cleanup_index_repair_what_check_finds() {
                         .into_iter()
                         .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_b"))
                         .expect("idx_b");
-                    let entries = table.with_own_store(|table, store| table.index_entries_for_check(store, index.read().id)).expect("entries");
+                    let entries = table.index_entries_for_check(&mut *store, index.read().id).expect("entries");
                     Ok(entries[0].0.clone())
                 } else {
                     Ok(tidb_tablecodec::table_key::encode_row_key_with_handle(
