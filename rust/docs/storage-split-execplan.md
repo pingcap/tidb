@@ -278,7 +278,17 @@ CARGO_INCREMENTAL=0`.
     no `StmtContext` in scope yet and need it threaded, as Go's do through
     `sctx`.
   - [ ] (c) test fixtures hold a `MemTableStorage` (or a fixture catalog's
-    one) and pass it.
+    one) and pass it. Counted 2026-11-02 after 9a78dc42cdd: 359 sites in 37
+    files, mostly `tidb-executor` unit tests (kv_table/tests.rs 61,
+    remote_scan.rs 50, access_path.rs 36, table_scan.rs 27,
+    tests_cluster_storage.rs 25). Technique: `insert_row` /
+    `insert_row_with_row_id` take the store first; each fixture table `T`
+    gets `let mut T_store = MemTableStorage::new();` (or the custom store a
+    test built it with) and every `T.insert_row(` / `T.store().clone_box()` /
+    `T.with_own_store(|table, store| BODY)` uses it; fixture builders return
+    `(TableCommon, store)`; executor harness tests that run SQL put the
+    store in `StmtContext` (a `with_txn_store` builder) so
+    `statement_store` needs no fallback.
   - [ ] (d) delete the field and its accessors.
 - [ ] Milestone 5: one `InfoSchema` per schema version, shared by sessions.
 - [ ] Milestone 6: `ClusterCatalog` is gone.
