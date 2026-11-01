@@ -110,7 +110,19 @@ CARGO_INCREMENTAL=0`.
   cloning the table to swap one in; `StatementLocker` holds the statement's
   store, not a table. `TableCommon::lock_keys_for_read` / `do_lock_keys`
   are gone (callers lock through the store).
-- [ ] Milestone 2: write family.
+- [x] Milestone 2: write family (2026-11-02). Every write helper inside
+  `tidb-table` (`insert_row_in`, `update_row_in`, `delete_row_in`,
+  `delete_old_row_in`, `with_txn_staging`, the index entry writers and
+  removers, the non-public index and column paths, the partition-reorg
+  double writes, `row_conflicts_reported_as`, the prefetches) takes
+  `store: &mut dyn TableStorage` and never reads `self.store`. The public
+  entry points (`insert_row*`, `add_record_with_record_id`,
+  `update_row_with_*`, `delete_row_with_*`, `row_conflicts*`) are the
+  boundary: each lends the table's own store through
+  `TableCommon::with_own_store`, which moves it out for the call (a
+  `DetachedStorage` that panics stands in) and puts it back even on unwind.
+  `KvTablePartitionReorg::reorg_partition_batch` takes the DDL worker's
+  store directly, as Go's backfill takes the job's transaction.
 - [ ] Milestone 3: DDL, backfill and maintenance users.
 - [ ] Milestone 4: the `store` field is gone.
 - [ ] Milestone 5: one `InfoSchema` per schema version, shared by sessions.

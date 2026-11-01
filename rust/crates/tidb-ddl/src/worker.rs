@@ -3058,7 +3058,14 @@ impl IndexBackfiller for KvTableIndexBackfiller {
             .map_err(exchange_validation_internal)?
             .with_new_collation_mode(tidb_datatype::new_collation_enabled());
             return table
-                .reorg_partition_batch(*physical_id, start, end, reorg.batch_size, context)
+                .reorg_partition_batch(
+                    &mut storage.clone(),
+                    *physical_id,
+                    start,
+                    end,
+                    reorg.batch_size,
+                    context,
+                )
                 .map(AddIndexReorgAnswer::Batch)
                 .map_err(backfill_failure);
         }

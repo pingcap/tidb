@@ -732,7 +732,9 @@ impl KvTableReader for TableCommon {
         handle: &TableHandle,
         zone: &SessionTimeZone,
     ) -> Result<Option<Vec<Datum>>, KvTableError> {
-        self.read_row(handle, &RowDecodeContext::legacy_default(zone))
+        self.with_own_store(|table, store| {
+            table.read_row(store, handle, &RowDecodeContext::legacy_default(zone))
+        })
     }
 
     fn row_decoder_projected(

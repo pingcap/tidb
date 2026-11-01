@@ -478,7 +478,13 @@ fn cascade_at_depth(
                     ));
                 };
                 let row = std::sync::Arc::make_mut(kv)
-                    .get_row_by_handle_with_context(&handle, &RowDecodeContext::for_write(ctx))
+                    .with_own_store(|table, store| {
+                        table.get_row_by_handle_with_context(
+                            store,
+                            &handle,
+                            &RowDecodeContext::for_write(ctx),
+                        )
+                    })
                     .map_err(|error| {
                         crate::driver::kv_read_error("foreign key cascade read failed", error)
                     })?

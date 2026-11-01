@@ -31,6 +31,7 @@ use std::sync::Arc;
 use tidb_datatype::{ConversionFlags, Datum, FieldType, FieldTypeCode, SessionTimeZone};
 
 use super::{TableCommon, KvTableError, NonPublicColumn, TableHandle};
+use tidb_kv::storage::TableStorage;
 
 impl TableCommon {
     /// Adds a column a DDL is adding, dropping or changing.
@@ -226,6 +227,7 @@ impl TableCommon {
     /// other column's original default.
     fn stored_nonpublic_values(
         &mut self,
+        store: &mut dyn TableStorage,
         handle: &TableHandle,
         old: &[Datum],
         ctx: Option<&dyn tidb_tblctx::MutateContext>,
@@ -237,7 +239,7 @@ impl TableCommon {
             .iter()
             .map(|column| (column.column.read().id, column.column.read().field_type.clone()))
             .collect();
-        let stored = match self.stored_record_in_own_store(handle)? {
+        let stored = match self.stored_record(store, handle)? {
             Some((_, entry)) => {
                 tidb_tablecodec::decode_table_row_to_map(&entry, &types, Some(zone))
                     .map_err(|error| KvTableError::Decode(format!("{error:?}")))?
@@ -274,6 +276,7 @@ impl TableCommon {
     /// filed under.
     pub(crate) fn update_write_rows(
         &mut self,
+        store: &mut dyn TableStorage,
         handle: &TableHandle,
         old: &[Datum],
         new: &[Datum],
@@ -284,7 +287,7 @@ impl TableCommon {
         }
         let flags = ctx.write_conversion_flags();
         let zone = ctx.session_zone();
-        let stored = self.stored_nonpublic_values(handle, old, Some(ctx), flags, &zone)?;
+        let stored = self.stored_nonpublic_values(store, handle, old, Some(ctx), flags, &zone)?;
         let public = self.columns.len();
         let mut old_row = old[..old.len().min(public)].to_vec();
         old_row.resize(public, Datum::Null);
@@ -326,6 +329,7 @@ impl TableCommon {
     /// record holds for each non-public column (Go `DeletableCols`).
     pub(crate) fn delete_write_row(
         &mut self,
+        store: &mut dyn TableStorage,
         handle: &TableHandle,
         old: &[Datum],
         ctx: &dyn tidb_tblctx::MutateContext,
@@ -334,7 +338,7 @@ impl TableCommon {
             return Ok(None);
         }
         let zone = ctx.session_zone();
-        let stored = self.stored_nonpublic_values(
+        let stored = self.stored_nonpublic_values(store, 
             handle,
             old,
             Some(ctx),

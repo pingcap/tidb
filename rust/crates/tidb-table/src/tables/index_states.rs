@@ -32,6 +32,7 @@ use tidb_tablecodec::{
     decode_handle_in_index_value, decode_temp_index_value, index_key_to_temp_index_key,
     temp_index_key_to_index_key, TempIndexValueElem,
 };
+use tidb_kv::storage::TableStorage;
 use tidb_txnkv::{AssertionOp, Key};
 
 use tidb_kv::storage::StorageError;
@@ -103,8 +104,8 @@ fn txn_handle(handle: &TableHandle) -> Result<tidb_txnkv::Handle, KvTableError> 
 impl TableCommon {
     /// Go `getKeyInTxn`: the value the transaction sees, `None` for absent
     /// (or deleted).
-    fn get_key_in_txn(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, KvTableError> {
-        match self.store.get(&Key::from_bytes(key.to_vec())) {
+    fn get_key_in_txn(&mut self, store: &mut dyn TableStorage, key: &[u8]) -> Result<Option<Vec<u8>>, KvTableError> {
+        match store.get(&Key::from_bytes(key.to_vec())) {
             Ok(value) if value.is_empty() => Ok(None),
             Ok(value) => Ok(Some(value)),
             Err(StorageError::NotFound) => Ok(None),
@@ -117,14 +118,15 @@ impl TableCommon {
     /// element and the original index, plus the temporary key's raw value.
     fn fetch_duplicated_handle_for_temp_index_key(
         &mut self,
+        store: &mut dyn TableStorage,
         temp_key: &[u8],
     ) -> Result<(Option<TableHandle>, Option<Vec<u8>>), KvTableError> {
         let mut origin_key = temp_key.to_vec();
         temp_index_key_to_index_key(&mut origin_key)
             .map_err(|error| KvTableError::Encode(format!("{error:?}")))?;
         let decode_error = |error| KvTableError::Encode(format!("{error:?}"));
-        let Some(temp_raw) = self.get_key_in_txn(temp_key)? else {
-            let Some(origin) = self.get_key_in_txn(&origin_key)? else {
+        let Some(temp_raw) = self.get_key_in_txn(store, temp_key)? else {
+            let Some(origin) = self.get_key_in_txn(store, &origin_key)? else {
                 return Ok((None, None));
             };
             let handle = decode_handle_in_index_value(&origin).map_err(decode_error)?;
@@ -135,7 +137,7 @@ impl TableCommon {
             return Ok((None, Some(temp_raw)));
         };
         if current.delete {
-            let Some(origin) = self.get_key_in_txn(&origin_key)? else {
+            let Some(origin) = self.get_key_in_txn(store, &origin_key)? else {
                 return Ok((None, Some(temp_raw)));
             };
             let Some(origin_handle) =
@@ -153,7 +155,7 @@ impl TableCommon {
                 tidb_tablecodec::table_key::decode_table_id(temp_key),
                 &origin_handle.clone().encoded(),
             );
-            if self.get_key_in_txn(&row_key)?.is_none() {
+            if self.get_key_in_txn(store, &row_key)?.is_none() {
                 return Ok((None, Some(temp_raw)));
             }
             return Ok((Some(convert_handle(&origin_handle)), Some(temp_raw)));
@@ -168,6 +170,7 @@ impl TableCommon {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn create_nonpublic_index_entries(
         &mut self,
+        store: &mut dyn TableStorage,
         index: &NonPublicIndex,
         row: &[Datum],
         handle: &TableHandle,
@@ -216,11 +219,11 @@ impl TableCommon {
                 } else {
                     value.clone()
                 };
-                self.store
+                store
                     .set(Key::from_bytes(key), stored)
                     .map_err(KvTableError::from)?;
                 if let Some(temp_key) = temp_key {
-                    self.store
+                    store
                         .set(
                             Key::from_bytes(temp_key),
                             encode_temp_value(&[], &element(false))?,
@@ -238,7 +241,7 @@ impl TableCommon {
                     temp_key.clone().expect("a merge stage writes a temp key")
                 };
                 let (duplicate, previous) =
-                    self.fetch_duplicated_handle_for_temp_index_key(&probe)?;
+                    self.fetch_duplicated_handle_for_temp_index_key(store, &probe)?;
                 if duplicate.is_some() {
                     return Err(KvTableError::Mysql(
                         tidb_terror::MysqlError::from_terror(
@@ -255,11 +258,11 @@ impl TableCommon {
                 } else {
                     value.clone()
                 };
-                self.store
+                store
                     .set(Key::from_bytes(key), stored)
                     .map_err(KvTableError::from)?;
                 if let Some(temp_key) = temp_key {
-                    self.store
+                    store
                         .set(
                             Key::from_bytes(temp_key),
                             encode_temp_value(&previous, &element(true))?,
@@ -271,13 +274,13 @@ impl TableCommon {
             // `BackfillStateInapplicable`: the index key itself, checked like
             // a public unique entry but written without an assertion.
             let key = Key::from_bytes(key);
-            let lazy_check = self.check_insert_key(
+            let lazy_check = self.check_insert_key(store, 
                 &key,
                 &duplicate_value,
                 &self.qualified_key(kv_index.read().name.original()),
                 lazy_dup_check,
             )?;
-            self.store
+            store
                 .set_with_constraint_check(
                     key,
                     value,
@@ -295,6 +298,7 @@ impl TableCommon {
     /// assertion, because a non-public entry need not exist.
     pub(crate) fn remove_nonpublic_index_entries(
         &mut self,
+        store: &mut dyn TableStorage,
         index: &NonPublicIndex,
         row: &[Datum],
         handle: &TableHandle,
@@ -306,7 +310,7 @@ impl TableCommon {
         for entry in self.index_entry_keys(kv_index, row, handle, physical_id, zone)? {
             let (key, temp_key, key_version) = gen_temp_idx_key_by_state(index, entry.key)?;
             let previous = match (&temp_key, kv_index.read().unique) {
-                (Some(temp_key), true) => self.get_key_in_txn(temp_key)?.unwrap_or_default(),
+                (Some(temp_key), true) => self.get_key_in_txn(store, temp_key)?.unwrap_or_default(),
                 _ => Vec::new(),
             };
             let element = TempIndexValueElem {
@@ -321,7 +325,7 @@ impl TableCommon {
                 let mut ok_to_delete = true;
                 if entry.distinct && index.backfill_state != tidb_model::BackfillState::INAPPLICABLE
                 {
-                    if let Some(origin) = self.get_key_in_txn(&key)? {
+                    if let Some(origin) = self.get_key_in_txn(store, &key)? {
                         let origin_handle = decode_handle_in_index_value(&origin)
                             .map_err(|error| KvTableError::Encode(format!("{error:?}")))?;
                         if origin_handle.as_ref().map(convert_handle).as_ref() != Some(handle) {
@@ -331,14 +335,14 @@ impl TableCommon {
                     }
                 }
                 if ok_to_delete {
-                    self.store
+                    store
                         .delete(Key::from_bytes(key))
                         .map_err(KvTableError::from)?;
                 }
             }
             if let Some(temp_key) = temp_key {
                 let base: &[u8] = if entry.distinct { &previous } else { &[] };
-                self.store
+                store
                     .set(
                         Key::from_bytes(temp_key),
                         encode_temp_value(base, &element)?,
@@ -356,6 +360,7 @@ impl TableCommon {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn rebuild_update_record_indices(
         &mut self,
+        store: &mut dyn TableStorage,
         indexes: &[NonPublicIndex],
         old_row: &[Datum],
         new_row: &[Datum],
@@ -382,10 +387,10 @@ impl TableCommon {
                 continue;
             }
             if old_holds {
-                self.remove_nonpublic_index_entries(index, old_row, handle, physical_id, zone)?;
+                self.remove_nonpublic_index_entries(store, index, old_row, handle, physical_id, zone)?;
             }
             if new_holds && index.is_index_writable() {
-                self.create_nonpublic_index_entries(
+                self.create_nonpublic_index_entries(store, 
                     index,
                     new_row,
                     handle,

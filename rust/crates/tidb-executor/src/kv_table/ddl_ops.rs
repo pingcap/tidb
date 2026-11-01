@@ -126,12 +126,10 @@ impl KvTableDdl for TableCommon {
             for entry in self.index_entry_keys(&index, row, handle, physical_id, &zone)? {
                 let key = Key::from_bytes(entry.key);
                 if entry.distinct {
-                    self.check_insert_key(
-                        &key,
-                        &duplicate_value,
-                        &self.qualified_key(index.read().name.original()),
-                        false,
-                    )?;
+                    let duplicate_key = self.qualified_key(index.read().name.original());
+                    self.with_own_store(|table, store| {
+                        table.check_insert_key(store, &key, &duplicate_value, &duplicate_key, false)
+                    })?;
                 }
                 // The same entry value an INSERT writes, restored data and
                 // all -- a backfill that stored a simpler one would leave the

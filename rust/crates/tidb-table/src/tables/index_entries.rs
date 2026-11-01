@@ -110,6 +110,7 @@ impl TableCommon {
     /// Storage errors are never evidence of absence.
     pub fn check_insert_key(
         &mut self,
+        store: &mut dyn TableStorage,
         key: &Key,
         duplicate_value: &str,
         duplicate_key: &str,
@@ -120,9 +121,9 @@ impl TableCommon {
         // see a presumption (`tables.go:898`, `index.go:476`).
         let lazy = lazy && !self.is_temporary();
         let value = if lazy {
-            self.store.get_local(key)
+            store.get_local(key)
         } else {
-            self.store.get(key)
+            store.get(key)
         };
         match value {
             Ok(value) if !value.is_empty() => Err(KvTableError::Mysql(
@@ -136,7 +137,7 @@ impl TableCommon {
             Ok(_) => Ok(false),
             Err(StorageError::NotFound) => {
                 if lazy {
-                    self.store.mark_presume_key_not_exists_with_hint(
+                    store.mark_presume_key_not_exists_with_hint(
                         key,
                         duplicate_value,
                         duplicate_key,
@@ -671,6 +672,7 @@ impl TableCommon {
     /// index as Go's `index.Create` does with `ErrKeyExists`.
     pub fn write_index_entries(
         &mut self,
+        store: &mut dyn TableStorage,
         row: &[Datum],
         handle: &TableHandle,
         physical_id: i64,
@@ -690,7 +692,7 @@ impl TableCommon {
             if !self.index_condition_holds(index, row, zone)? {
                 continue;
             }
-            self.create_index_entries(
+            self.create_index_entries(store, 
                 index,
                 row,
                 handle,
@@ -710,7 +712,7 @@ impl TableCommon {
             if !self.index_condition_holds(&index.index, row, zone)? {
                 continue;
             }
-            self.create_nonpublic_index_entries(
+            self.create_nonpublic_index_entries(store, 
                 index,
                 row,
                 handle,
@@ -729,6 +731,7 @@ impl TableCommon {
     #[allow(clippy::too_many_arguments)]
     pub fn create_index_entries(
         &mut self,
+        store: &mut dyn TableStorage,
         index: &Index,
         row: &[Datum],
         handle: &TableHandle,
@@ -756,7 +759,7 @@ impl TableCommon {
             )?;
             let key = Key::from_bytes(entry.key);
             let lazy_check = if entry.distinct {
-                self.check_insert_key(
+                self.check_insert_key(store, 
                     &key,
                     &duplicate_value,
                     &self.qualified_key(index.read().name.original()),
@@ -770,7 +773,7 @@ impl TableCommon {
             } else {
                 AssertionOp::AssertNotExist
             };
-            self.store
+            store
                 .set_with_constraint_check(
                     key,
                     value,
@@ -789,6 +792,7 @@ impl TableCommon {
     /// un-commit flag").
     fn write_untouched_index_entries(
         &mut self,
+        store: &mut dyn TableStorage,
         index: &Index,
         row: &[Datum],
         handle: &TableHandle,
@@ -798,7 +802,7 @@ impl TableCommon {
         let _create = tidb_tracing::start_thread_region("index.Create");
         for entry in self.index_entry_keys(index, row, handle, physical_id, zone)? {
             let key = Key::from_bytes(entry.key);
-            match self.store.get_local(&key) {
+            match store.get_local(&key) {
                 Ok(staged) if !staged.is_empty() => continue,
                 Ok(_) | Err(StorageError::NotFound) => {}
                 Err(error) => return Err(KvTableError::from(error)),
@@ -813,7 +817,7 @@ impl TableCommon {
                 physical_id,
                 zone,
             )?;
-            self.store.set(key, value).map_err(KvTableError::from)?;
+            store.set(key, value).map_err(KvTableError::from)?;
         }
         Ok(())
     }
@@ -822,6 +826,7 @@ impl TableCommon {
     /// filed.
     fn remove_index_entries(
         &mut self,
+        store: &mut dyn TableStorage,
         index: &Index,
         row: &[Datum],
         handle: &TableHandle,
@@ -829,7 +834,7 @@ impl TableCommon {
         zone: &SessionTimeZone,
     ) -> Result<(), KvTableError> {
         for entry in self.index_entry_keys(index, row, handle, physical_id, zone)? {
-            self.store
+            store
                 .delete_with_assertion(Key::from_bytes(entry.key), AssertionOp::AssertExist)
                 .map_err(KvTableError::from)?;
         }
@@ -839,6 +844,7 @@ impl TableCommon {
     /// Removes every index entry for `row`.
     pub fn delete_index_entries(
         &mut self,
+        store: &mut dyn TableStorage,
         row: &[Datum],
         handle: &TableHandle,
         physical_id: i64,
@@ -854,7 +860,7 @@ impl TableCommon {
             if !self.index_condition_holds(index, row, zone)? {
                 continue;
             }
-            self.remove_index_entries(index, row, handle, physical_id, zone)?;
+            self.remove_index_entries(store, index, row, handle, physical_id, zone)?;
         }
         // Go `removeRowIndices` walks `DeletableIndices`: every index that
         // is not `StateNone`, a DDL's half-built ones included.
@@ -865,7 +871,7 @@ impl TableCommon {
             if !self.index_condition_holds(&index.index, row, zone)? {
                 continue;
             }
-            self.remove_nonpublic_index_entries(index, row, handle, physical_id, zone)?;
+            self.remove_nonpublic_index_entries(store, index, row, handle, physical_id, zone)?;
         }
         Ok(())
     }
@@ -888,6 +894,7 @@ impl TableCommon {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn rewrite_changed_index_entries(
         &mut self,
+        store: &mut dyn TableStorage,
         old_row: &[Datum],
         new_row: &[Datum],
         handle: &TableHandle,
@@ -900,9 +907,9 @@ impl TableCommon {
     ) -> Result<(), KvTableError> {
         debug_assert!(!lazy_dup_check || pessimistic);
         // Go's untouched rewrite exists only where the commit drops it.
-        let write_untouched = write_untouched && self.store.filters_untouched_index_values();
+        let write_untouched = write_untouched && store.filters_untouched_index_values();
         let (indexes, nonpublic) = self.partition_index_sets(physical_id);
-        self.rebuild_update_record_indices(
+        self.rebuild_update_record_indices(store, 
             &nonpublic,
             old_row,
             new_row,
@@ -924,7 +931,7 @@ impl TableCommon {
             match (old_holds, new_holds) {
                 (false, false) => continue,
                 (false, true) => {
-                    self.create_index_entries(
+                    self.create_index_entries(store, 
                         index,
                         new_row,
                         handle,
@@ -937,7 +944,7 @@ impl TableCommon {
                     continue;
                 }
                 (true, false) => {
-                    self.remove_index_entries(index, old_row, handle, physical_id, zone)?;
+                    self.remove_index_entries(store, index, old_row, handle, physical_id, zone)?;
                     continue;
                 }
                 (true, true) => {}
@@ -956,7 +963,7 @@ impl TableCommon {
                 // (`rebuildUpdateRecordIndices` without
                 // `SkipWriteUntouchedIndices`).
                 if write_untouched {
-                    self.write_untouched_index_entries(index, new_row, handle, physical_id, zone)?;
+                    self.write_untouched_index_entries(store, index, new_row, handle, physical_id, zone)?;
                 }
                 continue;
             }
@@ -966,8 +973,8 @@ impl TableCommon {
             // delete's AssertExist because the first assertion wins
             // (`setAssertion`).
             if self.is_mv_index(index) {
-                self.remove_index_entries(index, old_row, handle, physical_id, zone)?;
-                self.create_index_entries(
+                self.remove_index_entries(store, index, old_row, handle, physical_id, zone)?;
+                self.create_index_entries(store, 
                     index,
                     new_row,
                     handle,
@@ -1011,13 +1018,13 @@ impl TableCommon {
                     // one it leaves the entry in the membuffer, where the
                     // transaction's `UnionScanExec` reads it.
                     if write_untouched {
-                        self.store
+                        store
                             .delete_with_assertion(
                                 Key::from_bytes(old_key),
                                 AssertionOp::AssertExist,
                             )
                             .map_err(KvTableError::from)?;
-                        self.store
+                        store
                             .set_with_assertion(
                                 Key::from_bytes(new_key),
                                 new_value,
@@ -1029,7 +1036,7 @@ impl TableCommon {
                 }
                 // Same index key, different payload (a covering or appended
                 // column changed): overwrite the entry in place.
-                self.store
+                store
                     .set_with_assertion(
                         Key::from_bytes(new_key),
                         new_value,
@@ -1049,7 +1056,7 @@ impl TableCommon {
             )?;
             let key = Key::from_bytes(new_key);
             let lazy_check = if new_distinct {
-                self.check_insert_key(
+                self.check_insert_key(store, 
                     &key,
                     &duplicate_value_text(&new_values),
                     &self.qualified_key(index.read().name.original()),
@@ -1058,10 +1065,10 @@ impl TableCommon {
             } else {
                 false
             };
-            self.store
+            store
                 .delete_with_assertion(Key::from_bytes(old_key), AssertionOp::AssertExist)
                 .map_err(KvTableError::from)?;
-            self.store
+            store
                 .set_with_constraint_check(
                     key,
                     value,

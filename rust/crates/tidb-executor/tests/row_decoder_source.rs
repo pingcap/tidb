@@ -744,7 +744,9 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
     let rewritten = generated_column("a + 2", true, &table.columns()[..1], &zone);
     table.columns_mut()[1].generated = Some(rewritten);
     let read = table
-        .get_row_by_handle_with_context(&handle, &RowDecodeContext::for_query(&statement))
+        .with_own_store(|table, store| {
+            table.get_row_by_handle_with_context(store, &handle, &RowDecodeContext::for_query(&statement))
+        })
         .unwrap()
         .unwrap();
     assert_eq!(read, [Datum::Int(2), Datum::Int(3)]);

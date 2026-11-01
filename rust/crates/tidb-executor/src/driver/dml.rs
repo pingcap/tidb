@@ -1686,7 +1686,9 @@ fn run_insert_rows(
     let skip_primary_duplicate_check =
         if !resolves_conflicts && !lazy_dup_check && extra_handle_offset.is_none() {
             match target(catalog, &database, &table_name)
-                .all_clustered_insert_keys_absent(&new_rows, ctx)
+                .with_own_store(|table, store| {
+                    table.all_clustered_insert_keys_absent(store, &new_rows, ctx)
+                })
                 .map_err(kv_write_error)?
             {
                 Some(absent) => absent,
@@ -1770,11 +1772,11 @@ fn run_insert_rows(
                         if !table.is_temporary() {
                             let _prefetch =
                                 tidb_tracing::start_thread_region("prefetchDataCache");
-                            let values = table
-                                .prefetch_unique_indices(&rows, ctx)
-                                .map_err(kv_write_error)?;
                             table
-                                .prefetch_conflicted_old_rows(&rows, &values, ctx)
+                                .with_own_store(|table, store| {
+                                    let values = table.prefetch_unique_indices(store, &rows, ctx)?;
+                                    table.prefetch_conflicted_old_rows(store, &rows, &values, ctx)
+                                })
                                 .map_err(kv_write_error)?;
                         }
                     } else {
@@ -1785,7 +1787,9 @@ fn run_insert_rows(
                         ));
                         if !table.is_temporary() {
                             table
-                                .prefetch_unique_indices(&rows, ctx)
+                                .with_own_store(|table, store| {
+                                    table.prefetch_unique_indices(store, &rows, ctx)
+                                })
                                 .map_err(kv_write_error)?;
                         }
                     }

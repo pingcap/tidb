@@ -28,6 +28,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tidb_datatype::{Datum, SessionTimeZone};
+use tidb_kv::storage::TableStorage;
 use tidb_txnkv::Key;
 
 use super::{Index, TableCommon, KvTableError, NonPublicIndex, RowDecodeContext, TableHandle};
@@ -194,6 +195,7 @@ impl TableCommon {
     #[allow(clippy::too_many_arguments)]
     pub fn add_partition_copy(
         &mut self,
+        store: &mut dyn TableStorage,
         physical_id: i64,
         row: &[Datum],
         handle: &TableHandle,
@@ -215,13 +217,13 @@ impl TableCommon {
                 TableHandle::Common(_) => unreachable!("a heap table has an integer handle"),
             }
         };
-        self.check_insert_key(
+        self.check_insert_key(store, 
             &key,
             &duplicate_value,
             &self.qualified_key("PRIMARY"),
             lazy_dup_check,
         )?;
-        self.write_index_entries(
+        self.write_index_entries(store, 
             row,
             handle,
             physical_id,
@@ -230,28 +232,30 @@ impl TableCommon {
             pessimistic,
             check_in_prewrite,
         )?;
-        self.store.set(key, value).map_err(KvTableError::from)
+        store.set(key, value).map_err(KvTableError::from)
     }
 
     /// Go `removeRecord` on the other side of a reorganization.
     pub fn remove_record(
         &mut self,
+        store: &mut dyn TableStorage,
         physical_id: i64,
         row: &[Datum],
         handle: &TableHandle,
         zone: &SessionTimeZone,
     ) -> Result<(), KvTableError> {
-        self.delete_index_entries(row, handle, physical_id, zone)?;
+        self.delete_index_entries(store, row, handle, physical_id, zone)?;
         let key = Key::from_bytes(super::encode_row_key_with_handle(
             physical_id,
             &handle.record_handle(),
         ));
-        self.store.delete(key).map_err(KvTableError::from)
+        store.delete(key).map_err(KvTableError::from)
     }
 
     /// The stored copy under `handle` in `physical_id`, if any.
     pub fn partition_copy(
         &mut self,
+        store: &mut dyn TableStorage,
         physical_id: i64,
         handle: &TableHandle,
     ) -> Result<Option<Vec<u8>>, KvTableError> {
@@ -259,7 +263,7 @@ impl TableCommon {
             physical_id,
             &handle.record_handle(),
         ));
-        match self.store.get(&key) {
+        match store.get(&key) {
             Ok(value) if value.is_empty() => Ok(None),
             Ok(value) => Ok(Some(value)),
             Err(tidb_kv::storage::StorageError::NotFound) => Ok(None),
@@ -286,6 +290,7 @@ impl TableCommon {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn double_write_insert(
         &mut self,
+        store: &mut dyn TableStorage,
         physical_id: i64,
         row: &[Datum],
         handle: &TableHandle,
@@ -301,7 +306,7 @@ impl TableCommon {
         let Some(target) = self.locate_reorg_partition(row, ctx)? else {
             return Ok(());
         };
-        self.add_partition_copy(
+        self.add_partition_copy(store, 
             target,
             row,
             handle,
@@ -316,6 +321,7 @@ impl TableCommon {
     /// table's only while it still holds this row's values.
     pub(crate) fn double_write_remove(
         &mut self,
+        store: &mut dyn TableStorage,
         physical_id: i64,
         row: &[Datum],
         handle: &TableHandle,
@@ -329,11 +335,11 @@ impl TableCommon {
         };
         let zone = ctx.session_zone();
         if self.clustered() {
-            return self.remove_record(target, row, handle, &zone);
+            return self.remove_record(store, target, row, handle, &zone);
         }
-        if let Some(copy) = self.partition_copy(target, handle)? {
+        if let Some(copy) = self.partition_copy(store, target, handle)? {
             if self.copy_equals_row(handle, &copy, row, ctx)? {
-                return self.remove_record(target, row, handle, &zone);
+                return self.remove_record(store, target, row, handle, &zone);
             }
         }
         Ok(())
@@ -346,6 +352,7 @@ impl TableCommon {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn plan_reorg_update(
         &mut self,
+        store: &mut dyn TableStorage,
         old_physical_id: i64,
         new_physical_id: i64,
         handle: &TableHandle,
@@ -381,7 +388,7 @@ impl TableCommon {
         let mut remove_from = None;
         let mut same_as_from = None;
         if let Some(from) = new_from {
-            if let Some(copy) = self.partition_copy(from, handle)? {
+            if let Some(copy) = self.partition_copy(store, from, handle)? {
                 let same = self.copy_equals_row(handle, &copy, old_row, ctx)?;
                 if same {
                     remove_from = Some(from);
@@ -403,7 +410,7 @@ impl TableCommon {
         let collides = if Some(to) == new_from {
             same_as_from.map(|same| !same)
         } else if new_handle == handle {
-            match self.partition_copy(to, handle)? {
+            match self.partition_copy(store, to, handle)? {
                 Some(copy) => Some(!self.copy_equals_row(handle, &copy, old_row, ctx)?),
                 None => None,
             }
@@ -429,6 +436,7 @@ impl TableCommon {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_reorg_update(
         &mut self,
+        store: &mut dyn TableStorage,
         plan: ReorgUpdate,
         handle: &TableHandle,
         old_row: &[Datum],
@@ -440,10 +448,10 @@ impl TableCommon {
     ) -> Result<(), KvTableError> {
         let zone = ctx.session_zone();
         if let Some(from) = plan.remove_from {
-            self.remove_record(from, old_row, handle, &zone)?;
+            self.remove_record(store, from, old_row, handle, &zone)?;
         }
         if let Some(to) = plan.add_to {
-            self.add_partition_copy(
+            self.add_partition_copy(store, 
                 to,
                 new_row,
                 &plan.copy_handle,

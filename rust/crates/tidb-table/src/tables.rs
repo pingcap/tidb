@@ -597,6 +597,51 @@ pub struct TableCommon {
     pub(crate) read_partitions: Option<Vec<i64>>,
 }
 
+/// What a table holds while [`TableCommon::with_own_store`] has lent its
+/// store out: any access through the table then is a bug, and fails loudly.
+#[derive(Clone, Copy, Debug)]
+struct DetachedStorage;
+
+impl DetachedStorage {
+    fn misuse() -> ! {
+        panic!("a table's store was reached through the table while lent to a call")
+    }
+}
+
+impl TableStorage for DetachedStorage {
+    fn get(&mut self, _key: &Key) -> Result<Vec<u8>, StorageError> {
+        Self::misuse()
+    }
+
+    fn set(&mut self, _key: Key, _value: Vec<u8>) -> Result<(), StorageError> {
+        Self::misuse()
+    }
+
+    fn delete(&mut self, _key: Key) -> Result<(), StorageError> {
+        Self::misuse()
+    }
+
+    fn iter(
+        &mut self,
+        _start: Option<&Key>,
+        _upper_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        Self::misuse()
+    }
+
+    fn key_count(&self) -> usize {
+        Self::misuse()
+    }
+
+    fn clear(&mut self) {
+        Self::misuse()
+    }
+
+    fn clone_box(&self) -> Box<dyn TableStorage> {
+        Self::misuse()
+    }
+}
+
 /// Go PointGetExecutor keeps immutable table metadata and a separate snapshot.
 /// A read owns only the backend handle, never a detached catalog/table image.
 pub struct PointRead<'a> {
@@ -1708,18 +1753,6 @@ impl TableCommon {
         read_stored_record(store, self.record_physical_ids(), handle)
     }
 
-    /// [`Self::stored_record`] through the store this table still owns, for
-    /// the write paths that have not yet been given the transaction's store.
-    fn stored_record_in_own_store(
-        &mut self,
-        handle: &TableHandle,
-    ) -> Result<Option<(Key, Vec<u8>)>, KvTableError> {
-        if self.read_partitions.is_none() && self.partition.is_none() {
-            return read_stored_record_one(self.store.as_mut(), self.table_id, handle);
-        }
-        let physical_ids = self.record_physical_ids();
-        read_stored_record(self.store.as_mut(), physical_ids, handle)
-    }
 
     /// The record key each of `handles` names, Go `EncodeRowKeyWithHandle(tID,
     /// handle)` with `tID` the routed partition (`planPhysIDs`) or the table.
@@ -1756,9 +1789,13 @@ impl TableCommon {
         }
     }
 
-    /// [`TableCommon::stored_record_in_own_store`] without the bytes.
-    fn stored_record_key(&mut self, handle: &TableHandle) -> Result<Option<Key>, KvTableError> {
-        Ok(self.stored_record_in_own_store(handle)?.map(|(key, _)| key))
+    /// [`TableCommon::stored_record`] without the bytes.
+    fn stored_record_key(
+        &self,
+        store: &mut dyn TableStorage,
+        handle: &TableHandle,
+    ) -> Result<Option<Key>, KvTableError> {
+        Ok(self.stored_record(store, handle)?.map(|(key, _)| key))
     }
 
     /// One stored record per requested handle, in request order; `None`
@@ -3120,7 +3157,9 @@ impl TableCommon {
         row: &[Datum],
         ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<Vec<RowConflict>, KvTableError> {
-        self.row_conflicts_reported_as(row, None, ctx, DuplicateText::TableLayer)
+        self.with_own_store(|table, store| {
+            table.row_conflicts_reported_as(store, row, None, ctx, DuplicateText::TableLayer)
+        })
     }
 
     /// An INSERT's conflicts, reported as Go's batch checker does
@@ -3132,11 +3171,14 @@ impl TableCommon {
         row_id: Option<i64>,
         ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<Vec<RowConflict>, KvTableError> {
-        self.row_conflicts_reported_as(row, row_id, ctx, DuplicateText::BatchChecker)
+        self.with_own_store(|table, store| {
+            table.row_conflicts_reported_as(store, row, row_id, ctx, DuplicateText::BatchChecker)
+        })
     }
 
     fn row_conflicts_reported_as(
         &mut self,
+        store: &mut dyn TableStorage,
         row: &[Datum],
         row_id: Option<i64>,
         ctx: &dyn tidb_exprctx::Columns,
@@ -3152,7 +3194,7 @@ impl TableCommon {
             row_id.map(TableHandle::Int)
         };
         if let Some(handle) = candidate_handle {
-            if read_stored_record_one(self.store.as_mut(), physical_id, &handle)?.is_some() {
+            if read_stored_record_one(&mut *store, physical_id, &handle)?.is_some() {
                 // Go `getKeysNeedCheckOneRow`: a common handle reports its
                 // columns' row values through `dataToStrings`, an integer
                 // handle its value.
@@ -3197,7 +3239,7 @@ impl TableCommon {
                 if !entry.distinct {
                     continue;
                 }
-                let value = match self.store.get(&Key::from_bytes(entry.key)) {
+                let value = match store.get(&Key::from_bytes(entry.key)) {
                     Ok(value) if !value.is_empty() => value,
                     Ok(_) | Err(StorageError::NotFound) => continue,
                     Err(error) => return Err(error.into()),
@@ -3283,6 +3325,7 @@ impl TableCommon {
     /// checks then read. Returns the entries found.
     pub fn prefetch_unique_indices(
         &mut self,
+        store: &mut dyn TableStorage,
         rows: &[(&[Datum], Option<i64>)],
         ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<std::collections::HashMap<Key, Vec<u8>>, KvTableError> {
@@ -3300,7 +3343,7 @@ impl TableCommon {
         }
         // Go `tikvTxn.BatchGet`, the driver transaction's read.
         let _batch_get = tidb_tracing::start_thread_region_ex("tikvTxn.BatchGet");
-        self.store.batch_get(&keys).map_err(KvTableError::from)
+        store.batch_get(&keys).map_err(KvTableError::from)
     }
 
     /// Go `prefetchConflictedOldRows`: one `BatchGet` of the rows the found
@@ -3308,6 +3351,7 @@ impl TableCommon {
     /// reads next.
     pub fn prefetch_conflicted_old_rows(
         &mut self,
+        store: &mut dyn TableStorage,
         rows: &[(&[Datum], Option<i64>)],
         values: &std::collections::HashMap<Key, Vec<u8>>,
         ctx: &dyn tidb_exprctx::Columns,
@@ -3338,7 +3382,7 @@ impl TableCommon {
             }
         }
         let _batch_get = tidb_tracing::start_thread_region_ex("tikvTxn.BatchGet");
-        self.store.batch_get(&keys).map_err(KvTableError::from)?;
+        store.batch_get(&keys).map_err(KvTableError::from)?;
         Ok(())
     }
 
@@ -3355,6 +3399,7 @@ impl TableCommon {
     /// explicit transaction falls back rather than hiding a duplicate.
     pub fn all_clustered_insert_keys_absent(
         &mut self,
+        store: &mut dyn TableStorage,
         rows: &[Vec<Datum>],
         ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<Option<bool>, KvTableError> {
@@ -3384,7 +3429,7 @@ impl TableCommon {
             }
             keys.push(key);
         }
-        let found = self.store.batch_get(&keys).map_err(KvTableError::from)?;
+        let found = store.batch_get(&keys).map_err(KvTableError::from)?;
         Ok(Some(found.is_empty()))
     }
 
@@ -3891,7 +3936,9 @@ impl TableCommon {
         shard: i64,
         ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<TableHandle, KvTableError> {
-        self.insert_row_in(row, row_id, shard, ctx, false, false, None, true)
+        self.with_own_store(|table, store| {
+            table.insert_row_in(store, row, row_id, shard, ctx, false, false, None, true)
+        })
     }
 
     /// [`Self::insert_row_with_row_id`] for the INSERT executor, which names
@@ -3916,18 +3963,37 @@ impl TableCommon {
         // writes take the caller's ctx (`GetCreateIdxOpt`), so they are its
         // siblings.
         let _add_record = tidb_tracing::start_thread_region("table.AddRecord");
-        self.with_txn_staging(ctx, |table| {
-            table.insert_row_in(
-                row,
-                row_id,
-                shard,
-                ctx,
-                lazy_dup_check,
-                false,
-                Some(ctx),
-                true,
-            )
+        self.with_own_store(|table, store| {
+            table.with_txn_staging(store, ctx, |table, store| {
+                table.insert_row_in(
+                    store,
+                    row,
+                    row_id,
+                    shard,
+                    ctx,
+                    lazy_dup_check,
+                    false,
+                    Some(ctx),
+                    true,
+                )
+            })
         })
+    }
+
+    /// Runs `f` over this table's metadata and the store the table still
+    /// owns, passed apart as Go passes the transaction to every table call.
+    /// The boundary of the storage split (`docs/storage-split-execplan.md`):
+    /// the store is moved out for the call, so nothing inside can reach it
+    /// through `self`, and it is put back even when `f` unwinds.
+    pub fn with_own_store<R>(
+        &mut self,
+        f: impl FnOnce(&mut Self, &mut dyn TableStorage) -> R,
+    ) -> R {
+        let mut store = std::mem::replace(&mut self.store, Box::new(DetachedStorage));
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self, &mut *store)));
+        self.store = store;
+        result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     }
 
     /// Runs one row write with the statement's transaction staging attached
@@ -3935,20 +4001,21 @@ impl TableCommon {
     /// (see [`tidb_kv::storage::TableStorage::attach_txn_staging`]).
     fn with_txn_staging<T>(
         &mut self,
+        store: &mut dyn TableStorage,
         ctx: &dyn tidb_tblctx::MutateContext,
-        write: impl FnOnce(&mut Self) -> Result<T, KvTableError>,
+        write: impl FnOnce(&mut Self, &mut dyn TableStorage) -> Result<T, KvTableError>,
     ) -> Result<T, KvTableError> {
         let optimistic = ctx.optimistic_transaction();
         if !optimistic && !ctx.pessimistic_transaction() {
-            return write(self);
+            return write(self, store);
         }
-        self.store.attach_txn_staging(Some(TxnStaging {
+        store.attach_txn_staging(Some(TxnStaging {
             writes: ctx.staged_writes_handle(),
             table_id: self.table_id,
             optimistic,
         }));
-        let result = write(self);
-        self.store.attach_txn_staging(None);
+        let result = write(self, &mut *store);
+        store.attach_txn_staging(None);
         result
     }
 
@@ -3975,17 +4042,20 @@ impl TableCommon {
         lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
         let _add_record = tidb_tracing::start_thread_region("table.AddRecord");
-        self.with_txn_staging(ctx, |table| {
-            table.insert_row_in(
-                row,
-                row_id,
-                shard,
-                ctx,
-                lazy_dup_check,
-                true,
-                Some(ctx),
-                true,
-            )
+        self.with_own_store(|table, store| {
+            table.with_txn_staging(store, ctx, |table, store| {
+                table.insert_row_in(
+                    store,
+                    row,
+                    row_id,
+                    shard,
+                    ctx,
+                    lazy_dup_check,
+                    true,
+                    Some(ctx),
+                    true,
+                )
+            })
         })
     }
 
@@ -4006,17 +4076,20 @@ impl TableCommon {
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<TableHandle, KvTableError> {
         let _add_record = tidb_tracing::start_thread_region("table.AddRecord");
-        self.with_txn_staging(ctx, |table| {
-            table.insert_row_in(
-                row,
-                record_id,
-                0,
-                ctx,
-                lazy_dup_check,
-                false,
-                Some(ctx),
-                false,
-            )
+        self.with_own_store(|table, store| {
+            table.with_txn_staging(store, ctx, |table, store| {
+                table.insert_row_in(
+                    store,
+                    row,
+                    record_id,
+                    0,
+                    ctx,
+                    lazy_dup_check,
+                    false,
+                    Some(ctx),
+                    false,
+                )
+            })
         })
     }
 
@@ -4038,6 +4111,7 @@ impl TableCommon {
     #[allow(clippy::too_many_arguments)]
     fn insert_row_in(
         &mut self,
+        store: &mut dyn TableStorage,
         row: &[Datum],
         row_id: Option<i64>,
         shard: i64,
@@ -4052,7 +4126,7 @@ impl TableCommon {
         // (committed plus this transaction's) exceeds
         // `@@tidb_tmp_table_max_size`, before the row is written (1114).
         if let Some(statement) = stats_ctx.filter(|_| self.is_temporary()) {
-            if i64::try_from(self.store.size_bytes()).unwrap_or(i64::MAX)
+            if i64::try_from(store.size_bytes()).unwrap_or(i64::MAX)
                 > statement.tmp_table_max_size()
             {
                 return Err(KvTableError::Mysql(
@@ -4128,14 +4202,14 @@ impl TableCommon {
             // Go addRecord checks t.RecordKey(recordID), not every partition
             // containing that handle. Hidden row IDs can repeat across physical
             // partitions, whose record keys are distinct.
-            self.check_insert_key(&key, &duplicate_value, &duplicate_key, lazy_dup_check)?
+            self.check_insert_key(store, &key, &duplicate_value, &duplicate_key, lazy_dup_check)?
         } else {
             false
         };
         let pessimistic = stats_ctx.is_some_and(|ctx| ctx.pessimistic_transaction());
         let check_in_prewrite =
             stats_ctx.is_some_and(|ctx| ctx.pessimistic_check_in_prewrite());
-        self.write_index_entries(
+        self.write_index_entries(store, 
             row,
             &handle,
             physical_id,
@@ -4149,7 +4223,7 @@ impl TableCommon {
                 .staged_writes()
                 .note(self.table_id, key.as_bytes());
         }
-        self.store
+        store
             .set_with_constraint_check(
                 key,
                 value,
@@ -4161,7 +4235,7 @@ impl TableCommon {
                 set_presume && pessimistic && check_in_prewrite,
             )
             .map_err(KvTableError::from)?;
-        self.double_write_insert(
+        self.double_write_insert(store, 
             physical_id,
             row,
             &handle,
@@ -4223,7 +4297,7 @@ impl TableCommon {
     /// Removes one row's record entry, leaving its index entries orphaned.
     /// See [`TableCommon::delete_raw_key_for_test`].
     pub fn delete_record_for_test(&mut self, handle: &TableHandle) -> Result<(), KvTableError> {
-        let Some(key) = self.stored_record_key(handle)? else {
+        let Some(key) = self.with_own_store(|table, store| table.stored_record_key(store, handle))? else {
             return Ok(());
         };
         self.delete_raw_key_for_test(key.as_bytes())
@@ -4233,21 +4307,23 @@ impl TableCommon {
     /// single read a point-get plan performs.
     pub fn get_row_by_handle_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         handle: &TableHandle,
         context: &RowDecodeContext,
     ) -> Result<Option<Vec<Datum>>, KvTableError> {
-        self.read_row(handle, context)
+        self.read_row(store, handle, context)
     }
 
     /// One stored-record read decoded by the immutable projection retained on
     /// a prepared PointGet plan.
     pub fn get_prepared_point_row(
         &mut self,
+        store: &mut dyn TableStorage,
         handle: &TableHandle,
         decoder: &PreparedPointGetRowDecoder,
         context: &PreparedPointGetDecodeContext,
     ) -> Result<Option<Vec<Datum>>, KvTableError> {
-        let Some((_, entry)) = self.stored_record_in_own_store(handle)? else {
+        let Some((_, entry)) = self.stored_record(store, handle)? else {
             return Ok(None);
         };
         decoder.decode(handle, &entry, context).map(Some)
@@ -4256,10 +4332,11 @@ impl TableCommon {
     /// The row stored under `handle`, decoded, or `None` when absent.
     pub fn read_row(
         &mut self,
+        store: &mut dyn TableStorage,
         handle: &TableHandle,
         context: &RowDecodeContext,
     ) -> Result<Option<Vec<Datum>>, KvTableError> {
-        let Some((_, entry)) = self.stored_record_in_own_store(handle)? else {
+        let Some((_, entry)) = self.stored_record(store, handle)? else {
             return Ok(None);
         };
         Ok(Some(self.decode_row_entry(handle, &entry, context)?))
@@ -4296,11 +4373,14 @@ impl TableCommon {
         row: &[Datum],
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
-        self.with_txn_staging(ctx, |table| table.update_row_in(handle, old_row, row, ctx))
+        self.with_own_store(|table, store| {
+            table.with_txn_staging(store, ctx, |table, store| table.update_row_in(store, handle, old_row, row, ctx))
+        })
     }
 
     fn update_row_in(
         &mut self,
+        store: &mut dyn TableStorage,
         handle: &TableHandle,
         old_row: Option<&[Datum]>,
         row: &[Datum],
@@ -4317,10 +4397,10 @@ impl TableCommon {
         } else {
             let old = match old_row {
                 Some(old) => Some(old.to_vec()),
-                None => self.read_row(handle, &RowDecodeContext::for_write(ctx))?,
+                None => self.read_row(store, handle, &RowDecodeContext::for_write(ctx))?,
             };
             match old {
-                Some(old) => self.update_write_rows(handle, &old, row, ctx)?,
+                Some(old) => self.update_write_rows(store, handle, &old, row, ctx)?,
                 None => None,
             }
         };
@@ -4399,7 +4479,7 @@ impl TableCommon {
                 &handle.record_handle(),
             )))
         } else {
-            self.stored_record_key(handle)?
+            self.stored_record_key(store, handle)?
         };
         if !clustered
             && old_key
@@ -4426,14 +4506,14 @@ impl TableCommon {
             let old_for_reorg = match old_row {
                 Some(old) => Some(old),
                 None => {
-                    owned_old = self.read_row(handle, &RowDecodeContext::for_write(ctx))?;
+                    owned_old = self.read_row(store, handle, &RowDecodeContext::for_write(ctx))?;
                     owned_old.as_deref()
                 }
             };
             match old_for_reorg {
                 Some(old) => {
                     let old: Vec<Datum> = old.to_vec();
-                    self.plan_reorg_update(
+                    self.plan_reorg_update(store, 
                         old_physical_for_reorg,
                         new_physical_id,
                         handle,
@@ -4472,7 +4552,7 @@ impl TableCommon {
                     TableHandle::Common(_) => unreachable!("heap table has an integer handle"),
                 }
             };
-            self.check_insert_key(
+            self.check_insert_key(store, 
                 &destination_key,
                 &duplicate_value,
                 &self.qualified_key("PRIMARY"),
@@ -4492,14 +4572,14 @@ impl TableCommon {
             let old = match old_row {
                 Some(old) => Some(old),
                 None => {
-                    owned_old = self.read_row(handle, &RowDecodeContext::for_write(ctx))?;
+                    owned_old = self.read_row(store, handle, &RowDecodeContext::for_write(ctx))?;
                     owned_old.as_deref()
                 }
             };
             // Go leaves a failed index rewrite to the statement's membuffer
             // stage (`StmtRollback`); this stage gives a store that is not
             // under one (a bare in-process store) the same rollback.
-            let stage = self.store.staging();
+            let stage = store.staging();
             let rewritten = (|| -> Result<(), KvTableError> {
                 match &old {
                     Some(old) if new_handle == *handle && old_physical_id == new_physical_id => {
@@ -4508,7 +4588,7 @@ impl TableCommon {
                         // its own current bytes. Go skips those rewrites
                         // (`SkipWriteUntouchedIndices`, see
                         // `rewrite_changed_index_entries`); this port does too.
-                        if let Err(error) = self.rewrite_changed_index_entries(
+                        if let Err(error) = self.rewrite_changed_index_entries(store, 
                             old,
                             row,
                             handle,
@@ -4523,8 +4603,8 @@ impl TableCommon {
                         }
                     }
                     Some(old) => {
-                        self.delete_index_entries(old, handle, old_physical_id, &zone)?;
-                        if let Err(error) = self.write_index_entries(
+                        self.delete_index_entries(store, old, handle, old_physical_id, &zone)?;
+                        if let Err(error) = self.write_index_entries(store, 
                             row,
                             &new_handle,
                             new_physical_id,
@@ -4537,7 +4617,7 @@ impl TableCommon {
                         }
                     }
                     None => {
-                        self.write_index_entries(
+                        self.write_index_entries(store, 
                             row,
                             &new_handle,
                             new_physical_id,
@@ -4551,9 +4631,9 @@ impl TableCommon {
                 Ok(())
             })();
             match rewritten {
-                Ok(()) => self.store.release(stage),
+                Ok(()) => store.release(stage),
                 Err(error) => {
-                    self.store.cleanup(stage);
+                    store.cleanup(stage);
                     return Err(error);
                 }
             }
@@ -4576,12 +4656,12 @@ impl TableCommon {
         };
         if let Some(old_key) = old_key.filter(|old_key| *old_key != key) {
             ctx.staged_writes().note(self.table_id, old_key.as_bytes());
-            self.store
+            store
                 .delete_with_assertion(old_key, tidb_txnkv::AssertionOp::AssertExist)
                 .map_err(KvTableError::from)?;
         }
         ctx.staged_writes().note(self.table_id, key.as_bytes());
-        self.store
+        store
             .set_with_constraint_check(
                 key,
                 value,
@@ -4590,7 +4670,7 @@ impl TableCommon {
             )
             .map_err(KvTableError::from)?;
         if let Some((plan, old)) = reorg_plan {
-            self.apply_reorg_update(
+            self.apply_reorg_update(store, 
                 plan,
                 handle,
                 &old,
@@ -4616,15 +4696,18 @@ impl TableCommon {
         handle: &TableHandle,
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
-        self.with_txn_staging(ctx, |table| table.delete_row_in(handle, ctx))
+        self.with_own_store(|table, store| {
+            table.with_txn_staging(store, ctx, |table, store| table.delete_row_in(store, handle, ctx))
+        })
     }
 
     fn delete_row_in(
         &mut self,
+        store: &mut dyn TableStorage,
         handle: &TableHandle,
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
-        let Some(key) = self.stored_record_key(handle)? else {
+        let Some(key) = self.stored_record_key(store, handle)? else {
             return Ok(());
         };
         let physical_id = tidb_tablecodec::table_key::decode_table_id(key.as_bytes());
@@ -4633,19 +4716,19 @@ impl TableCommon {
             || !self.nonpublic_indexes.is_empty()
             || self.partition_reorg.is_some()
         {
-            if let Some(row) = self.read_row(handle, &RowDecodeContext::for_write(ctx))? {
+            if let Some(row) = self.read_row(store, handle, &RowDecodeContext::for_write(ctx))? {
                 // Go removes the `DeletableCols` row.
-                let row = self.delete_write_row(handle, &row, ctx)?.unwrap_or(row);
-                self.delete_index_entries(&row, handle, physical_id, &ctx.session_zone())?;
+                let row = self.delete_write_row(store, handle, &row, ctx)?.unwrap_or(row);
+                self.delete_index_entries(store, &row, handle, physical_id, &ctx.session_zone())?;
                 removed_row = Some(row);
             }
         }
         ctx.staged_writes().note(self.table_id, key.as_bytes());
-        self.store
+        store
             .delete_with_assertion(key, tidb_txnkv::AssertionOp::AssertExist)
             .map_err(KvTableError::from)?;
         if let Some(row) = removed_row {
-            self.double_write_remove(physical_id, &row, handle, ctx)?;
+            self.double_write_remove(store, physical_id, &row, handle, ctx)?;
         }
         ctx.update_delta_for_table(physical_id, -1, 1);
         Ok(())
@@ -4660,11 +4743,14 @@ impl TableCommon {
         old_row: &[Datum],
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
-        self.with_txn_staging(ctx, |table| table.delete_old_row_in(handle, old_row, ctx))
+        self.with_own_store(|table, store| {
+            table.with_txn_staging(store, ctx, |table, store| table.delete_old_row_in(store, handle, old_row, ctx))
+        })
     }
 
     fn delete_old_row_in(
         &mut self,
+        store: &mut dyn TableStorage,
         handle: &TableHandle,
         old_row: &[Datum],
         ctx: &dyn tidb_tblctx::MutateContext,
@@ -4676,16 +4762,16 @@ impl TableCommon {
             &handle.record_handle(),
         ));
         // Go removes the `DeletableCols` row.
-        let write_row = self.delete_write_row(handle, old_row, ctx)?;
+        let write_row = self.delete_write_row(store, handle, old_row, ctx)?;
         let old_row = write_row.as_deref().unwrap_or(old_row);
         if !self.indexes.is_empty() || !self.nonpublic_indexes.is_empty() {
-            self.delete_index_entries(old_row, handle, physical_id, &zone)?;
+            self.delete_index_entries(store, old_row, handle, physical_id, &zone)?;
         }
         ctx.staged_writes().note(self.table_id, key.as_bytes());
-        self.store
+        store
             .delete_with_assertion(key, tidb_txnkv::AssertionOp::AssertExist)
             .map_err(KvTableError::from)?;
-        self.double_write_remove(physical_id, old_row, handle, ctx)?;
+        self.double_write_remove(store, physical_id, old_row, handle, ctx)?;
         ctx.update_delta_for_table(physical_id, -1, 1);
         Ok(())
     }

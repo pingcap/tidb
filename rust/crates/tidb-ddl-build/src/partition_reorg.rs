@@ -37,6 +37,7 @@ pub trait KvTablePartitionReorg {
     /// finding it. Every source record not rewritten is locked.
     fn reorg_partition_batch(
         &mut self,
+        store: &mut dyn tidb_kv::storage::TableStorage,
         physical_id: i64,
         start: &[u8],
         end: &[u8],
@@ -49,6 +50,7 @@ pub trait KvTablePartitionReorg {
 impl KvTablePartitionReorg for TableCommon {
     fn reorg_partition_batch(
         &mut self,
+        store: &mut dyn tidb_kv::storage::TableStorage,
         physical_id: i64,
         start: &[u8],
         end: &[u8],
@@ -61,7 +63,7 @@ impl KvTablePartitionReorg for TableCommon {
         let mut records: Vec<(Vec<u8>, TableHandle, Vec<Datum>, Vec<u8>)> = Vec::new();
         let mut task_done = false;
         {
-            let mut iter = self.store_mut().iter(
+            let mut iter = store.iter(
                 Some(&Key::from_bytes(start.to_vec())),
                 Some(&Key::from_bytes(end.to_vec())),
             )?;
@@ -110,7 +112,7 @@ impl KvTablePartitionReorg for TableCommon {
             let mut handle = handle;
             let mut rewritten = false;
             if !clustered {
-                if let Some(copy) = self.partition_copy(target, &handle)? {
+                if let Some(copy) = self.partition_copy(store, target, &handle)? {
                     if copy == value {
                         // Already copied, or double written by DML.
                         batch.locks.push(source_key);
@@ -118,7 +120,7 @@ impl KvTablePartitionReorg for TableCommon {
                     }
                     // Go `RemoveRecord` + `AddRecord` in the source
                     // partition, which gives the row a fresh handle.
-                    self.remove_record(physical_id, &row, &handle, &zone)?;
+                    self.remove_record(store, physical_id, &row, &handle, &zone)?;
                     let shard = if self.shard_row_id_bits() > 0 {
                         ctx.next_row_id_shard(1) as i64
                     } else {
@@ -126,6 +128,7 @@ impl KvTablePartitionReorg for TableCommon {
                     };
                     handle = self.handle_of_row(&row, &zone, shard)?;
                     self.add_partition_copy(
+                        store,
                         physical_id,
                         &row,
                         &handle,
@@ -146,7 +149,7 @@ impl KvTablePartitionReorg for TableCommon {
                 target,
                 &handle.record_handle(),
             ));
-            self.store_mut().set(key, value).map_err(KvTableError::from)?;
+            store.set(key, value).map_err(KvTableError::from)?;
             batch.added += 1;
         }
         Ok(batch)
