@@ -370,9 +370,13 @@ func (c *s3Client) MultipartWriter(ctx context.Context, name string) (objectio.W
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// A compatible service can return its canonical bucket instead of the alias
+	// used to route the request. Keep the request identity for all later parts.
 	return &multipartWriter{
 		svc:           c.svc,
-		createOutput:  resp,
+		bucket:        input.Bucket,
+		key:           input.Key,
+		uploadID:      resp.UploadId,
 		completeParts: make([]types.CompletedPart, 0, 128),
 		s3Compatible:  c.s3Compatible,
 	}, nil
@@ -410,7 +414,9 @@ func withContentMD5(o *s3.Options) {
 // multipartWriter does multi-part upload to s3.
 type multipartWriter struct {
 	svc           S3API
-	createOutput  *s3.CreateMultipartUploadOutput
+	bucket        *string
+	key           *string
+	uploadID      *string
 	completeParts []types.CompletedPart
 	s3Compatible  bool
 }
@@ -423,10 +429,10 @@ func (u *multipartWriter) Write(ctx context.Context, data []byte) (int, error) {
 	}
 	partInput := &s3.UploadPartInput{
 		Body:          bytes.NewReader(data),
-		Bucket:        u.createOutput.Bucket,
-		Key:           u.createOutput.Key,
+		Bucket:        u.bucket,
+		Key:           u.key,
 		PartNumber:    aws.Int32(int32(len(u.completeParts) + 1)),
-		UploadId:      u.createOutput.UploadId,
+		UploadId:      u.uploadID,
 		ContentLength: aws.Int64(int64(len(data))),
 	}
 
@@ -448,9 +454,9 @@ func (u *multipartWriter) Write(ctx context.Context, data []byte) (int, error) {
 // Close complete multi upload request.
 func (u *multipartWriter) Close(ctx context.Context) error {
 	completeInput := &s3.CompleteMultipartUploadInput{
-		Bucket:   u.createOutput.Bucket,
-		Key:      u.createOutput.Key,
-		UploadId: u.createOutput.UploadId,
+		Bucket:   u.bucket,
+		Key:      u.key,
+		UploadId: u.uploadID,
 		MultipartUpload: &types.CompletedMultipartUpload{
 			Parts: u.completeParts,
 		},
