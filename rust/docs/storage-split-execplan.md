@@ -252,6 +252,20 @@ CARGO_INCREMENTAL=0`.
   - [ ] Delete `TemporaryTableOverlay`, `TemporaryTableTxnData`,
     `swap_temporary_txn_data`.
 - [ ] Milestone 4: the `store` field is gone.
+  - [x] (a) (2026-11-02, 6c9320a2ade) `StmtContext::txn_store` is Go
+    `sctx.Txn()`: `Session::transaction_store` answers the stale read's
+    `HistoricalRead.store` while one is active, the session transaction's
+    store otherwise (every `Session` is built over a node and gets it in
+    `open_storage_session`).
+  - [ ] (b) about 20 executor/session library sites (admin check/recover/
+    cleanup, foreign keys, TABLESAMPLE, the legacy `get_row_by_handle`,
+    the prepared point get, physical-builder leaves, DML prefetch, ANALYZE,
+    account and privilege tables) take the statement's store; several have
+    no `StmtContext` in scope yet and need it threaded, as Go's do through
+    `sctx`.
+  - [ ] (c) test fixtures hold a `MemTableStorage` (or a fixture catalog's
+    one) and pass it.
+  - [ ] (d) delete the field and its accessors.
 - [ ] Milestone 5: one `InfoSchema` per schema version, shared by sessions.
 - [ ] Milestone 6: `ClusterCatalog` is gone.
 
