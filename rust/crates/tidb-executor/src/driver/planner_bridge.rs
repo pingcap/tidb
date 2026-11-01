@@ -339,7 +339,7 @@ fn remap_partition_indices(
 }
 
 fn locate_list_columns_condition(
-    partition: &tidb_table::partition_routing::PartitionSpec,
+    partition: &tidb_table::partition_routing::PartitionExpr,
     pi: &tidb_model::partition::PartitionInfo,
     condition: &Expression,
     columns: &[tidb_expr::column::Column],
@@ -410,7 +410,7 @@ fn locate_list_columns_condition(
 }
 
 fn locate_list_columns_cnf(
-    partition: &tidb_table::partition_routing::PartitionSpec,
+    partition: &tidb_table::partition_routing::PartitionExpr,
     pi: &tidb_model::partition::PartitionInfo,
     conditions: &[Expression],
     columns: &[tidb_expr::column::Column],
@@ -433,7 +433,7 @@ fn locate_list_columns_cnf(
 }
 
 fn locate_list_columns_dnf(
-    partition: &tidb_table::partition_routing::PartitionSpec,
+    partition: &tidb_table::partition_routing::PartitionExpr,
     pi: &tidb_model::partition::PartitionInfo,
     conditions: &[Expression],
     columns: &[tidb_expr::column::Column],
@@ -455,7 +455,7 @@ fn locate_list_columns_dnf(
 }
 
 fn list_columns_pruned_ids(
-    partition: &tidb_table::partition_routing::PartitionSpec,
+    partition: &tidb_table::partition_routing::PartitionExpr,
     pi: &tidb_model::partition::PartitionInfo,
     conditions: &[Expression],
     columns: &[tidb_expr::column::Column],
@@ -479,7 +479,7 @@ fn list_columns_pruned_ids(
 }
 
 fn partition_indices_for_spec(
-    partition: &tidb_table::partition_routing::PartitionSpec,
+    partition: &tidb_table::partition_routing::PartitionExpr,
     pi: &tidb_model::partition::PartitionInfo,
     source: &tidb_planner_core_operator_logicalop::DataSource,
     builder: &RealFunctionBuilder<'_, crate::StmtContext>,
@@ -612,7 +612,7 @@ fn partition_indices_for_spec(
 mod list_columns_pruning_tests {
     use super::*;
     use tidb_model::partition::{PartitionDefinition, PartitionInfo};
-    use tidb_table::partition_routing::{PartitionKind, PartitionSpec};
+    use tidb_table::partition_routing::{PartitionKind, PartitionExpr};
     use tidb_ast::CiString;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_expr::{column::Column, constant::Constant, scalar_function::ScalarFunction};
@@ -647,9 +647,9 @@ mod list_columns_pruning_tests {
         ))
     }
 
-    fn list_columns_spec() -> PartitionSpec {
+    fn list_columns_spec() -> PartitionExpr {
         let field_type = integer_type();
-        PartitionSpec {
+        PartitionExpr {
             kind: PartitionKind::ListColumns {
                 values: vec![
                     (vec![Datum::Int(1), Datum::Int(5)], 0),

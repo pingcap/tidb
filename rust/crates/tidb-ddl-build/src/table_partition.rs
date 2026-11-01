@@ -19,7 +19,7 @@
 //! with the validation `checkTableInfoValidWithStmt` runs after it
 //! (`checkPartitionDefinitionConstraints`, `checkPartitionFuncType`,
 //! `checkPartitioningKeysConstraints`). The result is the
-//! [`tidb_table::partition_routing::PartitionSpec`] the table stores; a table with
+//! [`tidb_table::partition_routing::PartitionExpr`] the table stores; a table with
 //! no clause gets `None`.
 //!
 //! # What is accepted
@@ -67,7 +67,7 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_table::generated_column::TableColumnResolver;
 use tidb_model::index::IndexInfo;
 use tidb_model::partition::{PartitionDefinition as StoredDefinition, PartitionInfo};
-use tidb_table::partition_routing::{PartitionKind, PartitionSpec, RangeBound, RangeColumnBound};
+use tidb_table::partition_routing::{PartitionKind, PartitionExpr, RangeBound, RangeColumnBound};
 use tidb_terror::MysqlError;
 
 use tidb_table::partition_metadata::PARTITION_MAX_VALUE;
@@ -112,7 +112,7 @@ pub fn build_table_partitioning(
     handle_offsets: &[usize],
     allocate_id: &mut dyn FnMut() -> i64,
     ctx: &tidb_metabuild::Context,
-) -> Result<Option<(PartitionSpec, PartitionInfo)>, MysqlError> {
+) -> Result<Option<(PartitionExpr, PartitionInfo)>, MysqlError> {
     create
         .partitioning
         .as_ref()
@@ -141,7 +141,7 @@ pub fn build_table_partition_info(
     handle_offsets: &[usize],
     allocate_id: &mut dyn FnMut() -> i64,
     ctx: &tidb_metabuild::Context,
-) -> Result<(PartitionSpec, PartitionInfo), MysqlError> {
+) -> Result<(PartitionExpr, PartitionInfo), MysqlError> {
     let (spec, mut definitions, expr_text) = build_table_partitioning_inner(
         partitioning,
         names,
@@ -167,7 +167,7 @@ fn build_table_partitioning_inner(
     // depend on the session `time_zone`. Go threads its `BuildContext` down
     // the same path (`buildTablePartitionInfo` -> `checkPartitionValuesIsInt`).
     ctx: &tidb_metabuild::Context,
-) -> Result<(PartitionSpec, Vec<StoredDefinition>, String), MysqlError> {
+) -> Result<(PartitionExpr, Vec<StoredDefinition>, String), MysqlError> {
     let method = &partitioning.method;
     if !matches!(
         method.kind,
@@ -301,7 +301,7 @@ fn build_table_partitioning_inner(
             .collect::<Vec<_>>();
         let indexes = apply_update_indexes(partitioning, indexes, handle_offsets)?;
         check_unique_keys_include_partition_columns(&indexes, names, handle_offsets, &dependency_offsets)?;
-        let spec = PartitionSpec {
+        let spec = PartitionExpr {
             kind: PartitionKind::Key,
             expr: tidb_expr::expression::Expression::Constant(
                 tidb_expr::expression::Constant::new(
@@ -342,7 +342,7 @@ fn build_table_partitioning_inner(
             .collect::<Vec<_>>();
         let indexes = apply_update_indexes(partitioning, indexes, handle_offsets)?;
         check_unique_keys_include_partition_columns(&indexes, names, handle_offsets, &dependency_offsets)?;
-        let spec = PartitionSpec {
+        let spec = PartitionExpr {
             kind,
             expr: tidb_expr::expression::Expression::Constant(
                 tidb_expr::expression::Constant::new(
@@ -390,7 +390,7 @@ fn build_table_partitioning_inner(
             .collect::<Vec<_>>();
         let indexes = apply_update_indexes(partitioning, indexes, handle_offsets)?;
         check_unique_keys_include_partition_columns(&indexes, names, handle_offsets, &dependency_offsets)?;
-        let spec = PartitionSpec {
+        let spec = PartitionExpr {
             kind: PartitionKind::RangeColumns {
                 less_than,
                 field_types,
@@ -493,7 +493,7 @@ fn build_table_partitioning_inner(
     let indexes = apply_update_indexes(partitioning, indexes, handle_offsets)?;
     check_unique_keys_include_partition_columns(&indexes, names, handle_offsets, &dependency_offsets)?;
 
-    let spec = PartitionSpec {
+    let spec = PartitionExpr {
         kind,
         expr: built,
         dependencies,
@@ -1806,7 +1806,7 @@ pub fn build_partition_metadata(
     handle_offsets: &[usize],
     allocate_id: &mut dyn FnMut() -> i64,
     ctx: &tidb_metabuild::Context,
-) -> Result<Option<(PartitionInfo, PartitionSpec)>, MysqlError> {
+) -> Result<Option<(PartitionInfo, PartitionExpr)>, MysqlError> {
     Ok(build_table_partitioning(
         create,
         names,
@@ -1823,7 +1823,7 @@ pub fn build_partition_metadata(
 /// the definitions it built.
 fn partition_info_for(
     partitioning: &tidb_ast::TablePartitioning,
-    spec: &PartitionSpec,
+    spec: &PartitionExpr,
     expr_text: String,
     definitions: Vec<StoredDefinition>,
 ) -> PartitionInfo {
@@ -1877,7 +1877,7 @@ fn partition_info_for(
 /// written ones.
 fn fill_stored_bounds(
     partitioning: &tidb_ast::TablePartitioning,
-    spec: &PartitionSpec,
+    spec: &PartitionExpr,
     definitions: &mut [StoredDefinition],
     ctx: &tidb_metabuild::Context,
 ) -> Result<(), MysqlError> {

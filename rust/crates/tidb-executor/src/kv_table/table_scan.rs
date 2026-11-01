@@ -7241,7 +7241,7 @@ mod remote_cursor_tests {
             }),
         );
         table.set_pk_handle_offset(0);
-        table.set_partition(tidb_table::partition_routing::PartitionSpec {
+        table.set_partition(tidb_table::partition_routing::PartitionExpr {
             kind: tidb_table::partition_routing::PartitionKind::Hash,
             expr: tidb_expr::expression::Expression::Constant(
                 tidb_expr::expression::Constant::new(

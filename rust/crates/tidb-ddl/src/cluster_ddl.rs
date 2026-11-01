@@ -7661,7 +7661,7 @@ fn sequence_base_for(increment: i64, value: i64) -> i64 {
 /// builds it from Go's `PartitionInfo`.
 fn stored_partition_spec(
     stored: &TableInfo,
-) -> Result<tidb_table::partition_routing::PartitionSpec, DdlPlanError> {
+) -> Result<tidb_table::partition_routing::PartitionExpr, DdlPlanError> {
     let partition = stored.partition.as_ref().ok_or_else(|| {
         DdlPlanError::Admission(DdlAdmissionError::from_terror(
             &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED

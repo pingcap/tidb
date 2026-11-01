@@ -30,7 +30,7 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_terror::MysqlError;
 use tidb_hack::GoCaseCompare;
 
-use crate::partition_routing::{PartitionKind, PartitionSpec, RangeBound, RangeColumnBound};
+use crate::partition_routing::{PartitionKind, PartitionExpr, RangeBound, RangeColumnBound};
 
 /// Go's `partitionMaxValue`, stored as that literal word and matched back
 /// with `strings.EqualFold`.
@@ -189,7 +189,7 @@ pub fn partition_spec_from_metadata(
     definitions: &[tidb_model::partition::PartitionDefinition],
     names: &[String],
     types: &[FieldType],
-) -> Result<PartitionSpec, MysqlError> {
+) -> Result<PartitionExpr, MysqlError> {
     // Go builds its own; the caller's context is deliberately not used here.
     let ctx = &partition_metadata_context();
     // Go `newPartitionedTable` (`tables/partition.go:114`): an empty
@@ -232,7 +232,7 @@ pub fn partition_spec_from_metadata(
                     ));
                 }
             }
-            Ok(PartitionSpec {
+            Ok(PartitionExpr {
                 kind: PartitionKind::Key,
                 expr: placeholder(),
                 dependencies: columns.to_vec(),
@@ -244,7 +244,7 @@ pub fn partition_spec_from_metadata(
         PartitionType::RANGE if !columns.is_empty() => {
             let (dependencies, field_types, less_than) =
                 load_range_columns_bounds(&column_paths, &ast_definitions()?, names, types, ctx)?;
-            Ok(PartitionSpec {
+            Ok(PartitionExpr {
                 kind: PartitionKind::RangeColumns {
                     less_than,
                     field_types,
@@ -256,7 +256,7 @@ pub fn partition_spec_from_metadata(
         PartitionType::LIST if !columns.is_empty() => {
             let (dependencies, kind) =
                 load_list_columns_values(&column_paths, &ast_definitions()?, names, types, ctx)?;
-            Ok(PartitionSpec {
+            Ok(PartitionExpr {
                 kind,
                 expr: placeholder(),
                 dependencies,
@@ -332,7 +332,7 @@ pub fn partition_spec_from_metadata(
                 }
                 _ => PartitionKind::Hash,
             };
-            Ok(PartitionSpec {
+            Ok(PartitionExpr {
                 kind,
                 expr: built,
                 dependencies,
@@ -344,7 +344,7 @@ pub fn partition_spec_from_metadata(
         // `ALTER TABLE ... PARTITION BY` reorganises it, so refusing it made
         // an ordinary table unreadable for the length of the reorg -- a Go
         // cluster serves it throughout.
-        PartitionType::NONE => Ok(PartitionSpec {
+        PartitionType::NONE => Ok(PartitionExpr {
             kind: PartitionKind::None,
             expr: placeholder(),
             dependencies: Vec::new(),

@@ -31,7 +31,7 @@ use tidb_datatype::{Datum, SessionTimeZone};
 use tidb_txnkv::Key;
 
 use super::{Index, TableCommon, KvTableError, NonPublicIndex, RowDecodeContext, TableHandle};
-use crate::partition_routing::PartitionSpec;
+use crate::partition_routing::PartitionExpr;
 
 /// One table's ongoing partition reorganization, as Go's
 /// `partitionedTable` holds it.
@@ -39,7 +39,7 @@ use crate::partition_routing::PartitionSpec;
 pub struct PartitionDoubleWrite {
     /// Go `reorgPartitionExpr` over the reorganization's other definition
     /// set: where a double write goes.
-    pub spec: PartitionSpec,
+    pub spec: PartitionExpr,
     /// Go `reorganizePartitions`: writes to these partitions are written
     /// again through [`Self::spec`].
     pub reorganize: BTreeSet<i64>,

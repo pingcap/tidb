@@ -322,7 +322,7 @@ pub fn cluster_table(
     // can rebuild from METADATA. `partition_spec_from_metadata` reads Go's
     // stored `PartitionInfo` -- the restored expression text, the columns,
     // and the definitions with their physical ids -- and returns the same
-    // `PartitionSpec` a `CREATE TABLE` here would have built, so the read
+    // `PartitionExpr` a `CREATE TABLE` here would have built, so the read
     // path routes by the identical expression either way.
     //
     // Anything it cannot rebuild still skips, and the reason it gives says
@@ -932,7 +932,7 @@ fn partition_double_write_for(
 pub fn partition_spec_for(
     table_columns: &[GoShared<tidb_model::column::ColumnInfo>],
     partition: &tidb_model::partition::PartitionInfo,
-) -> Result<crate::partition_routing::PartitionSpec, tidb_terror::MysqlError> {
+) -> Result<crate::partition_routing::PartitionExpr, tidb_terror::MysqlError> {
     let names: Vec<String> = table_columns
         .iter()
         .map(|column| column.read().name.original().to_owned())
@@ -962,7 +962,7 @@ pub fn partition_spec_for(
 fn loaded_partition_spec(
     table_columns: &[GoShared<tidb_model::column::ColumnInfo>],
     partition: &tidb_model::partition::PartitionInfo,
-) -> Result<crate::partition_routing::PartitionSpec, String> {
+) -> Result<crate::partition_routing::PartitionExpr, String> {
     partition_spec_for(table_columns, partition)
         .map_err(|error| format!("its partitioning cannot be rebuilt: {error}"))
 }

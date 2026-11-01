@@ -6890,7 +6890,7 @@ use std::collections::HashMap;
         let gets = Arc::clone(&storage.gets);
         let mut table = TableCommon::with_storage(77, vec![column("id", 1)], Box::new(storage));
         table.set_pk_handle_offset(0);
-        table.set_partition(tidb_table::partition_routing::PartitionSpec {
+        table.set_partition(tidb_table::partition_routing::PartitionExpr {
             kind: tidb_table::partition_routing::PartitionKind::Hash,
             expr: Expression::Column(tidb_expr::column::Column::new(0, long())),
             dependencies: vec!["id".to_owned()],
@@ -6944,7 +6944,7 @@ use std::collections::HashMap;
             let batch_keys = Arc::clone(&storage.batch_keys);
             let mut table =
                 TableCommon::with_storage(77, vec![column("p", 1), column("v", 2)], Box::new(storage));
-            table.set_partition(tidb_table::partition_routing::PartitionSpec {
+            table.set_partition(tidb_table::partition_routing::PartitionExpr {
                 kind: tidb_table::partition_routing::PartitionKind::Hash,
                 expr: Expression::Column(tidb_expr::column::Column::new(0, long())),
                 dependencies: vec!["p".to_owned()],

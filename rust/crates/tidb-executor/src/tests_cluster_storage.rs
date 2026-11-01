@@ -159,7 +159,7 @@ use tidb_txnkv::Key;
     fn table_mutation_batch_partition_move_preserves_repeated_hidden_handle() {
         use tidb_table::tables::TableHandle;
         use tidb_table::tables::TableCommon;
-        use tidb_table::partition_routing::{PartitionKind, PartitionSpec};
+        use tidb_table::partition_routing::{PartitionKind, PartitionExpr};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::expression::{Column, Expression};
         let (store, _, buffer) = storage(&[]);
@@ -186,7 +186,7 @@ use tidb_txnkv::Key;
         );
         let mut column = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
         column.index = 0;
-        table.set_partition(PartitionSpec {
+        table.set_partition(PartitionExpr {
             kind: PartitionKind::Hash,
             expr: Expression::Column(column),
             dependencies: vec!["v".into()],

@@ -579,7 +579,7 @@ pub struct TableCommon {
     /// record key goes through [`TableCommon::record_physical_id`], which reads
     /// this field once and then has no cases left. See
     /// [`crate::partition_routing`].
-    pub(crate) partition: Option<Box<crate::partition_routing::PartitionSpec>>,
+    pub(crate) partition: Option<Box<crate::partition_routing::PartitionExpr>>,
     /// The physical ids a READ of this table may touch, when something has
     /// narrowed them: `PARTITION (p)` naming them explicitly, or pruning
     /// proving the rest cannot match. `None` is "every partition", which is
@@ -1078,7 +1078,7 @@ impl TableCommon {
     }
 
     /// The partition spec, mutably.
-    pub fn partition_mut(&mut self) -> &mut Option<Box<crate::partition_routing::PartitionSpec>> {
+    pub fn partition_mut(&mut self) -> &mut Option<Box<crate::partition_routing::PartitionExpr>> {
         &mut self.partition
     }
 
@@ -1301,13 +1301,13 @@ impl TableCommon {
 
     /// Records how this table is partitioned (Go's `TableInfo.Partition`),
     /// which is what makes its record keys carry a partition id.
-    pub fn set_partition(&mut self, partition: crate::partition_routing::PartitionSpec) {
+    pub fn set_partition(&mut self, partition: crate::partition_routing::PartitionExpr) {
         self.partition = Some(Box::new(partition));
     }
 
     /// The table's partitioning, or `None` for an ordinary table.
     #[must_use]
-    pub fn partition(&self) -> Option<&crate::partition_routing::PartitionSpec> {
+    pub fn partition(&self) -> Option<&crate::partition_routing::PartitionExpr> {
         self.partition.as_deref()
     }
 

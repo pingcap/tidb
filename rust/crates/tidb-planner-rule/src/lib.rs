@@ -42,7 +42,7 @@
 //!
 use tidb_ranger::types::Range;
 use tidb_model::partition::PartitionInfo;
-use tidb_table::partition_routing::{PartitionKind, PartitionSpec, RangeBound};
+use tidb_table::partition_routing::{PartitionKind, PartitionExpr, RangeBound};
 use std::collections::{BTreeMap, BTreeSet};
 use tidb_datatype::Datum;
 use tidb_hack::GoCaseCompare;
@@ -104,7 +104,7 @@ pub fn ids_for_selected_partitions(
 /// comparison collator for every tuple position; RANGE COLUMNS pruning must
 /// retain that metadata through `minCmp`/`maxCmp`.
 pub fn pruned_ids_from_ranger(
-    spec: &PartitionSpec,
+    spec: &PartitionExpr,
     pi: &PartitionInfo,
     ranger_ranges: &[tidb_ranger::types::Range],
     ctx: &impl tidb_exprctx::Columns,
@@ -113,7 +113,7 @@ pub fn pruned_ids_from_ranger(
 }
 
 fn pruned_ids_impl(
-    spec: &PartitionSpec,
+    spec: &PartitionExpr,
     pi: &PartitionInfo,
     ranges: &[Range],
     ctx: &impl tidb_exprctx::Columns,
@@ -163,7 +163,7 @@ fn pruned_ids_impl(
 /// interval over one KEY column is enumerated while its width is smaller than
 /// the partition count. A partial multi-column key may hash anywhere and
 /// remains a full scan.
-fn prune_key_ids(spec: &PartitionSpec, pi: &PartitionInfo, ranges: &[Range]) -> Vec<i64> {
+fn prune_key_ids(spec: &PartitionExpr, pi: &PartitionInfo, ranges: &[Range]) -> Vec<i64> {
     let ids = pi.definitions.map_visible(|definition| definition.id);
     let mut used = vec![false; ids.len()];
     for range in ranges {
@@ -622,7 +622,7 @@ fn tuple_endpoint_order(
 /// values inside any ranger interval. A DEFAULT definition is always retained
 /// because an interval can include values that have no explicit owner.
 fn prune_list_ids(
-    spec: &PartitionSpec,
+    spec: &PartitionExpr,
     pi: &PartitionInfo,
     ranges: &[Range],
     values: &[(i64, usize)],
@@ -819,7 +819,7 @@ enum RangeMonotoneMode {
 /// wider ranges keep the full scan, except BIT columns whose declared width
 /// proves that only the first `2^flen` hash values can occur.
 fn prune_hash_ids(
-    spec: &PartitionSpec,
+    spec: &PartitionExpr,
     pi: &PartitionInfo,
     ranges: &[Range],
     ctx: &impl tidb_exprctx::Columns,
@@ -941,19 +941,19 @@ mod tests {
     /// the `TableInfo.Partition` it was built from.
     #[derive(Clone)]
     struct Table {
-        spec: PartitionSpec,
+        spec: PartitionExpr,
         pi: PartitionInfo,
     }
 
     impl std::ops::Deref for Table {
-        type Target = PartitionSpec;
-        fn deref(&self) -> &PartitionSpec {
+        type Target = PartitionExpr;
+        fn deref(&self) -> &PartitionExpr {
             &self.spec
         }
     }
 
     impl std::ops::DerefMut for Table {
-        fn deref_mut(&mut self) -> &mut PartitionSpec {
+        fn deref_mut(&mut self) -> &mut PartitionExpr {
             &mut self.spec
         }
     }
@@ -1017,7 +1017,7 @@ mod tests {
 
     fn range_table() -> Table {
         Table {
-            spec: PartitionSpec {
+            spec: PartitionExpr {
                 kind: PartitionKind::Range {
                     less_than: vec![
                         RangeBound::Value(10),
@@ -1045,7 +1045,7 @@ mod tests {
         let mut column = tidb_expr::column::Column::new(1, field_type);
         column.index = 0;
         Table {
-            spec: PartitionSpec {
+            spec: PartitionExpr {
                 kind: PartitionKind::Range {
                     unsigned: false,
                     less_than: bounds.clone(),
@@ -1059,7 +1059,7 @@ mod tests {
 
     fn list_table() -> Table {
         Table {
-            spec: PartitionSpec {
+            spec: PartitionExpr {
                 kind: PartitionKind::List {
                     values: vec![(1, 0), (3, 0), (5, 1)],
                     null_partition: Some(1),
@@ -1086,7 +1086,7 @@ mod tests {
             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
         ];
         Table {
-            spec: PartitionSpec {
+            spec: PartitionExpr {
                 kind: PartitionKind::RangeColumns {
                     less_than: vec![
                         vec![Value(Datum::Int(1)), Value(Datum::Int(10))],
@@ -2618,7 +2618,7 @@ fn is_time_as_duration_cast(function: &tidb_expr::scalar_function::ScalarFunctio
 /// bare column or a function of it, and the monotone mode Go assigns.
 /// `None` is Go's `col == nil` (no pruning).
 fn partition_fn_of_column(
-    spec: &PartitionSpec,
+    spec: &PartitionExpr,
 ) -> Option<(Option<&tidb_expr::expression::Expression>, Option<RangeMonotoneMode>)> {
     use tidb_expr::expression::Expression;
     let function = match &spec.expr {
@@ -2694,7 +2694,7 @@ fn partition_fn_of_column(
 /// Go `PruneRangePartition` for `PARTITION BY RANGE (expr)`: the physical ids
 /// `conditions` can reach, or `None` when Go cannot prune this table.
 pub fn scalar_range_pruned_ids(
-    spec: &PartitionSpec,
+    spec: &PartitionExpr,
     pi: &PartitionInfo,
     conditions: &[tidb_expr::expression::Expression],
     column: &tidb_expr::column::Column,
@@ -2732,7 +2732,7 @@ pub fn scalar_range_pruned_ids(
 /// Go `pruneRangeColumnsPartition` for a single-column RANGE COLUMNS table:
 /// the physical ids `conditions` can reach.
 pub fn single_range_columns_pruned_ids(
-    spec: &PartitionSpec,
+    spec: &PartitionExpr,
     pi: &PartitionInfo,
     conditions: &[tidb_expr::expression::Expression],
     column: &tidb_expr::column::Column,

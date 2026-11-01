@@ -26,7 +26,7 @@ use tidb_hack::GoCaseCompare;
 use tidb_model::index::IndexInfo;
 use tidb_model::table_info::TableInfo;
 use tidb_model::partition::PartitionDefinition as StoredDefinition;
-use tidb_table::partition_routing::{PartitionKind, PartitionSpec, RangeBound, RangeColumnBound};
+use tidb_table::partition_routing::{PartitionKind, PartitionExpr, RangeBound, RangeColumnBound};
 
 use crate::table_partition::self;
 
@@ -41,7 +41,7 @@ fn note(ctx: &tidb_metabuild::Context, proto: &tidb_terror::TerrorError, message
 /// (`tables.newPartitionExpr`).
 pub struct PartitionedTable<'a> {
     meta: &'a TableInfo,
-    partition: Option<PartitionSpec>,
+    partition: Option<PartitionExpr>,
 }
 
 impl<'a> PartitionedTable<'a> {
@@ -67,7 +67,7 @@ impl<'a> PartitionedTable<'a> {
         self.meta
     }
 
-    fn partition(&self) -> Option<&PartitionSpec> {
+    fn partition(&self) -> Option<&PartitionExpr> {
         self.partition.as_ref()
     }
 
@@ -1195,7 +1195,7 @@ fn existing_method(table: &PartitionedTable<'_>) -> Result<PartitionMethod, Mysq
 /// Go `getReplacedPartitionIDs`: the ordinals of the named partitions, with
 /// the first and last of them.
 fn replaced_partitions(
-    partition: &PartitionSpec,
+    partition: &PartitionExpr,
     existing: &[StoredDefinition],
     names: &[String],
 ) -> Result<(usize, usize, Vec<usize>), MysqlError> {

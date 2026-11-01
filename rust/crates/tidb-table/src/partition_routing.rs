@@ -24,8 +24,8 @@
 //!
 //! # Why the unpartitioned table is not a special case
 //!
-//! [`PartitionSpec`] is what a table has INSTEAD of nothing; every key the
-//! table writes goes through [`PartitionSpec::locate`] when it has one and
+//! [`PartitionExpr`] is what a table has INSTEAD of nothing; every key the
+//! table writes goes through [`PartitionExpr::locate`] when it has one and
 //! through the table id when it does not, which is the same statement as
 //! "an unpartitioned table is a table with one partition whose id is its
 //! own". The routing code therefore has no "is this partitioned" branch
@@ -82,7 +82,7 @@ pub enum RangeColumnBound {
 /// The partition method a table was created with.
 ///
 /// Go's `ast.PartitionType` has six values; this tier stores the methods it
-/// can route. The rest never reach a `PartitionSpec` because DDL refuses them.
+/// can route. The rest never reach a `PartitionExpr` because DDL refuses them.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PartitionKind {
     /// Go `ast.PartitionTypeHash`: `PARTITION BY HASH (expr) PARTITIONS n`.
@@ -165,7 +165,7 @@ impl PartitionKind {
 /// pruning data Go derives from `model.PartitionInfo` when it loads the table.
 /// The definitions themselves stay on `TableInfo.Partition`.
 #[derive(Clone, Debug)]
-pub struct PartitionSpec {
+pub struct PartitionExpr {
     /// The method.
     pub kind: PartitionKind,
     /// The evaluable form, whose `Column` nodes index [`Self::dependencies`]
@@ -205,7 +205,7 @@ pub enum RoutingError {
     Conversion(String),
 }
 
-impl PartitionSpec {
+impl PartitionExpr {
     pub fn update_dependency_type(&mut self, name: &str, field_type: &FieldType) {
         let Some(index) = self
             .dependencies

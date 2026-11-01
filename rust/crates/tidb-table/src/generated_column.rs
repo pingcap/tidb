@@ -578,7 +578,7 @@ impl<'a> TableColumnResolver<'a> {
 
     /// The column NAMES the expression referenced, in the order the built
     /// expression indexes them. This is what a `GeneratedColumn` or a
-    /// `PartitionSpec` stores.
+    /// `PartitionExpr` stores.
     pub fn dependency_names(&self) -> Vec<String> {
         self.seen
             .borrow()

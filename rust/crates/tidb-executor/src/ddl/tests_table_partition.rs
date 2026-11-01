@@ -20,7 +20,7 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_table::generated_column::TableColumnResolver;
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use tidb_table::partition_routing::{PartitionKind, PartitionSpec, RangeBound, RangeColumnBound};
+use tidb_table::partition_routing::{PartitionKind, PartitionExpr, RangeBound, RangeColumnBound};
 #[allow(unused_imports)]
 use tidb_terror::MysqlError;
 #[allow(unused_imports)]

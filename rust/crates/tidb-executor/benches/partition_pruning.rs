@@ -22,7 +22,7 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_charset::Collation;
 use tidb_planner_rule::pruned_ids_from_ranger;
 use tidb_model::partition::{PartitionDefinition, PartitionInfo};
-use tidb_table::partition_routing::{PartitionKind, PartitionSpec, RangeColumnBound};
+use tidb_table::partition_routing::{PartitionKind, PartitionExpr, RangeColumnBound};
 use tidb_expr::{column::Column, expression::Expression};
 use tidb_exprctx::NoColumns;
 use tidb_ranger::types::Range;
@@ -30,7 +30,7 @@ use tidb_ranger::types::Range;
 const PARTITION_COUNTS: [usize; 5] = [2, 10, 100, 1_000, 8_000];
 const ITERATIONS: usize = 10_000;
 
-fn benchmark_spec(parts: usize) -> (PartitionSpec, PartitionInfo) {
+fn benchmark_spec(parts: usize) -> (PartitionExpr, PartitionInfo) {
     let field_type = FieldType::new(FieldTypeCode::LongLong)
         .with_flags(FieldTypeFlags::UNSIGNED)
         .with_collation(Collation::Binary);
@@ -44,7 +44,7 @@ fn benchmark_spec(parts: usize) -> (PartitionSpec, PartitionInfo) {
         })
         .collect::<Vec<_>>();
     less_than.push(vec![RangeColumnBound::MaxValue]);
-    let spec = PartitionSpec {
+    let spec = PartitionExpr {
         kind: PartitionKind::RangeColumns {
             less_than,
             field_types: vec![field_type],

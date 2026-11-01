@@ -491,10 +491,10 @@ fn drop_index_removes_orphan_entries_without_decoding_rows() {
 
 #[test]
 fn drop_index_covers_all_partition_ranges_and_global_ownership() {
-    use tidb_table::partition_routing::{PartitionKind, PartitionSpec};
+    use tidb_table::partition_routing::{PartitionKind, PartitionExpr};
     for global in [false, true] {
         let mut table = TableCommon::new(42, Vec::new());
-        table.set_partition(PartitionSpec {
+        table.set_partition(PartitionExpr {
             kind: PartitionKind::Hash,
             expr: Expression::Constant(tidb_expr::constant::Constant::default()),
             dependencies: vec![],

@@ -16,7 +16,7 @@
 //! COLUMNS`, and scalar `BY LIST` are REAL; unsupported methods remain
 //! refused as a tripwire.
 //!
-//! This node stores a `PartitionSpec` (Go `model.PartitionInfo`; see
+//! This node stores a `PartitionExpr` (Go `model.PartitionInfo`; see
 //! `tidb_table::partition_routing`), routes each row into one of N
 //! physical key prefixes exactly as Go's `locatePartition` does, PRUNES which
 //! of them a `WHERE` reads (`tidb_planner_rule`, Go

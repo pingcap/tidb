@@ -477,7 +477,7 @@ impl TableInterval {
 /// what an INTERVAL would have generated, and if so which one. `None` for
 /// anything else, as Go answers nil.
 pub fn get_partition_interval_from_table(
-    partition: &tidb_table::partition_routing::PartitionSpec,
+    partition: &tidb_table::partition_routing::PartitionExpr,
     definitions: &[tidb_model::partition::PartitionDefinition],
     ctx: &tidb_metabuild::Context,
 ) -> Option<TableInterval> {

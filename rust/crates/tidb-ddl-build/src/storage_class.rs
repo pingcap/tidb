@@ -27,7 +27,7 @@ use tidb_model::serde_helpers::go_json_field_matches;
 use tidb_model::StorageClassTransitRule;
 
 use tidb_model::partition::PartitionDefinition;
-use tidb_table::partition_routing::{PartitionKind, PartitionSpec};
+use tidb_table::partition_routing::{PartitionKind, PartitionExpr};
 use tidb_terror::MysqlError;
 
 use tidb_table::partition_routing::StorageClass;
@@ -444,7 +444,7 @@ pub fn build_storage_class_for_table(defs: &[StorageClassDef]) -> StorageClass {
 /// `definitions`. An attribute that names no storage class leaves them unset.
 pub fn rebuild_storage_class_for_partitions(
     engine_attribute: &str,
-    spec: &PartitionSpec,
+    spec: &PartitionExpr,
     definitions: &mut [PartitionDefinition],
     ctx: &tidb_metabuild::Context,
 ) -> Result<(), MysqlError> {
@@ -461,7 +461,7 @@ pub fn rebuild_storage_class_for_partitions(
 /// definition, or `None` when the attribute names no storage class.
 pub fn partition_storage_classes(
     engine_attribute: &str,
-    spec: &PartitionSpec,
+    spec: &PartitionExpr,
     definitions: &[PartitionDefinition],
     ctx: &tidb_metabuild::Context,
 ) -> Result<Option<Vec<StorageClass>>, MysqlError> {

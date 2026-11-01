@@ -9531,7 +9531,7 @@ use super::*;
                     _ => {}
                 }
                 if partitioned {
-                    table.set_partition(tidb_table::partition_routing::PartitionSpec {
+                    table.set_partition(tidb_table::partition_routing::PartitionExpr {
                         kind: tidb_table::partition_routing::PartitionKind::Hash,
                         expr: Expression::Column(two_long_schema().columns[0].clone()),
                         dependencies: vec!["id".to_owned()],
