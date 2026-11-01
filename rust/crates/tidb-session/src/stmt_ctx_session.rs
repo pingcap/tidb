@@ -229,6 +229,14 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &self.staged_writes
     }
 
+    fn txn_temporary_tables_ref(&self) -> &tidb_tblctx::temporary_table::TxnTemporaryTables {
+        &self.txn_temporary_tables
+    }
+
+    fn temporary_table_data_ref(&self) -> Option<&tidb_variable::temporary_table_data::SessionData> {
+        self.temporary_table_data.as_ref()
+    }
+
     fn staged_writes_mut(&mut self) -> &mut std::sync::Arc<tidb_kv::staged_writes::StagedWrites> {
         &mut self.staged_writes
     }

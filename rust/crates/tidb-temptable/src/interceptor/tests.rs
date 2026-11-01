@@ -84,12 +84,12 @@ fn session_data(data: &[(Vec<u8>, &str)]) -> Arc<Mutex<TemporaryTableData>> {
 }
 
 /// Go `newMockedInfoSchema(t).AddTable(None, 1).AddTable(Global, 3).AddTable(Local, 5)`.
-fn info_schema() -> HashMap<i64, TempTableType> {
-    HashMap::from([
+fn info_schema() -> TemporaryTableKinds {
+    Arc::new(std::sync::RwLock::new(HashMap::from([
         (1, TempTableType::NONE),
         (3, TempTableType::GLOBAL),
         (5, TempTableType::LOCAL),
-    ])
+    ])))
 }
 
 #[test]

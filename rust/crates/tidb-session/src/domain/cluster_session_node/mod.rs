@@ -342,7 +342,7 @@ pub struct NodeConn {
     txn: TxnManager,
     /// The slot every table of the session reads through; rebound per
     /// statement.
-    slot: crate::statement_lifecycle::SnapshotSlot,
+    pub(crate) slot: crate::statement_lifecycle::SnapshotSlot,
     /// The catalog the session follows.
     follower: catalog_follower::CatalogFollower,
     /// Whether the running write is one whose transaction Go's executor

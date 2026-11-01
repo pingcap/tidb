@@ -463,7 +463,8 @@ impl StatementLifecycle<'_> {
                     autocommit_pessimistic,
                     fair_locking,
                     tidb_domain_core::session_transaction::set_options_on_txn_active(vars)
-                        .with_statement_kv_context(self.session.statement_kv_context_cell()),
+                        .with_statement_kv_context(self.session.statement_kv_context_cell())
+                        .with_temporary_tables(self.session.temporary_table_ids()),
                 )
             } else {
                 match self.open_read_snapshot(shape, retry_read_ts, read_ts, resource_group, is_dml)
@@ -1244,6 +1245,9 @@ pub fn bind_snapshot(
     // Go passes the statement ctx (its `RUDetails`) to every snapshot
     // call and sets the statement's resource-group tagger on it.
     snapshot.set_statement_kv_context(&session.statement_kv_context_cell());
+    // Go `sessiontxn/isolation/base.go`: the transaction's snapshot reads a
+    // temporary table's keys from the session, never the store.
+    let snapshot = session.session_snapshot_interceptor(snapshot);
     slot.lock()
         .unwrap_or_else(|poison| poison.into_inner())
         .bind(snapshot)

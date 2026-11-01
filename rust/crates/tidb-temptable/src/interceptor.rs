@@ -29,15 +29,17 @@ use tidb_variable::temporary_table_data::TemporaryTableData;
 /// Go `tableWithIDPrefixLen`: `t` plus the eight-byte table id.
 const TABLE_WITH_ID_PREFIX_LEN: usize = 9;
 
+/// The temporary tables of a session's infoschema by id, all Go's
+/// `temporaryTableInfoByID` reads of it; the session refreshes it as its
+/// infoschema changes.
+pub type TemporaryTableKinds = Arc<std::sync::RwLock<HashMap<i64, TempTableType>>>;
+
 /// Go `TemporaryTableSnapshotInterceptor`, wrapping the snapshot it
 /// intercepts (Go passes it to every `On*` call).
-///
-/// `is` is the temporary tables of the infoschema the interceptor was built
-/// over, by id: all Go's `temporaryTableInfoByID` reads of it.
 #[derive(Debug)]
 pub struct TemporaryTableSnapshotInterceptor {
     snap: Box<dyn ClusterSnapshot>,
-    is: HashMap<i64, TempTableType>,
+    is: TemporaryTableKinds,
     session_data: Option<Arc<Mutex<TemporaryTableData>>>,
 }
 
@@ -47,10 +49,14 @@ pub struct TemporaryTableSnapshotInterceptor {
 #[must_use]
 pub fn session_snapshot_interceptor(
     snap: Box<dyn ClusterSnapshot>,
-    is: HashMap<i64, TempTableType>,
+    is: TemporaryTableKinds,
     session_data: Option<Arc<Mutex<TemporaryTableData>>>,
 ) -> Result<TemporaryTableSnapshotInterceptor, Box<dyn ClusterSnapshot>> {
-    if is.is_empty() {
+    if is
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .is_empty()
+    {
         return Err(snap);
     }
     Ok(TemporaryTableSnapshotInterceptor::new(snap, is, session_data))
@@ -61,7 +67,7 @@ impl TemporaryTableSnapshotInterceptor {
     #[must_use]
     pub fn new(
         snap: Box<dyn ClusterSnapshot>,
-        is: HashMap<i64, TempTableType>,
+        is: TemporaryTableKinds,
         session_data: Option<Arc<Mutex<TemporaryTableData>>>,
     ) -> Self {
         Self {
@@ -73,6 +79,8 @@ impl TemporaryTableSnapshotInterceptor {
 
     fn temporary_table_info_by_id(&self, tbl_id: i64) -> Option<TempTableType> {
         self.is
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&tbl_id)
             .copied()
             .filter(|kind| *kind != TempTableType::NONE)
@@ -314,6 +322,28 @@ fn get_key_accessed_table_id(k: &[u8]) -> Option<i64> {
 fn not_table_range(k: &[u8], upper_bound: &[u8]) -> bool {
     (k > TABLE_PREFIX && !k.starts_with(TABLE_PREFIX))
         || (!upper_bound.is_empty() && upper_bound < TABLE_PREFIX)
+}
+
+/// A snapshot that holds nothing: what a temporary table's reader reads
+/// from the store, since its rows are never there (Go builds a dummy
+/// `TableReader` for it). Under the interceptor, every temporary key still
+/// resolves from the session.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EmptySnapshot;
+
+impl ClusterSnapshot for EmptySnapshot {
+    fn get(&mut self, _key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+        Ok(None)
+    }
+
+    fn scan(
+        &mut self,
+        _start: &Key,
+        _end: &Key,
+        _limit: Option<usize>,
+    ) -> Result<SnapshotPairs, StorageError> {
+        Ok(Vec::new())
+    }
 }
 
 impl ClusterSnapshot for TemporaryTableSnapshotInterceptor {

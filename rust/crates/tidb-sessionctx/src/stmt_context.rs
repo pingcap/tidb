@@ -431,6 +431,10 @@ pub struct StmtContextSessionState {
     /// The current transaction's (or, in autocommit, current statement's)
     /// staged-write tracker. See [`StmtContextData::staged_writes`].
     pub staged_writes: Arc<tidb_kv::staged_writes::StagedWrites>,
+    /// Go `TxnCtx.TemporaryTables` of the current transaction.
+    pub txn_temporary_tables: tidb_tblctx::temporary_table::TxnTemporaryTables,
+    /// Go `SessionVars.TemporaryTableData`.
+    pub temporary_table_data: Option<tidb_variable::temporary_table_data::SessionData>,
     /// Retry ID history retained across attempts.
     pub retry_auto_ids: Arc<Mutex<RetryAutoIds>>,
     /// Session row-ID shard generator.
@@ -500,6 +504,8 @@ impl Default for StmtContextSessionState {
             last_insert_id: Arc::default(),
             current_tso: CurrentTso::default(),
             staged_writes: Arc::default(),
+            txn_temporary_tables: Arc::default(),
+            temporary_table_data: None,
             retry_auto_ids: Arc::default(),
             row_id_shards: Arc::default(),
             planned_apply: Arc::default(),
@@ -834,6 +840,11 @@ pub struct StmtContextData {
     /// without a catalog-wide walk to reset it: a fresh transaction gets a
     /// fresh, empty handle here, exactly as Go's fresh membuffer is empty.
     staged_writes: Arc<tidb_kv::staged_writes::StagedWrites>,
+    /// Go `TxnCtx.TemporaryTables`: what this transaction wrote to each
+    /// temporary table.
+    txn_temporary_tables: tidb_tblctx::temporary_table::TxnTemporaryTables,
+    /// Go `SessionVars.TemporaryTableData`.
+    temporary_table_data: Option<tidb_variable::temporary_table_data::SessionData>,
     /// Go `StmtCtx.InsertID`: the explicit value a row gave the
     /// `AUTO_INCREMENT` column, which the OK packet falls back to.
     given_insert_id: Arc<AtomicU64>,
@@ -2607,6 +2618,8 @@ impl StmtContext {
             client_found_rows: false,
             current_tso: session.current_tso,
             staged_writes: session.staged_writes,
+            txn_temporary_tables: session.txn_temporary_tables,
+            temporary_table_data: session.temporary_table_data,
             given_insert_id: Arc::default(),
             retry_auto_ids: session.retry_auto_ids,
             row_id_shards: session.row_id_shards,
@@ -5656,6 +5669,17 @@ impl tidb_tblctx::MutateContext for StmtContext {
 
     fn tmp_table_max_size(&self) -> i64 {
         StmtContext::tmp_table_max_size(self)
+    }
+
+    fn add_temporary_table_to_txn(
+        &self,
+        table_id: i64,
+    ) -> Option<tidb_tblctx::temporary_table::TemporaryTableHandler> {
+        Some(tidb_tblctx::temporary_table::add_temporary_table_to_txn(
+            &self.txn_temporary_tables,
+            table_id,
+            self.temporary_table_data.as_ref(),
+        ))
     }
 
     fn statement_memory(&self) -> tidb_variable::mem_quota::StatementMemory {

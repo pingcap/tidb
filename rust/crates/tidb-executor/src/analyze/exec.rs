@@ -780,6 +780,18 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
     /// Moves the statement context's warnings onto the session.
     fn drain_context_warnings(&mut self, ctx: &crate::StmtContext);
 
+    /// Runs `body` with a read snapshot bound for a temporary table's rows:
+    /// those are the transaction's buffer and the session's data, never the
+    /// store (Go builds a dummy `TableReader` for a temporary table), so a
+    /// session with no statement snapshot binds an empty one under its
+    /// temporary-table interceptor for the duration.
+    fn with_temporary_table_snapshot<T>(
+        &mut self,
+        body: impl FnOnce(&mut Self) -> Result<T, DriverError>,
+    ) -> Result<T, DriverError>
+    where
+        Self: Sized;
+
     /// Runs one `ANALYZE` through the session catalog when its resolved table
     /// is temporary.
     ///
@@ -807,7 +819,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
         };
         let table_id = table.table_id();
         let statistics = self
-            .analyze_one_table(statement)?
+            .with_temporary_table_snapshot(|session| session.analyze_one_table(statement))?
             .remove(&table_id)
             .ok_or_else(|| DriverError::unsupported("temporary ANALYZE produced no statistics"))?;
         Ok(Some((

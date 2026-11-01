@@ -443,10 +443,10 @@ impl tidb_exprctx::Columns for IndexConditionContext<'_> {
 }
 
 /// One session transaction's state of a GLOBAL temporary table: Go
-/// `TxnCtx.TemporaryTables[id]`, its rows and its auto-id allocator.
+/// `TxnCtx.TemporaryTables[id]`'s auto-id allocators. Its rows are in the
+/// transaction's buffer like any table's.
 #[derive(Clone, Debug)]
 pub struct TemporaryTableTxnData {
-    store: Box<dyn TableStorage>,
     auto_id: AutoIdAllocator,
     row_id: Option<AutoIdAllocator>,
 }
@@ -1924,7 +1924,6 @@ impl TableCommon {
     #[must_use]
     pub fn temp_table_from_meta(&self) -> TemporaryTableTxnData {
         TemporaryTableTxnData {
-            store: Box::new(MemTableStorage::new()),
             auto_id: AutoIdAllocator::temporary(self.auto_id.unsigned, self.meta.read().auto_inc_id),
             row_id: None,
         }
@@ -1938,14 +1937,12 @@ impl TableCommon {
         self.row_id = None;
     }
 
-    /// Exchanges this table's rows and allocators for a session's
-    /// transaction-scoped ones (see [`Self::temp_table_from_meta`]),
-    /// returning what it held. The session's GLOBAL temporary table overlay
-    /// swaps them in for a statement and back out afterwards, as
-    /// [`Self::swap_storage`] does for the rows alone.
+    /// Exchanges this table's allocators for a session's transaction-scoped
+    /// ones (see [`Self::temp_table_from_meta`]), returning what it held. The
+    /// session's GLOBAL temporary table overlay swaps them in for a statement
+    /// and back out afterwards.
     pub fn swap_temporary_txn_data(&mut self, data: TemporaryTableTxnData) -> TemporaryTableTxnData {
         TemporaryTableTxnData {
-            store: std::mem::replace(&mut self.store, data.store),
             auto_id: std::mem::replace(&mut self.auto_id, data.auto_id),
             row_id: std::mem::replace(&mut self.row_id, data.row_id),
         }
@@ -4004,17 +4001,40 @@ impl TableCommon {
         ctx: &dyn tidb_tblctx::MutateContext,
         write: impl FnOnce(&mut Self, &mut dyn TableStorage) -> Result<T, KvTableError>,
     ) -> Result<T, KvTableError> {
-        let optimistic = ctx.optimistic_transaction();
-        if !optimistic && !ctx.pessimistic_transaction() {
-            return write(self, store);
+        // Go `addTemporaryTable` + `checkTempTableSize` before the write, and
+        // `defer handleTempTableSize(tmpTable, txn.Size(), txn)` after it.
+        let temporary = if self.is_temporary() {
+            ctx.add_temporary_table_to_txn(self.table_id)
+        } else {
+            None
+        };
+        if let Some(handler) = &temporary {
+            if handler.get_committed_size() + handler.get_dirty_size() > ctx.tmp_table_max_size() {
+                return Err(KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
+                    &crate::table_errors::ERR_TEMP_TABLE_FULL
+                        .generate_with_stack_by_args(&[self.name().into()]),
+                )));
+            }
         }
-        store.attach_txn_staging(Some(TxnStaging {
-            writes: ctx.staged_writes_handle(),
-            table_id: self.table_id,
-            optimistic,
-        }));
-        let result = write(self, &mut *store);
-        store.attach_txn_staging(None);
+        let txn_size_before = store.size_bytes();
+        let optimistic = ctx.optimistic_transaction();
+        let result = if !optimistic && !ctx.pessimistic_transaction() {
+            write(self, &mut *store)
+        } else {
+            store.attach_txn_staging(Some(TxnStaging {
+                writes: ctx.staged_writes_handle(),
+                table_id: self.table_id,
+                optimistic,
+            }));
+            let result = write(self, &mut *store);
+            store.attach_txn_staging(None);
+            result
+        };
+        if let Some(handler) = temporary {
+            let after = i64::try_from(store.size_bytes()).unwrap_or(i64::MAX);
+            let before = i64::try_from(txn_size_before).unwrap_or(i64::MAX);
+            handler.update_txn_delta_size(after - before);
+        }
         result
     }
 
@@ -4121,21 +4141,6 @@ impl TableCommon {
         rebase_written_id: bool,
     ) -> Result<TableHandle, KvTableError> {
         let zone = ctx.time_zone();
-        // Go `addRecord`: a temporary table refuses a row once what it holds
-        // (committed plus this transaction's) exceeds
-        // `@@tidb_tmp_table_max_size`, before the row is written (1114).
-        if let Some(statement) = stats_ctx.filter(|_| self.is_temporary()) {
-            if i64::try_from(store.size_bytes()).unwrap_or(i64::MAX)
-                > statement.tmp_table_max_size()
-            {
-                return Err(KvTableError::Mysql(
-                    tidb_terror::MysqlError::from_terror(
-                        &crate::table_errors::ERR_TEMP_TABLE_FULL
-                            .generate_with_stack_by_args(&[self.name().into()]),
-                    ),
-                ));
-            }
-        }
         // Go AddRecord receives a row completed by the mutation executor.
         // Re-evaluation here would duplicate warnings and could replace its
         // converted/NULL-substituted generated values before index encoding.

@@ -459,9 +459,13 @@ pub struct Session {
     local_temporary_tables: tidb_infoschema::session_tables::SessionTables,
     /// Go `SessionVars.TemporaryTableData`: the committed rows of the LOCAL
     /// temporary tables, created with the first one.
-    temporary_table_data: Option<
-        std::sync::Arc<std::sync::Mutex<tidb_variable::temporary_table_data::TemporaryTableData>>,
-    >,
+    temporary_table_data: Option<tidb_variable::temporary_table_data::SessionData>,
+    /// Go `TxnCtx.TemporaryTables`: built fresh for each transaction
+    /// ([`Session::reset_transaction_scope`]).
+    txn_temporary_tables: tidb_tblctx::temporary_table::TxnTemporaryTables,
+    /// The transaction store and the published temporary tables (see
+    /// [`temptable::SessionTemporaryTables`]).
+    temporary: temptable::SessionTemporaryTables,
     /// Go `sctx.GetInfoSchema()`: the node's schema this session's catalog
     /// was built from, which `DDLExec` builds a LOCAL temporary table's
     /// `TableInfo` against. `None` for a session no node opened.
@@ -865,6 +869,8 @@ impl Session {
             write_sli: tidb_sli::TxnWriteThroughputSli::default(),
             local_temporary_tables: Vec::new(),
             temporary_table_data: None,
+            txn_temporary_tables: std::sync::Arc::default(),
+            temporary: temptable::SessionTemporaryTables::default(),
             info_schema: None,
             hypo_indexes: Arc::default(),
             hypo_tiflash_replicas: Arc::default(),

@@ -1516,6 +1516,8 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             } else {
                 std::sync::Arc::clone(&self.staged_writes_ref())
             },
+            txn_temporary_tables: Arc::clone(self.txn_temporary_tables_ref()),
+            temporary_table_data: self.temporary_table_data_ref().cloned(),
             retry_auto_ids: Arc::clone(&self.retry_auto_ids_ref()),
             row_id_shards: Arc::clone(&self.row_id_shards_ref()),
             planned_apply: Arc::clone(&self.planned_apply_ref()),
@@ -2208,6 +2210,10 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn sql_cpu_usages_mut(&mut self) -> &mut Arc<tidb_ppcpuusage::SqlCpuUsages>;
     /// Go `SessionVars` / `StmtCtx` state `staged_writes`, read.
     fn staged_writes_ref(&self) -> &std::sync::Arc<tidb_kv::staged_writes::StagedWrites>;
+    /// Go `TxnCtx.TemporaryTables`, read.
+    fn txn_temporary_tables_ref(&self) -> &tidb_tblctx::temporary_table::TxnTemporaryTables;
+    /// Go `SessionVars.TemporaryTableData`, read.
+    fn temporary_table_data_ref(&self) -> Option<&tidb_variable::temporary_table_data::SessionData>;
     /// Go `SessionVars` / `StmtCtx` state `staged_writes`, mutably.
     fn staged_writes_mut(&mut self) -> &mut std::sync::Arc<tidb_kv::staged_writes::StagedWrites>;
     /// Go `SessionVars` / `StmtCtx` state `statement_affected_rows`, read.

@@ -1450,7 +1450,7 @@ impl KvTableReader for TableCommon {
                 .collect()
         };
         for (physical_id, ranges) in request_groups {
-            let Some(scan) = crate::remote_scan::open_remote_scan(&*store, &build_request(physical_id, ranges))
+            let Some(scan) = crate::remote_scan::open_table_remote_scan(self, &*store, &build_request(physical_id, ranges))
             else {
                 for (_, opened_parts) in partition_scans.drain(..) {
                     for mut opened in opened_parts {
@@ -2149,7 +2149,7 @@ impl KvTableReader for TableCommon {
                 range_hints: Vec::new(),
                 statement: statement.clone(),
             };
-            let Some(scan) = crate::remote_scan::open_remote_scan(&*store, &request) else {
+            let Some(scan) = crate::remote_scan::open_table_remote_scan(self, &*store, &request) else {
                 close_streams(&mut streams);
                 return Ok(None);
             };
@@ -2420,7 +2420,7 @@ impl KvTableReader for TableCommon {
                 range_hints: Vec::new(),
                 statement: statement.clone(),
             };
-            let Some(scan) = crate::remote_scan::open_remote_scan(&*store, &request) else {
+            let Some(scan) = crate::remote_scan::open_table_remote_scan(self, &*store, &request) else {
                 close_streams(&mut streams);
                 return Ok(None);
             };
@@ -2931,7 +2931,7 @@ impl KvTableReader for TableCommon {
             range_hints: Vec::new(),
             statement: statement.clone(),
         };
-        let Some(scan) = crate::remote_scan::open_remote_scan(&*store, &request) else {
+        let Some(scan) = crate::remote_scan::open_table_remote_scan(self, &*store, &request) else {
             return Ok(None);
         };
         let mut scan = scan.map_err(KvTableError::from)?;

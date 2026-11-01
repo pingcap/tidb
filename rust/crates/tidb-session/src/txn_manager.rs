@@ -196,6 +196,7 @@ impl TxnManager {
     pub fn statement_transaction_options(session: &Session) -> SessionTransactionOptions {
         set_options_on_txn_active(session.vars())
             .with_statement_kv_context(session.statement_kv_context_cell())
+            .with_temporary_tables(session.temporary_table_ids())
     }
 
     /// Go `PrepareTxnCtx` for `autocommit = 0`: enters the transaction when the
@@ -369,14 +370,19 @@ impl TxnManager {
         resource_group: &str,
     ) -> Result<(), SqlQueryError> {
         let bindings_changed = hooks.binding_records_changed(&self.buffer);
-        match self.transactions.commit_with_schema_lease(
+        let temporary = session
+            .stage_temporary_data_commit(&self.buffer)
+            .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))?;
+        let committed = self.transactions.commit_with_schema_lease(
             &self.buffer,
             read_ts,
             resource_group,
             hooks.schema_lease_checker(),
             Self::statement_transaction_options(session),
             session.transaction_observer(),
-        ) {
+        );
+        Session::finish_temporary_data_commit(temporary, committed.is_ok());
+        match committed {
             Ok(committed) => {
                 Self::record_committed_txn_info(session, committed);
                 hooks.refresh_committed_bindings(bindings_changed);
@@ -419,7 +425,12 @@ impl TxnManager {
                     transaction.set_schema_lease_checker(checker);
                 }
                 let bindings_changed = hooks.binding_records_changed(&self.buffer);
-                return match transaction.commit(&self.buffer) {
+                let temporary = session
+                    .stage_temporary_data_commit(&self.buffer)
+                    .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))?;
+                let committed = transaction.commit(&self.buffer);
+                Session::finish_temporary_data_commit(temporary, committed.is_ok());
+                return match committed {
                     Ok(committed) => {
                         Self::record_committed_txn_info(session, committed);
                         hooks.refresh_committed_bindings(bindings_changed);
@@ -491,7 +502,11 @@ impl TxnManager {
         if let Some(start_ts) = start_ts {
             session.record_started_txn_info(start_ts);
         }
+        let temporary = session
+            .stage_temporary_data_commit(&self.buffer)
+            .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))?;
         let commit_result = transaction.commit(&self.buffer);
+        Session::finish_temporary_data_commit(temporary, commit_result.is_ok());
         if let Some(observer) = session.transaction_observer() {
             observer.finished();
         }

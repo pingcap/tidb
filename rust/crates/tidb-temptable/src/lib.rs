@@ -41,9 +41,7 @@ pub trait TemporaryTableContext {
     fn temporary_table_data(&mut self) -> &mut Option<SessionData>;
 }
 
-/// The session's `TemporaryTableData`, shared with the snapshot interceptor
-/// that reads it.
-pub type SessionData = Arc<Mutex<TemporaryTableData>>;
+pub use tidb_variable::temporary_table_data::SessionData;
 
 /// Go `temptable.TemporaryTableDDL`: the three DDL operations on the
 /// session's LOCAL temporary tables.

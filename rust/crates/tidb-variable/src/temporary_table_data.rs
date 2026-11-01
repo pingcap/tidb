@@ -21,6 +21,10 @@ use std::collections::HashMap;
 use tidb_kv::storage::{MemTableStorage, StagingHandle, StorageError, StorageIterator, TableStorage};
 use tidb_txnkv::Key;
 
+/// The session's [`TemporaryTableData`] (Go `SessionVars.TemporaryTableData`),
+/// shared with the snapshot interceptor and the table write path that read it.
+pub type SessionData = std::sync::Arc<std::sync::Mutex<TemporaryTableData>>;
+
 /// Go `TemporaryTableData`: a MemBuffer of temporary-table keys plus each
 /// table's size in it.
 #[derive(Clone, Debug, Default)]

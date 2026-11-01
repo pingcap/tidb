@@ -318,10 +318,17 @@ impl<'s> ClusterServerSession<'s> {
         // the user's transaction stays open.
         let analyze = Arc::clone(&self.domain_services().analyze);
         let service = analyze(&self.session);
-        self
+        // A temporary table is sampled in-process (see
+        // `AnalyzeExec::with_temporary_table_snapshot`); the node, which
+        // this routed statement holds, is where its snapshot binds.
+        let bound_here =
+            crate::temptable::bind_temporary_read_snapshot(&self.node.slot, &self.session);
+        let analyzed = self
             .session
             .run_analyze_statements(tables, service.as_ref())
-            .map_err(super::map_error)?;
+            .map_err(super::map_error);
+        crate::temptable::finish_temporary_read_snapshot(&self.node.slot, bound_here);
+        analyzed?;
         // Go answers `ANALYZE TABLE` with an OK packet carrying no rows.
         Ok(WriteOutcome {
             affected_rows: 0,

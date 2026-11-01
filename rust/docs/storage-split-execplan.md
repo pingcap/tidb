@@ -179,6 +179,24 @@ CARGO_INCREMENTAL=0`.
     live `TemporaryTableIds` the session refreshes, because Rust applies
     transaction options when the transaction begins while Go sets the
     filter in `doCommit`.
+  - [x] (2026-11-02) The write switch below, items
+    1-8, landed together. Discoveries while making it:
+    - The node resets the transaction scope BEFORE `COMMIT` / `ROLLBACK`
+      run and BEGIN's implicit commit runs after its reset; Go commits under
+      the old `TxnCtx` and only then starts a fresh one. So
+      `txn_temporary_tables` resets where a transaction starts
+      (`start_statement_transaction_scope`, after BEGIN's and
+      `NewTxnInStmt`'s commit), not in `reset_transaction_scope`.
+    - The kinds are published by the overlay at every catalog door, AND by
+      the statement that creates the session's first temporary table;
+      otherwise the next statement binds its snapshot without the
+      interceptor. The interceptor and the commit filter read the live set.
+    - In-process `ANALYZE` of a temporary table runs with no statement
+      snapshot; it binds `interceptor::EmptySnapshot` (Go's dummy reader)
+      when the slot is unbound, on the node route (which holds the node
+      during a routed statement) and on the session route.
+    - Autocommit writes build their transaction options directly
+      (`statement_lifecycle.rs`), so the filter's ids are added there too.
   - [ ] The write switch, which must land as one change:
     1. `Session` holds its transaction store (`ClusterTableStorage` clone,
        set where `open_storage_session` builds it) and the live
@@ -205,7 +223,15 @@ CARGO_INCREMENTAL=0`.
        `TxnCtx.TemporaryTables[id].GetSize()` (committed size from
        `TemporaryTableData.GetTableSize` plus the transaction's delta,
        `handleTempTableSize` around each `AddRecord`), replacing the
-       per-table `store.size_bytes()`.
+       per-table `store.size_bytes()`. Go's shape: `tblctx.
+       TemporaryTableHandler { tblInTxn tableutil.TempTable, data
+       TemporaryTableData }` from `MutateContext.AddTemporaryTableToTxn`
+       (`tblsession/table.go:180`: `vars.GetTemporaryTable(tblInfo)` looks
+       up or creates `TxnCtx.TemporaryTables[id]`, marks it modified). The
+       Rust `TemporaryTableTxnData` is that `TempTable` (it already holds the
+       per-transaction allocators) and gains `size` and `modified`; Go checks
+       on AddRecord, UpdateRecord and RemoveRecord, Rust today only on
+       insert. The commit copy (item 5) walks only MODIFIED local tables.
   - [ ] Delete `TemporaryTableOverlay`, `TemporaryTableTxnData`,
     `swap_temporary_txn_data`.
 - [ ] Milestone 4: the `store` field is gone.

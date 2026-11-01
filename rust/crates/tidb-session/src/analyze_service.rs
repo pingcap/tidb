@@ -27,6 +27,21 @@ impl tidb_executor::analyze::exec::AnalyzeExec for crate::Session {
         crate::Session::drain_context_warnings(self, ctx);
     }
 
+    fn with_temporary_table_snapshot<T>(
+        &mut self,
+        body: impl FnOnce(&mut Self) -> Result<T, tidb_driver_error::DriverError>,
+    ) -> Result<T, tidb_driver_error::DriverError> {
+        // A routed statement holds the node itself, and binds there
+        // (`ClusterServerSession::run_analyze`).
+        let Some(slot) = self.node.as_ref().map(|node| std::sync::Arc::clone(&node.slot)) else {
+            return body(self);
+        };
+        let bound_here = crate::temptable::bind_temporary_read_snapshot(&slot, self);
+        let value = body(self);
+        crate::temptable::finish_temporary_read_snapshot(&slot, bound_here);
+        value
+    }
+
     fn publish_table_delta(&self) {
         crate::Session::publish_table_delta(self);
     }

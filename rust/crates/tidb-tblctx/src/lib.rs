@@ -21,6 +21,7 @@
 use tidb_datatype::ConversionFlags;
 
 mod static_mutate;
+pub mod temporary_table;
 
 pub use static_mutate::{resolve_statement_clock, StaticMutateContext};
 
@@ -65,6 +66,15 @@ pub trait MutateContext: tidb_exprctx::Columns + Send + Sync {
 
     /// Go `GetTemporaryTableSupport().GetTemporaryTableSizeLimit`.
     fn tmp_table_max_size(&self) -> i64;
+
+    /// Go `GetTemporaryTableSupport().AddTemporaryTableToTxn`: `None` when
+    /// the context has no session transaction (Go's `ok == false`).
+    fn add_temporary_table_to_txn(
+        &self,
+        _table_id: i64,
+    ) -> Option<temporary_table::TemporaryTableHandler> {
+        None
+    }
 
     /// The statement's memory and disk quota.
     fn statement_memory(&self) -> tidb_variable::mem_quota::StatementMemory;

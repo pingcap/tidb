@@ -1148,6 +1148,12 @@ impl ClusterTableStorage {
 }
 
 impl TableStorage for ClusterTableStorage {
+    /// Go `txn.Size()`: the transaction buffer's key/value bytes, which
+    /// `handleTempTableSize` diffs around each temporary-table write.
+    fn size_bytes(&self) -> u64 {
+        self.buffer.staged_bytes() as u64
+    }
+
     fn set_snapshot_read_options(&self, options: tidb_txnkv::SnapshotReadOptions) {
         self.snapshot
             .lock()

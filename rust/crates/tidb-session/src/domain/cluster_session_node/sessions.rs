@@ -232,6 +232,7 @@ impl DomainSessions for Domain {
             store: None,
         });
         let mut session = Session::over_catalog(crate::SharedCatalog::new(built.catalog), node);
+        session.set_temporary_txn_store(Box::new(storage.clone()));
         session.set_stats_handle(stats_handle);
         session.set_global_id_generator(Arc::new(ClusterGlobalIds {
             transactions: Arc::clone(&self.transactions),

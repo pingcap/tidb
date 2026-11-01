@@ -127,6 +127,21 @@ pub fn partial_aggregate_input_offsets(aggregate: &PushdownPartialAggregate) -> 
 /// `None` -- a store with no coprocessor, or a request the lowering refused
 /// -- sends the caller to the byte-level cursor, which answers the same
 /// question from the same snapshot.
+/// [`open_remote_scan`] for a read of `table`. A temporary table's rows are
+/// never in the store (Go `temporaryTableKVFilter` keeps them out of every
+/// commit), so its reader never goes remote: Go builds a dummy
+/// `TableReader` for it and serves it from the session.
+pub(crate) fn open_table_remote_scan(
+    table: &tidb_table::tables::TableCommon,
+    store: &dyn tidb_kv::storage::TableStorage,
+    request: &PushdownScanRequest,
+) -> Option<Result<PushdownScan, tidb_kv::storage::StorageError>> {
+    if table.is_temporary() {
+        return None;
+    }
+    open_remote_scan(store, request)
+}
+
 pub fn open_remote_scan(
     store: &dyn tidb_kv::storage::TableStorage,
     request: &PushdownScanRequest,
