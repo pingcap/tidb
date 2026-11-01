@@ -236,6 +236,7 @@ go_test(
         "lateral_join_test.go",
         "logical_plans_test.go",
         "main_test.go",
+        "nulls_order_test.go",
         "optimizer_test.go",
         "panicrisk_regression_test.go",
         "physical_plan_test.go",
