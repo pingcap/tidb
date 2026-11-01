@@ -62,7 +62,7 @@ impl ClusterAnalyze for PanickingAnalyze {
 /// and reports Go's skipped-target warning.
 struct WarningStatsLock {
     calls: AtomicUsize,
-    catalog: Arc<tidb_infoschema_issyncer::catalog_watch::SharedCatalog>,
+    catalog: Arc<tidb_infoschema_issyncer::catalog_watch::InfoCache>,
 }
 
 impl WarningStatsLock {
@@ -162,7 +162,7 @@ impl tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock for 
         tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockReport,
         tidb_store_driver_error::sql_query_error::SqlQueryError,
     > {
-        let catalog = self.catalog.load();
+        let catalog = self.catalog.get_latest();
         let (_, table) = catalog.find_table("app", "t").expect("app.t");
         assert_eq!(
             *request,

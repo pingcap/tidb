@@ -25,7 +25,7 @@ use tidb_txnkv::kv_storage::{SnapshotScanRegion, Storage, Transaction};
 use tidb_txnkv::Key;
 
 use crate::catalog_reload::{reload_cluster_catalog, ReloadedCatalog};
-use tidb_infoschema::cluster_catalog::{load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot};
+use tidb_infoschema::cluster_catalog::{fetch_all_schemas_with_tables, ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot};
 
 use tidb_kv::key::prefix_scan_end;
 
@@ -263,7 +263,7 @@ pub fn load_catalog_from_cluster_at(
     let lease_grant_ts = transaction.start_ts();
     let catalog = {
         let mut snapshot = TransactionMetaSnapshot::new(transaction.as_mut(), timeout);
-        load_cluster_catalog(&mut snapshot)?
+        fetch_all_schemas_with_tables(&mut snapshot)?
     };
     transaction
         .finish_without_writes()

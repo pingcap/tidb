@@ -73,7 +73,7 @@ pub fn prepare_modify_column_job_submission<S: MetaSnapshot>(
     store_count: usize,
     has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let built = build_modify_column_job(
         snapshot,
         &catalog,

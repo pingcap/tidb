@@ -19,7 +19,7 @@ use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use tidb_infoschema_issyncer::catalog_watch::SharedCatalog as SharedClusterCatalog;
+use tidb_infoschema_issyncer::catalog_watch::InfoCache;
 use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_store_driver_txn::cluster_storage::MutationBuffer;
@@ -73,7 +73,7 @@ pub trait ClusterBindings: Send + Sync {
 
 struct StoredBindings {
     opener: Arc<dyn Storage>,
-    catalog: Arc<SharedClusterCatalog>,
+    catalog: Arc<InfoCache>,
     globals: std::sync::Arc<dyn tidb_variable::GlobalVarAccessor + Send + Sync>,
     cache: SharedBindingCache,
     timeout: Duration,
@@ -95,7 +95,7 @@ impl ClusterBindings for StoredBindings {
             .refresh
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let catalog = self.catalog.load();
+        let catalog = self.catalog.get_latest();
         let view = SystemTableView::locate(&catalog, "bind_info", COLUMNS)
             .map_err(|error| error.to_string())?;
         // Go readBindingsFromStorage runs SELECT through an internal session.
@@ -221,7 +221,7 @@ impl Drop for BindingReloader {
 /// Load the initial image before accepting connections, then follow peer changes.
 pub fn start_binding_cache(
     opener: Arc<dyn Storage>,
-    catalog: Arc<SharedClusterCatalog>,
+    catalog: Arc<InfoCache>,
     globals: std::sync::Arc<dyn tidb_variable::GlobalVarAccessor + Send + Sync>,
     timeout: Duration,
     owner: Arc<dyn tidb_owner::Manager>,
@@ -372,7 +372,7 @@ mod tests {
         let pool = Arc::new(Pool(AtomicUsize::new(0)));
         let bindings = StoredBindings {
             opener: Arc::new(opener),
-            catalog: Arc::new(SharedClusterCatalog::new(
+            catalog: Arc::new(InfoCache::new(
                 tidb_infoschema::cluster_catalog::ClusterCatalog {
                     resource_groups: Vec::new(),
                     policies: Vec::new(),

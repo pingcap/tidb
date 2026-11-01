@@ -47,7 +47,7 @@ pub fn prepare_add_foreign_key_job_submission<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let (_, stored) = locate_table(&catalog, schema, table)?;
     // Go `AlterTable` names an anonymous key before any spec runs.
     let name = foreign_key_name(definition, stored, 0);

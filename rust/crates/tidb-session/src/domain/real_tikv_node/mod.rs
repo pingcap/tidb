@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use crate::GlobalSysvars;
 
-use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadError, CatalogReloader, SharedCatalog};
+use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadError, CatalogReloader, InfoCache};
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_infoschema_issyncer::real_tikv_catalog::reload_catalog_from_cluster;
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;

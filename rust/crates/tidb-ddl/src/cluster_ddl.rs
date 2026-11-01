@@ -67,7 +67,7 @@ use tidb_goruntime::go_runtime::GoSharedSlice;
 use tidb_txnkv::transaction::BufferMutation;
 
 use tidb_infoschema::cluster_catalog::{
-    load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaSnapshot,
+    fetch_all_schemas_with_tables, ClusterCatalog, ClusterCatalogError, MetaSnapshot,
 };
 use tidb_context::WarningLevel;
 use tidb_hack::GoToLower;
@@ -4778,7 +4778,7 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<tidb_ddl_jobsubmit::JobSpec>, DdlPlanError> {
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let (job, args) = match statement {
         DdlStatement::AddCheckConstraint {
             schema,
@@ -5306,7 +5306,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     ) -> Result<PersistedDdlActionStep, DdlPlanError>,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let job_table = tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&catalog)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     let mut active = job_table
@@ -7122,7 +7122,7 @@ pub fn plan_persisted_ddl_job_failure<S: MetaSnapshot>(
     load_error_count_limit: &dyn Fn() -> i64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let job_table = tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&catalog)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     let mut active = job_table
@@ -7920,7 +7920,7 @@ pub fn plan_ddl<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
 ) -> Result<DdlPlan, DdlPlanError> {
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     // Go `executor.AlterTable` refuses a view or a sequence before any
     // specification is looked at, whichever specification the statement carries.
     if let Some((schema, table)) = alter_table_target(statement) {

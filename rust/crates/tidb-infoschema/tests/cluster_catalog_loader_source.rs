@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 
-use tidb_infoschema::cluster_catalog::{load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{fetch_all_schemas_with_tables, ClusterCatalogError, MetaPairs, MetaSnapshot};
 
 
 use tidb_kv::key::prefix_scan_end;
@@ -139,7 +139,7 @@ fn recorded_cluster() -> RecordedSnapshot {
 #[test]
 fn loads_databases_tables_and_schema_version_from_stored_bytes() {
     let mut snapshot = recorded_cluster();
-    let catalog = load_cluster_catalog(&mut snapshot).expect("catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut snapshot).expect("catalog loads");
 
     assert_eq!(catalog.schema_version, 412);
     // Only the stored databases: `METRICS_SCHEMA` is one of Go's virtual
@@ -159,7 +159,7 @@ fn loads_databases_tables_and_schema_version_from_stored_bytes() {
 fn absent_schema_version_reads_as_go_zero() {
     let mut snapshot = RecordedSnapshot::default();
     snapshot.put(key::database_kv_key(3), GO_DBINFO);
-    let catalog = load_cluster_catalog(&mut snapshot).expect("catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut snapshot).expect("catalog loads");
     assert_eq!(catalog.schema_version, 0);
     assert!(catalog.databases[0].tables.is_empty());
 }

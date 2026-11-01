@@ -39,7 +39,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tidb_infoschema_issyncer::catalog_watch::{
-    CatalogReloadStats, CatalogReloadStatsSource, CatalogReloadWaker, SharedCatalog,
+    CatalogReloadStats, CatalogReloadStatsSource, CatalogReloadWaker, InfoCache,
 };
 use tidb_ddl_systable::MinJobIdRefresher;
 use tidb_infoschema_issyncer::mdl_info_load::{load_mdl_jobs, MdlJob};
@@ -218,7 +218,7 @@ impl SchemaSyncAck {
     /// still owed. Session, watch, monotonic-write, and owner-wait behavior
     /// comes from the shared `tidb-schemaver` package implementation.
     pub fn spawn<S>(
-        catalog: Arc<SharedCatalog>,
+        catalog: Arc<InfoCache>,
         opener: RealOptimisticTransactionOpener<S>,
         pins: Arc<SchemaPinRegistry>,
         min_job_id_refresher: Arc<MinJobIdRefresher>,
@@ -394,7 +394,7 @@ fn handle_global_version_recv(
 
 #[allow(clippy::too_many_arguments)]
 fn run_ack_loop<S>(
-    catalog: &SharedCatalog,
+    catalog: &InfoCache,
     opener: &RealOptimisticTransactionOpener<S>,
     pins: &SchemaPinRegistry,
     min_job_id_refresher: &MinJobIdRefresher,
@@ -442,7 +442,7 @@ fn run_ack_loop<S>(
             }
             continue;
         }
-        let loaded = catalog.load().schema_version;
+        let loaded = catalog.get_latest().schema_version;
         let reload_pass = reload_stats().passes;
         let mdl_enabled = tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen());
 
@@ -481,7 +481,7 @@ fn run_ack_loop<S>(
                 last_reload_pass,
             ) {
                 let min_job_id = min_job_id_refresher.current_min_job_id();
-                match load_mdl_jobs(opener, timeout, &catalog.load(), min_job_id) {
+                match load_mdl_jobs(opener, timeout, &catalog.get_latest(), min_job_id) {
                     Ok(jobs) => {
                         scanned_version = Some(loaded);
                         last_reload_pass = Some(reload_pass);
@@ -512,14 +512,14 @@ fn run_ack_loop<S>(
                             // session schema; refresh the Rust catalog through
                             // the same fresh snapshot before retrying.
                             let _reload = catalog.lock_reload();
-                            let current = catalog.load();
+                            let current = catalog.get_latest();
                             match tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster(
                                 opener, timeout,
                             ) {
                                 Ok(refreshed)
                                     if refreshed.schema_version >= current.schema_version =>
                                 {
-                                    catalog.store(refreshed);
+                                    catalog.upsert(refreshed);
                                 }
                                 // Go resolves the table from a fresh session
                                 // and has no such refresh to log.
@@ -616,7 +616,7 @@ fn recover_schema_syncer(
     validator: &SchemaValidator,
     reload_waker: &CatalogReloadWaker,
     reload_stats: &CatalogReloadStatsSource,
-    catalog: &SharedCatalog,
+    catalog: &InfoCache,
     stop: &AtomicBool,
 ) -> bool {
     let logger = tidb_logutil::bg_logger();
@@ -640,7 +640,7 @@ fn recover_schema_syncer(
     if !must_reload(reload_waker, reload_stats, stop) {
         return false;
     }
-    let version = catalog.load().schema_version;
+    let version = catalog.get_latest().schema_version;
     validator.restart(version);
     logger.info("schema syncer restarted", &[]);
     true
@@ -704,7 +704,7 @@ mod tests {
         let syncer = Arc::new(MemSyncer::new());
         let context = SchemaVersionContext::background();
         syncer.init(&context).unwrap();
-        let catalog = Arc::new(SharedCatalog::new(ClusterCatalog {
+        let catalog = Arc::new(InfoCache::new(ClusterCatalog {
             resource_groups: Vec::new(),
             policies: Vec::new(),
             schema_version: 7,
@@ -749,7 +749,7 @@ mod tests {
         let syncer = Arc::new(MemSyncer::new());
         let context = SchemaVersionContext::background();
         syncer.init(&context).unwrap();
-        let catalog = Arc::new(SharedCatalog::new(ClusterCatalog {
+        let catalog = Arc::new(InfoCache::new(ClusterCatalog {
             resource_groups: Vec::new(),
             policies: Vec::new(),
             schema_version: 7,
@@ -787,7 +787,7 @@ mod tests {
     /// succeeds -- here the pass fails twice before it answers.
     #[test]
     fn must_reload_waits_out_failed_passes_until_one_succeeds() {
-        let catalog = Arc::new(SharedCatalog::new(ClusterCatalog {
+        let catalog = Arc::new(InfoCache::new(ClusterCatalog {
             resource_groups: Vec::new(),
             policies: Vec::new(),
             schema_version: 7,
@@ -821,7 +821,7 @@ mod tests {
     /// A node that is stopping gives up instead of waiting forever.
     #[test]
     fn must_reload_gives_up_when_the_node_stops() {
-        let catalog = Arc::new(SharedCatalog::new(ClusterCatalog {
+        let catalog = Arc::new(InfoCache::new(ClusterCatalog {
             resource_groups: Vec::new(),
             policies: Vec::new(),
             schema_version: 7,
@@ -1005,7 +1005,7 @@ mod tests {
             )
             .unwrap();
         loaded.schema_version = 5;
-        let catalog = Arc::new(SharedCatalog::new(loaded));
+        let catalog = Arc::new(InfoCache::new(loaded));
         let reloader = CatalogReloader::spawn(
             catalog.clone(),
             Duration::from_secs(3600),

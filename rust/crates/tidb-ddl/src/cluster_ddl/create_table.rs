@@ -39,7 +39,7 @@ pub fn prepare_create_table_job_submission<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let mut warnings = Vec::new();
     let info = match build_create_table_info(
         snapshot,

@@ -18,7 +18,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use tidb_infoschema_issyncer::catalog_watch::SharedCatalog;
+use tidb_infoschema_issyncer::catalog_watch::InfoCache;
 use tidb_variable::statusvar::{Statistics, DEFAULT_STATUS_VAR_SCOPE_FLAG};
 use tidb_variable::SessionVars;
 
@@ -27,7 +27,7 @@ pub struct DdlStatistics {
     /// This node's server ID.
     pub id: String,
     /// The node's loaded catalog, whose schema version is reported.
-    pub catalog: Arc<SharedCatalog>,
+    pub catalog: Arc<InfoCache>,
 }
 
 impl Statistics for DdlStatistics {
@@ -41,7 +41,7 @@ impl Statistics for DdlStatistics {
             ("server_id".to_owned(), self.id.clone()),
             (
                 "ddl_schema_version".to_owned(),
-                self.catalog.load().schema_version.to_string(),
+                self.catalog.get_latest().schema_version.to_string(),
             ),
         ]))
     }

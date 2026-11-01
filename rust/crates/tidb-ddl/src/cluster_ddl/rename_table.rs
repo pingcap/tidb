@@ -148,7 +148,7 @@ pub fn prepare_rename_table_job_submission<S: MetaSnapshot>(
         DdlStatement::RenameTables { pairs } => (pairs.clone(), false),
         _ => return Ok(None),
     };
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let mut tables = BTreeMap::new();
     let (job, args) = if pairs.len() == 1 {
         // Go `renameTable`.

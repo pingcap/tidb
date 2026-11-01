@@ -33,7 +33,7 @@ pub fn prepare_truncate_table_job_submission<S: MetaSnapshot>(
     let DdlStatement::TruncateTable { schema, table } = statement else {
         return Ok(None);
     };
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let (db_id, stored) = locate_table(&catalog, schema, table)?;
     // A view or a sequence has no rows to truncate and reads as missing.
     if stored.view.is_some() || stored.is_sequence() {

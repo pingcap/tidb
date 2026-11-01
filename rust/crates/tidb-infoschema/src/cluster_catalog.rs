@@ -222,13 +222,13 @@ pub fn read_schema_version<S: MetaSnapshot>(snapshot: &mut S) -> Result<i64, Clu
     }
 }
 
-/// Reads the whole catalog (every database and table) from one snapshot, at
-/// its schema version.
+/// Go `Loader.fetchAllSchemasWithTables`: the whole catalog (every database
+/// and table) from one snapshot, at its schema version.
 ///
 /// Go `ListDatabases` then `ListTables` per database. Go filters a database's
 /// hash by field prefix because the same hash also holds the per-table ID
 /// allocators; so does this.
-pub fn load_cluster_catalog<S: MetaSnapshot>(
+pub fn fetch_all_schemas_with_tables<S: MetaSnapshot>(
     snapshot: &mut S,
 ) -> Result<ClusterCatalog, ClusterCatalogError> {
     let schema_version = read_schema_version(snapshot)?;

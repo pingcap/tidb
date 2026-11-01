@@ -108,7 +108,7 @@ where
     S: StoreClient,
 {
     let (tables, rows) = reorg_transaction(opener, timeout, |meta, _, _, _| {
-        let catalog = load_cluster_catalog(meta).map_err(DdlPlanError::from)?;
+        let catalog = fetch_all_schemas_with_tables(meta).map_err(DdlPlanError::from)?;
         let tables = DelRangeTables {
             ranges: DelRangeTable::locate(&catalog, "gc_delete_range")
                 .map_err(ClusterDdlError::Backfill)?,

@@ -39,7 +39,7 @@ pub fn prepare_create_schema_job_submission<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     if let Some(existing) = find_database(&catalog, name) {
         if *if_not_exists {
             return Ok(Some(AddIndexSubmission::AlreadySatisfied {

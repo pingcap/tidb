@@ -27,7 +27,7 @@ use tidb_model::db::DBInfo;
 /// The `TableInfo` it publishes comes from the same catalog-aware build recipe
 /// as the real path.
 pub(super) struct MockDdl {
-    pub(super) catalog: Arc<SharedClusterCatalog>,
+    pub(super) catalog: Arc<InfoCache>,
     /// Stands in for `NextGlobalID`.
     pub(super) next_id: AtomicI64,
     /// Catalog changes actually published.
@@ -35,7 +35,7 @@ pub(super) struct MockDdl {
 }
 
 impl MockDdl {
-    pub(super) fn new(catalog: Arc<SharedClusterCatalog>) -> Self {
+    pub(super) fn new(catalog: Arc<InfoCache>) -> Self {
         Self {
             catalog,
             next_id: AtomicI64::new(200),
@@ -101,7 +101,7 @@ impl ClusterDdl for MockDdl {
         statement: &DdlStatement,
         _job_context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
-        let current = self.catalog.load();
+        let current = self.catalog.get_latest();
         let mut next = ClusterCatalog {
             resource_groups: current.resource_groups.clone(),
             policies: current.policies.clone(),
@@ -545,7 +545,7 @@ impl ClusterDdl for MockDdl {
         let schema_version = next.schema_version;
         // The real writer refreshes the node's catalog inline, before it
         // answers; so does this one.
-        self.catalog.store(next);
+        self.catalog.upsert(next);
         self.applied.fetch_add(1, Ordering::AcqRel);
         Ok(ClusterDdlReport::Applied {
             schema_version,

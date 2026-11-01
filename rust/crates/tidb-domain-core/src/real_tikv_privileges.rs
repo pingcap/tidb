@@ -26,7 +26,7 @@ use std::time::Duration;
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_store_driver_txn::transaction::StoreClient;
 
-use tidb_infoschema::cluster_catalog::{load_cluster_catalog, ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{fetch_all_schemas_with_tables, ClusterCatalog, MetaSnapshot};
 use tidb_privilege::cluster_privilege_load::{
     load_cluster_privileges, read_bootstrap_state, read_system_tz, ClusterBootstrapState,
     ClusterPrivileges,
@@ -73,7 +73,7 @@ pub fn load_accounts_from_cluster<S: StoreClient>(
         .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
     let accounts = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = load_cluster_catalog(&mut snapshot)?;
+        let catalog = fetch_all_schemas_with_tables(&mut snapshot)?;
         let bootstrap = read_bootstrap_state(&mut snapshot, &catalog)?;
         // A keyspace no TiDB ever bootstrapped has no `mysql.user` to read,
         // and reading one anyway would report a missing table as if it were a
@@ -151,7 +151,7 @@ pub fn load_startup_variables_from_cluster<S: StoreClient>(
         .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
     let variables = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = load_cluster_catalog(&mut snapshot)?;
+        let catalog = fetch_all_schemas_with_tables(&mut snapshot)?;
         ClusterStartupVariables {
             system_tz: read_system_tz(&mut snapshot, &catalog)?,
             sysvars: load_cluster_sysvars(&mut snapshot, &catalog)?,
@@ -186,13 +186,13 @@ fn load_sysvars_from_snapshot_with_catalog_cache<S: MetaSnapshot>(
             match cached {
                 Some(catalog) => catalog,
                 None => {
-                    let catalog = std::sync::Arc::new(load_cluster_catalog(snapshot)?);
+                    let catalog = std::sync::Arc::new(fetch_all_schemas_with_tables(snapshot)?);
                     *lock_catalog_cache(cache) = Some(std::sync::Arc::clone(&catalog));
                     catalog
                 }
             }
         }
-        None => std::sync::Arc::new(load_cluster_catalog(snapshot)?),
+        None => std::sync::Arc::new(fetch_all_schemas_with_tables(snapshot)?),
     };
     let bootstrap = read_bootstrap_state(snapshot, &catalog)?;
     if !bootstrap.already_bootstrapped() {

@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 
 use tidb_datatype::{Time, TimeType};
 use tidb_infoschema::cluster_catalog::{
-    load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
+    fetch_all_schemas_with_tables, ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
 use tidb_syssession::cluster_sysvar_load::load_cluster_sysvars;
 use tidb_syssession::cluster_sysvar_write::plan_sysvar_write;
@@ -94,7 +94,7 @@ impl MetaStore {
     }
 
     fn catalog(&mut self) -> ClusterCatalog {
-        load_cluster_catalog(self).expect("the bootstrapped catalog loads")
+        fetch_all_schemas_with_tables(self).expect("the bootstrapped catalog loads")
     }
 
     fn sysvars(&mut self) -> Vec<(String, String)> {

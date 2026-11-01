@@ -315,7 +315,7 @@ pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let (_, stored) = locate_table(&catalog, schema, table)?;
     let mut specs = Vec::new();
     let mut details = Vec::new();
@@ -1134,7 +1134,7 @@ pub(super) fn on_multi_schema_change<S: MetaSnapshot>(
             merge_write(&mut merged, step.write);
             action_types.push(sub.read().type_);
             // The next sub-job reads the metadata this one left.
-            sub_catalog = Some(load_cluster_catalog(&mut overlay)?);
+            sub_catalog = Some(fetch_all_schemas_with_tables(&mut overlay)?);
         }
         if action_types.len() > 1 {
             // Go `SetSchemaDiff` with every sub-job's action.

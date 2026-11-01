@@ -440,7 +440,7 @@ fn table_delta_follows_commit_rollback_and_savepoint_lifecycle() {
     let (mut session, usage) = open_session_on_with_usage(&node);
     let table_id = node
         .catalog
-        .load()
+        .get_latest()
         .databases
         .iter()
         .find(|database| database.info.name.lowercase() == "app")

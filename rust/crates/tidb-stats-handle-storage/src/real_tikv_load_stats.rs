@@ -29,7 +29,7 @@ use std::time::Duration;
 use tidb_stats_util::JsonTable;
 use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
-use tidb_infoschema::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
+use tidb_infoschema::cluster_catalog::{fetch_all_schemas_with_tables, ClusterCatalog};
 use crate::cluster_load_stats::{
     load_cluster_stats_target, resolve_cluster_load_stats, ClusterLoadStatsTarget,
     LoadedStatsTable, ResolvedClusterLoadStats,
@@ -157,7 +157,7 @@ pub fn commit_cluster_drop_stats<S: StoreClient>(
 ) -> Result<(), ClusterLoadStatsCommitError> {
     commit_pessimistic_statement(opener, timeout, |snapshot, version| {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
+        let catalog = fetch_all_schemas_with_tables(&mut snapshot).map_err(|error| error.to_string())?;
         let plan = plan_delete_table_stats(
             &mut snapshot,
             &catalog,
@@ -293,7 +293,7 @@ fn resolve_tables<S: StoreClient>(
     let mut transaction = opener.begin_read_only().map_err(other)?;
     let (tables, catalog) = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = load_cluster_catalog(&mut snapshot).map_err(other)?;
+        let catalog = fetch_all_schemas_with_tables(&mut snapshot).map_err(other)?;
         (
             resolve_cluster_load_stats(&catalog, json).map_err(other)?,
             catalog,

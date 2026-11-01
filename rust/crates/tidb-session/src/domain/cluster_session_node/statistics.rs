@@ -24,7 +24,7 @@ use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_executor::ddl_exec::WriteOutcome;
 
-use super::{ClusterServerSession, ClusterTransactions, SharedClusterCatalog};
+use super::{ClusterServerSession, ClusterTransactions, InfoCache};
 use tidb_executor::stats_exec::FlushStatsDeltaTargets;
 
 /// Go answers the statistics statements with an OK packet carrying no rows.
@@ -43,7 +43,7 @@ fn into_driver_error(error: SqlQueryError) -> tidb_driver_error::DriverError {
 
 struct PersistedAnalyzeJobs {
     transactions: Arc<dyn ClusterTransactions>,
-    catalog: Arc<SharedClusterCatalog>,
+    catalog: Arc<InfoCache>,
     instance: String,
     process_id: u64,
     global_vars: crate::GlobalSysvars,
@@ -64,7 +64,7 @@ impl PersistedAnalyzeJobs {
         let read_ts = snapshot.start_ts();
         let plan = build(
             &mut super::SnapshotMetaSnapshot::new(snapshot),
-            &self.catalog.load(),
+            &self.catalog.get_latest(),
         )?;
         self.transactions
             .commit_optimistic_mutations(
@@ -80,7 +80,7 @@ impl PersistedAnalyzeJobs {
 impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
     fn insert(&self, spec: &AnalyzeJobSpec) -> Option<u64> {
         let result = (|| {
-            let catalog = self.catalog.load();
+            let catalog = self.catalog.get_latest();
             let snapshot = self.transactions.open_snapshot("default")?;
             let read_ts = snapshot.start_ts();
             let mut snapshot = super::SnapshotMetaSnapshot::new(snapshot);
@@ -416,7 +416,7 @@ struct ClusterAnalyzeService {
     connection_id: u64,
     stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
     transactions: Arc<dyn super::ClusterTransactions>,
-    catalog: Arc<super::SharedClusterCatalog>,
+    catalog: Arc<super::InfoCache>,
     stats: Arc<super::SharedStats>,
     global_vars: crate::GlobalSysvars,
     analyze: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze>,
@@ -444,7 +444,7 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
     }
 
     fn builds_column_task(&self, statement: &AnalyzeStatement) -> bool {
-        tidb_executor::real_tikv_analyze::analyze_builds_column_task(&self.catalog.load(), statement)
+        tidb_executor::real_tikv_analyze::analyze_builds_column_task(&self.catalog.get_latest(), statement)
     }
 
     fn execute(
@@ -524,7 +524,7 @@ struct ClusterStatsStatementService {
     resource_group: String,
     stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
     transactions: Arc<dyn super::ClusterTransactions>,
-    catalog: Arc<super::SharedClusterCatalog>,
+    catalog: Arc<super::InfoCache>,
     stats: Arc<super::SharedStats>,
     global_vars: crate::GlobalSysvars,
     analyze: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze>,
@@ -560,7 +560,7 @@ impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementS
     ) -> Result<String, tidb_driver_error::DriverError> {
         // Go `LockExec.Next`: the tables resolve against the domain's latest
         // schema (`do.InfoSchema()`) before the handle's transaction.
-        let request = statement.resolve(&self.catalog.load()).map_err(|error| {
+        let request = statement.resolve(&self.catalog.get_latest()).map_err(|error| {
             into_driver_error(
                 tidb_stats_handle_lockstats::real_tikv_stats_lock::cluster_stats_lock_error(
                     tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockCommitError::Plan(error),

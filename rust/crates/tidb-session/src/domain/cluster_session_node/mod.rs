@@ -182,7 +182,7 @@ use crate::identity::CompiledExecutor;
 use tidb_privilege::PrivilegeRegistry;
 use crate::{GlobalSysvars, Session, StmtKind, StmtOutput};
 use tidb_ast::Stmt;
-use tidb_infoschema_issyncer::catalog_watch::SharedCatalog as SharedClusterCatalog;
+use tidb_infoschema_issyncer::catalog_watch::InfoCache;
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;
 use tidb_infoschema_isvalidator::SchemaValidator;
@@ -1387,7 +1387,7 @@ impl<'s> ClusterServerSession<'s> {
     ) -> Result<(), SqlQueryError> {
         let row_ids = Arc::clone(&self.node.domain.auto_ids);
         let transaction = self.notifier_transaction()?;
-        let catalog = self.node.domain.catalog.load();
+        let catalog = self.node.domain.catalog.get_latest();
         let version = transaction.start_ts();
         let loader = ClusterStatsLoader::locate(&catalog)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
@@ -1509,7 +1509,7 @@ impl<'s> ClusterServerSession<'s> {
     ) -> Result<(), SqlQueryError> {
         let row_ids = Arc::clone(&self.node.domain.auto_ids);
         let transaction = self.notifier_transaction()?;
-        let catalog = self.node.domain.catalog.load();
+        let catalog = self.node.domain.catalog.get_latest();
         let version = transaction.start_ts();
         for &physical_id in ids {
             let refreshed = transactions::stage_pessimistic_statement(
@@ -1560,7 +1560,7 @@ impl<'s> ClusterServerSession<'s> {
     ) -> Result<(), SqlQueryError> {
         let row_ids = Arc::clone(&self.node.domain.auto_ids);
         let transaction = self.notifier_transaction()?;
-        let catalog = self.node.domain.catalog.load();
+        let catalog = self.node.domain.catalog.get_latest();
         let snapshot = transaction
             .snapshot_for(false)
             .map_err(SqlQueryError::unknown)?;
@@ -1627,7 +1627,7 @@ impl<'s> ClusterServerSession<'s> {
     ) -> Result<(), SqlQueryError> {
         let row_ids = Arc::clone(&self.node.domain.auto_ids);
         let transaction = self.notifier_transaction()?;
-        let catalog = self.node.domain.catalog.load();
+        let catalog = self.node.domain.catalog.get_latest();
         let version = transaction.start_ts();
         let loader = ClusterStatsLoader::locate(&catalog)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
@@ -1750,7 +1750,7 @@ impl<'s> ClusterServerSession<'s> {
         new_table_id: i64,
     ) -> Result<(), SqlQueryError> {
         let transaction = self.notifier_transaction()?;
-        let catalog = self.node.domain.catalog.load();
+        let catalog = self.node.domain.catalog.get_latest();
         for target in tidb_stats_handle_storage::cluster_stats_write::GLOBAL_STATS_ID_TABLES {
             transactions::stage_pessimistic_statement(
                 transaction,
@@ -1776,7 +1776,7 @@ impl<'s> ClusterServerSession<'s> {
 
     fn stage_stats_version_refresh(&self) -> Result<(), SqlQueryError> {
         let transaction = self.notifier_transaction()?;
-        let catalog = self.node.domain.catalog.load();
+        let catalog = self.node.domain.catalog.get_latest();
         let version = transaction.start_ts();
         for target in tidb_stats_handle_storage::cluster_stats_write::STATS_VERSION_TABLES {
             transactions::stage_pessimistic_statement(
@@ -1962,7 +1962,7 @@ impl<'s> ClusterServerSession<'s> {
             .vars()
             .get_system(tidb_vardef::tidb_vars::TIDB_SCATTER_REGION)
             .unwrap_or_default();
-        let loaded = self.node.domain.catalog.load();
+        let loaded = self.node.domain.catalog.get_latest();
         for id in created {
             let found = loaded
                 .databases
@@ -2145,7 +2145,7 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
     }
 
     fn published_catalog(&self) -> Arc<ClusterCatalog> {
-        self.node.domain.catalog.load()
+        self.node.domain.catalog.get_latest()
     }
 
     fn run_ddl_statement(
@@ -3105,7 +3105,7 @@ fn sql_query_error_to_driver(error: SqlQueryError) -> tidb_driver_error::DriverE
 struct ClusterDdlService {
     ddl: Arc<dyn ClusterDdl>,
     /// The node's latest schema (Go the DDL's `infoCache.GetLatest()`).
-    catalog: Arc<SharedClusterCatalog>,
+    catalog: Arc<InfoCache>,
 }
 
 impl crate::ddl_service::DdlService for ClusterDdlService {
@@ -3128,7 +3128,7 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
         current_db: &str,
     ) -> Result<(), tidb_driver_error::DriverError> {
         tidb_ddl::cluster_ddl::cached_table::check_cached_table_ddl(
-            &self.catalog.load(),
+            &self.catalog.get_latest(),
             current_db,
             stmt,
         )
@@ -3148,7 +3148,7 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
 /// accordingly.
 #[must_use]
 pub fn build_tiflash_replica_poll(
-    catalog: std::sync::Arc<tidb_infoschema_issyncer::catalog_watch::SharedCatalog>,
+    catalog: std::sync::Arc<tidb_infoschema_issyncer::catalog_watch::InfoCache>,
     pd_http_client: Option<tikv_client::pd_http::Client>,
     security: &tidb_pd_client::ClusterSecurity,
     ddl: Arc<dyn tidb_ddl::tiflash_replica_manager::TiFlashReplicaControl>,

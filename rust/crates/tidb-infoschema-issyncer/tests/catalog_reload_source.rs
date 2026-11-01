@@ -27,7 +27,7 @@ use tidb_infoschema_issyncer::catalog_reload::{
     reload_cluster_catalog, FullReloadReason, ReloadedCatalog,
     LOAD_SCHEMA_DIFF_VERSION_GAP_THRESHOLD,
 };
-use tidb_infoschema::cluster_catalog::{load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{fetch_all_schemas_with_tables, ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot};
 
 use tidb_kv::key::prefix_scan_end;
 use tidb_meta::{key, value};
@@ -120,7 +120,7 @@ fn started_cluster() -> (RecordedSnapshot, ClusterCatalog) {
     snapshot.put(key::database_kv_key(3), GO_DBINFO);
     snapshot.put(key::table_kv_key(3, 77), go_table(77, "Rows", "rows"));
     snapshot.commit_diff(100, &diff_json(100, ActionType::ACTION_CREATE_TABLE, 3, 77));
-    let catalog = load_cluster_catalog(&mut snapshot).expect("startup load");
+    let catalog = fetch_all_schemas_with_tables(&mut snapshot).expect("startup load");
     assert_eq!(catalog.schema_version, 100);
     (snapshot, catalog)
 }
@@ -256,7 +256,7 @@ fn a_rename_table_diff_across_databases_moves_the_table() {
     snapshot.put(key::database_kv_key(4), GO_SECOND_DBINFO);
     snapshot.put(key::table_kv_key(3, 77), go_table(77, "Rows", "rows"));
     snapshot.commit_diff(100, &diff_json(100, ActionType::ACTION_CREATE_TABLE, 3, 77));
-    let catalog = load_cluster_catalog(&mut snapshot).expect("startup load");
+    let catalog = fetch_all_schemas_with_tables(&mut snapshot).expect("startup load");
 
     snapshot.remove(&key::table_kv_key(3, 77));
     snapshot.put(key::table_kv_key(4, 77), go_table(77, "Rows", "rows"));
@@ -306,7 +306,7 @@ fn a_rename_tables_diff_moves_every_affected_table() {
     snapshot.put(key::table_kv_key(3, 77), go_table(77, "Rows", "rows"));
     snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
     snapshot.commit_diff(100, &diff_json(100, ActionType::ACTION_CREATE_TABLE, 3, 77));
-    let catalog = load_cluster_catalog(&mut snapshot).expect("startup load");
+    let catalog = fetch_all_schemas_with_tables(&mut snapshot).expect("startup load");
     snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
 
     // Table 77 stays in database 3 under a new name; table 78 moves from
@@ -574,7 +574,7 @@ fn old_table_infos_are_normalized_on_load_like_gos_builder() {
         ),
     );
     snapshot.commit_diff(100, &diff_json(100, ActionType::ACTION_CREATE_TABLE, 3, 73));
-    let catalog = load_cluster_catalog(&mut snapshot).expect("startup load");
+    let catalog = fetch_all_schemas_with_tables(&mut snapshot).expect("startup load");
 
     let expect = |charset: &str, collate: &str| {
         (

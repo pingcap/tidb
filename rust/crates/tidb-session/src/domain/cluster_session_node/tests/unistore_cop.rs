@@ -2120,7 +2120,7 @@ fn stats_ddl_wait_does_not_require_an_unready_other_subscriber() {
     let table_id = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_wait")
         .unwrap()
         .1
@@ -2289,7 +2289,7 @@ fn exchange_partition_event_updates_global_statistics_like_go() {
     rows(&mut session, "ANALYZE TABLE stats_exchange_nt");
 
     let (partitioned, partition_id, standalone) = {
-        let catalog = stack.factory.catalog.load();
+        let catalog = stack.factory.catalog.get_latest();
         let partitioned = catalog
             .find_table("test", "stats_exchange_pt")
             .expect("partitioned table is published")
@@ -2511,7 +2511,7 @@ fn stats_notifier_uses_a_real_internal_transaction_like_go() {
     rows(&mut client, "ANALYZE TABLE stats_notifier_transaction");
     let table_id = factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_notifier_transaction")
         .expect("table is published")
         .1
@@ -2595,7 +2595,7 @@ fn global_temporary_analyze_uses_session_rows_and_statistics() {
     let temporary_id = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "global_stats")
         .expect("GLOBAL temporary DDL publishes its table metadata")
         .1
@@ -2664,7 +2664,7 @@ fn stats_lock_live_pessimistic_transaction_merges_partition_delta_like_go() {
         "INSERT INTO lock_live VALUES (1),(2),(11),(12)",
     );
     rows(&mut session, "ANALYZE TABLE lock_live");
-    let catalog = factory.catalog.load();
+    let catalog = factory.catalog.get_latest();
     let table = catalog
         .find_table("test", "lock_live")
         .expect("lock table is published")
@@ -2921,7 +2921,7 @@ fn run_tracked_auto_analyze(kill: Option<bool>) {
     );
     let table_id = factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "auto_exec_live")
         .expect("auto-analyze table is published")
         .1
@@ -3180,7 +3180,7 @@ fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path()
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    let catalog = factory.catalog.load();
+    let catalog = factory.catalog.get_latest();
     let analyze_id = catalog
         .find_table("test", "queue_analyze")
         .expect("analyze table exists")
@@ -3536,7 +3536,7 @@ fn table_lifecycle_ddl_updates_statistics_like_go() {
     let old_id = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_lifecycle")
         .expect("created table is published")
         .1
@@ -3564,7 +3564,7 @@ fn table_lifecycle_ddl_updates_statistics_like_go() {
     let like_id = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_lifecycle_like")
         .expect("CREATE TABLE LIKE result is published")
         .1
@@ -3590,7 +3590,7 @@ fn table_lifecycle_ddl_updates_statistics_like_go() {
     let new_id = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_lifecycle")
         .expect("truncated table is published")
         .1
@@ -3648,7 +3648,7 @@ fn ddl_after_loaded_statistics_matches_go() {
     let table_id = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_ddl_after_load")
         .expect("created table is published")
         .1
@@ -3780,7 +3780,7 @@ fn ddl_after_loaded_statistics_matches_go() {
     assert!(stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_ddl_after_load")
         .is_some_and(|(_, table)| table.columns.iter_deref().any(|column| column
             .read()
@@ -3815,7 +3815,7 @@ fn truncate_partitioned_table_statistics_match_go() {
     );
     rows(&mut session, "ANALYZE TABLE stats_truncate_partitioned");
     let old_ids = partition_id_map(
-        &stack.factory.catalog.load(),
+        &stack.factory.catalog.get_latest(),
         "test",
         "stats_truncate_partitioned",
     )
@@ -3839,7 +3839,7 @@ fn truncate_partitioned_table_statistics_match_go() {
     rows(&mut session, "TRUNCATE TABLE stats_truncate_partitioned");
     drain_stats_ddl_events(&stack.factory, &mut session);
     let new_ids = partition_id_map(
-        &stack.factory.catalog.load(),
+        &stack.factory.catalog.get_latest(),
         "test",
         "stats_truncate_partitioned",
     )
@@ -3894,7 +3894,7 @@ fn truncate_hash_partition_statistics_match_go() {
     );
     rows(&mut session, "ANALYZE TABLE stats_truncate_hash");
     let (logical_id, partitions) =
-        partition_id_map(&stack.factory.catalog.load(), "test", "stats_truncate_hash")
+        partition_id_map(&stack.factory.catalog.get_latest(), "test", "stats_truncate_hash")
             .expect("table is hash partitioned");
     let old_p0 = partitions
         .iter()
@@ -3922,7 +3922,7 @@ fn truncate_hash_partition_statistics_match_go() {
         )),
         [["4", "1"]]
     );
-    let new_p0 = partition_id_map(&stack.factory.catalog.load(), "test", "stats_truncate_hash")
+    let new_p0 = partition_id_map(&stack.factory.catalog.get_latest(), "test", "stats_truncate_hash")
         .expect("table remains hash partitioned")
         .1
         .into_iter()
@@ -3972,7 +3972,7 @@ fn add_partition_statistics_follow_global_prune_mode_like_go() {
         );
         drain_stats_ddl_events(&stack.factory, &mut session);
         let (logical_id, original) =
-            partition_id_map(&stack.factory.catalog.load(), "test", &table_name)
+            partition_id_map(&stack.factory.catalog.get_latest(), "test", &table_name)
                 .expect("table is partitioned");
         for (_, physical_id) in original {
             assert_eq!(
@@ -4001,7 +4001,7 @@ fn add_partition_statistics_follow_global_prune_mode_like_go() {
             ),
         );
         drain_stats_ddl_events(&stack.factory, &mut session);
-        let new_id = partition_id_map(&stack.factory.catalog.load(), "test", &table_name)
+        let new_id = partition_id_map(&stack.factory.catalog.get_latest(), "test", &table_name)
             .expect("table remains partitioned")
             .1
             .into_iter()
@@ -4055,7 +4055,7 @@ fn drop_partitions_statistics_match_go() {
     );
     rows(&mut session, "ANALYZE TABLE stats_drop_partitions");
     let (logical_id, partitions) = partition_id_map(
-        &stack.factory.catalog.load(),
+        &stack.factory.catalog.get_latest(),
         "test",
         "stats_drop_partitions",
     )
@@ -4133,7 +4133,7 @@ fn reorganize_partition_event_updates_statistics_like_go() {
     let table = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_reorganize_event")
         .expect("partitioned table is published")
         .1
@@ -4224,7 +4224,7 @@ fn add_and_remove_partitioning_events_move_statistics_like_go() {
     let source = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_partitioning_event")
         .expect("table is published")
         .1
@@ -4340,7 +4340,7 @@ fn flashback_cluster_event_refreshes_statistics_versions_like_go() {
     let table_id = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_flashback_event")
         .expect("table is published")
         .1
@@ -4393,7 +4393,7 @@ fn delayed_create_and_add_column_events_preserve_newer_statistics_like_go() {
     let create_table = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_delayed_create")
         .expect("created table is published")
         .1
@@ -4448,7 +4448,7 @@ fn delayed_create_and_add_column_events_preserve_newer_statistics_like_go() {
         "ANALYZE TABLE stats_delayed_column ALL COLUMNS",
     );
     let (column_table, delayed_columns) = {
-        let catalog = stack.factory.catalog.load();
+        let catalog = stack.factory.catalog.get_latest();
         let table = catalog
             .find_table("test", "stats_delayed_column")
             .expect("altered table is published")
@@ -4516,7 +4516,7 @@ fn drop_schema_ddl_retires_all_statistics_like_go() {
     );
     drain_stats_ddl_events(&stack.factory, &mut session);
     let retired_ids = {
-        let catalog = stack.factory.catalog.load();
+        let catalog = stack.factory.catalog.get_latest();
         let database = catalog
             .databases
             .iter()
@@ -4586,7 +4586,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
     let table_id = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_add_column")
         .expect("created table is published")
         .1
@@ -4606,7 +4606,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
     let column_id = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_add_column")
         .expect("altered table is published")
         .1
@@ -4642,7 +4642,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
     let defaulted_column_id = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_add_column")
         .expect("altered table is published")
         .1
@@ -4683,7 +4683,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
     let zeroed_column_id = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_add_column")
         .expect("altered table is published")
         .1
@@ -4722,7 +4722,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
     );
     drain_stats_ddl_events(&stack.factory, &mut session);
     let virtual_column_id = {
-        let catalog = stack.factory.catalog.load();
+        let catalog = stack.factory.catalog.get_latest();
         let column = catalog
             .find_table("test", "stats_add_column")
             .expect("altered table is published")
@@ -4796,7 +4796,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
     );
     drain_stats_ddl_events(&stack.factory, &mut session);
     let (f_id, g_id) = {
-        let catalog = stack.factory.catalog.load();
+        let catalog = stack.factory.catalog.get_latest();
         let table = catalog
             .find_table("test", "stats_add_column")
             .expect("altered table is published")
@@ -4861,7 +4861,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
     let h_id = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_add_column")
         .expect("altered table is published")
         .1
@@ -5212,7 +5212,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
         .commit_stats_plan(|snapshot, _| {
             let (created_job_id, plan) = tidb_stats_handle_autoanalyze::analyze_jobs::plan_insert_analyze_job(
                 snapshot,
-                &stack.factory.catalog.load(),
+                &stack.factory.catalog.get_latest(),
                 "test",
                 "stats_show_analyze_job",
                 "",
@@ -5231,7 +5231,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
         .commit_stats_plan(|snapshot, _| {
             tidb_stats_handle_autoanalyze::analyze_jobs::plan_start_analyze_job(
                 snapshot,
-                &stack.factory.catalog.load(),
+                &stack.factory.catalog.get_latest(),
                 job_id,
                 started_at,
                 Some(stack.factory.auto_ids.as_ref()),
@@ -5243,7 +5243,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
         .commit_stats_plan(|snapshot, _| {
             tidb_stats_handle_autoanalyze::analyze_jobs::plan_update_analyze_job_progress(
                 snapshot,
-                &stack.factory.catalog.load(),
+                &stack.factory.catalog.get_latest(),
                 job_id,
                 3,
                 started_at,
@@ -5308,7 +5308,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
         .commit_stats_plan(|snapshot, _| {
             let (created_job_id, plan) = tidb_stats_handle_autoanalyze::analyze_jobs::plan_insert_analyze_job(
                 snapshot,
-                &factory.catalog.load(),
+                &factory.catalog.get_latest(),
                 "test",
                 "t",
                 "",
@@ -5327,7 +5327,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
         .commit_stats_plan(|snapshot, _| {
             tidb_stats_handle_autoanalyze::analyze_jobs::plan_start_analyze_job(
                 snapshot,
-                &factory.catalog.load(),
+                &factory.catalog.get_latest(),
                 job_id,
                 started_at,
                 Some(factory.auto_ids.as_ref()),
@@ -5339,7 +5339,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
         .commit_stats_plan(|snapshot, _| {
             tidb_stats_handle_autoanalyze::analyze_jobs::plan_finish_analyze_job(
                 snapshot,
-                &factory.catalog.load(),
+                &factory.catalog.get_latest(),
                 job_id,
                 0,
                 Some("simulated failure"),
@@ -5420,7 +5420,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
             .commit_stats_plan(|snapshot, _| {
                 let (_, plan) = tidb_stats_handle_autoanalyze::analyze_jobs::plan_insert_analyze_job(
                     snapshot,
-                    &stack.factory.catalog.load(),
+                    &stack.factory.catalog.get_latest(),
                     "test",
                     "t",
                     "",
@@ -5440,7 +5440,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
             .commit_stats_plan(|snapshot, _| {
                 tidb_stats_handle_autoanalyze::analyze_jobs::plan_start_analyze_job(
                     snapshot,
-                    &stack.factory.catalog.load(),
+                    &stack.factory.catalog.get_latest(),
                     id,
                     old,
                     Some(stack.factory.auto_ids.as_ref()),
@@ -5453,7 +5453,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
         .commit_stats_plan(|snapshot, _| {
             tidb_stats_handle_autoanalyze::analyze_jobs::plan_finish_analyze_job(
                 snapshot,
-                &stack.factory.catalog.load(),
+                &stack.factory.catalog.get_latest(),
                 2,
                 0,
                 None,
@@ -5467,7 +5467,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
         .commit_stats_plan(|snapshot, _| {
             tidb_stats_handle_autoanalyze::analyze_jobs::plan_start_analyze_job(
                 snapshot,
-                &stack.factory.catalog.load(),
+                &stack.factory.catalog.get_latest(),
                 2,
                 old,
                 Some(stack.factory.auto_ids.as_ref()),
@@ -5479,7 +5479,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
         .commit_stats_plan(|snapshot, _| {
             tidb_stats_handle_autoanalyze::analyze_jobs::plan_finish_analyze_job(
                 snapshot,
-                &stack.factory.catalog.load(),
+                &stack.factory.catalog.get_latest(),
                 5,
                 0,
                 None,
@@ -5782,7 +5782,7 @@ fn system_table_ddl_does_not_publish_statistics_events_like_go() {
     let old_id = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("mysql", "stats_no_event")
         .expect("system table is published")
         .1
@@ -5805,7 +5805,7 @@ fn system_table_ddl_does_not_publish_statistics_events_like_go() {
     let new_id = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("mysql", "stats_no_event")
         .expect("truncated system table is published")
         .1
@@ -5821,7 +5821,7 @@ fn system_table_ddl_does_not_publish_statistics_events_like_go() {
          PARTITION p0 VALUES LESS THAN (10))",
     );
     let (logical_id, p0_id) = {
-        let catalog = stack.factory.catalog.load();
+        let catalog = stack.factory.catalog.get_latest();
         let table = catalog
             .find_table("mysql", "stats_no_event_part")
             .expect("partitioned system table is published")
@@ -5841,7 +5841,7 @@ fn system_table_ddl_does_not_publish_statistics_events_like_go() {
          PARTITION p1 VALUES LESS THAN MAXVALUE)",
     );
     let p1_id = {
-        let catalog = stack.factory.catalog.load();
+        let catalog = stack.factory.catalog.get_latest();
         let table = catalog
             .find_table("mysql", "stats_no_event_part")
             .expect("partitioned system table is published")
@@ -5865,7 +5865,7 @@ fn system_table_ddl_does_not_publish_statistics_events_like_go() {
         "ALTER TABLE mysql.stats_no_event_part TRUNCATE PARTITION p1",
     );
     let replacement_p1_id = {
-        let catalog = stack.factory.catalog.load();
+        let catalog = stack.factory.catalog.get_latest();
         let table = catalog
             .find_table("mysql", "stats_no_event_part")
             .expect("partitioned system table is published")
@@ -6048,7 +6048,7 @@ fn modify_column_ddl_events_follow_go() {
     );
     rows(&mut session, "ANALYZE TABLE stats_modify_column");
     let (table_id, column_id) = {
-        let catalog = stack.factory.catalog.load();
+        let catalog = stack.factory.catalog.get_latest();
         let table = catalog
             .find_table("test", "stats_modify_column")
             .expect("created table is published")
@@ -6188,7 +6188,7 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
         )),
         [["1"]]
     );
-    let catalog = stack.factory.catalog.load();
+    let catalog = stack.factory.catalog.get_latest();
     let (_, table) = catalog
         .find_table("test", "history_analyze")
         .expect("analyzed table remains published");
@@ -6621,7 +6621,7 @@ fn stats_gc_matches_go_column_usage_cleanup() {
     let table_id = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_gc_usage")
         .expect("table is in the live catalog")
         .1
@@ -6685,7 +6685,7 @@ fn stats_gc_keeps_meta_for_existing_table_without_histograms() {
     let table_id = stack
         .factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "stats_gc_empty_hist")
         .expect("table is in the live catalog")
         .1
@@ -6727,7 +6727,7 @@ fn historical_stats_reader_falls_back_to_latest_stats_like_go() {
         "SET GLOBAL tidb_enable_historical_stats = OFF",
     );
     rows(&mut session, "ANALYZE TABLE history_fallback");
-    let catalog = stack.factory.catalog.load();
+    let catalog = stack.factory.catalog.get_latest();
     let (_, table) = catalog
         .find_table("test", "history_fallback")
         .expect("analyzed table remains published");
@@ -6785,7 +6785,7 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
         "CREATE TABLE history_partition (a INT, b INT, INDEX idx(b)) \
          PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))",
     );
-    let catalog = stack.factory.catalog.load();
+    let catalog = stack.factory.catalog.get_latest();
     let (_, table) = catalog
         .find_table("test", "history_partition")
         .expect("partitioned table is published");
@@ -16068,7 +16068,7 @@ fn drop_stats_soft_deletes_the_stored_statistics() {
     rows(&mut session, "ANALYZE TABLE ds ALL COLUMNS WITH 2 TOPN");
     let table_id = factory
         .catalog
-        .load()
+        .get_latest()
         .find_table("test", "ds")
         .expect("table is published")
         .1

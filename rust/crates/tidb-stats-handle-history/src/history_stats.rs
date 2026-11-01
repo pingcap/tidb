@@ -31,7 +31,7 @@ use std::time::Duration;
 use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
-use tidb_infoschema::cluster_catalog::load_cluster_catalog;
+use tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables;
 use tidb_store_driver_txn::cluster_table_storage::{
     lock_pessimistic_statement, PessimisticStatementTransactionError,
     SessionTransaction,
@@ -202,7 +202,7 @@ pub fn record_historical_stats_meta<S: StoreClient>(
     let (modify_count, count) =
         lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
+            let catalog = fetch_all_schemas_with_tables(&mut snapshot).map_err(|error| error.to_string())?;
             let (counts, plan) =
                 plan_historical_stats_meta_lock(&mut snapshot, &catalog, table_id, version)
                     .map_err(|error| error.to_string())?;
@@ -210,7 +210,7 @@ pub fn record_historical_stats_meta<S: StoreClient>(
         })?;
     lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
+        let catalog = fetch_all_schemas_with_tables(&mut snapshot).map_err(|error| error.to_string())?;
         let plan = plan_historical_stats_meta_replace(
             &mut snapshot,
             &catalog,

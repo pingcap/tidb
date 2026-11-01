@@ -925,7 +925,7 @@ fn rename_owner_batch_self_reference_and_moved_child_share_publication() {
     );
     apply(&mut store, &child);
     let child_id = child.created_id.unwrap();
-    let before = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut store).unwrap();
+    let before = tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables(&mut store).unwrap();
     let write = plan(
         &mut store,
         "RENAME TABLE u6.parent TO u6.renamed, u6.child TO u6.moved_child",

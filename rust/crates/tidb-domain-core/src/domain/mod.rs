@@ -28,7 +28,7 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::{Datelike, Timelike, Utc};
-use tidb_infoschema_issyncer::catalog_watch::SharedCatalog as SharedClusterCatalog;
+use tidb_infoschema_issyncer::catalog_watch::InfoCache;
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;
 use tidb_infoschema_isvalidator::SchemaValidator;
@@ -67,7 +67,7 @@ pub struct ClusterDataLockWaits {
 
 pub struct ClusterStatisticsItemLoader {
     pub transactions: Arc<dyn ClusterTransactions>,
-    pub catalog: Arc<SharedClusterCatalog>,
+    pub catalog: Arc<InfoCache>,
     pub stats: Arc<SharedStats>,
     pub global_vars: GlobalSysvars,
 }
@@ -115,12 +115,12 @@ impl tidb_stats_handle::StatisticsSource for ClusterStatisticsSource {
 
 pub struct ClusterColumnStatsUsageProvider {
     pub transactions: Arc<dyn ClusterTransactions>,
-    pub catalog: Arc<SharedClusterCatalog>,
+    pub catalog: Arc<InfoCache>,
 }
 
 pub struct ClusterTableStorageStatsProvider {
     pub transactions: Arc<dyn ClusterTransactions>,
-    pub catalog: Arc<SharedClusterCatalog>,
+    pub catalog: Arc<InfoCache>,
     /// Go `cache.TableRowStatsCache`
     /// (`pkg/statistics/handle/cache/stats_table_row_cache.go`): the size
     /// cache the information-schema `TABLES`/`PARTITIONS` readers refresh in
@@ -235,7 +235,7 @@ impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
         // The latest catalog only locates `mysql.stats_meta` and
         // `mysql.stats_histograms`, as Go's restricted SQL resolves them; the
         // tables sized are the statement's own (`physical_ids`).
-        let catalog = self.catalog.load();
+        let catalog = self.catalog.get_latest();
 
         // Go `updateStatsCacheIfNeed` + `TableRowStatsCache.UpdateByID`
         // (`executor/infoschema_reader.go:671`): refresh the node's size cache
@@ -383,7 +383,7 @@ impl tidb_pdhelper::ApproximateTableCountProvider
 
 pub struct ClusterAnalyzeStatusProvider {
     pub transactions: Arc<dyn ClusterTransactions>,
-    pub catalog: Arc<SharedClusterCatalog>,
+    pub catalog: Arc<InfoCache>,
     pub approximate_counts: Arc<ClusterApproximateTableCountProvider>,
 }
 
@@ -395,7 +395,7 @@ impl tidb_stats_handle_autoanalyze::analyze_jobs::AnalyzeStatusProvider for Clus
         let snapshot = self.transactions.open_snapshot(resource_group)?;
         tidb_stats_handle_autoanalyze::analyze_jobs::load_analyze_status_jobs(
             &mut SnapshotMetaSnapshot::new(snapshot),
-            &self.catalog.load(),
+            &self.catalog.get_latest(),
         )
         .map_err(|error| error.to_string())
     }
@@ -462,7 +462,7 @@ impl tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::ColumnSt
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
         tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::load_column_stats_usage(
             &mut snapshot,
-            &self.catalog.load(),
+            &self.catalog.get_latest(),
             location,
         )
         .map(|usage| {
@@ -481,7 +481,7 @@ impl tidb_stats_handle_syncload::sync_load::StatisticsItemLoader for ClusterStat
         items: &[tidb_model::StatsLoadItem],
         resource_group: &str,
     ) -> Result<Vec<(i64, Arc<tidb_stats::Table>)>, String> {
-        let catalog = self.catalog.load();
+        let catalog = self.catalog.get_latest();
         let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
         let skipped_column_types = self
             .global_vars
@@ -626,7 +626,7 @@ pub struct Domain {
     /// The cluster catalog, republished whole by the reload thread and by a
     /// DDL's own inline reload. A connection takes one `Arc` per statement, so
     /// no session ever sees a half-updated catalog.
-    pub catalog: Arc<SharedClusterCatalog>,
+    pub catalog: Arc<InfoCache>,
     /// Go's one `privilege.Manager` per `Domain`, here loaded from the
     /// cluster's own `mysql.*`.
     pub privileges: PrivilegeRegistry,
@@ -846,7 +846,7 @@ impl Domain {
         accounts: Arc<dyn ClusterAccountWriter>,
         sysvars: Arc<dyn ClusterSysvarWriter>,
         stats_lock: Arc<dyn ClusterStatsLock>,
-        catalog: Arc<SharedClusterCatalog>,
+        catalog: Arc<InfoCache>,
         privileges: PrivilegeRegistry,
         global_vars: GlobalSysvars,
         stats: Arc<SharedStats>,
@@ -857,7 +857,7 @@ impl Domain {
             Arc::clone(&transactions),
         )));
         let boot_skipped = cluster_session_catalog(
-            &catalog.load(),
+            &catalog.get_latest(),
             &detached_storage(),
             &stats.load(),
             auto_ids.as_ref(),
@@ -1072,7 +1072,7 @@ impl Domain {
         .commit_stats_plan(|snapshot, _| {
             tidb_stats_handle_autoanalyze::analyze_jobs::plan_delete_analyze_jobs(
                 snapshot,
-                &self.catalog.load(),
+                &self.catalog.get_latest(),
                 &cutoff,
             )
             .map_err(|error| error.to_string())
@@ -1115,7 +1115,7 @@ impl Domain {
         .commit_stats_plan(|snapshot, _| {
             tidb_stats_handle_autoanalyze::analyze_jobs::plan_cleanup_corrupted_analyze_jobs_on_current_instance(
                 snapshot,
-                &self.catalog.load(),
+                &self.catalog.get_latest(),
                 &instance,
                 &analyze_process_ids,
                 &cutoff,
@@ -1154,7 +1154,7 @@ impl Domain {
         .commit_stats_plan(|snapshot, _| {
             tidb_stats_handle_autoanalyze::analyze_jobs::plan_cleanup_corrupted_analyze_jobs_on_dead_instances(
                 snapshot,
-                &self.catalog.load(),
+                &self.catalog.get_latest(),
                 &alive_instances,
                 &cutoff,
                 Some(self.auto_ids.as_ref()),
@@ -1355,7 +1355,7 @@ impl Domain {
                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                 tidb_stats_handle_usage::session_stats_collect::plan_column_stats_usage_dump(
                     &mut snapshot,
-                    &self.catalog.load(),
+                    &self.catalog.get_latest(),
                     &converted,
                     tidb_datatype::current_time::utc_now_timestamp(),
                     Some(row_ids.as_ref()),
@@ -1398,7 +1398,7 @@ impl Domain {
     pub fn dump_stats_delta_to_kv_parts(
         stats_usage: &tidb_stats_handle_usage::StatsUsageHandle,
         transactions: &dyn ClusterTransactions,
-        catalog_store: &SharedClusterCatalog,
+        catalog_store: &InfoCache,
         stats_store: &SharedStats,
         global_vars: &GlobalSysvars,
         force_dump: bool,
@@ -1410,7 +1410,7 @@ impl Domain {
         let table_ids = pending.collect_pending_stats_delta_table_ids(target_table_ids);
         for batch in table_ids.chunks(tidb_stats_handle_usage::DUMP_DELTA_BATCH_SIZE) {
             let batch_time = SystemTime::now();
-            let catalog = catalog_store.load();
+            let catalog = catalog_store.get_latest();
             let stats = stats_store.load();
             let mut original_updates = Vec::new();
             let mut parents = std::collections::HashMap::new();
@@ -1661,7 +1661,7 @@ impl Domain {
     }
 
     fn gc_index_usage(&self) -> Result<(), String> {
-        let catalog = self.catalog.load();
+        let catalog = self.catalog.get_latest();
         self.stats_usage.gc_index_usage(|table_id| {
             catalog
                 .databases
@@ -1865,7 +1865,7 @@ impl Domain {
     /// The schema version this node has followed the cluster to.
     #[must_use]
     pub fn followed_schema_version(&self) -> i64 {
-        self.catalog.load().schema_version
+        self.catalog.get_latest().schema_version
     }
 
     /// The catalog this node currently serves, for the status server's
@@ -1873,7 +1873,7 @@ impl Domain {
     /// this reads the live pointer rather than a captured snapshot.
     #[must_use]
     pub fn catalog_snapshot(&self) -> tidb_infoschema::cluster_catalog::ClusterCatalog {
-        (*self.catalog.load()).clone()
+        (*self.catalog.get_latest()).clone()
     }
 
     /// The process list of every connection this factory has open.
@@ -2191,7 +2191,7 @@ impl Drop for Domain {
 
 #[derive(Clone)]
 pub struct ClusterHistoricalInfoSchema {
-    pub catalog: Arc<SharedClusterCatalog>,
+    pub catalog: Arc<InfoCache>,
 }
 
 pub struct ClusterHistoricalSchemaView {
@@ -2248,14 +2248,14 @@ impl SessionInfoSchema for ClusterHistoricalInfoSchema {
 
     fn info_schema(&self) -> Self::View {
         ClusterHistoricalSchemaView {
-            catalog: (*self.catalog.load()).clone(),
+            catalog: (*self.catalog.get_latest()).clone(),
         }
     }
 }
 
 pub struct ClusterHistoricalStatsHandle {
     pub transactions: Arc<dyn ClusterTransactions>,
-    pub catalog: Arc<SharedClusterCatalog>,
+    pub catalog: Arc<InfoCache>,
     pub global_vars: GlobalSysvars,
     /// The node's live row-ID allocators for new rows.
     pub auto_ids: Arc<dyn TableAutoIds>,
@@ -2353,7 +2353,7 @@ impl ClusterHistoricalStatsHandle {
         let cutoff = tidb_datatype::current_time::local_now_datetime()
             .add_duration(retention)
             .map_err(|error| error.to_string())?;
-        let catalog = self.catalog.load();
+        let catalog = self.catalog.get_latest();
         let count = {
             let snapshot = self.transactions.open_snapshot("default")?;
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
@@ -2513,7 +2513,7 @@ impl ClusterHistoricalStatsHandle {
             return Ok(());
         }
         let gc_version = now - offset;
-        let catalog = self.catalog.load();
+        let catalog = self.catalog.get_latest();
         let last_gc = {
             let snapshot = self.transactions.open_snapshot("default")?;
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
@@ -2700,7 +2700,7 @@ impl ClusterHistoricalStatsHandle {
         table: &tidb_model::table_info::TableInfo,
         snapshot_ts: u64,
     ) -> Result<(Option<tidb_stats_util::JsonTable>, Vec<String>), String> {
-        let catalog = self.catalog.load();
+        let catalog = self.catalog.get_latest();
         let Some(partition) = table.get_partition_info() else {
             let (json, fallback) = self.historical_or_latest_json(
                 &catalog,
@@ -2773,7 +2773,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
         is_partition: bool,
     ) -> Result<u64, String> {
         let row_ids = self.auto_ids.clone();
-        let catalog = self.catalog.load();
+        let catalog = self.catalog.get_latest();
         let table_info = catalog
             .databases
             .iter()
@@ -3217,7 +3217,7 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueSource
         };
 
         let factory = self.factory()?;
-        let catalog = factory.catalog.load();
+        let catalog = factory.catalog.get_latest();
         let statistics = factory.stats.load();
         let snapshot = factory.transactions.open_snapshot("default")?;
         let current_ts = snapshot.start_ts();
@@ -3297,7 +3297,7 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext
         let Ok(factory) = self.factory() else {
             return tidb_stats_handle_autoanalyze_priorityqueue::TableLookup::TableMissing;
         };
-        let catalog = factory.catalog.load();
+        let catalog = factory.catalog.get_latest();
         for database in &catalog.databases {
             if let Some(table) = database.tables.iter().find(|table| table.id == table_id) {
                 return tidb_stats_handle_autoanalyze_priorityqueue::TableLookup::Found {

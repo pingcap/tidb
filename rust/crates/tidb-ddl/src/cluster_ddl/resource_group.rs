@@ -56,7 +56,7 @@ pub fn prepare_resource_group_job_submission<S: MetaSnapshot>(
         ),
         _ => return Ok(None),
     };
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let mut job = session_job(job_context, action);
     job.schema_id = schema_id;
     job.schema_name = group.name.lowercase().to_owned().into();

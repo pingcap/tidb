@@ -255,7 +255,7 @@ pub(super) fn scramble(password: &[u8], salt: &[u8]) -> [u8; 20] {
 /// what lets a test watch one connection's DDL reach another's.
 pub(super) struct MockNode {
     pub(super) cluster: Arc<MockCluster>,
-    pub(super) catalog: Arc<SharedClusterCatalog>,
+    pub(super) catalog: Arc<InfoCache>,
     pub(super) ddl: Arc<MockDdl>,
     pub(super) accounts: Arc<MockAccountWriter>,
     pub(super) sysvars: Arc<MockSysvarWriter>,
@@ -303,7 +303,7 @@ impl MockNode {
     /// A node whose published catalog is `loaded`, as the store's meta
     /// holds it.
     pub(super) fn over(loaded: ClusterCatalog) -> Self {
-        let catalog = Arc::new(SharedClusterCatalog::new(loaded));
+        let catalog = Arc::new(InfoCache::new(loaded));
         Self {
             cluster: Arc::new(MockCluster::default()),
             ddl: Arc::new(MockDdl::new(Arc::clone(&catalog))),

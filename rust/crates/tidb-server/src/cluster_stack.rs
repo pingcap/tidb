@@ -297,7 +297,7 @@ pub fn cluster_session_stack(
         let catalog = Arc::clone(&catalog);
         Arc::new(build_mpp_client(
             &authority,
-            move || catalog.load().schema_version,
+            move || catalog.get_latest().schema_version,
         ))
     };
     // This node's identity in the cluster: `/tidb/server/info/<uuid>` under

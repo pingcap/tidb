@@ -118,8 +118,8 @@ fn stats_targets(catalog: &ClusterCatalog) -> Vec<tidb_stats_handle_syncload::re
 /// schema follower. Go's statistics handle does the equivalent on every
 /// cache update: a DDL must not leave a newly added table, or a changed column
 /// type, outside later `mysql.stats_*` reads.
-fn current_stats_targets(catalog: &SharedCatalog) -> Vec<tidb_stats_handle_syncload::real_tikv_stats::StatsTarget> {
-    let current = catalog.load();
+fn current_stats_targets(catalog: &InfoCache) -> Vec<tidb_stats_handle_syncload::real_tikv_stats::StatsTarget> {
+    let current = catalog.get_latest();
     stats_targets(&current)
 }
 
@@ -147,7 +147,7 @@ fn async_stats_load_interval(stats_lease: tidb_domain_core::node_config::StatsLe
 /// loading. Stats have no schema-watch nudge; Go's own refresh is tick-only
 /// too.
 pub fn spawn_node_stats<S>(
-    catalog: Arc<SharedCatalog>,
+    catalog: Arc<InfoCache>,
     opener: tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
     stats_lease: tidb_domain_core::node_config::StatsLease,
     timeout: Duration,
@@ -186,7 +186,7 @@ where
     // when the boot catalog has one, and let ordinary leased passes retry the
     // lookup after bootstrap or a transient catalog failure.
     let loader = Arc::new(std::sync::RwLock::new(
-        tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader::locate(&catalog.load()).ok(),
+        tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader::locate(&catalog.get_latest()).ok(),
     ));
     let (async_loader, async_init) = if let Some(async_interval) =
         async_stats_load_interval(stats_lease)
@@ -292,7 +292,7 @@ where
                 .map(Ok)
                 .unwrap_or_else(|| {
                     tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader::locate(
-                        &update_catalog.load(),
+                        &update_catalog.get_latest(),
                     )
                     .map_err(|error| error.to_string())
                 })?;
@@ -335,7 +335,7 @@ pub fn spawn_catalog_reloader<S>(
     transaction_opener: RealOptimisticTransactionOpener<S>,
     schema_lease: Duration,
     row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<(Arc<SharedCatalog>, CatalogReloader, Arc<SchemaValidator>), CatalogReloadError>
+) -> Result<(Arc<InfoCache>, CatalogReloader, Arc<SchemaValidator>), CatalogReloadError>
 where
     S: StoreClient,
 {
@@ -354,7 +354,7 @@ where
     // 8027 on the first COMMIT after boot.
     validator.reset();
     validator.update(startup_lease_grant_ts, 0, startup.schema_version, None);
-    let catalog = Arc::new(SharedCatalog::new(startup));
+    let catalog = Arc::new(InfoCache::new(startup));
     let pass_validator = Arc::clone(&validator);
     let reloader = CatalogReloader::spawn(
         Arc::clone(&catalog),
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn statistics_reload_targets_follow_the_current_catalog() {
-        let shared = SharedCatalog::new(catalog(11, 101));
+        let shared = InfoCache::new(catalog(11, 101));
         assert_eq!(
             current_stats_targets(&shared)
                 .into_iter()
@@ -422,7 +422,7 @@ mod tests {
         // A DDL publication must affect the next stats pass. The old path
         // captured the first target vector and would have kept reading table
         // 11 with its old type map forever.
-        shared.store(catalog(22, 202));
+        shared.upsert(catalog(22, 202));
         assert_eq!(
             current_stats_targets(&shared)
                 .into_iter()

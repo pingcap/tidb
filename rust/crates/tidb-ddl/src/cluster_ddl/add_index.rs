@@ -241,7 +241,7 @@ pub fn prepare_add_index_job_submission<S: MetaSnapshot>(
     has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
     job_context: &dyn DdlSessionContext,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let mut built = build_add_index_job(snapshot, &catalog, statement, store_count, job_context)?;
     // Go `Job.Query` is the submitting statement's text, which the job
     // context carries (the lowered statement's context predates it).

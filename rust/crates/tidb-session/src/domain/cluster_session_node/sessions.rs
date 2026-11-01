@@ -160,7 +160,7 @@ impl DomainSessions for Domain {
         if let Some(client) = self.kv_client.as_ref() {
             storage = storage.with_client(Arc::clone(client));
         }
-        let loaded = self.catalog.load();
+        let loaded = self.catalog.get_latest();
         // One fully built table set per schema version, shared the same way:
         // each session clones its tables (columns/indexes are Arc-shared) and
         // swaps in only its own storage seam below.
@@ -277,7 +277,7 @@ impl DomainSessions for Domain {
                         .and_then(|value| value.parse::<usize>().ok())
                         .unwrap_or(16);
                     let loaded = historical_catalog
-                        .historical_at(&mut metadata, capacity)
+                        .load_with_ts(&mut metadata, capacity)
                         .map_err(historical_catalog_error)?;
                     let built = cluster_session_catalog_with_templates(
                         &loaded,
@@ -328,7 +328,7 @@ impl DomainSessions for Domain {
                     .and_then(|value| value.parse::<usize>().ok())
                     .unwrap_or(16);
                 let loaded = catalogs
-                    .historical_at(&mut metadata, capacity)
+                    .load_with_ts(&mut metadata, capacity)
                     .map_err(historical_catalog_error)?;
                 let built = cluster_session_catalog_with_templates(
                     &loaded,
@@ -413,7 +413,7 @@ impl DomainSessions for Domain {
         // read at statement time rather than captured when the session opens.
         let catalog_versions = Arc::clone(&self.catalog);
         session.set_cluster_schema_version_source(Arc::new(move || {
-            catalog_versions.load().schema_version
+            catalog_versions.get_latest().schema_version
         }));
         // Go `preprocess.go:2270` writes each bound table into the
         // transaction's `GetRelatedTableForMDL` map; here the driver session

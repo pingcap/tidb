@@ -30,7 +30,7 @@ use std::collections::{BTreeMap, HashMap};
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, Time, TimeType};
 use tidb_infoschema::cluster_catalog::{
-    load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
+    fetch_all_schemas_with_tables, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
 use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::ColumnStatsTimeInfo;
 use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::{
@@ -264,7 +264,7 @@ fn bootstrapped() -> MetaStore {
 }
 
 fn analyze_job_rows(store: &mut MetaStore) -> Vec<SystemRow<'static>> {
-    let catalog = load_cluster_catalog(store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(store).expect("the bootstrapped catalog loads");
     let table = catalog
         .databases
         .iter()
@@ -309,7 +309,7 @@ fn analyze_job_rows(store: &mut MetaStore) -> Vec<SystemRow<'static>> {
 fn analyze_job_lifecycle_and_timestamp_cleanup_match_go() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let (job_id, insert) = plan_insert_analyze_job(
         &mut store,
         &catalog,
@@ -327,17 +327,17 @@ fn analyze_job_lifecycle_and_timestamp_cleanup_match_go() {
     apply_mutations(&mut store, &insert.mutations);
     let running_at =
         Time::from_date_checked(2026, 7, 29, 6, 13, 0, 0, TimeType::Timestamp, 0).unwrap();
-    let catalog = load_cluster_catalog(&mut store).unwrap();
+    let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
     let start = plan_start_analyze_job(&mut store, &catalog, job_id, running_at, Some(&*row_ids)).unwrap();
     apply_mutations(&mut store, &start.mutations);
-    let catalog = load_cluster_catalog(&mut store).unwrap();
+    let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
     let progress =
         plan_update_analyze_job_progress(&mut store, &catalog, job_id, 8, running_at, Some(&*row_ids))
             .unwrap();
     apply_mutations(&mut store, &progress.mutations);
     let finished_at =
         Time::from_date_checked(2026, 7, 29, 6, 13, 5, 0, TimeType::Timestamp, 0).unwrap();
-    let catalog = load_cluster_catalog(&mut store).unwrap();
+    let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
     let finish =
         plan_finish_analyze_job(&mut store, &catalog, job_id, 12, None, finished_at, Some(&*row_ids)).unwrap();
     apply_mutations(&mut store, &finish.mutations);
@@ -353,7 +353,7 @@ fn analyze_job_lifecycle_and_timestamp_cleanup_match_go() {
     assert_eq!(rows[0].datum("process_id").unwrap(), None);
     assert_eq!(rows[0].text("job_info").unwrap().unwrap().len(), 65_535);
 
-    let catalog = load_cluster_catalog(&mut store).unwrap();
+    let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
     let keep = plan_delete_analyze_jobs(&mut store, &catalog, &finished_at).unwrap();
     assert!(keep.is_empty(), "equal update_time is retained");
     let after = Time::from_date_checked(2026, 7, 29, 6, 13, 6, 0, TimeType::Timestamp, 0).unwrap();
@@ -478,7 +478,7 @@ fn loaded_stats_item_uses_go_statement_batches() {
 fn a_real_table_s_six_histograms_fit_one_analyze_transaction() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let stats = ClusterTableStats {
         table_id: 4242,
         version: 440_000_000_000_000_000,
@@ -513,7 +513,7 @@ fn a_real_table_s_six_histograms_fit_one_analyze_transaction() {
 fn the_analyze_version_round_trips_through_the_stored_row() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let stats = ClusterTableStats {
         table_id: 4242,
         version: 440_000_000_000_000_000,
@@ -553,7 +553,7 @@ fn the_analyze_version_round_trips_through_the_stored_row() {
 fn table_size_stats_source_reads_requested_storage_rows() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     for (table_id, row_count, column_id) in [(4242, 10, 11), (5151, 20, 12)] {
         let stats = ClusterTableStats {
             table_id,
@@ -623,7 +623,7 @@ fn table_size_stats_source_reads_requested_storage_rows() {
 fn the_table_row_size_cache_serves_previous_values_after_a_failed_refresh() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     for (table_id, row_count, column_id) in [(4242, 10, 11), (5151, 20, 12)] {
         let stats = ClusterTableStats {
             table_id,
@@ -788,7 +788,7 @@ fn analyze_save_reconciles_deltas_committed_after_sampling() {
     for (analyze_snapshot, expected_count) in [(true, 6), (false, 3)] {
         let mut store = bootstrapped();
         let row_ids = std::sync::Arc::clone(&store.row_ids);
-        let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+        let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
         let current = ClusterTableStats {
             table_id: 4242,
             version: 90,
@@ -844,7 +844,7 @@ fn analyze_save_reconciles_deltas_committed_after_sampling() {
 fn analyze_save_does_not_replace_a_newer_snapshot() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let current = ClusterTableStats {
         table_id: 4242,
         version: 120,
@@ -899,7 +899,7 @@ fn analyze_save_does_not_replace_a_newer_snapshot() {
 #[test]
 fn stats_ndv_batch_load_stats_replaces_and_clears_fm_sketches() {
     let mut store = bootstrapped();
-    let catalog = load_cluster_catalog(&mut store).unwrap();
+    let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
     let loader = ClusterStatsLoader::locate(&catalog).unwrap();
     for is_index in [false, true] {
         let mut item = full_histogram(1, is_index);
@@ -982,7 +982,7 @@ fn stats_ndv_batch_load_stats_replaces_and_clears_fm_sketches() {
 fn partition_fm_sketch_round_trips_only_for_global_merge() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let expected = FmSketch::from_raw_parts(3, MAX_SKETCH_SIZE, [4, 8, 12]);
     let mut column = full_histogram(1, false);
     column.fm_sketch = Some(expected.clone());
@@ -1035,7 +1035,7 @@ fn partition_fm_sketch_round_trips_only_for_global_merge() {
 fn async_global_stats_loads_each_payload_by_item() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let expected = FmSketch::from_raw_parts(3, MAX_SKETCH_SIZE, [8, 16, 24]);
     let mut expected_cms = CmsSketch::new(2, 8);
     expected_cms.insert_bytes_by_count(b"x", 5);
@@ -1164,7 +1164,7 @@ fn async_global_stats_loads_each_payload_by_item() {
 fn lite_load_keeps_metadata_and_evicts_the_histogram_payload() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let stats = ClusterTableStats {
         table_id: 4242,
         version: 440_000_000_000_000_000,
@@ -1207,7 +1207,7 @@ fn lite_load_keeps_metadata_and_evicts_the_histogram_payload() {
 fn initial_stats_matches_go_table_scope_and_payload_shapes() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let version = 440_000_000_000_000_000;
     let current_ids = [4242, 4243, 4250, 4251];
     let dropped_id = 4999;
@@ -1363,7 +1363,7 @@ fn initial_stats_matches_go_table_scope_and_payload_shapes() {
 fn initial_stats_handles_missing_histograms_and_topn_without_buckets() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let empty_id = 4260;
     let topn_only_id = 4261;
     let initial =
@@ -1460,7 +1460,7 @@ fn initial_stats_handles_missing_histograms_and_topn_without_buckets() {
 fn cache_update_preserves_and_refreshes_resident_histogram_payload() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let old_stats = ClusterTableStats {
         table_id: 4242,
         version: 440_000_000_000_000_000,
@@ -1558,7 +1558,7 @@ fn cache_update_preserves_and_refreshes_resident_histogram_payload() {
 fn topn_load_uses_the_declared_secondary_index() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let stats = ClusterTableStats {
         table_id: 4242,
         version: 440_000_000_000_000_000,
@@ -1604,7 +1604,7 @@ fn topn_load_uses_the_declared_secondary_index() {
 fn one_item_load_uses_only_that_items_key_ranges() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let stats = ClusterTableStats {
         table_id: 4242,
         version: 440_000_000_000_000_000,
@@ -1665,7 +1665,7 @@ fn one_item_load_uses_only_that_items_key_ranges() {
 fn column_distribution_read_is_atomic_ordered_and_validated() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let stats = ClusterTableStats {
         table_id: 4242,
         version: 440_000_000_000_000_000,
@@ -1777,7 +1777,7 @@ fn column_distribution_read_is_atomic_ordered_and_validated() {
 fn loaded_stats_item_write_replaces_only_the_named_histogram() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial = ClusterTableStats {
         table_id,
@@ -1849,7 +1849,7 @@ fn loaded_stats_item_write_replaces_only_the_named_histogram() {
 fn stats_item_gc_removes_only_the_dropped_column_in_one_plan() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4244;
     let stats = ClusterTableStats {
         table_id,
@@ -1913,7 +1913,7 @@ fn stats_item_gc_removes_only_the_dropped_column_in_one_plan() {
 fn table_stats_delete_preserves_go_soft_and_hard_phases() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4245;
     let stats = ClusterTableStats {
         table_id,
@@ -1995,7 +1995,7 @@ fn table_stats_delete_preserves_go_soft_and_hard_phases() {
 fn stats_gc_window_and_timestamp_are_half_open_and_persistent() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     for (table_id, version) in [(4250, 100), (4251, 200)] {
         let stats = ClusterTableStats {
             table_id,
@@ -2037,7 +2037,7 @@ fn stats_gc_window_and_timestamp_are_half_open_and_persistent() {
 fn persisted_analyze_options_round_trip_and_replace_raw_values() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table = TableInfo {
         id: 4242,
         columns: vec![
@@ -2131,7 +2131,7 @@ fn persisted_analyze_options_round_trip_and_replace_raw_values() {
 fn partial_analyze_write_preserves_unselected_histograms() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial = ClusterTableStats {
         table_id,
@@ -2204,7 +2204,7 @@ fn partial_analyze_write_preserves_unselected_histograms() {
 fn independent_index_write_preserves_existing_meta_values() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial = ClusterTableStats {
         table_id,
@@ -2266,7 +2266,7 @@ fn independent_index_write_preserves_existing_meta_values() {
 fn independent_index_write_creates_zero_count_zero_snapshot_meta() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let version = 440_000_000_000_000_001;
     let stats = ClusterTableStats {
         table_id: 4242,
@@ -2304,7 +2304,7 @@ fn independent_index_write_creates_zero_count_zero_snapshot_meta() {
 fn loaded_stats_negative_count_preserves_existing_meta_values() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial = ClusterTableStats {
         table_id,
@@ -2345,7 +2345,7 @@ fn loaded_stats_negative_count_preserves_existing_meta_values() {
 fn loaded_stats_final_meta_update_preserves_unnamed_columns() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial = ClusterTableStats {
         table_id,
@@ -2379,7 +2379,7 @@ fn loaded_stats_final_meta_update_preserves_unnamed_columns() {
 fn slow_save_version_refresh_changes_only_the_two_go_columns() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial = ClusterTableStats {
         table_id,
@@ -2418,7 +2418,7 @@ fn slow_save_version_refresh_changes_only_the_two_go_columns() {
 fn flashback_stats_version_updates_meta_and_histograms_only() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial = ClusterTableStats {
         table_id,
@@ -2469,7 +2469,7 @@ fn flashback_stats_version_updates_meta_and_histograms_only() {
 fn global_stats_id_moves_all_six_go_tables() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let from = 4242;
     let to = 5151;
     let stats = ClusterTableStats {
@@ -2544,7 +2544,7 @@ fn global_stats_id_moves_all_six_go_tables() {
 fn global_stats_id_move_rejects_target_identity_collisions() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     for table_id in [4242, 5151] {
         let stats = ClusterTableStats {
             table_id,
@@ -2571,7 +2571,7 @@ fn global_stats_id_move_rejects_target_identity_collisions() {
 fn insert_table_stats_uses_go_statement_order_and_histogram_placeholders() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let physical_id = 4243;
     let table = TableInfo {
         id: physical_id,
@@ -2674,7 +2674,7 @@ fn insert_table_stats_uses_go_statement_order_and_histogram_placeholders() {
 fn insert_column_stats_uses_go_origin_default_branches() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let physical_id = 4244;
     let version = 440_000_000_000_000_001;
     let initial = ClusterTableStats {
@@ -2859,7 +2859,7 @@ fn stats_delta_updates_use_go_statement_order() {
 fn stats_delta_lock_statements_lock_only_selected_existing_rows() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let existing_id = 4241;
     let initial =
         plan_loaded_stats_meta_write(&mut store, &catalog, existing_id, 10, 2, 100, now(), Some(&*row_ids))
@@ -2883,7 +2883,7 @@ fn stats_delta_lock_statements_lock_only_selected_existing_rows() {
 fn exchange_partition_stats_update_matches_go_clamping_and_locked_rows() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial =
         plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 8, 5, 100, now(), Some(&*row_ids))
@@ -2952,7 +2952,7 @@ fn exchange_partition_stats_update_matches_go_clamping_and_locked_rows() {
 #[test]
 fn stats_delta_negative_multirow_insert_keeps_go_duplicate_key_order() {
     let mut store = bootstrapped();
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4240;
     apply_stats_delta_statements(
         &mut store,
@@ -2993,7 +2993,7 @@ fn stats_delta_negative_multirow_insert_keeps_go_duplicate_key_order() {
 fn stats_delta_updates_match_go_positive_negative_and_locked_rows() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial =
         plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 10, 2, 100, now(), Some(&*row_ids))
@@ -3086,7 +3086,7 @@ fn stats_delta_updates_match_go_positive_negative_and_locked_rows() {
 #[test]
 fn stats_delta_batch_assigns_one_transaction_version_to_every_table() {
     let mut store = bootstrapped();
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let updates = [4246, 4247].map(|table_id| DeltaUpdate {
         table_id,
         delta: TableDelta {
@@ -3112,7 +3112,7 @@ fn stats_delta_batch_assigns_one_transaction_version_to_every_table() {
 fn stats_delta_update_keeps_go_row_delta_when_modify_count_is_zero() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4244;
     let initial =
         plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 10, 2, 100, now(), Some(&*row_ids))
@@ -3150,7 +3150,7 @@ fn stats_delta_update_keeps_go_row_delta_when_modify_count_is_zero() {
 fn loaded_stats_usage_replaces_timestamps_in_one_plan() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let first = plan_loaded_stats_usage_write(
         &mut store,
@@ -3227,7 +3227,7 @@ fn loaded_stats_usage_replaces_timestamps_in_one_plan() {
 fn column_stats_usage_write_does_not_filter_the_table_item_kind() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let usage = HashMap::from([(
         tidb_model::TableItemID {
@@ -3263,7 +3263,7 @@ fn usage_item(table_id: i64, column_id: i64) -> tidb_model::TableItemID {
 
 fn dump_usage(store: &mut MetaStore, item: tidb_model::TableItemID, used_at: Time) {
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut *store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut *store).expect("the bootstrapped catalog loads");
     let plan =
         plan_column_stats_usage_dump(store, &catalog, &[(item, used_at)], now(), Some(&*row_ids))
             .expect("column usage dump plans");
@@ -3275,7 +3275,7 @@ fn predicate_usage_first_touch_creates_row() {
     let mut store = bootstrapped();
     let item = usage_item(4243, 11);
     dump_usage(&mut store, item, now());
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let usage = load_column_stats_usage_for_table(
         &mut store,
         &catalog,
@@ -3296,7 +3296,7 @@ fn predicate_usage_no_bump_within_throttle() {
         .expect("fixed timestamp");
     dump_usage(&mut store, item, first);
     dump_usage(&mut store, item, shortly_after);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let usage = load_column_stats_usage_for_table(
         &mut store,
         &catalog,
@@ -3315,7 +3315,7 @@ fn predicate_usage_bump_after_old_stored_value() {
         .expect("fixed timestamp");
     dump_usage(&mut store, item, old);
     dump_usage(&mut store, item, now());
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let usage = load_column_stats_usage_for_table(
         &mut store,
         &catalog,
@@ -3333,7 +3333,7 @@ fn predicate_usage_bump_after_old_stored_value() {
 fn predicate_column_load_and_cleanup_match_the_pinned_storage_contract() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let plan = plan_loaded_stats_usage_write(
         &mut store,
@@ -3400,7 +3400,7 @@ fn predicate_column_load_and_cleanup_match_the_pinned_storage_contract() {
 fn predicate_column_missing_table_skips_cleanup_but_still_reads_usage() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4243;
     let item = usage_item(table_id, 9);
     let usage = HashMap::from([(
@@ -3427,7 +3427,7 @@ fn predicate_column_missing_table_skips_cleanup_but_still_reads_usage() {
 fn predicate_column_invalid_zero_timestamp_matches_convert_tz_null() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4244;
     let item = usage_item(table_id, 10);
     let zero = Time::from_date_checked(0, 0, 0, 0, 0, 0, 0, TimeType::Timestamp, 0)
@@ -3494,7 +3494,7 @@ fn predicate_column_invalid_zero_timestamp_matches_convert_tz_null() {
 fn loaded_stats_history_requires_the_exact_current_meta_version() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let version = 440_000_000_000_000_000;
     let meta =
@@ -3566,7 +3566,7 @@ fn loaded_stats_history_requires_the_exact_current_meta_version() {
 #[test]
 fn historical_stats_data_round_trips_through_stats_history() {
     let mut store = bootstrapped();
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let json = JsonTable {
         database_name: "test".to_owned(),
@@ -3634,7 +3634,7 @@ fn historical_stats_data_round_trips_through_stats_history() {
 fn historical_stats_data_plans_one_statement_per_block() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4243;
     let json = JsonTable {
         database_name: "test".to_owned(),
@@ -3700,7 +3700,7 @@ fn historical_stats_data_plans_one_statement_per_block() {
 fn historical_stats_reader_selects_meta_and_data_versions_independently() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let data_version = 440_000_000_000_000_000;
     let data = JsonTable {
@@ -3778,7 +3778,7 @@ fn historical_stats_reader_selects_meta_and_data_versions_independently() {
 fn outdated_historical_stats_deletes_only_rows_at_or_before_the_cutoff() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4243;
     let cutoff = now();
     let newer = Time::from_date_checked(2027, 7, 29, 6, 12, 55, 0, TimeType::Timestamp, 0)
@@ -3861,7 +3861,7 @@ fn outdated_historical_stats_deletes_only_rows_at_or_before_the_cutoff() {
 fn live_stats_dump_refreshes_meta_after_loading_payload() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial = ClusterTableStats {
         table_id,
@@ -3946,7 +3946,7 @@ fn live_stats_dump_refreshes_meta_after_loading_payload() {
 #[test]
 fn stats_writes_allocate_from_the_node_allocator_like_go() {
     let mut store = bootstrapped();
-    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
     let allocators = tidb_table::table_from_meta::LocalTableAutoIds::default();
     let mut job_ids = Vec::new();
     for _ in 0..2 {

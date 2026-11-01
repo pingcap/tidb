@@ -108,7 +108,7 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
         } => (schema, table, action.as_ref(), &context.0),
         _ => return Ok(None),
     };
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let (database_id, stored) = locate_table(&catalog, schema, table)?;
     let kv = tidb_ddl_build::partition_ddl::PartitionedTable::new(stored)
         .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error)))?;

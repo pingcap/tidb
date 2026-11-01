@@ -946,7 +946,7 @@ mod tiflash_cluster_http_tests {
             String::new(),
             vec![],
         );
-        let catalog = Arc::new(tidb_infoschema_issyncer::catalog_watch::SharedCatalog::new(
+        let catalog = Arc::new(tidb_infoschema_issyncer::catalog_watch::InfoCache::new(
             tidb_infoschema::cluster_catalog::ClusterCatalog {
                 resource_groups: Vec::new(),
                 policies: Vec::new(),

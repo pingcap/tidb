@@ -44,7 +44,7 @@ pub fn prepare_exchange_partition_job_submission<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let (partitioned_db_id, partitioned) = locate_table(&catalog, schema, table)?;
     let (standalone_db_id, standalone) =
         locate_table(&catalog, standalone_schema, standalone_table)?;

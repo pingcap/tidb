@@ -31,7 +31,7 @@ pub fn prepare_alter_schema_job_submission<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let (name, action, args, policy) = match statement {
         // Go `executor.ModifySchemaCharsetAndCollate`.
         DdlStatement::ModifySchemaCharsetAndCollate {

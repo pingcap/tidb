@@ -283,7 +283,7 @@ fn builtin_in_estimate_survives_statistics_initialization() {
     )
     .unwrap();
     storage.apply(&bootstrap.mutations);
-    let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut storage).unwrap();
+    let catalog = tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables(&mut storage).unwrap();
     for statement in insert_table_stats_statements(&table, table_id) {
         let write =
             plan_insert_table_stats_statement(&mut storage, &catalog, &statement, 101, now, None)

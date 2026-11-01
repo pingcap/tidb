@@ -92,12 +92,13 @@ use std::time::Duration;
 
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 
-/// The catalog every query reads, replaced whole by the reload thread.
+/// Go `infoschema.InfoCache`: the catalog every query reads, replaced whole by
+/// the reload thread.
 ///
-/// A reader's [`load`](SharedCatalog::load) hands back an owned `Arc`, so a
+/// A reader's [`get_latest`](InfoCache::get_latest) hands back an owned `Arc`, so a
 /// statement in flight keeps the exact catalog it started with and a publish
 /// never has to wait for readers.
-pub struct SharedCatalog {
+pub struct InfoCache {
     published: RwLock<Arc<ClusterCatalog>>,
     historical: Mutex<std::collections::BTreeMap<i64, Arc<ClusterCatalog>>>,
     capacity: AtomicUsize,
@@ -107,7 +108,7 @@ pub struct SharedCatalog {
     reload: Mutex<()>,
 }
 
-impl SharedCatalog {
+impl InfoCache {
     /// Publishes an initial catalog, normally the node's startup full load.
     #[must_use]
     pub fn new(catalog: ClusterCatalog) -> Self {
@@ -131,19 +132,21 @@ impl SharedCatalog {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// The catalog in force now. A poisoned lock still yields the value: a
+    /// Go `InfoCache.GetLatest`: the catalog in force now. A poisoned lock still yields the value: a
     /// panicking publisher cannot leave the node unable to answer queries.
     #[must_use]
-    pub fn load(&self) -> Arc<ClusterCatalog> {
+    pub fn get_latest(&self) -> Arc<ClusterCatalog> {
         match self.published.read() {
             Ok(guard) => Arc::clone(&guard),
             Err(poisoned) => Arc::clone(&poisoned.into_inner()),
         }
     }
 
-    /// Resolves a schema version from the caller's actual historical snapshot.
-    /// Old reads never replace the latest publication; the newest versions are retained.
-    pub fn historical_at<S: tidb_infoschema::cluster_catalog::MetaSnapshot>(
+    /// Go `Loader.LoadWithTS(ts, isSnapshot)`: the schema at the snapshot's
+    /// version, from this cache (`GetByVersion`) or loaded and inserted. Old
+    /// reads never replace the latest publication; the newest versions are
+    /// retained.
+    pub fn load_with_ts<S: tidb_infoschema::cluster_catalog::MetaSnapshot>(
         &self,
         snapshot: &mut S,
         capacity: usize,
@@ -155,7 +158,7 @@ impl SharedCatalog {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             self.capacity.store(capacity, Ordering::Relaxed);
-            let latest = self.load();
+            let latest = self.get_latest();
             versions.insert(latest.schema_version, latest);
             // Go ReSize retains the newest entries before GetByVersion.
             while versions.len() > capacity {
@@ -167,7 +170,7 @@ impl SharedCatalog {
             return Ok(found);
         }
         // No shared cache lock spans storage RPCs.
-        let mut loaded = tidb_infoschema::cluster_catalog::load_cluster_catalog(snapshot)?;
+        let mut loaded = tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables(snapshot)?;
         // The reserved counter may be ahead of the committed schema diff.
         // Use the same effective version as the live reload owner.
         loaded.schema_version = version;
@@ -184,15 +187,15 @@ impl SharedCatalog {
         Ok(found)
     }
 
-    /// Admits `catalog` and publishes it unless a newer schema version is
-    /// already published; returns whether it was published.
+    /// Go `InfoCache.Upsert`: admits `catalog` and publishes it unless a newer
+    /// schema version is already published; returns whether it was published.
     ///
-    /// Go `InfoCache.Insert` keeps schemas ordered by version and
+    /// Go's cache keeps schemas ordered by version and
     /// `GetLatest` answers the highest, so a reload that finishes late (a
     /// slow full load racing a DDL's inline reload) can never take the node
     /// back to an older schema. The older catalog still enters the
     /// historical cache, as Go's insert keeps it for snapshot reads.
-    pub fn store(&self, catalog: ClusterCatalog) -> bool {
+    pub fn upsert(&self, catalog: ClusterCatalog) -> bool {
         // Publication and retained-version admission share the same lock order
         // as historical lookup, and holding the cache lock across the version
         // comparison serializes concurrent publishers.
@@ -360,7 +363,7 @@ impl CatalogReloader {
     /// Go ticks at `schemaLease/2`; a caller with a lease should pass half of
     /// it, which is why the interval is a parameter rather than a constant.
     pub fn spawn(
-        catalog: Arc<SharedCatalog>,
+        catalog: Arc<InfoCache>,
         interval: Duration,
         mut pass: ReloadPass,
     ) -> Result<Self, CatalogReloadError> {
@@ -469,7 +472,7 @@ impl Drop for CatalogReloader {
 /// A failed read is not fatal: the previously published catalog stays in force
 /// and the next tick tries again, exactly as Go's reload loop logs and retries.
 fn run_one_pass(
-    catalog: &SharedCatalog,
+    catalog: &InfoCache,
     stats: &StatCounters,
     pass: &mut ReloadPass,
     nudged: bool,
@@ -479,7 +482,7 @@ fn run_one_pass(
     // a log, and the live proof would be asserting nothing.
     let trigger = if nudged { "watch" } else { "tick" };
     let _reload = catalog.lock_reload();
-    let current = catalog.load();
+    let current = catalog.get_latest();
     let outcome = pass(&current);
     stats.passes.fetch_add(1, Ordering::AcqRel);
     match outcome {
@@ -488,13 +491,13 @@ fn run_one_pass(
         }
         Ok(CatalogReloadPass::Diffs(next)) => {
             let schema_version = next.schema_version;
-            catalog.store(next);
+            catalog.upsert(next);
             stats.diff_reloads.fetch_add(1, Ordering::AcqRel);
             emit_reloaded(schema_version, "diffs", trigger);
         }
         Ok(CatalogReloadPass::Full(next)) => {
             let schema_version = next.schema_version;
-            catalog.store(next);
+            catalog.upsert(next);
             stats.full_reloads.fetch_add(1, Ordering::AcqRel);
             emit_reloaded(schema_version, "full", trigger);
         }
@@ -550,16 +553,16 @@ mod tests {
                 panic!("a published retained version must not be full-loaded again")
             }
         }
-        let shared = SharedCatalog::new(catalog_at(7));
-        shared.store(catalog_at(8));
+        let shared = InfoCache::new(catalog_at(7));
+        shared.upsert(catalog_at(8));
         assert_eq!(
             shared
-                .historical_at(&mut NoScan, 16)
+                .load_with_ts(&mut NoScan, 16)
                 .unwrap()
                 .schema_version,
             7
         );
-        assert_eq!(shared.load().schema_version, 8);
+        assert_eq!(shared.get_latest().schema_version, 8);
     }
 
     #[test]
@@ -590,19 +593,19 @@ mod tests {
                 Ok(Vec::new())
             }
         }
-        let shared = SharedCatalog::new(catalog_at(10));
+        let shared = InfoCache::new(catalog_at(10));
         let mut snapshot = Snapshot {
             version: 7,
             scans: 0,
         };
-        shared.historical_at(&mut snapshot, 4).unwrap();
+        shared.load_with_ts(&mut snapshot, 4).unwrap();
         snapshot.version = 8;
-        shared.historical_at(&mut snapshot, 4).unwrap();
+        shared.load_with_ts(&mut snapshot, 4).unwrap();
         snapshot.version = 9;
-        shared.historical_at(&mut snapshot, 4).unwrap();
+        shared.load_with_ts(&mut snapshot, 4).unwrap();
         snapshot.version = 7;
         snapshot.scans = 0;
-        shared.historical_at(&mut snapshot, 2).unwrap();
+        shared.load_with_ts(&mut snapshot, 2).unwrap();
         assert!(snapshot.scans > 0, "Go ReSize evicts before GetByVersion");
     }
 
@@ -635,25 +638,25 @@ mod tests {
                 Ok(Vec::new())
             }
         }
-        let shared = SharedCatalog::new(catalog_at(10));
+        let shared = InfoCache::new(catalog_at(10));
         let mut snapshot = Snapshot {
             version: 7,
             scans: 0,
             diff: Some(b"{}".to_vec()),
         };
-        let old = shared.historical_at(&mut snapshot, 3).unwrap();
+        let old = shared.load_with_ts(&mut snapshot, 3).unwrap();
         assert_eq!(old.schema_version, 7);
         assert!(snapshot.scans > 0);
         snapshot.scans = 0;
         assert!(Arc::ptr_eq(
             &old,
-            &shared.historical_at(&mut snapshot, 3).unwrap()
+            &shared.load_with_ts(&mut snapshot, 3).unwrap()
         ));
         assert_eq!(snapshot.scans, 0);
         snapshot.version = 8;
-        shared.historical_at(&mut snapshot, 3).unwrap();
+        shared.load_with_ts(&mut snapshot, 3).unwrap();
         snapshot.version = 9;
-        shared.historical_at(&mut snapshot, 2).unwrap();
+        shared.load_with_ts(&mut snapshot, 2).unwrap();
         assert_eq!(
             shared
                 .historical
@@ -664,23 +667,23 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![9, 10]
         );
-        assert_eq!(shared.load().schema_version, 10);
+        assert_eq!(shared.get_latest().schema_version, 10);
         assert_eq!(
             old.schema_version, 7,
             "eviction does not invalidate an active reader"
         );
         snapshot.version = 7;
         snapshot.scans = 0;
-        shared.historical_at(&mut snapshot, 2).unwrap();
+        shared.load_with_ts(&mut snapshot, 2).unwrap();
         assert!(
             snapshot.scans > 0,
             "evicted schema reloads from its own snapshot"
         );
-        shared.store(catalog_at(11));
+        shared.upsert(catalog_at(11));
         snapshot.version = 11;
         assert_eq!(
             shared
-                .historical_at(&mut snapshot, 2)
+                .load_with_ts(&mut snapshot, 2)
                 .unwrap()
                 .schema_version,
             11
@@ -693,7 +696,7 @@ mod tests {
         snapshot.diff = None;
         assert_eq!(
             shared
-                .historical_at(&mut snapshot, 2)
+                .load_with_ts(&mut snapshot, 2)
                 .unwrap()
                 .schema_version,
             10
@@ -701,7 +704,7 @@ mod tests {
         snapshot.version = 9;
         assert_eq!(
             shared
-                .historical_at(&mut snapshot, 2)
+                .load_with_ts(&mut snapshot, 2)
                 .unwrap()
                 .schema_version,
             8,
@@ -710,7 +713,7 @@ mod tests {
         snapshot.version = 0;
         assert_eq!(
             shared
-                .historical_at(&mut snapshot, 2)
+                .load_with_ts(&mut snapshot, 2)
                 .unwrap()
                 .schema_version,
             0
@@ -718,10 +721,10 @@ mod tests {
         snapshot.version = 11;
         snapshot.diff = Some(b"invalid diff".to_vec());
         assert!(
-            shared.historical_at(&mut snapshot, 2).is_err(),
+            shared.load_with_ts(&mut snapshot, 2).is_err(),
             "a cached schema cannot suppress metadata decoding errors"
         );
-        assert_eq!(shared.load().schema_version, 11);
+        assert_eq!(shared.get_latest().schema_version, 11);
     }
 
     fn catalog_at(version: i64) -> ClusterCatalog {
@@ -735,32 +738,32 @@ mod tests {
 
     #[test]
     fn a_published_catalog_replaces_the_previous_one_whole() {
-        let shared = SharedCatalog::new(catalog_at(1));
-        let held = shared.load();
-        shared.store(catalog_at(2));
+        let shared = InfoCache::new(catalog_at(1));
+        let held = shared.get_latest();
+        shared.upsert(catalog_at(2));
         // The in-flight reader keeps its own version; the next reader sees the
         // new one. That is the whole consistency contract of the swap.
         assert_eq!(held.schema_version, 1);
-        assert_eq!(shared.load().schema_version, 2);
+        assert_eq!(shared.get_latest().schema_version, 2);
     }
 
     /// Go `InfoCache.GetLatest` answers the highest version: a reload that
     /// finishes after a newer one was published is cached, not published.
     #[test]
     fn a_late_older_catalog_never_replaces_a_newer_one() {
-        let shared = SharedCatalog::new(catalog_at(5));
-        assert!(shared.store(catalog_at(8)));
-        assert!(!shared.store(catalog_at(7)));
-        assert_eq!(shared.load().schema_version, 8);
+        let shared = InfoCache::new(catalog_at(5));
+        assert!(shared.upsert(catalog_at(8)));
+        assert!(!shared.upsert(catalog_at(7)));
+        assert_eq!(shared.get_latest().schema_version, 8);
         assert!(shared.historical.lock().unwrap().contains_key(&7));
-        assert!(shared.store(catalog_at(8)));
-        assert_eq!(shared.load().schema_version, 8);
+        assert!(shared.upsert(catalog_at(8)));
+        assert_eq!(shared.get_latest().schema_version, 8);
     }
 
     #[test]
     fn a_zero_interval_is_refused_rather_than_spinning() {
         let error = CatalogReloader::spawn(
-            Arc::new(SharedCatalog::new(catalog_at(1))),
+            Arc::new(InfoCache::new(catalog_at(1))),
             Duration::ZERO,
             Box::new(|_| Ok(CatalogReloadPass::Unchanged)),
         )
@@ -770,7 +773,7 @@ mod tests {
 
     #[test]
     fn the_thread_publishes_each_pass_and_stops_promptly_on_shutdown() {
-        let shared = Arc::new(SharedCatalog::new(catalog_at(1)));
+        let shared = Arc::new(InfoCache::new(catalog_at(1)));
         let (sender, receiver) = mpsc::channel();
         let mut version = 1;
         let mut reloader = CatalogReloader::spawn(
@@ -793,7 +796,7 @@ mod tests {
         // A condvar-based stop must not wait out a tick; the bound is generous
         // enough for a loaded machine yet far below a long interval.
         assert!(stopping.elapsed() < Duration::from_secs(5));
-        assert!(shared.load().schema_version >= 3);
+        assert!(shared.get_latest().schema_version >= 3);
         assert!(reloader.stats().diff_reloads >= 2);
         // The thread is gone: no further pass can arrive.
         drop(receiver);
@@ -801,7 +804,7 @@ mod tests {
 
     #[test]
     fn a_watch_nudge_reloads_long_before_the_tick_would_have() {
-        let shared = Arc::new(SharedCatalog::new(catalog_at(1)));
+        let shared = Arc::new(InfoCache::new(catalog_at(1)));
         let (sender, receiver) = mpsc::channel();
         // An hour-long tick: anything that arrives here arrived because the
         // nudge woke the thread, not because the lease elapsed.
@@ -828,12 +831,12 @@ mod tests {
         let stats = reloader.stats();
         assert_eq!(stats.nudged, 2);
         assert_eq!(stats.passes, 2);
-        assert_eq!(shared.load().schema_version, 3);
+        assert_eq!(shared.get_latest().schema_version, 3);
     }
 
     #[test]
     fn a_nudge_that_arrives_before_the_thread_waits_is_not_lost() {
-        let shared = Arc::new(SharedCatalog::new(catalog_at(1)));
+        let shared = Arc::new(InfoCache::new(catalog_at(1)));
         let (sender, receiver) = mpsc::channel();
         let mut reloader = CatalogReloader::spawn(
             Arc::clone(&shared),
@@ -856,7 +859,7 @@ mod tests {
     #[test]
     fn a_waker_outliving_its_reloader_is_inert() {
         let mut reloader = CatalogReloader::spawn(
-            Arc::new(SharedCatalog::new(catalog_at(1))),
+            Arc::new(InfoCache::new(catalog_at(1))),
             Duration::from_secs(3600),
             Box::new(|_| Ok(CatalogReloadPass::Unchanged)),
         )
@@ -870,28 +873,28 @@ mod tests {
 
     #[test]
     fn a_failed_pass_keeps_the_previous_catalog_published() {
-        let shared = Arc::new(SharedCatalog::new(catalog_at(7)));
+        let shared = Arc::new(InfoCache::new(catalog_at(7)));
         let stats = Arc::new(StatCounters::default());
         let mut pass: ReloadPass = Box::new(|_| Err("snapshot read failed".to_owned()));
         run_one_pass(&shared, &stats, &mut pass, false);
-        assert_eq!(shared.load().schema_version, 7);
+        assert_eq!(shared.get_latest().schema_version, 7);
         assert_eq!(stats.snapshot().failures, 1);
     }
 
     #[test]
     fn an_unchanged_pass_publishes_nothing() {
-        let shared = Arc::new(SharedCatalog::new(catalog_at(7)));
+        let shared = Arc::new(InfoCache::new(catalog_at(7)));
         let stats = Arc::new(StatCounters::default());
-        let published = shared.load();
+        let published = shared.get_latest();
         let mut pass: ReloadPass = Box::new(|_| Ok(CatalogReloadPass::Unchanged));
         run_one_pass(&shared, &stats, &mut pass, false);
-        assert!(Arc::ptr_eq(&published, &shared.load()));
+        assert!(Arc::ptr_eq(&published, &shared.get_latest()));
         assert_eq!(stats.snapshot().unchanged, 1);
     }
 
     #[test]
     fn dropping_the_reloader_stops_its_thread() {
-        let shared = Arc::new(SharedCatalog::new(catalog_at(1)));
+        let shared = Arc::new(InfoCache::new(catalog_at(1)));
         let (sender, receiver) = mpsc::channel();
         let reloader = CatalogReloader::spawn(
             Arc::clone(&shared),

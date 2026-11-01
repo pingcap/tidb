@@ -42,7 +42,7 @@ use tidb_model::schema_diff::SchemaDiff;
 use tidb_model::schema_state::SchemaState;
 
 use tidb_infoschema::cluster_catalog::{
-    load_cluster_catalog, load_database_tables, normalize_diff_loaded_table_info, ClusterCatalog,
+    fetch_all_schemas_with_tables, load_database_tables, normalize_diff_loaded_table_info, ClusterCatalog,
     ClusterCatalogError, LoadedDatabase, MetaSnapshot,
 };
 use tidb_infoschema_isvalidator::RelatedSchemaChange;
@@ -232,7 +232,7 @@ pub fn reload_cluster_catalog<S: MetaSnapshot>(
         }
     };
 
-    let mut catalog = load_cluster_catalog(snapshot)?;
+    let mut catalog = fetch_all_schemas_with_tables(snapshot)?;
     // The diff whose absence set `needed` back one version is still absent at
     // this snapshot, so the full load's own version reading is stepped back
     // the same way rather than trusting the raw counter.

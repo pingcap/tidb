@@ -81,7 +81,7 @@ pub trait TiFlashReplicaControl: Send + Sync {
 
 /// One poller over the node's catalog and PD membership. It owns no transaction.
 pub struct TiFlashReplicaManager {
-    catalog: Arc<tidb_infoschema_issyncer::catalog_watch::SharedCatalog>,
+    catalog: Arc<tidb_infoschema_issyncer::catalog_watch::InfoCache>,
     stores: Box<dyn Fn() -> Result<Vec<PdStore>, String> + Send + Sync>,
     ddl: Arc<dyn TiFlashReplicaControl>,
     /// Go `TiFlashReplicaManagerCtx.pdHTTPCli`.
@@ -229,7 +229,7 @@ impl TiFlashReplicaManager {
     /// InternalHTTPClient does. Retained five-tick discovery is shared with
     /// deterministic injected tests.
     pub fn with_pd_http_client(
-        catalog: Arc<tidb_infoschema_issyncer::catalog_watch::SharedCatalog>,
+        catalog: Arc<tidb_infoschema_issyncer::catalog_watch::InfoCache>,
         ddl: Arc<dyn TiFlashReplicaControl>,
         pd_http_client: pd_http::Client,
         security: &tidb_pd_client::ClusterSecurity,
@@ -265,7 +265,7 @@ impl TiFlashReplicaManager {
     /// `pd_http_client`, as Go's `initTiFlashReplicaManager` uses
     /// `is.pdHTTPCli`.
     pub fn new(
-        catalog: Arc<tidb_infoschema_issyncer::catalog_watch::SharedCatalog>,
+        catalog: Arc<tidb_infoschema_issyncer::catalog_watch::InfoCache>,
         stores: impl Fn() -> Result<Vec<PdStore>, String> + Send + Sync + 'static,
         ddl: Arc<dyn TiFlashReplicaControl>,
         pd_http_client: pd_http::Client,
@@ -338,7 +338,7 @@ impl TiFlashReplicaManager {
                 .clear();
             return Ok(());
         }
-        let catalog = self.catalog.load();
+        let catalog = self.catalog.get_latest();
         let mut state = self.state.lock().expect("TiFlash poll state");
         if state.counter % 5 == 0 {
             match (self.stores)() {
@@ -736,7 +736,7 @@ mod tests {
     }
 
     fn manager(ddl: Arc<Ddl>, calls: Arc<AtomicUsize>) -> TiFlashReplicaManager {
-        let catalog = Arc::new(tidb_infoschema_issyncer::catalog_watch::SharedCatalog::new(
+        let catalog = Arc::new(tidb_infoschema_issyncer::catalog_watch::InfoCache::new(
             tidb_infoschema::cluster_catalog::ClusterCatalog {
                 resource_groups: Vec::new(),
                 policies: Vec::new(),
@@ -903,7 +903,7 @@ mod tests {
     #[test]
     fn tiflash_batch_collects_physical_and_adding_partitions() {
         let catalog = replica_catalog(&[(7, false)]);
-        let mut image = catalog.load();
+        let mut image = catalog.get_latest();
         Arc::make_mut(&mut image).databases[0].tables[0].partition =
             Some(tidb_model::GoShared::new(tidb_model::PartitionInfo {
                 enable: true,
@@ -937,7 +937,7 @@ mod tests {
         let ddl = Arc::new(Ddl::default());
         ddl.owner.store(true, Ordering::SeqCst);
         let poller = fixture_manager(&http, ddl, &[]);
-        poller.catalog.store((*image).clone());
+        poller.catalog.upsert((*image).clone());
         poller.poll_once().unwrap();
         let requests = http.requests.lock().unwrap();
         assert!(
@@ -1174,8 +1174,8 @@ mod tests {
         }
     }
 
-    fn replica_catalog(tables: &[(i64, bool)]) -> Arc<tidb_infoschema_issyncer::catalog_watch::SharedCatalog> {
-        Arc::new(tidb_infoschema_issyncer::catalog_watch::SharedCatalog::new(
+    fn replica_catalog(tables: &[(i64, bool)]) -> Arc<tidb_infoschema_issyncer::catalog_watch::InfoCache> {
+        Arc::new(tidb_infoschema_issyncer::catalog_watch::InfoCache::new(
             tidb_infoschema::cluster_catalog::ClusterCatalog {
                 resource_groups: Vec::new(),
                 policies: Vec::new(),

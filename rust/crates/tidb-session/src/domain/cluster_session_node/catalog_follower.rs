@@ -31,13 +31,13 @@ use crate::Session;
 
 use super::{
     cluster_session_catalog_with_templates,
-    SharedClusterCatalog, SkippedTable, TableAutoIds,
+    InfoCache, SkippedTable, TableAutoIds,
 };
 
 /// See the module documentation.
 pub(super) struct CatalogFollower {
     /// The node's catalog, which this connection follows.
-    catalog: Arc<SharedClusterCatalog>,
+    catalog: Arc<InfoCache>,
     /// The handles every table of the session was built over, kept so the
     /// connection's catalog can be rebuilt after a DDL without disturbing the
     /// snapshot slot or the staged writes.
@@ -55,7 +55,7 @@ pub(super) struct CatalogFollower {
 
 impl CatalogFollower {
     pub(super) fn new(
-        catalog: Arc<SharedClusterCatalog>,
+        catalog: Arc<InfoCache>,
         storage: ClusterTableStorage,
         auto_ids: Arc<dyn TableAutoIds>,
         schema_version: i64,
@@ -88,7 +88,7 @@ impl CatalogFollower {
     /// (`domain.GetSnapshotInfoSchema(startTS)`) -- a table committed before
     /// `BEGIN` is visible to every statement of the new transaction.
     pub(super) fn rebuild(&mut self, session: &mut Session) {
-        let loaded = self.catalog.load();
+        let loaded = self.catalog.get_latest();
         // Go pins InfoSchema independently of Domain.StatsHandle. Statistics
         // reads already see current publications, including inside a transaction.
         if loaded.schema_version == self.schema_version {

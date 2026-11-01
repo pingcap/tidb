@@ -31,7 +31,7 @@ pub fn prepare_drop_column_job_submission<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let built = build_drop_column_job(snapshot, &catalog, statement, job_context)?;
     submit_built_job(snapshot, &catalog, built, start_ts, upgrading, min_job_id)
 }

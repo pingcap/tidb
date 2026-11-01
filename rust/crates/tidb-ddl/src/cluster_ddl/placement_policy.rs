@@ -70,7 +70,7 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let (action, policy_name, schema_id, args) = match statement {
         // Go `executor.CreatePlacementPolicyWithInfo`.
         DdlStatement::CreatePlacementPolicy {

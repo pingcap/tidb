@@ -30,7 +30,7 @@ use tidb_store_driver_txn::transaction::StoreClient;
 
 use tidb_ddl_serverstate::{EtcdSyncer, MemSyncer, Syncer};
 use tidb_timeutil::SleepContext;
-use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadPass, SharedCatalog as SharedClusterCatalog};
+use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadPass, InfoCache};
 use crate::cluster_ddl::{CheckConstraintValidation, DdlStatement, ExchangePartitionValidation};
 use tidb_ddl_build::plan_error::DdlPlanError;
 use crate::ddl_job_scheduler::{must_reload_schemas, SchemaLoader};
@@ -266,7 +266,7 @@ where
     S: StoreClient,
 {
     opener: Arc<RealOptimisticTransactionOpener<S>>,
-    catalog: Arc<SharedClusterCatalog>,
+    catalog: Arc<InfoCache>,
     /// The node's schema validator, renewed by this reload like the reload
     /// thread's own passes renew it.
     schema_validator: Arc<SchemaValidator>,
@@ -650,7 +650,7 @@ where
     /// the reload thread publishes into.
     pub fn new(
         opener: RealOptimisticTransactionOpener<S>,
-        catalog: Arc<SharedClusterCatalog>,
+        catalog: Arc<InfoCache>,
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
         server_info: Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>,
@@ -680,7 +680,7 @@ where
     /// `refreshMDLCheckTableInfo` read that same monotonic lower bound.
     pub fn new_with_min_job_id_refresher(
         opener: RealOptimisticTransactionOpener<S>,
-        catalog: Arc<SharedClusterCatalog>,
+        catalog: Arc<InfoCache>,
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
         server_info: Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>,
@@ -1063,7 +1063,7 @@ mod schema_sync_tests {
         tidb_vardef::set_enable_mdl(false);
         let mut tx = opener.begin().unwrap();
         let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-        let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+        let catalog = tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables(&mut snapshot).unwrap();
         let before = catalog.schema_version;
         let mut job = Job::default();
         job.id = 600;
@@ -1208,7 +1208,7 @@ mod schema_sync_tests {
         job.last_schema_version = 0;
         job.fill_args(Some(GoShared::new(tidb_model::DropSchemaArgs::default())));
         let mut tx = opener.begin().unwrap();
-        let current = tidb_infoschema::cluster_catalog::load_cluster_catalog(
+        let current = tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables(
             &mut TransactionMetaSnapshot::new(&mut tx, timeout),
         )
         .unwrap();
@@ -1308,7 +1308,7 @@ mod schema_sync_tests {
         let seed = |job: &mut Job| {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables(&mut snapshot).unwrap();
             let table = DdlJobTable::locate(&catalog).unwrap();
             let mut mutations = Vec::new();
             table
@@ -1589,7 +1589,7 @@ mod schema_sync_tests {
         // and follows the normal schema barrier.
         let mut tx = opener.begin().unwrap();
         let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-        let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+        let catalog = tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables(&mut snapshot).unwrap();
         let table = DdlJobTable::locate(&catalog).unwrap();
         let mut active = table.load_by_id(&mut snapshot, 504).unwrap().unwrap();
         active.job.state = JobState::QUEUEING;
@@ -1653,7 +1653,7 @@ mod schema_sync_tests {
         let set_limit = |limit: i64| {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables(&mut snapshot).unwrap();
             let mut vars =
                 tidb_syssession::cluster_sysvar_load::load_cluster_sysvars(&mut snapshot, &catalog)
                     .unwrap()
@@ -1889,7 +1889,7 @@ mod schema_sync_tests {
         let validator = PauseDuringValidation(|_: &MutationBuffer| {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables(&mut snapshot).unwrap();
             let queue = DdlJobTable::locate(&catalog).unwrap();
             let mut active = queue.load_by_id(&mut snapshot, 700).unwrap().unwrap();
             active.job.state = JobState::PAUSING;
@@ -1930,7 +1930,7 @@ mod schema_sync_tests {
             .is_none());
         let mut tx = opener.begin().unwrap();
         let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-        let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+        let catalog = tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables(&mut snapshot).unwrap();
         let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut active = queue.load_by_id(&mut snapshot, 700).unwrap().unwrap();
         active.job.state = JobState::QUEUEING;
@@ -2144,7 +2144,7 @@ mod schema_sync_tests {
         let set_job_state = |state| {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables(&mut snapshot).unwrap();
             let queue = DdlJobTable::locate(&catalog).unwrap();
             let mut active = queue.load_by_id(&mut snapshot, 703).unwrap().unwrap();
             active.job.state = state;
@@ -2299,7 +2299,7 @@ mod schema_sync_tests {
         {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables(&mut snapshot).unwrap();
             let mut mutations = Vec::new();
             DdlJobTable::locate(&catalog)
                 .unwrap()
@@ -2338,7 +2338,7 @@ mod schema_sync_tests {
         >| {
             let mut tx = opener.begin().unwrap();
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_infoschema::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let catalog = tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables(&mut snapshot).unwrap();
             DdlReorgTable::locate(&catalog)
                 .unwrap()
                 .load(&mut snapshot, 700)
@@ -2443,7 +2443,7 @@ where
 {
     fn reload_catalog(&self) -> Result<(), String> {
         let _reload = self.catalog.lock_reload();
-        let current = self.catalog.load();
+        let current = self.catalog.get_latest();
         let at =
             reload_catalog_from_cluster(&self.opener, self.timeout, &current, &self.row_ids)
                 .map_err(|error| error.to_string())?;
@@ -2454,7 +2454,7 @@ where
         ) {
             CatalogReloadPass::Unchanged => {}
             CatalogReloadPass::Diffs(catalog) | CatalogReloadPass::Full(catalog) => {
-                self.catalog.store(catalog);
+                self.catalog.upsert(catalog);
             }
         }
         Ok(())

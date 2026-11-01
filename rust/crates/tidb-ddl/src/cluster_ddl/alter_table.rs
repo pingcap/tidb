@@ -96,7 +96,7 @@ pub fn prepare_alter_table_job_submission<S: MetaSnapshot>(
     min_job_id: i64,
     tiflash_stores: &dyn Fn() -> Result<u64, String>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = load_cluster_catalog(snapshot)?;
+    let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let built = build_alter_table_job(
         snapshot,
         &catalog,

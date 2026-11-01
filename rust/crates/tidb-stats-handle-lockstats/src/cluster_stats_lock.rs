@@ -345,7 +345,7 @@ fn datum_i64(value: Option<&Datum>, column: &str) -> Result<i64, ClusterStatsLoc
 mod statement_tests {
     use super::*;
     use tidb_infoschema::cluster_catalog::{
-        load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
+        fetch_all_schemas_with_tables, ClusterCatalogError, MetaPairs, MetaSnapshot,
     };
     use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
     use tidb_stats_handle_storage::cluster_stats_write::plan_loaded_stats_meta_write;
@@ -417,7 +417,7 @@ mod statement_tests {
     fn lock_insert_and_meta_version_are_separate_go_statements() {
         const TABLE_ID: i64 = 42;
         let mut store = bootstrapped();
-        let catalog = load_cluster_catalog(&mut store).unwrap();
+        let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
         let meta = plan_loaded_stats_meta_write(
             &mut store,
             &catalog,
