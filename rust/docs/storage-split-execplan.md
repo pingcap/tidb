@@ -289,6 +289,18 @@ CARGO_INCREMENTAL=0`.
     `(TableCommon, store)`; executor harness tests that run SQL put the
     store in `StmtContext` (a `with_txn_store` builder) so
     `statement_store` needs no fallback.
+    Tried 2026-11-02 and reverted: a per-test `MemTableStorage` beside each
+    fixture table broke ~25 tests, because those tests then register the
+    table in a catalog and run SQL, whose `StmtContext::for_query()` falls
+    back to the table's own (now empty) store. The fixture store must be ONE
+    shared handle that both the test and the statement context use, as Go's
+    single mock store is: a `ClusterTableStorage` over a fresh
+    `MutationBuffer` and an `EmptySnapshot` (what production tables already
+    read through), or an `Arc`-shared in-memory store. First build that
+    fixture store and the `StmtContext` builder that carries it; then
+    convert fixtures file by file. Landed meanwhile (60bb0e7176b):
+    `insert_row` / `insert_row_with_row_id` take the store, fixtures lend
+    the table's own.
   - [ ] (d) delete the field and its accessors.
 - [ ] Milestone 5: one `InfoSchema` per schema version, shared by sessions.
 - [ ] Milestone 6: `ClusterCatalog` is gone.
