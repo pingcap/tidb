@@ -1685,8 +1685,7 @@ fn run_insert_rows(
     // has additional duplicate semantics that must stay on the row path.
     let skip_primary_duplicate_check =
         if !resolves_conflicts && !lazy_dup_check && extra_handle_offset.is_none() {
-            match target(catalog, &database, &table_name)
-                .with_own_store(|table, store| {
+            match crate::with_statement_store(ctx, target(catalog, &database, &table_name), |table, store| {
                     table.all_clustered_insert_keys_absent(store, &new_rows, ctx)
                 })
                 .map_err(kv_write_error)?
@@ -1772,8 +1771,7 @@ fn run_insert_rows(
                         if !table.is_temporary() {
                             let _prefetch =
                                 tidb_tracing::start_thread_region("prefetchDataCache");
-                            table
-                                .with_own_store(|table, store| {
+                            crate::with_statement_store(ctx, table, |table, store| {
                                     let values = table.prefetch_unique_indices(store, &rows, ctx)?;
                                     table.prefetch_conflicted_old_rows(store, &rows, &values, ctx)
                                 })
@@ -1786,8 +1784,7 @@ fn run_insert_rows(
                             "InsertValues.batchCheckAndInsert",
                         ));
                         if !table.is_temporary() {
-                            table
-                                .with_own_store(|table, store| {
+                            crate::with_statement_store(ctx, table, |table, store| {
                                     table.prefetch_unique_indices(store, &rows, ctx)
                                 })
                                 .map_err(kv_write_error)?;
@@ -1840,8 +1837,9 @@ fn run_insert_rows(
                 let mut unchanged = false;
                 for conflict in &conflicts {
                     let handle = &conflict.handle;
-                    let existing = target(catalog, &database, &table_name)
-                        .get_row_by_handle(handle, &ctx.session_zone())
+                    let table = target(catalog, &database, &table_name);
+                    let existing = table
+                        .get_row_by_handle(&mut *crate::statement_store(ctx, table), handle, &ctx.session_zone())
                         .map_err(|e| kv_read_error("row read failed", e))?;
                     if existing.as_deref() == Some(row) {
                         // Go `batchCheckAndInsert`: an identical row behind the
@@ -2211,8 +2209,9 @@ fn apply_on_duplicate(
         unreachable!("ODKU targets a byte-backed table")
     };
     let auto_increment_offset = table.auto_increment_column_offset();
+    let mut store = crate::statement_store(ctx, table);
     let Some(existing) = std::sync::Arc::make_mut(table)
-        .get_row_by_handle(handle, &ctx.session_zone())
+        .get_row_by_handle(&mut *store, handle, &ctx.session_zone())
         .map_err(|e| kv_read_error("row read failed", e))?
     else {
         return Ok(OnDuplicateApplied::default());

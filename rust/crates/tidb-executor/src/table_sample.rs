@@ -57,6 +57,8 @@ pub(crate) struct SampleRange {
 pub struct TableSampleExecutor {
     meta: ExecutorMeta,
     tables: Vec<TableCommon>,
+    /// The statement's store for each of `tables` (Go `sctx.Txn()`).
+    stores: Vec<Box<dyn tidb_kv::storage::TableStorage>>,
     ranges: Vec<SampleRange>,
     output_columns: Vec<SampleOutputColumn>,
     decode_context: RowDecodeContext,
@@ -70,6 +72,7 @@ impl TableSampleExecutor {
     pub(crate) fn new(
         meta: ExecutorMeta,
         tables: Vec<TableCommon>,
+        stores: Vec<Box<dyn tidb_kv::storage::TableStorage>>,
         ranges: Vec<SampleRange>,
         output_columns: Vec<SampleOutputColumn>,
         decode_context: RowDecodeContext,
@@ -77,6 +80,7 @@ impl TableSampleExecutor {
         Self {
             meta,
             tables,
+            stores,
             ranges,
             output_columns,
             decode_context,
@@ -91,13 +95,13 @@ impl Executor for TableSampleExecutor {
         self.rows.clear();
         self.cursor = 0;
         for range in &self.ranges {
-            let table = self
-                .tables
-                .get_mut(range.table)
-                .ok_or_else(|| ExecError::unsupported("a sampled range names no physical table"))?;
-            let mut store = table.store().clone_box();
+            let (Some(table), Some(store)) =
+                (self.tables.get_mut(range.table), self.stores.get_mut(range.table))
+            else {
+                return Err(ExecError::unsupported("a sampled range names no physical table"));
+            };
             let sampled = table
-                .first_snapshot_row_in_range(&mut *store, &range.start, &range.end, &self.decode_context)
+                .first_snapshot_row_in_range(&mut **store, &range.start, &range.end, &self.decode_context)
                 .map_err(|error| {
                     ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
                 })?;

@@ -112,9 +112,10 @@ impl Session {
         self.temporary.txn_store.clone()
     }
 
-    /// Binds the session's transaction store (Go `sctx.Txn()`), which its
-    /// temporary tables write through like every other table.
-    pub fn set_temporary_txn_store(&mut self, store: Box<dyn tidb_kv::storage::TableStorage>) {
+    /// Binds the session's transaction store (Go `sctx.Txn()`), which every
+    /// table of the session, temporary ones included, reads and writes
+    /// through.
+    pub fn set_transaction_store(&mut self, store: Box<dyn tidb_kv::storage::TableStorage>) {
         self.temporary.txn_store = Some(store);
     }
 

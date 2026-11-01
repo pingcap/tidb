@@ -2681,52 +2681,206 @@ fn fk_access_batch_common_primary_prefix_and_exact_lookup() {
 // that no dependent row exists (Go FKCheckExec.checkKey/checkPrefixKey).
 #[test]
 fn fk_access_batch_read_errors_are_not_success_or_ignored_violations() {
-    use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
+    use std::collections::HashMap;
+    use tidb_kv::storage::{StagingHandle, StorageError, StorageIterator, TableStorage};
     use tidb_txnkv::Key;
+    /// The session's transaction store, whose reads of the parent table's
+    /// keys fail (Go injects the same failure into the transaction's reads).
     #[derive(Debug, Clone)]
-    struct FailedReads;
+    struct FailedParentReads {
+        inner: Box<dyn TableStorage>,
+        parent: Vec<u8>,
+    }
     fn failure() -> StorageError {
         StorageError::Sql(tidb_terror::MysqlError::from_terror(
             &tidb_txnkv::tikv_errors::ERR_REGION_UNAVAILABLE
                 .generate_with_stack("FK read failed"),
         ))
     }
-    impl TableStorage for FailedReads {
-        fn get(&mut self, _: &Key) -> Result<Vec<u8>, StorageError> {
-            Err(failure())
+    impl FailedParentReads {
+        fn check(&self, key: Option<&Key>) -> Result<(), StorageError> {
+            match key {
+                Some(key) if key.as_bytes().starts_with(&self.parent) => Err(failure()),
+                _ => Ok(()),
+            }
+        }
+    }
+    impl TableStorage for FailedParentReads {
+        fn size_bytes(&self) -> u64 {
+            self.inner.size_bytes()
+        }
+        fn set_snapshot_read_options(&self, options: tidb_txnkv::SnapshotReadOptions) {
+            self.inner.set_snapshot_read_options(options);
+        }
+        fn point_rpc_counts(&mut self) -> (u64, u64) {
+            self.inner.point_rpc_counts()
+        }
+        fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
+            self.check(Some(key))?;
+            self.inner.get(key)
+        }
+        fn get_local(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
+            self.check(Some(key))?;
+            self.inner.get_local(key)
+        }
+        fn mark_presume_key_not_exists(&mut self, key: &Key) {
+            self.inner.mark_presume_key_not_exists(key);
+        }
+        fn mark_presume_key_not_exists_with_hint(&mut self, key: &Key, value: &str, index: &str) {
+            self.inner.mark_presume_key_not_exists_with_hint(key, value, index);
+        }
+        fn attach_txn_staging(&mut self, staging: Option<tidb_kv::staged_writes::TxnStaging>) {
+            self.inner.attach_txn_staging(staging);
+        }
+        fn batch_get(&mut self, keys: &[Key]) -> Result<HashMap<Key, Vec<u8>>, StorageError> {
+            for key in keys {
+                self.check(Some(key))?;
+            }
+            self.inner.batch_get(keys)
+        }
+        fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), StorageError> {
+            self.inner.set(key, value)
+        }
+        fn set_with_assertion(
+            &mut self,
+            key: Key,
+            value: Vec<u8>,
+            assertion: tidb_txnkv::AssertionOp,
+        ) -> Result<(), StorageError> {
+            self.inner.set_with_assertion(key, value, assertion)
+        }
+        fn set_with_constraint_check(
+            &mut self,
+            key: Key,
+            value: Vec<u8>,
+            assertion: tidb_txnkv::AssertionOp,
+            check_in_prewrite: bool,
+        ) -> Result<(), StorageError> {
+            self.inner.set_with_constraint_check(key, value, assertion, check_in_prewrite)
+        }
+        fn delete(&mut self, key: Key) -> Result<(), StorageError> {
+            self.inner.delete(key)
+        }
+        fn delete_with_assertion(
+            &mut self,
+            key: Key,
+            assertion: tidb_txnkv::AssertionOp,
+        ) -> Result<(), StorageError> {
+            self.inner.delete_with_assertion(key, assertion)
         }
         fn iter(
             &mut self,
-            _: Option<&Key>,
-            _: Option<&Key>,
+            start: Option<&Key>,
+            upper_bound: Option<&Key>,
         ) -> Result<Box<dyn StorageIterator>, StorageError> {
-            Err(failure())
+            self.check(start)?;
+            self.inner.iter(start, upper_bound)
         }
-        fn set(&mut self, _: Key, _: Vec<u8>) -> Result<(), StorageError> {
-            Ok(())
+        fn iter_reverse(
+            &mut self,
+            upper_bound: Option<&Key>,
+            lower_bound: Option<&Key>,
+        ) -> Result<Box<dyn StorageIterator>, StorageError> {
+            self.check(lower_bound)?;
+            self.inner.iter_reverse(upper_bound, lower_bound)
         }
-        fn delete(&mut self, _: Key) -> Result<(), StorageError> {
-            Ok(())
+        fn first(
+            &mut self,
+            start: Option<&Key>,
+            upper_bound: Option<&Key>,
+        ) -> Result<Option<(Key, Vec<u8>)>, StorageError> {
+            self.check(start)?;
+            self.inner.first(start, upper_bound)
+        }
+        fn snapshot_first(
+            &mut self,
+            start: &Key,
+            upper_bound: &Key,
+        ) -> Result<Option<(Key, Vec<u8>)>, StorageError> {
+            self.check(Some(start))?;
+            self.inner.snapshot_first(start, upper_bound)
+        }
+        fn lock_keys_for_read(
+            &mut self,
+            keys: &[Key],
+            wait: tidb_txnkv::transaction::LockWaitTime,
+            only_if_exists: bool,
+        ) -> Result<(), StorageError> {
+            self.inner.lock_keys_for_read(keys, wait, only_if_exists)
+        }
+        fn do_lock_keys(
+            &mut self,
+            keys: &[Key],
+            wait: tidb_txnkv::transaction::LockWaitTime,
+        ) -> Result<(), StorageError> {
+            self.inner.do_lock_keys(keys, wait)
+        }
+        fn snapshot_reader(&self) -> Option<Box<dyn TableStorage>> {
+            self.inner.snapshot_reader().map(|inner| {
+                Box::new(FailedParentReads {
+                    inner,
+                    parent: self.parent.clone(),
+                }) as Box<dyn TableStorage>
+            })
+        }
+        fn mem_buffer_snapshot(
+            &self,
+            ranges: &[(Key, Key)],
+        ) -> Option<std::sync::Arc<tidb_kv::mem_buffer::MemBufferSnapshot>> {
+            self.inner.mem_buffer_snapshot(ranges)
+        }
+        fn start_ts(&self) -> u64 {
+            self.inner.start_ts()
+        }
+        fn client(&self) -> Option<std::sync::Arc<dyn tidb_txnkv::Client>> {
+            self.inner.client()
+        }
+        fn mpp_client(&self) -> Option<std::sync::Arc<dyn tidb_txnkv::MppClient>> {
+            self.inner.mpp_client()
+        }
+        fn reads_processed_keys(&self) -> bool {
+            self.inner.reads_processed_keys()
         }
         fn key_count(&self) -> usize {
-            0
+            self.inner.key_count()
         }
-        fn clear(&mut self) {}
+        fn has_external_statement_rollback(&self) -> bool {
+            self.inner.has_external_statement_rollback()
+        }
+        fn staging(&mut self) -> StagingHandle {
+            self.inner.staging()
+        }
+        fn cleanup(&mut self, handle: StagingHandle) {
+            self.inner.cleanup(handle);
+        }
+        fn release(&mut self, handle: StagingHandle) {
+            self.inner.release(handle);
+        }
+        fn filters_untouched_index_values(&self) -> bool {
+            self.inner.filters_untouched_index_values()
+        }
+        fn clear(&mut self) {
+            self.inner.clear();
+        }
         fn clone_box(&self) -> Box<dyn TableStorage> {
             Box::new(self.clone())
         }
     }
     let mut session = pair("");
-    session
+    let parent_id = session
         .with_staged_catalog(|catalog| {
             let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "p")
             else {
                 panic!("missing parent");
             };
-            std::sync::Arc::make_mut(table).replace_storage(Box::new(FailedReads));
-            Ok(())
+            Ok(table.table_id())
         })
         .unwrap();
+    let inner = session.transaction_store().expect("a node session has a store");
+    session.set_transaction_store(Box::new(FailedParentReads {
+        inner,
+        parent: tidb_tablecodec::table_key::encode_table_prefix(parent_id),
+    }));
     for sql in [
         "INSERT INTO c VALUES(20,1)",
         "INSERT IGNORE INTO c VALUES(20,1)",

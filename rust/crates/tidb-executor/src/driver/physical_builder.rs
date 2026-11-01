@@ -116,10 +116,12 @@ impl ReaderStorage {
     /// whether it was separated from the transaction's buffered writes.
     fn table(
         &self,
+        ctx: &crate::StmtContext,
         table: Arc<crate::TableCommon>,
     ) -> (Arc<crate::TableCommon>, Box<dyn tidb_kv::storage::TableStorage>, bool) {
+        let statement_store = crate::statement_store(ctx, &table);
         let store = match self {
-            ReaderStorage::Snapshot => table.snapshot_reader(),
+            ReaderStorage::Snapshot => statement_store.snapshot_reader(),
             ReaderStorage::Merged => None,
             ReaderStorage::MemBuffer(snapshot) => Some(Box::new(
                 tidb_store_driver_txn::cluster_storage::MemBufferStorage::new(Arc::clone(snapshot)),
@@ -128,10 +130,7 @@ impl ReaderStorage {
         };
         match store {
             Some(store) => (table, store, true),
-            None => {
-                let store = table.store().clone_box();
-                (table, store, false)
-            }
+            None => (table, statement_store, false),
         }
     }
 
@@ -1233,6 +1232,7 @@ fn build_table_scan(
     cop_chain: Option<&CopChain>,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let (table, store, separated) = storage.table(
+        ctx,
         catalog
             .physical_kv_table_by_id(scan.table_id)
             .ok_or_else(|| {
@@ -1411,6 +1411,7 @@ fn build_table_sample(
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             RowDecodeContext::for_query(ctx),
         )));
     }
@@ -1465,6 +1466,10 @@ fn build_table_sample(
     if sample.desc {
         ranges.reverse();
     }
+    let stores = tables
+        .iter()
+        .map(|table| crate::statement_store(ctx, table))
+        .collect();
     let tables = tables
         .into_iter()
         .map(std::sync::Arc::unwrap_or_clone)
@@ -1472,6 +1477,7 @@ fn build_table_sample(
     Ok(Box::new(TableSampleExecutor::new(
         meta(ctx, plan, schema),
         tables,
+        stores,
         ranges,
         output_columns,
         RowDecodeContext::for_query(ctx),
@@ -2582,6 +2588,7 @@ fn build_index_reader(
     // `usedIndex`; handle order would append the staged rows instead.
     let keep_order = keep_order || storage.is_mem_buffer();
     let (mut table, store, separated) = storage.table(
+        ctx,
         catalog
             .physical_kv_table_by_id(scan.table_id)
             .ok_or_else(|| {
@@ -3337,7 +3344,7 @@ fn build_index_inner_reader(
         DriverError::unsupported("a physical index join has no retained inner table ID")
     })?;
     let (mut table, store, separated) =
-        storage.table(catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
+        storage.table(ctx, catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
             DriverError::unsupported("a physical index-join table ID is absent from the catalog")
         })?);
     let (embedded, covering) = index_inner_reader_payload(plan).ok_or_else(|| {
@@ -4935,7 +4942,7 @@ fn select_lock_executor(
             continue;
         }
         locked_table_ids.push(*table_id);
-        lock_store.get_or_insert_with(|| table.store().clone_box());
+        lock_store.get_or_insert_with(|| crate::statement_store(ctx, table));
         let width = table.common_handle_offsets().len().max(1);
         if columns.len() % width != 0 {
             return Err(DriverError::unsupported(
@@ -5181,7 +5188,7 @@ fn build_point_get(
             UniqueIndexPointSourceExec::new(
                 executor_meta,
                 (*table).clone(),
-                table.store().clone_box(),
+                crate::statement_store(ctx, &table),
                 index_id,
                 index_values,
                 output_columns,
@@ -5211,7 +5218,7 @@ fn build_point_get(
         HandleSourceExec::new_point_mapped_with_context(
             executor_meta,
             (*table).clone(),
-            table.store().clone_box(),
+            crate::statement_store(ctx, &table),
             handles.into_iter().next().expect("checked one handle"),
             output_columns,
             RowDecodeContext::for_query(ctx),
@@ -5262,7 +5269,7 @@ fn build_batch_point_get(
             UniqueIndexPointSourceExec::new(
                 executor_meta,
                 (*table).clone(),
-                table.store().clone_box(),
+                crate::statement_store(ctx, &table),
                 index_id,
                 index_values,
                 output_columns,
@@ -5313,7 +5320,7 @@ fn build_batch_point_get(
         HandleSourceExec::new_mapped_with_context(
             executor_meta,
             (*table).clone(),
-            table.store().clone_box(),
+            crate::statement_store(ctx, &table),
             handles,
             output_columns,
             RowDecodeContext::for_query(ctx),
@@ -5576,7 +5583,7 @@ fn build_index_merge_reader(
     let (table, store, separated) =
         state
             .reader_storage
-            .table(catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
+            .table(ctx, catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
                 DriverError::unsupported("physical index-merge table ID is absent from the catalog")
             })?);
     let physical_ids = table.record_physical_ids();

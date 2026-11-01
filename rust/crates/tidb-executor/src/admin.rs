@@ -576,8 +576,10 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                 let (columns, rows) = self.with_catalog_mut(|catalog| {
                     let table =
                         admin_check_table_mut(catalog, &database, &name, "admin check index")?;
+                    let mut store = crate::statement_store(&ctx, table);
                     crate::admin_check::check_index_ranges(
                         table,
+                        &mut *store,
                         &index,
                         &ranges,
                         &decode_context,
@@ -602,8 +604,9 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
         let (added, scanned) = self.with_catalog_mut(|catalog| {
             let table = admin_index_table_mut(catalog, &database, &name)?;
             let table_name = table.name().to_owned();
-            table
-                .with_own_store(|table, store| table.recover_index(store, &index, &ctx, &decode_context))
+            crate::with_statement_store(&ctx, table, |table, store| {
+                table.recover_index(store, &index, &ctx, &decode_context)
+            })
                 .map_err(crate::ddl::index_backfill_error)?
                 .ok_or_else(|| secondary_index_not_found(&index, &table_name))
         })?;
@@ -625,11 +628,11 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
     ) -> Result<StmtOutput, DriverError> {
         let (database, name) = self.split_table_path(&cleanup.table)?;
         let index = cleanup.index.clone();
+        let ctx = self.statement_context(true);
         let removed = self.with_catalog_mut(|catalog| {
             let table = admin_index_table_mut(catalog, &database, &name)?;
             let table_name = table.name().to_owned();
-            table
-                .with_own_store(|table, store| table.cleanup_index(store, &index))
+            crate::with_statement_store(&ctx, table, |table, store| table.cleanup_index(store, &index))
                 .map_err(crate::ddl::index_backfill_error)?
                 .ok_or_else(|| secondary_index_not_found(&index, &table_name))
         })?;
@@ -658,8 +661,10 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
         let fast_check = self.session_vars().system_bool("tidb_enable_fast_table_check", true);
         self.with_catalog_mut(|catalog| {
             let table = admin_check_table_mut(catalog, &database, &name, statement)?;
+            let mut store = crate::statement_store(&ctx, table);
             crate::admin_check::check_table(
                 table,
+                &mut *store,
                 only_index.as_deref(),
                 &decode_context,
                 fast_check,

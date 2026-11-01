@@ -21,6 +21,8 @@ use tidb_executor::KvTableReader;
 /// `tidb_privilege::cluster_privilege_load::load_privileges` reads a cluster's.
 pub(crate) struct SessionPrivilegeTables<'a> {
     pub(crate) catalog: &'a mut tidb_infoschema::SessionExtendedInfoSchema,
+    /// The statement the tables are read under (its store is Go `sctx.Txn()`).
+    pub(crate) ctx: &'a tidb_sessionctx::StmtContext,
     /// TIMESTAMP columns decode in UTC, as the cluster reader decodes them.
     pub(crate) decode: tidb_table::tables::RowDecodeContext,
 }
@@ -54,7 +56,7 @@ impl tidb_privilege::cluster_privilege_load::PrivilegeTables for SessionPrivileg
             columns,
         );
         let ids: Vec<i64> = stored.columns().iter().map(|column| column.read().id).collect();
-        let mut store = stored.store().clone_box();
+        let mut store = tidb_executor::statement_store(self.ctx, stored);
         let rows = stored
             .scan_rows_with_context(&mut *store, &self.decode)
             .map_err(

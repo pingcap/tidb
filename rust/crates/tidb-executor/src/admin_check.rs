@@ -201,10 +201,11 @@ fn render_handle(handle: &TableHandle) -> String {
 /// datum bounds it would have to invent.
 fn index_entries(
     table: &mut TableCommon,
+    store: &mut dyn tidb_kv::storage::TableStorage,
     index_id: i64,
 ) -> Result<Vec<tidb_table::tables::IndexEntryForCheck>, AdminCheckError> {
     table
-        .with_own_store(|table, store| table.index_entry_records_for_check(store, index_id))
+        .index_entry_records_for_check(store, index_id)
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))
 }
 
@@ -239,6 +240,7 @@ fn partial_index_rows<'a>(
 /// asserting the statement did work reads.
 pub fn check_table(
     table: &mut TableCommon,
+    store: &mut dyn tidb_kv::storage::TableStorage,
     only_index: Option<&str>,
     context: &RowDecodeContext,
     fast_check: bool,
@@ -282,7 +284,7 @@ pub fn check_table(
     // partition has been exchanged two partitions may hold the same
     // `_tidb_rowid`, so a row is its physical table and its handle.
     let rows = table
-        .with_own_store(|table, store| table.scan_physical_rows_with_handles(store, context))
+        .scan_physical_rows_with_handles(store, context)
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
     // Go `admin.CheckIndicesCount` runs first and, for `ADMIN CHECK INDEX`,
     // is the error the client sees.
@@ -292,7 +294,7 @@ pub fn check_table(
         if table.is_mv_index(index) {
             continue;
         }
-        let entries = index_entries(table, index.read().id)?;
+        let entries = index_entries(table, store, index.read().id)?;
         let index_count = entries.len() as i64;
         let expected_count = partial_index_rows(table, index, &rows, context)?.len() as i64;
         if index_count != expected_count && only_index.is_some() {
@@ -310,7 +312,7 @@ pub fn check_table(
         // Go chooses the direction from the count comparison. Equal counts
         // use IndexLookUp (INDEX -> ROW); only a table-heavy mismatch uses
         // `CheckRecordAndIndex` (ROW -> INDEX).
-        let stored = index_entries(table, index.read().id)?;
+        let stored = index_entries(table, store, index.read().id)?;
         let matching_rows = partial_index_rows(table, index, &rows, context)?;
         if table.is_mv_index(index) {
             check_mv_index(table, index, &stored, matching_rows, context)?;
@@ -529,6 +531,7 @@ fn check_mv_index(
 /// the consistency check, and goes through [`check_table`].
 pub fn check_index_ranges(
     table: &mut TableCommon,
+    store: &mut dyn tidb_kv::storage::TableStorage,
     index_name: &str,
     ranges: &[tidb_ast::AdminCheckHandleRange],
     context: &RowDecodeContext,
@@ -558,7 +561,7 @@ pub fn check_index_ranges(
     ));
 
     let rows = table
-        .with_own_store(|table, store| table.scan_physical_rows_with_handles(store, context))
+        .scan_physical_rows_with_handles(store, context)
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
     let mut by_handle: BTreeMap<Vec<u8>, (TableHandle, Vec<Datum>)> = BTreeMap::new();
     for (physical_id, handle, row) in &rows {

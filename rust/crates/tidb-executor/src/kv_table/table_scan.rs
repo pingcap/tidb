@@ -76,6 +76,7 @@ pub trait KvTableReader {
     /// Origin defaults use the exact former `DEFAULT_STATEMENT_FLAGS` behavior.
     fn get_row_by_handle(
         &mut self,
+        store: &mut dyn TableStorage,
         handle: &TableHandle,
         zone: &SessionTimeZone,
     ) -> Result<Option<Vec<Datum>>, KvTableError>;
@@ -729,12 +730,11 @@ impl KvTableReader for TableCommon {
 
     fn get_row_by_handle(
         &mut self,
+        store: &mut dyn TableStorage,
         handle: &TableHandle,
         zone: &SessionTimeZone,
     ) -> Result<Option<Vec<Datum>>, KvTableError> {
-        self.with_own_store(|table, store| {
-            table.read_row(store, handle, &RowDecodeContext::legacy_default(zone))
-        })
+        self.read_row(store, handle, &RowDecodeContext::legacy_default(zone))
     }
 
     fn row_decoder_projected(

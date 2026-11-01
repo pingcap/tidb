@@ -705,7 +705,11 @@ use tidb_txnkv::Key;
                 }
                 assert_eq!(
                     table
-                        .get_row_by_handle(&TableHandle::Int(1), &ctx.session_zone())
+                        .get_row_by_handle(
+                            &mut *crate::statement_store(&ctx, &table),
+                            &TableHandle::Int(1),
+                            &ctx.session_zone(),
+                        )
                         .unwrap(),
                     Some(old.to_vec())
                 );

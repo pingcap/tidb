@@ -82,7 +82,7 @@ fn admin_check_detects_generated_column_index_value_corruption() {
     let mut table = kv_table_of(&catalog, "t");
     let context = check_context();
     // Go: the initial "ADMIN CHECK TABLE t" passes.
-    let checked = admin_check::check_table(&mut table, None, &context, true)
+    let checked = { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, None, &context, true) }
         .expect("the consistent table must pass");
     assert_eq!(checked, 1, "exactly idx_gen is checked");
 
@@ -126,7 +126,7 @@ fn admin_check_detects_generated_column_index_value_corruption() {
         .expect("wrong entry written");
     table.swap_storage(storage);
 
-    let error = admin_check::check_table(&mut table, None, &context, true)
+    let error = { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, None, &context, true) }
         .expect_err("the corrupted generated-column index must be refused");
     let admin_check::AdminCheckError::ValueMismatch(mismatch) = &error else {
         panic!("expected the value-mismatch shape, got {error:?}");
@@ -171,12 +171,12 @@ fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
     );
     let mut table = kv_table_of(&catalog, "admin_test");
     assert_eq!(
-        admin_check::check_table(&mut table, None, &context, true).expect("table check"),
+        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, None, &context, true) }.expect("table check"),
         1,
         "the whole-table check covers uk_status"
     );
     assert_eq!(
-        admin_check::check_table(&mut table, Some("uk_status"), &context, true).expect("index check"),
+        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, Some("uk_status"), &context, true) }.expect("index check"),
         1,
         "exactly the named index is checked"
     );
@@ -185,7 +185,7 @@ fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
     // tier has the one consistency path, so a second pass stands in.
     let mut table = kv_table_of(&catalog, "admin_test");
     assert_eq!(
-        admin_check::check_table(&mut table, Some("uk_status"), &context, true)
+        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, Some("uk_status"), &context, true) }
             .expect("index check again"),
         1
     );
@@ -203,11 +203,11 @@ fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
     );
     let mut table = kv_table_of(&catalog, "admin_test");
     assert_eq!(
-        admin_check::check_table(&mut table, None, &context, true).expect("table check"),
+        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, None, &context, true) }.expect("table check"),
         1
     );
     assert_eq!(
-        admin_check::check_table(&mut table, Some("uk_name"), &context, true).expect("index check"),
+        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, Some("uk_name"), &context, true) }.expect("index check"),
         1
     );
     drop(table);
@@ -225,12 +225,12 @@ fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
     );
     let mut table = kv_table_of(&catalog, "admin_test");
     assert_eq!(
-        admin_check::check_table(&mut table, Some("uk_composite"), &context, true)
+        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, Some("uk_composite"), &context, true) }
             .expect("composite index check"),
         1
     );
     assert_eq!(
-        admin_check::check_table(&mut table, None, &context, true).expect("composite table check"),
+        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, None, &context, true) }.expect("composite table check"),
         1
     );
 }
@@ -253,11 +253,11 @@ fn admin_check_counts_only_rows_matching_partial_index_predicate() {
     let mut table = kv_table_of(&catalog, "t");
     let context = check_context();
     assert_eq!(
-        admin_check::check_table(&mut table, None, &context, true).expect("partial table check"),
+        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, None, &context, true) }.expect("partial table check"),
         1
     );
     assert_eq!(
-        admin_check::check_table(&mut table, Some("idx_b"), &context, true).expect("partial index check"),
+        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, Some("idx_b"), &context, true) }.expect("partial index check"),
         1
     );
 }
@@ -296,7 +296,7 @@ fn admin_check_table_runs_concurrently_over_one_hundred_rows() {
                     };
                     (**table).clone()
                 };
-                admin_check::check_table(&mut table, None, &check_context(), true)
+                { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, None, &check_context(), true) }
                     .map_err(|error| format!("{error:?}"))
             })
         })

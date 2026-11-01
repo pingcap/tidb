@@ -286,9 +286,11 @@ fn writes_through_a_prefix_index_stay_admin_check_clean() {
         let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t") else {
             panic!("the table is not storage-backed");
         };
+        let mut store = table.store().clone_box();
         assert_eq!(
             crate::admin_check::check_table(
                 std::sync::Arc::make_mut(table),
+                &mut *store,
                 None,
                 &crate::RowDecodeContext::for_test_query_utc(), true)
             .expect("every stored entry re-encodes from the row it names"),
@@ -336,9 +338,11 @@ fn a_multi_byte_column_is_cut_by_characters() {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in("test", "c") else {
         panic!("the table is not storage-backed");
     };
+    let mut store = table.store().clone_box();
     assert_eq!(
         crate::admin_check::check_table(
             std::sync::Arc::make_mut(table),
+            &mut *store,
             None,
             &crate::RowDecodeContext::for_test_query_utc(), true)
         .unwrap(),

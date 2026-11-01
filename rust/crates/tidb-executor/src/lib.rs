@@ -233,6 +233,30 @@ pub use explain::{brief_binary_plan, explain_analyze_delete_stmt, explain_analyz
 use tidb_sessionctx::explain_format::ExplainFormat;
 use tidb_executor_join::join::{JoinExec, JoinKind};
 pub use kv_table::{KvTableDdl, KvTablePartitionMaintenance, KvTableReader, RowDecodeContextExt, TableScanExec};
+
+/// Go `sctx.Txn()` for a statement over `table`: the store the statement's
+/// session reads and writes through. A statement no session runs (an
+/// executor fixture) reads the table's own until the fixtures carry a store
+/// (`docs/storage-split-execplan.md`, Milestone 4 (c)).
+pub fn statement_store(
+    ctx: &StmtContext,
+    table: &TableCommon,
+) -> Box<dyn tidb_kv::storage::TableStorage> {
+    ctx.txn_store().unwrap_or_else(|| table.store().clone_box())
+}
+
+/// [`statement_store`] for a write: `f` gets the table and the statement's
+/// store.
+pub fn with_statement_store<R>(
+    ctx: &StmtContext,
+    table: &mut TableCommon,
+    f: impl FnOnce(&mut TableCommon, &mut dyn tidb_kv::storage::TableStorage) -> R,
+) -> R {
+    match ctx.txn_store() {
+        Some(mut store) => f(table, &mut *store),
+        None => table.with_own_store(f),
+    }
+}
 use tidb_ddl_build::table_backfill::KvTableBackfill;
 use tidb_table::tables::{TableCommon, RowDecodeContext, TableCharset};
 pub use limit::LimitExec;

@@ -1168,7 +1168,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
                 for index_id in &index_tasks.independent_index_ids {
                     let mut index_table = (*table).clone();
                     let statistics =
-                        analyze_kv_table_independent_index(&mut index_table, *index_id, &effective)
+                        analyze_kv_table_independent_index(&mut index_table, *index_id, &effective, &ctx)
                             .map_err(DriverError::from)?;
                     let statistics = merge_independent_index_statistics(
                         analyzed
