@@ -359,7 +359,7 @@ fn a_corrupted_index_is_caught() {
                 .into_iter()
                 .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_b"))
                 .expect("idx_b");
-            let entries = table.index_entries_for_check(index.read().id).expect("entries");
+            let entries = table.with_own_store(|table, store| table.index_entries_for_check(store, index.read().id)).expect("entries");
             assert_eq!(entries.len(), 3, "three rows, three entries");
             Ok(entries[0].0.clone())
         })
@@ -446,7 +446,7 @@ fn a_unique_index_entry_naming_the_wrong_row_reports_both_records() {
                 .into_iter()
                 .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_b"))
                 .expect("idx_b");
-            let entries = table.index_entries_for_check(index.read().id).expect("entries");
+            let entries = table.with_own_store(|table, store| table.index_entries_for_check(store, index.read().id)).expect("entries");
             assert_eq!(entries.len(), 2);
             table
                 .swap_raw_values_for_test(&entries[0].0, &entries[1].0)
@@ -494,7 +494,7 @@ fn an_index_value_mismatch_reports_the_column_and_both_values() {
                 .into_iter()
                 .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_b"))
                 .expect("idx_b");
-            let entries = table.index_entries_for_check(index.read().id).expect("entries");
+            let entries = table.with_own_store(|table, store| table.index_entries_for_check(store, index.read().id)).expect("entries");
             let (old_key, _) = entries
                 .iter()
                 .find(|(_, handle)| *handle == tidb_table::tables::TableHandle::Int(2))
@@ -603,7 +603,7 @@ fn recover_and_cleanup_index_repair_what_check_finds() {
                         .into_iter()
                         .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_b"))
                         .expect("idx_b");
-                    let entries = table.index_entries_for_check(index.read().id).expect("entries");
+                    let entries = table.with_own_store(|table, store| table.index_entries_for_check(store, index.read().id)).expect("entries");
                     Ok(entries[0].0.clone())
                 } else {
                     Ok(tidb_tablecodec::table_key::encode_row_key_with_handle(

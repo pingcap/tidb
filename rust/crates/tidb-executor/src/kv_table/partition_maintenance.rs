@@ -22,12 +22,14 @@ pub trait KvTablePartitionMaintenance {
     /// been exchanged, so a handle alone does not name a row.
     fn scan_physical_rows_with_handles(
         &mut self,
+        store: &mut dyn TableStorage,
         decode_context: &RowDecodeContext,
     ) -> Result<Vec<(i64, TableHandle, Vec<Datum>)>, KvTableError>;
 
     /// The rows stored under one physical table, with their handles.
     fn rows_of_physical_table(
         &mut self,
+        store: &mut dyn TableStorage,
         physical_id: i64,
         decode_context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError>;
@@ -36,12 +38,13 @@ pub trait KvTablePartitionMaintenance {
 impl KvTablePartitionMaintenance for TableCommon {
     fn scan_physical_rows_with_handles(
         &mut self,
+        store: &mut dyn TableStorage,
         decode_context: &RowDecodeContext,
     ) -> Result<Vec<(i64, TableHandle, Vec<Datum>)>, KvTableError> {
         let mut rows = Vec::new();
         for physical_id in self.record_physical_ids() {
             rows.extend(
-                self.rows_of_physical_table(physical_id, decode_context)?
+                self.rows_of_physical_table(store, physical_id, decode_context)?
                     .into_iter()
                     .map(|(handle, row)| (physical_id, handle, row)),
             );
@@ -51,6 +54,7 @@ impl KvTablePartitionMaintenance for TableCommon {
 
     fn rows_of_physical_table(
         &mut self,
+        store: &mut dyn TableStorage,
         physical_id: i64,
         decode_context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
@@ -58,8 +62,7 @@ impl KvTablePartitionMaintenance for TableCommon {
             .partition()
             .is_some()
             .then(|| self.read_partitions_mut().replace(vec![physical_id]));
-        let mut store = self.store().clone_box();
-        let rows = self.scan_rows_with_handles_recomputed(&mut *store, decode_context);
+        let rows = self.scan_rows_with_handles_recomputed(store, decode_context);
         if let Some(previous) = previous_read_partitions {
             *self.read_partitions_mut() = previous;
         }

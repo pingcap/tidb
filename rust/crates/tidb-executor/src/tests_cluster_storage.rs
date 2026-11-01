@@ -681,7 +681,7 @@ use tidb_txnkv::Key;
                         &[Datum::Int(1), Datum::Int(3)],
                         &ctx,
                     ),
-                    "backfill" => table.create_index_with_context(index, &ctx),
+                    "backfill" => table.with_own_store(|table, store| table.create_index_with_context(store, index, &ctx)),
                     "conflicts" => table.row_conflicts(&candidate, &ctx).map(|_| ()),
                     _ => unreachable!(),
                 };

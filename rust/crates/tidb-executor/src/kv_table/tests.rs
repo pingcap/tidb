@@ -440,7 +440,7 @@ fn column_and_index_mutators_keep_the_table_info_in_step() {
         let part = index.columns.get(0).unwrap();
         assert_eq!((part.read().name.original(), part.read().offset), ("z", 3));
     }
-    assert!(table.drop_index("iz").unwrap());
+    assert!(table.with_own_store(|table, store| table.drop_index(store, "iz")).unwrap());
     assert!(table.meta().read().find_index_by_id(9).is_none());
 
     table.set_common_handle_offsets(vec![1]);
@@ -481,7 +481,7 @@ fn drop_index_removes_orphan_entries_without_decoding_rows() {
     ));
     table.store_mut().set(retired.clone(), vec![1]).unwrap();
     table.store_mut().set(retained.clone(), vec![2]).unwrap();
-    assert!(table.drop_index("retired").unwrap());
+    assert!(table.with_own_store(|table, store| table.drop_index(store, "retired")).unwrap());
     assert!(matches!(
         table.store_mut().get(&retired),
         Err(StorageError::NotFound)
@@ -539,7 +539,7 @@ fn drop_index_covers_all_partition_ranges_and_global_ownership() {
         for key in &keys {
             table.store_mut().set(key.clone(), vec![1]).unwrap();
         }
-        assert!(table.drop_index("retired").unwrap());
+        assert!(table.with_own_store(|table, store| table.drop_index(store, "retired")).unwrap());
         for (id, key) in [42, 43, 44, 45].into_iter().zip(&keys) {
             let removed = if global {
                 id == 42
@@ -552,7 +552,7 @@ fn drop_index_covers_all_partition_ranges_and_global_ownership() {
                 "global={global}, table={id}"
             );
         }
-        assert!(!table.drop_index("retired").unwrap());
+        assert!(!table.with_own_store(|table, store| table.drop_index(store, "retired")).unwrap());
     }
 }
 
@@ -640,7 +640,7 @@ fn update_rewrites_only_index_entries_whose_bytes_change() {
         )
         .unwrap();
     let handle = TableHandle::Int(1);
-    let before = table.index_entries_for_check(1).unwrap();
+    let before = table.with_own_store(|table, store| table.index_entries_for_check(store, 1)).unwrap();
     assert_eq!(before.len(), 1);
 
     // Update a NON-indexed column only: the index entry must survive
@@ -653,7 +653,7 @@ fn update_rewrites_only_index_entries_whose_bytes_change() {
             &crate::StmtContext::for_dml(false, false, false),
         )
         .unwrap();
-    let after_untouched = table.index_entries_for_check(1).unwrap();
+    let after_untouched = table.with_own_store(|table, store| table.index_entries_for_check(store, 1)).unwrap();
     assert_eq!(after_untouched, before, "untouched index stayed as it was");
     let rows = table
         .scan_rows_with_handles_with_context(&mut *table.store().clone_box(), &RowDecodeContext::for_test_query_utc())
@@ -669,7 +669,7 @@ fn update_rewrites_only_index_entries_whose_bytes_change() {
             &crate::StmtContext::for_dml(false, false, false),
         )
         .unwrap();
-    let after_touched = table.index_entries_for_check(1).unwrap();
+    let after_touched = table.with_own_store(|table, store| table.index_entries_for_check(store, 1)).unwrap();
     assert_eq!(
         after_touched.len(),
         1,
@@ -796,7 +796,7 @@ fn a_nonpublic_index_is_written_by_its_backfill_state() {
         let row = [Datum::Int(7), Datum::Null];
         table.insert_row(&row, &tidb_exprctx::NoColumns).unwrap();
         // No reader sees an index a DDL has not made public.
-        assert!(table.index_entries_for_check(1).is_err());
+        assert!(table.with_own_store(|table, store| table.index_entries_for_check(store, 1)).is_err());
         let handle = table
             .scan_rows_with_handles_with_context(&mut *table.store().clone_box(), &RowDecodeContext::for_test_query_utc())
             .unwrap()[0]
@@ -887,7 +887,7 @@ fn test_unique_index_multiple_null_entries() {
             .len(),
         2
     );
-    assert_eq!(table.index_entries_for_check(1).unwrap().len(), 2);
+    assert_eq!(table.with_own_store(|table, store| table.index_entries_for_check(store, 1)).unwrap().len(), 2);
 }
 
 #[test]

@@ -8840,8 +8840,7 @@ use super::*;
             crate::TableCommon::new(46, vec![long_column("id", 1), long_column("value", 2)]);
         table.set_common_handle_offsets(vec![0, 1]);
         table
-            .create_index_with_context(
-                tidb_table::tables::Index {
+            .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 8,
                         name: tidb_ast::CiString::new("value_uidx"),
@@ -8862,7 +8861,7 @@ use super::*;
                     clustered_primary: false,
                 },
                 &crate::StmtContext::for_query(),
-            )
+            ))
             .expect("create unique index");
         for value in 1..=3 {
             table
@@ -8966,8 +8965,7 @@ use super::*;
             crate::TableCommon::new(45, vec![long_column("id", 1), long_column("value", 2)]);
         table.set_pk_handle_offset(0);
         table
-            .create_index_with_context(
-                tidb_table::tables::Index {
+            .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 8,
                         name: tidb_ast::CiString::new("value_uidx"),
@@ -8988,7 +8986,7 @@ use super::*;
                     clustered_primary: false,
                 },
                 &crate::StmtContext::for_query(),
-            )
+            ))
             .expect("create unique index");
         for value in 1..=3 {
             table
@@ -9100,8 +9098,7 @@ use super::*;
                 .unwrap();
         }
         table
-            .create_index_with_context(
-                tidb_table::tables::Index {
+            .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 7,
                         name: tidb_ast::CiString::new("value_idx"),
@@ -9121,7 +9118,7 @@ use super::*;
                     clustered_primary: false,
                 },
                 &crate::StmtContext::for_query(),
-            )
+            ))
             .unwrap();
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("im", table.clone());
@@ -9565,8 +9562,7 @@ use super::*;
                     ));
                 }
                 table
-                    .create_index_with_context(
-                        tidb_table::tables::Index {
+                    .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
                             info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                                 id: 7,
                                 name: tidb_ast::CiString::new("value_idx"),
@@ -9587,7 +9583,7 @@ use super::*;
                             clustered_primary: false,
                         },
                         &crate::StmtContext::for_query(),
-                    )
+                    ))
                     .expect("create secondary index");
                 for value in 1..=4 {
                     table

@@ -93,7 +93,7 @@ fn admin_check_detects_generated_column_index_value_corruption() {
         .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_gen"))
         .expect("idx_gen exists");
     let Some((old_entry_key, _)) = table
-        .index_entries_for_check(index.read().id)
+        .with_own_store(|table, store| table.index_entries_for_check(store, index.read().id))
         .expect("index entries")
         .into_iter()
         .next()

@@ -772,7 +772,7 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
         column_offsets: vec![1],
         clustered_primary: false,
     };
-    table.create_index_with_context(index, &statement).unwrap();
+    table.with_own_store(|table, store| table.create_index_with_context(store, index, &statement)).unwrap();
     let handles = table
         .scan_index_range(&mut *table.store().clone_box(), 
             7,

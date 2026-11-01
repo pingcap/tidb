@@ -26,12 +26,14 @@ pub trait KvTableDdl {
     /// rejected with the duplicate it found, leaving the table unchanged.
     fn create_index_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         index: Index,
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError>;
 
     fn create_index_in(
         &mut self,
+        store: &mut dyn TableStorage,
         index: Index,
         ctx: &dyn tidb_exprctx::Columns,
         decode_context: &RowDecodeContext,
@@ -39,6 +41,7 @@ pub trait KvTableDdl {
 
     fn backfill_index(
         &mut self,
+        store: &mut dyn TableStorage,
         index: Index,
         ctx: &dyn tidb_exprctx::Columns,
         decode_context: &RowDecodeContext,
@@ -56,6 +59,7 @@ pub trait KvTableDdl {
     /// `Ok(None)` is no writable index of that name.
     fn recover_index(
         &mut self,
+        store: &mut dyn TableStorage,
         index_name: &str,
         ctx: &dyn tidb_exprctx::Columns,
         decode_context: &RowDecodeContext,
@@ -66,33 +70,36 @@ pub trait KvTableDdl {
 impl KvTableDdl for TableCommon {
     fn create_index_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         index: Index,
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
-        self.create_index_in(index, ctx, &RowDecodeContext::for_ddl(ctx))
+        self.create_index_in(store, index, ctx, &RowDecodeContext::for_ddl(ctx))
             .map(|_| ())
     }
 
     fn create_index_in(
         &mut self,
+        store: &mut dyn TableStorage,
         index: Index,
         ctx: &dyn tidb_exprctx::Columns,
         decode_context: &RowDecodeContext,
     ) -> Result<usize, KvTableError> {
         // Go's transaction owns backfill rollback: the backfill's writes sit
         // in one stage that a failure cleans up.
-        let stage = self.store_mut().staging();
-        let result = self.backfill_index(index, ctx, decode_context);
+        let stage = store.staging();
+        let result = self.backfill_index(store, index, ctx, decode_context);
         if result.is_err() {
-            self.store_mut().cleanup(stage);
+            store.cleanup(stage);
         } else {
-            self.store_mut().release(stage);
+            store.release(stage);
         }
         result
     }
 
     fn backfill_index(
         &mut self,
+        store: &mut dyn TableStorage,
         index: Index,
         ctx: &dyn tidb_exprctx::Columns,
         decode_context: &RowDecodeContext,
@@ -114,7 +121,7 @@ impl KvTableDdl for TableCommon {
         // column is therefore recomputed under the DDL statement context
         // before an index entry is persisted, including STORED columns whose
         // old bytes may predate this backfill.
-        let rows = self.scan_physical_rows_with_handles(decode_context)?;
+        let rows = self.scan_physical_rows_with_handles(store, decode_context)?;
         let mut added = 0;
         for (physical_id, handle, row) in &rows {
             let physical_id = *physical_id;
@@ -127,9 +134,7 @@ impl KvTableDdl for TableCommon {
                 let key = Key::from_bytes(entry.key);
                 if entry.distinct {
                     let duplicate_key = self.qualified_key(index.read().name.original());
-                    self.with_own_store(|table, store| {
-                        table.check_insert_key(store, &key, &duplicate_value, &duplicate_key, false)
-                    })?;
+                    self.check_insert_key(store, &key, &duplicate_value, &duplicate_key, false)?;
                 }
                 // The same entry value an INSERT writes, restored data and
                 // all -- a backfill that stored a simpler one would leave the
@@ -143,7 +148,7 @@ impl KvTableDdl for TableCommon {
                     physical_id,
                     &zone,
                 )?;
-                self.store_mut().set(key, value).map_err(KvTableError::from)?;
+                store.set(key, value).map_err(KvTableError::from)?;
             }
         }
         self.add_index(index, false);
@@ -152,6 +157,7 @@ impl KvTableDdl for TableCommon {
 
     fn recover_index(
         &mut self,
+        store: &mut dyn TableStorage,
         index_name: &str,
         ctx: &dyn tidb_exprctx::Columns,
         decode_context: &RowDecodeContext,
@@ -168,7 +174,7 @@ impl KvTableDdl for TableCommon {
             return Ok(Some((0, 0)));
         }
         let zone = ctx.time_zone();
-        let rows = self.scan_physical_rows_with_handles(decode_context)?;
+        let rows = self.scan_physical_rows_with_handles(store, decode_context)?;
         let (mut added, mut scanned) = (0_i64, 0_i64);
         for (physical_id, handle, row) in &rows {
             let physical_id = *physical_id;
@@ -181,7 +187,7 @@ impl KvTableDdl for TableCommon {
             // files is found.
             let mut all_found = true;
             for entry in &entries {
-                match self.store_mut().get(&Key::from_bytes(entry.key.clone())) {
+                match store.get(&Key::from_bytes(entry.key.clone())) {
                     Ok(value) if !value.is_empty() => {}
                     Ok(_) | Err(StorageError::NotFound) => all_found = false,
                     Err(error) => return Err(error.into()),
@@ -202,7 +208,7 @@ impl KvTableDdl for TableCommon {
                     physical_id,
                     &zone,
                 )?;
-                self.store_mut()
+                store
                     .set(Key::from_bytes(entry.key), value)
                     .map_err(KvTableError::from)?;
             }

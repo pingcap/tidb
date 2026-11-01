@@ -603,7 +603,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             let table = admin_index_table_mut(catalog, &database, &name)?;
             let table_name = table.name().to_owned();
             table
-                .recover_index(&index, &ctx, &decode_context)
+                .with_own_store(|table, store| table.recover_index(store, &index, &ctx, &decode_context))
                 .map_err(crate::ddl::index_backfill_error)?
                 .ok_or_else(|| secondary_index_not_found(&index, &table_name))
         })?;
@@ -629,7 +629,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             let table = admin_index_table_mut(catalog, &database, &name)?;
             let table_name = table.name().to_owned();
             table
-                .cleanup_index(&index)
+                .with_own_store(|table, store| table.cleanup_index(store, &index))
                 .map_err(crate::ddl::index_backfill_error)?
                 .ok_or_else(|| secondary_index_not_found(&index, &table_name))
         })?;

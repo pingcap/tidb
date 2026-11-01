@@ -2813,7 +2813,7 @@ impl TableCommon {
     /// removes nothing.
     ///
     /// `Ok(None)` is no public index of that name.
-    pub fn cleanup_index(&mut self, index_name: &str) -> Result<Option<u64>, KvTableError> {
+    pub fn cleanup_index(&mut self, store: &mut dyn TableStorage, index_name: &str) -> Result<Option<u64>, KvTableError> {
         let Some(index) = self
             .indexes
             .iter()
@@ -2826,13 +2826,13 @@ impl TableCommon {
             return Ok(Some(0));
         }
         let mut removed = 0_u64;
-        for entry in self.index_entry_records_for_check(index.read().id)? {
-            if read_stored_record_one(self.store.as_mut(), entry.physical_id, &entry.handle)?
+        for entry in self.index_entry_records_for_check(store, index.read().id)? {
+            if read_stored_record_one(&mut *store, entry.physical_id, &entry.handle)?
                 .is_some()
             {
                 continue;
             }
-            self.store
+            store
                 .delete(Key::from_bytes(entry.key))
                 .map_err(KvTableError::from)?;
             removed += 1;
@@ -2843,7 +2843,7 @@ impl TableCommon {
     /// Removes the index's physical key ranges without evaluating rows. Go's
     /// delete-range worker has the same key ownership; this existing direct
     /// DDL path stages deletion in its transaction, pending durable GC jobs.
-    pub fn drop_index(&mut self, name: &str) -> Result<bool, KvTableError> {
+    pub fn drop_index(&mut self, store: &mut dyn TableStorage, name: &str) -> Result<bool, KvTableError> {
         let Some(position) = self
             .indexes
             .iter()
@@ -2859,27 +2859,26 @@ impl TableCommon {
         } else {
             self.partition_physical_ids()
         };
-        let stage = self.store.staging();
+        let stage = store.staging();
         let result = (|| -> Result<(), KvTableError> {
             for physical_id in physical_ids {
                 let (low, high) = crate::tables::index_key_bounds(physical_id, index_id);
-                let mut iterator = self
-                    .store
+                let mut iterator = store
                     .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(high)))?;
                 while iterator.valid() {
                     let key = iterator.key().clone();
                     iterator.next()?;
-                    self.store.delete(key)?;
+                    store.delete(key)?;
                 }
                 iterator.close();
             }
             Ok(())
         })();
         if let Err(error) = result {
-            self.store.cleanup(stage);
+            store.cleanup(stage);
             return Err(error);
         }
-        self.store.release(stage);
+        store.release(stage);
         self.indexes_mut().remove(position);
         self.remove_partial_index_condition(index_id);
         let position = self

@@ -68,6 +68,7 @@ pub trait KvTableBackfill {
     /// empty physical table.
     fn physical_record_range(
         &mut self,
+        store: &mut dyn tidb_kv::storage::TableStorage,
         physical_id: i64,
     ) -> Result<Option<(Vec<u8>, Vec<u8>)>, KvTableError>;
 
@@ -77,6 +78,7 @@ pub trait KvTableBackfill {
     #[allow(clippy::type_complexity)]
     fn fetch_reorg_rows(
         &mut self,
+        store: &mut dyn tidb_kv::storage::TableStorage,
         start: &[u8],
         end: &[u8],
         batch_count: usize,
@@ -98,6 +100,7 @@ pub trait KvTableBackfill {
     /// writer of it just the same.
     fn clean_up_global_index_batch(
         &mut self,
+        store: &mut dyn tidb_kv::storage::TableStorage,
         index_ids: &[i64],
         physical_id: i64,
         start: &[u8],
@@ -113,6 +116,7 @@ pub trait KvTableBackfill {
     /// skipped, another row's is a duplicate), and every other entry written.
     fn backfill_index_batch(
         &mut self,
+        store: &mut dyn tidb_kv::storage::TableStorage,
         index_id: i64,
         physical_id: i64,
         start: &[u8],
@@ -127,6 +131,7 @@ pub trait KvTableBackfill {
     /// on the index key and the temporary key removed.
     fn merge_temp_index_batch(
         &mut self,
+        store: &mut dyn tidb_kv::storage::TableStorage,
         index_id: i64,
         physical_id: i64,
         start: &[u8],
@@ -153,6 +158,7 @@ pub trait KvTableBackfill {
     #[allow(clippy::too_many_arguments)]
     fn update_column_batch(
         &mut self,
+        store: &mut dyn tidb_kv::storage::TableStorage,
         old_offset: usize,
         changing: usize,
         start: &[u8],
@@ -166,12 +172,13 @@ pub trait KvTableBackfill {
 impl KvTableBackfill for TableCommon {
     fn physical_record_range(
         &mut self,
+        store: &mut dyn tidb_kv::storage::TableStorage,
         physical_id: i64,
     ) -> Result<Option<(Vec<u8>, Vec<u8>)>, KvTableError> {
         let prefix = tidb_tablecodec::table_key::gen_table_record_prefix(physical_id);
         let upper = Key::from_bytes(prefix.clone()).prefix_next();
         let start = {
-            let mut iter = self.store_mut()
+            let mut iter = store
                 .iter(Some(&Key::from_bytes(prefix.clone())), Some(&upper))?;
             let first = iter.valid().then(|| iter.key().as_bytes().to_vec());
             iter.close();
@@ -181,8 +188,7 @@ impl KvTableBackfill for TableCommon {
             return Ok(None);
         };
         let last = {
-            let mut iter = self
-                .store_mut()
+            let mut iter = store
                 .iter_reverse(Some(&upper), Some(&Key::from_bytes(prefix)))?;
             let last = iter.valid().then(|| iter.key().as_bytes().to_vec());
             iter.close();
@@ -195,6 +201,7 @@ impl KvTableBackfill for TableCommon {
     #[allow(clippy::type_complexity)]
     fn fetch_reorg_rows(
         &mut self,
+        store: &mut dyn tidb_kv::storage::TableStorage,
         start: &[u8],
         end: &[u8],
         batch_count: usize,
@@ -210,7 +217,7 @@ impl KvTableBackfill for TableCommon {
         let mut rows: Vec<(Vec<u8>, TableHandle, Vec<tidb_datatype::Datum>)> = Vec::new();
         let mut task_done = false;
         {
-            let mut iter = self.store_mut().iter(
+            let mut iter = store.iter(
                 Some(&Key::from_bytes(start.to_vec())),
                 Some(&Key::from_bytes(end.to_vec())),
             )?;
@@ -251,6 +258,7 @@ impl KvTableBackfill for TableCommon {
 
     fn clean_up_global_index_batch(
         &mut self,
+        store: &mut dyn tidb_kv::storage::TableStorage,
         index_ids: &[i64],
         physical_id: i64,
         start: &[u8],
@@ -271,14 +279,14 @@ impl KvTableBackfill for TableCommon {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let zone = decode_context.zone().clone();
-        let (rows, mut batch) = self.fetch_reorg_rows(start, end, batch_count, decode_context)?;
+        let (rows, mut batch) = self.fetch_reorg_rows(store, start, end, batch_count, decode_context)?;
         for (_, handle, row) in &rows {
             for index in &indexes {
                 batch.scanned += 1;
                 for entry in self.index_entry_keys(index, row, handle, physical_id, &zone)? {
                     let key = Key::from_bytes(entry.key.clone());
                     if entry.distinct {
-                        match self.store_mut().get(&key) {
+                        match store.get(&key) {
                             Ok(value) if !value.is_empty() => {
                                 let stored = tidb_tablecodec::decode_handle_in_index_value(&value)
                                     .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
@@ -292,7 +300,7 @@ impl KvTableBackfill for TableCommon {
                             Err(error) => return Err(error.into()),
                         }
                     }
-                    self.store_mut().delete(key)?;
+                    store.delete(key)?;
                 }
                 batch.added += 1;
             }
@@ -302,6 +310,7 @@ impl KvTableBackfill for TableCommon {
 
     fn backfill_index_batch(
         &mut self,
+        store: &mut dyn tidb_kv::storage::TableStorage,
         index_id: i64,
         physical_id: i64,
         start: &[u8],
@@ -316,7 +325,7 @@ impl KvTableBackfill for TableCommon {
             .cloned()
             .ok_or_else(|| KvTableError::Decode(format!("index {index_id} is not on the table")))?;
         let zone = decode_context.zone().clone();
-        let (rows, mut batch) = self.fetch_reorg_rows(start, end, batch_count, decode_context)?;
+        let (rows, mut batch) = self.fetch_reorg_rows(store, start, end, batch_count, decode_context)?;
         // Go `batchCheckUniqueKey`: the batch's distinct keys read once; a key
         // the batch itself files counts for the rows after it.
         let mut filed: HashMap<Vec<u8>, TableHandle> = HashMap::new();
@@ -329,7 +338,7 @@ impl KvTableBackfill for TableCommon {
                 if index.read().unique {
                     let existing = match filed.get(&entry.key) {
                         Some(owner) => Some(owner.clone()),
-                        None => match self.store_mut().get(&Key::from_bytes(entry.key.clone())) {
+                        None => match store.get(&Key::from_bytes(entry.key.clone())) {
                             Ok(value) if !value.is_empty() => {
                                 if entry.distinct {
                                     let stored =
@@ -392,7 +401,7 @@ impl KvTableBackfill for TableCommon {
                     physical_id,
                     &zone,
                 )?;
-                self.store_mut().set(Key::from_bytes(entry.key), value)?;
+                store.set(Key::from_bytes(entry.key), value)?;
             }
             batch.added += 1;
         }
@@ -401,6 +410,7 @@ impl KvTableBackfill for TableCommon {
 
     fn merge_temp_index_batch(
         &mut self,
+        store: &mut dyn tidb_kv::storage::TableStorage,
         index_id: i64,
         physical_id: i64,
         start: &[u8],
@@ -426,7 +436,7 @@ impl KvTableBackfill for TableCommon {
         let mut last_key: Option<Vec<u8>> = None;
         let mut scanned = 0_u64;
         {
-            let mut iter = self.store_mut().iter(
+            let mut iter = store.iter(
                 Some(&Key::from_bytes(start.to_vec())),
                 Some(&Key::from_bytes(end.to_vec())),
             )?;
@@ -496,7 +506,7 @@ impl KvTableBackfill for TableCommon {
             for record in &mut records {
                 let original = match seen.get(&record.origin_key) {
                     Some(value) => value.clone(),
-                    None => match self.store_mut().get(&Key::from_bytes(record.origin_key.clone())) {
+                    None => match store.get(&Key::from_bytes(record.origin_key.clone())) {
                         Ok(value) if !value.is_empty() => Some(value),
                         Ok(_) | Err(tidb_kv::storage::StorageError::NotFound) => None,
                         Err(error) => return Err(error.into()),
@@ -533,7 +543,7 @@ impl KvTableBackfill for TableCommon {
                                 // Several changes hit the key: delete only when
                                 // the row the index names is gone.
                                 let row_key = self.record_key_of(physical_id, &owner);
-                                let exists = match self.store_mut().get(&Key::from_bytes(row_key)) {
+                                let exists = match store.get(&Key::from_bytes(row_key)) {
                                     Ok(value) => !value.is_empty(),
                                     Err(tidb_kv::storage::StorageError::NotFound) => false,
                                     Err(error) => return Err(error.into()),
@@ -561,11 +571,11 @@ impl KvTableBackfill for TableCommon {
             }
             let origin = Key::from_bytes(record.origin_key);
             if record.delete {
-                self.store_mut().delete(origin)?;
+                store.delete(origin)?;
             } else {
-                self.store_mut().set(origin, record.value)?;
+                store.set(origin, record.value)?;
             }
-            self.store_mut().delete(Key::from_bytes(record.temp_key))?;
+            store.delete(Key::from_bytes(record.temp_key))?;
             batch.added += 1;
         }
         Ok(batch)
@@ -601,6 +611,7 @@ impl KvTableBackfill for TableCommon {
     #[allow(clippy::too_many_arguments)]
     fn update_column_batch(
         &mut self,
+        store: &mut dyn tidb_kv::storage::TableStorage,
         old_offset: usize,
         changing: usize,
         start: &[u8],
@@ -637,7 +648,7 @@ impl KvTableBackfill for TableCommon {
         let mut rows = Vec::new();
         let mut task_done = false;
         {
-            let mut iter = self.store_mut().iter(
+            let mut iter = store.iter(
                 Some(&Key::from_bytes(start.to_vec())),
                 Some(&Key::from_bytes(end.to_vec())),
             )?;
@@ -744,7 +755,7 @@ impl KvTableBackfill for TableCommon {
             }
             let encoded = self.encode_row_value(&write_row, &zone)?;
             let _ = handle;
-            self.store_mut().set(Key::from_bytes(key), encoded)?;
+            store.set(Key::from_bytes(key), encoded)?;
             batch.added += 1;
         }
         for warning in statement_warnings {

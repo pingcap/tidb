@@ -3144,6 +3144,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                     })?;
                 table
                     .update_column_batch(
+                        &mut storage.clone(),
                         old_offset,
                         changing,
                         start,
@@ -3159,7 +3160,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                     })
             }
             AddIndexReorgWork::TableRange { physical_id } => table
-                .physical_record_range(physical_id)
+                .physical_record_range(&mut storage.clone(), physical_id)
                 .map(AddIndexReorgAnswer::Range)
                 .map_err(backfill_failure),
             AddIndexReorgWork::Backfill {
@@ -3192,6 +3193,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 for index_id in &reorg.index_ids {
                     let batch = table
                         .backfill_index_batch(
+                            &mut storage.clone(),
                             *index_id,
                             physical_id,
                             start,
@@ -3227,6 +3229,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 end,
             } => table
                 .clean_up_global_index_batch(
+                    &mut storage.clone(),
                     &reorg.index_ids,
                     physical_id,
                     start,
@@ -3242,7 +3245,14 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 start,
                 end,
             } => table
-                .merge_temp_index_batch(index_id, physical_id, start, end, reorg.batch_size)
+                .merge_temp_index_batch(
+                    &mut storage.clone(),
+                    index_id,
+                    physical_id,
+                    start,
+                    end,
+                    reorg.batch_size,
+                )
                 .map(AddIndexReorgAnswer::Batch)
                 .map_err(backfill_failure),
         }

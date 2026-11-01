@@ -214,7 +214,7 @@ pub fn analyze_kv_table_independent_index(
         topn_count,
     );
     for entry in table
-        .index_entry_records_for_check(index.read().id)
+        .with_own_store(|table, store| table.index_entry_records_for_check(store, index.read().id))
         .map_err(AnalyzeError::from)?
     {
         let (encoded_columns, _) =

@@ -204,7 +204,7 @@ fn index_entries(
     index_id: i64,
 ) -> Result<Vec<tidb_table::tables::IndexEntryForCheck>, AdminCheckError> {
     table
-        .index_entry_records_for_check(index_id)
+        .with_own_store(|table, store| table.index_entry_records_for_check(store, index_id))
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))
 }
 
@@ -282,7 +282,7 @@ pub fn check_table(
     // partition has been exchanged two partitions may hold the same
     // `_tidb_rowid`, so a row is its physical table and its handle.
     let rows = table
-        .scan_physical_rows_with_handles(context)
+        .with_own_store(|table, store| table.scan_physical_rows_with_handles(store, context))
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
     // Go `admin.CheckIndicesCount` runs first and, for `ADMIN CHECK INDEX`,
     // is the error the client sees.
@@ -558,7 +558,7 @@ pub fn check_index_ranges(
     ));
 
     let rows = table
-        .scan_physical_rows_with_handles(context)
+        .with_own_store(|table, store| table.scan_physical_rows_with_handles(store, context))
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
     let mut by_handle: BTreeMap<Vec<u8>, (TableHandle, Vec<Datum>)> = BTreeMap::new();
     for (physical_id, handle, row) in &rows {

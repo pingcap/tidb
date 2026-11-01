@@ -107,7 +107,7 @@ fn admin_check_index_reports_each_corruption_shape() {
             .expect("index c");
         let index_id = index.read().id;
         table
-            .index_entries_for_check(index_id)
+            .with_own_store(|table, store| table.index_entries_for_check(store, index_id))
             .expect("entries")
             .into_iter()
             .find(|(_, entry_handle)| *entry_handle == tidb_table::tables::TableHandle::Int(handle))
@@ -151,7 +151,7 @@ fn admin_check_index_reports_each_corruption_shape() {
         .find(|index| index.read().name.original().eq_ignore_ascii_case("c"))
         .expect("index c");
     let entries = entry_lost
-        .index_entries_for_check(index.read().id)
+        .with_own_store(|table, store| table.index_entries_for_check(store, index.read().id))
         .expect("index entries");
     assert_eq!(entries.len(), 3, "one entry per row");
     entry_lost

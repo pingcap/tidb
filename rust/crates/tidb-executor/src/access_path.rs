@@ -7020,8 +7020,7 @@ use std::collections::HashMap;
                 },
             ));
             table
-                .create_index_with_context(
-                    tidb_table::tables::Index {
+                .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
                         info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                             id: 1,
                             name: tidb_ast::CiString::new("idx"),
@@ -7042,7 +7041,7 @@ use std::collections::HashMap;
                         clustered_primary: false,
                     },
                     &crate::StmtContext::for_query(),
-                )
+                ))
                 .unwrap();
             // Row IDs belong to their physical record keyspaces. Global index
             // order alternates those keyspaces; a bare handle is insufficient.
@@ -7262,8 +7261,7 @@ use std::collections::HashMap;
         );
         if indexed {
             table
-                .create_index_with_context(
-                    tidb_table::tables::Index {
+                .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
                         info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                             id: 1,
                             name: tidb_ast::CiString::new("ib"),
@@ -7283,7 +7281,7 @@ use std::collections::HashMap;
                         clustered_primary: false,
                     },
                     &crate::StmtContext::for_query(),
-                )
+                ))
                 .unwrap();
         }
         for i in 1..=n {
@@ -8405,8 +8403,7 @@ use std::collections::HashMap;
         );
         table.set_common_handle_offsets(vec![0, 1, 2]);
         table
-            .create_index_with_context(
-                tidb_table::tables::Index {
+            .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("PRIMARY"),
@@ -8428,7 +8425,7 @@ use std::collections::HashMap;
                     clustered_primary: false,
                 },
                 &crate::StmtContext::default(),
-            )
+            ))
             .unwrap();
         for o_id in 1..=100 {
             table
@@ -8478,8 +8475,7 @@ use std::collections::HashMap;
         );
         table.set_common_handle_offsets(vec![0, 1, 2, 3]);
         table
-            .create_index_with_context(
-                tidb_table::tables::Index {
+            .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("PRIMARY"),
@@ -8501,7 +8497,7 @@ use std::collections::HashMap;
                     clustered_primary: false,
                 },
                 &crate::StmtContext::default(),
-            )
+            ))
             .unwrap();
         for d_id in 1..=2 {
             for o_id in 1..=100 {
@@ -8617,8 +8613,7 @@ use std::collections::HashMap;
         );
         table.set_common_handle_offsets(vec![0, 1, 2]);
         table
-            .create_index_with_context(
-                tidb_table::tables::Index {
+            .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("k4"),
@@ -8638,7 +8633,7 @@ use std::collections::HashMap;
                     clustered_primary: false,
                 },
                 &crate::StmtContext::for_query(),
-            )
+            ))
             .unwrap();
         let mut exec = IndexRangeSourceExec::new_with_statement(
             {
@@ -8819,8 +8814,7 @@ use std::collections::HashMap;
             Box::new(MemTableStorage::default()),
         );
         table
-            .create_index_with_context(
-                tidb_table::tables::Index {
+            .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("ibc"),
@@ -8843,7 +8837,7 @@ use std::collections::HashMap;
                     clustered_primary: false,
                 },
                 &crate::StmtContext::for_query(),
-            )
+            ))
             .unwrap();
         for (a, b, c) in [(1, 2, 20), (2, 1, 30), (3, 2, 10), (4, 1, 40)] {
             table
@@ -9005,8 +8999,7 @@ use std::collections::HashMap;
             Box::new(MemTableStorage::default()),
         );
         table
-            .create_index_with_context(
-                tidb_table::tables::Index {
+            .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("ibc"),
@@ -9029,7 +9022,7 @@ use std::collections::HashMap;
                     clustered_primary: false,
                 },
                 &crate::StmtContext::for_query(),
-            )
+            ))
             .unwrap();
         for handle in 1..=n {
             let b = n / 4 - (handle - 1) / 4;

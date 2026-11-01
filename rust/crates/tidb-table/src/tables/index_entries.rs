@@ -168,10 +168,11 @@ impl TableCommon {
     /// Every stored entry of one index, as `(entry key, the handle it names)`.
     pub fn index_entries_for_check(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
     ) -> Result<Vec<(Vec<u8>, TableHandle)>, KvTableError> {
         Ok(self
-            .index_entry_records_for_check(index_id)?
+            .index_entry_records_for_check(store, index_id)?
             .into_iter()
             .map(|entry| (entry.key, entry.handle))
             .collect())
@@ -179,6 +180,7 @@ impl TableCommon {
 
     pub fn index_entry_records_for_check(
         &mut self,
+        store: &mut dyn TableStorage,
         index_id: i64,
     ) -> Result<Vec<IndexEntryForCheck>, KvTableError> {
         let Some(index) = self
@@ -198,8 +200,7 @@ impl TableCommon {
         };
         for physical_id in physical_ids {
             let (low, high) = crate::tables::index_key_bounds(physical_id, index_id);
-            let mut iterator = self
-                .store
+            let mut iterator = store
                 .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(high)))
                 .map_err(KvTableError::from)?;
             while iterator.valid() {

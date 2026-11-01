@@ -123,7 +123,15 @@ CARGO_INCREMENTAL=0`.
   `DetachedStorage` that panics stands in) and puts it back even on unwind.
   `KvTablePartitionReorg::reorg_partition_batch` takes the DDL worker's
   store directly, as Go's backfill takes the job's transaction.
-- [ ] Milestone 3: DDL, backfill and maintenance users.
+- [x] Milestone 3: DDL, backfill and maintenance users (2026-11-02).
+  `KvTableBackfill` (index backfill, global-index cleanup, temp-index merge,
+  MODIFY COLUMN rewrite, record ranges) and `KvTablePartitionReorg` take
+  the DDL worker's store, as Go's backfill workers take the job's
+  transaction. The in-process `KvTableDdl` (create/backfill/recover index)
+  and `KvTablePartitionMaintenance` take the store; so do
+  `TableCommon::{cleanup_index, drop_index, index_entry_records_for_check,
+  index_entries_for_check}`. Catalog callers lend the table's own store
+  through `with_own_store` until Milestone 4.
 - [ ] Milestone 4: the `store` field is gone.
 - [ ] Milestone 5: one `InfoSchema` per schema version, shared by sessions.
 - [ ] Milestone 6: `ClusterCatalog` is gone.
@@ -172,6 +180,19 @@ CARGO_INCREMENTAL=0`.
   (`reads_processed_keys`): before, a union scan's mem reader got the
   membuffer store swapped into its table copy, and with the swap gone the
   table's own store would have counted membuffer reads as processed keys.
+
+- 2026-11-02: a `self` / `.store` access split over two lines escapes a
+  one-line search. `drop_index` and `index_entry_records_for_check` had
+  one, and both would have hit `DetachedStorage` once called inside
+  `with_own_store` (none of Milestone 2's write paths reach them). Search
+  with `grep -B1 '^\s*\.store\b'` as well as `self\.store`. Remaining
+  own-store readers: `partition_row_counts`,
+  `stats_row_count_for_physical_id`, `stored_keys`,
+  `cache_storage_size_exceeds`, `len`, `is_empty`, `stored_raw_value`,
+  `truncate*`, and the boundary accessors.
+- 2026-11-02: what is left for Milestone 4, counted by marking the
+  own-store methods `#[deprecated]` and compiling: 82 library call sites and
+  359 in all (104 of them `insert_row` in test fixtures).
 
 ## Decision Log
 

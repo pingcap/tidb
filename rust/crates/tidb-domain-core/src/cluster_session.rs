@@ -766,11 +766,11 @@ use tidb_table::table_from_meta::kv_index;
                 .expect("a full-value index");
 
         walked
-            .create_index_with_context(index, &tidb_sessionctx::StmtContext::default())
+            .with_own_store(|table, store| table.create_index_with_context(store, index, &tidb_sessionctx::StmtContext::default()))
             .expect("a backfill that allocates nothing needs no allocator");
         assert!(
             walked
-                .drop_index("vi")
+                .with_own_store(|table, store| table.drop_index(store, "vi"))
                 .expect("the removal walk also allocates nothing"),
             "the index it just created is the one it removes"
         );

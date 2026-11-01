@@ -79,8 +79,7 @@ fn schema_of(width: usize) -> Schema {
 fn inner_table(rows: &[(i64, i64)]) -> TableCommon {
     let mut table = TableCommon::new(91, vec![column("a", 1), column("b", 2)]);
     table
-        .create_index_with_context(
-            Index {
+        .with_own_store(|table, store| table.create_index_with_context(store, Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("ib"),
@@ -100,7 +99,7 @@ fn inner_table(rows: &[(i64, i64)]) -> TableCommon {
                 clustered_primary: false,
             },
             &crate::StmtContext::for_query(),
-        )
+        ))
         .unwrap();
     for (a, b) in rows {
         table
@@ -115,8 +114,7 @@ fn common_handle_table(rows: &[(i64, i64)]) -> TableCommon {
     let mut table = TableCommon::new(94, vec![column("a", 1), column("b", 2)]);
     table.set_common_handle_offsets(vec![0, 1]);
     table
-        .create_index_with_context(
-            Index {
+        .with_own_store(|table, store| table.create_index_with_context(store, Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("PRIMARY"),
@@ -138,7 +136,7 @@ fn common_handle_table(rows: &[(i64, i64)]) -> TableCommon {
                 clustered_primary: false,
             },
             &crate::StmtContext::for_query(),
-        )
+        ))
         .unwrap();
     for (a, b) in rows {
         table

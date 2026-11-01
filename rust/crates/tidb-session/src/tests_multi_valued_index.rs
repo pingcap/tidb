@@ -44,7 +44,7 @@ fn index_entry_count(session: &mut Session, table: &str, index: &str) -> usize {
                 .expect("the index exists");
             let id = index.read().id;
             Ok(stored
-                .index_entries_for_check(id)
+                .with_own_store(|table, store| table.index_entries_for_check(store, id))
                 .expect("entries readable")
                 .len())
         })
