@@ -37,7 +37,7 @@ use crate::ddl_job_scheduler::{must_reload_schemas, SchemaLoader};
 use tidb_ddl_systable::ddl_job_table::DdlJobTable;
 use tidb_ddl_systable::MinJobIdRefresher;
 use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
-use tidb_infoschema_issyncer::real_tikv_catalog::reload_catalog_from_cluster;
+use tidb_infoschema_issyncer::real_tikv_catalog::reload;
 use crate::real_tikv_ddl::{
     answer_ddl_without_job, load_active_persisted_ddl_jobs_cached, load_history_persisted_ddl_job,
     load_min_persisted_ddl_job_id_cached, run_persisted_ddl_job,
@@ -2445,7 +2445,7 @@ where
         let _reload = self.catalog.lock_reload();
         let current = self.catalog.get_latest();
         let at =
-            reload_catalog_from_cluster(&self.opener, self.timeout, &current, &self.row_ids)
+            reload(&self.opener, self.timeout, &current, &self.row_ids)
                 .map_err(|error| error.to_string())?;
         match tidb_infoschema_issyncer::real_tikv_catalog::note_reload(
             &self.schema_validator,

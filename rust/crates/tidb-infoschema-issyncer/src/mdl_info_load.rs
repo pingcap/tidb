@@ -65,7 +65,7 @@ fn str_to_int64s(text: &str) -> Vec<i64> {
 /// no meta walk happens here — only the table's own record scan. A catalog
 /// that predates the table returns a retryable missing-table error; the caller
 /// refreshes the catalog and retries, matching Go's SQL behavior.
-pub fn load_mdl_jobs(
+pub fn refresh_mdl_check_table_info(
     opener: &dyn Storage,
     timeout: Duration,
     catalog: &ClusterCatalog,

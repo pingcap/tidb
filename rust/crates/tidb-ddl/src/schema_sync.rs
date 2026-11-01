@@ -42,7 +42,7 @@ use tidb_infoschema_issyncer::catalog_watch::{
     CatalogReloadStats, CatalogReloadStatsSource, CatalogReloadWaker, InfoCache,
 };
 use tidb_ddl_systable::MinJobIdRefresher;
-use tidb_infoschema_issyncer::mdl_info_load::{load_mdl_jobs, MdlJob};
+use tidb_infoschema_issyncer::mdl_info_load::{refresh_mdl_check_table_info, MdlJob};
 use tidb_syssession::mysql_system_tables::SystemTableError;
 use tidb_infoschema_isvalidator::{SchemaValidator, Validator as _};
 use tidb_pd_client::EtcdClient;
@@ -481,7 +481,7 @@ fn run_ack_loop<S>(
                 last_reload_pass,
             ) {
                 let min_job_id = min_job_id_refresher.current_min_job_id();
-                match load_mdl_jobs(opener, timeout, &catalog.get_latest(), min_job_id) {
+                match refresh_mdl_check_table_info(opener, timeout, &catalog.get_latest(), min_job_id) {
                     Ok(jobs) => {
                         scanned_version = Some(loaded);
                         last_reload_pass = Some(reload_pass);
@@ -695,7 +695,7 @@ fn sleep_sliced(total: Duration, stop: &AtomicBool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadPass, CatalogReloader};
+    use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadPass, Syncer};
     use tidb_infoschema::cluster_catalog::ClusterCatalog;
     use tidb_schemaver::mem_syncer::MemSyncer;
 
@@ -710,7 +710,7 @@ mod tests {
             schema_version: 7,
             databases: Vec::new(),
         }));
-        let reloader = CatalogReloader::spawn(
+        let reloader = Syncer::spawn(
             catalog,
             Duration::from_secs(3600),
             Box::new(|_| Ok(CatalogReloadPass::Unchanged)),
@@ -755,7 +755,7 @@ mod tests {
             schema_version: 7,
             databases: Vec::new(),
         }));
-        let reloader = CatalogReloader::spawn(
+        let reloader = Syncer::spawn(
             catalog,
             Duration::from_secs(3600),
             Box::new(|_| Ok(CatalogReloadPass::Unchanged)),
@@ -794,7 +794,7 @@ mod tests {
             databases: Vec::new(),
         }));
         let mut failures_left = 2;
-        let reloader = CatalogReloader::spawn(
+        let reloader = Syncer::spawn(
             catalog,
             Duration::from_secs(3600),
             Box::new(move |_| {
@@ -827,7 +827,7 @@ mod tests {
             schema_version: 7,
             databases: Vec::new(),
         }));
-        let reloader = CatalogReloader::spawn(
+        let reloader = Syncer::spawn(
             catalog,
             Duration::from_secs(3600),
             Box::new(|_| Err("store unreachable".to_owned())),
@@ -1006,7 +1006,7 @@ mod tests {
             .unwrap();
         loaded.schema_version = 5;
         let catalog = Arc::new(InfoCache::new(loaded));
-        let reloader = CatalogReloader::spawn(
+        let reloader = Syncer::spawn(
             catalog.clone(),
             Duration::from_secs(3600),
             Box::new(|_| Ok(CatalogReloadPass::Unchanged)),

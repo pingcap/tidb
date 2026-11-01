@@ -120,7 +120,7 @@
 //!
 //! * **The node's**, immediately. [`RealClusterDdl`] runs one reload pass
 //!   inline on the statement's own thread rather than waiting up to `lease/2`
-//!   for [`CatalogReloader`]'s tick -- this node is the one that wrote the
+//!   for [`Syncer`]'s tick -- this node is the one that wrote the
 //!   change, so it needs no notification to know about it. Both publishers
 //!   swap the whole catalog into the same slot, so they cannot interleave.
 //! * **The connection's**, at its next statement. A connection's tables are

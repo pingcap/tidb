@@ -574,7 +574,7 @@ impl PrivilegeRegistry {
     /// (`tidb_server::cluster_privileges::registry_from_cluster`) from one
     /// cluster snapshot, so each table is replaced whole rather than
     /// reconciled row by row -- the same "publish whole" philosophy
-    /// [`crate::catalog_watch::CatalogReloader`] uses for the schema
+    /// [`crate::catalog_watch::Syncer`] uses for the schema
     /// catalog, applied per table because this registry has no single outer
     /// handle to swap.
     ///

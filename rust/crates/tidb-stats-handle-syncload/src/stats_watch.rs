@@ -630,7 +630,7 @@ pub type StatsReloadRead =
 /// Re-reads a node's tracked tables' statistics on a plain tick.
 ///
 /// See the module doc for why this has no watch/nudge half the way
-/// [`tidb_infoschema_issyncer::catalog_watch::CatalogReloader`] does: Go's own stats refresh is
+/// [`tidb_infoschema_issyncer::catalog_watch::Syncer`] does: Go's own stats refresh is
 /// tick-only.
 #[derive(Debug)]
 pub struct StatsReloader {

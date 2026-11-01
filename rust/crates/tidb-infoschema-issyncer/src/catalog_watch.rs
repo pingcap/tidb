@@ -60,7 +60,7 @@
 //!
 //! The shape here is the same, with the select replaced by a condvar because
 //! the reload thread is a plain thread and the watch lives on its own thread:
-//! [`CatalogReloader::waker`] hands out a [`CatalogReloadWaker`], the etcd
+//! [`Syncer::waker`] hands out a [`CatalogReloadWaker`], the etcd
 //! watch thread calls [`CatalogReloadWaker::nudge`] on every event, and the
 //! reload thread wakes early and runs exactly the pass its tick would have
 //! run. Nothing about *which* version was published is read from the event:
@@ -151,7 +151,7 @@ impl InfoCache {
         snapshot: &mut S,
         capacity: usize,
     ) -> Result<Arc<ClusterCatalog>, tidb_infoschema::cluster_catalog::ClusterCatalogError> {
-        let version = crate::catalog_reload::schema_version_with_non_empty_diff(snapshot)?;
+        let version = crate::catalog_reload::get_schema_version_with_non_empty_diff(snapshot)?;
         let found = {
             let mut versions = self
                 .historical
@@ -321,7 +321,7 @@ pub enum CatalogReloadPass {
     Full(ClusterCatalog),
 }
 
-/// Wakes a [`CatalogReloader`] before its next tick.
+/// Wakes a [`Syncer`] before its next tick.
 ///
 /// This is the whole coupling between the etcd watch and the reload loop: the
 /// watch thread owns no catalog and performs no read, it only says "something
@@ -351,13 +351,13 @@ impl CatalogReloadWaker {
 /// The running reload thread. Dropping it stops and joins the thread, so a
 /// node cannot outlive its own reloader or leak it.
 #[derive(Debug)]
-pub struct CatalogReloader {
+pub struct Syncer {
     signal: Arc<(Mutex<ReloadSignal>, Condvar)>,
     stats: Arc<StatCounters>,
     worker: Option<JoinHandle<()>>,
 }
 
-impl CatalogReloader {
+impl Syncer {
     /// Starts the reload thread ticking every `interval`.
     ///
     /// Go ticks at `schemaLease/2`; a caller with a lease should pass half of
@@ -461,7 +461,7 @@ impl CatalogReloader {
     }
 }
 
-impl Drop for CatalogReloader {
+impl Drop for Syncer {
     fn drop(&mut self) {
         let _ = self.shutdown();
     }
@@ -762,7 +762,7 @@ mod tests {
 
     #[test]
     fn a_zero_interval_is_refused_rather_than_spinning() {
-        let error = CatalogReloader::spawn(
+        let error = Syncer::spawn(
             Arc::new(InfoCache::new(catalog_at(1))),
             Duration::ZERO,
             Box::new(|_| Ok(CatalogReloadPass::Unchanged)),
@@ -776,7 +776,7 @@ mod tests {
         let shared = Arc::new(InfoCache::new(catalog_at(1)));
         let (sender, receiver) = mpsc::channel();
         let mut version = 1;
-        let mut reloader = CatalogReloader::spawn(
+        let mut reloader = Syncer::spawn(
             Arc::clone(&shared),
             Duration::from_millis(5),
             Box::new(move |current| {
@@ -808,7 +808,7 @@ mod tests {
         let (sender, receiver) = mpsc::channel();
         // An hour-long tick: anything that arrives here arrived because the
         // nudge woke the thread, not because the lease elapsed.
-        let mut reloader = CatalogReloader::spawn(
+        let mut reloader = Syncer::spawn(
             Arc::clone(&shared),
             Duration::from_secs(3600),
             Box::new(move |current| {
@@ -838,7 +838,7 @@ mod tests {
     fn a_nudge_that_arrives_before_the_thread_waits_is_not_lost() {
         let shared = Arc::new(InfoCache::new(catalog_at(1)));
         let (sender, receiver) = mpsc::channel();
-        let mut reloader = CatalogReloader::spawn(
+        let mut reloader = Syncer::spawn(
             Arc::clone(&shared),
             Duration::from_secs(3600),
             Box::new(move |_| {
@@ -858,7 +858,7 @@ mod tests {
 
     #[test]
     fn a_waker_outliving_its_reloader_is_inert() {
-        let mut reloader = CatalogReloader::spawn(
+        let mut reloader = Syncer::spawn(
             Arc::new(InfoCache::new(catalog_at(1))),
             Duration::from_secs(3600),
             Box::new(|_| Ok(CatalogReloadPass::Unchanged)),
@@ -896,7 +896,7 @@ mod tests {
     fn dropping_the_reloader_stops_its_thread() {
         let shared = Arc::new(InfoCache::new(catalog_at(1)));
         let (sender, receiver) = mpsc::channel();
-        let reloader = CatalogReloader::spawn(
+        let reloader = Syncer::spawn(
             Arc::clone(&shared),
             Duration::from_millis(5),
             Box::new(move |_| {

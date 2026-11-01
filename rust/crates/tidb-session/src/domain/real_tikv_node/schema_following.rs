@@ -335,7 +335,7 @@ pub fn spawn_catalog_reloader<S>(
     transaction_opener: RealOptimisticTransactionOpener<S>,
     schema_lease: Duration,
     row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<(Arc<InfoCache>, CatalogReloader, Arc<SchemaValidator>), CatalogReloadError>
+) -> Result<(Arc<InfoCache>, Syncer, Arc<SchemaValidator>), CatalogReloadError>
 where
     S: StoreClient,
 {
@@ -356,11 +356,11 @@ where
     validator.update(startup_lease_grant_ts, 0, startup.schema_version, None);
     let catalog = Arc::new(InfoCache::new(startup));
     let pass_validator = Arc::clone(&validator);
-    let reloader = CatalogReloader::spawn(
+    let reloader = Syncer::spawn(
         Arc::clone(&catalog),
         schema_lease / 2,
         Box::new(move |current| {
-            match reload_catalog_from_cluster(
+            match reload(
                 &transaction_opener,
                 PRODUCTION_CONTROL_PLANE_TIMEOUT,
                 current,

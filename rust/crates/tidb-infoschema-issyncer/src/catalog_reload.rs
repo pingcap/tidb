@@ -178,7 +178,7 @@ impl ReloadedCatalog {
 /// a version whose diff does not exist yet. Adopting that version would let a
 /// later read of the same version see more, which is the inconsistency the
 /// step-back avoids.
-pub(crate) fn schema_version_with_non_empty_diff<S: MetaSnapshot>(
+pub(crate) fn get_schema_version_with_non_empty_diff<S: MetaSnapshot>(
     snapshot: &mut S,
 ) -> Result<i64, ClusterCatalogError> {
     let version = tidb_infoschema::cluster_catalog::read_schema_version(snapshot)?;
@@ -209,7 +209,7 @@ pub fn reload_cluster_catalog<S: MetaSnapshot>(
     current: &ClusterCatalog,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<ReloadedCatalog, ClusterCatalogError> {
-    let needed = schema_version_with_non_empty_diff(snapshot)?;
+    let needed = get_schema_version_with_non_empty_diff(snapshot)?;
     let loaded = current.schema_version;
     if needed == loaded {
         return Ok(ReloadedCatalog::Unchanged { version: needed });

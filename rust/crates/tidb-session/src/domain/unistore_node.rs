@@ -243,7 +243,7 @@ pub struct UnistoreClusterStack {
         Option<tidb_domain_core::domain::stats_maintenance::StatsMaintenanceWorker>,
     // Guards, dropped in declaration order: reload threads first, then the
     // store they read from.
-    pub _reloader: tidb_infoschema_issyncer::catalog_watch::CatalogReloader,
+    pub _reloader: tidb_infoschema_issyncer::catalog_watch::Syncer,
     pub _sysvar_reloader: tidb_domain_core::cluster_sysvar_seam::SysvarReloader,
     pub _stats_reloader: tidb_stats_handle_syncload::stats_watch::StatsReloader,
     pub _binding_reloader: tidb_bindinfo::cluster_binding_seam::BindingReloader,

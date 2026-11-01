@@ -277,7 +277,7 @@ pub fn load_catalog_from_cluster_at(
 /// diffs, and any object a diff points at are all read at that one timestamp,
 /// so a pass never publishes a blend of two schema versions. The transaction
 /// is read-only and finished without writes, leaving no locks behind.
-pub fn reload_catalog_from_cluster(
+pub fn reload(
     opener: &dyn Storage,
     timeout: Duration,
     current: &ClusterCatalog,
