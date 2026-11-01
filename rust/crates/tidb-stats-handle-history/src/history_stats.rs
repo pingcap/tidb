@@ -48,22 +48,23 @@ pub fn plan_historical_stats_meta_lock<S: MetaSnapshot>(
     version: u64,
 ) -> Result<((i64, i64), StatsWritePlan), StatsWriteError> {
     let meta = locate(catalog, "stats_meta")?;
-    let meta_rows = StatsRows::open(snapshot, meta, &["table_id"], table_id)?;
+    let meta = meta.read();
+    let meta_rows = StatsRows::open(snapshot, &meta, &["table_id"], table_id)?;
     let identity = vec![format!("{:?}", Datum::Int(table_id))];
     let (key, values) = meta_rows.existing.get(&identity).ok_or_else(|| {
         StatsWriteError::HistoricalMeta("no historical meta stats can be recorded".to_owned())
     })?;
-    let stored_version = unsigned_value(values.get(&column_id(meta, "version")?));
+    let stored_version = unsigned_value(values.get(&column_id(&meta, "version")?));
     if stored_version != Some(version) {
         return Err(StatsWriteError::HistoricalMeta(
             "no historical meta stats can be recorded".to_owned(),
         ));
     }
     let modify_count =
-        signed_value(values.get(&column_id(meta, "modify_count")?)).ok_or_else(|| {
+        signed_value(values.get(&column_id(&meta, "modify_count")?)).ok_or_else(|| {
             StatsWriteError::HistoricalMeta("invalid stats_meta.modify_count".to_owned())
         })?;
-    let count = signed_value(values.get(&column_id(meta, "count")?))
+    let count = signed_value(values.get(&column_id(&meta, "count")?))
         .ok_or_else(|| StatsWriteError::HistoricalMeta("invalid stats_meta.count".to_owned()))?;
     let mut plan = StatsWritePlan::default();
     plan.mutations.push(
@@ -86,35 +87,36 @@ pub fn plan_historical_stats_meta_replace<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let history = locate(catalog, "stats_meta_history")?;
-    let mut rows = StatsRows::open(snapshot, history, &["table_id", "version"], table_id)?;
-    let mut history_values = defaults_row(history, now)?;
+    let history = history.read();
+    let mut rows = StatsRows::open(snapshot, &history, &["table_id", "version"], table_id)?;
+    let mut history_values = defaults_row(&history, now)?;
     set(
-        history,
+        &history,
         &mut history_values,
         "table_id",
         Datum::Int(table_id),
     );
     set(
-        history,
+        &history,
         &mut history_values,
         "modify_count",
         Datum::Int(modify_count),
     );
-    set(history, &mut history_values, "count", Datum::Int(count));
+    set(&history, &mut history_values, "count", Datum::Int(count));
     set(
-        history,
+        &history,
         &mut history_values,
         "version",
         Datum::UInt(version),
     );
     set(
-        history,
+        &history,
         &mut history_values,
         "source",
         Datum::Bytes(source.as_bytes().to_vec()),
     );
     set(
-        history,
+        &history,
         &mut history_values,
         "create_time",
         Datum::Time(now),
@@ -161,24 +163,25 @@ pub fn plan_historical_stats_data_block<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let history = locate(catalog, "stats_history")?;
+    let history = history.read();
     let mut rows = StatsRows::open(
         snapshot,
-        history,
+        &history,
         &["table_id", "version", "seq_no"],
         physical_id,
     )?;
     let mut plan = StatsWritePlan::default();
-    let mut values = defaults_row(history, now)?;
-    set(history, &mut values, "table_id", Datum::Int(physical_id));
+    let mut values = defaults_row(&history, now)?;
+    set(&history, &mut values, "table_id", Datum::Int(physical_id));
     set(
-        history,
+        &history,
         &mut values,
         "stats_data",
         Datum::Bytes(block.to_vec()),
     );
-    set(history, &mut values, "seq_no", Datum::Int(sequence as i64));
-    set(history, &mut values, "version", Datum::UInt(version));
-    set(history, &mut values, "create_time", Datum::Time(now));
+    set(&history, &mut values, "seq_no", Datum::Int(sequence as i64));
+    set(&history, &mut values, "version", Datum::UInt(version));
+    set(&history, &mut values, "create_time", Datum::Time(now));
     rows.store_row(catalog, &values, &mut plan, row_ids)?;
     Ok(plan)
 }

@@ -280,18 +280,16 @@ impl SessionExtendedInfoSchema {
                 TableEntry::Kv(table) => Some(table.meta().read().clone()),
                 _ => None,
             })
-            .collect();
+            .collect::<Vec<_>>();
         crate::virtual_tables::register_virtual_table(
-            crate::virtual_tables::VirtualSchema {
-                db_info: tidb_model::db::DBInfo {
-                    id: db_id,
-                    name: tidb_ast::CiString::new(name.to_owned()),
-                    charset: tidb_mysql::charset::DefaultCharset.to_owned(),
-                    collate: tidb_mysql::charset::DefaultCollationName.to_owned(),
-                    state: tidb_model::SchemaState::PUBLIC,
-                    ..tidb_model::db::DBInfo::default()
-                },
-                tables,
+            tidb_model::db::DBInfo {
+                id: db_id,
+                name: tidb_ast::CiString::new(name.to_owned()),
+                charset: tidb_mysql::charset::DefaultCharset.to_owned(),
+                collate: tidb_mysql::charset::DefaultCollationName.to_owned(),
+                state: tidb_model::SchemaState::PUBLIC,
+                deprecated_tables: tables.into(),
+                ..tidb_model::db::DBInfo::default()
             },
         );
     }

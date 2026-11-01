@@ -125,6 +125,7 @@ pub fn plan_insert_analyze_job<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(AnalyzeJobId, StatsWritePlan), StatsWriteError> {
     let table = locate(catalog, "analyze_jobs")?;
+    let table = &*table.read();
     let job_id = allocate_row_id(catalog, table, row_ids)?;
     let job_id = u64::try_from(job_id).map_err(|_| {
         StatsWriteError::Encode(RowEncodeError(
@@ -186,6 +187,7 @@ fn plan_update_analyze_job<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let table = locate(catalog, "analyze_jobs")?;
+    let table = &*table.read();
     let id_column = column_id(table, "id")?;
     let existing = read_rows_with_keys(snapshot, table, None)?
         .into_iter()
@@ -340,6 +342,7 @@ pub fn plan_delete_analyze_jobs<S: MetaSnapshot>(
     cutoff: &Time,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let table = locate(catalog, "analyze_jobs")?;
+    let table = &*table.read();
     let update_time = column_id(table, "update_time")?;
     let mut plan = StatsWritePlan::default();
     for (key, values) in read_rows_with_keys(snapshot, table, None)? {
@@ -420,6 +423,7 @@ fn plan_cleanup_corrupted_analyze_jobs<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let table = locate(catalog, "analyze_jobs")?;
+    let table = &*table.read();
     let state = column_id(table, "state")?;
     let update_time = column_id(table, "update_time")?;
     let mut selected = Vec::new();

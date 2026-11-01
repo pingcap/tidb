@@ -15,9 +15,40 @@ use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use tidb_ast::CiString;
 use tidb_datatype::FieldTypeFlags;
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, LoadedDatabase};
+use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_ddl::real_tikv_ddl::ClusterDdlReport;
 use tidb_model::db::DBInfo;
+
+/// Go `DBInfo.Deprecated.Tables` as the test fixtures read and edit it.
+trait DeprecatedTables {
+    fn tables(&self) -> Vec<tidb_model::table_info::TableInfo>;
+    fn with_tables<R>(&mut self, edit: impl FnOnce(&mut Vec<tidb_model::table_info::TableInfo>) -> R) -> R;
+    /// The tables as pointers this database alone holds, to write through:
+    /// a mock catalog is a copy of the one before it.
+    fn tables_mut(&mut self) -> Vec<tidb_model::GoShared<tidb_model::table_info::TableInfo>>;
+}
+
+impl DeprecatedTables for tidb_model::db::DBInfo {
+    fn tables(&self) -> Vec<tidb_model::table_info::TableInfo> {
+        self.deprecated_tables
+            .iter_deref()
+            .map(|table| table.read().clone())
+            .collect()
+    }
+
+    fn with_tables<R>(&mut self, edit: impl FnOnce(&mut Vec<tidb_model::table_info::TableInfo>) -> R) -> R {
+        let mut tables = self.tables();
+        let result = edit(&mut tables);
+        self.deprecated_tables = tables.into();
+        result
+    }
+
+    fn tables_mut(&mut self) -> Vec<tidb_model::GoShared<tidb_model::table_info::TableInfo>> {
+        self.deprecated_tables = self.tables().into();
+        self.deprecated_tables.iter_deref().collect()
+    }
+}
+
 
 /// The catalog writer, offline: the meta-key encoding and the 2PC are
 /// proven by `tidb-exec`'s own `cluster_ddl_source` tests, so what is
@@ -60,7 +91,7 @@ fn mock_rename_table(
         catalog
             .databases
             .iter()
-            .position(|database| database.info.name.lowercase() == name)
+            .position(|database| database.name.lowercase() == name)
     };
     let source_at = database_index(from_schema)
         .ok_or_else(|| SqlQueryError::unknown(format!("Unknown database '{from_schema}'")))?;
@@ -68,25 +99,25 @@ fn mock_rename_table(
         .ok_or_else(|| SqlQueryError::unknown(format!("Unknown database '{to_schema}'")))?;
     let source_name = from_table.to_lowercase();
     let source_table = catalog.databases[source_at]
-        .tables
-        .iter()
-        .position(|stored| stored.name.lowercase() == source_name)
+        .deprecated_tables
+        .iter_deref()
+        .position(|stored| stored.read().name.lowercase() == source_name)
         .ok_or_else(|| {
             SqlQueryError::unknown(format!("Unknown table '{from_schema}.{from_table}'"))
         })?;
     let target_name = to_table.to_lowercase();
     if catalog.databases[target_at]
-        .tables
-        .iter()
-        .any(|stored| stored.name.lowercase() == target_name)
+        .deprecated_tables
+        .iter_deref()
+        .any(|stored| stored.read().name.lowercase() == target_name)
     {
         return Err(SqlQueryError::unknown(format!(
             "Table '{to_schema}.{to_table}' already exists"
         )));
     }
-    let mut table = catalog.databases[source_at].tables.remove(source_table);
+    let mut table = catalog.databases[source_at].with_tables(|tables| tables.remove(source_table));
     table.name = CiString::new(to_table.to_owned());
-    catalog.databases[target_at].tables.push(table);
+    catalog.databases[target_at].with_tables(|tables| tables.push(table));
     Ok(())
 }
 
@@ -108,11 +139,11 @@ impl ClusterDdl for MockDdl {
             schema_version: current.schema_version + 1,
             databases: current.databases.clone(),
         };
-        let find = |databases: &mut Vec<LoadedDatabase>, name: &str| -> Option<usize> {
+        let find = |databases: &mut Vec<tidb_model::db::DBInfo>, name: &str| -> Option<usize> {
             let name = name.to_lowercase();
             databases
                 .iter()
-                .position(|database| database.info.name.lowercase() == name)
+                .position(|database| database.name.lowercase() == name)
         };
         let mut created_id = None;
         match statement {
@@ -136,15 +167,13 @@ impl ClusterDdl for MockDdl {
                 }
                 let id = self.allocate();
                 created_id = Some(id);
-                next.databases.push(LoadedDatabase {
-                    info: DBInfo {
-                        id,
-                        name: CiString::new(name.clone()),
-                        charset: charset.clone(),
-                        collate: collate.clone(),
-                        ..DBInfo::default()
-                    },
-                    tables: Vec::new(),
+                next.databases.push(DBInfo {
+                    id,
+                    name: CiString::new(name.clone()),
+                    charset: charset.clone(),
+                    collate: collate.clone(),
+                    deprecated_tables: Vec::new().into(),
+                    ..DBInfo::default()
                 });
             }
             DdlStatement::DropDatabase { name, if_exists } => {
@@ -174,9 +203,9 @@ impl ClusterDdl for MockDdl {
                 })?;
                 let lowered = table.to_lowercase();
                 if next.databases[at]
-                    .tables
-                    .iter()
-                    .any(|stored| stored.name.lowercase() == lowered)
+                    .deprecated_tables
+                    .iter_deref()
+                    .any(|stored| stored.read().name.lowercase() == lowered)
                 {
                     if *if_not_exists {
                         return Ok(ClusterDdlReport::AlreadySatisfied {
@@ -190,7 +219,7 @@ impl ClusterDdl for MockDdl {
                 }
                 let id = self.allocate();
                 created_id = Some(id);
-                let database = &next.databases[at].info;
+                let database = &next.databases[at];
                 let mut info = build
                     .for_database(&database.charset, &database.collate)
                     .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
@@ -209,7 +238,7 @@ impl ClusterDdl for MockDdl {
                             .update(ordinal, |definition| definition.id = physical);
                     }
                 }
-                next.databases[at].tables.push(info);
+                next.databases[at].with_tables(|tables| tables.push(info));
             }
             DdlStatement::CreateView {
                 schema,
@@ -222,22 +251,22 @@ impl ClusterDdl for MockDdl {
                 })?;
                 let lowered = name.to_lowercase();
                 let existing = next.databases[at]
-                    .tables
-                    .iter()
-                    .position(|stored| stored.name.lowercase() == lowered);
+                    .deprecated_tables
+                    .iter_deref()
+                    .position(|stored| stored.read().name.lowercase() == lowered);
                 if existing.is_some() && !or_replace {
                     return Err(SqlQueryError::unknown(format!(
                         "Table '{schema}.{name}' already exists"
                     )));
                 }
                 if let Some(old) = existing {
-                    next.databases[at].tables.remove(old);
+                    next.databases[at].with_tables(|tables| tables.remove(old));
                 }
                 let id = self.allocate();
                 created_id = Some(id);
                 let mut info = (**info).clone();
                 info.id = id;
-                next.databases[at].tables.push(info);
+                next.databases[at].with_tables(|tables| tables.push(info));
             }
             DdlStatement::DropView { names, if_exists } => {
                 let mut missing = Vec::new();
@@ -248,19 +277,19 @@ impl ClusterDdl for MockDdl {
                     };
                     let lowered = name.to_lowercase();
                     let Some(stored) = next.databases[at]
-                        .tables
-                        .iter()
-                        .position(|stored| stored.name.lowercase() == lowered)
+                        .deprecated_tables
+                        .iter_deref()
+                        .position(|stored| stored.read().name.lowercase() == lowered)
                     else {
                         missing.push(format!("{schema}.{name}"));
                         continue;
                     };
-                    if next.databases[at].tables[stored].view.is_none() {
+                    if next.databases[at].tables()[stored].view.is_none() {
                         return Err(SqlQueryError::unknown(format!(
                             "'{schema}.{name}' is a base table, not a VIEW"
                         )));
                     }
-                    next.databases[at].tables.remove(stored);
+                    next.databases[at].with_tables(|tables| tables.remove(stored));
                 }
                 if !missing.is_empty() && !if_exists {
                     return Err(SqlQueryError::unknown(format!(
@@ -280,12 +309,13 @@ impl ClusterDdl for MockDdl {
                 })?;
                 let lowered = table.to_lowercase();
                 let stored = next.databases[at]
-                    .tables
-                    .iter_mut()
-                    .find(|stored| stored.name.lowercase() == lowered)
+                    .tables_mut()
+                    .into_iter()
+                    .find(|stored| stored.read().name.lowercase() == lowered)
                     .ok_or_else(|| {
                         SqlQueryError::unknown(format!("Unknown table '{schema}.{table}'"))
                     })?;
+                let mut stored = stored.write();
                 if stored.auto_random_bits == 0 {
                     return Err(SqlQueryError::new(
                         8216,
@@ -316,12 +346,13 @@ impl ClusterDdl for MockDdl {
                 })?;
                 let lowered = table.to_lowercase();
                 let stored = next.databases[at]
-                    .tables
-                    .iter_mut()
-                    .find(|stored| stored.name.lowercase() == lowered)
+                    .tables_mut()
+                    .into_iter()
+                    .find(|stored| stored.read().name.lowercase() == lowered)
                     .ok_or_else(|| {
                         SqlQueryError::unknown(format!("Unknown table '{schema}.{table}'"))
                     })?;
+                let mut stored = stored.write();
                 if (*new_cache == 1) != (stored.auto_id_cache == 1) {
                     return Err(SqlQueryError::unknown(
                         "Can't Alter AUTO_ID_CACHE between 1 and non-1, the underlying implementation is different",
@@ -342,12 +373,13 @@ impl ClusterDdl for MockDdl {
                 })?;
                 let lowered = table.to_lowercase();
                 let stored = next.databases[at]
-                    .tables
-                    .iter_mut()
-                    .find(|stored| stored.name.lowercase() == lowered)
+                    .tables_mut()
+                    .into_iter()
+                    .find(|stored| stored.read().name.lowercase() == lowered)
                     .ok_or_else(|| {
                         SqlQueryError::unknown(format!("Unknown table '{schema}.{table}'"))
                     })?;
+                let mut stored = stored.write();
                 if stored.auto_random_bits > *shard_bits {
                     return Err(SqlQueryError::new(
                         8216,
@@ -378,12 +410,12 @@ impl ClusterDdl for MockDdl {
                 })?;
                 let lowered = table.to_lowercase();
                 let found = next.databases[at]
-                    .tables
-                    .iter()
-                    .position(|stored| stored.name.lowercase() == lowered);
+                    .deprecated_tables
+                    .iter_deref()
+                    .position(|stored| stored.read().name.lowercase() == lowered);
                 match found {
                     Some(index) => {
-                        next.databases[at].tables.remove(index);
+                        next.databases[at].with_tables(|tables| tables.remove(index));
                     }
                     None if *if_exists => {
                         return Ok(ClusterDdlReport::AlreadySatisfied {
@@ -437,6 +469,7 @@ impl ClusterDdl for MockDdl {
                         let info =
                             mock_table_by_ids(&mut next.databases, lock.schema_id, lock.table_id)
                                 .ok_or_else(|| SqlQueryError::unknown("locked table not found"))?;
+                        let mut info = info.write();
                         let name = info.name.lowercase().to_owned();
                         let current = info.lock.as_ref().map(|lock| lock.read().clone());
                         if check {
@@ -556,20 +589,20 @@ impl ClusterDdl for MockDdl {
 }
 
 fn mock_table_by_ids(
-    databases: &mut [LoadedDatabase],
+    databases: &mut [tidb_model::db::DBInfo],
     schema_id: i64,
     table_id: i64,
-) -> Option<&mut tidb_model::TableInfo> {
+) -> Option<tidb_model::GoShared<tidb_model::TableInfo>> {
     databases
         .iter_mut()
-        .find(|database| database.info.id == schema_id)?
-        .tables
-        .iter_mut()
-        .find(|table| table.id == table_id)
+        .find(|database| database.id == schema_id)?
+        .tables_mut()
+        .into_iter()
+        .find(|table| table.read().id == table_id)
 }
 
 fn mock_unlock_tables(
-    databases: &mut [LoadedDatabase],
+    databases: &mut [tidb_model::db::DBInfo],
     unlock_tables: &[tidb_model::TableLockTpInfo],
     session: &tidb_model::SessionInfo,
     is_cleanup: bool,
@@ -578,6 +611,7 @@ fn mock_unlock_tables(
         let Some(info) = mock_table_by_ids(databases, unlock.schema_id, unlock.table_id) else {
             continue;
         };
+        let mut info = info.write();
         let current = info.lock.as_ref().map(|lock| lock.read().clone());
         if let Some(next) =
             tidb_ddl_build::table_lock::unlock_table(current.as_ref(), session, is_cleanup)

@@ -49,8 +49,9 @@ pub fn prepare_add_foreign_key_job_submission<S: MetaSnapshot>(
     };
     let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let (_, stored) = locate_table(&catalog, schema, table)?;
+    let stored = stored.read();
     // Go `AlterTable` names an anonymous key before any spec runs.
-    let name = foreign_key_name(definition, stored, 0);
+    let name = foreign_key_name(definition, &stored, 0);
     let mut specs = build_add_foreign_key_jobs(
         snapshot,
         &catalog,
@@ -116,7 +117,8 @@ pub(super) fn build_add_foreign_key_jobs<S: MetaSnapshot>(
     store_count: usize,
 ) -> Result<Vec<tidb_ddl_jobsubmit::JobSpec>, DdlPlanError> {
     let (schema_id, stored) = locate_table(catalog, schema, table)?;
-    let created = create_foreign_key(catalog, schema, stored, name, definition, context)?;
+    let stored = stored.read();
+    let created = create_foreign_key(catalog, schema, &stored, name, definition, context)?;
     let mut specs = Vec::new();
     if created.needs_index {
         // Go `createIndex(ctx, ti, IndexKeyTypeNone, fkInfo.Name, ...)`, one
@@ -269,7 +271,7 @@ pub(super) fn on_create_foreign_key(
     outcome: Option<&ReorgOutcome>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let database_id = active.job.schema_id;
-    let mut info = checked_job_table(catalog, active, true)?.clone_like_go();
+    let mut info = checked_job_table(catalog, active, true)?.read().clone_like_go();
     let args = tidb_model::get_add_foreign_key_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
         .ok_or_else(|| {

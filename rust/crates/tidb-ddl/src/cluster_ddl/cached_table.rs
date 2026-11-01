@@ -40,7 +40,7 @@ pub fn check_cached_table_ddl(
             _ => return false,
         };
         catalog.find_table(database, name).is_some_and(|(_, table)| {
-            table.table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE
+            table.read().table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE
         })
     };
     let refused = |operation: &str| {

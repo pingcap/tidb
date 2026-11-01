@@ -22,56 +22,50 @@ use std::sync::{Mutex, OnceLock};
 use tidb_hack::GoToLower;
 use tidb_model::db::DBInfo;
 use tidb_model::table_info::TableInfo;
+use tidb_model::GoShared;
 
-/// One registered virtual schema: its `DBInfo` and its tables.
-#[derive(Debug)]
-pub struct VirtualSchema {
-    /// Go `virtualTableDriver.DBInfo`.
-    pub db_info: DBInfo,
-    /// The schema's tables, as Go's `tableFromMeta` builds them.
-    pub tables: Vec<TableInfo>,
-}
-
-fn drivers() -> &'static Mutex<Vec<&'static VirtualSchema>> {
-    static DRIVERS: OnceLock<Mutex<Vec<&'static VirtualSchema>>> = OnceLock::new();
+fn drivers() -> &'static Mutex<Vec<&'static DBInfo>> {
+    static DRIVERS: OnceLock<Mutex<Vec<&'static DBInfo>>> = OnceLock::new();
     DRIVERS.get_or_init(Mutex::default)
 }
 
-/// Go `RegisterVirtualTable`: adds `schema` to every infoschema. A schema
+/// Go `RegisterVirtualTable`: adds the virtual driver's `DBInfo`, whose
+/// `Deprecated.Tables` are its tables, to every infoschema. A schema
 /// registered again (by name) keeps its first registration.
-pub fn register_virtual_table(schema: VirtualSchema) {
+pub fn register_virtual_table(db_info: DBInfo) {
     let mut drivers = drivers().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let name = schema.db_info.name.lowercase().to_owned();
+    let name = db_info.name.lowercase().to_owned();
     if drivers
         .iter()
-        .any(|registered| registered.db_info.name.lowercase() == name)
+        .any(|registered| registered.name.lowercase() == name)
     {
         return;
     }
-    drivers.push(Box::leak(Box::new(schema)));
+    drivers.push(Box::leak(Box::new(db_info)));
 }
 
 /// The registered virtual schema named `schema` (case-insensitive) with its
 /// tables, the part of Go `InfoSchema.SchemaByName` and
 /// `SchemaTableInfos` the virtual drivers answer.
 #[must_use]
-pub fn virtual_schema(schema: &str) -> Option<(&'static DBInfo, &'static [TableInfo])> {
+pub fn virtual_schema(schema: &str) -> Option<&'static DBInfo> {
     let schema = schema.go_to_lower();
     let drivers = drivers().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     drivers
         .iter()
-        .find(|registered| registered.db_info.name.lowercase() == schema)
-        .map(|registered| (&registered.db_info, registered.tables.as_slice()))
+        .find(|registered| registered.name.lowercase() == schema)
+        .copied()
 }
 
 /// The registered virtual table `schema`.`table` (case-insensitive), the
 /// part of Go `InfoSchema.TableByName` the virtual drivers answer.
 #[must_use]
-pub fn virtual_table(schema: &str, table: &str) -> Option<(&'static DBInfo, &'static TableInfo)> {
-    let (db_info, tables) = virtual_schema(schema)?;
+pub fn virtual_table(schema: &str, table: &str) -> Option<(&'static DBInfo, GoShared<TableInfo>)> {
+    let db_info = virtual_schema(schema)?;
     let table = table.go_to_lower();
-    tables
-        .iter()
-        .find(|stored| stored.name.lowercase() == table)
+    db_info
+        .deprecated_tables
+        .iter_deref()
+        .find(|stored| stored.read().name.lowercase() == table)
         .map(|stored| (db_info, stored))
 }

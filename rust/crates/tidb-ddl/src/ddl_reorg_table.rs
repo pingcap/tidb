@@ -51,6 +51,7 @@ impl DdlReorgTable {
         let (_, table) = catalog
             .find_table("mysql", "tidb_ddl_reorg")
             .ok_or_else(|| "mysql.tidb_ddl_reorg does not exist".to_owned())?;
+        let table = table.read();
         let table = table.clone_like_go();
         let view = SystemTableView::project(
             "mysql.tidb_ddl_reorg",

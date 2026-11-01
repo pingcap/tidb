@@ -493,11 +493,12 @@ impl tidb_stats_handle_syncload::sync_load::StatisticsItemLoader for ClusterStat
             let Some(table) = catalog
                 .databases
                 .iter()
-                .flat_map(|database| &database.tables)
-                .find(|table| table.id == item.table_id)
+                .flat_map(|database| database.deprecated_tables.iter_deref())
+                .find(|table| table.read().id == item.table_id)
             else {
                 continue;
             };
+            let table = table.read();
             if item.is_index
                 && !table
                     .indices
@@ -543,7 +544,7 @@ impl tidb_stats_handle_syncload::sync_load::StatisticsItemLoader for ClusterStat
                     continue;
                 }
                 if !analyzed {
-                    self.stats.publish_empty_column(item.table_id, item.id, table);
+                    self.stats.publish_empty_column(item.table_id, item.id, &table);
                     continue;
                 }
             }
@@ -566,7 +567,7 @@ impl tidb_stats_handle_syncload::sync_load::StatisticsItemLoader for ClusterStat
                 // contribute to read latency.
                 tidb_stats_handle_metrics::READ_STATS_HISTOGRAM
                     .observe(started.elapsed().as_millis() as f64);
-                self.stats.update_item(item.table_id, loaded, table);
+                self.stats.update_item(item.table_id, loaded, &table);
             }
         }
         // The domain publication above is authoritative for every session.
@@ -1666,10 +1667,9 @@ impl Domain {
             catalog
                 .databases
                 .iter()
-                .flat_map(|database| &database.tables)
-                .find(|table| table.id == table_id)
-                .cloned()
-                .map(Arc::new)
+                .flat_map(|database| database.deprecated_tables.iter_deref())
+                .find(|table| table.read().id == table_id)
+                .map(|table| Arc::new(table.read().clone()))
         });
         Ok(())
     }
@@ -2203,11 +2203,14 @@ impl InfoSchemaView for ClusterHistoricalSchemaView {
         self.catalog
             .databases
             .iter()
-            .flat_map(|database| &database.tables)
-            .find(|table| table.id == table_id)
-            .map(|table| TableMeta {
-                id: table.id,
-                name: table.name.original().to_owned(),
+            .flat_map(|database| database.deprecated_tables.iter_deref())
+            .find(|table| table.read().id == table_id)
+            .map(|table| {
+                let table = table.read();
+                TableMeta {
+                    id: table.id,
+                    name: table.name.original().to_owned(),
+                }
             })
     }
 
@@ -2215,8 +2218,9 @@ impl InfoSchemaView for ClusterHistoricalSchemaView {
         self.catalog
             .databases
             .iter()
-            .flat_map(|database| &database.tables)
+            .flat_map(|database| database.deprecated_tables.iter_deref())
             .find(|table| {
+                let table = table.read();
                 table.get_partition_info().is_some_and(|partition| {
                     partition
                         .read()
@@ -2226,19 +2230,22 @@ impl InfoSchemaView for ClusterHistoricalSchemaView {
                         .any(|definition| definition.id == partition_id)
                 })
             })
-            .map(|table| TableMeta {
-                id: table.id,
-                name: table.name.original().to_owned(),
+            .map(|table| {
+                let table = table.read();
+                TableMeta {
+                    id: table.id,
+                    name: table.name.original().to_owned(),
+                }
             })
     }
 
     fn schema_by_table(&self, table: &TableMeta) -> Option<String> {
         self.catalog.databases.iter().find_map(|database| {
             database
-                .tables
-                .iter()
-                .any(|candidate| candidate.id == table.id)
-                .then(|| database.info.name.original().to_owned())
+                .deprecated_tables
+                .iter_deref()
+                .any(|candidate| candidate.read().id == table.id)
+                .then(|| database.name.original().to_owned())
         })
     }
 }
@@ -2381,12 +2388,13 @@ impl ClusterHistoricalStatsHandle {
     fn physical_table<'catalog>(
         catalog: &'catalog ClusterCatalog,
         physical_id: i64,
-    ) -> Option<&'catalog tidb_model::table_info::TableInfo> {
+    ) -> Option<tidb_model::GoShared<tidb_model::table_info::TableInfo>> {
         catalog
             .databases
             .iter()
-            .flat_map(|database| &database.tables)
+            .flat_map(|database| database.deprecated_tables.iter_deref())
             .find(|table| {
+                let table = table.read();
                 table.id == physical_id
                     || table.get_partition_info().is_some_and(|partition| {
                         partition
@@ -2435,6 +2443,7 @@ impl ClusterHistoricalStatsHandle {
             }
             return Ok(false);
         };
+        let table = table.read();
 
         let logical_table_exists = table.id == physical_id;
         for (is_index, hist_id) in histograms {
@@ -2777,13 +2786,14 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
         let table_info = catalog
             .databases
             .iter()
-            .flat_map(|database| &database.tables)
-            .find(|candidate| candidate.id == table.id)
+            .flat_map(|database| database.deprecated_tables.iter_deref())
+            .find(|candidate| candidate.read().id == table.id)
             .ok_or_else(|| format!("cannot get table by id {}", table.id))?;
+        let table_info = table_info.read();
         let Some(json) = self.historical_json(
             &catalog,
             database_name,
-            table_info,
+            &table_info,
             physical_id,
             is_partition,
         )?
@@ -3031,9 +3041,10 @@ pub fn system_time_timestamp(value: SystemTime) -> Result<tidb_datatype::Time, S
 
 pub(crate) fn stats_delta_table(catalog: &ClusterCatalog, physical_id: i64) -> Option<(&str, Option<i64>)> {
     for database in &catalog.databases {
-        for table in &database.tables {
+        for table in database.deprecated_tables.iter_deref() {
+                let table = table.read();
             if table.id == physical_id {
-                return Some((database.info.name.lowercase(), None));
+                return Some((database.name.lowercase(), None));
             }
             if table.partition.as_ref().is_some_and(|partition| {
                 partition
@@ -3043,7 +3054,7 @@ pub(crate) fn stats_delta_table(catalog: &ClusterCatalog, physical_id: i64) -> O
                     .iter()
                     .any(|definition| definition.id == physical_id)
             }) {
-                return Some((database.info.name.lowercase(), Some(table.id)));
+                return Some((database.name.lowercase(), Some(table.id)));
             }
         }
     }
@@ -3242,7 +3253,8 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueSource
             .map_err(|error| error.to_string())?;
         let mut tables = Vec::new();
         for database in &catalog.databases {
-            for table in &database.tables {
+            for table in database.deprecated_tables.iter_deref() {
+                    let table = table.read();
                 let global_stats = statistics
                     .get(&table.id)
                     .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
@@ -3262,7 +3274,7 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueSource
                     }
                 }
                 tables.push(InventoryTable {
-                    schema_name: database.info.name.original().to_owned(),
+                    schema_name: database.name.original().to_owned(),
                     table: Arc::new(table.clone()),
                     global_stats,
                     partition_stats,
@@ -3299,10 +3311,14 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext
         };
         let catalog = factory.catalog.get_latest();
         for database in &catalog.databases {
-            if let Some(table) = database.tables.iter().find(|table| table.id == table_id) {
+            if let Some(table) = database
+                .deprecated_tables
+                .iter_deref()
+                .find(|table| table.read().id == table_id)
+            {
                 return tidb_stats_handle_autoanalyze_priorityqueue::TableLookup::Found {
-                    schema_name: database.info.name.original().to_owned(),
-                    table: Arc::new(table.clone()),
+                    schema_name: database.name.original().to_owned(),
+                    table: Arc::new(table.read().clone()),
                 };
             }
         }

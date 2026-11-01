@@ -193,28 +193,29 @@ pub fn cluster_session_catalog_with_templates(
         catalog.set_policy(policy.clone());
     }
     for database in &loaded.databases {
-        let schema = database.info.name.original().to_owned();
+        let schema = database.name.original().to_owned();
         // Go `DBInfo.Charset`/`Collate`: what `SHOW CREATE DATABASE` and
         // `information_schema.schemata` report, and the default a table
         // created without its own charset inherits. An unrecognised stored
         // name falls back to the server default rather than refusing the
         // whole database.
         let charset = tidb_table::tables::TableCharset {
-            charset: tidb_charset::Charset::from_name(&database.info.charset)
+            charset: tidb_charset::Charset::from_name(&database.charset)
                 .unwrap_or(tidb_table::tables::TableCharset::default().charset),
-            collation: tidb_charset::Collation::from_name(&database.info.collate)
+            collation: tidb_charset::Collation::from_name(&database.collate)
                 .unwrap_or(tidb_table::tables::TableCharset::default().collation),
         };
-        catalog.register_database_with_id_and_charset(&schema, database.info.id, charset);
+        catalog.register_database_with_id_and_charset(&schema, database.id, charset);
         // Go `DBInfo.PlacementPolicyRef`: the schema default a table created
         // without its own takes, and what SHOW CREATE DATABASE prints.
-        if let Some(reference) = &database.info.placement_policy_ref {
+        if let Some(reference) = &database.placement_policy_ref {
             catalog.set_database_placement_policy(&schema, Some(reference.read().clone()));
         }
-        for table in &database.tables {
+        for table in database.deprecated_tables.iter_deref() {
+                let table = table.read();
             if table.is_view() {
                 let name = table.name.original();
-                match cluster_view(table) {
+                match cluster_view(&table) {
                     Ok(view) => catalog
                         .register_view_in(&schema, name, view)
                         .expect("the schema was created just above this loop"),
@@ -230,7 +231,7 @@ pub fn cluster_session_catalog_with_templates(
                 // (`infoschema.loadSequence`); SHOW TABLES lists it and
                 // NEXTVAL/LASTVAL/SETVAL resolve against it. Skipping it here
                 // is what made `SELECT nextval(...)` answer 1146 on this tier.
-                match auto_ids.sequence_allocator_for(database.info.id, table) {
+                match auto_ids.sequence_allocator_for(database.id, &table) {
                     Some(sequence) => catalog
                         .register_sequence_in(&schema, table.name.original(), sequence)
                         .expect("the schema was created just above this loop"),
@@ -242,7 +243,7 @@ pub fn cluster_session_catalog_with_templates(
                 continue;
             }
             let auto = AutoIdSource::In {
-                db_id: database.info.id,
+                db_id: database.id,
                 ids: auto_ids,
             };
             // A cached template clone carries neutral storage and valid
@@ -253,7 +254,7 @@ pub fn cluster_session_catalog_with_templates(
             {
                 Some(template) => Ok(template.clone()),
                 None => {
-                    let fresh = cluster_table(table, template_storage, &auto);
+                    let fresh = cluster_table(&table, template_storage, &auto);
                     if let (Ok(fresh), Some(cache)) = (&fresh, kv_templates.as_deref_mut()) {
                         cache.insert(&schema, table.name.original(), fresh.clone());
                     }
@@ -274,7 +275,7 @@ pub fn cluster_session_catalog_with_templates(
                     // it too and refuses every statement on it with
                     // `ErrTableNotExists` (`tryLockMDLAndUpdateSchemaIfNecessary`).
                     if table.state == tidb_model::SchemaState::PUBLIC {
-                        report_unbuildable_table(&schema, table, &reason);
+                        report_unbuildable_table(&schema, &table, &reason);
                     }
                     skipped.push(SkippedTable {
                         name: format!("{schema}.{}", table.name.original()),
@@ -647,13 +648,11 @@ use tidb_table::table_from_meta::kv_index;
             resource_groups: Vec::new(),
             policies: Vec::new(),
             schema_version: 7,
-            databases: vec![tidb_infoschema::cluster_catalog::LoadedDatabase {
-                info: DBInfo {
-                    id: 5,
-                    name: CiString::new("app"),
-                    ..DBInfo::default()
-                },
-                tables: vec![table],
+            databases: vec![DBInfo {
+                id: 5,
+                name: CiString::new("app"),
+                deprecated_tables: vec![table].into(),
+                ..DBInfo::default()
             }],
         }
     }

@@ -42,13 +42,14 @@ pub fn prepare_table_lock_job_submission<S: MetaSnapshot>(
                 let database = catalog
                     .databases
                     .iter()
-                    .find(|database| database.info.id == table.schema_id)?;
+                    .find(|database| database.id == table.schema_id)?;
                 let stored = database
-                    .tables
-                    .iter()
-                    .find(|stored| stored.id == table.table_id)?;
+                    .deprecated_tables
+                    .iter_deref()
+                    .find(|stored| stored.read().id == table.table_id)?;
+                let stored = stored.read();
                 Some(tidb_model::InvolvingSchemaInfo {
-                    database: database.info.name.lowercase().to_owned().into(),
+                    database: database.name.lowercase().to_owned().into(),
                     table: stored.name.lowercase().to_owned().into(),
                     ..tidb_model::InvolvingSchemaInfo::default()
                 })
@@ -171,6 +172,7 @@ fn unlock_tables(
     let write = match stored_table_by_ids(catalog, target.schema_id, target.table_id) {
         None => no_table_write(active),
         Some(stored) => {
+            let stored = stored.read();
             let current = stored.lock.as_ref().map(|lock| lock.read().clone());
             match tidb_ddl_build::table_lock::unlock_table(
                 current.as_ref(),
@@ -197,7 +199,7 @@ fn job_table<'a>(
     catalog: &'a ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &tidb_model::TableLockTpInfo,
-) -> Result<&'a TableInfo, DdlPlanError> {
+) -> Result<GoShared<TableInfo>, DdlPlanError> {
     active.job.schema_id = target.schema_id;
     active.job.table_id = target.table_id;
     checked_job_table(catalog, active, true)
@@ -218,6 +220,7 @@ pub(super) fn on_lock_tables(
     if args.index_of_lock == 0 {
         for target in &args.lock_tables {
             let info = job_table(catalog, active, target)?;
+            let info = info.read();
             let current = info.lock.as_ref().map(|lock| lock.read().clone());
             tidb_ddl_build::table_lock::check_table_locked(
                 info.name.lowercase(),
@@ -235,7 +238,7 @@ pub(super) fn on_lock_tables(
     else {
         return Ok(action_step(no_table_write(active)));
     };
-    let mut info = job_table(catalog, active, &target)?.clone_like_go();
+    let mut info = job_table(catalog, active, &target)?.read().clone_like_go();
     let current = info.lock.as_ref().map(|lock| lock.read().clone());
     let mut lock = tidb_ddl_build::table_lock::lock_table(
         info.name.lowercase(),

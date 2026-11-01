@@ -142,7 +142,8 @@ struct ReplicaTable {
 fn replica_tables(catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog) -> Vec<ReplicaTable> {
     let mut tables = Vec::new();
     for database in &catalog.databases {
-        for stored in &database.tables {
+        for stored in database.deprecated_tables.iter_deref() {
+                let stored = stored.read();
             let Some(replica) = &stored.tiflash_replica else {
                 continue;
             };
@@ -904,7 +905,11 @@ mod tests {
     fn tiflash_batch_collects_physical_and_adding_partitions() {
         let catalog = replica_catalog(&[(7, false)]);
         let mut image = catalog.get_latest();
-        Arc::make_mut(&mut image).databases[0].tables[0].partition =
+        // The image is a copy: write a fresh pointer rather than through
+        // the shared one.
+        let database = &mut Arc::make_mut(&mut image).databases[0];
+        let mut table = database.deprecated_tables.get(0).unwrap().read().clone();
+        table.partition =
             Some(tidb_model::GoShared::new(tidb_model::PartitionInfo {
                 enable: true,
                 definitions: vec![tidb_model::PartitionDefinition {
@@ -919,6 +924,7 @@ mod tests {
                 .into(),
                 ..Default::default()
             }));
+        database.deprecated_tables = vec![table].into();
         let tables = replica_tables(&image);
         assert_eq!(
             tables.iter().map(|table| table.id).collect::<Vec<_>>(),
@@ -1180,9 +1186,8 @@ mod tests {
                 resource_groups: Vec::new(),
                 policies: Vec::new(),
                 schema_version: 1,
-                databases: vec![tidb_infoschema::cluster_catalog::LoadedDatabase {
-                    info: tidb_model::db::DBInfo::default(),
-                    tables: tables
+                databases: vec![tidb_model::db::DBInfo {
+                    deprecated_tables: tables
                         .iter()
                         .map(|&(id, available)| tidb_model::table_info::TableInfo {
                             id,
@@ -1195,7 +1200,9 @@ mod tests {
                             )),
                             ..Default::default()
                         })
-                        .collect(),
+                        .collect::<Vec<_>>()
+                        .into(),
+                    ..Default::default()
                 }],
             },
         ))

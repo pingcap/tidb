@@ -151,12 +151,12 @@ fn ids_and_versions_are_the_classic_go_ones() {
         catalog
             .databases
             .iter()
-            .find(|database| database.info.name.lowercase() == name)
+            .find(|database| database.name.lowercase() == name)
             .unwrap_or_else(|| panic!("the bootstrap created {name}"))
     };
-    assert_eq!(database("mysql").info.id, 1);
-    assert_eq!(database("sys").info.id, 2);
-    assert_eq!(database("test").info.id, 114);
+    assert_eq!(database("mysql").id, 1);
+    assert_eq!(database("sys").id, 2);
+    assert_eq!(database("test").id, 114);
 
     let mysql = database("mysql");
     let created = BOOTSTRAP_TABLES
@@ -164,19 +164,20 @@ fn ids_and_versions_are_the_classic_go_ones() {
         .filter(|table| !MATERIALIZED_VIEW_TABLES.contains(&table.name));
     for (position, table) in created.enumerate() {
         let stored = mysql
-            .tables
-            .iter()
-            .find(|stored| stored.name.lowercase() == table.name)
+            .deprecated_tables
+            .iter_deref()
+            .find(|stored| stored.read().name.lowercase() == table.name)
             .unwrap_or_else(|| panic!("mysql.{} was created", table.name));
+        let stored = stored.read();
         assert_eq!(stored.id, 4 + 2 * position as i64, "mysql.{}", table.name);
     }
     let view = |db: &str, name: &str| {
         database(db)
-            .tables
-            .iter()
-            .find(|table| table.name.lowercase() == name)
+            .deprecated_tables
+            .iter_deref()
+            .find(|table| table.read().name.lowercase() == name)
             .unwrap_or_else(|| panic!("{db}.{name} was created"))
-            .id
+            .read().id
     };
     assert_eq!(view("mysql", "tidb_mdl_view"), 110);
     assert_eq!(view("sys", "schema_unused_indexes"), 112);
@@ -189,9 +190,9 @@ fn ids_and_versions_are_the_classic_go_ones() {
     assert_eq!(int_key(&mut store, key::next_global_id_kv_key()), 116);
     // The five materialized-view tables are not Go's, in this layout.
     assert!(mysql
-        .tables
-        .iter()
-        .all(|table| !MATERIALIZED_VIEW_TABLES.contains(&table.name.lowercase())));
+        .deprecated_tables
+        .iter_deref()
+        .all(|table| !MATERIALIZED_VIEW_TABLES.contains(&table.read().name.lowercase())));
     // `InitDDLTables` leaves no schema version of its own: version 1 is `sys`.
     let first_diff = store
         .get(&key::schema_diff_kv_key(1))
@@ -369,6 +370,7 @@ fn the_first_user_table_is_117() {
     assert_eq!(version, 59);
     let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
     let (database, table) = catalog.find_table("test", "t1").expect("t1 was created");
+    let table = table.read();
     assert_eq!((database.id, table.id), (114, 117));
 }
 

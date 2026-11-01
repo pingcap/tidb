@@ -145,18 +145,18 @@ pub(crate) fn resolve_cluster_load_stats(
         .databases
         .iter()
         .find(|database| {
-            database.info.name.lowercase() == json.database_name.to_lowercase().as_str()
+            database.name.lowercase() == json.database_name.to_lowercase().as_str()
         })
         .and_then(|database| {
-            database
-                .tables
-                .iter()
-                .find(|table| table.name.lowercase() == json.table_name.to_lowercase().as_str())
+            database.deprecated_tables.iter_deref().find(|table| {
+                table.read().name.lowercase() == json.table_name.to_lowercase().as_str()
+            })
         })
         .ok_or_else(|| ClusterLoadStatsError::MissingTable {
             database: json.database_name.clone(),
             table: json.table_name.clone(),
         })?;
+    let table = table.read().clone();
     let schema = table.clone();
 
     let Some(partitions) = json.partitions.as_ref() else {
@@ -300,7 +300,6 @@ mod tests {
     use tidb_stats_util::{JsonColumn, JsonHistogram};
 
     use super::*;
-    use tidb_infoschema::cluster_catalog::LoadedDatabase;
 
     fn table() -> TableInfo {
         TableInfo {
@@ -340,13 +339,11 @@ mod tests {
             resource_groups: Vec::new(),
             policies: Vec::new(),
             schema_version: 1,
-            databases: vec![LoadedDatabase {
-                info: DBInfo {
-                    id: 1,
-                    name: CiString::new("test"),
-                    ..DBInfo::default()
-                },
-                tables: vec![table()],
+            databases: vec![DBInfo {
+                id: 1,
+                name: CiString::new("test"),
+                deprecated_tables: vec![table()].into(),
+                ..DBInfo::default()
             }],
         }
     }

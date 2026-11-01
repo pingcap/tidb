@@ -40,10 +40,11 @@ use tidb_meta::{key, value};
 use tidb_model::action_type::ActionType;
 use tidb_model::schema_diff::SchemaDiff;
 use tidb_model::schema_state::SchemaState;
+use tidb_model::{GoShared, GoSharedPointerSlice};
 
 use tidb_infoschema::cluster_catalog::{
     fetch_all_schemas_with_tables, load_database_tables, normalize_diff_loaded_table_info, ClusterCatalog,
-    ClusterCatalogError, LoadedDatabase, MetaSnapshot,
+    ClusterCatalogError, MetaSnapshot,
 };
 use tidb_infoschema_isvalidator::RelatedSchemaChange;
 
@@ -349,11 +350,8 @@ fn apply_schema_diff<S: MetaSnapshot>(
                     format!("database {}", diff.schema_id),
                 )));
             };
-            catalog.databases.retain(|db| db.info.id != info.id);
-            catalog.databases.push(LoadedDatabase {
-                info,
-                tables: Vec::new(),
-            });
+            catalog.databases.retain(|db| db.id != info.id);
+            catalog.databases.push(info);
             Ok(Ok(Vec::new()))
         }
         // Go `applyDropSchema` (`builder.go:747-771`): absent is a no-op;
@@ -363,13 +361,13 @@ fn apply_schema_diff<S: MetaSnapshot>(
             if let Some(database) = catalog
                 .databases
                 .iter()
-                .find(|db| db.info.id == diff.schema_id)
+                .find(|db| db.id == diff.schema_id)
             {
-                for table in &database.tables {
-                    affected_ids(table, &mut ids);
+                for table in database.deprecated_tables.iter_deref() {
+                    affected_ids(&table.read(), &mut ids);
                 }
             }
-            catalog.databases.retain(|db| db.info.id != diff.schema_id);
+            catalog.databases.retain(|db| db.id != diff.schema_id);
             Ok(Ok(ids))
         }
         ActionType::ACTION_RECOVER_SCHEMA => recover_schema(snapshot, catalog, diff),
@@ -632,7 +630,7 @@ fn apply_table_update<S: MetaSnapshot>(
     if !catalog
         .databases
         .iter()
-        .any(|db| db.info.id == diff.schema_id)
+        .any(|db| db.id == diff.schema_id)
     {
         return Ok(Err(missing(
             version,
@@ -685,7 +683,7 @@ fn recover_schema<S: MetaSnapshot>(
     if catalog
         .databases
         .iter()
-        .any(|db| db.info.id == diff.schema_id)
+        .any(|db| db.id == diff.schema_id)
     {
         return Ok(Err(FullReloadReason::ConflictingObject {
             version,
@@ -699,18 +697,17 @@ fn recover_schema<S: MetaSnapshot>(
         )));
     };
     if diff.read_table_from_meta {
+        let mut info = info;
         let tables = load_database_tables(snapshot, info.id)?;
         let mut ids = Vec::new();
         for table in &tables {
             affected_ids(table, &mut ids);
         }
-        catalog.databases.push(LoadedDatabase { info, tables });
+        info.deprecated_tables = tables.into();
+        catalog.databases.push(info);
         return Ok(Ok(ids));
     }
-    catalog.databases.push(LoadedDatabase {
-        info,
-        tables: Vec::new(),
-    });
+    catalog.databases.push(info);
     apply_affected_opts(
         snapshot,
         catalog,
@@ -733,10 +730,10 @@ fn modify_schema<S: MetaSnapshot>(
     let Some(fresh) = read_database(snapshot, db_id)? else {
         return Ok(Err(missing(version, format!("database {db_id}"))));
     };
-    let Some(database) = catalog.databases.iter_mut().find(|db| db.info.id == db_id) else {
+    let Some(database) = catalog.databases.iter_mut().find(|db| db.id == db_id) else {
         return Ok(Err(missing(version, format!("unknown database {db_id}"))));
     };
-    apply(&mut database.info, fresh);
+    apply(database, fresh);
     Ok(Ok(Vec::new()))
 }
 
@@ -864,20 +861,16 @@ fn refresh_meta<S: MetaSnapshot>(
     if table_id == 0 {
         let Some(fresh) = read_database(snapshot, schema_id)? else {
             // Gone from the store: drop it (absent is a no-op, as in Go).
-            catalog.databases.retain(|db| db.info.id != schema_id);
+            catalog.databases.retain(|db| db.id != schema_id);
             return Ok(Ok(Vec::new()));
         };
         match catalog
             .databases
             .iter_mut()
-            .find(|db| db.info.id == schema_id)
+            .find(|db| db.id == schema_id)
         {
-            None => catalog.databases.push(LoadedDatabase {
-                info: fresh,
-                tables: Vec::new(),
-            }),
-            Some(database) => {
-                let loaded = &mut database.info;
+            None => catalog.databases.push(fresh),
+            Some(loaded) => {
                 if loaded.charset != fresh.charset || loaded.collate != fresh.collate {
                     loaded.charset = fresh.charset;
                     loaded.collate = fresh.collate;
@@ -894,7 +887,7 @@ fn refresh_meta<S: MetaSnapshot>(
     }
     // A table under a database this catalog does not have: the database is
     // gone, so its tables are too.
-    if !catalog.databases.iter().any(|db| db.info.id == schema_id) {
+    if !catalog.databases.iter().any(|db| db.id == schema_id) {
         return Ok(Ok(Vec::new()));
     }
     let stored = snapshot
@@ -945,7 +938,7 @@ fn create_table<S: MetaSnapshot>(
     db_id: i64,
     table_id: i64,
 ) -> AppliedDiff {
-    let Some(database) = catalog.databases.iter_mut().find(|db| db.info.id == db_id) else {
+    let Some(database) = catalog.databases.iter_mut().find(|db| db.id == db_id) else {
         return Ok(Err(missing(version, format!("unknown database {db_id}"))));
     };
     let Some(stored) = snapshot.get(&key::table_kv_key(db_id, table_id))? else {
@@ -959,8 +952,13 @@ fn create_table<S: MetaSnapshot>(
     normalize_diff_loaded_table_info(&mut table);
     let mut ids = Vec::new();
     affected_ids(&table, &mut ids);
-    database.tables.retain(|existing| existing.id != table.id);
-    database.tables.push(table);
+    let mut tables = database
+        .deprecated_tables
+        .iter_handles()
+        .filter(|existing| existing.as_ref().is_none_or(|existing| existing.read().id != table.id))
+        .collect::<Vec<_>>();
+    tables.push(Some(GoShared::new(table)));
+    database.deprecated_tables = GoSharedPointerSlice::from_handles(tables);
     Ok(Ok(ids))
 }
 
@@ -973,17 +971,18 @@ fn drop_table(
     db_id: i64,
     table_id: i64,
 ) -> AppliedDiff {
-    let Some(database) = catalog.databases.iter_mut().find(|db| db.info.id == db_id) else {
+    let Some(database) = catalog.databases.iter_mut().find(|db| db.id == db_id) else {
         return Ok(Err(missing(version, format!("unknown database {db_id}"))));
     };
     let mut ids = Vec::new();
-    if let Some(index) = database
-        .tables
+    let mut tables = database.deprecated_tables.iter_handles().collect::<Vec<_>>();
+    if let Some(index) = tables
         .iter()
-        .position(|existing| existing.id == table_id)
+        .position(|existing| existing.as_ref().is_some_and(|existing| existing.read().id == table_id))
     {
-        let dropped = database.tables.remove(index);
-        affected_ids(&dropped, &mut ids);
+        let dropped = tables.remove(index).expect("matched a non-nil pointer");
+        affected_ids(&dropped.read(), &mut ids);
+        database.deprecated_tables = GoSharedPointerSlice::from_handles(tables);
     }
     Ok(Ok(ids))
 }

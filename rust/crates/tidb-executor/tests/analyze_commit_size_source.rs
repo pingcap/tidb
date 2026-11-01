@@ -237,7 +237,7 @@ fn system_table_id(catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog, n
         .find_table("mysql", name)
         .unwrap_or_else(|| panic!("mysql.{name} exists"))
         .1
-        .id
+        .read().id
 }
 
 fn now() -> Time {
@@ -268,14 +268,15 @@ fn analyze_job_rows(store: &mut MetaStore) -> Vec<SystemRow<'static>> {
     let table = catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == "mysql")
+        .find(|database| database.name.lowercase() == "mysql")
         .and_then(|database| {
             database
-                .tables
-                .iter()
-                .find(|table| table.name.lowercase() == "analyze_jobs")
+                .deprecated_tables
+                .iter_deref()
+                .find(|table| table.read().name.lowercase() == "analyze_jobs")
         })
         .expect("mysql.analyze_jobs exists")
+        .read()
         .clone();
     let view = Box::leak(Box::new(SystemTableView::project(
         "mysql.analyze_jobs",
@@ -2728,18 +2729,20 @@ fn insert_column_stats_uses_go_origin_default_branches() {
         catalog
             .databases
             .iter()
-            .find(|database| database.info.name.lowercase() == "mysql")
+            .find(|database| database.name.lowercase() == "mysql")
             .and_then(|database| {
                 database
-                    .tables
-                    .iter()
-                    .find(|table| table.name.lowercase() == name)
+                    .deprecated_tables
+                    .iter_deref()
+                    .find(|table| table.read().name.lowercase() == name)
             })
             .expect("statistics table exists")
+            .read()
+            .clone()
     };
     let hist_view = SystemTableView::project(
         "mysql.stats_histograms",
-        mysql_table("stats_histograms"),
+        &mysql_table("stats_histograms"),
         &[
             "table_id",
             "hist_id",
@@ -2767,7 +2770,7 @@ fn insert_column_stats_uses_go_origin_default_branches() {
 
     let bucket_view = SystemTableView::project(
         "mysql.stats_buckets",
-        mysql_table("stats_buckets"),
+        &mysql_table("stats_buckets"),
         &[
             "table_id",
             "hist_id",
@@ -2925,17 +2928,18 @@ fn exchange_partition_stats_update_matches_go_clamping_and_locked_rows() {
     let locked_table = catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == "mysql")
+        .find(|database| database.name.lowercase() == "mysql")
         .and_then(|database| {
             database
-                .tables
-                .iter()
-                .find(|table| table.name.lowercase() == "stats_table_locked")
+                .deprecated_tables
+                .iter_deref()
+                .find(|table| table.read().name.lowercase() == "stats_table_locked")
         })
         .expect("stats_table_locked exists");
+    let locked_table = locked_table.read();
     let view = SystemTableView::project(
         "mysql.stats_table_locked",
-        locked_table,
+        &locked_table,
         &["table_id", "version", "modify_count", "count"],
     );
     let row = scan_system_table(&mut store, &view)
@@ -3059,17 +3063,18 @@ fn stats_delta_updates_match_go_positive_negative_and_locked_rows() {
     let locked_table = catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == "mysql")
+        .find(|database| database.name.lowercase() == "mysql")
         .and_then(|database| {
             database
-                .tables
-                .iter()
-                .find(|table| table.name.lowercase() == "stats_table_locked")
+                .deprecated_tables
+                .iter_deref()
+                .find(|table| table.read().name.lowercase() == "stats_table_locked")
         })
         .expect("stats_table_locked exists");
+    let locked_table = locked_table.read();
     let view = SystemTableView::project(
         "mysql.stats_table_locked",
-        locked_table,
+        &locked_table,
         &["table_id", "version", "modify_count", "count"],
     );
     let row = scan_system_table(&mut store, &view)
@@ -3188,17 +3193,18 @@ fn loaded_stats_usage_replaces_timestamps_in_one_plan() {
     let table = catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == "mysql")
+        .find(|database| database.name.lowercase() == "mysql")
         .and_then(|database| {
             database
-                .tables
-                .iter()
-                .find(|table| table.name.lowercase() == "column_stats_usage")
+                .deprecated_tables
+                .iter_deref()
+                .find(|table| table.read().name.lowercase() == "column_stats_usage")
         })
         .expect("column_stats_usage exists");
+    let table = table.read();
     let view = SystemTableView::project(
         "mysql.column_stats_usage",
-        table,
+        &table,
         &["table_id", "column_id", "last_used_at", "last_analyzed_at"],
     );
     let rows = scan_system_table(&mut store, &view).expect("usage rows scan");
@@ -3528,17 +3534,18 @@ fn loaded_stats_history_requires_the_exact_current_meta_version() {
     let table = catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == "mysql")
+        .find(|database| database.name.lowercase() == "mysql")
         .and_then(|database| {
             database
-                .tables
-                .iter()
-                .find(|table| table.name.lowercase() == "stats_meta_history")
+                .deprecated_tables
+                .iter_deref()
+                .find(|table| table.read().name.lowercase() == "stats_meta_history")
         })
         .expect("stats_meta_history exists");
+    let table = table.read();
     let view = SystemTableView::project(
         "mysql.stats_meta_history",
-        table,
+        &table,
         &["table_id", "modify_count", "count", "version", "source"],
     );
     let rows = scan_system_table(&mut store, &view).expect("history rows scan");
@@ -3584,17 +3591,18 @@ fn historical_stats_data_round_trips_through_stats_history() {
     let table = catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == "mysql")
+        .find(|database| database.name.lowercase() == "mysql")
         .and_then(|database| {
             database
-                .tables
-                .iter()
-                .find(|table| table.name.lowercase() == "stats_history")
+                .deprecated_tables
+                .iter_deref()
+                .find(|table| table.read().name.lowercase() == "stats_history")
         })
         .expect("stats_history exists");
+    let table = table.read();
     let view = SystemTableView::project(
         "mysql.stats_history",
-        table,
+        &table,
         &["table_id", "stats_data", "seq_no", "version"],
     );
     let timezone = tidb_datatype::SessionTimeZone::utc();
@@ -3651,17 +3659,18 @@ fn historical_stats_data_plans_one_statement_per_block() {
     let history = catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == "mysql")
+        .find(|database| database.name.lowercase() == "mysql")
         .and_then(|database| {
             database
-                .tables
-                .iter()
-                .find(|table| table.name.lowercase() == "stats_history")
+                .deprecated_tables
+                .iter_deref()
+                .find(|table| table.read().name.lowercase() == "stats_history")
         })
         .expect("stats_history exists");
+    let history = history.read();
     let view = SystemTableView::project(
         "mysql.stats_history",
-        history,
+        &history,
         &["table_id", "seq_no", "version"],
     );
     let timezone = tidb_datatype::SessionTimeZone::utc();

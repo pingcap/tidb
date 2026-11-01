@@ -31,6 +31,7 @@ use std::fmt;
 use tidb_hack::GoToLower;
 use tidb_meta::{key, value};
 use tidb_model::db::DBInfo;
+use tidb_model::GoShared;
 use tidb_model::table_info::{TableInfo, TABLE_INFO_VERSION2, TABLE_INFO_VERSION3};
 
 /// Failure to read or interpret the stored catalog.
@@ -148,22 +149,14 @@ pub fn stored_table_info_json(info: &TableInfo) -> Result<Vec<u8>, String> {
     tidb_meta::value::serialize_table_info(info).map_err(|error| error.to_string())
 }
 
-/// One database and the tables stored under it.
-#[derive(Clone, Debug)]
-pub struct LoadedDatabase {
-    /// The stored `DBInfo`.
-    pub info: DBInfo,
-    /// The stored `TableInfo`s, in stored key order.
-    pub tables: Vec<TableInfo>,
-}
-
 /// One whole catalog as of one snapshot.
 #[derive(Clone, Debug)]
 pub struct ClusterCatalog {
     /// Go `mSchemaVersionKey`. Absent means 0, matching Go's `GetInt64`.
     pub schema_version: i64,
-    /// Every database, in stored key order.
-    pub databases: Vec<LoadedDatabase>,
+    /// Every database, in stored key order, its `Deprecated.Tables` the
+    /// tables stored under it (Go `fetchAllSchemasWithTables`).
+    pub databases: Vec<DBInfo>,
     /// Go `Mutator.ListResourceGroups`: the stored resource groups, with
     /// meta's default group when none is stored under that name.
     pub resource_groups: Vec<tidb_model::ResourceGroupInfo>,
@@ -177,37 +170,36 @@ impl ClusterCatalog {
     /// by case-insensitive name and its tables, a stored one, else one of
     /// the virtual schemas every infoschema serves (`initVirtualTables`).
     #[must_use]
-    pub fn schema_by_name(&self, schema: &str) -> Option<(&DBInfo, &[TableInfo])> {
+    pub fn schema_by_name(&self, schema: &str) -> Option<&DBInfo> {
         let lower = schema.go_to_lower();
         self.databases
             .iter()
-            .find(|database| database.info.name.lowercase() == lower)
-            .map(|database| (&database.info, database.tables.as_slice()))
+            .find(|database| database.name.lowercase() == lower)
             .or_else(|| crate::virtual_tables::virtual_schema(schema))
     }
 
     /// Go `InfoSchema.TableByName`: a stored table, else one of the virtual
     /// schemas every infoschema serves (`initVirtualTables`).
     #[must_use]
-    pub fn table_by_name(&self, schema: &str, table: &str) -> Option<(&DBInfo, &TableInfo)> {
+    pub fn table_by_name(&self, schema: &str, table: &str) -> Option<(&DBInfo, GoShared<TableInfo>)> {
         self.find_table(schema, table)
             .or_else(|| crate::virtual_tables::virtual_table(schema, table))
     }
 
     /// Finds one table by case-insensitive schema and table name.
     #[must_use]
-    pub fn find_table(&self, schema: &str, table: &str) -> Option<(&DBInfo, &TableInfo)> {
+    pub fn find_table(&self, schema: &str, table: &str) -> Option<(&DBInfo, GoShared<TableInfo>)> {
         let schema = schema.go_to_lower();
         let table = table.go_to_lower();
         self.databases
             .iter()
-            .filter(|database| database.info.name.lowercase() == schema)
+            .filter(|database| database.name.lowercase() == schema)
             .find_map(|database| {
                 database
-                    .tables
-                    .iter()
-                    .find(|stored| stored.name.lowercase() == table)
-                    .map(|stored| (&database.info, stored))
+                    .deprecated_tables
+                    .iter_deref()
+                    .find(|stored| stored.read().name.lowercase() == table)
+                    .map(|stored| (database, stored))
             })
     }
 }
@@ -265,10 +257,10 @@ pub fn fetch_all_schemas_with_tables<S: MetaSnapshot>(
         if !key::has_prefix(key::DB_PREFIX, &field) {
             continue;
         }
-        let info = value::parse_db_info(&stored)
+        let mut info = value::parse_db_info(&stored)
             .map_err(|error| ClusterCatalogError::Decode(format!("DBInfo: {error}")))?;
-        let tables = load_database_tables(snapshot, info.id)?;
-        databases.push(LoadedDatabase { info, tables });
+        info.deprecated_tables = load_database_tables(snapshot, info.id)?.into();
+        databases.push(info);
     }
 
     Ok(ClusterCatalog {

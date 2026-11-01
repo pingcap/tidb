@@ -22,17 +22,22 @@ use tidb_infoschema::cluster_catalog::ClusterCatalog;
 impl KeyInfoCatalog for ClusterCatalog {
     fn resolve_physical_table(&self, physical_id: i64) -> Option<KeyInfoTableLookup> {
         for database in &self.databases {
-            if let Some(table) = database.tables.iter().find(|table| table.id == physical_id) {
+            if let Some(table) = database
+                .deprecated_tables
+                .iter_deref()
+                .find(|table| table.read().id == physical_id)
+            {
                 return Some(KeyInfoTableLookup::Resolved(table_info(
                     database,
-                    table,
+                    &table.read(),
                     0,
                     String::new(),
                 )));
             }
         }
         for database in &self.databases {
-            for table in &database.tables {
+            for table in database.deprecated_tables.iter_deref() {
+                let table = table.read();
                 let Some(partition) = table.partition.as_ref() else {
                     continue;
                 };
@@ -45,7 +50,7 @@ impl KeyInfoCatalog for ClusterCatalog {
                 {
                     return Some(KeyInfoTableLookup::Resolved(table_info(
                         database,
-                        table,
+                        &table,
                         definition.id,
                         definition.name.original().to_owned(),
                     )));
@@ -57,14 +62,14 @@ impl KeyInfoCatalog for ClusterCatalog {
 }
 
 fn table_info(
-    database: &tidb_infoschema::cluster_catalog::LoadedDatabase,
+    database: &tidb_model::db::DBInfo,
     table: &tidb_model::table_info::TableInfo,
     partition_id: i64,
     partition_name: String,
 ) -> KeyInfoTable {
     KeyInfoTable {
-        db_name: database.info.name.original().to_owned(),
-        db_id: database.info.id,
+        db_name: database.name.original().to_owned(),
+        db_id: database.id,
         table_name: table.name.original().to_owned(),
         table_id: table.id,
         partition_name,

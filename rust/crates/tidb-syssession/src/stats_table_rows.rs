@@ -276,16 +276,16 @@ pub fn identity_of(
 pub fn locate<'catalog>(
     catalog: &'catalog ClusterCatalog,
     name: &str,
-) -> Result<&'catalog TableInfo, StatsWriteError> {
+) -> Result<tidb_model::GoShared<TableInfo>, StatsWriteError> {
     catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == SYSTEM_DB)
+        .find(|database| database.name.lowercase() == SYSTEM_DB)
         .and_then(|database| {
             database
-                .tables
-                .iter()
-                .find(|stored| stored.name.lowercase() == name)
+                .deprecated_tables
+                .iter_deref()
+                .find(|stored| stored.read().name.lowercase() == name)
         })
         .ok_or_else(|| StatsWriteError::MissingTable(format!("{SYSTEM_DB}.{name}")))
 }
@@ -294,8 +294,8 @@ pub fn system_db_id(catalog: &ClusterCatalog) -> Result<i64, StatsWriteError> {
     catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == SYSTEM_DB)
-        .map(|database| database.info.id)
+        .find(|database| database.name.lowercase() == SYSTEM_DB)
+        .map(|database| database.id)
         .ok_or_else(|| StatsWriteError::MissingTable(SYSTEM_DB.to_owned()))
 }
 

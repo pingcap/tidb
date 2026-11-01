@@ -475,6 +475,7 @@ impl DelRangeTable {
         let (database, table) = catalog
             .find_table("mysql", name)
             .ok_or_else(|| format!("mysql.{name} does not exist"))?;
+        let table = table.read();
         let db_id = database.id;
         let table = table.clone_like_go();
         let view = SystemTableView::project(

@@ -46,16 +46,17 @@ pub fn plan_column_stats_usage_dump<S: MetaSnapshot>(
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     let table = locate(catalog, "column_stats_usage")?;
+    let table = table.read();
     let mut rows_by_table = BTreeMap::new();
     for (item, _) in entries {
         if !rows_by_table.contains_key(&item.table_id) {
             rows_by_table.insert(
                 item.table_id,
-                StatsRows::open(snapshot, table, &["table_id", "column_id"], item.table_id)?,
+                StatsRows::open(snapshot, &table, &["table_id", "column_id"], item.table_id)?,
             );
         }
     }
-    let last_used_id = column_id(table, "last_used_at")?;
+    let last_used_id = column_id(&table, "last_used_at")?;
     let threshold_nanoseconds = i64::try_from(
         crate::COL_STATS_USAGE_LAST_USED_THROTTLE_INTERVAL.as_nanos(),
     )
@@ -64,10 +65,10 @@ pub fn plan_column_stats_usage_dump<S: MetaSnapshot>(
         let rows = rows_by_table
             .get_mut(&item.table_id)
             .expect("the table's rows were opened above");
-        let mut values = defaults_row(table, now)?;
-        set(table, &mut values, "table_id", Datum::Int(item.table_id));
-        set(table, &mut values, "column_id", Datum::Int(item.id));
-        let identity = identity_of(table, &["table_id", "column_id"], &values)?;
+        let mut values = defaults_row(&table, now)?;
+        set(&table, &mut values, "table_id", Datum::Int(item.table_id));
+        set(&table, &mut values, "column_id", Datum::Int(item.id));
+        let identity = identity_of(&table, &["table_id", "column_id"], &values)?;
         if let Some(stored) = rows.existing_values(&identity) {
             values = stored.clone();
         }
@@ -82,10 +83,10 @@ pub fn plan_column_stats_usage_dump<S: MetaSnapshot>(
             continue;
         }
         set(
-            table,
+            &table,
             &mut values,
             "last_used_at",
-            predicate_time_value(table, "last_used_at", Some(*incoming))?,
+            predicate_time_value(&table, "last_used_at", Some(*incoming))?,
         );
         rows.store_row(catalog, &values, &mut plan, row_ids)?;
     }
@@ -167,9 +168,10 @@ pub fn plan_stats_delta_statement<S: MetaSnapshot>(
                 "stats_meta"
             };
             let table = locate(catalog, table_name)?;
+            let table = table.read();
             let mut plan = StatsWritePlan::default();
             for table_id in table_ids {
-                let rows = StatsRows::open(snapshot, table, &["table_id"], *table_id)?;
+                let rows = StatsRows::open(snapshot, &table, &["table_id"], *table_id)?;
                 for (key, _) in rows.existing.into_values() {
                     plan.mutations
                         .push(BufferMutation::lock_only(key).map_err(|error| {
@@ -198,18 +200,19 @@ pub fn plan_stats_delta_statement<S: MetaSnapshot>(
     }
     let mut plan = StatsWritePlan::default();
     let table = locate(catalog, table_name)?;
+    let table = table.read();
     for (table_id, deltas) in grouped {
-        let mut rows = StatsRows::open(snapshot, table, &["table_id"], table_id)?;
-        let mut values = defaults_row(table, now)?;
-        set(table, &mut values, "table_id", Datum::Int(table_id));
-        let identity = identity_of(table, &["table_id"], &values)?;
+        let mut rows = StatsRows::open(snapshot, &table, &["table_id"], table_id)?;
+        let mut values = defaults_row(&table, now)?;
+        set(&table, &mut values, "table_id", Datum::Int(table_id));
+        let identity = identity_of(&table, &["table_id"], &values)?;
         let existed = rows.existing_values(&identity).is_some();
         if let Some(stored) = rows.existing_values(&identity) {
             values = stored.clone();
         }
         let current_modify =
-            signed_value(values.get(&column_id(table, "modify_count")?)).unwrap_or_default();
-        let mut count = signed_value(values.get(&column_id(table, "count")?)).unwrap_or_default();
+            signed_value(values.get(&column_id(&table, "modify_count")?)).unwrap_or_default();
+        let mut count = signed_value(values.get(&column_id(&table, "count")?)).unwrap_or_default();
         let mut modify_count = current_modify;
         for (index, delta) in deltas.into_iter().enumerate() {
             modify_count = modify_count.wrapping_add(delta.count);
@@ -223,9 +226,9 @@ pub fn plan_stats_delta_statement<S: MetaSnapshot>(
                 delta.delta.wrapping_neg()
             };
         }
-        set(table, &mut values, "version", Datum::UInt(version));
-        set(table, &mut values, "modify_count", Datum::Int(modify_count));
-        set(table, &mut values, "count", Datum::Int(count));
+        set(&table, &mut values, "version", Datum::UInt(version));
+        set(&table, &mut values, "modify_count", Datum::Int(modify_count));
+        set(&table, &mut values, "count", Datum::Int(count));
         rows.store_row(catalog, &values, &mut plan, row_ids)?;
     }
     Ok(plan)

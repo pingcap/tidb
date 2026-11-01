@@ -180,8 +180,8 @@ where
         let system_db_id = catalog
             .databases
             .iter()
-            .find(|database| database.info.name.lowercase() == "mysql")
-            .map(|database| database.info.id)
+            .find(|database| database.name.lowercase() == "mysql")
+            .map(|database| database.id)
             .ok_or_else(|| ClusterDdlError::Backfill("database mysql does not exist".to_owned()))?;
         Ok((
             ReorgTables {

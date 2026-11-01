@@ -20,7 +20,7 @@ use tidb_tablecodec::table_key::{
 };
 use tidb_codec::encode_key;
 use tidb_datatype::Datum;
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, LoadedDatabase};
+use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_keydecoder::{decode_key, HandleType};
 use tidb_model::db::DBInfo;
 use tidb_model::go_runtime::GoShared;
@@ -43,13 +43,10 @@ fn catalog() -> ClusterCatalog {
         resource_groups: Vec::new(),
         policies: Vec::new(),
         schema_version: 1,
-        databases: vec![LoadedDatabase {
-            info: DBInfo {
-                id: 1,
-                name: CiString::new("test"),
-                ..DBInfo::default()
-            },
-            tables: vec![
+        databases: vec![DBInfo {
+            id: 1,
+            name: CiString::new("test"),
+            deprecated_tables: vec![
                 TableInfo {
                     id: 1,
                     name: CiString::new("table1"),
@@ -83,7 +80,9 @@ fn catalog() -> ClusterCatalog {
                     })),
                     ..TableInfo::default()
                 },
-            ],
+            ]
+            .into(),
+            ..DBInfo::default()
         }],
     }
 }

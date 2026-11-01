@@ -32,6 +32,29 @@ use tidb_model::index::{IndexColumn, IndexInfo};
 use tidb_model::table::ViewInfo;
 use tidb_model::{GoAny, GoShared, SchemaState, TableInfo};
 
+/// Go `DBInfo.Deprecated.Tables` as the test fixtures read and edit it.
+trait DeprecatedTables {
+    fn tables(&self) -> Vec<tidb_model::table_info::TableInfo>;
+    fn with_tables<R>(&mut self, edit: impl FnOnce(&mut Vec<tidb_model::table_info::TableInfo>) -> R) -> R;
+}
+
+impl DeprecatedTables for tidb_model::db::DBInfo {
+    fn tables(&self) -> Vec<tidb_model::table_info::TableInfo> {
+        self.deprecated_tables
+            .iter_deref()
+            .map(|table| table.read().clone())
+            .collect()
+    }
+
+    fn with_tables<R>(&mut self, edit: impl FnOnce(&mut Vec<tidb_model::table_info::TableInfo>) -> R) -> R {
+        let mut tables = self.tables();
+        let result = edit(&mut tables);
+        self.deprecated_tables = tables.into();
+        result
+    }
+}
+
+
 /// A session on a node that publishes `catalog`, the tables its catalog
 /// left out, and the node.
 fn node_session(catalog: ClusterCatalog) -> (Session, Vec<SkippedTable>, MockNode) {
@@ -46,13 +69,11 @@ fn one_database(tables: Vec<TableInfo>) -> ClusterCatalog {
         resource_groups: Vec::new(),
         policies: Vec::new(),
         schema_version: 7,
-        databases: vec![tidb_infoschema::cluster_catalog::LoadedDatabase {
-            info: DBInfo {
-                id: 5,
-                name: CiString::new("app"),
-                ..DBInfo::default()
-            },
-            tables,
+        databases: vec![DBInfo {
+            id: 5,
+            name: CiString::new("app"),
+            deprecated_tables: tables.into(),
+            ..DBInfo::default()
         }],
     }
 }
@@ -509,17 +530,19 @@ fn loaded_hidden_columns_preserve_native_layout_and_index_values() {
     let mut generated = column(4, 3, "g", false);
     generated.generated_expr_string = "`id` + `v`".to_owned();
     let mut catalog = base_catalog();
-    catalog.databases[0].tables.truncate(1);
-    let info = &mut catalog.databases[0].tables[0];
-    // A visible column may follow a hidden column in stored Go metadata.
-    info.columns = vec![
-        column(1, 0, "id", true),
-        hidden,
-        column(2, 2, "v", false),
-        generated,
-    ]
-    .into();
-    info.indices = vec![index(7, "vi", "_V$_vi_0", 1, -1)].into();
+    catalog.databases[0].with_tables(|tables| {
+        tables.truncate(1);
+        let info = &mut tables[0];
+        // A visible column may follow a hidden column in stored Go metadata.
+        info.columns = vec![
+            column(1, 0, "id", true),
+            hidden,
+            column(2, 2, "v", false),
+            generated,
+        ]
+        .into();
+        info.indices = vec![index(7, "vi", "_V$_vi_0", 1, -1)].into();
+    });
     let (mut session, skipped, _node) = node_session(catalog);
     assert!(skipped.is_empty(), "{skipped:?}");
     session
@@ -550,9 +573,8 @@ fn loaded_generated_columns_keep_virtual_and_stored_semantics() {
     stored_column.generated_expr_string = "`id` + 20".to_owned();
     stored_column.generated_stored = true;
     let mut catalog = base_catalog();
-    catalog.databases[0].tables.truncate(1);
-    catalog.databases[0].tables[0].columns =
-        vec![column(1, 0, "id", true), virtual_column, stored_column].into();
+    catalog.databases[0].with_tables(|tables| tables.truncate(1));
+    catalog.databases[0].with_tables(|tables| tables[0].columns = vec![column(1, 0, "id", true), virtual_column, stored_column].into());
     let (mut session, skipped, node) = node_session(catalog);
     assert!(skipped.is_empty());
     // A stored generated value is decoded, not recomputed by the reader.
@@ -662,7 +684,7 @@ fn a_clustered_composite_primary_remains_the_table_path() {
 #[test]
 fn a_cluster_column_whose_default_is_not_a_literal_refuses_the_table() {
     let catalog = default_catalog();
-    let column = catalog.databases[0].tables[0]
+    let column = catalog.databases[0].tables()[0]
         .columns
         .get(1)
         .expect("the fixture has its value column");
@@ -815,7 +837,7 @@ fn non_clustered_tables_share_the_hidden_rowid_allocator() {
 #[test]
 fn a_loaded_prefix_index_preserves_full_value_filtering() {
     let mut catalog = ci_catalog();
-    catalog.databases[0].tables[0].indices = vec![index(1, "idx", "c", 1, 4)].into();
+    catalog.databases[0].with_tables(|tables| tables[0].indices = vec![index(1, "idx", "c", 1, 4)].into());
     let (mut session, skipped, _node) = node_session(catalog);
     assert!(skipped.is_empty());
     session
@@ -871,8 +893,8 @@ fn a_stored_database_charset_survives_the_load() {
         ..TableInfo::default()
     };
     let mut catalog_source = one_table_catalog(table);
-    catalog_source.databases[0].info.charset = "latin1".to_owned();
-    catalog_source.databases[0].info.collate = "latin1_bin".to_owned();
+    catalog_source.databases[0].charset = "latin1".to_owned();
+    catalog_source.databases[0].collate = "latin1_bin".to_owned();
     let (session, skipped, _node) = node_session(catalog_source);
     assert!(skipped.is_empty());
     let catalog = session.shared_catalog();

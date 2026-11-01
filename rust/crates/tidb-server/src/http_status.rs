@@ -563,11 +563,11 @@ fn settings_response(
 fn find_table_by_id(
     catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog,
     id: i64,
-) -> Option<&tidb_model::TableInfo> {
+) -> Option<tidb_model::GoShared<tidb_model::TableInfo>> {
     catalog
         .databases
         .iter()
-        .find_map(|database| database.tables.iter().find(|table| table.id == id))
+        .find_map(|database| database.deprecated_tables.iter_deref().find(|table| table.read().id == id))
 }
 
 /// Go `SchemaHandler.ServeHTTP` (`tikvhandler/tikv_handler.go`): the three
@@ -615,7 +615,7 @@ fn schema_response(
             return Some(match id.parse::<i64>() {
                 Ok(id) => match find_table_by_id(&catalog, id) {
                     Some(found) => {
-                        encode(tidb_infoschema::cluster_catalog::stored_table_info_json(found))
+                        encode(tidb_infoschema::cluster_catalog::stored_table_info_json(&found.read()))
                     }
                     // Go `getTableByIDStr`'s own message.
                     None => Err(format!(
@@ -634,7 +634,8 @@ fn schema_response(
                 let Some(found) = find_table_by_id(&catalog, id) else {
                     continue;
                 };
-                match encode(tidb_infoschema::cluster_catalog::stored_table_info_json(found)) {
+                let found = found.read();
+                match encode(tidb_infoschema::cluster_catalog::stored_table_info_json(&found)) {
                     Ok(body) => {
                         if found_any {
                             out.push(',');
@@ -662,7 +663,7 @@ fn schema_response(
                     out.push(',');
                 }
                 match encode(tidb_infoschema::cluster_catalog::stored_db_info_json(
-                    &database.info,
+                    &database,
                 )) {
                     Ok(body) => out.push_str(&body),
                     Err(error) => return Some(Err(error)),
@@ -676,7 +677,6 @@ fn schema_response(
         [database] => {
             let Some(found) = catalog.databases.iter().find(|candidate| {
                 candidate
-                    .info
                     .name
                     .original()
                     .eq_ignore_ascii_case(database)
@@ -687,7 +687,8 @@ fn schema_response(
             // caller that wants the listing without every column.
             if form("id_name_only") == Some("true") {
                 let mut out = String::from("[");
-                for (index, table) in found.tables.iter().enumerate() {
+                for (index, table) in found.deprecated_tables.iter_deref().enumerate() {
+                    let table = table.read();
                     if index > 0 {
                         out.push(',');
                     }
@@ -702,11 +703,11 @@ fn schema_response(
                 return Some(Ok(out));
             }
             let mut out = String::from("[");
-            for (index, table) in found.tables.iter().enumerate() {
+            for (index, table) in found.deprecated_tables.iter_deref().enumerate() {
                 if index > 0 {
                     out.push(',');
                 }
-                match encode(tidb_infoschema::cluster_catalog::stored_table_info_json(table)) {
+                match encode(tidb_infoschema::cluster_catalog::stored_table_info_json(&table.read())) {
                     Ok(body) => out.push_str(&body),
                     Err(error) => return Some(Err(error)),
                 }
@@ -721,20 +722,19 @@ fn schema_response(
                 .iter()
                 .find(|candidate| {
                     candidate
-                        .info
                         .name
                         .original()
                         .eq_ignore_ascii_case(database)
                 })
                 .and_then(|database| {
                     database
-                        .tables
-                        .iter()
-                        .find(|candidate| candidate.name.original().eq_ignore_ascii_case(table))
+                        .deprecated_tables
+                        .iter_deref()
+                        .find(|candidate| candidate.read().name.original().eq_ignore_ascii_case(table))
                 });
             match found {
                 Some(found) => Some(encode(tidb_infoschema::cluster_catalog::stored_table_info_json(
-                    found,
+                    &found.read(),
                 ))),
                 None => Some(Err(format!(
                     "[schema:1146]Table '{database}.{table}' doesn't exist"
@@ -749,7 +749,7 @@ fn schema_response(
 mod schema_route_tests {
     use super::*;
 
-    fn catalog_with(databases: Vec<tidb_infoschema::cluster_catalog::LoadedDatabase>) -> SchemaSource {
+    fn catalog_with(databases: Vec<tidb_model::db::DBInfo>) -> SchemaSource {
         let catalog = tidb_infoschema::cluster_catalog::ClusterCatalog {
             resource_groups: Vec::new(),
             policies: Vec::new(),
@@ -762,17 +762,15 @@ mod schema_route_tests {
     fn database(
         name: &str,
         tables: Vec<tidb_model::TableInfo>,
-    ) -> tidb_infoschema::cluster_catalog::LoadedDatabase {
-        tidb_infoschema::cluster_catalog::LoadedDatabase {
-            info: tidb_model::DBInfo {
-                id: 2,
-                name: tidb_ast::CiString::new(name),
-                charset: "utf8mb4".to_owned(),
-                collate: "utf8mb4_bin".to_owned(),
-                state: tidb_model::SchemaState::PUBLIC,
-                ..tidb_model::DBInfo::default()
-            },
-            tables,
+    ) -> tidb_model::db::DBInfo {
+        tidb_model::DBInfo {
+            id: 2,
+            name: tidb_ast::CiString::new(name),
+            charset: "utf8mb4".to_owned(),
+            collate: "utf8mb4_bin".to_owned(),
+            state: tidb_model::SchemaState::PUBLIC,
+            deprecated_tables: tables.into(),
+            ..tidb_model::DBInfo::default()
         }
     }
 

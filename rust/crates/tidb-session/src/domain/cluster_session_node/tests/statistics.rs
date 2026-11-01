@@ -164,6 +164,7 @@ impl tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock for 
     > {
         let catalog = self.catalog.get_latest();
         let (_, table) = catalog.find_table("app", "t").expect("app.t");
+        let table = table.read();
         assert_eq!(
             *request,
             tidb_stats_handle_lockstats::cluster_stats_lock::StatsLockRequest::Tables {

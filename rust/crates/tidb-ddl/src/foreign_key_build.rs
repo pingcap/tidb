@@ -37,7 +37,9 @@ pub(crate) fn check_table_foreign_key_valid(
     if fk.version < FK_VERSION1 {
         return Ok(());
     }
-    let refer = if fk.ref_schema.lowercase() == schema.go_to_lower()
+    let looked_up;
+    let looked_up_info;
+    let refer: &TableInfo = if fk.ref_schema.lowercase() == schema.go_to_lower()
         && fk.ref_table.lowercase() == table.name.lowercase()
     {
         if !in_owner {
@@ -53,7 +55,7 @@ pub(crate) fn check_table_foreign_key_valid(
         }
         table
     } else {
-        match lookup(catalog, fk.ref_schema.original(), fk.ref_table.original()) {
+        looked_up = match lookup(catalog, fk.ref_schema.original(), fk.ref_table.original()) {
             Some(refer) => refer,
             None if !fk_check => return Ok(()),
             None if in_owner => {
@@ -74,16 +76,18 @@ pub(crate) fn check_table_foreign_key_valid(
                             .into()]),
                 )))
             }
-        }
+        };
+        looked_up_info = looked_up.read();
+        &looked_up_info
     };
     check_table_foreign_key(refer, table, fk)
 }
 
-fn lookup<'c>(catalog: &'c ClusterCatalog, schema: &str, table: &str) -> Option<&'c TableInfo> {
+fn lookup(catalog: &ClusterCatalog, schema: &str, table: &str) -> Option<tidb_model::GoShared<TableInfo>> {
     catalog
         .find_table(schema, table)
         .map(|(_, table)| table)
-        .filter(|table| table.state == SchemaState::PUBLIC)
+        .filter(|table| table.read().state == SchemaState::PUBLIC)
 }
 
 /// Go `checkTableForeignKeysValid` (`foreign_key.go:151`) and, with
@@ -108,14 +112,15 @@ fn check_valid(
     // Go `is.GetTableReferredForeignKeys`: children created earlier with
     // `foreign_key_checks=0` that reference this (new) table.
     for database in &catalog.databases {
-        for child in &database.tables {
+        for child in database.deprecated_tables.iter_deref() {
+            let child = child.read();
             for fk in child.foreign_keys.iter_deref() {
                 let fk = fk.read();
                 if fk.version >= FK_VERSION1
                     && fk.ref_schema.lowercase() == schema_l
                     && fk.ref_table.lowercase() == table.name.lowercase()
                 {
-                    check_table_foreign_key(table, child, &fk)?;
+                    check_table_foreign_key(table, &child, &fk)?;
                 }
             }
         }
@@ -166,7 +171,8 @@ pub(crate) fn get_table_referred_foreign_keys(
     );
     let mut referred = Vec::new();
     for database in &catalog.databases {
-        for child in &database.tables {
+        for child in database.deprecated_tables.iter_deref() {
+            let child = child.read();
             for fk in child.foreign_keys.iter_deref() {
                 let fk = fk.read();
                 if fk.version < FK_VERSION1
@@ -179,7 +185,7 @@ pub(crate) fn get_table_referred_foreign_keys(
                     cols: tidb_model::serde_helpers::GoValueSlice::allocated(
                         fk.ref_cols.snapshot(),
                     ),
-                    child_schema: database.info.name.clone(),
+                    child_schema: database.name.clone(),
                     child_table: child.name.clone(),
                     child_fk_name: fk.name.clone(),
                 });
@@ -369,6 +375,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
                     ),
                 ));
             };
+            let refer_table = refer_table.read();
             let Some(refer_col) = find_column_info(&refer_table.columns, ref_cols[i].lowercase())
             else {
                 return Err(coded(
@@ -414,6 +421,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
             ) else {
                 continue;
             };
+            let child_tbl_info = child_tbl_info.read();
             // Go `model.FindFKInfoByName`.
             let Some(fk) = child_tbl_info.foreign_keys.iter_deref().find(|fk| {
                 fk.read().name.lowercase() == referred_fk.child_fk_name.lowercase()

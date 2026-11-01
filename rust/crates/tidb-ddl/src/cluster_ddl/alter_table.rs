@@ -167,6 +167,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             invisible,
         } => {
             let (_, stored) = locate_table(&catalog, schema, table)?;
+            let stored = stored.read();
             let mut probe = stored.clone_like_go();
             // Go `validateAlterIndexVisibility` early-returns on an unchanged
             // visibility only outside a multi-schema change; inside one the
@@ -198,7 +199,8 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             to,
         } => {
             let (_, stored) = locate_table(&catalog, schema, table)?;
-            check_rename_index_cache(stored)?;
+            let stored = stored.read();
+            check_rename_index_cache(&stored)?;
             let mut probe = stored.clone_like_go();
             if let AlterColumnOutcome::AlreadySatisfied(detail) =
                 apply_rename_index(&mut probe, schema, table, from, to)?
@@ -232,6 +234,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             name,
         } => {
             let (_, stored) = locate_table(&catalog, schema, table)?;
+            let stored = stored.read();
             if !stored
                 .foreign_keys
                 .iter_deref()
@@ -258,6 +261,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
         } => {
             check_table_charset_named(charset, collate)?;
             let (_, stored) = locate_table(&catalog, schema, table)?;
+            let stored = stored.read();
             let mut probe = stored.clone_like_go();
             if let AlterColumnOutcome::AlreadySatisfied(detail) = apply_table_charset_and_collate(
                 &catalog,
@@ -292,6 +296,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             context,
         } => {
             let (_, stored) = locate_table(&catalog, schema, table)?;
+            let stored = stored.read();
             let mut probe = stored.clone_like_go();
             apply_set_column_default(
                 &mut probe,
@@ -322,6 +327,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             bits,
         } => {
             let (_, stored) = locate_table(&catalog, schema, table)?;
+            let stored = stored.read();
             if stored.temp_table_type != tidb_model::TempTableType::NONE {
                 return Err(coded_refusal(
                     &tidb_dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
@@ -355,6 +361,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             new_cache,
         } => {
             let (_, stored) = locate_table(&catalog, schema, table)?;
+            let stored = stored.read();
             if (*new_cache == 1) != (stored.auto_id_cache == 1) {
                 return Err(DdlPlanError::Unsupported(
                     "Can't Alter AUTO_ID_CACHE between 1 and non-1, the underlying implementation is different"
@@ -380,13 +387,14 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             force,
         } => {
             let (schema_id, stored) = locate_table(catalog, schema, table)?;
+            let stored = stored.read();
             let mut new_base = *new_base;
             if !*force {
                 let adjusted = adjust_new_base_to_next_global_id(
                     snapshot,
                     AutoIdKind::Increment,
                     schema_id,
-                    stored,
+                    &stored,
                     new_base,
                 )?;
                 if adjusted != new_base {
@@ -416,6 +424,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             force,
         } => {
             let (schema_id, stored) = locate_table(catalog, schema, table)?;
+            let stored = stored.read();
             if stored.auto_random_bits == 0 || stored.get_pk_col_info().is_none() {
                 return Err(DdlPlanError::from(
                     tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
@@ -443,7 +452,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                     snapshot,
                     AutoIdKind::Random,
                     schema_id,
-                    stored,
+                    &stored,
                     new_base,
                 )?;
                 if adjusted != new_base {
@@ -474,6 +483,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             job_interval,
         } => {
             let (_, stored) = locate_table(catalog, schema, table)?;
+            let stored = stored.read();
             match ttl_info {
                 Some(ttl) => {
                     let mut candidate = stored.clone_like_go();
@@ -513,6 +523,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
         // Go `executor.AlterTableRemoveTTL`: no job for a table without TTL.
         DdlStatement::RemoveTtl { schema, table } => {
             let (_, stored) = locate_table(catalog, schema, table)?;
+            let stored = stored.read();
             if stored.ttl_info.is_none() {
                 return Ok(already_satisfied(format!(
                     "`{schema}`.`{table}` has no TTL"
@@ -534,6 +545,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             policy,
         } => {
             let (_, stored) = locate_table(catalog, schema, table)?;
+            let stored = stored.read();
             if stored.temp_table_type != tidb_model::TempTableType::NONE {
                 return Err(coded_refusal(
                     &tidb_dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
@@ -563,7 +575,8 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             policy,
         } => {
             let (_, stored) = locate_table(catalog, schema, table)?;
-            let partition_id = find_partition_id(stored, partition)?;
+            let stored = stored.read();
+            let partition_id = find_partition_id(&stored, partition)?;
             let reference = check_and_normalize_placement_policy(snapshot, policy)?;
             shared_policy = reference
                 .as_ref()
@@ -595,10 +608,11 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                 ));
             };
             let (_, stored) = locate_table(catalog, schema, table)?;
+            let stored = stored.read();
             let rule = label_rules::table_attributes_rule(
                 attributes,
-                database.info.name.lowercase(),
-                &LabelRuleTable::from_table_info(stored),
+                database.name.lowercase(),
+                &LabelRuleTable::from_table_info(&stored),
             )
             .map_err(invalid_attributes_spec)?;
             (
@@ -626,10 +640,11 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                 ));
             };
             let (_, stored) = locate_table(catalog, schema, table)?;
-            let partition_id = find_partition_id(stored, partition)?;
+            let stored = stored.read();
+            let partition_id = find_partition_id(&stored, partition)?;
             let rule = label_rules::partition_attributes_rule(
                 attributes,
-                database.info.name.lowercase(),
+                database.name.lowercase(),
                 stored.name.lowercase(),
                 &partition.go_to_lower(),
                 partition_id,
@@ -655,7 +670,8 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             level,
         } => {
             let (_, stored) = locate_table(catalog, schema, table)?;
-            refuse_non_base_table(stored, schema, table)?;
+            let stored = stored.read();
+            refuse_non_base_table(&stored, schema, table)?;
             let affinity = tidb_ddl_build::table_affinity(level).map_err(driver_refusal)?;
             tidb_ddl_build::validate_table_affinity(
                 stored.temp_table_type != tidb_model::TempTableType::NONE,
@@ -682,6 +698,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             option,
         } => {
             let (_, stored) = locate_table(catalog, schema, table)?;
+            let stored = stored.read();
             let target = match target {
                 tidb_ast::SplitTarget::Table => tidb_ddl_build::split_region::SplitPolicyTarget::Table,
                 tidb_ast::SplitTarget::PrimaryKey => {
@@ -692,7 +709,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                 }
             };
             let (index_name, policy) =
-                tidb_ddl_build::split_region::normalize_split_policy(target, option, stored)
+                tidb_ddl_build::split_region::normalize_split_policy(target, option, &stored)
                     .map_err(driver_refusal)?;
             (
                 ActionType::ACTION_ALTER_TABLE_SET_REGION_SPLIT_POLICY,
@@ -716,7 +733,8 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             hypo,
         } => {
             let (_, stored) = locate_table(catalog, schema, table)?;
-            tidb_ddl_build::ddl_executor::is_table_tiflash_supported(schema, stored)
+            let stored = stored.read();
+            tidb_ddl_build::ddl_executor::is_table_tiflash_supported(schema, &stored)
                 .map_err(DdlPlanError::from_mysql_error)?;
             let current = stored.tiflash_replica.as_ref().map(|replica| replica.read().clone());
             if !tidb_ddl_build::ddl_executor::should_modify_tiflash_replica(
@@ -767,9 +785,12 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
         } => {
             let Some((database, stored)) = catalog.databases.iter().find_map(|database| {
                 database
-                    .tables
-                    .iter()
-                    .find(|stored| stored.id == *table_id || partition_of(stored, *table_id))
+                    .deprecated_tables
+                    .iter_deref()
+                    .find(|stored| {
+                        let stored = stored.read();
+                        stored.id == *table_id || partition_of(&stored, *table_id)
+                    })
                     .map(|stored| (database, stored))
             }) else {
                 return Err(DdlPlanError::from(
@@ -780,6 +801,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                         ]),
                 ));
             };
+            let stored = stored.read();
             let unchanged = stored.tiflash_replica.as_ref().is_none_or(|replica| {
                 let replica = replica.read();
                 if stored.id == *table_id {
@@ -797,9 +819,9 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                 job_context,
                 ActionType::ACTION_UPDATE_TI_FLASH_REPLICA_STATUS,
             );
-            job.schema_id = database.info.id;
+            job.schema_id = database.id;
             job.table_id = stored.id;
-            job.schema_name = database.info.name.lowercase().to_owned().into();
+            job.schema_name = database.name.lowercase().to_owned().into();
             job.table_name = stored.name.lowercase().to_owned().into();
             return Ok(Some(AddIndexSubmission::Job(
                 Box::new(tidb_ddl_jobsubmit::JobSpec {
@@ -823,6 +845,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             cache,
         } => {
             let (_, stored) = locate_table(catalog, schema, table)?;
+            let stored = stored.read();
             let wanted = if *cache {
                 tidb_model::TableCacheStatusType::ENABLE
             } else {
@@ -864,6 +887,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
         _ => unreachable!("checked by is_alter_table_statement"),
     };
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
+    let stored = stored.read();
     let mut job = session_job(job_context, action);
     job.schema_id = schema_id;
     job.table_id = stored.id;
@@ -1208,7 +1232,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    let mut info = checked_job_table(catalog, active, true)?.clone_like_go();
+    let mut info = checked_job_table(catalog, active, true)?.read().clone_like_go();
     let schema_id = active.job.schema_id;
     let schema = active.job.schema_name.to_string();
     let table = info.name.original().to_owned();
@@ -1873,7 +1897,7 @@ pub(super) fn convert_job_2_rollback_job(
         ActionType::ACTION_DROP_FOREIGN_KEY => active.job.schema_state == SchemaState::PUBLIC,
         // `rollingbackRenameIndex`: cancellable while the source is public.
         ActionType::ACTION_RENAME_INDEX => {
-            let info = checked_job_table(catalog, active, true)?.clone_like_go();
+            let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
             let args = tidb_model::get_modify_index_args(&mut active.job)
                 .map_err(|error| args_error(active, error))?
                 .ok_or_else(|| nil_args(active))?;

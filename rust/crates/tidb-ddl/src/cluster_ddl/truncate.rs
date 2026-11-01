@@ -35,12 +35,13 @@ pub fn prepare_truncate_table_job_submission<S: MetaSnapshot>(
     };
     let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let (db_id, stored) = locate_table(&catalog, schema, table)?;
+    let stored = stored.read();
     // A view or a sequence has no rows to truncate and reads as missing.
     if stored.view.is_some() || stored.is_sequence() {
         let database = find_database(&catalog, schema).expect("located above");
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
-                (database.info.name.original().to_owned()).into(),
+                (database.name.original().to_owned()).into(),
                 (stored.name.original().to_owned()).into(),
             ]),
         ));
@@ -57,7 +58,7 @@ pub fn prepare_truncate_table_job_submission<S: MetaSnapshot>(
     ) {
         return Err(truncate_referenced(&referred));
     }
-    let old_partition_ids = add_index::partition_ids(stored);
+    let old_partition_ids = add_index::partition_ids(&stored);
     let mut job = session_job(job_context, ActionType::ACTION_TRUNCATE_TABLE);
     job.schema_id = db_id;
     job.table_id = stored.id;
@@ -114,7 +115,7 @@ pub(super) fn on_truncate_table<S: MetaSnapshot>(
                 DdlPlanError::Encode("TRUNCATE TABLE has nil args".to_owned()),
             )
         })?;
-    let stored = checked_job_table(catalog, active, false)?.clone_like_go();
+    let stored = checked_job_table(catalog, active, false)?.read().clone_like_go();
     let schema = active.job.schema_name.to_string();
     if stored.view.is_some() || stored.is_sequence() {
         return Err(cancel_ddl_job(

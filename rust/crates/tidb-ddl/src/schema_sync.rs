@@ -988,6 +988,7 @@ mod tests {
         let mut loaded =
             tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
         let (_, table) = loaded.find_table("mysql", "tidb_mdl_info").unwrap();
+        let table = table.read();
         let info = MdlInfoUpdate {
             table: Box::new(table.clone_like_go()),
             table_ids: "0".into(),

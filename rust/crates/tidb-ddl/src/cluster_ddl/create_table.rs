@@ -65,8 +65,8 @@ pub fn prepare_create_table_job_submission<S: MetaSnapshot>(
     };
     let database = find_database(&catalog, schema).expect("the builder found the database");
     let mut job = session_job(job_context, ActionType::ACTION_CREATE_TABLE);
-    job.schema_id = database.info.id;
-    job.schema_name = database.info.name.lowercase().to_owned().into();
+    job.schema_id = database.id;
+    job.schema_name = database.name.lowercase().to_owned().into();
     job.table_name = info.name.lowercase().to_owned().into();
     // Go's partition sugar rewrites `QueryString` before the job copies it;
     // a text without the sugar is `rewritePartitionQueryString`'s error.
@@ -173,7 +173,7 @@ pub(super) fn on_create_table<S: MetaSnapshot>(
     let database = catalog
         .databases
         .iter()
-        .find(|database| database.info.id == active.job.schema_id)
+        .find(|database| database.id == active.job.schema_id)
         .ok_or_else(|| {
             cancel_ddl_job(
                 active,
@@ -187,8 +187,8 @@ pub(super) fn on_create_table<S: MetaSnapshot>(
                 ),
             )
         })?;
-    let database_id = database.info.id;
-    let schema = database.info.name.original().to_owned();
+    let database_id = database.id;
+    let schema = database.name.original().to_owned();
     let has_foreign_keys = !info.foreign_keys.is_empty();
     let schema_version = catalog.schema_version + 1;
     let mut mutations = Vec::new();
@@ -201,9 +201,12 @@ pub(super) fn on_create_table<S: MetaSnapshot>(
             // `checkTableForeignKeyValidInOwner` and `allocateFKIndexID`.
             info.state = SchemaState::NONE;
             if database
-                .tables
-                .iter()
-                .any(|table| table.name.lowercase() == info.name.lowercase() || table.id == info.id)
+                .deprecated_tables
+                .iter_deref()
+                .any(|table| {
+                    let table = table.read();
+                    table.name.lowercase() == info.name.lowercase() || table.id == info.id
+                })
             {
                 return Err(cancel_ddl_job(
                     active,
@@ -220,7 +223,8 @@ pub(super) fn on_create_table<S: MetaSnapshot>(
             }
             for constraint in info.constraints.iter_deref() {
                 let wanted = constraint.read().name.lowercase().to_owned();
-                if database.tables.iter().any(|table| {
+                if database.deprecated_tables.iter_deref().any(|table| {
+                    let table = table.read();
                     table
                         .constraints
                         .iter_deref()

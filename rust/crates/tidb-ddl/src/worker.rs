@@ -1094,6 +1094,7 @@ mod schema_sync_tests {
             .unwrap();
         if remove_mdl_table {
             let (schema, table) = catalog.find_table("mysql", "tidb_mdl_info").unwrap();
+            let table = table.read();
             mutations.push(BufferMutation::delete(key::table_kv_key(schema.id, table.id)).unwrap());
         }
         if recover {
@@ -1560,7 +1561,7 @@ mod schema_sync_tests {
         assert!(!catalog
             .databases
             .iter()
-            .any(|database| database.info.id == 505));
+            .any(|database| database.id == 505));
 
         // Another job can finish while the paused job remains in the queue.
         let mut other = paused_job.clone();
@@ -1647,7 +1648,7 @@ mod schema_sync_tests {
                 .unwrap()
                 .databases
                 .iter()
-                .any(|db| db.info.id == 601)
+                .any(|db| db.id == 601)
         );
 
         let set_limit = |limit: i64| {
@@ -2128,9 +2129,10 @@ mod schema_sync_tests {
         let stored_table = after
             .databases
             .iter()
-            .flat_map(|db| &db.tables)
-            .find(|table| table.id == 701)
+            .flat_map(|db| db.deprecated_tables.iter_deref())
+            .find(|table| table.read().id == 701)
             .unwrap();
+        let stored_table = stored_table.read();
         assert_eq!(
             stored_table.constraints.get(0).unwrap().read().state,
             SchemaState::WRITE_REORGANIZATION
@@ -2221,9 +2223,10 @@ mod schema_sync_tests {
         let stored_table = after
             .databases
             .iter()
-            .flat_map(|db| &db.tables)
-            .find(|table| table.id == 701)
+            .flat_map(|db| db.deprecated_tables.iter_deref())
+            .find(|table| table.read().id == 701)
             .unwrap();
+        let stored_table = stored_table.read();
         assert!(
             stored_table.constraints.is_empty(),
             "cancellation must finish metadata rollback"

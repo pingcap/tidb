@@ -126,6 +126,7 @@ pub fn plan_sysvar_write<S: MetaSnapshot>(
 ) -> Result<SysvarWritePlan, SysvarWriteError> {
     let mut plan = SysvarWritePlan::default();
     let table = locate(catalog)?;
+    let table = &*table.read();
     let name_id = column_id(table, "variable_name")?;
     let value_id = column_id(table, "variable_value")?;
 
@@ -217,16 +218,16 @@ struct StoredRow {
     values: RowValues,
 }
 
-fn locate(catalog: &ClusterCatalog) -> Result<&TableInfo, SysvarWriteError> {
+fn locate(catalog: &ClusterCatalog) -> Result<tidb_model::GoShared<TableInfo>, SysvarWriteError> {
     catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == SYSTEM_DB)
+        .find(|database| database.name.lowercase() == SYSTEM_DB)
         .and_then(|database| {
             database
-                .tables
-                .iter()
-                .find(|stored| stored.name.lowercase() == GLOBAL_VARIABLES_TABLE)
+                .deprecated_tables
+                .iter_deref()
+                .find(|stored| stored.read().name.lowercase() == GLOBAL_VARIABLES_TABLE)
         })
         .ok_or(SysvarWriteError::MissingTable)
 }
@@ -277,7 +278,7 @@ fn system_db_id(catalog: &ClusterCatalog) -> Result<i64, SysvarWriteError> {
     catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == SYSTEM_DB)
-        .map(|database| database.info.id)
+        .find(|database| database.name.lowercase() == SYSTEM_DB)
+        .map(|database| database.id)
         .ok_or(SysvarWriteError::MissingTable)
 }

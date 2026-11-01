@@ -56,8 +56,9 @@ pub(super) fn build_add_column_job<S: MetaSnapshot>(
         return Ok(None);
     };
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
+    let stored = stored.read();
     let (mut added, _) = match build_add_column(
-        stored,
+        &stored,
         schema,
         table,
         column,
@@ -137,7 +138,7 @@ fn check_add_column(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<Result<AddColumnTarget, (bool, DdlPlanError)>, DdlPlanError> {
-    let info = checked_job_table(catalog, active, true)?.clone_like_go();
+    let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
     let args = tidb_model::get_table_column_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
         .ok_or_else(|| {

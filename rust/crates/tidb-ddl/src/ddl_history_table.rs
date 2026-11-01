@@ -101,6 +101,7 @@ impl DdlHistoryTable {
             .ok_or_else(|| SystemTableError::Missing {
                 name: "mysql.tidb_ddl_history".to_owned(),
             })?;
+        let table = table.read();
         let table = table.clone_like_go();
         let view = SystemTableView::project(
             "mysql.tidb_ddl_history",

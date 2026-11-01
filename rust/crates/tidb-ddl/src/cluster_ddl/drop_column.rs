@@ -55,10 +55,11 @@ pub(super) fn build_drop_column_job<S: MetaSnapshot>(
         return Ok(None);
     };
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
+    let stored = stored.read();
     if !check_is_droppable_column(
         &catalog,
         schema,
-        stored,
+        &stored,
         column,
         *if_exists,
         *allow_remove_auto_inc,
@@ -72,7 +73,7 @@ pub(super) fn build_drop_column_job<S: MetaSnapshot>(
             )],
         }));
     }
-    check_visible_column_cnt(stored, 0, 1)?;
+    check_visible_column_cnt(&stored, 0, 1)?;
     let mut job = session_job(job_context, ActionType::ACTION_DROP_COLUMN);
     job.schema_id = schema_id;
     job.table_id = stored.id;
@@ -111,7 +112,7 @@ fn check_drop_column_in_owner(
     catalog: &ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<Result<DropColumnTarget, (bool, DdlPlanError)>, DdlPlanError> {
-    let stored = checked_job_table(catalog, active, true)?.clone_like_go();
+    let stored = checked_job_table(catalog, active, true)?.read().clone_like_go();
     let args = tidb_model::get_table_column_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
         .ok_or_else(|| {

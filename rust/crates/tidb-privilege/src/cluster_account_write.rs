@@ -589,16 +589,16 @@ struct StoredRow {
 fn locate<'catalog>(
     catalog: &'catalog ClusterCatalog,
     table: &str,
-) -> Result<&'catalog TableInfo, AccountWriteError> {
+) -> Result<tidb_model::GoShared<TableInfo>, AccountWriteError> {
     catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == SYSTEM_DB)
+        .find(|database| database.name.lowercase() == SYSTEM_DB)
         .and_then(|database| {
             database
-                .tables
-                .iter()
-                .find(|stored| stored.name.lowercase() == table)
+                .deprecated_tables
+                .iter_deref()
+                .find(|stored| stored.read().name.lowercase() == table)
         })
         .ok_or_else(|| AccountWriteError::MissingTable(format!("{SYSTEM_DB}.{table}")))
 }
@@ -696,6 +696,7 @@ fn reconcile<S: MetaSnapshot>(
         }
         Err(missing) => return Err(missing),
     };
+    let table = &*table.read();
     // An update rewrites the record alone, so a value column an index covers
     // would leave a stale entry behind. None of these tables declares one --
     // their indexes cover only identity columns -- and checking says so out
@@ -942,7 +943,7 @@ fn system_db_id(catalog: &ClusterCatalog) -> Result<i64, AccountWriteError> {
     catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == SYSTEM_DB)
-        .map(|database| database.info.id)
+        .find(|database| database.name.lowercase() == SYSTEM_DB)
+        .map(|database| database.id)
         .ok_or_else(|| AccountWriteError::MissingTable(SYSTEM_DB.to_owned()))
 }

@@ -133,7 +133,7 @@ fn a_bootstrapped_keyspace_loads_back_as_a_catalog_with_every_mysql_table() {
     let database = catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == "mysql")
+        .find(|database| database.name.lowercase() == "mysql")
         .expect("the bootstrap created the mysql database");
     // The five materialized-view tables are Go master's, not this tree's.
     let all_tables = DDL_TABLE_VERSION_TABLES
@@ -146,16 +146,25 @@ fn a_bootstrapped_keyspace_loads_back_as_a_catalog_with_every_mysql_table() {
         );
     // Go bootstrap also creates the MDL view, represented by the catalog owner.
     assert!(database
-        .tables
-        .iter()
-        .any(|table| table.name.lowercase() == "tidb_mdl_view" && table.view.is_some()));
-    assert_eq!(database.tables.len(), all_tables.clone().count() + 1);
+        .deprecated_tables
+        .iter_deref()
+        .any(|table| {
+            let table = table.read();
+            table.name.lowercase() == "tidb_mdl_view" && table.view.is_some()
+        }));
+    assert_eq!(
+        database.deprecated_tables.iter_deref().count(),
+        all_tables.clone().count() + 1
+    );
     for table in all_tables {
         assert!(
             database
-                .tables
-                .iter()
-                .any(|stored| stored.name.lowercase() == table.name && stored.id == table.id),
+                .deprecated_tables
+                .iter_deref()
+                .any(|stored| {
+                    let stored = stored.read();
+                    stored.name.lowercase() == table.name && stored.id == table.id
+                }),
             "mysql.{} is missing from the loaded catalog",
             table.name
         );
@@ -176,13 +185,14 @@ fn bootstrap_creates_all_ddl_tables_and_advances_their_version() {
     let mysql = catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == "mysql")
+        .find(|database| database.name.lowercase() == "mysql")
         .expect("mysql database");
     let notifier = mysql
-        .tables
-        .iter()
-        .find(|table| table.name.lowercase() == "tidb_ddl_notifier")
+        .deprecated_tables
+        .iter_deref()
+        .find(|table| table.read().name.lowercase() == "tidb_ddl_notifier")
         .expect("DDL notifier table");
+    let notifier = notifier.read();
     assert_eq!(notifier.id, tidb_metadef::system::TI_DBDDLNOTIFIER_TABLE_ID);
 }
 
@@ -299,19 +309,21 @@ fn a_next_gen_bootstrap_spends_one_schema_version_per_ddl_job() {
     // Go draws an id per object and per job from 1: the views are 1 and 3,
     // `test` is 5, the jobs are 2, 4, 6 and 7.
     let (mysql, mdl_view) = catalog.find_table("mysql", "tidb_mdl_view").unwrap();
+    let mdl_view = mdl_view.read();
     assert_eq!(mysql.id, tidb_metadef::system::SYSTEM_DATABASE_ID);
     assert_eq!(mdl_view.id, 1);
     let (sys, sys_view) = catalog
         .find_table("sys", "schema_unused_indexes")
         .unwrap();
+    let sys_view = sys_view.read();
     assert_eq!(sys.id, tidb_metadef::system::SYS_DATABASE_ID);
     assert_eq!(sys_view.id, 3);
     let test = catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == "test")
+        .find(|database| database.name.lowercase() == "test")
         .unwrap();
-    assert_eq!(test.info.id, 5);
+    assert_eq!(test.id, 5);
     assert_eq!(store.pairs[&key::next_global_id_kv_key()], b"7");
 }
 
@@ -370,16 +382,17 @@ fn the_next_gen_layout_is_what_go_creates() {
     let catalog = fetch_all_schemas_with_tables(&mut store).expect("the catalog loads");
     let mut seen = 0;
     for database in &catalog.databases {
-        let name = database.info.name.lowercase().to_owned();
+        let name = database.name.lowercase().to_owned();
         if !["mysql", "sys", "test"].contains(&name.as_str()) {
             continue;
         }
         assert_eq!(
             go["databases"][&name].as_i64(),
-            Some(database.info.id),
+            Some(database.id),
             "database {name}"
         );
-        for table in &database.tables {
+        for table in database.deprecated_tables.iter_deref() {
+                let table = table.read();
             let full = format!("{name}.{}", table.name.lowercase());
             let expected = &go["tables"][&full];
             assert_eq!(expected["id"].as_i64(), Some(table.id), "{full} id");

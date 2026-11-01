@@ -125,6 +125,7 @@ impl ClusterStatsLockStatement {
         let mut tables = BTreeMap::new();
         for target in &self.targets {
             let table = user_table(catalog, &target.schema, &target.table)?;
+            let table = &*table.read();
             let partition_info = table.get_partition_info().map(|partition| {
                 partition
                     .read()
@@ -166,6 +167,7 @@ fn resolve_partitions(
     target: &StatsLockTarget,
 ) -> Result<StatsLockRequest, ClusterStatsLockError> {
     let table = user_table(catalog, &target.schema, &target.table)?;
+    let table = &*table.read();
     let Some(partition) = table.get_partition_info() else {
         return Err(ClusterStatsLockError::Invalid(format!(
             "table {}.{} is not a partition table",
@@ -207,7 +209,7 @@ fn user_table<'a>(
     catalog: &'a ClusterCatalog,
     schema: &str,
     table: &str,
-) -> Result<&'a TableInfo, ClusterStatsLockError> {
+) -> Result<tidb_model::GoShared<TableInfo>, ClusterStatsLockError> {
     catalog.find_table(schema, table).map(|(_, table)| table).ok_or_else(|| {
         ClusterStatsLockError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS

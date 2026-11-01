@@ -133,7 +133,7 @@ pub(crate) fn query_cluster_locked_tables<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
 ) -> Result<BTreeSet<i64>, ClusterStatsLockError> {
-    Ok(read_rows(snapshot, system_table(catalog, LOCK_TABLE)?)?
+    Ok(read_rows(snapshot, &system_table(catalog, LOCK_TABLE)?.read())?
         .into_keys()
         .collect())
 }
@@ -146,6 +146,7 @@ pub(crate) fn plan_cluster_insert_lock<S: MetaSnapshot>(
     now: Time,
 ) -> Result<Vec<BufferMutation>, ClusterStatsLockError> {
     let table = system_table(catalog, LOCK_TABLE)?;
+    let table = &*table.read();
     let rows = read_rows(snapshot, table)?;
     if let Some(row) = rows.get(&table_id) {
         // The duplicate arm still writes `table_id = table_id` and therefore
@@ -165,6 +166,7 @@ pub(crate) fn plan_cluster_update_meta_version<S: MetaSnapshot>(
     start_ts: u64,
 ) -> Result<Vec<BufferMutation>, ClusterStatsLockError> {
     let table = system_table(catalog, META_TABLE)?;
+    let table = &*table.read();
     let rows = read_rows(snapshot, table)?;
     let Some(initial) = rows.get(&table_id) else {
         return Ok(Vec::new());
@@ -181,6 +183,7 @@ pub(crate) fn query_cluster_lock_delta<S: MetaSnapshot>(
     table_id: i64,
 ) -> Result<(i64, i64), ClusterStatsLockError> {
     let table = system_table(catalog, LOCK_TABLE)?;
+    let table = &*table.read();
     let rows = read_rows(snapshot, table)?;
     let Some(row) = rows.get(&table_id) else {
         return Ok((0, 0));
@@ -201,6 +204,7 @@ pub(crate) fn plan_cluster_update_meta_delta<S: MetaSnapshot>(
     start_ts: u64,
 ) -> Result<Vec<BufferMutation>, ClusterStatsLockError> {
     let table = system_table(catalog, META_TABLE)?;
+    let table = &*table.read();
     let rows = read_rows(snapshot, table)?;
     let Some(initial) = rows.get(&table_id) else {
         return Ok(Vec::new());
@@ -232,6 +236,7 @@ pub(crate) fn plan_cluster_delete_lock<S: MetaSnapshot>(
     table_id: i64,
 ) -> Result<Vec<BufferMutation>, ClusterStatsLockError> {
     let table = system_table(catalog, LOCK_TABLE)?;
+    let table = &*table.read();
     let rows = read_rows(snapshot, table)?;
     rows.get(&table_id)
         .map_or(Ok(Vec::new()), |row| Ok(delete_clustered_row(table, row)?))
@@ -255,7 +260,7 @@ fn read_rows<S: MetaSnapshot>(
 fn system_table<'a>(
     catalog: &'a ClusterCatalog,
     name: &str,
-) -> Result<&'a TableInfo, ClusterStatsLockError> {
+) -> Result<tidb_model::GoShared<TableInfo>, ClusterStatsLockError> {
     user_table(catalog, "mysql", name)
 }
 
@@ -263,16 +268,16 @@ fn user_table<'a>(
     catalog: &'a ClusterCatalog,
     schema: &str,
     table: &str,
-) -> Result<&'a TableInfo, ClusterStatsLockError> {
+) -> Result<tidb_model::GoShared<TableInfo>, ClusterStatsLockError> {
     catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == schema.go_to_lower())
+        .find(|database| database.name.lowercase() == schema.go_to_lower())
         .and_then(|database| {
             database
-                .tables
-                .iter()
-                .find(|stored| stored.name.lowercase() == table.go_to_lower())
+                .deprecated_tables
+                .iter_deref()
+                .find(|stored| stored.read().name.lowercase() == table.go_to_lower())
         })
         .ok_or_else(|| {
             ClusterStatsLockError::from(

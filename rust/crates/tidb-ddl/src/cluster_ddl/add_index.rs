@@ -278,6 +278,7 @@ pub(super) fn check_added_primary_key_holds_no_null(
         return Ok(());
     }
     let (_, stored) = locate_table(catalog, schema, table)?;
+    let stored = stored.read();
     for part in index.columns.iter_deref() {
         let name = part.read().name.lowercase().to_owned();
         let Some(column) = stored
@@ -296,7 +297,7 @@ pub(super) fn check_added_primary_key_holds_no_null(
                     .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL),
             )
         };
-        if nullable && has_null(schema, stored, id)? {
+        if nullable && has_null(schema, &stored, id)? {
             return Err(coded_refusal(
                 &tidb_dbterror::ERR_INVALID_USE_OF_NULL,
                 "Invalid use of NULL value",
@@ -328,7 +329,8 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
         return Ok(None);
     };
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
-    if index.primary && (find_index(stored, "PRIMARY").is_some() || stored.pk_is_handle) {
+    let stored = stored.read();
+    if index.primary && (find_index(&stored, "PRIMARY").is_some() || stored.pk_is_handle) {
         return Err(DdlPlanError::Admission(
             tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
                 &tidb_infoschema::infoschema_errors::ERR_MULTIPLE_PRI_KEY
@@ -342,8 +344,8 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
             "The primary key cannot be an expression index",
         ));
     }
-    let name = settle_added_index_name(stored, index, expressions);
-    if let Some(existing) = find_index(stored, &name) {
+    let name = settle_added_index_name(&stored, index, expressions);
+    if let Some(existing) = find_index(&stored, &name) {
         let existing = existing.read();
         if *if_not_exists {
             return Ok(Some(AddIndexSubmission::AlreadySatisfied {
@@ -394,7 +396,7 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
             warnings: Vec::new(),
         }));
     }
-    warn_missing_region_split_policy(stored, &name, &context.0);
+    warn_missing_region_split_policy(&stored, &name, &context.0);
 
     let reorg_meta = new_ddl_reorg_meta(&context.0, schema, store_count);
     // Go `createIndex`: a partial index needs a fast reorganization.
@@ -913,6 +915,7 @@ pub(super) fn plan_persisted_add_index_job_step<S: MetaSnapshot>(
     }
     let is_pk = active.job.type_ == ActionType::ACTION_ADD_PRIMARY_KEY;
     let stored = checked_job_table(catalog, active, true)?;
+    let stored = stored.read();
     let database_id = active.job.schema_id;
     if stored.table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE {
         return Err(cancel_ddl_job(
@@ -1322,6 +1325,7 @@ fn plan_rollback_add_index(
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let stored = checked_job_table(catalog, active, true)?;
+    let stored = stored.read();
     let database_id = active.job.schema_id;
     let mut info = stored.clone_like_go();
     let args = tidb_model::get_finished_modify_index_args(&mut active.job)
@@ -1509,6 +1513,7 @@ pub(super) fn rollingback_add_index(
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let _ = start_ts;
     let stored = checked_job_table(catalog, active, true)?;
+    let stored = stored.read();
     let mut info = stored.clone_like_go();
     let args = tidb_model::get_modify_index_args(&mut active.job)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;

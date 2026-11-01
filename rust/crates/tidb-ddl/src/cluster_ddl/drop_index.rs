@@ -57,6 +57,7 @@ pub(super) fn build_drop_index_job<S: MetaSnapshot>(
             // `dropHypoIndexFromCtx`.
             if *hypo {
                 let (_, stored) = locate_table(&catalog, schema, table)?;
+                let stored = stored.read();
                 job_context
                     .drop_hypo_index(&schema.go_to_lower(), stored.name.lowercase(), index, *if_exists)
                     .map_err(DdlPlanError::from_mysql_error)?;
@@ -73,7 +74,8 @@ pub(super) fn build_drop_index_job<S: MetaSnapshot>(
         _ => return Ok(None),
     };
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
-    let index = find_index(stored, &index_name);
+    let stored = stored.read();
+    let index = find_index(&stored, &index_name);
     // Go `CheckIsDropPrimaryKey`: a general index merely named `primary` is
     // not the primary key (#14243).
     let is_pk = index_name.go_to_lower() == "primary"
@@ -113,7 +115,7 @@ pub(super) fn build_drop_index_job<S: MetaSnapshot>(
         ));
     };
     let index = index.read().clone_like_go();
-    crate::foreign_key_build::check_index_needed_in_foreign_key(&catalog, schema, stored, &index)
+    crate::foreign_key_build::check_index_needed_in_foreign_key(&catalog, schema, &stored, &index)
         .map_err(DdlPlanError::Admission)?;
 
     let action = if is_pk {
@@ -159,7 +161,7 @@ fn check_drop_index(
     ),
     DdlPlanError,
 > {
-    let stored = checked_job_table(catalog, active, false)?.clone_like_go();
+    let stored = checked_job_table(catalog, active, false)?.read().clone_like_go();
     let args = tidb_model::get_drop_index_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
         .ok_or_else(|| {

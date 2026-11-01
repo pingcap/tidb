@@ -111,7 +111,8 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
                 .map_err(|error| {
                     DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
                 })?;
-            let (schema_id, stored) = locate_table(&catalog, schema, table)?;
+            let (schema_id, shared) = locate_table(&catalog, schema, table)?;
+            let stored = shared.read();
             let original_col_name = rename_from.as_deref().unwrap_or(column.name.as_str());
             let bdr_role = snapshot.get(&key::bdr_role_kv_key())?.unwrap_or_default();
             let built = match get_modifiable_column_job(
@@ -119,7 +120,7 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
                 &bdr_role,
                 schema,
                 table,
-                stored,
+                &stored,
                 original_col_name,
                 column,
                 position,
@@ -157,7 +158,7 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
                 new_shard_bits: built.new_shard_bits,
                 ..tidb_model::ModifyColumnArgs::default()
             };
-            (schema, stored, schema_id, args, built.need_reorg)
+            (schema, GoShared::clone(&shared), schema_id, args, built.need_reorg)
         }
         DdlStatement::RenameColumn {
             schema,
@@ -165,9 +166,10 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
             from,
             to,
         } => {
-            let (schema_id, stored) = locate_table(&catalog, schema, table)?;
+            let (schema_id, shared) = locate_table(&catalog, schema, table)?;
+            let stored = shared.read();
             // Go `RenameColumn`: the column cloned under its new name.
-            let Some(renamed) = prepare_rename_column(stored, table, from, to)? else {
+            let Some(renamed) = prepare_rename_column(&stored, table, from, to)? else {
                 return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                     detail: format!("column `{from}` already has the requested name"),
                     warnings: Vec::new(),
@@ -179,10 +181,11 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
                 ..tidb_model::ModifyColumnArgs::default()
             };
             // Go `RenameColumn` submits no reorganization.
-            (schema, stored, schema_id, args, false)
+            (schema, GoShared::clone(&shared), schema_id, args, false)
         }
         _ => return Ok(None),
     };
+    let stored = stored.read();
     let mut job = session_job(job_context, ActionType::ACTION_MODIFY_COLUMN);
     job.schema_id = schema_id;
     job.table_id = stored.id;
@@ -1169,7 +1172,7 @@ fn get_modify_column_info(
     let Some(database) = catalog
         .databases
         .iter()
-        .find(|database| database.info.id == active.job.schema_id)
+        .find(|database| database.id == active.job.schema_id)
     else {
         return Err(cancel_ddl_job(
             active,
@@ -1183,8 +1186,8 @@ fn get_modify_column_info(
             ),
         ));
     };
-    let schema = database.info.name.original().to_owned();
-    let info = checked_job_table(catalog, active, true)?.clone_like_go();
+    let schema = database.name.original().to_owned();
+    let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
     let old = if args.old_column_id > 0 {
         tidb_model::column::find_column_info_by_id(&info.columns, args.old_column_id)
     } else {
@@ -1926,7 +1929,8 @@ fn adjust_foreign_key_children(
     }
     let mut children: Vec<(i64, TableInfo)> = Vec::new();
     for database in &catalog.databases {
-        for child in &database.tables {
+        for child in database.deprecated_tables.iter_deref() {
+                let child = child.read();
             if child.id == info.id {
                 continue;
             }
@@ -1936,7 +1940,7 @@ fn adjust_foreign_key_children(
                 changed |= rename_ref_cols(&mut *fk.write());
             }
             if changed {
-                children.push((database.info.id, child_info));
+                children.push((database.id, child_info));
             }
         }
     }

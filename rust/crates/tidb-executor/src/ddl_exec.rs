@@ -522,6 +522,7 @@ pub trait DdlExec {
         let killer = self.sql_killer();
         let (mut origin_version, mut pending_count, mut force_check) = (0_i64, 0_u32, false);
         for table in tables {
+            let table = table.read();
             if tidb_ddl_build::ddl_executor::is_session_done(&killer).0 {
                 return Ok(());
             }
@@ -538,7 +539,7 @@ pub trait DdlExec {
                 continue;
             }
             if let Err(error) =
-                tidb_ddl_build::ddl_executor::is_table_tiflash_supported(&schema, table)
+                tidb_ddl_build::ddl_executor::is_table_tiflash_supported(&schema, &table)
             {
                 self.append_warning(
                     tidb_context::WarningLevel::Note,
@@ -840,7 +841,10 @@ pub trait TemporaryTableDdlExec:
             }
             None => None,
         };
-        let Some((database, _)) = info_schema.schema_by_name(schema) else {
+        let like = like
+            .as_ref()
+            .map(|(source_schema, source)| (*source_schema, source.read()));
+        let Some(database) = info_schema.schema_by_name(schema) else {
             return Err(DriverError::from(
                 tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                     .generate_with_stack_by_args(&[(schema.to_owned()).into()]),
@@ -863,7 +867,7 @@ pub trait TemporaryTableDdlExec:
             database,
             create,
             table,
-            like,
+            like.as_ref().map(|(source_schema, source)| (*source_schema, &**source)),
             &ctx,
             &mut warnings,
         );

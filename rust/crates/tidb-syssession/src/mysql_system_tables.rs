@@ -251,14 +251,15 @@ impl SystemTableView {
         let database = catalog
             .databases
             .iter()
-            .find(|database| database.info.name.lowercase() == SYSTEM_DB)
+            .find(|database| database.name.lowercase() == SYSTEM_DB)
             .ok_or_else(missing)?;
         let info = database
-            .tables
-            .iter()
-            .find(|stored| stored.name.lowercase() == table)
+            .deprecated_tables
+            .iter_deref()
+            .find(|stored| stored.read().name.lowercase() == table)
             .ok_or_else(missing)?;
-        Ok(Self::project(&qualified, info, columns))
+        let view = Self::project(&qualified, &info.read(), columns);
+        Ok(view)
     }
 
     /// A view over a table this node holds itself, from its public columns as

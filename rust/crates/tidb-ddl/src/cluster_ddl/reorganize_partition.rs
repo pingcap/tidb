@@ -111,7 +111,8 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
     };
     let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let (database_id, stored) = locate_table(&catalog, schema, table)?;
-    let kv = tidb_ddl_build::partition_ddl::PartitionedTable::new(stored)
+    let stored = stored.read();
+    let kv = tidb_ddl_build::partition_ddl::PartitionedTable::new(&stored)
         .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error)))?;
     let ctx = context.metabuild_context();
     let mut host = AdmissionReorgHost {
@@ -477,7 +478,7 @@ fn reorg_partition_info(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     part_info: &tidb_model::partition::PartitionInfo,
 ) -> Result<TableInfo, DdlPlanError> {
-    let mut info = checked_job_table(catalog, active, true)?.clone_like_go();
+    let mut info = checked_job_table(catalog, active, true)?.read().clone_like_go();
     if active.job.schema_state == SchemaState::NONE {
         let partition = match &info.partition {
             Some(partition) => partition.clone(),
@@ -1163,7 +1164,7 @@ fn rollback_reorganize_partition_with_err(
     if active.job.schema_state == SchemaState::NONE {
         return Err(cancel_ddl_job(active, error));
     }
-    let mut info = checked_job_table(catalog, active, true)?.clone_like_go();
+    let mut info = checked_job_table(catalog, active, true)?.read().clone_like_go();
     let partition = info
         .partition
         .clone()

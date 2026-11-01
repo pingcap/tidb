@@ -45,7 +45,7 @@ pub fn create_schema<S: MetaSnapshot>(
             return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                 detail: format!(
                     "database `{}` already exists",
-                    existing.info.name.original()
+                    existing.name.original()
                 ),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
                     tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS

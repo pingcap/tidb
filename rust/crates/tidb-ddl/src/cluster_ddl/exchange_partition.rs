@@ -46,9 +46,11 @@ pub fn prepare_exchange_partition_job_submission<S: MetaSnapshot>(
     };
     let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let (partitioned_db_id, partitioned) = locate_table(&catalog, schema, table)?;
+    let partitioned = partitioned.read();
     let (standalone_db_id, standalone) =
         locate_table(&catalog, standalone_schema, standalone_table)?;
-    check_exchange_tables(partitioned, standalone)?;
+    let standalone = standalone.read();
+    check_exchange_tables(&partitioned, &standalone)?;
     let partition_name = partition.go_to_lower();
     // Go `tables.FindPartitionByName`.
     let partition_id = partitioned
@@ -288,7 +290,7 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
     if !catalog
         .databases
         .iter()
-        .any(|database| database.info.id == args.pt_schema_id)
+        .any(|database| database.id == args.pt_schema_id)
     {
         return Err(cancel_ddl_job(
             active,
@@ -302,7 +304,7 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
             ),
         ));
     }
-    let mut standalone = checked_job_table(catalog, active, true)?.clone_like_go();
+    let mut standalone = checked_job_table(catalog, active, true)?.read().clone_like_go();
     if active.job.is_rollingback() {
         return rollback_exchange_table_partition(catalog, active, &args, standalone, start_ts);
     }
@@ -320,6 +322,7 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
             ),
         ));
     };
+    let partitioned = partitioned.read();
     let mut partitioned = partitioned.clone_like_go();
     // Go `getPartitionDef`.
     let Some(definition) = partitioned.get_partition_info().and_then(|info| {
@@ -420,8 +423,8 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
                     catalog
                         .databases
                         .iter()
-                        .find(|database| database.info.id == id)
-                        .map(|database| database.info.name.lowercase().to_owned())
+                        .find(|database| database.id == id)
+                        .map(|database| database.name.lowercase().to_owned())
                         .unwrap_or_default()
                 };
                 let check = ExchangePartitionValidation {
@@ -566,8 +569,8 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
     let partitioned_schema = catalog
         .databases
         .iter()
-        .find(|database| database.info.id == args.pt_schema_id)
-        .map(|database| database.info.name.lowercase().to_owned())
+        .find(|database| database.id == args.pt_schema_id)
+        .map(|database| database.name.lowercase().to_owned())
         .unwrap_or_default();
     let swap = ExchangePartitionLabelSwap {
         partitioned_schema,
@@ -640,6 +643,7 @@ fn rollback_exchange_table_partition(
                         )),
                 )
             })?
+            .read()
             .clone_like_go();
         partitioned.exchange_partition_info = None;
         Some(partitioned)
@@ -665,7 +669,7 @@ pub(super) fn rollingback_exchange_table_partition(
         return Err(cancelled_ddl_job(active));
     }
     let (_, args) = exchange_args(active)?;
-    let standalone = checked_job_table(catalog, active, true)?.clone_like_go();
+    let standalone = checked_job_table(catalog, active, true)?.read().clone_like_go();
     rollback_exchange_table_partition(catalog, active, &args, standalone, start_ts)
 }
 

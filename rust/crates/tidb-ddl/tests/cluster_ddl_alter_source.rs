@@ -947,7 +947,7 @@ fn rename_owner_batch_self_reference_and_moved_child_share_publication() {
             .find_table("u6", "child")
             .unwrap()
             .1
-            .foreign_keys
+            .read().foreign_keys
             .get(0)
             .unwrap()
             .read()
@@ -963,6 +963,7 @@ fn rename_owner_batch_self_reference_and_moved_child_share_publication() {
     assert!(peer.find_table("u6", "parent").is_none());
     assert!(peer.find_table("u6", "child").is_none());
     let child = peer.find_table("u6", "moved_child").unwrap().1;
+    let child = child.read();
     assert_eq!(child.id, child_id);
     assert_eq!(
         child

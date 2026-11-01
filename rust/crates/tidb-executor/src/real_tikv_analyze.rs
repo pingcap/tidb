@@ -426,7 +426,8 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
         let catalog = fetch_all_schemas_with_tables(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, statement)?;
-        let partition_ids = analyze_partition_ids(table, &statement.partitions)?;
+        let table = table.read();
+        let partition_ids = analyze_partition_ids(&table, &statement.partitions)?;
         let partition_names = table
             .partition
             .as_ref()
@@ -444,7 +445,7 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
         if statement.persist_options {
             for physical_id in std::iter::once(table.id).chain(partition_ids.iter().copied()) {
                 if let Some(options) =
-                    load_analyze_options(&mut snapshot, &catalog, table, physical_id)
+                    load_analyze_options(&mut snapshot, &catalog, &table, physical_id)
                         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
                 {
                     saved.insert(physical_id, options);
@@ -759,7 +760,10 @@ pub fn analyze_builds_column_task(
     let Ok(table) = find_statement_table(catalog, statement) else {
         return true;
     };
-    select_index_tasks(table, statement).map_or(true, |selection| selection.run_full_sampling)
+    let table = table.read();
+    let runs_full_sampling =
+        select_index_tasks(&table, statement).map_or(true, |selection| selection.run_full_sampling);
+    runs_full_sampling
 }
 
 fn analyze_partition_ids(
@@ -868,6 +872,7 @@ pub fn save_cluster_analyze_options<S: StoreClient>(
         let catalog = fetch_all_schemas_with_tables(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, &resolved.statement)?;
+        let table = table.read();
         let mut combined = StatsWritePlan::default();
         for options in &resolved.physical_options {
             if options.is_partition && resolved.statement.dynamic_partition_prune {
@@ -876,7 +881,7 @@ pub fn save_cluster_analyze_options<S: StoreClient>(
             let write = plan_analyze_options_write(
                 &mut snapshot,
                 &catalog,
-                table,
+                &table,
                 options.physical_id,
                 options.raw,
                 &options.columns,
@@ -897,16 +902,16 @@ pub fn save_cluster_analyze_options<S: StoreClient>(
 fn find_statement_table<'catalog>(
     catalog: &'catalog tidb_infoschema::cluster_catalog::ClusterCatalog,
     statement: &AnalyzeStatement,
-) -> Result<&'catalog tidb_model::table_info::TableInfo, ClusterAnalyzeError> {
+) -> Result<tidb_model::GoShared<tidb_model::table_info::TableInfo>, ClusterAnalyzeError> {
     catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == statement.schema.go_to_lower().as_str())
+        .find(|database| database.name.lowercase() == statement.schema.go_to_lower().as_str())
         .and_then(|database| {
             database
-                .tables
-                .iter()
-                .find(|stored| stored.name.lowercase() == statement.table.go_to_lower().as_str())
+                .deprecated_tables
+                .iter_deref()
+                .find(|stored| stored.read().name.lowercase() == statement.table.go_to_lower().as_str())
         })
         .ok_or_else(|| {
             ClusterAnalyzeError::from(
@@ -920,13 +925,13 @@ fn find_statement_table<'catalog>(
         })
         .and_then(|table| {
             // Go `buildAnalyzeTable` refuses both by the name as written.
-            if table.is_view() {
+            if table.read().is_view() {
                 return Err(ClusterAnalyzeError::Other(format!(
                     "analyze view {} is not supported now",
                     statement.table
                 )));
             }
-            if table.is_sequence() {
+            if table.read().is_sequence() {
                 return Err(ClusterAnalyzeError::Other(format!(
                     "analyze sequence {} is not supported now",
                     statement.table
@@ -1390,6 +1395,7 @@ fn commit_cluster_global_stats<S: StoreClient>(
         let catalog = fetch_all_schemas_with_tables(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, &resolved.statement)?;
+        let table = table.read();
         let definitions = table
             .partition
             .as_ref()
@@ -1399,7 +1405,7 @@ fn commit_cluster_global_stats<S: StoreClient>(
             .snapshot();
         let loader = ClusterStatsLoader::locate(&catalog)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        let column_types = column_types_of(table);
+        let column_types = column_types_of(&table);
         let column_names = table
             .cols()
             .iter_deref()
@@ -1439,7 +1445,7 @@ fn commit_cluster_global_stats<S: StoreClient>(
             });
             let items = match &resolved.statement.eval_context.session_zone() {
                 SessionTimeZone::Local => merge_global_items_async(
-                    table,
+                    &table,
                     &mut snapshot,
                     &loader,
                     Some(&chrono::Local),
@@ -1454,7 +1460,7 @@ fn commit_cluster_global_stats<S: StoreClient>(
                     killer,
                 ),
                 SessionTimeZone::Named(zone) => merge_global_items_async(
-                    table,
+                    &table,
                     &mut snapshot,
                     &loader,
                     Some(zone),
@@ -1473,7 +1479,7 @@ fn commit_cluster_global_stats<S: StoreClient>(
                         ClusterAnalyzeError::Other("invalid session timezone offset".to_owned())
                     })?;
                     merge_global_items_async(
-                        table,
+                        &table,
                         &mut snapshot,
                         &loader,
                         Some(&zone),
@@ -1515,7 +1521,7 @@ fn commit_cluster_global_stats<S: StoreClient>(
                 .fold(0_i64, |total, stats| total.wrapping_add(stats.modify_count));
             let items = match &resolved.statement.eval_context.session_zone() {
                 SessionTimeZone::Local => merge_global_items(
-                    table,
+                    &table,
                     Some(&chrono::Local),
                     &partitions,
                     column_ids,
@@ -1529,7 +1535,7 @@ fn commit_cluster_global_stats<S: StoreClient>(
                     killer,
                 ),
                 SessionTimeZone::Named(zone) => merge_global_items(
-                    table,
+                    &table,
                     Some(zone),
                     &partitions,
                     column_ids,
@@ -1547,7 +1553,7 @@ fn commit_cluster_global_stats<S: StoreClient>(
                         ClusterAnalyzeError::Other("invalid session timezone offset".to_owned())
                     })?;
                     merge_global_items(
-                        table,
+                        &table,
                         Some(&zone),
                         &partitions,
                         column_ids,
@@ -2319,6 +2325,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
         let catalog = fetch_all_schemas_with_tables(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, statement)?.clone();
+        let table = table.read();
         // The sample rate Go derives from `RealtimeCount`: what the table's
         // previous `ANALYZE` (or delta flush) said it holds.
         let base_stats = ClusterStatsLoader::locate(&catalog)
@@ -2525,6 +2532,7 @@ fn commit_cluster_independent_index<S: StoreClient>(
         let catalog = fetch_all_schemas_with_tables(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, statement)?.clone();
+        let table = table.read();
         let index = table
             .indices
             .iter_deref()
@@ -2948,33 +2956,34 @@ pub fn plan_analyze_options_write<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let stored = locate(catalog, "analyze_options")?;
-    let mut rows = StatsRows::open(snapshot, stored, &["table_id"], physical_id)?;
+    let stored = stored.read();
+    let mut rows = StatsRows::open(snapshot, &stored, &["table_id"], physical_id)?;
     let identity = vec![format!("{:?}", Datum::Int(physical_id))];
     let mut values = rows
         .existing_values(&identity)
         .cloned()
-        .unwrap_or(defaults_row(stored, now)?);
-    set(stored, &mut values, "table_id", Datum::Int(physical_id));
+        .unwrap_or(defaults_row(&stored, now)?);
+    set(&stored, &mut values, "table_id", Datum::Int(physical_id));
     set(
-        stored,
+        &stored,
         &mut values,
         "sample_num",
         Datum::Int(raw.num_samples.map_or(0, |value| value as i64)),
     );
     set(
-        stored,
+        &stored,
         &mut values,
         "sample_rate",
         Datum::Real(raw.sample_rate.unwrap_or(0.0)),
     );
     set(
-        stored,
+        &stored,
         &mut values,
         "buckets",
         Datum::Int(raw.num_buckets.map_or(0, |value| value as i64)),
     );
     set(
-        stored,
+        &stored,
         &mut values,
         "topn",
         Datum::Int(raw.num_topn.map_or(-1, |value| value as i64)),
@@ -2999,13 +3008,13 @@ pub fn plan_analyze_options_write<S: MetaSnapshot>(
         }
     };
     set(
-        stored,
+        &stored,
         &mut values,
         "column_choice",
         Datum::Bytes(choice.as_bytes().to_vec()),
     );
     set(
-        stored,
+        &stored,
         &mut values,
         "column_ids",
         Datum::Bytes(ids.into_bytes()),

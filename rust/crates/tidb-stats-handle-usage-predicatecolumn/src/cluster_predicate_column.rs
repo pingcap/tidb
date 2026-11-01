@@ -194,6 +194,7 @@ pub fn plan_get_predicate_columns<S: MetaSnapshot>(
         .filter(|column_id| current_column_ids.contains(column_id))
         .collect();
     let table = locate(catalog, "column_stats_usage")?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(snapshot, table, &["table_id", "column_id"], table_id)?;
     let dropped = rows
         .existing

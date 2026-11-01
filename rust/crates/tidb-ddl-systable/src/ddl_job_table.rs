@@ -146,7 +146,7 @@ impl DdlJobTable {
                 name: "mysql.tidb_ddl_job".to_owned(),
             }
         })?;
-        let table = table.clone_like_go();
+        let table = table.read().clone_like_go();
         let view = SystemTableView::project(
             "mysql.tidb_ddl_job",
             &table,

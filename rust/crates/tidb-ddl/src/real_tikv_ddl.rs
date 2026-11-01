@@ -1554,11 +1554,12 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
             let table = catalog
                 .databases
                 .iter()
-                .flat_map(|database| database.tables.iter())
-                .find(|table| table.id == table_id)
+                .flat_map(|database| database.deprecated_tables.iter_deref())
+                .find(|table| table.read().id == table_id)
                 .ok_or_else(|| ClusterDdlError::Backfill(format!("table {table_id} is gone")))?;
+            let table = table.read();
             backfiller
-                .stage_cache_table_check(table, handle, buffer)
+                .stage_cache_table_check(&table, handle, buffer)
                 .map_err(ClusterDdlError::IndexBackfill)?;
             buffer.reset();
             let mut writes = Vec::new();

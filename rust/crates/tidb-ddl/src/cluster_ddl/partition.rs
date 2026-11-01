@@ -108,6 +108,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
             ..
         } => {
             let (database_id, stored) = locate_table(&catalog, schema, table)?;
+            let stored = stored.read();
             let Some(partitioning) = stored.get_partition_info() else {
                 return Err(admission(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
@@ -129,7 +130,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
             // over the session's expression context (Go `ctx.GetExprCtx()`),
             // whose notes this statement reports.
             let context = job_context.with_isolated_warnings();
-            let change = apply_partition_change(stored, action, &*context)?;
+            let change = apply_partition_change(&stored, action, &*context)?;
             let transformed = change.definitions;
             let notes = partition_notes(&*context);
             let old_names = partitioning
@@ -168,7 +169,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
                 ActionType::ACTION_ADD_TABLE_PARTITION,
                 database_id,
                 schema,
-                stored,
+                &stored,
                 interval_query_rewrite(action, change.query_rewrite).as_ref(),
             );
             scatter_region_vars(&mut job, job_context);
@@ -193,10 +194,11 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
             ..
         } => {
             let (database_id, stored) = locate_table(&catalog, schema, table)?;
+            let stored = stored.read();
             // `CheckDropTablePartition`, and FIRST PARTITION's generated
             // names.
             let context = job_context.with_isolated_warnings();
-            let change = apply_partition_change(stored, action, &*context)?;
+            let change = apply_partition_change(&stored, action, &*context)?;
             let transformed = change.definitions;
             let notes = partition_notes(&*context);
             let remaining = transformed
@@ -230,7 +232,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
                 ActionType::ACTION_DROP_TABLE_PARTITION,
                 database_id,
                 schema,
-                stored,
+                &stored,
                 interval_query_rewrite(action, change.query_rewrite).as_ref(),
             );
             job.schema_state = SchemaState::PUBLIC;
@@ -256,6 +258,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
             ..
         } => {
             let (database_id, stored) = locate_table(&catalog, schema, table)?;
+            let stored = stored.read();
             let Some(partitioning) = stored.get_partition_info() else {
                 return Err(admission(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
@@ -302,7 +305,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
                 ActionType::ACTION_TRUNCATE_TABLE_PARTITION,
                 database_id,
                 schema,
-                stored,
+                &stored,
                 None,
             );
             job.schema_state = SchemaState::PUBLIC;
@@ -686,7 +689,7 @@ pub(super) fn on_add_table_partition<S: MetaSnapshot>(
     if active.job.is_rollingback() {
         return rollback_like_drop_partition(snapshot, catalog, active, start_ts);
     }
-    let info = checked_job_table(catalog, active, true)?.clone_like_go();
+    let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
     let partition = job_partition(active, &info)?;
     let part_info = args
         .read()
@@ -840,7 +843,7 @@ pub(super) fn rollback_like_drop_partition<S: MetaSnapshot>(
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = table_partition_args(active)?;
-    let info = checked_job_table(catalog, active, true)?.clone_like_go();
+    let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
     let partition = job_partition(active, &info)?;
     let schema = active.job.schema_name.to_string();
     let database_id = active.job.schema_id;
@@ -1020,7 +1023,7 @@ pub(super) fn on_drop_table_partition<S: MetaSnapshot>(
         .into_iter()
         .map(|name| name.to_string())
         .collect::<Vec<_>>();
-    let info = checked_job_table(catalog, active, true)?.clone_like_go();
+    let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
     let database_id = active.job.schema_id;
     let schema = active.job.schema_name.to_string();
     match active.job.schema_state {
@@ -1191,7 +1194,7 @@ pub(super) fn on_truncate_table_partition<S: MetaSnapshot>(
             DdlPlanError::Encode("len(oldIDs) must be the same as len(newIDs)".to_owned()),
         ));
     }
-    let info = checked_job_table(catalog, active, true)?.clone_like_go();
+    let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
     let Some(partition) = info.partition.clone() else {
         return Err(fault(
             active,
@@ -1377,7 +1380,7 @@ pub(super) fn rollingback_add_table_partition(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    let info = checked_job_table(catalog, active, true)?.clone_like_go();
+    let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
     let database_id = active.job.schema_id;
     match active.job.type_ {
         ActionType::ACTION_ADD_TABLE_PARTITION => {

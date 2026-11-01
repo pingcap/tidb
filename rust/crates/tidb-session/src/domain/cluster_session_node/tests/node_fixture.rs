@@ -21,7 +21,7 @@ use std::net::SocketAddr;
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_goruntime::GoString;
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, LoadedDatabase};
+use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_model::column::ColumnInfo as ModelColumnInfo;
 use tidb_model::db::DBInfo;
 use tidb_model::index::{IndexColumn, IndexInfo};
@@ -221,13 +221,11 @@ pub(super) fn loaded_catalog() -> ClusterCatalog {
         }],
         policies: Vec::new(),
         schema_version: 11,
-        databases: vec![LoadedDatabase {
-            info: DBInfo {
-                id: 5,
-                name: CiString::new("app"),
-                ..DBInfo::default()
-            },
-            tables: vec![t, g, pending, acct, hnd, ai],
+        databases: vec![DBInfo {
+            id: 5,
+            name: CiString::new("app"),
+            deprecated_tables: vec![t, g, pending, acct, hnd, ai].into(),
+            ..DBInfo::default()
         }],
     }
 }

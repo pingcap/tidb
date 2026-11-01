@@ -317,6 +317,7 @@ pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
     };
     let catalog = fetch_all_schemas_with_tables(snapshot)?;
     let (_, stored) = locate_table(&catalog, schema, table)?;
+    let stored = stored.read();
     let mut specs = Vec::new();
     let mut details = Vec::new();
     let mut anonymous_foreign_keys = 0;
@@ -364,7 +365,7 @@ pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
                 context,
             } => {
                 let name =
-                    foreign_key::foreign_key_name(definition, stored, anonymous_foreign_keys);
+                    foreign_key::foreign_key_name(definition, &stored, anonymous_foreign_keys);
                 if definition.name.as_deref().is_none_or(str::is_empty) {
                     anonymous_foreign_keys += 1;
                 }
@@ -517,6 +518,7 @@ pub(super) fn build_multi_schema_job(
     store_count: usize,
 ) -> Result<tidb_ddl_jobsubmit::JobSpec, DdlPlanError> {
     let (schema_id, stored) = locate_table(catalog, schema, table)?;
+    let stored = stored.read();
     let mut info = MultiSchemaInfo::default();
     let mut names = MultiSchemaNames::default();
     let mut sub_jobs = Vec::with_capacity(specs.len());
@@ -551,7 +553,7 @@ pub(super) fn build_multi_schema_job(
         sub.reorg_type = reorg_type;
         sub_jobs.push(sub);
     }
-    names.check(stored)?;
+    names.check(&stored)?;
     merge_add_index(&mut sub_jobs);
     let set_reorg_param = sub_jobs.iter().any(|sub| {
         matches!(
@@ -1068,7 +1070,7 @@ pub(super) fn on_multi_schema_change<S: MetaSnapshot>(
         }
 
         // Save the table and the sub-jobs for rolling back.
-        let saved_info = checked_job_table(catalog, active, true)?.clone_like_go();
+        let saved_info = checked_job_table(catalog, active, true)?.read().clone_like_go();
         // Go `doAnalyzeWithoutReorg`: no analyze for a job whose
         // `tidb_enable_ddl_analyze` is off, decided in a step of its own.
         if let Some(meta) = &active.job.reorg_meta {
@@ -1222,7 +1224,7 @@ fn finish_multi_schema_job(
         .map(|sub| sub.read().schema_version)
         .max()
         .unwrap_or(0);
-    let info = checked_job_table(catalog, active, false)?.clone_like_go();
+    let info = checked_job_table(catalog, active, false)?.read().clone_like_go();
     active.job.finish_table_job(
         JobState::DONE,
         SchemaState::NONE,

@@ -486,6 +486,7 @@ fn ddl_systable_manager_matches_go_queries() {
     let (_, mdl_table) = catalog
         .find_table("mysql", "tidb_mdl_info")
         .expect("the MDL table exists");
+    let mdl_table = mdl_table.read();
     let mdl = MdlInfoUpdate {
         omit_owner_id: false,
         table: Box::new(mdl_table.clone_like_go()),
@@ -952,7 +953,7 @@ fn persisted_action_panic_preserves_checkpoint_and_discards_unfinished_metadata(
         apply(&mut store, &step.write);
         let after = fetch_all_schemas_with_tables(&mut store).unwrap();
         assert_eq!(after.schema_version, catalog.schema_version);
-        assert!(!after.databases.iter().any(|db| db.info.id == 991));
+        assert!(!after.databases.iter().any(|db| db.id == 991));
         if limit > 0 {
             let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
             assert_eq!(active.job.state, JobState::CANCELLING);
@@ -1001,7 +1002,7 @@ fn persisted_panic_during_cancellation_or_rollback_keeps_go_budget_and_prior_err
             .find_table("u6", "panic_check")
             .unwrap()
             .1
-            .clone_like_go();
+            .read().clone_like_go();
         let constraint = tidb_model::table::ConstraintInfo {
             name: tidb_ast::CiString::new("c"),
             state: SchemaState::WRITE_ONLY,
@@ -1500,6 +1501,7 @@ fn persisted_cancel_uses_physical_drop_state() {
             apply(&mut store, &create);
             let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
             let (db, table) = catalog.find_table("u6", "cancel_drop").unwrap();
+            let table = table.read();
             if action == ActionType::ACTION_DROP_SCHEMA {
                 let mut db = db.clone();
                 db.state = state;
@@ -1575,7 +1577,7 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
                 .find_table("u6", "cancel_check")
                 .unwrap()
                 .1
-                .clone_like_go();
+                .read().clone_like_go();
             let constraint = tidb_model::table::ConstraintInfo {
                 name: tidb_ast::CiString::new("c_positive"),
                 expr_string: "`a` > 0".into(),
@@ -1678,6 +1680,7 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
                 assert_eq!(active.job.raw_args, raw);
                 let after = fetch_all_schemas_with_tables(&mut store).unwrap();
                 let table = after.find_table("u6", "cancel_check").unwrap().1;
+                let table = table.read();
                 if action == ActionType::ACTION_ADD_CHECK_CONSTRAINT {
                     assert!(table.constraints.is_empty());
                 } else {
@@ -1760,7 +1763,7 @@ fn persisted_check_source_state_errors() {
             .find_table("u6", "checked_table")
             .unwrap()
             .1
-            .clone_like_go();
+            .read().clone_like_go();
         table.constraints = vec![tidb_model::table::ConstraintInfo {
             name: tidb_ast::CiString::new("MixedCheck"),
             expr_string: "`a` > 0".into(),
@@ -1939,7 +1942,7 @@ fn persisted_check_lookup_failures_cancel_before_retry() {
                     .find_table("u6", "checked_table")
                     .unwrap()
                     .1
-                    .clone_like_go();
+                    .read().clone_like_go();
                 table.state = SchemaState::WRITE_ONLY;
                 store.put(
                     key::table_kv_key(112, id),
@@ -2052,7 +2055,7 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
                     .find_table("mysql", "tidb_mdl_info")
                     .unwrap()
                     .1
-                    .clone_like_go(),
+                    .read().clone_like_go(),
             ),
             table_ids: original.table_ids.clone(),
             omit_owner_id: false,
@@ -2370,6 +2373,7 @@ fn history_table_failure_is_logged_and_the_job_still_finishes() {
                 .unwrap();
             apply_mutations(&mut store, &mutations);
             let (db, table) = catalog.find_table("mysql", "tidb_ddl_history").unwrap();
+            let table = table.read();
             store.pairs.remove(&key::table_kv_key(db.id, table.id));
             let step = plan_worker_step(&mut store, 900, 10_000).unwrap();
             assert!(step.terminal);
@@ -3542,6 +3546,7 @@ fn create_table_stages_the_go_notifier_row_in_the_catalog_transaction() {
             tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME,
         )
         .expect("the notifier table is bootstrapped");
+    let notifier = notifier.read();
     let record_prefix = tidb_tablecodec::table_key::gen_table_record_prefix(notifier.id);
     let record = write
         .mutations
@@ -3596,6 +3601,7 @@ fn clustered_notifier_events_use_the_composite_primary_key() {
     let mut store = bootstrapped();
     let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
     let (_, notifier) = catalog.find_table("mysql", "tidb_ddl_notifier").unwrap();
+    let notifier = notifier.read();
     let mut notifier = notifier.clone_like_go();
     notifier.is_common_handle = true;
     notifier.common_handle_version = 1;
@@ -3657,6 +3663,7 @@ fn notifier_events(
             tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME,
         )
         .expect("the notifier table is bootstrapped");
+    let notifier = notifier.read();
     let record_prefix = tidb_tablecodec::table_key::gen_table_record_prefix(notifier.id);
     let field_types: BTreeMap<_, _> = notifier
         .cols()
@@ -4797,12 +4804,13 @@ fn tiflash_batch_truncate_table_resets_all_availability() {
     let table = catalog
         .databases
         .iter()
-        .find(|db| db.info.name.lowercase() == "u6")
+        .find(|db| db.name.lowercase() == "u6")
         .unwrap()
-        .tables
-        .iter()
-        .find(|t| t.name.lowercase() == "tfparts")
+        .deprecated_tables
+        .iter_deref()
+        .find(|t| t.read().name.lowercase() == "tfparts")
         .unwrap();
+    let table = table.read();
     let replica = table.tiflash_replica.as_ref().unwrap().read();
     assert!(!replica.available);
     assert!(replica.available_partition_ids.is_empty());
@@ -5926,6 +5934,7 @@ fn partition_ids(store: &mut MetaStore, table: &str) -> Vec<i64> {
     let (_, info) = catalog
         .find_table("u6", table)
         .unwrap_or_else(|| panic!("table {table} exists"));
+    let info = info.read();
     let partition = info.partition.as_ref().expect("a partitioned table");
     let definitions = partition.read().definitions.snapshot();
     definitions.iter().map(|definition| definition.id).collect()

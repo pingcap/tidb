@@ -574,6 +574,7 @@ pub fn plan_loaded_stats_meta_write<S: MetaSnapshot>(
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     let table = locate(catalog, "stats_meta")?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(snapshot, table, &["table_id"], table_id)?;
     let identity = vec![format!("{:?}", Datum::Int(table_id))];
     let mut values = rows
@@ -669,6 +670,7 @@ pub fn plan_insert_table_stats_statement<S: MetaSnapshot>(
         ),
     };
     let table = locate(catalog, table_name)?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(snapshot, table, identity, physical_id)?;
     let mut values = defaults_row(table, now)?;
     set(table, &mut values, "table_id", Datum::Int(physical_id));
@@ -724,6 +726,7 @@ pub fn plan_insert_column_stats<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(bool, StatsWritePlan), StatsWriteError> {
     let table = locate(catalog, "stats_histograms")?;
+    let table = &*table.read();
     let identity_columns = &["table_id", "is_index", "hist_id"];
     let mut rows = StatsRows::open(snapshot, table, identity_columns, physical_id)?;
     let mut values = defaults_row(table, now)?;
@@ -784,6 +787,7 @@ pub fn plan_insert_column_default_bucket<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let table = locate(catalog, "stats_buckets")?;
+    let table = &*table.read();
     let identity_columns = &["table_id", "is_index", "hist_id", "bucket_id"];
     let mut rows = StatsRows::open(snapshot, table, identity_columns, physical_id)?;
     let mut values = defaults_row(table, now)?;
@@ -817,6 +821,7 @@ pub fn plan_stats_meta_version_refresh<S: MetaSnapshot>(
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     let table = locate(catalog, "stats_meta")?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(snapshot, table, &["table_id"], table_id)?;
     let identity = vec![format!("{:?}", Datum::Int(table_id))];
     let Some(mut values) = rows.existing_values(&identity).cloned() else {
@@ -865,6 +870,7 @@ pub fn plan_update_stats_table_version<S: MetaSnapshot>(
         }
     };
     let table = locate(catalog, table_name)?;
+    let table = &*table.read();
     let mut rows = StatsRows::open_all(snapshot, table, identity)?;
     let stored = rows
         .existing
@@ -981,6 +987,7 @@ fn change_stats_table_id<S: MetaSnapshot>(
         return Ok(());
     }
     let table = locate(catalog, table_name)?;
+    let table = &*table.read();
     let mut rows = StatsRows::open_all(snapshot, table, identity)?;
     let table_id = column_id(table, "table_id")?;
     let source_identities = rows
@@ -1061,6 +1068,7 @@ pub fn plan_column_stats_usage_write<S: MetaSnapshot>(
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     let table = locate(catalog, "column_stats_usage")?;
+    let table = &*table.read();
     let mut rows_by_table = BTreeMap::new();
     for item in usage.keys() {
         if !rows_by_table.contains_key(&item.table_id) {
@@ -1115,6 +1123,7 @@ pub fn plan_exchange_partition_stats_update<S: MetaSnapshot>(
             "stats_meta"
         },
     )?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(snapshot, table, &["table_id"], table_id)?;
     let mut values = defaults_row(table, now)?;
     set(table, &mut values, "table_id", Datum::Int(table_id));
@@ -1156,6 +1165,7 @@ pub fn load_stats_locked_table_ids<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
 ) -> Result<std::collections::HashSet<i64>, StatsWriteError> {
     let table = locate(catalog, "stats_table_locked")?;
+    let table = &*table.read();
     let table_id_column = column_id(table, "table_id")?;
     read_rows_with_keys(snapshot, table, None).map(|rows| {
         rows.into_iter()
@@ -1178,6 +1188,7 @@ fn plan_outdated_historical_stats_delete<S: MetaSnapshot>(
     limit: usize,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let table = locate(catalog, table_name)?;
+    let table = &*table.read();
     let create_time_id = column_id(table, "create_time")?;
     let stale = read_rows_with_keys_from_index(snapshot, table, "idx_create_time")?
         .into_iter()
@@ -1229,6 +1240,7 @@ pub fn count_outdated_historical_stats<S: MetaSnapshot>(
     cutoff: Time,
 ) -> Result<usize, StatsWriteError> {
     let table = locate(catalog, "stats_meta_history")?;
+    let table = &*table.read();
     let create_time_id = column_id(table, "create_time")?;
     Ok(
         read_rows_with_keys_from_index(snapshot, table, "idx_create_time")?
@@ -1252,6 +1264,7 @@ fn plan_historical_stats_table_delete<S: MetaSnapshot>(
     physical_id: i64,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let table = locate(catalog, table_name)?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(snapshot, table, identity, physical_id)?;
     let mut plan = StatsWritePlan::default();
     rows.retract_remaining(&mut plan)?;
@@ -1298,6 +1311,7 @@ pub fn load_stats_gc_candidates<S: MetaSnapshot>(
     gc_version: u64,
 ) -> Result<Vec<i64>, StatsWriteError> {
     let table = locate(catalog, "stats_meta")?;
+    let table = &*table.read();
     let view = SystemTableView::project("mysql.stats_meta", table, &["table_id", "version"]);
     let mut candidates = Vec::new();
     for (key, value) in scan_system_table(snapshot, &view)? {
@@ -1380,6 +1394,7 @@ pub fn plan_stats_gc_timestamp_write<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let table = locate(catalog, "tidb")?;
+    let table = &*table.read();
     let mut rows = StatsRows::open_all(snapshot, table, &["variable_name"])?;
     let name_type = table
         .cols()
@@ -1427,6 +1442,7 @@ fn retract_stats_item_rows<S: MetaSnapshot>(
     plan: &mut StatsWritePlan,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, table_name)?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(snapshot, table, identity, physical_id)?;
     rows.retract_prefix(prefix, plan)
 }
@@ -1499,6 +1515,7 @@ fn retract_stats_table_rows<S: MetaSnapshot>(
     plan: &mut StatsWritePlan,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, table_name)?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(snapshot, table, identity, physical_id)?;
     rows.retract_remaining(plan)
 }
@@ -1512,6 +1529,7 @@ fn reset_table_histograms<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_histograms")?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(
         snapshot,
         table,
@@ -1669,6 +1687,7 @@ fn plan_loaded_meta<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_meta")?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(snapshot, table, &["table_id"], table_id)?;
     if count < 0 {
         let identity = vec![format!("{:?}", Datum::Int(table_id))];
@@ -1713,6 +1732,7 @@ fn plan_loaded_histogram<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_histograms")?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(
         snapshot,
         table,
@@ -1876,6 +1896,7 @@ fn plan_loaded_buckets_delete<S: MetaSnapshot>(
     plan: &mut StatsWritePlan,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_buckets")?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(
         snapshot,
         table,
@@ -1897,6 +1918,7 @@ fn plan_loaded_buckets_insert<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_buckets")?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(
         snapshot,
         table,
@@ -1957,6 +1979,7 @@ fn plan_loaded_topn_delete<S: MetaSnapshot>(
     plan: &mut StatsWritePlan,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_top_n")?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(
         snapshot,
         table,
@@ -1978,6 +2001,7 @@ fn plan_loaded_topn_insert<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_top_n")?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(
         snapshot,
         table,
@@ -2022,6 +2046,7 @@ fn plan_loaded_fm_insert<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_fm_sketch")?;
+    let table = &*table.read();
     let Some(encoded) = encode_fm_sketch(item.fm_sketch.as_ref()) else {
         return Ok(());
     };
@@ -2069,6 +2094,7 @@ fn plan_loaded_fm_delete<S: MetaSnapshot>(
     plan: &mut StatsWritePlan,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_fm_sketch")?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(
         snapshot,
         table,
@@ -2089,6 +2115,7 @@ fn plan_meta<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<bool, StatsWriteError> {
     let table = locate(catalog, "stats_meta")?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(snapshot, table, &["table_id"], stats.table_id)?;
     let identity = vec![format!("{:?}", Datum::Int(stats.table_id))];
     if let (Some(meta), Some(existing)) = (analyze_meta, rows.existing_values(&identity)) {
@@ -2163,6 +2190,7 @@ fn plan_independent_index_meta<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<bool, StatsWriteError> {
     let table = locate(catalog, "stats_meta")?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(snapshot, table, &["table_id"], stats.table_id)?;
     let identity = vec![format!("{:?}", Datum::Int(stats.table_id))];
     let inserted = rows.existing_values(&identity).is_none();
@@ -2197,6 +2225,7 @@ fn plan_histograms<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_histograms")?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(
         snapshot,
         table,
@@ -2265,6 +2294,7 @@ fn plan_buckets<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_buckets")?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(
         snapshot,
         table,
@@ -2332,6 +2362,7 @@ fn plan_topn<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_top_n")?;
+    let table = &*table.read();
     // A TopN row is named by its VALUE as well as by its histogram: one
     // histogram has many of them, and they are not numbered.
     let mut rows = StatsRows::open(
@@ -2380,6 +2411,7 @@ fn plan_fm_sketches<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_fm_sketch")?;
+    let table = &*table.read();
     let mut rows = StatsRows::open(
         snapshot,
         table,

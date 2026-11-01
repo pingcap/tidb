@@ -1967,12 +1967,12 @@ impl<'s> ClusterServerSession<'s> {
             let found = loaded
                 .databases
                 .iter()
-                .flat_map(|database| database.tables.iter())
-                .find(|table| table.id == *id);
+                .flat_map(|database| database.deprecated_tables.iter_deref())
+                .find(|table| table.read().id == *id);
             if let Some(table) = found {
                 tidb_ddl::pre_split::pre_split_and_scatter(
                     regions.as_ref(),
-                    table,
+                    &table.read(),
                     &scatter_scope,
                 );
             }
