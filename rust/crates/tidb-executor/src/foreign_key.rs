@@ -185,7 +185,7 @@ pub(crate) fn referring(
                 && key.ref_table.original().go_lower_eq(table)
             {
                 drop(key);
-                found.push((child_db, child_table, foreign_key));
+                found.push((child_db.clone(), child_table, foreign_key));
             }
         }
     }
@@ -193,10 +193,10 @@ pub(crate) fn referring(
     // within each child. Only matching constraints need owned metadata: the
     // cascade mutates the catalog after this borrow ends. Unrelated tables
     // contribute no name, column, or constraint copies.
-    found.sort_by(|left, right| (left.0, left.1).cmp(&(right.0, right.1)));
+    found.sort_by(|left, right| (&left.0, left.1).cmp(&(&right.0, right.1)));
     found
         .into_iter()
-        .map(|(database, table, key)| (database.to_owned(), table.to_owned(), key))
+        .map(|(database, table, key)| (database, table.to_owned(), key))
         .collect()
 }
 

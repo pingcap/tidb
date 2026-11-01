@@ -727,7 +727,7 @@ fn index_access(
     // the session's hypothetical indexes rather than one the table stores.
     let hypo_index = || {
         let database = catalog.physical_kv_table_database_by_id(table_id)?;
-        tidb_table::tables::hypo_kv_indexes(hypo_indexes?, database, &table)
+        tidb_table::tables::hypo_kv_indexes(hypo_indexes?, &database, &table)
             .into_iter()
             .find(|index| index.read().id == index_id)
     };

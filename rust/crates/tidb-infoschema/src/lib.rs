@@ -119,19 +119,67 @@ pub const DEFAULT_DATABASE: &str = "test";
 /// in. Spelled lower case, which is the name Go stores and reports.
 pub const SYSTEM_DATABASE: &str = "mysql";
 
-/// One schema: Go `model.DBInfo`, reduced to the metadata this catalog serves.
-#[derive(Clone, Debug, Default)]
+/// One schema: Go `infoschema.schemaTables` -- the schema's `DBInfo`
+/// pointer and its tables.
+#[derive(Clone, Debug)]
 struct Database {
-    /// Go `DBInfo.ID`, retained for physical-key diagnostics.
-    id: i64,
-    /// The name as written, for `SHOW DATABASES` output.
-    name: String,
-    /// The defaults inherited by tables created without explicit options.
-    charset: TableCharset,
-    /// Go `DBInfo.PlacementPolicyRef`: the schema's default placement,
-    /// which a table created without its own inherits.
-    placement_policy: Option<tidb_model::PolicyRefInfo>,
+    /// Go `schemaTables.dbInfo`.
+    info: tidb_model::GoShared<tidb_model::db::DBInfo>,
     tables: HashMap<String, std::sync::Arc<TableEntry>>,
+}
+
+impl Database {
+    fn new(info: tidb_model::db::DBInfo) -> Self {
+        Self {
+            info: tidb_model::GoShared::new(info),
+            tables: HashMap::new(),
+        }
+    }
+
+    /// Go `DBInfo.ID`.
+    fn id(&self) -> i64 {
+        self.info.read().id
+    }
+
+    /// Go `DBInfo.Name.O`.
+    fn name(&self) -> String {
+        self.info.read().name.original().to_owned()
+    }
+
+    /// Go `DBInfo.Charset` / `Collate`: the defaults a table created without
+    /// its own inherits. A name this tier does not know falls back to the
+    /// server default, as the loader always did.
+    fn charset(&self) -> TableCharset {
+        let info = self.info.read();
+        TableCharset {
+            charset: tidb_charset::Charset::from_name(&info.charset)
+                .unwrap_or(TableCharset::default().charset),
+            collation: tidb_charset::Collation::from_name(&info.collate)
+                .unwrap_or(TableCharset::default().collation),
+        }
+    }
+
+    /// Go `DBInfo.PlacementPolicyRef`.
+    fn placement_policy(&self) -> Option<tidb_model::PolicyRefInfo> {
+        self.info
+            .read()
+            .placement_policy_ref
+            .as_ref()
+            .map(|reference| reference.read().clone())
+    }
+}
+
+/// A `DBInfo` for a schema registered by name: a memory schema or a
+/// fixture's.
+fn db_info(id: i64, name: &str, charset: TableCharset) -> tidb_model::db::DBInfo {
+    tidb_model::db::DBInfo {
+        id,
+        name: tidb_ast::CiString::new(name),
+        charset: charset.charset.name().to_owned(),
+        collate: charset.collation.name().to_owned(),
+        state: tidb_model::SchemaState::PUBLIC,
+        ..tidb_model::db::DBInfo::default()
+    }
 }
 
 /// Go `infoschema.InfoSchema`: one schema image -- databases, their tables,
@@ -312,10 +360,11 @@ impl SessionExtendedInfoSchema {
             Database {
                 // Go `autoid.InformationSchemaDBID`: a memory schema's id has
                 // the system flag, so it can never be a stored schema's id.
-                id: (1 << 62) | 1,
-                name: "INFORMATION_SCHEMA".to_owned(),
-                charset: TableCharset::default(),
-                placement_policy: None,
+                info: tidb_model::GoShared::new(db_info(
+                    (1 << 62) | 1,
+                    "INFORMATION_SCHEMA",
+                    TableCharset::default(),
+                )),
                 // Go's `initVirtualTables` builds the memory schemas' tables
                 // into the infoschema itself, so they are ordinary objects to
                 // every name lookup; each schema's tables are built once per
@@ -347,10 +396,7 @@ impl SessionExtendedInfoSchema {
             databases.insert(
                 key.to_owned(),
                 Database {
-                    id,
-                    name: display.to_owned(),
-                    charset: TableCharset::default(),
-                    placement_policy: None,
+                    info: tidb_model::GoShared::new(db_info(id, display, TableCharset::default())),
                     tables,
                 },
             );
@@ -643,7 +689,7 @@ impl SessionExtendedInfoSchema {
         let mut names: Vec<String> = self
             .schema.databases
             .values()
-            .map(|database| database.name.clone())
+            .map(|database| database.name())
             .collect();
         names.sort();
         if let Some(position) = names
@@ -692,16 +738,15 @@ impl SessionExtendedInfoSchema {
     pub fn database_charset(&self, database: &str) -> Option<TableCharset> {
         self.schema.databases
             .get(&database.go_to_lower())
-            .map(|database| database.charset)
+            .map(|database| database.charset())
     }
 
     /// Go `DBInfo.PlacementPolicyRef` of `database`.
     #[must_use]
-    pub fn database_placement_policy(&self, database: &str) -> Option<&tidb_model::PolicyRefInfo> {
+    pub fn database_placement_policy(&self, database: &str) -> Option<tidb_model::PolicyRefInfo> {
         self.schema.databases
             .get(&database.go_to_lower())?
-            .placement_policy
-            .as_ref()
+            .placement_policy()
     }
 
     /// Go `onModifySchemaDefaultPlacement`'s `DBInfo` edit (or the loader
@@ -715,7 +760,10 @@ impl SessionExtendedInfoSchema {
         let Some(schema) = self.database_mut(&database.go_to_lower()) else {
             return false;
         };
-        schema.placement_policy = policy;
+        // `DBInfo` is shared by every catalog image: a change is a new one.
+        let mut info = schema.info.read().clone();
+        info.placement_policy_ref = policy.map(tidb_model::GoShared::new);
+        schema.info = tidb_model::GoShared::new(info);
         self.bump_version();
         true
     }
@@ -725,7 +773,7 @@ impl SessionExtendedInfoSchema {
     pub fn database_definition(&self, database: &str) -> Option<(String, TableCharset)> {
         self.schema.databases
             .get(&database.go_to_lower())
-            .map(|database| (database.name.clone(), database.charset))
+            .map(|database| (database.name(), database.charset()))
     }
 
     /// Go `infoschema.PolicyByName`: the policy a name refers to, folded.
@@ -781,8 +829,7 @@ impl SessionExtendedInfoSchema {
             // Go `checkPlacementPolicyNotInUseFromInfoSchema` checks each
             // schema's default before its tables.
             database
-                .placement_policy
-                .as_ref()
+                .placement_policy()
                 .is_some_and(|reference| reference.name.lowercase() == folded)
                 || database.tables.values().any(|entry| {
                     let crate::TableEntry::Kv(table) = &**entry else {
@@ -829,21 +876,41 @@ impl SessionExtendedInfoSchema {
         self.bump_metadata_version();
         let key = database.go_to_lower();
         if let Some(existing) = self.database_mut(&key) {
-            let changed =
-                existing.id != id || existing.name != database || existing.charset != charset;
-            existing.id = id;
-            existing.name = database.to_owned();
-            existing.charset = charset;
+            let changed = existing.id() != id
+                || existing.name() != database
+                || existing.charset() != charset;
+            if changed {
+                let mut info = existing.info.read().clone();
+                info.id = id;
+                info.name = tidb_ast::CiString::new(database);
+                info.charset = charset.charset.name().to_owned();
+                info.collate = charset.collation.name().to_owned();
+                existing.info = tidb_model::GoShared::new(info);
+            }
             self.schema.version += u64::from(changed);
+            return false;
+        }
+        Arc::make_mut(&mut self.schema.databases)
+            .insert(key, Arc::new(Database::new(db_info(id, database, charset))));
+        self.bump_version();
+        true
+    }
+
+    /// Go `Builder.createSchemaTablesForDB`: the schema `info` names, holding
+    /// that very `DBInfo` pointer. `false` when the schema already existed
+    /// (its pointer is replaced).
+    pub fn register_database_info(&mut self, info: tidb_model::GoShared<tidb_model::db::DBInfo>) -> bool {
+        self.bump_metadata_version();
+        let key = info.read().name.lowercase().to_owned();
+        if let Some(existing) = self.database_mut(&key) {
+            existing.info = info;
+            self.bump_version();
             return false;
         }
         Arc::make_mut(&mut self.schema.databases).insert(
             key,
             Arc::new(Database {
-                id,
-                name: database.to_owned(),
-                charset,
-                placement_policy: None,
+                info,
                 tables: HashMap::new(),
             }),
         );
@@ -919,12 +986,13 @@ impl SessionExtendedInfoSchema {
     /// Borrows current table metadata without copying names or resolving
     /// them through the catalog again. Callers impose ordering only on the
     /// entries they need; hash-map traversal itself is unordered.
-    pub fn table_entries(&self) -> impl Iterator<Item = (&str, &str, &TableEntry)> {
+    pub fn table_entries(&self) -> impl Iterator<Item = (String, &str, &TableEntry)> {
         self.schema.databases.values().flat_map(|database| {
+            let schema = database.name();
             database
                 .tables
                 .iter()
-                .map(move |(name, entry)| (database.name.as_str(), name.as_str(), entry.as_ref()))
+                .map(move |(name, entry)| (schema.clone(), name.as_str(), entry.as_ref()))
         })
     }
 
@@ -954,7 +1022,7 @@ impl SessionExtendedInfoSchema {
     pub fn database_id(&self, database: &str) -> Option<i64> {
         self.schema.databases
             .get(&database.go_to_lower())
-            .map(|schema| schema.id)
+            .map(|database| database.id())
     }
 
     /// The name of the database whose Go `DBInfo.ID` is `id`, as Go's
@@ -963,8 +1031,8 @@ impl SessionExtendedInfoSchema {
     pub fn database_name_by_id(&self, id: i64) -> Option<String> {
         self.schema.databases
             .values()
-            .find(|schema| schema.id == id)
-            .map(|schema| schema.name.clone())
+            .find(|schema| schema.id() == id)
+            .map(|database| database.name())
     }
 
     /// The `(schema, table)` names of the stored table whose Go
@@ -982,7 +1050,7 @@ impl SessionExtendedInfoSchema {
         let database = self
             .schema.databases
             .get(database)
-            .map_or_else(|| database.to_owned(), |schema| schema.name.clone());
+            .map_or_else(|| database.to_owned(), |schema| schema.name());
         Some((database, table.name()))
     }
 
@@ -1002,7 +1070,7 @@ impl SessionExtendedInfoSchema {
                         })
                 }) =>
             {
-                Some((schema.name.clone(), table.name()))
+                Some((schema.name(), table.name()))
             }
             _ => None,
         }
@@ -1010,7 +1078,7 @@ impl SessionExtendedInfoSchema {
 
     /// Every table carrying a `TableInfo.Lock`, with its schema name -- Go
     /// `ListTablesWithSpecialAttribute(TableLockAttribute)`.
-    pub fn locked_tables(&self) -> impl Iterator<Item = (&str, &crate::TableCommon)> {
+    pub fn locked_tables(&self) -> impl Iterator<Item = (String, &crate::TableCommon)> {
         self.table_entries()
             .filter(|_| self.schema.table_locks_present)
             .filter_map(|(schema, _, entry)| match entry {
@@ -1236,9 +1304,9 @@ impl SessionExtendedInfoSchema {
     }
 
     /// Resolves a logical or partition table ID to its owning database name.
-    pub fn physical_kv_table_database_by_id(&self, physical_id: i64) -> Option<&str> {
+    pub fn physical_kv_table_database_by_id(&self, physical_id: i64) -> Option<String> {
         let (database, _) = self.table_by_id(physical_id)?;
-        Some(self.schema.databases.get(database)?.name.as_str())
+        Some(self.schema.databases.get(database)?.name())
     }
 
     /// A table of the default database, for tests that inspect the entry.

@@ -171,7 +171,7 @@
             assert_eq!(physical.table_id(), partitioned.table_id());
             assert_eq!(physical.record_physical_ids(), vec![definition.id]);
             assert_eq!(
-                catalog.physical_kv_table_database_by_id(definition.id),
+                catalog.physical_kv_table_database_by_id(definition.id).as_deref(),
                 Some(DEFAULT_DATABASE)
             );
         }

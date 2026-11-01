@@ -29,7 +29,7 @@ impl KeyInfoCatalog for SessionExtendedInfoSchema {
             if table.table_id() == physical_id {
                 return Some(KeyInfoTableLookup::Resolved(key_info_table(
                     self,
-                    database,
+                    &database,
                     registered_name,
                     table,
                     0,
@@ -51,7 +51,7 @@ impl KeyInfoCatalog for SessionExtendedInfoSchema {
             {
                 return Some(KeyInfoTableLookup::Resolved(key_info_table(
                     self,
-                    database,
+                    &database,
                     registered_name,
                     table,
                     definition.id,

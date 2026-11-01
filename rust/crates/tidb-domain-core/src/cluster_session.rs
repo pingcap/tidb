@@ -171,23 +171,9 @@ pub fn cluster_session_catalog_with_templates(
     }
     for database in &loaded.databases {
         let schema = database.name.original().to_owned();
-        // Go `DBInfo.Charset`/`Collate`: what `SHOW CREATE DATABASE` and
-        // `information_schema.schemata` report, and the default a table
-        // created without its own charset inherits. An unrecognised stored
-        // name falls back to the server default rather than refusing the
-        // whole database.
-        let charset = tidb_table::tables::TableCharset {
-            charset: tidb_charset::Charset::from_name(&database.charset)
-                .unwrap_or(tidb_table::tables::TableCharset::default().charset),
-            collation: tidb_charset::Collation::from_name(&database.collate)
-                .unwrap_or(tidb_table::tables::TableCharset::default().collation),
-        };
-        catalog.register_database_with_id_and_charset(&schema, database.id, charset);
-        // Go `DBInfo.PlacementPolicyRef`: the schema default a table created
-        // without its own takes, and what SHOW CREATE DATABASE prints.
-        if let Some(reference) = &database.placement_policy_ref {
-            catalog.set_database_placement_policy(&schema, Some(reference.read().clone()));
-        }
+        // Go `Builder.createSchemaTablesForDB`: the schema holds its
+        // `DBInfo` -- charset, collation, placement and all.
+        catalog.register_database_info(tidb_model::GoShared::new(database.clone()));
         for table in database.deprecated_tables.iter_deref() {
             let table = table.read();
             if table.is_view() {

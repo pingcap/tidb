@@ -82,7 +82,7 @@ pub fn table_rows(
 /// The schema's own placement row, if it has a policy. Its state is
 /// `PENDING` while any table exists.
 pub fn database_rows(catalog: &SessionExtendedInfoSchema, database: &str) -> Result<Option<Vec<Datum>>, DriverError> {
-    let Some(placement) = get_policy_placement(catalog, catalog.database_placement_policy(database))?
+    let Some(placement) = get_policy_placement(catalog, catalog.database_placement_policy(database).as_ref())?
     else {
         return Ok(None);
     };

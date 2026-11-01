@@ -33,7 +33,7 @@ impl SessionExtendedInfoSchema {
                     .schema.databases
                     .values()
                     .flat_map(|database| {
-                        let database_name = database.name.go_to_lower();
+                        let database_name = database.name().go_to_lower();
                         database
                             .tables
                             .values()

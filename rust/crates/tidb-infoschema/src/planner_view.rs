@@ -365,8 +365,8 @@ impl SessionExtendedInfoSchema {
             .values()
             .flat_map(|database| {
                 database.tables.keys().filter_map(move |name| {
-                    is_virtual_schema_table(&database.name, name)
-                        .then(|| (database.name.go_to_lower(), name.go_to_lower()))
+                    is_virtual_schema_table(&database.name(), name)
+                        .then(|| (database.name().go_to_lower(), name.go_to_lower()))
                 })
             })
             .collect();
@@ -383,7 +383,7 @@ impl SessionExtendedInfoSchema {
                 .map_or(0, |index| index as i64)
         };
         for (database_key, database) in self.schema.databases.iter() {
-            let resolve_db_info = tidb_model::GoShared::new(database_info(database));
+            let resolve_db_info = database.info.clone();
             for (entry_name, entry) in &database.tables {
                 // The owning catalog already stores Go-folded keys. Preserve
                 // those keys rather than folding original metadata again.
@@ -402,10 +402,10 @@ impl SessionExtendedInfoSchema {
                     // shared table ID 0, so a scan read whichever table that
                     // ID found.
                     TableEntry::Kv(table)
-                        if is_virtual_schema_table(&database.name, entry_name) =>
+                        if is_virtual_schema_table(&database.name(), entry_name) =>
                     {
                         let table_name = if database
-                            .name
+                            .name()
                             .go_lower_eq(crate::infoschema_meta::INFORMATION_SCHEMA)
                         {
                             crate::infoschema_meta::canonical_table_name(entry_name)
@@ -416,13 +416,13 @@ impl SessionExtendedInfoSchema {
                         let table_id = if table.table_id() != 0 {
                             table.table_id()
                         } else {
-                            memory_table_id(&database.name, entry_name)
+                            memory_table_id(&database.name(), entry_name)
                         };
                         let mut source_table = SourceTable {
                             is_memory_table: true,
                             table_id,
                             table_name,
-                            db_name: database.name.clone(),
+                            db_name: database.name(),
                             physical_table_id: table_id,
                             columns: table
                                 .columns()
@@ -434,21 +434,21 @@ impl SessionExtendedInfoSchema {
                                 .collect(),
                             ..SourceTable::default()
                         };
-                        mark_cluster_table(&mut source_table, &database.name, entry_name);
+                        mark_cluster_table(&mut source_table, &database.name(), entry_name);
                         source_table.attach_resolve_metadata(resolve_db_info.clone(), None);
                         tables.insert(key(), source_table);
                     }
                     TableEntry::Kv(table) => {
                         tables.insert(
                             key(),
-                            kv_source_table(table, &database.name, resolve_db_info.clone()),
+                            kv_source_table(table, &database.name(), resolve_db_info.clone()),
                         );
                     }
                     TableEntry::View(view) => {
                         views.insert(
                             key(),
                             SourceView {
-                                db_name: database.name.clone(),
+                                db_name: database.name(),
                                 view_name: view.name.clone(),
                                 select_sql: view.select_sql.clone(),
                                 table_id: view.id,
@@ -654,14 +654,7 @@ fn kv_source_table(
     source_table
 }
 
-/// The `DBInfo` the planner resolves a schema's names with.
+/// The `DBInfo` the planner resolves a schema's names with: the schema's own.
 fn database_info(database: &Database) -> tidb_model::DBInfo {
-    tidb_model::DBInfo {
-        id: database.id,
-        name: tidb_ast::CiString::new(database.name.clone()),
-        charset: database.charset.charset.name().to_owned(),
-        collate: database.charset.collation.name().to_owned(),
-        state: tidb_model::SchemaState::PUBLIC,
-        ..tidb_model::DBInfo::default()
-    }
+    database.info.read().clone()
 }
