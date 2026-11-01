@@ -128,6 +128,13 @@ ClusterCatalog` (DDL planner, stats, `tidb-syssession`; about 83 files) onto
 the shared `InfoSchema`'s `SchemaByName` / `TableByName`. Then delete
 `ClusterCatalog`.
 
+The second `MetaSnapshot` (`tidb_infoschema::cluster_catalog::MetaSnapshot`,
+a raw get/scan seam with `PagedMetaSnapshot` / `RegionPagedMetaSnapshot`)
+exists only because `ClusterCatalog`'s loader decodes meta keys itself; Go
+loads through `meta.Reader` over a `kv.Snapshot`, which `tidb_meta`'s
+`MetaSnapshot` already is. Milestone 6 moves the loader onto `tidb_meta`
+and deletes that trait with `ClusterCatalog`.
+
 ## Validation and Acceptance
 
 For each milestone:
