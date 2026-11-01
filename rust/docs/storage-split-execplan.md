@@ -309,7 +309,17 @@ CARGO_INCREMENTAL=0`.
     `insert_row` / `insert_row_with_row_id` take the store, fixtures lend
     the table's own.
   - [ ] (d) delete the field and its accessors.
-- [ ] Milestone 5: one `InfoSchema` per schema version, shared by sessions.
+- [x] Milestone 5: one `InfoSchema` per schema version, shared by sessions
+  (2026-11-02). (a) ce502ab73b6: a session's tables are no longer rebound
+  to its store -- production reads only the statement's store. (b)
+  09ea95c8b41: `tidb_domain_core::cluster_session::SessionCatalogs` builds
+  a schema version's session catalog once over neutral storage; every
+  session open and every follower reload takes a clone (the database maps
+  are `Arc`-shared, copied only by a session's own copy-on-write change);
+  `KvTableTemplates` is gone. Tests that inspected a table's own store
+  (stored keys, partition row counts, raw-key corruption, coprocessor
+  client) now read through `Session::transaction_store` inside the
+  committed-snapshot scope.
 - [ ] Milestone 6: `ClusterCatalog` is gone.
 
 ## Surprises & Discoveries
