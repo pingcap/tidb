@@ -5349,11 +5349,12 @@ fn configure_point_snapshot_read(
     snapshot_stats: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
 ) -> Option<tidb_executor_internal_exec::index_usage_reporter::PointSnapshotStats> {
     let options = ctx.snapshot_read_options(avg_row_bytes);
+    let store = crate::statement_store(ctx, table);
     let Some(stats) = snapshot_stats else {
-        table.set_snapshot_read_options(options);
+        store.set_snapshot_read_options(options);
         return None;
     };
-    table.set_snapshot_read_options(tidb_txnkv::SnapshotReadOptions {
+    store.set_snapshot_read_options(tidb_txnkv::SnapshotReadOptions {
         runtime_stats: Some(tidb_txnkv::SnapshotRuntimeStatsHandle(Arc::clone(&stats))),
         ..options.clone()
     });
@@ -5380,9 +5381,11 @@ fn wrap_point_index_usage(
         PointCommand::Get => None,
         PointCommand::BatchGet => crate::access_cost::load_table_stats(ctx, catalog, table.table_id()),
     };
+    let store = crate::statement_store(ctx, &table);
     Box::new(PointIndexUsageExec::new(
         child,
         table,
+        store,
         stats,
         ctx.index_usage_collector().cloned(),
         index_id,
@@ -7444,7 +7447,7 @@ fn build_union_scan(
     else {
         return merged(state);
     };
-    if handle_offsets.is_empty() || table.snapshot_reader().is_none() {
+    if handle_offsets.is_empty() || crate::statement_store(ctx, &table).snapshot_reader().is_none() {
         return merged(state);
     }
     // The buffered entries of every physical table the reader can reach,
@@ -7465,7 +7468,7 @@ fn build_union_scan(
             )
         })
         .collect::<Vec<_>>();
-    let snapshot = table.mem_buffer_snapshot(&ranges).ok_or_else(|| {
+    let snapshot = crate::statement_store(ctx, &table).mem_buffer_snapshot(&ranges).ok_or_else(|| {
         DriverError::unsupported("a union scan's storage has no membuffer to read")
     })?;
     let child = build_with_state(child_plan, catalog, ctx, state)?;

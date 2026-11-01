@@ -2745,7 +2745,6 @@ impl TableCommon {
     pub fn truncate_local_temporary_table(&mut self, table_id: i64) {
         debug_assert_eq!(self.temp_table_type(), tidb_model::TempTableType::LOCAL);
         self.table_id = table_id;
-        self.store = Box::new(MemTableStorage::new());
         self.auto_id = AutoIdAllocator::over(
             std::sync::Arc::new(LocalAutoIdStore::new()),
             match self.auto_id_cache() {

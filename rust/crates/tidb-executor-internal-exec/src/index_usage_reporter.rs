@@ -177,6 +177,8 @@ pub struct PointSnapshotStats {
 pub struct PointIndexUsageExec {
     child: Box<dyn Executor>,
     table: TableCommon,
+    /// The statement's store the point read went through (Go's snapshot).
+    store: Box<dyn tidb_kv::storage::TableStorage>,
     stats: Option<UsedStatsInfoForTable>,
     collector: Option<Arc<StmtIndexUsageCollector>>,
     index_id: Option<i64>,
@@ -195,6 +197,7 @@ impl PointIndexUsageExec {
     pub fn new(
         child: Box<dyn Executor>,
         table: TableCommon,
+        store: Box<dyn tidb_kv::storage::TableStorage>,
         stats: Option<UsedStatsInfoForTable>,
         collector: Option<Arc<StmtIndexUsageCollector>>,
         index_id: Option<i64>,
@@ -204,6 +207,7 @@ impl PointIndexUsageExec {
         Self {
             child,
             table,
+            store,
             stats,
             collector,
             index_id,
@@ -229,7 +233,7 @@ impl PointIndexUsageExec {
                 PointCommand::BatchGet => tikv_client::SnapshotRpcCommand::BatchGet,
             }),
             None => {
-                let after = self.table.point_rpc_counts();
+                let after = self.store.point_rpc_counts();
                 match self.command {
                     PointCommand::Get => after.0.wrapping_sub(self.before.0),
                     PointCommand::BatchGet => after.1.wrapping_sub(self.before.1),
@@ -257,7 +261,7 @@ impl PointIndexUsageExec {
 
 impl Executor for PointIndexUsageExec {
     fn open(&mut self) -> Result<(), ExecError> {
-        self.before = self.table.point_rpc_counts();
+        self.before = self.store.point_rpc_counts();
         self.rows = 0;
         self.reported = false;
         self.child.open()
@@ -281,7 +285,7 @@ impl Executor for PointIndexUsageExec {
                 );
             }
             if !std::mem::replace(&mut self.snapshot_stats_released, true) {
-                self.table
+                self.store
                     .set_snapshot_read_options(snapshot.options_without_stats.clone());
             }
         }

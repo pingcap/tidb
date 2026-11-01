@@ -17,7 +17,6 @@
 //! preimages back into the table. FK checks precede cascades after all records
 //! have been written, as in `ExecStmt.handleForeignKeyTrigger`.
 
-use crate::WithStatementStore as _;
 use super::*;
 
 pub(crate) struct UpdateRecords<'a> {
