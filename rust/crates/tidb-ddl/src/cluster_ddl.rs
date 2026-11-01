@@ -5325,7 +5325,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         info.omit_owner_id =
             tidb_metadef::is_system_related_db(&active.job.schema_name.to_string().go_to_lower());
         match tidb_ddl_systable::SystemTableManager::new(&catalog)
-            .get_mdl_version(snapshot, ddl_job_id)
+            .get_mdl_ver(snapshot, ddl_job_id)
         {
             Ok(version) if Some(version) != schema_state.synced_version => {
                 return Ok(PersistedDdlJobPlan::SchemaSync {

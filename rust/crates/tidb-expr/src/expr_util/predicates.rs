@@ -433,7 +433,7 @@ pub fn remove_mutable_const(exprs: &mut [Expression], ctx: &dyn Columns) -> Resu
             Expression::Constant(constant) => {
                 constant.param_marker = None;
                 if let Some(deferred) = constant.deferred_expr.as_deref() {
-                    let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
+                    let mut dual = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
                     dual.set_num_virtual_rows(1);
                     match deferred.eval_with_error_value(ctx, dual.get_row(0)) {
                         Ok(value) => constant.value = value,

@@ -230,7 +230,7 @@ impl Session {
 
     /// Go `ShowExec.fetchShowSessionStates`: the encoded session state, and
     /// a session token for the logged-in user.
-    pub(crate) fn show_session_states_rows(&self) -> Result<Vec<Vec<Datum>>, DriverError> {
+    pub(crate) fn fetch_show_session_states(&self) -> Result<Vec<Vec<Datum>>, DriverError> {
         let text = serde_json::to_string(&self.encode_session_states()?).map_err(invalid_state)?;
         let state = tidb_datatype::BinaryJSON::parse(&text).map_err(invalid_state)?;
         // A session with no user has no token. A failure to sign is only

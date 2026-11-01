@@ -108,7 +108,7 @@ fn plain_error(message: impl Into<String>) -> DriverError {
 /// `NewLoadDataWorker`, up to the point `LoadDataExec.Open` requests the
 /// file. `check_privileges` is the planner's visit-info check, run after the
 /// table resolves and before the executor builder's own checks.
-pub fn prepare_load_data(
+pub fn build_load_data(
     load: &LoadDataStmt,
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
@@ -468,7 +468,7 @@ pub fn run_load_data(
     }
 
     let eval_chunk = {
-        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
         chunk.set_num_virtual_rows(1);
         chunk
     };
@@ -711,7 +711,7 @@ pub trait LoadDataExec: crate::show::exec::ShowExec {
             _ => Ok(()),
         };
         self.with_catalog_mut(|catalog| {
-            prepare_load_data(load, catalog, &current_db, &env, |_, _| privileges)
+            build_load_data(load, catalog, &current_db, &env, |_, _| privileges)
         })
     }
 }

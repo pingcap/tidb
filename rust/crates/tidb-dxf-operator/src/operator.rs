@@ -62,7 +62,7 @@ impl Context {
     }
 
     /// Go `Context.OperatorErr`.
-    pub fn operator_error(&self) -> Option<OperatorError> {
+    pub fn operator_err(&self) -> Option<OperatorError> {
         self.inner.operator_error()
     }
 

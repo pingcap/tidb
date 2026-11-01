@@ -534,7 +534,7 @@ mod tests {
                             .with_prepared_params(vec![value.clone()].into());
                         let cloned = ctx.clone();
                         for _ in 0..16 {
-                            let mut input = Chunk::new_empty(&[]);
+                            let mut input = Chunk::new_empty_chunk(&[]);
                             input.set_num_virtual_rows(3);
                             let mut output = Chunk::new_chunk_with_capacity(&[long()], 3);
                             suite.run(&cloned, &mut input, &mut output).unwrap();

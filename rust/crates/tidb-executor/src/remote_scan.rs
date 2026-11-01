@@ -51,7 +51,7 @@ pub fn pushdown_statement_context(ctx: &crate::StmtContext) -> PushdownStatement
         estimated_net_bytes: 0.0,
         lookup_avg_row_bytes: None,
         max_execution_time_ms: ctx.max_execution_time_ms(),
-        priority: kv_priority(ctx.statement_priority()),
+        priority: get_kv_priority(ctx.statement_priority()),
         not_fill_cache: ctx.not_fill_cache(),
         dist_sql_scan_concurrency: ctx.dist_sql_scan_concurrency(),
         store_batch_size: ctx.store_batch_size(),
@@ -68,7 +68,7 @@ pub fn pushdown_statement_context(ctx: &crate::StmtContext) -> PushdownStatement
 /// the `mysql.PriorityEnum` the DistSQL context carries. `Delayed` maps to
 /// `NoPriority` only later, at the KV boundary, so the DistSQL context keeps
 /// the spelling the statement used.
-pub const fn kv_priority(priority: tidb_ast::StatementPriority) -> tidb_mysql::Priority {
+pub const fn get_kv_priority(priority: tidb_ast::StatementPriority) -> tidb_mysql::Priority {
     match priority {
         tidb_ast::StatementPriority::None => tidb_mysql::Priority::None,
         tidb_ast::StatementPriority::Low => tidb_mysql::Priority::Low,

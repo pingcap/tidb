@@ -40,7 +40,7 @@ fn rewrite(sql_expr: &str) -> tidb_expr::expression::Expression {
 
 fn eval(sql_expr: &str) -> Datum {
     let expression = rewrite(sql_expr);
-    let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     chunk.set_num_virtual_rows(1);
     expression
         .eval(&NoColumns, chunk.get_row(0))

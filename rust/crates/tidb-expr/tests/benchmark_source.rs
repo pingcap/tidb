@@ -39,7 +39,7 @@ fn parse_expr(sql_expr: &str) -> tidb_ast::Expr {
 
 fn eval_built(sql_expr: &str, ctx: &impl Columns) -> Result<Datum, EvalError> {
     let expression = rewrite_expr(&parse_expr(sql_expr))?;
-    let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     chunk.set_num_virtual_rows(1);
     expression.eval(ctx, chunk.get_row(0))
 }

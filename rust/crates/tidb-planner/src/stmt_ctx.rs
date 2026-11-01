@@ -286,11 +286,11 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn in_transaction(&self) -> bool {
         self.pessimistic_transaction() || self.optimistic_transaction()
     }
-    fn is_chunk_alloc_valid(&self) -> bool {
-        StmtContext::is_chunk_alloc_valid(self)
+    fn is_alloc_valid(&self) -> bool {
+        StmtContext::is_alloc_valid(self)
     }
-    fn set_chunk_alloc_valid(&self, valid: bool) {
-        StmtContext::set_chunk_alloc_valid(self, valid);
+    fn set_alloc(&self, valid: bool) {
+        StmtContext::set_alloc(self, valid);
     }
     fn max_chunk_size(&self) -> usize {
         self.executor_chunk_sizes().1

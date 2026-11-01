@@ -388,7 +388,7 @@ fn raw_storage_failures_propagate_and_keep_go_partial_mutation_order() {
 
     let read_error = Mutator::new(base.clone().with_get_error(0, "point read"));
     assert_eq!(
-        read_error.database_exists(1),
+        read_error.is_database_exist(1),
         Err(MetaError::Storage("point read".to_owned()))
     );
     let read_error = Mutator::new(base.clone().with_get_error(1, "second table read"));
@@ -502,7 +502,7 @@ fn raw_storage_failures_propagate_and_keep_go_partial_mutation_order() {
         database_delete.drop_database(1),
         Err(MetaError::Storage("database clear".to_owned()))
     );
-    assert!(database_delete.database_exists(1).unwrap());
+    assert!(database_delete.is_database_exist(1).unwrap());
 }
 
 #[test]
@@ -596,12 +596,12 @@ fn catalog_fast_paths_cover_metas_names_attributes_cancellation_and_corruption()
 #[test]
 fn system_database_creation_and_iteration_cover_classic_and_nextgen_rules() {
     let meta = Mutator::new(MemoryTransaction::default());
-    assert!(!meta.database_exists(42).unwrap());
+    assert!(!meta.is_database_exist(42).unwrap());
     meta.create_sys_database_by_id_if_not_exists("mysql", 42)
         .unwrap();
     meta.create_sys_database_by_id_if_not_exists("ignored", 42)
         .unwrap();
-    assert!(meta.database_exists(42).unwrap());
+    assert!(meta.is_database_exist(42).unwrap());
     assert_eq!(meta.system_database_id().unwrap(), 42);
     assert_eq!(meta.database(42).unwrap().unwrap().name.original(), "mysql");
 
@@ -775,10 +775,10 @@ fn policies_masking_policies_and_resource_groups_preserve_source_lifecycle() {
     );
     masking.name = CiString::new("m2");
     meta.update_masking_policy(&masking).unwrap();
-    assert_eq!(meta.masking_policy(9).unwrap(), masking);
+    assert_eq!(meta.get_masking_policy(9).unwrap(), masking);
     assert_eq!(meta.list_masking_policies().unwrap(), [masking.clone()]);
     let reopened = Mutator::new(meta.inspect(Clone::clone).unwrap());
-    assert_eq!(reopened.masking_policy(9).unwrap(), masking);
+    assert_eq!(reopened.get_masking_policy(9).unwrap(), masking);
     assert_eq!(
         meta.update_masking_policy(&MaskingPolicyInfo {
             id: 10,
@@ -906,7 +906,7 @@ fn policy_masking_and_resource_reads_preserve_magic_json_and_empty_panics() {
             &key::masking_policy_key(8),
             b"\x40{}"
         )
-        .masking_policy(8),
+        .get_masking_policy(8),
         Err(MetaError::UnknownMagicType)
     );
     assert!(matches!(
@@ -1174,16 +1174,16 @@ fn composed_auto_id_sequence_and_schema_diff_methods_preserve_source_order() {
         Err(MetaError::DatabaseNotExists)
     );
 
-    assert_eq!(meta.schema_version_with_non_empty_diff().unwrap(), 0);
+    assert_eq!(meta.get_schema_version_with_non_empty_diff().unwrap(), 0);
     assert_eq!(meta.gen_schema_version().unwrap(), 1);
-    assert_eq!(meta.schema_version_with_non_empty_diff().unwrap(), 0);
+    assert_eq!(meta.get_schema_version_with_non_empty_diff().unwrap(), 0);
     let diff = SchemaDiff {
         version: 1,
         action_type: ActionType::ACTION_CREATE_TABLE,
         ..Default::default()
     };
     meta.set_schema_diff(&diff).unwrap();
-    assert_eq!(meta.schema_version_with_non_empty_diff().unwrap(), 1);
+    assert_eq!(meta.get_schema_version_with_non_empty_diff().unwrap(), 1);
     assert_eq!(
         meta.encode_schema_diff_key(1),
         tidb_structure::encode_string_data_key(META_PREFIX, b"Diff:1")

@@ -108,7 +108,7 @@ fn chunk_e_with(expr: &str, ctx: &impl Columns) -> String {
         Ok(rewritten) => rewritten,
         Err(err) => return format!("{err:?}"),
     };
-    let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     chunk.set_num_virtual_rows(1);
     match rewritten.eval(ctx, chunk.get_row(0)) {
         Ok(value) => value.label(),

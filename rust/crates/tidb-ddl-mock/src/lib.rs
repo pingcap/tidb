@@ -238,7 +238,7 @@ impl Manager for MockManager {
             .expect("unexpected GetJobBytesByIDWithSe call")(snapshot, job_id)
     }
 
-    fn get_mdl_version(
+    fn get_mdl_ver(
         &self,
         snapshot: &mut dyn MetaSnapshot,
         job_id: i64,

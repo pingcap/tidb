@@ -159,7 +159,7 @@ impl ColumnSlot {
 
     pub(crate) fn append_cell_from(&mut self, source: &Self, row: usize) {
         if let (Self::Owned(destination), Self::Owned(source)) = (&mut *self, source) {
-            destination.column.append_cell_from(&source.column, row);
+            destination.column.append_cell_by_cell(&source.column, row);
             return;
         }
 

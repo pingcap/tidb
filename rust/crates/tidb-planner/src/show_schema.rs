@@ -369,7 +369,7 @@ pub fn convert2_output_schemas_and_names(
             _ => FieldTypeCode::Varchar,
         };
         let mut field_type = FieldType::new(tp);
-        let (flen, decimal) = tp.default_field_length_and_decimal();
+        let (flen, decimal) = tp.get_default_field_length_and_decimal();
         field_type.set_flen(i64::from(flen));
         field_type.set_decimal(i64::from(decimal));
         field_type.set_collation(default_collation_for_type(tp));

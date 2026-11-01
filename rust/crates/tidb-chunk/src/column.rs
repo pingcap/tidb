@@ -1230,7 +1230,7 @@ impl Column {
             }
         }
         for &row in sel {
-            destination.append_cell_from(self, row);
+            destination.append_cell_by_cell(self, row);
         }
         destination
     }
@@ -1238,7 +1238,7 @@ impl Column {
     /// Go `appendCellByCell`: append `src`'s cell at `row_idx` (value and
     /// nullity) as a new row of this column. `self` and `src` must be the same
     /// element kind.
-    pub(crate) fn append_cell_from(&mut self, src: &Column, row_idx: usize) {
+    pub(crate) fn append_cell_by_cell(&mut self, src: &Column, row_idx: usize) {
         self.append_null_bitmap(!src.is_null(row_idx));
         if src.is_fixed() {
             let elem_len = src.elem_buffer_len();
@@ -1558,7 +1558,7 @@ impl Column {
         }
         if std::ptr::eq(self, src) {
             for &row in row_ids {
-                self.append_cell_from(src, row);
+                self.append_cell_by_cell(src, row);
             }
             return;
         }
@@ -1617,7 +1617,7 @@ impl Column {
 
         drop(source_data);
         for &row in row_ids {
-            self.append_cell_from(src, row);
+            self.append_cell_by_cell(src, row);
         }
     }
 
@@ -1626,7 +1626,7 @@ impl Column {
         if std::ptr::eq(self, src) {
             for (row, &is_selected) in selected.iter().enumerate() {
                 if is_selected {
-                    self.append_cell_from(src, row);
+                    self.append_cell_by_cell(src, row);
                 }
             }
             return;
@@ -1698,7 +1698,7 @@ impl Column {
         drop(source_data);
         for (row, &is_selected) in selected.iter().enumerate() {
             if is_selected {
-                self.append_cell_from(src, row);
+                self.append_cell_by_cell(src, row);
             }
         }
     }

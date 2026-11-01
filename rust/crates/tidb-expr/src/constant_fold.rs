@@ -504,7 +504,7 @@ fn fold_value(expr: &mut Expression) -> Option<Datum> {
     // A constant tree reads no row and no session state, so Go's empty
     // `chunk.Row{}` over a resolver that answers nothing is the whole input.
     let chunk = {
-        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
         chunk.set_num_virtual_rows(1);
         chunk
     };
@@ -571,7 +571,7 @@ pub(crate) fn folded_value(expr: &Expression) -> Option<Datum> {
     if !folds_to_constant(expr) {
         return None;
     }
-    let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     chunk.set_num_virtual_rows(1);
     expr.eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0)).ok()
 }

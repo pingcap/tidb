@@ -365,7 +365,7 @@ pub mod memory_usage;
 pub mod new_function;
 pub use new_function::{
     new_function, new_function_base, new_function_impl, new_function_internal,
-    new_function_try_fold, new_function_with_init, scalar_funcs_to_exprs, type_infer_for_null,
+    new_function_try_fold, new_function_with_init, scalar_funcs_2_exprs, type_infer_for_null,
     ScalarFunctionCallBack,
 };
 mod ops;
@@ -665,7 +665,7 @@ pub fn eval_expression_once(
     expression: &expression::Expression,
     ctx: &dyn Columns,
 ) -> Result<Datum, EvalError> {
-    let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let mut dual = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     dual.set_num_virtual_rows(1);
     expression.eval(ctx, dual.get_row(0))
 }

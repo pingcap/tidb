@@ -704,7 +704,7 @@ impl TableCommon {
         // Go `addIndices` walks `WritableIndices`, which include an index
         // a DDL is still adding.
         for index in nonpublic.iter() {
-            if !index.is_writable() || index.index.clustered_primary {
+            if !index.is_index_writable() || index.index.clustered_primary {
                 continue;
             }
             if !self.index_condition_holds(&index.index, row, zone)? {

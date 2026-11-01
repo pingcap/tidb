@@ -902,7 +902,7 @@ fn test_to_base64_gbk_session_rows() {
             panic!("expected expression")
         };
         let rewritten = crate::rewriter::rewrite_expr_resolved(expr, &GbkSession).unwrap();
-        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
         chunk.set_num_virtual_rows(1);
         rewritten.eval(&GbkSession, chunk.get_row(0)).unwrap()
     };
@@ -1053,7 +1053,7 @@ fn test_weight_string_binary_cut_warning() {
     ] {
         let ctx = PacketWarnCtx::new(64 << 20);
         let rewritten = chunk_rewrite(expr).expect("WEIGHT_STRING rewrites");
-        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
         chunk.set_num_virtual_rows(1);
         let result = rewritten
             .eval(&ctx, chunk.get_row(0))

@@ -3461,7 +3461,7 @@ pub fn get_hash_aggs_with_mpp_options(
 /// `CheckAggCanPushCop`.  The caller has already established the TiFlash
 /// replica and MPP session gates.
 fn check_agg_can_push_mpp(agg: &tidb_planner_core_operator_logicalop::LogicalAggregation, blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist) -> bool {
-    crate::final_mode_agg::check_agg_can_push_mpp(&agg.agg_funcs, &agg.group_by_items, blacklist)
+    crate::final_mode_agg::check_can_push_down_to_mpp(&agg.agg_funcs, &agg.group_by_items, blacklist)
 }
 
 fn get_mpp_hash_aggs(

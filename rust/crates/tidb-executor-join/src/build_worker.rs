@@ -579,7 +579,7 @@ impl HashJoinV2Exec {
                         Some(child) => child.new_chunk(),
                         // Go sends nil admission tokens during restore. Each
                         // worker owns one actual disk-read buffer above.
-                        None => Chunk::new_empty(&[]),
+                        None => Chunk::new_empty_chunk(&[]),
                     });
                 }
                 loop {

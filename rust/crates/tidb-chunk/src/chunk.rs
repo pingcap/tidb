@@ -101,7 +101,7 @@ impl Chunk {
     }
 
     /// Go `NewEmptyChunk`: columns typed for `fields` with no preallocation.
-    pub fn new_empty(fields: &[FieldType]) -> Self {
+    pub fn new_empty_chunk(fields: &[FieldType]) -> Self {
         Chunk {
             columns: fields
                 .iter()
@@ -1684,7 +1684,7 @@ mod tests {
 
     #[test]
     fn empty_chunk_virtual_rows() {
-        let mut chk = Chunk::new_empty(&[]);
+        let mut chk = Chunk::new_empty_chunk(&[]);
         assert_eq!(chk.num_cols(), 0);
         chk.set_num_virtual_rows(5);
         assert_eq!(chk.num_rows(), 5);
@@ -1772,7 +1772,7 @@ mod tests {
         assert_eq!(projected.get_row(0).get_int64(1), 2);
         assert_eq!(projected.get_row(1).get_bytes(0), b"s0");
 
-        let mut virtual_only = Chunk::new_empty(&[]);
+        let mut virtual_only = Chunk::new_empty_chunk(&[]);
         assert_eq!(virtual_only.append_rows_by_col_idxs(&rows, Some(&[])), 0);
         assert_eq!(virtual_only.num_rows(), 2);
     }
@@ -1784,7 +1784,7 @@ mod tests {
         nil_columns.reset();
         assert_eq!(nil_columns.num_virtual_rows(), 7);
 
-        let mut initialized_empty = Chunk::new_empty(&[]);
+        let mut initialized_empty = Chunk::new_empty_chunk(&[]);
         initialized_empty.set_num_virtual_rows(7);
         initialized_empty.reset();
         assert_eq!(initialized_empty.num_virtual_rows(), 0);

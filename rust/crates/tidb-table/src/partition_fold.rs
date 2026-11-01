@@ -115,7 +115,7 @@ pub fn eval_column_value(
             &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
         )
     })?;
-    let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let mut dual = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     dual.set_num_virtual_rows(1);
     rewritten
         .eval(ctx.get_expr_ctx().get_eval_ctx(), dual.get_row(0))
@@ -330,7 +330,7 @@ fn fold_list_value(
                 )
             },
         )?;
-    let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let mut dual = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     dual.set_num_virtual_rows(1);
     match rewritten
         .eval(ctx.get_expr_ctx().get_eval_ctx(), dual.get_row(0))
@@ -426,7 +426,7 @@ pub fn fold_range_bound(
                 )
             },
         )?;
-    let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let mut dual = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     dual.set_num_virtual_rows(1);
     let value = rewritten
         .eval(ctx.get_expr_ctx().get_eval_ctx(), dual.get_row(0))

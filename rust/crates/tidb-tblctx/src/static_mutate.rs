@@ -221,7 +221,7 @@ impl Columns for StaticMutateContext {
     /// reorganization's.
     fn type_flags(&self) -> ConversionFlags {
         if self.reorg {
-            return self.reorg_default_conversion_flags();
+            return self.reorg_type_flags_with_sql_mode();
         }
         ConversionFlags::default()
             .with_ignore_zero_date_err(true)
@@ -300,7 +300,7 @@ impl MutateContext for StaticMutateContext {
     }
 
     /// Go's static contexts carry no statistics support.
-    fn update_table_delta(&self, _physical_table_id: i64, _delta: i64, _count: i64) {}
+    fn update_delta_for_table(&self, _physical_table_id: i64, _delta: i64, _count: i64) {}
 
     fn staged_writes(&self) -> &StagedWrites {
         &self.shared.staged_writes
@@ -355,7 +355,7 @@ impl MutateContext for StaticMutateContext {
     }
 
     /// Go `reorgTypeFlagsWithSQLMode`.
-    fn reorg_default_conversion_flags(&self) -> ConversionFlags {
+    fn reorg_type_flags_with_sql_mode(&self) -> ConversionFlags {
         tidb_datatype::STRICT_FLAGS
             .with_truncate_as_warning(!self.strict)
             .with_ignore_invalid_date_err(self.date_modes.allow_invalid_dates)

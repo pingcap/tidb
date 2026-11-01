@@ -798,7 +798,7 @@ pub fn propagate_constant_for_join(
 /// Go `PropConstForOuterJoin`.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
-pub fn propagate_constant_for_outer_join(
+pub fn prop_const_for_outer_join(
     builder: &dyn FunctionBuilder,
     use_plan_cache: bool,
     mut join_conditions: Vec<Expression>,

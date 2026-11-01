@@ -104,7 +104,7 @@ pub fn with_block_encryption_mode(mode: impl Into<String>) -> ExprCtxOption {
 
 /// Go `WithSysDateIsNow`.
 #[must_use]
-pub fn with_sysdate_is_now(now: bool) -> ExprCtxOption {
+pub fn with_sys_date_is_now(now: bool) -> ExprCtxOption {
     ExprCtxOption::new(move |state| state.sysdate_is_now = now)
 }
 
@@ -428,7 +428,7 @@ impl ExprContext {
                     }
                 }
                 TIDB_SYSDATE_IS_NOW => {
-                    opts.push(with_sysdate_is_now(session_vars.sysdate_is_now()))
+                    opts.push(with_sys_date_is_now(session_vars.sysdate_is_now()))
                 }
                 TIDB_ENABLE_NOOP_FUNCS => {
                     opts.push(with_noop_funcs_mode(session_vars.noop_funcs_mode()));
@@ -559,7 +559,7 @@ pub fn make_expr_context_static(ctx: &dyn StaticConvertibleExprContext) -> ExprC
         with_charset(charset, collation),
         with_default_collation_for_utf_8_mb_4(ctx.get_default_collation_for_utf8mb4()),
         with_block_encryption_mode(ctx.get_block_encryption_mode()),
-        with_sysdate_is_now(ctx.get_sysdate_is_now()),
+        with_sys_date_is_now(ctx.get_sysdate_is_now()),
         with_noop_funcs_mode(ctx.get_noop_funcs_mode()),
         with_rng(ctx.rng()),
         with_plan_cache_tracker(ctx.get_plan_cache_tracker()),
@@ -631,7 +631,7 @@ mod tests {
             with_charset("gbk", "gbk_bin"),
             with_default_collation_for_utf_8_mb_4("utf8mb4_0900_ai_ci"),
             with_block_encryption_mode("aes-256-cbc"),
-            with_sysdate_is_now(true),
+            with_sys_date_is_now(true),
             with_noop_funcs_mode(WARN_INT),
             with_rng(Arc::clone(&state.rng)),
             with_plan_cache_tracker(plan_cache_tracker),
@@ -757,7 +757,7 @@ mod tests {
             with_charset("a", "b"),
             with_default_collation_for_utf_8_mb_4("c"),
             with_block_encryption_mode("d"),
-            with_sysdate_is_now(true),
+            with_sys_date_is_now(true),
             with_noop_funcs_mode(1),
             with_rng(Arc::new(MysqlRng::new_with_seed(12_345_678))),
             with_plan_cache_tracker(Arc::clone(&plan_cache_tracker)),

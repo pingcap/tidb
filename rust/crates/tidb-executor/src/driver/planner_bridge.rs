@@ -1728,7 +1728,7 @@ fn default_evaluator_using<'a>(
                 // Go `ErrUnknownColumn.GenWithStackByArgs(colName, "field_list")`.
                 tidb_exprctx::EvalError::UnknownColumnInClause(column.go_to_lower(), "field_list")
             })?;
-        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
         chunk.set_num_virtual_rows(1);
         let value =
             super::dml::materialize_column_default(&meta, default_use, ctx, chunk.get_row(0))

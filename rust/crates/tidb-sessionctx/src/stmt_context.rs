@@ -2914,13 +2914,13 @@ impl StmtContext {
     }
 
     /// Go `SessionVars.SetAlloc` / `ClearAlloc` for this statement.
-    pub fn set_chunk_alloc_valid(&self, valid: bool) {
+    pub fn set_alloc(&self, valid: bool) {
         self.chunk_alloc_valid.store(valid, Ordering::Relaxed);
     }
 
     /// Go `SessionVars.IsAllocValid`.
     #[must_use]
-    pub fn is_chunk_alloc_valid(&self) -> bool {
+    pub fn is_alloc_valid(&self) -> bool {
         self.chunk_alloc_valid.load(Ordering::Relaxed)
     }
 
@@ -3146,7 +3146,7 @@ impl StmtContext {
     }
 
     /// Go `dropHypoIndexFromCtx`.
-    pub fn drop_hypo_index(
+    pub fn drop_hypo_index_from_ctx(
         &self,
         schema: &str,
         table: &str,
@@ -3553,7 +3553,7 @@ impl StmtContext {
     }
 
     /// Go `TransactionContext.UpdateDeltaForTable`.
-    pub fn update_table_delta(&self, physical_table_id: i64, delta: i64, count: i64) {
+    pub fn update_delta_for_table(&self, physical_table_id: i64, delta: i64, count: i64) {
         if let Some(table_delta) = &self.table_delta {
             table_delta.update(physical_table_id, delta, count);
         }
@@ -5017,7 +5017,7 @@ impl StmtContext {
     /// invalid/zero-in dates only when the reorg SQL mode says so, and uses
     /// the source time-to-YEAR concatenation rule.
     #[must_use]
-    pub fn reorg_default_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
+    pub fn reorg_type_flags_with_sql_mode(&self) -> tidb_datatype::ConversionFlags {
         tidb_datatype::STRICT_FLAGS
             .with_truncate_as_warning(!self.strict)
             .with_ignore_invalid_date_err(self.date_modes().allow_invalid_dates)
@@ -5622,8 +5622,8 @@ impl tidb_tblctx::MutateContext for StmtContext {
         StmtContext::write_conversion_flags(self)
     }
 
-    fn update_table_delta(&self, physical_table_id: i64, delta: i64, count: i64) {
-        StmtContext::update_table_delta(self, physical_table_id, delta, count);
+    fn update_delta_for_table(&self, physical_table_id: i64, delta: i64, count: i64) {
+        StmtContext::update_delta_for_table(self, physical_table_id, delta, count);
     }
 
     fn staged_writes(&self) -> &tidb_kv::staged_writes::StagedWrites {
@@ -5666,8 +5666,8 @@ impl tidb_tblctx::MutateContext for StmtContext {
         StmtContext::snapshot_read_options(self, avg_row_bytes)
     }
 
-    fn reorg_default_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
-        StmtContext::reorg_default_conversion_flags(self)
+    fn reorg_type_flags_with_sql_mode(&self) -> tidb_datatype::ConversionFlags {
+        StmtContext::reorg_type_flags_with_sql_mode(self)
     }
 
     fn take_warnings(&self) -> Vec<SqlWarn> {
@@ -6080,7 +6080,7 @@ impl Columns for StmtContext {
 
     fn type_flags(&self) -> tidb_datatype::ConversionFlags {
         if self.reorg {
-            return self.reorg_default_conversion_flags();
+            return self.reorg_type_flags_with_sql_mode();
         }
         // ResetContextOfStmt starts from DefaultStmtFlags, independently of
         // strict SQL mode. The column-write helper's strict-zero base is not
@@ -6348,7 +6348,7 @@ mod tests {
             let expression =
                 tidb_expr::rewriter::rewrite_expr_resolved(expr, &tidb_expr::rewriter::NoResolver)
                     .expect("SPACE rewrites");
-            let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
+            let mut dual = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
             dual.set_num_virtual_rows(1);
             expression
                 .eval(ctx, dual.get_row(0))
@@ -6487,7 +6487,7 @@ mod tests {
         let expression =
             tidb_expr::rewriter::rewrite_expr_resolved(expr, &tidb_expr::rewriter::NoResolver)
                 .expect("CURRENT_RESOURCE_GROUP rewrites");
-        let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        let mut dual = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
         dual.set_num_virtual_rows(1);
         let ctx = StmtContext::for_query().with_resource_group_name("rg1");
         assert_eq!(
@@ -6531,7 +6531,7 @@ mod tests {
                 no_zero_in_date: true,
                 allow_invalid_dates: false,
             });
-        let flags = strict.reorg_default_conversion_flags();
+        let flags = strict.reorg_type_flags_with_sql_mode();
         assert!(!flags.truncate_as_warning());
         assert!(!flags.ignore_zero_date_err());
         assert!(!flags.ignore_zero_in_date_err());
@@ -6545,7 +6545,7 @@ mod tests {
                 no_zero_in_date: true,
                 allow_invalid_dates: true,
             });
-        let flags = permissive.reorg_default_conversion_flags();
+        let flags = permissive.reorg_type_flags_with_sql_mode();
         assert!(flags.truncate_as_warning());
         assert!(!flags.ignore_zero_date_err());
         assert!(flags.ignore_zero_in_date_err());

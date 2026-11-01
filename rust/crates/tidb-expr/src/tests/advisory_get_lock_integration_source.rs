@@ -95,7 +95,7 @@ impl LockSession {
                     rewrite_expr_resolved(expr, &NoResolver).expect("rewrite without columns");
                 // Rewrite/evaluation constants carry VARCHAR types already;
                 // give the tree one empty virtual row like testkit would.
-                let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+                let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
                 chunk.set_num_virtual_rows(1);
                 rewritten.eval(self, chunk.get_row(0)).unwrap().label()
             })
@@ -130,7 +130,7 @@ fn test_get_lock_call_semantics_table() {
                 FieldType::new(FieldTypeCode::VarString),
             ))],
         );
-        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
         chunk.set_num_virtual_rows(1);
         let err = function
             .eval(&session, chunk.get_row(0))
@@ -192,7 +192,7 @@ fn test_get_lock_call_semantics_table() {
             panic!("no expr")
         };
         let rewritten = rewrite_expr_resolved(expr, &NoResolver).expect("rewrite");
-        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
         chunk.set_num_virtual_rows(1);
         rewritten
             .eval(&warn_session, chunk.get_row(0))
@@ -240,7 +240,7 @@ fn test_get_lock_rejects_bad_names_with_3057() {
             panic!("no expr")
         };
         let rewritten = rewrite_expr_resolved(expr, &NoResolver).expect("rewrite");
-        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
         chunk.set_num_virtual_rows(1);
         let err = rewritten.eval(&session, chunk.get_row(0)).expect_err(sql);
         match err {

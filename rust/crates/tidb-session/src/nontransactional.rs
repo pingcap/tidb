@@ -215,7 +215,7 @@ pub enum NonTransactionalStep {
 impl Session {
     /// Go `HandleNonTransactionalDML` with every step run by this session
     /// itself.
-    pub(crate) fn run_non_transactional_dml(
+    pub(crate) fn handle_non_transactional_dml(
         &mut self,
         stmt: &BatchDmlStmt,
     ) -> Result<StmtOutput, DriverError> {

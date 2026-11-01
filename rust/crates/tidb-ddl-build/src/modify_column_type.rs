@@ -129,8 +129,8 @@ pub fn no_reorg_data_strict(old: &FieldType, new: &FieldType, column_indexed: bo
     };
     // Go ignores an integer's declared display width and compares the
     // types' default widths instead.
-    let default_old_flen = old.code().default_field_length_and_decimal().0;
-    let default_new_flen = new.code().default_field_length_and_decimal().0;
+    let default_old_flen = old.code().get_default_field_length_and_decimal().0;
+    let default_new_flen = new.code().get_default_field_length_and_decimal().0;
     let need_truncation_or_toggle_sign_for_integer = || {
         (default_new_flen > 0 && default_new_flen < default_old_flen)
             || to_unsigned != origin_unsigned
@@ -364,8 +364,8 @@ fn modify_type_needs_reorganization(origin: &FieldType, to: &FieldType) -> bool 
 
     let (mut old_flen, mut new_flen) = (origin.flen(), to.flen());
     if origin.code().is_integer_type() && to.code().is_integer_type() {
-        old_flen = i64::from(origin.code().default_field_length_and_decimal().0);
-        new_flen = i64::from(to.code().default_field_length_and_decimal().0);
+        old_flen = i64::from(origin.code().get_default_field_length_and_decimal().0);
+        new_flen = i64::from(to.code().get_default_field_length_and_decimal().0);
     }
     if new_flen > 0 && new_flen != old_flen {
         if new_flen < old_flen {

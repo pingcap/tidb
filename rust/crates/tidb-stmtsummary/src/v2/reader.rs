@@ -1945,7 +1945,7 @@ pub(crate) mod tests {
     #[test]
     fn test_mem_reader() {
         let columns = columns_for_test();
-        let ss = StmtSummary::new_for_test(3);
+        let ss = StmtSummary::new_stmt_summary_4_test(3);
 
         ss.add(&crate::v2::record::generate_stmt_exec_info_4_test(
             "digest1",

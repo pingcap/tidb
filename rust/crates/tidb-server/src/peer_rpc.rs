@@ -948,7 +948,7 @@ mod tests {
         };
         let config = tidb_config::config_tree::config::get_global_config();
         let previous = global_stmt_summary();
-        let summary = StmtSummary::new_for_test(64);
+        let summary = StmtSummary::new_stmt_summary_4_test(64);
         set_global_stmt_summary(Some(summary.clone()));
         let path = std::env::temp_dir().join(format!(
             "tidb-digest-{}-{}-{}.log",
@@ -2279,7 +2279,7 @@ mod tests {
         let mut session = Session::new();
         let config = tidb_config::config_tree::config::get_global_config();
         let previous = global_stmt_summary();
-        let summary = StmtSummary::new_for_test(1);
+        let summary = StmtSummary::new_stmt_summary_4_test(1);
         set_global_stmt_summary(Some(summary.clone()));
         let mut persistent = (*config).clone();
         persistent.instance.stmt_summary_enable_persistent = true;

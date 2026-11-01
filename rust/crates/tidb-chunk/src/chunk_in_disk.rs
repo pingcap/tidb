@@ -334,7 +334,7 @@ impl DataInDiskByChunks {
     /// Go `GetChunk`.
     pub fn get_chunk(&mut self, chk_idx: usize) -> Result<Chunk, DiskError> {
         self.read_from_disk(chk_idx)?;
-        let mut chk = Chunk::new_empty(&self.field_types);
+        let mut chk = Chunk::new_empty_chunk(&self.field_types);
         deserialize_data_to_chunk(&mut chk, &self.buf);
         Ok(chk)
     }
@@ -581,7 +581,7 @@ mod tests {
         let go_bytes: Vec<u8> = (0..GO_MIXED_SEL.len() / 2)
             .map(|i| u8::from_str_radix(&GO_MIXED_SEL[i * 2..i * 2 + 2], 16).expect("hex"))
             .collect();
-        let mut chk = Chunk::new_empty(&mixed_fields());
+        let mut chk = Chunk::new_empty_chunk(&mixed_fields());
         deserialize_data_to_chunk(&mut chk, &go_bytes);
 
         assert_eq!(chk.capacity, 17);
@@ -711,7 +711,7 @@ mod tests {
         }
 
         // `fill_chunk` refills a caller's chunk with the same content.
-        let mut dest = Chunk::new_empty(&fields);
+        let mut dest = Chunk::new_empty_chunk(&fields);
         container.fill_chunk(7, &mut dest).expect("fill_chunk");
         assert_eq!(dest.column(0).get_int64(0), 7000);
 
@@ -958,7 +958,7 @@ mod tests {
         }
 
         // Go testImpl(isNewChunk = false): FillChunk into a reset chunk.
-        let mut chk = Chunk::new_empty(&fields);
+        let mut chk = Chunk::new_empty_chunk(&fields);
         for i in 0..num_chk {
             chk.reset();
             data_in_disk_by_chunks

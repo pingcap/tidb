@@ -891,7 +891,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         // Go installs the session's reusable chunk allocator for every
         // statement (`SetAlloc` in `conn.handleQuery`), which
         // `tidb_enable_reuse_chunk` gates; the planner may clear it.
-        ctx.set_chunk_alloc_valid(
+        ctx.set_alloc(
             self.session_vars()
                 .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_REUSECHUNK)
                 .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1"),

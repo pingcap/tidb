@@ -131,7 +131,7 @@ fn eval_setvar(value: Datum, value_ft: FieldType, store: &VarStore) -> Result<Da
         value_ft.clone(),
         vec![var_name("f"), const_arg(value, value_ft)],
     );
-    let empty = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let empty = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     function.eval(store, empty.get_row(0))
 }
 
@@ -163,7 +163,7 @@ fn setvar_stores_session_value_and_returns_it() {
             const_arg(text("34"), FieldType::new(C::VarString)),
         ],
     );
-    let empty = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let empty = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     assert_eq!(renamed.eval(&store, empty.get_row(0)).unwrap(), text("34"));
     assert_eq!(store.get("g"), Some(text("34")));
 
@@ -346,7 +346,7 @@ fn eval_getvar(kind: &str, name: &str, ctx: &VarStore) -> Result<Datum, EvalErro
         ret_type,
         vec![var_name(name)],
     );
-    let empty = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let empty = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     function.eval(ctx, empty.get_row(0))
 }
 
@@ -436,7 +436,7 @@ fn values_function_reads_the_current_insert_row() {
     assert_eq!(function.get_static_type(), Some(&string_type));
 
     let store = InsertValuesStore::default();
-    let empty = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let empty = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     assert_eq!(
         function.eval(&store, empty.get_row(0)).unwrap(),
         Datum::Null
@@ -494,7 +494,7 @@ fn getparam_function_evaluation_matches_plan_cache_values() {
     let ctx = ParamStore {
         params: vec![Datum::Int(123), Datum::new_string("abc".to_owned())],
     };
-    let empty = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let empty = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     for (index, expected) in [(0, "123"), (1, "abc")] {
         let function = ScalarFunction::new(
             CiString::new("getparam"),
@@ -550,7 +550,7 @@ fn ast_args(expr: &tidb_ast::Expr) -> &[tidb_ast::Expr] {
 #[test]
 fn vectorized_builtin_other_func_representable_arms() {
     let store = VarStore::default();
-    let empty = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let empty = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
 
     // Four SETVAR signature arms, values drawn across the generator domains.
     for (name, value, ft) in [

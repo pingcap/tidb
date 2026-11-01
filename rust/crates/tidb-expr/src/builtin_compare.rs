@@ -1085,7 +1085,7 @@ fn refine_unsigned_arguments(
     let (Some(column), Some(constant_type)) = (column, constant.ret_type.as_ref()) else {
         return;
     };
-    let mut empty = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let mut empty = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     empty.set_num_virtual_rows(1);
     let Ok(Datum::Int(value)) = constant.eval_typed_as_on_row(ctx, empty.get_row(0), EvalType::Int)
     else {

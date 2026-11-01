@@ -64,7 +64,7 @@ impl StatementLocker {
 
     fn lock(&mut self, keys: &BTreeSet<Vec<u8>>, wait: LockWaitTime) -> Result<(), ExecError> {
         for table_id in &self.table_ids {
-            self.ctx.update_table_delta(*table_id, 0, 0);
+            self.ctx.update_delta_for_table(*table_id, 0, 0);
         }
         if keys.is_empty() {
             return Ok(());

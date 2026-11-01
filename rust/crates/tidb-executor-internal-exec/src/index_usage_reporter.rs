@@ -85,7 +85,7 @@ impl<'a> IndexUsageReporter<'a> {
         kv_requests: u64,
         rows: u64,
     ) {
-        let Some(index_id) = cluster_index_id(table) else {
+        let Some(index_id) = get_cluster_index_id(table) else {
             return;
         };
         self.report_point_for_table(table, stats, index_id, kv_requests, rows);
@@ -136,7 +136,7 @@ fn real_table_row_count(stats: Option<&UsedStatsInfoForTable>) -> Option<u64> {
 }
 
 /// Go `getClusterIndexID`.
-pub fn cluster_index_id(table: &TableCommon) -> Option<i64> {
+pub fn get_cluster_index_id(table: &TableCommon) -> Option<i64> {
     if table.pk_handle_offset().is_some() {
         return Some(0);
     }
@@ -595,7 +595,7 @@ mod tests {
     fn cluster_index_id_matches_go_table_handle_kinds() {
         let mut integer_handle = TableCommon::new(1, vec![handle_column()]);
         integer_handle.set_pk_handle_offset(0);
-        assert_eq!(cluster_index_id(&integer_handle), Some(0));
+        assert_eq!(get_cluster_index_id(&integer_handle), Some(0));
 
         let mut common_handle = TableCommon::new(2, vec![handle_column()]);
         common_handle.set_common_handle_offsets(vec![0]);
@@ -622,7 +622,7 @@ mod tests {
             },
             true,
         );
-        assert_eq!(cluster_index_id(&common_handle), Some(7));
+        assert_eq!(get_cluster_index_id(&common_handle), Some(7));
 
         let mut nonclustered_handle = TableCommon::new(3, vec![]);
         nonclustered_handle.add_index(
@@ -648,6 +648,6 @@ mod tests {
             },
             false,
         );
-        assert_eq!(cluster_index_id(&nonclustered_handle), None);
+        assert_eq!(get_cluster_index_id(&nonclustered_handle), None);
     }
 }

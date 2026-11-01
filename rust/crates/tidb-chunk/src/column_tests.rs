@@ -203,7 +203,7 @@ fn append_range_from_matches_cell_appends_for_all_bitmap_alignments() {
         for &(begin, end) in &[(0, 24), (1, 17), (8, 32), (3, 11)] {
             actual.append_range_from(&source, begin, end);
             for row in begin..end {
-                expected.append_cell_from(&source, row);
+                expected.append_cell_by_cell(&source, row);
             }
             assert_eq!(actual.length, expected.length);
             assert_eq!(actual.null_bitmap, expected.null_bitmap);
@@ -660,7 +660,7 @@ fn bulk_row_id_copies_match_go_scalar_order_for_fixed_and_var() {
     fixed_expected.append_int64(-1);
     for (i, &is_selected) in selected.iter().enumerate().take(7).skip(1) {
         if is_selected {
-            fixed_expected.append_cell_from(&fixed_source, row_ids[i]);
+            fixed_expected.append_cell_by_cell(&fixed_source, row_ids[i]);
         }
     }
     let mut fixed_actual = Column::new_fixed_len_column(8, 8);
@@ -672,7 +672,7 @@ fn bulk_row_id_copies_match_go_scalar_order_for_fixed_and_var() {
     let copied_rows = [7, 0, 4, 2];
     let mut fixed_rows_expected = Column::new_fixed_len_column(8, 4);
     for &row in &copied_rows {
-        fixed_rows_expected.append_cell_from(&fixed_source, row);
+        fixed_rows_expected.append_cell_by_cell(&fixed_source, row);
     }
     let mut fixed_rows_actual = Column::new_fixed_len_column(8, 4);
     fixed_rows_actual.copy_rows_from(&fixed_source, &copied_rows);
@@ -692,7 +692,7 @@ fn bulk_row_id_copies_match_go_scalar_order_for_fixed_and_var() {
     variable_expected.append_string("prefix");
     for (i, &is_selected) in selected.iter().enumerate().take(8).skip(1) {
         if is_selected {
-            variable_expected.append_cell_from(&variable_source, row_ids[i]);
+            variable_expected.append_cell_by_cell(&variable_source, row_ids[i]);
         }
     }
     let mut variable_actual = Column::new_var_len_column(8);
@@ -716,7 +716,7 @@ fn bulk_row_id_copies_match_go_scalar_order_for_fixed_and_var() {
     let mut frozen_expected = Column::new_var_len_column(8);
     frozen_expected.append_string("prefix");
     for &row in &copied_rows {
-        frozen_expected.append_cell_from(&variable_source, row);
+        frozen_expected.append_cell_by_cell(&variable_source, row);
     }
     assert_eq!(frozen_actual, frozen_expected);
 }

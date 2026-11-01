@@ -255,7 +255,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `NewDropPartitionEvent`.
-    pub fn drop_partitions(table: TableInfo, dropped: PartitionInfo) -> Self {
+    pub fn new_drop_partition_event(table: TableInfo, dropped: PartitionInfo) -> Self {
         Self::with_partitions(
             ActionType::ACTION_DROP_TABLE_PARTITION,
             table,
@@ -750,7 +750,7 @@ mod tests {
             (4, 42, 41)
         );
 
-        let event = round_trip(SchemaChangeEvent::drop_partitions(table(4), partition(42)));
+        let event = round_trip(SchemaChangeEvent::new_drop_partition_event(table(4), partition(42)));
         assert_eq!(
             (
                 event.get_drop_partition_info().0.id,

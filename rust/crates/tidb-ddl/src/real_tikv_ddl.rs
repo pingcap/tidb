@@ -1512,7 +1512,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
                     )
                 })
         };
-        let tiflash_stores = || opener.store().tiflash_store_count();
+        let tiflash_stores = || opener.store().get_tiflash_store_count();
         prepare_persisted_job_submission(
             &mut snapshot,
             statement,

@@ -4139,7 +4139,7 @@ impl TableCommon {
             ctx,
         )?;
         if let Some(stats_ctx) = stats_ctx {
-            stats_ctx.update_table_delta(physical_id, 1, 1);
+            stats_ctx.update_delta_for_table(physical_id, 1, 1);
         }
         Ok(handle)
     }
@@ -4569,10 +4569,10 @@ impl TableCommon {
             )?;
         }
         if old_physical_id == new_physical_id {
-            ctx.update_table_delta(old_physical_id, 0, 1);
+            ctx.update_delta_for_table(old_physical_id, 0, 1);
         } else {
-            ctx.update_table_delta(old_physical_id, -1, 1);
-            ctx.update_table_delta(new_physical_id, 1, 1);
+            ctx.update_delta_for_table(old_physical_id, -1, 1);
+            ctx.update_delta_for_table(new_physical_id, 1, 1);
         }
         Ok(())
     }
@@ -4614,7 +4614,7 @@ impl TableCommon {
         if let Some(row) = removed_row {
             self.double_write_remove(physical_id, &row, handle, ctx)?;
         }
-        ctx.update_table_delta(physical_id, -1, 1);
+        ctx.update_delta_for_table(physical_id, -1, 1);
         Ok(())
     }
 
@@ -4653,7 +4653,7 @@ impl TableCommon {
             .delete_with_assertion(key, tidb_txnkv::AssertionOp::AssertExist)
             .map_err(KvTableError::from)?;
         self.double_write_remove(physical_id, old_row, handle, ctx)?;
-        ctx.update_table_delta(physical_id, -1, 1);
+        ctx.update_delta_for_table(physical_id, -1, 1);
         Ok(())
     }
 }

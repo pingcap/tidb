@@ -104,7 +104,7 @@ fn eval_now(offset_secs: i32) -> String {
         panic!("no expr")
     };
     let rewritten = rewrite_expr_resolved(expr, &ctx).expect("rewrite");
-    let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     chunk.set_num_virtual_rows(1);
     rewritten
         .eval(&ctx, chunk.get_row(0))
@@ -164,7 +164,7 @@ fn test_timestamp_sysvar_renders_fixed_now_literal_rows() {
         panic!("no expr")
     };
     let rewritten = rewrite_expr_resolved(expr, &ZeroZone).expect("rewrite");
-    let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     chunk.set_num_virtual_rows(1);
     // Two executions within one statement context agree (Go asserts the pair
     // of SELECT NOW() calls both read 1970-01-01 03:25:45).

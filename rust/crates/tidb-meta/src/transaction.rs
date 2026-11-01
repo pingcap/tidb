@@ -783,7 +783,7 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GetSchemaVersionWithNonEmptyDiff`.
-    pub fn schema_version_with_non_empty_diff(&self) -> Result<i64> {
+    pub fn get_schema_version_with_non_empty_diff(&self) -> Result<i64> {
         let version = self.schema_version()?;
         if version > 0 && self.schema_diff(version)?.is_none() {
             return Ok(version - 1);
@@ -808,7 +808,7 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.IsDatabaseExist`.
-    pub fn database_exists(&self, database_id: i64) -> Result<bool> {
+    pub fn is_database_exist(&self, database_id: i64) -> Result<bool> {
         let mut transaction = self.lock()?;
         meta_structure(&mut *transaction)
             .h_get(key::DBS, &key::db_key(database_id))
@@ -872,7 +872,7 @@ impl<T: MetaTransaction> Mutator<T> {
 
     /// Go `Mutator.CreateSysDatabaseByIDIfNotExists`.
     pub fn create_sys_database_by_id_if_not_exists(&self, name: &str, id: i64) -> Result<()> {
-        if self.database_exists(id)? {
+        if self.is_database_exist(id)? {
             return Ok(());
         }
         self.create_sys_database_by_id(name, id)
@@ -998,7 +998,7 @@ impl<T: MetaTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GetMaskingPolicy`.
-    pub fn masking_policy(&self, policy_id: i64) -> Result<MaskingPolicyInfo> {
+    pub fn get_masking_policy(&self, policy_id: i64) -> Result<MaskingPolicyInfo> {
         let mut transaction = self.lock()?;
         let stored = meta_structure(&mut *transaction)
             .h_get(key::MASKING_POLICIES, &key::masking_policy_key(policy_id))?

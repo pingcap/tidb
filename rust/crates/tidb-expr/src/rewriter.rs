@@ -4012,7 +4012,7 @@ mod tests {
     // Evaluates a rewritten expression over an empty (column-less) row.
     fn eval_const(expr: &Expr) -> Datum {
         let rewritten = rewrite_expr(expr).unwrap();
-        let chunk = Chunk::new_empty(&[]);
+        let chunk = Chunk::new_empty_chunk(&[]);
         // A column-less chunk still yields a virtual row for evaluation.
         let mut c = chunk;
         c.set_num_virtual_rows(1);
@@ -4163,7 +4163,7 @@ mod tests {
             origin_position: 0,
         };
         let rewritten = rewrite_expr_resolved(&expression, &GbkResolver).unwrap();
-        let mut chunk = Chunk::new_empty(&[]);
+        let mut chunk = Chunk::new_empty_chunk(&[]);
         chunk.set_num_virtual_rows(1);
         let value = rewritten
             .eval(&NoColumns, chunk.get_row(0))
@@ -4595,7 +4595,7 @@ mod literal_tests {
             ("18446744073709551615 - 1", Datum::UInt(u64::MAX - 1)),
             ("9223372036854775808 + 1", Datum::UInt(1 << 63 | 1)),
         ] {
-            let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+            let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
             chunk.set_num_virtual_rows(1);
             let got = rewrite(text)
                 .eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0))
@@ -4692,7 +4692,7 @@ mod builtin_type_tests {
     }
 
     fn eval(sql_expr: &str) -> Datum {
-        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
         chunk.set_num_virtual_rows(1);
         rewrite(sql_expr)
             .eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0))

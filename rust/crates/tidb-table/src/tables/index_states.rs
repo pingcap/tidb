@@ -384,7 +384,7 @@ impl TableCommon {
             if old_holds {
                 self.remove_nonpublic_index_entries(index, old_row, handle, physical_id, zone)?;
             }
-            if new_holds && index.is_writable() {
+            if new_holds && index.is_index_writable() {
                 self.create_nonpublic_index_entries(
                     index,
                     new_row,

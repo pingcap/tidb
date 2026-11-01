@@ -390,7 +390,7 @@ fn test_real_arithmetic_overflow_error_message() {
             const_typed(Datum::Real(1e300), real_ft()),
         ],
     );
-    let chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     let error = function
         .eval(&NoColumns, chunk.get_row(0))
         .expect_err("1e300 * 1e300 must overflow DOUBLE");

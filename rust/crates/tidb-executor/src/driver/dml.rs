@@ -930,7 +930,7 @@ fn run_insert_rows(
         None => (&[][..], &[][..], None, None),
     };
     let eval_chunk = {
-        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
         chunk.set_num_virtual_rows(1);
         chunk
     };

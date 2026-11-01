@@ -1071,7 +1071,7 @@ fn decode_channel(
         }
         EncodeType::TypeChunk => {
             let mut decoded =
-                reusable_chunk.unwrap_or_else(|| DecodedChunk::new_empty(field_types));
+                reusable_chunk.unwrap_or_else(|| DecodedChunk::new_empty_chunk(field_types));
             decoded.reset();
             // The columns share the response payload (Go `decodeColumn`).
             let empty = prost::bytes::Bytes::new();

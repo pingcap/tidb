@@ -48,7 +48,7 @@ pub trait Manager: Send + Sync {
         job_id: i64,
     ) -> Result<Vec<u8>, SystemTableManagerError>;
     /// Go `GetMDLVer`.
-    fn get_mdl_version(
+    fn get_mdl_ver(
         &self,
         snapshot: &mut dyn MetaSnapshot,
         job_id: i64,
@@ -202,7 +202,7 @@ impl SystemTableManager {
     }
 
     /// Go `GetMDLVer`.
-    pub fn get_mdl_version<S: MetaSnapshot>(
+    pub fn get_mdl_ver<S: MetaSnapshot>(
         &self,
         snapshot: &mut S,
         job_id: i64,
@@ -258,12 +258,12 @@ impl Manager for SystemTableManager {
         self.get_job_bytes_by_id_with_se(&mut SnapshotRef(snapshot), job_id)
     }
 
-    fn get_mdl_version(
+    fn get_mdl_ver(
         &self,
         snapshot: &mut dyn MetaSnapshot,
         job_id: i64,
     ) -> Result<i64, SystemTableManagerError> {
-        Self::get_mdl_version(self, &mut SnapshotRef(snapshot), job_id)
+        Self::get_mdl_ver(self, &mut SnapshotRef(snapshot), job_id)
     }
 
     fn get_min_job_id(

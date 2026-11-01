@@ -1239,7 +1239,7 @@ fn build_table_scan(
     );
     let (schema, keep, extra_handle_slot, extra_commit_ts_slot) = table_scan_schema(scan, &table)?;
     let logical_table_id = table.table_id();
-    let index_id = tidb_executor_internal_exec::index_usage_reporter::cluster_index_id(&table);
+    let index_id = tidb_executor_internal_exec::index_usage_reporter::get_cluster_index_id(&table);
     // Go `buildIndexUsageReporter(v, true)`: `LoadTableStats`, then the
     // statement's `UsedStatsInfo` entry the report reads.
     let stats = crate::access_cost::load_table_stats(ctx, catalog, table.stats_physical_id());

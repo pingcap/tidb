@@ -514,7 +514,7 @@ pub fn new_function_internal(
 
 /// Go `ScalarFuncs2Exprs` (`scalar_function.go:341`).
 #[must_use]
-pub fn scalar_funcs_to_exprs(funcs: Vec<ScalarFunction>) -> Vec<Expression> {
+pub fn scalar_funcs_2_exprs(funcs: Vec<ScalarFunction>) -> Vec<Expression> {
     funcs.into_iter().map(Expression::ScalarFunction).collect()
 }
 
@@ -522,7 +522,7 @@ pub fn scalar_funcs_to_exprs(funcs: Vec<ScalarFunction>) -> Vec<Expression> {
 mod tests {
     use super::{
         new_function, new_function_base, new_function_internal, new_function_with_init,
-        scalar_funcs_to_exprs, type_infer_for_null,
+        scalar_funcs_2_exprs, type_infer_for_null,
     };
     use crate::column::Column;
     use crate::constant::{Constant, ParamMarker};
@@ -628,7 +628,7 @@ mod tests {
         };
         let funcs = vec![make(0), make(1)];
         let expected = funcs.clone();
-        let exprs = scalar_funcs_to_exprs(funcs);
+        let exprs = scalar_funcs_2_exprs(funcs);
         assert_eq!(exprs.len(), expected.len());
         for (expr, func) in exprs.iter().zip(expected.iter()) {
             assert_eq!(as_func(expr).func_name, func.func_name);

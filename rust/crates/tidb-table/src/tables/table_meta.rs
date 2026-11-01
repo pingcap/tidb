@@ -117,7 +117,7 @@ impl RowDecodeContext {
     pub fn for_ddl(ctx: &dyn tidb_tblctx::MutateContext) -> Self {
         let ctx = ctx.for_reorg();
         Self {
-            type_flags: ctx.reorg_default_conversion_flags(),
+            type_flags: ctx.reorg_type_flags_with_sql_mode(),
             zone: ctx.session_zone(),
             expression: ctx,
         }
@@ -283,7 +283,7 @@ impl NonPublicColumn {
 impl NonPublicIndex {
     /// Go `IsIndexWritable`: every state except the two delete-only ones.
     #[must_use]
-    pub(crate) fn is_writable(&self) -> bool {
+    pub(crate) fn is_index_writable(&self) -> bool {
         self.state != tidb_model::SchemaState::DELETE_ONLY
             && self.state != tidb_model::SchemaState::DELETE_REORGANIZATION
     }

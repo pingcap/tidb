@@ -677,7 +677,7 @@ impl KvTableBackfill for TableCommon {
             != tidb_datatype::FieldTypeCode::Timestamp)
             .then(|| tidb_table::tables::null_timestamp_substitute(&target.read().field_type, cast_context))
             .flatten();
-        let flags = cast_context.reorg_default_conversion_flags();
+        let flags = cast_context.reorg_type_flags_with_sql_mode();
         let statement_warnings = cast_context.take_warnings();
         let mut warnings: Vec<(u16, String, i64)> = Vec::new();
         let mut failure = None;

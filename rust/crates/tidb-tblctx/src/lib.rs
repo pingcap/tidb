@@ -40,7 +40,7 @@ pub trait MutateContext: tidb_exprctx::Columns + Send + Sync {
     fn new_collation_enabled(&self) -> bool;
 
     /// Go `GetStatisticsSupport().UpdatePhysicalTableDelta`.
-    fn update_table_delta(&self, physical_table_id: i64, delta: i64, count: i64);
+    fn update_delta_for_table(&self, physical_table_id: i64, delta: i64, count: i64);
 
     /// Go `GetMutateBuffers`: the transaction's staged writes.
     fn staged_writes(&self) -> &tidb_kv::staged_writes::StagedWrites;
@@ -73,7 +73,7 @@ pub trait MutateContext: tidb_exprctx::Columns + Send + Sync {
     fn snapshot_read_options(&self, avg_row_bytes: f64) -> tidb_txnkv::SnapshotReadOptions;
 
     /// Go's reorganization type flags.
-    fn reorg_default_conversion_flags(&self) -> ConversionFlags;
+    fn reorg_type_flags_with_sql_mode(&self) -> ConversionFlags;
 
     /// Takes the statement's warnings recorded so far.
     fn take_warnings(&self) -> Vec<tidb_context::SqlWarn>;

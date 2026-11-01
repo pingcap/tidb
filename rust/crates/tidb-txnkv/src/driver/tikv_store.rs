@@ -221,7 +221,7 @@ impl<PdC: PdClient> TikvStore<PdC> {
 
     /// Go `infoschema.GetTiFlashStoreCount`: the stores PD lists whose type
     /// (`tikvrpc.GetStoreTypeByMeta`) is TiFlash.
-    pub fn tiflash_store_count(&self) -> Result<u64, String> {
+    pub fn get_tiflash_store_count(&self) -> Result<u64, String> {
         #[cfg(feature = "failpoints")]
         fail::fail_point!("mockTiFlashStoreCount", |_| Ok(10));
         let pd = self.store.pd_client();

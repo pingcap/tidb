@@ -149,9 +149,9 @@ fn table_name_info_decoders_agree_on_bench_shapes() {
 #[test]
 fn is_database_exist_tracks_sys_database_creation() {
     let meta = Mutator::new(MemoryTransaction::default());
-    assert!(!meta.database_exists(123).unwrap());
+    assert!(!meta.is_database_exist(123).unwrap());
     meta.create_sys_database_by_id("aaa", 123).unwrap();
-    assert!(meta.database_exists(123).unwrap());
+    assert!(meta.is_database_exist(123).unwrap());
 }
 
 /// Go `TestBootTableVersion` (`pkg/meta/meta_test.go:1396`): a fresh cluster
@@ -184,7 +184,7 @@ fn create_sys_database_by_id_if_not_exists_is_idempotent() {
     let meta = Mutator::new(MemoryTransaction::default());
     meta.create_sys_database_by_id_if_not_exists("aaa", 123)
         .unwrap();
-    assert!(meta.database_exists(123).unwrap());
+    assert!(meta.is_database_exist(123).unwrap());
     meta.create_sys_database_by_id_if_not_exists("aaa", 123)
         .unwrap();
     // The second creation is a no-op, and database 123 keeps its original

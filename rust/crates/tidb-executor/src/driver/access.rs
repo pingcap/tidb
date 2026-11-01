@@ -2042,7 +2042,7 @@ impl Executor for PreparedPointGetExecutor {
         }
         let after = reader.point_rpc_counts();
         let index_id = match plan.target {
-            PreparedPointTarget::RowHandle => tidb_executor_internal_exec::index_usage_reporter::cluster_index_id(table),
+            PreparedPointTarget::RowHandle => tidb_executor_internal_exec::index_usage_reporter::get_cluster_index_id(table),
             PreparedPointTarget::UniqueIndex { index_id } => Some(index_id),
         };
         if let Some(index_id) = index_id {

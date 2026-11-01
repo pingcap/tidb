@@ -272,7 +272,7 @@ impl AutoAdmin<'_> {
                 let mut columns = vec![column.clone()];
                 columns.extend(order_by_columns.iter().cloned());
                 columns.truncate(self.option.max_index_width);
-                let index = Index::with_columns(&temp_index_name(&columns), &columns);
+                let index = Index::new_index_with_columns(&temp_index_name(&columns), &columns);
                 let contained = candidates
                     .to_list()
                     .iter()

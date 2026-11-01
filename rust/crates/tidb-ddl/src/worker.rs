@@ -1177,7 +1177,7 @@ mod schema_sync_tests {
             assert!(
                 matches!(
                     tidb_ddl_systable::SystemTableManager::new(&catalog)
-                        .get_mdl_version(&mut snapshot, job.id),
+                        .get_mdl_ver(&mut snapshot, job.id),
                     Err(tidb_ddl_systable::SystemTableManagerError::NotFound)
                 ),
                 "disabled mode must never register an MDL row"
@@ -2512,7 +2512,7 @@ where
     fn tiflash_store_count(&self) -> Result<u64, SqlQueryError> {
         self.opener
             .store()
-            .tiflash_store_count()
+            .get_tiflash_store_count()
             .map_err(SqlQueryError::unknown)
     }
 
@@ -3394,7 +3394,7 @@ mod reorg_context_tests {
             format!("{:?}", ctx.optimistic_transaction()),
             format!("{:?}", ctx.writes_untouched_indices()),
             format!("{:?}", ctx.tmp_table_max_size()),
-            format!("{:?}", ctx.reorg_default_conversion_flags()),
+            format!("{:?}", ctx.reorg_type_flags_with_sql_mode()),
             format!("{:?}", ctx.query_default_conversion_flags()),
             format!("{:?}", ctx.show_default_conversion_flags()),
             format!("{:?}", ctx.session_zone()),

@@ -99,7 +99,7 @@ impl Index {
     }
 
     /// Go `NewIndexWithColumns`.
-    pub(crate) fn with_columns(index_name: &str, columns: &[Column]) -> Self {
+    pub(crate) fn new_index_with_columns(index_name: &str, columns: &[Column]) -> Self {
         let names: Vec<&str> = columns
             .iter()
             .map(|column| column.column_name.as_str())

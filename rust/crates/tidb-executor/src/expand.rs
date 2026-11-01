@@ -110,7 +110,7 @@ impl<C: Columns + Send> Executor for ExpandExec<C> {
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
-        self.input = Chunk::new_empty(self.child.ret_field_types());
+        self.input = Chunk::new_empty_chunk(self.child.ret_field_types());
         self.tracker.replace_bytes_used(0);
         self.child.close()
     }

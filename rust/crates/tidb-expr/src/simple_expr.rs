@@ -1307,7 +1307,7 @@ mod tests {
             expr.static_type().expect("typed").code(),
             FieldTypeCode::Varchar
         );
-        let chunk = Chunk::new_empty(&[]);
+        let chunk = Chunk::new_empty_chunk(&[]);
         assert_eq!(
             expr.eval(&NoColumns, chunk.get_row(0)).expect("eval"),
             Datum::new_string(*b"6")

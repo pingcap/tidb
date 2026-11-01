@@ -136,9 +136,9 @@ pub trait OptimizeContext: tidb_exprctx::Columns + PlanCacheMarker + HintWarning
     /// is active (the UnionScan elimination reads it).
     fn in_transaction(&self) -> bool;
     /// Go `SessionVars.IsAllocValid()`.
-    fn is_chunk_alloc_valid(&self) -> bool;
+    fn is_alloc_valid(&self) -> bool;
     /// Go `SessionVars.SetAlloc(nil)` / `ClearAlloc`.
-    fn set_chunk_alloc_valid(&self, valid: bool);
+    fn set_alloc(&self, valid: bool);
     /// Go `SessionVars.MaxChunkSize`.
     fn max_chunk_size(&self) -> usize;
     /// Go `StmtCtx.AppendWarning` / `AppendNote` for a task warning.
@@ -514,14 +514,14 @@ pub fn physical_optimize<C: OptimizeContext>(
         crate::post_optimize::enable_parallel_apply(&mut physical, ctx.executor_concurrency());
     }
     // Go postOptimize: disableReuseChunkIfNeeded.
-    if ctx.is_chunk_alloc_valid()
+    if ctx.is_alloc_valid()
         && crate::chunk_reuse::should_disable_reuse_chunk(
             &physical,
             ctx.max_chunk_size(),
             tidb_memory::mem_total().ok(),
         )
     {
-        ctx.set_chunk_alloc_valid(false);
+        ctx.set_alloc(false);
     }
     physical
         .base_mut()

@@ -37,7 +37,7 @@ fn eval_row(select_list: &str) -> String {
     let QueryStmt::Select(select) = query.into_inner() else {
         panic!("not select")
     };
-    let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     chunk.set_num_virtual_rows(1);
     select
         .fields

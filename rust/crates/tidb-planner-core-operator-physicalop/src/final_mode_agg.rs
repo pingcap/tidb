@@ -1511,7 +1511,7 @@ pub fn check_agg_can_push_cop(
 /// `CheckAggCanPushCop`.  TiFlash MPP currently permits DISTINCT only for
 /// COUNT and GROUP_CONCAT, and does not admit APPROX_COUNT_DISTINCT.
 #[must_use]
-pub fn check_agg_can_push_mpp(
+pub fn check_can_push_down_to_mpp(
     agg_funcs: &[AggFuncDesc],
     group_by_items: &[Expression],
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
@@ -1695,7 +1695,7 @@ fn new_partial_aggregate_for_store(
     };
     let is_tiflash = store == tidb_kv::store_type::StoreType::TiFlash;
     let can_push = if is_tiflash {
-        check_agg_can_push_mpp(agg_funcs, group_by_items, blacklist)
+        check_can_push_down_to_mpp(agg_funcs, group_by_items, blacklist)
     } else {
         check_agg_can_push_cop(agg_funcs, group_by_items, store, blacklist)
     };
@@ -1821,17 +1821,17 @@ mod tests {
         let sum = agg(names::SUM, &a, false);
         let blacklist = HashMap::from([("sum".into(), blacklist_store_mask("tikv"))]);
         assert!(!check_agg_can_push_cop_tikv(std::slice::from_ref(&sum), &[], &blacklist));
-        assert!(check_agg_can_push_mpp(std::slice::from_ref(&sum), &[], &blacklist));
+        assert!(check_can_push_down_to_mpp(std::slice::from_ref(&sum), &[], &blacklist));
         let blacklist = HashMap::from([("sum".into(), blacklist_store_mask("tiflash"))]);
         assert!(check_agg_can_push_cop_tikv(std::slice::from_ref(&sum), &[], &blacklist));
-        assert!(!check_agg_can_push_mpp(std::slice::from_ref(&sum), &[], &blacklist));
+        assert!(!check_can_push_down_to_mpp(std::slice::from_ref(&sum), &[], &blacklist));
         let expr = Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
             tidb_ast::CiString::new("gt"), FieldType::new(FieldTypeCode::LongLong),
             vec![Expression::Column(a.clone()), Expression::Column(a.clone())],
         ));
         let count = AggFuncDesc::new(&ctx(), names::COUNT, vec![expr.clone()], false).unwrap();
         let blacklist = HashMap::from([("gt.gtint".into(), blacklist_store_mask("tikv,tiflash,tidb"))]);
-        for check in [check_agg_can_push_cop_tikv, check_agg_can_push_mpp] {
+        for check in [check_agg_can_push_cop_tikv, check_can_push_down_to_mpp] {
             assert!(check(std::slice::from_ref(&count), &[], &Default::default()));
             assert!(!check(std::slice::from_ref(&count), &[], &blacklist));
             assert!(!check(std::slice::from_ref(&sum), std::slice::from_ref(&expr), &blacklist));

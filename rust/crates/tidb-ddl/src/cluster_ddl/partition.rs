@@ -1121,7 +1121,7 @@ pub(super) fn on_drop_table_partition<S: MetaSnapshot>(
                     active.job.id,
                     &[(
                         -1,
-                        SchemaChangeEvent::drop_partitions(
+                        SchemaChangeEvent::new_drop_partition_event(
                             info.clone_like_go(),
                             event_partition_info(dropped),
                         ),

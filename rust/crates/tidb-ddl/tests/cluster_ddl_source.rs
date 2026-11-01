@@ -480,7 +480,7 @@ fn ddl_systable_manager_matches_go_queries() {
     assert_eq!(loaded.job.unwrap().read().id, 9_999);
 
     assert!(matches!(
-        manager.get_mdl_version(&mut store, 9_999),
+        manager.get_mdl_ver(&mut store, 9_999),
         Err(SystemTableManagerError::NotFound)
     ));
     let (_, mdl_table) = catalog
@@ -497,7 +497,7 @@ fn ddl_systable_manager_matches_go_queries() {
     apply_mutations(&mut store, &mutations);
     assert_eq!(
         manager
-            .get_mdl_version(&mut store, 9_999)
+            .get_mdl_ver(&mut store, 9_999)
             .expect("the MDL version is found"),
         123
     );

@@ -2158,7 +2158,7 @@ impl Session {
                         ))
                     }
                     DmlStmt::LoadData(load) => self.run_load_data_stmt(load, &stmt),
-                    DmlStmt::Batch(batch) => self.run_non_transactional_dml(batch),
+                    DmlStmt::Batch(batch) => self.handle_non_transactional_dml(batch),
                     other => Err(DriverError::unsupported(format!(
                         "this DML statement kind ({}) is not supported yet",
                         variant_name(other)

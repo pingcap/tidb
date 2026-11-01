@@ -27,7 +27,7 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 /// A leaked-empty row context for one-shot scalar evaluation, mirroring the
 /// shared helper other source modules keep locally.
 fn empty_row() -> tidb_chunk::row::Row<'static> {
-    let chunk = Box::leak(Box::new(tidb_chunk::chunk::Chunk::new_empty(&[])));
+    let chunk = Box::leak(Box::new(tidb_chunk::chunk::Chunk::new_empty_chunk(&[])));
     chunk.get_row(0)
 }
 

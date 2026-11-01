@@ -463,7 +463,7 @@ impl FieldTypeCode {
     /// Go `mysql.GetDefaultFieldLengthAndDecimal`
     /// (`parser/mysql/util.go:65`), whose table this reproduces entry for
     /// entry; an unlisted type is Go's `(-1, -1)`.
-    pub const fn default_field_length_and_decimal(self) -> (i32, i32) {
+    pub const fn get_default_field_length_and_decimal(self) -> (i32, i32) {
         match self {
             Self::Bit => (1, 0),
             Self::Tiny => (4, 0),

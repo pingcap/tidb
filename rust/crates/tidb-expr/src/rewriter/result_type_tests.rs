@@ -387,7 +387,7 @@ mod time_source_tests {
             origin_position: 0,
         };
         let rewritten = crate::rewriter::rewrite_expr(&expression).unwrap();
-        let mut chunk = Chunk::new_empty(&[]);
+        let mut chunk = Chunk::new_empty_chunk(&[]);
         chunk.set_num_virtual_rows(1);
         rewritten.eval(&NoColumns, chunk.get_row(0)).unwrap()
     }

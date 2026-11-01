@@ -1429,7 +1429,7 @@ pub fn propagate_constant_for_outer_join(
     null_sensitive: bool,
     valid: Option<&dyn Fn(&Expression) -> bool>,
 ) -> (Vec<Expression>, Vec<Expression>) {
-    let outcome = tidb_expr::constant_propagation::propagate_constant_for_outer_join(
+    let outcome = tidb_expr::constant_propagation::prop_const_for_outer_join(
         ctx.builder,
         ctx.use_plan_cache,
         join_conditions,

@@ -1036,7 +1036,7 @@ fn encoding_error_rows_follow_session_charset_conversion() {
             panic!("expected expression")
         };
         let rewritten = crate::rewriter::rewrite_expr_resolved(expr, &GbkSession).expect("rewrite");
-        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
         chunk.set_num_virtual_rows(1);
         rewritten.eval(&GbkSession, chunk.get_row(0))
     };

@@ -53,7 +53,7 @@ fn rewrite(sql_expr: &str) -> Expression {
 
 fn eval_rewritten(sql_expr: &str, ctx: &impl Columns) -> Datum {
     let expression = rewrite(sql_expr);
-    let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     chunk.set_num_virtual_rows(1);
     expression.eval(ctx, chunk.get_row(0)).expect("evaluates")
 }

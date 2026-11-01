@@ -844,7 +844,7 @@ mod tests {
     #[test]
     fn checked_decode_reports_remote_truncation_and_returns_the_suffix() {
         let fields = vec![ft(C::LongLong)];
-        let mut target = Chunk::new_empty(&fields);
+        let mut target = Chunk::new_empty_chunk(&fields);
         assert_eq!(
             Codec::new(fields.clone()).try_decode_to_chunk(&[1, 2, 3], &mut target),
             Err(CodecDecodeError::Truncated {
@@ -873,7 +873,7 @@ mod tests {
         invalid_offsets.extend_from_slice(&0_u32.to_le_bytes());
         invalid_offsets.extend_from_slice(&0_i64.to_ne_bytes());
         invalid_offsets.extend_from_slice(&(-1_i64).to_ne_bytes());
-        let mut variable_target = Chunk::new_empty(&variable_fields);
+        let mut variable_target = Chunk::new_empty_chunk(&variable_fields);
         assert_eq!(
             Codec::new(variable_fields).try_decode_to_chunk(&invalid_offsets, &mut variable_target),
             Err(CodecDecodeError::InvalidOffset {
@@ -886,7 +886,7 @@ mod tests {
         let (_, source) = int64_with_null();
         let mut image = Codec::new(fields.clone()).encode(&source);
         image.extend_from_slice(&[0xde, 0xad]);
-        let mut target = Chunk::new_empty(&fields);
+        let mut target = Chunk::new_empty_chunk(&fields);
         let suffix = Codec::new(fields)
             .try_decode_to_chunk(&image, &mut target)
             .unwrap();

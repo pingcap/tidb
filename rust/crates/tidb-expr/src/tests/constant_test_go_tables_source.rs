@@ -594,7 +594,7 @@ fn test_constant_propagation_for_outer_join() {
     let inner = crate::schema::Schema::new(vec![Column::new(1, longlong_type())]);
     let eq = build("eq", vec![column(0), column(1)]);
     let outer_filter = build("gt", vec![column(0), int_const(1)]);
-    let result = crate::constant_propagation::propagate_constant_for_outer_join(
+    let result = crate::constant_propagation::prop_const_for_outer_join(
         &builder,
         false,
         vec![eq.clone()],
@@ -629,7 +629,7 @@ fn test_constant_propagation_for_outer_join() {
         function.func_name.lowercase() == "not"
     }));
 
-    let sensitive = crate::constant_propagation::propagate_constant_for_outer_join(
+    let sensitive = crate::constant_propagation::prop_const_for_outer_join(
         &builder,
         false,
         vec![eq],
@@ -652,7 +652,7 @@ fn test_constant_propagation_for_outer_join() {
         Column::new(1, longlong_type()),
         Column::new(3, longlong_type()),
     ]);
-    let transitive = crate::constant_propagation::propagate_constant_for_outer_join(
+    let transitive = crate::constant_propagation::prop_const_for_outer_join(
         &builder,
         false,
         vec![

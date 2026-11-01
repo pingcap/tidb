@@ -463,7 +463,7 @@ impl StmtSummary {
 
     /// Go `NewStmtSummary4Test`: creates a new `StmtSummary` for testing
     /// purposes.
-    pub fn new_for_test(max_stmt_count: usize) -> Arc<Self> {
+    pub fn new_stmt_summary_4_test(max_stmt_count: usize) -> Arc<Self> {
         let (summary, rx) = Self::with_options(
             DEFAULT_MAX_STMT_COUNT,
             60 * 60 * 24 * 365, // 1 year
@@ -1706,7 +1706,7 @@ mod tests {
     /// Go `TestStmtWindow`.
     #[test]
     fn test_stmt_window() {
-        let ss = StmtSummary::new_for_test(5);
+        let ss = StmtSummary::new_stmt_summary_4_test(5);
         for digest in [
             "digest1", "digest1", "digest2", "digest2", "digest3", "digest4", "digest5", "digest6",
             "digest7",
@@ -1739,7 +1739,7 @@ mod tests {
     /// Go `TestStmtSummary`.
     #[test]
     fn test_stmt_summary() {
-        let ss = StmtSummary::new_for_test(3);
+        let ss = StmtSummary::new_stmt_summary_4_test(3);
 
         let w = ss.window();
         for digest in ["digest1", "digest2", "digest3", "digest4", "digest5"] {
@@ -1779,7 +1779,7 @@ mod tests {
         }
 
         let storage = Arc::new(MockStmtStorage::default());
-        let ss = StmtSummary::new_for_test(2);
+        let ss = StmtSummary::new_stmt_summary_4_test(2);
         ss.set_storage(Arc::clone(&storage) as Arc<dyn StmtStorage>);
         ss.set_persist_evicted(true);
 
@@ -1833,7 +1833,7 @@ mod tests {
             Arc::clone(&metrics) as Arc<dyn EvictedLogMetricsSink>,
         ));
 
-        let ss = StmtSummary::new_for_test(2);
+        let ss = StmtSummary::new_stmt_summary_4_test(2);
         ss.set_storage(Arc::clone(&storage) as Arc<dyn StmtStorage>);
         ss.set_persist_evicted(true);
 
@@ -1883,7 +1883,7 @@ mod tests {
     /// Go `TestStmtSummaryGroupByUser`.
     #[test]
     fn test_stmt_summary_group_by_user() {
-        let ss = StmtSummary::new_for_test(100);
+        let ss = StmtSummary::new_stmt_summary_4_test(100);
 
         // Two statements, same digest, different users: without the flag they
         // should merge into one record.
@@ -1988,7 +1988,7 @@ mod tests {
     #[test]
     fn test_stmt_summary_flush() {
         let storage = Arc::new(MockStmtStorage::default());
-        let ss = StmtSummary::new_for_test(1000);
+        let ss = StmtSummary::new_stmt_summary_4_test(1000);
         ss.set_storage(Arc::clone(&storage) as Arc<dyn StmtStorage>);
 
         for _ in 0..2 {

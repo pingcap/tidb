@@ -155,7 +155,7 @@ fn fold_constant(expression: &Expression) -> Option<Datum> {
             {
                 return None;
             }
-            let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+            let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
             chunk.set_num_virtual_rows(1);
             expression
                 .eval(&crate::StmtContext::for_query(), chunk.get_row(0))
