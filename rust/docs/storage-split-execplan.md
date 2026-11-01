@@ -128,10 +128,11 @@ CARGO_INCREMENTAL=0`.
   (`ReaderStorage::table` in `crates/tidb-executor/src/driver/
   physical_builder.rs`, `replace_storage`). With storage as a parameter, they
   pass that view directly and stop cloning tables.
-- 2026-11-01: Open question for Milestone 1: the embedded tier's
-  `MemTableStorage` is per table. Check whether its keys are full
-  TiKV-format keys (`t{id}_r...`), so one session-wide map can serve every
-  table as Go's single KV store does.
+- 2026-11-01: The embedded tier's `MemTableStorage` is per table, but it
+  stores full TiKV-format keys (`tidb_tablecodec::table_key::
+  encode_row_key_with_handle`, `t{tid}_r{handle}`). So one store per node,
+  with each session's staging over it, can serve every table, as Go's single
+  KV store does. Milestone 1 does not need a key-format change.
 
 ## Decision Log
 
