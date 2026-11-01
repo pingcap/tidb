@@ -70,6 +70,33 @@ Milestone 3 (DDL and maintenance): convert backfill (`tidb-ddl-build/src/
 table_backfill.rs`), `cleanup_index`, `drop_index`, `truncate`,
 statistics row counts, and the copr and admin users.
 
+Milestone 4a (temporary tables through the transaction, Go
+`pkg/table/temptable` + `session.commitTxnWithTemporaryData`): today each
+local temporary table owns a `MemTableStorage` and each global temporary
+table's rows are a `TemporaryTableTxnData` swapped into the shared table
+object around every statement (`TemporaryTableOverlay` in
+`crates/tidb-session/src/txn.rs`). Go has neither. Its temporary-table
+writes go into the session transaction's membuffer like any other table's.
+At commit, `commitTxnWithTemporaryData` copies each modified LOCAL
+temporary table's keys from the membuffer into `SessionVars.
+TemporaryTableData` (a session MemBuffer with per-table sizes, staged so a
+failed commit leaves it unchanged), and `temporaryTableKVFilter` keeps every
+temporary key out of 2PC; GLOBAL temporary keys simply die with the
+transaction. Reads never reach TiKV: `buildTableReader` makes a temporary
+table's reader a dummy, and the reader under `UnionScan` (`mem_reader.go`
+around line 627) serves the membuffer merged with `TemporaryTableData` for
+a local temporary table; the snapshot interceptor
+(`TemporaryTableSnapshotInterceptor`, `interceptor.go`) answers point and
+range reads of temporary keys from the session data (local) or nothing
+(global). In Rust the interceptor is a `ClusterSnapshot` wrapper
+(`crates/tidb-kv/src/cluster_storage.rs` is Go's `kv.Snapshot`), the session
+data is a session-level store with per-table sizes, and the commit protocol
+gains the filter and the copy. Then `TemporaryTableOverlay`,
+`TemporaryTableTxnData`, `swap_temporary_txn_data` and
+`truncate_local_temporary_table`'s store replacement all go (TRUNCATE of a
+local temporary table deletes its session-data range and takes a new id, as
+Go's `TruncateLocalTemporaryTable` does).
+
 Milestone 4: delete the `store` field, `replace_storage`, `swap_storage`,
 `store`, `store_mut` and the `TemporaryTableTxnData.store` duplication. A
 GLOBAL temporary table's rows then live in the session transaction, as Go's
@@ -132,6 +159,7 @@ CARGO_INCREMENTAL=0`.
   `TableCommon::{cleanup_index, drop_index, index_entry_records_for_check,
   index_entries_for_check}`. Catalog callers lend the table's own store
   through `with_own_store` until Milestone 4.
+- [ ] Milestone 4a: temporary tables through the transaction (design above).
 - [ ] Milestone 4: the `store` field is gone.
 - [ ] Milestone 5: one `InfoSchema` per schema version, shared by sessions.
 - [ ] Milestone 6: `ClusterCatalog` is gone.
