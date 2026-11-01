@@ -38,8 +38,6 @@ pub enum DerivedAccessPath {
 /// Go's post-derivation PossibleAccessPaths and their shared minimum selectivity.
 #[derive(Clone, Debug)]
 pub struct DerivedAccessPaths {
-    /// Integer/common-handle state derived before property search.
-    pub table_path: Option<FilledTablePath>,
     /// Ordinary and merge candidates compete through one retained collection.
     pub paths: Vec<DerivedAccessPath>,
     /// Includes merge estimates before ordered-index expected-count adjustment.
@@ -54,8 +52,8 @@ pub struct DerivedAccessPaths {
 /// Go `util.AccessPath`: one candidate way of reading a `DataSource`, born
 /// at enumeration (`getPossibleAccessPaths`) with its store, index and handle
 /// kind, and grown in place by plan building and statistics derivation.
-/// (The table path's ranges and the index-merge paths still live in
-/// [`DerivedAccessPaths`]; see `docs/access-path-execplan.md`.)
+/// (The index-merge paths still live in [`DerivedAccessPaths`]; see
+/// `docs/access-path-execplan.md`.)
 #[derive(Clone, Debug, Default)]
 pub struct AccessPath {
     /// Go `Index`: the index the path reads, or a common-handle table path's
@@ -84,6 +82,9 @@ pub struct AccessPath {
     /// An index path's `fillIndexPath` result: ranges, access conditions,
     /// index/table filters and `CountAfterIndex`.
     pub filled: Option<FilledIndexPath>,
+    /// The TiKV table path's `deriveTablePathStats` result: ranges, access
+    /// conditions, table filters and counts.
+    pub filled_table: Option<FilledTablePath>,
 }
 
 impl AccessPath {

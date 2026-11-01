@@ -369,6 +369,15 @@ impl DataSource {
             .find(|path| path.index.as_ref().is_some_and(|index| index.read().id == id))
     }
 
+    /// The TiKV table path's `deriveTablePathStats` result.
+    #[must_use]
+    pub fn filled_table_path(&self) -> Option<&tidb_planner_util::path::FilledTablePath> {
+        self.enumerated_paths
+            .iter()
+            .find(|path| path.is_tikv_table_path())
+            .and_then(|path| path.filled_table.as_ref())
+    }
+
     /// [`Self::path_by_index_id`], for updating the path in place.
     pub fn path_by_index_id_mut(
         &mut self,

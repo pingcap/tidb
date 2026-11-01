@@ -105,13 +105,16 @@ pub(crate) fn derive_access_paths(
     prefix_single_scan: bool,
     use_plan_cache: bool,
 ) -> Result<(DerivedAccessPaths, Option<String>), tidb_planner_core_base::PlanError> {
-    let table_path = source
-        .enumerated_paths
-        .iter()
-        .find(|path| path.is_tikv_table_path())
-        .map(|path| path.index.as_ref())
-        .map(|primary| ordinary::fill_table_path(source, primary, context))
-        .transpose()?;
+    // Go `deriveTablePathStats` over the TiKV table path.
+    if let Some(position) = source.enumerated_paths.iter().position(|path| path.is_tikv_table_path()) {
+        let filled = ordinary::fill_table_path(
+            source,
+            source.enumerated_paths[position].index.as_ref(),
+            context,
+        )?;
+        source.enumerated_paths[position].filled_table = Some(filled);
+    }
+    let table_path = source.filled_table_path().cloned();
     ordinary::fill_ordinary_index_paths(source, context, prefix_single_scan)?;
     let mut paths = source
         .enumerated_paths
@@ -318,7 +321,6 @@ pub(crate) fn derive_access_paths(
         });
     Ok((
         DerivedAccessPaths {
-            table_path,
             paths,
             min_selectivity,
             index_merge_max_count,

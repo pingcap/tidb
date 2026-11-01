@@ -232,7 +232,7 @@ fn join_keys_contain_unique_index(
             source
                 .derived_access_paths
                 .as_ref()
-                .and_then(|derived| derived.table_path.as_ref())
+                .and_then(|_| source.filled_table_path())
                 .map(|table| table.common_columns.iter().map(|(column, _)| column).collect())
                 .unwrap_or_default()
         } else {

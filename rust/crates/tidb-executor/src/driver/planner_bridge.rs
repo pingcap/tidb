@@ -1242,6 +1242,7 @@ impl InitStats<'_> {
         for path in &mut source.enumerated_paths {
             path.row_estimate = None;
             path.filled = None;
+            path.filled_table = None;
             path.is_single_scan = None;
         }
         source.access_path_min_selectivity = 1.0;
@@ -3565,7 +3566,6 @@ mod statistics_initialization_tests {
             },
         );
         source.derived_access_paths = Some(tidb_planner_util::path::DerivedAccessPaths {
-            table_path: None,
             paths: Vec::new(),
             min_selectivity: 0.01,
             index_merge_max_count: None,

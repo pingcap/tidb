@@ -105,8 +105,10 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
     `CountAfterAccess` and bounds, `filled`); `IndexPathState` and the
     id-keyed `DataSource.derived_index_paths` are gone, and readers find the
     live path with `DataSource::path_by_index_id`.
-  - [ ] 2b: the table path's `FilledTablePath` moves onto the table path(s)
-    (Go `deriveTablePathStats` fills each table path, TiFlash included).
+  - [x] 2b (2026-11-02): the TiKV table path carries its
+    `deriveTablePathStats` result (`filled_table`);
+    `DerivedAccessPaths.table_path` is gone. Go also fills the TiFlash table
+    path; Rust's TiFlash readers still read the TiKV path's result.
   - [ ] 2c: `FilledIndexPath`'s fields flatten into Go's (`IdxCols`,
     `Ranges`, `AccessConds`, `IndexFilters`, `TableFilters`,
     `CountAfterIndex`), and `declared_columns` / `row_estimate` take Go's

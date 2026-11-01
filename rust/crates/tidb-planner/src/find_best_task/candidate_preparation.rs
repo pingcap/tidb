@@ -48,7 +48,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
     if prop.index_join_prop.is_some() {
         return None;
     }
-    let retained = ds.derived_access_paths.as_ref()?;
+    ds.derived_access_paths.as_ref()?;
     let mut candidates = Vec::new();
     for &path in paths {
         if (ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH != 0
@@ -64,7 +64,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
                 if prop.partial_order_info.is_some() {
                     continue;
                 }
-                let table = retained.table_path.as_ref()?;
+                let table = ds.filled_table_path()?;
                 let columns = tidb_planner_util::column_length::Col2Len::from_pairs(
                     table.detached.access_conds.iter().flat_map(|condition| {
                         tidb_expr::simple_expr::extract_columns(condition)
@@ -233,14 +233,13 @@ fn range_scan_flags(
     ctx: &DispatchContext<'_>,
     metrics: Option<&CandidateMetrics>,
 ) -> (bool, bool) {
-    let retained = match ds.derived_access_paths.as_ref() {
-        Some(retained) => retained,
-        None => return (false, false),
-    };
+    if ds.derived_access_paths.is_none() {
+        return (false, false);
+    }
     let prefer_merge = !ds.index_merge_hints.is_empty() || ds.prefer_index_merge_by_fix_control;
     match path.index_info() {
         None if !path.is_tiflash_path() => {
-            let Some(table) = retained.table_path.as_ref() else {
+            let Some(table) = ds.filled_table_path() else {
                 return (false, false);
             };
             // A table path is always a single scan; like an index path it is

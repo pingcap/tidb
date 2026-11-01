@@ -3171,7 +3171,7 @@ fn find_best_task_4_logical_data_source_paths(
                     let ranges = ds
                         .derived_access_paths
                         .as_ref()
-                        .and_then(|paths| paths.table_path.as_ref())
+                        .and_then(|_| ds.filled_table_path())
                         .filter(|_| prop.index_join_prop.is_none())
                         .map(|path| &path.detached.ranges);
                     let order_match = table_path_matches_order(ds, prop, ranges);
@@ -3194,7 +3194,7 @@ fn find_best_task_4_logical_data_source_paths(
                 let table_path = if let Some(path) = ds
                     .derived_access_paths
                     .as_ref()
-                    .and_then(|paths| paths.table_path.as_ref())
+                    .and_then(|_| ds.filled_table_path())
                     .filter(|_| prop.index_join_prop.is_none())
                 {
                     path
