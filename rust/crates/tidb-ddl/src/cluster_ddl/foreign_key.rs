@@ -68,7 +68,7 @@ pub fn prepare_add_foreign_key_job_submission<S: MetaSnapshot>(
     } else {
         // The key's `createIndex` set `StmtCtx.MultiSchemaInfo`, so
         // `AlterTable` ends with `multiSchemaChange`.
-        let job = super::multi_schema::append_to_sub_jobs(
+        let job = super::multi_schema::build_multi_schema_job(
             &catalog,
             schema,
             table,

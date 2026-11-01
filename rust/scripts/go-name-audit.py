@@ -16,12 +16,17 @@ Go identifiers (funcs, methods, types, fields, consts, vars):
 import os,re,sys,json,collections
 ROOT=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PKG=os.path.join(ROOT,'pkg'); CR=os.path.join(ROOT,'rust/crates')
-PRODUCTS=(('TiKV','Tikv'),('TiDB','Tidb'),('TiFlash','Tiflash'),('MySQL','Mysql'),('IDs','Ids'))
+PRODUCTS=(('TiKV','Tikv'),('TiDB','Tidb'),('TiFlash','Tiflash'),('MySQL','Mysql'),('IDs','Ids'),
+          ('SCtx','Sctx'),('DBkey','DbKey'),('UnSynced','Unsynced'))
+# A sized type name keeps its digits (Float64 -> float64, Int32 -> int32).
+SIZED=re.compile(r'(Int|Uint|Float|int|uint|float)(8|16|32|64)(?=[A-Z_]|$)')
 def snake(n):
     # Go CamelCase -> snake: GetHTTPServer -> get_http_server, LoadWithTS -> load_with_ts,
     # product names stay one word (TiKV -> tikv), digits are their own word (Task4Logical -> task_4_logical)
     for a,b in PRODUCTS: n=n.replace(a,b)
+    n=SIZED.sub(lambda m:m.group(1)+'\x00'+m.group(2),n)
     n=re.sub(r'(?<=[A-Za-z])(\d+)',r'_\1_',n)
+    n=n.replace('\x00_','').replace('\x00','')
     s=re.sub(r'([A-Z]+)([A-Z][a-z])',r'\1_\2',n)
     s=re.sub(r'([a-z0-9])([A-Z])',r'\1_\2',s)
     return re.sub(r'_+','_',s.lower()).strip('_')

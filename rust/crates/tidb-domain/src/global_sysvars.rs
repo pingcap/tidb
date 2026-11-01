@@ -1092,7 +1092,7 @@ impl GlobalSysvars {
             REQUIRE_SECURE_TRANSPORT => tidb_tls::REQUIRE_SECURE_TRANSPORT
                 .store(!tidb_config_deploymode::is_starter() && on, SeqCst),
             PERFORMANCE_SCHEMA_SESSION_CONNECT_ATTRS_SIZE => tidb_vardef::CONNECT_ATTRS_SIZE.store(
-                tidb_variable::varsutil::tidb_opt_int_64(
+                tidb_variable::varsutil::tidb_opt_int64(
                     value,
                     tidb_vardef::defaults::DEF_CONNECT_ATTRS_SIZE,
                 ),

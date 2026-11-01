@@ -123,7 +123,7 @@ use tidb_ast::{
 use tidb_datatype::{EvalType, FieldName, FieldType, FieldTypeCode};
 use tidb_expression_aggregation::{need_frame, use_default_frame, WindowFuncDesc};
 use tidb_expr::column::Column;
-use tidb_expr::expr_util::get_uint_64_from_constant;
+use tidb_expr::expr_util::get_uint64_from_constant;
 use tidb_expr::expression::Expression;
 use tidb_expr::new_function::new_function_base;
 use tidb_expr::schema::Schema;
@@ -1242,7 +1242,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let expr = self
             .rewrite_scalar(offset, &Schema::default(), &[], &BTreeMap::new())
             .ok()?;
-        get_uint_64_from_constant(&expr, self.ctx)
+        get_uint64_from_constant(&expr, self.ctx)
     }
 
     /// Go `buildWindowFunctionFrameBound(ctx, spec, orderByItems, boundClause)`
@@ -1346,7 +1346,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         // Go evaluates the constant as an INT and rejects a negative, a NULL
         // or an evaluation error with `ErrWindowFrameIllegal`. A negative
-        // signed datum is exactly what `get_uint_64_from_constant` refuses.
+        // signed datum is exactly what `get_uint64_from_constant` refuses.
         // Constant.EvalInt converts string datums with ToInt64, ignoring
         // truncation here. Keep the original string for composite intervals
         // such as '1 2' DAY_HOUR; only the validation reads its numeric prefix.
@@ -1369,9 +1369,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         (converted.value >= 0).then_some((converted.value as u64, false))
                     })
                 }
-                _ => get_uint_64_from_constant(&constant, self.ctx),
+                _ => get_uint64_from_constant(&constant, self.ctx),
             },
-            _ => get_uint_64_from_constant(&constant, self.ctx),
+            _ => get_uint64_from_constant(&constant, self.ctx),
         };
         match checked_offset {
             Some((_, false)) => {}

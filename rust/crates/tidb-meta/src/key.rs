@@ -192,7 +192,7 @@ pub fn parse_db_key(field: &[u8]) -> Result<i64> {
 }
 
 /// Go `IsDBkey`.
-pub fn is_d_bkey(field: &[u8]) -> bool {
+pub fn is_db_key(field: &[u8]) -> bool {
     has_prefix(DB_PREFIX, field)
 }
 

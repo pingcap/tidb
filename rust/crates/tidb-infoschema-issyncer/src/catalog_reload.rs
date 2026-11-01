@@ -430,7 +430,7 @@ fn apply_schema_diff<S: MetaSnapshot>(
             let Some(stored) = snapshot.get(&key::policy_kv_key(diff.schema_id))? else {
                 return Ok(Err(missing(version, format!("policy {}", diff.schema_id))));
             };
-            let policy = value::list_policies(&stored)
+            let policy = value::parse_policy_info(&stored)
                 .map_err(|error| ClusterCatalogError::Decode(format!("PolicyInfo: {error}")))?;
             catalog.policies.retain(|existing| existing.id != policy.id);
             catalog.policies.push(policy);

@@ -491,7 +491,7 @@ pub fn pseudo_selectivity(
 /// and unique-key flag, or `None` when the collection has no entry — and the
 /// source charges an equality's rate BEFORE that nil check, which
 /// [`pseudo_selectivity`] reproduces.
-pub fn get_constant_column_id(
+pub fn classify_pseudo_predicate(
     expr: &tidb_expr::expression::Expression,
     resolve: &dyn Fn(i64) -> Option<PseudoColumn>,
 ) -> PseudoPredicate {
@@ -532,7 +532,7 @@ pub fn hist_coll_pseudo_selectivity(
     let resolve = |unique_id: i64| hist_coll.column_info(unique_id);
     let predicates: Vec<PseudoPredicate> = conditions
         .iter()
-        .map(|condition| get_constant_column_id(condition, &resolve))
+        .map(|condition| classify_pseudo_predicate(condition, &resolve))
         .collect();
     let indexes: Vec<PseudoIndex> = hist_coll
         .index_infos()
@@ -581,7 +581,7 @@ pub fn derive_stats_by_filter(
     } else {
         let predicates: Vec<PseudoPredicate> = conds
             .iter()
-            .map(|cond| get_constant_column_id(cond, resolve))
+            .map(|cond| classify_pseudo_predicate(cond, resolve))
             .collect();
         pseudo_selectivity(
             &predicates,

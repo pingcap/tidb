@@ -26,7 +26,7 @@ use tidb_table::kv_table::KvTable;
 use tidb_ranger::types::Range;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_distsql::{
-    signed_handle_ranges_to_kv_ranges, split_ranges_across_int_64_boundary, SignedHandleRange,
+    signed_handle_ranges_to_kv_ranges, split_ranges_across_int64_boundary, SignedHandleRange,
 };
 use tidb_txnkv::Key;
 
@@ -87,7 +87,7 @@ struct HandleColumn {
 /// `convertPointsInPlace`, and it decides two things: which extremes an open
 /// endpoint becomes ([`to_table_range_in_domain`]), and whether the ranges
 /// have to be cut at the point the key encoding flips sign
-/// ([`tidb_distsql::split_ranges_across_int_64_boundary`]).
+/// ([`tidb_distsql::split_ranges_across_int64_boundary`]).
 fn handle_is_unsigned(table: &KvTable) -> bool {
     handle_column(table).is_some_and(|column| column.field_type.is_unsigned())
 }
@@ -107,7 +107,7 @@ fn handle_is_unsigned(table: &KvTable) -> bool {
 /// optimization: `u64::MAX` encodes as -1, so mapping an unsigned open high to
 /// `i64::MAX` turns `id >= 2^63` into the key interval `[negative, i64::MAX]`,
 /// which spans the whole table -- and hides the boundary from
-/// [`tidb_distsql::split_ranges_across_int_64_boundary`], because a sentinel is not an
+/// [`tidb_distsql::split_ranges_across_int64_boundary`], because a sentinel is not an
 /// integer it can compare.
 fn to_table_range_in_domain(range: &Range, unsigned: bool) -> (i64, i64, bool, bool) {
     // The domain's extremes, as the handle codec spells them. For an unsigned
@@ -251,7 +251,7 @@ pub fn record_key_range_value_halves(
         .map(|range| materialize_open_bounds(range, unsigned))
         .collect();
     let (signed_side, unsigned_side) = if unsigned {
-        split_ranges_across_int_64_boundary(materialized, true, false, false)
+        split_ranges_across_int64_boundary(materialized, true, false, false)
     } else {
         (materialized, Vec::new())
     };

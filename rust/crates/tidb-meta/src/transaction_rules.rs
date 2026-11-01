@@ -1,5 +1,5 @@
 /// Go `splitRangeInt64Max`.
-pub fn split_range_int_64_max(count: i64) -> Vec<(String, String)> {
+pub fn split_range_int64_max(count: i64) -> Vec<(String, String)> {
     assert!(count >= 0, "negative split range count");
     let mut ranges = Vec::with_capacity(count as usize);
     // Go reaches this division after successfully allocating a zero-length
@@ -37,7 +37,7 @@ where
     F: FnMut(&TableInfo) -> Result<()> + Send,
 {
     let concurrency = concurrency.clamp(1, 15);
-    let ranges = split_range_int_64_max(i64::from(concurrency));
+    let ranges = split_range_int64_max(i64::from(concurrency));
     let callback = Mutex::new(visit);
     let stop = AtomicBool::new(false);
     let first_error = Mutex::new(None::<MetaError>);

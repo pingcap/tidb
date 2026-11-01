@@ -3075,7 +3075,7 @@ impl ScalarFunction {
                     return crate::builtin_ext::extremum_with_signature(
                         &vals,
                         want,
-                        crate::rewriter::result_type::resolve_type_4_extremum(&self.args),
+                        crate::rewriter::result_type::gl_signature(&self.args),
                         &arg_decimals,
                         all_constant,
                         collation,
@@ -4147,7 +4147,7 @@ fn cast_numeric_argument_in_mode(
                 convert_numeric_datum(value, &target, ctx)
             };
         }
-        let (decimal, error) = tidb_datatype::MyDecimal::from_float_64(*real);
+        let (decimal, error) = tidb_datatype::MyDecimal::from_float64(*real);
         match error {
             Some(tidb_datatype::DecimalError::Overflow) => {
                 if ctx.truncate_level() == tidb_exprctx::context::ErrorLevel::Error {
@@ -5309,7 +5309,7 @@ mod tests {
             let Datum::Decimal(actual) = actual else {
                 panic!("expected decimal");
             };
-            let (expected, error) = tidb_datatype::MyDecimal::from_float_64(value);
+            let (expected, error) = tidb_datatype::MyDecimal::from_float64(value);
             assert!(error.is_none() || error == Some(tidb_datatype::DecimalError::Truncated));
             let expected = tidb_datatype::Decimal::from_my_decimal(&expected);
             assert_eq!(

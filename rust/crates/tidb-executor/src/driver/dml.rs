@@ -1034,7 +1034,7 @@ fn run_insert_rows(
             ));
         };
         Some(
-            tidb_planner_rule::find_by_name(spec, &insert.partitions)
+            tidb_planner_rule::ids_for_selected_partitions(spec, &insert.partitions)
                 .map_err(|partition| {
                     DriverError::from(
                         tidb_table::table_errors::ERR_UNKNOWN_PARTITION
@@ -3440,7 +3440,7 @@ fn run_update_with_physical(
                 ));
             };
             Some(
-                tidb_planner_rule::find_by_name(spec, &table_ref.partitions)
+                tidb_planner_rule::ids_for_selected_partitions(spec, &table_ref.partitions)
                     .map_err(|partition| {
                         DriverError::from(
                             tidb_table::table_errors::ERR_UNKNOWN_PARTITION

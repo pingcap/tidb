@@ -938,7 +938,7 @@ impl<T: MetaTransaction> Mutator<T> {
         let stored = meta_structure(&mut *transaction)
             .h_get(key::POLICIES, &key::policy_key(policy_id))?
             .ok_or(MetaError::PolicyIdNotExists(policy_id))?;
-        value::list_policies(&stored)
+        value::parse_policy_info(&stored)
     }
 
     /// Go `Mutator.ListPolicies` in encoded field order.
@@ -947,7 +947,7 @@ impl<T: MetaTransaction> Mutator<T> {
         meta_structure(&mut *transaction)
             .h_get_all(key::POLICIES)?
             .into_iter()
-            .map(|pair| value::list_policies(&pair.value))
+            .map(|pair| value::parse_policy_info(&pair.value))
             .collect()
     }
 
@@ -1752,7 +1752,7 @@ impl<T: MetaTransaction> Mutator<T> {
     pub fn row_id(&self, database_id: i64, table_id: i64) -> Result<i64> {
         let mut transaction = self.lock()?;
         meta_structure(&mut *transaction)
-            .h_get_int_64(&key::db_key(database_id), &key::auto_table_id_key(table_id))
+            .h_get_int64(&key::db_key(database_id), &key::auto_table_id_key(table_id))
     }
 
     /// Deletes one row-ID allocator field.
@@ -1871,7 +1871,7 @@ impl<T: MetaTransaction> AutoIdAccessor<T> {
     pub fn get(&self) -> Result<i64> {
         let mut transaction = self.meta.lock()?;
         meta_structure(&mut *transaction)
-            .h_get_int_64(&key::db_key(self.database_id), &self.field())
+            .h_get_int64(&key::db_key(self.database_id), &self.field())
     }
 
     /// Go `AutoIDAccessor.Put`.

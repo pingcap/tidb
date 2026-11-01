@@ -143,7 +143,7 @@ fn parse_i64(name: &str, value: &str) -> Result<i64, SqlExecError> {
 
 /// Go `UpdateSCtxVarsForStats`, preserving its read/mutation order and
 /// partial-update behavior on an intermediate error.
-pub fn update_s_ctx_vars_for_stats<C: StatsSessionContext + ?Sized>(
+pub fn update_sctx_vars_for_stats<C: StatsSessionContext + ?Sized>(
     context: &C,
 ) -> Result<(), SqlExecError> {
     let value = context.global_system_var(tidb_vars::TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS)?;
@@ -213,7 +213,7 @@ where
     let result = catch_unwind(AssertUnwindSafe(|| {
         pool.with_session(&mut |session| {
             session.with_session_context(|context| {
-                update_s_ctx_vars_for_stats(context)?;
+                update_sctx_vars_for_stats(context)?;
                 let callback = callback
                     .take()
                     .expect("CallWithSCtx callback called more than once");
@@ -700,7 +700,7 @@ mod tests {
     #[test]
     fn session_variables_are_synchronized_in_source_order() {
         let context = MockContext::new();
-        update_s_ctx_vars_for_stats(&context).unwrap();
+        update_sctx_vars_for_stats(&context).unwrap();
         assert_eq!(
             *context.reads.lock().unwrap(),
             [
@@ -738,7 +738,7 @@ mod tests {
     #[test]
     fn analyze_store_batch_size_is_loaded_before_historical_stats() {
         let context = MockContext::new();
-        update_s_ctx_vars_for_stats(&context).unwrap();
+        update_sctx_vars_for_stats(&context).unwrap();
         let reads = context.reads.lock().unwrap();
         let version = reads
             .iter()
@@ -773,7 +773,7 @@ mod tests {
             tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY.to_owned(),
             "not-an-int".to_owned(),
         );
-        assert!(update_s_ctx_vars_for_stats(&context).is_err());
+        assert!(update_sctx_vars_for_stats(&context).is_err());
         let state = context.state.lock().unwrap();
         assert!(state.async_merge);
         assert_eq!(state.partition_concurrency, 0);

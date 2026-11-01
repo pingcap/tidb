@@ -300,7 +300,7 @@ impl Session {
     /// them (captured: an ascii client's `SELECT é`, whose identifier warns
     /// 1300 as `?`, shows only its 1054). A buffer the statement rebuilt keeps
     /// what it holds.
-    pub(crate) fn handle_stmt(&mut self, succeeded: bool) {
+    pub(crate) fn move_parse_warnings_behind_execution(&mut self, succeeded: bool) {
         let Some((start, parsed)) = self.parse_warnings.take() else {
             return;
         };
@@ -369,7 +369,7 @@ impl Session {
     /// parse opened closes with the statement.
     pub(crate) fn finish_routed_statement_warnings(&mut self, succeeded: bool) {
         self.statement_boundary_open = false;
-        self.handle_stmt(succeeded);
+        self.move_parse_warnings_behind_execution(succeeded);
     }
 
     pub(crate) fn begin_cached_prepared_query_boundary(&mut self) {

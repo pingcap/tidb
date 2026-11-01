@@ -149,7 +149,7 @@ pub(crate) fn eval_numeric_cast_with_type(
                 handle(error)?;
                 Decimal::from_my_decimal(&decimal)
             } else if let Datum::Real(value) | Datum::Float32(value) = value {
-                let (decimal, error) = MyDecimal::from_float_64(value);
+                let (decimal, error) = MyDecimal::from_float64(value);
                 match error {
                     // The cast signature explicitly ignores fraction loss.
                     None | Some(DecimalError::Truncated) => {}

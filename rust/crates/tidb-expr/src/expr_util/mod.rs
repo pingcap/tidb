@@ -163,7 +163,7 @@ pub use predicates::{
     const_expr_consider_plan_cache, contain_correlated_column, contain_mutable_const,
     contain_outer_not, contain_virtual_column, contains, disable_parse_json_flag_4_expr,
     expr_has_set_var_or_sleep, exprs_has_side_effects, get_expr_inside_is_truth, get_func_arg,
-    get_row_len, get_uint_64_from_constant, has_column_with_condition, is_const_null,
+    get_row_len, get_uint64_from_constant, has_column_with_condition, is_const_null,
     is_immutable_func, is_mutable_effects_expr, is_runtime_const_expr,
     maybe_over_optimized_4_plan_cache, projection_benefits_from_pushed_down, remove_dup_exprs,
     remove_mutable_const,

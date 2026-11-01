@@ -202,7 +202,7 @@ fn hash_operations_cover_set_get_iterate_last_n_inc_del_clear_and_nil_values() {
 
     assert_eq!(tx.h_inc(key, b"1", 1).unwrap(), 2);
     assert_eq!(tx.h_inc(key, b"1", 1).unwrap(), 3);
-    assert_eq!(tx.h_get_int_64(key, b"1").unwrap(), 3);
+    assert_eq!(tx.h_get_int64(key, b"1").unwrap(), 3);
 
     tx.h_clear(key).unwrap();
     tx.h_del(key, &[b"fake_key"]).unwrap();

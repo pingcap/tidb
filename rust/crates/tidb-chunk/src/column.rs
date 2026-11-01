@@ -510,14 +510,14 @@ impl Column {
     /// element shape for the requested evaluation type.
     pub fn reset_for_eval_type(&mut self, eval_type: EvalType) {
         match eval_type {
-            EvalType::Int => self.resize_int_64(0, false),
-            EvalType::Real => self.resize_float_64(0, false),
+            EvalType::Int => self.resize_int64(0, false),
+            EvalType::Real => self.resize_float64(0, false),
             EvalType::Decimal => self.resize_decimal(0, false),
             EvalType::String => self.reserve_string(0),
             EvalType::Datetime | EvalType::Timestamp => self.resize_time(0, false),
             EvalType::Duration => self.resize_go_duration(0, false),
             EvalType::Json => self.reserve_json(0),
-            EvalType::VectorFloat32 => self.reserve_vector_float_32(0),
+            EvalType::VectorFloat32 => self.reserve_vector_float32(0),
         }
     }
 
@@ -1078,22 +1078,22 @@ impl Column {
     }
 
     /// Go `ResizeInt64`.
-    pub fn resize_int_64(&mut self, n: usize, is_null: bool) {
+    pub fn resize_int64(&mut self, n: usize, is_null: bool) {
         self.resize_fixed(n, 8, is_null);
     }
 
     /// Go `ResizeUint64`.
-    pub fn resize_uint_64(&mut self, n: usize, is_null: bool) {
+    pub fn resize_uint64(&mut self, n: usize, is_null: bool) {
         self.resize_fixed(n, 8, is_null);
     }
 
     /// Go `ResizeFloat32`.
-    pub fn resize_float_32(&mut self, n: usize, is_null: bool) {
+    pub fn resize_float32(&mut self, n: usize, is_null: bool) {
         self.resize_fixed(n, 4, is_null);
     }
 
     /// Go `ResizeFloat64`.
-    pub fn resize_float_64(&mut self, n: usize, is_null: bool) {
+    pub fn resize_float64(&mut self, n: usize, is_null: bool) {
         self.resize_fixed(n, 8, is_null);
     }
 
@@ -1133,7 +1133,7 @@ impl Column {
     }
 
     /// Go `ReserveVectorFloat32`.
-    pub fn reserve_vector_float_32(&mut self, n: usize) {
+    pub fn reserve_vector_float32(&mut self, n: usize) {
         self.reserve_var(n, ESTIMATED_ELEM_LEN);
     }
 

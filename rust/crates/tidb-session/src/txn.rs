@@ -32,7 +32,7 @@ use tidb_store_driver_txn::cluster_storage::BufferCheckpoint;
 use tidb_driver_error::DriverError;
 use tidb_infoschema::Catalog;
 
-use crate::{new_provider_with_request, PESSIMISTIC_TXN_MODE};
+use crate::{txn_mode_for_begin, PESSIMISTIC_TXN_MODE};
 use crate::{Session, SessionTxnMode};
 
 /// A persisted schema image and the storage authority's retained timestamp guard.
@@ -654,7 +654,7 @@ impl Session {
             .vars
             .get_system("tidb_txn_mode")
             .unwrap_or_else(|_| PESSIMISTIC_TXN_MODE.to_owned());
-        new_provider_with_request(mode, &variable)
+        txn_mode_for_begin(mode, &variable)
     }
 
     /// Applies `BEGIN`/`START TRANSACTION`, `COMMIT`, `ROLLBACK` or a

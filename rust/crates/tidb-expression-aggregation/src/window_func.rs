@@ -21,7 +21,7 @@
 use super::names;
 use super::{AggDescError, BaseFuncDesc};
 use tidb_exprctx::context::Columns;
-use tidb_expr::expr_util::get_uint_64_from_constant;
+use tidb_expr::expr_util::get_uint64_from_constant;
 use tidb_expr::expression::Expression;
 use tidb_datatype::FieldTypeFlags;
 
@@ -55,7 +55,7 @@ impl WindowFuncDesc {
                     let Some(arg) = args.get(1) else {
                         return Ok(None);
                     };
-                    match get_uint_64_from_constant(arg, ctx) {
+                    match get_uint64_from_constant(arg, ctx) {
                         Some((value, is_null)) if value != 0 || is_null => {}
                         _ => return Ok(None),
                     }
@@ -65,7 +65,7 @@ impl WindowFuncDesc {
                     let Some(arg) = args.first() else {
                         return Ok(None);
                     };
-                    match get_uint_64_from_constant(arg, ctx) {
+                    match get_uint64_from_constant(arg, ctx) {
                         Some((value, is_null)) if value != 0 || is_null => {}
                         _ => return Ok(None),
                     }
@@ -73,7 +73,7 @@ impl WindowFuncDesc {
                 // Go `break`s out of the switch when there is no second
                 // argument, leaving the call accepted.
                 names::LEAD | names::LAG if args.len() >= 2 => {
-                    match get_uint_64_from_constant(&args[1], ctx) {
+                    match get_uint64_from_constant(&args[1], ctx) {
                         Some((_, false)) => {}
                         _ => return Ok(None),
                     }

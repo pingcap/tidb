@@ -35,7 +35,7 @@
 use crate::wrap_cast::{
     wrap_with_cast_as_decimal, wrap_with_cast_as_duration, wrap_with_cast_as_int,
     wrap_with_cast_as_json, wrap_with_cast_as_real, wrap_with_cast_as_string,
-    wrap_with_cast_as_time, wrap_with_cast_as_vector_float_32,
+    wrap_with_cast_as_time, wrap_with_cast_as_vector_float32,
 };
 use crate::builtin_arithmetic::new_return_field_type_for_base_builtin_func;
 use crate::constant::Constant;
@@ -792,7 +792,7 @@ pub(crate) fn generate_cmp_sigs(
             crate::expr_util::predicates::disable_parse_json_flag_4_expr(&mut wrapped);
             wrapped
         }),
-        EvalType::VectorFloat32 => wrap_with_cast_as_vector_float_32(expression),
+        EvalType::VectorFloat32 => wrap_with_cast_as_vector_float32(expression),
     };
     // Go derives the comparison collation before the casts and hands it to
     // `HandleBinaryLiteral` for every ETString argument: a binary operand

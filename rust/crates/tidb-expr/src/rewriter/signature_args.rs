@@ -33,7 +33,7 @@ use tidb_datatype::{EvalType, FieldType, FieldTypeCode};
 use crate::wrap_cast::{
     wrap_with_cast_as_decimal, wrap_with_cast_as_duration, wrap_with_cast_as_int,
     wrap_with_cast_as_json, wrap_with_cast_as_real, wrap_with_cast_as_string,
-    wrap_with_cast_as_time, wrap_with_cast_as_vector_float_32,
+    wrap_with_cast_as_time, wrap_with_cast_as_vector_float32,
 };
 use crate::expr_util::predicates::disable_parse_json_flag_4_expr;
 use crate::expression::Expression;
@@ -589,7 +589,7 @@ pub(crate) fn wrap_builtin_arguments(
                     wrap_with_cast_as_time(arg, FieldType::new(FieldTypeCode::Timestamp))?
                 }
                 ArgKind::Duration => wrap_with_cast_as_duration(arg)?,
-                ArgKind::Vector => wrap_with_cast_as_vector_float_32(arg)?,
+                ArgKind::Vector => wrap_with_cast_as_vector_float32(arg)?,
                 ArgKind::Document => return wrap_with_cast_as_json(arg),
                 ArgKind::Value => {
                     let mut wrapped = wrap_with_cast_as_json(arg)?;

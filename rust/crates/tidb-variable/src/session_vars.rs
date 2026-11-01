@@ -420,7 +420,7 @@ impl RuntimeFilterMode {
     }
 }
 
-use crate::varsutil::{tidb_opt_int_64, tidb_opt_positive_int32};
+use crate::varsutil::{tidb_opt_int64, tidb_opt_positive_int32};
 use tidb_hack::go_to_upper;
 use tidb_vardef::tidb_vars as names;
 
@@ -488,11 +488,11 @@ impl MemQuota {
     #[must_use]
     pub fn from_vars(vars: &impl SystemVars) -> Self {
         Self {
-            mem_quota_query: tidb_opt_int_64(
+            mem_quota_query: tidb_opt_int64(
                 &stored(vars, names::TIDB_MEM_QUOTA_QUERY),
                 defaults::DEF_TIDB_MEM_QUOTA_QUERY,
             ),
-            mem_quota_apply_cache: tidb_opt_int_64(
+            mem_quota_apply_cache: tidb_opt_int64(
                 &stored(vars, names::TIDB_MEM_QUOTA_APPLY_CACHE),
                 defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE,
             ),

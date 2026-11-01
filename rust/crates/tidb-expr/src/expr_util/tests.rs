@@ -295,22 +295,22 @@ fn go_disable_parse_json_flag_4_expr() {
 
 /// GO PORT of `TestGetUint64FromConstant` (`util_test.go:155`), minus the
 /// `ParamMarker` case -- see the narrowing on
-/// [`super::predicates::get_uint_64_from_constant`].
+/// [`super::predicates::get_uint64_from_constant`].
 #[test]
 fn go_get_uint64_from_constant() {
     let null = Expression::Constant(Constant::new(Datum::Null, int_type()));
-    assert_eq!(get_uint_64_from_constant(&null, &NoColumns), Some((0, true)));
+    assert_eq!(get_uint64_from_constant(&null, &NoColumns), Some((0, true)));
 
     // A negative signed value is not usable.
     let negative = Expression::Constant(Constant::new(Datum::Int(-1), int_type()));
-    assert_eq!(get_uint_64_from_constant(&negative, &NoColumns), None);
+    assert_eq!(get_uint64_from_constant(&negative, &NoColumns), None);
 
     let one = Expression::Constant(Constant::new(Datum::Int(1), int_type()));
-    assert_eq!(get_uint_64_from_constant(&one, &NoColumns), Some((1, false)));
+    assert_eq!(get_uint64_from_constant(&one, &NoColumns), Some((1, false)));
 
     let unsigned = Expression::Constant(Constant::new(Datum::UInt(1), int_type()));
     assert_eq!(
-        get_uint_64_from_constant(&unsigned, &NoColumns),
+        get_uint64_from_constant(&unsigned, &NoColumns),
         Some((1, false))
     );
 
@@ -318,7 +318,7 @@ fn go_get_uint64_from_constant() {
     let mut deferred = Constant::new(Datum::Null, int_type());
     deferred.deferred_expr = Some(Box::new(int_const(1)));
     assert_eq!(
-        get_uint_64_from_constant(&Expression::Constant(deferred), &NoColumns),
+        get_uint64_from_constant(&Expression::Constant(deferred), &NoColumns),
         Some((1, false))
     );
 }

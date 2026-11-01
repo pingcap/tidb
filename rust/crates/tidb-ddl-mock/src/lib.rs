@@ -307,9 +307,9 @@ mod tests {
     #[test]
     fn unsynced_job_tracker_contract() {
         let tracker = UnSyncedJobTracker::new();
-        tracker.add_un_synced(1);
-        assert!(tracker.is_un_synced(1));
-        tracker.remove_un_synced(1);
-        assert!(!tracker.is_un_synced(1));
+        tracker.add_unsynced(1);
+        assert!(tracker.is_unsynced(1));
+        tracker.remove_unsynced(1);
+        assert!(!tracker.is_unsynced(1));
     }
 }

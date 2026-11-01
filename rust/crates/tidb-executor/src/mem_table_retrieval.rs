@@ -68,7 +68,7 @@ impl MemTableRead {
     /// Go `memtableRetriever.updateStatsCacheIfNeed`: whether the pruned
     /// columns of `TABLES` / `PARTITIONS` need the table-size statistics.
     #[must_use]
-    pub fn update_stats_cache_if_need(&self) -> bool {
+    pub fn needs_table_storage_statistics(&self) -> bool {
         self.is_table_with_storage_sizes()
             && self.columns.iter().any(|column| {
                 matches!(

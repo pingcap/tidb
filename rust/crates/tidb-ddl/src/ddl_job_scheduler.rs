@@ -75,7 +75,7 @@ impl UnSyncedJobTracker {
     }
 
     /// Go `addUnSynced`.
-    pub fn add_un_synced(&self, job_id: i64) {
+    pub fn add_unsynced(&self, job_id: i64) {
         self.state
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -85,7 +85,7 @@ impl UnSyncedJobTracker {
 
     /// Go `isUnSynced`.
     #[must_use]
-    pub fn is_un_synced(&self, job_id: i64) -> bool {
+    pub fn is_unsynced(&self, job_id: i64) -> bool {
         self.state
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -94,7 +94,7 @@ impl UnSyncedJobTracker {
     }
 
     /// Go `removeUnSynced`.
-    pub fn remove_un_synced(&self, job_id: i64) {
+    pub fn remove_unsynced(&self, job_id: i64) {
         self.state
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

@@ -392,7 +392,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.HGetInt64`: a missing field is zero.
-    pub fn h_get_int_64(&mut self, key: &[u8], field: &[u8]) -> Result<i64, T::Error> {
+    pub fn h_get_int64(&mut self, key: &[u8], field: &[u8]) -> Result<i64, T::Error> {
         Ok(self.h_get(key, field)?.map_or(Ok(0), |stored| parse_int_value(&stored))?)
     }
 

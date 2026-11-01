@@ -229,7 +229,7 @@ fn stored_policy<S: MetaSnapshot>(
 ) -> Result<tidb_model::PolicyInfo, DdlPlanError> {
     let stored = snapshot
         .get(&key::policy_kv_key(policy_id))?
-        .map(|bytes| value::list_policies(&bytes))
+        .map(|bytes| value::parse_policy_info(&bytes))
         .transpose()
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     stored.ok_or_else(|| {

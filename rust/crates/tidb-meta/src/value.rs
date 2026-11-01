@@ -133,12 +133,12 @@ pub fn serialize_schema_diff(diff: &SchemaDiff) -> Result<Vec<u8>> {
 }
 
 /// Go `ListPolicies`: JSON behind the magic byte.
-pub fn list_policies(value: &[u8]) -> Result<PolicyInfo> {
+pub fn parse_policy_info(value: &[u8]) -> Result<PolicyInfo> {
     let data = detach_magic_byte(value)?;
     from_json(data)
 }
 
-/// The write side of [`list_policies`]. Go `Mutator.CreatePolicy`.
+/// The write side of [`parse_policy_info`]. Go `Mutator.CreatePolicy`.
 pub fn serialize_policy_info(policy: &PolicyInfo) -> Result<Vec<u8>> {
     Ok(attach_magic_byte(&to_json(policy)?))
 }

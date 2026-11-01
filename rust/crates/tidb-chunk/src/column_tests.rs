@@ -489,15 +489,15 @@ fn copy_construct_owns_buffers_and_clears_zero_copy_reuse_guard() {
 #[test]
 fn resize_reserve_and_eval_type_reset_match_go_shapes() {
     let mut column = Column::new_column(&FieldType::new(FieldTypeCode::LongLong), 2);
-    column.resize_int_64(4, false);
+    column.resize_int64(4, false);
     assert_eq!(column.rows(), 4);
     assert_eq!(column.null_bitmap, vec![0x0f]);
     assert_eq!(column.data.len(), 32);
     assert!(column.data.read().iter().all(|byte| *byte == 0));
 
-    column.resize_uint_64(11, false);
+    column.resize_uint64(11, false);
     assert_eq!(column.null_bitmap, vec![0xff, 0x07]);
-    column.resize_uint_64(7, true);
+    column.resize_uint64(7, true);
     assert_eq!(column.null_bitmap, vec![0]);
 
     column.reset_for_eval_type(EvalType::Duration);
@@ -522,14 +522,14 @@ fn resize_preserves_scratch_and_offset_headers() {
     let mut fixed = Column::new_fixed_len_column(8, 2);
     let scratch = 0x0102_0304_0506_0708_i64;
     fixed.append_int64(scratch);
-    fixed.resize_int_64(0, false);
+    fixed.resize_int64(0, false);
     fixed.append_null();
     assert!(fixed.is_null(0));
     assert_eq!(fixed.get_raw(0), &scratch.to_ne_bytes());
 
     let mut changing = Column::new_var_len_column(2);
     changing.offsets = vec![7, 9];
-    changing.resize_int_64(0, false);
+    changing.resize_int64(0, false);
     assert_eq!(changing.offsets, vec![7, 9]);
     changing.reserve_string(1);
     assert_eq!(changing.offsets, vec![7]);
@@ -795,9 +795,9 @@ fn set_null_ranges_and_merge_nulls_match_rowwise_and() {
     let mut left = Column::new_fixed_len_column(8, 16);
     let mut right = Column::new_fixed_len_column(8, 16);
     let mut result = Column::new_fixed_len_column(8, 16);
-    left.resize_int_64(11, false);
-    right.resize_int_64(11, false);
-    result.resize_int_64(11, false);
+    left.resize_int64(11, false);
+    right.resize_int64(11, false);
+    result.resize_int64(11, false);
     left.set_nulls(1, 4, true);
     right.set_nulls(3, 8, true);
     result.merge_nulls(&[&left, &right]);
@@ -1218,13 +1218,13 @@ fn go_test_my_decimal() {
     let fields = vec![FieldType::new(FieldTypeCode::NewDecimal)];
     let mut chk = Chunk::new_chunk_with_capacity(&fields, 1024);
     for i in 0..1024i64 {
-        let (d, error) = MyDecimal::from_float_64(i as f64 * 1.1);
+        let (d, error) = MyDecimal::from_float64(i as f64 * 1.1);
         assert!(error.is_none());
         chk.column_mut(0).append_my_decimal(&d);
     }
 
     for i in 0..1024usize {
-        let (d, error) = MyDecimal::from_float_64(i as f64 * 1.1);
+        let (d, error) = MyDecimal::from_float64(i as f64 * 1.1);
         assert!(error.is_none());
         assert_eq!(
             d.compare(&chk.column(0).get_my_decimal(i)),
@@ -1236,7 +1236,7 @@ fn go_test_my_decimal() {
     // types.DecimalAdd(&ds[i], d, &ds[i]) doubles every stored decimal.
     chk.column_mut(0).with_decimals_mut(|ds| {
         for (i, cell) in ds.iter_mut().enumerate() {
-            let (d, error) = MyDecimal::from_float_64(i as f64 * 1.1);
+            let (d, error) = MyDecimal::from_float64(i as f64 * 1.1);
             assert!(error.is_none());
             let (sum, warning) =
                 Decimal::from_my_decimal(cell).add_mysql(&Decimal::from_my_decimal(&d));
@@ -1249,7 +1249,7 @@ fn go_test_my_decimal() {
     let mut i = 0i64;
     let mut row = it.begin();
     while row != it.end() {
-        let (d, error) = MyDecimal::from_float_64(i as f64 * 1.1 * 2.0);
+        let (d, error) = MyDecimal::from_float64(i as f64 * 1.1 * 2.0);
         assert!(error.is_none());
         // Go: delta := DecimalSub(d, row.GetMyDecimal(0), fDelta); InDelta(0, fDelta, 0.0001).
         let got = row.expect("not end").get_my_decimal(0);
@@ -1429,7 +1429,7 @@ fn go_test_nulls_column() {
 #[test]
 fn go_test_pre_alloc_int64() {
     let mut col = Column::new_column(&FieldType::new(FieldTypeCode::LongLong), 128);
-    col.resize_int_64(256, true);
+    col.resize_int64(256, true);
     assert_eq!(col.with_int64s_mut(|values| values.len()), 256);
     for i in 0..256 {
         assert!(col.is_null(i));
@@ -1447,7 +1447,7 @@ fn go_test_pre_alloc_int64() {
 fn go_test_pre_alloc_uint64() {
     let tll = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
     let mut col = Column::new_column(&tll, 128);
-    col.resize_uint_64(256, true);
+    col.resize_uint64(256, true);
     assert_eq!(col.with_uint64s_mut(|values| values.len()), 256);
     for i in 0..256 {
         assert!(col.is_null(i));
@@ -1464,7 +1464,7 @@ fn go_test_pre_alloc_uint64() {
 #[test]
 fn go_test_pre_alloc_float32() {
     let mut col = Column::new_fixed_len_column(4, 128);
-    col.resize_float_32(256, true);
+    col.resize_float32(256, true);
     assert_eq!(col.with_float32s_mut(|values| values.len()), 256);
     for i in 0..256 {
         assert!(col.is_null(i));
@@ -1481,7 +1481,7 @@ fn go_test_pre_alloc_float32() {
 #[test]
 fn go_test_pre_alloc_float64() {
     let mut col = Column::new_fixed_len_column(8, 128);
-    col.resize_float_64(256, true);
+    col.resize_float64(256, true);
     assert_eq!(col.with_float64s_mut(|values| values.len()), 256);
     for i in 0..256 {
         assert!(col.is_null(i));
@@ -1536,7 +1536,7 @@ fn go_test_pre_alloc_time() {
 #[test]
 fn go_test_null() {
     let mut col = Column::new_fixed_len_column(8, 32);
-    col.resize_float_64(1024, true);
+    col.resize_float64(1024, true);
     assert_eq!(col.null_count(), 1024);
 
     // Go draws 512 distinct-ish random indices; the same xorshift generator
@@ -1554,16 +1554,16 @@ fn go_test_null() {
         assert!(!col.is_null(idx));
     }
 
-    col.resize_float_64(8, true);
+    col.resize_float64(8, true);
     col.set_nulls(0, 8, true);
     col.set_null(7, false);
     assert_eq!(col.null_count(), 7);
 
-    col.resize_float_64(8, true);
+    col.resize_float64(8, true);
     col.set_nulls(0, 8, true);
     assert_eq!(col.null_count(), 8);
 
-    col.resize_float_64(9, true);
+    col.resize_float64(9, true);
     col.set_nulls(0, 9, true);
     col.set_null(8, false);
     assert_eq!(col.null_count(), 8);
@@ -1574,7 +1574,7 @@ fn go_test_null() {
 #[test]
 fn go_test_set_nulls() {
     let mut col = Column::new_fixed_len_column(8, 32);
-    col.resize_float_64(1024, true);
+    col.resize_float64(1024, true);
     assert_eq!(col.null_count(), 1024);
 
     col.set_nulls(0, 1024, false);
@@ -1607,11 +1607,11 @@ fn go_test_resize_reserve() {
     assert_eq!(c_i64s.length(), 0);
     for _ in 0..100 {
         let n = (rng.next_u64() % 1024) as usize;
-        c_i64s.resize_int_64(n, true);
+        c_i64s.resize_int64(n, true);
         assert_eq!(c_i64s.length(), n);
         assert_eq!(c_i64s.with_int64s_mut(|values| values.len()), n);
     }
-    c_i64s.resize_int_64(0, true);
+    c_i64s.resize_int64(0, true);
     assert_eq!(c_i64s.length(), 0);
     assert_eq!(c_i64s.with_int64s_mut(|values| values.len()), 0);
 
@@ -1669,7 +1669,7 @@ fn go_test_resize() {
     for i in 0..1024i64 {
         col.append_int64(i);
     }
-    col.resize_int_64(1024, false);
+    col.resize_int64(1024, false);
     for i in 0..1024 {
         assert_eq!(col.with_int64s_mut(|values| values[i]), 0);
     }
@@ -1678,7 +1678,7 @@ fn go_test_resize() {
     for i in 0..1024i64 {
         col.append_float32(i as f32);
     }
-    col.resize_float_32(1024, false);
+    col.resize_float32(1024, false);
     for i in 0..1024 {
         assert_eq!(col.with_float32s_mut(|values| values[i]), 0.0);
     }
@@ -1687,7 +1687,7 @@ fn go_test_resize() {
     for i in 0..1024i64 {
         col.append_float64(i as f64);
     }
-    col.resize_float_64(1024, false);
+    col.resize_float64(1024, false);
     for i in 0..1024 {
         assert_eq!(col.with_float64s_mut(|values| values[i]), 0.0);
     }
@@ -1796,7 +1796,7 @@ fn go_test_vectorized_nulls() {
         let mut cols: Vec<Column> = Vec::with_capacity(4);
         for _ in 0..4 {
             let mut c = Column::new_column(&FieldType::new(FieldTypeCode::LongLong), 1024);
-            c.resize_int_64(1024, false);
+            c.resize_int64(1024, false);
             for j in 0..1024 {
                 if rng.intn10() < 5 {
                     c.set_null(j, true);
@@ -1845,17 +1845,17 @@ fn go_test_column_resize_int64() {
     col.append_uint64(11);
     col.append_uint64(11);
 
-    col.resize_int_64(4, false);
+    col.resize_int64(4, false);
     assert_eq!(col.null_bitmap, vec![0b1111]);
     col.append_uint64(11);
     assert_eq!(col.null_bitmap, vec![0b1111_1]);
     col.append_null();
     assert_eq!(col.null_bitmap, vec![0b0111_11]);
 
-    col.resize_uint_64(11, false);
+    col.resize_uint64(11, false);
     assert_eq!(col.null_bitmap, vec![0b1111_1111, 0b111]);
 
-    col.resize_uint_64(7, true);
+    col.resize_uint64(7, true);
     assert_eq!(col.null_bitmap, vec![0]);
 
     col.append_uint64(32);

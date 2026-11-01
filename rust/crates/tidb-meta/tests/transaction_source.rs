@@ -25,7 +25,7 @@ use tidb_ast::CiString;
 use tidb_meta::transaction::{
     default_group_meta_4_test, extract_schema_and_table_name_from_job,
     fast_unmarshal_table_name_info, iter_all_tables, is_job_match, get_oldest_schema_version,
-    split_range_int_64_max, table_info_must_load, unescape_name, unescape_name_bytes, AutoIdGroup,
+    split_range_int64_max, table_info_must_load, unescape_name, unescape_name_bytes, AutoIdGroup,
     DailyRuStats, DdlJobCodec, DdlTableVersion, GroupRuStats, MemoryTransaction, MetaSnapshotStore,
     MustLoadFilterAttr, Mutator, MutatorOption, MvccInfo, MvccReader, MvccWrite,
     NextGenBootTableVersion, RuConsumption, RuStats,
@@ -1353,14 +1353,14 @@ fn malformed_scalar_storage_returns_the_source_parse_error_class() {
 #[test]
 fn source_range_partial_json_and_filter_boundaries() {
     assert_eq!(
-        split_range_int_64_max(1),
+        split_range_int64_max(1),
         [("0".to_owned(), "9999999999999999999".to_owned())]
     );
-    let ranges = split_range_int_64_max(15);
+    let ranges = split_range_int64_max(15);
     assert_eq!(ranges.len(), 15);
     assert_eq!(ranges[0].0, "0");
     assert_eq!(ranges.last().unwrap().1.len(), 19);
-    assert!(std::panic::catch_unwind(|| split_range_int_64_max(0)).is_err());
+    assert!(std::panic::catch_unwind(|| split_range_int64_max(0)).is_err());
 
     let compact = br#"{"id":7,"name":{"O":"t","L":"t"}} trailing garbage"#;
     let table = fast_unmarshal_table_name_info(compact).unwrap();

@@ -738,7 +738,7 @@ impl BaseFuncDesc {
                 }
                 EvalType::Duration => wrap_cast::wrap_with_cast_as_duration(old)?,
                 EvalType::Json => wrap_cast::wrap_with_cast_as_json(old)?,
-                EvalType::VectorFloat32 => wrap_cast::wrap_with_cast_as_vector_float_32(old)?,
+                EvalType::VectorFloat32 => wrap_cast::wrap_with_cast_as_vector_float32(old)?,
             };
             // Go BuildCastFunction folds non-JSON casts with the live build
             // context. Preserve constants for buildLeadLag's default conversion.

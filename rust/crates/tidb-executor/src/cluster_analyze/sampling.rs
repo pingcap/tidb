@@ -317,7 +317,7 @@ fn analyze_handle_ranges(table: &TableInfo) -> tidb_ranger::types::Ranges {
         None => full_int_range(false),
     };
     if unsigned_pk.is_some() {
-        crate::split_ranges_across_int_64_boundary(ranges, false, false, false).0
+        crate::split_ranges_across_int64_boundary(ranges, false, false, false).0
     } else {
         ranges
     }

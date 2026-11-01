@@ -283,7 +283,7 @@ pub fn remove_dup_exprs(exprs: Vec<Expression>) -> Vec<Expression> {
 /// which this crate does not carry, so a parameter constant reports `None`
 /// (Go's own outcome when that call errors).
 #[must_use]
-pub fn get_uint_64_from_constant(expr: &Expression, ctx: &impl Columns) -> Option<(u64, bool)> {
+pub fn get_uint64_from_constant(expr: &Expression, ctx: &impl Columns) -> Option<(u64, bool)> {
     let Expression::Constant(constant) = expr else {
         return None;
     };

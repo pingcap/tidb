@@ -1926,7 +1926,7 @@ fn build_window(
                         .base
                         .args
                         .get(1)
-                        .and_then(|arg| tidb_expr::expr_util::get_uint_64_from_constant(arg, ctx))
+                        .and_then(|arg| tidb_expr::expr_util::get_uint64_from_constant(arg, ctx))
                         .ok_or(DriverError::from(
                             tidb_plannererrors::ERR_WRONG_ARGUMENTS
                                 .generate_with_stack_by_args(&["nth_value".into()]),
@@ -1945,7 +1945,7 @@ fn build_window(
                 let args = &descriptor.base.args;
                 let offset = match args.get(1) {
                     Some(arg) => {
-                        tidb_expr::expr_util::get_uint_64_from_constant(arg, ctx)
+                        tidb_expr::expr_util::get_uint64_from_constant(arg, ctx)
                             .filter(|(_, is_null)| !is_null)
                             .ok_or(DriverError::from(
                                 tidb_plannererrors::ERR_WRONG_ARGUMENTS
@@ -1987,7 +1987,7 @@ fn build_window(
                     .base
                     .args
                     .first()
-                    .and_then(|arg| tidb_expr::expr_util::get_uint_64_from_constant(arg, ctx))
+                    .and_then(|arg| tidb_expr::expr_util::get_uint64_from_constant(arg, ctx))
                     .ok_or(DriverError::from(
                         tidb_plannererrors::ERR_WRONG_ARGUMENTS
                             .generate_with_stack_by_args(&["ntile".into()]),

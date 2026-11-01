@@ -96,13 +96,13 @@ pub fn tidb_opt_int(opt: &str, default_val: i64) -> i64 {
 
 /// Go `TidbOptInt64`.
 #[must_use]
-pub fn tidb_opt_int_64(opt: &str, default_val: i64) -> i64 {
+pub fn tidb_opt_int64(opt: &str, default_val: i64) -> i64 {
     opt.parse::<i64>().unwrap_or(default_val)
 }
 
 /// Go `TidbOptUint64`.
 #[must_use]
-pub fn tidb_opt_uint_64(opt: &str, default_val: u64) -> u64 {
+pub fn tidb_opt_uint64(opt: &str, default_val: u64) -> u64 {
     opt.parse::<u64>().unwrap_or(default_val)
 }
 
@@ -348,10 +348,10 @@ mod tests {
         assert_eq!(tidb_opt_int("-1234", 5), -1234);
         assert_eq!(tidb_opt_int("bogus", 5), 5);
 
-        assert_eq!(tidb_opt_int_64("-9223372036854775808", 5), i64::MIN);
-        assert_eq!(tidb_opt_int_64("bogus", 5), 5);
-        assert_eq!(tidb_opt_uint_64("18446744073709551615", 5), u64::MAX);
-        assert_eq!(tidb_opt_uint_64("-1", 5), 5);
+        assert_eq!(tidb_opt_int64("-9223372036854775808", 5), i64::MIN);
+        assert_eq!(tidb_opt_int64("bogus", 5), 5);
+        assert_eq!(tidb_opt_uint64("18446744073709551615", 5), u64::MAX);
+        assert_eq!(tidb_opt_uint64("-1", 5), 5);
         assert!((tidb_opt_float64("1.5", 0.0) - 1.5).abs() < f64::EPSILON);
         assert!((tidb_opt_float64("bogus", 2.5) - 2.5).abs() < f64::EPSILON);
     }

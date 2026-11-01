@@ -141,7 +141,7 @@ fn selected_partition_ids(
                 .generate_with_stack_by_args(&[]),
         ));
     };
-    tidb_planner_rule::find_by_name(spec, partitions)
+    tidb_planner_rule::ids_for_selected_partitions(spec, partitions)
         .map(Some)
         .map_err(|partition| {
             DriverError::from(

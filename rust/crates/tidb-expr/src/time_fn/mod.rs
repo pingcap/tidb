@@ -487,7 +487,7 @@ fn format_time_only(secs: i64, nanos: u32, fsp: u32, round: bool) -> String {
 /// or `None` for NULL and for an argument `rejects` refuses, after
 /// `handleInvalidTimeError(ErrWrongValue(DateTimeStr, arg.String()))` has
 /// warned (or failed a strict statement).
-pub(crate) fn eval_time(
+pub(crate) fn checked_date_arg(
     value: &Datum,
     cols: &dyn Columns,
     rejects: impl FnOnce(tidb_datatype::Time) -> bool,
@@ -550,7 +550,7 @@ fn day_of_week(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
         return Err(EvalError::Unsupported("bad function arity"));
     };
     Ok(
-        eval_time(value, cols, tidb_datatype::Time::invalid_zero)?.map_or(
+        checked_date_arg(value, cols, tidb_datatype::Time::invalid_zero)?.map_or(
             Datum::Null,
             |time| {
                 let (year, month, day) = date_fields(time);
@@ -567,7 +567,7 @@ fn day_of_year(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
         return Err(EvalError::Unsupported("bad function arity"));
     };
     Ok(
-        eval_time(value, cols, tidb_datatype::Time::invalid_zero)?.map_or(
+        checked_date_arg(value, cols, tidb_datatype::Time::invalid_zero)?.map_or(
             Datum::Null,
             |time| {
                 let (year, month, day) = date_fields(time);
@@ -584,7 +584,7 @@ fn weekday(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
         return Err(EvalError::Unsupported("bad function arity"));
     };
     Ok(
-        eval_time(value, cols, zero_or_invalid_zero)?.map_or(Datum::Null, |time| {
+        checked_date_arg(value, cols, zero_or_invalid_zero)?.map_or(Datum::Null, |time| {
             let (year, month, day) = date_fields(time);
             Datum::Int((days_from_civil(year, month, day) + 3).rem_euclid(7))
         }),
@@ -622,7 +622,7 @@ fn week_of_year_builtin(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Eva
     let [value] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    let Some(date) = eval_time(value, cols, zero_or_invalid_zero)?.map(date_fields) else {
+    let Some(date) = checked_date_arg(value, cols, zero_or_invalid_zero)?.map(date_fields) else {
         return Ok(Datum::Null);
     };
     Ok(Datum::Int(week_of_year(date.0, date.1, date.2, 3, false).1))
@@ -725,7 +725,7 @@ pub(crate) fn week(
     if !(1..=2).contains(&vals.len()) {
         return Err(EvalError::Unsupported("bad function arity"));
     }
-    let Some(date) = eval_time(&vals[0], cols, zero_or_invalid_zero)?.map(date_fields)
+    let Some(date) = checked_date_arg(&vals[0], cols, zero_or_invalid_zero)?.map(date_fields)
     else {
         return Ok(Datum::Null);
     };
@@ -752,7 +752,7 @@ fn yearweek(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     } else {
         tidb_datatype::Time::invalid_zero
     };
-    let Some(date) = eval_time(&vals[0], cols, rejects)?.map(date_fields) else {
+    let Some(date) = checked_date_arg(&vals[0], cols, rejects)?.map(date_fields) else {
         return Ok(Datum::Null);
     };
     let mode = if vals.len() == 2 {
@@ -790,7 +790,7 @@ fn monthname(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
         return Err(EvalError::Unsupported("bad function arity"));
     };
     let no_zero_date = cols.date_modes().no_zero_date;
-    let time = eval_time(value, cols, |time| time.is_zero() && no_zero_date)?;
+    let time = checked_date_arg(value, cols, |time| time.is_zero() && no_zero_date)?;
     Ok(time
         .map(date_fields)
         .filter(|&(_, month, _)| month != 0)
@@ -814,7 +814,7 @@ fn dayname(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     let [value] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    let time = eval_time(value, cols, tidb_datatype::Time::invalid_zero)?;
+    let time = checked_date_arg(value, cols, tidb_datatype::Time::invalid_zero)?;
     Ok(time.map(date_fields).map_or(Datum::Null, |(y, m, d)| {
         Datum::new_string(DAYS[(days_from_civil(y, m, d) + 4).rem_euclid(7) as usize].to_string())
     }))
@@ -827,7 +827,7 @@ fn last_day(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
         return Err(EvalError::Unsupported("bad function arity"));
     };
     let no_zero_date = cols.date_modes().no_zero_date;
-    let time = eval_time(value, cols, |time| {
+    let time = checked_date_arg(value, cols, |time| {
         let core = time.core_time();
         core.month() == 0 || (core.day() == 0 && no_zero_date)
     })?;

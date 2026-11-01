@@ -308,7 +308,7 @@ fn flush_privileges_announces_the_reload_to_peers() {
     let mut session = Session::new();
     let announced = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counter = std::sync::Arc::clone(&announced);
-    session.check_password_reuse_policy(std::sync::Arc::new(move || {
+    session.set_privilege_change_notifier(std::sync::Arc::new(move || {
         counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }));
     session.run("FLUSH PRIVILEGES").unwrap();

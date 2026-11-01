@@ -253,7 +253,7 @@ pub fn load_cluster_catalog<S: MetaSnapshot>(
     let mut policies = Vec::new();
     for (_, stored) in snapshot.scan_prefix(&key::policies_kv_prefix())? {
         policies.push(
-            value::list_policies(&stored)
+            value::parse_policy_info(&stored)
                 .map_err(|error| ClusterCatalogError::Decode(format!("PolicyInfo: {error}")))?,
         );
     }

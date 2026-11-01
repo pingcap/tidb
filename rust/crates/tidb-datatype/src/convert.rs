@@ -1244,7 +1244,7 @@ pub(crate) fn json_to_decimal_reported(
         JSON_TYPE_CODE_UINT64 => (Decimal::from_uint(json.as_u64().unwrap()), None),
         JSON_TYPE_CODE_FLOAT64 => {
             let value = json.as_f64().unwrap();
-            let (decimal, error) = crate::MyDecimal::from_float_64(value);
+            let (decimal, error) = crate::MyDecimal::from_float64(value);
             (
                 Decimal::from_my_decimal(&decimal),
                 error.map(|error| {

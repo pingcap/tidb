@@ -495,7 +495,7 @@ pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
             warnings: Vec::new(),
         }));
     }
-    let job = append_to_sub_jobs(&catalog, schema, table, specs, job_context, store_count)?;
+    let job = build_multi_schema_job(&catalog, schema, table, specs, job_context, store_count)?;
     submit_built_job(
         snapshot,
         &catalog,
@@ -508,7 +508,7 @@ pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
 
 /// Go `appendToSubJobs` for each built job, then `multiSchemaChange`: the
 /// parent job, `checkMultiSchemaInfo` and `mergeAddIndex`.
-pub(super) fn append_to_sub_jobs(
+pub(super) fn build_multi_schema_job(
     catalog: &ClusterCatalog,
     schema: &str,
     table: &str,

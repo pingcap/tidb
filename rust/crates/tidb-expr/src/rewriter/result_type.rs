@@ -2358,7 +2358,7 @@ fn concat_flen(args: &[Expression], skip: usize) -> i64 {
 /// `None` means an argument carries no static type here, which is this tier's
 /// "I cannot name Go's signature", never a claim that Go would refuse the
 /// call.
-pub fn resolve_type_4_extremum(args: &[Expression]) -> Option<GlSignature> {
+pub fn gl_signature(args: &[Expression]) -> Option<GlSignature> {
     let typed: Vec<FieldType> = args
         .iter()
         .filter_map(|arg| arg.static_type().cloned())

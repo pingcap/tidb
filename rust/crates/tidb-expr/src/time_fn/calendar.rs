@@ -628,7 +628,7 @@ pub(crate) fn to_days(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalE
     let [value] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    let Some(time) = super::eval_time(value, cols, tidb_datatype::Time::invalid_zero)?
+    let Some(time) = super::checked_date_arg(value, cols, tidb_datatype::Time::invalid_zero)?
     else {
         return Ok(Datum::Null);
     };
@@ -653,7 +653,7 @@ pub(crate) fn to_seconds(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Ev
     let [value] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    let Some(time) = super::eval_time(value, cols, tidb_datatype::Time::invalid_zero)?
+    let Some(time) = super::checked_date_arg(value, cols, tidb_datatype::Time::invalid_zero)?
     else {
         return Ok(Datum::Null);
     };

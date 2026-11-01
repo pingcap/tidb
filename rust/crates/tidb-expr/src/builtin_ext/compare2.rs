@@ -94,7 +94,7 @@ pub enum GlCmpStringMode {
 
 /// Go's `resolveType4Extremum` answer for one GREATEST/LEAST call: which of
 /// the eight signatures `getFunction` built. Produced by
-/// `crate::rewriter::result_type::resolve_type_4_extremum`.
+/// `crate::rewriter::result_type::gl_signature`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GlSignature {
     /// Go `argTp` -- `aggregateType(args).EvalType()`, forced to
@@ -216,7 +216,7 @@ pub struct GlSignature {
 ///    a JSON one. The branch is unreachable; the faithful form is kept because
 ///    it is Go's, and because Go's ordering DOES decide whether
 ///    `unsupportedJSONComparison` warns.
-///  * DROP `resolve_type_4_extremum`'s requirement that EVERY argument be statically
+///  * DROP `gl_signature`'s requirement that EVERY argument be statically
 ///    typed, aggregating only the typed ones. No fixture reaches it because
 ///    the rewriter types every expression it hands to `eval_by_signature`
 ///    today -- but `ScalarFunction::ret_type` is an `Option`, so an inner

@@ -39,7 +39,7 @@ use tidb_infoschema::Catalog;
 use tidb_driver_error::DriverError;
 use tidb_mathutil::MysqlRng;
 pub use load_stats_arm::ClientLocalFileReader;
-use txn_mode::new_provider_with_request;
+use txn_mode::txn_mode_for_begin;
 use tidb_vardef::txn_mode::{SessionTxnMode, PESSIMISTIC_TXN_MODE};
 
 /// Go `approxParseSQLTokenCnt`: estimates the token count used to reserve
@@ -702,7 +702,7 @@ pub struct Session {
     stats_handle: Arc<tidb_stats_handle::StatsHandle>,
     /// The parser warnings of the statement now running, with where they
     /// start in [`Self::warnings`]; see
-    /// [`Self::handle_stmt`].
+    /// [`Self::move_parse_warnings_behind_execution`].
     pub(crate) parse_warnings: Option<(usize, Vec<SqlWarn>)>,
     /// Go `ExecStmt.OutputNames` of the statement's materialized query
     /// result, one per column; empty for any other result. With
@@ -2709,7 +2709,7 @@ impl Session {
     }
 
     fn finish_statement_state(&mut self, result: &Result<StatementCompletion, DriverError>) {
-        self.handle_stmt(result.is_ok());
+        self.move_parse_warnings_behind_execution(result.is_ok());
         // Go ExecStmt.FinishExecuteStmt clears MPPQueryInfo only at completion.
         // Retained readers are detached from the next statement's counters;
         // ordinary completion reuses the allocation. Retries never reset it.

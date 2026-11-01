@@ -27,7 +27,7 @@
 //! | `WrapWithCastAsTime` | 2817 | [`wrap_with_cast_as_time`] |
 //! | `WrapWithCastAsDuration` | 2853 | [`wrap_with_cast_as_duration`] |
 //! | `WrapWithCastAsJSON` | 2873 | [`wrap_with_cast_as_json`] |
-//! | `WrapWithCastAsVectorFloat32` | 2883 | [`wrap_with_cast_as_vector_float_32`] |
+//! | `WrapWithCastAsVectorFloat32` | 2883 | [`wrap_with_cast_as_vector_float32`] |
 //!
 //! This module claims NOTHING else in `builtin_cast.go`. When that file is
 //! ported as a unit these functions move there and this module becomes a
@@ -348,7 +348,7 @@ pub fn wrap_with_cast_as_json(expr: Expression) -> Result<Expression, EvalError>
 }
 
 /// Go `WrapWithCastAsVectorFloat32` (`builtin_cast.go:2883`).
-pub fn wrap_with_cast_as_vector_float_32(expr: Expression) -> Result<Expression, EvalError> {
+pub fn wrap_with_cast_as_vector_float32(expr: Expression) -> Result<Expression, EvalError> {
     if type_of(&expr).code() == FieldTypeCode::VectorFloat32 {
         return Ok(expr);
     }

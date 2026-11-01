@@ -1729,7 +1729,7 @@ fn load_policies<S: MetaSnapshot>(snapshot: &mut S) -> Result<SnapshotPolicies, 
     let mut policies = Vec::new();
     for (_, encoded) in snapshot.scan_prefix(&key::policies_kv_prefix())? {
         policies.push(
-            value::list_policies(&encoded)
+            value::parse_policy_info(&encoded)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
         );
     }
@@ -1769,7 +1769,7 @@ fn find_policy<S: MetaSnapshot>(
 ) -> Result<Option<tidb_model::PolicyInfo>, DdlPlanError> {
     let folded = CiString::new(name.to_owned());
     for (_, encoded) in snapshot.scan_prefix(&key::policies_kv_prefix())? {
-        let policy = value::list_policies(&encoded)
+        let policy = value::parse_policy_info(&encoded)
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
         if policy.name.lowercase() == folded.lowercase() {
             return Ok(Some(policy));

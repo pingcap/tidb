@@ -603,14 +603,14 @@ impl Datum {
     ) -> Result<Converted<Self>, DatumValueError> {
         use crate::MyDecimal;
         let parsed = match self {
-            Self::Real(value) => Some(MyDecimal::from_float_64(*value)),
-            Self::Float32(value) => Some(MyDecimal::from_float_64(f64::from(*value as f32))),
+            Self::Real(value) => Some(MyDecimal::from_float64(*value)),
+            Self::Float32(value) => Some(MyDecimal::from_float64(f64::from(*value as f32))),
             Self::String(value) => Some(MyDecimal::from_string(value.bytes())),
             Self::Bytes(value) => Some(MyDecimal::from_string(value)),
             // Datum.ConvertTo uses ToNumber (float64), unlike ToDecimal's
             // direct unsigned conversion used by other callers.
-            Self::Enum(value, _) => Some(MyDecimal::from_float_64(value.value() as f64)),
-            Self::Set(value, _) => Some(MyDecimal::from_float_64(value.value() as f64)),
+            Self::Enum(value, _) => Some(MyDecimal::from_float64(value.value() as f64)),
+            Self::Set(value, _) => Some(MyDecimal::from_float64(value.value() as f64)),
             _ => None,
         };
         let converted = if let Some((value, error)) = parsed {
