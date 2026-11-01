@@ -15,7 +15,7 @@
 //! Derivation consumes expression, range and statistics inputs only. Physical
 //! property convergence and task construction belong to `find_best_task`.
 
-use tidb_planner_util::path::{AccessPath, IndexMergePath, Partial, UnionIndexMergePath};
+use tidb_planner_util::path::{AccessPath, IndexMergePath, UnionIndexMergePath};
 use super::AccessPathDerivationContext;
 use tidb_planner_core_operator_logicalop::DataSource;
 use tidb_planner_core_base::PlanError;
@@ -114,7 +114,7 @@ fn prepare_union_index_merge_path_for_or(
         return Ok(None);
     }
 
-    let mut alternatives: Vec<Vec<Partial>> = Vec::with_capacity(disjuncts.len());
+    let mut alternatives: Vec<Vec<Vec<AccessPath>>> = Vec::with_capacity(disjuncts.len());
     for disjunct in &disjuncts {
         let mut branch = Vec::new();
         // Go walks `PossibleAccessPaths` in order, the table path first, and
@@ -195,11 +195,16 @@ fn prepare_union_index_merge_path_for_or(
                         ) {
                             result.remained_conds.clear();
                         }
-                        branch.push(Partial::Table {
-                            filled,
-                            rows,
-                            keep_source_filter,
-                        });
+                        branch.push(vec![AccessPath {
+                            filled_table: Some(filled),
+                            row_estimate: Some(tidb_stats::RowEstimate::new(rows, rows, rows)),
+                            keep_index_merge_or_source_filter: keep_source_filter,
+                            ..AccessPath::table_path(
+                                tidb_kv::store_type::StoreType::TiKv,
+                                primary.is_some(),
+                                primary.cloned(),
+                            )
+                        }]);
                     }
                 }
             }
@@ -228,18 +233,18 @@ fn prepare_union_index_merge_path_for_or(
                         unfinished.merge_and_item_into_unfinished_index_merge_path(item);
                     }
                 }
-                if let Some((paths, keep_source_filter)) = super::mv_index::build_mv_alternative(
+                if let Some((mut paths, keep_source_filter)) = super::mv_index::build_mv_alternative(
                     ds,
                     ctx,
                     source_index,
                     &unfinished,
                     use_plan_cache,
                 )? {
-                    branch.push(Partial::MvIndex {
-                        index: source_index.clone(),
-                        paths,
-                        keep_source_filter,
-                    });
+                    // Go sets only one of the paths' flag.
+                    if let Some(first) = paths.first_mut() {
+                        first.keep_index_merge_or_source_filter = keep_source_filter;
+                        branch.push(paths);
+                    }
                 }
                 continue;
             }
@@ -298,12 +303,12 @@ fn prepare_union_index_merge_path_for_or(
             }
             filled.count_after_index =
                 Some(rows * super::ordinary::filter_selectivity(ds, &filled.index_filters, ctx));
-            branch.push(Partial::Index {
-                index: source_index.clone(),
-                filled,
-                rows,
-                keep_source_filter,
-            });
+            branch.push(vec![AccessPath {
+                filled: Some(filled),
+                row_estimate: Some(tidb_stats::RowEstimate::new(rows, rows, rows)),
+                keep_index_merge_or_source_filter: keep_source_filter,
+                ..AccessPath::index_path(source_index.clone())
+            }]);
         }
         if branch.is_empty() {
             return Ok(None);
@@ -316,13 +321,13 @@ fn prepare_union_index_merge_path_for_or(
     // adds nothing over that object's own path.
     let mut possible_ids = std::collections::BTreeSet::new();
     let mut contain_mv_path = false;
-    for partial in alternatives.iter().flatten() {
-        match partial {
-            Partial::Index { index, .. } | Partial::MvIndex { index, .. } => {
+    for path in alternatives.iter().flatten().flatten() {
+        match path.index_info() {
+            Some(index) => {
                 possible_ids.insert(index.read().id);
                 contain_mv_path |= index.read().mv_index;
             }
-            Partial::Table { .. } => {
+            None => {
                 possible_ids.insert(-1);
             }
         }
@@ -336,6 +341,7 @@ fn prepare_union_index_merge_path_for_or(
         .map(|branch| {
             branch
                 .iter()
+                .map(Vec::as_slice)
                 .min_by(|left, right| compare_alternatives(left, right, false))
                 .expect("nonempty branch")
         })
@@ -353,50 +359,43 @@ fn prepare_union_index_merge_path_for_or(
 
 pub(crate) fn estimate_union_access(
     ds: &DataSource,
-    selected: &[&Partial],
+    selected: &[&[AccessPath]],
     ctx: &AccessPathDerivationContext<'_>,
 ) -> f64 {
     // Go `estimateCountAfterAccessForIndexMergeOR`: with an MV partial the
     // decided paths unite by `CalcTotalSelectivityForMVIdxPath`.
-    if selected
-        .iter()
-        .any(|partial| matches!(partial, Partial::MvIndex { .. }))
-    {
-        let rows = selected.iter().flat_map(|partial| match partial {
-            Partial::Index { rows, .. } | Partial::Table { rows, .. } => vec![*rows],
-            Partial::MvIndex { paths, .. } => paths.iter().map(|path| path.count_after_access().unwrap_or(0.0)).collect(),
-        });
+    let paths = || selected.iter().flat_map(|alternative| alternative.iter());
+    if selected.iter().any(|alternative| is_mv_alternative(alternative)) {
+        let rows = paths().map(|path| path.count_after_access().unwrap_or(0.0));
         return ds.table_stats.as_ref().map_or(0.0, |stats| stats.row_count())
             * super::mv_index::union_selectivity(ds, rows);
     }
-    let mut total_rows = selected
-        .iter()
-        .map(|partial| match partial {
-            Partial::Index { rows, .. } | Partial::Table { rows, .. } => *rows,
-            Partial::MvIndex { paths, .. } => paths.iter().map(|path| path.count_after_access().unwrap_or(0.0)).sum(),
-        })
+    let mut total_rows = paths()
+        .map(|path| path.count_after_access().unwrap_or(0.0))
         .sum::<f64>();
     let access_branches = selected
         .iter()
-        .map(|partial| match partial {
-            Partial::Index { filled, .. } => {
+        .map(|alternative| {
+            let first = &alternative[0];
+            if is_mv_alternative(alternative) {
+                tidb_expr::simple_expr::compose_dnf_condition(
+                    alternative
+                        .iter()
+                        .filter_map(|path| {
+                            tidb_expr::simple_expr::compose_cnf_condition(
+                                path.filled_index_path().detached.access_conds.clone(),
+                            )
+                        })
+                        .collect(),
+                )
+            } else if let Some(filled) = &first.filled_table {
+                tidb_expr::simple_expr::compose_cnf_condition(filled.detached.access_conds.clone())
+            } else {
+                let filled = first.filled_index_path();
                 let mut conditions = filled.detached.access_conds.clone();
                 conditions.extend(filled.index_filters.iter().cloned());
                 tidb_expr::simple_expr::compose_cnf_condition(conditions)
             }
-            Partial::Table { filled, .. } => {
-                tidb_expr::simple_expr::compose_cnf_condition(filled.detached.access_conds.clone())
-            }
-            Partial::MvIndex { paths, .. } => tidb_expr::simple_expr::compose_dnf_condition(
-                paths
-                    .iter()
-                    .filter_map(|path| {
-                        tidb_expr::simple_expr::compose_cnf_condition(
-                            path.filled_index_path().detached.access_conds.clone(),
-                        )
-                    })
-                    .collect(),
-            ),
         })
         .collect::<Option<Vec<_>>>();
     if let Some(stats) = &ds.table_stats {
@@ -503,60 +502,65 @@ fn collect_unfinished_filters(
 
 // Go cmpAlternatives prefers empty/unique-point alternatives before row
 // count. Physical convergence additionally prefers global indexes on ties.
+/// Go: an OR-branch alternative over a multi-valued index -- one partial
+/// path per value (`Index.MVIndex`).
+pub(crate) fn is_mv_alternative(alternative: &[AccessPath]) -> bool {
+    alternative
+        .first()
+        .and_then(AccessPath::index_info)
+        .is_some_and(|index| index.read().mv_index)
+}
+
 pub(crate) fn compare_alternatives(
-    left: &Partial,
-    right: &Partial,
+    left: &[AccessPath],
+    right: &[AccessPath],
     physical: bool,
 ) -> std::cmp::Ordering {
-    let attributes = |partial: &Partial| {
-        let (point, rows, global) = match partial {
-            Partial::Index {
-                index,
-                filled,
-                rows,
-                ..
-            } => {
-                let ranges = &filled.detached.ranges;
-                let point = ranges.is_empty()
+    let attributes = |alternative: &[AccessPath]| {
+        let first = &alternative[0];
+        let (point, rows, global) = if let Some(filled) = &first.filled_table {
+            (
+                filled.detached.ranges.iter().all(|range| range.is_point_nullable()),
+                first.count_after_access().unwrap_or(0.0),
+                false,
+            )
+        } else if is_mv_alternative(alternative) {
+            // Go cmpAlternatives: every path must be empty or unique-point,
+            // and a multi-path alternative compares by its largest count.
+            let index = first.index_info().expect("an MV alternative reads its index");
+            let point = alternative.iter().all(|path| {
+                let ranges = &path.filled_index_path().detached.ranges;
+                ranges.is_empty()
                     || (index.read().unique
                         && ranges.iter().all(|range| {
                             range.is_point_non_nullable()
                                 && range.high_val.len() == index.read().columns.len()
-                        }));
-                (point, filled.count_after_index.unwrap_or(*rows), index.read().global)
-            }
-            Partial::Table { filled, rows, .. } => (
-                filled.detached.ranges.iter().all(|range| range.is_point_nullable()),
-                *rows,
-                false,
-            ),
-            // Go cmpAlternatives: every path must be empty or unique-point,
-            // and a multi-path alternative compares by its largest count.
-            Partial::MvIndex {
-                index, paths, ..
-            } => {
-                let point = paths.iter().all(|path| {
-                    let ranges = &path.filled_index_path().detached.ranges;
-                    ranges.is_empty()
-                        || (index.read().unique
-                            && ranges.iter().all(|range| {
-                                range.is_point_non_nullable()
-                                    && range.high_val.len() == index.read().columns.len()
-                            }))
-                });
-                let rows = paths
-                    .iter()
-                    .map(|path| {
-                        let filled = path.filled_index_path();
-                        if filled.index_filters.is_empty() {
-                            path.count_after_access().unwrap_or(0.0)
-                        } else {
-                            filled.count_after_index.unwrap_or(0.0)
-                        }
-                    })
-                    .fold(0.0, f64::max);
-                (point, rows, index.read().global)
-            }
+                        }))
+            });
+            let rows = alternative
+                .iter()
+                .map(|path| {
+                    let filled = path.filled_index_path();
+                    if filled.index_filters.is_empty() {
+                        path.count_after_access().unwrap_or(0.0)
+                    } else {
+                        filled.count_after_index.unwrap_or(0.0)
+                    }
+                })
+                .fold(0.0, f64::max);
+            (point, rows, index.read().global)
+        } else {
+            let index = first.index_info().expect("an index alternative reads its index");
+            let filled = first.filled_index_path();
+            let ranges = &filled.detached.ranges;
+            let point = ranges.is_empty()
+                || (index.read().unique
+                    && ranges.iter().all(|range| {
+                        range.is_point_non_nullable()
+                            && range.high_val.len() == index.read().columns.len()
+                    }));
+            let rows = first.count_after_access().unwrap_or(0.0);
+            (point, filled.count_after_index.unwrap_or(rows), index.read().global)
         };
         (point, rows, global)
     };

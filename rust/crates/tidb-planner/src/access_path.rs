@@ -227,12 +227,7 @@ pub(crate) fn derive_access_paths(
                             path.alternatives
                                 .iter()
                                 .flatten()
-                                .any(|partial| match partial {
-                                    tidb_planner_util::path::Partial::MvIndex { paths, .. } => {
-                                        !paths.is_empty()
-                                    }
-                                    _ => false,
-                                })
+                                .any(|alternative| index_merge::is_mv_alternative(alternative))
                         }
                         _ => false,
                     };

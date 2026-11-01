@@ -4938,14 +4938,9 @@ fn pruning_info_message(
                     PreparedMerge::Union(path) => path
                         .partials()
                         .iter()
-                        .map(|partial| match partial {
-                            tidb_planner_util::path::Partial::Index { index, .. }
-                            | tidb_planner_util::path::Partial::MvIndex {
-                                index, ..
-                            } => index_name(index),
-                            tidb_planner_util::path::Partial::Table { .. } => {
-                                table.to_owned()
-                            }
+                        .map(|partial| match partial[0].index_info() {
+                            Some(index) => index_name(index),
+                            None => table.to_owned(),
                         })
                         .collect(),
                     PreparedMerge::IndexMerge(path) => path

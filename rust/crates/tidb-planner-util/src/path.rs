@@ -95,7 +95,9 @@ pub struct AccessPath {
     pub index_lookup_push_down_by: IndexLookUpPushDownByType,
     /// Go `NoncacheableReason`: why a plan reading this path may not enter
     /// the plan cache.
-    pub noncacheable_reason: Option<String>,
+    pub noncacheable_reason: Option<String>,    /// Go `KeepIndexMergeORSourceFilter`: an OR-branch alternative holding
+    /// this path still needs the source OR filter above the merge.
+    pub keep_index_merge_or_source_filter: bool,
 }
 
 impl AccessPath {
@@ -264,46 +266,13 @@ pub struct FilledTablePath {
     pub correlated_access_count: usize,
 }
 
-/// One viable partial access for a single disjunct.
-#[derive(Clone, Debug)]
-pub enum Partial {
-    /// A secondary-index range scan; rows are (index cols..., handle...).
-    Index {
-        /// Go `path.Index`.
-        index: tidb_model::GoShared<tidb_model::IndexInfo>,
-        /// The filled ranges and filters.
-        filled: FilledIndexPath,
-        /// Go `CountAfterAccess`.
-        rows: f64,
-        /// Whether the disjunct must still be applied above the merge.
-        keep_source_filter: bool,
-    },
-    /// A table-handle alternative retaining residuals until schema narrowing.
-    Table {
-        /// The filled handle ranges.
-        filled: FilledTablePath,
-        /// Go `CountAfterAccess`.
-        rows: f64,
-        /// Whether the disjunct must still be applied above the merge.
-        keep_source_filter: bool,
-    },
-    /// Go's MV alternative (`buildIntoAccessPath`'s MV arm): one partial path
-    /// per value over a multi-valued index, whose handles unite.
-    MvIndex {
-        /// Go `path.Index`, the multi-valued index.
-        index: tidb_model::GoShared<tidb_model::IndexInfo>,
-        /// One partial path per value.
-        paths: Vec<AccessPath>,
-        /// Whether the disjunct must still be applied above the merge.
-        keep_source_filter: bool,
-    },
-}
-
 /// Logical access ranges and counts, prepared before physical path costing.
 #[derive(Clone, Debug)]
 pub struct UnionIndexMergePath {
-    /// Per disjunct, the partial accesses it may take.
-    pub alternatives: Vec<Vec<Partial>>,
+    /// Go `PartialAlternativeIndexPaths`: per OR branch, its alternatives,
+    /// each a list of partial paths -- one table or index path, or one path
+    /// per value over a multi-valued index.
+    pub alternatives: Vec<Vec<Vec<AccessPath>>>,
     /// Go `CountAfterAccess`.
     pub count_after_access: f64,
     /// The OR condition the merge was built from.

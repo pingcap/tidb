@@ -124,9 +124,11 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
   - [x] 3a (2026-11-02): a finished merge's partials are `AccessPath`s (Go
     `PartialIndexPaths`); `IndexMergePartial` is gone. Go's per-path
     `NoncacheableReason` replaces `DataSource.partial_index_noncacheable_ids`.
-  - [ ] 3b: the union alternatives are Go's `PartialAlternativeIndexPaths`
-    (`[][][]*AccessPath`, one list of paths per alternative, with
-    `KeepIndexMergeORSourceFilter` on a path); the `Partial` enum goes.
+  - [x] 3b (2026-11-02): the union alternatives are Go's
+    `PartialAlternativeIndexPaths` (`[][][]*AccessPath`: a table or index
+    alternative is one path, a multi-valued one a path per value, and
+    `KeepIndexMergeORSourceFilter` sits on the first path); the `Partial`
+    enum is gone.
   - [ ] 3c: `UnionIndexMergePath` / `IndexMergePath` become `AccessPath`s and
     `DerivedAccessPath(s)` a plain path list.
 - [ ] 4. Consumers moved.

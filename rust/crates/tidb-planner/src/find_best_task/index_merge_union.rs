@@ -15,7 +15,8 @@
 
 use crate::access_path::index_merge::compare_alternatives;
 
-use tidb_planner_util::path::{Partial, UnionIndexMergePath};
+use tidb_planner_util::path::{AccessPath, UnionIndexMergePath};
+use crate::access_path::index_merge::is_mv_alternative;
 use crate::find_best_task::dispatch::DispatchContext;
 use tidb_planner_core_operator_logicalop::DataSource;
 use tidb_planner_core_operator_physicalop::PhysicalPlan;
@@ -49,7 +50,7 @@ pub fn build_union_index_merge_task(
 /// path is ordered outright).
 fn partial_matches_order(
     ds: &DataSource,
-    partial: &Partial,
+    partial: &[AccessPath],
     items: &[tidb_planner_property::SortItem],
 ) -> Option<Vec<usize>> {
     let first = items.first()?;
@@ -65,50 +66,51 @@ fn partial_matches_order(
     let allow_groups = |detached: &tidb_ranger::detacher::DetachRangeResult| {
         !tidb_expr::expr_util::predicates::contain_correlated_column(&detached.access_conds)
     };
-    match partial {
+    let lead = &partial[0];
+    if is_mv_alternative(partial) {
         // Go `isMatchPropForIndexMerge`: every MV partial path must match,
         // its equality on the array value fixing that key position.
-        Partial::MvIndex {
-            index, paths, ..
-        } => paths
+        let index = lead.index_info().expect("an MV alternative reads its index");
+        return partial
             .iter()
             .all(|path| {
                 index_partial_matches_order(ds, index, path.filled_index_path(), items, false)
                     .is_some()
             })
-            .then(Vec::new),
+            .then(Vec::new);
+    }
+    if let Some(filled) = &lead.filled_table {
         // Go `matchProperty` over a table path: the integer handle alone, or
         // a clustered common handle's key columns (its `IdxCols`) after the
         // prefix its ranges pin.
-        Partial::Table { .. } if ds.handle_is_int => (items.len() == 1
-            && ds
-                .handle_cols
-                .first()
-                .is_some_and(|column| column.unique_id == first.col.unique_id))
-        .then(Vec::new),
-        Partial::Table { filled, .. } => {
-            if !ds.is_common_handle
-                || ds.tikv_table_path().is_some_and(|path| path.force_no_keep_order)
-            {
-                return None;
-            }
-            key_columns_match_order(
-                &filled.common_columns,
-                &filled.detached.ranges,
-                items,
-                allow_groups(&filled.detached),
-            )
+        if ds.handle_is_int {
+            return (items.len() == 1
+                && ds
+                    .handle_cols
+                    .first()
+                    .is_some_and(|column| column.unique_id == first.col.unique_id))
+            .then(Vec::new);
         }
-        Partial::Index {
-            index, filled, ..
-        } => index_partial_matches_order(
-            ds,
-            index,
-            filled,
+        if !ds.is_common_handle
+            || ds.tikv_table_path().is_some_and(|path| path.force_no_keep_order)
+        {
+            return None;
+        }
+        return key_columns_match_order(
+            &filled.common_columns,
+            &filled.detached.ranges,
             items,
             allow_groups(&filled.detached),
-        ),
+        );
     }
+    let filled = lead.filled_index_path();
+    index_partial_matches_order(
+        ds,
+        lead.index_info().expect("an index alternative reads its index"),
+        filled,
+        items,
+        allow_groups(&filled.detached),
+    )
 }
 
 /// Go `isMatchProp` over one index partial path: the sort columns follow
@@ -225,6 +227,7 @@ pub(super) fn converge_union_index_merge_path<'a>(
     for branch in &path.alternatives {
         let matched = branch
             .iter()
+            .map(Vec::as_slice)
             .filter_map(|partial| {
                 partial_matches_order(ds, partial, sort_items).map(|groups| (partial, groups))
             })
@@ -243,6 +246,7 @@ pub(super) fn converge_union_index_merge_path<'a>(
             (
                 branch
                     .iter()
+                    .map(Vec::as_slice)
                     .min_by(|left, right| compare_alternatives(left, right, true))
                     .expect("prepared branches are nonempty"),
                 PhysicalPropMatchResult::NotMatched,
@@ -259,12 +263,7 @@ pub(super) fn converge_union_index_merge_path<'a>(
         &partials,
         &ctx.access_path_derivation_context(),
     );
-    let index_id = |partial: &Partial| match partial {
-        Partial::Index { index, .. } | Partial::MvIndex { index, .. } => {
-            index.read().id
-        }
-        Partial::Table { .. } => -1,
-    };
+    let index_id = |partial: &[AccessPath]| partial[0].index_info().map_or(-1, |index| index.read().id);
     if ds.index_merge_hints.is_empty()
         && partials.first().is_some_and(|first| {
             partials
@@ -284,26 +283,27 @@ pub(super) fn converge_union_index_merge_path<'a>(
             ) {
                 return true;
             }
-            !partials.iter().all(|partial| match partial {
-                Partial::Index {
-                    index, filled, ..
-                } => {
-                    tidb_planner_core_operator_logicalop::data_source::index_covers_condition(
-                        ds,
-                        index,
-                        filter,
-                        ctx.opt_prefix_index_single_scan,
-                    ) && !filled.table_filters.iter().any(|condition| {
-                        condition.canonical_hash_code() == filter.canonical_hash_code()
-                    }) && filled.detached.access_conds.iter().any(|condition| {
-                        condition.canonical_hash_code() == filter.canonical_hash_code()
-                    })
-                }
+            !partials.iter().all(|partial| {
                 // Go `indexMergePartialPathCoversFilter`: "Be conservative: only
                 // remove a filter when a normal index partial path carries the
                 // exact predicate in AccessConds. Filters handled by table/MV
                 // paths ... still need the global Selection."
-                Partial::MvIndex { .. } | Partial::Table { .. } => false,
+                let lead = &partial[0];
+                if lead.filled_table.is_some() || is_mv_alternative(partial) {
+                    return false;
+                }
+                let index = lead.index_info().expect("an index alternative reads its index");
+                let filled = lead.filled_index_path();
+                tidb_planner_core_operator_logicalop::data_source::index_covers_condition(
+                    ds,
+                    index,
+                    filter,
+                    ctx.opt_prefix_index_single_scan,
+                ) && !filled.table_filters.iter().any(|condition| {
+                    condition.canonical_hash_code() == filter.canonical_hash_code()
+                }) && filled.detached.access_conds.iter().any(|condition| {
+                    condition.canonical_hash_code() == filter.canonical_hash_code()
+                })
             })
         })
         .cloned()
@@ -311,21 +311,11 @@ pub(super) fn converge_union_index_merge_path<'a>(
     if tidb_expr::expr_util::maybe_over_optimized_4_plan_cache(
         path.use_plan_cache,
         std::slice::from_ref(&path.source_filter),
-    ) || partials.iter().any(|partial| {
-        matches!(
-            partial,
-            Partial::Index {
-                keep_source_filter: true,
-                ..
-            } | Partial::Table {
-                keep_source_filter: true,
-                ..
-            } | Partial::MvIndex {
-                keep_source_filter: true,
-                ..
-            }
-        )
-    }) {
+    ) || partials
+        .iter()
+        .flat_map(|partial| partial.iter())
+        .any(|path| path.keep_index_merge_or_source_filter)
+    {
         table_filters.push(path.source_filter.clone());
     }
     Some(ConvergedUnionPath {
@@ -357,13 +347,13 @@ pub(super) fn converge_union_index_merge_path<'a>(
 
 impl<'a> ConvergedUnionPath<'a> {
     /// The converged partial accesses, in OR-list order.
-    pub(super) fn partials(&self) -> &[&'a Partial] {
+    pub(super) fn partials(&self) -> &[&'a [AccessPath]] {
         &self.partials
     }
 }
 
 pub(super) struct ConvergedUnionPath<'a> {
-    partials: Vec<&'a Partial>,
+    partials: Vec<&'a [AccessPath]>,
     partial_matches: Vec<tidb_planner_property::PhysicalPropMatchResult>,
     /// Go `GroupByColIdxs` of each partial path, empty when it is ordered
     /// outright or unordered.
@@ -456,173 +446,168 @@ pub(super) fn build_converged_union_index_merge_task(
         .zip(partial_matches)
         .zip(partial_groups)
     {
-        match partial {
-            Partial::Index {
-                index,
-                filled,
-                rows,
-                ..
-            } => {
-                let scan_rows =
-                    partial_rows(*rows, matched.matched(), false, !filled.index_filters.is_empty());
+        let lead = &partial[0];
+        if let Some(filled) = &lead.filled_table {
+            let rows = &lead.count_after_access().unwrap_or(0.0);
+            let detached = &filled.detached;
+            let ranges = &detached.ranges;
+            let mut schema_columns = partial_handle_columns(ds, ctx)?;
+            // Go `convertToPartialTableScan`: the partition id rides
+            // along an ordered partial of a dynamically pruned table.
+            if matched.matched() && keeps_phys_tbl_id(ds) {
+                super::dispatch::add_extra_phys_tbl_id_column(&mut schema_columns, ctx);
+            }
+            // Go PhysicalTableScan.TP: IsFullScan holds for no ranges too.
+            let unsigned_int_handle = ds.pk_is_handle && filled.handle_type.is_unsigned();
+            let scan_kind = if ranges
+                .iter()
+                .all(|range| range.is_full_range(unsigned_int_handle))
+            {
+                tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Full
+            } else {
+                tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Range
+            };
+            let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
+                ctx.allocator,
+                scan_kind.plan_type(),
+                ds.base.base.query_block_offset(),
+            );
+            base.base.set_stats(Some(merge_scan_stats(
+                ds,
+                partial_rows(
+                    *rows,
+                    matched.matched(),
+                    true,
+                    !detached.remained_conds.is_empty(),
+                ),
+                ctx,
+            )));
+            base.base
+                .set_schema(Some(tidb_expr::schema::Schema::new(schema_columns)));
+            partial_plans_raw.push(PhysicalPlan::TableScan(
+                tidb_planner_core_operator_physicalop::PhysicalTableScan {
+                    by_items: Vec::new(),
+                    group_by_col_idxs: groups.clone(),
+                    base,
+                    table_id: ds.physical_table_id,
+                    table_as_name: ds.table_as_name.clone(),
+                    dynamic_partition_access: ds.dynamic_partition_access.clone(),
+                    cost_columns: ds.table_columns.clone(),
+                    store_type: tidb_kv::store_type::StoreType::TiKv,
+                    keep_order: matched.matched(),
+                    desc,
+                    ranges: ranges.clone(),
+                    range_rebuild: partial_table_range_rebuild(ds, filled),
+                    table_scan_penalty: ds.table_scan_penalty,
+                    tikv_pushdown: None,
+                    db_name: ds.db_name.clone(),
+                    table_name: ds.table_name.clone(),
+                    handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
+                    is_temporary: ds.is_temporary,
+                    prop: None,
+                    plan_part_info: None,
+                    filter_condition: Vec::new(),
+                    resolved_descriptor: Some(
+                        tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
+                            ds.physical_table_id,
+                            !ds.common_handle_cols.is_empty(),
+                            scan_kind,
+                            tidb_planner_core_operator_logicalop::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
+                        ),
+                    ),
+                },
+            ));
+            let scan = partial_plans_raw
+                .pop()
+                .expect("partial scan was just built");
+            // Go convertToPartialTableScan removes residuals referring
+            // to columns lost when the partial schema becomes handles.
+            let filters = detached
+                .remained_conds
+                .iter()
+                .filter(|condition| {
+                    tidb_expr::simple_expr::extract_columns(condition)
+                        .iter()
+                        .all(|column| {
+                            scan.schema().is_some_and(|schema| {
+                                schema
+                                    .columns
+                                    .iter()
+                                    .any(|handle| handle.unique_id == column.unique_id)
+                            })
+                        })
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if filters.is_empty() {
+                partial_plans_raw.push(scan);
+            } else {
+                let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
+                    ctx.allocator,
+                    "Selection",
+                    ds.base.base.query_block_offset(),
+                );
+                base.base.set_schema(scan.schema().cloned());
+                let ratio = crate::access_path::ordinary::filter_selectivity(
+                    ds,
+                    &filters,
+                    &ctx.access_path_derivation_context(),
+                );
+                base.base.set_stats(
+                    scan.stats_info()
+                        .map(|stats| stats.scale(ratio, ctx.skew_ratio)),
+                );
+                base.set_children(vec![scan]);
+                partial_plans_raw.push(PhysicalPlan::Selection(
+                    tidb_planner_core_operator_physicalop::PhysicalSelection {
+                        base,
+                        conditions: filters,
+                        from_data_source: true,
+                    },
+                ));
+            }
+        } else if is_mv_alternative(partial) {
+            // Go builds one partial scan per path of the MV alternative.
+            let index = lead.index_info().expect("an MV alternative reads its index");
+            for path in partial {
+                let filled = path.filled_index_path();
+                let scan_rows = partial_rows(
+                    path.count_after_access().unwrap_or(0.0),
+                    matched.matched(),
+                    false,
+                    !filled.index_filters.is_empty(),
+                );
                 partial_remaining.extend(push_index_partial(
                     ds,
                     ctx,
                     index,
                     filled,
-                    *rows,
+                    path.count_after_access().unwrap_or(0.0),
                     scan_rows,
                     matched.matched(),
                     desc,
-                    groups,
+                    &[],
                     &mut partial_plans_raw,
                 )?);
             }
-            // Go builds one partial scan per path of the MV alternative.
-            Partial::MvIndex {
-                index, paths, ..
-            } => {
-                for path in paths {
-                    let filled = path.filled_index_path();
-                    let scan_rows = partial_rows(
-                        path.count_after_access().unwrap_or(0.0),
-                        matched.matched(),
-                        false,
-                        !filled.index_filters.is_empty(),
-                    );
-                    partial_remaining.extend(push_index_partial(
-                        ds,
-                        ctx,
-                        index,
-                        filled,
-                        path.count_after_access().unwrap_or(0.0),
-                        scan_rows,
-                        matched.matched(),
-                        desc,
-                        &[],
-                        &mut partial_plans_raw,
-                    )?);
-                }
-            }
-            Partial::Table { filled, rows, .. } => {
-                let detached = &filled.detached;
-                let ranges = &detached.ranges;
-                let mut schema_columns = partial_handle_columns(ds, ctx)?;
-                // Go `convertToPartialTableScan`: the partition id rides
-                // along an ordered partial of a dynamically pruned table.
-                if matched.matched() && keeps_phys_tbl_id(ds) {
-                    super::dispatch::add_extra_phys_tbl_id_column(&mut schema_columns, ctx);
-                }
-                // Go PhysicalTableScan.TP: IsFullScan holds for no ranges too.
-                let unsigned_int_handle = ds.pk_is_handle && filled.handle_type.is_unsigned();
-                let scan_kind = if ranges
-                    .iter()
-                    .all(|range| range.is_full_range(unsigned_int_handle))
-                {
-                    tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Full
-                } else {
-                    tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Range
-                };
-                let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
-                    ctx.allocator,
-                    scan_kind.plan_type(),
-                    ds.base.base.query_block_offset(),
-                );
-                base.base.set_stats(Some(merge_scan_stats(
-                    ds,
-                    partial_rows(
-                        *rows,
-                        matched.matched(),
-                        true,
-                        !detached.remained_conds.is_empty(),
-                    ),
-                    ctx,
-                )));
-                base.base
-                    .set_schema(Some(tidb_expr::schema::Schema::new(schema_columns)));
-                partial_plans_raw.push(PhysicalPlan::TableScan(
-                    tidb_planner_core_operator_physicalop::PhysicalTableScan {
-                        by_items: Vec::new(),
-                        group_by_col_idxs: groups.clone(),
-                        base,
-                        table_id: ds.physical_table_id,
-                        table_as_name: ds.table_as_name.clone(),
-                        dynamic_partition_access: ds.dynamic_partition_access.clone(),
-                        cost_columns: ds.table_columns.clone(),
-                        store_type: tidb_kv::store_type::StoreType::TiKv,
-                        keep_order: matched.matched(),
-                        desc,
-                        ranges: ranges.clone(),
-                        range_rebuild: partial_table_range_rebuild(ds, filled),
-                        table_scan_penalty: ds.table_scan_penalty,
-                        tikv_pushdown: None,
-                        db_name: ds.db_name.clone(),
-                        table_name: ds.table_name.clone(),
-                        handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
-                        is_temporary: ds.is_temporary,
-                        prop: None,
-                        plan_part_info: None,
-                        filter_condition: Vec::new(),
-                        resolved_descriptor: Some(
-                            tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
-                                ds.physical_table_id,
-                                !ds.common_handle_cols.is_empty(),
-                                scan_kind,
-                                tidb_planner_core_operator_logicalop::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
-                            ),
-                        ),
-                    },
-                ));
-                let scan = partial_plans_raw
-                    .pop()
-                    .expect("partial scan was just built");
-                // Go convertToPartialTableScan removes residuals referring
-                // to columns lost when the partial schema becomes handles.
-                let filters = detached
-                    .remained_conds
-                    .iter()
-                    .filter(|condition| {
-                        tidb_expr::simple_expr::extract_columns(condition)
-                            .iter()
-                            .all(|column| {
-                                scan.schema().is_some_and(|schema| {
-                                    schema
-                                        .columns
-                                        .iter()
-                                        .any(|handle| handle.unique_id == column.unique_id)
-                                })
-                            })
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>();
-                if filters.is_empty() {
-                    partial_plans_raw.push(scan);
-                } else {
-                    let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
-                        ctx.allocator,
-                        "Selection",
-                        ds.base.base.query_block_offset(),
-                    );
-                    base.base.set_schema(scan.schema().cloned());
-                    let ratio = crate::access_path::ordinary::filter_selectivity(
-                        ds,
-                        &filters,
-                        &ctx.access_path_derivation_context(),
-                    );
-                    base.base.set_stats(
-                        scan.stats_info()
-                            .map(|stats| stats.scale(ratio, ctx.skew_ratio)),
-                    );
-                    base.set_children(vec![scan]);
-                    partial_plans_raw.push(PhysicalPlan::Selection(
-                        tidb_planner_core_operator_physicalop::PhysicalSelection {
-                            base,
-                            conditions: filters,
-                            from_data_source: true,
-                        },
-                    ));
-                }
-            }
+        } else {
+            let index = lead.index_info().expect("an index alternative reads its index");
+            let filled = lead.filled_index_path();
+            let rows = &lead.count_after_access().unwrap_or(0.0);
+            let scan_rows =
+                partial_rows(*rows, matched.matched(), false, !filled.index_filters.is_empty());
+            partial_remaining.extend(push_index_partial(
+                ds,
+                ctx,
+                index,
+                filled,
+                *rows,
+                scan_rows,
+                matched.matched(),
+                desc,
+                groups,
+                &mut partial_plans_raw,
+            )?);
         }
     }
 
