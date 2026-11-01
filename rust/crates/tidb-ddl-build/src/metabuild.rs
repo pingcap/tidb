@@ -153,7 +153,7 @@ impl crate::session_context::DdlSessionContext for StmtContext {
         index: &str,
         if_exists: bool,
     ) -> Result<(), tidb_terror::MysqlError> {
-        StmtContext::drop_hypo_index(self, schema, table, index, if_exists)
+        StmtContext::drop_hypo_index_from_ctx(self, schema, table, index, if_exists)
     }
 
     fn append_sql_warn(&self, warning: tidb_context::SqlWarn) {

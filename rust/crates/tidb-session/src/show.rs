@@ -250,7 +250,7 @@ impl tidb_executor::show::exec::ShowExec for Session {
     }
 
     fn show_session_states_rows(&self) -> Result<Vec<Vec<Datum>>, DriverError> {
-        Session::show_session_states_rows(self)
+        Session::fetch_show_session_states(self)
     }
 
     fn cluster_config_table_rows(

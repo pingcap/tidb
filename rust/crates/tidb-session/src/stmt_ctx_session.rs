@@ -387,7 +387,7 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
     }
 
     fn view_definer_privilege_check(&self) -> Option<tidb_sessionctx::ViewDefinerPrivilegeCheck> {
-        Session::view_definer_privilege_check(self)
+        Session::request_verification_with_user(self)
     }
 
     fn sys_warning_count(&self) -> usize {

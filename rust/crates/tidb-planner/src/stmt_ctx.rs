@@ -170,7 +170,7 @@ impl crate::optimize::OptimizeContext for StmtContext {
         StmtContext::allow_derive_topn(self)
     }
     fn logical_rule_disabled(&self, name: &str) -> bool {
-        StmtContext::logical_rule_disabled(self, name)
+        StmtContext::is_logical_rule_disabled(self, name)
     }
     fn opt_index_prune_threshold(&self) -> i32 {
         StmtContext::opt_index_prune_threshold(self)

@@ -487,6 +487,9 @@ rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem
 [workspace.lints.rust]
 unsafe_code = "forbid"        # Phase 0 is safe Rust end-to-end.
 missing_docs = "warn"
+# A rename that moves an inherent method out from under a `Type::m(self)`
+# trait delegation compiles into infinite recursion; make that an error.
+unconditional_recursion = "deny"
 
 [workspace.lints.clippy]
 all = "warn"
