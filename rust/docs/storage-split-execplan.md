@@ -160,6 +160,19 @@ CARGO_INCREMENTAL=0`.
   index_entries_for_check}`. Catalog callers lend the table's own store
   through `with_own_store` until Milestone 4.
 - [ ] Milestone 4a: temporary tables through the transaction (design above).
+  - [x] (2026-11-02, eea56309e09) Go `TemporaryTableData` ported to
+    `tidb_variable::temporary_table_data`; Go
+    `TemporaryTableSnapshotInterceptor` ported to
+    `tidb_temptable::interceptor` as a `ClusterSnapshot` wrapper, with Go's
+    `interceptor_test.go` cases (a limited scan is drained batch by batch
+    and must equal the unlimited one).
+  - [ ] Session: hold `TemporaryTableData`; wrap the transaction snapshot in
+    the interceptor when the infoschema has temporary tables.
+  - [ ] Temporary-table writes go through the session store; commit copies
+    local temporary keys into `TemporaryTableData` and filters every
+    temporary key out of 2PC; readers of temporary tables never go remote.
+  - [ ] Delete `TemporaryTableOverlay`, `TemporaryTableTxnData`,
+    `swap_temporary_txn_data`.
 - [ ] Milestone 4: the `store` field is gone.
 - [ ] Milestone 5: one `InfoSchema` per schema version, shared by sessions.
 - [ ] Milestone 6: `ClusterCatalog` is gone.
