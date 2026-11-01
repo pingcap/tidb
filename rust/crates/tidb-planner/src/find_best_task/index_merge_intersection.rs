@@ -28,15 +28,15 @@ use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 /// remain as a Selection on the final table lookup.
 pub(super) fn build_prepared_index_merge_task(
     ds: &DataSource,
-    path: &tidb_planner_util::path::IndexMergePath,
+    path: &tidb_planner_util::path::AccessPath,
     ctx: &DispatchContext<'_>,
 ) -> Result<Task, PlanError> {
-    let partials = &path.partials;
+    let partials = &path.partial_index_paths;
     let mut partial_plans_raw = Vec::with_capacity(partials.len());
     // Go `globalRemainingFilters`: each partial's unpushable conditions, in
     // partial order, ahead of the table lookup's own.
     let mut partial_remaining = Vec::new();
-    let output_rows = path.count_after_access;
+    let output_rows = path.count_after_access().unwrap_or(0.0);
     for partial in partials {
         let source_index = partial.index_info().expect("an index merge partial reads an index");
         let filled = partial
@@ -197,8 +197,8 @@ pub(super) fn build_prepared_index_merge_task(
         phys_plan_part_info: Some(tidb_planner_core_operator_physicalop::PhysPlanPartInfo::from_data_source(ds)),
         table_plan: Some(Box::new(table_plan)),
         idx_merge_part_plans: partial_plans_raw,
-        idx_merge_is_intersection: path.is_intersection,
-        idx_merge_access_mv_index: path.access_mv_index,
+        idx_merge_is_intersection: path.index_merge_is_intersection,
+        idx_merge_access_mv_index: path.index_merge_access_mv_index,
         index_plan_finished,
         stats_context: ctx.task_stats_context(ds, &root_task_conds),
         root_task_conds,

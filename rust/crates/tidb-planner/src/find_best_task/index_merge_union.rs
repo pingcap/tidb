@@ -15,7 +15,7 @@
 
 use crate::access_path::index_merge::compare_alternatives;
 
-use tidb_planner_util::path::{AccessPath, UnionIndexMergePath};
+use tidb_planner_util::path::AccessPath;
 use crate::access_path::index_merge::is_mv_alternative;
 use crate::find_best_task::dispatch::DispatchContext;
 use tidb_planner_core_operator_logicalop::DataSource;
@@ -193,7 +193,7 @@ fn key_columns_match_order(
 #[cfg(test)]
 pub(super) fn build_prepared_union_index_merge_task(
     ds: &DataSource,
-    path: &UnionIndexMergePath,
+    path: &AccessPath,
     prop: &tidb_planner_property::PhysicalProperty,
     ctx: &DispatchContext<'_>,
 ) -> Result<Task, PlanError> {
@@ -205,7 +205,7 @@ pub(super) fn build_prepared_union_index_merge_task(
 
 pub(super) fn converge_union_index_merge_path<'a>(
     ds: &DataSource,
-    path: &'a UnionIndexMergePath,
+    path: &'a AccessPath,
     prop: &tidb_planner_property::PhysicalProperty,
     ctx: &DispatchContext<'_>,
 ) -> Option<ConvergedUnionPath<'a>> {
@@ -221,10 +221,14 @@ pub(super) fn converge_union_index_merge_path<'a>(
     } else {
         &prop.sort_items
     };
-    let mut partials = Vec::with_capacity(path.alternatives.len());
-    let mut partial_matches = Vec::with_capacity(path.alternatives.len());
-    let mut partial_groups = Vec::with_capacity(path.alternatives.len());
-    for branch in &path.alternatives {
+    let source_filter = path
+        .index_merge_or_source_filter
+        .as_ref()
+        .expect("a union index merge keeps its source OR filter");
+    let mut partials = Vec::with_capacity(path.partial_alternative_index_paths.len());
+    let mut partial_matches = Vec::with_capacity(path.partial_alternative_index_paths.len());
+    let mut partial_groups = Vec::with_capacity(path.partial_alternative_index_paths.len());
+    for branch in &path.partial_alternative_index_paths {
         let matched = branch
             .iter()
             .map(Vec::as_slice)
@@ -278,7 +282,7 @@ pub(super) fn converge_union_index_merge_path<'a>(
         .iter()
         .filter(|filter| {
             if tidb_expr::expr_util::maybe_over_optimized_4_plan_cache(
-                path.use_plan_cache,
+                ctx.use_plan_cache,
                 std::slice::from_ref(*filter),
             ) {
                 return true;
@@ -309,14 +313,14 @@ pub(super) fn converge_union_index_merge_path<'a>(
         .cloned()
         .collect::<Vec<_>>();
     if tidb_expr::expr_util::maybe_over_optimized_4_plan_cache(
-        path.use_plan_cache,
-        std::slice::from_ref(&path.source_filter),
+        ctx.use_plan_cache,
+        std::slice::from_ref(source_filter),
     ) || partials
         .iter()
         .flat_map(|partial| partial.iter())
         .any(|path| path.keep_index_merge_or_source_filter)
     {
-        table_filters.push(path.source_filter.clone());
+        table_filters.push(source_filter.clone());
     }
     Some(ConvergedUnionPath {
         partials,
@@ -1250,10 +1254,10 @@ mod tests {
         let alternatives = prepare_union_index_merge_path(&choices, &derivation)
             .unwrap()
             .unwrap();
-        assert!(alternatives.count_after_access >= 0.0);
-        assert_eq!(alternatives.alternatives.len(), 2);
+        assert!(alternatives.count_after_access().unwrap() >= 0.0);
+        assert_eq!(alternatives.partial_alternative_index_paths.len(), 2);
         assert!(alternatives
-            .alternatives
+            .partial_alternative_index_paths
             .iter()
             .all(|branch| branch.len() == 2));
         assert_eq!(allocator.current(), plan_id_before);
@@ -1315,7 +1319,10 @@ mod tests {
         multiple_or.all_conds = multiple_or.pushed_down_conds.clone();
         let candidates = crate::access_path::index_merge::prepare_union_index_merge_paths(&multiple_or, &derivation, false).unwrap();
         assert_eq!(candidates.len(), 2, "each top-level OR retains its own candidate");
-        assert_ne!(candidates[0].source_filter.canonical_hash_code(), candidates[1].source_filter.canonical_hash_code());
+        assert_ne!(
+            candidates[0].index_merge_or_source_filter.as_ref().unwrap().canonical_hash_code(),
+            candidates[1].index_merge_or_source_filter.as_ref().unwrap().canonical_hash_code()
+        );
         let advisory = tidb_planner_property::PhysicalProperty {
             advisory_sort_items: vec![tidb_planner_property::SortItem::new(b.unique_id, false)],
             ..Default::default()
@@ -1345,7 +1352,7 @@ mod tests {
                 .is_some_and(|paths| paths
                     .paths
                     .iter()
-                    .all(|path| matches!(path, tidb_planner_util::path::DerivedAccessPath::Union(_)))
+                    .all(|path| !path.partial_alternative_index_paths.is_empty())
                     && !paths.paths.is_empty()),
             "logical derivation must retain hinted merge alternatives even with cached row statistics"
         );
@@ -1404,9 +1411,8 @@ mod tests {
         assert_eq!(allocator.current(), before_convergence,
             "merge convergence must finish before physical allocation");
         let retained = &derived_source.derived_access_paths.as_ref().unwrap().paths;
-        let tidb_planner_util::path::DerivedAccessPath::Union(retained_union) = &retained[0] else {
-            unreachable!()
-        };
+        let retained_union = &retained[0];
+        assert!(!retained_union.partial_alternative_index_paths.is_empty());
         for property in [
             &advisory,
             &tidb_planner_property::PhysicalProperty::default(),
@@ -1440,7 +1446,7 @@ mod tests {
         }
         assert!(
             retained_union
-                .alternatives
+                .partial_alternative_index_paths
                 .iter()
                 .all(|branch| branch.len() == 2),
             "physical convergence must not destroy another property's alternatives"
@@ -1489,11 +1495,9 @@ mod tests {
             .unwrap()
             .paths
             .retain(|path| {
-                matches!(
-                    path,
-                    tidb_planner_util::path::DerivedAccessPath::Ordinary(path)
-                        if path.index_info().is_some_and(|index| index.ptr_eq(&first_index))
-                )
+                path.partial_alternative_index_paths.is_empty()
+                    && path.partial_index_paths.is_empty()
+                    && path.index_info().is_some_and(|index| index.ptr_eq(&first_index))
             });
         let before_survivor = allocator.current();
         let mut survivor_context = DispatchContext::new(&allocator, &coster, 1.0)

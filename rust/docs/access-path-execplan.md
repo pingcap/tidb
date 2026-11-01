@@ -129,8 +129,17 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
     alternative is one path, a multi-valued one a path per value, and
     `KeepIndexMergeORSourceFilter` sits on the first path); the `Partial`
     enum is gone.
-  - [ ] 3c: `UnionIndexMergePath` / `IndexMergePath` become `AccessPath`s and
-    `DerivedAccessPath(s)` a plain path list.
+  - [x] 3c (2026-11-02): union and finished merges are `AccessPath`s with
+    Go's `PartialAlternativeIndexPaths` / `PartialIndexPaths`,
+    `IndexMergeORSourceFilter`, `TableFilters`, `IndexMergeIsIntersection`
+    and `IndexMergeAccessMVIndex`; `UnionIndexMergePath`, `IndexMergePath`
+    and the `DerivedAccessPath` enum are gone. The union's plan-cache check
+    reads the statement flag at physical time (Go `UseCache()`), not a copy.
+- [ ] 3d. `DerivedAccessPaths` (paths + min selectivity + max merge count)
+  dissolves into Go's `DataSource.PossibleAccessPaths` /
+  `AllPossibleAccessPaths` / `AccessPathMinSelectivity`; today
+  `enumerated_paths` and `derived_access_paths.paths` are two lists where Go
+  mutates one.
 - [ ] 4. Consumers moved.
 - [ ] 5. Old types deleted.
 

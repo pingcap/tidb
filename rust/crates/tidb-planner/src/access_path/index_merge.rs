@@ -15,7 +15,7 @@
 //! Derivation consumes expression, range and statistics inputs only. Physical
 //! property convergence and task construction belong to `find_best_task`.
 
-use tidb_planner_util::path::{AccessPath, IndexMergePath, UnionIndexMergePath};
+use tidb_planner_util::path::AccessPath;
 use super::AccessPathDerivationContext;
 use tidb_planner_core_operator_logicalop::DataSource;
 use tidb_planner_core_base::PlanError;
@@ -64,7 +64,7 @@ pub(crate) fn enumerated_indexes(
 pub(crate) fn prepare_union_index_merge_path(
     ds: &DataSource,
     ctx: &AccessPathDerivationContext<'_>,
-) -> Result<Option<UnionIndexMergePath>, PlanError> {
+) -> Result<Option<AccessPath>, PlanError> {
     prepare_union_index_merge_path_for_or(ds, ctx, 0, false)
 }
 
@@ -72,7 +72,7 @@ pub(crate) fn prepare_union_index_merge_paths(
     ds: &DataSource,
     ctx: &AccessPathDerivationContext<'_>,
     use_plan_cache: bool,
-) -> Result<Vec<UnionIndexMergePath>, PlanError> {
+) -> Result<Vec<AccessPath>, PlanError> {
     // Go `generateORIndexMerge` reads `indexMergeConds` = `AllConds`, so an
     // OR list that cannot be pushed (`json_overlaps(...) or ...`) still builds
     // an IndexMerge, the list itself staying in the Selection above.
@@ -92,7 +92,7 @@ fn prepare_union_index_merge_path_for_or(
     ctx: &AccessPathDerivationContext<'_>,
     or_position: usize,
     use_plan_cache: bool,
-) -> Result<Option<UnionIndexMergePath>, PlanError> {
+) -> Result<Option<AccessPath>, PlanError> {
     if ds.is_local_temporary {
         return Ok(None);
     }
@@ -348,12 +348,12 @@ fn prepare_union_index_merge_path_for_or(
         .collect::<Vec<_>>();
     let total_rows = estimate_union_access(ds, &selected, ctx);
 
-    Ok(Some(UnionIndexMergePath {
-        alternatives,
-        count_after_access: total_rows,
-        source_filter: ds.all_conds[or_position].clone(),
+    Ok(Some(AccessPath {
+        partial_alternative_index_paths: alternatives,
+        row_estimate: Some(tidb_stats::RowEstimate::new(total_rows, total_rows, total_rows)),
+        index_merge_or_source_filter: Some(ds.all_conds[or_position].clone()),
         table_filters,
-        use_plan_cache,
+        ..AccessPath::default()
     }))
 }
 
@@ -646,7 +646,7 @@ pub(crate) fn generate_normal_index_partial_path_4_and(
     used_access: &mut std::collections::HashMap<Vec<u8>, Expression>,
 ) -> Vec<AccessPath> {
     generate_and_index_merge_for_normal_index(ds, ctx, false, used_access)
-        .map(|path| path.partials)
+        .map(|path| path.partial_index_paths)
         .unwrap_or_default()
 }
 
@@ -658,7 +658,7 @@ pub(crate) fn generate_and_index_merge_4_normal_index(
     ds: &DataSource,
     ctx: &AccessPathDerivationContext<'_>,
     use_plan_cache: bool,
-) -> Result<Option<IndexMergePath>, PlanError> {
+) -> Result<Option<AccessPath>, PlanError> {
     Ok(generate_and_index_merge_for_normal_index(
         ds,
         ctx,
@@ -672,7 +672,7 @@ fn generate_and_index_merge_for_normal_index(
     ctx: &AccessPathDerivationContext<'_>,
     use_plan_cache: bool,
     used_access: &mut std::collections::HashMap<Vec<u8>, Expression>,
-) -> Option<IndexMergePath> {
+) -> Option<AccessPath> {
     use std::collections::HashSet;
     if ds.is_local_temporary
         || !ds
@@ -772,12 +772,15 @@ fn generate_and_index_merge_for_normal_index(
         .as_ref()
         .map_or(0.0, |stats| stats.row_count())
         * super::ordinary::filter_selectivity(ds, &partial_filters, ctx);
-    Some(IndexMergePath {
-        partials,
-        count_after_access,
+    Some(AccessPath {
+        partial_index_paths: partials,
+        row_estimate: Some(tidb_stats::RowEstimate::new(
+            count_after_access,
+            count_after_access,
+            count_after_access,
+        )),
         table_filters: final_filters,
-        is_intersection: true,
-        access_mv_index: false,
-        noncacheable_reason: None,
+        index_merge_is_intersection: true,
+        ..AccessPath::default()
     })
 }

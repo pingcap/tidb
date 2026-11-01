@@ -293,7 +293,7 @@ fn range_scan_flags(
 
 pub(super) enum PreparedMerge<'a> {
     Union(super::index_merge_union::ConvergedUnionPath<'a>),
-    IndexMerge(&'a tidb_planner_util::path::IndexMergePath),
+    IndexMerge(&'a AccessPath),
 }
 
 pub(super) struct PreparedDataSourcePaths<'a> {
@@ -324,27 +324,23 @@ pub(super) fn prepare_access_paths<'a>(
     {
         if let Some(paths) = &ds.derived_access_paths {
             for (position, path) in paths.paths.iter().enumerate() {
-                match path {
-                    tidb_planner_util::path::DerivedAccessPath::Union(path) => {
-                        if let Some(path) =
-                            super::index_merge_union::converge_union_index_merge_path(
-                                ds, path, prop, ctx,
-                            )
-                        {
-                            merges.push(PreparedMerge::Union(path));
-                            merge_positions.push(position);
-                        }
+                if !path.partial_alternative_index_paths.is_empty() {
+                    if let Some(path) =
+                        super::index_merge_union::converge_union_index_merge_path(
+                            ds, path, prop, ctx,
+                        )
+                    {
+                        merges.push(PreparedMerge::Union(path));
+                        merge_positions.push(position);
                     }
+                } else if !path.partial_index_paths.is_empty() {
                     // Go `isMatchPropForIndexMerge` refuses an order to an
                     // intersection; a finished union keeps no order here
                     // either, since its partials scan single element values.
-                    tidb_planner_util::path::DerivedAccessPath::IndexMerge(path) => {
-                        if prop.is_sort_item_empty() {
-                            merges.push(PreparedMerge::IndexMerge(path));
-                            merge_positions.push(position);
-                        }
+                    if prop.is_sort_item_empty() {
+                        merges.push(PreparedMerge::IndexMerge(path));
+                        merge_positions.push(position);
                     }
-                    tidb_planner_util::path::DerivedAccessPath::Ordinary(_) => {}
                 }
             }
         }

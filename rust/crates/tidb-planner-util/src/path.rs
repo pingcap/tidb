@@ -21,25 +21,12 @@
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 
-/// Candidate identities and merge alternatives retained after logical derivation.
-/// Ordinary index identities refer to the datasource's filled index states.
-#[derive(Clone, Debug)]
-pub enum DerivedAccessPath {
-    /// An ordinary table/index candidate from the logical pruning boundary.
-    Ordinary(AccessPath),
-    /// OR alternatives converge only when physical properties are known.
-    Union(UnionIndexMergePath),
-    /// A finished index merge (Go `PartialIndexPaths`): the hinted normal
-    /// intersection and the multi-valued index paths, whose residual
-    /// predicates attach on the table side.
-    IndexMerge(IndexMergePath),
-}
-
 /// Go's post-derivation PossibleAccessPaths and their shared minimum selectivity.
 #[derive(Clone, Debug)]
 pub struct DerivedAccessPaths {
-    /// Ordinary and merge candidates compete through one retained collection.
-    pub paths: Vec<DerivedAccessPath>,
+    /// Ordinary and index-merge paths compete through one retained
+    /// collection (Go `PossibleAccessPaths` after `generateIndexMergePath`).
+    pub paths: Vec<AccessPath>,
     /// Includes merge estimates before ordered-index expected-count adjustment.
     pub min_selectivity: f64,
     /// Go `generateIndexMergePath`'s `maxRowCount`: the largest index-merge
@@ -52,8 +39,7 @@ pub struct DerivedAccessPaths {
 /// Go `util.AccessPath`: one candidate way of reading a `DataSource`, born
 /// at enumeration (`getPossibleAccessPaths`) with its store, index and handle
 /// kind, and grown in place by plan building and statistics derivation.
-/// (The index-merge paths still live in [`DerivedAccessPaths`]; see
-/// `docs/access-path-execplan.md`.)
+/// Index-merge paths are `AccessPath`s too, with partial paths.
 #[derive(Clone, Debug, Default)]
 pub struct AccessPath {
     /// Go `Index`: the index the path reads, or a common-handle table path's
@@ -97,7 +83,23 @@ pub struct AccessPath {
     /// the plan cache.
     pub noncacheable_reason: Option<String>,    /// Go `KeepIndexMergeORSourceFilter`: an OR-branch alternative holding
     /// this path still needs the source OR filter above the merge.
-    pub keep_index_merge_or_source_filter: bool,
+    pub keep_index_merge_or_source_filter: bool,    /// Go `PartialIndexPaths`: a finished index merge's partial paths -- the
+    /// hinted normal intersection and the multi-valued index paths.
+    pub partial_index_paths: Vec<AccessPath>,
+    /// Go `PartialAlternativeIndexPaths`: a union index merge's OR branches,
+    /// their alternatives, each a list of partial paths -- one table or
+    /// index path, or one path per value over a multi-valued index. They
+    /// converge only when physical properties are known.
+    pub partial_alternative_index_paths: Vec<Vec<Vec<AccessPath>>>,
+    /// Go `IndexMergeORSourceFilter`: the OR condition a union merge was
+    /// built from.
+    pub index_merge_or_source_filter: Option<Expression>,
+    /// Go `TableFilters` of an index-merge path.
+    pub table_filters: Vec<Expression>,
+    /// Go `IndexMergeIsIntersection`.
+    pub index_merge_is_intersection: bool,
+    /// Go `IndexMergeAccessMVIndex`.
+    pub index_merge_access_mv_index: bool,
 }
 
 impl AccessPath {
@@ -266,42 +268,7 @@ pub struct FilledTablePath {
     pub correlated_access_count: usize,
 }
 
-/// Logical access ranges and counts, prepared before physical path costing.
-#[derive(Clone, Debug)]
-pub struct UnionIndexMergePath {
-    /// Go `PartialAlternativeIndexPaths`: per OR branch, its alternatives,
-    /// each a list of partial paths -- one table or index path, or one path
-    /// per value over a multi-valued index.
-    pub alternatives: Vec<Vec<Vec<AccessPath>>>,
-    /// Go `CountAfterAccess`.
-    pub count_after_access: f64,
-    /// The OR condition the merge was built from.
-    pub source_filter: Expression,
-    /// Go `TableFilters`.
-    pub table_filters: Vec<Expression>,
-    /// Whether the path may enter the plan cache.
-    pub use_plan_cache: bool,
-}
 
-/// Go's finished index-merge `AccessPath` (`PartialIndexPaths` set): the
-/// partials are fixed at logical derivation, unlike the OR alternatives of
-/// [`UnionIndexMergePath`] that converge only under physical properties.
-#[derive(Clone, Debug)]
-pub struct IndexMergePath {
-    /// Go `PartialIndexPaths`.
-    pub partials: Vec<AccessPath>,
-    /// Go `CountAfterAccess`.
-    pub count_after_access: f64,
-    /// Go `TableFilters`.
-    pub table_filters: Vec<Expression>,
-    /// Go `IndexMergeIsIntersection`.
-    pub is_intersection: bool,
-    /// Go `IndexMergeAccessMVIndex`.
-    pub access_mv_index: bool,
-    /// Go `NoncacheableReason`/`SetSkipPlanCache` for a path whose ranges
-    /// depend on parameter values.
-    pub noncacheable_reason: Option<String>,
-}
 
 /// Go `getPossibleAccessPaths`' hint-filtering result.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

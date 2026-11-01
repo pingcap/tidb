@@ -33,7 +33,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::index_merge::{enumerated_indexes, estimate_partial_index_ranges, is_in_index_merge_hints};
 
-use tidb_planner_util::path::{AccessPath, IndexMergePath};
+use tidb_planner_util::path::AccessPath;
 use super::AccessPathDerivationContext;
 use tidb_planner_core_operator_logicalop::DataSource;
 use tidb_planner_core_base::PlanError;
@@ -573,17 +573,22 @@ fn build_partial_path_up_for_mv_index(
     is_intersection: bool,
     table_filters: Vec<Expression>,
     noncacheable_reason: Option<String>,
-) -> IndexMergePath {
+) -> AccessPath {
     let realtime_count = ds.table_stats.as_ref().map_or(0.0, |stats| stats.row_count());
     let count_after_access =
         realtime_count * calc_total_selectivity_for_mv_idx_path(ds, &partials, is_intersection);
-    IndexMergePath {
-        partials,
-        count_after_access,
+    AccessPath {
+        partial_index_paths: partials,
+        row_estimate: Some(tidb_stats::RowEstimate::new(
+            count_after_access,
+            count_after_access,
+            count_after_access,
+        )),
         table_filters,
-        is_intersection,
-        access_mv_index: true,
+        index_merge_is_intersection: is_intersection,
+        index_merge_access_mv_index: true,
         noncacheable_reason,
+        ..AccessPath::default()
     }
 }
 
@@ -627,7 +632,7 @@ pub(crate) fn generate_and_index_merge_4_mv_index(
     ctx: &AccessPathDerivationContext<'_>,
     filters: &[Expression],
     use_plan_cache: bool,
-) -> Result<Vec<IndexMergePath>, PlanError> {
+) -> Result<Vec<AccessPath>, PlanError> {
     let mut paths = Vec::new();
     for index in possible_mv_indexes(ds) {
         let Some(idx_cols) = prepare_idx_cols_and_unwrap_array_type(ds, index, true)
@@ -773,7 +778,7 @@ pub(crate) fn generate_and_index_merge_4_composed_index(
     ctx: &AccessPathDerivationContext<'_>,
     filters: &[Expression],
     use_plan_cache: bool,
-) -> Result<Option<IndexMergePath>, PlanError> {
+) -> Result<Option<AccessPath>, PlanError> {
     if filters.is_empty() || ds.enumerated_paths.len() <= 1 {
         return Ok(None);
     }
@@ -834,7 +839,7 @@ pub(crate) fn generate_and_index_merge_4_composed_index(
 /// IndexMerge path, every path not reading it is dropped.
 pub(crate) fn clean_access_path_for_mv_index_hint(
     ds: &DataSource,
-    paths: &mut Vec<tidb_planner_util::path::DerivedAccessPath>,
+    paths: &mut Vec<AccessPath>,
 ) {
     let forced: std::collections::BTreeSet<i64> = ds
         .enumerated_paths
@@ -847,12 +852,10 @@ pub(crate) fn clean_access_path_for_mv_index_hint(
     if forced.is_empty() {
         return;
     }
-    let reads_forced = |path: &tidb_planner_util::path::DerivedAccessPath| match path {
-        tidb_planner_util::path::DerivedAccessPath::IndexMerge(path) => path
-            .partials
+    let reads_forced = |path: &AccessPath| {
+        path.partial_index_paths
             .iter()
-            .any(|partial| partial.index.as_ref().is_some_and(|index| forced.contains(&index.read().id))),
-        _ => false,
+            .any(|partial| partial.index.as_ref().is_some_and(|index| forced.contains(&index.read().id)))
     };
     if paths.iter().any(reads_forced) {
         paths.retain(reads_forced);

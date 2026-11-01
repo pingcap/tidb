@@ -3040,9 +3040,9 @@ fn find_best_task_4_logical_data_source_paths(
             paths
                 .paths
                 .iter()
-                .filter_map(|path| match path {
-                    tidb_planner_util::path::DerivedAccessPath::Ordinary(path) => Some(path),
-                    _ => None,
+                .filter(|path| {
+                    path.partial_index_paths.is_empty()
+                        && path.partial_alternative_index_paths.is_empty()
                 })
                 .collect()
         },
@@ -4904,7 +4904,7 @@ fn pruning_info_message(
     merge_positions: &[usize],
     prop: &PhysicalProperty,
 ) -> Option<String> {
-    use tidb_planner_util::path::{DerivedAccessPath, AccessPath};
+    use tidb_planner_util::path::AccessPath;
     use super::candidate_preparation::PreparedMerge;
     if ordinary.len() + merges.len() == derived.paths.len() {
         return None;
@@ -4920,37 +4920,34 @@ fn pruning_info_message(
     };
     let mut names = Vec::new();
     for (position, path) in derived.paths.iter().enumerate() {
-        match path {
-            DerivedAccessPath::Ordinary(path) => {
-                if ordinary.iter().any(|kept| std::ptr::eq(*kept, path)) {
-                    names.push(path_name(path));
-                }
+        if path.partial_index_paths.is_empty() && path.partial_alternative_index_paths.is_empty() {
+            if ordinary.iter().any(|kept| std::ptr::eq(*kept, path)) {
+                names.push(path_name(path));
             }
-            DerivedAccessPath::Union(_) | DerivedAccessPath::IndexMerge(_) => {
-                let Some(merge) = merge_positions
+        } else {
+            let Some(merge) = merge_positions
+                .iter()
+                .position(|merge_position| *merge_position == position)
+                .and_then(|merge| merges.get(merge))
+            else {
+                continue;
+            };
+            let partials: Vec<String> = match merge {
+                PreparedMerge::Union(path) => path
+                    .partials()
                     .iter()
-                    .position(|merge_position| *merge_position == position)
-                    .and_then(|merge| merges.get(merge))
-                else {
-                    continue;
-                };
-                let partials: Vec<String> = match merge {
-                    PreparedMerge::Union(path) => path
-                        .partials()
-                        .iter()
-                        .map(|partial| match partial[0].index_info() {
-                            Some(index) => index_name(index),
-                            None => table.to_owned(),
-                        })
-                        .collect(),
-                    PreparedMerge::IndexMerge(path) => path
-                        .partials
-                        .iter()
-                        .map(|partial| index_name(partial.index_info().expect("an index merge partial reads an index")))
-                        .collect(),
-                };
-                names.push(format!("IndexMerge{{{}}}", partials.join(",")));
-            }
+                    .map(|partial| match partial[0].index_info() {
+                        Some(index) => index_name(index),
+                        None => table.to_owned(),
+                    })
+                    .collect(),
+                PreparedMerge::IndexMerge(path) => path
+                    .partial_index_paths
+                    .iter()
+                    .map(|partial| index_name(partial.index_info().expect("an index merge partial reads an index")))
+                    .collect(),
+            };
+            names.push(format!("IndexMerge{{{}}}", partials.join(",")));
         }
     }
     // Go prints the DataSource's own column, which carries the original name.

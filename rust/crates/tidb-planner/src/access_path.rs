@@ -19,7 +19,7 @@
 //! generic Rust candidate cannot silently become an index scan.
 
 use tidb_planner_util::path::ResolvedIndexPaths;
-use tidb_planner_util::path::{DerivedAccessPath, DerivedAccessPaths, IndexLookUpPushDownByType, AccessPath};
+use tidb_planner_util::path::{DerivedAccessPaths, IndexLookUpPushDownByType, AccessPath};
 use tidb_sessionctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
 
 pub(crate) mod index_merge;
@@ -120,7 +120,6 @@ pub(crate) fn derive_access_paths(
         .enumerated_paths
         .iter()
         .cloned()
-        .map(DerivedAccessPath::Ordinary)
         .collect::<Vec<_>>();
     let mut min_selectivity = source
         .table_stats
@@ -175,14 +174,12 @@ pub(crate) fn derive_access_paths(
             );
         }
         let mut merges = Vec::new();
-        for path in index_merge::prepare_union_index_merge_paths(source, context, use_plan_cache)? {
-            merges.push(DerivedAccessPath::Union(path));
-        }
-        if let Some(path) =
-            index_merge::generate_and_index_merge_4_normal_index(source, context, use_plan_cache)?
-        {
-            merges.push(DerivedAccessPath::IndexMerge(path));
-        }
+        merges.extend(index_merge::prepare_union_index_merge_paths(source, context, use_plan_cache)?);
+        merges.extend(index_merge::generate_and_index_merge_4_normal_index(
+            source,
+            context,
+            use_plan_cache,
+        )?);
         // Go `generateOtherIndexMerge`'s `needConsiderIndexMerge`: without
         // index-merge hints, the merges just built are kept only when every
         // condition can be pushed down and, with fix control 52869 OFF, no
@@ -222,15 +219,11 @@ pub(crate) fn derive_access_paths(
                 let mut contain_mv_path = false;
                 let mut i = 0;
                 while i < merges.len() {
-                    contain_mv_path |= match &merges[i] {
-                        DerivedAccessPath::Union(path) => {
-                            path.alternatives
-                                .iter()
-                                .flatten()
-                                .any(|alternative| index_merge::is_mv_alternative(alternative))
-                        }
-                        _ => false,
-                    };
+                    contain_mv_path |= merges[i]
+                        .partial_alternative_index_paths
+                        .iter()
+                        .flatten()
+                        .any(|alternative| index_merge::is_mv_alternative(alternative));
                     if !contain_mv_path {
                         merges.remove(i);
                     }
@@ -250,7 +243,7 @@ pub(crate) fn derive_access_paths(
             &source.all_conds,
             use_plan_cache,
         )? {
-            merges.push(DerivedAccessPath::IndexMerge(path));
+            merges.push(path);
         }
         let composed = mv_index::generate_and_index_merge_4_composed_index(
             source,
@@ -261,12 +254,8 @@ pub(crate) fn derive_access_paths(
         if source.all_conds.len() > source.pushed_down_conds.len() {
             index_merge_max_count = merges
                 .iter()
-                .map(|path| match path {
-                    DerivedAccessPath::Union(path) => path.count_after_access,
-                    DerivedAccessPath::IndexMerge(path) => path.count_after_access,
-                    DerivedAccessPath::Ordinary(_) => 0.0,
-                })
-                .chain(composed.iter().map(|path| path.count_after_access))
+                .chain(composed.iter())
+                .map(|path| path.count_after_access().unwrap_or(0.0))
                 .reduce(f64::max);
         }
         if !source.index_merge_hints.is_empty() {
@@ -280,23 +269,21 @@ pub(crate) fn derive_access_paths(
                 min_selectivity = 1.0;
             }
         }
-        if let Some(path) = composed {
-            merges.push(DerivedAccessPath::IndexMerge(path));
-        }
+        merges.extend(composed);
         if let Some(stats) = source
             .table_stats
             .as_ref()
             .filter(|stats| stats.row_count() > 0.0)
         {
             for path in &merges {
-                let rows = match path {
-                    // Go's unfinished PartialAlternativeIndexPaths reads
-                    // CountAfterIndex (still zero) in getGeneralAttributesFromPaths.
-                    // Convergence later creates concrete PartialIndexPaths whose
-                    // CountAfterAccess is used for physical conversion.
-                    DerivedAccessPath::Union(_) => 0.0,
-                    DerivedAccessPath::IndexMerge(path) => path.count_after_access,
-                    DerivedAccessPath::Ordinary(_) => unreachable!(),
+                // Go's unfinished PartialAlternativeIndexPaths reads
+                // CountAfterIndex (still zero) in getGeneralAttributesFromPaths.
+                // Convergence later creates concrete PartialIndexPaths whose
+                // CountAfterAccess is used for physical conversion.
+                let rows = if path.partial_alternative_index_paths.is_empty() {
+                    path.count_after_access().unwrap_or(0.0)
+                } else {
+                    0.0
                 };
                 min_selectivity = min_selectivity.min(rows / stats.row_count());
             }
