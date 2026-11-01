@@ -20,36 +20,26 @@
 
 use tidb_ast::{CiString, ReferOptionType};
 use tidb_hack::{GoCaseCompare, GoToLower};
+use tidb_datatype::FieldTypeFlags;
+use tidb_model::column::ColumnInfo;
 use tidb_model::table::FKInfo;
+use tidb_model::table_info::TableInfo;
 use tidb_model::GoShared;
 
 use crate::{FkTriggerKind, FkTriggerNode};
 use tidb_planner_core_base::PlanIdAllocator;
 
-/// A column of a table, as the trigger builders read it.
-#[derive(Clone, Debug)]
-pub struct FkColumn {
-    /// The column name.
-    pub name: String,
-    /// Whether the column carries `ON UPDATE CURRENT_TIMESTAMP`.
-    pub on_update_now: bool,
-    /// The columns a generated column reads, `None` for an ordinary column.
-    pub generated_dependencies: Option<Vec<String>>,
-}
-
-/// A table with its columns and its own foreign keys.
-#[derive(Clone, Debug)]
-pub struct FkTable {
-    /// Go `Meta().Columns`.
-    pub columns: Vec<FkColumn>,
-    /// Go `Meta().ForeignKeys`.
-    pub foreign_keys: Vec<GoShared<FKInfo>>,
+/// Go `tbl.Cols()`: the table's public columns in offset order, the row
+/// layout the triggers' offsets index.
+fn public_columns(table: &GoShared<TableInfo>) -> Vec<GoShared<ColumnInfo>> {
+    table.read().cols().iter_handles().flatten().collect()
 }
 
 /// The metadata `BuildOn*FKTriggers` reads.
 pub trait ForeignKeyCatalog {
-    /// A base table, or `None` for any other kind or a missing one.
-    fn table(&self, database: &str, table: &str) -> Option<FkTable>;
+    /// Go `is.TableByName(...).Meta()` of a base table, or `None` for any
+    /// other kind or a missing one.
+    fn table(&self, database: &str, table: &str) -> Option<GoShared<TableInfo>>;
 
     /// Go `is.GetTableReferredForeignKeys`: the constraints of other tables
     /// that reference `table`, as `(child schema, child table, constraint)`,
@@ -114,33 +104,33 @@ pub fn build_fk_triggers(
     let mut spec = spec.clone();
     let own_table = catalog.table(&spec.database, &spec.table);
     if let Some(table) = &own_table {
+        let columns = public_columns(table);
         for updated in [&mut spec.updated_cols, &mut spec.on_duplicate_cols] {
             if updated.is_empty() {
                 continue;
             }
             let mut modified = updated.clone();
             modified.extend(
-                table
-                    .columns
+                columns
                     .iter()
-                    .filter(|column| column.on_update_now)
-                    .map(|column| column.name.clone()),
+                    .map(|column| column.read())
+                    .filter(|column| column.field_type.has_flag(FieldTypeFlags::ON_UPDATE_NOW))
+                    .map(|column| column.name.original().to_owned()),
             );
-            for column in &table.columns {
-                if column
-                    .generated_dependencies
-                    .as_ref()
-                    .is_some_and(|dependencies| {
-                        dependencies
-                            .iter()
-                            .any(|dependency| modified.iter().any(|name| name.go_lower_eq(dependency)))
+            for column in &columns {
+                let column = column.read();
+                if column.is_generated()
+                    && column.dependences.snapshot().iter().any(|dependency| {
+                        let dependency = dependency.to_utf8_lossy_go();
+                        modified.iter().any(|name| name.go_lower_eq(&dependency))
                     })
                 {
-                    if !modified.iter().any(|name| name.go_lower_eq(&column.name)) {
-                        modified.push(column.name.clone());
+                    let name = column.name.original();
+                    if !modified.iter().any(|modified| modified.go_lower_eq(name)) {
+                        modified.push(name.to_owned());
                     }
-                    if !updated.iter().any(|name| name.go_lower_eq(&column.name)) {
-                        updated.push(column.name.clone());
+                    if !updated.iter().any(|updated| updated.go_lower_eq(name)) {
+                        updated.push(name.to_owned());
                     }
                 }
             }
@@ -188,7 +178,13 @@ pub fn build_fk_triggers(
         }
     }
     if let Some(table) = &own_table {
-        for fk in &table.foreign_keys {
+        let foreign_keys = table
+            .read()
+            .foreign_keys
+            .iter_deref()
+            .filter(|fk| fk.read().state == tidb_model::SchemaState::PUBLIC)
+            .collect::<Vec<_>>();
+        for fk in &foreign_keys {
             let fk = fk.read();
             if fk.version < tidb_model::table::FK_VERSION1 {
                 continue;
@@ -237,14 +233,14 @@ fn compile_trigger(
     let Some(child) = catalog.table(child_db, child_table) else {
         return Ok(None);
     };
-    let offsets = |table: &FkTable, names: &[CiString]| -> Result<Vec<usize>, FkPlanError> {
+    let offsets = |table: &GoShared<TableInfo>, names: &[CiString]| -> Result<Vec<usize>, FkPlanError> {
+        let columns = public_columns(table);
         names
             .iter()
             .map(|name| {
-                table
-                    .columns
+                columns
                     .iter()
-                    .position(|column| column.name.go_lower_eq(name.lowercase()))
+                    .position(|column| column.read().name.lowercase() == name.lowercase())
                     .ok_or_else(|| {
                         FkPlanError::Unsupported(format!("foreign key column {name} is not found"))
                     })
@@ -337,17 +333,31 @@ mod tests {
     /// `parent(id)` referenced by `child(pid)` with `fk_child (pid) REFERENCES
     /// parent (id)`, the child indexed on `pid`.
     struct Fake {
-        tables: BTreeMap<(String, String), FkTable>,
+        tables: BTreeMap<(String, String), GoShared<TableInfo>>,
         indexed: Vec<(String, String)>,
         action: ReferOptionType,
     }
 
-    fn column(name: &str) -> FkColumn {
-        FkColumn {
-            name: name.to_owned(),
-            on_update_now: false,
-            generated_dependencies: None,
-        }
+    /// Go `model.TableInfo` with public `columns` and `foreign_keys`.
+    fn table(columns: &[&str], foreign_keys: Vec<GoShared<FKInfo>>) -> GoShared<TableInfo> {
+        GoShared::new(TableInfo {
+            columns: columns
+                .iter()
+                .enumerate()
+                .map(|(offset, name)| ColumnInfo {
+                    id: offset as i64 + 1,
+                    name: CiString::new(*name),
+                    offset: offset as i64,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..ColumnInfo::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            foreign_keys: tidb_model::GoSharedPointerSlice::from_handles(
+                foreign_keys.into_iter().map(Some).collect(),
+            ),
+            ..TableInfo::default()
+        })
     }
 
     fn fk(action: ReferOptionType) -> GoShared<FKInfo> {
@@ -360,6 +370,7 @@ mod tests {
             ref_cols: vec![CiString::new("id")].into(),
             on_delete: action.into(),
             on_update: action.into(),
+            state: tidb_model::SchemaState::PUBLIC,
             ..FKInfo::default()
         })
     }
@@ -368,17 +379,11 @@ mod tests {
         let mut tables = BTreeMap::new();
         tables.insert(
             ("test".to_owned(), "parent".to_owned()),
-            FkTable {
-                columns: vec![column("id")],
-                foreign_keys: Vec::new(),
-            },
+            table(&["id"], Vec::new()),
         );
         tables.insert(
             ("test".to_owned(), "child".to_owned()),
-            FkTable {
-                columns: vec![column("id"), column("pid")],
-                foreign_keys: vec![fk(action)],
-            },
+            table(&["id", "pid"], vec![fk(action)]),
         );
         Fake {
             tables,
@@ -391,7 +396,7 @@ mod tests {
     }
 
     impl ForeignKeyCatalog for Fake {
-        fn table(&self, database: &str, table: &str) -> Option<FkTable> {
+        fn table(&self, database: &str, table: &str) -> Option<GoShared<TableInfo>> {
             self.tables
                 .get(&(database.to_owned(), table.to_owned()))
                 .cloned()
@@ -523,14 +528,15 @@ mod tests {
     #[test]
     fn a_generated_column_joins_the_update_columns_it_depends_on() {
         let ids = PlanIdAllocator::new();
-        let mut catalog = fake(ReferOptionType::Restrict, &["parent", "child"]);
-        let child = catalog
-            .tables
-            .get_mut(&("test".to_owned(), "child".to_owned()))
-            .unwrap();
+        let catalog = fake(ReferOptionType::Restrict, &["parent", "child"]);
+        let child = &catalog.tables[&("test".to_owned(), "child".to_owned())];
         // `pid` becomes generated from `id`: updating `id` moves `pid`, which
         // the foreign key reads.
-        child.columns[1].generated_dependencies = Some(vec!["id".to_owned()]);
+        let pid = child.read().columns.get(1).unwrap();
+        let mut pid = pid.write();
+        pid.generated_expr_string = "`id`".to_owned();
+        pid.dependences.insert("id");
+        drop(pid);
         let mut update = spec("child");
         update.updated_cols = vec!["id".to_owned()];
         assert_eq!(

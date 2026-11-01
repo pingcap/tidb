@@ -17,7 +17,7 @@
 use tidb_infoschema::{SessionExtendedInfoSchema, TableEntry};
 use crate::driver::DriverError;
 use crate::StmtContext;
-use tidb_planner_core_operator_physicalop::fk_plan::{FkColumn, FkPlanError, FkTable, ForeignKeyCatalog};
+use tidb_planner_core_operator_physicalop::fk_plan::{FkPlanError, ForeignKeyCatalog};
 use tidb_planner_core_operator_physicalop::FkTriggerNode;
 use tidb_planner_core_base::PlanIdAllocator;
 
@@ -26,33 +26,15 @@ pub(crate) use tidb_planner_core_operator_physicalop::fk_plan::FkPlanSpec;
 struct CatalogForeignKeys<'a>(&'a SessionExtendedInfoSchema);
 
 impl ForeignKeyCatalog for CatalogForeignKeys<'_> {
-    fn table(&self, database: &str, table: &str) -> Option<FkTable> {
+    fn table(
+        &self,
+        database: &str,
+        table: &str,
+    ) -> Option<tidb_model::GoShared<tidb_model::table_info::TableInfo>> {
         let Some(TableEntry::Kv(table)) = self.0.get_in(database, table) else {
             return None;
         };
-        Some(FkTable {
-            columns: table
-                .columns()
-                .iter()
-                .map(|column| FkColumn {
-                    name: column.read().name.original().to_owned(),
-                    on_update_now: column
-                        .read().field_type
-                        .has_flag(tidb_datatype::FieldTypeFlags::ON_UPDATE_NOW),
-                    generated_dependencies: column
-                        .generated
-                        .as_ref()
-                        .map(|generated| generated.dependencies.clone()),
-                })
-                .collect(),
-            foreign_keys: table
-                .meta()
-                .read()
-                .foreign_keys
-                .iter_deref()
-                .filter(|fk| fk.read().state == tidb_model::SchemaState::PUBLIC)
-                .collect(),
-        })
+        Some(table.meta())
     }
 
     fn referring(
