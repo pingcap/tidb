@@ -1190,7 +1190,7 @@ fn aggregation_build_initializes_declared_index_keys_before_statistics() {
     plan.walk_preorder(&mut |node| {
         if let LogicalPlan::DataSource(source) = node {
             seen = true;
-            let path = &source.derived_index_paths[&1];
+            let path = source.path_by_index_id(1).unwrap();
             let declared = path.declared_columns.as_ref().unwrap();
             assert_eq!(declared.len(), 1);
             assert_eq!(declared[0].as_ref().unwrap().0.id, 2);

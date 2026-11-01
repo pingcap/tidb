@@ -2382,7 +2382,7 @@ fn index_join_candidate(
     core: &super::index_join_path::IndexJoinPathCore,
     ctx: &DispatchContext<'_>,
 ) -> crate::find_best_task::candidate::CandidateMetrics {
-    let state = ds.derived_index_paths.get(&source_index.read().id);
+    let state = ds.path_by_index_id(source_index.read().id);
     let mut candidate = state
         .and_then(|state| {
             let single_scan = state.is_single_scan.unwrap_or_else(|| {
@@ -3886,7 +3886,7 @@ fn find_best_task_4_logical_data_source_paths(
                 // invalidate ranges on an earlier prefix; only the first
                 // unresolved position ends that prefix.
                 let filled_path = prop.index_join_prop.is_none().then(|| {
-                    ds.derived_index_paths.get(&source_index.read().id).and_then(|path| path.filled.as_ref())
+                    ds.path_by_index_id(source_index.read().id).and_then(|path| path.filled.as_ref())
                 }).flatten();
                 let resolved_index_prefix = filled_path.map_or_else(
                     || ds.index_range_columns(source_index), |path| path.columns.clone(),
@@ -3993,8 +3993,7 @@ fn find_best_task_4_logical_data_source_paths(
                 // read (`BuildIndexLookUpTask` at conversion) — the cop task
                 // carries BOTH halves, exactly Go's shape.
                 let single_scan = ds
-                    .derived_index_paths
-                    .get(&source_index.read().id)
+                    .path_by_index_id(source_index.read().id)
                     .and_then(|path| path.is_single_scan)
                     .unwrap_or_else(|| {
                         index_path_is_single_scan(
@@ -4140,8 +4139,7 @@ fn find_best_task_4_logical_data_source_paths(
                     }
                     point_base.base.set_schema(ds.base.base.schema().cloned());
                     let access_rows = ds
-                        .derived_index_paths
-                        .get(&source_index.read().id)
+                        .path_by_index_id(source_index.read().id)
                         .and_then(|path| path.count_after_access())
                         .unwrap_or(ranges.len() as f64)
                         .min(ranges.len() as f64);
@@ -4246,8 +4244,7 @@ fn find_best_task_4_logical_data_source_paths(
                         });
                 if detach.is_some() {
                     count_after_access = ds
-                        .derived_index_paths
-                        .get(&source_index.read().id)
+                        .path_by_index_id(source_index.read().id)
                         .and_then(|path| path.count_after_access())
                         .or_else(|| {
                             let base_stats = table_stats.as_ref()?;
@@ -4285,8 +4282,7 @@ fn find_best_task_4_logical_data_source_paths(
                     // Runtime probes and unfilled sources retain this fallback.
                     let logically_adjusted = filled_path.is_some()
                         && ds
-                            .derived_index_paths
-                            .get(&source_index.read().id)
+                            .path_by_index_id(source_index.read().id)
                             .is_some_and(|path| path.row_estimate.is_some());
                     if !logically_adjusted
                         && *count + tidb_planner_core_cost::TOLERANCE_FACTOR < ds_stats.row_count()
@@ -4611,8 +4607,7 @@ fn find_best_task_4_logical_data_source_paths(
                             filled_path.and_then(|path| path.count_after_index)
                         {
                             let access_rows = ds
-                                .derived_index_paths
-                                .get(&source_index.read().id)
+                                .path_by_index_id(source_index.read().id)
                                 .and_then(|path| path.count_after_access())
                                 .unwrap_or(0.0);
                             let selectivity = if access_rows > 0.0 {
@@ -6387,10 +6382,9 @@ mod tests {
             "full parent output cannot use a prefix"
         );
 
+        ds.enumerated_paths = vec![tidb_planner_util::path::AccessPath::index_path(index.clone())];
         ds.indexes = vec![index];
         ds.table_stats = Some(StatsInfo::new(10.0, []));
-        let estimate = tidb_stats::RowEstimate::new(2.0, 1.0, 4.0);
-        ds.derived_index_paths.entry(0).or_default().row_estimate = Some(estimate);
         let mut plan = LogicalPlan::DataSource(ds);
         let context = crate::rule::rule_tests::test_context(&allocator);
         plan.recursive_derive_stats_with_context(&[], &context)
@@ -6400,11 +6394,12 @@ mod tests {
         };
         assert_eq!(
             source
-                .derived_index_paths
-                .get(&0)
+                .path_by_index_id(0)
                 .and_then(|path| path.is_single_scan),
             Some(false)
         );
+        let estimate = source.path_by_index_id(0).unwrap().row_estimate;
+        assert!(estimate.is_some(), "derivation fills the index path's estimate");
         source.cols_requiring_full_len = Some(Vec::new());
         plan.recursive_derive_stats_with_context(&[], &context)
             .unwrap();
@@ -6412,23 +6407,23 @@ mod tests {
             unreachable!()
         };
         assert_eq!(
-            source.derived_index_paths.get(&0).and_then(|path| path.is_single_scan),
+            source.path_by_index_id(0).and_then(|path| path.is_single_scan),
             Some(false),
             "final pruning must not change the path retained by join reorder"
         );
         assert_eq!(
-            source.clone_shallow().derived_index_paths[&0].row_estimate,
-            source.derived_index_paths[&0].row_estimate
+            source.clone_shallow().path_by_index_id(0).unwrap().row_estimate,
+            source.path_by_index_id(0).unwrap().row_estimate
         );
         assert_eq!(
-            source.clone_shallow().derived_index_paths[&0].is_single_scan,
-            source.derived_index_paths[&0].is_single_scan
+            source.clone_shallow().path_by_index_id(0).unwrap().is_single_scan,
+            source.path_by_index_id(0).unwrap().is_single_scan
         );
         let mut cloned = source.clone_shallow();
-        cloned.derived_index_paths.get_mut(&0).unwrap().row_estimate = None;
+        cloned.path_by_index_id_mut(0).unwrap().row_estimate = None;
         assert_eq!(
-            source.derived_index_paths[&0].row_estimate,
-            Some(estimate),
+            source.path_by_index_id(0).unwrap().row_estimate,
+            estimate,
             "a cloned datasource owns its derived state"
         );
         source.base.base.set_stats(None);
@@ -6438,13 +6433,13 @@ mod tests {
             unreachable!()
         };
         assert_eq!(
-            source.derived_index_paths.get(&0).and_then(|path| path.is_single_scan),
+            source.path_by_index_id(0).and_then(|path| path.is_single_scan),
             Some(true),
             "reinitialized statistics derive a new path from current requirements"
         );
         assert_eq!(
-            source.derived_index_paths[&0].row_estimate,
-            Some(estimate),
+            source.path_by_index_id(0).unwrap().row_estimate,
+            estimate,
             "covering derivation preserves access estimates and risk bounds"
         );
         source.base.base.set_stats(None);
@@ -6457,8 +6452,7 @@ mod tests {
         };
         assert_eq!(
             source
-                .derived_index_paths
-                .get(&0)
+                .path_by_index_id(0)
                 .and_then(|path| path.is_single_scan),
             Some(false)
         );

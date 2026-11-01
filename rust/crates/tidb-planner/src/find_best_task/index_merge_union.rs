@@ -1467,14 +1467,10 @@ mod tests {
         ordinary_source.pushed_down_conds = vec![eq(1)];
         ordinary_source.all_conds = ordinary_source.pushed_down_conds.clone();
         ordinary_source.index_merge_hints.clear();
-        for index in &ordinary_source.indexes {
-            ordinary_source
-                .derived_index_paths
-                .entry(index.read().id)
-                .or_default()
-                .row_estimate = Some(tidb_stats::RowEstimate::new(
-                100.0, 0.0, 0.0,
-            ));
+        for path in &mut ordinary_source.enumerated_paths {
+            if path.index_info().is_some() {
+                path.row_estimate = Some(tidb_stats::RowEstimate::new(100.0, 0.0, 0.0));
+            }
         }
         let mut ordinary = tidb_planner_core_operator_logicalop::LogicalPlan::DataSource(ordinary_source);
         ordinary

@@ -237,8 +237,7 @@ fn join_keys_contain_unique_index(
                 .unwrap_or_default()
         } else {
             let Some(filled) = source
-                .derived_index_paths
-                .get(&index.read().id)
+                .path_by_index_id(index.read().id)
                 .and_then(|state| state.filled.as_ref())
             else {
                 return false;

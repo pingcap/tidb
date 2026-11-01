@@ -35,7 +35,6 @@ use super::index_merge::{enumerated_indexes, estimate_partial_index_ranges, is_i
 
 use tidb_planner_util::path::{IndexMergePartial, IndexMergePath};
 use super::AccessPathDerivationContext;
-use tidb_planner_util::path::IndexPathState;
 use tidb_planner_core_operator_logicalop::DataSource;
 use tidb_planner_core_base::PlanError;
 use tidb_ranger::points::ExpressionEvaluator;
@@ -416,14 +415,13 @@ fn build_partial_path_for_mv_index(
     let rows = estimate_partial_index_ranges(ds, index, &filled, ctx)?;
     Ok(Some(IndexMergePartial {
         index: index.clone(),
-        path: IndexPathState {
+        path: tidb_planner_util::path::AccessPath {
             filled: Some(filled),
-            declared_columns: None,
             row_estimate: Some(tidb_stats::RowEstimate::new(
                 rows, rows, rows,
             )),
             is_single_scan: Some(false),
-            is_uk_shard_index_path: false,
+            ..tidb_planner_util::path::AccessPath::index_path(index.clone())
         },
     }))
 }

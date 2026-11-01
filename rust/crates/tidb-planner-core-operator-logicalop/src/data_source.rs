@@ -241,9 +241,6 @@ pub struct DataSource {
     pub table_stats: Option<StatsInfo>,
     /// Candidates retained by logical derivation; physical search consumes them.
     pub derived_access_paths: Option<tidb_planner_util::path::DerivedAccessPaths>,
-    /// Occurrence-local ordinary index records, keyed by catalog ID.
-    /// Declared key slots precede statistics, estimates and covering decisions.
-    pub derived_index_paths: std::collections::BTreeMap<i64, tidb_planner_util::path::IndexPathState>,
     /// Go ColAndIdxExistenceMap.HasAnalyzed, independent of payload eviction.
     pub analyzed_index_ids: std::collections::BTreeSet<i64>,
     /// The table/session facts that Go retains on `PhysicalTableScan` for
@@ -362,15 +359,36 @@ impl DataSource {
             .collect()
     }
 
+    /// The first path over index `id` -- a secondary index's own path, or a
+    /// clustered table's TiKV path for its PRIMARY index -- whose fields Go
+    /// grows in place.
+    #[must_use]
+    pub fn path_by_index_id(&self, id: i64) -> Option<&tidb_planner_util::path::AccessPath> {
+        self.enumerated_paths
+            .iter()
+            .find(|path| path.index.as_ref().is_some_and(|index| index.read().id == id))
+    }
+
+    /// [`Self::path_by_index_id`], for updating the path in place.
+    pub fn path_by_index_id_mut(
+        &mut self,
+        id: i64,
+    ) -> Option<&mut tidb_planner_util::path::AccessPath> {
+        self.enumerated_paths
+            .iter_mut()
+            .find(|path| path.index.as_ref().is_some_and(|index| index.read().id == id))
+    }
+
     /// Go plan building initializes full declared keys before pruning and
     /// statistics loading; ranger resolves the current schema again later.
     pub fn initialize_index_columns(&mut self) {
-        for path in &self.enumerated_paths {
+        for position in 0..self.enumerated_paths.len() {
+            let path = &self.enumerated_paths[position];
             // Go: every path but an int-handle one (`!path.IsIntHandlePath`).
-            let Some(index) = &path.index else {
+            let Some(index) = path.index.clone() else {
                 continue;
             };
-            let columns = self.index_info_2_full_cols(index);
+            let columns = self.index_info_2_full_cols(&index);
             // Go `buildDataSource` (`logical_plan_builder.go:5316`): only a
             // unique secondary index of more than one column whose first
             // column is a `tidb_shard()` generated column.
@@ -383,9 +401,9 @@ impl DataSource {
                     && index.read().columns.len() > 1
                     && index.read().unique;
             self.contain_expr_prefix_uk |= is_uk_shard_index_path;
-            let state = self.derived_index_paths.entry(index.read().id).or_default();
-            state.declared_columns = Some(columns);
-            state.is_uk_shard_index_path = is_uk_shard_index_path;
+            let path = &mut self.enumerated_paths[position];
+            path.declared_columns = Some(columns);
+            path.is_uk_shard_index_path = is_uk_shard_index_path;
         }
     }
 
@@ -404,16 +422,12 @@ impl DataSource {
         }
         let mut new_conds = conds.clone();
         for path in &self.enumerated_paths {
+            if !path.is_uk_shard_index_path {
+                continue;
+            }
             let Some(index) = path.index_info() else {
                 continue;
             };
-            if !self
-                .derived_index_paths
-                .get(&index.read().id)
-                .is_some_and(|state| state.is_uk_shard_index_path)
-            {
-                continue;
-            }
             match self.add_expr_prefix_cond(index, new_conds, regard_null_as_point) {
                 Ok(rewritten) => new_conds = rewritten,
                 Err(_) => return conds,
@@ -1151,7 +1165,6 @@ impl DataSource {
             prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
             index_merge_skip_range_scan_check: self.index_merge_skip_range_scan_check,
             table_stats: self.table_stats.clone(),
-            derived_index_paths: self.derived_index_paths.clone(),
             derived_access_paths: self.derived_access_paths.clone(),
             analyzed_index_ids: self.analyzed_index_ids.clone(),
             table_scan_penalty: self.table_scan_penalty,

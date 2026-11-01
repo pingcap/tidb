@@ -126,7 +126,7 @@ pub(super) fn equality_facts(detached: &tidb_ranger::detacher::DetachRangeResult
 pub(crate) fn get_index_candidate(
     source: &tidb_planner_core_operator_logicalop::DataSource,
     index: &tidb_model::GoShared<tidb_model::IndexInfo>,
-    path: &tidb_planner_util::path::IndexPathState,
+    path: &tidb_planner_util::path::AccessPath,
     single_scan: bool,
     matches_property: bool,
 ) -> Option<CandidateMetrics> {
@@ -445,7 +445,7 @@ mod skyline_tests {
 
     #[test]
     fn index_facts_keep_full_key_filters_and_dnf_equality_counts() {
-        use tidb_planner_util::path::{IndexPathState, FilledIndexPath};
+        use tidb_planner_util::path::{AccessPath, FilledIndexPath};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::{
             column::Column, constant::Constant, expression::Expression,
@@ -476,7 +476,7 @@ mod skyline_tests {
             ..tidb_model::IndexInfo::default()
         });
         let source = tidb_planner_core_operator_logicalop::DataSource::default();
-        let mut path = IndexPathState {
+        let mut path = AccessPath {
             row_estimate: Some(tidb_stats::RowEstimate::new(
                 100.0, 20.0, 200.0,
             )),

@@ -758,8 +758,7 @@ fn deriving_a_data_source_fills_each_index_path_row_count_from_its_collection() 
     })];
     op.enumerated_paths = vec![tidb_planner_util::path::AccessPath::index_path(op.indexes[0].clone())];
     op.pushed_down_conds = vec![Expression::ScalarFunction(eq_condition_to_constant(1, 7))];
-    op.derived_index_paths.entry(8).or_default().row_estimate =
-        Some(tidb_stats::default_row_est(1.0));
+    op.enumerated_paths[0].row_estimate = Some(tidb_stats::default_row_est(1.0));
     attach_pseudo_collection(op);
     let context = crate::rule::rule_tests::test_context(&allocator);
     let (plan, result) =
@@ -768,7 +767,9 @@ fn deriving_a_data_source_fills_each_index_path_row_count_from_its_collection() 
     let LogicalPlan::DataSource(op) = plan else {
         unreachable!()
     };
-    let estimate = op.derived_index_paths[&8]
+    let estimate = op
+        .path_by_index_id(8)
+        .unwrap()
         .row_estimate
         .expect("the planner fills the index path's estimate");
     assert_eq!(estimate.est, 10.0);

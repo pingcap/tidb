@@ -691,7 +691,7 @@ fn generate_and_index_merge_for_normal_index(
         {
             continue;
         }
-        let Some(mut path) = ds.derived_index_paths.get(&index.read().id).cloned() else {
+        let Some(mut path) = ds.path_by_index_id(index.read().id).cloned() else {
             continue;
         };
         let Some(filled) = &mut path.filled else {

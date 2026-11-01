@@ -21,36 +21,6 @@
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 
-/// Occurrence-local state for one ordinary index access path. Go retains
-/// these fields together on `util.AccessPath`; a datasource occurrence owns
-/// the record independently of shared catalog metadata.
-#[derive(Clone, Debug, Default)]
-pub struct IndexPathState {
-    /// Logically detached ranges and filter stages shared by ordinary and merge paths.
-    pub filled: Option<FilledIndexPath>,
-    /// Go's FullIdxCols/FullIdxColLens at plan construction, before ranger
-    /// appends handles. None denotes the static metadata-only pruning path;
-    /// unresolved positions remain None instead of shortening the key.
-    pub declared_columns: Option<Vec<Option<(tidb_expr::column::Column, i64)>>>,
-    /// Access estimate and its skyline risk bounds, adjusted together.
-    pub row_estimate: Option<tidb_stats::RowEstimate>,
-    /// Go `IsSingleScan`, evaluated during pruning and refreshed at the first
-    /// logical statistics derivation, before final column pruning.
-    /// None means the covering decision has not been derived yet.
-    pub is_single_scan: Option<bool>,
-    /// Go `IsUkShardIndexPath`: a unique secondary index of more than one
-    /// column led by a `tidb_shard()` generated column.
-    pub is_uk_shard_index_path: bool,
-}
-
-impl IndexPathState {
-    /// Go `CountAfterAccess`, from the same estimate as its uncertainty bounds.
-    #[must_use]
-    pub fn count_after_access(&self) -> Option<f64> {
-        self.row_estimate.map(|estimate| estimate.est)
-    }
-}
-
 /// Candidate identities and merge alternatives retained after logical derivation.
 /// Ordinary index identities refer to the datasource's filled index states.
 #[derive(Clone, Debug)]
@@ -83,9 +53,9 @@ pub struct DerivedAccessPaths {
 
 /// Go `util.AccessPath`: one candidate way of reading a `DataSource`, born
 /// at enumeration (`getPossibleAccessPaths`) with its store, index and handle
-/// kind. (Its ranges, conditions and counts still live in
-/// [`IndexPathState`] / [`DerivedAccessPaths`]; see
-/// `docs/access-path-execplan.md`.)
+/// kind, and grown in place by plan building and statistics derivation.
+/// (The table path's ranges and the index-merge paths still live in
+/// [`DerivedAccessPaths`]; see `docs/access-path-execplan.md`.)
 #[derive(Clone, Debug, Default)]
 pub struct AccessPath {
     /// Go `Index`: the index the path reads, or a common-handle table path's
@@ -97,6 +67,23 @@ pub struct AccessPath {
     pub is_int_handle_path: bool,
     /// Go `IsCommonHandlePath`.
     pub is_common_handle_path: bool,
+    /// Go `FullIdxCols` / `FullIdxColLens` at plan construction, before
+    /// ranger appends handles. None until `buildDataSource` declares them;
+    /// unresolved positions remain None instead of shortening the key.
+    pub declared_columns: Option<Vec<Option<(Column, i64)>>>,
+    /// Go `IsUkShardIndexPath`: a unique secondary index of more than one
+    /// column led by a `tidb_shard()` generated column.
+    pub is_uk_shard_index_path: bool,
+    /// Go `IsSingleScan`, evaluated during pruning and refreshed at the first
+    /// logical statistics derivation, before final column pruning.
+    /// None means the covering decision has not been derived yet.
+    pub is_single_scan: Option<bool>,
+    /// Go `CountAfterAccess` with its `MinCountAfterAccess` /
+    /// `MaxCountAfterAccess` skyline bounds, adjusted together.
+    pub row_estimate: Option<tidb_stats::RowEstimate>,
+    /// An index path's `fillIndexPath` result: ranges, access conditions,
+    /// index/table filters and `CountAfterIndex`.
+    pub filled: Option<FilledIndexPath>,
 }
 
 impl AccessPath {
@@ -113,6 +100,7 @@ impl AccessPath {
             store_type,
             is_int_handle_path: !is_common_handle,
             is_common_handle_path: is_common_handle,
+            ..Self::default()
         }
     }
 
@@ -123,6 +111,12 @@ impl AccessPath {
             index: Some(index),
             ..Self::default()
         }
+    }
+
+    /// Go `CountAfterAccess`, from the same estimate as its uncertainty bounds.
+    #[must_use]
+    pub fn count_after_access(&self) -> Option<f64> {
+        self.row_estimate.map(|estimate| estimate.est)
     }
 
     /// Go `IsTablePath`: a handle path, or a TiFlash path over an index.
@@ -320,7 +314,7 @@ pub struct IndexMergePartial {
     /// Go `path.Index`.
     pub index: tidb_model::GoShared<tidb_model::IndexInfo>,
     /// Its filled state.
-    pub path: IndexPathState,
+    pub path: AccessPath,
 }
 
 /// Go's finished index-merge `AccessPath` (`PartialIndexPaths` set): the

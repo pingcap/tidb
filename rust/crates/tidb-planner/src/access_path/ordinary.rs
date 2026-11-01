@@ -174,10 +174,11 @@ pub(crate) fn fill_ordinary_index_paths(
     context: &AccessPathDerivationContext<'_>,
     prefix_single_scan: bool,
 ) -> Result<(), PlanError> {
-    for candidate in &source.enumerated_paths {
-        let Some(index) = candidate.index_info() else {
+    for position in 0..source.enumerated_paths.len() {
+        let Some(index) = source.enumerated_paths[position].index_info().cloned() else {
             continue;
         };
+        let index = &index;
         if index.read().mv_index || index.read().is_columnar_index() {
             continue;
         }
@@ -252,10 +253,10 @@ pub(crate) fn fill_ordinary_index_paths(
                 )
             }
         });
-        let state = source.derived_index_paths.entry(index.read().id).or_default();
-        state.row_estimate = estimate;
+        let path = &mut source.enumerated_paths[position];
+        path.row_estimate = estimate;
         filled.count_after_index = count_after_index;
-        state.filled = Some(filled);
+        path.filled = Some(filled);
     }
     Ok(())
 }

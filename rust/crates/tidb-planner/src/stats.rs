@@ -160,30 +160,24 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                     // path's `IsSingleScan` here -- at join reorder for a
                     // join, after the final column pruning otherwise.
                     let missing = op
-                        .indexes
+                        .enumerated_paths
                         .iter()
-                        .filter(|index| {
-                            op.derived_index_paths
-                                .get(&index.read().id)
-                                .and_then(|path| path.is_single_scan)
-                                .is_none()
-                        })
-                        .map(|index| {
-                            (
-                                index.read().id,
+                        .enumerate()
+                        .filter(|(_, path)| path.is_single_scan.is_none())
+                        .filter_map(|(position, path)| {
+                            let index = path.index.as_ref()?;
+                            Some((
+                                position,
                                 tidb_planner_core_operator_logicalop::data_source::index_path_is_single_scan(
                                     op,
                                     index,
                                     env.opt_prefix_index_single_scan,
                                 ),
-                            )
+                            ))
                         })
                         .collect::<Vec<_>>();
-                    for (index_id, single_scan) in missing {
-                        op.derived_index_paths
-                            .entry(index_id)
-                            .or_default()
-                            .is_single_scan = Some(single_scan);
+                    for (position, single_scan) in missing {
+                        op.enumerated_paths[position].is_single_scan = Some(single_scan);
                     }
                     Ok((stats, op.all_conds.is_empty()))
                 } else {
@@ -254,19 +248,16 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                     // Go derivePathStatsAndTryHeuristics fixes IsSingleScan
                     // with the first stats profile. Join reorder can derive
                     // this before the final column-pruning pass.
-                    for path in op.derived_index_paths.values_mut() {
-                        path.is_single_scan = None;
-                    }
-                    for index in &op.indexes {
-                        let is_single_scan = tidb_planner_core_operator_logicalop::data_source::index_path_is_single_scan(
-                            op,
-                            index,
-                            env.opt_prefix_index_single_scan,
-                        );
-                        op.derived_index_paths
-                            .entry(index.read().id)
-                            .or_default()
-                            .is_single_scan = Some(is_single_scan);
+                    for position in 0..op.enumerated_paths.len() {
+                        let path = &op.enumerated_paths[position];
+                        let is_single_scan = path.index.as_ref().map(|index| {
+                            tidb_planner_core_operator_logicalop::data_source::index_path_is_single_scan(
+                                op,
+                                index,
+                                env.opt_prefix_index_single_scan,
+                            )
+                        });
+                        op.enumerated_paths[position].is_single_scan = is_single_scan;
                     }
                     op.base.base.set_stats(Some(stats.clone()));
                     Ok((stats, op.all_conds.is_empty()))

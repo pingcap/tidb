@@ -113,7 +113,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
                 if index.read().mv_index {
                     continue;
                 }
-                let state = ds.derived_index_paths.get(&index.read().id)?;
+                let state = ds.path_by_index_id(index.read().id)?;
                 let filled = state.filled.as_ref()?;
                 let partial = prop
                     .partial_order_info
@@ -256,8 +256,7 @@ fn range_scan_flags(
         }
         Some(index) => {
             let Some(filled) = ds
-                .derived_index_paths
-                .get(&index.read().id)
+                .path_by_index_id(index.read().id)
                 .and_then(|state| state.filled.as_ref())
             else {
                 return (false, false);

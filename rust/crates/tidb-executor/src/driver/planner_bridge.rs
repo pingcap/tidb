@@ -1239,12 +1239,11 @@ impl InitStats<'_> {
         };
         source.base.base.set_stats(None);
         source.derived_access_paths = None;
-        source.derived_index_paths.retain(|_, path| {
+        for path in &mut source.enumerated_paths {
             path.row_estimate = None;
             path.filled = None;
             path.is_single_scan = None;
-            path.declared_columns.is_some()
-        });
+        }
         source.access_path_min_selectivity = 1.0;
         // Go `deriveStats4DataSource`: `EliminateNoPrecisionLossCast` over the
         // pushed conditions before any index path is filled, so `cast(a AS
@@ -3535,21 +3534,23 @@ mod statistics_initialization_tests {
         source.table_info = Some(table_info);
         source.db_name = "test".to_owned();
         source.physical_table_id = 7;
-        source.derived_index_paths.insert(
-            99,
-            tidb_planner_util::path::IndexPathState {
-                row_estimate: Some(
-                    tidb_stats::RowEstimate::new(
-                        900.0, 800.0, 1000.0,
-                    ),
+        let index = |id: i64| {
+            tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id,
+                ..tidb_model::IndexInfo::default()
+            })
+        };
+        source.enumerated_paths.push(tidb_planner_util::path::AccessPath {
+            row_estimate: Some(
+                tidb_stats::RowEstimate::new(
+                    900.0, 800.0, 1000.0,
                 ),
-                is_single_scan: Some(true),
-                ..Default::default()
-            },
-        );
-        source.derived_index_paths.insert(
-            77,
-            tidb_planner_util::path::IndexPathState {
+            ),
+            is_single_scan: Some(true),
+            ..tidb_planner_util::path::AccessPath::index_path(index(99))
+        });
+        source.enumerated_paths.push(
+            tidb_planner_util::path::AccessPath {
                 declared_columns: Some(vec![Some((
                     Column::new(1, FieldType::new(FieldTypeCode::LongLong)),
                     -1,
@@ -3560,7 +3561,7 @@ mod statistics_initialization_tests {
                     ),
                 ),
                 is_single_scan: Some(true),
-                ..Default::default()
+                ..tidb_planner_util::path::AccessPath::index_path(index(77))
             },
         );
         source.derived_access_paths = Some(tidb_planner_util::path::DerivedAccessPaths {
@@ -3583,12 +3584,10 @@ mod statistics_initialization_tests {
         };
         assert!(returned.derived_access_paths.is_none(), "statistics refresh invalidates candidate derivation");
         assert!(initializer.error.is_none(), "{:?}", initializer.error);
-        assert_eq!(
-            returned.derived_index_paths.len(),
-            1,
-            "InitStats discards stale estimates without erasing declared keys"
-        );
-        let retained = &returned.derived_index_paths[&77];
+        // InitStats discards stale estimates without erasing declared keys.
+        let stale = returned.path_by_index_id(99).unwrap();
+        assert_eq!((stale.row_estimate, stale.is_single_scan), (None, None));
+        let retained = returned.path_by_index_id(77).unwrap();
         assert_eq!(
             retained.declared_columns.as_ref().unwrap()[0]
                 .as_ref()
@@ -3982,7 +3981,7 @@ mod statistics_initialization_tests {
                         panic!("lost datasource");
                     };
                     assert_eq!(returned.table_id, 7);
-                    assert!(returned.derived_index_paths.get(&9).and_then(|path| path.count_after_access()).is_some());
+                    assert!(returned.path_by_index_id(9).and_then(|path| path.count_after_access()).is_some());
                 } else {
                     assert_eq!(optimized.err(), expected_error.clone());
                     if let Some(error) = expected_error {

@@ -115,18 +115,16 @@ fn score_index_path(
     interesting_ids: &HashSet<i64>,
     discounted: &HashSet<i64>,
 ) -> Option<IndexWithScore> {
-    let index = path.index_info()?;
-    let metadata = Some(index)?;
-    let state = source.derived_index_paths.get(&metadata.read().id);
-    let declared = state.and_then(|state| state.declared_columns.as_ref());
+    let metadata = path.index_info()?;
+    let declared = path.declared_columns.as_ref();
     let mut score = IndexWithScore {
         path: path.clone(),
         interesting_count: 0,
         consecutive_column_ids: Vec::new(),
         covered_column_ids: Vec::new(),
         covers_non_discounted: false,
-        is_single_scan: state
-            .and_then(|state| state.is_single_scan)
+        is_single_scan: path
+            .is_single_scan
             .unwrap_or_else(|| {
                 declared.is_some()
                     && tidb_planner_core_operator_logicalop::data_source::index_path_is_single_scan(source, metadata, false)
@@ -379,25 +377,14 @@ pub fn prune_data_source_with_options(
         return None;
     }
     // The paths' indexes, which `initialize_index_columns` declared.
-    let path_indexes = source
-        .enumerated_paths
-        .iter()
-        .filter_map(|path| path.index.clone())
-        .collect::<Vec<_>>();
-    for index in &path_indexes {
-        if source
-            .derived_index_paths
-            .get(&index.read().id)
-            .is_some_and(|state| state.declared_columns.is_some())
-        {
-            let single =
-                tidb_planner_core_operator_logicalop::data_source::index_path_is_single_scan(source, index, prefix_single_scan);
-            source
-                .derived_index_paths
-                .get_mut(&index.read().id)
-                .unwrap()
-                .is_single_scan = Some(single);
-        }
+    for position in 0..source.enumerated_paths.len() {
+        let path = &source.enumerated_paths[position];
+        let Some(index) = path.index.clone().filter(|_| path.declared_columns.is_some()) else {
+            continue;
+        };
+        let single =
+            tidb_planner_core_operator_logicalop::data_source::index_path_is_single_scan(source, &index, prefix_single_scan);
+        source.enumerated_paths[position].is_single_scan = Some(single);
     }
     let effective_threshold = if threshold == 0 {
         i32::try_from(source.enumerated_paths.len()).unwrap_or(i32::MAX)
@@ -586,12 +573,10 @@ mod tests {
         });
         let columns = source.indexes[0].read().columns.clone();
         source.indexes[1].write().columns = columns;
-        for index in &source.indexes {
-            source
-                .derived_index_paths
-                .entry(index.read().id)
-                .or_default()
-                .declared_columns = Some(vec![Some((column(1), -1)), Some((column(2), -1))]);
+        for path in &mut source.enumerated_paths {
+            if path.index_info().is_some() {
+                path.declared_columns = Some(vec![Some((column(1), -1)), Some((column(2), -1))]);
+            }
         }
         assert_eq!(
             prune_indexes_by_where_and_order(&source, &source.enumerated_paths, 1),
@@ -658,7 +643,7 @@ mod tests {
         assert_eq!(discounted, HashSet::from([3]));
         let a = score_index_path(
             &source,
-            &tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
+            source.path_by_index_id(source.indexes[0].read().id).unwrap(),
             &interesting,
             &discounted,
         )
@@ -672,7 +657,7 @@ mod tests {
         assert!(!a.droppable());
         let b = score_index_path(
             &source,
-            &tidb_planner_util::path::AccessPath::index_path(source.indexes[1].clone()),
+            source.path_by_index_id(source.indexes[1].read().id).unwrap(),
             &interesting,
             &discounted,
         )
@@ -680,15 +665,14 @@ mod tests {
         assert_eq!(b.covered_column_ids, vec![3]);
         assert!(b.droppable(), "table path serves handle-only access");
         source
-            .derived_index_paths
-            .get_mut(&11)
+            .path_by_index_id_mut(11)
             .unwrap()
             .declared_columns
             .as_mut()
             .unwrap()[0] = None;
         let missing = score_index_path(
             &source,
-            &tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
+            source.path_by_index_id(source.indexes[0].read().id).unwrap(),
             &interesting,
             &discounted,
         )
@@ -706,7 +690,7 @@ mod tests {
         assert_eq!(
             score_index_path(
                 &source,
-                &tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
+                source.path_by_index_id(source.indexes[0].read().id).unwrap(),
                 &interesting,
                 &discounted
             )

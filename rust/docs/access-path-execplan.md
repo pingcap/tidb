@@ -99,6 +99,18 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
   `IsUndetermined`; the isolation filter and `prefer_tikv` key on
   `StoreType`.
 - [ ] 2. Statistics derivation fills it.
+  - [x] 2a (2026-11-02): an index path's state lives on its `AccessPath`
+    (`declared_columns` = Go `FullIdxCols`/`FullIdxColLens`,
+    `is_uk_shard_index_path`, `is_single_scan`, `row_estimate` = Go
+    `CountAfterAccess` and bounds, `filled`); `IndexPathState` and the
+    id-keyed `DataSource.derived_index_paths` are gone, and readers find the
+    live path with `DataSource::path_by_index_id`.
+  - [ ] 2b: the table path's `FilledTablePath` moves onto the table path(s)
+    (Go `deriveTablePathStats` fills each table path, TiFlash included).
+  - [ ] 2c: `FilledIndexPath`'s fields flatten into Go's (`IdxCols`,
+    `Ranges`, `AccessConds`, `IndexFilters`, `TableFilters`,
+    `CountAfterIndex`), and `declared_columns` / `row_estimate` take Go's
+    names.
 - [ ] 3. Index merge produces it.
 - [ ] 4. Consumers moved.
 - [ ] 5. Old types deleted.
