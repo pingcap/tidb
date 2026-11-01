@@ -33,6 +33,7 @@ pub mod slow_log_rules;
 pub mod statusvar;
 pub mod sysvar;
 pub mod table_delta;
+pub mod temporary_table_data;
 pub mod varsutil;
 pub mod vars;
 

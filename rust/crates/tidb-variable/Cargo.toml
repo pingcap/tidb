@@ -43,4 +43,5 @@ tikv-client.workspace = true
 chrono = { workspace = true }
 serde_json.workspace = true
 tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-kv = { path = "../tidb-kv" }
 chrono-tz = { workspace = true }

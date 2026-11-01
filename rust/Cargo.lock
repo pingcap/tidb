@@ -7818,8 +7818,12 @@ dependencies = [
  "tidb-driver-error",
  "tidb-hack",
  "tidb-infoschema",
+ "tidb-kv",
  "tidb-model",
  "tidb-table",
+ "tidb-tablecodec",
+ "tidb-txnkv",
+ "tidb-variable",
 ]
 
 [[package]]
@@ -8248,6 +8252,7 @@ dependencies = [
  "tidb-go-time-layout",
  "tidb-goruntime",
  "tidb-hack",
+ "tidb-kv",
  "tidb-memory",
  "tidb-model",
  "tidb-mysql",

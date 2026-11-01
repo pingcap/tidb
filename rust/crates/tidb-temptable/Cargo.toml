@@ -16,3 +16,7 @@ tidb-hack = { path = "../tidb-hack" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-model = { path = "../tidb-model" }
 tidb-table = { path = "../tidb-table" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-variable = { path = "../tidb-variable" }

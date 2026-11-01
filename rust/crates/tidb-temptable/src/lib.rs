@@ -21,6 +21,8 @@ use tidb_hack::go_to_lower;
 use tidb_infoschema::session_tables::{self, SessionTables};
 use tidb_model::db::DBInfo;
 
+pub mod interceptor;
+
 /// What the DDL reads from the session that runs it (Go's `sctx`).
 pub trait TemporaryTableContext {
     /// Go `SessionVars.LocalTemporaryTables`.
