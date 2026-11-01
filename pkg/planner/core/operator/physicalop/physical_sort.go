@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
@@ -236,6 +237,12 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (_ *property.
 			if col == nil {
 				return nil, false, false
 			}
+			// The order of col decides ties of expr only when expr never maps
+			// distinct values of col to the same value. Otherwise the later items
+			// must break those ties, which the order of col does not do.
+			if i+1 < len(items) && mayTieDistinctValues(expr) {
+				return nil, false, false
+			}
 			// Reversing value order does not reverse NULL order: -NULL is still
 			// NULL. So `-c DESC` on a nullable column is `c ASC NULLS LAST`, which
 			// is the NULLs-high order of c rather than its plain opposite order.
@@ -293,6 +300,26 @@ func GetPropByOrderByItems(items []*util.ByItems) (*property.PhysicalProperty, b
 		propItems = append(propItems, property.SortItem{Col: col, Desc: item.Desc})
 	}
 	return &property.PhysicalProperty{SortItems: propItems}, true
+}
+
+// mayTieDistinctValues reports whether sf, which GetSingleColumn maps to a
+// single column, can map distinct values of that column to the same result.
+// Floating-point addition or subtraction of a constant can round distinct
+// values together (1+1e20 = 2+1e20). Negation, and integer or decimal
+// arithmetic, which is exact or fails with an overflow error, cannot.
+func mayTieDistinctValues(sf *expression.ScalarFunction) bool {
+	switch sf.FuncName.L {
+	case ast.Plus, ast.Minus:
+		if sf.RetType.EvalType() == types.ETReal {
+			return true
+		}
+	}
+	for _, arg := range sf.GetArgs() {
+		if f, ok := arg.(*expression.ScalarFunction); ok && mayTieDistinctValues(f) {
+			return true
+		}
+	}
+	return false
 }
 
 // matchIsNullPair checks whether items[i] and items[i+1] are `ISNULL(col), col`,

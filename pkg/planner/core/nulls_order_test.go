@@ -190,6 +190,27 @@ func TestNullsOrderAvoidSort(t *testing.T) {
 		tk.MustQuery(tc.sql).Check(testkit.Rows(tc.rows...))
 	}
 
+	// Floating-point arithmetic can map distinct values to the same result, so the
+	// index order cannot break its ties for later sort items.
+	tk.MustExec("create table tf (id int primary key, a double, b double not null, key ia(a), key ib(b))")
+	tk.MustExec("insert into tf values (1, 2, 2), (2, 1, 1), (3, null, 3)")
+	for _, tc := range []struct {
+		sql  string
+		rows []string
+	}{
+		{"select id from tf use index(ia) order by -(a+1e20) desc, id", []string{"1", "2", "3"}},
+		{"select id from tf use index(ia) order by a+1e20, id", []string{"3", "1", "2"}},
+		{"select id from tf use index(ib) where id < 3 order by b+1e20, id", []string{"1", "2"}},
+		{"select id from tf use index(ib) where id < 3 order by -(b+1e20) desc, id", []string{"1", "2"}},
+	} {
+		tk.MustQuery("explain format = 'brief' " + tc.sql).CheckContain("Sort")
+		tk.MustQuery(tc.sql).Check(testkit.Rows(tc.rows...))
+	}
+	// Negation is exact, and ties of the last sort item may come in any order.
+	tk.MustQuery("explain format = 'brief' select id from tf use index(ia) order by -a desc, id").CheckNotContain("Sort")
+	tk.MustQuery("select id from tf use index(ia) order by -a desc, id").Check(testkit.Rows("2", "1", "3"))
+	tk.MustQuery("explain format = 'brief' select a from tf use index(ia) order by -(a+1e20) desc").CheckNotContain("Sort")
+
 	// Union scan merges the transaction's rows with the default NULL order.
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (6, null, 60, 3), (7, 0, 70, 3)")
