@@ -54,14 +54,6 @@
 //! * `sessionVars.AllowDeriveTopN` gates Go's `BaseLogicalPlan.DeriveTopN`
 //!   recursion (`base_logical_plan.go:169`). It is a [`RuleContext`] field
 //!   here, threaded rather than read off the plan.
-//! * `dataSource.AllPossibleAccessPaths[i].StoreType == kv.TiFlash` refuses the
-//!   derivation ("Pushing down window aggregation is good enough in this
-//!   case"). [`super::super::access_path::DataSourceAccessPath`] does not carry
-//!   `util.AccessPath.StoreType`, so [`tidb_planner_core_operator_logicalop::DataSource::has_tiflash_replica`]
-//!   stands in: a table with a TiFlash replica is where such a path can come
-//!   from, so the test refuses a SUPERSET of what Go refuses. Refusing is the
-//!   safe direction — the plan keeps the window without a derived TopN, which
-//!   is what Go produces whenever the guard fires.
 //! * `expression.Column.Equal(evalCtx, other)` compares by `UniqueID` for
 //!   columns, which is what [`tidb_expr::column::Column::equal_column`] does.
 
@@ -123,9 +115,13 @@ fn window_is_topn(selection: &tidb_planner_core_operator_logicalop::LogicalSelec
     let LogicalPlan::DataSource(data_source) = &child.children()[0] else {
         return None;
     };
-    // Go: "Give up if TiFlash is one possible access path of all." See this
-    // module's narrowings.
-    if data_source.has_tiflash_replica {
+    // Go: "Give up if TiFlash is one possible access path of all. Pushing
+    // down window aggregation is good enough in this case."
+    if data_source
+        .enumerated_paths
+        .iter()
+        .any(|path| matches!(path, tidb_planner_util::path::PossiblePath::TiFlashTable))
+    {
         return None;
     }
     let frame = window.frame.as_ref()?;

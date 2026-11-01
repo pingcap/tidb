@@ -1303,19 +1303,6 @@ impl PhysicalTableScan {
         }
     }
 
-    /// Builds the scan after the access path has validated table identity.
-    #[must_use]
-    pub fn from_validated_pushdown(
-        plan_id: i32,
-        query_block_offset: i32,
-        pushdown: tidb_planner_core_operator_logicalop::data_source_paths::ValidatedTablePushdown,
-    ) -> Self {
-        let descriptor = pushdown.descriptor();
-        let mut scan = Self::init(plan_id, query_block_offset, pushdown.spec().clone());
-        scan.resolved_descriptor = Some(descriptor);
-        scan
-    }
-
     /// Installs Go `CountAfterAccess` as this physical operator's statistics.
     pub fn try_with_source_estimated_rows(mut self, rows: f64) -> Option<Self> {
         if !rows.is_finite() || rows < 0.0 {

@@ -25,7 +25,6 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::extract_columns;
 
-use tidb_planner_core_operator_logicalop::data_source_paths::DataSourceAccessPath;
 use crate::expression_rewriter::{
     extract_correlated_cols_4_logical_plan, matching_cor_columns_by_schema,
 };
@@ -206,37 +205,55 @@ fn join_keys_contain_schema_key(
     })
 }
 
+/// Go `isInnerJoinKeysContainIndex` over `ds.AllPossibleAccessPaths`: a
+/// unique index path (a common-handle table path's PRIMARY counts) whose
+/// `IdxCols` are all join keys, none of them a nullable null-safe-equal key.
+/// `IdxCols` is filled by `fillIndexPath` / the table-path fill when
+/// statistics are derived; a path not filled yet has none and never matches.
 fn join_keys_contain_unique_index(
     inner: &LogicalPlan,
     join_keys: &Schema,
     null_eq: &HashSet<i64>,
 ) -> bool {
+    use tidb_planner_util::path::PossiblePath;
     let LogicalPlan::DataSource(source) = inner else {
         return false;
     };
-    source.all_possible_access_paths.iter().any(|path| {
-        let DataSourceAccessPath::Index(path) = path else {
-            return false;
+    source.enumerated_paths.iter().any(|path| {
+        let idx_cols: Vec<&Column> = match path {
+            PossiblePath::Index { index } => {
+                if !index.read().unique {
+                    return false;
+                }
+                let Some(filled) = source
+                    .derived_index_paths
+                    .get(&index.read().id)
+                    .and_then(|state| state.filled.as_ref())
+                else {
+                    return false;
+                };
+                filled.columns.iter().map(|(column, _)| column).collect()
+            }
+            PossiblePath::Table {
+                is_int_handle: false,
+                primary_index: Some(_),
+            } => source
+                .derived_access_paths
+                .as_ref()
+                .and_then(|derived| derived.table_path.as_ref())
+                .map(|table| table.common_columns.iter().map(|(column, _)| column).collect())
+                .unwrap_or_default(),
+            _ => return false,
         };
-        let index_id = path.candidate().index_id;
-        let Some(index) = source
-            .indexes
-            .iter()
-            .find(|index| index.read().id == index_id && index.read().unique && !index.read().columns.is_empty())
-        else {
-            return false;
-        };
-        index.read().columns.iter_deref().all(|index_column| {
-            let Some(column) = source.table_columns.get(index_column.read().offset as usize) else {
-                return false;
-            };
-            join_keys.contains(column)
-                && (column
-                    .ret_type
-                    .as_ref()
-                    .is_some_and(|field_type| field_type.has_flag(FieldTypeFlags::NOT_NULL))
-                    || !null_eq.contains(&column.unique_id))
-        })
+        !idx_cols.is_empty()
+            && idx_cols.iter().all(|column| {
+                join_keys.contains(column)
+                    && (column
+                        .ret_type
+                        .as_ref()
+                        .is_some_and(|field_type| field_type.has_flag(FieldTypeFlags::NOT_NULL))
+                        || !null_eq.contains(&column.unique_id))
+            })
     })
 }
 

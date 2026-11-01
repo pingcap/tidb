@@ -799,6 +799,44 @@ fn a_row_number_upper_bound_derives_a_topn_under_the_window() {
     out.dismantle();
 }
 
+/// Go `LogicalSelection.canDerivedTopN`: "Give up if TiFlash is one possible
+/// access path of all" -- the TiFlash PATH among `AllPossibleAccessPaths`,
+/// not a replica on the table. A replica whose path was not enumerated (the
+/// isolation engines exclude TiFlash) still derives the TopN.
+#[test]
+fn only_an_enumerated_tiflash_path_refuses_the_derivation() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let plan = |paths: Vec<tidb_planner_util::path::PossiblePath>| {
+        let mut source = data_source(&allocator, &[1]);
+        let LogicalPlan::DataSource(ds) = &mut source else {
+            unreachable!()
+        };
+        ds.has_tiflash_replica = true;
+        ds.enumerated_paths = paths;
+        selection(
+            &allocator,
+            vec![le_const(2, 5)],
+            row_number_window(&allocator, "row_number", source),
+        )
+    };
+    let table = tidb_planner_util::path::PossiblePath::Table {
+        is_int_handle: true,
+        primary_index: None,
+    };
+
+    let replica_only = derive_top_n(&ctx, plan(vec![table.clone()]));
+    assert_eq!(kind(&replica_only.children()[0].children()[0]), "TopN");
+    replica_only.dismantle();
+
+    let tiflash_path = derive_top_n(
+        &ctx,
+        plan(vec![table, tidb_planner_util::path::PossiblePath::TiFlashTable]),
+    );
+    assert_eq!(kind(&tiflash_path.children()[0].children()[0]), "DataSource");
+    tiflash_path.dismantle();
+}
+
 #[test]
 fn a_window_function_other_than_row_number_derives_nothing() {
     let allocator = PlanIdAllocator::default();

@@ -85,10 +85,8 @@ pub struct DerivedAccessPaths {
 ///
 /// Go's `util.AccessPath` is born nearly empty — `{StoreType, Index,
 /// IsIntHandlePath/IsCommonHandlePath}` — and only later grows ranges and
-/// counts (`deriveStatsByFilter`). This type is that newborn form;
-/// [`DataSourceAccessPath`] above is the grown, costing-time form the bounded
-/// scanner builds. Two stages, as in Go, where one struct mutates through
-/// both.
+/// counts (`deriveStatsByFilter`). This type is that newborn form; the grown
+/// state is [`IndexPathState`] and [`DerivedAccessPaths`].
 #[derive(Clone, Debug)]
 pub enum PossiblePath {
     /// The table path, always first (`publicPaths[0]`).

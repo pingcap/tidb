@@ -3498,11 +3498,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         };
         // Go `getPossibleAccessPaths` (`:5042`): the ENUMERATION runs here,
         // filling the newborn path list — the table path plus one per public
-        // index. The GROWN lists (`possible_access_paths` and friends) stay
-        // empty at build time deliberately: every constructor on
-        // [`DataSourceAccessPath`] demands an already-PROVEN ranger/statistics
-        // input, and that costing seam fills them later, as Go's
-        // `deriveStatsByFilter` stage does.
+        // index. Statistics derivation grows them later, as Go's
+        // `deriveStatsByFilter` does.
         // Go `getPossibleAccessPaths`: a table without an available TiFlash
         // replica (a hypothetical one is available) blocks enforced MPP.
         match &table.tiflash_replica {
@@ -3688,7 +3685,6 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         data_source.index_lookup_push_down_by = resolution.index_lookup_push_down_by;
         data_source.indexes = table.indexes.clone();
         self.set_preferred_store_type(&mut data_source);
-        debug_assert!(data_source.possible_access_paths.is_empty());
 
         data_source
             .base

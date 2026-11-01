@@ -15,11 +15,10 @@
 //! Go `pkg/planner/core/operator/logicalop/logical_datasource.go`:
 //! `DataSource`, the leaf that reads one (physical) table.
 //!
-//! SEED of `pkg/planner/core`. The ACCESS PATHS are
-//! [`crate::data_source_paths::DataSourceAccessPath`], already in this crate and
-//! reused rather than restated; the path-to-task lowering stays in
-//! the planner's `logical_data_source` / `logical_data_source_task`, which
-//! this operator feeds rather than duplicates.
+//! SEED of `pkg/planner/core`. The access paths are
+//! `tidb_planner_util::path`'s, enumerated into
+//! [`DataSource::enumerated_paths`] and derived into
+//! [`DataSource::derived_access_paths`].
 //!
 //! # Narrowings, by name
 //!
@@ -51,7 +50,6 @@ use tidb_expr::simple_expr::{
     extract_columns_from_expressions, extract_cor_columns, parse_simple_expr, BuildOptions,
 };
 
-use crate::data_source_paths::DataSourceAccessPath;
 use crate::schema_producer;
 use crate::BaseLogicalPlan;
 use tidb_planner_core_base::PossiblePropertiesInfo;
@@ -156,10 +154,6 @@ pub struct DataSource {
     /// Go reads off `ds.TableInfo.Indices` when it fills `path.IdxCols`
     /// (`fillIndexPath`). Filled beside the newborn path list.
     pub indexes: Vec<tidb_model::GoShared<tidb_model::IndexInfo>>,
-    /// Go `AllPossibleAccessPaths`, reusing this crate's own path model.
-    pub all_possible_access_paths: Vec<DataSourceAccessPath>,
-    /// Go `PossibleAccessPaths`: the pruned subset the optimizer enumerates.
-    pub possible_access_paths: Vec<DataSourceAccessPath>,
     /// Go `TableInfo.PKIsHandle`.
     pub pk_is_handle: bool,
     /// Latest-schema public index IDs used by `ExtractFD` for a connected
@@ -792,18 +786,6 @@ impl DataSource {
             tidb_planner_util::path::PossiblePath::Table { .. }
             | tidb_planner_util::path::PossiblePath::TiFlashTable => !partial_index_used_hint,
         });
-        self.all_possible_access_paths.retain(|path| match path {
-            DataSourceAccessPath::Index(index) => keep_index_id(index.candidate().index_id),
-            DataSourceAccessPath::Table(_) | DataSourceAccessPath::IndexMerge => {
-                !partial_index_used_hint
-            }
-        });
-        self.possible_access_paths.retain(|path| match path {
-            DataSourceAccessPath::Index(index) => keep_index_id(index.candidate().index_id),
-            DataSourceAccessPath::Table(_) | DataSourceAccessPath::IndexMerge => {
-                !partial_index_used_hint
-            }
-        });
     }
 
     /// Go `DataSource.PruneColumns(parentUsedCols)`'s LOCAL half
@@ -1145,8 +1127,6 @@ impl DataSource {
             ast_index_hints: self.ast_index_hints.clone(),
             index_hints: self.index_hints.clone(),
             indexes: self.indexes.clone(),
-            all_possible_access_paths: self.all_possible_access_paths.clone(),
-            possible_access_paths: self.possible_access_paths.clone(),
             pk_is_handle: self.pk_is_handle,
             fd_latest_public_index_ids: self.fd_latest_public_index_ids.clone(),
             fd_latest_index_lookup_failed: self.fd_latest_index_lookup_failed,

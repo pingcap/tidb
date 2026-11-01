@@ -397,8 +397,8 @@ to the three removed map fields.
 This is the statistics portion of path ownership. Ranges, key layouts, access
 conditions, residual filter partitions and merge candidates still lack the shared
 logical owner required by the target design. The bounded planner's separate
-`DataSourceAccessPath` lists are also not interchangeable with the general
-production dispatch state; merging them by name alone would be incorrect.
+`DataSourceAccessPath` lists, never filled in production, are deleted; rules
+that read Go's `AllPossibleAccessPaths` read `DataSource.enumerated_paths`.
 Whole-package source coverage and workload performance remain open.
 
 Validation commands:

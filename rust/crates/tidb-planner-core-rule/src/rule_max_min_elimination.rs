@@ -25,7 +25,6 @@ use tidb_expr::simple_expr::extract_columns;
 use tidb_planner_core_operator_logicalop::aggregation::{AGG_FUNC_MAX, AGG_FUNC_MIN};
 use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
 use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalAggregation, LogicalJoin, LogicalLimit, LogicalPlan, LogicalSelection, LogicalSort};
-use tidb_planner_core_operator_logicalop::data_source_paths::{AccessPathStore, DataSourceAccessPath};
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;
 
@@ -71,119 +70,38 @@ fn check_column_can_use_index(
                 .is_some_and(|child| check_column_can_use_index(ctx, child, column, conditions))
         }
         LogicalPlan::DataSource(source) => {
-            // Logical planning has enumerated paths before costing constructs
-            // DataSourceAccessPath. Go's AllPossibleAccessPaths already contains
-            // these hint-filtered entries at this stage.
-            if source.all_possible_access_paths.is_empty() {
-                use tidb_planner_util::path::PossiblePath;
-                for path in &source.enumerated_paths {
-                    let (columns, lengths): (Vec<Column>, Vec<i64>) = match path {
-                        PossiblePath::Table {
-                            is_int_handle: true,
-                            ..
-                        } => {
-                            if source
-                                .handle_cols
-                                .first()
-                                .is_some_and(|handle| handle.unique_id == column.unique_id)
-                            {
-                                return tidb_ranger::detacher::detach_conds_for_column(
-                                    &conditions,
-                                    column,
-                                    true,
-                                )
-                                .1
-                                .is_empty();
-                            }
-                            continue;
+            // Go `AllPossibleAccessPaths`: the hint-filtered enumerated paths.
+            use tidb_planner_util::path::PossiblePath;
+            for path in &source.enumerated_paths {
+                let (columns, lengths): (Vec<Column>, Vec<i64>) = match path {
+                    PossiblePath::Table {
+                        is_int_handle: true,
+                        ..
+                    } => {
+                        if source
+                            .handle_cols
+                            .first()
+                            .is_some_and(|handle| handle.unique_id == column.unique_id)
+                        {
+                            return tidb_ranger::detacher::detach_conds_for_column(
+                                &conditions,
+                                column,
+                                true,
+                            )
+                            .1
+                            .is_empty();
                         }
-                        PossiblePath::Table {
-                            is_int_handle: false,
-                            ..
-                        } => (
-                            source.common_handle_cols.clone(),
-                            source.common_handle_lens.clone(),
-                        ),
-                        PossiblePath::Index { index } => {
-                            index
-                                .read().columns
-                                .iter_deref()
-                                .map_while(|index_column| {
-                                    let index_column = index_column.read();
-                                    source
-                                        .schema_column_for_index_column(&index_column)
-                                        .cloned()
-                                        .map(|column| (column, index_column.length))
-                                })
-                                .unzip()
-                        }
-                        PossiblePath::TiFlashTable => continue,
-                    };
-                    if columns.is_empty() {
                         continue;
                     }
-                    if detach(&columns, &lengths).is_ok_and(|result| {
-                        result.remained_conds.is_empty()
-                            && (0..=result.eq_cond_count).any(|offset| {
-                                columns.get(offset).is_some_and(|index_column| {
-                                    index_column.unique_id == column.unique_id
-                                })
-                            })
-                    }) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-            for path in &source.all_possible_access_paths {
-                let can_use = match path {
-                    DataSourceAccessPath::Table(path) => {
-                        if path.store() != AccessPathStore::TiKv {
-                            continue;
-                        }
-                        if source.handle_is_int {
-                            if source
-                                .handle_cols
-                                .first()
-                                .is_some_and(|handle| handle.unique_id == column.unique_id)
-                            {
-                                // Go stops the complete search on this matching handle,
-                                // including when residual filters make it unusable.
-                                return tidb_ranger::detacher::detach_conds_for_column(
-                                    &conditions,
-                                    column,
-                                    true,
-                                )
-                                .1
-                                .is_empty();
-                            }
-                            continue;
-                        }
-                        if source.common_handle_cols.is_empty() {
-                            continue;
-                        }
-                        detach(&source.common_handle_cols, &source.common_handle_lens).is_ok_and(
-                            |result| {
-                                result.remained_conds.is_empty()
-                                    && (0..=result.eq_cond_count).any(|offset| {
-                                        source.common_handle_cols.get(offset).is_some_and(
-                                            |index_column| {
-                                                index_column.unique_id == column.unique_id
-                                            },
-                                        )
-                                    })
-                            },
-                        )
-                    }
-                    DataSourceAccessPath::Index(path) => {
-                        let Some(index) = source
-                            .indexes
-                            .iter()
-                            .find(|index| index.read().id == path.candidate().index_id)
-                        else {
-                            continue;
-                        };
-                        let resolved = index
+                    PossiblePath::Table {
+                        is_int_handle: false,
+                        ..
+                    } => (
+                        source.common_handle_cols.clone(),
+                        source.common_handle_lens.clone(),
+                    ),
+                    PossiblePath::Index { index } => {
+                        index
                             .read().columns
                             .iter_deref()
                             .map_while(|index_column| {
@@ -193,30 +111,21 @@ fn check_column_can_use_index(
                                     .cloned()
                                     .map(|column| (column, index_column.length))
                             })
-                            .collect::<Vec<_>>();
-                        if resolved.is_empty() {
-                            continue;
-                        }
-                        let columns = resolved
-                            .iter()
-                            .map(|(column, _)| column.clone())
-                            .collect::<Vec<_>>();
-                        let lengths = resolved
-                            .iter()
-                            .map(|(_, length)| *length)
-                            .collect::<Vec<_>>();
-                        detach(&columns, &lengths).is_ok_and(|result| {
-                            result.remained_conds.is_empty()
-                                && (0..=result.eq_cond_count).any(|offset| {
-                                    columns.get(offset).is_some_and(|index_column| {
-                                        index_column.unique_id == column.unique_id
-                                    })
-                                })
-                        })
+                            .unzip()
                     }
-                    DataSourceAccessPath::IndexMerge => false,
+                    PossiblePath::TiFlashTable => continue,
                 };
-                if can_use {
+                if columns.is_empty() {
+                    continue;
+                }
+                if detach(&columns, &lengths).is_ok_and(|result| {
+                    result.remained_conds.is_empty()
+                        && (0..=result.eq_cond_count).any(|offset| {
+                            columns.get(offset).is_some_and(|index_column| {
+                                index_column.unique_id == column.unique_id
+                            })
+                        })
+                }) {
                     return true;
                 }
             }
@@ -244,8 +153,6 @@ fn clone_subplan(ctx: &RuleContext<'_>, plan: &LogicalPlan) -> Option<LogicalPla
         }
         LogicalPlan::DataSource(source) => {
             let mut cloned = source.clone();
-            // Go resets each split source to all paths before pruning it again.
-            cloned.possible_access_paths = cloned.all_possible_access_paths.clone();
             let mut base = BaseLogicalPlan::new(
                 ctx.allocator,
                 source.base.base.tp(),
@@ -512,42 +419,17 @@ mod tests {
 
     #[test]
     fn integer_handle_residual_stops_before_later_covering_index() {
-        use tidb_planner_core_operator_logicalop::data_source_paths::{IndexAccessPath, PointGetAdmission, ResolvedTableDescriptor, ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix};
-        use tidb_planner_cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
-        use tidb_planner_core_operator_logicalop::tikv_scan_spec::TiKvTableScanSpec;
+        use tidb_planner_util::path::PossiblePath;
         let allocator = PlanIdAllocator::new();
         let handle = column(1, false);
         let other = column(2, false);
         let mut base = BaseLogicalPlan::new(&allocator, DataSource::TYPE, 0);
         base.base
             .set_schema(Some(Schema::new(vec![handle.clone(), other.clone()])));
-        let table = DataSourceAccessPath::Table(
-            TableAccessPath::from_source_table_scan(
-                ResolvedTableDescriptor::new(
-                    1,
-                    false,
-                    ResolvedTableScanKind::Full,
-                    TableScanExplainIdSuffix::IncludePlanId,
-                ),
-                TiKvTableScanSpec::new(1, vec![]),
-                PointGetAdmission::NotEligible,
-                10.0,
-            )
-            .unwrap(),
-        );
-        let index = DataSourceAccessPath::Index(IndexAccessPath::new(LiveIndexCandidate {
-            index_id: 11,
-            ranges: vec![],
-            proven_equality_range: false,
-            point_statistics: IndexPointStatistics {
-                topn_count: None,
-                cms_count: None,
-                histogram_count: 0,
-            },
-            row_size: 8.0,
-            scan_factor: 1.0,
-            index_scan_cost_factor: 1.0,
-        }));
+        let table = PossiblePath::Table {
+            is_int_handle: true,
+            primary_index: None,
+        };
         let mut source = DataSource {
             base,
             handle_is_int: true,
@@ -590,9 +472,12 @@ mod tests {
                 ].into(),
                 ..tidb_model::IndexInfo::default()
             })],
-            all_possible_access_paths: vec![index.clone()],
             ..DataSource::default()
         };
+        let index = PossiblePath::Index {
+            index: source.indexes[0].clone(),
+        };
+        source.enumerated_paths = vec![index.clone()];
         let condition =
             Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
                 tidb_ast::CiString::new("eq"),
@@ -635,7 +520,7 @@ mod tests {
         assert!(!tracker.use_cache());
         assert_eq!(tracker.plan_cache_unqualified(), "in-list is too long");
         assert_eq!(warnings.warning_count(), 2);
-        source.all_possible_access_paths = vec![table.clone(), index.clone()];
+        source.enumerated_paths = vec![table.clone(), index.clone()];
         assert!(
             !check_column_can_use_index(
                 &test_context(&allocator),
@@ -645,61 +530,13 @@ mod tests {
             ),
             "Go returns false immediately for residual predicates on the matching integer handle"
         );
-        source.all_possible_access_paths = vec![index, table];
+        source.enumerated_paths = vec![index, table];
         assert!(check_column_can_use_index(
             &test_context(&allocator),
             &LogicalPlan::DataSource(source),
             &handle,
             vec![condition]
         ));
-    }
-
-    #[test]
-    fn split_source_clone_restores_all_access_paths() {
-        use tidb_planner_core_operator_logicalop::data_source_paths::IndexAccessPath;
-        use tidb_planner_cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
-        let path = |index_id| {
-            DataSourceAccessPath::Index(IndexAccessPath::new(LiveIndexCandidate {
-                index_id,
-                ranges: vec![],
-                proven_equality_range: false,
-                point_statistics: IndexPointStatistics {
-                    topn_count: None,
-                    cms_count: None,
-                    histogram_count: 0,
-                },
-                row_size: 8.0,
-                scan_factor: 1.0,
-                index_scan_cost_factor: 1.0,
-            }))
-        };
-        let allocator = PlanIdAllocator::new();
-        let ctx = test_context(&allocator);
-        let all_paths = vec![path(11), path(22)];
-        let original = LogicalPlan::DataSource(DataSource {
-            base: BaseLogicalPlan::new(&allocator, DataSource::TYPE, 0),
-            all_possible_access_paths: all_paths.clone(),
-            possible_access_paths: vec![all_paths[1].clone()],
-            ..DataSource::default()
-        });
-        let LogicalPlan::DataSource(mut first) = clone_subplan(&ctx, &original).unwrap() else {
-            panic!("source clone expected")
-        };
-        let LogicalPlan::DataSource(second) = clone_subplan(&ctx, &original).unwrap() else {
-            panic!("source clone expected")
-        };
-        // Each split aggregate must reconsider every path, in the original order.
-        assert_eq!(first.possible_access_paths, all_paths);
-        assert_eq!(second.possible_access_paths, all_paths);
-        first.possible_access_paths.clear();
-        first.all_possible_access_paths.clear();
-        assert_eq!(second.possible_access_paths, all_paths);
-        assert_eq!(second.all_possible_access_paths, all_paths);
-        let LogicalPlan::DataSource(original) = original else {
-            unreachable!()
-        };
-        assert_eq!(original.possible_access_paths, vec![all_paths[1].clone()]);
-        assert_eq!(original.all_possible_access_paths, all_paths);
     }
 
     #[test]

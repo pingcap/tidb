@@ -20,17 +20,13 @@ use tidb_executor::dag_request::{
     construct_dag_req, DagRequestBuildError, DagRequestContext, TiKvScanPlan,
     DEFAULT_DIV_PRECISION_INCREMENT,
 };
-use tidb_planner_property::task_type::TaskType;
 use tidb_planner_cardinality::{
         index_range_policy::{IndexRangeShape, RangeBoundKind},
         live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate},
 };
-use tidb_planner::{
-    logical_data_source::LogicalDataSource,
-    logical_data_source_task::IndexTaskProperty,
-};
+
 use tidb_planner_core_operator_physicalop::{PhysicalIndexScan, PhysicalTableScan};
-use tidb_planner_core_operator_logicalop::data_source_paths::{DataSourceAccessPath, IndexAccessPath, PointGetAdmission};
+
 use tidb_planner_core_operator_logicalop::tikv_scan_spec::{
         check_cover_index, IndexPushdownMetadataError, ResolvedIndexDescriptor, ScanColumnInfo,
         TiKvIndexScanSpec, TiKvTableScanSpec, UnsupportedScanFeature,
@@ -265,51 +261,6 @@ fn check_cover_index_ports_source_width_and_null_rules() {
 }
 
 #[test]
-fn live_index_task_reaches_index_scan_dag_payload() {
-    let ranges = vec![value_range(2)];
-    let pushdown = TiKvIndexScanSpec::new(
-        100,
-        11,
-        vec![ScanColumnInfo {
-            column_id: 3,
-            tp: 3,
-            ..ScanColumnInfo::default()
-        }],
-        true,
-        2,
-    );
-    let descriptor = ResolvedIndexDescriptor {
-        index_id: 11,
-        declared_unique: true,
-        index_column_count: 2,
-    };
-    let path = IndexAccessPath::from_source_index_scan(
-        candidate(11, ranges),
-        5.0,
-        PointGetAdmission::NotEligible,
-    )
-    .with_pushdown(descriptor, pushdown)
-    .unwrap();
-    let source = LogicalDataSource::new(9, 0, [DataSourceAccessPath::Index(path)]);
-    let task = source.build_index_task(IndexTaskProperty::new(TaskType::CopSingleRead));
-    let plan = task.index_plan().expect("source-admitted index task");
-    let request = construct_dag_req(&default_context(), &[TiKvScanPlan::Index(plan)]).unwrap();
-    let executor = &request.executors[0];
-    assert_eq!(executor.tp, Some(ExecType::TypeIndexScan as i32));
-    assert_eq!(executor.executor_id, None);
-    let scan = executor.idx_scan.as_ref().unwrap();
-    assert_eq!(scan.table_id, Some(100));
-    assert_eq!(scan.index_id, Some(11));
-    assert_eq!(scan.desc, Some(false));
-    assert_eq!(scan.unique, Some(true));
-    assert_eq!(scan.columns[0].column_id, Some(3));
-    assert_eq!(
-        DagRequest::decode(request.encode_to_vec().as_slice()).unwrap(),
-        request
-    );
-}
-
-#[test]
 fn request_optional_fields_follow_construct_dag_req_presence_rules() {
     let table = PhysicalTableScan::init(1, 0, TiKvTableScanSpec::new(1, vec![]));
     let mut context = default_context();
@@ -389,10 +340,9 @@ fn index_pushdown_rejects_split_identity_and_shape_authority() {
         }
     );
 
-    let error =
-        IndexAccessPath::from_source_index_scan(candidate, 1.0, PointGetAdmission::NotEligible)
-            .with_pushdown(descriptor, TiKvIndexScanSpec::new(1, 11, vec![], true, 1))
-            .unwrap_err();
+    let error = PhysicalIndexScan::init(1, 0, &candidate, 1.0)
+        .try_with_pushdown(descriptor, TiKvIndexScanSpec::new(1, 11, vec![], true, 1))
+        .unwrap_err();
     assert_eq!(
         error,
         IndexPushdownMetadataError::IndexColumnCount {
