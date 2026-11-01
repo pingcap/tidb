@@ -18,7 +18,7 @@
 #[allow(unused_imports)]
 use crate::table_info_build::DdlAdmissionError;
 #[allow(unused_imports)]
-use tidb_ast::{CiString, CreateTableStmt, IndexPart, ReferentialAction, TableConstraint};
+use tidb_ast::{CiString, CreateTableStmt, IndexPart, ReferOptionType, TableConstraint};
 #[allow(unused_imports)]
 use tidb_datatype::FieldTypeFlags;
 #[allow(unused_imports)]
@@ -53,29 +53,6 @@ pub fn coded(
     message: impl Into<String>,
 ) -> DdlAdmissionError {
     DdlAdmissionError::from_terror(&proto.generate_with_stack(message.into()))
-}
-
-/// Go `ast.ReferOptionType` ordinal.
-pub fn refer_opt(action: Option<ReferentialAction>) -> i64 {
-    match action.unwrap_or_default() {
-        ReferentialAction::NoOption | ReferentialAction::Unknown(_) => 0,
-        ReferentialAction::Restrict => 1,
-        ReferentialAction::Cascade => 2,
-        ReferentialAction::SetNull => 3,
-        ReferentialAction::NoAction => 4,
-        ReferentialAction::SetDefault => 5,
-    }
-}
-
-pub fn refer_opt_name(opt: i64) -> &'static str {
-    match opt {
-        1 => "RESTRICT",
-        2 => "CASCADE",
-        3 => "SET NULL",
-        4 => "NO ACTION",
-        5 => "SET DEFAULT",
-        _ => "",
-    }
 }
 
 pub fn part_column(part: &IndexPart) -> Refusal<String> {
@@ -125,8 +102,8 @@ pub fn build_fk_info(
     crate::check_too_long_identifier(fk_name).map_err(refusal)?;
     crate::check_too_long_identifier(ref_schema).map_err(refusal)?;
     crate::check_too_long_identifier(&ref_table).map_err(refusal)?;
-    let on_delete = refer_opt(refer.on_delete);
-    let on_update = refer_opt(refer.on_update);
+    let on_delete = refer.on_delete.unwrap_or_default();
+    let on_update = refer.on_update.unwrap_or_default();
     // Go: columns a STORED generated column depends on.
     let mut base_cols = std::collections::HashSet::new();
     for column in table.columns.iter_deref() {
@@ -165,34 +142,34 @@ pub fn build_fk_info(
                         ]),
                 )));
             }
-            if matches!(on_update, 2 | 3 | 5) {
+            if matches!(on_update, ReferOptionType::Cascade | ReferOptionType::SetNull | ReferOptionType::SetDefault) {
                 return Err(refusal(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_WRONG_FK_OPTION_FOR_GENERATED_COLUMN
                         .generate_with_stack_by_args(&[(format!(
                             "ON UPDATE {}",
-                            refer_opt_name(on_update)
+                            on_update.sql()
                         ))
                         .to_string()
                         .into()]),
                 )));
             }
-            if matches!(on_delete, 3 | 5) {
+            if matches!(on_delete, ReferOptionType::SetNull | ReferOptionType::SetDefault) {
                 return Err(refusal(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_WRONG_FK_OPTION_FOR_GENERATED_COLUMN
                         .generate_with_stack_by_args(&[(format!(
                             "ON DELETE {}",
-                            refer_opt_name(on_delete)
+                            on_delete.sql()
                         ))
                         .to_string()
                         .into()]),
                 )));
             }
         } else if base_cols.contains(column.name.lowercase())
-            && (matches!(on_update, 2 | 3 | 5) || matches!(on_delete, 2 | 3 | 5))
+            && (matches!(on_update, ReferOptionType::Cascade | ReferOptionType::SetNull | ReferOptionType::SetDefault) || matches!(on_delete, ReferOptionType::Cascade | ReferOptionType::SetNull | ReferOptionType::SetDefault))
         {
             return Err(cannot_add());
         }
-        if column.field_type.has_flag(FieldTypeFlags::NOT_NULL) && (on_delete == 3 || on_update == 3)
+        if column.field_type.has_flag(FieldTypeFlags::NOT_NULL) && (on_delete == ReferOptionType::SetNull || on_update == ReferOptionType::SetNull)
         {
             return Err(refusal(tidb_terror::MysqlError::from_terror(
                 &tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_COLUMN_NOT_NULL
@@ -216,8 +193,8 @@ pub fn build_fk_info(
         ref_table: CiString::new(ref_table),
         ref_cols: ref_cols.into(),
         cols: cols.into(),
-        on_delete,
-        on_update,
+        on_delete: on_delete.into(),
+        on_update: on_update.into(),
         state: SchemaState::PUBLIC,
         version: if tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst) { FK_VERSION1 } else { 0 },
         ..FKInfo::default()

@@ -234,7 +234,7 @@ use tidb_sessionctx::explain_format::ExplainFormat;
 use tidb_executor_join::join::{JoinExec, JoinKind};
 pub use kv_table::{KvTableDdl, KvTablePartitionMaintenance, KvTableReader, RowDecodeContextExt, TableScanExec};
 use tidb_ddl_build::table_backfill::KvTableBackfill;
-use tidb_table::tables::{FkAction, TableCommon, RowDecodeContext, TableCharset};
+use tidb_table::tables::{TableCommon, RowDecodeContext, TableCharset};
 pub use limit::LimitExec;
 pub use mem_quota::{SessionMemory, StatementMemory};
 use tidb_vardef::OomAction;

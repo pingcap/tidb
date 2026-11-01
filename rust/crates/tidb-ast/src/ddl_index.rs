@@ -18,7 +18,7 @@
 //! vocabulary without yet changing an existing statement envelope: the parser
 //! and executor can switch to one lossless contract atomically.
 
-use crate::{IndexType, PrimaryKeyStorage, ReferentialAction};
+use crate::{IndexType, PrimaryKeyStorage, ReferOptionType};
 
 use super::{
     back_quote, escape_string_literal, push_index_parts, push_name_path, Expr, IndexPart,
@@ -516,9 +516,9 @@ pub struct ForeignKeyReference {
     /// Optional match mode.
     pub match_type: ForeignKeyMatch,
     /// Parent-row delete action.
-    pub on_delete: Option<ReferentialAction>,
+    pub on_delete: Option<ReferOptionType>,
     /// Parent-row update action.
-    pub on_update: Option<ReferentialAction>,
+    pub on_update: Option<ReferOptionType>,
 }
 
 impl ForeignKeyReference {
@@ -1172,8 +1172,8 @@ mod tests {
                     desc: false,
                 }]),
                 match_type: ForeignKeyMatch::Full,
-                on_delete: Some(ReferentialAction::Cascade),
-                on_update: Some(ReferentialAction::Restrict),
+                on_delete: Some(ReferOptionType::Cascade),
+                on_update: Some(ReferOptionType::Restrict),
             },
         };
 
@@ -1211,7 +1211,7 @@ mod tests {
                     table: Some(vec!["parent".to_string()]),
                     parts: Some(vec![column("id")]),
                     match_type: ForeignKeyMatch::Simple,
-                    on_delete: Some(ReferentialAction::Cascade),
+                    on_delete: Some(ReferOptionType::Cascade),
                     on_update: None,
                 },
             },
@@ -1248,7 +1248,7 @@ mod tests {
                         parts: Some(vec![column("id")]),
                         match_type: ForeignKeyMatch::None,
                         on_delete: None,
-                        on_update: Some(ReferentialAction::SetNull),
+                        on_update: Some(ReferOptionType::SetNull),
                     },
                 }),
             ],

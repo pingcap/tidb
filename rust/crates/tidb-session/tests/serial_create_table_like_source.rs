@@ -30,8 +30,8 @@ struct ForeignKeyView {
     ref_schema: String,
     ref_table: String,
     ref_cols: Vec<String>,
-    on_delete: tidb_table::tables::FkAction,
-    on_update: tidb_table::tables::FkAction,
+    on_delete: tidb_ast::ReferOptionType,
+    on_update: tidb_ast::ReferOptionType,
 }
 
 fn foreign_keys(table: &tidb_table::tables::TableCommon) -> Vec<ForeignKeyView> {

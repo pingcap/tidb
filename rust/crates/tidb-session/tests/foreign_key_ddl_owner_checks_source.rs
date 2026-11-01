@@ -22,7 +22,6 @@
 
 use crate::support::testkit::TestKit;
 use tidb_infoschema::TableEntry;
-use tidb_table::tables::FkAction;
 use tidb_table::tables::TableCommon;
 
 /// Go `tbl.Meta().ForeignKeys` (the public ones), in the shapes the
@@ -36,8 +35,8 @@ struct ForeignKeyView {
     ref_schema: String,
     ref_table: String,
     ref_cols: Vec<String>,
-    on_delete: tidb_table::tables::FkAction,
-    on_update: tidb_table::tables::FkAction,
+    on_delete: tidb_ast::ReferOptionType,
+    on_update: tidb_ast::ReferOptionType,
 }
 
 fn foreign_keys(table: &tidb_table::tables::TableCommon) -> Vec<ForeignKeyView> {
@@ -102,8 +101,8 @@ fn foreign_key_add_then_drop_constraint_round_trip() {
     assert_eq!(foreign_key.ref_cols, vec!["c1".to_owned()]);
     // Go passes ast.ReferOptionCascade (delete) and ast.ReferOptionSetNull
     // (update); the ported meta carries the same two actions.
-    assert!(matches!(foreign_key.on_delete, FkAction::Cascade));
-    assert!(matches!(foreign_key.on_update, FkAction::SetNull));
+    assert!(matches!(foreign_key.on_delete, tidb_ast::ReferOptionType::Cascade));
+    assert!(matches!(foreign_key.on_update, tidb_ast::ReferOptionType::SetNull));
     // Go CreateForeignKey auto-creates a supporting index when none covers
     // the referencing columns.
     assert!(

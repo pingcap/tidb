@@ -41,7 +41,6 @@
 
 use crate::support::testkit::TestKit;
 use tidb_infoschema::TableEntry;
-use tidb_table::tables::FkAction;
 
 /// Go `tbl.Meta().ForeignKeys` (the public ones), in the shapes the
 /// assertions read.
@@ -54,8 +53,8 @@ struct ForeignKeyView {
     ref_schema: String,
     ref_table: String,
     ref_cols: Vec<String>,
-    on_delete: tidb_table::tables::FkAction,
-    on_update: tidb_table::tables::FkAction,
+    on_delete: tidb_ast::ReferOptionType,
+    on_update: tidb_ast::ReferOptionType,
 }
 
 fn foreign_keys(table: &tidb_table::tables::TableCommon) -> Vec<ForeignKeyView> {
@@ -177,8 +176,8 @@ fn create_table_fk_meta_lands_on_both_sides() {
     assert_eq!(keys[0].ref_schema, "test");
     assert_eq!(keys[0].ref_table, "t1");
     assert_eq!(keys[0].ref_cols, vec!["id".to_owned()]);
-    assert!(matches!(keys[0].on_delete, FkAction::Cascade), "Go: OnDelete == ast.ReferOptionCascade (2)");
-    assert!(matches!(keys[0].on_update, FkAction::Restrict), "Go: OnUpdate == ast.ReferOptionRestrict (1)");
+    assert!(matches!(keys[0].on_delete, tidb_ast::ReferOptionType::Cascade), "Go: OnDelete == ast.ReferOptionCascade (2)");
+    assert!(matches!(keys[0].on_update, tidb_ast::ReferOptionType::Restrict), "Go: OnUpdate == ast.ReferOptionRestrict (1)");
     assert!(referred_foreign_keys(&tk, "test2", "t2").is_empty());
 
     // Auto-created supporting index: Go requires len(tb2Info.Indices) == 1
@@ -197,8 +196,8 @@ fn create_table_fk_meta_lands_on_both_sides() {
     assert_eq!(t3_keys[0].name, "fk_b");
     assert_eq!(t3_keys[0].ref_schema, "test2");
     assert_eq!(t3_keys[0].ref_table, "t2");
-    assert!(matches!(t3_keys[0].on_delete, FkAction::NoAction), "Go: ON DELETE NO ACTION");
-    assert!(matches!(t3_keys[0].on_update, FkAction::SetNull), "Go: ON UPDATE SET NULL");
+    assert!(matches!(t3_keys[0].on_delete, tidb_ast::ReferOptionType::NoAction), "Go: ON DELETE NO ACTION");
+    assert!(matches!(t3_keys[0].on_update, tidb_ast::ReferOptionType::SetNull), "Go: ON UPDATE SET NULL");
     assert_eq!(index_names(&tk, "test2", "t3"), vec!["idx_b".to_owned()], "Go: idx_b reused, none added");
 
     // t5: an UNNAMED self-referencing constraint is fk_1 (Go
@@ -269,12 +268,12 @@ fn child_first_fk_meta_resolves_once_the_parent_lands() {
     assert_eq!(t3_keys.len(), 2);
     assert_eq!(t3_keys[0].name, "fk_a");
     assert_eq!(t3_keys[0].ref_table, "t1");
-    assert!(matches!(t3_keys[0].on_delete, FkAction::Cascade));
-    assert!(matches!(t3_keys[0].on_update, FkAction::Restrict));
+    assert!(matches!(t3_keys[0].on_delete, tidb_ast::ReferOptionType::Cascade));
+    assert!(matches!(t3_keys[0].on_update, tidb_ast::ReferOptionType::Restrict));
     assert_eq!(t3_keys[1].name, "fk_a2");
     assert_eq!(t3_keys[1].ref_schema, "test2");
     assert_eq!(t3_keys[1].ref_table, "t2");
-    assert!(matches!(t3_keys[1].on_delete, FkAction::NoOption));
+    assert!(matches!(t3_keys[1].on_delete, tidb_ast::ReferOptionType::NoOption));
     assert_eq!(index_names(&tk, "test", "t3"), vec!["fk_a".to_owned()], "Go: exactly one auto-created index");
 }
 

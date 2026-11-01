@@ -95,7 +95,7 @@ use tidb_infoschema::TableEntry;
 use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_table::tables::TableHandle;
 use tidb_table::tables::RowDecodeContext;
-use tidb_table::tables::FkAction;
+use tidb_ast::ReferOptionType;
 use tidb_hack::GoCaseCompare;
 use tidb_planner_core_operator_physicalop::{FkTriggerKind, FkTriggerNode};
 
@@ -383,7 +383,7 @@ fn cascade_at_depth(
         let (action, deleting) = match node.kind {
             FkTriggerKind::ChildCheck => unreachable!(),
             FkTriggerKind::ParentCheck => (
-                FkAction::Restrict,
+                ReferOptionType::Restrict,
                 changes
                     .iter()
                     .any(|change| matches!(change, ParentChange::Delete(_))),
@@ -393,9 +393,9 @@ fn cascade_at_depth(
                 set_null,
             } => (
                 if set_null {
-                    FkAction::SetNull
+                    ReferOptionType::SetNull
                 } else {
-                    FkAction::Cascade
+                    ReferOptionType::Cascade
                 },
                 on_delete,
             ),
@@ -444,7 +444,7 @@ fn cascade_at_depth(
                 catalog,
                 child_db,
                 child_table,
-                deleting && action == FkAction::Cascade,
+                deleting && action == ReferOptionType::Cascade,
             )?;
         }
         let child = &node.child_offsets;
@@ -494,10 +494,14 @@ fn cascade_at_depth(
             continue;
         }
         match action {
-            FkAction::NoOption | FkAction::Restrict | FkAction::NoAction | FkAction::SetDefault => {
+            ReferOptionType::NoOption
+            | ReferOptionType::Restrict
+            | ReferOptionType::NoAction
+            | ReferOptionType::SetDefault
+            | ReferOptionType::Unknown(_) => {
                 unreachable!("a restricting action returned above")
             }
-            FkAction::Cascade if deleting => {
+            ReferOptionType::Cascade if deleting => {
                 // ON DELETE CASCADE: the dependents go away, and so do THEIR
                 // dependents -- the recursion is what makes it transitive.
                 let doomed: Vec<Vec<Datum>> = affected
@@ -545,7 +549,7 @@ fn cascade_at_depth(
                     ctx,
                 )?;
             }
-            FkAction::Cascade | FkAction::SetNull => {
+            ReferOptionType::Cascade | ReferOptionType::SetNull => {
                 // ON UPDATE CASCADE repoints the referencing columns; SET
                 // NULL nulls them. Both CHANGE the child's own row, so the
                 // child's own dependents see an update.
@@ -555,7 +559,7 @@ fn cascade_at_depth(
                     let mut new = old.clone();
                     for (position, offset) in child.iter().enumerate() {
                         new[*offset] = match (action, replacement) {
-                            (FkAction::Cascade, Some(values)) => values[position].clone(),
+                            (ReferOptionType::Cascade, Some(values)) => values[position].clone(),
                             _ => Datum::Null,
                         };
                     }

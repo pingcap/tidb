@@ -358,9 +358,10 @@ impl IndexType {
     }
 }
 
-/// A foreign-key referential action.
+/// Go `ast.ReferOptionType`: a foreign key's `ON DELETE` / `ON UPDATE`
+/// option. Go stores it as a plain `int` in `model.FKInfo.On{Delete,Update}`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ReferentialAction {
+pub enum ReferOptionType {
     /// No clause was supplied.
     #[default]
     NoOption,
@@ -378,8 +379,38 @@ pub enum ReferentialAction {
     Unknown(i64),
 }
 
-impl ReferentialAction {
-    /// Returns the source spelling, empty for no option.
+/// Go `ast.ReferOptionType(v)` over the stored int.
+impl From<i64> for ReferOptionType {
+    fn from(value: i64) -> Self {
+        match value {
+            0 => Self::NoOption,
+            1 => Self::Restrict,
+            2 => Self::Cascade,
+            3 => Self::SetNull,
+            4 => Self::NoAction,
+            5 => Self::SetDefault,
+            other => Self::Unknown(other),
+        }
+    }
+}
+
+/// Go `int(r)`: the value `model.FKInfo` stores.
+impl From<ReferOptionType> for i64 {
+    fn from(value: ReferOptionType) -> Self {
+        match value {
+            ReferOptionType::NoOption => 0,
+            ReferOptionType::Restrict => 1,
+            ReferOptionType::Cascade => 2,
+            ReferOptionType::SetNull => 3,
+            ReferOptionType::NoAction => 4,
+            ReferOptionType::SetDefault => 5,
+            ReferOptionType::Unknown(other) => other,
+        }
+    }
+}
+
+impl ReferOptionType {
+    /// Go `ReferOptionType.String`: the source spelling, empty for no option.
     pub const fn sql(self) -> &'static str {
         match self {
             Self::NoOption => "",
@@ -666,7 +697,7 @@ impl crate::Visitable for IndexType {
     }
 }
 
-impl crate::Visitable for ReferentialAction {
+impl crate::Visitable for ReferOptionType {
     fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
         if visitor.enter(self) {
             return visitor.leave(self);
@@ -848,7 +879,7 @@ mod tests {
         assert_eq!(PartitionType::NONE.sql(), "NONE");
         assert_eq!(PrimaryKeyType::Default.sql(), "");
         assert_eq!(IndexType::INVALID.sql(), "");
-        assert_eq!(ReferentialAction::NoOption.sql(), "");
+        assert_eq!(ReferOptionType::NoOption.sql(), "");
         assert_eq!(RunawayActionType::None.sql(), "DRYRUN");
         assert_eq!(RunawayWatchType::None.sql(), "NONE");
         assert_eq!(ColumnChoice::DEFAULT.sql(), "DEFAULT");

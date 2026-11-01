@@ -61,7 +61,7 @@ pub use row_decoder::{
     DecodedRow, GeneratedColumnSelection, PreparedPointGetRowDecoder, RowDecoder,
 };
 pub use table_meta::{
-    FkAction, Column,
+    Column,
     Index, NonPublicColumn, PreparedPointGetDecodeContext,
     RowDecodeContext, TableCharset, TableHandle,
 };

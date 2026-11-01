@@ -443,11 +443,17 @@ for foreign_key in table.meta().read().foreign_keys.iter_deref() {
             "  CONSTRAINT {} FOREIGN KEY ({columns}) REFERENCES {target} ({referenced})",
             escape_name(foreign_key.name.original(), ansi_quotes),
         );
-        if let Some(action) = referential_action_sql(foreign_key.on_delete.into()) {
-            clause.push_str(&format!(" ON DELETE {action}"));
+        if foreign_key.on_delete != 0 {
+            clause.push_str(&format!(
+                " ON DELETE {}",
+                tidb_ast::ReferOptionType::from(foreign_key.on_delete).sql()
+            ));
         }
-        if let Some(action) = referential_action_sql(foreign_key.on_update.into()) {
-            clause.push_str(&format!(" ON UPDATE {action}"));
+        if foreign_key.on_update != 0 {
+            clause.push_str(&format!(
+                " ON UPDATE {}",
+                tidb_ast::ReferOptionType::from(foreign_key.on_update).sql()
+            ));
         }
         if foreign_key.version < tidb_model::table::FK_VERSION1 {
             clause.push_str(" /* FOREIGN KEY INVALID */");
@@ -808,19 +814,6 @@ fn partition_clause_text(table: &crate::TableCommon, ansi_quotes: bool) -> Strin
         // empty, so it takes the `else` branch and prints
         // `PARTITION BY NONE (<Expr>)` with the definition list.
         crate::PartitionKind::None => format!("{head}{}", defs()),
-    }
-}
-
-/// The `ON DELETE`/`ON UPDATE` spelling `SHOW CREATE TABLE` prints, or
-/// `None` for an omitted clause.
-fn referential_action_sql(action: crate::FkAction) -> Option<&'static str> {
-    match action {
-        crate::FkAction::NoOption => None,
-        crate::FkAction::Restrict => Some("RESTRICT"),
-        crate::FkAction::Cascade => Some("CASCADE"),
-        crate::FkAction::SetNull => Some("SET NULL"),
-        crate::FkAction::NoAction => Some("NO ACTION"),
-        crate::FkAction::SetDefault => Some("SET DEFAULT"),
     }
 }
 

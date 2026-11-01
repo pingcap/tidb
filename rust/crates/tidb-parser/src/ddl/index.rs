@@ -17,7 +17,7 @@ use tidb_ast::{
     CreateIndexStmt, ForeignKeyConstraintDefinition, ForeignKeyMatch, ForeignKeyReference,
     IndexAlgorithm, IndexConstraintDefinition, IndexConstraintKind, IndexKind, IndexLock,
     IndexOnlineDdl, IndexOptions, IndexPart, IndexPreSplitRegions, IndexType, IndexVisibility,
-    PrimaryKeyStorage, ReferentialAction,
+    PrimaryKeyStorage, ReferOptionType,
 };
 use tidb_lexer::TokenKind;
 
@@ -365,7 +365,7 @@ impl Parser {
                 has_on_delete = true;
                 self.bump();
                 let action = self.parse_referential_action()?;
-                on_delete = (action != ReferentialAction::NoOption).then_some(action);
+                on_delete = (action != ReferOptionType::NoOption).then_some(action);
             } else if self.is_kw("UPDATE") {
                 if has_on_update {
                     return Err(self.err_here("duplicate ON UPDATE"));
@@ -373,7 +373,7 @@ impl Parser {
                 has_on_update = true;
                 self.bump();
                 let action = self.parse_referential_action()?;
-                on_update = (action != ReferentialAction::NoOption).then_some(action);
+                on_update = (action != ReferOptionType::NoOption).then_some(action);
             }
         }
         Ok(ForeignKeyReference {
@@ -440,26 +440,26 @@ impl Parser {
 
     /// Parses a `FOREIGN KEY`'s `ON DELETE`/`ON UPDATE` action, positioned
     /// right after the `DELETE`/`UPDATE` keyword.
-    pub(super) fn parse_referential_action(&mut self) -> PResult<ReferentialAction> {
+    pub(super) fn parse_referential_action(&mut self) -> PResult<ReferOptionType> {
         if self.is_kw("CASCADE") {
             self.bump();
-            Ok(ReferentialAction::Cascade)
+            Ok(ReferOptionType::Cascade)
         } else if self.is_kw("RESTRICT") {
             self.bump();
-            Ok(ReferentialAction::Restrict)
+            Ok(ReferOptionType::Restrict)
         } else if self.is_kw("SET") {
             self.bump();
             if self.is_kw("NULL") {
                 self.bump();
-                Ok(ReferentialAction::SetNull)
+                Ok(ReferOptionType::SetNull)
             } else if self.is_kw("DEFAULT") {
                 self.bump();
                 self.warn_near_next(
                     "The SET DEFAULT clause is parsed but ignored by all storage engines.",
                 );
-                Ok(ReferentialAction::SetDefault)
+                Ok(ReferOptionType::SetDefault)
             } else {
-                Ok(ReferentialAction::NoOption)
+                Ok(ReferOptionType::NoOption)
             }
         } else if self.is_kw("NO") {
             self.bump();
@@ -468,9 +468,9 @@ impl Parser {
             if self.is_kw("ACTION") {
                 self.bump();
             }
-            Ok(ReferentialAction::NoAction)
+            Ok(ReferOptionType::NoAction)
         } else {
-            Ok(ReferentialAction::NoOption)
+            Ok(ReferOptionType::NoOption)
         }
     }
 }

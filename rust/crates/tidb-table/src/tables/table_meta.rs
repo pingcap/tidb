@@ -17,7 +17,7 @@
 //! table's default character set.
 //!
 //! Inside: [`TableHandle`] (Go `kv.Handle`), [`Index`],
-//! [`FkAction`], [`crate::column::Column`] with the read-time cast that
+//! [`crate::column::Column`] with the read-time cast that
 //! makes `OriginDefaultValue` behave, and [`TableCharset`].
 //!
 //! Mirrors Go `pkg/meta/model`'s `IndexInfo`, `FKInfo` and `ColumnInfo`
@@ -377,42 +377,6 @@ impl Index {
                     length == UNSPECIFIED_LENGTH || length == column_flen
                 }
             })
-    }
-}
-
-/// Go `ast.ReferOptionType`: both its exact metadata spelling and the parent
-/// mutation behavior TiDB gives that spelling.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum FkAction {
-    /// No clause was supplied. It behaves as `RESTRICT`, while SHOW omits it
-    /// and `REFERENTIAL_CONSTRAINTS` reports `NO ACTION`.
-    #[default]
-    NoOption,
-    /// Reject the parent mutation while a referencing row exists.
-    Restrict,
-    /// Delete the referencing rows, or repoint them at the new value.
-    Cascade,
-    /// Null out the referencing columns.
-    SetNull,
-    /// TiDB stores this spelling but, like MySQL, does not defer the check.
-    NoAction,
-    /// TiDB stores this spelling but does not implement default propagation.
-    SetDefault,
-}
-
-/// Go `ast.ReferOptionType(v)` over the stored `FKInfo.On{Delete,Update}`
-/// int (`pkg/parser/ast/model.go`): NoOption 0, Restrict 1, Cascade 2,
-/// SetNull 3, NoAction 4, SetDefault 5.
-impl From<i64> for FkAction {
-    fn from(action: i64) -> Self {
-        match action {
-            1 => FkAction::Restrict,
-            2 => FkAction::Cascade,
-            3 => FkAction::SetNull,
-            4 => FkAction::NoAction,
-            5 => FkAction::SetDefault,
-            _ => FkAction::NoOption,
-        }
     }
 }
 

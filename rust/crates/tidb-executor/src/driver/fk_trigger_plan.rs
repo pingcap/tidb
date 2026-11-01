@@ -16,41 +16,12 @@
 
 use tidb_infoschema::{SessionExtendedInfoSchema, TableEntry};
 use crate::driver::DriverError;
-use tidb_table::tables::FkAction;
 use crate::StmtContext;
-use tidb_planner_core_operator_physicalop::fk_plan::{FkColumn, FkMeta, FkPlanError, FkTable, ForeignKeyCatalog};
+use tidb_planner_core_operator_physicalop::fk_plan::{FkColumn, FkPlanError, FkTable, ForeignKeyCatalog};
 use tidb_planner_core_operator_physicalop::FkTriggerNode;
 use tidb_planner_core_base::PlanIdAllocator;
 
 pub(crate) use tidb_planner_core_operator_physicalop::fk_plan::FkPlanSpec;
-
-fn action(action: FkAction) -> tidb_planner_core_operator_physicalop::fk_plan::FkAction {
-    use tidb_planner_core_operator_physicalop::fk_plan::FkAction as Planned;
-    match action {
-        FkAction::NoOption => Planned::NoOption,
-        FkAction::Restrict => Planned::Restrict,
-        FkAction::Cascade => Planned::Cascade,
-        FkAction::SetNull => Planned::SetNull,
-        FkAction::NoAction => Planned::NoAction,
-        FkAction::SetDefault => Planned::SetDefault,
-    }
-}
-
-pub(crate) fn meta(fk: &tidb_model::table::FKInfo) -> FkMeta {
-    let names = |names: Vec<tidb_ast::CiString>| {
-        names.iter().map(|name| name.original().to_owned()).collect()
-    };
-    FkMeta {
-        version: fk.version,
-        name: fk.name.original().to_owned(),
-        cols: names(fk.cols.snapshot()),
-        ref_schema: fk.ref_schema.original().to_owned(),
-        ref_table: fk.ref_table.original().to_owned(),
-        ref_cols: names(fk.ref_cols.snapshot()),
-        on_delete: action(fk.on_delete.into()),
-        on_update: action(fk.on_update.into()),
-    }
-}
 
 struct CatalogForeignKeys<'a>(&'a SessionExtendedInfoSchema);
 
@@ -80,16 +51,16 @@ impl ForeignKeyCatalog for CatalogForeignKeys<'_> {
                 .foreign_keys
                 .iter_deref()
                 .filter(|fk| fk.read().state == tidb_model::SchemaState::PUBLIC)
-                .map(|fk| meta(&fk.read()))
                 .collect(),
         })
     }
 
-    fn referring(&self, database: &str, table: &str) -> Vec<(String, String, FkMeta)> {
+    fn referring(
+        &self,
+        database: &str,
+        table: &str,
+    ) -> Vec<(String, String, tidb_model::GoShared<tidb_model::table::FKInfo>)> {
         crate::foreign_key::referring(self.0, database, table)
-            .into_iter()
-            .map(|(child_db, child_table, fk)| (child_db, child_table, meta(&fk.read())))
-            .collect()
     }
 
     fn lookup_index(

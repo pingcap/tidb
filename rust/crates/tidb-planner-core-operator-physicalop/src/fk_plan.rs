@@ -18,103 +18,13 @@
 //! The foreign key metadata is reached through [`ForeignKeyCatalog`], the part
 //! of Go's `table.Table` and `infoschema.InfoSchema` these functions read.
 
+use tidb_ast::{CiString, ReferOptionType};
 use tidb_hack::{GoCaseCompare, GoToLower};
+use tidb_model::table::FKInfo;
+use tidb_model::GoShared;
 
 use crate::{FkTriggerKind, FkTriggerNode};
 use tidb_planner_core_base::PlanIdAllocator;
-
-/// Go `model.ReferOptionType`, as a foreign key's `ON DELETE` / `ON UPDATE`
-/// action.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum FkAction {
-    /// No clause was supplied; behaves as `RESTRICT`.
-    #[default]
-    NoOption,
-    /// Reject the parent mutation while a referencing row exists.
-    Restrict,
-    /// Delete the referencing rows, or repoint them at the new value.
-    Cascade,
-    /// Null out the referencing columns.
-    SetNull,
-    /// Stored like MySQL's spelling but not deferred.
-    NoAction,
-    /// Parsed and stored; never enforced.
-    SetDefault,
-}
-
-/// Go `model.FKInfo`.
-#[derive(Clone, Debug)]
-pub struct FkMeta {
-    /// Go `Version`: zero retains metadata without enforcement.
-    pub version: i64,
-    /// The constraint name.
-    pub name: String,
-    /// The referencing columns' names.
-    pub cols: Vec<String>,
-    /// The referenced schema.
-    pub ref_schema: String,
-    /// The referenced table.
-    pub ref_table: String,
-    /// The referenced columns' names, parallel to `cols`.
-    pub ref_cols: Vec<String>,
-    /// Go `OnDelete`.
-    pub on_delete: FkAction,
-    /// Go `OnUpdate`.
-    pub on_update: FkAction,
-}
-
-impl FkMeta {
-    /// Go `FKInfo.String(db, tb)`: the child table and the constraint as a
-    /// violation reports them. The referenced schema and table are
-    /// lower-cased, and the schema is omitted when it equals `db`.
-    #[must_use]
-    pub fn string(&self, db: &str, tb: &str) -> String {
-        let quoted = |cols: &[String]| {
-            cols.iter()
-                .map(|col| format!("`{col}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let ref_schema = self.ref_schema.to_lowercase();
-        let mut buf = format!(
-            "`{db}`.`{tb}`, CONSTRAINT `{}` FOREIGN KEY ({}) REFERENCES `",
-            self.name,
-            quoted(&self.cols)
-        );
-        if ref_schema != db {
-            buf.push_str(&ref_schema);
-            buf.push_str("`.`");
-        }
-        buf.push_str(&self.ref_table.to_lowercase());
-        buf.push_str("` (");
-        buf.push_str(&quoted(&self.ref_cols));
-        buf.push(')');
-        if let Some(action) = self.on_delete.refer_option_string() {
-            buf.push_str(" ON DELETE ");
-            buf.push_str(action);
-        }
-        if let Some(action) = self.on_update.refer_option_string() {
-            buf.push_str(" ON UPDATE ");
-            buf.push_str(action);
-        }
-        buf
-    }
-}
-
-impl FkAction {
-    /// Go `ReferOptionType.String`, `None` for `ReferOptionNoOption`.
-    #[must_use]
-    pub const fn refer_option_string(self) -> Option<&'static str> {
-        match self {
-            Self::NoOption => None,
-            Self::Restrict => Some("RESTRICT"),
-            Self::Cascade => Some("CASCADE"),
-            Self::SetNull => Some("SET NULL"),
-            Self::NoAction => Some("NO ACTION"),
-            Self::SetDefault => Some("SET DEFAULT"),
-        }
-    }
-}
 
 /// A column of a table, as the trigger builders read it.
 #[derive(Clone, Debug)]
@@ -133,7 +43,7 @@ pub struct FkTable {
     /// Go `Meta().Columns`.
     pub columns: Vec<FkColumn>,
     /// Go `Meta().ForeignKeys`.
-    pub foreign_keys: Vec<FkMeta>,
+    pub foreign_keys: Vec<GoShared<FKInfo>>,
 }
 
 /// The metadata `BuildOn*FKTriggers` reads.
@@ -144,7 +54,7 @@ pub trait ForeignKeyCatalog {
     /// Go `is.GetTableReferredForeignKeys`: the constraints of other tables
     /// that reference `table`, as `(child schema, child table, constraint)`,
     /// in schema/table then declaration order.
-    fn referring(&self, database: &str, table: &str) -> Vec<(String, String, FkMeta)>;
+    fn referring(&self, database: &str, table: &str) -> Vec<(String, String, GoShared<FKInfo>)>;
 
     /// Go `FindIndexByColumnsForForeignKey` over the table's columns at
     /// `columns` (offsets). The outer `None` is a missing access path, the
@@ -220,7 +130,11 @@ pub fn build_fk_triggers(
                 if column
                     .generated_dependencies
                     .as_ref()
-                    .is_some_and(|dependencies| touches(&modified, dependencies))
+                    .is_some_and(|dependencies| {
+                        dependencies
+                            .iter()
+                            .any(|dependency| modified.iter().any(|name| name.go_lower_eq(dependency)))
+                    })
                 {
                     if !modified.iter().any(|name| name.go_lower_eq(&column.name)) {
                         modified.push(column.name.clone());
@@ -244,18 +158,19 @@ pub fn build_fk_triggers(
     };
     if let Some((on_delete, updated)) = parent_change {
         for (child_db, child_table, fk) in catalog.referring(&spec.database, &spec.table) {
-            if !on_delete && !touches(updated, &fk.ref_cols) {
+            let fk = fk.read();
+            if !on_delete && !touches(updated, &fk.ref_cols.snapshot()) {
                 continue;
             }
-            let action = if on_delete {
+            let action = ReferOptionType::from(if on_delete {
                 fk.on_delete
             } else {
                 fk.on_update
-            };
+            });
             let kind = match action {
-                FkAction::Cascade | FkAction::SetNull => FkTriggerKind::Cascade {
+                ReferOptionType::Cascade | ReferOptionType::SetNull => FkTriggerKind::Cascade {
                     on_delete,
-                    set_null: action == FkAction::SetNull,
+                    set_null: action == ReferOptionType::SetNull,
                 },
                 _ => FkTriggerKind::ParentCheck,
             };
@@ -274,11 +189,12 @@ pub fn build_fk_triggers(
     }
     if let Some(table) = &own_table {
         for fk in &table.foreign_keys {
+            let fk = fk.read();
             if fk.version < tidb_model::table::FK_VERSION1 {
                 continue;
             }
             if operator != "Insert"
-                && (operator != "Update" || !touches(&spec.updated_cols, &fk.cols))
+                && (operator != "Update" || !touches(&spec.updated_cols, &fk.cols.snapshot()))
             {
                 continue;
             }
@@ -286,9 +202,9 @@ pub fn build_fk_triggers(
                 catalog,
                 &spec.database,
                 &spec.table,
-                fk,
+                &fk,
                 FkTriggerKind::ChildCheck,
-                FkAction::NoOption,
+                ReferOptionType::NoOption,
                 plan_ids,
             )? {
                 nodes.push(node);
@@ -298,44 +214,45 @@ pub fn build_fk_triggers(
     Ok(nodes)
 }
 
-fn touches(updated: &[String], columns: &[String]) -> bool {
+/// Go `isMapContainAnyCols`.
+fn touches(updated: &[String], columns: &[CiString]) -> bool {
     columns
         .iter()
-        .any(|column| updated.iter().any(|name| name.go_lower_eq(column)))
+        .any(|column| updated.iter().any(|name| name.go_lower_eq(column.lowercase())))
 }
 
 fn compile_trigger(
     catalog: &dyn ForeignKeyCatalog,
     child_db: &str,
     child_table: &str,
-    fk: &FkMeta,
+    fk: &FKInfo,
     kind: FkTriggerKind,
-    action: FkAction,
+    action: ReferOptionType,
     plan_ids: &PlanIdAllocator,
 ) -> Result<Option<FkTriggerNode>, FkPlanError> {
-    let Some(parent) = catalog.table(&fk.ref_schema, &fk.ref_table) else {
+    let Some(parent) = catalog.table(fk.ref_schema.original(), fk.ref_table.original()) else {
         // Go buildFKCheckOnModifyChildTable omits a missing parent.
         return Ok(None);
     };
     let Some(child) = catalog.table(child_db, child_table) else {
         return Ok(None);
     };
-    let offsets = |table: &FkTable, names: &[String]| -> Result<Vec<usize>, FkPlanError> {
+    let offsets = |table: &FkTable, names: &[CiString]| -> Result<Vec<usize>, FkPlanError> {
         names
             .iter()
             .map(|name| {
                 table
                     .columns
                     .iter()
-                    .position(|column| column.name.go_lower_eq(name))
+                    .position(|column| column.name.go_lower_eq(name.lowercase()))
                     .ok_or_else(|| {
                         FkPlanError::Unsupported(format!("foreign key column {name} is not found"))
                     })
             })
             .collect()
     };
-    let child_offsets = offsets(&child, &fk.cols)?;
-    let parent_offsets = offsets(&parent, &fk.ref_cols)?;
+    let child_offsets = offsets(&child, &fk.cols.snapshot())?;
+    let parent_offsets = offsets(&parent, &fk.ref_cols.snapshot())?;
     // Go `fk.String(dbName, tblInfo.Name.L)` / `(ChildSchema.L, ChildTable.L)`.
     let fk_string = fk.string(&child_db.go_to_lower(), &child_table.go_to_lower());
     let failure = || {
@@ -347,8 +264,8 @@ fn compile_trigger(
     };
     let (table_schema, table_name, columns) = if kind == FkTriggerKind::ChildCheck {
         (
-            fk.ref_schema.as_str(),
-            fk.ref_table.as_str(),
+            fk.ref_schema.original(),
+            fk.ref_table.original(),
             &parent_offsets,
         )
     } else {
@@ -359,7 +276,8 @@ fn compile_trigger(
         return Err(if matches!(kind, FkTriggerKind::Cascade { .. }) {
             FkPlanError::Unsupported(format!(
                 "Missing index for '{}' foreign key columns in the table '{}'",
-                fk.name, child_table
+                fk.name.original(),
+                child_table
             ))
         } else {
             failure()
@@ -372,19 +290,19 @@ fn compile_trigger(
     let (operator, info) = match kind {
         FkTriggerKind::ChildCheck => (
             "Foreign_Key_Check",
-            format!("foreign_key:{}, check_exist", fk.name),
+            format!("foreign_key:{}, check_exist", fk.name.original()),
         ),
         FkTriggerKind::ParentCheck => (
             "Foreign_Key_Check",
-            format!("foreign_key:{}, check_not_exist", fk.name),
+            format!("foreign_key:{}, check_not_exist", fk.name.original()),
         ),
         FkTriggerKind::Cascade { on_delete, .. } => (
             "Foreign_Key_Cascade",
             format!(
                 "foreign_key:{}, {}:{}",
-                fk.name,
+                fk.name.original(),
                 if on_delete { "on_delete" } else { "on_update" },
-                if action == FkAction::SetNull {
+                if action == ReferOptionType::SetNull {
                     "SET NULL"
                 } else {
                     "CASCADE"
@@ -400,8 +318,8 @@ fn compile_trigger(
         kind,
         child_database: child_db.to_owned(),
         child_table: child_table.to_owned(),
-        parent_database: fk.ref_schema.clone(),
-        parent_table: fk.ref_table.clone(),
+        parent_database: fk.ref_schema.original().to_owned(),
+        parent_table: fk.ref_table.original().to_owned(),
         child_offsets,
         parent_offsets,
         lookup_index: lookup_id,
@@ -421,7 +339,7 @@ mod tests {
     struct Fake {
         tables: BTreeMap<(String, String), FkTable>,
         indexed: Vec<(String, String)>,
-        action: FkAction,
+        action: ReferOptionType,
     }
 
     fn column(name: &str) -> FkColumn {
@@ -432,20 +350,21 @@ mod tests {
         }
     }
 
-    fn fk(action: FkAction) -> FkMeta {
-        FkMeta {
+    fn fk(action: ReferOptionType) -> GoShared<FKInfo> {
+        GoShared::new(FKInfo {
             version: tidb_model::table::FK_VERSION1,
-            name: "fk_child".to_owned(),
-            cols: vec!["pid".to_owned()],
-            ref_schema: "test".to_owned(),
-            ref_table: "parent".to_owned(),
-            ref_cols: vec!["id".to_owned()],
-            on_delete: action,
-            on_update: action,
-        }
+            name: CiString::new("fk_child"),
+            cols: vec![CiString::new("pid")].into(),
+            ref_schema: CiString::new("test"),
+            ref_table: CiString::new("parent"),
+            ref_cols: vec![CiString::new("id")].into(),
+            on_delete: action.into(),
+            on_update: action.into(),
+            ..FKInfo::default()
+        })
     }
 
-    fn fake(action: FkAction, indexed: &[&str]) -> Fake {
+    fn fake(action: ReferOptionType, indexed: &[&str]) -> Fake {
         let mut tables = BTreeMap::new();
         tables.insert(
             ("test".to_owned(), "parent".to_owned()),
@@ -478,7 +397,7 @@ mod tests {
                 .cloned()
         }
 
-        fn referring(&self, database: &str, table: &str) -> Vec<(String, String, FkMeta)> {
+        fn referring(&self, database: &str, table: &str) -> Vec<(String, String, GoShared<FKInfo>)> {
             if (database, table) == ("test", "parent") {
                 vec![("test".to_owned(), "child".to_owned(), fk(self.action))]
             } else {
@@ -510,7 +429,7 @@ mod tests {
     fn deleting_a_parent_row_selects_the_cascade_or_the_not_exist_check() {
         let ids = PlanIdAllocator::new();
         let cascade = build_fk_triggers(
-            &fake(FkAction::Cascade, &["child", "parent"]),
+            &fake(ReferOptionType::Cascade, &["child", "parent"]),
             true,
             "Delete",
             &spec("parent"),
@@ -529,7 +448,7 @@ mod tests {
             }
         ));
         let restrict = build_fk_triggers(
-            &fake(FkAction::Restrict, &["child"]),
+            &fake(ReferOptionType::Restrict, &["child"]),
             true,
             "Delete",
             &spec("parent"),
@@ -543,7 +462,7 @@ mod tests {
     #[test]
     fn writing_a_child_checks_the_parent_only_for_touched_columns() {
         let ids = PlanIdAllocator::new();
-        let catalog = fake(FkAction::Restrict, &["parent"]);
+        let catalog = fake(ReferOptionType::Restrict, &["parent"]);
         let insert = build_fk_triggers(&catalog, true, "Insert", &spec("child"), &ids).unwrap();
         assert_eq!(insert[0].info, "foreign_key:fk_child, check_exist");
         assert_eq!(insert[0].access, "table:parent, index:idx_parent");
@@ -565,7 +484,7 @@ mod tests {
     fn a_disabled_check_or_a_missing_index_changes_the_outcome() {
         let ids = PlanIdAllocator::new();
         assert!(build_fk_triggers(
-            &fake(FkAction::Cascade, &["child"]),
+            &fake(ReferOptionType::Cascade, &["child"]),
             false,
             "Delete",
             &spec("parent"),
@@ -576,12 +495,12 @@ mod tests {
         // No index on the child: a cascade is refused by message, a check by
         // the constraint violation Go reports.
         assert!(matches!(
-            build_fk_triggers(&fake(FkAction::Cascade, &[]), true, "Delete", &spec("parent"), &ids),
+            build_fk_triggers(&fake(ReferOptionType::Cascade, &[]), true, "Delete", &spec("parent"), &ids),
             Err(FkPlanError::Unsupported(message)) if message.contains("Missing index")
         ));
         assert!(matches!(
             build_fk_triggers(
-                &fake(FkAction::Restrict, &[]),
+                &fake(ReferOptionType::Restrict, &[]),
                 true,
                 "Delete",
                 &spec("parent"),
@@ -591,7 +510,7 @@ mod tests {
         ));
         assert!(matches!(
             build_fk_triggers(
-                &fake(FkAction::Restrict, &[]),
+                &fake(ReferOptionType::Restrict, &[]),
                 true,
                 "Insert",
                 &spec("child"),
@@ -604,7 +523,7 @@ mod tests {
     #[test]
     fn a_generated_column_joins_the_update_columns_it_depends_on() {
         let ids = PlanIdAllocator::new();
-        let mut catalog = fake(FkAction::Restrict, &["parent", "child"]);
+        let mut catalog = fake(ReferOptionType::Restrict, &["parent", "child"]);
         let child = catalog
             .tables
             .get_mut(&("test".to_owned(), "child".to_owned()))

@@ -595,19 +595,6 @@ impl_go_json_merge_object!(FKInfo, destination, map, key, {
 
 impl_go_json_deserialize!(FKInfo);
 
-// Mirrors `ast.ReferOptionType.String` for the int-valued FKInfo.On{Delete,
-// Update} (ReferOptionType is not yet in tidb-ast). NoOption(0)/unknown -> "".
-fn refer_option_string(opt: i64) -> &'static str {
-    match opt {
-        1 => "RESTRICT",
-        2 => "CASCADE",
-        3 => "SET NULL",
-        4 => "NO ACTION",
-        5 => "SET DEFAULT",
-        _ => "",
-    }
-}
-
 impl FKInfo {
     /// Go's named `(*FKInfo).Clone` method. Nil receivers panic; both column
     /// slices use exact `slices.Clone` header/capacity semantics.
@@ -678,11 +665,11 @@ impl FKInfo {
         // Go tests the numeric value against ReferOptionNoOption (0).
         if self.on_delete != 0 {
             buf.push_str(" ON DELETE ");
-            buf.push_str(refer_option_string(self.on_delete));
+            buf.push_str(tidb_ast::ReferOptionType::from(self.on_delete).sql());
         }
         if self.on_update != 0 {
             buf.push_str(" ON UPDATE ");
-            buf.push_str(refer_option_string(self.on_update));
+            buf.push_str(tidb_ast::ReferOptionType::from(self.on_update).sql());
         }
         buf
     }

@@ -780,8 +780,8 @@ for foreign_key in table.meta().read().foreign_keys.iter_deref() {
                 text(&schema),
                 text("PRIMARY"),
                 text("NONE"),
-                text(referential_rule(foreign_key.on_update.into())),
-                text(referential_rule(foreign_key.on_delete.into())),
+                text(referential_rule(foreign_key.on_update)),
+                text(referential_rule(foreign_key.on_delete)),
                 text(&table_name),
                 text(foreign_key.ref_table.original()),
             ]);
@@ -790,13 +790,13 @@ for foreign_key in table.meta().read().foreign_keys.iter_deref() {
     rows
 }
 
-fn referential_rule(action: crate::FkAction) -> &'static str {
-    match action {
-        crate::FkAction::NoOption | crate::FkAction::NoAction => "NO ACTION",
-        crate::FkAction::Restrict => "RESTRICT",
-        crate::FkAction::Cascade => "CASCADE",
-        crate::FkAction::SetNull => "SET NULL",
-        crate::FkAction::SetDefault => "SET DEFAULT",
+/// Go `setDataFromReferConst`'s update/delete rule: `NO ACTION` unless the
+/// stored option is set.
+fn referential_rule(action: i64) -> &'static str {
+    if action != 0 {
+        tidb_ast::ReferOptionType::from(action).sql()
+    } else {
+        "NO ACTION"
     }
 }
 
