@@ -87,6 +87,7 @@
 //!   [`rewrite_table_references`], and column renames rewrite `cols` and
 //!   `ref_cols` through [`rewrite_column_name`].
 
+use crate::WithStatementStore as _;
 use crate::KvTableReader;
 use tidb_datatype::Datum;
 
@@ -527,11 +528,10 @@ fn cascade_at_depth(
                 };
                 let kv = std::sync::Arc::make_mut(kv);
                 for (index, _) in &affected {
-                    kv.delete_row_with_old_context(
-                        &child_handles[*index],
+                    kv.with_statement_store(ctx, |table, store| table.delete_row_with_old_context(store, &child_handles[*index],
                         &child_rows[*index],
                         ctx,
-                    )
+                    ))
                     .map_err(crate::driver::kv_write_error)?;
                 }
                 cascade_at_depth(
@@ -610,7 +610,7 @@ fn cascade_at_depth(
                 };
                 let kv = std::sync::Arc::make_mut(kv);
                 for ((index, _), (old, new)) in affected.iter().zip(&rewritten) {
-                    kv.update_row_with_old_context(&child_handles[*index], Some(old), new, ctx)
+                    kv.with_statement_store(ctx, |table, store| table.update_row_with_old_context(store, &child_handles[*index], Some(old), new, ctx))
                         .map_err(crate::driver::kv_write_error)?;
                 }
                 let old: Vec<_> = rewritten.iter().map(|(old, _)| old.clone()).collect();

@@ -1097,23 +1097,21 @@ mod tests {
             commit(&fixture.buffer, &fixture.snapshot);
             fixture
                 .table
-                .update_row_with_context(
-                    &handles[0],
+                .with_own_store(|table, store| table.update_row_with_context(store, &handles[0],
                     &[key.clone(), Datum::Int(1), Datum::Int(110)],
                     &ctx,
-                )
+                ))
                 .unwrap();
             fixture
                 .table
-                .delete_row_with_context(&handles[1], &ctx)
+                .with_own_store(|table, store| table.delete_row_with_context(store, &handles[1], &ctx))
                 .unwrap();
             fixture
                 .table
-                .update_row_with_context(
-                    &handles[2],
+                .with_own_store(|table, store| table.update_row_with_context(store, &handles[2],
                     &[key.clone(), Datum::Int(13), Datum::Int(130)],
                     &ctx,
-                )
+                ))
                 .unwrap();
             fixture
                 .table
@@ -2228,18 +2226,16 @@ mod tests {
             .unwrap();
         fixture
             .table
-            .update_row_with_context(
-                &committed_moved,
+            .with_own_store(|table, store| table.update_row_with_context(store, &committed_moved,
                 &[Datum::Int(8), Datum::Int(80)],
                 &crate::StmtContext::for_dml(false, false, false),
-            )
+            ))
             .unwrap();
         fixture
             .table
-            .delete_row_with_context(
-                &committed_low,
+            .with_own_store(|table, store| table.delete_row_with_context(store, &committed_low,
                 &crate::StmtContext::for_dml(false, false, false),
-            )
+            ))
             .unwrap();
         assert!(!fixture.buffer.is_empty(), "the writes are staged");
 
@@ -2290,17 +2286,15 @@ mod tests {
         // 1..3, of which only one survives the overlay.
         fixture
             .table
-            .delete_row_with_context(
-                &TableHandle::Int(1),
+            .with_own_store(|table, store| table.delete_row_with_context(store, &TableHandle::Int(1),
                 &crate::StmtContext::for_dml(false, false, false),
-            )
+            ))
             .unwrap();
         fixture
             .table
-            .delete_row_with_context(
-                &TableHandle::Int(2),
+            .with_own_store(|table, store| table.delete_row_with_context(store, &TableHandle::Int(2),
                 &crate::StmtContext::for_dml(false, false, false),
-            )
+            ))
             .unwrap();
 
         let catalog = catalog_of(fixture.table);

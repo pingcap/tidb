@@ -70,19 +70,18 @@ fn writes_carry_nonpublic_columns_like_go() {
     });
     let ctx = crate::StmtContext::for_dml(false, false, false);
     let handle = table
-        .insert_row_with_row_id_checked(&[Datum::Int(1), Datum::Int(5)], None, 0, &ctx, false)
+        .with_own_store(|table, store| table.insert_row_with_row_id_checked(store, &[Datum::Int(1), Datum::Int(5)], None, 0, &ctx, false))
         .unwrap();
     let row = stored(&mut table, &handle);
     assert_eq!(row.get(&3), Some(&Datum::Int(7)));
     assert_eq!(row.get(&4), Some(&Datum::Int(5)));
 
     table
-        .update_row_with_old_context(
-            &handle,
+        .with_own_store(|table, store| table.update_row_with_old_context(store, &handle,
             Some(&[Datum::Int(1), Datum::Int(5)]),
             &[Datum::Int(1), Datum::Int(9)],
             &ctx,
-        )
+        ))
         .unwrap();
     let row = stored(&mut table, &handle);
     assert_eq!(row.get(&2), Some(&Datum::Int(9)));
@@ -93,13 +92,12 @@ fn writes_carry_nonpublic_columns_like_go() {
     let mut later = table.clone_for_test_nonpublic();
     Arc::make_mut(later.nonpublic_columns_arc_mut())[0].state = tidb_model::SchemaState::DELETE_ONLY;
     let handle = later
-        .insert_row_with_row_id_checked(
-            &[Datum::Int(2), Datum::Int(3)],
+        .with_own_store(|table, store| table.insert_row_with_row_id_checked(store, &[Datum::Int(2), Datum::Int(3)],
             Some(2),
             0,
             &ctx,
             false,
-        )
+        ))
         .unwrap();
     let row = stored(&mut later, &handle);
     assert_eq!(row.get(&3), None);

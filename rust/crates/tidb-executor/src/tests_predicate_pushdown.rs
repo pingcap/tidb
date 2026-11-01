@@ -257,17 +257,15 @@ mod tests {
             .insert_row(&[Datum::Int(3), Datum::Int(30)], &tidb_exprctx::NoColumns)
             .unwrap();
         table
-            .update_row_with_context(
-                &committed_moved,
+            .with_own_store(|table, store| table.update_row_with_context(store, &committed_moved,
                 &[Datum::Int(8), Datum::Int(80)],
                 &crate::StmtContext::for_dml(false, false, false),
-            )
+            ))
             .unwrap();
         table
-            .delete_row_with_context(
-                &committed_low,
+            .with_own_store(|table, store| table.delete_row_with_context(store, &committed_low,
                 &crate::StmtContext::for_dml(false, false, false),
-            )
+            ))
             .unwrap();
         assert!(!buffer.is_empty(), "the writes are staged, not committed");
 

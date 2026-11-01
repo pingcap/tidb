@@ -17,6 +17,7 @@
 //! preimages back into the table. FK checks precede cascades after all records
 //! have been written, as in `ExecStmt.handleForeignKeyTrigger`.
 
+use crate::WithStatementStore as _;
 use super::*;
 
 pub(crate) struct UpdateRecords<'a> {
@@ -212,7 +213,7 @@ impl<'a> UpdateRecords<'a> {
                 // index-write failures. An ignored duplicate must not dirty
                 // that stage or undo earlier successful rows.
                 if ignore {
-                    match kv.row_conflicts(new, ctx) {
+                    match kv.with_statement_store(ctx, |table, store| table.row_conflicts(store, new, ctx)) {
                         Ok(conflicts) => {
                             if let Some(conflict) =
                                 conflicts.into_iter().find(|c| c.handle != *handle)
@@ -228,7 +229,7 @@ impl<'a> UpdateRecords<'a> {
                     }
                 }
                 // Every write caller retains the complete writable preimage.
-                kv.update_row_with_old_context(handle, Some(old), new, ctx)
+                kv.with_statement_store(ctx, |table, store| table.update_row_with_old_context(store, handle, Some(old), new, ctx))
                     .map_err(kv_write_error)
             }
             _ => {

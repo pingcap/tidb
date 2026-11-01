@@ -18,6 +18,7 @@
 //! Mirrors Go's `PlanBuilder.buildInsert` / `buildUpdate` / `buildDelete` and
 //! the `executor` package's `InsertExec` / `UpdateExec` / `DeleteExec`.
 
+use crate::WithStatementStore as _;
 use tidb_planner::physical_plan_cache::RebuildPlanForCache;
 use crate::KvTableReader;
 use super::plan_cache::{CachedPhysicalPlan, PhysicalPlanCacheKey, SessionPlanCache};
@@ -1813,11 +1814,10 @@ fn run_insert_rows(
         let conflicts = if lazy_dup_check || !resolves_conflicts {
             Vec::new()
         } else {
-            match target(catalog, &database, &table_name).row_conflicts_with_row_id(
-                row,
+            match target(catalog, &database, &table_name).with_statement_store(ctx, |table, store| table.row_conflicts_with_row_id(store, row,
                 written_row_id,
                 ctx,
-            ) {
+            )) {
                 Ok(conflicts) => conflicts,
                 Err(error) => {
                     handle_partition_write_error(kv_write_error(error), partition_warns, ctx)?;
@@ -1965,21 +1965,19 @@ fn run_insert_rows(
         };
         let insert_result = if skip_primary_duplicate_check {
             target(catalog, &database, &table_name)
-                .insert_row_with_row_id_checked_without_primary_duplicate_check(
-                    row,
+                .with_statement_store(ctx, |table, store| table.insert_row_with_row_id_checked_without_primary_duplicate_check(store, row,
                     written_row_id,
                     shard,
                     ctx,
                     lazy_dup_check,
-                )
+                ))
         } else {
-            target(catalog, &database, &table_name).insert_row_with_row_id_checked(
-                row,
+            target(catalog, &database, &table_name).with_statement_store(ctx, |table, store| table.insert_row_with_row_id_checked(store, row,
                 written_row_id,
                 shard,
                 ctx,
                 lazy_dup_check,
-            )
+            ))
         };
         match insert_result {
             Ok(_) => {

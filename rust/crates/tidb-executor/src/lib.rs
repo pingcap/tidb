@@ -245,6 +245,26 @@ pub fn statement_store(
     ctx.txn_store().unwrap_or_else(|| table.store().clone_box())
 }
 
+/// [`with_statement_store`] as a method of the table being written.
+pub trait WithStatementStore {
+    /// See [`with_statement_store`].
+    fn with_statement_store<R>(
+        &mut self,
+        ctx: &StmtContext,
+        f: impl FnOnce(&mut TableCommon, &mut dyn tidb_kv::storage::TableStorage) -> R,
+    ) -> R;
+}
+
+impl WithStatementStore for TableCommon {
+    fn with_statement_store<R>(
+        &mut self,
+        ctx: &StmtContext,
+        f: impl FnOnce(&mut TableCommon, &mut dyn tidb_kv::storage::TableStorage) -> R,
+    ) -> R {
+        with_statement_store(ctx, self, f)
+    }
+}
+
 /// [`statement_store`] for a write: `f` gets the table and the statement's
 /// store.
 pub fn with_statement_store<R>(

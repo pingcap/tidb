@@ -214,7 +214,7 @@ impl TableWriter {
     ) -> Result<Vec<BufferMutation>, RowEncodeError> {
         let row = self.row(values, true)?;
         self.table
-            .add_record_with_record_id(&row, record_id, true, &*self.context)
+            .add_record_with_record_id(&mut self.writes, &row, record_id, true, &*self.context)
             .map_err(|error| encode_error(format!("{error:?}")))?;
         Ok(self.writes.take())
     }
@@ -237,7 +237,7 @@ impl TableWriter {
             None => self.clustered_handle(&new)?,
         };
         self.table
-            .update_row_with_old_context(&handle, Some(&old), &new, &*self.context)
+            .update_row_with_old_context(&mut self.writes, &handle, Some(&old), &new, &*self.context)
             .map_err(|error| encode_error(format!("{error:?}")))?;
         Ok(self.writes.take())
     }
@@ -256,7 +256,7 @@ impl TableWriter {
             None => self.clustered_handle(&row)?,
         };
         self.table
-            .delete_row_with_old_context(&handle, &row, &*self.context)
+            .delete_row_with_old_context(&mut self.writes, &handle, &row, &*self.context)
             .map_err(|error| encode_error(format!("{error:?}")))?;
         Ok(self.writes.take())
     }

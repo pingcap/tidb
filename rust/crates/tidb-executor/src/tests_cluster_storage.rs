@@ -89,7 +89,7 @@ use tidb_txnkv::Key;
             let ctx = crate::StmtContext::for_dml(false, true, ignore)
                 .with_pessimistic_transaction(pessimistic);
             table
-                .insert_row_with_row_id_checked(&old, None, 0, &ctx, false)
+                .with_own_store(|table, store| table.insert_row_with_row_id_checked(store, &old, None, 0, &ctx, false))
                 .unwrap();
             for key in buffer.staged_keys() {
                 snapshot
@@ -101,7 +101,7 @@ use tidb_txnkv::Key;
             buffer.reset();
             snapshot.lock().unwrap().gets.clear();
             table
-                .update_row_with_old_context(&TableHandle::Int(1), Some(&old), &new, &ctx)
+                .with_own_store(|table, store| table.update_row_with_old_context(store, &TableHandle::Int(1), Some(&old), &new, &ctx))
                 .unwrap();
             assert_eq!(
                 snapshot.lock().unwrap().gets.len(),
@@ -129,7 +129,7 @@ use tidb_txnkv::Key;
         let new = [Datum::Int(2), Datum::Null];
         let ctx = crate::StmtContext::default().with_pessimistic_transaction(true);
         table
-            .insert_row_with_row_id_checked(&old, None, 0, &ctx, false)
+            .with_own_store(|table, store| table.insert_row_with_row_id_checked(store, &old, None, 0, &ctx, false))
             .unwrap();
         for key in buffer.staged_keys() {
             snapshot
@@ -141,7 +141,7 @@ use tidb_txnkv::Key;
         buffer.reset();
         snapshot.lock().unwrap().gets.clear();
         table
-            .update_row_with_old_context(&TableHandle::Int(1), Some(&old), &new, &ctx)
+            .with_own_store(|table, store| table.update_row_with_old_context(store, &TableHandle::Int(1), Some(&old), &new, &ctx))
             .unwrap();
         assert!(snapshot.lock().unwrap().gets.is_empty());
         let key = Key::from_bytes(tidb_tablecodec::table_key::encode_row_key_with_handle(
@@ -211,7 +211,7 @@ use tidb_txnkv::Key;
         let second = [Datum::Int(1), Datum::Int(20)];
         for row in [&first, &second] {
             table
-                .insert_row_with_row_id_checked(row, Some(1), 0, &ctx, false)
+                .with_own_store(|table, store| table.insert_row_with_row_id_checked(store, row, Some(1), 0, &ctx, false))
                 .unwrap();
         }
         let key = |id, handle| {
@@ -223,7 +223,7 @@ use tidb_txnkv::Key;
         let original_first = buffer.get(&key(43, 1));
         let new = [Datum::Int(0), Datum::Int(20)];
         table
-            .update_row_with_old_context(&TableHandle::Int(1), Some(&second), &new, &ctx)
+            .with_own_store(|table, store| table.update_row_with_old_context(store, &TableHandle::Int(1), Some(&second), &new, &ctx))
             .unwrap();
         assert_eq!(buffer.get(&key(43, 1)), original_first);
         assert_eq!(buffer.get(&key(44, 1)), Some(None));
@@ -308,7 +308,7 @@ use tidb_txnkv::Key;
             let row = [Datum::Int(7)];
             let handle = TableHandle::Int(1);
             table
-                .insert_row_with_row_id_checked(&row, Some(1), 0, &ctx, lazy)
+                .with_own_store(|table, store| table.insert_row_with_row_id_checked(store, &row, Some(1), 0, &ctx, lazy))
                 .unwrap();
             let keys = buffer.staged_keys();
             assert_eq!(keys.len(), 3);
@@ -329,7 +329,7 @@ use tidb_txnkv::Key;
 
             let checkpoint = buffer.checkpoint();
             table
-                .delete_row_with_old_context(&handle, &row, &ctx)
+                .with_own_store(|table, store| table.delete_row_with_old_context(store, &handle, &row, &ctx))
                 .unwrap();
             for key in &keys {
                 let flag = flags(&buffer, key);
@@ -346,7 +346,7 @@ use tidb_txnkv::Key;
 
             let updated = [Datum::Int(8)];
             table
-                .update_row_with_old_context(&handle, Some(&row), &updated, &ctx)
+                .with_own_store(|table, store| table.update_row_with_old_context(store, &handle, Some(&row), &updated, &ctx))
                 .unwrap();
             assert_eq!(buffer.staged_keys().len(), 5);
             for key in buffer.staged_keys() {
@@ -365,7 +365,7 @@ use tidb_txnkv::Key;
             }
             publish(&buffer, &snapshot);
             table
-                .delete_row_with_context(&handle, &ctx)
+                .with_own_store(|table, store| table.delete_row_with_context(store, &handle, &ctx))
                 .unwrap();
             assert_eq!(buffer.staged_keys().len(), 3);
             for key in buffer.staged_keys() {
@@ -374,7 +374,7 @@ use tidb_txnkv::Key;
             }
             // A reinsert over a local deletion retains the first assertion.
             table
-                .insert_row_with_row_id_checked(&updated, Some(1), 0, &ctx, true)
+                .with_own_store(|table, store| table.insert_row_with_row_id_checked(store, &updated, Some(1), 0, &ctx, true))
                 .unwrap();
             for key in buffer.staged_keys() {
                 assert!(flags(&buffer, &key).has_assert_exist());
@@ -403,7 +403,7 @@ use tidb_txnkv::Key;
                 buffer.delete(key).unwrap();
             }
             table
-                .insert_row_with_row_id_checked(&updated, Some(1), 0, &ctx, true)
+                .with_own_store(|table, store| table.insert_row_with_row_id_checked(store, &updated, Some(1), 0, &ctx, true))
                 .unwrap();
             for key in buffer.staged_keys() {
                 let flag = flags(&buffer, &key);
@@ -421,11 +421,11 @@ use tidb_txnkv::Key;
             snapshot.lock().unwrap().data.clear();
             table.set_pk_handle_offset(0);
             table
-                .insert_row_with_row_id_checked(&row, None, 0, &ctx, false)
+                .with_own_store(|table, store| table.insert_row_with_row_id_checked(store, &row, None, 0, &ctx, false))
                 .unwrap();
             publish(&buffer, &snapshot);
             table
-                .update_row_with_old_context(&TableHandle::Int(7), Some(&row), &updated, &ctx)
+                .with_own_store(|table, store| table.update_row_with_old_context(store, &TableHandle::Int(7), Some(&row), &updated, &ctx))
                 .unwrap();
             assert_eq!(buffer.staged_keys().len(), 6);
             for key in buffer.staged_keys() {
@@ -501,7 +501,7 @@ use tidb_txnkv::Key;
         // In place: the committed duplicate is reported at statement time,
         // exactly Go's eager `txn.Get` arm finding the key.
         let error = table
-            .insert_row_with_row_id_checked(&row, Some(1), 0, &ctx, false)
+            .with_own_store(|table, store| table.insert_row_with_row_id_checked(store, &row, Some(1), 0, &ctx, false))
             .unwrap_err();
         assert!(matches!(
             error,
@@ -514,7 +514,7 @@ use tidb_txnkv::Key;
         // and stages the row presumed absent for the commit to verify.
         let error_count = snapshot.lock().unwrap().gets.len();
         table
-            .insert_row_with_row_id_checked(&row, Some(1), 0, &ctx, true)
+            .with_own_store(|table, store| table.insert_row_with_row_id_checked(store, &row, Some(1), 0, &ctx, true))
             .unwrap();
         assert_eq!(snapshot.lock().unwrap().gets.len(), error_count);
         let marks = buffer.take_presume_not_exists();
@@ -533,7 +533,7 @@ use tidb_txnkv::Key;
         let checkpoint = buffer.checkpoint();
         assert!(
             matches!(
-                table.insert_row_with_row_id_checked(&row, Some(2), 0, &ctx, true),
+                table.with_own_store(|table, store| table.insert_row_with_row_id_checked(store, &row, Some(2), 0, &ctx, true)),
                 Err(tidb_table::tables::KvTableError::Mysql(error))
                     if error.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS)
                         && error.message.starts_with("Duplicate entry '7' for key")
@@ -543,7 +543,7 @@ use tidb_txnkv::Key;
         buffer.restore(checkpoint);
         buffer.delete(index_key.clone()).unwrap();
         table
-            .insert_row_with_row_id_checked(&row, Some(2), 0, &ctx, true)
+            .with_own_store(|table, store| table.insert_row_with_row_id_checked(store, &row, Some(2), 0, &ctx, true))
             .unwrap();
         assert!(
             !buffer.take_presume_not_exists().contains(&index_key),
@@ -555,13 +555,12 @@ use tidb_txnkv::Key;
         snapshot.lock().unwrap().fail_with =
             Some(StorageError::Backend("index read failed".to_owned()));
         let error = table
-            .insert_row_with_row_id_checked_without_primary_duplicate_check(
-                &[Datum::Int(8)],
+            .with_own_store(|table, store| table.insert_row_with_row_id_checked_without_primary_duplicate_check(store, &[Datum::Int(8)],
                 Some(3),
                 0,
                 &ctx,
                 false,
-            )
+            ))
             .expect_err("a failed eager index read is not an absent key");
         assert!(
             matches!(error, tidb_table::tables::KvTableError::Storage(StorageError::Backend(detail)) if detail.contains("index read failed"))
@@ -675,14 +674,13 @@ use tidb_txnkv::Key;
                 let candidate = [Datum::Int(3), Datum::Int(3)];
                 let result = match operation {
                     "insert" => table.insert_row(&candidate, &ctx).map(|_| ()),
-                    "update" | "partial_update" => table.update_row_with_old_context(
-                        &TableHandle::Int(1),
+                    "update" | "partial_update" => table.with_own_store(|table, store| table.update_row_with_old_context(store, &TableHandle::Int(1),
                         Some(&old),
                         &[Datum::Int(1), Datum::Int(3)],
                         &ctx,
-                    ),
+                    )),
                     "backfill" => table.with_own_store(|table, store| table.create_index_with_context(store, index, &ctx)),
-                    "conflicts" => table.row_conflicts(&candidate, &ctx).map(|_| ()),
+                    "conflicts" => table.with_own_store(|table, store| table.row_conflicts(store, &candidate, &ctx)).map(|_| ()),
                     _ => unreachable!(),
                 };
                 match result {

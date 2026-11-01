@@ -900,7 +900,7 @@ use tidb_table::table_from_meta::kv_index;
             // the new handle too (Go always removes and adds the copy).
             let ctx = tidb_sessionctx::StmtContext::for_dml(false, false, false);
             loaded
-                .update_row_with_context(&handle, &[Datum::Int(5)], &ctx)
+                .with_own_store(|table, store| table.update_row_with_context(store, &handle, &[Datum::Int(5)], &ctx))
                 .expect("the update succeeds");
             assert!(
                 loaded.stored_raw_value(&key(3, copy)).is_none(),
@@ -912,7 +912,7 @@ use tidb_table::table_from_meta::kv_index;
             );
             let moved = tidb_table::tables::TableHandle::Int(5);
             loaded
-                .delete_row_with_context(&moved, &ctx)
+                .with_own_store(|table, store| table.delete_row_with_context(store, &moved, &ctx))
                 .expect("the delete succeeds");
             assert!(
                 loaded.stored_raw_value(&key(5, main)).is_none(),

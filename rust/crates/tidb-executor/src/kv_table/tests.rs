@@ -136,11 +136,10 @@ fn writable_check_constraints_guard_insert_and_update() {
                 && error.message == "Check constraint 'positive_a' is violated."
     ));
     assert!(matches!(
-        table.update_row_with_context(
-            &handle,
+        table.with_own_store(|table, store| table.update_row_with_context(store, &handle,
             &[Datum::Int(-1), Datum::Null],
             &crate::StmtContext::for_dml(false, false, false),
-        ),
+        )),
         Err(KvTableError::Mysql(error))
             if error.equal(&tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED)
                 && error.message == "Check constraint 'positive_a' is violated."
@@ -646,12 +645,11 @@ fn update_rewrites_only_index_entries_whose_bytes_change() {
     // Update a NON-indexed column only: the index entry must survive
     // byte-identical.
     table
-        .update_row_with_old_context(
-            &handle,
+        .with_own_store(|table, store| table.update_row_with_old_context(store, &handle,
             Some(&[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(10)]),
             &[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(11)],
             &crate::StmtContext::for_dml(false, false, false),
-        )
+        ))
         .unwrap();
     let after_untouched = table.with_own_store(|table, store| table.index_entries_for_check(store, 1)).unwrap();
     assert_eq!(after_untouched, before, "untouched index stayed as it was");
@@ -662,12 +660,11 @@ fn update_rewrites_only_index_entries_whose_bytes_change() {
 
     // Update the INDEXED column: the entry moves to the new key.
     table
-        .update_row_with_old_context(
-            &handle,
+        .with_own_store(|table, store| table.update_row_with_old_context(store, &handle,
             Some(&[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(11)]),
             &[Datum::Int(1), Datum::Bytes(b"s9".to_vec()), Datum::Int(11)],
             &crate::StmtContext::for_dml(false, false, false),
-        )
+        ))
         .unwrap();
     let after_touched = table.with_own_store(|table, store| table.index_entries_for_check(store, 1)).unwrap();
     assert_eq!(
@@ -717,17 +714,15 @@ fn row_conflicts_only_include_matching_partial_indexes() {
         )
         .unwrap();
     assert!(table
-        .row_conflicts(
-            &[Datum::Int(-1), Datum::Bytes(b"same".to_vec())],
+        .with_own_store(|table, store| table.row_conflicts(store, &[Datum::Int(-1), Datum::Bytes(b"same".to_vec())],
             &tidb_exprctx::NoColumns
-        )
+        ))
         .unwrap()
         .is_empty());
     let conflicts = table
-        .row_conflicts(
-            &[Datum::Int(2), Datum::Bytes(b"same".to_vec())],
+        .with_own_store(|table, store| table.row_conflicts(store, &[Datum::Int(2), Datum::Bytes(b"same".to_vec())],
             &tidb_exprctx::NoColumns,
-        )
+        ))
         .unwrap();
     assert_eq!(conflicts.len(), 1);
     assert_eq!(conflicts[0].handle, TableHandle::Int(1));
@@ -826,7 +821,7 @@ fn a_nonpublic_index_is_written_by_its_backfill_state() {
             "{state:?} {backfill:?}"
         );
         table
-            .delete_row_with_context(&handle, &crate::StmtContext::for_dml(false, false, false))
+            .with_own_store(|table, store| table.delete_row_with_context(store, &handle, &crate::StmtContext::for_dml(false, false, false)))
             .unwrap();
         assert!(
             table.stored_raw_value(&key).is_none(),
@@ -993,11 +988,10 @@ fn scan_reports_the_handles_the_key_codec_wrote() {
     assert_eq!(scanned, handles);
 
     // A row written under an explicit handle round-trips too.
-    t.update_row_with_context(
-        &handles[1],
+    t.with_own_store(|table, store| table.update_row_with_context(store, &handles[1],
         &[Datum::Int(99), Datum::Bytes(b"y".to_vec())],
         &crate::StmtContext::for_dml(false, false, false),
-    )
+    ))
     .unwrap();
     let rows = t
         .scan_rows_with_handles_with_context(&mut *t.store().clone_box(), &RowDecodeContext::for_test_query_utc())
@@ -1006,10 +1000,9 @@ fn scan_reports_the_handles_the_key_codec_wrote() {
     assert_eq!(rows[1].0, handles[1]);
     assert_eq!(rows[1].1[0], Datum::Int(99));
 
-    t.delete_row_with_context(
-        &handles[0],
+    t.with_own_store(|table, store| table.delete_row_with_context(store, &handles[0],
         &crate::StmtContext::for_dml(false, false, false),
-    )
+    ))
     .unwrap();
     let after: Vec<TableHandle> = t
         .scan_rows_with_handles_with_context(&mut *t.store().clone_box(), &RowDecodeContext::for_test_query_utc())
@@ -1212,10 +1205,9 @@ fn a_short_common_handle_indexes_under_the_key_the_delete_path_computes() {
     assert_eq!(scanned.len(), 1);
     assert_eq!(scanned[0].0, written, "the write and the read disagree");
 
-    t.delete_row_with_context(
-        &scanned[0].0,
+    t.with_own_store(|table, store| table.delete_row_with_context(store, &scanned[0].0,
         &crate::StmtContext::for_dml(false, false, false),
-    )
+    ))
     .unwrap();
     assert_eq!(
         t.stored_keys().unwrap(),

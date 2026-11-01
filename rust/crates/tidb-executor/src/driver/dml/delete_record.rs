@@ -16,6 +16,7 @@
 //! onRemoveRowForFK. Ordinary checks see all statement writes; IGNORE checks
 //! one candidate before writing it. Statement staging owns rollback.
 
+use crate::WithStatementStore as _;
 use super::{kv_read_error, TableHandle};
 use crate::driver::{SessionExtendedInfoSchema, DriverError, TableEntry};
 use crate::foreign_key::{self, ParentChange};
@@ -73,7 +74,7 @@ impl<'a> DeleteRecords<'a> {
             Some(TableEntry::Kv(kv)) => {
                 let handle = id;
                 let kv = std::sync::Arc::make_mut(kv);
-                kv.delete_row_with_old_context(handle, old, ctx)
+                kv.with_statement_store(ctx, |table, store| table.delete_row_with_old_context(store, handle, old, ctx))
                     .map_err(|error| kv_read_error("row delete failed", error))?;
             }
             _ => {

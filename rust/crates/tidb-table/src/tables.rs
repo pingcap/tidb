@@ -3150,12 +3150,11 @@ impl TableCommon {
     /// prefix.
     pub fn row_conflicts(
         &mut self,
+        store: &mut dyn TableStorage,
         row: &[Datum],
         ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<Vec<RowConflict>, KvTableError> {
-        self.with_own_store(|table, store| {
-            table.row_conflicts_reported_as(store, row, None, ctx, DuplicateText::TableLayer)
-        })
+        self.row_conflicts_reported_as(store, row, None, ctx, DuplicateText::TableLayer)
     }
 
     /// An INSERT's conflicts, reported as Go's batch checker does
@@ -3163,13 +3162,12 @@ impl TableCommon {
     /// explicitly supplied heap ID.
     pub fn row_conflicts_with_row_id(
         &mut self,
+        store: &mut dyn TableStorage,
         row: &[Datum],
         row_id: Option<i64>,
         ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<Vec<RowConflict>, KvTableError> {
-        self.with_own_store(|table, store| {
-            table.row_conflicts_reported_as(store, row, row_id, ctx, DuplicateText::BatchChecker)
-        })
+        self.row_conflicts_reported_as(store, row, row_id, ctx, DuplicateText::BatchChecker)
     }
 
     fn row_conflicts_reported_as(
@@ -3949,6 +3947,7 @@ impl TableCommon {
     /// key retains its own absence check and duplicate diagnostic.
     pub fn insert_row_with_row_id_checked(
         &mut self,
+        store: &mut dyn TableStorage,
         row: &[Datum],
         row_id: Option<i64>,
         shard: i64,
@@ -3959,8 +3958,7 @@ impl TableCommon {
         // writes take the caller's ctx (`GetCreateIdxOpt`), so they are its
         // siblings.
         let _add_record = tidb_tracing::start_thread_region("table.AddRecord");
-        self.with_own_store(|table, store| {
-            table.with_txn_staging(store, ctx, |table, store| {
+        self.with_txn_staging(store, ctx, |table, store| {
                 table.insert_row_in(
                     store,
                     row,
@@ -3973,7 +3971,6 @@ impl TableCommon {
                     true,
                 )
             })
-        })
     }
 
     /// Runs `f` over this table's metadata and the store the table still
@@ -4054,6 +4051,7 @@ impl TableCommon {
     /// insert path chooses record and index duplicate checking together.
     pub fn insert_row_with_row_id_checked_without_primary_duplicate_check(
         &mut self,
+        store: &mut dyn TableStorage,
         row: &[Datum],
         row_id: Option<i64>,
         shard: i64,
@@ -4061,8 +4059,7 @@ impl TableCommon {
         lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
         let _add_record = tidb_tracing::start_thread_region("table.AddRecord");
-        self.with_own_store(|table, store| {
-            table.with_txn_staging(store, ctx, |table, store| {
+        self.with_txn_staging(store, ctx, |table, store| {
                 table.insert_row_in(
                     store,
                     row,
@@ -4075,7 +4072,6 @@ impl TableCommon {
                     true,
                 )
             })
-        })
     }
 
     /// Go `AddRecord` for a caller that already holds the row's record id
@@ -4089,14 +4085,14 @@ impl TableCommon {
     /// (`tidb_syssession::system_row_write`) write through this.
     pub fn add_record_with_record_id(
         &mut self,
+        store: &mut dyn TableStorage,
         row: &[Datum],
         record_id: Option<i64>,
         lazy_dup_check: bool,
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<TableHandle, KvTableError> {
         let _add_record = tidb_tracing::start_thread_region("table.AddRecord");
-        self.with_own_store(|table, store| {
-            table.with_txn_staging(store, ctx, |table, store| {
+        self.with_txn_staging(store, ctx, |table, store| {
                 table.insert_row_in(
                     store,
                     row,
@@ -4109,7 +4105,6 @@ impl TableCommon {
                     false,
                 )
             })
-        })
     }
 
     /// The record handle a clustered table derives from `row` (Go
@@ -4360,11 +4355,12 @@ impl TableCommon {
     /// change).
     pub fn update_row_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         handle: &TableHandle,
         row: &[Datum],
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
-        self.update_row_with_old_context(handle, None, row, ctx)
+        self.update_row_with_old_context(store, handle, None, row, ctx)
     }
 
     /// Replaces a row using the selected old row when available, avoiding a
@@ -4372,14 +4368,13 @@ impl TableCommon {
     /// staged writes and table statistics, as Go's table mutation context does.
     pub fn update_row_with_old_context(
         &mut self,
+        store: &mut dyn TableStorage,
         handle: &TableHandle,
         old_row: Option<&[Datum]>,
         row: &[Datum],
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
-        self.with_own_store(|table, store| {
-            table.with_txn_staging(store, ctx, |table, store| table.update_row_in(store, handle, old_row, row, ctx))
-        })
+        self.with_txn_staging(store, ctx, |table, store| table.update_row_in(store, handle, old_row, row, ctx))
     }
 
     fn update_row_in(
@@ -4697,12 +4692,11 @@ impl TableCommon {
     /// Removes the row stored under `handle` using the statement's write policy.
     pub fn delete_row_with_context(
         &mut self,
+        store: &mut dyn TableStorage,
         handle: &TableHandle,
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
-        self.with_own_store(|table, store| {
-            table.with_txn_staging(store, ctx, |table, store| table.delete_row_in(store, handle, ctx))
-        })
+        self.with_txn_staging(store, ctx, |table, store| table.delete_row_in(store, handle, ctx))
     }
 
     fn delete_row_in(
@@ -4743,13 +4737,12 @@ impl TableCommon {
     /// no second storage read is needed.
     pub fn delete_row_with_old_context(
         &mut self,
+        store: &mut dyn TableStorage,
         handle: &TableHandle,
         old_row: &[Datum],
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
-        self.with_own_store(|table, store| {
-            table.with_txn_staging(store, ctx, |table, store| table.delete_old_row_in(store, handle, old_row, ctx))
-        })
+        self.with_txn_staging(store, ctx, |table, store| table.delete_old_row_in(store, handle, old_row, ctx))
     }
 
     fn delete_old_row_in(
