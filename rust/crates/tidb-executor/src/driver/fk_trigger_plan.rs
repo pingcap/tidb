@@ -71,11 +71,29 @@ pub(crate) fn build_fk_triggers(
     spec: &FkPlanSpec,
     plan_ids: &PlanIdAllocator,
 ) -> Result<Vec<FkTriggerNode>, DriverError> {
+    // The updated columns are those of Go's write lists: the SET (or ON
+    // DUPLICATE) assignments plus the generated assignments the planner
+    // appends to them (`Update.OrderedList`, `Insert.OnDuplicate`).
+    let mut spec = spec.clone();
+    if let Some(TableEntry::Kv(table)) = catalog.get_in(&spec.database, &spec.table) {
+        let columns: Vec<_> = table.meta().read().cols().iter_handles().flatten().collect();
+        use tidb_planner::plan_builder::generated_assignments::{
+            on_duplicate_generated_columns, update_list_generated_columns,
+        };
+        if !spec.updated_cols.is_empty() {
+            let generated = update_list_generated_columns(&columns, &spec.updated_cols);
+            spec.updated_cols.extend(generated);
+        }
+        if !spec.on_duplicate_cols.is_empty() {
+            let generated = on_duplicate_generated_columns(&columns, &spec.on_duplicate_cols);
+            spec.on_duplicate_cols.extend(generated);
+        }
+    }
     tidb_planner_core_operator_physicalop::fk_plan::build_fk_triggers(
         &CatalogForeignKeys(catalog),
         ctx.foreign_key_checks(),
         operator,
-        spec,
+        &spec,
         plan_ids,
     )
     .map_err(|error| match error {

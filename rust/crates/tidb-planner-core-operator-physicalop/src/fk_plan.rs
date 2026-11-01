@@ -20,7 +20,6 @@
 
 use tidb_ast::{CiString, ReferOptionType};
 use tidb_hack::{GoCaseCompare, GoToLower};
-use tidb_datatype::FieldTypeFlags;
 use tidb_model::column::ColumnInfo;
 use tidb_model::table::FKInfo;
 use tidb_model::table_info::TableInfo;
@@ -98,44 +97,9 @@ pub fn build_fk_triggers(
     if !foreign_key_checks {
         return Ok(Vec::new());
     }
-    // Go buildUpdateLists appends generated assignments when their
-    // dependencies may change, including transitive generated dependencies
-    // and ON UPDATE timestamps. ODKU uses the same completed update columns.
-    let mut spec = spec.clone();
+    // `spec` carries Go's write-list columns, generated assignments
+    // included (the caller's `Update.OrderedList` / `Insert.OnDuplicate`).
     let own_table = catalog.table(&spec.database, &spec.table);
-    if let Some(table) = &own_table {
-        let columns = public_columns(table);
-        for updated in [&mut spec.updated_cols, &mut spec.on_duplicate_cols] {
-            if updated.is_empty() {
-                continue;
-            }
-            let mut modified = updated.clone();
-            modified.extend(
-                columns
-                    .iter()
-                    .map(|column| column.read())
-                    .filter(|column| column.field_type.has_flag(FieldTypeFlags::ON_UPDATE_NOW))
-                    .map(|column| column.name.original().to_owned()),
-            );
-            for column in &columns {
-                let column = column.read();
-                if column.is_generated()
-                    && column.dependences.snapshot().iter().any(|dependency| {
-                        let dependency = dependency.to_utf8_lossy_go();
-                        modified.iter().any(|name| name.go_lower_eq(&dependency))
-                    })
-                {
-                    let name = column.name.original();
-                    if !modified.iter().any(|modified| modified.go_lower_eq(name)) {
-                        modified.push(name.to_owned());
-                    }
-                    if !updated.iter().any(|updated| updated.go_lower_eq(name)) {
-                        updated.push(name.to_owned());
-                    }
-                }
-            }
-        }
-    }
     let mut nodes = Vec::new();
     let parent_change = match operator {
         "Delete" => Some((true, &[][..])),
@@ -525,8 +489,11 @@ mod tests {
         ));
     }
 
+    /// The write list carries a generated column the SET moves (the
+    /// planner's `Update.OrderedList`, `generated_assignments`), and the
+    /// child-side check the foreign key over it needs is built from it.
     #[test]
-    fn a_generated_column_joins_the_update_columns_it_depends_on() {
+    fn a_generated_column_in_the_write_list_selects_its_foreign_key() {
         let ids = PlanIdAllocator::new();
         let catalog = fake(ReferOptionType::Restrict, &["parent", "child"]);
         let child = &catalog.tables[&("test".to_owned(), "child".to_owned())];
@@ -539,6 +506,13 @@ mod tests {
         drop(pid);
         let mut update = spec("child");
         update.updated_cols = vec!["id".to_owned()];
+        assert!(
+            build_fk_triggers(&catalog, true, "Update", &update, &ids)
+                .unwrap()
+                .is_empty(),
+            "the SET alone does not name the foreign key's column"
+        );
+        update.updated_cols.push("pid".to_owned());
         assert_eq!(
             build_fk_triggers(&catalog, true, "Update", &update, &ids)
                 .unwrap()
