@@ -1020,7 +1020,7 @@ impl CopRowStream {
 impl PushdownRowStream for CopRowStream {
     fn cop_count_and_rows(&self) -> (u64, u64) {
         self.iter.as_ref().map_or((0, 0), |iter| {
-            iter.runtime_stats().cop_count_and_rows(self.plan_id)
+            iter.runtime_stats().get_cop_count_and_rows(self.plan_id)
         })
     }
     fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {

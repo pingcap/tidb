@@ -85,6 +85,6 @@ impl<F: CatalogFollowing> TxnManagerOps for StoreTxnOps<'_, F> {
     }
 
     fn rollback_to_checkpoint(&mut self, checkpoint: &BufferCheckpoint) {
-        self.txn.rollback_to_checkpoint(checkpoint);
+        self.txn.rollback_mem_db_to_checkpoint(checkpoint);
     }
 }

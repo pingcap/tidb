@@ -25,7 +25,7 @@ use tidb_ast::CiString;
 use tidb_meta::transaction::{
     default_group_meta_4_test, extract_schema_and_table_name_from_job,
     fast_unmarshal_table_name_info, iter_all_tables, is_job_match, get_oldest_schema_version,
-    split_range_int64_max, table_info_must_load, unescape_name, unescape_name_bytes, AutoIdGroup,
+    split_range_int64_max, is_table_info_must_load, unescape_name, unescape_name_bytes, AutoIdGroup,
     DailyRuStats, DdlJobCodec, DdlTableVersion, GroupRuStats, MemoryTransaction, MetaSnapshotStore,
     MustLoadFilterAttr, Mutator, MutatorOption, MvccInfo, MvccReader, MvccWrite,
     NextGenBootTableVersion, RuConsumption, RuStats,
@@ -1376,10 +1376,10 @@ fn source_range_partial_json_and_filter_boundaries() {
     let table = fast_unmarshal_table_name_info(odd_keys).unwrap();
     assert_eq!(table.name.original(), "Original");
     assert!(fast_unmarshal_table_name_info(br#"{"id":8,"name":{"x":"Original","y":{}}}"#).is_err());
-    assert!(table_info_must_load(br#"{"fk_info":null}"#));
+    assert!(is_table_info_must_load(br#"{"fk_info":null}"#));
     let ordinary = br#"{"fk_info":null,"partition":null,"Lock":null,"tiflash_replica":null,"temp_table_type":0,"policy_ref_info":null,"ttl_info":null,"affinity":null}"#;
-    assert!(!table_info_must_load(ordinary));
-    assert!(!table_info_must_load(
+    assert!(!is_table_info_must_load(ordinary));
+    assert!(!is_table_info_must_load(
         br#"{"fk_info":[],"partition":null,"Lock":null,"tiflash_replica":null,"temp_table_type":0,"policy_ref_info":null,"ttl_info":null}"#
     ));
     for special in [
@@ -1392,9 +1392,9 @@ fn source_range_partial_json_and_filter_boundaries() {
         br#"{"fk_info":null,"partition":null,"Lock":null,"tiflash_replica":null,"temp_table_type":0,"policy_ref_info":null,"ttl_info":{}}"#,
         br#"{"fk_info":null,"partition":null,"Lock":null,"tiflash_replica":null,"temp_table_type":0,"policy_ref_info":null,"ttl_info":null,"affinity":{"level":"s"}}"#,
     ] {
-        assert!(table_info_must_load(special), "special={:?}", special);
+        assert!(is_table_info_must_load(special), "special={:?}", special);
     }
-    assert!(table_info_must_load(
+    assert!(is_table_info_must_load(
         br#"{"fk_info":[],"partition":null,"Lock":null,"tiflash_replica":null,"temp_table_type":0,"policy_ref_info":null,"ttl_info":null,"affinity":{}}"#
     ));
 
@@ -1409,7 +1409,7 @@ fn source_range_partial_json_and_filter_boundaries() {
         std::str::from_utf8(&ordered).unwrap(),
         r#"{"id":0,"name":{"O":"","L":""},"charset":"","collate":"","cols":null,"index_info":null,"constraint_info":null,"fk_info":null,"state":0,"pk_is_handle":false,"is_common_handle":false,"common_handle_version":0,"comment":"","auto_inc_id":0,"auto_id_cache":0,"auto_rand_id":0,"max_col_id":0,"max_idx_id":0,"max_fk_id":0,"max_cst_id":0,"update_timestamp":0,"ShardRowIDBits":0,"max_shard_row_id_bits":0,"auto_random_bits":0,"auto_random_range_bits":0,"pre_split_regions":0,"partition":null,"compression":"","view":null,"sequence":null,"Lock":null,"version":0,"tiflash_replica":null,"is_columnar":false,"temp_table_type":0,"cache_table_status":0,"policy_ref_info":null,"stats_options":null,"exchange_partition_info":null,"ttl_info":null,"affinity":{"level":"s"},"revision":0}"#
     );
-    assert!(table_info_must_load(&ordered));
+    assert!(is_table_info_must_load(&ordered));
 
     let source_cases = [
         TableInfo {
@@ -1471,7 +1471,7 @@ fn source_range_partial_json_and_filter_boundaries() {
         },
     ];
     for source_case in source_cases {
-        assert!(table_info_must_load(
+        assert!(is_table_info_must_load(
             &value::serialize_table_info(&source_case).unwrap()
         ));
     }
@@ -1486,7 +1486,7 @@ fn source_range_partial_json_and_filter_boundaries() {
             ..Default::default()
         },
     ] {
-        assert!(!table_info_must_load(
+        assert!(!is_table_info_must_load(
             &value::serialize_table_info(&ordinary).unwrap()
         ));
     }

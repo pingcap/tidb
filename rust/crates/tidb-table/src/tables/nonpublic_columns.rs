@@ -74,7 +74,7 @@ impl TableCommon {
     /// index `index_id` encodes, the column's changing type when the part
     /// uses it.
     #[must_use]
-    pub(crate) fn index_part_type(
+    pub(crate) fn get_idx_changing_field_type(
         &self,
         index_id: i64,
         position: usize,

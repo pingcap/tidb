@@ -725,7 +725,7 @@ impl IndexJoinCompareOp {
 /// Go `ColWithCmpFuncManager`, retained on `PhysicalIndexJoin` after its
 /// inner access path is completed.
 #[derive(Clone, Debug)]
-pub struct IndexJoinCompareFilters {
+pub struct ColWithCmpFuncManager {
     /// Go `TargetCol`.
     pub target_col: tidb_expr::column::Column,
     /// The target column's offset in the selected index/common-handle key.
@@ -738,7 +738,7 @@ pub struct IndexJoinCompareFilters {
     pub args: Vec<tidb_expr::expression::Expression>,
 }
 
-impl IndexJoinCompareFilters {
+impl ColWithCmpFuncManager {
     /// Go `ColWithCmpFuncManager.MemoryUsage` (`physical_index_join.go:335-358`).
     ///
     /// Go's manager also keeps what `AppendNewExpr` (`:261-272`) built for
@@ -834,7 +834,7 @@ pub struct PhysicalIndexJoin {
     /// Go `PhysicalIndexJoin.IdxColLens`.
     pub idx_col_lens: Vec<i64>,
     /// Go `PhysicalIndexJoin.CompareFilters`.
-    pub compare_filters: Option<IndexJoinCompareFilters>,
+    pub compare_filters: Option<ColWithCmpFuncManager>,
     /// Parameter-dependent range metadata retained for cache rebuilding.
     pub range_rebuild: Option<crate::range_rebuild::PointRangeRebuild>,
     /// Which `RangeInfo` spelling master renders on the inner access scan:

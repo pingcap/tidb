@@ -125,7 +125,7 @@ impl Pool {
             chunk.num_cols(),
             "Pool.PutChunk field/column width mismatch"
         );
-        let columns = chunk.take_columns_for_reuse();
+        let columns = chunk.reset_for_reuse();
         for column in columns {
             let type_size = column.type_size();
             self.bucket(type_size).put(column);

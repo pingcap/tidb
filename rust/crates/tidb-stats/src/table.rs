@@ -590,7 +590,7 @@ impl Table {
             ..Self::default()
         };
         for (id, column) in columns {
-            table.put_analyzed_column(id, column);
+            table.set_col(id, column);
         }
         for (id, index) in indexes {
             table.set_idx(id, index);
@@ -600,7 +600,7 @@ impl Table {
 
     /// Go `HistColl.SetCol` of an analyzed, fully loaded column, recorded in
     /// `ColAndIdxExistenceMap` as analyzed; `StatsVer` follows the item's.
-    pub fn put_analyzed_column(&mut self, id: i64, mut column: Column) {
+    pub fn set_col(&mut self, id: i64, mut column: Column) {
         column.stats_loaded_status = StatsLoadedStatus::full_load();
         self.hist_coll.stats_version = self
             .hist_coll

@@ -54,7 +54,7 @@ use crate::rule::rule_tests::push_down_topn;
 use tidb_planner_core_operator_logicalop::plan_context::LogicalOptRule;
 use tidb_planner_core_operator_logicalop::plan_context::RuleContext;
 use super::rule_aggregation_elimination::AggregationEliminator;
-use super::rule_derive_topn_from_window::derive_topn;
+use super::rule_derive_topn_from_window::derive_top_n;
 use super::rule_eliminate_empty_selection::eliminate_empty_selection;
 use super::rule_eliminate_unionall_dual_item::union_all_eliminate_dual_item;
 use super::rule_join_elimination::OuterJoinEliminator;
@@ -778,7 +778,7 @@ fn a_row_number_upper_bound_derives_a_topn_under_the_window() {
         row_number_window(&allocator, "row_number", data_source(&allocator, &[1])),
     );
 
-    let out = derive_topn(&ctx, plan);
+    let out = derive_top_n(&ctx, plan);
 
     // Go: "return select->datasource->topN->window".
     assert_eq!(kind(&out), "Selection");
@@ -809,7 +809,7 @@ fn a_window_function_other_than_row_number_derives_nothing() {
         row_number_window(&allocator, "rank", data_source(&allocator, &[1])),
     );
 
-    let out = derive_topn(&ctx, plan);
+    let out = derive_top_n(&ctx, plan);
 
     assert_eq!(kind(&out.children()[0]), "Window");
     assert_eq!(kind(&out.children()[0].children()[0]), "DataSource");
@@ -827,7 +827,7 @@ fn two_conditions_or_a_bound_on_the_wrong_column_derive_nothing() {
         vec![le_const(2, 5), le_const(1, 9)],
         row_number_window(&allocator, "row_number", data_source(&allocator, &[1])),
     );
-    let out = derive_topn(&ctx, two_conditions);
+    let out = derive_top_n(&ctx, two_conditions);
     assert_eq!(kind(&out.children()[0].children()[0]), "DataSource");
     out.dismantle();
 
@@ -838,7 +838,7 @@ fn two_conditions_or_a_bound_on_the_wrong_column_derive_nothing() {
         vec![le_const(1, 5)],
         row_number_window(&allocator, "row_number", data_source(&allocator, &[1])),
     );
-    let out = derive_topn(&ctx, wrong_column);
+    let out = derive_top_n(&ctx, wrong_column);
     assert_eq!(kind(&out.children()[0].children()[0]), "DataSource");
 }
 
@@ -858,7 +858,7 @@ fn the_derivation_walks_past_a_deep_chain_and_respects_allow_derive_topn() {
         )
     };
 
-    let derived = derive_topn(&ctx, build());
+    let derived = derive_top_n(&ctx, build());
     let mut node = &derived;
     for _ in 0..DEEP {
         node = &node.children()[0];
@@ -868,7 +868,7 @@ fn the_derivation_walks_past_a_deep_chain_and_respects_allow_derive_topn() {
 
     // Go's `AllowDeriveTopN` gates the whole recursion.
     ctx.allow_derive_topn = false;
-    let untouched = derive_topn(&ctx, build());
+    let untouched = derive_top_n(&ctx, build());
     let mut node = &untouched;
     for _ in 0..DEEP {
         node = &node.children()[0];
@@ -917,7 +917,7 @@ fn a_childless_selection_panics_when_derive_topn_probes_it_like_go() {
 
     // Go `windowIsTopN` reads `p.Children()[0]` unconditionally.
     assert!(
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { derive_topn(&ctx, plan) }))
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { derive_top_n(&ctx, plan) }))
             .is_err()
     );
 }
@@ -932,7 +932,7 @@ fn a_window_without_children_panics_at_the_grandchild_probe_like_go() {
 
     // Go: `grandChild := child.Children()[0]` before the type assertion.
     assert!(
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { derive_topn(&ctx, plan) }))
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { derive_top_n(&ctx, plan) }))
             .is_err()
     );
 }

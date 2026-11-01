@@ -108,7 +108,7 @@ impl<T: Keyed + Clone> KeySet<T> {
 
     /// Go `CombSet`: every combination of `number_of_items` items, in the
     /// order the include-then-exclude recursion yields them.
-    pub fn combinations(&self, number_of_items: usize) -> Vec<Self> {
+    pub fn comb_set(&self, number_of_items: usize) -> Vec<Self> {
         let list = self.to_list();
         let mut current = Self::new();
         comb_iterate(&list, &mut current, 0, number_of_items)
@@ -158,9 +158,9 @@ mod tests {
     fn sets_list_in_key_order_and_combine_like_go() {
         let set = KeySet::from_items([Item("c"), Item("a"), Item("b"), Item("a")]);
         assert_eq!(keys(&set), vec!["a", "b", "c"]);
-        let combos: Vec<_> = set.combinations(2).iter().map(keys).collect();
+        let combos: Vec<_> = set.comb_set(2).iter().map(keys).collect();
         assert_eq!(combos, vec![vec!["a", "b"], vec!["a", "c"], vec!["b", "c"]]);
-        assert_eq!(set.combinations(0).len(), 1);
+        assert_eq!(set.comb_set(0).len(), 1);
         let other = KeySet::from_items([Item("b")]);
         assert_eq!(keys(&KeySet::difference(&set, &other)), vec!["a", "c"]);
         assert_eq!(keys(&KeySet::intersection(&set, &other)), vec!["b"]);

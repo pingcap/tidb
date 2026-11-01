@@ -50,7 +50,7 @@
 
 use tidb_model::table::SequenceInfo;
 use tidb_autoid::sequence::{
-    seek_to_first_sequence_value, sequence_offset, LocalSequenceCounter,
+    seek_to_first_sequence_value, get_offset, LocalSequenceCounter,
     SequenceCounter, SequenceError,
 };
 use std::sync::{Arc, Mutex};
@@ -167,7 +167,7 @@ impl SequenceAllocator {
     /// Go `sequenceCommon.getOffset`: the congruence offset is `START` until
     /// `CYCLE` has wrapped at least once, and the wrapped-to bound afterwards.
     fn offset(&self, round: i64) -> i64 {
-        sequence_offset(&self.info, round)
+        get_offset(&self.info, round)
     }
 
     /// Go `TableCommon.GetSequenceNextVal`: seek inside the cached batch, and

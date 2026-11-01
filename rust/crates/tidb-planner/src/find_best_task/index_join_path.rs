@@ -23,7 +23,7 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
-use tidb_planner_core_operator_physicalop::{IndexJoinCompareFilters, IndexJoinCompareOp};
+use tidb_planner_core_operator_physicalop::{ColWithCmpFuncManager, IndexJoinCompareOp};
 use tidb_planner_core_base::PlanError;
 use tidb_ranger::points::ExpressionEvaluator;
 use tidb_ranger::types::{Range, Ranges};
@@ -111,7 +111,7 @@ pub(crate) struct IndexJoinPathCore {
     /// Go `idxOff2KeyOff`.
     pub idx_off2_key_off: Vec<i64>,
     /// Go `lastColManager`.
-    pub last_col_manager: Option<IndexJoinCompareFilters>,
+    pub last_col_manager: Option<ColWithCmpFuncManager>,
 }
 
 /// What `indexJoinPathBuild` answers for one path.
@@ -412,7 +412,7 @@ fn index_join_path_build_col_manager(
     next_col: &Column,
     next_col_offset: usize,
     col_length: i64,
-) -> (Option<IndexJoinCompareFilters>, Vec<Expression>) {
+) -> (Option<ColWithCmpFuncManager>, Vec<Expression>) {
     let mut ops = Vec::new();
     let mut args = Vec::new();
     let mut last_col_accesses = Vec::new();
@@ -451,7 +451,7 @@ fn index_join_path_build_col_manager(
         ops.push(op);
         args.push(another_arg.clone());
     }
-    let manager = (!ops.is_empty()).then(|| IndexJoinCompareFilters {
+    let manager = (!ops.is_empty()).then(|| ColWithCmpFuncManager {
         target_col: next_col.clone(),
         target_index_offset: next_col_offset,
         col_length,
@@ -640,7 +640,7 @@ fn index_join_path_construct_result(
     ranges: Ranges,
     accesses: Vec<Expression>,
     remained: Vec<Expression>,
-    last_col_manager: Option<IndexJoinCompareFilters>,
+    last_col_manager: Option<ColWithCmpFuncManager>,
     last_col_is_range: bool,
     used_cols_len: usize,
 ) -> IndexJoinPathCore {
@@ -798,7 +798,7 @@ mod tests {
         )
     }
 
-    fn render_manager(manager: Option<&IndexJoinCompareFilters>) -> String {
+    fn render_manager(manager: Option<&ColWithCmpFuncManager>) -> String {
         manager.map_or_else(
             || "<nil>".to_owned(),
             |manager| {

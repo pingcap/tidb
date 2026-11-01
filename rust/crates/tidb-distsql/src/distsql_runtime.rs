@@ -191,7 +191,7 @@ impl SelectResultRuntimeStats {
 
     /// Go `RuntimeStatsColl.GetCopCountAndRows`.
     #[must_use]
-    pub fn cop_count_and_rows(&self, plan_id: isize) -> (u64, u64) {
+    pub fn get_cop_count_and_rows(&self, plan_id: isize) -> (u64, u64) {
         let summaries = self.plan_summaries(plan_id);
         (
             summaries.len() as u64,
@@ -240,8 +240,8 @@ mod tests {
                 }],
             );
         }
-        assert_eq!(stats.cop_count_and_rows(7), (2, 8));
-        assert_eq!(stats.cop_count_and_rows(8), (0, 0));
+        assert_eq!(stats.get_cop_count_and_rows(7), (2, 8));
+        assert_eq!(stats.get_cop_count_and_rows(8), (0, 0));
     }
 
     #[test]

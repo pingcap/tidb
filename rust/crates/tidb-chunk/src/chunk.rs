@@ -535,7 +535,7 @@ impl Chunk {
     /// zero-value chunk metadata while returning each UNIQUE column owner to
     /// the caller. Aliased slots yield one owner; a cross-chunk live owner is
     /// not reusable yet.
-    pub(crate) fn take_columns_for_reuse(&mut self) -> Vec<Column> {
+    pub(crate) fn reset_for_reuse(&mut self) -> Vec<Column> {
         self.sel = None;
         self.num_virtual_rows = 0;
         self.capacity = 0;

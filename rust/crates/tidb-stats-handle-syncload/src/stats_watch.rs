@@ -240,8 +240,8 @@ impl SharedStats {
     /// Go `StatsHandle.GetNextCheckVersionWithOffset` over the canonical
     /// cache owned by this shared statistics image.
     #[must_use]
-    pub fn next_check_version_with_offset(&self, lease: Duration) -> u64 {
-        self.cache.next_check_version_with_offset(lease)
+    pub fn get_next_check_version_with_offset(&self, lease: Duration) -> u64 {
+        self.cache.get_next_check_version_with_offset(lease)
     }
 
     /// Replaces the published snapshot atomically.
@@ -1217,10 +1217,10 @@ mod tests {
     #[test]
     fn analyze_publication_does_not_advance_the_cache_lifecycle_version() {
         let shared = shared_stats(StatsSnapshot::from([loaded_at(1, 10)]));
-        assert_eq!(shared.next_check_version_with_offset(Duration::ZERO), 10);
+        assert_eq!(shared.get_next_check_version_with_offset(Duration::ZERO), 10);
         shared.store_after_analyze(StatsSnapshot::from([loaded_at(1, 20)]));
         assert_eq!(shared.load()[&1].version(), Some(20));
-        assert_eq!(shared.next_check_version_with_offset(Duration::ZERO), 10);
+        assert_eq!(shared.get_next_check_version_with_offset(Duration::ZERO), 10);
     }
 
     #[test]

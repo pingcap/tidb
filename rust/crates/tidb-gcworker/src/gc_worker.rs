@@ -1818,7 +1818,7 @@ impl GcJobContext {
         if value.is_empty() {
             return Ok(None);
         }
-        tidb_config_configtypes::parse_go_duration(&value)
+        tidb_config_configtypes::parse_duration(&value)
             .map(Some)
             .map_err(GcError::new)
     }

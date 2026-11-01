@@ -880,7 +880,7 @@ impl LogicalPlan {
 
     /// Go `DeriveTopN()` (`<5th>`), gated on `AllowDeriveTopN`.
     #[must_use]
-    pub fn derive_topn(self) -> Self {
+    pub fn derive_top_n(self) -> Self {
         self // todo: needs the session's AllowDeriveTopN and LogicalWindow
     }
 

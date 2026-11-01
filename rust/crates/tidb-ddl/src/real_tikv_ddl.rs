@@ -1389,7 +1389,7 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
             )
         }
         DdlStatement::RenameTable { .. } | DdlStatement::RenameTables { .. } => {
-            crate::cluster_ddl::rename_table::prepare_rename_table_job_submission(
+            crate::cluster_ddl::rename_table::rename_table(
                 snapshot,
                 statement,
                 job_context,
@@ -1399,7 +1399,7 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
             )
         }
         DdlStatement::CreateDatabase { .. } => {
-            crate::cluster_ddl::create_schema::prepare_create_schema_job_submission(
+            crate::cluster_ddl::create_schema::create_schema(
                 snapshot,
                 statement,
                 job_context,
@@ -1421,7 +1421,7 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
             )
         }
         DdlStatement::AddColumn { .. } => {
-            crate::cluster_ddl::add_column::prepare_add_column_job_submission(
+            crate::cluster_ddl::add_column::add_column(
                 snapshot,
                 statement,
                 job_context,
@@ -1431,7 +1431,7 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
             )
         }
         DdlStatement::DropColumn { .. } => {
-            crate::cluster_ddl::drop_column::prepare_drop_column_job_submission(
+            crate::cluster_ddl::drop_column::drop_column(
                 snapshot,
                 statement,
                 job_context,
@@ -1441,7 +1441,7 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
             )
         }
         DdlStatement::DropIndex { .. } | DdlStatement::DropPrimaryKey { .. } => {
-            crate::cluster_ddl::drop_index::prepare_drop_index_job_submission(
+            crate::cluster_ddl::drop_index::drop_index(
                 snapshot,
                 statement,
                 job_context,

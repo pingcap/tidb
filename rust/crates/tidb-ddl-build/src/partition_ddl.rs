@@ -347,7 +347,7 @@ pub fn plan_partition_change(
             query_rewrite = Some(rewrite);
         }
         tidb_ast::AlterPartitionAction::Drop { if_exists, names } => {
-            if let Some(ordinals) = plan_drop_partitions(table, *if_exists, names, ctx)? {
+            if let Some(ordinals) = check_drop_table_partition(table, *if_exists, names, ctx)? {
                 drop_partitions(&mut partition, &ordinals);
             }
         }
@@ -545,7 +545,7 @@ fn append_partitions(
 /// Go `CheckDropTablePartition`: the ordinals of `table`'s partitions that
 /// `DROP PARTITION names` removes; `None` when `IF EXISTS` met a missing
 /// name (Go's note is left on `ctx`).
-pub fn plan_drop_partitions(
+pub fn check_drop_table_partition(
     table: &PartitionedTable<'_>,
     if_exists: bool,
     names: &[String],
@@ -1106,7 +1106,7 @@ pub fn drop_table_partition(
         .iter()
         .map(|definition| definition.name.clone())
         .collect::<Vec<_>>();
-    let ordinals = plan_drop_partitions(table, false, &names, ctx)?
+    let ordinals = check_drop_table_partition(table, false, &names, ctx)?
         .expect("without IF EXISTS a missing partition is an error");
     // Go `DropTablePartition` rewrites the job's query: the FIRST clause
     // becomes the partitions it names.
@@ -1405,7 +1405,7 @@ fn replaced_partitions(
 
 /// Go `ReorganizePartitions` and the `checkReorgPartitionDefs` battery,
 /// planned against `table`.
-pub fn plan_reorganize_partition(
+pub fn reorganize_partitions(
     table: &PartitionedTable<'_>,
     names: &[String],
     definitions: &[PartitionDefinition],
@@ -1705,7 +1705,7 @@ pub fn alter_table_partitioning(
 }
 
 /// Go `RemovePartitioning`, planned against `table`.
-pub fn plan_remove_partitioning(table: &PartitionedTable<'_>) -> Result<PartitionReorgPlan, MysqlError> {
+pub fn remove_partitioning(table: &PartitionedTable<'_>) -> Result<PartitionReorgPlan, MysqlError> {
     let Some(partition) = table.partition() else {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED

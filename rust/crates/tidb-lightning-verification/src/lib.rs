@@ -161,7 +161,7 @@ impl KvChecksum {
     }
 
     /// Go `KVChecksum.MarshalLogObject`.
-    pub fn log_value(&self) -> Value {
+    pub fn marshal_log_object(&self) -> Value {
         Value::Object(vec![
             Field::new("cksum", Value::U64(self.checksum)),
             Field::new("size", Value::U64(self.bytes)),
@@ -300,11 +300,11 @@ impl<'a> KvGroupChecksum<'a> {
     }
 
     /// Go `KVGroupChecksum.MarshalLogObject`.
-    pub fn log_value(&self) -> Value {
+    pub fn marshal_log_object(&self) -> Value {
         Value::Object(
             self.m
                 .iter()
-                .map(|(id, checksum)| Field::new(format!("id={id}"), checksum.log_value()))
+                .map(|(id, checksum)| Field::new(format!("id={id}"), checksum.marshal_log_object()))
                 .collect(),
         )
     }

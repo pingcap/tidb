@@ -24,7 +24,7 @@ use super::*;
 
 /// Go `executor.dropIndex` up to `doDDLJob2` for `DROP INDEX` and
 /// `DROP PRIMARY KEY`. `None` for any other statement.
-pub fn prepare_drop_index_job_submission<S: MetaSnapshot>(
+pub fn drop_index<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,

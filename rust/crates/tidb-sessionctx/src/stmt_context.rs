@@ -4305,7 +4305,7 @@ impl StmtContext {
     /// Go `isLogicalRuleDisabled`: whether `mysql.opt_rule_blacklist` names
     /// this logical rule.
     #[must_use]
-    pub fn logical_rule_disabled(&self, name: &str) -> bool {
+    pub fn is_logical_rule_disabled(&self, name: &str) -> bool {
         self.disabled_logical_rules.contains(name)
     }
 

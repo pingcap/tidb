@@ -25,7 +25,7 @@
 
 use tidb_ast::CiString;
 use tidb_meta::transaction::{
-    fast_unmarshal_table_name_info, table_info_must_load, MemoryTransaction, Mutator,
+    fast_unmarshal_table_name_info, is_table_info_must_load, MemoryTransaction, Mutator,
     DdlTableVersion, NextGenBootTableVersion,
 };
 use tidb_meta::value;
@@ -112,7 +112,7 @@ fn is_table_info_must_load_is_false_for_bench_table_shapes() {
     for table in bench_table_infos() {
         let data = value::serialize_table_info(&table).unwrap();
         assert!(
-            !table_info_must_load(&data),
+            !is_table_info_must_load(&data),
             "ordinary table {} must not be flagged must-load",
             std::str::from_utf8(&data).unwrap()
         );

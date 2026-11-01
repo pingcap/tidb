@@ -295,7 +295,7 @@ impl TableCommon {
                     *offset,
                     row.get(*offset).cloned().unwrap_or(Datum::Null),
                 );
-                if let Some(field_type) = self.index_part_type(index.read().id, position, *offset) {
+                if let Some(field_type) = self.get_idx_changing_field_type(index.read().id, position, *offset) {
                     tidb_tablecodec::cut_datum_by_prefix_len(
                         &mut value,
                         index.prefix_length(position),
@@ -560,7 +560,7 @@ impl TableCommon {
             .iter()
             .enumerate()
             .any(|(position, offset)| {
-                self.index_part_type(index.read().id, position, *offset)
+                self.get_idx_changing_field_type(index.read().id, position, *offset)
                     .is_some_and(|field_type| {
                         field_type.need_restored_data_with_collation(self.use_new_collation)
                     })

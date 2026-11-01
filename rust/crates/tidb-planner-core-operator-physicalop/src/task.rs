@@ -130,7 +130,7 @@ pub struct IndexJoinInfo {
     /// Static template inputs for Go mutableIndexJoinRange on cache reuse.
     pub range_rebuild: Option<crate::range_rebuild::PointRangeRebuild>,
     /// Go `IndexJoinInfo.CompareFilters`.
-    pub compare_filters: Option<crate::IndexJoinCompareFilters>,
+    pub compare_filters: Option<crate::ColWithCmpFuncManager>,
     /// Go `AccessPath.RangeInfo`'s spelling: `indexJoinIntPKRangeInfo` renders
     /// the bare outer join keys when the probe is the integer handle
     /// (`constructDS2TableScanTask`'s int-PK branch); every other probe

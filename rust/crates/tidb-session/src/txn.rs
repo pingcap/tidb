@@ -949,7 +949,7 @@ impl Session {
         txn: &mut dyn TxnManagerOps,
     ) -> Result<(), DriverError> {
         let found = self.txn_ctx.as_mut().and_then(|ctx| {
-            ctx.savepoints.rollback_to(name).map(|savepoint| {
+            ctx.savepoints.rollback_to_savepoint(name).map(|savepoint| {
                 (
                     savepoint.buffer.clone(),
                     savepoint.local_temporary.clone(),

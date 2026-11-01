@@ -21,7 +21,7 @@ use super::*;
 
 /// Go `executor.CreateSchema` -> `CreateSchemaWithInfo` up to `doDDLJob2`.
 /// `None` for any other statement.
-pub fn prepare_create_schema_job_submission<S: MetaSnapshot>(
+pub fn create_schema<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,

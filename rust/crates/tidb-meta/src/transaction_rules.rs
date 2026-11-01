@@ -161,7 +161,7 @@ pub fn table_info_must_load_with_filters(
 }
 
 /// Go `IsTableInfoMustLoad`.
-pub fn table_info_must_load(json: &[u8]) -> bool {
+pub fn is_table_info_must_load(json: &[u8]) -> bool {
     table_info_must_load_with_filters(json, true, TABLE_INFO_MUST_LOAD_FILTERS)
 }
 

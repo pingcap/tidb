@@ -153,7 +153,7 @@ where
             .map_err(ClusterDdlError::Backfill)?;
         let mutations = tables
             .reorg
-            .delete_mutations(&existing)
+            .remove_ddl_reorg_handle(&existing)
             .map_err(ClusterDdlError::Backfill)?;
         Ok(((), mutations))
     })

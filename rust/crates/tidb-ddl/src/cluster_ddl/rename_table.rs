@@ -121,7 +121,7 @@ fn check_renamable(
 
 /// Go `executor.RenameTable` up to `doDDLJob2`. `None` for any other
 /// statement.
-pub fn prepare_rename_table_job_submission<S: MetaSnapshot>(
+pub fn rename_table<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,

@@ -226,7 +226,7 @@ impl SequenceCounter for LocalSequenceCounter {
         let size = if info.cache { info.cache_value } else { 1 };
         let mut store = self.0.lock().expect("sequence store state");
         let mut base = store.stored;
-        let mut offset = sequence_offset(info, store.round);
+        let mut offset = get_offset(info, store.round);
         let step = match calc_sequence_batch_size(
             base,
             size,
@@ -298,7 +298,7 @@ impl SequenceCounter for LocalSequenceCounter {
 /// Go `sequenceCommon.getOffset`, free-standing: both counter implementations
 /// need the same congruence offset for the current cycle round.
 #[must_use]
-pub fn sequence_offset(info: &SequenceInfo, round: i64) -> i64 {
+pub fn get_offset(info: &SequenceInfo, round: i64) -> i64 {
     if info.cycle && round > 0 {
         if info.increment > 0 {
             info.min_value

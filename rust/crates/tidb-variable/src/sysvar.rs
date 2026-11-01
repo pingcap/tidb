@@ -2357,7 +2357,7 @@ impl SysVarDef {
     /// Go `checkDurationSystemVar`: parse `time.Duration`, clamp to the
     /// configured nanosecond range, and render through `Duration.String()`.
     fn check_duration(&self, value: &str) -> Result<Validated, ValidationError> {
-        let parsed = tidb_config_configtypes::parse_go_duration(value)
+        let parsed = tidb_config_configtypes::parse_duration(value)
             .map_err(|_| ValidationError::WrongType)?;
         if parsed < self.min_value {
             return Ok(Validated {

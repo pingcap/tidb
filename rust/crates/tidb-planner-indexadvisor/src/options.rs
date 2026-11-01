@@ -123,7 +123,7 @@ pub(crate) fn option_val(option: &str, value: &Expr) -> Result<String> {
                     )))
                 }
             };
-            let nanos = tidb_config_configtypes::parse_go_duration(text).map_err(advisor_error)?;
+            let nanos = tidb_config_configtypes::parse_duration(text).map_err(advisor_error)?;
             if nanos < 0 {
                 return Err(advisor_error(format!(
                     "invalid value {} for {option}",
@@ -157,7 +157,7 @@ pub(crate) fn fill_option(
         .map_or("", String::as_str)
         .to_owned();
     let nanos =
-        tidb_config_configtypes::parse_go_duration(&timeout_text).map_err(advisor_error)?;
+        tidb_config_configtypes::parse_duration(&timeout_text).map_err(advisor_error)?;
     Ok(AdvisorOption {
         max_num_indexes: number(OPT_MAX_NUM_INDEX),
         max_index_width: number(OPT_MAX_INDEX_COLUMNS),

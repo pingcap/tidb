@@ -1350,7 +1350,7 @@ impl<T: MetaTransaction> Mutator<T> {
             let name_capture = name_regex.captures(&pair.value).unwrap();
             let id = value::parse_int_value(&id_capture[1])?;
             names.insert(unescape_name_bytes(&name_capture[1]), id);
-            if table_info_must_load(&pair.value) {
+            if is_table_info_must_load(&pair.value) {
                 must_load.push(value::parse_table_info(&pair.value, database_id)?);
             }
         }

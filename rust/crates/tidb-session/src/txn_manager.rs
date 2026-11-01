@@ -318,7 +318,7 @@ impl TxnManager {
 
     /// Go `RollbackMemDBToCheckpoint`: the staged writes go back to the
     /// checkpoint a savepoint took.
-    pub fn rollback_to_checkpoint(&mut self, checkpoint: &BufferCheckpoint) {
+    pub fn rollback_mem_db_to_checkpoint(&mut self, checkpoint: &BufferCheckpoint) {
         self.buffer.restore(checkpoint.clone());
     }
 

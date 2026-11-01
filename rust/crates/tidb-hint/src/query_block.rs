@@ -289,7 +289,7 @@ impl QBHintHandler {
     }
 
     /// Go `GetCurrentStmtHints`.
-    pub fn current_stmt_hints(
+    pub fn get_current_stmt_hints(
         &mut self,
         hints: &[Hint],
         current_offset: i32,
@@ -340,13 +340,13 @@ impl QBHintHandler {
     ) -> Vec<Hint> {
         match self.left_hints.remove(&current_offset) {
             Some(left) => {
-                let hints = self.current_stmt_hints(&left, current_offset, state);
+                let hints = self.get_current_stmt_hints(&left, current_offset, state);
                 // Moving the vector keeps its elements' addresses, which
                 // `current_stmt_hints` uses as hint identities.
                 self.left_hints.insert(current_offset, left);
                 hints
             }
-            None => self.current_stmt_hints(ast_hints, current_offset, state),
+            None => self.get_current_stmt_hints(ast_hints, current_offset, state),
         }
     }
 

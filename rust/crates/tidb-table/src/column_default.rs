@@ -861,8 +861,10 @@ fn materialize_stored_literal_with_system_zone(
     Ok(converted)
 }
 
-/// Go `table.GetColDefaultValue`: the value an omitted column takes for ONE
-/// row. A settled default is that value; a computed one is evaluated now,
+/// Go `getColDefaultValue`, the non-expression branch of
+/// `table.GetColDefaultValue` (snake_case cannot tell the two Go names
+/// apart): the value an omitted column takes for ONE row. A settled default
+/// is that value; a computed one is evaluated now,
 /// against the statement's own context, so `CURRENT_TIMESTAMP` and
 /// `CURRENT_DATE` read the statement clock exactly as Go's
 /// `getColDefaultExprValue` does.

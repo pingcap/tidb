@@ -76,7 +76,7 @@ pub struct StatementTxnModeInputs<'a> {
 /// pessimistic. See `ClusterServerSession::may_retry_autocommit_statement` in
 /// `tidb-server` for what the divergence does and does not cost.
 #[must_use]
-pub fn txn_mode_for_statement(inputs: StatementTxnModeInputs<'_>) -> SessionTxnMode {
+pub fn decide_txn_mode(inputs: StatementTxnModeInputs<'_>) -> SessionTxnMode {
     if inputs.retrying {
         return SessionTxnMode::Pessimistic;
     }
@@ -94,7 +94,7 @@ pub fn txn_mode_for_statement(inputs: StatementTxnModeInputs<'_>) -> SessionTxnM
 
 #[cfg(test)]
 mod tests {
-    use super::{txn_mode_for_begin, txn_mode_for_statement, StatementTxnModeInputs};
+    use super::{txn_mode_for_begin, decide_txn_mode, StatementTxnModeInputs};
     use tidb_vardef::txn_mode::SessionTxnMode;
     use tidb_ast::TransactionMode;
 
@@ -131,11 +131,11 @@ mod tests {
     #[test]
     fn an_autocommit_dml_is_optimistic_even_in_pessimistic_mode() {
         assert_eq!(
-            txn_mode_for_statement(statement("pessimistic")),
+            decide_txn_mode(statement("pessimistic")),
             SessionTxnMode::Optimistic
         );
         assert_eq!(
-            txn_mode_for_statement(StatementTxnModeInputs {
+            decide_txn_mode(StatementTxnModeInputs {
                 pessimistic_auto_commit: true,
                 ..statement("pessimistic")
             }),
@@ -143,7 +143,7 @@ mod tests {
         );
         // The config only reaches DML.
         assert_eq!(
-            txn_mode_for_statement(StatementTxnModeInputs {
+            decide_txn_mode(StatementTxnModeInputs {
                 pessimistic_auto_commit: true,
                 is_dml: false,
                 ..statement("pessimistic")
@@ -155,14 +155,14 @@ mod tests {
     #[test]
     fn a_statement_inside_an_open_transaction_follows_the_variable() {
         assert_eq!(
-            txn_mode_for_statement(StatementTxnModeInputs {
+            decide_txn_mode(StatementTxnModeInputs {
                 autocommit: false,
                 ..statement("pessimistic")
             }),
             SessionTxnMode::Pessimistic
         );
         assert_eq!(
-            txn_mode_for_statement(StatementTxnModeInputs {
+            decide_txn_mode(StatementTxnModeInputs {
                 autocommit: false,
                 ..statement("optimistic")
             }),
@@ -173,7 +173,7 @@ mod tests {
     #[test]
     fn a_retry_is_pessimistic_whatever_the_variable_says() {
         assert_eq!(
-            txn_mode_for_statement(StatementTxnModeInputs {
+            decide_txn_mode(StatementTxnModeInputs {
                 retrying: true,
                 ..statement("optimistic")
             }),

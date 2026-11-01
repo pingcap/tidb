@@ -2141,7 +2141,7 @@ fn index_join_compare_filters_weigh_what_gos_manager_allocates() {
     let long = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long);
     let target_col = tidb_expr::column::Column::new(1, long());
     let outer = tidb_expr::column::Column::new(2, long());
-    let filters = IndexJoinCompareFilters {
+    let filters = ColWithCmpFuncManager {
         target_col: target_col.clone(),
         target_index_offset: 0,
         col_length: tidb_datatype::UNSPECIFIED_LENGTH,

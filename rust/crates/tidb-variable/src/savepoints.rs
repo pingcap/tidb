@@ -53,7 +53,7 @@ impl<C> SavepointStack<C> {
     /// Go `TxnCtx.RollbackToSavepoint`: the named checkpoint, with every
     /// savepoint after it dropped and the named one kept. `None` for an
     /// unknown name, which the caller reports as 1305.
-    pub fn rollback_to(&mut self, name: &str) -> Option<&C> {
+    pub fn rollback_to_savepoint(&mut self, name: &str) -> Option<&C> {
         let index = self.position(name)?;
         self.entries.truncate(index + 1);
         Some(&self.entries[index].1)
@@ -106,7 +106,7 @@ mod tests {
         stack.add("A", 1);
         stack.add("b", 2);
         stack.add("a", 3);
-        assert_eq!(stack.rollback_to("B"), Some(&2));
+        assert_eq!(stack.rollback_to_savepoint("B"), Some(&2));
         // `a` was redefined after `b`, so it is gone with the truncation.
         assert!(!stack.contains("a"));
         assert!(stack.contains("b"));
@@ -118,12 +118,12 @@ mod tests {
         stack.add("a", 1);
         stack.add("b", 2);
         stack.add("c", 3);
-        assert_eq!(stack.rollback_to("b"), Some(&2));
+        assert_eq!(stack.rollback_to_savepoint("b"), Some(&2));
         assert!(stack.contains("b") && !stack.contains("c"));
-        assert_eq!(stack.rollback_to("b"), Some(&2));
+        assert_eq!(stack.rollback_to_savepoint("b"), Some(&2));
         assert!(stack.release("b"));
         assert!(!stack.contains("b") && stack.contains("a"));
         assert!(!stack.release("b"));
-        assert_eq!(stack.rollback_to("zz"), None);
+        assert_eq!(stack.rollback_to_savepoint("zz"), None);
     }
 }

@@ -3814,7 +3814,7 @@ pub struct RemoteRowCursor {
 impl RemoteRowCursor {
     /// Go `RuntimeStatsColl.GetCopCountAndRows` for this remote scan.
     #[must_use]
-    pub fn cop_count_and_rows(&self) -> (u64, u64) {
+    pub fn get_cop_count_and_rows(&self) -> (u64, u64) {
         self.stream.cop_count_and_rows()
     }
 
@@ -4196,7 +4196,7 @@ pub struct RemoteIndexHandleCursor {
 impl RemoteIndexHandleCursor {
     /// Go `RuntimeStatsColl.GetCopCountAndRows` for the index scan.
     #[must_use]
-    pub fn cop_count_and_rows(&self) -> (u64, u64) {
+    pub fn get_cop_count_and_rows(&self) -> (u64, u64) {
         self.inner.cop_count_and_rows()
     }
 
@@ -4876,7 +4876,7 @@ impl TableScanExec {
     /// index-usage report.
     fn drop_remote(&mut self) {
         if let Some(remote) = self.remote.take() {
-            let (tasks, rows) = remote.cop_count_and_rows();
+            let (tasks, rows) = remote.get_cop_count_and_rows();
             let retained = self.dropped_cop_stats.get_or_insert((0, 0));
             retained.0 = retained.0.wrapping_add(tasks);
             retained.1 = retained.1.wrapping_add(rows);
@@ -5916,7 +5916,7 @@ impl tidb_executor_internal_exec::table_access::TableAccess for TableScanExec {
         let live = self
             .remote
             .as_ref()
-            .map(RemoteRowCursor::cop_count_and_rows);
+            .map(RemoteRowCursor::get_cop_count_and_rows);
         match (self.dropped_cop_stats, live) {
             (None, live) => live,
             (Some(dropped), None) => Some(dropped),

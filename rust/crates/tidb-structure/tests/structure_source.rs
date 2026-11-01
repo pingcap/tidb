@@ -72,7 +72,7 @@ fn list_operations_cover_push_pop_index_set_clear_and_snapshot_refusal() {
     );
     assert_eq!(tx.l_pop(key).unwrap().as_deref(), Some(b"11".as_slice()));
 
-    assert_eq!(tx.llen(key).unwrap(), 3);
+    assert_eq!(tx.l_len(key).unwrap(), 3);
 
     assert_eq!(tx.lindex(key, 1).unwrap().as_deref(), Some(b"2".as_slice()));
 
@@ -92,10 +92,10 @@ fn list_operations_cover_push_pop_index_set_clear_and_snapshot_refusal() {
     );
 
     assert_eq!(tx.l_pop(key).unwrap().as_deref(), Some(b"1".as_slice()));
-    assert_eq!(tx.llen(key).unwrap(), 2);
+    assert_eq!(tx.l_len(key).unwrap(), 2);
 
     tx.r_push(key, &[b"4"]).unwrap();
-    assert_eq!(tx.llen(key).unwrap(), 3);
+    assert_eq!(tx.l_len(key).unwrap(), 3);
     assert_eq!(
         tx.lindex(key, -1).unwrap().as_deref(),
         Some(b"4".as_slice())
@@ -104,11 +104,11 @@ fn list_operations_cover_push_pop_index_set_clear_and_snapshot_refusal() {
     assert_eq!(tx.r_pop(key).unwrap().as_deref(), Some(b"4".as_slice()));
     assert_eq!(tx.r_pop(key).unwrap().as_deref(), Some(b"3".as_slice()));
     assert_eq!(tx.r_pop(key).unwrap().as_deref(), Some(b"2".as_slice()));
-    assert_eq!(tx.llen(key).unwrap(), 0);
+    assert_eq!(tx.l_len(key).unwrap(), 0);
 
     tx.l_push(key, &[b"1"]).unwrap();
     tx.l_clear(key).unwrap();
-    assert_eq!(tx.llen(key).unwrap(), 0);
+    assert_eq!(tx.l_len(key).unwrap(), 0);
 
     let mut tx1 = TxStructure::read_only(&mut transaction, &[0x01]);
     assert_eq!(tx1.l_push(key, &[b"1"]), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));

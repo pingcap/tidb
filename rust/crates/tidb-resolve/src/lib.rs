@@ -47,7 +47,7 @@ impl<N> NodeW<N> {
     }
 
     /// Go `NewNodeWWithCtx`.
-    pub fn with_context(node: N, resolve_ctx: GoShared<Context>) -> Self {
+    pub fn new_node_w_with_ctx(node: N, resolve_ctx: GoShared<Context>) -> Self {
         Self { node, resolve_ctx }
     }
 

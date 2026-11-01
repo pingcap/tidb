@@ -185,7 +185,7 @@ impl StatsCacheImpl {
     }
 
     /// Go `GetNextCheckVersionWithOffset`, with the handle-owned lease explicit.
-    pub fn next_check_version_with_offset(&self, lease: Duration) -> u64 {
+    pub fn get_next_check_version_with_offset(&self, lease: Duration) -> u64 {
         let nanos = i64::try_from(lease.as_nanos()).unwrap_or(i64::MAX);
         let offset =
             tidb_stats_handle_util::duration_to_ts(nanos.saturating_mul(i64::from(LEASE_OFFSET)));
@@ -212,7 +212,7 @@ impl StatsCacheImpl {
         }
         let mut rows = source
             .stats_meta_rows(
-                self.next_check_version_with_offset(source.lease()),
+                self.get_next_check_version_with_offset(source.lease()),
                 &physical_ids,
             )
             .map_err(UpdateError::Source)?;

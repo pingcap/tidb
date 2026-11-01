@@ -46,7 +46,7 @@ fn install_cardinality_mock_statistics_for_table(
     let mut statistics = tidb_stats::Table::default();
     statistics.hist_coll.realtime_count = row_count;
     for (column, &(ndv, repeat)) in table.columns().iter().zip(columns) {
-        statistics.put_analyzed_column(
+        statistics.set_col(
             column.read().id,
             tidb_stats::column::Column {
                 histogram: histogram(column.read().id, ndv, repeat, false),

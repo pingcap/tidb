@@ -150,7 +150,7 @@ pub trait InternalSqlRunner {
 /// With `wrap_txn` the body runs inside `BEGIN PESSIMISTIC` and is committed
 /// on success or rolled back on failure; the rollback's own error is
 /// swallowed, as Go swallows it into `terror.Log`.
-pub fn call_with_runner<R, T>(
+pub fn call_with_sctx<R, T>(
     runner: &mut R,
     wrap_txn: bool,
     body: impl FnOnce(&mut R) -> Result<T, DriverError>,
@@ -327,7 +327,7 @@ where
     R: InternalSqlRunner + ?Sized,
 {
     let sql = read_bindings_sql(condition);
-    call_with_runner(runner, false, |runner| {
+    call_with_sctx(runner, false, |runner| {
         let rows = runner.exec_rows(&sql, args)?;
         let mut bindings = Vec::with_capacity(rows.len());
         for row in &rows {
@@ -500,7 +500,7 @@ where
             last_used: usages[index].last_used_at.unwrap_or(now),
         })
         .collect();
-    call_with_runner(runner, true, |runner| {
+    call_with_sctx(runner, true, |runner| {
         runner.exec(LOCK_BIND_INFO_SQL, &[])?;
         // "lockBindInfoTable is to prefetch the rows and lock them, it is good
         // for performance when there are many bindings to update with multi
@@ -1016,7 +1016,7 @@ mod tests {
     #[test]
     fn call_with_runner_rolls_back_on_error() {
         let mut runner = RecordingRunner::default();
-        let err = call_with_runner(&mut runner, true, |_runner| {
+        let err = call_with_sctx(&mut runner, true, |_runner| {
             Err::<(), _>(DriverError::unsupported("boom"))
         })
         .unwrap_err();

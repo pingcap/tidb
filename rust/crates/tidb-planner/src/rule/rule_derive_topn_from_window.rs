@@ -228,7 +228,7 @@ impl OwnedRewrite for DeriveTopN<'_, '_> {
 /// The whole walk is gated on Go's `AllowDeriveTopN`, exactly as the base body
 /// gates its own recursion.
 #[must_use]
-pub fn derive_topn(ctx: &RuleContext<'_>, plan: LogicalPlan) -> LogicalPlan {
+pub fn derive_top_n(ctx: &RuleContext<'_>, plan: LogicalPlan) -> LogicalPlan {
     if !ctx.allow_derive_topn {
         return plan;
     }
@@ -249,7 +249,7 @@ impl LogicalOptRule for DeriveTopNFromWindow {
         plan: LogicalPlan,
     ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
         // Go hard-codes `planChanged := false`.
-        Ok((derive_topn(ctx, plan), false))
+        Ok((derive_top_n(ctx, plan), false))
     }
 
     fn name(&self) -> &'static str {

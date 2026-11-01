@@ -311,7 +311,7 @@ pub fn format_go_duration(d: i64) -> String {
 }
 
 /// Go `time.ParseDuration`.
-pub fn parse_go_duration(s: &str) -> Result<i64, String> {
+pub fn parse_duration(s: &str) -> Result<i64, String> {
     let orig = s;
     let mut s = s;
     let mut neg = false;
@@ -456,7 +456,7 @@ impl Serialize for Duration {
 impl<'de> Deserialize<'de> for Duration {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Duration, D::Error> {
         let s = String::deserialize(deserializer)?;
-        let v = parse_go_duration(&s).map_err(D::Error::custom)?;
+        let v = parse_duration(&s).map_err(D::Error::custom)?;
         Ok(Duration(v))
     }
 }
@@ -591,10 +591,10 @@ mod tests {
                 3_600_000_000_000 + 2 * 60_000_000_000 + 3_000_000_000 + 4_000_000 + 5_000 + 6,
             ),
         ] {
-            assert_eq!(parse_go_duration(s).unwrap(), v, "case {s}");
+            assert_eq!(parse_duration(s).unwrap(), v, "case {s}");
         }
         for s in ["", "3", "-", "s", ".", "-.", ".s", "+.s", "3x", "1d"] {
-            assert!(parse_go_duration(s).is_err(), "case {s}");
+            assert!(parse_duration(s).is_err(), "case {s}");
         }
 
         for (v, s) in [

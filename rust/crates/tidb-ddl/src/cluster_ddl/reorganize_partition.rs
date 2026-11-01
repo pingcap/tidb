@@ -120,7 +120,7 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
     let planned = match action {
         tidb_ast::AlterPartitionAction::Reorganize {
             names, definitions, ..
-        } => tidb_ddl_build::partition_ddl::plan_reorganize_partition(
+        } => tidb_ddl_build::partition_ddl::reorganize_partitions(
             &kv,
             names,
             definitions,
@@ -136,7 +136,7 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
             )
         }
         tidb_ast::AlterPartitionAction::RemovePartitioning => {
-            tidb_ddl_build::partition_ddl::plan_remove_partitioning(&kv)
+            tidb_ddl_build::partition_ddl::remove_partitioning(&kv)
         }
         tidb_ast::AlterPartitionAction::Coalesce { count, .. } => {
             tidb_ddl_build::partition_ddl::hash_partition_management(

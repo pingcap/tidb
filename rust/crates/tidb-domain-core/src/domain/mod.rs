@@ -3204,7 +3204,7 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueSource
             .map(|factory| {
                 factory
                     .stats
-                    .next_check_version_with_offset(self.stats_lease)
+                    .get_next_check_version_with_offset(self.stats_lease)
             })
             .unwrap_or(0)
     }

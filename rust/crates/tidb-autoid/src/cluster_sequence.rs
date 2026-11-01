@@ -40,7 +40,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::sequence::{
-    calc_sequence_batch_size, sequence_offset, SequenceCounter, SequenceError,
+    calc_sequence_batch_size, get_offset, SequenceCounter, SequenceError,
 };
 use tidb_tablecodec::table_key::encode_meta_key;
 use tidb_meta::{key, value};
@@ -179,7 +179,7 @@ impl SequenceCounter for ClusterSequenceCounter {
                 self.read(&mut transaction).map_err(SequenceError::Store)?;
             // Go `alloc4Sequence`: the real offset is the wrapped-to bound
             // once `CYCLE` has wrapped at least once.
-            let mut offset = sequence_offset(info, if info.cycle { round } else { 0 });
+            let mut offset = get_offset(info, if info.cycle { round } else { 0 });
             let step = match calc_sequence_batch_size(
                 base,
                 size,

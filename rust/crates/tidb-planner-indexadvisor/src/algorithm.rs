@@ -491,7 +491,7 @@ impl AutoAdmin<'_> {
     ) -> Result<(IndexSet, IndexSetCost)> {
         let mut combinations = Vec::new();
         for number_of_indexes in 0..=number_indexes_naive {
-            combinations.extend(candidates.combinations(number_of_indexes));
+            combinations.extend(candidates.comb_set(number_of_indexes));
         }
         let (lowest, lowest_cost) =
             choose_best_index_set(query_set, self.optimizer, &combinations)?;

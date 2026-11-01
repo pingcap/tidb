@@ -23,7 +23,7 @@ use super::*;
 
 /// Go `executor.AddColumn` up to `doDDLJob2`. `None` for any other
 /// statement.
-pub fn prepare_add_column_job_submission<S: MetaSnapshot>(
+pub fn add_column<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,

@@ -126,7 +126,7 @@ impl DdlReorgTable {
         handle: &ReorgHandle,
         row_id: i64,
     ) -> Result<Vec<BufferMutation>, String> {
-        let mut mutations = self.delete_mutations(existing)?;
+        let mut mutations = self.remove_ddl_reorg_handle(existing)?;
         let mut values = RowValues::new();
         values.insert(self.column_id("job_id")?, Datum::Int(job_id));
         values.insert(self.column_id("ele_id")?, Datum::Int(handle.element_id));
@@ -192,7 +192,7 @@ impl DdlReorgTable {
     }
 
     /// Go `removeDDLReorgHandle`.
-    pub fn delete_mutations(
+    pub fn remove_ddl_reorg_handle(
         &self,
         existing: &[StoredReorgRow],
     ) -> Result<Vec<BufferMutation>, String> {

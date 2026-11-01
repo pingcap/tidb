@@ -723,7 +723,7 @@ impl Session {
     /// view expansion: whether an account -- matched against the stored ones by
     /// host pattern, with its default roles -- holds a privilege. `None` is a
     /// session that enforces no privileges (Go's nil manager).
-    pub(crate) fn view_definer_privilege_check(
+    pub(crate) fn request_verification_with_user(
         &self,
     ) -> Option<tidb_sessionctx::ViewDefinerPrivilegeCheck> {
         let (registry, _, _) = self.privilege_context()?;

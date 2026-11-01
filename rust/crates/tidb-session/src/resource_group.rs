@@ -25,7 +25,7 @@ use tidb_ast::{
     ResourceGroupPriority, ResourceGroupRate, ResourceGroupRunawayAction as AstRunawayAction,
     ResourceGroupRunawayOption, ResourceGroupRunawayRule,
 };
-use tidb_config_configtypes::parse_go_duration;
+use tidb_config_configtypes::parse_duration;
 use tidb_driver_error::DriverError;
 use tidb_terror::MysqlError;
 use tidb_hack::GoToLower;
@@ -130,7 +130,7 @@ fn set_direct_resource_group_runaway_option(
 ) -> Result<(), DriverError> {
     match option {
         ResourceGroupRunawayOption::Rule(ResourceGroupRunawayRule::ExecElapsed(text)) => {
-            let nanos = parse_go_duration(text).map_err(|error| plain_error(&error))?;
+            let nanos = parse_duration(text).map_err(|error| plain_error(&error))?;
             // Go `uint64(dur.Milliseconds())`.
             settings.exec_elapsed_time_ms = (nanos / 1_000_000) as u64;
         }
@@ -154,7 +154,7 @@ fn set_direct_resource_group_runaway_option(
             settings.watch_type = watch.watch_type.into();
             settings.watch_duration_ms = match watch.duration.as_deref() {
                 Some(text) if !text.is_empty() => {
-                    parse_go_duration(text).map_err(|error| plain_error(&error))? / 1_000_000
+                    parse_duration(text).map_err(|error| plain_error(&error))? / 1_000_000
                 }
                 _ => 0,
             };

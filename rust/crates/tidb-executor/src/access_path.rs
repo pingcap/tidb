@@ -1880,7 +1880,7 @@ pub(crate) fn calculate_lookup_batch_size_with_cap(
 impl IndexRangeSourceExec {
     fn retain_remote_index_stats(&mut self) {
         if let Some(remote) = self.remote_index.as_ref() {
-            let stats = remote.cop_count_and_rows();
+            let stats = remote.get_cop_count_and_rows();
             self.cop_stats.0 = self.cop_stats.0.wrapping_add(stats.0);
             self.cop_stats.1 = self.cop_stats.1.wrapping_add(stats.1);
         }
@@ -4434,7 +4434,7 @@ impl tidb_executor_internal_exec::table_access::TableAccess for IndexRangeSource
     fn cop_count_and_rows(&self) -> Option<(u64, u64)> {
         let mut stats = self.cop_stats;
         if let Some(remote) = self.remote_index.as_ref() {
-            let live = remote.cop_count_and_rows();
+            let live = remote.get_cop_count_and_rows();
             stats.0 = stats.0.wrapping_add(live.0);
             stats.1 = stats.1.wrapping_add(live.1);
         }

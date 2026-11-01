@@ -143,7 +143,7 @@ pub fn settle_column_default(
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<SettledColumnDefault, MysqlError> {
     let flags = ctx.get_expr_ctx().get_eval_ctx().type_ctx_flags();
-    let stored = column_default_storage_value(value, field_type, column, flags, zone, Some(ctx))?;
+    let stored = get_default_value(value, field_type, column, flags, zone, Some(ctx))?;
     let (has_default, stored) = check_column_default_value(stored, field_type, column, ctx, zone)?;
     let stored = convert_timestamp_default_val_to_utc(stored, field_type, column, flags, zone)?;
     Ok(SettledColumnDefault {
@@ -205,7 +205,7 @@ pub fn check_default_value(
 /// Go `getDefaultValue`: settle one evaluated expression to the exact byte
 /// string `ColumnInfo.DefaultValue` stores. This is deliberately distinct
 /// from [`check_default_value`], which returns the typed runtime value.
-pub fn column_default_storage_value(
+pub fn get_default_value(
     value: Datum,
     field_type: &FieldType,
     column: &str,
@@ -559,7 +559,7 @@ pub fn normalize_column_default(
     column: &str,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Datum, MysqlError> {
-    let stored = column_default_storage_value(
+    let stored = get_default_value(
         value,
         field_type,
         column,

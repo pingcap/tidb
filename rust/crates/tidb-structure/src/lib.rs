@@ -641,7 +641,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.LLen`.
-    pub fn llen(&mut self, key: &[u8]) -> Result<i64, T::Error> {
+    pub fn l_len(&mut self, key: &[u8]) -> Result<i64, T::Error> {
         let meta_key = self.list_meta_key(key);
         let meta = self.load_list_meta(&meta_key)?;
         Ok(meta.r_index - meta.l_index)
