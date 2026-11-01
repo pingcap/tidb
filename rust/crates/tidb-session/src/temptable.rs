@@ -30,6 +30,10 @@ impl tidb_temptable::TemporaryTableContext for Session {
     fn gen_global_id(&mut self) -> Result<i64, DriverError> {
         Session::gen_global_id(self)
     }
+
+    fn temporary_table_data(&mut self) -> &mut Option<tidb_temptable::SessionData> {
+        &mut self.temporary_table_data
+    }
 }
 
 impl Session {

@@ -7815,6 +7815,8 @@ dependencies = [
 name = "tidb-temptable"
 version = "0.0.0"
 dependencies = [
+ "tidb-ast",
+ "tidb-datatype",
  "tidb-driver-error",
  "tidb-hack",
  "tidb-infoschema",

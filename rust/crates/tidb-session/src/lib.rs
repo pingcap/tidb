@@ -457,6 +457,11 @@ pub struct Session {
     /// expanding a view's body (`logical_plan_builder.go:4941`), which the
     /// planner reads through the catalog's detached view.
     local_temporary_tables: tidb_infoschema::session_tables::SessionTables,
+    /// Go `SessionVars.TemporaryTableData`: the committed rows of the LOCAL
+    /// temporary tables, created with the first one.
+    temporary_table_data: Option<
+        std::sync::Arc<std::sync::Mutex<tidb_variable::temporary_table_data::TemporaryTableData>>,
+    >,
     /// Go `sctx.GetInfoSchema()`: the node's schema this session's catalog
     /// was built from, which `DDLExec` builds a LOCAL temporary table's
     /// `TableInfo` against. `None` for a session no node opened.
@@ -859,6 +864,7 @@ impl Session {
             txn_ctx: None,
             write_sli: tidb_sli::TxnWriteThroughputSli::default(),
             local_temporary_tables: Vec::new(),
+            temporary_table_data: None,
             info_schema: None,
             hypo_indexes: Arc::default(),
             hypo_tiflash_replicas: Arc::default(),

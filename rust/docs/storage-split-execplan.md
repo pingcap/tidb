@@ -168,6 +168,11 @@ CARGO_INCREMENTAL=0`.
     and must equal the unlimited one).
   - [ ] Session: hold `TemporaryTableData`; wrap the transaction snapshot in
     the interceptor when the infoschema has temporary tables.
+    The choke point is `tidb_session::statement_lifecycle::bind_snapshot`
+    (every statement snapshot is bound there; Go installs the interceptor
+    at the same moment, `sessiontxn/isolation/base.go:251`). Installing it
+    alone changes nothing observable while temporary tables still write to
+    their own stores, so this step lands together with the write switch.
   - [ ] Temporary-table writes go through the session store; commit copies
     local temporary keys into `TemporaryTableData` and filters every
     temporary key out of 2PC; readers of temporary tables never go remote.
