@@ -2279,8 +2279,8 @@ mod partition_index_hints {
             ]
         );
         assert_eq!(
-            source.forced_index_ids,
-            std::collections::BTreeSet::from([1, 3])
+            source.enumerated_paths.iter().filter(|path| path.forced).filter_map(|path| path.index_info()).map(|index| index.read().id).collect::<Vec<_>>(),
+            [1, 3]
         );
         assert_eq!(source.index_hints.len(), 2);
     }
@@ -2317,8 +2317,8 @@ mod partition_index_hints {
             vec![tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())]
         );
         assert_eq!(
-            source.forced_index_ids,
-            std::collections::BTreeSet::from([1])
+            source.enumerated_paths.iter().filter(|path| path.forced).filter_map(|path| path.index_info()).map(|index| index.read().id).collect::<Vec<_>>(),
+            [1]
         );
     }
 }

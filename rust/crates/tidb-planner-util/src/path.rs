@@ -85,6 +85,14 @@ pub struct AccessPath {
     /// The TiKV table path's `deriveTablePathStats` result: ranges, access
     /// conditions, table filters and counts.
     pub filled_table: Option<FilledTablePath>,
+    /// Go `Forced`: a USE/FORCE INDEX hint names this path.
+    pub forced: bool,
+    /// Go `ForceKeepOrder` (`ORDER_INDEX` hint).
+    pub force_keep_order: bool,
+    /// Go `ForceNoKeepOrder` (`NO_ORDER_INDEX` hint).
+    pub force_no_keep_order: bool,
+    /// Go `IndexLookUpPushDownBy`.
+    pub index_lookup_push_down_by: IndexLookUpPushDownByType,
 }
 
 impl AccessPath {
@@ -343,18 +351,6 @@ pub struct IndexMergePath {
 pub struct ResolvedIndexPaths {
     /// Go `available` after ignore and fallback handling.
     pub paths: Vec<AccessPath>,
-    /// Index IDs whose path has `Forced` set.
-    pub forced_index_ids: std::collections::BTreeSet<i64>,
-    /// Index IDs whose path has `ForceKeepOrder` set.
-    pub force_keep_order_index_ids: std::collections::BTreeSet<i64>,
-    /// Index IDs whose path has `ForceNoKeepOrder` set.
-    pub force_no_keep_order_index_ids: std::collections::BTreeSet<i64>,
-    /// Whether the TiKV table path has `ForceKeepOrder` set.
-    pub force_keep_order_table_path: bool,
-    /// Whether the TiKV table path has `ForceNoKeepOrder` set.
-    pub force_no_keep_order_table_path: bool,
-    /// Go `AccessPath.IndexLookUpPushDownBy`, keyed by index ID.
-    pub index_lookup_push_down_by: std::collections::BTreeMap<i64, IndexLookUpPushDownByType>,
     /// Unknown names from comment-style hints; Go downgrades these to 1176
     /// warnings while table-syntax hints return the error directly.
     pub unknown_comment_indexes: Vec<String>,

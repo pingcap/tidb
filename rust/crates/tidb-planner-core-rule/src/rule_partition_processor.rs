@@ -131,12 +131,6 @@ pub fn resolve_index_hints_for_partition(
     )?;
     source.derived_access_paths = None;
     source.enumerated_paths = resolution.paths;
-    source.forced_index_ids = resolution.forced_index_ids;
-    source.force_keep_order_index_ids = resolution.force_keep_order_index_ids;
-    source.force_no_keep_order_index_ids = resolution.force_no_keep_order_index_ids;
-    source.force_keep_order_table_path = resolution.force_keep_order_table_path;
-    source.force_no_keep_order_table_path = resolution.force_no_keep_order_table_path;
-    source.index_lookup_push_down_by = resolution.index_lookup_push_down_by;
     Ok(())
 }
 

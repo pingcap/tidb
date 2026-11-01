@@ -3153,8 +3153,8 @@ fn find_best_task_4_logical_data_source_paths(
                     // prefix order required by the executor.
                     continue 'paths;
                 }
-                if (!ordered && ds.force_keep_order_table_path)
-                    || (ordered && ds.force_no_keep_order_table_path)
+                if (!ordered && path.force_keep_order)
+                    || (ordered && path.force_no_keep_order)
                 {
                     continue 'paths;
                 }
@@ -3953,8 +3953,8 @@ fn find_best_task_4_logical_data_source_paths(
                 }
                 if ctx.partial_ordered_index_for_topn
                     && partial_order_match.is_some()
-                    && ds.forced_index_ids.contains(&source_index.read().id)
-                    && !ds.force_no_keep_order_index_ids.contains(&source_index.read().id)
+                    && path.forced
+                    && !path.force_no_keep_order
                 {
                     // Go skylinePruning marks the path before conversion, even
                     // if this candidate's single/double-read task is refused.
@@ -3969,8 +3969,8 @@ fn find_best_task_4_logical_data_source_paths(
                 {
                     continue 'paths;
                 }
-                if (!keep_order && ds.force_keep_order_index_ids.contains(&source_index.read().id))
-                    || (keep_order && ds.force_no_keep_order_index_ids.contains(&source_index.read().id))
+                if (!keep_order && path.force_keep_order)
+                    || (keep_order && path.force_no_keep_order)
                 {
                     continue 'paths;
                 }
@@ -4021,7 +4021,7 @@ fn find_best_task_4_logical_data_source_paths(
                     && prop.index_join_prop.is_none()
                     && prop.is_sort_item_empty()
                     && partial_order_match.is_none()
-                    && !ds.forced_index_ids.contains(&source_index.read().id)
+                    && !path.forced
                     && !single_scan
                 {
                     continue 'paths;
@@ -4761,10 +4761,7 @@ fn find_best_task_4_logical_data_source_paths(
                     index_lookup_push_down_by: if single_scan {
                         tidb_planner_util::path::IndexLookUpPushDownByType::None
                     } else {
-                        ds.index_lookup_push_down_by
-                            .get(&source_index.read().id)
-                            .copied()
-                            .unwrap_or(tidb_planner_util::path::IndexLookUpPushDownByType::None)
+                        path.index_lookup_push_down_by
                     },
                     stats_context: ctx.task_stats_context(ds, &root_task_conds),
                     root_task_conds,
@@ -6702,16 +6699,8 @@ mod tests {
         );
 
         for (force_order, force_no_order, valid) in [(true, false, true), (false, true, false)] {
-            source.force_keep_order_index_ids = if force_order {
-                [3].into_iter().collect()
-            } else {
-                Default::default()
-            };
-            source.force_no_keep_order_index_ids = if force_no_order {
-                [3].into_iter().collect()
-            } else {
-                Default::default()
-            };
+            source.enumerated_paths[0].force_keep_order = force_order;
+            source.enumerated_paths[0].force_no_keep_order = force_no_order;
             let task =
                 find_best_task_4_logical_data_source_without_enforcer(&source, &partial, &mut ctx)
                     .unwrap();
@@ -6725,23 +6714,15 @@ mod tests {
         // Master marks matching forced paths during the partial-order search,
         // before ordinary TopN candidates are costed. NO_ORDER_INDEX and an
         // unmatched property must preserve ordinary forced-index behavior.
-        source.force_keep_order_index_ids.clear();
+        source.enumerated_paths[0].force_keep_order = false;
         for (forced, no_order, matches) in [
             (true, false, true),
             (false, false, true),
             (true, true, true),
             (true, false, false),
         ] {
-            source.forced_index_ids = if forced {
-                [3].into_iter().collect()
-            } else {
-                Default::default()
-            };
-            source.force_no_keep_order_index_ids = if no_order {
-                [3].into_iter().collect()
-            } else {
-                Default::default()
-            };
+            source.enumerated_paths[0].forced = forced;
+            source.enumerated_paths[0].force_no_keep_order = no_order;
             let mut partial = partial.clone();
             if !matches {
                 partial.partial_order_info.as_mut().unwrap().sort_items[0]
@@ -6770,8 +6751,8 @@ mod tests {
 
         // Separate occurrences can share a Go plan ID and an index ID. A
         // mark on one occurrence must not affect an already-existing other.
-        source.forced_index_ids = [3].into_iter().collect();
-        source.force_no_keep_order_index_ids.clear();
+        source.enumerated_paths[0].forced = true;
+        source.enumerated_paths[0].force_no_keep_order = false;
         let other = source.clone();
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0)
             .with_column_ids(&column_ids)

@@ -840,9 +840,11 @@ pub(crate) fn clean_access_path_for_mv_index_hint(
     paths: &mut Vec<tidb_planner_util::path::DerivedAccessPath>,
 ) {
     let forced: std::collections::BTreeSet<i64> = ds
-        .indexes
+        .enumerated_paths
         .iter()
-        .filter(|index| index.read().mv_index && ds.forced_index_ids.contains(&index.read().id))
+        .filter(|path| path.forced)
+        .filter_map(tidb_planner_util::path::AccessPath::index_info)
+        .filter(|index| index.read().mv_index)
         .map(|index| index.read().id)
         .collect();
     if forced.is_empty() {

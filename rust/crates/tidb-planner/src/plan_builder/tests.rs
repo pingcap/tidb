@@ -813,10 +813,7 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
         source.enumerated_paths,
         vec![tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())]
     );
-    assert_eq!(
-        source.forced_index_ids,
-        std::collections::BTreeSet::from([1])
-    );
+    assert!(source.enumerated_paths[0].forced);
 
     let mut builder = harness.builder();
     let (plan, _) = builder
@@ -832,10 +829,7 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
         source.enumerated_paths,
         vec![tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())]
     );
-    assert_eq!(
-        source.forced_index_ids,
-        std::collections::BTreeSet::from([1])
-    );
+    assert!(source.enumerated_paths[0].forced);
 
     let mut builder = harness.builder();
     let (plan, _) = builder
@@ -853,7 +847,7 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
         source.enumerated_paths.as_slice(),
         [path] if path.is_tikv_table_path()
     ));
-    assert!(source.force_keep_order_table_path);
+    assert!(source.enumerated_paths[0].force_keep_order);
 
     let mut builder = harness.builder();
     let (plan, _) = builder

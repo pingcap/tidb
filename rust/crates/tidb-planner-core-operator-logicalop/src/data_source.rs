@@ -210,19 +210,6 @@ pub struct DataSource {
     pub asked_column_group: Vec<Vec<Column>>,
     /// Go `InterestingColumns`.
     pub interesting_columns: Vec<Column>,
-    /// Index IDs whose access paths have Go `AccessPath.Forced` set.
-    pub forced_index_ids: std::collections::BTreeSet<i64>,
-    /// Index IDs carrying Go `ForceKeepOrder`.
-    pub force_keep_order_index_ids: std::collections::BTreeSet<i64>,
-    /// Index IDs carrying Go `ForceNoKeepOrder`.
-    pub force_no_keep_order_index_ids: std::collections::BTreeSet<i64>,
-    /// Whether the TiKV table path carries Go `ForceKeepOrder`.
-    pub force_keep_order_table_path: bool,
-    /// Whether the TiKV table path carries Go `ForceNoKeepOrder`.
-    pub force_no_keep_order_table_path: bool,
-    /// Go `AccessPath.IndexLookUpPushDownBy`, keyed by index ID.
-    pub index_lookup_push_down_by:
-        std::collections::BTreeMap<i64, tidb_planner_util::path::IndexLookUpPushDownByType>,
     /// Index IDs carrying Go `AccessPath.NoncacheableReason` after
     /// `CheckPartialIndexes` rejects the general cached-plan proof.
     pub partial_index_noncacheable_ids: std::collections::BTreeSet<i64>,
@@ -367,6 +354,12 @@ impl DataSource {
         self.enumerated_paths
             .iter()
             .find(|path| path.index.as_ref().is_some_and(|index| index.read().id == id))
+    }
+
+    /// The TiKV table path (Go `IsTiKVTablePath`).
+    #[must_use]
+    pub fn tikv_table_path(&self) -> Option<&tidb_planner_util::path::AccessPath> {
+        self.enumerated_paths.iter().find(|path| path.is_tikv_table_path())
     }
 
     /// The TiKV table path's `deriveTablePathStats` result.
@@ -774,7 +767,7 @@ impl DataSource {
                 removed_ids.insert(metadata.read().id);
                 continue;
             }
-            if self.forced_index_ids.contains(&metadata.read().id) {
+            if path.forced {
                 partial_index_used_hint = true;
             }
             if use_plan_cache
@@ -787,13 +780,11 @@ impl DataSource {
             return;
         }
 
-        let keep_index_id = |index_id: i64| {
-            !removed_ids.contains(&index_id)
-                && (!partial_index_used_hint || self.forced_index_ids.contains(&index_id))
-        };
         self.derived_access_paths = None;
         self.enumerated_paths.retain(|path| match path.index_info() {
-            Some(index) => keep_index_id(index.read().id),
+            Some(index) => {
+                !removed_ids.contains(&index.read().id) && (!partial_index_used_hint || path.forced)
+            }
             None => !partial_index_used_hint,
         });
     }
@@ -1162,12 +1153,6 @@ impl DataSource {
             access_path_min_selectivity: self.access_path_min_selectivity,
             asked_column_group: self.asked_column_group.clone(),
             interesting_columns: self.interesting_columns.clone(),
-            forced_index_ids: self.forced_index_ids.clone(),
-            force_keep_order_index_ids: self.force_keep_order_index_ids.clone(),
-            force_no_keep_order_index_ids: self.force_no_keep_order_index_ids.clone(),
-            force_keep_order_table_path: self.force_keep_order_table_path,
-            force_no_keep_order_table_path: self.force_no_keep_order_table_path,
-            index_lookup_push_down_by: self.index_lookup_push_down_by.clone(),
             partial_index_noncacheable_ids: self.partial_index_noncacheable_ids.clone(),
             force_no_index_lookup_push_down: self.force_no_index_lookup_push_down,
             index_merge_hints: self.index_merge_hints.clone(),

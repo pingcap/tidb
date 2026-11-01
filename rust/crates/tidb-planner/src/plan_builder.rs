@@ -3673,12 +3673,6 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         data_source.public_enumerated_paths = public_paths;
         data_source.enumerated_paths = resolution.paths;
-        data_source.forced_index_ids = resolution.forced_index_ids;
-        data_source.force_keep_order_index_ids = resolution.force_keep_order_index_ids;
-        data_source.force_no_keep_order_index_ids = resolution.force_no_keep_order_index_ids;
-        data_source.force_keep_order_table_path = resolution.force_keep_order_table_path;
-        data_source.force_no_keep_order_table_path = resolution.force_no_keep_order_table_path;
-        data_source.index_lookup_push_down_by = resolution.index_lookup_push_down_by;
         data_source.indexes = table.indexes.clone();
         self.set_preferred_store_type(&mut data_source);
 

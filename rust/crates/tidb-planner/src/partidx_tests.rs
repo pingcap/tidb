@@ -194,7 +194,7 @@ fn datasource_prunes_partial_paths_and_marks_the_ordinary_cached_plan() {
         .enumerated_paths
         .insert(1, tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()));
     source.pushed_down_conds = vec![compare("gt", integer_column(1), integer(5))];
-    source.forced_index_ids.insert(10);
+    source.path_by_index_id_mut(10).unwrap().forced = true;
     source.check_partial_indexes(&NoResolver, true, true);
     assert_eq!(
         source.enumerated_paths,

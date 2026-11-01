@@ -109,6 +109,13 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
     `deriveTablePathStats` result (`filled_table`);
     `DerivedAccessPaths.table_path` is gone. Go also fills the TiFlash table
     path; Rust's TiFlash readers still read the TiKV path's result.
+  - [x] 2d (2026-11-02): Go's `Forced`, `ForceKeepOrder`,
+    `ForceNoKeepOrder` and `IndexLookUpPushDownBy` are fields of the path.
+    Hint resolution sets them on a working copy of `publicPaths` and
+    `available` lists positions into it, as Go's pointers share one path;
+    the id sets on `DataSource` and `ResolvedIndexPaths` are gone.
+    `USE INDEX ()` now marks the table path `Forced` and `SetIndexForce`
+    follows `getGeneralAttributesFromPaths` (any forced path), as in Go.
   - [ ] 2c: `FilledIndexPath`'s fields flatten into Go's (`IdxCols`,
     `Ranges`, `AccessConds`, `IndexFilters`, `TableFilters`,
     `CountAfterIndex`), and `declared_columns` / `row_estimate` take Go's
@@ -131,6 +138,11 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
 - The physical task builders (`dispatch.rs`, `candidate_preparation.rs`)
   keep their three-way TiKV-table / TiFlash / index split for now; step 4
   moves them onto Go's per-path fields.
+
+- `crates/tidb-planner/src/plan_builder/tests.rs` (1,769 lines) is not a
+  module of the crate: `431d637dec5` dropped its `mod tests;`, so it has not
+  compiled since. Its hint assertions were updated with this plan, but the
+  file needs wiring back in (or deleting) as its own task.
 
 ## Decision Log
 

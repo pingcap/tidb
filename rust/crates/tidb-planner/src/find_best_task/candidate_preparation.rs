@@ -124,8 +124,8 @@ pub(super) fn prepare_ordinary_paths<'a>(
                 }
                 if ctx.partial_ordered_index_for_topn
                     && partial.is_some()
-                    && ds.forced_index_ids.contains(&index.read().id)
-                    && !ds.force_no_keep_order_index_ids.contains(&index.read().id)
+                    && path.forced
+                    && !path.force_no_keep_order
                 {
                     ctx.forced_partial_order_paths
                         .insert((std::ptr::from_ref(ds).addr(), index.read().id));
@@ -140,7 +140,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
                 if filled.detached.access_conds.is_empty()
                     && !empty_ranges
                     && prop.is_sort_item_empty()
-                    && !ds.forced_index_ids.contains(&index.read().id)
+                    && !path.forced
                     && !single_scan
                     && partial.is_none()
                 {
@@ -250,7 +250,7 @@ fn range_scan_flags(
                         &table.detached.ranges,
                         ds.table_scan_penalty.unsigned_int_handle,
                     ),
-                !ds.forced_index_ids.is_empty(),
+                path.forced,
             )
         }
         Some(index) => {
@@ -284,7 +284,7 @@ fn range_scan_flags(
                     || ((single_scan || index_filters)
                         && (prop.is_sort_item_empty() || matches_property)))
                     && !tidb_ranger::types::has_full_range(&filled.detached.ranges, false),
-                ds.forced_index_ids.contains(&index.read().id) || index.read().global || index.read().mv_index,
+                path.forced || index.read().global || index.read().mv_index,
             )
         }
         None => (false, true),

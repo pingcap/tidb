@@ -87,7 +87,9 @@ fn partial_matches_order(
                 .is_some_and(|column| column.unique_id == first.col.unique_id))
         .then(Vec::new),
         Partial::Table { filled, .. } => {
-            if !ds.is_common_handle || ds.force_no_keep_order_table_path {
+            if !ds.is_common_handle
+                || ds.tikv_table_path().is_some_and(|path| path.force_no_keep_order)
+            {
                 return None;
             }
             key_columns_match_order(
@@ -118,7 +120,7 @@ fn index_partial_matches_order(
     items: &[tidb_planner_property::SortItem],
     allow_groups: bool,
 ) -> Option<Vec<usize>> {
-    if ds.force_no_keep_order_index_ids.contains(&index.read().id) {
+    if ds.path_by_index_id(index.read().id).is_some_and(|path| path.force_no_keep_order) {
         return None;
     }
     // Match the same normalized key layout used by ordinary ranges,

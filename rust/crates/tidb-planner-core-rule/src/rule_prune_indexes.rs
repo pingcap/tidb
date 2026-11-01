@@ -307,7 +307,7 @@ pub fn prune_indexes_by_where_and_order(
                     multi_value_paths.push(path.clone());
                     continue;
                 }
-                if source.forced_index_ids.contains(&metadata.read().id) {
+                if path.forced {
                     return paths.to_vec();
                 }
                 let Some(scored) = score_index_path(source, path, &interesting_ids, &discounted)
@@ -492,7 +492,7 @@ mod tests {
     #[test]
     fn a_forced_path_disables_pruning_for_the_whole_source() {
         let mut source = source();
-        source.forced_index_ids.insert(12);
+        source.path_by_index_id_mut(12).unwrap().forced = true;
         assert_eq!(
             prune_indexes_by_where_and_order(&source, &source.enumerated_paths, 1),
             source.enumerated_paths

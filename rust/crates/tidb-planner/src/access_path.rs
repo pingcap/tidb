@@ -461,6 +461,34 @@ impl tidb_planner_core_operator_logicalop::plan_context::AccessPathResolver for 
     }
 }
 
+/// Go `getPathByIndexName`: the position of the path `name` names -- the
+/// TiKV table path for PRIMARY of a clustered table, an exact index name, or
+/// the only index whose name `name` prefixes.
+fn path_by_index_name(paths: &[AccessPath], name: &str, has_clustered_index: bool) -> Option<usize> {
+    let mut prefix_path = None;
+    let mut prefix_matches = 0;
+    for (position, path) in paths.iter().enumerate() {
+        // Only accept TiKV's primary key table path.
+        if path.is_tikv_table_path() && tidb_mysql::lowercase_equal(name, "primary") && has_clustered_index {
+            return Some(position);
+        }
+        // If it's not a TiKV table path and the index is nil, it could not
+        // be any index path.
+        let Some(index) = &path.index else {
+            continue;
+        };
+        if tidb_mysql::lowercase_equal(index.read().name.original(), name) {
+            return Some(position);
+        }
+        if tidb_mysql::to_lowercase(index.read().name.original()).starts_with(&tidb_mysql::to_lowercase(name)) {
+            prefix_path = Some(position);
+            prefix_matches += 1;
+        }
+    }
+    // Return only unique prefix matches.
+    if prefix_matches == 1 { prefix_path } else { None }
+}
+
 /// Applies Go `getPossibleAccessPaths`' table-syntax and already-matched
 /// comment-style index-hint tail to an enumerated public-path list.
 pub fn apply_table_index_hints(
@@ -476,14 +504,17 @@ pub fn apply_table_index_hints(
 ) -> Result<ResolvedIndexPaths, tidb_planner_core_base::PlanError> {
     use tidb_ast::{IndexHintKind, IndexHintScope};
 
+    // Go hands out pointers into `publicPaths`: a hint's flags land on the
+    // shared path, and `available` lists those paths. Here `available` holds
+    // positions into this working copy.
+    let mut public_paths = public_paths.to_vec();
     let table_path = public_paths
         .iter()
-        .find(|path| path.is_tikv_table_path())
-        .cloned()
+        .position(|path| path.is_tikv_table_path())
         .expect("getPossibleAccessPaths always creates a table path");
     let mut has_scan_hint = false;
     let mut has_use_or_force = false;
-    let mut available = Vec::new();
+    let mut available: Vec<usize> = Vec::new();
     let mut ignored = std::collections::BTreeSet::new();
     let mut result = ResolvedIndexPaths::default();
 
@@ -519,14 +550,9 @@ pub fn apply_table_index_hints(
         )
         && (session.policy != IndexLookupPushDownPolicy::AffinityForce || table.has_affinity)
     {
-        for path in public_paths {
-            let Some(metadata) = path.index_info() else {
-                continue;
-            };
-            if unsupported_reason(metadata).is_none() {
-                result
-                    .index_lookup_push_down_by
-                    .insert(metadata.read().id, IndexLookUpPushDownByType::SysVar);
+        for path in &mut public_paths {
+            if path.index_info().is_some_and(|metadata| unsupported_reason(metadata).is_none()) {
+                path.index_lookup_push_down_by = IndexLookUpPushDownByType::SysVar;
             }
         }
     }
@@ -566,43 +592,17 @@ pub fn apply_table_index_hints(
             continue;
         }
         if indexes.is_empty() && kind != IndexHintKind::Ignore {
-            has_use_or_force = true;
-            available.push(table_path.clone());
+            // Go `getTablePath`: the first table path.
+            if let Some(position) = public_paths.iter().position(AccessPath::is_table_path) {
+                has_use_or_force = true;
+                public_paths[position].forced = true;
+                available.push(position);
+            }
         }
         for name in indexes {
-            let mut prefix_path = None;
-            let mut prefix_matches = 0;
             // Go `getPathByIndexName`.
-            let exact_path = public_paths.iter().find(|path| {
-                // Only accept TiKV's primary key table path.
-                if path.is_tikv_table_path()
-                    && tidb_mysql::lowercase_equal(name, "primary")
-                    && (table.pk_is_handle || table.is_common_handle)
-                {
-                    return true;
-                }
-                let Some(index) = &path.index else {
-                    return false;
-                };
-                if tidb_mysql::lowercase_equal(index.read().name.original(), name) {
-                    return true;
-                }
-                if tidb_mysql::to_lowercase(index.read().name.original())
-                    .starts_with(&tidb_mysql::to_lowercase(name))
-                {
-                    prefix_path = Some(*path);
-                    prefix_matches += 1;
-                }
-                false
-            });
-            let path = exact_path.or_else(|| {
-                if prefix_matches == 1 {
-                    prefix_path
-                } else {
-                    None
-                }
-            });
-            let Some(path) = path.cloned() else {
+            let path = path_by_index_name(&public_paths, name, table.pk_is_handle || table.is_common_handle);
+            let Some(position) = path else {
                 if comment_style {
                     result.unknown_comment_indexes.push(name.clone());
                     continue;
@@ -612,6 +612,7 @@ pub fn apply_table_index_hints(
                         .generate_with_stack_by_args(&[name.into(), (&table.table_name).into()]),
                 ));
             };
+            let path = &mut public_paths[position];
             if kind == IndexHintKind::Ignore {
                 // Go `removeIgnoredPaths` matches the resolved paths' `Index`.
                 if let Some(index) = &path.index {
@@ -636,22 +637,15 @@ pub fn apply_table_index_hints(
                 return Err(tidb_planner_core_base::PlanError::internal(message));
             }
             has_use_or_force = true;
-            if path.is_table_path() {
-                if force_keep_order {
-                    result.force_keep_order_table_path = true;
-                }
-                if force_no_keep_order {
-                    result.force_no_keep_order_table_path = true;
-                }
+            path.forced = true;
+            if force_keep_order {
+                path.force_keep_order = true;
             }
-            if let Some(metadata) = path.index.as_ref() {
-                result.forced_index_ids.insert(metadata.read().id);
-                if force_keep_order {
-                    result.force_keep_order_index_ids.insert(metadata.read().id);
-                }
-                if force_no_keep_order {
-                    result.force_no_keep_order_index_ids.insert(metadata.read().id);
-                }
+            if force_no_keep_order {
+                path.force_no_keep_order = true;
+            }
+            if let Some(metadata) = path.index.clone() {
+                let metadata = &metadata;
                 if push_down_lookup {
                     if force_no_index_lookup_push_down {
                         result.hint_warnings.push(
@@ -665,35 +659,36 @@ pub fn apply_table_index_hints(
                         ));
                         continue;
                     }
-                    result
-                        .index_lookup_push_down_by
-                        .insert(metadata.read().id, IndexLookUpPushDownByType::Hint);
+                    path.index_lookup_push_down_by = IndexLookUpPushDownByType::Hint;
                 }
             }
-            available.push(path);
+            available.push(position);
         }
     }
 
     if !has_scan_hint || !has_use_or_force {
-        available = public_paths.to_vec();
+        available = (0..public_paths.len()).collect();
     }
     // Go `removeIgnoredPaths`.
-    available.retain(|path| {
-            path.is_tikv_table_path()
-                || path.is_tiflash_simple_table_path()
-                || !path.index.as_ref().is_some_and(|index| ignored.contains(&index.read().id))
-        });
+    available.retain(|&position| {
+        let path = &public_paths[position];
+        path.is_tikv_table_path()
+            || path.is_tiflash_simple_table_path()
+            || !path.index.as_ref().is_some_and(|index| ignored.contains(&index.read().id))
+    });
     if remove_global_indexes {
         // Go `removeGlobalIndexPaths`.
-        available.retain(|path| !path.index.as_ref().is_some_and(|index| index.read().global));
+        available.retain(|&position| {
+            !public_paths[position].index.as_ref().is_some_and(|index| index.read().global)
+        });
     }
     if available.is_empty() {
-        available.push(table_path.clone());
-    }
-    if available.iter().all(AccessPath::is_undetermined) {
         available.push(table_path);
     }
-    result.paths = available;
+    if available.iter().all(|&position| public_paths[position].is_undetermined()) {
+        available.push(table_path);
+    }
+    result.paths = available.into_iter().map(|position| public_paths[position].clone()).collect();
     Ok(result)
 }
 
