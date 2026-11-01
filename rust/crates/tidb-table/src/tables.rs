@@ -128,7 +128,7 @@ impl tidb_ast::Visitor for AstColumnPaths {
 /// Go `tables.ExtractColumnsFromCondition` optionally expands a virtual
 /// generated column to its base-column dependencies, then still returns the
 /// virtual column itself. Stored generated columns remain ordinary columns.
-pub fn extract_columns_from_index_condition(
+pub fn extract_columns_from_condition(
     index: &tidb_model::IndexInfo,
     table: &tidb_model::TableInfo,
     include_virtual_generated_dependencies: bool,
@@ -216,7 +216,7 @@ impl AddRecordOpt {
 
     /// Go `WithCtx` for an add-record operation.
     #[must_use]
-    pub fn with_context(mut self, context: std::rc::Rc<dyn tidb_tblctx::MutateContext>) -> Self {
+    pub fn with_ctx(mut self, context: std::rc::Rc<dyn tidb_tblctx::MutateContext>) -> Self {
         self.common.context = Some(context);
         self
     }
@@ -263,7 +263,7 @@ impl AddRecordOpt {
 
     /// Go `AddRecordOpt.GetCreateIdxOpt`.
     #[must_use]
-    pub fn create_index_options(&self) -> CreateIdxOpt {
+    pub fn get_create_idx_opt(&self) -> CreateIdxOpt {
         CreateIdxOpt {
             common: self.common.clone(),
             ..CreateIdxOpt::default()
@@ -288,7 +288,7 @@ impl UpdateRecordOpt {
 
     /// Go `WithCtx` for an update-record operation.
     #[must_use]
-    pub fn with_context(mut self, context: std::rc::Rc<dyn tidb_tblctx::MutateContext>) -> Self {
+    pub fn with_ctx(mut self, context: std::rc::Rc<dyn tidb_tblctx::MutateContext>) -> Self {
         self.common.context = Some(context);
         self
     }
@@ -329,7 +329,7 @@ impl UpdateRecordOpt {
 
     /// Go `UpdateRecordOpt.GetCreateIdxOpt`.
     #[must_use]
-    pub fn create_index_options(&self) -> CreateIdxOpt {
+    pub fn get_create_idx_opt(&self) -> CreateIdxOpt {
         CreateIdxOpt {
             common: self.common.clone(),
             ..CreateIdxOpt::default()
@@ -354,7 +354,7 @@ impl CreateIdxOpt {
 
     /// Go `WithCtx` for an index write.
     #[must_use]
-    pub fn with_context(mut self, context: std::rc::Rc<dyn tidb_tblctx::MutateContext>) -> Self {
+    pub fn with_ctx(mut self, context: std::rc::Rc<dyn tidb_tblctx::MutateContext>) -> Self {
         self.common.context = Some(context);
         self
     }
@@ -1498,7 +1498,7 @@ impl TableCommon {
         ctx: &dyn tidb_exprctx::Columns,
     ) -> Option<(usize, i64)> {
         let partition = self.partition.as_ref()?;
-        let ordinal = partition.locate_ordinal(row, &self.columns, ctx).ok()?;
+        let ordinal = partition.get_partition_idx_by_row(row, &self.columns, ctx).ok()?;
         let definition = partition.definitions.get(ordinal)?;
         self.record_physical_ids()
             .contains(&definition.id)
@@ -2184,7 +2184,7 @@ impl TableCommon {
     /// # Errors
     ///
     /// A row no partition accepts.
-    pub fn locate_physical_id(
+    pub fn locate_partition(
         &self,
         row: &[Datum],
         ctx: &dyn tidb_exprctx::Columns,
@@ -2673,7 +2673,7 @@ impl TableCommon {
 
     /// Go `temptable.TruncateLocalTemporaryTable` retains metadata but gives
     /// the replacement a new identity, empty storage and memory allocators.
-    pub fn recreate_local_temporary(&mut self, table_id: i64) {
+    pub fn truncate_local_temporary_table(&mut self, table_id: i64) {
         debug_assert_eq!(self.temp_table_type(), tidb_model::TempTableType::LOCAL);
         self.table_id = table_id;
         self.store = Box::new(MemTableStorage::new());

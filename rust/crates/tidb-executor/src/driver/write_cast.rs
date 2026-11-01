@@ -608,7 +608,7 @@ use tidb_charset::Collation;
     #[test]
     fn ordinal_owner_batch_table_bit_keeps_two_diagnostics() {
         let ctx = crate::StmtContext::for_dml(false, false, false);
-        let value = cast_table_value(
+        let value = cast_value(
             Datum::new_bytes([1; 9]),
             &FieldType::new(FieldTypeCode::Bit).with_flen(8),
             "a",
@@ -697,7 +697,7 @@ use tidb_charset::Collation;
             "Incorrect double value: '{}' for column 'a' at row 5"
         );
         let ctx = crate::StmtContext::for_dml(false, true, false);
-        let error = cast_table_value(
+        let error = cast_value(
             Datum::Json(tidb_datatype::BinaryJSON::parse("{}").unwrap()),
             &FieldType::new(FieldTypeCode::Double),
             "a",
@@ -717,7 +717,7 @@ use tidb_charset::Collation;
             ("9223372036854775808", "9223372036854775808"),
             ("1.9tail", "1.9"),
         ] {
-            let error = cast_table_value(
+            let error = cast_value(
                 Datum::new_string(input),
                 &FieldType::new(FieldTypeCode::LongLong),
                 "a",
@@ -739,7 +739,7 @@ use tidb_charset::Collation;
         let ctx = crate::StmtContext::for_query();
         let field = FieldType::new(FieldTypeCode::Tiny);
         let result =
-            cast_table_value(Datum::new_string("128tail"), &field, "a", &ctx, false).unwrap();
+            cast_value(Datum::new_string("128tail"), &field, "a", &ctx, false).unwrap();
         assert_eq!(result, Datum::Int(127));
         let warnings = ctx.take_warnings();
         assert_eq!(warnings.len(), 2, "{warnings:?}");
@@ -754,7 +754,7 @@ use tidb_charset::Collation;
     fn table_mutation_batch_varchar_space_truncation_warns() {
         let ctx = crate::StmtContext::for_dml(false, true, false);
         let field = FieldType::new(FieldTypeCode::Varchar).with_flen(2);
-        let value = cast_table_value(Datum::new_string("ab  "), &field, "a", &ctx, false).unwrap();
+        let value = cast_value(Datum::new_string("ab  "), &field, "a", &ctx, false).unwrap();
         assert_eq!(datum_error_text(&value), "ab");
         let warnings = ctx.take_warnings();
         assert_eq!(warnings.len(), 1);
@@ -800,7 +800,7 @@ use tidb_charset::Collation;
             );
         }
         let ctx = crate::StmtContext::for_dml(false, true, false);
-        let result = cast_table_value(Datum::new_string("ab中"), &field, "a", &ctx, true).unwrap();
+        let result = cast_value(Datum::new_string("ab中"), &field, "a", &ctx, true).unwrap();
         assert_eq!(datum_error_text(&result), "ab?");
         assert!(ctx.take_warnings().is_empty());
     }
@@ -814,14 +814,14 @@ use tidb_charset::Collation;
             Datum::Duration(tidb_datatype::MySqlDuration::new(1, 0, 0, 0, 0).unwrap()),
         ];
         for value in values {
-            let error = cast_table_value(value, &field, "a", &ctx, false)
+            let error = cast_value(value, &field, "a", &ctx, false)
                 .unwrap_err()
                 .to_mysql_error();
             assert_eq!(error.code, 1690, "{}", error.message);
         }
         let wide = Datum::new_binary_literal(BinaryLiteral::from(vec![1; 9]));
         let ctx = crate::StmtContext::for_dml(false, false, false);
-        let value = cast_table_value(wide, &field, "a", &ctx, false).unwrap();
+        let value = cast_value(wide, &field, "a", &ctx, false).unwrap();
         assert_eq!(value, Datum::Int(127));
         let warnings = ctx.take_warnings();
         assert_eq!(
@@ -874,7 +874,7 @@ use tidb_charset::Collation;
         let integer = FieldType::new(FieldTypeCode::Long).with_charset_name("utf8");
 
         assert_eq!(
-            cast_table_value(Datum::Null, &integer, "", &ctx, false).unwrap(),
+            cast_value(Datum::Null, &integer, "", &ctx, false).unwrap(),
             Datum::Null
         );
 
@@ -885,40 +885,40 @@ use tidb_charset::Collation;
             .unwrap();
         assert_eq!(converted.value, Datum::Int(0));
         assert!(converted.event.is_some());
-        assert!(cast_table_value(Datum::new_string("test"), &integer, "", &ctx, false).is_err());
+        assert!(cast_value(Datum::new_string("test"), &integer, "", &ctx, false).is_err());
 
         let plain_string = FieldType::new(FieldTypeCode::String);
         assert!(
-            cast_table_value(Datum::new_string("test"), &plain_string, "", &ctx, false).is_ok()
+            cast_value(Datum::new_string("test"), &plain_string, "", &ctx, false).is_ok()
         );
 
         let utf8 = FieldType::new(FieldTypeCode::String).with_charset_name("utf8");
         let mb4_rune = Datum::new_bytes([0xf0, 0x9f, 0x8c, 0x80]);
-        assert!(cast_table_value(mb4_rune.clone(), &utf8, "", &ctx, false).is_err());
-        assert!(cast_table_value(mb4_rune, &utf8, "", &ctx, true).is_ok());
+        assert!(cast_value(mb4_rune.clone(), &utf8, "", &ctx, false).is_err());
+        assert!(cast_value(mb4_rune, &utf8, "", &ctx, true).is_ok());
 
         let utf8mb4 = FieldType::new(FieldTypeCode::String).with_charset_name("utf8mb4");
         let incomplete_rune = Datum::new_bytes([0xf0, 0x9f, 0x80]);
-        assert!(cast_table_value(incomplete_rune.clone(), &utf8mb4, "", &ctx, false).is_err());
-        assert!(cast_table_value(incomplete_rune, &utf8mb4, "", &ctx, true).is_ok());
+        assert!(cast_value(incomplete_rune.clone(), &utf8mb4, "", &ctx, false).is_err());
+        assert!(cast_value(incomplete_rune, &utf8mb4, "", &ctx, true).is_ok());
 
         let ascii = FieldType::new(FieldTypeCode::String).with_charset_name("ascii");
         let non_ascii = Datum::new_bytes([0x32, 0xf0]);
-        assert!(cast_table_value(non_ascii.clone(), &ascii, "", &ctx, false).is_err());
-        assert!(cast_table_value(non_ascii, &ascii, "", &ctx, true).is_ok());
+        assert!(cast_value(non_ascii.clone(), &ascii, "", &ctx, false).is_err());
+        assert!(cast_value(non_ascii, &ascii, "", &ctx, true).is_ok());
 
         let general_ci = FieldType::new(FieldTypeCode::String)
             .with_charset_name("utf8mb4")
             .with_collation_name("utf8mb4_general_ci");
         let good_literal = Datum::new_binary_literal(BinaryLiteral::from(&[0xE5, 0xA5, 0xBD]));
-        let cast = cast_table_value(good_literal, &general_ci, "", &ctx, false).unwrap();
+        let cast = cast_value(good_literal, &general_ci, "", &ctx, false).unwrap();
         assert_eq!(cast.collation(), Some(Collation::Utf8Mb4GeneralCi));
 
         for invalid in [
             Datum::new_binary_literal(BinaryLiteral::from(&[0xE5, 0xA5, 0xBD, 0x81])),
             Datum::new_bytes([0xE5, 0xA5, 0xBD, 0x81]),
         ] {
-            let error = cast_table_value(invalid, &general_ci, "", &ctx, false)
+            let error = cast_value(invalid, &general_ci, "", &ctx, false)
                 .unwrap_err()
                 .to_mysql_error();
             assert_eq!(error.code, 1366);
@@ -1011,7 +1011,7 @@ use tidb_charset::Collation;
             (tidb_exprctx::ErrorLevel::Ignore, true, false, 0),
         ] {
             let ctx = crate::StmtContext::for_dml(false, true, false).with_truncate_level(level);
-            let value = cast_table_value(Datum::Int(300), &field, "b", &ctx, force);
+            let value = cast_value(Datum::Int(300), &field, "b", &ctx, force);
             assert_eq!(value.is_err(), should_fail, "{level:?}, force={force}");
             if !should_fail {
                 assert_eq!(value.unwrap(), Datum::Int(127));
@@ -1022,7 +1022,7 @@ use tidb_charset::Collation;
         let decimal = FieldType::new(FieldTypeCode::NewDecimal)
             .with_flen(5)
             .with_decimal(1);
-        let value = cast_table_value(Datum::new_string("1.25"), &decimal, "b", &ctx, true).unwrap();
+        let value = cast_value(Datum::new_string("1.25"), &decimal, "b", &ctx, true).unwrap();
         assert_eq!(datum_error_text(&value), "1.3");
         let warnings = ctx.take_warnings();
         assert_eq!(

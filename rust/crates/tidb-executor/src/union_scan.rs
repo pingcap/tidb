@@ -184,8 +184,8 @@ use tidb_exprctx::Columns;
 use tidb_tablecodec::table_key::encode_row_key_with_handle;
 use tidb_txnkv::Key;
 
-use crate::bad_null::zero_value;
-use tidb_table::column::cast_table_value;
+use crate::bad_null::get_zero_value;
+use tidb_table::column::cast_value;
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use tidb_executor_join::joiner::eval_bool;
@@ -617,7 +617,7 @@ impl<C: Columns> UnionScanExec<C> {
             })?;
             // :167. Go passes `returnErr=false, forceIgnoreTruncate=true`.
             let mut cast_datum =
-                cast_table_value(datum, &info.field_type, &info.name, &self.stmt, true)
+                cast_value(datum, &info.field_type, &info.name, &self.stmt, true)
                     .map_err(|error| ExecError::Mysql(error.to_mysql_error()))?;
             // :172-174. A NOT NULL (or PreventNullInsert) column that cast to
             // NULL takes its type's zero value instead.
@@ -625,7 +625,7 @@ impl<C: Columns> UnionScanExec<C> {
             let not_null = flags & FieldTypeFlags::NOT_NULL != 0
                 || flags & FieldTypeFlags::PREVENT_NULL_INSERT != 0;
             if not_null && matches!(cast_datum, Datum::Null) {
-                cast_datum = zero_value(&info.field_type);
+                cast_datum = get_zero_value(&info.field_type);
             }
             // :175.
             mutable_row.set_datum(index, &cast_datum);

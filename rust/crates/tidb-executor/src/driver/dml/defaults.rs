@@ -232,7 +232,7 @@ pub(crate) fn set_value_for_ref_column(
                     .has_flag(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT);
             }
             Err(error) if error.equal(&tidb_table::table_errors::ERR_NO_DEFAULT_VALUE) => {
-                row[offset] = crate::bad_null::zero_value(&column.field_type);
+                row[offset] = crate::bad_null::get_zero_value(&column.field_type);
             }
             Err(error) => return Err(error),
         }

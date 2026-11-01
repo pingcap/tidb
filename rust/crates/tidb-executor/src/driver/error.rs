@@ -29,7 +29,7 @@ mod source_tests {
         let field = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)
             .with_flen(10)
             .with_collation_name("utf8mb4_bin");
-        let error = tidb_table::column::cast_table_value(
+        let error = tidb_table::column::cast_value(
             tidb_datatype::Datum::new_bytes([0x81]),
             &field,
             "",

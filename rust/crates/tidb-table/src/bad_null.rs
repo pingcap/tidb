@@ -119,7 +119,7 @@ pub fn handle_bad_null(
         crate::table_errors::ERR_COLUMN_CANT_NULL
             .generate_with_stack_by_args(&[column.into()]),
     ));
-    *value = zero_value(field_type);
+    *value = get_zero_value(field_type);
     Ok(true)
 }
 
@@ -152,7 +152,7 @@ pub fn handle_bad_null_in_load_data(
         &crate::table_errors::ERR_WARN_NULL_TO_NOTNULL,
         message,
     ));
-    *value = zero_value(field_type);
+    *value = get_zero_value(field_type);
     Ok(true)
 }
 
@@ -162,7 +162,7 @@ pub fn handle_bad_null_in_load_data(
 /// A type this tier does not otherwise model reaches the `Null` arm exactly
 /// as Go's `switch` falls through to its zero `types.Datum`, which is also
 /// NULL -- so the fallback is Go's own, not a gap papered over.
-pub fn zero_value(field_type: &FieldType) -> Datum {
+pub fn get_zero_value(field_type: &FieldType) -> Datum {
     let unsigned = field_type.flags() & UNSIGNED_FLAG != 0;
     let collation = field_type.collation();
     match field_type.code() {

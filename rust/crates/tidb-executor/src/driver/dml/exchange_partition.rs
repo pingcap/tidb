@@ -104,7 +104,7 @@ impl ExchangePartitionCheck {
         };
         // Go `CheckForExchangePartition`.
         let located = partitioned
-            .locate_physical_id(row, ctx)
+            .locate_partition(row, ctx)
             .map_err(super::kv_write_error)?;
         if located != *partition_id && located != *standalone_id {
             return Err(DriverError::from(
@@ -139,7 +139,7 @@ impl ExchangePartitionCheck {
             return Ok(());
         }
         let located = table
-            .locate_physical_id(row, ctx)
+            .locate_partition(row, ctx)
             .map_err(super::kv_write_error)?;
         if located != *partition_id {
             return Ok(());

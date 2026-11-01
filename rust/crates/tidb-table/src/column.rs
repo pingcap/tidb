@@ -161,7 +161,7 @@ pub fn conversion_event_is_silent(event: &tidb_datatype::ScalarConversionEvent) 
 ///
 /// Reads and union scan retain the caller's type flags and raw error shape;
 /// mutation callers complete diagnostics with their own column/row metadata.
-pub fn cast_table_value(
+pub fn cast_value(
     value: Datum,
     field_type: &FieldType,
     column: &str,

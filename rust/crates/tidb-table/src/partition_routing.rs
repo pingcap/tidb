@@ -421,7 +421,7 @@ impl PartitionSpec {
     /// # Errors
     ///
     /// The same [`RoutingError`]s [`PartitionSpec::locate`] raises.
-    pub(crate) fn locate_ordinal<S: crate::generated_column::GeneratedColumnSlot>(
+    pub(crate) fn get_partition_idx_by_row<S: crate::generated_column::GeneratedColumnSlot>(
         &self,
         row: &[Datum],
         columns: &[S],

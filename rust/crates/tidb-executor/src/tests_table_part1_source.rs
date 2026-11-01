@@ -57,7 +57,7 @@ fn test_extract_columns_from_condition() {
         condition_expr_string: "c3 > 50".to_owned(),
         ..Default::default()
     };
-    let columns = tidb_table::tables::extract_columns_from_index_condition(&index, &table, true)
+    let columns = tidb_table::tables::extract_columns_from_condition(&index, &table, true)
         .expect("condition columns");
     let names = columns
         .iter()

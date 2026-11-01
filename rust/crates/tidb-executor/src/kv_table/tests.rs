@@ -176,7 +176,7 @@ fn test_options() {
     assert!(!add.is_update());
     assert!(!add.generate_record_id());
     assert_eq!(add.reserve_auto_id(), 0);
-    let create = add.create_index_options();
+    let create = add.get_create_idx_opt();
     assert!(create.context().is_none());
     assert!(!create.ignore_assertion());
     assert!(!create.from_backfill());
@@ -184,7 +184,7 @@ fn test_options() {
     let context: std::rc::Rc<dyn tidb_tblctx::MutateContext> =
         std::rc::Rc::new(crate::StmtContext::default());
     let add = AddRecordOpt::new()
-        .with_context(context.clone())
+        .with_ctx(context.clone())
         .for_update()
         .with_reserve_auto_id_hint(12);
     assert!(add.context().is_some());
@@ -192,7 +192,7 @@ fn test_options() {
     assert!(add.generate_record_id());
     assert_eq!(add.reserve_auto_id(), 12);
     assert!(std::rc::Rc::ptr_eq(
-        add.create_index_options().context().unwrap(),
+        add.get_create_idx_opt().context().unwrap(),
         &context
     ));
 
@@ -205,9 +205,9 @@ fn test_options() {
     let kept = update.get_add_record_opt_keep_record_id();
     assert!(kept.is_update());
     assert!(!kept.generate_record_id());
-    assert!(update.create_index_options().context().is_none());
+    assert!(update.get_create_idx_opt().context().is_none());
 
-    let update = UpdateRecordOpt::new().with_context(context.clone());
+    let update = UpdateRecordOpt::new().with_ctx(context.clone());
     assert!(std::rc::Rc::ptr_eq(update.context().unwrap(), &context));
     assert!(std::rc::Rc::ptr_eq(
         update.get_add_record_opt().context().unwrap(),
@@ -221,7 +221,7 @@ fn test_options() {
         &context
     ));
     assert!(std::rc::Rc::ptr_eq(
-        update.create_index_options().context().unwrap(),
+        update.get_create_idx_opt().context().unwrap(),
         &context
     ));
 
@@ -230,7 +230,7 @@ fn test_options() {
     assert!(!create.ignore_assertion());
     assert!(!create.from_backfill());
     let create = create
-        .with_context(context.clone())
+        .with_ctx(context.clone())
         .with_ignore_assertion()
         .with_backfill_source();
     assert!(std::rc::Rc::ptr_eq(create.context().unwrap(), &context));
@@ -241,7 +241,7 @@ fn test_options() {
     context.append_warning_parts(1105, "source context marker");
     assert_eq!(create.context().unwrap().warning_count(), 1);
     assert_eq!(
-        add.create_index_options()
+        add.get_create_idx_opt()
             .context()
             .unwrap()
             .warning_count(),
@@ -330,7 +330,7 @@ fn test_extract_columns_from_condition() {
             (true, expected_with_virtual.as_slice()),
         ] {
             let actual =
-                extract_columns_from_index_condition(&index, &table, include_virtual).unwrap();
+                extract_columns_from_condition(&index, &table, include_virtual).unwrap();
             let actual = actual
                 .iter()
                 .map(|column| {

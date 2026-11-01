@@ -232,7 +232,7 @@ pub(crate) fn cast_virtual_column_value(
                     | tidb_datatype::FieldTypeFlags::PREVENT_NULL_INSERT)
                 != 0)
     {
-        cast = crate::bad_null::zero_value(field_type);
+        cast = crate::bad_null::get_zero_value(field_type);
     }
     Ok(cast)
 }

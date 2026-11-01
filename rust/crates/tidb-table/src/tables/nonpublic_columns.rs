@@ -132,7 +132,7 @@ impl TableCommon {
     ) -> Result<Datum, KvTableError> {
         match ctx {
             Some(ctx) => {
-                crate::column::cast_table_value(value, &column.read().field_type, column.read().name.original(), ctx, false)
+                crate::column::cast_value(value, &column.read().field_type, column.read().name.original(), ctx, false)
                     .map_err(|error| KvTableError::Mysql(error.to_mysql_error()))
             }
             None => Ok(value

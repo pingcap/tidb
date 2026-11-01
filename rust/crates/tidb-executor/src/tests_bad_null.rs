@@ -171,7 +171,7 @@ fn test_get_zero_value() {
     ];
 
     for (field_type, expected) in cases {
-        assert_eq!(zero_value(&field_type), expected, "{field_type:?}");
+        assert_eq!(get_zero_value(&field_type), expected, "{field_type:?}");
     }
 }
 
@@ -188,7 +188,7 @@ fn test_get_zero_value() {
 #[test]
 fn binary_zero_value_is_flen_zero_bytes() {
     assert_eq!(
-        bytes_of(&zero_value(&field(
+        bytes_of(&get_zero_value(&field(
             FieldTypeCode::String,
             8,
             "binary",
@@ -197,7 +197,7 @@ fn binary_zero_value_is_flen_zero_bytes() {
         vec![0u8; 8]
     );
     assert_eq!(
-        bytes_of(&zero_value(&field(
+        bytes_of(&get_zero_value(&field(
             FieldTypeCode::String,
             4,
             "binary",
@@ -211,21 +211,21 @@ fn binary_zero_value_is_flen_zero_bytes() {
 /// CHAR, a zero-width BINARY, and VARBINARY (a separate Go arm entirely).
 #[test]
 fn only_fixed_width_binary_zero_fills() {
-    assert!(bytes_of(&zero_value(&field(
+    assert!(bytes_of(&get_zero_value(&field(
         FieldTypeCode::String,
         4,
         "utf8mb4",
         "utf8mb4_bin"
     )))
     .is_empty());
-    assert!(bytes_of(&zero_value(&field(
+    assert!(bytes_of(&get_zero_value(&field(
         FieldTypeCode::String,
         0,
         "binary",
         "binary"
     )))
     .is_empty());
-    assert!(bytes_of(&zero_value(&field(
+    assert!(bytes_of(&get_zero_value(&field(
         FieldTypeCode::VarString,
         8,
         "binary",
@@ -238,7 +238,7 @@ fn only_fixed_width_binary_zero_fills() {
 /// `types.ZeroVectorFloat32`, not a NULL datum.
 #[test]
 fn vector_zero_value_is_the_empty_vector() {
-    let zero = zero_value(&field(FieldTypeCode::VectorFloat32, 0, "binary", "binary"));
+    let zero = get_zero_value(&field(FieldTypeCode::VectorFloat32, 0, "binary", "binary"));
     match zero {
         Datum::VectorFloat32(value) => assert_eq!(value.len(), 0),
         other => panic!("expected a vector datum, got {other:?}"),

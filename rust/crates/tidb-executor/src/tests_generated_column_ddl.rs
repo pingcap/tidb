@@ -35,7 +35,7 @@ fn materialize<S: GeneratedColumnSlot>(
 ) -> Result<(), crate::DriverError> {
     let ctx = crate::StmtContext::for_query();
     materialize_with(columns, row, only_virtual, &ctx, |column, value| {
-        tidb_table::column::cast_table_value(
+        tidb_table::column::cast_value(
             value,
             &column.column_type(),
             &column.column_name(),

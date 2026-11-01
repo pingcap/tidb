@@ -834,7 +834,7 @@ impl Parser<'_> {
                         .map(|(value, (_, field_type))| {
                             value
                                 .take()
-                                .unwrap_or_else(|| crate::bad_null::zero_value(field_type))
+                                .unwrap_or_else(|| crate::bad_null::get_zero_value(field_type))
                         })
                         .collect();
                     data.push(finished);

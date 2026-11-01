@@ -967,7 +967,7 @@ pub fn get_col_default_value(
                 .map_err(Clone::clone)
                 .and_then(|expr| expr.eval(ctx, row))
                 .map_err(ColumnError::Eval)?;
-            crate::column::cast_table_value(value, field_type, name, ctx, false)
+            crate::column::cast_value(value, field_type, name, ctx, false)
                 .map_err(ColumnError::from)
         }
         // A COMPUTED default reads the statement's own clock here rather than
@@ -1012,7 +1012,7 @@ pub fn get_col_default_value_from_nil(
         return Ok(Datum::new_enum(value, field_type.collation()));
     }
     if field_type.has_flag(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT) {
-        return Ok(crate::bad_null::zero_value(field_type));
+        return Ok(crate::bad_null::get_zero_value(field_type));
     }
     if !ctx.strict() {
         ctx.append_sql_warn(tidb_context::SqlWarn::of(
@@ -1024,7 +1024,7 @@ pub fn get_col_default_value_from_nil(
             )
             .message,
         ));
-        return Ok(crate::bad_null::zero_value(field_type));
+        return Ok(crate::bad_null::get_zero_value(field_type));
     }
     Err(ColumnError::NoDefaultForField(name.to_owned()))
 }

@@ -94,7 +94,7 @@ impl<C: TemporaryTableContext + ?Sized> TemporaryTableDdl<'_, C> {
         let id = self.sctx.gen_global_id()?;
         self.sctx.local_temporary_tables()[position]
             .2
-            .recreate_local_temporary(id);
+            .truncate_local_temporary_table(id);
         Ok(())
     }
 }
