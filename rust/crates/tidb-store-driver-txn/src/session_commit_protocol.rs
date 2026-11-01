@@ -34,7 +34,27 @@ pub struct SessionTransactionOptions {
     /// every later call of the transaction is passed. `None` for a
     /// transaction no SQL session owns.
     pub kv_context: Option<tidb_txnkv::StatementKvContextCell>,
+    /// The session's temporary tables, whose keys Go's
+    /// `temporaryTableKVFilter` keeps out of the commit. `None` for a
+    /// transaction no SQL session owns.
+    pub temporary_tables: Option<TemporaryTableIds>,
 }
+
+/// The ids of a session's temporary tables, refreshed by the session as its
+/// infoschema changes; read by the commit's filter when it runs. Equal when
+/// they are the same session's set.
+#[derive(Clone, Debug, Default)]
+pub struct TemporaryTableIds(
+    pub std::sync::Arc<std::sync::RwLock<std::collections::HashSet<i64>>>,
+);
+
+impl PartialEq for TemporaryTableIds {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for TemporaryTableIds {}
 
 impl SessionTransactionOptions {
     /// Applies the activation snapshot before the transaction is exposed.
@@ -42,8 +62,15 @@ impl SessionTransactionOptions {
         self,
         transaction: &mut crate::transaction::RealTransaction<S>,
     ) {
-        // Go `NewTiKVTxn`'s `txn.SetKVFilter(TiDBKVFilter{})`.
-        transaction.set_kv_filter(std::sync::Arc::new(TiDBKVFilter));
+        // Go `NewTiKVTxn`'s `txn.SetKVFilter(TiDBKVFilter{})`, which
+        // `session.doCommit` replaces with `temporaryTableKVFilter` for a
+        // transaction that may hold temporary rows.
+        match self.temporary_tables {
+            Some(tables) => transaction.set_kv_filter(std::sync::Arc::new(
+                TemporaryTableKVFilter { tables },
+            )),
+            None => transaction.set_kv_filter(std::sync::Arc::new(TiDBKVFilter)),
+        }
         transaction.set_commit_protocol(self.commit_protocol);
         transaction.set_assertion_level(self.assertion_level);
         if let Some(context) = self.kv_context {
@@ -58,6 +85,13 @@ impl SessionTransactionOptions {
         context: tidb_txnkv::StatementKvContextCell,
     ) -> Self {
         self.kv_context = Some(context);
+        self
+    }
+
+    /// The session's temporary tables, for the commit's filter.
+    #[must_use]
+    pub fn with_temporary_tables(mut self, tables: TemporaryTableIds) -> Self {
+        self.temporary_tables = Some(tables);
         self
     }
 }
@@ -96,6 +130,34 @@ impl tikv_client::KvFilter for TiDBKVFilter {
     }
 }
 
+/// Go `session.temporaryTableKVFilter`: a temporary table's pairs are never
+/// committed; every other pair goes through [`TiDBKVFilter`].
+#[derive(Clone, Debug)]
+pub struct TemporaryTableKVFilter {
+    tables: TemporaryTableIds,
+}
+
+impl tikv_client::KvFilter for TemporaryTableKVFilter {
+    fn is_unnecessary_key_value(
+        &self,
+        key: &[u8],
+        value: &[u8],
+        flags: tikv_client::MutationFlags,
+    ) -> tikv_client::Result<bool> {
+        let tid = tidb_tablecodec::table_key::decode_table_id(key);
+        if self
+            .tables
+            .0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(&tid)
+        {
+            return Ok(true);
+        }
+        TiDBKVFilter.is_unnecessary_key_value(key, value, flags)
+    }
+}
+
 // Low-level storage and bootstrap callers have no SQL session. Preserve their
 // explicit protocol selection and the native client's assertion default.
 impl From<CommitProtocol> for SessionTransactionOptions {
@@ -104,6 +166,7 @@ impl From<CommitProtocol> for SessionTransactionOptions {
             commit_protocol,
             assertion_level: tidb_proto::KvrpcAssertionLevel::Off,
             kv_context: None,
+            temporary_tables: None,
         }
     }
 }
@@ -127,6 +190,28 @@ pub fn bootstrap_commit_protocol() -> CommitProtocol {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `temporaryTableKVFilter`: a temporary table's pair is never
+    /// committed, whatever its value; another table's pair is judged by
+    /// `TiDBKVFilter`; a table added to the set later is filtered too.
+    #[test]
+    fn temporary_table_pairs_are_filtered_out_of_the_commit() {
+        use tikv_client::KvFilter;
+        let ids = TemporaryTableIds::default();
+        ids.0.write().unwrap().insert(5);
+        let filter = TemporaryTableKVFilter { tables: ids.clone() };
+        let record = |id: i64| {
+            tidb_tablecodec::table_key::encode_row_key_with_handle(
+                id,
+                &tidb_tablecodec::table_key::RecordHandle::Int(1),
+            )
+        };
+        let flags = tikv_client::MutationFlags::default();
+        assert!(filter.is_unnecessary_key_value(&record(5), b"row", flags).unwrap());
+        assert!(!filter.is_unnecessary_key_value(&record(6), b"row", flags).unwrap());
+        ids.0.write().unwrap().insert(6);
+        assert!(filter.is_unnecessary_key_value(&record(6), b"row", flags).unwrap());
+    }
 
     /// A TiKV-backed node runs with both protocols on, and the registry default
     /// alone would have said otherwise.

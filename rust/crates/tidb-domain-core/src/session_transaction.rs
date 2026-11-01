@@ -89,6 +89,7 @@ pub fn options_from_values(
         },
         assertion_level,
         kv_context: None,
+        temporary_tables: None,
     }
 }
 

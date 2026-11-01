@@ -238,6 +238,7 @@ fn session_activation_retains_options_after_timestamp_future_failure() {
             commit_protocol: tidb_store_driver_txn::transaction::CommitProtocol::two_phase_only(),
             assertion_level: tidb_proto::KvrpcAssertionLevel::Strict,
             kv_context: None,
+            temporary_tables: None,
         };
         let pending = transactions
             .prepare_autocommit_write("default", pessimistic, false, options)

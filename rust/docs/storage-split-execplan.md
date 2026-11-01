@@ -173,9 +173,39 @@ CARGO_INCREMENTAL=0`.
     at the same moment, `sessiontxn/isolation/base.go:251`). Installing it
     alone changes nothing observable while temporary tables still write to
     their own stores, so this step lands together with the write switch.
-  - [ ] Temporary-table writes go through the session store; commit copies
-    local temporary keys into `TemporaryTableData` and filters every
-    temporary key out of 2PC; readers of temporary tables never go remote.
+  - [x] (2026-11-02) Go `temporaryTableKVFilter` ported
+    (`session_commit_protocol::TemporaryTableKVFilter`, installed when
+    `SessionTransactionOptions.temporary_tables` is set). The id set is a
+    live `TemporaryTableIds` the session refreshes, because Rust applies
+    transaction options when the transaction begins while Go sets the
+    filter in `doCommit`.
+  - [ ] The write switch, which must land as one change:
+    1. `Session` holds its transaction store (`ClusterTableStorage` clone,
+       set where `open_storage_session` builds it) and the live
+       `TemporaryTableIds`; `TxnManager::statement_transaction_options`
+       adds `with_temporary_tables`.
+    2. `TemporaryTableOverlay::run` gives each attached LOCAL table the
+       transaction store (`replace_storage`), so its rows go to the buffer.
+    3. GLOBAL tables keep the catalog's session store; the overlay swaps
+       only Go `TxnCtx.TemporaryTables`' allocators (drop
+       `TemporaryTableTxnData.store`).
+    4. `statement_lifecycle::bind_snapshot` refreshes the id set and wraps
+       the snapshot in `session_snapshot_interceptor` (global ids from the
+       session's infoschema, memoized per schema version; local ids from
+       `local_temporary_tables`; `temporary_table_data`).
+    5. Commit: Go `commitTxnWithTemporaryData` -- before the buffer
+       commits, copy each LOCAL table's buffer range into
+       `TemporaryTableData` under a stage; release it after a successful
+       commit, clean it up otherwise.
+    6. Remote scans refuse temporary tables (Go builds a dummy
+       `TableReader` for them).
+    7. Savepoints keep only the buffer checkpoint (drop `local_temporary`
+       and `global_temporary` row images).
+    8. `tmp_table_max_size`: Go `checkTempTableSize` over
+       `TxnCtx.TemporaryTables[id].GetSize()` (committed size from
+       `TemporaryTableData.GetTableSize` plus the transaction's delta,
+       `handleTempTableSize` around each `AddRecord`), replacing the
+       per-table `store.size_bytes()`.
   - [ ] Delete `TemporaryTableOverlay`, `TemporaryTableTxnData`,
     `swap_temporary_txn_data`.
 - [ ] Milestone 4: the `store` field is gone.
