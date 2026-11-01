@@ -95,7 +95,7 @@ fn physical_ids(
     target: &Target<'_>,
     partitions: &[String],
 ) -> Result<(Vec<i64>, bool), DriverError> {
-    let Some(partitioning) = target.table.and_then(TableCommon::partition) else {
+    let Some(pi) = target.table.and_then(|table| table.meta().read().get_partition_info()) else {
         if !partitions.is_empty() {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
@@ -104,17 +104,12 @@ fn physical_ids(
         }
         return Ok((vec![target.id], false));
     };
+    let definitions = pi.read().definitions.snapshot();
     let mut ids = Vec::new();
     for name in partitions {
-        let definition = partitioning
-            .definitions
+        let definition = definitions
             .iter()
-            .find(|definition| {
-                definition
-                    .name
-                    .go_to_lower()
-                    .go_equal_fold(&name.go_to_lower())
-            })
+            .find(|definition| definition.name.lowercase().go_equal_fold(&name.go_to_lower()))
             .ok_or_else(|| {
                 DriverError::from(
                     tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(
@@ -125,8 +120,7 @@ fn physical_ids(
         ids.push(definition.id);
     }
     if ids.is_empty() {
-        ids = partitioning
-            .definitions
+        ids = definitions
             .iter()
             .map(|definition| definition.id)
             .collect();
@@ -327,10 +321,14 @@ fn scheduling(
     let table_placement =
         get_policy_placement(catalog, target.table.and_then(TableCommon::placement_policy).as_ref())?;
     let mut by_id = std::collections::HashMap::new();
-    match target.table.and_then(TableCommon::partition) {
-        Some(partitioning) => {
-            for definition in &partitioning.definitions {
-                let placement = get_policy_placement(catalog, definition.placement_policy.as_ref())?
+    match target.table.and_then(|table| table.meta().read().get_partition_info()) {
+        Some(pi) => {
+            for definition in pi.read().definitions.snapshot() {
+                let policy = definition
+                    .placement_policy_ref
+                    .as_ref()
+                    .map(|reference| reference.read().clone());
+                let placement = get_policy_placement(catalog, policy.as_ref())?
                     .or_else(|| table_placement.clone());
                 if let Some(placement) = placement {
                     by_id.insert(definition.id, placement);

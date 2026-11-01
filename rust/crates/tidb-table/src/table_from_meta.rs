@@ -948,20 +948,11 @@ pub fn partition_spec_for(
         .into_iter()
         .map(|column| column.original().to_owned())
         .collect();
-    let overlapping_dropping_partition_indices = (0..definitions.len())
-        .map(|index| {
-            usize::try_from(partition.get_overlapping_dropping_partition_idx(index as isize)).ok()
-        })
-        .collect::<Vec<_>>();
     crate::partition_metadata::partition_spec_from_metadata(
         partition.partition_type,
         &partition.expr,
         &columns,
-        // Go `PartitionInfo.IsEmptyColumns`: the clause was written as
-        // `PARTITION BY KEY ()` and Go filled the columns in from the key.
-        partition.is_empty_columns,
         &definitions,
-        &overlapping_dropping_partition_indices,
         &names,
         &types,
     )

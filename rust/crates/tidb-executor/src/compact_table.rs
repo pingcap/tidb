@@ -51,17 +51,18 @@ pub fn build_compact_table(
     };
     let table_name = table.map_or_else(|| name.to_owned(), |table| table.name());
     if !compact.partition_names.is_empty() {
-        let Some(partition) = table.and_then(|table| table.partition()) else {
+        let Some(pi) = table.and_then(|table| table.meta().read().get_partition_info()) else {
             return Err(DriverError::unsupported(format!(
                 "table:{table_name} is not a partition table, but user specify partition name list:[{}]",
                 compact.partition_names.join(" ")
             )));
         };
         if let Some(unknown) = compact.partition_names.iter().find(|written| {
-            !partition
+            !pi.read()
                 .definitions
+                .snapshot()
                 .iter()
-                .any(|definition| definition.name.go_lower_eq(written))
+                .any(|definition| definition.name.original().go_lower_eq(written))
         }) {
             return Err(DriverError::from(
                 tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[

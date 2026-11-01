@@ -66,15 +66,11 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 use tidb_table::generated_column::TableColumnResolver;
 use tidb_model::index::IndexInfo;
-use tidb_table::partition_routing::{
-    PartitionDef, PartitionKind, PartitionSpec, RangeBound, RangeColumnBound,
-};
+use tidb_model::partition::{PartitionDefinition as StoredDefinition, PartitionInfo};
+use tidb_table::partition_routing::{PartitionKind, PartitionSpec, RangeBound, RangeColumnBound};
 use tidb_terror::MysqlError;
 
-use tidb_table::partition_metadata::{
-    partition_spec_from_metadata,
-    PARTITION_MAX_VALUE,
-};
+use tidb_table::partition_metadata::PARTITION_MAX_VALUE;
 use tidb_hack::GoCaseCompare;
 
 /// Go `checkAddPartitionTooManyPartitions`: the hard cap on partitions.
@@ -116,7 +112,7 @@ pub fn build_table_partitioning(
     handle_offsets: &[usize],
     allocate_id: &mut dyn FnMut() -> i64,
     ctx: &tidb_metabuild::Context,
-) -> Result<Option<PartitionSpec>, MysqlError> {
+) -> Result<Option<(PartitionSpec, PartitionInfo)>, MysqlError> {
     create
         .partitioning
         .as_ref()
@@ -145,8 +141,8 @@ pub fn build_table_partition_info(
     handle_offsets: &[usize],
     allocate_id: &mut dyn FnMut() -> i64,
     ctx: &tidb_metabuild::Context,
-) -> Result<PartitionSpec, MysqlError> {
-    let mut spec = build_table_partitioning_inner(
+) -> Result<(PartitionSpec, PartitionInfo), MysqlError> {
+    let (spec, mut definitions, expr_text) = build_table_partitioning_inner(
         partitioning,
         names,
         types,
@@ -155,17 +151,9 @@ pub fn build_table_partition_info(
         allocate_id,
         ctx,
     )?;
-    let stored = stored_definitions_for(partitioning, &spec, ctx)?;
-    for (routing, stored) in spec.definitions.iter_mut().zip(&stored) {
-        routing.less_than = stored.less_than.snapshot();
-        routing.in_values = stored
-            .in_values
-            .snapshot()
-            .into_iter()
-            .map(|tuple| tuple.snapshot())
-            .collect();
-    }
-    Ok(spec)
+    fill_stored_bounds(partitioning, &spec, &mut definitions, ctx)?;
+    let info = partition_info_for(partitioning, &spec, expr_text, definitions);
+    Ok((spec, info))
 }
 
 fn build_table_partitioning_inner(
@@ -179,7 +167,7 @@ fn build_table_partitioning_inner(
     // depend on the session `time_zone`. Go threads its `BuildContext` down
     // the same path (`buildTablePartitionInfo` -> `checkPartitionValuesIsInt`).
     ctx: &tidb_metabuild::Context,
-) -> Result<PartitionSpec, MysqlError> {
+) -> Result<(PartitionSpec, Vec<StoredDefinition>, String), MysqlError> {
     let method = &partitioning.method;
     if !matches!(
         method.kind,
@@ -313,15 +301,8 @@ fn build_table_partitioning_inner(
             .collect::<Vec<_>>();
         let indexes = apply_update_indexes(partitioning, indexes, handle_offsets)?;
         check_unique_keys_include_partition_columns(&indexes, names, handle_offsets, &dependency_offsets)?;
-        return Ok(PartitionSpec {
-            overlapping_dropping_partition_indices: Vec::new(),
-            is_empty_columns: method.columns.is_empty(),
+        let spec = PartitionSpec {
             kind: PartitionKind::Key,
-            expr_text: dependencies
-                .iter()
-                .map(|name| format!("`{name}`"))
-                .collect::<Vec<_>>()
-                .join(","),
             expr: tidb_expr::expression::Expression::Constant(
                 tidb_expr::expression::Constant::new(
                     tidb_datatype::Datum::Null,
@@ -329,8 +310,8 @@ fn build_table_partitioning_inner(
                 ),
             ),
             dependencies,
-            definitions,
-        });
+        };
+        return Ok((spec, definitions, String::new()));
     }
 
     if method.kind == PartitionType::LIST && method.expr.is_none() {
@@ -361,17 +342,8 @@ fn build_table_partitioning_inner(
             .collect::<Vec<_>>();
         let indexes = apply_update_indexes(partitioning, indexes, handle_offsets)?;
         check_unique_keys_include_partition_columns(&indexes, names, handle_offsets, &dependency_offsets)?;
-        return Ok(PartitionSpec {
-            overlapping_dropping_partition_indices: Vec::new(),
-            is_empty_columns: false,
+        let spec = PartitionSpec {
             kind,
-            expr_text: method
-                .columns
-                .iter()
-                .filter_map(|path| path.last())
-                .map(|name| format!("`{name}`"))
-                .collect::<Vec<_>>()
-                .join(","),
             expr: tidb_expr::expression::Expression::Constant(
                 tidb_expr::expression::Constant::new(
                     tidb_datatype::Datum::Null,
@@ -379,8 +351,8 @@ fn build_table_partitioning_inner(
                 ),
             ),
             dependencies,
-            definitions,
-        });
+        };
+        return Ok((spec, definitions, String::new()));
     }
 
     if method.kind == PartitionType::RANGE && method.expr.is_none() {
@@ -418,20 +390,11 @@ fn build_table_partitioning_inner(
             .collect::<Vec<_>>();
         let indexes = apply_update_indexes(partitioning, indexes, handle_offsets)?;
         check_unique_keys_include_partition_columns(&indexes, names, handle_offsets, &dependency_offsets)?;
-        return Ok(PartitionSpec {
-            overlapping_dropping_partition_indices: Vec::new(),
-            is_empty_columns: false,
+        let spec = PartitionSpec {
             kind: PartitionKind::RangeColumns {
                 less_than,
                 field_types,
             },
-            expr_text: method
-                .columns
-                .iter()
-                .filter_map(|path| path.last())
-                .map(|name| format!("`{name}`"))
-                .collect::<Vec<_>>()
-                .join(","),
             expr: tidb_expr::expression::Expression::Constant(
                 tidb_expr::expression::Constant::new(
                     tidb_datatype::Datum::Null,
@@ -439,8 +402,8 @@ fn build_table_partitioning_inner(
                 ),
             ),
             dependencies,
-            definitions,
-        });
+        };
+        return Ok((spec, definitions, String::new()));
     }
 
     let Some(expr) = &method.expr else {
@@ -530,15 +493,12 @@ fn build_table_partitioning_inner(
     let indexes = apply_update_indexes(partitioning, indexes, handle_offsets)?;
     check_unique_keys_include_partition_columns(&indexes, names, handle_offsets, &dependency_offsets)?;
 
-    Ok(PartitionSpec {
-        overlapping_dropping_partition_indices: Vec::new(),
-        is_empty_columns: false,
+    let spec = PartitionSpec {
         kind,
-        expr_text,
         expr: built,
         dependencies,
-        definitions,
-    })
+    };
+    Ok((spec, definitions, expr_text))
 }
 /// Go `buildTablePartitionInfo`'s `UPDATE INDEXES (name GLOBAL|LOCAL, ...)`:
 /// the table's indexes with each named one's locality replaced, which the
@@ -1043,7 +1003,7 @@ fn build_hash_partition_definitions(
     count: u64,
     allocate_id: &mut dyn FnMut() -> i64,
     ctx: &tidb_metabuild::Context,
-) -> Result<Vec<PartitionDef>, MysqlError> {
+) -> Result<Vec<StoredDefinition>, MysqlError> {
     // Go `buildHashPartitionDefinitions` checks the cap FIRST
     // (`partition.go:1514`), before a single definition is materialised. The
     // order is observable: a HASH statement that is BOTH over-cap and has a
@@ -1075,17 +1035,15 @@ fn build_hash_partition_definitions(
             None => String::new(),
         };
         let placement_policy = written_definition.and_then(partition_definition_placement);
-        definitions.push(PartitionDef {
+        // HASH and KEY definitions carry no VALUES clause at all; the
+        // storage class is resolved from the table's ENGINE_ATTRIBUTE once
+        // the table is built (`rebuildStorageClassForPartitions`).
+        definitions.push(StoredDefinition {
             id: allocate_id(),
-            name,
-            // HASH and KEY definitions carry no VALUES clause at all.
-            less_than: Vec::new(),
-            in_values: Vec::new(),
+            name: tidb_ast::CiString::new(name),
             comment,
-            placement_policy,
-            // Resolved from the table's ENGINE_ATTRIBUTE once the table is
-            // built (`rebuildStorageClassForPartitions`).
-            storage_class: Default::default(),
+            placement_policy_ref: placement_policy.map(tidb_model::GoShared::new),
+            ..StoredDefinition::default()
         });
     }
     Ok(definitions)
@@ -1515,7 +1473,7 @@ pub fn escape_identifier(name: &str, ansi_quotes: bool) -> String {
 /// values, and RANGE COLUMNS lost Go's `_binary` spelling.
 #[must_use]
 pub fn append_partition_defs(
-    definitions: &[PartitionDef],
+    definitions: &[StoredDefinition],
     kind: &PartitionKind,
     ansi_quotes: bool,
 ) -> String {
@@ -1524,12 +1482,19 @@ pub fn append_partition_defs(
         if ordinal > 0 {
             out.push_str(",\n ");
         }
+        let less_than = definition.less_than.snapshot();
+        let in_values = definition
+            .in_values
+            .snapshot()
+            .into_iter()
+            .map(|tuple| tuple.snapshot())
+            .collect::<Vec<_>>();
         out.push_str("PARTITION ");
-        out.push_str(&escape_identifier(&definition.name, ansi_quotes));
+        out.push_str(&escape_identifier(definition.name.original(), ansi_quotes));
         match kind {
             PartitionKind::Range { .. } | PartitionKind::RangeColumns { .. } => {
                 out.push_str(" VALUES LESS THAN (");
-                for (position, bound) in definition.less_than.iter().enumerate() {
+                for (position, bound) in less_than.iter().enumerate() {
                     if position > 0 {
                         out.push(',');
                     }
@@ -1540,15 +1505,15 @@ pub fn append_partition_defs(
             PartitionKind::List { .. } | PartitionKind::ListColumns { .. } => {
                 // Go's two spellings of a DEFAULT partition: no stored values
                 // at all, or the single literal word.
-                let bare_default = definition.in_values.is_empty()
-                    || (definition.in_values.len() == 1
-                        && definition.in_values[0].len() == 1
-                        && definition.in_values[0][0].eq_ignore_ascii_case("DEFAULT"));
+                let bare_default = in_values.is_empty()
+                    || (in_values.len() == 1
+                        && in_values[0].len() == 1
+                        && in_values[0][0].eq_ignore_ascii_case("DEFAULT"));
                 if bare_default {
                     out.push_str(" DEFAULT");
                 } else {
                     out.push_str(" VALUES IN (");
-                    for (index, tuple) in definition.in_values.iter().enumerate() {
+                    for (index, tuple) in in_values.iter().enumerate() {
                         if index > 0 {
                             out.push(',');
                         }
@@ -1573,10 +1538,11 @@ pub fn append_partition_defs(
             PartitionKind::Hash | PartitionKind::Key | PartitionKind::None => {}
         }
         out.push_str(&partition_comment_text(&definition.comment));
-        out.push_str(&partition_placement_text(
-            definition.placement_policy.as_ref(),
-            ansi_quotes,
-        ));
+        let placement = definition
+            .placement_policy_ref
+            .as_ref()
+            .map(|reference| reference.read().clone());
+        out.push_str(&partition_placement_text(placement.as_ref(), ansi_quotes));
     }
     out.push(')');
     out
@@ -1631,7 +1597,7 @@ pub fn partition_names_equal(left: &str, right: &str) -> bool {
 /// `buildHashPartitionDefinitions` store whatever was written.
 fn definition_tail<'a>(
     partitioning: &'a tidb_ast::TablePartitioning,
-    built: &'a mut Vec<PartitionDef>,
+    built: &'a mut Vec<StoredDefinition>,
     allocate_id: &'a mut dyn FnMut() -> i64,
     ctx: &'a tidb_metabuild::Context,
     validate_comment_length: bool,
@@ -1642,18 +1608,17 @@ fn definition_tail<'a>(
         };
         let comment = partition_definition_comment(definition, ctx, validate_comment_length)?;
         check_too_long_partition_name(&definition.name)?;
-        built.push(PartitionDef {
+        // `LessThan` / `InValues` are filled by `fill_stored_bounds` once
+        // the spec is complete; the storage class is resolved from the
+        // table's ENGINE_ATTRIBUTE once the table is built
+        // (`rebuildStorageClassForPartitions`).
+        built.push(StoredDefinition {
             id: allocate_id(),
-            name: definition.name.clone(),
-            // Filled by `build_table_partitioning`, which mirrors the stored
-            // text back onto every definition once the spec is complete.
-            less_than: Vec::new(),
-            in_values: Vec::new(),
+            name: tidb_ast::CiString::new(definition.name.clone()),
             comment,
-            placement_policy: partition_definition_placement(definition),
-            // Resolved from the table's ENGINE_ATTRIBUTE once the table is
-            // built (`rebuildStorageClassForPartitions`).
-            storage_class: Default::default(),
+            placement_policy_ref: partition_definition_placement(definition)
+                .map(tidb_model::GoShared::new),
+            ..StoredDefinition::default()
         });
         Ok(())
     }
@@ -1682,17 +1647,17 @@ fn check_partition_columns_unique(columns: &[String]) -> Result<(), MysqlError> 
     Ok(())
 }
 
-fn check_partition_name_unique(definitions: &[PartitionDef]) -> Result<(), MysqlError> {
+fn check_partition_name_unique(definitions: &[StoredDefinition]) -> Result<(), MysqlError> {
     // Go keeps a map of the lowered names (`checkPartitionNameUnique`), one
     // pass; an INTERVAL clause can generate thousands of definitions.
     let mut seen = std::collections::HashSet::with_capacity(definitions.len());
     for definition in definitions {
-        if !seen.insert(go_to_lower(&definition.name)) {
+        if !seen.insert(go_to_lower(definition.name.original())) {
             // Go reports the LATER occurrence, original-cased
             // (`partition.go:1761`).
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_SAME_NAME_PARTITION
-                    .generate_with_stack_by_args(&[(definition.name.clone()).to_string().into()]),
+                    .generate_with_stack_by_args(&[definition.name.original().to_owned().into()]),
             ));
         }
     }
@@ -1841,8 +1806,8 @@ pub fn build_partition_metadata(
     handle_offsets: &[usize],
     allocate_id: &mut dyn FnMut() -> i64,
     ctx: &tidb_metabuild::Context,
-) -> Result<Option<(tidb_model::partition::PartitionInfo, PartitionSpec)>, MysqlError> {
-    let Some(spec) = build_table_partitioning(
+) -> Result<Option<(PartitionInfo, PartitionSpec)>, MysqlError> {
+    Ok(build_table_partitioning(
         create,
         names,
         types,
@@ -1851,117 +1816,22 @@ pub fn build_partition_metadata(
         allocate_id,
         ctx,
     )?
-    else {
-        return Ok(None);
-    };
-    let partitioning = create
-        .partitioning
-        .as_ref()
-        .expect("a spec was built, so the clause is there");
-    Ok(Some((
-        stored_partition_metadata(partitioning, &spec, ctx)?,
-        spec,
-    )))
+    .map(|(spec, info)| (info, spec)))
 }
 
-/// Go `TableFromMeta` -> `newPartitionedTable` over a `PartitionInfo` read
-/// back from meta JSON: every stored string of the partitioning -- the
-/// expression, the column list and each definition's `LessThan` / `InValues`
-/// bound text -- has each byte that is not UTF-8 replaced by U+FFFD, and the
-/// routing is rebuilt from those strings, so a latin1 client's bound `'x\xE9'`
-/// routes as `'x\u{FFFD}'` (the stored text this tier renders from the
-/// folded bound already reads that way; the routing built from the statement
-/// still held the raw byte). `None` for a table that is not partitioned.
-/// `names` / `types` are the table's visible columns as reloaded.
-///
-/// # Errors
-///
-/// What [`partition_spec_from_metadata`] raises for the reloaded strings.
-pub fn reload_partition_spec_from_meta_json(
-    spec: &PartitionSpec,
-    names: &[String],
-    types: &[FieldType],
-) -> Option<Result<PartitionSpec, MysqlError>> {
-    use tidb_table::tables::table_meta::go_json_text_round_trip;
-    let reloaded = |text: &str| {
-        let mut text = text.to_owned();
-        go_json_text_round_trip(&mut text);
-        text
-    };
-    let kind = match spec.kind {
-        PartitionKind::Range { .. } | PartitionKind::RangeColumns { .. } => PartitionType::RANGE,
-        PartitionKind::List { .. } | PartitionKind::ListColumns { .. } => PartitionType::LIST,
-        PartitionKind::Hash => PartitionType::HASH,
-        PartitionKind::Key => PartitionType::KEY,
-        PartitionKind::None => return None,
-    };
-    // Go stores `pi.Expr` for a written expression and `pi.Columns` for a
-    // written column list (`stored_partition_metadata`).
-    let columns = match spec.kind {
-        PartitionKind::RangeColumns { .. }
-        | PartitionKind::ListColumns { .. }
-        | PartitionKind::Key => spec
-            .dependencies
-            .iter()
-            .map(|name| reloaded(name))
-            .collect(),
-        _ => Vec::new(),
-    };
-    let expr_text = if columns.is_empty() {
-        reloaded(&spec.expr_text)
-    } else {
-        String::new()
-    };
-    let definitions = spec
-        .definitions
-        .iter()
-        .map(|definition| tidb_table::partition_routing::PartitionDef {
-            id: definition.id,
-            name: reloaded(&definition.name),
-            less_than: definition
-                .less_than
-                .iter()
-                .map(|bound| reloaded(bound))
-                .collect(),
-            in_values: definition
-                .in_values
-                .iter()
-                .map(|tuple| tuple.iter().map(|value| reloaded(value)).collect())
-                .collect(),
-            comment: reloaded(&definition.comment),
-            placement_policy: definition.placement_policy.clone(),
-            storage_class: definition.storage_class.clone(),
-        }.to_definition())
-        .collect::<Vec<_>>();
-    Some(partition_spec_from_metadata(
-        kind,
-        &expr_text,
-        &columns,
-        spec.is_empty_columns,
-        &definitions,
-        &spec.overlapping_dropping_partition_indices,
-        names,
-        types,
-    ))
-}
-
-/// The STORED partition metadata a partitioning clause and the routing spec
-/// it built describe (Go `buildTablePartitionInfo` and
-/// `buildPartitionDefinitionsInfo`), the definition ids left at zero.
-///
-/// # Errors
-///
-/// A bound that cannot be rendered back.
-pub fn stored_partition_metadata(
+/// Go `buildTablePartitionInfo`'s `PartitionInfo` for a written clause, over
+/// the definitions it built.
+fn partition_info_for(
     partitioning: &tidb_ast::TablePartitioning,
     spec: &PartitionSpec,
-    ctx: &tidb_metabuild::Context,
-) -> Result<tidb_model::partition::PartitionInfo, MysqlError> {
+    expr_text: String,
+    definitions: Vec<StoredDefinition>,
+) -> PartitionInfo {
     let method = &partitioning.method;
     // Go dispatches the stored shape on whether an EXPRESSION was written:
     // `pi.Expr` for one, `pi.Columns` for a written column list.
     let (expr, columns, is_empty_columns) = if method.expr.is_some() {
-        (spec.expr_text.clone(), Vec::new(), false)
+        (expr_text, Vec::new(), false)
     } else {
         let written = method
             .columns
@@ -1979,8 +1849,7 @@ pub fn stored_partition_metadata(
             (String::new(), written, false)
         }
     };
-    let definitions = stored_definitions_for(partitioning, spec, ctx)?;
-    let mut info = tidb_model::partition::PartitionInfo {
+    let mut info = PartitionInfo {
         partition_type: method.kind,
         expr,
         // Every method this tier builds a spec for is one Go enables; the
@@ -1988,7 +1857,7 @@ pub fn stored_partition_metadata(
         enable: true,
         is_empty_columns,
         num: method.count,
-        ..tidb_model::partition::PartitionInfo::default()
+        ..PartitionInfo::default()
     };
     info.columns = columns
         .into_iter()
@@ -1996,7 +1865,7 @@ pub fn stored_partition_metadata(
         .collect::<Vec<_>>()
         .into();
     info.definitions = definitions.into();
-    Ok(info)
+    info
 }
 
 /// The stored `LessThan`/`InValues` TEXT for each definition.
@@ -2006,25 +1875,14 @@ pub fn stored_partition_metadata(
 /// expression forms (`expr.Format`). Both are reproduced from the routing
 /// spec, which holds the folded values, and the clause, which holds the
 /// written ones.
-fn stored_definitions_for(
+fn fill_stored_bounds(
     partitioning: &tidb_ast::TablePartitioning,
     spec: &PartitionSpec,
+    definitions: &mut [StoredDefinition],
     ctx: &tidb_metabuild::Context,
-) -> Result<Vec<tidb_model::partition::PartitionDefinition>, MysqlError> {
-    let mut stored = Vec::with_capacity(spec.definitions.len());
-    for (ordinal, definition) in spec.definitions.iter().enumerate() {
+) -> Result<(), MysqlError> {
+    for (ordinal, entry) in definitions.iter_mut().enumerate() {
         let written = partitioning.definitions.get(ordinal);
-        let mut entry = tidb_table::partition_routing::PartitionDef {
-            // Filled by the tier that publishes this metadata; Go allocates
-            // it at job-submission time.
-            id: 0,
-            name: definition.name.clone(),
-            less_than: Vec::new(),
-            in_values: Vec::new(),
-            comment: definition.comment.clone(),
-            placement_policy: definition.placement_policy.clone(),
-            storage_class: definition.storage_class.clone(),
-        };
         match &spec.kind {
             // HASH, KEY and NONE definitions carry a name and nothing else.
             PartitionKind::Hash | PartitionKind::Key | PartitionKind::None => {}
@@ -2038,14 +1896,15 @@ fn stored_definitions_for(
                         .copied()
                         .unwrap_or(RangeBound::MaxValue),
                     *unsigned,
-                )];
+                )]
+                .into();
             }
             PartitionKind::RangeColumns {
                 less_than,
                 field_types,
             } => {
                 let bounds = less_than.get(ordinal).map_or(&[][..], Vec::as_slice);
-                entry.less_than = stored_range_columns_bound_text(bounds, field_types)?;
+                entry.less_than = stored_range_columns_bound_text(bounds, field_types)?.into();
             }
             PartitionKind::List { .. } | PartitionKind::ListColumns { .. } => {
                 entry.in_values = stored_in_values(
@@ -2055,12 +1914,15 @@ fn stored_definitions_for(
                         _ => &[],
                     },
                     ctx,
-                )?;
+                )?
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<_>>()
+                .into();
             }
         }
-        stored.push(entry.to_definition());
     }
-    Ok(stored)
+    Ok(())
 }
 
 /// One RANGE COLUMNS bound tuple in the text Go stores
@@ -2226,6 +2088,7 @@ fn stored_list_component(
 #[cfg(test)]
 mod load_permissiveness_tests {
     use super::*;
+    use tidb_table::partition_metadata::partition_spec_from_metadata;
 
     /// Go's LOADER re-judges nothing. `newPartitionExpr`
     /// (`tables/partition.go:306`) rebuilds what a DDL already validated, and
@@ -2241,18 +2104,27 @@ mod load_permissiveness_tests {
         less_than: &[&str],
         in_values: &[&[&str]],
     ) -> tidb_model::partition::PartitionDefinition {
-        tidb_table::partition_routing::PartitionDef {
+        tidb_model::partition::PartitionDefinition {
             id,
-            name: name.to_owned(),
-            less_than: less_than.iter().map(|bound| (*bound).to_owned()).collect(),
+            name: tidb_ast::CiString::new(name),
+            less_than: less_than
+                .iter()
+                .map(|bound| (*bound).to_owned())
+                .collect::<Vec<_>>()
+                .into(),
             in_values: in_values
                 .iter()
-                .map(|tuple| tuple.iter().map(|value| (*value).to_owned()).collect())
-                .collect(),
-            comment: String::new(),
-            placement_policy: None,
-            storage_class: Default::default(),
-        }.to_definition()
+                .map(|tuple| {
+                    tuple
+                        .iter()
+                        .map(|value| (*value).to_owned())
+                        .collect::<Vec<_>>()
+                        .into()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            ..Default::default()
+        }
     }
 
     fn int_column() -> (Vec<String>, Vec<FieldType>) {
@@ -2273,12 +2145,10 @@ mod load_permissiveness_tests {
             PartitionType::LIST,
             "`a`",
             &[],
-            false,
             &[
                 definition(1, "p0", &[], &[&["1"], &["2"]]),
                 definition(2, "p1", &[], &[&["2"], &["3"]]),
             ],
-            &[],
             &names,
             &types,
         )
@@ -2302,12 +2172,10 @@ mod load_permissiveness_tests {
             PartitionType::RANGE,
             "`a`",
             &[],
-            false,
             &[
                 definition(1, "p0", &["10"], &[]),
                 definition(2, "p1", &["5"], &[]),
             ],
-            &[],
             &names,
             &types,
         )
@@ -2326,35 +2194,11 @@ mod load_permissiveness_tests {
             PartitionType::NONE,
             "",
             &[],
-            false,
             &[definition(1, "p0", &[], &[])],
-            &[],
             &names,
             &types,
         )
         .expect("a table mid-repartition opens");
         assert!(matches!(spec.kind, PartitionKind::None));
-    }
-
-    #[test]
-    fn online_drop_overlap_mapping_survives_metadata_rebuild() {
-        let (names, types) = int_column();
-        let spec = partition_spec_from_metadata(
-            PartitionType::RANGE,
-            "`a`",
-            &[],
-            false,
-            &[
-                definition(1, "p0", &["10"], &[]),
-                definition(2, "p1", &["MAXVALUE"], &[]),
-            ],
-            &[Some(1), Some(1)],
-            &names,
-            &types,
-        )
-        .expect("online DROP PARTITION metadata rebuilds");
-
-        assert_eq!(spec.get_overlapping_dropping_partition_idx(0), Some(1));
-        assert_eq!(spec.get_overlapping_dropping_partition_idx(1), Some(1));
     }
 }

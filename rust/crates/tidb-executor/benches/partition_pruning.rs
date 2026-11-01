@@ -21,9 +21,8 @@ use std::time::Instant;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_charset::Collation;
 use tidb_planner_rule::pruned_ids_from_ranger;
-use tidb_table::partition_routing::{
-    PartitionDef, PartitionKind, PartitionSpec, RangeColumnBound,
-};
+use tidb_model::partition::{PartitionDefinition, PartitionInfo};
+use tidb_table::partition_routing::{PartitionKind, PartitionSpec, RangeColumnBound};
 use tidb_expr::{column::Column, expression::Expression};
 use tidb_exprctx::NoColumns;
 use tidb_ranger::types::Range;
@@ -31,7 +30,7 @@ use tidb_ranger::types::Range;
 const PARTITION_COUNTS: [usize; 5] = [2, 10, 100, 1_000, 8_000];
 const ITERATIONS: usize = 10_000;
 
-fn benchmark_spec(parts: usize) -> PartitionSpec {
+fn benchmark_spec(parts: usize) -> (PartitionSpec, PartitionInfo) {
     let field_type = FieldType::new(FieldTypeCode::LongLong)
         .with_flags(FieldTypeFlags::UNSIGNED)
         .with_collation(Collation::Binary);
@@ -45,28 +44,28 @@ fn benchmark_spec(parts: usize) -> PartitionSpec {
         })
         .collect::<Vec<_>>();
     less_than.push(vec![RangeColumnBound::MaxValue]);
-    PartitionSpec {
-        overlapping_dropping_partition_indices: Vec::new(),
-        is_empty_columns: false,
+    let spec = PartitionSpec {
         kind: PartitionKind::RangeColumns {
             less_than,
             field_types: vec![field_type],
         },
-        expr_text: "`a`".to_owned(),
         expr: Expression::Column(column),
         dependencies: vec!["a".to_owned()],
+    };
+    let pi = PartitionInfo {
+        enable: true,
+        columns: vec![tidb_ast::CiString::new("a")].into(),
         definitions: (0..parts)
-            .map(|ordinal| PartitionDef {
+            .map(|ordinal| PartitionDefinition {
                 id: ordinal as i64,
-                name: format!("p{ordinal}"),
-                less_than: Vec::new(),
-                in_values: Vec::new(),
-                comment: String::new(),
-                placement_policy: None,
-                storage_class: Default::default(),
+                name: tidb_ast::CiString::new(format!("p{ordinal}")),
+                ..Default::default()
             })
-            .collect(),
-    }
+            .collect::<Vec<_>>()
+            .into(),
+        ..Default::default()
+    };
+    (spec, pi)
 }
 
 fn benchmark_range() -> Range {
@@ -82,11 +81,11 @@ fn benchmark_range() -> Range {
 fn main() {
     let range = benchmark_range();
     for parts in PARTITION_COUNTS {
-        let spec = benchmark_spec(parts);
+        let (spec, pi) = benchmark_spec(parts);
         let started = Instant::now();
         for _ in 0..ITERATIONS {
             black_box(
-                pruned_ids_from_ranger(&spec, std::slice::from_ref(&range), &NoColumns)
+                pruned_ids_from_ranger(&spec, &pi, std::slice::from_ref(&range), &NoColumns)
                     .expect("range-columns pruning succeeds"),
             );
         }

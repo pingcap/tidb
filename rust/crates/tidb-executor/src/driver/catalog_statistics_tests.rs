@@ -144,10 +144,10 @@
         };
         let table_id = table.table_id();
         let partition_ids = table
-            .partition()
+            .meta().read().get_partition_info()
             .map(|partition| {
                 partition
-                    .definitions
+                    .read().definitions.snapshot()
                     .iter()
                     .map(|definition| definition.id)
                     .collect::<Vec<_>>()
@@ -1271,9 +1271,9 @@
             panic!("fixture pt1 is not a KV table")
         };
         let partition_ids = table
-            .partition()
+            .meta().read().get_partition_info()
             .expect("partition metadata")
-            .definitions
+            .read().definitions.snapshot()
             .iter()
             .map(|definition| definition.id)
             .collect::<std::collections::HashSet<_>>();

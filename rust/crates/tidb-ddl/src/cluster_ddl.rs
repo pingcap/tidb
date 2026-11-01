@@ -211,7 +211,7 @@ fn rewrite_partition_query_string(
     let spec = tidb_table::table_from_meta::partition_spec_for(&columns, &partition.read())
         .map_err(DdlAdmissionError::from_mysql_error)?;
     let definitions = tidb_ddl_build::table_partition::append_partition_defs(
-        &spec.definitions,
+        &partition.read().definitions.snapshot(),
         &spec.kind,
         context.sql_mode().ansi_quotes,
     );
@@ -7671,31 +7671,6 @@ fn stored_partition_spec(
     let columns = stored.columns.iter_deref().collect::<Vec<_>>();
     tidb_table::table_from_meta::partition_spec_for(&columns, &partition.read())
         .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error)))
-}
-
-/// A definition of the shared partition implementation under the physical
-/// id `id`, as Go's model stores it.
-fn model_partition_definition(
-    definition: tidb_table::partition_routing::PartitionDef,
-    id: i64,
-) -> tidb_model::partition::PartitionDefinition {
-    let mut converted = tidb_model::partition::PartitionDefinition {
-        id,
-        name: CiString::new(definition.name),
-        comment: definition.comment,
-        placement_policy_ref: definition.placement_policy.map(GoShared::new),
-        storage_class_tier: definition.storage_class.0,
-        storage_class_transitions: definition.storage_class.1.into(),
-        ..tidb_model::partition::PartitionDefinition::default()
-    };
-    converted.less_than = definition.less_than.into();
-    converted.in_values = definition
-        .in_values
-        .into_iter()
-        .map(Into::into)
-        .collect::<Vec<_>>()
-        .into();
-    converted
 }
 
 /// Go `AddTablePartitions` / `DropTablePartition`'s checks over the stored

@@ -366,13 +366,13 @@ fn create_table_with_placement_policy_resolves_table_and_partition_refs() {
     );
     let table = stored_table(&tk, "t_range_p");
     assert_eq!(table.placement_policy().unwrap().id, x_id);
-    let definitions = &table.partition().unwrap().definitions;
+    let definitions = &table.meta().read().get_partition_info().unwrap().read().definitions.snapshot();
     assert_eq!(definitions.len(), 3);
-    assert!(definitions[0].placement_policy.is_none(), "p0 inherits nothing at DDL time");
-    let p1 = definitions[1].placement_policy.as_ref().unwrap();
+    assert!(definitions[0].placement_policy_ref.is_none(), "p0 inherits nothing at DDL time");
+    let p1 = definitions[1].placement_policy_ref.as_ref().unwrap().read().clone();
     assert_eq!(p1.id, y_id);
     assert_eq!(p1.name.lowercase(), "y");
-    assert!(definitions[2].placement_policy.is_none());
+    assert!(definitions[2].placement_policy_ref.is_none());
     tk.must_exec("drop table if exists t_range_p");
 
     // List-columns partitioned: same shape as Go's t_list_p.
@@ -384,10 +384,10 @@ fn create_table_with_placement_policy_resolves_table_and_partition_refs() {
     );
     let table = stored_table(&tk, "t_list_p");
     assert_eq!(table.placement_policy().unwrap().id, x_id);
-    let definitions = &table.partition().unwrap().definitions;
-    assert!(definitions[0].placement_policy.is_none());
-    assert_eq!(definitions[1].placement_policy.as_ref().unwrap().id, y_id);
-    assert!(definitions[2].placement_policy.is_none());
+    let definitions = &table.meta().read().get_partition_info().unwrap().read().definitions.snapshot();
+    assert!(definitions[0].placement_policy_ref.is_none());
+    assert_eq!(definitions[1].placement_policy_ref.as_ref().unwrap().read().clone().id, y_id);
+    assert!(definitions[2].placement_policy_ref.is_none());
     tk.must_exec("drop table if exists t_list_p");
 
     // Hash-partitioned with PARTITIONS 4: every generated definition keeps
@@ -397,10 +397,10 @@ fn create_table_with_placement_policy_resolves_table_and_partition_refs() {
     );
     let table = stored_table(&tk, "t_hash_p");
     assert_eq!(table.placement_policy().unwrap().id, x_id);
-    let definitions = &table.partition().unwrap().definitions;
+    let definitions = &table.meta().read().get_partition_info().unwrap().read().definitions.snapshot();
     assert_eq!(definitions.len(), 4);
     assert!(
-        definitions.iter().all(|definition| definition.placement_policy.is_none()),
+        definitions.iter().all(|definition| definition.placement_policy_ref.is_none()),
         "generated hash partitions carry no policy reference of their own"
     );
 }
@@ -542,11 +542,11 @@ fn alter_table_placement_updates_ref_and_failed_alter_keeps_old_ref() {
     assert_eq!(reference.name.lowercase(), "p1");
     assert!(
         table
-            .partition()
+            .meta().read().get_partition_info()
             .unwrap()
-            .definitions
+            .read().definitions.snapshot()
             .iter()
-            .all(|definition| definition.placement_policy.is_none()),
+            .all(|definition| definition.placement_policy_ref.is_none()),
         "a table-level alter does not write partition references"
     );
 
@@ -633,12 +633,12 @@ fn truncate_table_with_placement_keeps_table_and_partition_refs() {
     let reference = table.placement_policy().expect("table ref kept").clone();
     assert_eq!(reference.id, p1_id);
     assert_eq!(reference.name.lowercase(), "p1");
-    let definitions = &table.partition().unwrap().definitions;
-    assert!(definitions[0].placement_policy.is_none());
-    let p1_ref = definitions[1].placement_policy.as_ref().unwrap();
+    let definitions = &table.meta().read().get_partition_info().unwrap().read().definitions.snapshot();
+    assert!(definitions[0].placement_policy_ref.is_none());
+    let p1_ref = definitions[1].placement_policy_ref.as_ref().unwrap().read().clone();
     assert_eq!(p1_ref.id, p2_id);
     assert_eq!(p1_ref.name.lowercase(), "p2");
-    assert!(definitions[2].placement_policy.is_none());
+    assert!(definitions[2].placement_policy_ref.is_none());
 
     // Both policies are still referenced, so neither drops.
     let schema = tk.info_schema();

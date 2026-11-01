@@ -29,12 +29,13 @@ fn partition_defs(tk: &TestKit, table: &str) -> Vec<(String, i64)> {
     let tidb_infoschema::TableEntry::Kv(kv) = tk.get_table_by_name("test", table) else {
         panic!("table {table} is not a KV table");
     };
-    let partition = kv.partition().expect("table is partitioned");
-    partition
+    kv.meta()
+        .read()
+        .get_partition_info()
+        .expect("table is partitioned")
+        .read()
         .definitions
-        .iter()
-        .map(|definition| (definition.name.clone(), definition.id))
-        .collect()
+        .map_visible(|definition| (definition.name.original().to_owned(), definition.id))
 }
 
 /// Go `partition_test.go:34::TestDropAndTruncatePartition`. Go builds the

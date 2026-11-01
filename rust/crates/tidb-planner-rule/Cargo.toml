@@ -15,6 +15,7 @@ tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-ranger = { path = "../tidb-ranger" }
 tidb-table = { path = "../tidb-table" }
+tidb-model = { path = "../tidb-model" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }

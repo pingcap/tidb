@@ -691,14 +691,15 @@ fn table_access(catalog: &SessionExtendedInfoSchema, table_id: i64, alias: Optio
         ..ScanAccessObject::default()
     };
     if let Some(table) = catalog.physical_kv_table_by_id(table_id) {
-        if let Some(name) = table.partition().and_then(|partition| {
-            partition
+        if let Some(name) = table.meta().read().get_partition_info().and_then(|pi| {
+            pi.read()
                 .definitions
-                .iter()
+                .snapshot()
+                .into_iter()
                 .find(|definition| definition.id == table_id)
-                .map(|definition| definition.name.as_str())
+                .map(|definition| definition.name.original().to_owned())
         }) {
-            access.partitions.push(name.to_owned());
+            access.partitions.push(name);
         }
     }
     access
@@ -1122,12 +1123,14 @@ fn physical_access(
             let mut access = point_access(catalog, hypo_indexes, point.table_id, point.index_id);
             if let Some(ids) = &point.partition_ids {
                 if let Some(table) = catalog.physical_kv_table_by_id(point.table_id) {
-                    if let Some(partition) = table.partition() {
-                        access.partitions = partition
+                    if let Some(pi) = table.meta().read().get_partition_info() {
+                        access.partitions = pi
+                            .read()
                             .definitions
+                            .snapshot()
                             .iter()
                             .filter(|definition| ids.contains(&definition.id))
-                            .map(|definition| definition.name.clone())
+                            .map(|definition| definition.name.original().to_owned())
                             .collect();
                     }
                 }

@@ -355,28 +355,19 @@ fn physical_ids(
     table: &TableCommon,
     table_name: &str,
 ) -> Result<Vec<i64>, DriverError> {
-    let Some(partition) = table.partition() else {
+    let Some(pi) = table.meta().read().get_partition_info() else {
         return Ok(vec![table.table_id()]);
     };
+    let definitions = pi.read().definitions.snapshot();
     if stmt.partitions.is_empty() {
-        return Ok(partition
-            .definitions
-            .iter()
-            .map(|definition| definition.id)
-            .collect());
+        return Ok(definitions.iter().map(|definition| definition.id).collect());
     }
     stmt.partitions
         .iter()
         .map(|name| {
-            partition
-                .definitions
+            definitions
                 .iter()
-                .find(|definition| {
-                    definition
-                        .name
-                        .go_to_lower()
-                        .go_equal_fold(&name.go_to_lower())
-                })
+                .find(|definition| definition.name.lowercase().go_equal_fold(&name.go_to_lower()))
                 .map(|definition| definition.id)
                 .ok_or_else(|| {
                     DriverError::from(

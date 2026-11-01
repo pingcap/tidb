@@ -96,7 +96,7 @@ pub enum PartitionKind {
         /// Go `ForRangePruning.LessThan`/`MaxValue`: each partition's
         /// EXCLUSIVE upper bound, in definition order and strictly
         /// increasing (1493). Always the same length as
-        /// [`PartitionSpec::definitions`].
+        /// `PartitionInfo.Definitions`.
         less_than: Vec<RangeBound>,
         /// Whether the partition expression's type is unsigned, which is
         /// Go's `isPartExprUnsigned` and decides how a bound compares.
@@ -161,123 +161,13 @@ impl PartitionKind {
     }
 }
 
-/// One partition: Go `model.PartitionDefinition`, reduced to the facts a
-/// row's key and `SHOW CREATE TABLE` need.
-#[derive(Clone, Debug, Default)]
-pub struct PartitionDef {
-    /// Go `PartitionDefinition.ID`: the PHYSICAL table id this partition's
-    /// record keys are written under.
-    pub id: i64,
-    /// Go `PartitionDefinition.Name`, as written (`p0`, `p1`, ...).
-    pub name: String,
-    /// Go `PartitionDefinition.LessThan`: the bound TEXT as stored, which is
-    /// what `SHOW CREATE TABLE` prints. Go renders from these strings rather
-    /// than from the folded values (`ddl/partition.go:5204`), which is how a
-    /// written `MAXVALUE`, a `_binary 0x..` literal and the exact spelling of
-    /// a bound all survive a round trip.
-    pub less_than: Vec<String>,
-    /// Go `PartitionDefinition.InValues`: the `VALUES IN` tuples as stored.
-    ///
-    /// Rendering from the FOLDED values instead lost two things Go keeps: the
-    /// written position of `NULL` in the list, and the values of a partition
-    /// that also carries `DEFAULT` -- `VALUES IN (1, 2, DEFAULT)` printed as
-    /// a bare `DEFAULT`.
-    pub in_values: Vec<Vec<String>>,
-    /// Go `PartitionDefinition.Comment`, the per-partition `COMMENT '...'`.
-    ///
-    /// It is not decoration: `AppendPartitionInfo` (`ddl/partition.go:5155`)
-    /// treats a partition that carries one as NOT default-named, which is
-    /// what makes a HASH table print its definition list rather than the
-    /// compact `PARTITIONS n`.
-    pub comment: String,
-    /// Go `PartitionDefinition.PlacementPolicyRef`, reduced to the policy
-    /// NAME this definition points at.
-    ///
-    /// Go deliberately does NOT copy an inherited table policy down onto a
-    /// partition (`setPartitionPlacementFromOptions`, `ddl/partition.go`):
-    /// the partition's key range is appended to the table's rule coverage
-    /// instead, so altering the policy cascades to both. Only a policy
-    /// written on the partition ITSELF is recorded here.
-    ///
-    /// Both halves of Go's `PolicyRefInfo` are kept, not just the name: the
-    /// placement BUNDLES that carry these settings to PD are resolved by
-    /// policy ID (`PolicyGetter::get_policy`), so a reference that remembers
-    /// only the name cannot build one.
-    pub placement_policy: Option<tidb_model::PolicyRefInfo>,
-    /// Go `PartitionDefinition.StorageClassTier` and
-    /// `StorageClassTransitions`, resolved from the table's
-    /// `ENGINE_ATTRIBUTE` when the definition was built.
-    pub storage_class: StorageClass,
-}
-
-impl From<&tidb_model::partition::PartitionDefinition> for PartitionDef {
-    /// The stored Go `model.PartitionDefinition` a table routes by.
-    fn from(definition: &tidb_model::partition::PartitionDefinition) -> Self {
-        PartitionDef {
-            id: definition.id,
-            name: definition.name.original().to_owned(),
-            less_than: definition.less_than.snapshot(),
-            in_values: definition
-                .in_values
-                .snapshot()
-                .into_iter()
-                .map(|tuple| tuple.snapshot())
-                .collect(),
-            comment: definition.comment.clone(),
-            placement_policy: definition
-                .placement_policy_ref
-                .as_ref()
-                .map(|reference| reference.read().clone()),
-            storage_class: (
-                definition.storage_class_tier.clone(),
-                definition.storage_class_transitions.snapshot(),
-            ),
-        }
-    }
-}
-
-impl PartitionDef {
-    /// The Go `model.PartitionDefinition` this definition is stored as.
-    #[must_use]
-    pub fn to_definition(&self) -> tidb_model::partition::PartitionDefinition {
-        let mut stored = tidb_model::partition::PartitionDefinition {
-            id: self.id,
-            name: tidb_ast::CiString::new(self.name.clone()),
-            comment: self.comment.clone(),
-            storage_class_tier: self.storage_class.0.clone(),
-            ..tidb_model::partition::PartitionDefinition::default()
-        };
-        stored.less_than = self.less_than.clone().into();
-        stored.in_values = self
-            .in_values
-            .iter()
-            .map(|tuple| tuple.clone().into())
-            .collect::<Vec<_>>()
-            .into();
-        stored.placement_policy_ref = self
-            .placement_policy
-            .as_ref()
-            .map(|reference| tidb_model::GoShared::new(reference.clone()));
-        stored.storage_class_transitions = self.storage_class.1.clone().into();
-        stored
-    }
-
-    /// Go `PartitionDefinition.StorageClassString`.
-    #[must_use]
-    pub fn storage_class_string(&self) -> String {
-        tidb_model::build_storage_class_string(&self.storage_class.0, &self.storage_class.1)
-    }
-}
-
-/// A table's partitioning: Go `model.PartitionInfo` plus the built expression
-/// Go keeps beside it as `PartitionExpr`.
+/// Go `tables.PartitionExpr`: the built partition expression and the
+/// pruning data Go derives from `model.PartitionInfo` when it loads the table.
+/// The definitions themselves stay on `TableInfo.Partition`.
 #[derive(Clone, Debug)]
 pub struct PartitionSpec {
     /// The method.
     pub kind: PartitionKind,
-    /// Go `PartitionInfo.Expr`: the partition expression in Go's own restored
-    /// spelling, which is the text `SHOW CREATE TABLE` prints back.
-    pub expr_text: String,
     /// The evaluable form, whose `Column` nodes index [`Self::dependencies`]
     /// -- the same convention a generated column uses
     /// (`crate::generated_column::GeneratedColumn::expr`), and for the same
@@ -289,23 +179,6 @@ pub struct PartitionSpec {
     /// reads, in the order [`Self::expr`] indexes them. A projected scan must
     /// decode these or routing would evaluate over holes.
     pub dependencies: Vec<String>,
-    /// The partitions, in definition order. Never empty: Go's
-    /// `checkNoHashPartitions` rejects `PARTITIONS 0` with 1504.
-    pub definitions: Vec<PartitionDef>,
-    /// Go `PartitionInfo.GetOverlappingDroppingPartitionIdx`, captured for
-    /// every definition while the model metadata is still available. Empty
-    /// means the ordinary identity mapping used outside Go's online DROP
-    /// PARTITION write-only state.
-    pub overlapping_dropping_partition_indices: Vec<Option<usize>>,
-    /// Go `PartitionInfo.IsEmptyColumns`: set when `PARTITION BY KEY ()` was
-    /// written with no column list and Go filled one in from the primary key.
-    ///
-    /// `SHOW CREATE TABLE` must print the clause AS WRITTEN -- Go's
-    /// `writeColumnListToBuffer` returns before emitting anything when this
-    /// is set (`ddl/partition.go:5126`), so the table reads back as
-    /// `PARTITION BY KEY ()` and re-creating it resolves the key again
-    /// rather than pinning today's columns.
-    pub is_empty_columns: bool,
 }
 
 /// A row that no partition accepts, or an expression that failed to evaluate.
@@ -333,36 +206,6 @@ pub enum RoutingError {
 }
 
 impl PartitionSpec {
-    /// Go `PartitionInfo.Num`: how many partitions the table has.
-    #[must_use]
-    pub fn num(&self) -> u64 {
-        self.definitions.len() as u64
-    }
-
-    /// The physical table ids this table's rows can live under, ascending.
-    ///
-    /// Ids are allocated as one contiguous ascending block at `CREATE TABLE`,
-    /// so this is also the key ORDER the partitions' record ranges appear in.
-    #[must_use]
-    pub fn physical_ids(&self) -> Vec<i64> {
-        self.definitions.iter().map(|def| def.id).collect()
-    }
-
-    /// Go `PartitionInfo.GetOverlappingDroppingPartitionIdx` for one
-    /// definition ordinal. Online DROP PARTITION may redirect a RANGE or LIST
-    /// read to a still-readable overlapping definition, or skip it.
-    #[must_use]
-    pub fn get_overlapping_dropping_partition_idx(&self, index: usize) -> Option<usize> {
-        if self.overlapping_dropping_partition_indices.len() != self.definitions.len() {
-            return (index < self.definitions.len()).then_some(index);
-        }
-        self.overlapping_dropping_partition_indices
-            .get(index)
-            .copied()
-            .flatten()
-            .filter(|replacement| *replacement < self.definitions.len())
-    }
-
     pub fn update_dependency_type(&mut self, name: &str, field_type: &FieldType) {
         let Some(index) = self
             .dependencies
@@ -385,16 +228,9 @@ impl PartitionSpec {
         }
     }
 
-    /// The partition named `name`, matched case-insensitively as MySQL
-    /// matches partition names.
-    #[must_use]
-    pub fn definition_named(&self, name: &str) -> Option<&PartitionDef> {
-        self.definitions
-            .iter()
-            .find(|def| def.name.go_lower_eq(name))
-    }
-
-    /// Go `locatePartition`: the physical table id `row` belongs in.
+    /// Go `locatePartitionCommon`: the ordinal, among the `num` definitions
+    /// this expression routes over, that `row` belongs in -- the number
+    /// `EXPLAIN`'s access object indexes `Partition.Definitions` with.
     ///
     /// `columns` is the table's CURRENT column list, which is where the
     /// dependency names become offsets; `ctx` is the statement's evaluation
@@ -404,42 +240,15 @@ impl PartitionSpec {
     /// # Errors
     ///
     /// [`RoutingError::Eval`] when the partition expression fails.
-    pub fn locate<S: crate::generated_column::GeneratedColumnSlot>(
+    pub fn locate_partition_common<S: crate::generated_column::GeneratedColumnSlot>(
         &self,
-        row: &[Datum],
-        columns: &[S],
-        ctx: &dyn tidb_exprctx::Columns,
-    ) -> Result<i64, RoutingError> {
-        let index = self.locate_index(row, columns, ctx)?;
-        Ok(self.definitions[index].id)
-    }
-
-    /// [`PartitionSpec::locate`] as the partition's ORDINAL -- Go's
-    /// `GetPartitionIdxByRow`, the number `EXPLAIN`'s access object indexes
-    /// `Partition.Definitions` with.
-    ///
-    /// # Errors
-    ///
-    /// The same [`RoutingError`]s [`PartitionSpec::locate`] raises.
-    pub(crate) fn get_partition_idx_by_row<S: crate::generated_column::GeneratedColumnSlot>(
-        &self,
-        row: &[Datum],
-        columns: &[S],
-        ctx: &dyn tidb_exprctx::Columns,
-    ) -> Result<usize, RoutingError> {
-        self.locate_index(row, columns, ctx)
-    }
-
-    /// [`PartitionSpec::locate`] as the partition's ORDINAL, which is what
-    /// the per-method rules are written in terms of.
-    fn locate_index<S: crate::generated_column::GeneratedColumnSlot>(
-        &self,
+        num: u64,
         row: &[Datum],
         columns: &[S],
         ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<usize, RoutingError> {
         match &self.kind {
-            PartitionKind::Key => key_partition_index(row, columns, &self.dependencies, self.num()),
+            PartitionKind::Key => key_partition_index(row, columns, &self.dependencies, num),
             PartitionKind::RangeColumns {
                 less_than,
                 field_types,
@@ -478,7 +287,7 @@ impl PartitionSpec {
                 )
                 .map_err(RoutingError::Eval)?;
                 match kind {
-                    PartitionKind::Hash => locate_hash_partition(&value, self.num()),
+                    PartitionKind::Hash => locate_hash_partition(&value, num),
                     PartitionKind::Key => unreachable!("matched above"),
                     PartitionKind::Range {
                         less_than,

@@ -1027,14 +1027,16 @@ fn run_insert_rows(
     let insert_partition_ids = if insert.partitions.is_empty() {
         None
     } else {
-        let Some(spec) = kv.partition() else {
+        let Some(_) = kv.partition() else {
             return Err(DriverError::from(
                 tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
                     .generate_with_stack_by_args(&[]),
             ));
         };
         Some(
-            tidb_planner_rule::ids_for_selected_partitions(spec, &insert.partitions)
+            tidb_planner_rule::ids_for_selected_partitions(
+                    &kv.meta().read().get_partition_info().expect("partitioned").read(),
+                    &insert.partitions)
                 .map_err(|partition| {
                     DriverError::from(
                         tidb_table::table_errors::ERR_UNKNOWN_PARTITION
@@ -3429,7 +3431,7 @@ fn run_update_with_physical(
     let partition_ids = match catalog.get_in(&database, &name) {
         Some(TableEntry::Kv(kv)) if table_ref.partitions.is_empty() => None,
         Some(TableEntry::Kv(kv)) => {
-            let Some(spec) = kv.partition() else {
+            let Some(_) = kv.partition() else {
                 return Err(DriverError::from(
                     tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(
                         &[
@@ -3440,7 +3442,9 @@ fn run_update_with_physical(
                 ));
             };
             Some(
-                tidb_planner_rule::ids_for_selected_partitions(spec, &table_ref.partitions)
+                tidb_planner_rule::ids_for_selected_partitions(
+                    &kv.meta().read().get_partition_info().expect("partitioned").read(),
+                    &table_ref.partitions)
                     .map_err(|partition| {
                         DriverError::from(
                             tidb_table::table_errors::ERR_UNKNOWN_PARTITION

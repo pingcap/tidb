@@ -130,7 +130,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
             // whose notes this statement reports.
             let context = job_context.with_isolated_warnings();
             let change = apply_partition_change(stored, action, &*context)?;
-            let transformed = change.partition;
+            let transformed = change.definitions;
             let notes = partition_notes(&*context);
             let old_names = partitioning
                 .definitions
@@ -138,11 +138,14 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
                 .iter()
                 .map(|definition| definition.name.lowercase().to_owned())
                 .collect::<std::collections::HashSet<_>>();
+            // `assignGIDsForJobs` draws the new partitions' ids.
             let added = transformed
-                .definitions
                 .into_iter()
-                .filter(|definition| !old_names.contains(&definition.name.go_to_lower()))
-                .map(|definition| model_partition_definition(definition, 0))
+                .filter(|definition| !old_names.contains(definition.name.lowercase()))
+                .map(|definition| tidb_model::partition::PartitionDefinition {
+                    id: 0,
+                    ..definition
+                })
                 .collect::<Vec<_>>();
             // `IF NOT EXISTS` over an existing name: Go's note, no job.
             if added.is_empty() {
@@ -194,12 +197,11 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
             // names.
             let context = job_context.with_isolated_warnings();
             let change = apply_partition_change(stored, action, &*context)?;
-            let transformed = change.partition;
+            let transformed = change.definitions;
             let notes = partition_notes(&*context);
             let remaining = transformed
-                .definitions
                 .iter()
-                .map(|definition| definition.name.go_to_lower())
+                .map(|definition| definition.name.lowercase().to_owned())
                 .collect::<std::collections::HashSet<_>>();
             let dropped = stored
                 .get_partition_info()

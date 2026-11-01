@@ -57,9 +57,9 @@ impl SessionExtendedInfoSchema {
                             cacheable: table.temp_table_type() == tidb_model::TempTableType::NONE
                                 && !system_schema,
                         });
-                        if let Some(partition) = table.partition() {
-                            for definition in &partition.definitions {
-                                schemas.insert(definition.id, Arc::clone(&schema));
+                        if let Some(pi) = table.meta().read().get_partition_info() {
+                            for id in pi.read().definitions.map_visible(|definition| definition.id) {
+                                schemas.insert(id, Arc::clone(&schema));
                             }
                         }
                         schemas.insert(table.table_id(), schema);
@@ -122,17 +122,17 @@ impl SessionExtendedInfoSchema {
             return format!("tableID {physical_id}");
         };
         let mut name = table.name().clone();
-        if let Some(partition) = table.partition() {
-            match partition
-                .definitions
+        if let Some(pi) = table.meta().read().get_partition_info() {
+            let definitions = pi.read().definitions.snapshot();
+            match definitions
                 .iter()
                 .find(|definition| definition.id == physical_id)
             {
                 Some(definition) => {
                     name.push(' ');
-                    name.push_str(&definition.name);
+                    name.push_str(definition.name.original());
                 }
-                None if !partition.definitions.is_empty() => name.push_str(" global"),
+                None if !definitions.is_empty() => name.push_str(" global"),
                 None => {}
             }
         }

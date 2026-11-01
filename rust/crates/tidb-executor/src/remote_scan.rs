@@ -1660,6 +1660,7 @@ mod tests {
         let partition = table.partition().unwrap().clone();
         let mut fixture = common_handle_without_catalog_index_fixture();
         fixture.table.set_partition(partition);
+        fixture.table.meta().write().partition = table.meta().read().partition.clone();
         for row in [[1, 30], [2, 20], [3, 10], [4, 40]] {
             fixture
                 .table
@@ -1722,6 +1723,7 @@ mod tests {
         fixture
             .table
             .set_partition(table.partition().unwrap().clone());
+        fixture.table.meta().write().partition = table.meta().read().partition.clone();
         for (id, name, offset) in [(1, "ia", 0), (2, "ib", 1)] {
             fixture.table.add_index(
                 Index {

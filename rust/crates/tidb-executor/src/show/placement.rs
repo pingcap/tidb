@@ -56,9 +56,13 @@ pub fn table_rows(
         .as_ref()
         .map(|placement| row(format!("TABLE {database}.{table_name}"), placement, PENDING));
     let mut rows = Vec::new();
-    if let Some(partitioning) = table.partition() {
-        for definition in &partitioning.definitions {
-            let placement = get_policy_placement(catalog, definition.placement_policy.as_ref())?
+    if let Some(pi) = table.meta().read().get_partition_info() {
+        for definition in pi.read().definitions.snapshot() {
+            let policy = definition
+                .placement_policy_ref
+                .as_ref()
+                .map(|reference| reference.read().clone());
+            let placement = get_policy_placement(catalog, policy.as_ref())?
                 .or_else(|| table_placement.clone());
             if let Some(placement) = placement {
                 rows.push(row(

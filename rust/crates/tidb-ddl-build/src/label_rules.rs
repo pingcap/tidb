@@ -56,12 +56,10 @@ impl LabelRuleTable {
         Self {
             name: table.name().go_to_lower(),
             id: table.table_id(),
-            partitions: table.partition().map_or_else(Vec::new, |partition| {
-                partition
-                    .definitions
-                    .iter()
-                    .map(|definition| (definition.name.go_to_lower(), definition.id))
-                    .collect()
+            partitions: table.meta().read().get_partition_info().map_or_else(Vec::new, |pi| {
+                pi.read().definitions.map_visible(|definition| {
+                    (definition.name.lowercase().to_owned(), definition.id)
+                })
             }),
         }
     }

@@ -457,8 +457,8 @@ fn tiflash_replica_rows(catalog: &SessionExtendedInfoSchema, visibility: &Schema
             continue;
         };
         let fallback = f64::from(replica.available);
-        let progress = if let Some(partition) = table.partition() {
-            let ids: Vec<_> = partition.definitions.iter().map(|p| p.id).collect();
+        let progress = if let Some(pi) = table.meta().read().get_partition_info() {
+            let ids = pi.read().definitions.map_visible(|definition| definition.id);
             if ids.is_empty() {
                 fallback
             } else {
@@ -1029,17 +1029,29 @@ fn partitions_rows(
         // Go names the COLUMNS forms differently from the expression forms and
         // prints the column list in place of the expression
         // (`infoschema_reader.go`): `RANGE COLUMNS`, `LIST COLUMNS`, `KEY`.
-        let (method, expression) = match &partition.kind {
-            crate::PartitionKind::RangeColumns { .. } => {
-                ("RANGE COLUMNS".to_owned(), partition.expr_text.clone())
-            }
-            crate::PartitionKind::ListColumns { .. } => {
-                ("LIST COLUMNS".to_owned(), partition.expr_text.clone())
-            }
-            crate::PartitionKind::Key => ("KEY".to_owned(), partition.expr_text.clone()),
-            other => (other.sql().to_owned(), partition.expr_text.clone()),
+        let pi = table
+            .meta()
+            .read()
+            .get_partition_info()
+            .expect("a partitioned table carries its PartitionInfo");
+        let pi = pi.read();
+        let columns = pi.columns.snapshot();
+        let expression = if columns.is_empty() {
+            pi.expr.clone()
+        } else {
+            columns
+                .iter()
+                .map(|column| format!("`{}`", column.original()))
+                .collect::<Vec<_>>()
+                .join(",")
         };
-        for (ordinal, definition) in partition.definitions.iter().enumerate() {
+        let method = match &partition.kind {
+            crate::PartitionKind::RangeColumns { .. } => "RANGE COLUMNS".to_owned(),
+            crate::PartitionKind::ListColumns { .. } => "LIST COLUMNS".to_owned(),
+            crate::PartitionKind::Key => "KEY".to_owned(),
+            other => other.sql().to_owned(),
+        };
+        for (ordinal, definition) in pi.definitions.snapshot().iter().enumerate() {
             let (row_count, average_row_length, data_length, index_length) =
                 table.partition_storage_statistics(definition.id);
             // Go's `PARTITION_DESCRIPTION`: the RANGE bounds joined by commas,
@@ -1047,12 +1059,14 @@ fn partitions_rows(
             let description = match &partition.kind {
                 crate::PartitionKind::Range { .. }
                 | crate::PartitionKind::RangeColumns { .. } => {
-                    definition.less_than.join(",")
+                    definition.less_than.snapshot().join(",")
                 }
                 crate::PartitionKind::List { .. }
                 | crate::PartitionKind::ListColumns { .. } => definition
                     .in_values
-                    .iter()
+                    .snapshot()
+                    .into_iter()
+                    .map(|tuple| tuple.snapshot())
                     .map(|tuple| {
                         if tuple.len() == 1 {
                             tuple[0].clone()
@@ -1068,17 +1082,17 @@ fn partitions_rows(
             // absent comment read back as '' rather than NULL.
             let description = Datum::Bytes(description.into_bytes());
             let policy = definition
-                .placement_policy
+                .placement_policy_ref
                 .as_ref()
                 .map_or(Datum::Null, |reference| {
-                    Datum::Bytes(reference.name.original().as_bytes().to_vec())
+                    Datum::Bytes(reference.read().name.original().as_bytes().to_vec())
                 });
             let comment = Datum::Bytes(definition.comment.clone().into_bytes());
             rows.push(vec![
                 catalog_value(),
                 Datum::Bytes(schema.clone().into_bytes()),
                 Datum::Bytes(table_name.clone().into_bytes()),
-                Datum::Bytes(definition.name.clone().into_bytes()),
+                Datum::Bytes(definition.name.original().as_bytes().to_vec()),
                 Datum::Null,
                 // Go's ordinal is ONE-based.
                 Datum::Int(ordinal as i64 + 1),

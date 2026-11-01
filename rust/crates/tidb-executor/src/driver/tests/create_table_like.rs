@@ -261,26 +261,29 @@ fn like_copies_partitioning_with_fresh_physical_ids() {
     crate::run_create_table_on("CREATE TABLE dst LIKE src", &mut catalog).unwrap();
 
     let source_ids: Vec<i64> = kv(&catalog, "src")
-        .partition()
+        .meta()
+        .read()
+        .get_partition_info()
         .unwrap()
+        .read()
         .definitions
-        .iter()
-        .map(|def| def.id)
-        .collect();
+        .map_visible(|def| def.id);
     let copy = kv(&catalog, "dst");
-    let copy_partition = copy.partition().expect("the partitioning is inherited");
-    let copy_ids: Vec<i64> = copy_partition
+    let copy_definitions = copy
+        .meta()
+        .read()
+        .get_partition_info()
+        .expect("the partitioning is inherited")
+        .read()
         .definitions
-        .iter()
-        .map(|def| def.id)
-        .collect();
+        .snapshot();
+    let copy_ids: Vec<i64> = copy_definitions.iter().map(|def| def.id).collect();
 
     assert_eq!(copy_ids.len(), 4);
     assert_eq!(
-        copy_partition
-            .definitions
+        copy_definitions
             .iter()
-            .map(|def| def.name.as_str())
+            .map(|def| def.name.original())
             .collect::<Vec<_>>(),
         vec!["p0", "p1", "p2", "p3"]
     );

@@ -41,6 +41,7 @@
 //! Reading a superset costs time; reading a subset costs correctness.
 //!
 use tidb_ranger::types::Range;
+use tidb_model::partition::PartitionInfo;
 use tidb_table::partition_routing::{PartitionKind, PartitionSpec, RangeBound};
 use std::collections::{BTreeMap, BTreeSet};
 use tidb_datatype::Datum;
@@ -59,18 +60,18 @@ use tidb_hack::GoCaseCompare;
 /// `ErrUnknownPartition` (1735), captured as
 /// `Unknown partition 'nosuch' in table 'ok1'`.
 pub fn ids_for_selected_partitions(
-    spec: &PartitionSpec,
+    pi: &PartitionInfo,
     names: &[String],
 ) -> Result<Vec<i64>, String> {
+    let definitions = pi.definitions.snapshot();
     for name in names {
-        if spec.definition_named(name).is_none() {
+        if pi.find_partition_definition_by_name(name) < 0 {
             return Err(name.clone());
         }
     }
-    Ok(spec
-        .definitions
+    Ok(definitions
         .iter()
-        .filter(|def| names.iter().any(|name| name.go_lower_eq(&def.name)))
+        .filter(|def| names.iter().any(|name| name.go_lower_eq(def.name.original())))
         .map(|def| def.id)
         .collect())
 }
@@ -104,22 +105,24 @@ pub fn ids_for_selected_partitions(
 /// retain that metadata through `minCmp`/`maxCmp`.
 pub fn pruned_ids_from_ranger(
     spec: &PartitionSpec,
+    pi: &PartitionInfo,
     ranger_ranges: &[tidb_ranger::types::Range],
     ctx: &impl tidb_exprctx::Columns,
 ) -> Result<Option<Vec<i64>>, tidb_exprctx::EvalError> {
-    pruned_ids_impl(spec, ranger_ranges, ctx)
+    pruned_ids_impl(spec, pi, ranger_ranges, ctx)
 }
 
 fn pruned_ids_impl(
     spec: &PartitionSpec,
+    pi: &PartitionInfo,
     ranges: &[Range],
     ctx: &impl tidb_exprctx::Columns,
 ) -> Result<Option<Vec<i64>>, tidb_exprctx::EvalError> {
     Ok(match &spec.kind {
         // Every row is in partition 0, so there is nothing to prune away.
         PartitionKind::None => None,
-        PartitionKind::Hash => prune_hash_ids(spec, ranges, ctx),
-        PartitionKind::Key => Some(prune_key_ids(spec, ranges)),
+        PartitionKind::Hash => prune_hash_ids(spec, pi, ranges, ctx),
+        PartitionKind::Key => Some(prune_key_ids(spec, pi, ranges)),
         // Go prunes `PARTITION BY RANGE` by the statement's predicates, not by
         // ranger intervals: see [`scalar_range_pruned_ids`].
         PartitionKind::Range { .. } => None,
@@ -127,7 +130,7 @@ fn pruned_ids_impl(
             less_than,
             field_types,
         } => Some(prune_range_columns_ids(
-            spec,
+            pi,
             ranges,
             less_than,
             field_types,
@@ -139,6 +142,7 @@ fn pruned_ids_impl(
             unsigned,
         } => Some(prune_list_ids(
             spec,
+            pi,
             ranges,
             values,
             *null_partition,
@@ -159,35 +163,34 @@ fn pruned_ids_impl(
 /// interval over one KEY column is enumerated while its width is smaller than
 /// the partition count. A partial multi-column key may hash anywhere and
 /// remains a full scan.
-fn prune_key_ids(spec: &PartitionSpec, ranges: &[Range]) -> Vec<i64> {
-    let mut used = vec![false; spec.definitions.len()];
+fn prune_key_ids(spec: &PartitionSpec, pi: &PartitionInfo, ranges: &[Range]) -> Vec<i64> {
+    let ids = pi.definitions.map_visible(|definition| definition.id);
+    let mut used = vec![false; ids.len()];
     for range in ranges {
         if range.is_point(true) && range.low_val.len() == spec.dependencies.len() {
             let Ok(ordinal) =
-                tidb_table::partition_routing::key_partition_index_for_tuple(&range.low_val, spec.num())
+                tidb_table::partition_routing::key_partition_index_for_tuple(&range.low_val, ids.len() as u64)
             else {
-                return spec
-                    .definitions
+                return ids
                     .iter()
-                    .map(|definition| definition.id)
+                    .copied()
                     .collect();
             };
             used[ordinal] = true;
             continue;
         }
-        if spec.dependencies.len() == 1 && mark_short_key_range(range, spec.num(), &mut used) {
+        if spec.dependencies.len() == 1 && mark_short_key_range(range, ids.len() as u64, &mut used) {
             continue;
         }
-        return spec
-            .definitions
+        return ids
             .iter()
-            .map(|definition| definition.id)
+            .copied()
             .collect();
     }
-    spec.definitions
+    ids
         .iter()
         .zip(used)
-        .filter_map(|(definition, used)| used.then_some(definition.id))
+        .filter_map(|(id, used)| used.then_some(*id))
         .collect()
 }
 
@@ -259,38 +262,36 @@ fn mark_short_key_range(range: &Range, partitions: u64, used: &mut [bool]) -> bo
 /// already normalized the predicate into these endpoints; pruning only does
 /// the two source `sort.Search` operations over the partition bounds.
 fn prune_range_columns_ids(
-    spec: &PartitionSpec,
+    pi: &PartitionInfo,
     ranges: &[Range],
     less_than: &[Vec<tidb_table::partition_routing::RangeColumnBound>],
     field_types: &[tidb_datatype::FieldType],
 ) -> Vec<i64> {
-    if less_than.len() != spec.definitions.len()
+    let ids = pi.definitions.map_visible(|definition| definition.id);
+    if less_than.len() != ids.len()
         || less_than
             .iter()
             .any(|bound| bound.len() != field_types.len())
     {
-        return spec
-            .definitions
+        return ids
             .iter()
-            .map(|definition| definition.id)
+            .copied()
             .collect();
     }
 
-    let mut used = vec![false; spec.definitions.len()];
+    let mut used = vec![false; ids.len()];
     for range in ranges {
         if range.low_val.len() > field_types.len() || range.high_val.len() > field_types.len() {
-            return spec
-                .definitions
+            return ids
                 .iter()
-                .map(|definition| definition.id)
+                .copied()
                 .collect();
         }
         let collations = &range.collators;
         if collations.len() < range.low_val.len().max(range.high_val.len()) {
-            return spec
-                .definitions
+            return ids
                 .iter()
-                .map(|definition| definition.id)
+                .copied()
                 .collect();
         }
 
@@ -303,10 +304,9 @@ fn prune_range_columns_ids(
                 range.low_exclude,
             )
         }) else {
-            return spec
-                .definitions
+            return ids
                 .iter()
-                .map(|definition| definition.id)
+                .copied()
                 .collect();
         };
         let Ok(mut end) = first_range_columns_bound(less_than, |bound| {
@@ -317,10 +317,9 @@ fn prune_range_columns_ids(
                 range.high_exclude,
             )
         }) else {
-            return spec
-                .definitions
+            return ids
                 .iter()
-                .map(|definition| definition.id)
+                .copied()
                 .collect();
         };
         if end < less_than.len() {
@@ -330,10 +329,10 @@ fn prune_range_columns_ids(
             *slot = true;
         }
     }
-    spec.definitions
+    ids
         .iter()
         .zip(used)
-        .filter_map(|(definition, used)| used.then_some(definition.id))
+        .filter_map(|(id, used)| used.then_some(*id))
         .collect()
 }
 
@@ -624,6 +623,7 @@ fn tuple_endpoint_order(
 /// because an interval can include values that have no explicit owner.
 fn prune_list_ids(
     spec: &PartitionSpec,
+    pi: &PartitionInfo,
     ranges: &[Range],
     values: &[(i64, usize)],
     null_partition: Option<usize>,
@@ -631,13 +631,14 @@ fn prune_list_ids(
     unsigned: bool,
     ctx: &impl tidb_exprctx::Columns,
 ) -> Result<Vec<i64>, tidb_exprctx::EvalError> {
+    let ids = pi.definitions.map_visible(|definition| definition.id);
     let full = || {
-        spec.definitions
+        ids
             .iter()
-            .map(|definition| definition.id)
+            .copied()
             .collect::<Vec<_>>()
     };
-    let mut used = vec![false; spec.definitions.len()];
+    let mut used = vec![false; ids.len()];
     for range in ranges {
         // `[NULL, +inf]`, the full scan's interval.
         let full_scan = matches!(range.low_val.as_slice(), [Datum::Null])
@@ -684,11 +685,10 @@ fn prune_list_ids(
             used[ordinal] = true;
         }
     }
-    Ok(spec
-        .definitions
+    Ok(ids
         .iter()
         .zip(used)
-        .filter_map(|(definition, used)| used.then_some(definition.id))
+        .filter_map(|(id, used)| used.then_some(*id))
         .collect())
 }
 
@@ -820,10 +820,12 @@ enum RangeMonotoneMode {
 /// proves that only the first `2^flen` hash values can occur.
 fn prune_hash_ids(
     spec: &PartitionSpec,
+    pi: &PartitionInfo,
     ranges: &[Range],
     ctx: &impl tidb_exprctx::Columns,
 ) -> Option<Vec<i64>> {
-    let mut used = vec![false; spec.definitions.len()];
+    let ids = pi.definitions.map_visible(|definition| definition.id);
+    let mut used = vec![false; ids.len()];
     for range in ranges {
         if range.is_point(true) {
             if range.high_val.len() != spec.dependencies.len() {
@@ -835,7 +837,7 @@ fn prune_hash_ids(
                 // be evaluated; another ranger point may still be usable.
                 continue;
             };
-            let Ok(index) = tidb_table::partition_routing::locate_hash_partition(&value, spec.num())
+            let Ok(index) = tidb_table::partition_routing::locate_hash_partition(&value, ids.len() as u64)
             else {
                 continue;
             };
@@ -850,7 +852,7 @@ fn prune_hash_ids(
         if field_type.eval_type() != tidb_datatype::EvalType::Int {
             return None;
         }
-        if mark_short_hash_range(range, spec.num(), field_type, &mut used) {
+        if mark_short_hash_range(range, ids.len() as u64, field_type, &mut used) {
             continue;
         }
         if field_type.code() == tidb_datatype::FieldTypeCode::Bit
@@ -866,10 +868,10 @@ fn prune_hash_ids(
         return None;
     }
     Some(
-        spec.definitions
+        ids
             .iter()
             .zip(used)
-            .filter_map(|(definition, used)| used.then_some(definition.id))
+            .filter_map(|(id, used)| used.then_some(*id))
             .collect(),
     )
 }
@@ -934,9 +936,58 @@ fn hash_pruning_integer(value: &Datum, field_type: &tidb_datatype::FieldType) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_table::partition_routing::PartitionDef;
 
-    fn pruned_ids(spec: &PartitionSpec, ranges: &[Range]) -> Option<Vec<i64>> {
+    /// A partitioned table as the pruners read it: Go's `PartitionExpr` and
+    /// the `TableInfo.Partition` it was built from.
+    #[derive(Clone)]
+    struct Table {
+        spec: PartitionSpec,
+        pi: PartitionInfo,
+    }
+
+    impl std::ops::Deref for Table {
+        type Target = PartitionSpec;
+        fn deref(&self) -> &PartitionSpec {
+            &self.spec
+        }
+    }
+
+    impl std::ops::DerefMut for Table {
+        fn deref_mut(&mut self) -> &mut PartitionSpec {
+            &mut self.spec
+        }
+    }
+
+    impl Table {
+        fn truncate_definitions(&mut self, len: usize) {
+            let mut definitions = self.pi.definitions.snapshot();
+            definitions.truncate(len);
+            self.pi.definitions = definitions.into();
+        }
+
+        fn definition_ids(&self) -> Vec<i64> {
+            self.pi.definitions.map_visible(|definition| definition.id)
+        }
+    }
+
+    /// Go `PartitionInfo` with `definitions` as `(ID, Name)`.
+    fn partition_info(definitions: impl IntoIterator<Item = (i64, String)>) -> PartitionInfo {
+        PartitionInfo {
+            enable: true,
+            definitions: definitions
+                .into_iter()
+                .map(|(id, name)| tidb_model::partition::PartitionDefinition {
+                    id,
+                    name: tidb_ast::CiString::new(name),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            ..Default::default()
+        }
+    }
+
+    fn pruned_ids(spec: &Table, ranges: &[Range]) -> Option<Vec<i64>> {
         let field_types = match &spec.kind {
             PartitionKind::RangeColumns { field_types, .. } => Some(field_types.as_slice()),
             _ => None,
@@ -960,177 +1011,97 @@ mod tests {
                 }
             })
             .collect::<Vec<_>>();
-        super::pruned_ids_from_ranger(spec, &ranger_ranges, &tidb_exprctx::NoColumns)
+        super::pruned_ids_from_ranger(&spec.spec, &spec.pi, &ranger_ranges, &tidb_exprctx::NoColumns)
             .expect("partition pruning")
     }
 
-    fn range_table() -> PartitionSpec {
-        PartitionSpec {
-            overlapping_dropping_partition_indices: Vec::new(),
-            is_empty_columns: false,
-            kind: PartitionKind::Range {
-                less_than: vec![
-                    RangeBound::Value(10),
-                    RangeBound::Value(20),
-                    RangeBound::MaxValue,
-                ],
-                unsigned: false,
+    fn range_table() -> Table {
+        Table {
+            spec: PartitionSpec {
+                kind: PartitionKind::Range {
+                    less_than: vec![
+                        RangeBound::Value(10),
+                        RangeBound::Value(20),
+                        RangeBound::MaxValue,
+                    ],
+                    unsigned: false,
+                },
+                expr: {
+                    let mut column = tidb_expr::column::Column::new(
+                        1,
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                    );
+                    column.index = 0;
+                    tidb_expr::expression::Expression::Column(column)
+                },
+                dependencies: vec!["a".to_owned()],
             },
-            expr_text: "`a`".to_owned(),
-            expr: {
-                let mut column = tidb_expr::column::Column::new(
-                    1,
-                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                );
-                column.index = 0;
-                tidb_expr::expression::Expression::Column(column)
-            },
-            dependencies: vec!["a".to_owned()],
-            definitions: vec![
-                PartitionDef {
-                    id: 101,
-                    name: "p0".to_owned(),
-                    less_than: Vec::new(),
-                    in_values: Vec::new(),
-                    comment: String::new(),
-                    placement_policy: None,
-                    storage_class: Default::default(),
-                },
-                PartitionDef {
-                    id: 102,
-                    name: "p1".to_owned(),
-                    less_than: Vec::new(),
-                    in_values: Vec::new(),
-                    comment: String::new(),
-                    placement_policy: None,
-                    storage_class: Default::default(),
-                },
-                PartitionDef {
-                    id: 103,
-                    name: "pm".to_owned(),
-                    less_than: Vec::new(),
-                    in_values: Vec::new(),
-                    comment: String::new(),
-                    placement_policy: None,
-                    storage_class: Default::default(),
-                },
-            ],
+            pi: partition_info([(101, "p0".to_owned()), (102, "p1".to_owned()), (103, "pm".to_owned())]),
         }
     }
 
-    fn range_table_with_bounds(bounds: Vec<RangeBound>) -> PartitionSpec {
+    fn range_table_with_bounds(bounds: Vec<RangeBound>) -> Table {
         let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
         let mut column = tidb_expr::column::Column::new(1, field_type);
         column.index = 0;
-        PartitionSpec {
-            overlapping_dropping_partition_indices: Vec::new(),
-            is_empty_columns: false,
-            kind: PartitionKind::Range {
-                unsigned: false,
-                less_than: bounds.clone(),
+        Table {
+            spec: PartitionSpec {
+                kind: PartitionKind::Range {
+                    unsigned: false,
+                    less_than: bounds.clone(),
+                },
+                expr: tidb_expr::expression::Expression::Column(column),
+                dependencies: vec!["a".to_owned()],
             },
-            expr_text: "`a`".to_owned(),
-            expr: tidb_expr::expression::Expression::Column(column),
-            dependencies: vec!["a".to_owned()],
-            definitions: (0..bounds.len())
-                .map(|ordinal| PartitionDef {
-                    id: ordinal as i64,
-                    name: format!("p{ordinal}"),
-                    less_than: Vec::new(),
-                    in_values: Vec::new(),
-                    comment: String::new(),
-                    placement_policy: None,
-                    storage_class: Default::default(),
-                })
-                .collect(),
+            pi: partition_info((0..bounds.len()).map(|ordinal| (ordinal as i64, format!("p{ordinal}")))),
         }
     }
 
-    fn list_table() -> PartitionSpec {
-        PartitionSpec {
-            overlapping_dropping_partition_indices: Vec::new(),
-            is_empty_columns: false,
-            kind: PartitionKind::List {
-                values: vec![(1, 0), (3, 0), (5, 1)],
-                null_partition: Some(1),
-                default_partition: Some(2),
-                unsigned: false,
-            },
-            expr_text: "`a`".to_owned(),
-            expr: tidb_expr::expression::Expression::Constant(
-                tidb_expr::expression::Constant::new(
-                    Datum::Int(0),
-                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+    fn list_table() -> Table {
+        Table {
+            spec: PartitionSpec {
+                kind: PartitionKind::List {
+                    values: vec![(1, 0), (3, 0), (5, 1)],
+                    null_partition: Some(1),
+                    default_partition: Some(2),
+                    unsigned: false,
+                },
+                expr: tidb_expr::expression::Expression::Constant(
+                    tidb_expr::expression::Constant::new(
+                        Datum::Int(0),
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                    ),
                 ),
-            ),
-            dependencies: vec!["a".to_owned()],
-            definitions: vec![
-                PartitionDef {
-                    id: 201,
-                    name: "p0".to_owned(),
-                    less_than: Vec::new(),
-                    in_values: Vec::new(),
-                    comment: String::new(),
-                    placement_policy: None,
-                    storage_class: Default::default(),
-                },
-                PartitionDef {
-                    id: 202,
-                    name: "pn".to_owned(),
-                    less_than: Vec::new(),
-                    in_values: Vec::new(),
-                    comment: String::new(),
-                    placement_policy: None,
-                    storage_class: Default::default(),
-                },
-                PartitionDef {
-                    id: 203,
-                    name: "pd".to_owned(),
-                    less_than: Vec::new(),
-                    in_values: Vec::new(),
-                    comment: String::new(),
-                    placement_policy: None,
-                    storage_class: Default::default(),
-                },
-            ],
+                dependencies: vec!["a".to_owned()],
+            },
+            pi: partition_info([(201, "p0".to_owned()), (202, "pn".to_owned()), (203, "pd".to_owned())]),
         }
     }
 
-    fn range_columns_table() -> PartitionSpec {
+    fn range_columns_table() -> Table {
         use tidb_table::partition_routing::RangeColumnBound::{MaxValue, Value};
 
         let field_types = vec![
             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
         ];
-        PartitionSpec {
-            overlapping_dropping_partition_indices: Vec::new(),
-            is_empty_columns: false,
-            kind: PartitionKind::RangeColumns {
-                less_than: vec![
-                    vec![Value(Datum::Int(1)), Value(Datum::Int(10))],
-                    vec![Value(Datum::Int(2)), Value(Datum::Int(5))],
-                    vec![Value(Datum::Int(2)), MaxValue],
-                    vec![MaxValue, MaxValue],
-                ],
-                field_types: field_types.clone(),
+        Table {
+            spec: PartitionSpec {
+                kind: PartitionKind::RangeColumns {
+                    less_than: vec![
+                        vec![Value(Datum::Int(1)), Value(Datum::Int(10))],
+                        vec![Value(Datum::Int(2)), Value(Datum::Int(5))],
+                        vec![Value(Datum::Int(2)), MaxValue],
+                        vec![MaxValue, MaxValue],
+                    ],
+                    field_types: field_types.clone(),
+                },
+                expr: tidb_expr::expression::Expression::Constant(
+                    tidb_expr::expression::Constant::new(Datum::Int(0), field_types[0].clone()),
+                ),
+                dependencies: vec!["a".to_owned(), "b".to_owned()],
             },
-            expr_text: String::new(),
-            expr: tidb_expr::expression::Expression::Constant(
-                tidb_expr::expression::Constant::new(Datum::Int(0), field_types[0].clone()),
-            ),
-            dependencies: vec!["a".to_owned(), "b".to_owned()],
-            definitions: (0..4)
-                .map(|ordinal| PartitionDef {
-                    id: 301 + ordinal,
-                    name: format!("p{ordinal}"),
-                    less_than: Vec::new(),
-                    in_values: Vec::new(),
-                    comment: String::new(),
-                    placement_policy: None,
-                    storage_class: Default::default(),
-                })
-                .collect(),
+            pi: partition_info((0..4).map(|ordinal| (301 + ordinal, format!("p{ordinal}")))),
         }
     }
 
@@ -1269,11 +1240,11 @@ mod tests {
     }
 
     fn range_pruned(
-        spec: &PartitionSpec,
+        spec: &Table,
         column: &tidb_expr::column::Column,
         conditions: &[tidb_expr::expression::Expression],
     ) -> Option<Vec<i64>> {
-        scalar_range_pruned_ids(spec, conditions, column, &tidb_exprctx::NoColumns)
+        scalar_range_pruned_ids(&spec.spec, &spec.pi, conditions, column, &tidb_exprctx::NoColumns)
     }
 
     /// The captured queries, as the partitions each must read: `a < 10` is
@@ -1423,7 +1394,7 @@ mod tests {
         let datetime_column = part_column(FieldTypeCode::Datetime);
         let mut datetime_spec =
             range_table_with_bounds(vec![RangeBound::Value(733_108), RangeBound::Value(733_132)]);
-        datetime_spec.expr_text = "to_days(`d`)".to_owned();
+        datetime_spec.pi.expr = "to_days(`d`)".to_owned();
         datetime_spec.expr = Expression::ScalarFunction(ScalarFunction::new(
             CiString::new("to_days"),
             FieldType::new(FieldTypeCode::LongLong),
@@ -1464,7 +1435,7 @@ mod tests {
             RangeBound::Value(1_262_304_000),
             RangeBound::MaxValue,
         ]);
-        timestamp_spec.expr_text = "unix_timestamp(`report_updated`)".to_owned();
+        timestamp_spec.pi.expr = "unix_timestamp(`report_updated`)".to_owned();
         timestamp_spec.expr = Expression::ScalarFunction(ScalarFunction::new(
             CiString::new("unix_timestamp"),
             FieldType::new(FieldTypeCode::LongLong),
@@ -1627,7 +1598,7 @@ use tidb_charset::Collation;
             ],
             field_types,
         };
-        spec.definitions.truncate(2);
+        spec.truncate_definitions(2);
 
         assert_eq!(
             pruned_ids(
@@ -1663,7 +1634,7 @@ use tidb_charset::Collation;
             less_than: vec![vec![Value(Datum::new_string("b"))], vec![MaxValue]],
             field_types: vec![field_type],
         };
-        spec.definitions.truncate(2);
+        spec.truncate_definitions(2);
         let range = tidb_ranger::types::Range {
             low_val: vec![Datum::new_string("B")],
             high_val: vec![Datum::new_string("B")],
@@ -1673,7 +1644,7 @@ use tidb_charset::Collation;
         };
 
         assert_eq!(
-            pruned_ids_from_ranger(&spec, &[range], &tidb_exprctx::NoColumns).unwrap(),
+            pruned_ids_from_ranger(&spec.spec, &spec.pi, &[range], &tidb_exprctx::NoColumns).unwrap(),
             Some(vec![301]),
             "Go minCmp/maxCmp compare this binary-collation point before the lowercase bound"
         );
@@ -1919,19 +1890,19 @@ use tidb_charset::Collation;
         spec.kind = PartitionKind::Key;
 
         let expected_for = |values: &[i64]| {
-            let mut used = vec![false; spec.definitions.len()];
+            let mut used = vec![false; spec.definition_ids().len()];
             for value in values {
                 let ordinal = tidb_table::partition_routing::key_partition_index_for_tuple(
                     &[Datum::Int(*value)],
-                    spec.num(),
+                    spec.definition_ids().len() as u64,
                 )
                 .expect("integer key routing");
                 used[ordinal] = true;
             }
-            spec.definitions
-                .iter()
+            spec.definition_ids()
+                .into_iter()
                 .zip(used)
-                .filter_map(|(definition, used)| used.then_some(definition.id))
+                .filter_map(|(id, used)| used.then_some(id))
                 .collect::<Vec<_>>()
         };
 
@@ -1962,11 +1933,11 @@ use tidb_charset::Collation;
     fn an_explicit_selection_resolves_to_its_ids() {
         let spec = range_table();
         assert_eq!(
-            ids_for_selected_partitions(&spec, &["PM".to_owned(), "p0".to_owned()]),
+            ids_for_selected_partitions(&spec.pi, &["PM".to_owned(), "p0".to_owned()]),
             Ok(vec![101, 103])
         );
         assert_eq!(
-            ids_for_selected_partitions(&spec, &["nosuch".to_owned()]),
+            ids_for_selected_partitions(&spec.pi, &["nosuch".to_owned()]),
             Err("nosuch".to_owned())
         );
     }
@@ -2724,14 +2695,16 @@ fn partition_fn_of_column(
 /// `conditions` can reach, or `None` when Go cannot prune this table.
 pub fn scalar_range_pruned_ids(
     spec: &PartitionSpec,
+    pi: &PartitionInfo,
     conditions: &[tidb_expr::expression::Expression],
     column: &tidb_expr::column::Column,
     ctx: &impl tidb_exprctx::Columns,
 ) -> Option<Vec<i64>> {
+    let ids = pi.definitions.map_visible(|definition| definition.id);
     let PartitionKind::Range { less_than, .. } = &spec.kind else {
         return None;
     };
-    if less_than.len() != spec.definitions.len() {
+    if less_than.len() != ids.len() {
         return None;
     }
     let (part_fn, monotone) = partition_fn_of_column(spec)?;
@@ -2751,7 +2724,7 @@ pub fn scalar_range_pruned_ids(
         ranges
             .0
             .iter()
-            .flat_map(|range| spec.definitions[range.start..range.end].iter().map(|definition| definition.id))
+            .flat_map(|range| ids[range.start..range.end].iter().copied())
             .collect(),
     )
 }
@@ -2760,11 +2733,13 @@ pub fn scalar_range_pruned_ids(
 /// the physical ids `conditions` can reach.
 pub fn single_range_columns_pruned_ids(
     spec: &PartitionSpec,
+    pi: &PartitionInfo,
     conditions: &[tidb_expr::expression::Expression],
     column: &tidb_expr::column::Column,
     builder: &impl tidb_expr::expr_util::builder::FunctionBuilder,
     ctx: &impl tidb_exprctx::Columns,
 ) -> Option<Vec<i64>> {
+    let ids = pi.definitions.map_visible(|definition| definition.id);
     let PartitionKind::RangeColumns {
         less_than,
         field_types,
@@ -2775,7 +2750,7 @@ pub fn single_range_columns_pruned_ids(
     let [bound_type] = field_types.as_slice() else {
         return None;
     };
-    if less_than.len() != spec.definitions.len() || less_than.iter().any(|bound| bound.len() != 1) {
+    if less_than.len() != ids.len() || less_than.iter().any(|bound| bound.len() != 1) {
         return None;
     }
     let pruner = SingleRangeColumnsPruner {
@@ -2790,7 +2765,7 @@ pub fn single_range_columns_pruned_ids(
         ranges
             .0
             .iter()
-            .flat_map(|range| spec.definitions[range.start..range.end].iter().map(|definition| definition.id))
+            .flat_map(|range| ids[range.start..range.end].iter().copied())
             .collect(),
     )
 }

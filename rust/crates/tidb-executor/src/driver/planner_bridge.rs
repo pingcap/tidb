@@ -292,13 +292,21 @@ fn unparen_expression(mut expression: &tidb_ast::Expr) -> &tidb_ast::Expr {
     expression
 }
 
+/// Go `PartitionInfo.GetOverlappingDroppingPartitionIdx` as an ordinal, `None`
+/// for a definition no read reaches.
+fn overlapping_dropping_partition_idx(pi: &tidb_model::partition::PartitionInfo, index: usize) -> Option<usize> {
+    usize::try_from(pi.get_overlapping_dropping_partition_idx(index as isize))
+        .ok()
+        .filter(|replacement| *replacement < pi.definitions.len())
+}
+
 fn remap_list_columns_location(
-    partition: &tidb_table::partition_routing::PartitionSpec,
+    pi: &tidb_model::partition::PartitionInfo,
     location: tidb_planner_rule::ListPartitionLocation,
 ) -> tidb_planner_rule::ListPartitionLocation {
     let mut remapped = tidb_planner_rule::ListPartitionLocation::new();
     for (index, mut groups) in location {
-        let Some(replacement) = partition.get_overlapping_dropping_partition_idx(index) else {
+        let Some(replacement) = overlapping_dropping_partition_idx(pi, index) else {
             continue;
         };
         if replacement != index {
@@ -311,27 +319,28 @@ fn remap_list_columns_location(
 }
 
 fn remap_partition_indices(
-    partition: &tidb_table::partition_routing::PartitionSpec,
+    pi: &tidb_model::partition::PartitionInfo,
     partition_names: &[String],
     indices: impl IntoIterator<Item = usize>,
 ) -> Vec<usize> {
+    let definitions = pi.definitions.snapshot();
     let mut used_ids = std::collections::BTreeSet::new();
     indices
         .into_iter()
-        .filter_map(|index| partition.get_overlapping_dropping_partition_idx(index))
+        .filter_map(|index| overlapping_dropping_partition_idx(pi, index))
         .filter(|index| {
             partition_names.is_empty()
-                || partition_names.iter().any(|name| {
-                    tidb_ast::CiString::new(name)
-                        == tidb_ast::CiString::new(&partition.definitions[*index].name)
-                })
+                || partition_names
+                    .iter()
+                    .any(|name| tidb_ast::CiString::new(name) == definitions[*index].name)
         })
-        .filter(|index| used_ids.insert(partition.definitions[*index].id))
+        .filter(|index| used_ids.insert(definitions[*index].id))
         .collect()
 }
 
 fn locate_list_columns_condition(
     partition: &tidb_table::partition_routing::PartitionSpec,
+    pi: &tidb_model::partition::PartitionInfo,
     condition: &Expression,
     columns: &[tidb_expr::column::Column],
     context: &crate::StmtContext,
@@ -352,8 +361,8 @@ fn locate_list_columns_condition(
             Ok(Some(true)) | Err(_) => Ok(ListColumnsLocated::Full),
         },
         Expression::ScalarFunction(function) => match function.func_name.lowercase() {
-            "and" => locate_list_columns_cnf(partition, function.get_args(), columns, context),
-            "or" => locate_list_columns_dnf(partition, function.get_args(), columns, context),
+            "and" => locate_list_columns_cnf(partition, pi, function.get_args(), columns, context),
+            "or" => locate_list_columns_dnf(partition, pi, function.get_args(), columns, context),
             _ => {
                 let referenced = tidb_expr::simple_expr::extract_columns(condition);
                 if referenced.len() != 1 {
@@ -392,7 +401,7 @@ fn locate_list_columns_condition(
                     ))
                 })?;
                 Ok(location.map_or(ListColumnsLocated::Full, |location| {
-                    ListColumnsLocated::Location(remap_list_columns_location(partition, location))
+                    ListColumnsLocated::Location(remap_list_columns_location(pi, location))
                 }))
             }
         },
@@ -402,13 +411,14 @@ fn locate_list_columns_condition(
 
 fn locate_list_columns_cnf(
     partition: &tidb_table::partition_routing::PartitionSpec,
+    pi: &tidb_model::partition::PartitionInfo,
     conditions: &[Expression],
     columns: &[tidb_expr::column::Column],
     context: &crate::StmtContext,
 ) -> Result<ListColumnsLocated, tidb_planner_core_base::PlanError> {
     let mut location = None;
     for condition in conditions {
-        match locate_list_columns_condition(partition, condition, columns, context)? {
+        match locate_list_columns_condition(partition, pi, condition, columns, context)? {
             ListColumnsLocated::Full => {}
             ListColumnsLocated::Location(found) => {
                 if let Some(current) = &mut location {
@@ -424,6 +434,7 @@ fn locate_list_columns_cnf(
 
 fn locate_list_columns_dnf(
     partition: &tidb_table::partition_routing::PartitionSpec,
+    pi: &tidb_model::partition::PartitionInfo,
     conditions: &[Expression],
     columns: &[tidb_expr::column::Column],
     context: &crate::StmtContext,
@@ -433,7 +444,7 @@ fn locate_list_columns_dnf(
     }
     let mut location = tidb_planner_rule::ListPartitionLocation::new();
     for condition in conditions {
-        match locate_list_columns_condition(partition, condition, columns, context)? {
+        match locate_list_columns_condition(partition, pi, condition, columns, context)? {
             ListColumnsLocated::Full => return Ok(ListColumnsLocated::Full),
             ListColumnsLocated::Location(found) => {
                 tidb_planner_rule::union_list_partition_location(&mut location, found);
@@ -445,16 +456,17 @@ fn locate_list_columns_dnf(
 
 fn list_columns_pruned_ids(
     partition: &tidb_table::partition_routing::PartitionSpec,
+    pi: &tidb_model::partition::PartitionInfo,
     conditions: &[Expression],
     columns: &[tidb_expr::column::Column],
     context: &crate::StmtContext,
 ) -> Result<Option<Vec<i64>>, tidb_planner_core_base::PlanError> {
     Ok(
-        match locate_list_columns_cnf(partition, conditions, columns, context)? {
+        match locate_list_columns_cnf(partition, pi, conditions, columns, context)? {
             ListColumnsLocated::Full => None,
             ListColumnsLocated::Location(location) => Some(
-                partition
-                    .definitions
+                pi.definitions
+                    .snapshot()
                     .iter()
                     .enumerate()
                     .filter_map(|(index, definition)| {
@@ -468,11 +480,12 @@ fn list_columns_pruned_ids(
 
 fn partition_indices_for_spec(
     partition: &tidb_table::partition_routing::PartitionSpec,
+    pi: &tidb_model::partition::PartitionInfo,
     source: &tidb_planner_core_operator_logicalop::DataSource,
     builder: &RealFunctionBuilder<'_, crate::StmtContext>,
     context: &crate::StmtContext,
 ) -> Result<Vec<usize>, tidb_planner_core_base::PlanError> {
-    let mut surviving = (0..partition.definitions.len()).collect::<Vec<_>>();
+    let mut surviving = (0..pi.definitions.len()).collect::<Vec<_>>();
     // Go's hash pruning has no empty-condition shortcut (only the list pruner
     // does): a full range still reaches the BIT-column branch, which drops
     // the hash values the column's width cannot produce.
@@ -482,9 +495,9 @@ fn partition_indices_for_spec(
     );
     if (source.all_conds.is_empty() && !hash) || partition.dependencies.is_empty() {
         return Ok(remap_partition_indices(
-            partition,
+            pi,
             &source.partition_names,
-            0..partition.definitions.len(),
+            0..pi.definitions.len(),
         ));
     }
     let columns = partition
@@ -507,9 +520,9 @@ fn partition_indices_for_spec(
         .collect::<Option<Vec<_>>>();
     let Some(columns) = columns else {
         return Ok(remap_partition_indices(
-            partition,
+            pi,
             &source.partition_names,
-            0..partition.definitions.len(),
+            0..pi.definitions.len(),
         ));
     };
     let conditions = source
@@ -521,11 +534,11 @@ fn partition_indices_for_spec(
         partition.kind,
         tidb_table::partition_routing::PartitionKind::ListColumns { .. }
     ) {
-        if let Some(ids) = list_columns_pruned_ids(partition, &conditions, &columns, context)? {
-            surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
+        if let Some(ids) = list_columns_pruned_ids(partition, pi, &conditions, &columns, context)? {
+            surviving.retain(|index| ids.contains(&pi.definitions.get(*index).id));
         }
         return Ok(remap_partition_indices(
-            partition,
+            pi,
             &source.partition_names,
             surviving,
         ));
@@ -537,15 +550,16 @@ fn partition_indices_for_spec(
     {
         if let Some(ids) = tidb_planner_rule::single_range_columns_pruned_ids(
             partition,
+            pi,
             &conditions,
             column,
             builder,
             context,
         ) {
-            surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
+            surviving.retain(|index| ids.contains(&pi.definitions.get(*index).id));
         }
         return Ok(remap_partition_indices(
-            partition,
+            pi,
             &source.partition_names,
             surviving,
         ));
@@ -555,13 +569,13 @@ fn partition_indices_for_spec(
     if matches!(partition.kind, tidb_table::partition_routing::PartitionKind::Range { .. }) {
         if let [column] = columns.as_slice() {
             if let Some(ids) =
-                tidb_planner_rule::scalar_range_pruned_ids(partition, &conditions, column, context)
+                tidb_planner_rule::scalar_range_pruned_ids(partition, pi, &conditions, column, context)
             {
-                surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
+                surviving.retain(|index| ids.contains(&pi.definitions.get(*index).id));
             }
         }
         return Ok(remap_partition_indices(
-            partition,
+            pi,
             &source.partition_names,
             surviving,
         ));
@@ -576,19 +590,19 @@ fn partition_indices_for_spec(
         context.ranger_options(),
     ) else {
         return Ok(remap_partition_indices(
-            partition,
+            pi,
             &source.partition_names,
-            0..partition.definitions.len(),
+            0..pi.definitions.len(),
         ));
     };
     let pruned =
-        tidb_planner_rule::pruned_ids_from_ranger(partition, &detached.ranges, context)
+        tidb_planner_rule::pruned_ids_from_ranger(partition, pi, &detached.ranges, context)
             .map_err(|error| tidb_planner_core_base::PlanError::internal(format!("{error:?}")))?;
     if let Some(ids) = pruned {
-        surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
+        surviving.retain(|index| ids.contains(&pi.definitions.get(*index).id));
     }
     Ok(remap_partition_indices(
-        partition,
+        pi,
         &source.partition_names,
         surviving,
     ))
@@ -597,7 +611,8 @@ fn partition_indices_for_spec(
 #[cfg(test)]
 mod list_columns_pruning_tests {
     use super::*;
-    use tidb_table::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
+    use tidb_model::partition::{PartitionDefinition, PartitionInfo};
+    use tidb_table::partition_routing::{PartitionKind, PartitionSpec};
     use tidb_ast::CiString;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_expr::{column::Column, constant::Constant, scalar_function::ScalarFunction};
@@ -635,8 +650,6 @@ mod list_columns_pruning_tests {
     fn list_columns_spec() -> PartitionSpec {
         let field_type = integer_type();
         PartitionSpec {
-            overlapping_dropping_partition_indices: Vec::new(),
-            is_empty_columns: false,
             kind: PartitionKind::ListColumns {
                 values: vec![
                     (vec![Datum::Int(1), Datum::Int(5)], 0),
@@ -648,37 +661,75 @@ mod list_columns_pruning_tests {
                 default_partition: Some(2),
                 field_types: vec![field_type.clone(), field_type.clone()],
             },
-            expr_text: "`a`,`b`".to_owned(),
             expr: Expression::Constant(Constant::new(Datum::Null, field_type)),
             dependencies: vec!["a".to_owned(), "b".to_owned()],
-            definitions: (0..3)
-                .map(|ordinal| PartitionDef {
-                    id: 501 + ordinal,
-                    name: format!("p{ordinal}"),
-                    less_than: Vec::new(),
-                    in_values: Vec::new(),
-                    comment: String::new(),
-                    placement_policy: None,
-                    storage_class: Default::default(),
-                })
-                .collect(),
         }
+    }
+
+    /// Go `PartitionInfo` of `LIST COLUMNS (a, b)` with p0, p1 and a DEFAULT
+    /// p2, whose `InValues` are `values[ordinal]`.
+    fn list_columns_pi(values: [&[&[&str]]; 3]) -> PartitionInfo {
+        PartitionInfo {
+            partition_type: tidb_ast::PartitionType::LIST,
+            enable: true,
+            columns: vec![CiString::new("a"), CiString::new("b")].into(),
+            definitions: (0..3)
+                .map(|ordinal| PartitionDefinition {
+                    id: 501 + ordinal as i64,
+                    name: CiString::new(format!("p{ordinal}")),
+                    in_values: values[ordinal]
+                        .iter()
+                        .map(|tuple| {
+                            tuple
+                                .iter()
+                                .map(|value| (*value).to_owned())
+                                .collect::<Vec<_>>()
+                                .into()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            ..Default::default()
+        }
+    }
+
+    fn list_columns_definitions() -> PartitionInfo {
+        list_columns_pi([&[&["1", "5"], &["1", "6"]], &[&["1", "7"], &["9", "9"]], &[&["DEFAULT"]]])
+    }
+
+    /// Go's `DROP PARTITION` write-only state over `pi` with `dropping`.
+    fn dropping(mut pi: PartitionInfo, dropping: &[usize]) -> PartitionInfo {
+        let definitions = pi.definitions.snapshot();
+        pi.ddl_action = tidb_model::ActionType::ACTION_DROP_TABLE_PARTITION;
+        pi.ddl_state = tidb_model::SchemaState::WRITE_ONLY;
+        pi.dropping_definitions = dropping
+            .iter()
+            .map(|ordinal| definitions[*ordinal].clone())
+            .collect::<Vec<_>>()
+            .into();
+        pi
     }
 
     #[test]
     fn list_columns_prunes_each_referenced_column_and_intersects_tuple_groups() {
         let spec = list_columns_spec();
+        let pi = list_columns_definitions();
         let columns = vec![column(1, 11, 0), column(2, 12, 1)];
         let context = crate::StmtContext::for_query();
 
         assert_eq!(
-            list_columns_pruned_ids(&spec, &[equals(&columns[1], 7)], &columns, &context).unwrap(),
+            list_columns_pruned_ids(&spec, &pi, &[equals(&columns[1], 7)], &columns, &context)
+                .unwrap(),
             Some(vec![502, 503]),
             "a predicate on the second partition column is prunable; Go also retains DEFAULT"
         );
         assert_eq!(
             list_columns_pruned_ids(
                 &spec,
+                &pi,
                 &[equals(&columns[0], 1), equals(&columns[1], 9)],
                 &columns,
                 &context,
@@ -690,6 +741,7 @@ mod list_columns_pruning_tests {
         assert_eq!(
             list_columns_pruned_ids(
                 &spec,
+                &pi,
                 &[or(vec![equals(&columns[1], 6), equals(&columns[0], 9)])],
                 &columns,
                 &context,
@@ -702,16 +754,16 @@ mod list_columns_pruning_tests {
 
     #[test]
     fn dropping_partition_ordinals_are_remapped_before_static_children() {
-        let mut spec = list_columns_spec();
-        spec.overlapping_dropping_partition_indices = vec![Some(2), Some(2), Some(2)];
+        // p0 and p1 are dropping, so their reads go to the DEFAULT p2.
+        let pi = dropping(list_columns_definitions(), &[0, 1]);
 
         assert_eq!(
-            remap_partition_indices(&spec, &[], [0, 1, 2]),
+            remap_partition_indices(&pi, &[], [0, 1, 2]),
             vec![2],
             "Go deduplicates every dropping definition that overlaps the same readable partition"
         );
         assert!(
-            remap_partition_indices(&spec, &["p0".to_owned()], [0]).is_empty(),
+            remap_partition_indices(&pi, &["p0".to_owned()], [0]).is_empty(),
             "the explicit partition name is checked against Go's remapped definition"
         );
 
@@ -720,7 +772,7 @@ mod list_columns_pruning_tests {
             (1, std::collections::BTreeSet::from([2])),
         ]);
         assert_eq!(
-            remap_list_columns_location(&spec, location),
+            remap_list_columns_location(&pi, location),
             tidb_planner_rule::ListPartitionLocation::from([(
                 2,
                 std::collections::BTreeSet::from([-1])
@@ -728,9 +780,13 @@ mod list_columns_pruning_tests {
             "a remapped LIST COLUMNS location uses Go's special group and merges duplicates"
         );
 
-        spec.overlapping_dropping_partition_indices = vec![None, Some(1), Some(2)];
+        // The dropping p0 is itself the DEFAULT partition: no read reaches it.
+        let pi = dropping(
+            list_columns_pi([&[&["DEFAULT"]], &[&["1", "7"], &["9", "9"]], &[&["1", "5"]]]),
+            &[0],
+        );
         assert!(
-            remap_partition_indices(&spec, &[], [0]).is_empty(),
+            remap_partition_indices(&pi, &[], [0]).is_empty(),
             "Go skips a dropping definition with no readable overlap"
         );
     }
@@ -738,6 +794,7 @@ mod list_columns_pruning_tests {
     #[test]
     fn partition_pruning_fallback_keeps_explicit_partition_names() {
         let spec = list_columns_spec();
+        let pi = list_columns_definitions();
         let mut source = tidb_planner_core_operator_logicalop::DataSource::default();
         source.partition_names = vec!["p1".to_owned()];
         source.all_conds = vec![Expression::Constant(Constant::new(
@@ -748,7 +805,7 @@ mod list_columns_pruning_tests {
         let builder = RealFunctionBuilder::new(&context);
 
         assert_eq!(
-            partition_indices_for_spec(&spec, &source, &builder, &context).unwrap(),
+            partition_indices_for_spec(&spec, &pi, &source, &builder, &context).unwrap(),
             vec![1]
         );
     }
@@ -2967,7 +3024,13 @@ fn optimize_built_logical(
                     "partition processor received an unpartitioned table",
                 )
             })?;
-            partition_indices_for_spec(partition, source, self.builder, self.context)
+            let pi = table.meta().read().get_partition_info().ok_or_else(|| {
+                tidb_planner_core_base::PlanError::internal(
+                    "partition processor received an unpartitioned table",
+                )
+            })?;
+            let pi = pi.read();
+            partition_indices_for_spec(partition, &pi, source, self.builder, self.context)
         }
 
         // Go `generateHashPartitionExpr` and `MakePartitionByFnCol` each

@@ -86,10 +86,12 @@ pub fn data_for_analyze_status_helper(
                     table.table_id()
                 } else {
                     table
-                        .partition()
-                        .and_then(|partition| {
-                            partition.definitions.iter().find(|definition| {
-                                definition.name.go_lower_eq(&job.partition_name)
+                        .meta()
+                        .read()
+                        .get_partition_info()
+                        .and_then(|pi| {
+                            pi.read().definitions.snapshot().into_iter().find(|definition| {
+                                definition.name.original().go_lower_eq(&job.partition_name)
                             })
                         })
                         .map_or(0, |definition| definition.id)

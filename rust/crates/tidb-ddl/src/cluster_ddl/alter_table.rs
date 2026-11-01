@@ -1259,7 +1259,14 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                 if has_definitions {
                     let spec = stored_partition_spec(&info)
                         .map_err(|error| cancel_ddl_job(active, error))?;
-                    let definitions = spec.definitions.iter().collect::<Vec<_>>();
+                    let stored = info
+                        .partition
+                        .as_ref()
+                        .expect("checked above")
+                        .read()
+                        .definitions
+                        .snapshot();
+                    let definitions = stored.iter().collect::<Vec<_>>();
                     let classes =
                         tidb_ddl_build::storage_class::build_storage_class_for_partitions(
                             &settings,

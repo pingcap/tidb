@@ -157,7 +157,15 @@
         let TableEntry::Kv(partitioned) = catalog.get_in(DEFAULT_DATABASE, "pv2").unwrap() else {
             panic!("partitioned table")
         };
-        for definition in &partitioned.partition().unwrap().definitions {
+        let definitions = partitioned
+            .meta()
+            .read()
+            .get_partition_info()
+            .unwrap()
+            .read()
+            .definitions
+            .snapshot();
+        for definition in &definitions {
             assert!(catalog.kv_table_by_id(definition.id).is_none());
             let physical = catalog.physical_kv_table_by_id(definition.id).unwrap();
             assert_eq!(physical.table_id(), partitioned.table_id());

@@ -273,10 +273,10 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
     let (table_id, partition_ids) = {
         let table = kv_table_of(&catalog, "t");
         let ids = table
-            .partition()
+            .meta().read().get_partition_info()
             .map(|partition| {
                 partition
-                    .definitions
+                    .read().definitions.snapshot()
                     .iter()
                     .map(|d| d.id)
                     .collect::<Vec<_>>()
@@ -344,8 +344,8 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
     let table = kv_table_of(&catalog, "t");
     // This catalog allocated its own partition IDs.
     let partition_ids: Vec<i64> = table
-        .partition()
-        .map(|partition| partition.definitions.iter().map(|d| d.id).collect())
+        .meta().read().get_partition_info()
+        .map(|partition| partition.read().definitions.snapshot().iter().map(|d| d.id).collect())
         .unwrap_or_default();
     let mut p0 = table.clone();
     p0.restrict_read_to_partitions(&[partition_ids[0]]);
@@ -743,8 +743,8 @@ fn analyze_partition_verify_per_partition_and_global_ndv() {
     };
     let mut table = kv_table_of(&catalog, "t");
     let partition_ids: Vec<i64> = table
-        .partition()
-        .map(|partition| partition.definitions.iter().map(|d| d.id).collect())
+        .meta().read().get_partition_info()
+        .map(|partition| partition.read().definitions.snapshot().iter().map(|d| d.id).collect())
         .unwrap_or_default();
     assert_eq!(partition_ids.len(), 10, "ten partitions");
 

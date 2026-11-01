@@ -7242,9 +7242,7 @@ mod remote_cursor_tests {
         );
         table.set_pk_handle_offset(0);
         table.set_partition(tidb_table::partition_routing::PartitionSpec {
-            overlapping_dropping_partition_indices: Vec::new(),
             kind: tidb_table::partition_routing::PartitionKind::Hash,
-            expr_text: "id".to_owned(),
             expr: tidb_expr::expression::Expression::Constant(
                 tidb_expr::expression::Constant::new(
                     Datum::Int(0),
@@ -7252,20 +7250,26 @@ mod remote_cursor_tests {
                 ),
             ),
             dependencies: vec!["id".to_owned()],
-            definitions: vec![
-                tidb_table::partition_routing::PartitionDef {
-                    id: 101,
-                    name: "p0".to_owned(),
-                    ..Default::default()
-                },
-                tidb_table::partition_routing::PartitionDef {
-                    id: 102,
-                    name: "p1".to_owned(),
-                    ..Default::default()
-                },
-            ],
-            is_empty_columns: false,
         });
+        table.meta().write().partition = Some(tidb_model::GoShared::new(
+            tidb_model::partition::PartitionInfo {
+                enable: true,
+                definitions: vec![
+                tidb_model::partition::PartitionDefinition {
+                    id: 101,
+                    name: tidb_ast::CiString::new("p0".to_owned()),
+                    ..Default::default()
+                },
+                tidb_model::partition::PartitionDefinition {
+                    id: 102,
+                    name: tidb_ast::CiString::new("p1".to_owned()),
+                    ..Default::default()
+                },
+            ]
+                    .into(),
+                ..Default::default()
+            },
+        ));
 
         let cursor = table
             .pushdown_row_cursor_with_context(

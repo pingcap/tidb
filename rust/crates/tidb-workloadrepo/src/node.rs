@@ -273,13 +273,13 @@ impl crate::RepositorySession for WorkloadRepositorySession {
         };
         let partitions = match entry {
             tidb_infoschema::TableEntry::Kv(table) => table
-                .partition()
-                .map(|partition| {
-                    partition
+                .meta()
+                .read()
+                .get_partition_info()
+                .map(|pi| {
+                    pi.read()
                         .definitions
-                        .iter()
-                        .map(|definition| definition.name.clone())
-                        .collect()
+                        .map_visible(|definition| definition.name.original().to_owned())
                 })
                 .unwrap_or_default(),
             _ => Vec::new(),

@@ -42,10 +42,11 @@ impl tidb_ddl_build::partition_ddl::ReorgHost for AdmissionReorgHost {
 
     fn resolve_placement(
         &self,
-        definitions: &mut [tidb_table::partition_routing::PartitionDef],
+        definitions: &mut [tidb_model::partition::PartitionDefinition],
     ) -> Result<(), tidb_terror::MysqlError> {
         for definition in definitions {
-            if let Some(reference) = definition.placement_policy.as_mut() {
+            if let Some(reference) = definition.placement_policy_ref.as_ref() {
+                let mut reference = reference.write();
                 let Some(found) = self
                     .policies
                     .iter()

@@ -1459,16 +1459,16 @@ fn all_schemas(catalog: &tidb_infoschema::SessionExtendedInfoSchema) -> Vec<stor
                     id: table.table_id(),
                     name: table.name(),
                     partitions: table
-                        .partition()
-                        .map(|partition| {
-                            partition
+                        .meta()
+                        .read()
+                        .get_partition_info()
+                        .map(|pi| {
+                            pi.read()
                                 .definitions
-                                .iter()
-                                .map(|definition| store_helper::HelperPartition {
+                                .map_visible(|definition| store_helper::HelperPartition {
                                     id: definition.id,
-                                    name: definition.name.clone(),
+                                    name: definition.name.original().to_owned(),
                                 })
-                                .collect()
                         })
                         .unwrap_or_default(),
                     indices: table

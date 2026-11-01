@@ -41,11 +41,11 @@ impl KeyInfoCatalog for SessionExtendedInfoSchema {
             let TableEntry::Kv(table) = entry else {
                 continue;
             };
-            let Some(partition) = table.partition() else {
+            let Some(pi) = table.meta().read().get_partition_info() else {
                 continue;
             };
-            if let Some(definition) = partition
-                .definitions
+            let definitions = pi.read().definitions.snapshot();
+            if let Some(definition) = definitions
                 .iter()
                 .find(|definition| definition.id == physical_id)
             {
@@ -55,7 +55,7 @@ impl KeyInfoCatalog for SessionExtendedInfoSchema {
                     registered_name,
                     table,
                     definition.id,
-                    definition.name.clone(),
+                    definition.name.original().to_owned(),
                 )));
             }
         }

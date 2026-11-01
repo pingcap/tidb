@@ -1331,11 +1331,15 @@ impl TableCommon {
     ///
     /// [`KvTableError::Storage`] when the backend refuses a scan.
     pub fn partition_row_counts(&mut self) -> Result<Vec<(String, usize)>, KvTableError> {
-        let Some(partition) = self.partition.clone() else {
+        if self.partition.is_none() {
+            return Ok(Vec::new());
+        }
+        let Some(pi) = self.meta.read().get_partition_info() else {
             return Ok(Vec::new());
         };
-        let mut counts = Vec::with_capacity(partition.definitions.len());
-        for definition in &partition.definitions {
+        let definitions = pi.read().definitions.snapshot();
+        let mut counts = Vec::with_capacity(definitions.len());
+        for definition in &definitions {
             let (low, high) = get_table_handle_key_range(definition.id);
             let mut upper = high;
             upper.push(0);
@@ -1349,7 +1353,7 @@ impl TableCommon {
                 iterator.next().map_err(KvTableError::from)?;
             }
             iterator.close();
-            counts.push((definition.name.clone(), rows));
+            counts.push((definition.name.original().to_owned(), rows));
         }
         Ok(counts)
     }
@@ -1397,12 +1401,42 @@ impl TableCommon {
         row: &[Datum],
         ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<i64, KvTableError> {
-        let Some(partition) = &self.partition else {
+        if self.partition.is_none() {
             return Ok(self.table_id);
-        };
-        partition
-            .locate(row, &self.columns, ctx)
-            .map_err(routing_error)
+        }
+        // Go `locatePartition`: `pi.Definitions[idx].ID`.
+        let (_, id) = self.locate_partition_idx(row, ctx).map_err(routing_error)?;
+        Ok(id)
+    }
+
+    /// Go `locatePartitionIdx`, with the definition the ordinal names in
+    /// `TableInfo.Partition.Definitions`.
+    fn locate_partition_idx(
+        &self,
+        row: &[Datum],
+        ctx: &dyn tidb_exprctx::Columns,
+    ) -> Result<(usize, i64), crate::partition_routing::RoutingError> {
+        let partition = self
+            .partition
+            .as_deref()
+            .expect("locate_partition_idx on an unpartitioned table");
+        let pi = self
+            .meta
+            .read()
+            .get_partition_info()
+            .expect("a partitioned table's TableInfo carries its PartitionInfo");
+        let pi = pi.read();
+        // Go passes `pi.Num`; the definition count is the same number for
+        // every enabled partitioning this tier writes.
+        pi.definitions.with_visible(|definitions| {
+            let idx = partition.locate_partition_common(
+                definitions.len() as u64,
+                row,
+                &self.columns,
+                ctx,
+            )?;
+            Ok((idx, definitions[idx].id))
+        })
     }
 
     /// Encodes the selected row's lock identity without rereading storage.
@@ -1497,12 +1531,11 @@ impl TableCommon {
         row: &[Datum],
         ctx: &dyn tidb_exprctx::Columns,
     ) -> Option<(usize, i64)> {
-        let partition = self.partition.as_ref()?;
-        let ordinal = partition.get_partition_idx_by_row(row, &self.columns, ctx).ok()?;
-        let definition = partition.definitions.get(ordinal)?;
+        self.partition.as_ref()?;
+        let (ordinal, id) = self.locate_partition_idx(row, ctx).ok()?;
         self.record_physical_ids()
-            .contains(&definition.id)
-            .then_some((ordinal, definition.id))
+            .contains(&id)
+            .then_some((ordinal, id))
     }
 
     /// Go `BatchPointGetPlan.AccessObject().Partitions`: the partitions a set
@@ -1540,9 +1573,16 @@ impl TableCommon {
         zone: &SessionTimeZone,
         ctx: &dyn tidb_exprctx::Columns,
     ) -> Vec<String> {
-        let Some(partition) = &self.partition else {
+        if self.partition.is_none() {
+            return Vec::new();
+        }
+        let Some(pi) = self.meta.read().get_partition_info() else {
             return Vec::new();
         };
+        let names = pi
+            .read()
+            .definitions
+            .map_visible(|definition| definition.name.original().to_owned());
         let mut ordinals: Vec<usize> = Vec::new();
         for (ordinal, _) in self
             .handle_partition_routes(handles, zone, ctx)
@@ -1556,8 +1596,7 @@ impl TableCommon {
         ordinals.sort_unstable();
         ordinals
             .into_iter()
-            .filter_map(|ordinal| partition.definitions.get(ordinal))
-            .map(|definition| definition.name.clone())
+            .filter_map(|ordinal| names.get(ordinal).cloned())
             .collect()
     }
 
@@ -1573,9 +1612,18 @@ impl TableCommon {
         if let Some(ids) = &self.read_partitions {
             return ids.clone();
         }
-        self.partition
-            .as_ref()
-            .map_or_else(|| vec![self.table_id], |p| p.physical_ids())
+        self.partition_physical_ids()
+    }
+
+    /// Go `PartitionInfo.Definitions[*].ID` of a partitioned table, or the
+    /// table id of an ordinary one.
+    fn partition_physical_ids(&self) -> Vec<i64> {
+        match self.meta.read().get_partition_info() {
+            Some(pi) if self.partition.is_some() => {
+                pi.read().definitions.map_visible(|definition| definition.id)
+            }
+            _ => vec![self.table_id],
+        }
     }
 
     /// The id a READ of this table looks its STATISTICS up under: Go's
@@ -2785,9 +2833,7 @@ impl TableCommon {
         let physical_ids = if index.read().global {
             vec![self.table_id]
         } else {
-            self.partition
-                .as_ref()
-                .map_or_else(|| vec![self.table_id], |p| p.physical_ids())
+            self.partition_physical_ids()
         };
         let stage = self.store.staging();
         let result = (|| -> Result<(), KvTableError> {

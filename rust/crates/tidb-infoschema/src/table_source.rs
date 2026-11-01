@@ -107,7 +107,8 @@ pub struct SourceTable {
     /// Go `PartitionExpr.Expr` is a single column reference. Batch point-get
     /// eligibility on partitioned tables uses this same fast-plan condition.
     pub partition_expression_is_column: bool,
-    /// Whether the partition metadata includes Go's online DROP overlap map.
+    /// Go `TryFastPlan`'s global-index guard: the partition info has
+    /// `AddingDefinitions`, `NewPartitionIDs` or `DroppingDefinitions`.
     pub partition_is_reorganizing: bool,
     /// Go `TableInfo.GetPartitionInfo().Definitions[i].Name.O`.
     pub partition_definition_names: Vec<String>,

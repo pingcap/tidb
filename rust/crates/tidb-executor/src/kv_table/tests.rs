@@ -491,27 +491,27 @@ fn drop_index_removes_orphan_entries_without_decoding_rows() {
 
 #[test]
 fn drop_index_covers_all_partition_ranges_and_global_ownership() {
-    use tidb_table::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
+    use tidb_table::partition_routing::{PartitionKind, PartitionSpec};
     for global in [false, true] {
         let mut table = TableCommon::new(42, Vec::new());
-        *table.partition_mut() = Some(Box::new(PartitionSpec {
+        table.set_partition(PartitionSpec {
             kind: PartitionKind::Hash,
-            expr_text: "0".to_owned(),
             expr: Expression::Constant(tidb_expr::constant::Constant::default()),
             dependencies: vec![],
-            definitions: vec![
-                PartitionDef {
-                    id: 43,
-                    ..Default::default()
-                },
-                PartitionDef {
-                    id: 44,
-                    ..Default::default()
-                },
-            ],
-            overlapping_dropping_partition_indices: vec![],
-            is_empty_columns: false,
-        }));
+        });
+        table.meta().write().partition = Some(tidb_model::GoShared::new(
+            tidb_model::partition::PartitionInfo {
+                enable: true,
+                definitions: [43, 44]
+                    .map(|id| tidb_model::partition::PartitionDefinition {
+                        id,
+                        ..Default::default()
+                    })
+                    .to_vec()
+                    .into(),
+                ..Default::default()
+            },
+        ));
         table.restrict_read_to_partitions(&[43]);
         table.add_index(
             Index {

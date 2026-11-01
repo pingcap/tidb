@@ -6130,6 +6130,7 @@ dependencies = [
  "tidb-expr",
  "tidb-exprctx",
  "tidb-hack",
+ "tidb-model",
  "tidb-ranger",
  "tidb-table",
 ]

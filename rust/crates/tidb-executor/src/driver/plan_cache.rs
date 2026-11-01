@@ -481,11 +481,13 @@ pub(super) fn dirty_statement_tables(
         };
         // Go `tableHasDirtyContent`: a partitioned table is dirty when any
         // partition is; its own id is not consulted.
-        let is_dirty = match table.partition() {
-            Some(partition) => partition
+        let is_dirty = match table.meta().read().get_partition_info() {
+            Some(pi) => pi
+                .read()
                 .definitions
+                .map_visible(|definition| definition.id)
                 .iter()
-                .any(|definition| dirty.contains(&definition.id)),
+                .any(|id| dirty.contains(id)),
             None => dirty.contains(&table.table_id()),
         };
         if is_dirty {

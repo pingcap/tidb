@@ -110,8 +110,8 @@ pub trait StatsExec: AnalyzeExec {
                     return;
                 };
                 ids.push(table.table_id());
-                if let Some(partition) = table.partition() {
-                    ids.extend(partition.definitions.iter().map(|definition| definition.id));
+                if let Some(pi) = table.meta().read().get_partition_info() {
+                    ids.extend(pi.read().definitions.map_visible(|definition| definition.id));
                 }
             };
             for object in objects {
@@ -294,7 +294,7 @@ pub fn get_physical_ids_and_partition_names(
     table: &TableCommon,
     partition_names: &[String],
 ) -> Result<Vec<i64>, DriverError> {
-    let Some(partition) = table.partition() else {
+    let Some(pi) = table.meta().read().get_partition_info() else {
         if !partition_names.is_empty() {
             return Err(DriverError::from(
                 tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
@@ -303,21 +303,17 @@ pub fn get_physical_ids_and_partition_names(
         }
         return Ok(vec![table.table_id()]);
     };
+    let definitions = pi.read().definitions.snapshot();
     if partition_names.is_empty() {
-        return Ok(partition
-            .definitions
-            .iter()
-            .map(|definition| definition.id)
-            .collect());
+        return Ok(definitions.iter().map(|definition| definition.id).collect());
     }
     partition_names
         .iter()
         .map(|name| {
             let name_lower = go_to_lower(name);
-            partition
-                .definitions
+            definitions
                 .iter()
-                .find(|definition| go_to_lower(&definition.name) == name_lower)
+                .find(|definition| definition.name.lowercase() == name_lower)
                 .map(|definition| definition.id)
                 .ok_or_else(|| {
                     DriverError::unsupported(format!(

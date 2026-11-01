@@ -135,13 +135,15 @@ fn selected_partition_ids(
                 .generate_with_stack_by_args(&[first.clone().into(), name.to_owned().into()]),
         ));
     };
-    let Some(spec) = kv.partition() else {
+    let Some(_) = kv.partition() else {
         return Err(DriverError::from(
             tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
                 .generate_with_stack_by_args(&[]),
         ));
     };
-    tidb_planner_rule::ids_for_selected_partitions(spec, partitions)
+    tidb_planner_rule::ids_for_selected_partitions(
+                    &kv.meta().read().get_partition_info().expect("partitioned").read(),
+                    partitions)
         .map(Some)
         .map_err(|partition| {
             DriverError::from(

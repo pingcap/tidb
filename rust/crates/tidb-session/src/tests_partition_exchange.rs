@@ -404,7 +404,7 @@ fn a_marked_standalone_table_takes_only_rows_of_the_partition() {
                 let Some(tidb_infoschema::TableEntry::Kv(pt)) = catalog.table_in("test", "pt") else {
                     panic!("pt is not stored as bytes");
                 };
-                let p0 = pt.partition().expect("pt is partitioned").definitions[0].id;
+                let p0 = pt.meta().read().get_partition_info().expect("pt is partitioned").read().definitions.snapshot()[0].id;
                 (pt.table_id(), p0)
             };
             let Some(tidb_infoschema::TableEntry::Kv(nt)) = catalog.table_mut_in("test", "nt") else {

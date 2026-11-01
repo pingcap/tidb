@@ -68,9 +68,9 @@ fn create_table_like_copies_tiflash_replica_settings_clearing_availability() {
     let t1 = kv_table(&tk, "t1");
     // Mock for all partitions replica was available.
     let partition_ids = t1
-        .partition()
+        .meta().read().get_partition_info()
         .expect("source table is partitioned")
-        .definitions
+        .read().definitions.snapshot()
         .iter()
         .map(|definition| definition.id)
         .collect::<Vec<_>>();

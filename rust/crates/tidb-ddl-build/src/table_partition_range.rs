@@ -345,14 +345,10 @@ mod tests {
     #[test]
     fn the_definition_list_matches_gos_own_spelling() {
         let definitions = [("p0", "10"), ("p1", "20"), ("pm", "MAXVALUE")].map(|(name, bound)| {
-            tidb_table::partition_routing::PartitionDef {
-                id: 0,
-                name: name.to_owned(),
-                less_than: vec![bound.to_owned()],
-                in_values: Vec::new(),
-                comment: String::new(),
-                placement_policy: None,
-                storage_class: Default::default(),
+            tidb_model::partition::PartitionDefinition {
+                name: tidb_ast::CiString::new(name),
+                less_than: vec![bound.to_owned()].into(),
+                ..Default::default()
             }
         });
         assert_eq!(

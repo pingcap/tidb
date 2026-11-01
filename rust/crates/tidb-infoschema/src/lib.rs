@@ -796,12 +796,16 @@ impl SessionExtendedInfoSchema {
                     {
                         return true;
                     }
-                    table.partition().is_some_and(|partition| {
-                        partition.definitions.iter().any(|definition| {
-                            definition
-                                .placement_policy
-                                .as_ref()
-                                .is_some_and(|reference| reference.name.lowercase() == folded)
+                    table.meta().read().get_partition_info().is_some_and(|pi| {
+                        pi.read().definitions.with_visible(|definitions| {
+                            definitions.iter().any(|definition| {
+                                definition
+                                    .placement_policy_ref
+                                    .as_ref()
+                                    .is_some_and(|reference| {
+                                        reference.read().name.lowercase() == folded
+                                    })
+                            })
                         })
                     })
                 })
@@ -992,11 +996,12 @@ impl SessionExtendedInfoSchema {
         let schema = self.schema.databases.get(&key.database)?;
         match schema.tables.get(&key.table)?.as_ref() {
             TableEntry::Kv(table)
-                if table.partition().is_some_and(|partition| {
-                    partition
+                if table.meta().read().get_partition_info().is_some_and(|pi| {
+                    pi.read()
                         .definitions
-                        .iter()
-                        .any(|definition| definition.id == partition_id)
+                        .with_visible(|definitions| {
+                            definitions.iter().any(|definition| definition.id == partition_id)
+                        })
                 }) =>
             {
                 Some((schema.name.clone(), table.name()))
@@ -1209,9 +1214,9 @@ impl SessionExtendedInfoSchema {
                         table: table_name.clone(),
                     });
                     names.insert(table.table_id(), Arc::clone(&key));
-                    if let Some(partition) = table.partition() {
-                        for definition in &partition.definitions {
-                            names.insert(definition.id, Arc::clone(&key));
+                    if let Some(pi) = table.meta().read().get_partition_info() {
+                        for id in pi.read().definitions.map_visible(|definition| definition.id) {
+                            names.insert(id, Arc::clone(&key));
                         }
                     }
                 }

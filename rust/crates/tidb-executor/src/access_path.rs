@@ -6892,19 +6892,23 @@ use std::collections::HashMap;
         table.set_pk_handle_offset(0);
         table.set_partition(tidb_table::partition_routing::PartitionSpec {
             kind: tidb_table::partition_routing::PartitionKind::Hash,
-            expr_text: "id".to_owned(),
             expr: Expression::Column(tidb_expr::column::Column::new(0, long())),
             dependencies: vec!["id".to_owned()],
-            definitions: (0..3)
-                .map(|ordinal| tidb_table::partition_routing::PartitionDef {
+        });
+        table.meta().write().partition = Some(tidb_model::GoShared::new(
+            tidb_model::partition::PartitionInfo {
+                enable: true,
+                definitions: (0..3)
+                .map(|ordinal| tidb_model::partition::PartitionDefinition {
                     id: 101 + ordinal,
-                    name: format!("p{ordinal}"),
+                    name: tidb_ast::CiString::new(format!("p{ordinal}")),
                     ..Default::default()
                 })
-                .collect(),
-            overlapping_dropping_partition_indices: Vec::new(),
-            is_empty_columns: false,
-        });
+                .collect::<Vec<_>>()
+                    .into(),
+                ..Default::default()
+            },
+        ));
         for value in 1..=3 {
             table
                 .insert_row(&[Datum::Int(value)], &tidb_exprctx::NoColumns)
@@ -6942,19 +6946,23 @@ use std::collections::HashMap;
                 TableCommon::with_storage(77, vec![column("p", 1), column("v", 2)], Box::new(storage));
             table.set_partition(tidb_table::partition_routing::PartitionSpec {
                 kind: tidb_table::partition_routing::PartitionKind::Hash,
-                expr_text: "p".to_owned(),
                 expr: Expression::Column(tidb_expr::column::Column::new(0, long())),
                 dependencies: vec!["p".to_owned()],
-                definitions: (0..2)
-                    .map(|ordinal| tidb_table::partition_routing::PartitionDef {
+            });
+            table.meta().write().partition = Some(tidb_model::GoShared::new(
+                tidb_model::partition::PartitionInfo {
+                    enable: true,
+                    definitions: (0..2)
+                    .map(|ordinal| tidb_model::partition::PartitionDefinition {
                         id: 101 + ordinal,
-                        name: format!("p{ordinal}"),
+                        name: tidb_ast::CiString::new(format!("p{ordinal}")),
                         ..Default::default()
                     })
-                    .collect(),
-                overlapping_dropping_partition_indices: Vec::new(),
-                is_empty_columns: false,
-            });
+                    .collect::<Vec<_>>()
+                        .into(),
+                    ..Default::default()
+                },
+            ));
             table
                 .create_index_with_context(
                     tidb_table::tables::Index {

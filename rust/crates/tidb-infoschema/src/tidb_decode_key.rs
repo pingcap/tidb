@@ -82,9 +82,9 @@ impl TidbDecodeKeySnapshot {
             use_new_collation: table.use_new_collation(),
         };
         self.tables.insert(table.table_id(), metadata.clone());
-        if let Some(partition) = table.partition() {
-            for definition in &partition.definitions {
-                self.tables.insert(definition.id, metadata.clone());
+        if let Some(pi) = table.meta().read().get_partition_info() {
+            for id in pi.read().definitions.map_visible(|definition| definition.id) {
+                self.tables.insert(id, metadata.clone());
             }
         }
     }

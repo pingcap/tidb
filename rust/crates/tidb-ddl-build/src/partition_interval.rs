@@ -478,6 +478,7 @@ impl TableInterval {
 /// anything else, as Go answers nil.
 pub fn get_partition_interval_from_table(
     partition: &tidb_table::partition_routing::PartitionSpec,
+    definitions: &[tidb_model::partition::PartitionDefinition],
     ctx: &tidb_metabuild::Context,
 ) -> Option<TableInterval> {
     use tidb_table::partition_routing::PartitionKind;
@@ -488,7 +489,6 @@ pub fn get_partition_interval_from_table(
         }
         _ => return None,
     };
-    let definitions = &partition.definitions;
     if definitions.len() < 2 {
         return None;
     }
@@ -506,6 +506,7 @@ pub fn get_partition_interval_from_table(
     let bound = |ordinal: usize| {
         definitions[ordinal]
             .less_than
+            .snapshot()
             .first()
             .map(|text| super::table_partition::unwrap_from_single_quotes(text))
     };

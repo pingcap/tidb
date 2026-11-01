@@ -139,10 +139,36 @@ impl TableCommon {
         let Some(reorg) = self.partition_reorg.as_deref() else {
             return Ok(None);
         };
-        reorg
-            .spec
-            .locate(row, &self.columns, ctx)
-            .map(Some)
+        let pi = self
+            .meta
+            .read()
+            .get_partition_info()
+            .expect("a reorganizing table's TableInfo carries its PartitionInfo");
+        let pi = pi.read();
+        use tidb_model::{ActionType, SchemaState};
+        let mut reorg_defs = &pi.adding_definitions;
+        if matches!(
+            pi.ddl_action,
+            ActionType::ACTION_REORGANIZE_PARTITION
+                | ActionType::ACTION_REMOVE_PARTITIONING
+                | ActionType::ACTION_ALTER_TABLE_PARTITIONING
+        ) && pi.ddl_state == SchemaState::PUBLIC
+        {
+            reorg_defs = &pi.dropping_definitions;
+        }
+        if pi.ddl_state == SchemaState::DELETE_REORGANIZATION {
+            reorg_defs = &pi.dropping_definitions;
+        }
+        reorg_defs
+            .with_visible(|reorg_defs| {
+                let idx = reorg.spec.locate_partition_common(
+                    reorg_defs.len() as u64,
+                    row,
+                    &self.columns,
+                    ctx,
+                )?;
+                Ok(Some(reorg_defs[idx].id))
+            })
             .map_err(super::routing_error)
     }
 

@@ -159,7 +159,7 @@ use tidb_txnkv::Key;
     fn table_mutation_batch_partition_move_preserves_repeated_hidden_handle() {
         use tidb_table::tables::TableHandle;
         use tidb_table::tables::TableCommon;
-        use tidb_table::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
+        use tidb_table::partition_routing::{PartitionKind, PartitionSpec};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::expression::{Column, Expression};
         let (store, _, buffer) = storage(&[]);
@@ -188,24 +188,24 @@ use tidb_txnkv::Key;
         column.index = 0;
         table.set_partition(PartitionSpec {
             kind: PartitionKind::Hash,
-            expr_text: "v".into(),
             expr: Expression::Column(column),
             dependencies: vec!["v".into()],
-            definitions: [43, 44]
-                .into_iter()
-                .map(|id| PartitionDef {
-                    id,
-                    name: id.to_string(),
-                    less_than: vec![],
-                    in_values: vec![],
-                    comment: String::new(),
-                    placement_policy: None,
-                    storage_class: Default::default(),
-                })
-                .collect(),
-            overlapping_dropping_partition_indices: vec![],
-            is_empty_columns: false,
         });
+        table.meta().write().partition = Some(tidb_model::GoShared::new(
+            tidb_model::partition::PartitionInfo {
+                enable: true,
+                definitions: [43, 44]
+                .into_iter()
+                .map(|id| tidb_model::partition::PartitionDefinition {
+                    id,
+                    name: tidb_ast::CiString::new(id.to_string()),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                    .into(),
+                ..Default::default()
+            },
+        ));
         let ctx = crate::StmtContext::default();
         let first = [Datum::Int(0), Datum::Int(10)];
         let second = [Datum::Int(1), Datum::Int(20)];

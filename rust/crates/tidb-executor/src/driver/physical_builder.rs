@@ -1253,11 +1253,12 @@ fn build_table_scan(
                 .partitions
                 .iter()
                 .filter_map(|name| {
-                    table.partition().and_then(|partition| {
-                        partition
+                    table.meta().read().get_partition_info().and_then(|pi| {
+                        pi.read()
                             .definitions
+                            .snapshot()
                             .iter()
-                            .find(|definition| definition.name.go_lower_eq(name))
+                            .find(|definition| definition.name.original().go_lower_eq(name))
                             .map(|definition| definition.id)
                     })
                 })
@@ -2588,15 +2589,16 @@ fn build_index_reader(
     // their encoded partition IDs using this same read restriction.
     if let Some(access) = &scan.dynamic_partition_access {
         if !access.all_partitions {
-            let ids = table.partition().map_or_else(Vec::new, |partition| {
-                partition
+            let ids = table.meta().read().get_partition_info().map_or_else(Vec::new, |pi| {
+                pi.read()
                     .definitions
+                    .snapshot()
                     .iter()
                     .filter(|definition| {
                         access
                             .partitions
                             .iter()
-                            .any(|name| definition.name.go_lower_eq(name))
+                            .any(|name| definition.name.original().go_lower_eq(name))
                     })
                     .map(|definition| definition.id)
                     .collect()
@@ -4738,7 +4740,7 @@ fn point_partition_id(
     let table = catalog
         .physical_kv_table_by_id(point.table_id)
         .ok_or_else(|| DriverError::unsupported("point partition logical table is absent"))?;
-    let partition = table
+    table
         .partition()
         .ok_or_else(|| DriverError::unsupported("point partition metadata is absent"))?;
     // A GLOBAL index entry names its row's partition, which the source checks
@@ -4849,7 +4851,16 @@ fn point_partition_id(
             || routing
                 .names
                 .iter()
-                .any(|name| partition.definitions[ordinal].name.go_lower_eq(name)))
+                .any(|name| {
+                    table.meta().read().get_partition_info().is_some_and(|pi| {
+                        pi.read()
+                            .definitions
+                            .get(ordinal)
+                            .name
+                            .original()
+                            .go_lower_eq(name)
+                    })
+                }))
         .then_some(id)
     }))
 }
@@ -4860,12 +4871,14 @@ fn partition_ids_named(table: &tidb_table::tables::TableCommon, names: &[String]
     if names.is_empty() {
         return None;
     }
-    let partition = table.partition()?;
+    let pi = table.meta().read().get_partition_info()?;
+    let definitions = pi.read().definitions.snapshot();
     Some(
-        partition
-            .definitions
+        definitions
             .iter()
-            .filter(|definition| names.iter().any(|name| definition.name.go_lower_eq(name)))
+            .filter(|definition| {
+                names.iter().any(|name| definition.name.original().go_lower_eq(name))
+            })
             .map(|definition| definition.id)
             .collect(),
     )
@@ -5889,13 +5902,13 @@ fn index_merge_partition_indexes(
         .filter_map(|(index, id)| {
             let selected = access.is_none_or(|access| {
                 access.all_partitions
-                    || table.partition().is_some_and(|partition| {
-                        partition.definitions.iter().any(|definition| {
+                    || table.meta().read().get_partition_info().is_some_and(|pi| {
+                        pi.read().definitions.snapshot().iter().any(|definition| {
                             definition.id == *id
                                 && access
                                     .partitions
                                     .iter()
-                                    .any(|name| name.go_lower_eq(&definition.name))
+                                    .any(|name| name.go_lower_eq(definition.name.original()))
                         })
                     })
             });
@@ -9520,19 +9533,23 @@ use super::*;
                 if partitioned {
                     table.set_partition(tidb_table::partition_routing::PartitionSpec {
                         kind: tidb_table::partition_routing::PartitionKind::Hash,
-                        expr_text: "id".to_owned(),
                         expr: Expression::Column(two_long_schema().columns[0].clone()),
                         dependencies: vec!["id".to_owned()],
-                        definitions: (0..2)
-                            .map(|ordinal| tidb_table::partition_routing::PartitionDef {
+                    });
+                    table.meta().write().partition = Some(tidb_model::GoShared::new(
+                        tidb_model::partition::PartitionInfo {
+                            enable: true,
+                            definitions: (0..2)
+                            .map(|ordinal| tidb_model::partition::PartitionDefinition {
                                 id: 101 + ordinal,
-                                name: format!("p{ordinal}"),
+                                name: tidb_ast::CiString::new(format!("p{ordinal}")),
                                 ..Default::default()
                             })
-                            .collect(),
-                        overlapping_dropping_partition_indices: Vec::new(),
-                        is_empty_columns: false,
-                    });
+                            .collect::<Vec<_>>()
+                                .into(),
+                            ..Default::default()
+                        },
+                    ));
                 }
                 table
                     .create_index_with_context(

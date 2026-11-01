@@ -20,9 +20,7 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_table::generated_column::TableColumnResolver;
 #[allow(unused_imports)]
 #[allow(unused_imports)]
-use tidb_table::partition_routing::{
-    PartitionDef, PartitionKind, PartitionSpec, RangeBound, RangeColumnBound,
-};
+use tidb_table::partition_routing::{PartitionKind, PartitionSpec, RangeBound, RangeColumnBound};
 #[allow(unused_imports)]
 use tidb_terror::MysqlError;
 #[allow(unused_imports)]
@@ -110,10 +108,7 @@ fn routes_the_same_way(sql: &str) {
     .unwrap_or_else(|error| panic!("{sql}: {error:?}"))
     .unwrap_or_else(|| panic!("{sql} declares partitioning"));
     let (stored, direct) = built;
-    let mut definitions = stored.definitions.snapshot();
-    for (ordinal, definition) in definitions.iter_mut().enumerate() {
-        definition.id = direct.definitions[ordinal].id;
-    }
+    let definitions = stored.definitions.snapshot();
     let columns = stored
         .columns
         .snapshot()
@@ -124,9 +119,7 @@ fn routes_the_same_way(sql: &str) {
         stored.partition_type,
         &stored.expr,
         &columns,
-        stored.is_empty_columns,
         &definitions,
-        &[],
         &names,
         &types,
     )
@@ -142,17 +135,8 @@ fn routes_the_same_way(sql: &str) {
         "{sql}: the stored text did not fold back to the bounds it came from"
     );
     assert_eq!(
-        direct.expr_text, reloaded.expr_text,
-        "{sql}: the reloaded spec prints a different clause"
-    );
-    assert_eq!(
         direct.dependencies, reloaded.dependencies,
         "{sql}: the reloaded spec reads different columns"
-    );
-    assert_eq!(
-        direct.physical_ids(),
-        reloaded.physical_ids(),
-        "{sql}: the reloaded spec routes to different physical tables"
     );
 }
 
@@ -278,7 +262,7 @@ fn key_clause_dependencies(
         &mut || 1,
         &crate::ddl::new_metabuild_context_with_sctx(&crate::StmtContext::for_query()),
     )
-    .map(|spec| spec.expect("the clause is there").dependencies)
+    .map(|built| built.expect("the clause is there").0.dependencies)
 }
 
 /// Go `checkPartitionFuncType` accepts a whitelisted partition function

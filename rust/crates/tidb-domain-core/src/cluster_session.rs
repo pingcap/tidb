@@ -817,17 +817,17 @@ use tidb_table::table_from_meta::kv_index;
         let (storage, _, _) = cluster_storage();
         let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
             .expect("a HASH-partitioned table loads");
-        let spec = loaded
+        loaded
             .partition()
             .expect("the routing spec came back with the table");
         // The read path routes and prunes off these ids; before the rebuild
         // the table never reached the catalog at all.
         assert_eq!(
-            spec.physical_ids(),
+            loaded.record_physical_ids(),
             vec![401, 402],
             "the read reaches both partitions' physical tables"
         );
-        assert_eq!(spec.num(), 2);
+        assert_eq!(loaded.record_physical_ids().len(), 2);
     }
 
     /// Go `partitionedTable` during REORGANIZE PARTITION: before the change
@@ -954,8 +954,8 @@ use tidb_table::table_from_meta::kv_index;
         let (storage, _, _) = cluster_storage();
         let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
             .expect("a KEY-partitioned table loads");
-        let spec = loaded.partition().expect("the routing spec came back");
-        assert_eq!(spec.physical_ids(), vec![501, 502]);
+        loaded.partition().expect("the routing spec came back");
+        assert_eq!(loaded.record_physical_ids(), vec![501, 502]);
     }
 
     /// Partition metadata that is present but NOT enabled is not
@@ -1034,7 +1034,7 @@ use tidb_table::table_from_meta::kv_index;
         let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
             .expect("a RANGE-partitioned table loads");
         let spec = loaded.partition().expect("the routing spec came back");
-        assert_eq!(spec.physical_ids(), vec![701, 702]);
+        assert_eq!(loaded.record_physical_ids(), vec![701, 702]);
         let tidb_table::partition_routing::PartitionKind::Range { less_than, .. } = &spec.kind
         else {
             panic!(
@@ -1083,7 +1083,7 @@ use tidb_table::table_from_meta::kv_index;
         let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
             .expect("a LIST COLUMNS table loads");
         let spec = loaded.partition().expect("the routing spec came back");
-        assert_eq!(spec.physical_ids(), vec![801, 802]);
+        assert_eq!(loaded.record_physical_ids(), vec![801, 802]);
         let tidb_table::partition_routing::PartitionKind::ListColumns {
             values,
             default_partition,

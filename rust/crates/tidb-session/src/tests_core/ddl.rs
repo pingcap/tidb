@@ -1980,7 +1980,8 @@ fn truncate_partition_replaces_only_the_selected_physical_tables() {
         let tidb_infoschema::TableEntry::Kv(table) = catalog.get_table_for_test("pt").unwrap() else {
             panic!("pt should remain a storage-backed table");
         };
-        table.partition().unwrap().physical_ids()
+        assert!(table.partition().is_some());
+        table.record_physical_ids()
     };
     let before = physical_ids(&session);
 

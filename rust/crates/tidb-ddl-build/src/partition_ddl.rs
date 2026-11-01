@@ -25,9 +25,8 @@ use tidb_terror::MysqlError;
 use tidb_hack::GoCaseCompare;
 use tidb_model::index::IndexInfo;
 use tidb_model::table_info::TableInfo;
-use tidb_table::partition_routing::{
-    PartitionDef, PartitionKind, PartitionSpec, RangeBound, RangeColumnBound,
-};
+use tidb_model::partition::PartitionDefinition as StoredDefinition;
+use tidb_table::partition_routing::{PartitionKind, PartitionSpec, RangeBound, RangeColumnBound};
 
 use crate::table_partition::self;
 
@@ -70,6 +69,14 @@ impl<'a> PartitionedTable<'a> {
 
     fn partition(&self) -> Option<&PartitionSpec> {
         self.partition.as_ref()
+    }
+
+    /// Go `Meta().GetPartitionInfo().Definitions`.
+    fn definitions(&self) -> Vec<StoredDefinition> {
+        self.meta
+            .get_partition_info()
+            .map(|pi| pi.read().definitions.snapshot())
+            .unwrap_or_default()
     }
 
     /// Go `TableInfo.Indices`.
@@ -143,7 +150,7 @@ pub fn hash_partition_management(
             HashManagement::Coalesce(_) => "COALESCE PARTITION",
         },
     )?;
-    let existing = &partition.definitions;
+    let existing = table.definitions();
     let (count, written) = match change {
         HashManagement::Add { count, definitions } => {
             for definition in definitions {
@@ -203,9 +210,12 @@ pub fn hash_partition_management(
     for ordinal in 0..count {
         if let Some(definition) = existing.get(ordinal) {
             built.push((
-                definition.name.clone(),
+                definition.name.original().to_owned(),
                 definition.comment.clone(),
-                definition.placement_policy.clone(),
+                definition
+                    .placement_policy_ref
+                    .as_ref()
+                    .map(|reference| reference.read().clone()),
             ));
         } else if let Some(definition) = written.get(ordinal - existing.len()) {
             built.push((
@@ -229,17 +239,12 @@ pub fn hash_partition_management(
     }
     let mut definitions = built
         .into_iter()
-        .map(
-            |(name, comment, placement_policy)| tidb_table::partition_routing::PartitionDef {
-                id: 0,
-                name,
-                less_than: Vec::new(),
-                in_values: Vec::new(),
-                comment,
-                placement_policy,
-                storage_class: Default::default(),
-            },
-        )
+        .map(|(name, comment, placement_policy)| StoredDefinition {
+            name: tidb_ast::CiString::new(name),
+            comment,
+            placement_policy_ref: placement_policy.map(tidb_model::GoShared::new),
+            ..StoredDefinition::default()
+        })
         .collect::<Vec<_>>();
     // Go `handlePartitionPlacement`: each policy must exist.
     host.resolve_placement(&mut definitions)?;
@@ -263,7 +268,11 @@ pub fn hash_partition_management(
         expr: if key {
             String::new()
         } else {
-            partition.expr_text.clone()
+            table
+                .meta
+                .get_partition_info()
+                .map(|pi| pi.read().expr.clone())
+                .unwrap_or_default()
         },
         is_empty_columns: false,
         ..tidb_model::partition::PartitionInfo::default()
@@ -276,18 +285,7 @@ pub fn hash_partition_management(
             .collect::<Vec<_>>()
             .into();
     }
-    stored.definitions = definitions
-        .iter()
-        .map(|definition| {
-            tidb_table::partition_routing::PartitionDef {
-                less_than: Vec::new(),
-                in_values: Vec::new(),
-                ..definition.clone()
-            }
-            .to_definition()
-        })
-        .collect::<Vec<_>>()
-        .into();
+    stored.definitions = definitions.into();
     Ok(PartitionReorgPlan {
         source_ids,
         interval_rewrite: None,
@@ -302,8 +300,8 @@ pub fn hash_partition_management(
 /// rewrite for INTERVAL's FIRST / LAST PARTITION sugar (the written clause and
 /// the partitions it stands for).
 pub struct PartitionChange {
-    /// The table's partitioning after the change.
-    pub partition: PartitionSpec,
+    /// Go `PartitionInfo.Definitions` after the change.
+    pub definitions: Vec<StoredDefinition>,
     /// Go `ctx.SetValue(sessionctx.QueryString, ...)`'s rewrite, as
     /// (written, generated) text.
     pub query_rewrite: Option<(String, String)>,
@@ -324,12 +322,13 @@ pub fn plan_partition_change(
     action: &tidb_ast::AlterPartitionAction,
     ctx: &tidb_metabuild::Context,
 ) -> Result<PartitionChange, MysqlError> {
-    let mut partition = table.partition().cloned().ok_or_else(|| {
-        MysqlError::from_terror(
+    if table.partition().is_none() {
+        return Err(MysqlError::from_terror(
             &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
                 .generate_with_stack_by_args(&[]),
-        )
-    })?;
+        ));
+    }
+    let mut definitions = table.definitions();
     let mut query_rewrite = None;
     match action {
         tidb_ast::AlterPartitionAction::Add {
@@ -337,23 +336,23 @@ pub fn plan_partition_change(
             spec,
             ..
         } => {
-            if let Some((added, kind)) = plan_add_partitions(table, *if_not_exists, spec, ctx)? {
-                append_partitions(&mut partition, added, kind);
+            if let Some((added, _)) = plan_add_partitions(table, *if_not_exists, spec, ctx)? {
+                definitions.extend(added);
             }
         }
         tidb_ast::AlterPartitionAction::LastPartitionLessThan { expr, .. } => {
-            let (added, kind, rewrite) = plan_last_partition_less_than(table, expr, ctx)?;
-            append_partitions(&mut partition, added, kind);
+            let (added, _, rewrite) = plan_last_partition_less_than(table, expr, ctx)?;
+            definitions.extend(added);
             query_rewrite = Some(rewrite);
         }
         tidb_ast::AlterPartitionAction::Drop { if_exists, names } => {
             if let Some(ordinals) = check_drop_table_partition(table, *if_exists, names, ctx)? {
-                drop_partitions(&mut partition, &ordinals);
+                drop_partitions(&mut definitions, &ordinals);
             }
         }
         tidb_ast::AlterPartitionAction::FirstPartitionLessThan { expr, .. } => {
             let (ordinals, rewrite) = drop_table_partition(table, expr, ctx)?;
-            drop_partitions(&mut partition, &ordinals);
+            drop_partitions(&mut definitions, &ordinals);
             query_rewrite = Some(rewrite);
         }
         _ => {
@@ -363,183 +362,20 @@ pub fn plan_partition_change(
         }
     }
     Ok(PartitionChange {
-        partition,
+        definitions,
         query_rewrite,
     })
 }
 
-/// Go `updateDroppingPartitionInfo`'s effect on the partitioning: the
-/// definitions at `ordinals` leave, with every routing entry they owned.
-fn drop_partitions(partition: &mut PartitionSpec, ordinals: &[usize]) {
-    let mut next = 0usize;
-    let remap = (0..partition.definitions.len())
-        .map(|old| {
-            if ordinals.contains(&old) {
-                None
-            } else {
-                let new = next;
-                next += 1;
-                Some(new)
-            }
-        })
-        .collect::<Vec<_>>();
-    partition.definitions = partition
-        .definitions
-        .drain(..)
-        .enumerate()
-        .filter_map(|(old, definition)| remap[old].map(|_| definition))
-        .collect();
-    match &mut partition.kind {
-        // NONE keeps no per-partition structure beside the definitions
-        // that were just remapped.
-        PartitionKind::None => {}
-        PartitionKind::Range { less_than, .. } => {
-            *less_than = less_than
-                .drain(..)
-                .enumerate()
-                .filter_map(|(old, bound)| remap[old].map(|_| bound))
-                .collect();
-        }
-        PartitionKind::RangeColumns { less_than, .. } => {
-            *less_than = less_than
-                .drain(..)
-                .enumerate()
-                .filter_map(|(old, bound)| remap[old].map(|_| bound))
-                .collect();
-        }
-        PartitionKind::List {
-            values,
-            null_partition,
-            default_partition,
-            ..
-        } => {
-            *values = values
-                .drain(..)
-                .filter_map(|(value, old)| remap[old].map(|new| (value, new)))
-                .collect();
-            *null_partition = null_partition.and_then(|old| remap[old]);
-            *default_partition = default_partition.and_then(|old| remap[old]);
-        }
-        PartitionKind::ListColumns {
-            values,
-            keys,
-            default_partition,
-            ..
-        } => {
-            *values = values
-                .drain(..)
-                .filter_map(|(value, old)| remap[old].map(|new| (value, new)))
-                .collect();
-            keys.retain(|_, old| {
-                let Some(new) = remap[*old] else {
-                    return false;
-                };
-                *old = new;
-                true
-            });
-            *default_partition = default_partition.and_then(|old| remap[old]);
-        }
-        PartitionKind::Hash | PartitionKind::Key => {
-            unreachable!("DDL allows DROP PARTITION only for RANGE/LIST")
-        }
-    }
-}
-
-/// Go `CheckAndUpdateAddedPartitionDefinitions`' result on the partitioning:
-/// `definitions` follow the existing ones, `added_kind`'s routing entries
-/// renumbered after them.
-fn append_partitions(
-    partition: &mut PartitionSpec,
-    definitions: Vec<PartitionDef>,
-    added_kind: PartitionKind,
-) {
-    let offset = partition.definitions.len();
-    match (&mut partition.kind, added_kind) {
-        (
-            PartitionKind::Range {
-                less_than,
-                unsigned,
-            },
-            PartitionKind::Range {
-                less_than: added_bounds,
-                unsigned: added_unsigned,
-            },
-        ) => {
-            debug_assert_eq!(*unsigned, added_unsigned);
-            less_than.extend(added_bounds);
-        }
-        (
-            PartitionKind::RangeColumns {
-                less_than,
-                field_types,
-            },
-            PartitionKind::RangeColumns {
-                less_than: added_bounds,
-                field_types: added_types,
-            },
-        ) => {
-            debug_assert_eq!(*field_types, added_types);
-            less_than.extend(added_bounds);
-        }
-        (
-            PartitionKind::List {
-                values,
-                null_partition,
-                default_partition,
-                unsigned,
-            },
-            PartitionKind::List {
-                values: added_values,
-                null_partition: added_null,
-                default_partition: added_default,
-                unsigned: added_unsigned,
-            },
-        ) => {
-            debug_assert_eq!(*unsigned, added_unsigned);
-            values.extend(
-                added_values
-                    .into_iter()
-                    .map(|(value, owner)| (value, owner + offset)),
-            );
-            if let Some(owner) = added_null {
-                *null_partition = Some(owner + offset);
-            }
-            if let Some(owner) = added_default {
-                *default_partition = Some(owner + offset);
-            }
-        }
-        (
-            PartitionKind::ListColumns {
-                values,
-                keys,
-                default_partition,
-                field_types,
-            },
-            PartitionKind::ListColumns {
-                values: added_values,
-                keys: added_keys,
-                default_partition: added_default,
-                field_types: added_types,
-            },
-        ) => {
-            debug_assert_eq!(*field_types, added_types);
-            values.extend(
-                added_values
-                    .into_iter()
-                    .map(|(value, owner)| (value, owner + offset)),
-            );
-            keys.extend(
-                added_keys
-                    .into_iter()
-                    .map(|(key, owner)| (key, owner + offset)),
-            );
-            if let Some(owner) = added_default {
-                *default_partition = Some(owner + offset);
-            }
-        }
-        _ => unreachable!("DDL folds added definitions with the existing partition method"),
-    }
-    partition.definitions.extend(definitions);
+/// Go `updateDroppingPartitionInfo`'s effect on the definitions: the ones at
+/// `ordinals` leave.
+fn drop_partitions(definitions: &mut Vec<StoredDefinition>, ordinals: &[usize]) {
+    let mut ordinal = 0;
+    definitions.retain(|_| {
+        let keep = !ordinals.contains(&ordinal);
+        ordinal += 1;
+        keep
+    });
 }
 
 /// Go `CheckDropTablePartition`: the ordinals of `table`'s partitions that
@@ -570,15 +406,15 @@ pub fn check_drop_table_partition(
         ));
     }
     refuse_affinity(table, "DROP PARTITION")?;
-    if partition.definitions.len() <= names.len() {
+    if table.definitions().len() <= names.len() {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_DROP_LAST_PARTITION.generate_with_stack_by_args(&[]),
         ));
     }
     let mut ordinals = Vec::with_capacity(names.len());
     for name in names {
-        let Some(ordinal) = partition.definitions.iter().position(|definition| {
-            crate::table_partition::partition_names_equal(&definition.name, name)
+        let Some(ordinal) = table.definitions().iter().position(|definition| {
+            crate::table_partition::partition_names_equal(definition.name.original(), name)
         }) else {
             if if_exists {
                 note(
@@ -633,7 +469,7 @@ pub fn plan_add_partitions(
     if_not_exists: bool,
     spec: &tidb_ast::AddPartitionSpec,
     ctx: &tidb_metabuild::Context,
-) -> Result<Option<(Vec<PartitionDef>, PartitionKind)>, MysqlError> {
+) -> Result<Option<(Vec<StoredDefinition>, PartitionKind)>, MysqlError> {
     if table.partition().is_some() {
         refuse_affinity(table, "ADD PARTITION")?;
     }
@@ -693,7 +529,7 @@ pub fn plan_add_partitions(
                     .generate_with_stack_by_args(&[]),
             ));
         };
-        if partition.definitions.len() + definitions.len()
+        if table.definitions().len() + definitions.len()
             > crate::table_partition::MAX_PARTITIONS as usize
         {
             return Err(tidb_terror::MysqlError::from_terror(
@@ -701,8 +537,8 @@ pub fn plan_add_partitions(
             ));
         }
         for definition in definitions {
-            let duplicate_existing = partition.definitions.iter().any(|old| {
-                crate::table_partition::partition_names_equal(&old.name, &definition.name)
+            let duplicate_existing = table.definitions().iter().any(|old| {
+                crate::table_partition::partition_names_equal(old.name.original(), &definition.name)
             });
             let duplicate_added = definitions
                 .iter()
@@ -1020,22 +856,22 @@ pub fn plan_add_partitions(
     };
     let mut added_definitions = Vec::with_capacity(definitions.len());
     for (ordinal, definition) in definitions.iter().enumerate() {
-        added_definitions.push(PartitionDef {
-            // Allocated once every check has passed, as Go's
-            // `assignPartitionIDs` runs last.
-            id: 0,
-            name: definition.name.clone(),
-            less_than: range_bound_text(ordinal)?,
+        // The id is allocated once every check has passed, as Go's
+        // `assignPartitionIDs` runs last. Per-partition OPTIONS are refused
+        // on this path, so an added partition names no policy of its own.
+        added_definitions.push(StoredDefinition {
+            name: tidb_ast::CiString::new(definition.name.clone()),
+            less_than: range_bound_text(ordinal)?.into(),
             in_values: crate::table_partition::stored_in_values(
                 Some(definition),
                 &list_field_types,
                 ctx,
-            )?,
-            comment: String::new(),
-            // Per-partition OPTIONS are refused on this path, so an added
-            // partition names no policy of its own.
-            placement_policy: None,
-            storage_class: Default::default(),
+            )?
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<_>>()
+            .into(),
+            ..StoredDefinition::default()
         });
     }
     // Go `CheckAndUpdateAddedPartitionDefinitions`: the storage classes are
@@ -1045,7 +881,8 @@ pub fn plan_add_partitions(
         let partition = table
             .partition()
             .expect("ADD PARTITION was admitted for a partitioned table");
-        let existing = partition.definitions.iter().collect::<Vec<_>>();
+        let existing = table.definitions();
+        let existing = existing.iter().collect::<Vec<_>>();
         assign_partition_storage_classes(
             table,
             &partition.kind,
@@ -1078,7 +915,7 @@ pub fn drop_table_partition(
                 .generate_with_stack_by_args(&[message.into()]),
         )
     };
-    let Some(interval) = crate::partition_interval::get_partition_interval_from_table(partition, ctx) else {
+    let Some(interval) = crate::partition_interval::get_partition_interval_from_table(partition, &table.definitions(), ctx) else {
         return Err(unsupported(
             "FIRST PARTITION, does not seem like an INTERVAL partitioned table",
         ));
@@ -1087,11 +924,11 @@ pub fn drop_table_partition(
         &interval.interval(),
         crate::partition_interval::IntervalStatement::DropFirst(bound),
         interval.column.as_ref(),
-        partition.definitions.len(),
+        table.definitions().len(),
         ctx,
     )?;
     let null_offset = usize::from(interval.null_partition);
-    if generated.is_empty() || generated.len() >= partition.definitions.len() - null_offset {
+    if generated.is_empty() || generated.len() >= table.definitions().len() - null_offset {
         return Err(unsupported(
             "FIRST PARTITION, number of partitions does not match",
         ));
@@ -1102,9 +939,9 @@ pub fn drop_table_partition(
         ));
     }
     // The last generated partition becomes the new first one.
-    let names = partition.definitions[null_offset..null_offset + generated.len() - 1]
+    let names = table.definitions()[null_offset..null_offset + generated.len() - 1]
         .iter()
-        .map(|definition| definition.name.clone())
+        .map(|definition| definition.name.original().to_owned())
         .collect::<Vec<_>>();
     let ordinals = check_drop_table_partition(table, false, &names, ctx)?
         .expect("without IF EXISTS a missing partition is an error");
@@ -1136,7 +973,7 @@ pub fn plan_last_partition_less_than(
     table: &PartitionedTable<'_>,
     bound: &tidb_ast::NodeBox<tidb_ast::Expr>,
     ctx: &tidb_metabuild::Context,
-) -> Result<(Vec<PartitionDef>, PartitionKind, (String, String)), MysqlError> {
+) -> Result<(Vec<StoredDefinition>, PartitionKind, (String, String)), MysqlError> {
     let Some(partition) = table.partition() else {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
@@ -1162,7 +999,7 @@ pub fn plan_last_partition_less_than(
         }
         _ => {}
     }
-    let Some(interval) = crate::partition_interval::get_partition_interval_from_table(partition, ctx) else {
+    let Some(interval) = crate::partition_interval::get_partition_interval_from_table(partition, &table.definitions(), ctx) else {
         return Err(unsupported(
             "LAST PARTITION, does not seem like an INTERVAL partitioned table",
         ));
@@ -1174,7 +1011,7 @@ pub fn plan_last_partition_less_than(
         &interval.interval(),
         crate::partition_interval::IntervalStatement::AddLast(bound),
         interval.column.as_ref(),
-        partition.definitions.len(),
+        table.definitions().len(),
         ctx,
     )?;
     let (added_definitions, added_kind) = plan_add_partitions(
@@ -1203,8 +1040,8 @@ pub fn plan_last_partition_less_than(
 fn assign_partition_storage_classes(
     table: &PartitionedTable<'_>,
     kind: &PartitionKind,
-    preceding: &[&PartitionDef],
-    definitions: &mut [PartitionDef],
+    preceding: &[&StoredDefinition],
+    definitions: &mut [StoredDefinition],
     ctx: &tidb_metabuild::Context,
 ) -> Result<(), MysqlError> {
     let Some(settings) = crate::storage_class::get_storage_class_settings_from_table_info(&table.meta.engine_attribute)?
@@ -1222,7 +1059,8 @@ fn assign_partition_storage_classes(
         .iter_mut()
         .zip(classes.into_iter().skip(preceding.len()))
     {
-        definition.storage_class = class;
+        definition.storage_class_tier = class.0;
+        definition.storage_class_transitions = class.1.into();
     }
     Ok(())
 }
@@ -1283,7 +1121,7 @@ pub trait ReorgHost {
     fn allocate_table_id(&mut self) -> i64;
     /// Go `handlePartitionPlacement`: every policy a new definition names
     /// must exist, and the reference records its id.
-    fn resolve_placement(&self, definitions: &mut [PartitionDef]) -> Result<(), MysqlError>;
+    fn resolve_placement(&self, definitions: &mut [StoredDefinition]) -> Result<(), MysqlError>;
 }
 
 /// A partition reorganization planned against the table before it: Go's
@@ -1307,7 +1145,15 @@ pub struct PartitionReorgPlan {
 /// The method of an existing partitioned table, as the clause that would
 /// have created it: what Go's `BuildAddedPartitionInfo` copies into the new
 /// `PartitionInfo` (`Type`, `Expr`, `Columns`).
-fn existing_method(partition: &PartitionSpec) -> Result<PartitionMethod, MysqlError> {
+fn existing_method(table: &PartitionedTable<'_>) -> Result<PartitionMethod, MysqlError> {
+    let partition = table
+        .partition()
+        .expect("REORGANIZE PARTITION admits partitioned tables only");
+    let expr_text = table
+        .meta
+        .get_partition_info()
+        .map(|pi| pi.read().expr.clone())
+        .unwrap_or_default();
     let columns = || {
         partition
             .dependencies
@@ -1316,7 +1162,7 @@ fn existing_method(partition: &PartitionSpec) -> Result<PartitionMethod, MysqlEr
             .collect::<Vec<_>>()
     };
     let expression = || {
-        tidb_model::generated_expr::parse_expression(&partition.expr_text)
+        tidb_model::generated_expr::parse_expression(&expr_text)
             .map(Some)
             .map_err(|error| {
                 tidb_terror::MysqlError::from_terror(&tidb_util::misc::syntax_error(
@@ -1346,33 +1192,18 @@ fn existing_method(partition: &PartitionSpec) -> Result<PartitionMethod, MysqlEr
     })
 }
 
-/// The stored metadata for `spec`, each definition carrying its allocated id.
-fn stored_with_ids(
-    clause: &TablePartitioning,
-    spec: &PartitionSpec,
-    ctx: &tidb_metabuild::Context,
-) -> Result<tidb_model::partition::PartitionInfo, MysqlError> {
-    let mut stored = table_partition::stored_partition_metadata(clause, spec, ctx)?;
-    let mut definitions = stored.definitions.snapshot();
-    for (definition, built) in definitions.iter_mut().zip(&spec.definitions) {
-        definition.id = built.id;
-    }
-    stored.definitions = definitions.into();
-    Ok(stored)
-}
-
 /// Go `getReplacedPartitionIDs`: the ordinals of the named partitions, with
 /// the first and last of them.
 fn replaced_partitions(
     partition: &PartitionSpec,
+    existing: &[StoredDefinition],
     names: &[String],
 ) -> Result<(usize, usize, Vec<usize>), MysqlError> {
     let mut ordinals: Vec<usize> = Vec::with_capacity(names.len());
     for name in names {
-        let Some(ordinal) = partition
-            .definitions
-            .iter()
-            .position(|definition| table_partition::partition_names_equal(&definition.name, name))
+        let Some(ordinal) = existing.iter().position(|definition| {
+            table_partition::partition_names_equal(definition.name.original(), name)
+        })
         else {
             return Err(MysqlError::from_terror(
                 &tidb_dbterror::ERR_WRONG_PARTITION_NAME.generate_with_stack_by_args(&[]),
@@ -1412,7 +1243,7 @@ pub fn reorganize_partitions(
     ctx: &tidb_metabuild::Context,
     host: &mut dyn ReorgHost,
 ) -> Result<PartitionReorgPlan, MysqlError> {
-    let (mut spec, source_ids, new_offset, clause) = {
+    let (mut info, source_ids, new_offset) = {
         let Some(partition) = table.partition() else {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
@@ -1432,7 +1263,8 @@ pub fn reorganize_partitions(
                     .generate_with_stack_by_args(&[]),
             ));
         }
-        let (_, last, dropped) = replaced_partitions(partition, names)?;
+        let old = &table.definitions();
+        let (_, last, dropped) = replaced_partitions(partition, old, names)?;
         // Go `BuildAddedPartitionInfo`: RANGE and LIST need written
         // definitions.
         if definitions.is_empty() {
@@ -1445,8 +1277,7 @@ pub fn reorganize_partitions(
         // Go `getReorganizedDefinitions`: RANGE splices the new definitions
         // over the replaced run; LIST puts them where the first replaced
         // definition stood.
-        let old = &partition.definitions;
-        let mut layout: Vec<Option<&PartitionDef>> = Vec::new();
+        let mut layout: Vec<Option<&StoredDefinition>> = Vec::new();
         let mut written_at = Vec::new();
         let mut placed = false;
         for (ordinal, definition) in old.iter().enumerate() {
@@ -1468,7 +1299,7 @@ pub fn reorganize_partitions(
                 Some(definition) => {
                     Ok(
                         tidb_table::partition_metadata::stored_definitions_as_ast(std::slice::from_ref(
-                            definition,
+                            *definition,
                         ))?
                         .remove(0),
                     )
@@ -1480,7 +1311,7 @@ pub fn reorganize_partitions(
             })
             .collect::<Result<Vec<_>, MysqlError>>()?;
         let clause = TablePartitioning {
-            method: existing_method(partition)?,
+            method: existing_method(table)?,
             subpartition: None,
             definitions: ast_definitions,
             update_indexes: Vec::new(),
@@ -1490,7 +1321,7 @@ pub fn reorganize_partitions(
             .iter()
             .map(|slot| slot.map_or(0, |definition| definition.id))
             .collect::<std::collections::VecDeque<_>>();
-        let mut spec = table_partition::build_table_partition_info(
+        let (spec, mut info) = table_partition::build_table_partition_info(
             &clause,
             &names,
             &types,
@@ -1499,25 +1330,32 @@ pub fn reorganize_partitions(
             &mut || ids.pop_front().unwrap_or(0),
             ctx,
         )?;
+        let mut built = info.definitions.snapshot();
         // The surviving definitions keep everything Go keeps on them.
-        for (built, slot) in spec.definitions.iter_mut().zip(&layout) {
+        for (built, slot) in built.iter_mut().zip(&layout) {
             if let Some(definition) = slot {
                 built.comment.clone_from(&definition.comment);
                 built
-                    .placement_policy
-                    .clone_from(&definition.placement_policy);
-                built.storage_class.clone_from(&definition.storage_class);
+                    .placement_policy_ref
+                    .clone_from(&definition.placement_policy_ref);
+                built.storage_class_tier.clone_from(&definition.storage_class_tier);
+                built.storage_class_transitions =
+                    definition.storage_class_transitions.snapshot().into();
             }
         }
         // Go `updatePartInfoDefinitionsFromFinalDefinitions`: storage classes
         // resolve over the final list, and only the new definitions take
         // theirs.
-        if let Some(classes) =
-            crate::storage_class::partition_storage_classes(&table.meta.engine_attribute, &spec, ctx)?
-        {
-            for (offset, class) in classes.into_iter().enumerate() {
+        if let Some(classes) = crate::storage_class::partition_storage_classes(
+            &table.meta.engine_attribute,
+            &spec,
+            &built,
+            ctx,
+        )? {
+            for (offset, (tier, transitions)) in classes.into_iter().enumerate() {
                 if layout[offset].is_none() {
-                    spec.definitions[offset].storage_class = class;
+                    built[offset].storage_class_tier = tier;
+                    built[offset].storage_class_transitions = transitions.into();
                 }
             }
         }
@@ -1564,19 +1402,21 @@ pub fn reorganize_partitions(
                 ));
             }
         }
-        host.resolve_placement(&mut spec.definitions[new_offset..new_offset + definitions.len()])?;
+        host.resolve_placement(&mut built[new_offset..new_offset + definitions.len()])?;
+        info.definitions = built.into();
         let source_ids = dropped.iter().map(|ordinal| old[*ordinal].id).collect();
-        (spec, source_ids, new_offset, clause)
+        (info, source_ids, new_offset)
     };
-    for definition in &mut spec.definitions[new_offset..new_offset + definitions.len()] {
+    let mut built = info.definitions.snapshot();
+    for definition in &mut built[new_offset..new_offset + definitions.len()] {
         definition.id = host.allocate_table_id();
     }
-    let stored = stored_with_ids(&clause, &spec, ctx)?;
+    info.definitions = built.into();
     Ok(PartitionReorgPlan {
         source_ids,
         interval_rewrite: None,
         warning: Some(STATS_OUTDATED_RELATED),
-        stored: Some(stored),
+        stored: Some(info),
     })
 }
 
@@ -1618,11 +1458,11 @@ pub fn alter_table_partitioning(
     ctx: &tidb_metabuild::Context,
     host: &mut dyn ReorgHost,
 ) -> Result<PartitionReorgPlan, MysqlError> {
-    let (mut spec, source_ids) = {
+    let (spec, mut info, source_ids) = {
         refuse_affinity(table, "ALTER TABLE PARTITIONING")?;
         let (names, types) = visible_names_and_types(table);
         let handle_offsets = handle_offsets(table);
-        let mut spec = table_partition::build_table_partition_info(
+        let (spec, mut info) = table_partition::build_table_partition_info(
             partitioning,
             &names,
             &types,
@@ -1652,12 +1492,15 @@ pub fn alter_table_partitioning(
             )
             .into());
         }
+        let mut built = info.definitions.snapshot();
         crate::storage_class::rebuild_storage_class_for_partitions(
             &table.meta.engine_attribute,
-            &mut spec,
+            &spec,
+            &mut built,
             ctx,
         )?;
-        host.resolve_placement(&mut spec.definitions)?;
+        host.resolve_placement(&mut built)?;
+        info.definitions = built.into();
         // Go builds the reorganized table in the job's next state, and a KEY
         // method that resolved no column has no expression to build
         // (`extractPartitionExprColumns`).
@@ -1669,24 +1512,22 @@ pub fn alter_table_partitioning(
         // Go `buildTablePartitionInfo`'s UPDATE INDEXES checks.
         table_partition::apply_update_indexes(partitioning, &table.indexes(), &handle_offsets)?;
         let source_ids = match table.partition() {
-            Some(partition) => partition
-                .definitions
-                .iter()
-                .map(|definition| definition.id)
-                .collect(),
+            Some(_) => table.definitions().iter().map(|definition| definition.id).collect(),
             None => vec![table.meta.id],
         };
-        (spec, source_ids)
+        (spec, info, source_ids)
     };
     // Go's submitter allocates the partition ids (then the new table id).
-    for definition in &mut spec.definitions {
+    let mut built = info.definitions.snapshot();
+    for definition in &mut built {
         definition.id = host.allocate_table_id();
     }
+    info.definitions = built.into();
     // Go `rewritePartitionQueryString`: INTERVAL sugar's job query records
     // the partitions it generated.
     let interval_rewrite = partitioning.method.interval.as_ref().map(|interval| {
         let definitions = crate::table_partition::append_partition_defs(
-            &spec.definitions,
+            &info.definitions.snapshot(),
             &spec.kind,
             ctx.get_sql_mode().has_ansi_quotes_mode(),
         );
@@ -1695,26 +1536,25 @@ pub fn alter_table_partitioning(
             definitions.trim_start_matches('\n').to_owned(),
         )
     });
-    let stored = stored_with_ids(partitioning, &spec, ctx)?;
     Ok(PartitionReorgPlan {
         source_ids,
         interval_rewrite,
         warning: Some(STATS_OUTDATED_NEW),
-        stored: Some(stored),
+        stored: Some(info),
     })
 }
 
 /// Go `RemovePartitioning`, planned against `table`.
 pub fn remove_partitioning(table: &PartitionedTable<'_>) -> Result<PartitionReorgPlan, MysqlError> {
-    let Some(partition) = table.partition() else {
+    if table.partition().is_none() {
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
                 .generate_with_stack_by_args(&[]),
         ));
-    };
+    }
     refuse_affinity(table, "REMOVE PARTITIONING")?;
-    let source_ids = partition
-        .definitions
+    let source_ids = table
+        .definitions()
         .iter()
         .map(|definition| definition.id)
         .collect::<Vec<_>>();

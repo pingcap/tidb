@@ -147,11 +147,15 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                             tidb_ddl::ddl_affinity::get_table_affinity_group_id(table.table_id()),
                         )),
                         "partition" => {
-                            for definition in
-                                table.partition().map_or(&[][..], |spec| &spec.definitions)
-                            {
+                            let definitions = table
+                                .meta()
+                                .read()
+                                .get_partition_info()
+                                .map(|pi| pi.read().definitions.snapshot())
+                                .unwrap_or_default();
+                            for definition in &definitions {
                                 infos.push(row(
-                                    Some(definition.name.clone()),
+                                    Some(definition.name.original().to_owned()),
                                     tidb_ddl::ddl_affinity::get_partition_affinity_group_id(
                                         table.table_id(),
                                         definition.id,
@@ -822,13 +826,13 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                             None,
                         ),
                     )];
-                    if let Some(partition) = table.partition() {
-                        targets.extend(partition.definitions.iter().map(|definition| {
+                    if let Some(pi) = table.meta().read().get_partition_info() {
+                        targets.extend(pi.read().definitions.snapshot().iter().map(|definition| {
                             (
                                 definition.id,
                                 crate::show_stats::column_stats_usage_label(
                                     false,
-                                    Some(&definition.name),
+                                    Some(definition.name.original()),
                                 ),
                             )
                         }));
@@ -932,13 +936,13 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         continue;
                     };
                     let partitions: Vec<(i64, String)> = table
-                        .partition()
-                        .map(|partition| {
-                            partition
-                                .definitions
-                                .iter()
-                                .map(|definition| (definition.id, definition.name.clone()))
-                                .collect()
+                        .meta()
+                        .read()
+                        .get_partition_info()
+                        .map(|pi| {
+                            pi.read().definitions.map_visible(|definition| {
+                                (definition.id, definition.name.original().to_owned())
+                            })
                         })
                         .unwrap_or_default();
                     for target in crate::show_stats::PartitionTargets::for_table(
@@ -995,13 +999,13 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         continue;
                     };
                     let partitions = table
-                        .partition()
-                        .map(|partition| {
-                            partition
-                                .definitions
-                                .iter()
-                                .map(|definition| (definition.id, definition.name.clone()))
-                                .collect::<Vec<_>>()
+                        .meta()
+                        .read()
+                        .get_partition_info()
+                        .map(|pi| {
+                            pi.read().definitions.map_visible(|definition| {
+                                (definition.id, definition.name.original().to_owned())
+                            })
                         })
                         .unwrap_or_default();
                     for target in crate::show_stats::PartitionTargets::for_table(
@@ -1060,13 +1064,13 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         continue;
                     };
                     let partitions = table
-                        .partition()
-                        .map(|partition| {
-                            partition
-                                .definitions
-                                .iter()
-                                .map(|definition| (definition.id, definition.name.clone()))
-                                .collect::<Vec<_>>()
+                        .meta()
+                        .read()
+                        .get_partition_info()
+                        .map(|pi| {
+                            pi.read().definitions.map_visible(|definition| {
+                                (definition.id, definition.name.original().to_owned())
+                            })
                         })
                         .unwrap_or_default();
                     for target in crate::show_stats::PartitionTargets::for_table(
@@ -1128,13 +1132,13 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         continue;
                     };
                     let partitions = table
-                        .partition()
-                        .map(|partition| {
-                            partition
-                                .definitions
-                                .iter()
-                                .map(|definition| (definition.id, definition.name.clone()))
-                                .collect::<Vec<_>>()
+                        .meta()
+                        .read()
+                        .get_partition_info()
+                        .map(|pi| {
+                            pi.read().definitions.map_visible(|definition| {
+                                (definition.id, definition.name.original().to_owned())
+                            })
                         })
                         .unwrap_or_default();
                     for target in crate::show_stats::PartitionTargets::for_table(
@@ -1251,13 +1255,13 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         continue;
                     };
                     let partitions = table
-                        .partition()
-                        .map(|partition| {
-                            partition
-                                .definitions
-                                .iter()
-                                .map(|definition| (definition.id, definition.name.clone()))
-                                .collect::<Vec<_>>()
+                        .meta()
+                        .read()
+                        .get_partition_info()
+                        .map(|pi| {
+                            pi.read().definitions.map_visible(|definition| {
+                                (definition.id, definition.name.original().to_owned())
+                            })
                         })
                         .unwrap_or_default();
                     for target in crate::show_stats::PartitionTargets::for_table(
@@ -1382,13 +1386,13 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         continue;
                     };
                     let partitions = table
-                        .partition()
-                        .map(|partition| {
-                            partition
-                                .definitions
-                                .iter()
-                                .map(|definition| (definition.id, definition.name.clone()))
-                                .collect::<Vec<_>>()
+                        .meta()
+                        .read()
+                        .get_partition_info()
+                        .map(|pi| {
+                            pi.read().definitions.map_visible(|definition| {
+                                (definition.id, definition.name.original().to_owned())
+                            })
                         })
                         .unwrap_or_default();
                     for target in crate::show_stats::PartitionTargets::for_table(
@@ -1538,20 +1542,23 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                     let crate::TableEntry::Kv(table) = entry else {
                         return Err(unknown());
                     };
-                    let Some(partitioning) = table.partition() else {
+                    let Some(pi) = table.meta().read().get_partition_info() else {
                         return Err(unknown());
                     };
-                    let Some(definition) = partitioning
-                        .definitions
+                    let definitions = pi.read().definitions.snapshot();
+                    let Some(definition) = definitions
                         .iter()
-                        .find(|definition| definition.name.go_lower_eq(partition))
+                        .find(|definition| definition.name.original().go_lower_eq(partition))
                     else {
                         return Err(unknown());
                     };
                     let table_placement = crate::show_regions::get_policy_placement(catalog, table.placement_policy().as_ref())?;
-                    let placement =
-                        crate::show_regions::get_policy_placement(catalog, definition.placement_policy.as_ref())?
-                            .or(table_placement);
+                    let policy = definition
+                        .placement_policy_ref
+                        .as_ref()
+                        .map(|reference| reference.read().clone());
+                    let placement = crate::show_regions::get_policy_placement(catalog, policy.as_ref())?
+                        .or(table_placement);
                     Ok(placement
                         .map(|placement| {
                             row(

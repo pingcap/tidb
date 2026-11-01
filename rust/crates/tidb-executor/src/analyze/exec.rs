@@ -428,7 +428,7 @@ fn analyze_partition_ids(
     table: &tidb_table::tables::TableCommon,
     requested: &[String],
 ) -> Result<Vec<i64>, DriverError> {
-    let Some(partition) = table.partition() else {
+    let Some(pi) = table.meta().read().get_partition_info() else {
         if requested.is_empty() {
             return Ok(Vec::new());
         }
@@ -437,19 +437,15 @@ fn analyze_partition_ids(
                 .generate_with_stack_by_args(&[]),
         ));
     };
+    let definitions = pi.read().definitions.snapshot();
     if requested.is_empty() {
-        return Ok(partition
-            .definitions
-            .iter()
-            .map(|definition| definition.id)
-            .collect());
+        return Ok(definitions.iter().map(|definition| definition.id).collect());
     }
     let mut ids = Vec::with_capacity(requested.len());
     for requested_name in requested {
-        let definition = partition
-            .definitions
+        let definition = definitions
             .iter()
-            .find(|definition| go_to_lower(&definition.name) == go_to_lower(requested_name))
+            .find(|definition| definition.name.lowercase() == go_to_lower(requested_name))
             .ok_or_else(|| {
                 DriverError::unsupported(format!(
                     "can not found the specified partition name {requested_name} in the table definition"
@@ -1003,14 +999,18 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
                     continue;
                 }
                 let partition_name = table
-                    .partition()
-                    .and_then(|partition| {
-                        partition
+                    .meta()
+                    .read()
+                    .get_partition_info()
+                    .and_then(|pi| {
+                        pi.read()
                             .definitions
-                            .iter()
+                            .snapshot()
+                            .into_iter()
                             .find(|definition| definition.id == options.physical_id)
                     })
-                    .map_or("", |definition| definition.name.as_str());
+                    .map_or_else(String::new, |definition| definition.name.original().to_owned());
+                let partition_name = partition_name.as_str();
                 // Go `getAdjustedSampleRate`'s
                 // `GlobalPDHelper.GetApproximateTableCountFromStorage`.
                 let (approximate, has_pd) = approximate_table_counts.approximate_table_count(
@@ -1104,9 +1104,13 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
                             None
                         } else {
                             let definitions = &table
-                                .partition()
+                                .meta()
+                                .read()
+                                .get_partition_info()
                                 .expect("partition statistics require partition metadata")
-                                .definitions;
+                                .read()
+                                .definitions
+                                .snapshot();
                             let all_partition_statistics = definitions
                                 .iter()
                                 .filter_map(|definition| {
@@ -1301,8 +1305,8 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
                 continue;
             };
             ids.push(table.table_id());
-            if let Some(partition) = table.partition() {
-                ids.extend(partition.definitions.iter().map(|definition| definition.id));
+            if let Some(pi) = table.meta().read().get_partition_info() {
+                ids.extend(pi.read().definitions.map_visible(|definition| definition.id));
             }
         }
         ids

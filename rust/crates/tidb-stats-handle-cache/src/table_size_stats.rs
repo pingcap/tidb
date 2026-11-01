@@ -66,8 +66,8 @@ pub fn physical_table_ids(catalog: &SessionExtendedInfoSchema) -> Vec<i64> {
                 continue;
             };
             ids.push(table.table_id());
-            if let Some(partition) = table.partition() {
-                ids.extend(partition.definitions.iter().map(|definition| definition.id));
+            if let Some(pi) = table.meta().read().get_partition_info() {
+                ids.extend(pi.read().definitions.map_visible(|definition| definition.id));
             }
         }
     }
@@ -96,16 +96,18 @@ pub fn estimates_from(catalog: &SessionExtendedInfoSchema, source: &dyn TableSiz
                 continue;
             };
             let partitions = table
-                .partition()
-                .map(|partition| {
-                    partition
+                .meta()
+                .read()
+                .get_partition_info()
+                .map(|pi| {
+                    pi.read()
                         .definitions
-                        .iter()
-                        .map(|definition| {
-                            let rows = stats.table_rows(definition.id);
-                            let (data, index) =
-                                stats.data_and_index_length(table, definition.id, rows);
-                            (definition.id, (rows, average(data, rows), data, index))
+                        .map_visible(|definition| definition.id)
+                        .into_iter()
+                        .map(|id| {
+                            let rows = stats.table_rows(id);
+                            let (data, index) = stats.data_and_index_length(table, id, rows);
+                            (id, (rows, average(data, rows), data, index))
                         })
                         .collect()
                 })
@@ -171,14 +173,14 @@ impl SizeStats<'_> {
     fn estimate_data_length(&self, table: &TableCommon) -> StorageEstimate {
         let mut rows = self.table_rows(table.table_id());
         let (mut data, mut index) = self.data_and_index_length(table, table.table_id(), rows);
-        if let Some(partition) = table.partition() {
+        if let Some(pi) = table.meta().read().get_partition_info() {
             rows = 0;
             data = 0;
-            for definition in &partition.definitions {
-                let partition_rows = self.table_rows(definition.id);
+            for id in pi.read().definitions.map_visible(|definition| definition.id) {
+                let partition_rows = self.table_rows(id);
                 rows = rows.wrapping_add(partition_rows);
                 let (partition_data, partition_index) =
-                    self.data_and_index_length(table, definition.id, partition_rows);
+                    self.data_and_index_length(table, id, partition_rows);
                 data = data.wrapping_add(partition_data);
                 index = index.wrapping_add(partition_index);
             }

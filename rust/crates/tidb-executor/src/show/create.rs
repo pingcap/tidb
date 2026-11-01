@@ -733,14 +733,14 @@ fn ttl_clause_text(table: &crate::TableCommon) -> String {
 /// Go `AppendPartitionInfo`'s `defaultPartitionDefinitions`
 /// (`ddl/partition.go:5147-5159`): whether a HASH/KEY table's partitions are
 /// still exactly the ones `PARTITIONS n` would generate.
-fn hash_definitions_are_default(definitions: &[crate::PartitionDef]) -> bool {
+fn hash_definitions_are_default(definitions: &[tidb_model::partition::PartitionDefinition]) -> bool {
     definitions.iter().enumerate().all(|(ordinal, definition)| {
-        definition.name == format!("p{ordinal}")
+        definition.name.original() == format!("p{ordinal}")
             && definition.comment.is_empty()
             // Go's third condition: a partition carrying a PLACEMENT POLICY
             // is not default-shaped either (`AppendPartitionInfo`), so the
             // compact `PARTITIONS n` form would lose the policy.
-            && definition.placement_policy.is_none()
+            && definition.placement_policy_ref.is_none()
     })
 }
 
@@ -748,13 +748,16 @@ fn partition_clause_text(table: &crate::TableCommon, ansi_quotes: bool) -> Strin
     let Some(partition) = table.partition() else {
         return String::new();
     };
-    let head = format!(
-        "\nPARTITION BY {} ({})",
-        partition.kind.sql(),
-        partition.expr_text
-    );
+    let pi = table
+        .meta()
+        .read()
+        .get_partition_info()
+        .expect("a partitioned table carries its PartitionInfo");
+    let pi = pi.read();
+    let definitions = pi.definitions.snapshot();
+    let head = format!("\nPARTITION BY {} ({})", partition.kind.sql(), pi.expr);
     let defs = || {
-        tidb_ddl_build::table_partition::append_partition_defs(&partition.definitions, &partition.kind, ansi_quotes)
+        tidb_ddl_build::table_partition::append_partition_defs(&definitions, &partition.kind, ansi_quotes)
     };
     // Go `writeColumnListToBuffer` escapes each partition column by the
     // session's sql_mode.
@@ -783,7 +786,7 @@ fn partition_clause_text(table: &crate::TableCommon, ansi_quotes: bool) -> Strin
                 // emits NOTHING when the column list was filled in from the
                 // primary key, so `PARTITION BY KEY ()` reads back as
                 // written and re-creating it resolves the key again.
-                let columns = if partition.is_empty_columns {
+                let columns = if pi.is_empty_columns {
                     String::new()
                 } else {
                     column_list()
@@ -792,8 +795,8 @@ fn partition_clause_text(table: &crate::TableCommon, ansi_quotes: bool) -> Strin
             } else {
                 head.clone()
             };
-            if hash_definitions_are_default(&partition.definitions) {
-                format!("{head} PARTITIONS {}", partition.num())
+            if hash_definitions_are_default(&definitions) {
+                format!("{head} PARTITIONS {}", definitions.len())
             } else {
                 format!("{head}{}", defs())
             }

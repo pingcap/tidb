@@ -30,9 +30,7 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_terror::MysqlError;
 use tidb_hack::GoCaseCompare;
 
-use crate::partition_routing::{
-    PartitionDef, PartitionKind, PartitionSpec, RangeBound, RangeColumnBound, StorageClass,
-};
+use crate::partition_routing::{PartitionKind, PartitionSpec, RangeBound, RangeColumnBound};
 
 /// Go's `partitionMaxValue`, stored as that literal word and matched back
 /// with `strings.EqualFold`.
@@ -96,8 +94,15 @@ fn range_bound_from_stored_text(text: &str) -> Option<RangeBound> {
 /// text and matches them case-insensitively (`strings.EqualFold`) before
 /// parsing, because neither is an expression.
 fn stored_clause(
-    definition: &crate::partition_routing::PartitionDef,
+    definition: &tidb_model::partition::PartitionDefinition,
 ) -> Result<PartitionDefinitionClause, MysqlError> {
+    let less_than = definition.less_than.snapshot();
+    let in_values: Vec<Vec<String>> = definition
+        .in_values
+        .snapshot()
+        .into_iter()
+        .map(|tuple| tuple.snapshot())
+        .collect();
     let parse = |text: &String| {
         tidb_model::generated_expr::parse_expression(text).map_err(|error| {
             tidb_terror::MysqlError::from_terror(&tidb_util::misc::syntax_error(
@@ -105,9 +110,9 @@ fn stored_clause(
             ))
         })
     };
-    if !definition.less_than.is_empty() {
-        let mut values = Vec::with_capacity(definition.less_than.len());
-        for bound in &definition.less_than {
+    if !less_than.is_empty() {
+        let mut values = Vec::with_capacity(less_than.len());
+        for bound in &less_than {
             values.push(if bound.eq_ignore_ascii_case("MAXVALUE") {
                 PartitionValue::MaxValue
             } else {
@@ -116,9 +121,9 @@ fn stored_clause(
         }
         return Ok(PartitionDefinitionClause::LessThan(values));
     }
-    if !definition.in_values.is_empty() {
-        let mut values = Vec::with_capacity(definition.in_values.len());
-        for tuple in &definition.in_values {
+    if !in_values.is_empty() {
+        let mut values = Vec::with_capacity(in_values.len());
+        for tuple in &in_values {
             // Go `buildListPartitionValueMap`: `DEFAULT` is recognised on the
             // FIRST component only, and the rest of the tuple is not read.
             if tuple
@@ -143,13 +148,13 @@ fn stored_clause(
 /// The stored definitions as the AST nodes the bound folding reads, which is
 /// the shape Go reconstructs when it re-parses `LessThan`/`InValues`.
 pub fn stored_definitions_as_ast(
-    definitions: &[crate::partition_routing::PartitionDef],
+    definitions: &[tidb_model::partition::PartitionDefinition],
 ) -> Result<Vec<PartitionDefinition>, MysqlError> {
     definitions
         .iter()
         .map(|definition| {
             Ok(PartitionDefinition {
-                name: definition.name.clone(),
+                name: definition.name.original().to_owned(),
                 clause: stored_clause(definition)?,
                 options: Vec::new(),
                 sub_partitions: Vec::new(),
@@ -171,10 +176,6 @@ pub fn stored_definitions_as_ast(
 /// KEY and the `COLUMNS` variants carry instead of an expression; Go
 /// dispatches on it the same way (`len(partCols) < 1` chooses RANGE over
 /// RANGE COLUMNS in `generateRangePartitionExpr`).
-/// `overlapping_dropping_partition_indices` is the caller's direct snapshot
-/// of `PartitionInfo.GetOverlappingDroppingPartitionIdx` while the complete
-/// model metadata is available; the rebuilt spec retains it for static
-/// partition pruning during online DROP PARTITION.
 ///
 /// # Errors
 ///
@@ -185,9 +186,7 @@ pub fn partition_spec_from_metadata(
     kind: PartitionType,
     expr_text: &str,
     columns: &[String],
-    is_empty_columns: bool,
     definitions: &[tidb_model::partition::PartitionDefinition],
-    overlapping_dropping_partition_indices: &[Option<usize>],
     names: &[String],
     types: &[FieldType],
 ) -> Result<PartitionSpec, MysqlError> {
@@ -203,20 +202,12 @@ pub fn partition_spec_from_metadata(
             &crate::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[]),
         ));
     }
-    let physical = definitions.iter().map(PartitionDef::from).collect::<Vec<_>>();
     // The COLUMNS forms name their inputs directly. The builders take the
     // parser's qualified paths, whose last component is the column name.
     let column_paths = columns
         .iter()
         .map(|name| vec![name.clone()])
         .collect::<Vec<_>>();
-    let column_expr_text = || {
-        columns
-            .iter()
-            .map(|name| format!("`{name}`"))
-            .collect::<Vec<_>>()
-            .join(",")
-    };
     // The COLUMNS forms route off the stored column list rather than a built
     // expression, so the expression slot holds the same placeholder the DDL
     // path puts there.
@@ -226,7 +217,7 @@ pub fn partition_spec_from_metadata(
             FieldType::new(FieldTypeCode::LongLong),
         ))
     };
-    let ast_definitions = || stored_definitions_as_ast(&physical);
+    let ast_definitions = || stored_definitions_as_ast(definitions);
     match kind {
         // Go `generateKeyPartitionExpr`: KEY builds no expression at all. The
         // stored column list IS the routing input, hashed by the same
@@ -242,14 +233,9 @@ pub fn partition_spec_from_metadata(
                 }
             }
             Ok(PartitionSpec {
-                is_empty_columns,
                 kind: PartitionKind::Key,
-                expr_text: column_expr_text(),
                 expr: placeholder(),
                 dependencies: columns.to_vec(),
-                definitions: physical,
-                overlapping_dropping_partition_indices: overlapping_dropping_partition_indices
-                    .to_vec(),
             })
         }
         // Go `generateRangePartitionExpr` / `generateListPartitionExpr` with
@@ -259,31 +245,21 @@ pub fn partition_spec_from_metadata(
             let (dependencies, field_types, less_than) =
                 load_range_columns_bounds(&column_paths, &ast_definitions()?, names, types, ctx)?;
             Ok(PartitionSpec {
-                is_empty_columns,
                 kind: PartitionKind::RangeColumns {
                     less_than,
                     field_types,
                 },
-                expr_text: column_expr_text(),
                 expr: placeholder(),
                 dependencies,
-                definitions: physical,
-                overlapping_dropping_partition_indices: overlapping_dropping_partition_indices
-                    .to_vec(),
             })
         }
         PartitionType::LIST if !columns.is_empty() => {
             let (dependencies, kind) =
                 load_list_columns_values(&column_paths, &ast_definitions()?, names, types, ctx)?;
             Ok(PartitionSpec {
-                is_empty_columns,
                 kind,
-                expr_text: column_expr_text(),
                 expr: placeholder(),
                 dependencies,
-                definitions: physical,
-                overlapping_dropping_partition_indices: overlapping_dropping_partition_indices
-                    .to_vec(),
             })
         }
         // The expression forms: Go parses the stored `PartitionInfo.Expr` and
@@ -305,7 +281,6 @@ pub fn partition_spec_from_metadata(
                 &ctx.get_expr_ctx().get_eval_ctx().time_zone(),
                 ctx.get_expr_ctx().get_eval_ctx().like_default_escape(),
             )?;
-            let expr_text = expr_text.to_owned();
             let kind = match kind {
                 PartitionType::RANGE => {
                     // Go's loader reads each bound with `strconv`
@@ -313,11 +288,12 @@ pub fn partition_spec_from_metadata(
                     // that way falls back to folding the stored text as an
                     // expression, which is where Go reaches
                     // `fixOldVersionPartitionInfo`.
-                    let stored: Option<Vec<RangeBound>> = physical
+                    let stored: Option<Vec<RangeBound>> = definitions
                         .iter()
                         .map(|definition| {
                             definition
                                 .less_than
+                                .snapshot()
                                 .first()
                                 .and_then(|text| range_bound_from_stored_text(text))
                         })
@@ -357,14 +333,9 @@ pub fn partition_spec_from_metadata(
                 _ => PartitionKind::Hash,
             };
             Ok(PartitionSpec {
-                is_empty_columns,
                 kind,
-                expr_text,
                 expr: built,
                 dependencies,
-                definitions: physical,
-                overlapping_dropping_partition_indices: overlapping_dropping_partition_indices
-                    .to_vec(),
             })
         }
         // Go `newPartitionExpr` returns `nil, nil` for NONE
@@ -374,13 +345,9 @@ pub fn partition_spec_from_metadata(
         // an ordinary table unreadable for the length of the reorg -- a Go
         // cluster serves it throughout.
         PartitionType::NONE => Ok(PartitionSpec {
-            is_empty_columns,
             kind: PartitionKind::None,
-            expr_text: expr_text.to_owned(),
             expr: placeholder(),
             dependencies: Vec::new(),
-            definitions: physical,
-            overlapping_dropping_partition_indices: overlapping_dropping_partition_indices.to_vec(),
         }),
         other => {
             let name = other.sql();

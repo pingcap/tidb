@@ -717,20 +717,15 @@ pub fn build_table_info_with_stmt(
         {
             // Go `buildPartitionDefinitionsInfo` ->
             // `rebuildStorageClassForPartitions`.
-            if let Some(classes) = crate::storage_class::partition_storage_classes(
+            let mut definitions = metadata.definitions.snapshot();
+            crate::storage_class::rebuild_storage_class_for_partitions(
                 &table.engine_attribute,
                 &spec,
+                &mut definitions,
                 context,
             )
-            .map_err(default_admission_error)?
-            {
-                let mut definitions = metadata.definitions.snapshot();
-                for (definition, class) in definitions.iter_mut().zip(classes) {
-                    definition.storage_class_tier = class.0;
-                    definition.storage_class_transitions = class.1.into();
-                }
-                metadata.definitions = definitions.into();
-            }
+            .map_err(default_admission_error)?;
+            metadata.definitions = definitions.into();
             table.partition = Some(GoShared::new(metadata.clone()));
             // Go `buildTablePartitionInfo`.
             if table

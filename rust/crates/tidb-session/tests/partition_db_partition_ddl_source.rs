@@ -26,6 +26,17 @@ fn drop_table(tk: &mut TestKit, name: &str) {
 }
 
 /// Go `external.GetTableByName(t, tk, "test", name).Meta()`, read fresh.
+/// Go `Meta().GetPartitionInfo()` of a partitioned table.
+fn partition_info(table: &TableCommon) -> tidb_model::partition::PartitionInfo {
+    table
+        .meta()
+        .read()
+        .get_partition_info()
+        .expect("the table is partitioned")
+        .read()
+        .clone()
+}
+
 fn kv_table(tk: &TestKit, name: &str) -> TableCommon {
     match tk.get_table_by_name("test", name) {
         TableEntry::Kv(table) => TableCommon::clone(&table),
@@ -275,9 +286,9 @@ fn create_table_with_range_column_partition_valid_shapes() {
     match table.partition() {
         Some(spec) => {
             assert!(matches!(spec.kind, PartitionKind::RangeColumns { .. }));
-            assert_eq!(spec.definitions.len(), 8);
+            assert_eq!(partition_info(&table).definitions.len(), 8);
             assert_eq!(
-                spec.definitions[0].less_than,
+                partition_info(&table).definitions.get(0).less_than.snapshot(),
                 vec!["'2014-04-01 00:00:00'"],
                 "Go stores DATETIME bounds in the normalized full spelling"
             );
@@ -331,9 +342,9 @@ fn create_table_with_range_column_partition_valid_shapes() {
     tk.must_exec("insert into t values ('2019')");
     let table = kv_table(&tk, "t");
     match table.partition() {
-        Some(spec) => {
-            assert_eq!(spec.definitions[0].less_than, vec!["'00:20:20'"], "Go SHOW pins '00:20:20'");
-            assert_eq!(spec.expr_text, "`a`");
+        Some(_) => {
+            assert_eq!(partition_info(&table).definitions.get(0).less_than.snapshot(), vec!["'00:20:20'"], "Go SHOW pins '00:20:20'");
+            assert_eq!(partition_info(&table).columns.snapshot(), vec![tidb_ast::CiString::new("a")]);
         }
         None => panic!("t must be partitioned"),
     }
@@ -348,9 +359,9 @@ fn create_table_with_range_column_partition_valid_shapes() {
     tk.must_exec("insert into t values ('2019','2019'),('20:20:09','20:20:09')");
     let table = kv_table(&tk, "t");
     match table.partition() {
-        Some(spec) => {
-            assert_eq!(spec.definitions[0].less_than, vec!["'00:20:20'", "'00:20:20'"]);
-            assert_eq!(spec.definitions[1].less_than, vec!["'20:20:10'", "'20:20:10'"]);
+        Some(_) => {
+            assert_eq!(partition_info(&table).definitions.get(0).less_than.snapshot(), vec!["'00:20:20'", "'00:20:20'"]);
+            assert_eq!(partition_info(&table).definitions.get(1).less_than.snapshot(), vec!["'20:20:10'", "'20:20:10'"]);
         }
         None => panic!("t must be partitioned"),
     }
@@ -570,7 +581,7 @@ fn create_table_with_list_partition_valid_shapes() {
     let table = kv_table(&tk, "gen_t");
     let spec = table.partition().unwrap();
     assert!(matches!(spec.kind, PartitionKind::List { .. }));
-    assert_eq!(spec.definitions.len(), 8192);
+    assert_eq!(partition_info(&table).definitions.len(), 8192);
 }
 
 /// Go rows `db_partition_test.go:793-810` and :827-834: timestamp, decimal,
@@ -809,7 +820,7 @@ fn alter_table_truncate_partition_by_list() {
     tk.must_exec("create table t (id int) partition by list  (id) \
          (partition p0 values in (1,2), partition p1 values in (3,4), partition p3 values in (5,null))");
     tk.must_exec("insert into t values (1),(3),(5),(null)");
-    let old_id = kv_table(&tk, "t").partition().unwrap().definitions[1].id;
+    let old_id = kv_table(&tk, "t").meta().read().get_partition_info().unwrap().read().definitions.snapshot()[1].id;
 
     tk.must_exec("alter table t truncate partition p1");
     tk.must_query("select * from t").sort().check(["1", "5", "<nil>"]);
@@ -817,10 +828,10 @@ fn alter_table_truncate_partition_by_list() {
         let table = kv_table(&tk, "t");
         let spec = table.partition().unwrap();
         assert!(matches!(spec.kind, PartitionKind::List { .. }));
-        assert_eq!(spec.definitions.len(), 3);
-        assert_eq!(spec.definitions[1].in_values, vec![vec!["3"], vec!["4"]]);
-        assert_eq!(spec.definitions[1].name, "p1");
-        assert_ne!(spec.definitions[1].id, old_id, "truncate reassigns the physical id");
+        assert_eq!(partition_info(&table).definitions.len(), 3);
+        assert_eq!(partition_info(&table).definitions.get(1).in_values.snapshot().iter().map(|tuple| tuple.snapshot()).collect::<Vec<_>>(), vec![vec!["3"], vec!["4"]]);
+        assert_eq!(partition_info(&table).definitions.get(1).name.original(), "p1");
+        assert_ne!(partition_info(&table).definitions.get(1).id, old_id, "truncate reassigns the physical id");
     }
     // Unknown partition -> errno.ErrUnknownPartition (1735).
     let error = tk.must_exec_to_err("alter table t truncate partition p10");
@@ -845,7 +856,7 @@ fn alter_table_truncate_partition_by_list_columns() {
          (partition p0 values in ((1,'a'),(2,'b')), partition p1 values in ((3,'a'),(4,'b')), \
           partition p3 values in ((5,'a'),(null,null)))");
     tk.must_exec("insert into t values (1,'a'),(3,'a'),(5,'a'),(null,null)");
-    let old_id = kv_table(&tk, "t").partition().unwrap().definitions[1].id;
+    let old_id = kv_table(&tk, "t").meta().read().get_partition_info().unwrap().read().definitions.snapshot()[1].id;
 
     tk.must_exec("alter table t truncate partition p1");
     tk.must_query("select * from t").sort().check(["1 a", "5 a", "<nil> <nil>"]);
@@ -858,10 +869,10 @@ fn alter_table_truncate_partition_by_list_columns() {
             spec.kind,
             PartitionKind::List { .. } | PartitionKind::ListColumns { .. }
         ));
-        assert_eq!(spec.definitions.len(), 3);
-        assert_eq!(spec.definitions[1].in_values, vec![vec!["3", "'a'"], vec!["4", "'b'"]]);
-        assert_eq!(spec.definitions[1].name, "p1");
-        assert_ne!(spec.definitions[1].id, old_id);
+        assert_eq!(partition_info(&table).definitions.len(), 3);
+        assert_eq!(partition_info(&table).definitions.get(1).in_values.snapshot().iter().map(|tuple| tuple.snapshot()).collect::<Vec<_>>(), vec![vec!["3", "'a'"], vec!["4", "'b'"]]);
+        assert_eq!(partition_info(&table).definitions.get(1).name.original(), "p1");
+        assert_ne!(partition_info(&table).definitions.get(1).id, old_id);
     }
     let error = tk.must_exec_to_err("alter table t truncate partition p10");
     assert_eq!(error.code, 1735);
@@ -886,7 +897,7 @@ fn create_table_with_key_partition() {
         let table = kv_table(&tk, "tm1");
         let spec = table.partition().unwrap();
         assert!(matches!(spec.kind, PartitionKind::Key));
-        assert_eq!(spec.definitions.len(), 10);
+        assert_eq!(partition_info(&table).definitions.len(), 10);
         assert_eq!(spec.dependencies, vec!["s1"]);
     }
     drop_table(&mut tk, "tm1");
@@ -1103,7 +1114,7 @@ fn issue_40135_modify_partition_column() {
         );
         let spec = table.partition().unwrap();
         assert!(matches!(spec.kind, PartitionKind::Hash));
-        assert_eq!(spec.definitions.len(), 6);
+        assert_eq!(partition_info(&table).definitions.len(), 6);
         assert_eq!(spec.dependencies, vec!["a"]);
     }
     tk.must_exec("admin check table t40135");
@@ -1165,9 +1176,8 @@ fn alter_modify_column_on_partitioned_table() {
     {
         let table = kv_table(&tk, "t");
         assert!(table.indexes().iter().any(|index| index.read().name.original() == "b"), "index b survives");
-        let spec = table.partition().unwrap();
-        assert_eq!(spec.definitions.len(), 4);
-        assert_eq!(spec.definitions[3].name, "pMax");
+        assert_eq!(partition_info(&table).definitions.len(), 4);
+        assert_eq!(partition_info(&table).definitions.get(3).name.original(), "pMax");
     }
     assert_eq!(tk.must_query("select * from t order by c").rows()[3], vec!["34", "34💥"]);
     // Narrowing the partitioning column's type stays refused (8200).

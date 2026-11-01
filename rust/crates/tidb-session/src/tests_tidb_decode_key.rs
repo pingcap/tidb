@@ -212,7 +212,7 @@ fn tidb_decode_key_distinguishes_clustered_and_partition_handles() {
                     .iter()
                     .map(|index| index.read().id)
                     .collect::<Vec<_>>(),
-                table.partition().unwrap().definitions[0].id,
+                table.meta().read().get_partition_info().unwrap().read().definitions.snapshot()[0].id,
                 keys.iter()
                     .find(|key| tidb_tablecodec::is_record_key(key))
                     .unwrap()

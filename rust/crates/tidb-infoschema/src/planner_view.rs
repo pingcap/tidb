@@ -599,6 +599,7 @@ fn kv_source_table(
         .into_iter()
         .chain(common_handle_col_offsets.iter().copied())
         .collect();
+    let partition_info = info.get_partition_info();
     let mut source_table = crate::table_source::SourceTable {
         table_id: table.table_id(),
         table_name: table.name().clone(),
@@ -613,28 +614,23 @@ fn kv_source_table(
                 )
             },
         ),
-        partition_is_reorganizing: table.partition().is_some_and(|partition| {
-            !partition.overlapping_dropping_partition_indices.is_empty()
+        partition_is_reorganizing: partition_info.as_ref().is_some_and(|pi| {
+            let pi = pi.read();
+            !pi.adding_definitions.is_empty()
+                || !pi.new_partition_ids.is_empty()
+                || !pi.dropping_definitions.is_empty()
         }),
-        partition_definition_names: table
-            .partition()
-            .map(|partition| {
-                partition
+        partition_definition_names: partition_info
+            .as_ref()
+            .map(|pi| {
+                pi.read()
                     .definitions
-                    .iter()
-                    .map(|definition| definition.name.clone())
-                    .collect()
+                    .map_visible(|definition| definition.name.original().to_owned())
             })
             .unwrap_or_default(),
-        partition_definition_ids: table
-            .partition()
-            .map(|partition| {
-                partition
-                    .definitions
-                    .iter()
-                    .map(|definition| definition.id)
-                    .collect()
-            })
+        partition_definition_ids: partition_info
+            .as_ref()
+            .map(|pi| pi.read().definitions.map_visible(|definition| definition.id))
             .unwrap_or_default(),
         columns,
         indexes,

@@ -111,11 +111,15 @@ fn hash_partition_add_record_routes_rows_to_all_hash_partitions() {
 /// `partition_test.go:284::TestPartitionGetPhysicalID`.
 #[test]
 fn partition_get_physical_id_preserves_definition_ids() {
-    let spec = partition_fixture();
-    assert_eq!(spec.physical_ids(), vec![101, 102, 103]);
-    for definition in &spec.definitions {
+    let pi = partition_fixture();
+    let definitions = pi.definitions.snapshot();
+    assert_eq!(
+        definitions.iter().map(|definition| definition.id).collect::<Vec<_>>(),
+        vec![101, 102, 103]
+    );
+    for definition in &definitions {
         assert_eq!(
-            spec.definition_named(&definition.name).unwrap().id,
+            pi.get_partition_id_by_name(definition.name.original()),
             definition.id
         );
     }
@@ -249,37 +253,18 @@ fn pruning_overflow_keeps_the_matching_row() {
 // modules. They stay in this source-backed inventory so the manifest remains
 // one-to-one without duplicating private implementation tests here.
 
-fn partition_fixture() -> crate::PartitionSpec {
-    use crate::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
-    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-    use tidb_expr::expression::{Constant, Expression};
-
-    let field_type = FieldType::new(FieldTypeCode::LongLong);
-    PartitionSpec {
-        overlapping_dropping_partition_indices: Vec::new(),
-        kind: PartitionKind::Range {
-            less_than: vec![
-                RangeBound::Value(10),
-                RangeBound::Value(20),
-                RangeBound::MaxValue,
-            ],
-            unsigned: false,
-        },
-        expr_text: "`a`".to_owned(),
-        expr: Expression::Constant(Constant::new(Datum::Int(0), field_type)),
-        dependencies: vec!["a".to_owned()],
+fn partition_fixture() -> tidb_model::partition::PartitionInfo {
+    tidb_model::partition::PartitionInfo {
+        enable: true,
+        expr: "`a`".to_owned(),
         definitions: [(101, "p0"), (102, "p1"), (103, "p2")]
-            .into_iter()
-            .map(|(id, name)| PartitionDef {
+            .map(|(id, name)| tidb_model::partition::PartitionDefinition {
                 id,
-                name: name.to_owned(),
-                less_than: Vec::new(),
-                in_values: Vec::new(),
-                comment: String::new(),
-                placement_policy: None,
-                storage_class: Default::default(),
+                name: tidb_ast::CiString::new(name),
+                ..Default::default()
             })
-            .collect(),
-        is_empty_columns: false,
+            .to_vec()
+            .into(),
+        ..Default::default()
     }
 }

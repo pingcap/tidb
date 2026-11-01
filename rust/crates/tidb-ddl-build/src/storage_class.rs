@@ -26,7 +26,8 @@ use tidb_model::engine_attribute::{
 use tidb_model::serde_helpers::go_json_field_matches;
 use tidb_model::StorageClassTransitRule;
 
-use tidb_table::partition_routing::{PartitionDef, PartitionKind};
+use tidb_model::partition::PartitionDefinition;
+use tidb_table::partition_routing::{PartitionKind, PartitionSpec};
 use tidb_terror::MysqlError;
 
 use tidb_table::partition_routing::StorageClass;
@@ -439,16 +440,18 @@ pub fn build_storage_class_for_table(defs: &[StorageClassDef]) -> StorageClass {
     )
 }
 
-/// Go `rebuildStorageClassForPartitions` over every definition of
-/// `partition`. An attribute that names no storage class leaves them unset.
+/// Go `rebuildStorageClassForPartitions` over every definition in
+/// `definitions`. An attribute that names no storage class leaves them unset.
 pub fn rebuild_storage_class_for_partitions(
     engine_attribute: &str,
-    partition: &mut tidb_table::partition_routing::PartitionSpec,
+    spec: &PartitionSpec,
+    definitions: &mut [PartitionDefinition],
     ctx: &tidb_metabuild::Context,
 ) -> Result<(), MysqlError> {
-    if let Some(classes) = partition_storage_classes(engine_attribute, partition, ctx)? {
-        for (definition, class) in partition.definitions.iter_mut().zip(classes) {
-            definition.storage_class = class;
+    if let Some(classes) = partition_storage_classes(engine_attribute, spec, definitions, ctx)? {
+        for (definition, (tier, transitions)) in definitions.iter_mut().zip(classes) {
+            definition.storage_class_tier = tier;
+            definition.storage_class_transitions = transitions.into();
         }
     }
     Ok(())
@@ -458,14 +461,15 @@ pub fn rebuild_storage_class_for_partitions(
 /// definition, or `None` when the attribute names no storage class.
 pub fn partition_storage_classes(
     engine_attribute: &str,
-    partition: &tidb_table::partition_routing::PartitionSpec,
+    spec: &PartitionSpec,
+    definitions: &[PartitionDefinition],
     ctx: &tidb_metabuild::Context,
 ) -> Result<Option<Vec<StorageClass>>, MysqlError> {
     let Some(settings) = get_storage_class_settings_from_table_info(engine_attribute)? else {
         return Ok(None);
     };
-    let definitions = partition.definitions.iter().collect::<Vec<_>>();
-    build_storage_class_for_partitions(&settings, &partition.kind, &definitions, ctx).map(Some)
+    let definitions = definitions.iter().collect::<Vec<_>>();
+    build_storage_class_for_partitions(&settings, &spec.kind, &definitions, ctx).map(Some)
 }
 
 /// The partition method as `checkStorageClassPartitionScope` reads it from
@@ -493,7 +497,7 @@ fn partition_method(kind: &PartitionKind) -> PartitionMethod {
 pub fn build_storage_class_for_partitions(
     defs: &[StorageClassDef],
     kind: &PartitionKind,
-    partitions: &[&PartitionDef],
+    partitions: &[&PartitionDefinition],
     ctx: &tidb_metabuild::Context,
 ) -> Result<Vec<StorageClass>, MysqlError> {
     for def in defs {
@@ -506,7 +510,7 @@ pub fn build_storage_class_for_partitions(
             let matched = (!def.names_in.is_empty()
                 && def
                     .names_in
-                    .contains(&tidb_hack::go_to_lower(&partition.name)))
+                    .contains(&tidb_hack::go_to_lower(partition.name.original())))
                 || match &def.less_than {
                     Some(less_than) => {
                         is_partition_match_less_than(kind, partition, less_than, ctx)?
@@ -531,7 +535,7 @@ pub fn build_storage_class_for_partitions(
 /// Go `checkStorageClassPartitionScope`.
 fn check_storage_class_partition_scope(
     kind: &PartitionKind,
-    partitions: &[&PartitionDef],
+    partitions: &[&PartitionDefinition],
     def: &StorageClassDef,
 ) -> Result<(), MysqlError> {
     let method = partition_method(kind);
@@ -571,7 +575,13 @@ fn check_storage_class_partition_scope(
         }
         if partitions
             .iter()
-            .any(|partition| partition.in_values.iter().any(|values| values.len() != 1))
+            .any(|partition| {
+                partition
+                    .in_values
+                    .snapshot()
+                    .iter()
+                    .any(|values| values.len() != 1)
+            })
         {
             return Err(MysqlError::from_terror(
                 &tidb_dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(
@@ -587,29 +597,32 @@ fn check_storage_class_partition_scope(
 /// written `less_than`.
 fn is_partition_match_less_than(
     kind: &PartitionKind,
-    partition: &PartitionDef,
+    partition: &PartitionDefinition,
     less_than: &str,
     ctx: &tidb_metabuild::Context,
 ) -> Result<bool, MysqlError> {
-    let [bound] = partition.less_than.as_slice() else {
+    let bounds = partition.less_than.snapshot();
+    let [bound] = bounds.as_slice() else {
         return Ok(false);
     };
     Ok(compare_range_partition_values(kind, bound, less_than, ctx)? <= 0)
 }
 
 /// Go `isPartitionMatchValuesIn`.
-fn is_partition_match_values_in(partition: &PartitionDef, values_in: &[String]) -> bool {
+fn is_partition_match_values_in(partition: &PartitionDefinition, values_in: &[String]) -> bool {
     partition
         .in_values
-        .iter()
-        .filter_map(|values| match values.as_slice() {
-            [value] => Some(value),
-            _ => None,
+        .snapshot()
+        .into_iter()
+        .map(|values| values.snapshot())
+        .filter_map(|values| match <[String; 1]>::try_from(values) {
+            Ok([value]) => Some(value),
+            Err(_) => None,
         })
         .any(|value| {
             values_in
                 .iter()
-                .any(|candidate| partition_value_equals(value, candidate))
+                .any(|candidate| partition_value_equals(&value, candidate))
         })
 }
 
