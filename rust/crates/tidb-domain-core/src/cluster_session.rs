@@ -158,6 +158,7 @@ pub fn cluster_session_catalog_with_templates(
     template_storage: &ClusterTableStorage,
 ) -> ClusterSessionCatalog {
     let mut catalog = tidb_infoschema_perfschema::catalog();
+    catalog.set_schema_meta_version(loaded.schema_version);
     let mut skipped = Vec::new();
     // Go `infoschema`'s resource groups come from meta, so a group another
     // TiDB created is one this node's `SET RESOURCE GROUP` finds.
@@ -644,6 +645,62 @@ use tidb_table::table_from_meta::kv_index;
         let first = homes.allocator_for(1, &table);
         let second = homes.allocator_for(1, &table);
         assert!(first.same_allocator_as(&second));
+    }
+
+    /// Go's one infoschema answers what the loader loaded: the schema
+    /// version, every stored schema's `DBInfo` (memory schemas aside), and a
+    /// table in an intermediate DDL state, which a DDL reads although no
+    /// statement may use it.
+    #[test]
+    fn the_session_image_answers_the_loaders_reads_from_its_db_info() {
+        let public = TableInfo {
+            id: 401,
+            name: CiString::new("Pub"),
+            columns: vec![column(1, 0, "id", true)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        };
+        let mut catalog = one_table_catalog(public.clone());
+        catalog.databases[0].deprecated_tables = vec![
+            public,
+            TableInfo {
+                id: 402,
+                name: CiString::new("adding"),
+                columns: vec![column(1, 0, "id", true)].into(),
+                pk_is_handle: true,
+                state: SchemaState::DELETE_ONLY,
+                ..TableInfo::default()
+            },
+        ]
+        .into();
+        let (storage, _, _) = cluster_storage();
+        let built = cluster_session_catalog(
+            &catalog,
+            &storage,
+            &StatsSnapshot::new(),
+            &LocalTableAutoIds::default(),
+        );
+        let image = built.catalog;
+        assert_eq!(image.schema_meta_version(), 7);
+        let stored: Vec<i64> = image
+            .stored_schemas()
+            .iter()
+            .map(|info| info.read().id)
+            .filter(|id| *id == 5)
+            .collect();
+        assert_eq!(stored, [5]);
+        assert!(
+            image.stored_schemas().iter().all(|info| info.read().id & (1 << 62) == 0),
+            "memory schemas are not stored ones"
+        );
+        let (schema, table) = image.table_info_by_name("APP", "pub").expect("the public table");
+        assert_eq!((schema.read().id, table.read().id), (5, 401));
+        let (_, adding) = image
+            .table_info_by_name("app", "adding")
+            .expect("an intermediate-state table is in the schema's DBInfo");
+        assert_eq!(adding.read().state, SchemaState::DELETE_ONLY);
+        assert!(image.table_info_by_name("app", "missing").is_none());
     }
 
     #[test]

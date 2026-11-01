@@ -233,6 +233,9 @@ pub struct InfoSchema {
     /// each mutator's ENTRY, so a call that declines still invalidates: the
     /// cost of a spurious rebuild is one snapshot walk, never staleness.
     metadata_version: u64,
+    /// Go `InfoSchema.SchemaMetaVersion`: the schema version the image was
+    /// built at (0 for an image no loader built).
+    schema_meta_version: i64,
     /// The immutable domain index view belongs to this metadata version.
     /// SessionExtendedInfoSchema clones share the view; DDL invalidates only the mutated owner.
     latest_index_schema: std::sync::OnceLock<Arc<crate::table_source::LatestIndexSchema>>,
@@ -413,6 +416,7 @@ impl SessionExtendedInfoSchema {
                 resource_groups: HashMap::new(),
                 version: 0,
                 metadata_version: next_metadata_version(),
+                schema_meta_version: 0,
                 latest_index_schema: std::sync::OnceLock::new(),
                 temporary_sweep: None,
                 foreign_keys_present: false,
@@ -785,6 +789,65 @@ impl SessionExtendedInfoSchema {
 
     /// Every policy, for `information_schema` and `SHOW` surfaces.
     #[must_use]
+    /// Go `InfoSchema.SchemaMetaVersion`.
+    #[must_use]
+    pub fn schema_meta_version(&self) -> i64 {
+        self.schema.schema_meta_version
+    }
+
+    /// Records the schema version the loader built this image at.
+    pub fn set_schema_meta_version(&mut self, version: i64) {
+        self.schema.schema_meta_version = version;
+    }
+
+    /// Go `InfoSchema.AllSchemas` without the memory schemas (whose ids carry
+    /// the system flag): every stored schema's `DBInfo`, in id order. Each
+    /// holds all of its tables' `TableInfo`s, non-public ones included,
+    /// as Go's loader keeps them.
+    #[must_use]
+    pub fn stored_schemas(&self) -> Vec<tidb_model::GoShared<tidb_model::db::DBInfo>> {
+        let mut schemas: Vec<_> = self
+            .schema
+            .databases
+            .values()
+            .filter(|database| database.id() & (1 << 62) == 0)
+            .map(|database| database.info.clone())
+            .collect();
+        schemas.sort_by_key(|info| info.read().id);
+        schemas
+    }
+
+    /// Go `InfoSchema.SchemaByName`: the stored schema's `DBInfo`.
+    #[must_use]
+    pub fn schema_info_by_name(&self, schema: &str) -> Option<tidb_model::GoShared<tidb_model::db::DBInfo>> {
+        self.schema
+            .databases
+            .get(&schema.go_to_lower())
+            .map(|database| database.info.clone())
+    }
+
+    /// The `TableInfo` named `table` in `schema`, from the schema's `DBInfo`
+    /// (so a table in an intermediate DDL state is found too, as Go's
+    /// `TableInfoByName` finds it).
+    #[must_use]
+    pub fn table_info_by_name(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Option<(
+        tidb_model::GoShared<tidb_model::db::DBInfo>,
+        tidb_model::GoShared<tidb_model::TableInfo>,
+    )> {
+        let info = self.schema_info_by_name(schema)?;
+        let found = info
+            .read()
+            .deprecated_tables
+            .iter_handles()
+            .flatten()
+            .find(|candidate| candidate.read().name.original().go_lower_eq(table));
+        found.map(|table| (info, table))
+    }
+
     pub fn policies(&self) -> impl Iterator<Item = &tidb_model::PolicyInfo> {
         self.schema.policies.values()
     }
