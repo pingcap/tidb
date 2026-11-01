@@ -41,6 +41,8 @@ use crate::{Session, StmtResult};
 /// invisible here until `COMMIT` -- which is what
 /// [`an_uncommitted_delete_is_invisible_in_the_committed_key_set`] pins.
 fn key_shapes(session: &mut Session, table: &str) -> Vec<&'static str> {
+    let mut witness = Session::with_catalog(session.shared_catalog());
+    let mut store = witness.transaction_store().expect("a node session has a store");
     let read = |catalog: &mut tidb_infoschema::SessionExtendedInfoSchema| {
         let entry = catalog
             .table_mut_in("test", table)
@@ -48,11 +50,10 @@ fn key_shapes(session: &mut Session, table: &str) -> Vec<&'static str> {
         let TableEntry::Kv(kv) = entry else {
             panic!("table `{table}` is stored as KV bytes");
         };
-        Ok(std::sync::Arc::make_mut(kv).stored_keys().unwrap())
+        Ok(kv.stored_keys(&mut *store).unwrap())
     };
     // The committed keys are what ANOTHER session's snapshot reads -- the
     // session's own reads see its transaction's buffer, as in Go.
-    let mut witness = Session::with_catalog(session.shared_catalog());
     let keys = witness.with_committed_catalog_mut(read).unwrap();
     keys
         .into_iter()

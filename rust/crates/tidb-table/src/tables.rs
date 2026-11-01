@@ -3872,7 +3872,7 @@ impl TableCommon {
     /// (`pkg/kv/union_store.go`); this tier gives each table its own
     /// [`tidb_kv::storage::TableStorage`], so the whole key set is readable
     /// directly.
-    pub fn stored_keys(&mut self) -> Result<Vec<Vec<u8>>, KvTableError> {
+    pub fn stored_keys(&self, store: &mut dyn TableStorage) -> Result<Vec<Vec<u8>>, KvTableError> {
         // Every key of the table lies under one of its physical ids' `t{id}`
         // prefixes: the logical id (records, global indexes) and each
         // partition's. A store shared with other tables is read range by
@@ -3885,8 +3885,7 @@ impl TableCommon {
         for id in physical_ids {
             let start = Key::from_bytes(tidb_tablecodec::table_key::gen_table_prefix(id));
             let end = Key::from_bytes(tidb_tablecodec::table_key::gen_table_prefix(id.saturating_add(1)));
-            let mut iterator = self
-                .store
+            let mut iterator = store
                 .iter(Some(&start), Some(&end))
                 .map_err(KvTableError::from)?;
             while iterator.valid() {

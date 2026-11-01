@@ -126,6 +126,7 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
         .run("CREATE TABLE t (id BIGINT PRIMARY KEY, v VARCHAR(10), KEY idx_v (v))")
         .unwrap();
     session.run("INSERT INTO t VALUES (1, 'abc')").unwrap();
+    let mut store = session.transaction_store().expect("a node session has a store");
     let (table_id, index_key, db_id) = session
         .with_committed_catalog_mut(|catalog| {
             let db_id = catalog.database_id("test").expect("the test database");
@@ -134,7 +135,7 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
             };
             let table = std::sync::Arc::make_mut(table);
             let index_key = table
-                .stored_keys()
+                .stored_keys(&mut *store)
                 .unwrap()
                 .into_iter()
                 .find(|key| is_index_key(key))

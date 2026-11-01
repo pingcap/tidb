@@ -1203,7 +1203,7 @@ fn a_short_common_handle_indexes_under_the_key_the_delete_path_computes() {
     ))
     .unwrap();
     assert_eq!(
-        t.stored_keys().unwrap(),
+        t.stored_keys(&mut *t.store().clone_box()).unwrap(),
         Vec::<Vec<u8>>::new(),
         "the delete left orphaned index entries behind"
     );

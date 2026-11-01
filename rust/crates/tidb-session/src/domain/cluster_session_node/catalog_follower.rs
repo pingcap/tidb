@@ -96,7 +96,6 @@ impl CatalogFollower {
         }
         let mut built = cluster_session_catalog_with_templates(
             &loaded,
-            &self.storage,
             None,
             self.auto_ids.as_ref(),
             &self.storage,

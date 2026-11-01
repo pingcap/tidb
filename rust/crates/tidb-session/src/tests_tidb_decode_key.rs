@@ -118,6 +118,7 @@ fn tidb_decode_key_uses_table_column_and_index_metadata() {
     session
         .run("INSERT INTO t VALUES ('bbbb', 10, '2020-01-01 00:00:00')")
         .unwrap();
+    let mut store = session.transaction_store().expect("a node session has a store");
     let key = session
         .with_committed_catalog_mut(|catalog| {
             let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
@@ -125,7 +126,7 @@ fn tidb_decode_key_uses_table_column_and_index_metadata() {
             };
             let table = std::sync::Arc::make_mut(table);
             Ok(table
-                .stored_keys()
+                .stored_keys(&mut *store)
                 .unwrap()
                 .into_iter()
                 .find(|key| tidb_tablecodec::is_record_key(key))
@@ -166,6 +167,7 @@ fn tidb_decode_key_uses_table_column_and_index_metadata() {
     session
         .run("INSERT INTO t VALUES ('aaaaa', 100, '2000-01-01 00:00:00')")
         .unwrap();
+    let mut store = session.transaction_store().expect("a node session has a store");
     let key = session
         .with_committed_catalog_mut(|catalog| {
             let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
@@ -173,7 +175,7 @@ fn tidb_decode_key_uses_table_column_and_index_metadata() {
             };
             let table = std::sync::Arc::make_mut(table);
             Ok(table
-                .stored_keys()
+                .stored_keys(&mut *store)
                 .unwrap()
                 .into_iter()
                 .find(|key| tidb_tablecodec::table_key::is_index_key(key))
@@ -198,13 +200,14 @@ fn tidb_decode_key_distinguishes_clustered_and_partition_handles() {
         .run("CREATE TABLE t (a INT PRIMARY KEY CLUSTERED, b INT, KEY bk(b)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))")
         .unwrap();
     session.run("INSERT INTO t VALUES (7, 100)").unwrap();
+    let mut store = session.transaction_store().expect("a node session has a store");
     let (table_id, indexes, partition_id, record, index) = session
         .with_committed_catalog_mut(|catalog| {
             let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
                 panic!("t must be a KV table");
             };
             let table = std::sync::Arc::make_mut(table);
-            let keys = table.stored_keys().unwrap();
+            let keys = table.stored_keys(&mut *store).unwrap();
             Ok((
                 table.table_id(),
                 table

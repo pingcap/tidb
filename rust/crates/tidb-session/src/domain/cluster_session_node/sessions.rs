@@ -172,7 +172,6 @@ impl DomainSessions for Domain {
         kv_templates.reuse(&loaded);
         let mut built = cluster_session_catalog_with_templates(
             &loaded,
-            &storage,
             None,
             self.auto_ids.as_ref(),
             &template_storage,
@@ -282,7 +281,6 @@ impl DomainSessions for Domain {
                         .map_err(historical_catalog_error)?;
                     let built = cluster_session_catalog_with_templates(
                         &loaded,
-                        &historical_storage,
                         Some(Arc::clone(&statistics_view)),
                         auto_ids.as_ref(),
                         &historical_storage,
@@ -334,7 +332,6 @@ impl DomainSessions for Domain {
                     .map_err(historical_catalog_error)?;
                 let built = cluster_session_catalog_with_templates(
                     &loaded,
-                    &connection_storage,
                     Some(Arc::clone(&statistics_view)),
                     auto_ids.as_ref(),
                     &connection_storage,

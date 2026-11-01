@@ -92,7 +92,6 @@ pub fn cluster_session_catalog(
 ) -> ClusterSessionCatalog {
     cluster_session_catalog_with_templates(
         loaded,
-        storage,
         Some(snapshot_statistics_view(stats)),
         auto_ids,
         storage,
@@ -169,7 +168,6 @@ impl KvTableTemplates {
 #[allow(clippy::too_many_arguments)]
 pub fn cluster_session_catalog_with_templates(
     loaded: &ClusterCatalog,
-    storage: &ClusterTableStorage,
     // Go's planner reads the domain's statistics handle
     // (`GetPhysicalTableStats`), never a copy in the schema: the catalog plans
     // through this view of it.
@@ -262,8 +260,9 @@ pub fn cluster_session_catalog_with_templates(
                 }
             };
             match built {
-                Ok(mut kv_table) => {
-                    kv_table.replace_storage(storage.clone_box());
+                Ok(kv_table) => {
+                    // Go: a table is metadata; the session's statements read
+                    // and write through `sctx.Txn()`, never the table.
                     catalog
                         .register_kv_in(&schema, table.name.original(), kv_table)
                         .expect("the schema was created just above this loop");

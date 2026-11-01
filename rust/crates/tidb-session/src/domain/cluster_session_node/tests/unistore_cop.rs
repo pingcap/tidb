@@ -25143,12 +25143,11 @@ fn a_storage_sessions_tables_carry_the_nodes_coprocessor_client() {
         .factory
         .open_storage_session(141)
         .expect("storage session");
+    // Go: the session's transaction (`sctx.Txn()`) carries the client every
+    // table read goes through.
     let has_client = opened
-        .with_committed_catalog_mut(|catalog| match catalog.table_in("mysql", "user") {
-            Some(tidb_infoschema::TableEntry::Kv(table)) => Ok(table.store().client().is_some()),
-            _ => Ok(false),
-        })
-        .expect("catalog");
+        .transaction_store()
+        .is_some_and(|store| store.client().is_some());
     assert!(has_client);
 }
 
