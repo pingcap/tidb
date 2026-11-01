@@ -206,7 +206,7 @@ where
                     return;
                 };
                 let targets = current_stats_targets(&async_catalog);
-                if let Err(error) = tidb_stats_handle_syncload::real_tikv_stats::load_needed_histograms_from_cluster(
+                if let Err(error) = tidb_stats_handle_syncload::real_tikv_stats::load_needed_histograms(
                     &async_opener,
                     timeout,
                     &targets,

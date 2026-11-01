@@ -1316,7 +1316,7 @@ impl PrivilegeRegistry {
     /// `with_grant` mirrors Go: the explicit row must itself be grantable,
     /// and the SUPER fallback additionally requires `GRANT OPTION`.
     #[must_use]
-    pub fn has_dynamic_priv(&self, user: &str, host: &str, name: &str, with_grant: bool) -> bool {
+    pub fn request_dynamic_verification(&self, user: &str, host: &str, name: &str, with_grant: bool) -> bool {
         let name = go_to_upper(name);
         if self.has_explicitly_granted_dynamic_privilege(user, host, &name, with_grant) {
             return true;
@@ -1349,7 +1349,7 @@ impl PrivilegeRegistry {
         self.identities_for_check(user, host, active_roles)
             .into_iter()
             .any(|(role_user, role_host)| {
-                self.has_dynamic_priv(&role_user, &role_host, name, with_grant)
+                self.request_dynamic_verification(&role_user, &role_host, name, with_grant)
             })
     }
 
@@ -1357,7 +1357,7 @@ impl PrivilegeRegistry {
     /// host, not necessarily the account's stored host pattern. Default-role
     /// and dynamic-grant rows each match that host independently.
     #[must_use]
-    pub fn has_dynamic_priv_with_default_roles(&self, user: &str, host: &str, name: &str) -> bool {
+    pub fn request_dynamic_verification_with_user(&self, user: &str, host: &str, name: &str) -> bool {
         let _view = self.read_view();
         let defaults = self
             .lock_default_roles()

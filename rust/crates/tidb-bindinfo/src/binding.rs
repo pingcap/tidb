@@ -545,7 +545,7 @@ pub const SOURCE_HISTORY: &str = "history";
 /// Go `utilparser.GetDefaultDB`: the schema the FIRST table name in the
 /// statement carries, or the session's current database when it carries
 /// none.
-pub fn default_db_of(stmt: &Stmt, current_db: &str) -> String {
+pub fn get_default_db(stmt: &Stmt, current_db: &str) -> String {
     collect_table_names(stmt)
         .into_iter()
         .find_map(|(schema, _)| (!schema.is_empty()).then_some(schema))

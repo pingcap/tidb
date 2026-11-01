@@ -131,7 +131,7 @@ pub fn embedded_tikv_store(
     let store = tidb_unistore::mock::new_test_tikv_store(
         &rpc,
         pd_client,
-        tidb_txnkv::driver::tikv_store::cluster_security_config(security),
+        tidb_txnkv::driver::tikv_store::cluster_security(security),
     )
     .map_err(SqlQueryError::unknown)?;
     Ok((store, rpc))

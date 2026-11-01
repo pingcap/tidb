@@ -54,7 +54,7 @@ impl FieldType {
 
     /// Go `DeepCopy`: a nil receiver returns nil.
     #[must_use]
-    pub fn deep_copy_pointer(source: Option<&Self>) -> Option<Box<Self>> {
+    pub fn deep_copy(source: Option<&Self>) -> Option<Box<Self>> {
         source.map(|source| Box::new(source.deep_copy_like_go()))
     }
 

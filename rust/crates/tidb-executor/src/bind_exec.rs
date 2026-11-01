@@ -145,7 +145,7 @@ pub trait SqlBindExec:
         let db = if wildcard {
             String::new()
         } else {
-            binding::default_db_of(origin, &current_db)
+            binding::get_default_db(origin, &current_db)
         };
         self.refuse_binding_on_temporary_table(origin)?;
         let (original_sql, sql_digest) = binding::normalize_stmt_for_binding(origin, &current_db);
@@ -356,7 +356,7 @@ pub trait SqlBindExec:
         let bind_sql = tidb_bindinfo::binding_utils::generate_binding_sql(&origin, &plan_hint, &schema);
         let hinted = parse_one_stmt(&bind_sql, plan_digest)?;
         let bind_sql = binding::restore_with_default_db(&hinted, &schema);
-        let db = binding::default_db_of(&origin, &schema);
+        let db = binding::get_default_db(&origin, &schema);
         let (original_sql, sql_digest) = binding::normalize_stmt_for_binding(&origin, &schema);
         if !handled_sql_digests.insert(sql_digest.clone()) {
             self.append_sql_warning(tidb_context::SqlWarn::with_code(tidb_context::WarningLevel::Warning, 1105,

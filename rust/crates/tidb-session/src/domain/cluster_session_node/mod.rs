@@ -1252,7 +1252,7 @@ impl<'s> ClusterServerSession<'s> {
                 self.stage_stats_columns(table, columns)
             }
             ActionType::ACTION_MODIFY_COLUMN => {
-                let (table, columns, analyzed) = event.modify_column_info();
+                let (table, columns, analyzed) = event.get_modify_column_info();
                 if analyzed {
                     Ok(())
                 } else {

@@ -298,7 +298,7 @@ fn remap_list_columns_location(
 ) -> tidb_planner_rule::ListPartitionLocation {
     let mut remapped = tidb_planner_rule::ListPartitionLocation::new();
     for (index, mut groups) in location {
-        let Some(replacement) = partition.overlapping_dropping_partition_index(index) else {
+        let Some(replacement) = partition.get_overlapping_dropping_partition_idx(index) else {
             continue;
         };
         if replacement != index {
@@ -318,7 +318,7 @@ fn remap_partition_indices(
     let mut used_ids = std::collections::BTreeSet::new();
     indices
         .into_iter()
-        .filter_map(|index| partition.overlapping_dropping_partition_index(index))
+        .filter_map(|index| partition.get_overlapping_dropping_partition_idx(index))
         .filter(|index| {
             partition_names.is_empty()
                 || partition_names.iter().any(|name| {

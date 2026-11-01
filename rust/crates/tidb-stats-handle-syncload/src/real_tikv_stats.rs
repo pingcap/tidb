@@ -175,7 +175,7 @@ fn load_stats_item_payload_from_cluster<S: StoreClient>(
 /// Go `storage.LoadNeededHistograms`: drain the process-wide asynchronous
 /// statistics demand against the latest schema and shared statistics cache.
 /// Every item is removed after its one attempt, including storage failures.
-pub fn load_needed_histograms_from_cluster<S: StoreClient>(
+pub fn load_needed_histograms<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
     tables: &[StatsTarget],

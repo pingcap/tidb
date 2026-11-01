@@ -254,7 +254,7 @@ impl AccountState {
                 }
                 // `SYSTEM_USER` is a dynamic privilege with SUPER fallback,
                 // so a CREATE USER caller cannot inspect a protected target.
-                !registry.has_dynamic_priv(&user, &host, "SYSTEM_USER", false)
+                !registry.request_dynamic_verification(&user, &host, "SYSTEM_USER", false)
             })
             .collect())
     }

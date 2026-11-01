@@ -667,7 +667,7 @@ mod tests {
         let built = registry_from_cluster(&loaded);
         assert!(built
             .registry
-            .has_dynamic_priv("bridge", "%", "SYSTEM_VARIABLES_ADMIN", false));
+            .request_dynamic_verification("bridge", "%", "SYSTEM_VARIABLES_ADMIN", false));
         assert_eq!(built.skipped.len(), 1);
         assert_eq!(built.skipped[0].privilege, "NOT_A_REAL_PRIVILEGE");
         assert_eq!(built.skipped[0].account, "'bridge'@'%'");

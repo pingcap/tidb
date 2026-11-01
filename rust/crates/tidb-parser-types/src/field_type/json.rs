@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn clone_deep_copy_and_binary_marker_mutations_follow_go_headers() {
         assert!(std::panic::catch_unwind(|| FieldType::clone_pointer(None::<&FieldType>)).is_err());
-        assert!(FieldType::deep_copy_pointer(None::<&FieldType>).is_none());
+        assert!(FieldType::deep_copy(None::<&FieldType>).is_none());
         assert_eq!(FieldType::memory_usage_pointer(None), 0);
         FieldType::clean_elem_binary_literals_pointer(None);
 

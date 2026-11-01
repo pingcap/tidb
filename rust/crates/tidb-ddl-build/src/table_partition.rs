@@ -2354,7 +2354,7 @@ mod load_permissiveness_tests {
         )
         .expect("online DROP PARTITION metadata rebuilds");
 
-        assert_eq!(spec.overlapping_dropping_partition_index(0), Some(1));
-        assert_eq!(spec.overlapping_dropping_partition_index(1), Some(1));
+        assert_eq!(spec.get_overlapping_dropping_partition_idx(0), Some(1));
+        assert_eq!(spec.get_overlapping_dropping_partition_idx(1), Some(1));
     }
 }

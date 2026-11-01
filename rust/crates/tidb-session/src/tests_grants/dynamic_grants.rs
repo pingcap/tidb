@@ -160,7 +160,7 @@ fn super_is_the_fallback_for_every_dynamic_privilege() {
 
     for name in tidb_privilege::DYNAMIC_PRIVS {
         assert!(
-            registry.has_dynamic_priv("su", "%", name, false),
+            registry.request_dynamic_verification("su", "%", name, false),
             "SUPER satisfies {name}"
         );
         assert!(
@@ -171,17 +171,17 @@ fn super_is_the_fallback_for_every_dynamic_privilege() {
 
     // SUPER alone does not satisfy a GRANTABLE dynamic check: the
     // account must also hold GRANT OPTION.
-    assert!(!registry.has_dynamic_priv("su", "%", "BACKUP_ADMIN", true));
+    assert!(!registry.request_dynamic_verification("su", "%", "BACKUP_ADMIN", true));
     session
         .run("GRANT SUPER ON *.* TO 'su'@'%' WITH GRANT OPTION")
         .unwrap();
-    assert!(registry.has_dynamic_priv("su", "%", "BACKUP_ADMIN", true));
+    assert!(registry.request_dynamic_verification("su", "%", "BACKUP_ADMIN", true));
 
     // An account with neither SUPER nor a row fails every check, and
     // `SHOW GRANTS` for a SUPER account prints no dynamic line -- the
     // fallback is a check-time rule, not stored state.
     session.run("CREATE USER 'plain'@'%'").unwrap();
-    assert!(!registry.has_dynamic_priv("plain", "%", "BACKUP_ADMIN", false));
+    assert!(!registry.request_dynamic_verification("plain", "%", "BACKUP_ADMIN", false));
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'su'@'%'")),
         [["GRANT SUPER ON *.* TO 'su'@'%' WITH GRANT OPTION"]]

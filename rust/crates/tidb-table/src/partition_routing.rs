@@ -352,7 +352,7 @@ impl PartitionSpec {
     /// definition ordinal. Online DROP PARTITION may redirect a RANGE or LIST
     /// read to a still-readable overlapping definition, or skip it.
     #[must_use]
-    pub fn overlapping_dropping_partition_index(&self, index: usize) -> Option<usize> {
+    pub fn get_overlapping_dropping_partition_idx(&self, index: usize) -> Option<usize> {
         if self.overlapping_dropping_partition_indices.len() != self.definitions.len() {
             return (index < self.definitions.len()).then_some(index);
         }

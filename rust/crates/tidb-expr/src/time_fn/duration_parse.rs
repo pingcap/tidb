@@ -143,7 +143,7 @@ impl GoDateTime {
         let total = total.abs();
         let seconds = total / 1_000_000;
         let micros = (total % 1_000_000) as u32;
-        let (year, month, day) = date_from_daynr(seconds / 86_400);
+        let (year, month, day) = get_date_from_daynr(seconds / 86_400);
         let rest = seconds % 86_400;
         Some(GoDateTime {
             year,
@@ -194,7 +194,7 @@ fn days_in_year(year: i64) -> i64 {
 
 /// Go `getDateFromDaynr`, the inverse of [`daynr`]. Out-of-range day numbers
 /// answer `(0, 0, 0)`, exactly as Go's early return does.
-pub(crate) fn date_from_daynr(daynr: i64) -> (i64, u32, u32) {
+pub(crate) fn get_date_from_daynr(daynr: i64) -> (i64, u32, u32) {
     if daynr <= 365 || daynr >= 3_652_500 {
         return (0, 0, 0);
     }

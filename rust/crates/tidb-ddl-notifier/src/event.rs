@@ -209,7 +209,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetModifyColumnInfo`.
-    pub fn modify_column_info(&self) -> (&TableInfo, &[ColumnInfo], bool) {
+    pub fn get_modify_column_info(&self) -> (&TableInfo, &[ColumnInfo], bool) {
         self.assert_type(ActionType::ACTION_MODIFY_COLUMN);
         (self.table_info(), &self.inner.columns, self.inner.analyzed)
     }
@@ -723,7 +723,7 @@ mod tests {
             vec![column],
             true,
         ));
-        let (modified_table, columns, analyzed) = event.modify_column_info();
+        let (modified_table, columns, analyzed) = event.get_modify_column_info();
         assert_eq!((modified_table.id, columns[0].id, analyzed), (3, 11, true));
 
         let event = round_trip(SchemaChangeEvent::new_add_partition_event(table(4), partition(41)));

@@ -133,14 +133,14 @@ impl TikvStore {
         pd_endpoints: Vec<String>,
         security: &tidb_pd_client::ClusterSecurity,
     ) -> Result<Self, String> {
-        Self::connect(pd_endpoints, cluster_security_config(security))
+        Self::connect(pd_endpoints, cluster_security(security))
     }
 }
 
 /// Go `config.Security.ClusterSecurity()` as client-rust takes it: the
 /// default store config with the cluster TLS files `security` names.
 #[must_use]
-pub fn cluster_security_config(security: &tidb_pd_client::ClusterSecurity) -> tikv_client::Config {
+pub fn cluster_security(security: &tidb_pd_client::ClusterSecurity) -> tikv_client::Config {
     let config = tikv_client::Config::default();
     if security.is_tls_enabled() {
         config.with_security(

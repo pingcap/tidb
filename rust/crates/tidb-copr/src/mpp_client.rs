@@ -1131,7 +1131,7 @@ mod mpp_read_batch_tests {
         security: &ClusterSecurity,
     ) -> (TikvStore<TestPd>, Arc<tidb_unistore::cluster::Cluster>) {
         let (_rpc, pd, cluster) = tidb_unistore::mock::new(Vec::new()).unwrap();
-        let config = tidb_txnkv::driver::tikv_store::cluster_security_config(security);
+        let config = tidb_txnkv::driver::tikv_store::cluster_security(security);
         let runtime = tidb_txnkv::driver::tikv_store::store_runtime().unwrap();
         let store = runtime
             .block_on(async {

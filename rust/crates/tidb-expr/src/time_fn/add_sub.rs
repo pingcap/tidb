@@ -691,7 +691,7 @@ fn add_months(base: GoDateTime, months: f64, clamp: bool) -> Option<GoDateTime> 
     // A day past the target month's end rolls into the next month here,
     // which is exactly what Go's `time.Time.AddDate` normalization does.
     let (year, month, day) =
-        duration_parse::date_from_daynr(duration_parse::daynr(year, month, 1) + i64::from(day) - 1);
+        duration_parse::get_date_from_daynr(duration_parse::daynr(year, month, 1) + i64::from(day) - 1);
     Some(GoDateTime {
         year,
         month,
