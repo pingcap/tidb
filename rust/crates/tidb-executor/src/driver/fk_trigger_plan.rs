@@ -16,7 +16,6 @@
 
 use tidb_infoschema::{SessionExtendedInfoSchema, TableEntry};
 use crate::driver::DriverError;
-use tidb_table::tables::KvForeignKey;
 use tidb_table::tables::FkAction;
 use crate::StmtContext;
 use tidb_planner_core_operator_physicalop::fk_plan::{FkColumn, FkMeta, FkPlanError, FkTable, ForeignKeyCatalog};
@@ -37,16 +36,19 @@ fn action(action: FkAction) -> tidb_planner_core_operator_physicalop::fk_plan::F
     }
 }
 
-pub(crate) fn meta(fk: &KvForeignKey) -> FkMeta {
+pub(crate) fn meta(fk: &tidb_model::table::FKInfo) -> FkMeta {
+    let names = |names: Vec<tidb_ast::CiString>| {
+        names.iter().map(|name| name.original().to_owned()).collect()
+    };
     FkMeta {
         version: fk.version,
-        name: fk.name.clone(),
-        cols: fk.cols.clone(),
-        ref_schema: fk.ref_schema.clone(),
-        ref_table: fk.ref_table.clone(),
-        ref_cols: fk.ref_cols.clone(),
-        on_delete: action(fk.on_delete),
-        on_update: action(fk.on_update),
+        name: fk.name.original().to_owned(),
+        cols: names(fk.cols.snapshot()),
+        ref_schema: fk.ref_schema.original().to_owned(),
+        ref_table: fk.ref_table.original().to_owned(),
+        ref_cols: names(fk.ref_cols.snapshot()),
+        on_delete: action(fk.on_delete.into()),
+        on_update: action(fk.on_update.into()),
     }
 }
 
@@ -72,14 +74,21 @@ impl ForeignKeyCatalog for CatalogForeignKeys<'_> {
                         .map(|generated| generated.dependencies.clone()),
                 })
                 .collect(),
-            foreign_keys: table.foreign_keys().iter().map(meta).collect(),
+            foreign_keys: table
+                .meta()
+                .read()
+                .foreign_keys
+                .iter_deref()
+                .filter(|fk| fk.read().state == tidb_model::SchemaState::PUBLIC)
+                .map(|fk| meta(&fk.read()))
+                .collect(),
         })
     }
 
     fn referring(&self, database: &str, table: &str) -> Vec<(String, String, FkMeta)> {
         crate::foreign_key::referring(self.0, database, table)
             .into_iter()
-            .map(|(child_db, child_table, fk)| (child_db, child_table, meta(&fk)))
+            .map(|(child_db, child_table, fk)| (child_db, child_table, meta(&fk.read())))
             .collect()
     }
 

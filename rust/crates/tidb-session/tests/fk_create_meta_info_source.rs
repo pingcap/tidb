@@ -42,12 +42,50 @@
 use crate::support::testkit::TestKit;
 use tidb_infoschema::TableEntry;
 use tidb_table::tables::FkAction;
-use tidb_table::tables::KvForeignKey;
+
+/// Go `tbl.Meta().ForeignKeys` (the public ones), in the shapes the
+/// assertions read.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+struct ForeignKeyView {
+    version: i64,
+    name: String,
+    cols: Vec<String>,
+    ref_schema: String,
+    ref_table: String,
+    ref_cols: Vec<String>,
+    on_delete: tidb_table::tables::FkAction,
+    on_update: tidb_table::tables::FkAction,
+}
+
+fn foreign_keys(table: &tidb_table::tables::TableCommon) -> Vec<ForeignKeyView> {
+    let names = |names: Vec<tidb_ast::CiString>| -> Vec<String> {
+        names.iter().map(|name| name.original().to_owned()).collect()
+    };
+    table
+        .meta()
+        .read()
+        .foreign_keys
+        .iter_deref()
+        .map(|fk| fk.read().clone())
+        .filter(|fk| fk.state == tidb_model::SchemaState::PUBLIC)
+        .map(|fk| ForeignKeyView {
+            version: fk.version,
+            name: fk.name.original().to_owned(),
+            cols: names(fk.cols.snapshot()),
+            ref_schema: fk.ref_schema.original().to_owned(),
+            ref_table: fk.ref_table.original().to_owned(),
+            ref_cols: names(fk.ref_cols.snapshot()),
+            on_delete: fk.on_delete.into(),
+            on_update: fk.on_update.into(),
+        })
+        .collect()
+}
 
 /// Go `getTableInfo(t, dom, db, table).ForeignKeys`.
-fn foreign_keys_of(tk: &TestKit, db: &str, table: &str) -> Vec<KvForeignKey> {
+fn foreign_keys_of(tk: &TestKit, db: &str, table: &str) -> Vec<ForeignKeyView> {
     match tk.get_table_by_name(db, table) {
-        TableEntry::Kv(table) => table.foreign_keys().to_vec(),
+        TableEntry::Kv(table) => foreign_keys(&table).to_vec(),
         other => panic!("expected a storage-backed table {db}.{table}, got {other:?}"),
     }
 }
@@ -67,7 +105,7 @@ fn index_names(tk: &TestKit, db: &str, table: &str) -> Vec<String> {
 /// demand, so the same query is a scan over the schema's enumeration — which
 /// is sorted, while Go's list is registration-ordered. Every assertion below
 /// only orders children whose two orders coincide, or is order-agnostic.
-fn referred_foreign_keys(tk: &TestKit, db: &str, table: &str) -> Vec<(String, String, KvForeignKey)> {
+fn referred_foreign_keys(tk: &TestKit, db: &str, table: &str) -> Vec<(String, String, ForeignKeyView)> {
     let catalog = tk.info_schema();
     let mut found = Vec::new();
     for child_db in catalog.database_names() {
@@ -78,7 +116,7 @@ fn referred_foreign_keys(tk: &TestKit, db: &str, table: &str) -> Vec<(String, St
             let Some(TableEntry::Kv(child)) = catalog.table_in(&child_db, &child_table) else {
                 continue;
             };
-            for foreign_key in child.foreign_keys() {
+            for foreign_key in foreign_keys(&child) {
                 if foreign_key.ref_schema.eq_ignore_ascii_case(db)
                     && foreign_key.ref_table.eq_ignore_ascii_case(table)
                 {

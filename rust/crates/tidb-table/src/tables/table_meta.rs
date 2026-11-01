@@ -17,7 +17,7 @@
 //! table's default character set.
 //!
 //! Inside: [`TableHandle`] (Go `kv.Handle`), [`Index`],
-//! [`FkAction`] + [`KvForeignKey`], [`crate::column::Column`] with the read-time cast that
+//! [`FkAction`], [`crate::column::Column`] with the read-time cast that
 //! makes `OriginDefaultValue` behave, and [`TableCharset`].
 //!
 //! Mirrors Go `pkg/meta/model`'s `IndexInfo`, `FKInfo` and `ColumnInfo`
@@ -400,37 +400,20 @@ pub enum FkAction {
     SetDefault,
 }
 
-impl FkAction {
-}
-
-/// One foreign key of a [`TableCommon`]: Go `model.FKInfo`, reduced to what a
-/// referential check and a cascade need.
-///
-/// BOTH sides are stored as NAMES (Go `FKInfo.Cols` / `RefCols`, both
-/// `CIStr`). The referencing side used to be offsets on the theory that the
-/// declaring table's own schema is fixed -- it is not: `ALTER TABLE ... ADD
-/// COLUMN ... FIRST` shifts every offset above it, and a constraint that kept
-/// its old ones silently starts checking the wrong columns.
-#[derive(Clone, Debug)]
-pub struct KvForeignKey {
-    /// Go `FKInfo.Version`: version zero retains metadata without active enforcement.
-    pub version: i64,
-    /// The constraint name, which a violation reports.
-    pub name: String,
-    /// Go `FKInfo.Cols`: the referencing columns' NAMES in this table.
-    /// Resolved to offsets against the current column list where they are
-    /// used ([`TableCommon::foreign_key_offsets`]).
-    pub cols: Vec<String>,
-    /// The referenced schema.
-    pub ref_schema: String,
-    /// The referenced table.
-    pub ref_table: String,
-    /// The referenced columns' names, in the same order as `cols`.
-    pub ref_cols: Vec<String>,
-    /// Go `FKInfo.OnDelete`.
-    pub on_delete: FkAction,
-    /// Go `FKInfo.OnUpdate`.
-    pub on_update: FkAction,
+/// Go `ast.ReferOptionType(v)` over the stored `FKInfo.On{Delete,Update}`
+/// int (`pkg/parser/ast/model.go`): NoOption 0, Restrict 1, Cascade 2,
+/// SetNull 3, NoAction 4, SetDefault 5.
+impl From<i64> for FkAction {
+    fn from(action: i64) -> Self {
+        match action {
+            1 => FkAction::Restrict,
+            2 => FkAction::Cascade,
+            3 => FkAction::SetNull,
+            4 => FkAction::NoAction,
+            5 => FkAction::SetDefault,
+            _ => FkAction::NoOption,
+        }
+    }
 }
 
 /// A column of a [`TableCommon`]: Go's `table.Column`, whose `ColumnInfo` is

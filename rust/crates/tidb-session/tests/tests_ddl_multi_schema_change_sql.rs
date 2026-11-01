@@ -36,6 +36,45 @@ use tidb_infoschema::TableEntry;
 use tidb_table::tables::TableCommon;
 use tidb_context::WarningLevel;
 
+/// Go `tbl.Meta().ForeignKeys` (the public ones), in the shapes the
+/// assertions read.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+struct ForeignKeyView {
+    version: i64,
+    name: String,
+    cols: Vec<String>,
+    ref_schema: String,
+    ref_table: String,
+    ref_cols: Vec<String>,
+    on_delete: tidb_table::tables::FkAction,
+    on_update: tidb_table::tables::FkAction,
+}
+
+fn foreign_keys(table: &tidb_table::tables::TableCommon) -> Vec<ForeignKeyView> {
+    let names = |names: Vec<tidb_ast::CiString>| -> Vec<String> {
+        names.iter().map(|name| name.original().to_owned()).collect()
+    };
+    table
+        .meta()
+        .read()
+        .foreign_keys
+        .iter_deref()
+        .map(|fk| fk.read().clone())
+        .filter(|fk| fk.state == tidb_model::SchemaState::PUBLIC)
+        .map(|fk| ForeignKeyView {
+            version: fk.version,
+            name: fk.name.original().to_owned(),
+            cols: names(fk.cols.snapshot()),
+            ref_schema: fk.ref_schema.original().to_owned(),
+            ref_table: fk.ref_table.original().to_owned(),
+            ref_cols: names(fk.ref_cols.snapshot()),
+            on_delete: fk.on_delete.into(),
+            on_update: fk.on_update.into(),
+        })
+        .collect()
+}
+
 /// Go `external.GetTableByName(t, tk, "test", table).Meta()`.
 fn table_meta(tk: &TestKit, table: &str) -> std::sync::Arc<TableCommon> {
     let TableEntry::Kv(kv) = tk.get_table_by_name("test", table) else {
@@ -865,7 +904,7 @@ fn multi_schema_change_failed_action_restores_referencing_table_metadata() {
     tk.must_get_err_code("alter table parent rename column a to renamed, add column b int", 1060);
     assert_unchanged_table(&mut tk, &parent, "parent");
     assert_unchanged_table(&mut tk, &child, "child");
-    assert_eq!(table_meta(&tk, "child").foreign_keys()[0].ref_cols, vec!["a"]);
+    assert_eq!(foreign_keys(&table_meta(&tk, "child"))[0].ref_cols, vec!["a"]);
     tk.must_exec("insert into child values (1)");
 }
 

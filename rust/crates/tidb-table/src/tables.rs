@@ -39,7 +39,6 @@
 pub mod auto_increment;
 pub mod auto_random;
 pub mod cache;
-pub(crate) mod column_deps;
 pub mod index_entries;
 pub(crate) mod index_states;
 pub mod nonpublic_columns;
@@ -63,7 +62,7 @@ pub use row_decoder::{
 };
 pub use table_meta::{
     FkAction, Column,
-    KvForeignKey, Index, NonPublicColumn, PreparedPointGetDecodeContext,
+    Index, NonPublicColumn, PreparedPointGetDecodeContext,
     RowDecodeContext, TableCharset, TableHandle,
 };
 pub use index_entries::index_key_bounds;
@@ -566,11 +565,6 @@ pub struct TableCommon {
     /// Whether every loaded column is public. Point-read planning must not
     /// bypass the ordinary reader while a column is in a DDL transition.
     all_columns_public: bool,
-    /// Go `TableInfo.ForeignKeys`: the constraints this table DECLARES, i.e.
-    /// the child side. The parent side is found by scanning the catalog for
-    /// the tables whose foreign keys name this one, as Go's
-    /// `ReferredFKInfo` index does.
-    foreign_keys: Vec<KvForeignKey>,
     /// Go `TableCommon.writableConstraints`: enforced CHECK constraints not
     /// in delete-only/delete-reorganization state.
     check_constraints: std::sync::Arc<Vec<KvCheckConstraint>>,
@@ -1201,7 +1195,6 @@ impl TableCommon {
             new_table_global_indexes: None,
             use_new_collation,
             all_columns_public: true,
-            foreign_keys: Vec::new(),
             check_constraints: std::sync::Arc::new(Vec::new()),
             check_constraint_infos: std::sync::Arc::new(Vec::new()),
             partition: None,
@@ -1801,34 +1794,12 @@ impl TableCommon {
         })
     }
 
-    /// Records a foreign key this table declares.
-    pub fn add_foreign_key(&mut self, foreign_key: KvForeignKey) {
-        self.foreign_keys.push(foreign_key);
-    }
-
     /// Go `TableInfo.MaxForeignKeyID`: the counter an UNNAMED constraint is
     /// named after (`fk_1`, `fk_2`, ...). It only ever rises, so dropping
     /// `fk_1` and adding another unnamed constraint yields `fk_2` rather than
     /// reusing the freed name.
     pub fn max_foreign_key_id(&self) -> i64 {
         self.meta.read().max_foreign_key_id
-    }
-
-    /// Removes the constraint with this name, reporting whether one went.
-    ///
-    /// Go `dropForeignKey` rebuilds `TableInfo.ForeignKeys` without it and
-    /// leaves `MaxForeignKeyID` and the index the constraint relied on alone
-    /// -- the index outlives the constraint and has to be dropped by name.
-    pub fn drop_foreign_key(&mut self, name: &str) -> bool {
-        let before = self.foreign_keys.len();
-        self.foreign_keys.retain(|key| !key.name.go_lower_eq(name));
-        self.foreign_keys.len() != before
-    }
-
-    /// The foreign keys this table declares (the child side).
-    #[must_use]
-    pub fn foreign_keys(&self) -> &[KvForeignKey] {
-        &self.foreign_keys
     }
 
     /// Go `TableInfo.Charset`/`Collate`: the table's default character set

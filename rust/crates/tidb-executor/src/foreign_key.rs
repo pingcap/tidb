@@ -95,7 +95,6 @@ use tidb_infoschema::TableEntry;
 use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_table::tables::TableHandle;
 use tidb_table::tables::RowDecodeContext;
-use tidb_table::tables::KvForeignKey;
 use tidb_table::tables::FkAction;
 use tidb_hack::GoCaseCompare;
 use tidb_planner_core_operator_physicalop::{FkTriggerKind, FkTriggerNode};
@@ -163,7 +162,7 @@ pub(crate) fn referring(
     catalog: &SessionExtendedInfoSchema,
     database: &str,
     table: &str,
-) -> Vec<(String, String, KvForeignKey)> {
+) -> Vec<(String, String, tidb_model::GoShared<tidb_model::table::FKInfo>)> {
     // Sysbench and the normal TiDB bootstrap have no foreign-key declarations.
     // Avoid rebuilding and sorting the complete catalog path list for every
     // UPDATE/DELETE in that case; catalogs that do declare one retain the
@@ -176,11 +175,14 @@ pub(crate) fn referring(
         let TableEntry::Kv(child) = entry else {
             continue;
         };
-        for foreign_key in child.foreign_keys() {
-            if foreign_key.version >= tidb_model::table::FK_VERSION1
-                && foreign_key.ref_schema.go_lower_eq(database)
-                && foreign_key.ref_table.go_lower_eq(table)
+        for foreign_key in child.meta().read().foreign_keys.iter_deref() {
+            let key = foreign_key.read();
+            if key.state == tidb_model::SchemaState::PUBLIC
+                && key.version >= tidb_model::table::FK_VERSION1
+                && key.ref_schema.original().go_lower_eq(database)
+                && key.ref_table.original().go_lower_eq(table)
             {
+                drop(key);
                 found.push((child_db, child_table, foreign_key));
             }
         }
@@ -192,7 +194,7 @@ pub(crate) fn referring(
     found.sort_by(|left, right| (left.0, left.1).cmp(&(right.0, right.1)));
     found
         .into_iter()
-        .map(|(database, table, key)| (database.to_owned(), table.to_owned(), key.clone()))
+        .map(|(database, table, key)| (database.to_owned(), table.to_owned(), key))
         .collect()
 }
 

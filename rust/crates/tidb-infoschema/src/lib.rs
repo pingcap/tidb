@@ -614,7 +614,7 @@ impl SessionExtendedInfoSchema {
         let table_is_locked = matches!(&table, TableEntry::Kv(table) if table.lock().is_some());
         let table_has_foreign_keys = matches!(
             &table,
-            TableEntry::Kv(table) if !table.foreign_keys().is_empty()
+            TableEntry::Kv(table) if !table.meta().read().foreign_keys.is_empty()
         );
         let schema = self.database_mut(&database.go_to_lower()).ok_or_else(|| {
             DriverError::from(

@@ -22,8 +22,46 @@
 
 use crate::support::testkit::TestKit;
 use tidb_infoschema::TableEntry;
-use tidb_table::tables::KvForeignKey;
 use tidb_table::tables::TableCommon;
+
+/// Go `tbl.Meta().ForeignKeys` (the public ones), in the shapes the
+/// assertions read.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+struct ForeignKeyView {
+    version: i64,
+    name: String,
+    cols: Vec<String>,
+    ref_schema: String,
+    ref_table: String,
+    ref_cols: Vec<String>,
+    on_delete: tidb_table::tables::FkAction,
+    on_update: tidb_table::tables::FkAction,
+}
+
+fn foreign_keys(table: &tidb_table::tables::TableCommon) -> Vec<ForeignKeyView> {
+    let names = |names: Vec<tidb_ast::CiString>| -> Vec<String> {
+        names.iter().map(|name| name.original().to_owned()).collect()
+    };
+    table
+        .meta()
+        .read()
+        .foreign_keys
+        .iter_deref()
+        .map(|fk| fk.read().clone())
+        .filter(|fk| fk.state == tidb_model::SchemaState::PUBLIC)
+        .map(|fk| ForeignKeyView {
+            version: fk.version,
+            name: fk.name.original().to_owned(),
+            cols: names(fk.cols.snapshot()),
+            ref_schema: fk.ref_schema.original().to_owned(),
+            ref_table: fk.ref_table.original().to_owned(),
+            ref_cols: names(fk.ref_cols.snapshot()),
+            on_delete: fk.on_delete.into(),
+            on_update: fk.on_update.into(),
+        })
+        .collect()
+}
 
 /// Go `getTableInfo(t, dom, db, table)`: the storage-backed table as the
 /// domain's current schema holds it.
@@ -37,7 +75,7 @@ fn table_info(tk: &TestKit, db: &str, table: &str) -> TableCommon {
 /// Go `getTableInfoReferredForeignKeys`: the constraints in the domain's
 /// current schema that name `db.table` as their referenced table (computed
 /// on demand here; see the sibling `fk_create_meta_info_source` module doc).
-fn referred_foreign_keys(tk: &TestKit, db: &str, table: &str) -> Vec<(String, String, KvForeignKey)> {
+fn referred_foreign_keys(tk: &TestKit, db: &str, table: &str) -> Vec<(String, String, ForeignKeyView)> {
     let catalog = tk.info_schema();
     let mut found = Vec::new();
     for child_db in catalog.database_names() {
@@ -48,7 +86,7 @@ fn referred_foreign_keys(tk: &TestKit, db: &str, table: &str) -> Vec<(String, St
             let Some(TableEntry::Kv(child)) = catalog.table_in(&child_db, &child_table) else {
                 continue;
             };
-            for foreign_key in child.foreign_keys() {
+            for foreign_key in foreign_keys(&child) {
                 if foreign_key.ref_schema.eq_ignore_ascii_case(db)
                     && foreign_key.ref_table.eq_ignore_ascii_case(table)
                 {
@@ -61,8 +99,8 @@ fn referred_foreign_keys(tk: &TestKit, db: &str, table: &str) -> Vec<(String, St
 }
 
 /// Go `getTableInfo(t, dom, db, table).ForeignKeys`.
-fn declared(tk: &TestKit, db: &str, table: &str) -> Vec<KvForeignKey> {
-    table_info(tk, db, table).foreign_keys().to_vec()
+fn declared(tk: &TestKit, db: &str, table: &str) -> Vec<ForeignKeyView> {
+    foreign_keys(&table_info(tk, db, table)).to_vec()
 }
 
 /// Go `getTableInfo(t, dom, db, table).Indices`, by name.
@@ -147,7 +185,7 @@ fn alter_add_foreign_key_lands_constraints_and_enforces_child_side() {
     assert_eq!(table.indexes().len(), 4, "Go: len(tbl2Info.Indices) == 4");
     let index_names: Vec<String> = table.indexes().iter().map(|index| index.read().name.original().to_owned()).collect();
     assert_eq!(index_names, vec!["fk", "idx_c", "fk_d", "fk_e"], "Go's index order");
-    let names: Vec<String> = table.foreign_keys().iter().map(|key| key.name.clone()).collect();
+    let names: Vec<String> = foreign_keys(&table).iter().map(|key| key.name.clone()).collect();
     assert_eq!(names, vec!["fk", "fk_c", "fk_d", "fk_e"], "Go's FK order");
 
     // Every orphan insert fails [planner:1452] — the parent has no rows.

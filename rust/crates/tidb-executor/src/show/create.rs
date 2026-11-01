@@ -402,17 +402,23 @@ pub fn construct_result_of_show_create_table(
     // written. `RESTRICT` is the stored form of NO ACTION/SET DEFAULT/no
     // clause, so the three are indistinguishable here -- the one place this
     // engine's collapse of them is visible.
-    for foreign_key in table.foreign_keys() {
+for foreign_key in table.meta().read().foreign_keys.iter_deref() {
+        let foreign_key = foreign_key.read();
+        if foreign_key.state != tidb_model::SchemaState::PUBLIC {
+            continue;
+        }
         let columns = foreign_key
             .cols
+            .snapshot()
             .iter()
-            .map(|name| escape_name(name, ansi_quotes))
+            .map(|name| escape_name(name.original(), ansi_quotes))
             .collect::<Vec<_>>()
             .join(",");
         let referenced = foreign_key
             .ref_cols
+            .snapshot()
             .iter()
-            .map(|name| escape_name(name, ansi_quotes))
+            .map(|name| escape_name(name.original(), ansi_quotes))
             .collect::<Vec<_>>()
             .join(",");
         // Go `pkg/executor/show.go`: the referenced table is qualified with
@@ -422,23 +428,25 @@ pub fn construct_result_of_show_create_table(
         // same-schema one, which is a `SHOW CREATE TABLE` output no server
         // could replay into the table it came from.
         let target =
-            if foreign_key.ref_schema.is_empty() || foreign_key.ref_schema.go_lower_eq(database) {
-                escape_name(&foreign_key.ref_table, ansi_quotes)
+            if foreign_key.ref_schema.original().is_empty()
+                || foreign_key.ref_schema.original().go_lower_eq(database)
+            {
+                escape_name(foreign_key.ref_table.original(), ansi_quotes)
             } else {
                 format!(
                     "{}.{}",
-                    escape_name(&foreign_key.ref_schema, ansi_quotes),
-                    escape_name(&foreign_key.ref_table, ansi_quotes)
+                    escape_name(foreign_key.ref_schema.original(), ansi_quotes),
+                    escape_name(foreign_key.ref_table.original(), ansi_quotes)
                 )
             };
         let mut clause = format!(
             "  CONSTRAINT {} FOREIGN KEY ({columns}) REFERENCES {target} ({referenced})",
-            escape_name(&foreign_key.name, ansi_quotes),
+            escape_name(foreign_key.name.original(), ansi_quotes),
         );
-        if let Some(action) = referential_action_sql(foreign_key.on_delete) {
+        if let Some(action) = referential_action_sql(foreign_key.on_delete.into()) {
             clause.push_str(&format!(" ON DELETE {action}"));
         }
-        if let Some(action) = referential_action_sql(foreign_key.on_update) {
+        if let Some(action) = referential_action_sql(foreign_key.on_update.into()) {
             clause.push_str(&format!(" ON UPDATE {action}"));
         }
         if foreign_key.version < tidb_model::table::FK_VERSION1 {

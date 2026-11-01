@@ -14,6 +14,45 @@
 
 use super::*;
 
+/// Go `tbl.Meta().ForeignKeys` (the public ones), in the shapes the
+/// assertions read.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+struct ForeignKeyView {
+    version: i64,
+    name: String,
+    cols: Vec<String>,
+    ref_schema: String,
+    ref_table: String,
+    ref_cols: Vec<String>,
+    on_delete: tidb_table::tables::FkAction,
+    on_update: tidb_table::tables::FkAction,
+}
+
+fn foreign_keys(table: &crate::TableCommon) -> Vec<ForeignKeyView> {
+    let names = |names: Vec<tidb_ast::CiString>| -> Vec<String> {
+        names.iter().map(|name| name.original().to_owned()).collect()
+    };
+    table
+        .meta()
+        .read()
+        .foreign_keys
+        .iter_deref()
+        .map(|fk| fk.read().clone())
+        .filter(|fk| fk.state == tidb_model::SchemaState::PUBLIC)
+        .map(|fk| ForeignKeyView {
+            version: fk.version,
+            name: fk.name.original().to_owned(),
+            cols: names(fk.cols.snapshot()),
+            ref_schema: fk.ref_schema.original().to_owned(),
+            ref_table: fk.ref_table.original().to_owned(),
+            ref_cols: names(fk.ref_cols.snapshot()),
+            on_delete: fk.on_delete.into(),
+            on_update: fk.on_update.into(),
+        })
+        .collect()
+}
+
 /// The `TableCommon` a test asserts structure against.
 fn kv<'a>(catalog: &'a SessionExtendedInfoSchema, name: &str) -> &'a crate::TableCommon {
     match catalog.get_table_for_test(name) {
@@ -138,9 +177,9 @@ fn like_does_not_copy_foreign_keys() {
 
     crate::run_create_table_on("CREATE TABLE copy_of_child LIKE child", &mut catalog).unwrap();
 
-    assert!(kv(&catalog, "copy_of_child").foreign_keys().is_empty());
+    assert!(foreign_keys(&kv(&catalog, "copy_of_child")).is_empty());
     // The source still enforces its own.
-    assert!(!kv(&catalog, "child").foreign_keys().is_empty());
+    assert!(!foreign_keys(&kv(&catalog, "child")).is_empty());
 }
 
 /// Go `BuildTableInfoWithLike`: `referTblInfo.IsSequence() || IsView()` is

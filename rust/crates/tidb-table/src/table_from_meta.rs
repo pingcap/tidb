@@ -24,7 +24,7 @@
 use std::sync::{Arc, Mutex};
 use tidb_datatype::FieldTypeFlags;
 use crate::sequence::SequenceDef;
-use crate::tables::{KvForeignKey, Index, TableCommon, TableAutoId};
+use crate::tables::{Index, TableCommon, TableAutoId};
 use tidb_kv::storage::TableStorage;
 use tidb_model::{GoAnyView, GoShared, SchemaState, TableInfo};
 
@@ -608,38 +608,6 @@ pub fn cluster_table(
     kv_table
         .set_check_constraint_infos(constraints, &tidb_datatype::SessionTimeZone::utc(), b'\\')
         .map_err(|error| format!("its check constraints cannot be built: {error:?}"))?;
-    // Go `TableInfo.ForeignKeys` ride the loaded `TableInfo` into every
-    // `tables.Table`: the planner's FK triggers (`physicalop/foreign_key.go`)
-    // build their `FKCheck`/`FKCascade` EXPLAIN leaves from them and the FK
-    // check execs resolve parents through them. Retain public legacy keys too:
-    // metadata readers need them, while trigger planning and referred-key
-    // lookup apply Go's version gate at their own boundaries.
-    for fk in table.foreign_keys.iter_deref() {
-        let fk = fk.read();
-        if fk.state != SchemaState::PUBLIC {
-            continue;
-        }
-        kv_table.add_foreign_key(KvForeignKey {
-            version: fk.version,
-            name: fk.name.original().to_owned(),
-            cols: fk
-                .cols
-                .snapshot()
-                .into_iter()
-                .map(|column| column.original().to_owned())
-                .collect(),
-            ref_schema: fk.ref_schema.original().to_owned(),
-            ref_table: fk.ref_table.original().to_owned(),
-            ref_cols: fk
-                .ref_cols
-                .snapshot()
-                .into_iter()
-                .map(|column| column.original().to_owned())
-                .collect(),
-            on_delete: fk_action_from_stored(fk.on_delete),
-            on_update: fk_action_from_stored(fk.on_update),
-        });
-    }
     // The AUTO_INCREMENT column and the counter that feeds it. Both halves
     // have to be here: marking the column without giving the counter a
     // cluster-wide home would allocate from a fresh in-process cell and
@@ -961,21 +929,6 @@ fn partition_double_write_for(
 /// (`PartitionExpr`); this is that rebuild. The column names and types come
 /// from the table being loaded, so the expression binds to the same offsets
 /// the scan decodes.
-/// Go `ast.ReferOptionType` over the stored `FKInfo.On{Delete,Update}` int
-/// (`pkg/parser/ast/model.go:242`): NoOption 0, Restrict 1, Cascade 2,
-/// SetNull 3, NoAction 4, SetDefault 5.
-fn fk_action_from_stored(action: i64) -> crate::tables::FkAction {
-    use crate::tables::FkAction;
-    match action {
-        1 => FkAction::Restrict,
-        2 => FkAction::Cascade,
-        3 => FkAction::SetNull,
-        4 => FkAction::NoAction,
-        5 => FkAction::SetDefault,
-        _ => FkAction::NoOption,
-    }
-}
-
 pub fn partition_spec_for(
     table_columns: &[GoShared<tidb_model::column::ColumnInfo>],
     partition: &tidb_model::partition::PartitionInfo,

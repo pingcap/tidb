@@ -540,22 +540,24 @@ fn key_column_usage_rows(catalog: &SessionExtendedInfoSchema, visibility: &Schem
                 ));
             }
         }
-        for foreign_key in table.foreign_keys() {
-            for (position, column_name) in foreign_key.cols.iter().enumerate() {
+for foreign_key in table.meta().read().foreign_keys.iter_deref() {
+            let foreign_key = foreign_key.read();
+            if foreign_key.state != tidb_model::SchemaState::PUBLIC {
+                continue;
+            }
+            let ref_cols = foreign_key.ref_cols.snapshot();
+            for (position, column_name) in foreign_key.cols.snapshot().iter().enumerate() {
                 rows.push(key_column_usage_row(
                     &schema,
                     &table_name,
-                    &foreign_key.name,
-                    column_name,
+                    foreign_key.name.original(),
+                    column_name.original(),
                     (position + 1) as i64,
                     Datum::Int(1),
                     Some((
-                        foreign_key.ref_schema.as_str(),
-                        foreign_key.ref_table.as_str(),
-                        foreign_key
-                            .ref_cols
-                            .get(position)
-                            .map_or("", String::as_str),
+                        foreign_key.ref_schema.original(),
+                        foreign_key.ref_table.original(),
+                        ref_cols.get(position).map_or("", |name| name.original()),
                     )),
                 ));
             }
@@ -740,11 +742,15 @@ fn table_constraints_rows(catalog: &SessionExtendedInfoSchema, visibility: &Sche
                 constraint_type,
             ));
         }
-        for foreign_key in table.foreign_keys() {
+for foreign_key in table.meta().read().foreign_keys.iter_deref() {
+            let foreign_key = foreign_key.read();
+            if foreign_key.state != tidb_model::SchemaState::PUBLIC {
+                continue;
+            }
             rows.push(table_constraint_row(
                 &schema,
                 &table_name,
-                &foreign_key.name,
+                foreign_key.name.original(),
                 "FOREIGN KEY",
             ));
         }
@@ -761,19 +767,23 @@ fn referential_constraints_rows(
         let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
             continue;
         };
-        for foreign_key in table.foreign_keys() {
+for foreign_key in table.meta().read().foreign_keys.iter_deref() {
+            let foreign_key = foreign_key.read();
+            if foreign_key.state != tidb_model::SchemaState::PUBLIC {
+                continue;
+            }
             rows.push(vec![
                 text(CATALOG),
                 text(&schema),
-                text(&foreign_key.name),
+                text(foreign_key.name.original()),
                 text(CATALOG),
                 text(&schema),
                 text("PRIMARY"),
                 text("NONE"),
-                text(referential_rule(foreign_key.on_update)),
-                text(referential_rule(foreign_key.on_delete)),
+                text(referential_rule(foreign_key.on_update.into())),
+                text(referential_rule(foreign_key.on_delete.into())),
                 text(&table_name),
-                text(&foreign_key.ref_table),
+                text(foreign_key.ref_table.original()),
             ]);
         }
     }

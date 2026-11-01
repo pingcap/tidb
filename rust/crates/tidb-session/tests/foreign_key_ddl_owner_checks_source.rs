@@ -25,6 +25,45 @@ use tidb_infoschema::TableEntry;
 use tidb_table::tables::FkAction;
 use tidb_table::tables::TableCommon;
 
+/// Go `tbl.Meta().ForeignKeys` (the public ones), in the shapes the
+/// assertions read.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+struct ForeignKeyView {
+    version: i64,
+    name: String,
+    cols: Vec<String>,
+    ref_schema: String,
+    ref_table: String,
+    ref_cols: Vec<String>,
+    on_delete: tidb_table::tables::FkAction,
+    on_update: tidb_table::tables::FkAction,
+}
+
+fn foreign_keys(table: &tidb_table::tables::TableCommon) -> Vec<ForeignKeyView> {
+    let names = |names: Vec<tidb_ast::CiString>| -> Vec<String> {
+        names.iter().map(|name| name.original().to_owned()).collect()
+    };
+    table
+        .meta()
+        .read()
+        .foreign_keys
+        .iter_deref()
+        .map(|fk| fk.read().clone())
+        .filter(|fk| fk.state == tidb_model::SchemaState::PUBLIC)
+        .map(|fk| ForeignKeyView {
+            version: fk.version,
+            name: fk.name.original().to_owned(),
+            cols: names(fk.cols.snapshot()),
+            ref_schema: fk.ref_schema.original().to_owned(),
+            ref_table: fk.ref_table.original().to_owned(),
+            ref_cols: names(fk.ref_cols.snapshot()),
+            on_delete: fk.on_delete.into(),
+            on_update: fk.on_update.into(),
+        })
+        .collect()
+}
+
 /// Go `external.GetTableByName(t, tk, db, name).Meta()`: the storage-backed
 /// table as the domain's current schema holds it.
 fn kv_table(tk: &TestKit, database: &str, name: &str) -> TableCommon {
@@ -54,7 +93,7 @@ fn foreign_key_add_then_drop_constraint_round_trip() {
     );
 
     let table = kv_table(&tk, "test", "t");
-    let keys = table.foreign_keys();
+    let keys = foreign_keys(&table);
     assert_eq!(keys.len(), 1, "one public constraint after add");
     let foreign_key = &keys[0];
     assert_eq!(foreign_key.name, "c1_fk");
@@ -78,7 +117,7 @@ fn foreign_key_add_then_drop_constraint_round_trip() {
     tk.must_exec("alter table t drop foreign key c1_fk");
     let table = kv_table(&tk, "test", "t");
     assert!(
-        table.foreign_keys().is_empty(),
+        foreign_keys(&table).is_empty(),
         "constraint gone after drop"
     );
 }
@@ -227,7 +266,7 @@ fn fix_59705_change_column_across_a_constraint() {
     tk.must_exec("alter table child change column pid_test pid int");
 
     let table = kv_table(&tk, "test", "child");
-    let keys = table.foreign_keys();
+    let keys = foreign_keys(&table);
     assert_eq!(keys.len(), 1);
     assert_eq!(keys[0].name, "fk_1");
     assert_eq!(keys[0].cols, vec!["pid".to_owned()]);

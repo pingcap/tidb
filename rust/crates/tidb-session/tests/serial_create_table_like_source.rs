@@ -19,6 +19,45 @@
 use crate::support::testkit::TestKit;
 use tidb_infoschema::TableEntry;
 
+/// Go `tbl.Meta().ForeignKeys` (the public ones), in the shapes the
+/// assertions read.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+struct ForeignKeyView {
+    version: i64,
+    name: String,
+    cols: Vec<String>,
+    ref_schema: String,
+    ref_table: String,
+    ref_cols: Vec<String>,
+    on_delete: tidb_table::tables::FkAction,
+    on_update: tidb_table::tables::FkAction,
+}
+
+fn foreign_keys(table: &tidb_table::tables::TableCommon) -> Vec<ForeignKeyView> {
+    let names = |names: Vec<tidb_ast::CiString>| -> Vec<String> {
+        names.iter().map(|name| name.original().to_owned()).collect()
+    };
+    table
+        .meta()
+        .read()
+        .foreign_keys
+        .iter_deref()
+        .map(|fk| fk.read().clone())
+        .filter(|fk| fk.state == tidb_model::SchemaState::PUBLIC)
+        .map(|fk| ForeignKeyView {
+            version: fk.version,
+            name: fk.name.original().to_owned(),
+            cols: names(fk.cols.snapshot()),
+            ref_schema: fk.ref_schema.original().to_owned(),
+            ref_table: fk.ref_table.original().to_owned(),
+            ref_cols: names(fk.ref_cols.snapshot()),
+            on_delete: fk.on_delete.into(),
+            on_update: fk.on_update.into(),
+        })
+        .collect()
+}
+
 /// Go `serial_test.go:108-230::TestCreateTableWithLike`, ported over
 /// same-schema names (Go uses `ctwl_db`/`ctwl_db1`; this port stays in
 /// `test`):
@@ -59,7 +98,7 @@ fn create_table_like_copies_structure_without_rows_fks_or_autoinc_and_reports_go
         let TableEntry::Kv(table) = tk.get_table_by_name("test", name) else {
             panic!("{name} should be a KV table");
         };
-        assert!(table.foreign_keys().is_empty(), "{name} must strip FKs");
+        assert!(foreign_keys(&table).is_empty(), "{name} must strip FKs");
         assert_eq!(table.pk_handle_offset(), Some(0), "{name} PKIsHandle");
         assert!(
             table.columns()[0]

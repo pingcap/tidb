@@ -14,6 +14,45 @@ use tidb_infoschema::TableEntry;
 use tidb_session::Session;
 use tidb_domain::global_sysvars::GlobalSysvars;
 
+/// Go `tbl.Meta().ForeignKeys` (the public ones), in the shapes the
+/// assertions read.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+struct ForeignKeyView {
+    version: i64,
+    name: String,
+    cols: Vec<String>,
+    ref_schema: String,
+    ref_table: String,
+    ref_cols: Vec<String>,
+    on_delete: tidb_table::tables::FkAction,
+    on_update: tidb_table::tables::FkAction,
+}
+
+fn foreign_keys(table: &tidb_table::tables::TableCommon) -> Vec<ForeignKeyView> {
+    let names = |names: Vec<tidb_ast::CiString>| -> Vec<String> {
+        names.iter().map(|name| name.original().to_owned()).collect()
+    };
+    table
+        .meta()
+        .read()
+        .foreign_keys
+        .iter_deref()
+        .map(|fk| fk.read().clone())
+        .filter(|fk| fk.state == tidb_model::SchemaState::PUBLIC)
+        .map(|fk| ForeignKeyView {
+            version: fk.version,
+            name: fk.name.original().to_owned(),
+            cols: names(fk.cols.snapshot()),
+            ref_schema: fk.ref_schema.original().to_owned(),
+            ref_table: fk.ref_table.original().to_owned(),
+            ref_cols: names(fk.ref_cols.snapshot()),
+            on_delete: fk.on_delete.into(),
+            on_update: fk.on_update.into(),
+        })
+        .collect()
+}
+
 fn sql(session: &mut Session, statement: &str) {
     session
         .run(statement)
@@ -101,7 +140,7 @@ fn foreign_key_global_policy_batch() {
         let Some(TableEntry::Kv(table)) = catalog.table_in("test", "legacy") else {
             panic!("legacy table")
         };
-        assert_eq!(table.foreign_keys()[0].version, 0);
+        assert_eq!(foreign_keys(&table)[0].version, 0);
         assert!(
             table.indexes().is_empty(),
             "CREATE does not index version-zero keys"
@@ -118,7 +157,7 @@ fn foreign_key_global_policy_batch() {
         let Some(TableEntry::Kv(table)) = catalog.table_in("test", "altered") else {
             panic!("altered")
         };
-        assert_eq!(table.foreign_keys()[0].version, 0);
+        assert_eq!(foreign_keys(&table)[0].version, 0);
         assert_eq!(
             table.indexes().len(),
             1,
@@ -139,7 +178,7 @@ fn foreign_key_global_policy_batch() {
         let Some(TableEntry::Kv(table)) = catalog.table_in("test", "child") else {
             panic!("child")
         };
-        assert_eq!(table.foreign_keys()[0].ref_cols, ["k"]);
+        assert_eq!(foreign_keys(&table)[0].ref_cols, ["k"]);
     }
     sql(&mut session, "ALTER TABLE parent RENAME COLUMN k2 TO k");
     let tidb_session::StmtResult::Rows(rows) = session.run("SHOW CREATE TABLE legacy").unwrap() else { panic!("show create") };
@@ -152,7 +191,7 @@ fn foreign_key_global_policy_batch() {
         let Some(TableEntry::Kv(table)) = catalog.table_in("test", "child") else {
             panic!("child table")
         };
-        assert_eq!(table.foreign_keys()[0].ref_table, "parent");
+        assert_eq!(foreign_keys(&table)[0].ref_table, "parent");
     }
     sql(&mut session, "RENAME TABLE renamed TO parent");
     errno(&mut session, "TRUNCATE TABLE parent", 1701);
