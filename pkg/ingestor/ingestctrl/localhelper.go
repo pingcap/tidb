@@ -41,7 +41,7 @@ const coarseGrainedSplitKeysThreshold = 64
 
 // splitAndScatterRegionInBatches splits&scatter regions in batches.
 // Too many split&scatter requests may put a lot of pressure on TiKV and PD.
-func (local *Backend) splitAndScatterRegionInBatches(
+func (local *Ingestor) splitAndScatterRegionInBatches(
 	ctx context.Context,
 	splitKeys [][]byte,
 	batchCnt int,
@@ -78,7 +78,7 @@ func getCoarseGrainedSplitKeys(splitKeys [][]byte) [][]byte {
 	return coarseGrainedSplitKeys
 }
 
-func (local *Backend) splitAndScatterRegionInBatchesWithLimiter(
+func (local *Ingestor) splitAndScatterRegionInBatchesWithLimiter(
 	ctx context.Context,
 	splitKeys [][]byte,
 	batchCnt int,
@@ -102,7 +102,7 @@ func (local *Backend) splitAndScatterRegionInBatchesWithLimiter(
 	return nil
 }
 
-func (local *Backend) splitAndScatterRegionByRanges(
+func (local *Ingestor) splitAndScatterRegionByRanges(
 	ctx context.Context,
 	splitKeys [][]byte,
 ) (err error) {

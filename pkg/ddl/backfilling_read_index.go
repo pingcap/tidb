@@ -131,11 +131,9 @@ func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 		}
 	}
 	cfg := config.GetGlobalConfig()
-	if cfg.Store == config.StoreTypeTiKV {
-		if !r.isGlobalSort() {
-			r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
-			ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
-		}
+	if cfg.Store == config.StoreTypeTiKV && !r.isGlobalSort() {
+		r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
+		ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
 		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.store, r.job, hasUniqueIndex(r.indexes), false, 0)
 		if err != nil {
 			return errors.Trace(err)
@@ -488,7 +486,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		concurrency,
 		r.GetResource(),
 		rowCntCollector,
-		r.backend.GetTiKVCodec(),
+		r.store.GetCodec(),
 	)
 }
 

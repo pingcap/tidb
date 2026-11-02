@@ -152,7 +152,7 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	}
 	// when creating the table importer, it's using plan.ThreadCnt, not the resource
 	// CPU, we should refactor it later, that requires refactors the local backend.
-	tableImporter.Backend().SetWorkerConcurrency(int(s.GetResource().CPU.Capacity()))
+	tableImporter.Ingestor().SetWorkerConcurrency(int(s.GetResource().CPU.Capacity()))
 	s.tableImporter = tableImporter
 	defer func() {
 		if err == nil {
@@ -670,7 +670,7 @@ func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	tableImporter.Backend().SetWorkerConcurrency(int(e.GetResource().CPU.Capacity()))
+	tableImporter.Ingestor().SetWorkerConcurrency(int(e.GetResource().CPU.Capacity()))
 	e.tableImporter = tableImporter
 	return nil
 }
@@ -710,7 +710,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		task.End2(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
 	}()
 
-	localBackend := e.tableImporter.Backend()
+	ingestor := e.tableImporter.Ingestor()
 	// compatible with old version task meta
 	jobKeys := sm.RangeJobKeys
 	if jobKeys == nil {
@@ -730,7 +730,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		kvGroup:  sm.KVGroup,
 		meterRec: meterRec,
 	}
-	localBackend.SetCollector(collector)
+	ingestor.SetCollector(collector)
 
 	ts := sm.TS
 	if ts == 0 {
@@ -761,7 +761,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			e.logger.Warn("failed to close engine", zap.Error(err))
 		}
 	}()
-	err = localBackend.IngestExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = ingestor.IngestExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
 		return errors.Trace(err)
 	}

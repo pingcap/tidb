@@ -80,11 +80,30 @@ func TestStartDiskQuotaCheck(t *testing.T) {
 	require.NoError(t, err)
 	ti, err := importer.NewTableImporterForTest(ctx, controller, "test-disk-quota", store)
 	require.NoError(t, err)
-	defer ti.Backend().CloseEngineMgr()
+	defer ti.Backend().Close()
 
 	stop := ti.StartDiskQuotaCheck(ctx)
 	// stop should cancel the goroutine and return without hanging.
 	stop()
+
+	t.Run("global-sort-without-sort-dir", func(t *testing.T) {
+		tidbCfg.TempDir = t.TempDir()
+		importDir := importer.GetImportRootDir(tidbCfg)
+		// A global-sort importer must not require or replace the local sort path.
+		require.NoError(t, os.WriteFile(importDir, []byte("preserve"), 0o600))
+		controller.DataSourceType = importer.DataSourceTypeFile
+		controller.CloudStorageURI = "s3://bucket/global-sort"
+		globalImporter, err := importer.NewTableImporterForTest(ctx, controller, "global-sort", store)
+		require.NoError(t, err)
+		defer globalImporter.Close()
+		require.Nil(t, globalImporter.Backend())
+		require.NotNil(t, globalImporter.Ingestor())
+		require.Equal(t, store.GetCodec().GetAPIVersion(), globalImporter.Ingestor().GetTiKVCodec().GetAPIVersion())
+		require.Equal(t, store.GetCodec().GetKeyspace(), globalImporter.Ingestor().GetTiKVCodec().GetKeyspace())
+		contents, err := os.ReadFile(importDir)
+		require.NoError(t, err)
+		require.Equal(t, "preserve", string(contents))
+	})
 }
 
 func TestImportFromSelectCleanup(t *testing.T) {
@@ -121,6 +140,8 @@ func TestImportFromSelectCleanup(t *testing.T) {
 		SelectPlan: &physicalop.PhysicalSelection{},
 	}.Init(tk.Session().GetPlanCtx()), table)
 	require.NoError(t, err)
+	// Query imports use local engines even when a cloud URI is inherited.
+	plan.CloudStorageURI = "s3://bucket/inherited"
 	controller, err := importer.NewLoadDataController(plan, table, &importer.ASTArgs{})
 	require.NoError(t, err)
 	ti, err := importer.NewTableImporterForTest(
@@ -130,6 +151,7 @@ func TestImportFromSelectCleanup(t *testing.T) {
 		store,
 	)
 	require.NoError(t, err)
+	require.NotNil(t, ti.Backend())
 	ch := make(chan importer.QueryChunk)
 	ti.SetSelectedChunkCh(ch)
 	var wg util.WaitGroupWrapper
@@ -156,6 +178,6 @@ func TestImportFromSelectCleanup(t *testing.T) {
 	_, err = ti.ImportSelectedRows(ctx, tk.Session())
 	require.ErrorContains(t, err, "mock import from select error")
 	wg.Wait()
-	ti.Backend().CloseEngineMgr()
+	ti.Backend().Close()
 	checkImportDirEmpty(t)
 }

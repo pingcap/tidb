@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
@@ -615,7 +616,7 @@ func TestStoreBalancerNoRace(t *testing.T) {
 }
 
 func TestUpdateAndGetLimiterConcurrencySafety(t *testing.T) {
-	backend := &Backend{
+	backend := &Ingestor{
 		writeLimiter: newStoreWriteLimiter(0),
 	}
 
@@ -702,14 +703,15 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 		jobFromWorkerCh := make(chan *regionJob)
 		jobWg := &sync.WaitGroup{}
 
-		local := &Backend{
+		local := &Ingestor{
+			bufferPool:   membuf.NewPool(),
 			writeLimiter: newStoreWriteLimiter(0),
 			BackendConfig: BackendConfig{
 				WorkerConcurrency: toAtomic(4),
 			},
-			tls:       &common.TLS{},
-			engineMgr: &engineManager{},
+			tls: &common.TLS{},
 		}
+		t.Cleanup(local.Close)
 
 		pool := getRegionJobWorkerPool(
 			workerCtx, jobWg,
