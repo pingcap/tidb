@@ -16,6 +16,8 @@ package s3store
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
