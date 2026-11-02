@@ -570,7 +570,10 @@ fn cascade_at_depth(
                         };
                     }
                     if let Some(TableEntry::Kv(kv)) = catalog.get_in(&child_db, &child_table) {
-                        crate::driver::materialize_generated_for_write(
+                        // Go's cascade UPDATE assigns the child's referencing
+                        // columns; its ordered list holds their dependents.
+                        let listed = crate::driver::write_cast::update_generated_offsets(kv, child, false);
+                        crate::driver::write_cast::materialize_generated_for_write_selected(
                             kv,
                             &mut new,
                             ctx,
@@ -578,6 +581,7 @@ fn cascade_at_depth(
                                 row_index: rewritten.len(),
                             },
                             None,
+                            Some(&listed),
                         )?;
                         let level = crate::bad_null::NullLevel::from_is_error(
                             ctx.strict() && !ctx.ignore_err(),

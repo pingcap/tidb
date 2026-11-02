@@ -567,11 +567,15 @@ fn loaded_hidden_columns_preserve_native_layout_and_index_values() {
 
 #[test]
 fn loaded_generated_columns_keep_virtual_and_stored_semantics() {
+    // `Dependences` as DDL fills them (`table_info_build`), which the UPDATE
+    // ordered list (Go `buildUpdateLists`) reads.
     let mut virtual_column = column(2, 1, "v", false);
     virtual_column.generated_expr_string = "`id` + 10".to_owned();
+    virtual_column.dependences.insert("id");
     let mut stored_column = column(3, 2, "s", false);
     stored_column.generated_expr_string = "`id` + 20".to_owned();
     stored_column.generated_stored = true;
+    stored_column.dependences.insert("id");
     let mut catalog = base_catalog();
     catalog.databases[0].with_tables(|tables| tables.truncate(1));
     catalog.databases[0].with_tables(|tables| tables[0].columns = vec![column(1, 0, "id", true), virtual_column, stored_column].into());

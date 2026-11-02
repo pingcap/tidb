@@ -115,7 +115,6 @@ fn catalog() -> TestCatalog {
                 db_name: "test".to_owned(),
                 physical_table_id: 100,
                 columns: vec![column(0, "a", true), column(1, "b", false)],
-                handle_col_offsets: vec![0],
                 ..SourceTable::default()
             }; fixture.set_table_id(100); fixture.set_table_name("t".to_owned()); fixture },
             { let mut fixture = SourceTable {
@@ -123,7 +122,6 @@ fn catalog() -> TestCatalog {
                 db_name: "test".to_owned(),
                 physical_table_id: 200,
                 columns: vec![column(0, "a", true), column(1, "y", false)],
-                handle_col_offsets: vec![0],
                 ..SourceTable::default()
             }; fixture.set_table_id(200); fixture.set_table_name("hs".to_owned()); fixture },
         ],
@@ -422,7 +420,6 @@ fn test_table_source_drives_data_source_construction() {
 fn test_handle_less_table_gets_the_extra_row_id_handle() {
     let mut harness = Harness::new();
     harness.tables_mut()[0].set_pk_is_handle(false);
-    harness.tables_mut()[0].handle_col_offsets.clear();
     let mut builder = harness.builder();
     let plan = builder
         .build_data_source(&tidb_ast::TableRef {

@@ -84,6 +84,7 @@ impl<'a> UpdateRecords<'a> {
         partitions: Option<&[i64]>,
         ignore: bool,
         generation: GeneratedWrite,
+        assigned: &[usize],
         ctx: &crate::StmtContext,
     ) -> Result<UpdateOutcome, DriverError> {
         let _region = tidb_tracing::start_thread_region_ex("executor.updateRecord");
@@ -114,7 +115,21 @@ impl<'a> UpdateRecords<'a> {
             return Ok(UpdateOutcome::Unchanged);
         }
         if let TableEntry::Kv(kv) = entry {
-            materialize_generated_for_write(kv, new, ctx, generation, None)?;
+            // Go `updateRecord` step 4: only the generated assignments the
+            // statement's ordered list carries.
+            let listed = crate::driver::write_cast::update_generated_offsets(
+                kv,
+                assigned,
+                matches!(generation, GeneratedWrite::OnDuplicate { .. }),
+            );
+            crate::driver::write_cast::materialize_generated_for_write_selected(
+                kv,
+                new,
+                ctx,
+                generation,
+                None,
+                Some(&listed),
+            )?;
         }
         let fk_target = if crate::foreign_key::has_triggers(self.triggers, database, name) {
             let index = self

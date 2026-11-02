@@ -158,9 +158,6 @@ fn mark_cluster_table(
     };
     table.set_is_common_handle(true);
     table.set_common_handle_version(1);
-    table.handle_col_offsets = vec![offset];
-    table.common_handle_col_offsets = vec![offset];
-    table.common_handle_lens = vec![tidb_datatype::UNSPECIFIED_LENGTH];
     let primary = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
         name: tidb_ast::CiString::new("primary"),
         table: tidb_ast::CiString::new(table.table_name()),
@@ -573,35 +570,6 @@ fn kv_source_table(
     let info = meta.read();
     // Go `tbl.Cols()`: the table's own `table.Column`s.
     let columns = table.columns().to_vec();
-    let indexes = info.indices.iter_deref().collect::<Vec<_>>();
-    // Go `buildDataSource`'s handle columns: the PKIsHandle column, else the
-    // clustered PRIMARY KEY's columns (`tables.FindPrimaryIndex`).
-    let primary = info
-        .is_common_handle
-        .then(|| indexes.iter().find(|index| index.read().primary))
-        .flatten();
-    let (common_handle_col_offsets, common_handle_lens): (Vec<usize>, Vec<i64>) = primary
-        .map(|primary| {
-            primary
-                .read()
-                .columns
-                .iter_deref()
-                .map(|column| {
-                    let column = column.read();
-                    (column.offset as usize, column.length)
-                })
-                .unzip()
-        })
-        .unwrap_or_default();
-    let pk_handle_offset = info
-        .pk_is_handle
-        .then(|| info.get_pk_col_info())
-        .flatten()
-        .map(|column| column.read().offset as usize);
-    let handle_col_offsets = pk_handle_offset
-        .into_iter()
-        .chain(common_handle_col_offsets.iter().copied())
-        .collect();
     let mut source_table = crate::table_source::SourceTable {
         db_name: db_name.to_owned(),
         physical_table_id: table.table_id(),
@@ -614,9 +582,6 @@ fn kv_source_table(
             },
         ),
         columns,
-        handle_col_offsets,
-        common_handle_col_offsets,
-        common_handle_lens,
         ..crate::table_source::SourceTable::default()
     };
     drop(info);

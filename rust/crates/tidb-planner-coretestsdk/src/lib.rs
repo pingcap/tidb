@@ -558,7 +558,6 @@ fn source_table(table: GoShared<TableInfo>) -> SourceTable {
         db_name: "test".to_owned(),
         physical_table_id: info.id,
         columns,
-        handle_col_offsets,
         ..SourceTable::default()
     }; fixture.set_is_partitioned(info.partition.is_some()); fixture.set_partition_definition_names(partition_definition_names); fixture.set_partition_definition_ids(partition_definition_ids); fixture }
 }

@@ -245,6 +245,25 @@ pub fn materialize_with<S: GeneratedColumnSlot, E: From<GenerationError>>(
     row: &mut [Datum],
     only_virtual: bool,
     ctx: &dyn tidb_exprctx::Columns,
+    convert: impl FnMut(&S, Datum) -> Result<Datum, E>,
+) -> Result<(), E> {
+    materialize_selected(
+        columns,
+        row,
+        |_, generated| !(only_virtual && generated.stored),
+        ctx,
+        convert,
+    )
+}
+
+/// [`materialize_with`] over the generated columns `selected` (offset,
+/// generation) admits, in column order -- Go `updateRecord`'s step 4, which
+/// evaluates only the generated assignments `buildUpdateLists` appended.
+pub fn materialize_selected<S: GeneratedColumnSlot, E: From<GenerationError>>(
+    columns: &[S],
+    row: &mut [Datum],
+    selected: impl Fn(usize, &GeneratedColumn) -> bool,
+    ctx: &dyn tidb_exprctx::Columns,
     mut convert: impl FnMut(&S, Datum) -> Result<Datum, E>,
 ) -> Result<(), E> {
     if !columns.iter().any(|c| c.generation().is_some()) {
@@ -254,7 +273,7 @@ pub fn materialize_with<S: GeneratedColumnSlot, E: From<GenerationError>>(
         let Some(generated) = column.generation() else {
             continue;
         };
-        if only_virtual && generated.stored {
+        if !selected(offset, generated) {
             continue;
         }
         // Go rewrites the stored AST in the CURRENT statement's context, so a

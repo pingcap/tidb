@@ -2281,6 +2281,11 @@ fn apply_on_duplicate(
             row_index,
             null_level,
         },
+        &prepared
+            .assignments
+            .iter()
+            .map(|assignment| prepared.visible_offsets[assignment.offset])
+            .collect::<Vec<_>>(),
         ctx,
     )?;
     Ok(OnDuplicateApplied {
@@ -3470,6 +3475,9 @@ fn run_update_with_physical(
     let writes_stored_columns = set_exprs
         .iter()
         .any(|(offset, _)| Some(*offset) != stored_handle_slot);
+    // The SET columns, whose generated dependents Go's `buildUpdateLists`
+    // appends to the ordered list.
+    let assigned_offsets: Vec<usize> = set_exprs.iter().map(|(offset, _)| *offset).collect();
     let accountant = ctx
         .statement_memory()
         .write_accountant(mem_quota::label::UPDATE);
@@ -3520,6 +3528,7 @@ fn run_update_with_physical(
                     partition_ids.as_deref(),
                     update.ignore,
                     GeneratedWrite::Update { row_index },
+                    &assigned_offsets,
                     ctx,
                 )?;
                 row_index += 1;
@@ -3590,6 +3599,7 @@ fn run_update_with_physical(
             partition_ids.as_deref(),
             update.ignore,
             GeneratedWrite::Update { row_index },
+            &assigned_offsets,
             ctx,
         )?;
         touched += u64::from(outcome.touched());

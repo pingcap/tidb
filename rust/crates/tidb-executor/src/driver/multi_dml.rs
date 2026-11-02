@@ -410,6 +410,11 @@ pub(crate) fn run_multi_update(
                 table.selected_partitions.as_deref(),
                 update.ignore,
                 super::GeneratedWrite::Update { row_index },
+                &assigns
+                    .iter()
+                    .filter(|assign| assign.table == slot)
+                    .map(|assign| assign.column)
+                    .collect::<Vec<_>>(),
                 ctx,
             )?;
             if multiple[slot] {

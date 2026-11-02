@@ -71,6 +71,7 @@ mod placement_policy_ddl_source;
 mod row_count_flow_source;
 mod sequence_create_defaults_source;
 mod serial_auto_random_source;
+mod update_generated_assignments_source;
 mod update_ignore_check_constraint_source;
 mod serial_create_table_like_source;
 mod table_lifecycle_job_source;

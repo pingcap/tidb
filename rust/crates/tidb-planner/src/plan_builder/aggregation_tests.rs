@@ -111,7 +111,6 @@ fn catalog() -> TestCatalog {
                 column(1, "b", false),
                 column(2, "c", false),
             ],
-            handle_col_offsets: vec![0],
             ..SourceTable::default()
         }; fixture.set_table_id(100); fixture.set_table_name("t".to_owned()); fixture }],
     };
@@ -1259,7 +1258,6 @@ fn single_table_delete_prunes_the_read_to_the_handle_and_index_columns() {
     // `_tidb_rowid`.
     let mut heap = Harness::new();
     heap.catalog.tables[0].set_pk_is_handle(false);
-    heap.catalog.tables[0].handle_col_offsets = Vec::new();
     heap.catalog.tables[0].columns[0]
         .info
         .write()
@@ -1770,7 +1768,6 @@ fn single_table_update_assignments_resolve_to_table_columns() {
 
     let mut heap = Harness::new();
     heap.catalog.tables[0].set_pk_is_handle(false);
-    heap.catalog.tables[0].handle_col_offsets = Vec::new();
     let error = resolve(&heap, "UPDATE t SET _tidb_rowid = 1").err().unwrap();
     assert_eq!(
         error.message(),

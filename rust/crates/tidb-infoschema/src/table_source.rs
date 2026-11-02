@@ -103,15 +103,6 @@ pub struct SourceTable {
     pub partition_expression_is_column: bool,
     /// Go `TableInfo.Columns`, in offset order.
     pub columns: Vec<SourceColumn>,
-    /// Offsets into [`Self::columns`] of Go `HandleCols`' columns. Empty when
-    /// the table has no usable handle, in which case `buildDataSource` appends
-    /// the `_tidb_rowid` extra handle.
-    pub handle_col_offsets: Vec<usize>,
-    /// Offsets into [`Self::columns`] of Go `CommonHandleCols`.
-    pub common_handle_col_offsets: Vec<usize>,
-    /// Go `CommonHandleLens`, index-parallel to
-    /// [`Self::common_handle_col_offsets`].
-    pub common_handle_lens: Vec<i64>,
 }
 
 impl SourceTable {
@@ -204,6 +195,55 @@ impl SourceTable {
                     || !partition.new_partition_ids.is_empty()
                     || !partition.dropping_definitions.is_empty()
             })
+    }
+
+    /// Go `buildDataSource`'s handle columns, as offsets: the `PKIsHandle`
+    /// column, else the clustered PRIMARY KEY's columns
+    /// (`tables.FindPrimaryIndex`); empty for a `_tidb_rowid` table.
+    #[must_use]
+    pub fn handle_col_offsets(&self) -> Vec<usize> {
+        let pk_offset = self.table_info.as_ref().and_then(|info| {
+            let info = info.read();
+            info.pk_is_handle
+                .then(|| info.get_pk_col_info())
+                .flatten()
+                .map(|column| column.read().offset as usize)
+        });
+        pk_offset
+            .into_iter()
+            .chain(self.common_handle_col_offsets())
+            .collect()
+    }
+
+    /// Go `CommonHandleCols`' offsets: the clustered PRIMARY KEY's columns.
+    #[must_use]
+    pub fn common_handle_col_offsets(&self) -> Vec<usize> {
+        self.common_handle_columns(|column| column.offset as usize)
+    }
+
+    /// Go `CommonHandleLens`, index-parallel to
+    /// [`Self::common_handle_col_offsets`].
+    #[must_use]
+    pub fn common_handle_lens(&self) -> Vec<i64> {
+        self.common_handle_columns(|column| column.length)
+    }
+
+    fn common_handle_columns<U>(&self, mut map: impl FnMut(&tidb_model::IndexColumn) -> U) -> Vec<U> {
+        if !self.is_common_handle() {
+            return Vec::new();
+        }
+        self.table_indices()
+            .into_iter()
+            .find(|index| index.read().primary)
+            .map(|primary| {
+                primary
+                    .read()
+                    .columns
+                    .iter_deref()
+                    .map(|column| map(&column.read()))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Go `TableInfo.ID`.
@@ -423,7 +463,7 @@ impl SourceTable {
     /// non-common-handle handle.
     #[must_use]
     pub fn handle_is_int(&self) -> bool {
-        !self.is_common_handle() && self.handle_col_offsets.len() == 1
+        !self.is_common_handle() && self.handle_col_offsets().len() == 1
     }
 
     /// The column at `offset`, or `None` when the implementor handed back an
@@ -596,15 +636,27 @@ mod tests {
         }
     }
 
+    /// `t (a BIGINT PRIMARY KEY, b BIGINT)`: `a` is the int handle.
     fn table() -> SourceTable {
-        { let mut fixture = SourceTable {
-            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { pk_is_handle: true, ..tidb_model::TableInfo::default() })),
+        let columns = vec![column(0, "a"), column(1, "b")];
+        columns[0]
+            .info
+            .write()
+            .add_flag(u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY));
+        let mut table = SourceTable {
             db_name: "test".to_owned(),
             physical_table_id: 7,
-            columns: vec![column(0, "a"), column(1, "b")],
-            handle_col_offsets: vec![0],
+            columns,
             ..SourceTable::default()
-        }; fixture.set_table_id(7); fixture.set_table_name("t".to_owned()); fixture }
+        };
+        let infos: Vec<_> = table.columns.iter().map(|column| Some(column.info.clone())).collect();
+        table.update_table_info(|info| {
+            info.id = 7;
+            info.name = tidb_ast::CiString::new("t");
+            info.pk_is_handle = true;
+            info.columns = tidb_model::GoSharedPointerSlice::from_handles(infos);
+        });
+        table
     }
 
     #[test]
@@ -617,10 +669,21 @@ mod tests {
         assert!(!tbl.handle_is_int());
 
         // Neither is a multi-column handle, nor a handle-less table.
-        tbl.set_is_common_handle(false);
-        tbl.handle_col_offsets = vec![0, 1];
+        let index_column = |offset: i64| tidb_model::IndexColumn {
+            offset,
+            length: tidb_datatype::UNSPECIFIED_LENGTH,
+            ..tidb_model::IndexColumn::default()
+        };
+        tbl.set_pk_is_handle(false);
+        tbl.set_table_indices(vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+            primary: true,
+            columns: vec![index_column(0), index_column(1)].into(),
+            ..tidb_model::IndexInfo::default()
+        })]);
+        assert_eq!(tbl.handle_col_offsets(), [0, 1]);
         assert!(!tbl.handle_is_int());
-        tbl.handle_col_offsets.clear();
+        tbl.set_is_common_handle(false);
+        assert!(tbl.handle_col_offsets().is_empty());
         assert!(!tbl.handle_is_int());
     }
 

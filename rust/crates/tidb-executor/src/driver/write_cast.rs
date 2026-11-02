@@ -67,6 +67,22 @@ pub(crate) fn materialize_generated_for_write(
     policy: GeneratedWrite,
     planned: Option<&[Option<Expression>]>,
 ) -> Result<(), DriverError> {
+    materialize_generated_for_write_selected(table, row, ctx, policy, planned, None)
+}
+
+/// [`materialize_generated_for_write`] limited, for an UPDATE, to Go's
+/// `Update.OrderedList` generated assignments (`buildUpdateLists`): the
+/// generated columns at `listed`'s stored offsets, from
+/// [`update_generated_offsets`]. A generated column the statement cannot
+/// change keeps its stored value, as Go's `updateRecord` step 4 does.
+pub(crate) fn materialize_generated_for_write_selected(
+    table: &tidb_table::tables::TableCommon,
+    row: &mut Vec<Datum>,
+    ctx: &crate::StmtContext,
+    policy: GeneratedWrite,
+    planned: Option<&[Option<Expression>]>,
+    listed: Option<&[usize]>,
+) -> Result<(), DriverError> {
     let columns = table.columns();
     // A statement row holds the visible columns; generation fills the
     // hidden ones in their `TableInfo.Columns` places.
@@ -118,9 +134,16 @@ pub(crate) fn materialize_generated_for_write(
         Some(planned) => {
             tidb_table::generated_column::materialize_planned(columns, planned, row, ctx, convert)
         }
-        None => {
-            tidb_table::generated_column::materialize_with(columns, row, false, ctx, convert)
-        }
+        None => match listed {
+            Some(listed) => tidb_table::generated_column::materialize_selected(
+                columns,
+                row,
+                |offset, _| listed.contains(&offset),
+                ctx,
+                convert,
+            ),
+            None => tidb_table::generated_column::materialize_with(columns, row, false, ctx, convert),
+        },
     };
     result.map_err(|failure| match failure {
         GeneratedWriteFailure::Driver(error) => error,
@@ -1030,4 +1053,37 @@ use tidb_charset::Collation;
             (1292, "Truncated incorrect DECIMAL value: '1.25'")
         );
     }
+}
+
+/// The generated columns an UPDATE (Go `buildUpdateLists`' additions to
+/// `Update.OrderedList`) or an `INSERT ... ON DUPLICATE KEY UPDATE` (Go
+/// `resolveGeneratedColumns`' `OnDuplicate`) that assigns the stored offsets
+/// `assigned` of `table` evaluates, as stored offsets.
+pub(crate) fn update_generated_offsets(
+    table: &tidb_table::tables::TableCommon,
+    assigned: &[usize],
+    on_duplicate: bool,
+) -> Vec<usize> {
+    let columns = table.columns();
+    let names: Vec<String> = assigned
+        .iter()
+        .filter_map(|offset| columns.get(*offset))
+        .map(|column| column.read().name.original().to_owned())
+        .collect();
+    let infos: Vec<_> = columns.iter().map(|column| column.info.clone()).collect();
+    let listed = if on_duplicate {
+        tidb_planner::plan_builder::generated_assignments::on_duplicate_generated_columns(&infos, &names)
+    } else {
+        tidb_planner::plan_builder::generated_assignments::update_list_generated_columns(&infos, &names)
+    };
+    columns
+        .iter()
+        .enumerate()
+        .filter(|(_, column)| {
+            listed
+                .iter()
+                .any(|name| tidb_hack::GoCaseCompare::go_lower_eq(name.as_str(), column.read().name.original()))
+        })
+        .map(|(offset, _)| offset)
+        .collect()
 }

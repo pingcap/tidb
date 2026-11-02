@@ -3351,12 +3351,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         // `:5221` "We append an extra handle column to the schema when the
         // handle column is not the primary key."
-        if table.handle_col_offsets.is_empty() && table.is_cluster_table {
+        if table.handle_col_offsets().is_empty() && table.is_cluster_table {
             // "Cluster tables are memory tables that don't support
             // ExtraHandleID": `ds.HandleCols` stays nil.
             handle_cols = Vec::new();
             handle_is_int = true;
-        } else if table.handle_col_offsets.is_empty() {
+        } else if table.handle_col_offsets().is_empty() {
             let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
             ret_type
                 .set_flags(ret_type.flags() | FieldTypeFlags::NOT_NULL | FieldTypeFlags::PRI_KEY);
@@ -3384,7 +3384,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             names.push(name);
         } else {
             handle_cols = table
-                .handle_col_offsets
+                .handle_col_offsets()
                 .iter()
                 .filter_map(|offset| schema_columns.get(*offset).cloned())
                 .collect();
@@ -3424,7 +3424,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let table_columns = schema_columns.clone();
 
         let common_handle_cols: Vec<Column> = table
-            .common_handle_col_offsets
+            .common_handle_col_offsets()
             .iter()
             .filter_map(|offset| schema_columns.get(*offset).cloned())
             .collect();
@@ -3476,7 +3476,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             handle_cols,
             handle_is_int,
             common_handle_cols,
-            common_handle_lens: table.common_handle_lens.clone(),
+            common_handle_lens: table.common_handle_lens().clone(),
             // Go `DataSource.HasTiFlash`: a hypothetical replica counts.
             has_tiflash_replica: table.has_tiflash_replica() || hypo_tiflash_replica,
             is_for_update_read: self.is_for_update_read,

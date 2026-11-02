@@ -279,7 +279,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     let handle = if table.pk_is_handle() {
                         DeleteHandle::Int(
                             table
-                                .handle_col_offsets
+                                .handle_col_offsets()
                                 .first()
                                 .and_then(|offset| by_offset[*offset])
                                 .ok_or_else(|| {
@@ -289,7 +289,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     } else if table.is_common_handle() {
                         DeleteHandle::Common(
                             table
-                                .common_handle_col_offsets
+                                .common_handle_col_offsets()
                                 .iter()
                                 .map(|offset| by_offset[*offset])
                                 .collect::<Option<Vec<_>>>()

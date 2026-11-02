@@ -81,11 +81,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         let mut keep = vec![false; table.columns.len()];
         if table.pk_is_handle() {
-            for offset in &table.handle_col_offsets {
+            for offset in &table.handle_col_offsets() {
                 keep[*offset] = true;
             }
         }
-        for offset in &table.common_handle_col_offsets {
+        for offset in &table.common_handle_col_offsets() {
             keep[*offset] = true;
         }
         for index in &table.table_indices() {
@@ -202,11 +202,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     .any(|index| !index.read().condition_expr_string.is_empty());
             let mut needed = vec![false; table.columns.len()];
             if table.pk_is_handle() {
-                for offset in &table.handle_col_offsets {
+                for offset in &table.handle_col_offsets() {
                     needed[*offset] = true;
                 }
             }
-            for offset in &table.common_handle_col_offsets {
+            for offset in &table.common_handle_col_offsets() {
                 needed[*offset] = true;
             }
             for index in &table.table_indices() {
@@ -236,11 +236,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 columns.push((*position, offset));
             }
             let handle = if table.pk_is_handle() {
-                PendingHandle::Int(by_offset[*table.handle_col_offsets.first()?]?)
+                PendingHandle::Int(by_offset[*table.handle_col_offsets().first()?]?)
             } else if table.is_common_handle() {
                 PendingHandle::Common(
                     table
-                        .common_handle_col_offsets
+                        .common_handle_col_offsets()
                         .iter()
                         .map(|offset| by_offset[*offset])
                         .collect::<Option<Vec<_>>>()?,
