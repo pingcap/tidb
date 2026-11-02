@@ -23,6 +23,73 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestExtractQueryParametersRejectsMalformedQuery(t *testing.T) {
+	for _, query := range []string{
+		"region=changed&access-key=FAKE_QUERY_AK;FAKE_QUERY_SK",
+		"region=changed&access-key=FAKE_QUERY_AK&secret-access-key=FAKE_QUERY_SK%zz",
+	} {
+		t.Run(query, func(t *testing.T) {
+			u, err := url.Parse("s3://bucket/prefix?" + query)
+			require.NoError(t, err)
+			opts := S3BackendOptions{Region: "original", AccessKey: "original"}
+			original := opts
+
+			err = ExtractQueryParameters(u, &opts)
+
+			require.ErrorContains(t, err, "parse storage URL query failed: invalid format")
+			require.NotContains(t, fmt.Sprintf("%+v", err), "FAKE_QUERY")
+			require.Equal(t, original, opts, "invalid queries must not partially update options")
+			require.Equal(t, query, u.RawQuery)
+		})
+	}
+}
+
+func TestBackendOptionsRedacted(t *testing.T) {
+	opts := BackendOptions{
+		S3: S3BackendOptions{
+			AccessKey: "FAKE_AK", SecretAccessKey: "FAKE_SK", SessionToken: "FAKE_STS",
+			Region: "us-east-1", Endpoint: "https://FAKE_USER:FAKE_PASS@s3.example.com/?sig=FAKE_SIGNATURE#FAKE_FRAGMENT",
+		},
+		GCS: GCSBackendOptions{Endpoint: "https://gcs.example.com/?sig=FAKE_SIGNATURE"},
+		Azblob: AzblobBackendOptions{
+			AccountName: "account", AccountKey: "FAKE_AZKEY", SASToken: "FAKE_SAS", EncryptionKey: "FAKE_ENCRYPTION_KEY",
+			Endpoint: "https://azure.example.com/?sig=FAKE_SIGNATURE",
+		},
+	}
+	original := opts
+
+	redacted := opts.Redacted()
+
+	require.Equal(t, ast.RedactedValue, redacted.S3.AccessKey)
+	require.Equal(t, ast.RedactedValue, redacted.S3.SecretAccessKey)
+	require.Equal(t, ast.RedactedValue, redacted.S3.SessionToken)
+	require.Equal(t, ast.RedactedValue, redacted.Azblob.AccountKey)
+	require.Equal(t, ast.RedactedValue, redacted.Azblob.SASToken)
+	require.Equal(t, ast.RedactedValue, redacted.Azblob.EncryptionKey)
+	require.Equal(t, "us-east-1", redacted.S3.Region)
+	require.Equal(t, "account", redacted.Azblob.AccountName)
+	require.Equal(t, "https://s3.example.com/", redacted.S3.Endpoint)
+	require.Equal(t, "https://gcs.example.com/", redacted.GCS.Endpoint)
+	require.Equal(t, "https://azure.example.com/", redacted.Azblob.Endpoint)
+	require.Equal(t, original, opts)
+	require.Equal(t, BackendOptions{}, BackendOptions{}.Redacted())
+
+	opts.S3.Endpoint = "https://FAKE_USER:FAKE_PASS@host/path%zz?sig=FAKE_SIGNATURE"
+	require.Equal(t, InvalidURLPlaceholder, opts.Redacted().S3.Endpoint)
+}
+
+func TestParseBackendRejectsMalformedQuery(t *testing.T) {
+	for _, scheme := range []string{"s3", "ks3", "gs", "gcs", "azure", "azblob"} {
+		for _, query := range []string{"session-token=FAKE_QUERY_TOKEN;FAKE_QUERY_SECRET", "access-key=FAKE_QUERY_AK&secret-access-key=FAKE_QUERY_SK%zz"} {
+			t.Run(scheme+"/"+query, func(t *testing.T) {
+				_, err := ParseBackend(scheme+"://bucket/prefix?"+query, nil)
+				require.ErrorContains(t, err, "parse storage URL query failed: invalid format")
+				require.NotContains(t, fmt.Sprintf("%+v", err), "FAKE_QUERY")
+			})
+		}
+	}
+}
+
 func TestStorageErrorsDoNotLeakCredentials(t *testing.T) {
 	for _, rawURL := range []string{
 		"s3://FAKE_USER:FAKE_PASS@bucket/path%zz?access-key=FAKE_AK&secret-access-key=FAKE_SK",
