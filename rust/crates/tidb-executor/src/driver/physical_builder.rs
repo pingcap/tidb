@@ -119,7 +119,7 @@ impl ReaderStorage {
         ctx: &crate::StmtContext,
         table: Arc<crate::TableCommon>,
     ) -> (Arc<crate::TableCommon>, Box<dyn tidb_kv::storage::TableStorage>, bool) {
-        let statement_store = crate::statement_store(ctx, &table);
+        let statement_store = crate::statement_store(ctx);
         let store = match self {
             ReaderStorage::Snapshot => statement_store.snapshot_reader(),
             ReaderStorage::Merged => None,
@@ -1468,7 +1468,7 @@ fn build_table_sample(
     }
     let stores = tables
         .iter()
-        .map(|table| crate::statement_store(ctx, table))
+        .map(|_| crate::statement_store(ctx))
         .collect();
     let tables = tables
         .into_iter()
@@ -4942,7 +4942,7 @@ fn select_lock_executor(
             continue;
         }
         locked_table_ids.push(*table_id);
-        lock_store.get_or_insert_with(|| crate::statement_store(ctx, table));
+        lock_store.get_or_insert_with(|| crate::statement_store(ctx));
         let width = table.common_handle_offsets().len().max(1);
         if columns.len() % width != 0 {
             return Err(DriverError::unsupported(
@@ -5168,7 +5168,7 @@ fn build_point_get(
         .physical_kv_table_by_id(physical_id)
         .ok_or_else(|| DriverError::unsupported("physical point-get table ID is absent"))?;
     let snapshot_stats =
-        configure_point_snapshot_read(&table, ctx, plan.point_avg_row_size(true), snapshot_stats);
+        configure_point_snapshot_read(ctx, plan.point_avg_row_size(true), snapshot_stats);
     let schema = plan_schema(plan)?;
     let output_columns = table_output_columns(&schema, &table)?;
     let executor_meta = ExecutorMeta::new(schema, i64::from(plan.base().base.id()), 1, 1);
@@ -5188,7 +5188,7 @@ fn build_point_get(
             UniqueIndexPointSourceExec::new(
                 executor_meta,
                 (*table).clone(),
-                crate::statement_store(ctx, &table),
+                crate::statement_store(ctx),
                 index_id,
                 index_values,
                 output_columns,
@@ -5218,7 +5218,7 @@ fn build_point_get(
         HandleSourceExec::new_point_mapped_with_context(
             executor_meta,
             (*table).clone(),
-            crate::statement_store(ctx, &table),
+            crate::statement_store(ctx),
             handles.into_iter().next().expect("checked one handle"),
             output_columns,
             RowDecodeContext::for_query(ctx),
@@ -5247,7 +5247,7 @@ fn build_batch_point_get(
         .physical_kv_table_by_id(batch.table_id)
         .ok_or_else(|| DriverError::unsupported("physical batch-point table ID is absent"))?;
     let snapshot_stats =
-        configure_point_snapshot_read(&table, ctx, plan.point_avg_row_size(true), snapshot_stats);
+        configure_point_snapshot_read(ctx, plan.point_avg_row_size(true), snapshot_stats);
     let schema = plan_schema(plan)?;
     let output_columns = table_output_columns(&schema, &table)?;
     // Go buildBatchPointGet sizes both capacities to the retained access keys.
@@ -5269,7 +5269,7 @@ fn build_batch_point_get(
             UniqueIndexPointSourceExec::new(
                 executor_meta,
                 (*table).clone(),
-                crate::statement_store(ctx, &table),
+                crate::statement_store(ctx),
                 index_id,
                 index_values,
                 output_columns,
@@ -5320,7 +5320,7 @@ fn build_batch_point_get(
         HandleSourceExec::new_mapped_with_context(
             executor_meta,
             (*table).clone(),
-            crate::statement_store(ctx, &table),
+            crate::statement_store(ctx),
             handles,
             output_columns,
             RowDecodeContext::for_query(ctx),
@@ -5343,13 +5343,12 @@ fn build_batch_point_get(
 /// point reader's other snapshot options; the returned handle keeps the
 /// options to restore when the reader closes.
 fn configure_point_snapshot_read(
-    table: &tidb_table::tables::TableCommon,
     ctx: &crate::StmtContext,
     avg_row_bytes: f64,
     snapshot_stats: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
 ) -> Option<tidb_executor_internal_exec::index_usage_reporter::PointSnapshotStats> {
     let options = ctx.snapshot_read_options(avg_row_bytes);
-    let store = crate::statement_store(ctx, table);
+    let store = crate::statement_store(ctx);
     let Some(stats) = snapshot_stats else {
         store.set_snapshot_read_options(options);
         return None;
@@ -5381,7 +5380,7 @@ fn wrap_point_index_usage(
         PointCommand::Get => None,
         PointCommand::BatchGet => crate::access_cost::load_table_stats(ctx, catalog, table.table_id()),
     };
-    let store = crate::statement_store(ctx, &table);
+    let store = crate::statement_store(ctx);
     Box::new(PointIndexUsageExec::new(
         child,
         table,
@@ -7447,7 +7446,7 @@ fn build_union_scan(
     else {
         return merged(state);
     };
-    if handle_offsets.is_empty() || crate::statement_store(ctx, &table).snapshot_reader().is_none() {
+    if handle_offsets.is_empty() || crate::statement_store(ctx).snapshot_reader().is_none() {
         return merged(state);
     }
     // The buffered entries of every physical table the reader can reach,
@@ -7468,7 +7467,7 @@ fn build_union_scan(
             )
         })
         .collect::<Vec<_>>();
-    let snapshot = crate::statement_store(ctx, &table).mem_buffer_snapshot(&ranges).ok_or_else(|| {
+    let snapshot = crate::statement_store(ctx).mem_buffer_snapshot(&ranges).ok_or_else(|| {
         DriverError::unsupported("a union scan's storage has no membuffer to read")
     })?;
     let child = build_with_state(child_plan, catalog, ctx, state)?;
@@ -8108,10 +8107,11 @@ use super::*;
 
     #[test]
     fn ordinary_executor_records_runtime_stats_when_collection_is_enabled() {
+        let store = crate::test_store::store();
         let source = Arc::new(RecordingExecutorRuntimeStatsSource::default());
         let source_handle: Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource> = source.clone();
         let ctx =
-            crate::StmtContext::for_query().with_executor_runtime_stats_source(Some(source_handle));
+            crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_executor_runtime_stats_source(Some(source_handle));
         let plan = dual(17, 1);
         let mut executor = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &ctx).unwrap();
 
@@ -8148,8 +8148,9 @@ use super::*;
 
     #[test]
     fn built_executor_checks_sql_killer_before_next() {
+        let store = crate::test_store::store();
         let memory = crate::StatementMemory::default();
-        let ctx = crate::StmtContext::for_query_with_memory(memory.clone());
+        let ctx = crate::StmtContext::for_query_with_memory(memory.clone()).with_txn_store(Box::new(store.clone()));
         let mut executor = build(&dual(1, 1), &tidb_infoschema_perfschema::mock_catalog(), &ctx).unwrap();
         executor.open().unwrap();
         memory
@@ -8394,6 +8395,7 @@ use super::*;
 
     #[test]
     fn physical_shuffle_builds_worker_receivers_and_reads_each_source_once() {
+        let store = crate::test_store::store();
         use tidb_planner_core_operator_physicalop::PhysicalShuffle;
         let mut projection_base = BasePhysicalPlan::with_id(7, "Projection", 0);
         projection_base.base.set_schema(Some(empty_schema()));
@@ -8428,7 +8430,7 @@ use super::*;
             ids.alloc();
         }
         tidb_planner_core_operator_physicalop::shuffle::install_receivers(&mut plan, &ids).unwrap();
-        let mut exec = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &crate::StmtContext::default()).unwrap();
+        let mut exec = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &crate::StmtContext::default().with_txn_store(Box::new(store.clone()))).unwrap();
         for _ in 0..2 {
             exec.open().unwrap();
             let mut rows = 0;
@@ -8535,6 +8537,7 @@ use super::*;
 
     #[test]
     fn physical_cte_uses_the_recursive_delta_and_go_limit_window() {
+        let store = crate::test_store::store();
         let plan = cte(
             3,
             41,
@@ -8543,23 +8546,25 @@ use super::*;
             false,
             Some((1, 4)),
         );
-        let executor = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &crate::StmtContext::for_query())
+        let executor = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
             .expect("build recursive physical CTE");
         assert_eq!(drain_row_count(executor).expect("run recursive CTE"), 3);
     }
 
     #[test]
     fn physical_union_distinct_cte_stops_when_its_delta_is_empty() {
+        let store = crate::test_store::store();
         let plan = cte(3, 42, dual(1, 1), Some(cte_table(2, 42)), true, None);
-        let executor = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &crate::StmtContext::for_query())
+        let executor = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
             .expect("build distinct recursive physical CTE");
         assert_eq!(drain_row_count(executor).expect("run distinct CTE"), 1);
     }
 
     #[test]
     fn cached_physical_union_and_max_one_row_build_directly() {
+        let store = crate::test_store::store();
         let catalog = tidb_infoschema_perfschema::mock_catalog();
-        let ctx = crate::StmtContext::default();
+        let ctx = crate::StmtContext::default().with_txn_store(Box::new(store.clone()));
 
         let mut union_executor = build(&union(3, vec![dual(1, 1), dual(2, 1)]), &catalog, &ctx)
             .expect("build cached union");
@@ -8641,6 +8646,7 @@ use super::*;
 
     #[test]
     fn index_probe_hash_join_distinguishes_aliases_of_one_table() {
+        let store = crate::test_store::store();
         use tidb_planner_core_operator_physicalop::{PhysicalHashJoin, PhysicalIndexJoin};
         for right_table in [40, 41] {
             let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -8700,7 +8706,7 @@ use super::*;
                     &[LookupProbePart::Dynamic(0)],
                     &probes,
                     &catalog,
-                    &crate::StmtContext::for_query(),
+                    &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
                     &mut BuildState::default(),
                 );
                 assert!(
@@ -8714,6 +8720,7 @@ use super::*;
 
     #[test]
     fn table_reader_build_records_go_stmtctx_table_access() {
+        let store = crate::test_store::store();
         let table_id = 40;
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv(
@@ -8738,7 +8745,7 @@ use super::*;
         let session = crate::SessionMemory::new(-1, crate::OomAction::Cancel, 7);
         let cancellation = session.begin_query_cancellation();
         cancellation.cancel();
-        let ctx = crate::StmtContext::for_query_with_memory(session.statement());
+        let ctx = crate::StmtContext::for_query_with_memory(session.statement()).with_txn_store(Box::new(store.clone()));
         let _executor = build(&plan, &catalog, &ctx).expect("build physical table reader");
 
         assert!(tidb_exprctx::Columns::sleep_for(

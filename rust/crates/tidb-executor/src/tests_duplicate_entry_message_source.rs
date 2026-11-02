@@ -16,7 +16,7 @@
 use crate::{run_create_table_on, run_insert_reporting, SessionExtendedInfoSchema, StmtContext};
 
 fn strict() -> StmtContext {
-    StmtContext::for_dml(false, true, false)
+    StmtContext::for_dml(false, true, false).with_txn_store(Box::new(crate::test_store::store()))
 }
 
 fn expect_duplicate(catalog: &mut SessionExtendedInfoSchema, sql: &str, value: &str, key: &str) {
@@ -47,6 +47,7 @@ fn expect_duplicate(catalog: &mut SessionExtendedInfoSchema, sql: &str, value: &
 /// * `bigint unsigned` primary key at `18446744073709551615` (:499-503).
 #[test]
 fn duplicate_entry_message_names_the_new_value_and_key_across_type_shapes() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
 
     // :444-449 unique char under general_ci, case-insensitive dup.
@@ -157,7 +158,7 @@ fn duplicate_entry_message_names_the_new_value_and_key_across_type_shapes() {
         &mut catalog,
     )
     .unwrap();
-    let ignore = StmtContext::for_dml(false, true, true);
+    let ignore = StmtContext::for_dml(false, true, true).with_txn_store(Box::new(store.clone()));
     run_insert_reporting(
         "insert ignore into t7 values ('$', 'C', 10)",
         &mut catalog,

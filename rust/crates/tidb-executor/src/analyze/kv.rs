@@ -107,7 +107,7 @@ pub fn analyze_kv_table_columns(
     let decode_context = RowDecodeContext::for_analyze(ctx);
     let (plan, source_positions, source_indexes) =
         kv_analyze_plan(table, &decode_context, selected_column_ids)?;
-    let mut store = crate::statement_store(ctx, table);
+    let mut store = crate::statement_store(ctx);
     let rows = table
         .scan_rows_with_handles_with_context(&mut *store, &decode_context)
         .map_err(AnalyzeError::from)?;
@@ -215,7 +215,7 @@ pub fn analyze_kv_table_independent_index(
         topn_count,
     );
     for entry in table
-        .index_entry_records_for_check(&mut *crate::statement_store(ctx, table), index.read().id)
+        .index_entry_records_for_check(&mut *crate::statement_store(ctx), index.read().id)
         .map_err(AnalyzeError::from)?
     {
         let (encoded_columns, _) =

@@ -20,13 +20,14 @@ use tidb_txnkv::Key;
 
 #[test]
 fn fix52592_disables_unique_index_point_conversion() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE t (id INT PRIMARY KEY, u INT UNIQUE, v INT)",
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on("INSERT INTO t VALUES (1,5,50),(2,7,70)", &mut catalog, &ctx).unwrap();
     for (predicate, expected) in [
         ("u>=5 AND u<=5 AND v>1", vec![vec![Datum::Int(50)]]),
@@ -116,9 +117,10 @@ impl TableStorage for BatchGetCountingStorage {
 
 #[test]
 fn cached_physical_plan_rebuilds_and_executes_the_retained_tree() {
+    let store = crate::test_store::store();
     let cache = crate::SessionPlanCache::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     crate::run_create_table_on(
         "CREATE TABLE cache_no_replan (id BIGINT PRIMARY KEY, value BIGINT NOT NULL)",
         &mut catalog,
@@ -170,6 +172,7 @@ fn cached_physical_plan_rebuilds_and_executes_the_retained_tree() {
 
 #[test]
 fn prepared_in_predicate_caches_and_rebinds_analyzed_rows() {
+    let store = crate::test_store::store();
     let cache = crate::SessionPlanCache::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
@@ -177,7 +180,7 @@ fn prepared_in_predicate_caches_and_rebinds_analyzed_rows() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO prepared_in_stats VALUES
             (1,1,11),(2,2,22),(3,3,33),(4,4,44),(5,5,55),
@@ -249,9 +252,10 @@ fn prepared_in_predicate_caches_and_rebinds_analyzed_rows() {
 
 #[test]
 fn cached_composite_handle_range_rebuilds_every_tuple_bound() {
+    let store = crate::test_store::store();
     let cache = crate::SessionPlanCache::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     crate::run_create_table_on(
         "CREATE TABLE cache_tuple_range (\
             a BIGINT NOT NULL, b BIGINT NOT NULL, payload BIGINT NOT NULL, \
@@ -328,8 +332,9 @@ fn cached_composite_handle_range_rebuilds_every_tuple_bound() {
 
 #[test]
 fn composite_unique_prefix_is_not_a_point_get() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     crate::run_create_table_on(
         "CREATE TABLE point_prefix (\
             a BIGINT NOT NULL, b BIGINT NOT NULL, flag BIGINT UNSIGNED NOT NULL, \
@@ -367,9 +372,10 @@ fn composite_unique_prefix_is_not_a_point_get() {
 
 #[test]
 fn cached_physical_index_readers_build_without_legacy_planner() {
+    let store = crate::test_store::store();
     let cache = crate::SessionPlanCache::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     crate::run_create_table_on(
         "CREATE TABLE cache_index_reader (\
             id BIGINT PRIMARY KEY, c BIGINT NOT NULL, payload BIGINT NOT NULL, \
@@ -440,6 +446,7 @@ fn cached_physical_index_readers_build_without_legacy_planner() {
 /// mix.
 #[test]
 fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
+    let store = crate::test_store::store();
     let cache = crate::SessionPlanCache::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let environment = PreparedPlanCacheEnvironment::default();
@@ -451,7 +458,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
     run_insert_on(
         "INSERT INTO range_cache VALUES (1,10,'b'),(2,20,'a'),(3,30,'b'),(4,40,'c')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     crate::run_create_table_on(
@@ -462,7 +469,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
     run_insert_on(
         "INSERT INTO range_cache_dim VALUES (1,'one'),(2,'two'),(3,'three'),(4,'four')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -509,7 +516,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
                 2,
                 &catalog,
                 DEFAULT_DATABASE,
-                &crate::StmtContext::for_query(),
+                &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
             )
             .unwrap_or_else(|| panic!("{prepared} should admit a prepared SELECT cache")),
         );
@@ -521,14 +528,14 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
         .enumerate()
         {
             let expected =
-                run_select_on(ordinary, &catalog, &crate::StmtContext::for_query()).unwrap();
+                run_select_on(ordinary, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))).unwrap();
             let execution = plan
                 .bind(
                     &cache,
                     &values,
                     &catalog,
                     DEFAULT_DATABASE,
-                    &crate::StmtContext::for_query(),
+                    &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
                     &environment,
                 )
                 .expect("integer bounds bind");
@@ -537,7 +544,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
                 &execution,
                 &catalog,
                 DEFAULT_DATABASE,
-                &crate::StmtContext::for_query(),
+                &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
             )
             .unwrap();
             assert_eq!(actual, expected, "{prepared} with {values:?}");
@@ -555,7 +562,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
             3,
             &catalog,
             DEFAULT_DATABASE,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .expect("the shared cache admits a range with a residual filter"),
     );
@@ -583,14 +590,14 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
             "SELECT id FROM range_cache WHERE id BETWEEN 1 AND 4 AND c = 'c' ORDER BY id",
         ),
     ] {
-        let expected = run_select_on(ordinary, &catalog, &crate::StmtContext::for_query()).unwrap();
+        let expected = run_select_on(ordinary, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))).unwrap();
         let execution = plan
             .bind(
                 &cache,
                 &values,
                 &catalog,
                 DEFAULT_DATABASE,
-                &crate::StmtContext::for_query(),
+                &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
                 &environment,
             )
             .expect("residual values bind");
@@ -598,7 +605,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
             &execution,
             &catalog,
             DEFAULT_DATABASE,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .unwrap();
         assert_eq!(actual, expected, "{prepared} with {values:?}");
@@ -613,7 +620,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
             1,
             &catalog,
             DEFAULT_DATABASE,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .expect("a parameterized LIMIT is cacheable"),
     );
@@ -630,7 +637,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
                 &values,
                 &catalog,
                 DEFAULT_DATABASE,
-                &crate::StmtContext::for_query(),
+                &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
                 &environment,
             )
             .unwrap_or_else(|| panic!("the LIMIT value should bind: {values:?}"));
@@ -642,7 +649,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
             &[Datum::UInt(10_001)],
             &catalog,
             DEFAULT_DATABASE,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
             &environment,
         )
         .is_none());
@@ -659,7 +666,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
             &[Datum::Int(2)],
             &catalog,
             DEFAULT_DATABASE,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
             &changed_environment,
         )
         .expect("the changed environment replans");
@@ -670,7 +677,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
             &[Datum::Int(2)],
             &catalog,
             DEFAULT_DATABASE,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
             &changed_environment,
         )
         .expect("the changed environment has its own entry");
@@ -686,7 +693,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
         1,
         &catalog,
         DEFAULT_DATABASE,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .expect("derived-table SELECT is admitted");
     assert_eq!(
@@ -704,6 +711,7 @@ fn prepared_select_plan_reuses_shape_and_rebinds_parameters() {
 /// do NOT qualify and fall back.
 #[test]
 fn point_get_plans() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE g (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE, v BIGINT)",
@@ -713,7 +721,7 @@ fn point_get_plans() {
     run_insert_on(
         "INSERT INTO g VALUES (1, 'a', 10), (2, 'b', 20), (3, 'c', 30)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -722,7 +730,7 @@ fn point_get_plans() {
         run_select_on(
             "SELECT v FROM g WHERE id = 2",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(20)]]
@@ -732,7 +740,7 @@ fn point_get_plans() {
         run_select_on(
             "SELECT v FROM g WHERE id = 99",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         Vec::<Vec<Datum>>::new()
@@ -742,7 +750,7 @@ fn point_get_plans() {
         run_select_on(
             "SELECT id FROM g WHERE code = 'c'",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(3)]]
@@ -751,7 +759,7 @@ fn point_get_plans() {
         run_select_on(
             "SELECT id FROM g WHERE code = 'zz'",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         Vec::<Vec<Datum>>::new()
@@ -764,7 +772,7 @@ fn point_get_plans() {
         run_select_on(
             "SELECT id FROM g WHERE id = 2 AND v = 20",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(2)]]
@@ -773,7 +781,7 @@ fn point_get_plans() {
         run_select_on(
             "SELECT id FROM g WHERE id = 2 AND v = 999",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         Vec::<Vec<Datum>>::new()
@@ -784,7 +792,7 @@ fn point_get_plans() {
         run_select_on(
             "SELECT id FROM g WHERE v = 30",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(3)]],
@@ -794,7 +802,7 @@ fn point_get_plans() {
         run_select_on(
             "SELECT id FROM g WHERE id > 1 ORDER BY id",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(2)], vec![Datum::Int(3)]],
@@ -804,7 +812,7 @@ fn point_get_plans() {
         run_select_on(
             "SELECT id FROM g WHERE id = 1 OR id = 3",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(1)], vec![Datum::Int(3)]],
@@ -816,7 +824,7 @@ fn point_get_plans() {
         run_select_on(
             "SELECT id FROM g WHERE id = 2 LIMIT 1 OFFSET 1",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         Vec::<Vec<Datum>>::new()
@@ -825,7 +833,7 @@ fn point_get_plans() {
         run_select_on(
             "SELECT id FROM g WHERE id = 2 ORDER BY id",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(2)]]
@@ -837,7 +845,7 @@ fn point_get_plans() {
         run_select_on(
             "SELECT id FROM g WHERE id = 'x'",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         Vec::<Vec<Datum>>::new()
@@ -847,14 +855,14 @@ fn point_get_plans() {
     run_update_on(
         "UPDATE g SET v = 99 WHERE id = 2",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
         run_select_on(
             "SELECT v FROM g WHERE id = 2",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(99)]]
@@ -862,14 +870,14 @@ fn point_get_plans() {
     run_delete_on(
         "DELETE FROM g WHERE id = 2",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
         run_select_on(
             "SELECT v FROM g WHERE id = 2",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         Vec::<Vec<Datum>>::new()
@@ -878,7 +886,7 @@ fn point_get_plans() {
         run_select_on(
             "SELECT id FROM g WHERE code = 'b'",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         Vec::<Vec<Datum>>::new(),
@@ -900,7 +908,7 @@ fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
     run_insert_on(
         "INSERT INTO d VALUES (1, 'a', 10)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())),
     )
     .unwrap();
     let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("d") else {
@@ -1003,6 +1011,7 @@ fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
 
 #[test]
 fn prepared_point_plan_binds_common_handle_without_cloning_template() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE prepared_y (id VARCHAR(64) PRIMARY KEY, v VARCHAR(32))",
@@ -1012,7 +1021,7 @@ fn prepared_point_plan_binds_common_handle_without_cloning_template() {
     run_insert_on(
         "INSERT INTO prepared_y VALUES ('user-0001', 'value-1')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     let stmt = tidb_parser::parse("SELECT * FROM prepared_y WHERE id = ?").unwrap();
@@ -1029,7 +1038,7 @@ fn prepared_point_plan_binds_common_handle_without_cloning_template() {
         &execution,
         &mut catalog,
         &decode,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap()
     .expect("the prepared common-handle point plan remains valid");
@@ -1042,6 +1051,7 @@ fn prepared_point_plan_binds_common_handle_without_cloning_template() {
 /// key and retains residual predicates on the fetched row.
 #[test]
 fn prepared_point_cache_answers_a_unique_secondary_index() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE idx_pin (\
@@ -1056,7 +1066,7 @@ fn prepared_point_cache_answers_a_unique_secondary_index() {
     run_insert_on(
         "INSERT INTO idx_pin VALUES ('k1','a1','b1',10),('k2','a1','b2',20),('k3','a2','b1',30)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -1082,7 +1092,7 @@ fn prepared_point_cache_answers_a_unique_secondary_index() {
     let expected = run_select_on(
         "SELECT id, v FROM idx_pin WHERE a = 'a1' AND b = 'b2' AND v = 20",
         &catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     let (got, operations) = tidb_kv::storage::capture_storage_ops(|| {
@@ -1180,7 +1190,7 @@ fn cached_rows(
     values: &[Datum],
 ) -> Vec<Vec<Datum>> {
     let execution = plan.bind(values, zone).expect("binds");
-    run_prepared_point_get(&execution, catalog, ctx, &crate::StmtContext::for_query())
+    run_prepared_point_get(&execution, catalog, ctx, &crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())))
         .unwrap()
         .expect("the cached read")
         .1
@@ -1190,6 +1200,7 @@ fn cached_rows(
 /// key, and the cached read answers only rows whose decoded slot is NULL.
 #[test]
 fn prepared_point_cache_answers_an_is_null_residual() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE null_pin (\
@@ -1204,7 +1215,7 @@ fn prepared_point_cache_answers_an_is_null_residual() {
     run_insert_on(
         "INSERT INTO null_pin VALUES ('o1','n1',NULL,'1'),('o1','n2','dms','1')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     scale_analyzed_tpcc_table(
@@ -1212,7 +1223,7 @@ fn prepared_point_cache_answers_an_is_null_residual() {
         "null_pin",
         100,
         &[("alwcobj", 2), ("alwcnum", 100)],
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     );
 
     let stmt = tidb_parser::parse(
@@ -1245,6 +1256,7 @@ fn prepared_point_cache_answers_an_is_null_residual() {
 /// Limit/TableReader path and applies the requested limit.
 #[test]
 fn shared_planner_reads_the_bounded_clustered_handle_range() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE ycsb_scan (id VARCHAR(32) PRIMARY KEY CLUSTERED, v VARCHAR(32))",
@@ -1254,7 +1266,7 @@ fn shared_planner_reads_the_bounded_clustered_handle_range() {
     crate::run_insert_on(
         "INSERT INTO ycsb_scan VALUES ('user-0001','value-1'),('user-0002','value-2'),('user-0003','value-3')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     let stmt =
@@ -1267,7 +1279,7 @@ fn shared_planner_reads_the_bounded_clustered_handle_range() {
         _ => panic!("expected a query"),
     };
     let planned =
-        crate::run_select_meta_stmt(select, &catalog, "test", &crate::StmtContext::for_query())
+        crate::run_select_meta_stmt(select, &catalog, "test", &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
             .unwrap();
     assert_eq!(datum_text_for_test(&planned.1[0][0]), "user-0002");
     assert_eq!(datum_text_for_test(&planned.1[0][1]), "value-2");
@@ -1282,7 +1294,7 @@ fn shared_planner_reads_the_bounded_clustered_handle_range() {
         panic!("expected a select");
     };
     let wider =
-        crate::run_select_meta_stmt(select, &catalog, "test", &crate::StmtContext::for_query())
+        crate::run_select_meta_stmt(select, &catalog, "test", &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
             .unwrap();
     assert_eq!(wider.1.len(), 2);
 
@@ -1301,7 +1313,7 @@ fn shared_planner_reads_the_bounded_clustered_handle_range() {
         point,
         &catalog,
         "test",
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         tidb_sessionctx::explain_format::ExplainFormat::Row,
     )
     .unwrap();
@@ -1313,7 +1325,7 @@ fn shared_planner_reads_the_bounded_clustered_handle_range() {
         scan_select,
         &catalog,
         "test",
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         tidb_sessionctx::explain_format::ExplainFormat::Row,
     )
     .unwrap();
@@ -1338,7 +1350,7 @@ fn shared_planner_reads_the_bounded_clustered_handle_range() {
         update,
         &mut catalog,
         "test",
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         tidb_sessionctx::explain_format::ExplainFormat::Row,
     )
     .unwrap();
@@ -1356,6 +1368,7 @@ fn shared_planner_reads_the_bounded_clustered_handle_range() {
 /// match the scan in every case, including the shapes Go rejects.
 #[test]
 fn batch_point_get() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE b (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE, v BIGINT)",
@@ -1365,12 +1378,12 @@ fn batch_point_get() {
     run_insert_on(
         "INSERT INTO b VALUES (1, 'a', 10), (2, 'b', 20), (3, 'c', 30)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
     let ids = |sql: &str, catalog: &SessionExtendedInfoSchema| {
-        let mut got: Vec<i64> = run_select_on(sql, catalog, &crate::StmtContext::for_query())
+        let mut got: Vec<i64> = run_select_on(sql, catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
             .unwrap()
             .into_iter()
             .map(|row| match row[0] {
@@ -1424,7 +1437,7 @@ fn batch_point_get() {
         run_select_on(
             "SELECT id FROM b WHERE id IN (1, 2, 3) LIMIT 2",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .len(),
@@ -1436,13 +1449,14 @@ fn batch_point_get() {
 /// tuples pin every column of a composite primary/unique key.
 #[test]
 fn batch_point_get_accepts_row_in_on_a_composite_key() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE c (a INT, b INT, v INT, PRIMARY KEY (a, b))",
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO c VALUES (1, 1, 11), (1, 2, 12), (2, 1, 21)",
         &mut catalog,
@@ -1489,8 +1503,9 @@ fn batch_point_get_accepts_row_in_on_a_composite_key() {
 
 #[test]
 fn primary_batch_reads_use_written_common_handle_encoding() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     for (name, key_type, inserted, predicate) in [
         (
             "decimal_batch",
@@ -1935,6 +1950,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
 /// `rust/difftests/gorun` against a mock-backed session.
 #[test]
 fn a_point_plan_keys_by_the_constant_in_the_columns_domain() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE pk1 (pk BIGINT PRIMARY KEY, v BIGINT)",
@@ -1944,10 +1960,10 @@ fn a_point_plan_keys_by_the_constant_in_the_columns_domain() {
     run_insert_on(
         "INSERT INTO pk1 VALUES (1, 10)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
-    let rows = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap();
+    let rows = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))).unwrap();
     let one = vec![vec![Datum::Int(1)]];
     let none = Vec::<Vec<Datum>>::new();
 
@@ -1985,10 +2001,10 @@ fn a_point_plan_keys_by_the_constant_in_the_columns_domain() {
     run_insert_on(
         "INSERT INTO uq VALUES (7, 1)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
-    let rows = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap();
+    let rows = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))).unwrap();
     assert_eq!(
         rows("SELECT id FROM uq WHERE u = 1.0"),
         vec![vec![Datum::Int(7)]]
@@ -2009,6 +2025,7 @@ fn a_point_plan_keys_by_the_constant_in_the_columns_domain() {
 /// `Selection` or `Projection` remains.
 #[test]
 fn fast_point_get_replaces_selection_and_projection_like_go() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -2018,7 +2035,7 @@ fn fast_point_get_replaces_selection_and_projection_like_go() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO fast_point VALUES (1, 'one')",
         &mut catalog,
@@ -2058,13 +2075,14 @@ fn fast_point_get_replaces_selection_and_projection_like_go() {
 /// ordinary planner is needed.
 #[test]
 fn try_fast_plan_accepts_a_primary_key_point_read() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE fast_order (id INT PRIMARY KEY, c CHAR(8) NOT NULL)",
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO fast_order VALUES (1, 'one')",
         &mut catalog,
@@ -2097,13 +2115,14 @@ fn try_fast_plan_accepts_a_primary_key_point_read() {
 /// refuses to build with 1235.
 #[test]
 fn row_checksum_is_a_fast_point_plan_select_field() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE fast_checksum (id INT PRIMARY KEY, c VARCHAR(10))",
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO fast_checksum VALUES (1, 'one')",
         &mut catalog,
@@ -2150,13 +2169,14 @@ fn row_checksum_is_a_fast_point_plan_select_field() {
 
 #[test]
 fn fast_point_get_uses_gos_smaller_index_hint_check() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE fast_hint (id INT PRIMARY KEY, code VARCHAR(8) UNIQUE)",
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO fast_hint VALUES (1, 'one')",
         &mut catalog,
@@ -2238,7 +2258,7 @@ fn fast_point_writes_remove_only_the_consumed_selection_like_go() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()));
     run_insert_on(
         "INSERT INTO fast_write VALUES (1, 'one')",
         &mut catalog,
@@ -2326,6 +2346,7 @@ fn fast_point_writes_remove_only_the_consumed_selection_like_go() {
 /// unique index (`IndexRangeScan index:i(i, j) range:[1 1,1 1]`).
 #[test]
 fn a_handle_point_with_an_extra_conjunct_wins_over_the_unique_index_like_go() {
+    let store = crate::test_store::store();
     use crate::explain::explain_update_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -2335,7 +2356,7 @@ fn a_handle_point_with_an_extra_conjunct_wins_over_the_unique_index_like_go() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO heuristic_pin VALUES (1, 1)",
         &mut catalog,
@@ -2412,6 +2433,7 @@ fn a_handle_point_with_an_extra_conjunct_wins_over_the_unique_index_like_go() {
 /// into TiKV and returns it through a TableReader.
 #[test]
 fn exact_handle_range_uses_the_go_cop_projection_tree() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -2421,7 +2443,7 @@ fn exact_handle_range_uses_the_go_cop_projection_tree() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO fast_range VALUES (1, 'one'), (2, 'two')",
         &mut catalog,
@@ -2469,6 +2491,7 @@ fn exact_handle_range_uses_the_go_cop_projection_tree() {
 /// statistics even when the physical read is a common-handle prefix range.
 #[test]
 fn residual_selection_uses_logical_rows_over_access_rows() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -2511,7 +2534,7 @@ fn residual_selection_uses_logical_rows_over_access_rows() {
         },
         false,
     );
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO customer VALUES \
          (1,1,1,'Alice','OE','Able',10.00), \
@@ -2573,6 +2596,7 @@ fn residual_selection_uses_logical_rows_over_access_rows() {
 /// `oltp_common.lua` simple ordered-range shape.
 #[test]
 fn ordered_handle_range_keeps_the_go_cop_projection_below_sort() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -2582,7 +2606,7 @@ fn ordered_handle_range_keeps_the_go_cop_projection_below_sort() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO ordered_range VALUES (1, 'z'), (2, 'a')",
         &mut catalog,
@@ -2629,6 +2653,7 @@ fn ordered_handle_range_keeps_the_go_cop_projection_below_sort() {
 /// `c1 = 1 AND c2 > 1` reads `Point_Get`, not a `TableRangeScan` over `[1,1]`.
 #[test]
 fn a_single_point_handle_range_with_a_filter_is_a_point_get() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -2638,7 +2663,7 @@ fn a_single_point_handle_range_with_a_filter_is_a_point_get() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO t1 VALUES (1, 5, 50), (2, 20, 200)",
         &mut catalog,
@@ -2684,6 +2709,7 @@ fn a_single_point_handle_range_with_a_filter_is_a_point_get() {
 /// answers the empty set without a storage read (Go plans a `TableDual`).
 #[test]
 fn prepared_point_plan_answers_an_out_of_range_handle_without_reading() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE prepared_overflow (id BIGINT PRIMARY KEY, v BIGINT)",
@@ -2693,7 +2719,7 @@ fn prepared_point_plan_answers_an_out_of_range_handle_without_reading() {
     run_insert_on(
         "INSERT INTO prepared_overflow VALUES (1, 10)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     let stmt = tidb_parser::parse("SELECT v FROM prepared_overflow WHERE id = ?").unwrap();
@@ -2710,7 +2736,7 @@ fn prepared_point_plan_answers_an_out_of_range_handle_without_reading() {
         &execution,
         &mut catalog,
         &decode,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap()
     .expect("the prepared plan stays valid");
@@ -2722,8 +2748,9 @@ fn prepared_point_plan_answers_an_out_of_range_handle_without_reading() {
 /// the plan is a `TableDual` instead of a full scan.
 #[test]
 fn out_of_range_point_literal_plans_a_table_dual() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     crate::run_create_table_on(
         "CREATE TABLE plain_overflow (id BIGINT PRIMARY KEY, v BIGINT)",
         &mut catalog,
@@ -2803,7 +2830,7 @@ fn snapshot_policy_context(
     mode: crate::ReplicaReadType,
     store: &BatchGetCountingStorage,
 ) -> crate::StmtContext {
-    crate::StmtContext::for_query()
+    crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()))
         .with_txn_store(Box::new(store.clone()))
         .with_resource_group_name("statement-read-group")
         .with_replica_read(mode)

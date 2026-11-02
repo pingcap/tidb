@@ -20,8 +20,9 @@ use crate::{run_create_table_on, run_insert_reporting, run_select_on, SessionExt
 /// `maxID := strconv.Itoa(loops * 3)` at :522 with `loops = 1`).
 #[test]
 fn global_temporary_table_auto_increment_allocates_one_two_three() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = StmtContext::for_dml(false, true, false);
+    let ctx = StmtContext::for_dml(false, true, false).with_txn_store(Box::new(store.clone()));
 
     run_create_table_on(
         "create global temporary table temp_test(id int primary key auto_increment) on commit delete rows",

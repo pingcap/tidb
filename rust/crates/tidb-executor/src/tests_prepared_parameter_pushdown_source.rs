@@ -37,7 +37,7 @@ use crate::{
 };
 
 fn ctx() -> StmtContext {
-    StmtContext::for_query()
+    StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()))
 }
 
 fn go_t_catalog() -> SessionExtendedInfoSchema {

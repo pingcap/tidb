@@ -29,7 +29,7 @@ use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use crate::{run_create_table_on, run_insert_on, SessionExtendedInfoSchema, StmtContext};
 
 fn ctx() -> StmtContext {
-    StmtContext::for_query()
+    StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()))
 }
 
 fn create(catalog: &mut SessionExtendedInfoSchema, sql: &str) {

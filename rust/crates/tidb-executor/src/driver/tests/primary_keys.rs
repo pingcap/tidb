@@ -15,6 +15,7 @@ use super::*;
 /// pkg/table/tables `AddRecord`.
 #[test]
 fn integer_primary_key_is_the_row_handle() {
+    let store = crate::test_store::store();
     for ddl in [
         "CREATE TABLE p (id BIGINT PRIMARY KEY, v BIGINT)",
         "CREATE TABLE p (id BIGINT, v BIGINT, PRIMARY KEY (id))",
@@ -24,7 +25,7 @@ fn integer_primary_key_is_the_row_handle() {
         run_insert_on(
             "INSERT INTO p VALUES (10, 100), (20, 200)",
             &mut catalog,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .unwrap();
 
@@ -33,14 +34,14 @@ fn integer_primary_key_is_the_row_handle() {
         run_insert_on(
             "INSERT INTO p VALUES (5, 50)",
             &mut catalog,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .unwrap();
         assert_eq!(
             run_select_on(
                 "SELECT id FROM p",
                 &catalog,
-                &crate::StmtContext::for_query()
+                &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
             )
             .unwrap(),
             vec![
@@ -56,7 +57,7 @@ fn integer_primary_key_is_the_row_handle() {
             (run_insert_on(
                 "INSERT INTO p VALUES (10, 999)",
                 &mut catalog,
-                &crate::StmtContext::for_query()
+                &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
             ))
             .is_err_and(|error| error.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS)),
             "{ddl}"
@@ -66,7 +67,7 @@ fn integer_primary_key_is_the_row_handle() {
             run_select_on(
                 "SELECT v FROM p WHERE id = 10",
                 &catalog,
-                &crate::StmtContext::for_query()
+                &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
             )
             .unwrap(),
             vec![vec![Datum::Int(100)]],
@@ -76,14 +77,14 @@ fn integer_primary_key_is_the_row_handle() {
         run_insert_on(
             "INSERT INTO p VALUES (-1, 1)",
             &mut catalog,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .unwrap();
         assert_eq!(
             run_select_on(
                 "SELECT id FROM p",
                 &catalog,
-                &crate::StmtContext::for_query()
+                &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
             )
             .unwrap()
             .len(),
@@ -97,19 +98,20 @@ fn integer_primary_key_is_the_row_handle() {
 /// values are fine -- the table is a heap, as in Go with _tidb_rowid.
 #[test]
 fn without_a_primary_key_rows_repeat_freely() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE h (a BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO h VALUES (1), (1), (1)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
         run_select_on(
             "SELECT a FROM h",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .len(),
@@ -144,19 +146,20 @@ fn unsupported_constraints_are_rejected() {
 /// What this test asserts holds for both.
 #[test]
 fn a_non_integer_primary_key_is_enforced_by_its_index() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE s (k VARCHAR(10) PRIMARY KEY)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO s VALUES ('a'), ('b')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
         run_select_on(
             "SELECT k FROM s",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .len(),
@@ -166,7 +169,7 @@ fn a_non_integer_primary_key_is_enforced_by_its_index() {
     assert!((run_insert_on(
         "INSERT INTO s VALUES ('a')",
         &mut catalog,
-        &crate::StmtContext::for_query()
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
     ))
     .is_err_and(|error| error.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS)));
 }
@@ -177,6 +180,7 @@ fn a_non_integer_primary_key_is_enforced_by_its_index() {
 /// duplicate (Go's IsCommonHandle path in addRecord).
 #[test]
 fn clustered_common_handle() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE c (k VARCHAR(8) PRIMARY KEY, v BIGINT)",
@@ -186,7 +190,7 @@ fn clustered_common_handle() {
     run_insert_on(
         "INSERT INTO c VALUES ('b', 2), ('a', 1), ('c', 3)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -195,7 +199,7 @@ fn clustered_common_handle() {
         run_select_on(
             "SELECT k, v FROM c",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .into_iter()
@@ -208,7 +212,7 @@ fn clustered_common_handle() {
         run_select_on(
             "SELECT v FROM c WHERE k = 'b'",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(2)]]
@@ -217,7 +221,7 @@ fn clustered_common_handle() {
     assert!((run_insert_on(
         "INSERT INTO c VALUES ('a', 9)",
         &mut catalog,
-        &crate::StmtContext::for_query()
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
     ))
     .is_err_and(|error| error.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS)));
 
@@ -225,14 +229,14 @@ fn clustered_common_handle() {
     run_update_on(
         "UPDATE c SET v = 20 WHERE k = 'b'",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
         run_select_on(
             "SELECT v FROM c WHERE k = 'b'",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(20)]]
@@ -240,14 +244,14 @@ fn clustered_common_handle() {
     run_delete_on(
         "DELETE FROM c WHERE k = 'a'",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
         run_select_on(
             "SELECT k FROM c",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .len(),
@@ -257,7 +261,7 @@ fn clustered_common_handle() {
     run_insert_on(
         "INSERT INTO c VALUES ('a', 1)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -270,14 +274,14 @@ fn clustered_common_handle() {
     run_insert_on(
         "INSERT INTO m VALUES (1, 'y', 10), (1, 'x', 20), (2, 'a', 30)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
         run_select_on(
             "SELECT a, b FROM m",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .into_iter()
@@ -293,13 +297,13 @@ fn clustered_common_handle() {
     assert!((run_insert_on(
         "INSERT INTO m VALUES (1, 'x', 99)",
         &mut catalog,
-        &crate::StmtContext::for_query()
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
     ))
     .is_err_and(|error| error.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS)));
     run_insert_on(
         "INSERT INTO m VALUES (1, 'z', 40)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -313,14 +317,14 @@ fn clustered_common_handle() {
     run_insert_on(
         "INSERT INTO s VALUES ('p', 1), ('q', 2)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
         run_select_on(
             "SELECT k FROM s WHERE tag >= 2",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .into_iter()
@@ -370,6 +374,7 @@ fn explain_plan(sql: &str, catalog: &SessionExtendedInfoSchema, ctx: &crate::Stm
 
 #[test]
 fn pseudo_composite_index_applies_master_selectivity_floor() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE t (id INT PRIMARY KEY, bucket INT, rare INT, \
@@ -377,7 +382,7 @@ fn pseudo_composite_index_applies_master_selectivity_floor() {
         &mut catalog,
     )
     .unwrap();
-    let rows = explain_plan("SELECT * FROM t WHERE bucket = 1 AND rare = 7", &catalog, &crate::StmtContext::for_query());
+    let rows = explain_plan("SELECT * FROM t WHERE bucket = 1 AND rare = 7", &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())));
     let scan = rows
         .iter()
         .find(|row| row.split('\t').next().unwrap().contains("IndexRangeScan"))
@@ -390,6 +395,7 @@ fn pseudo_composite_index_applies_master_selectivity_floor() {
 
 #[test]
 fn analyzed_composite_index_dominates_single_equality_index() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE t (id INT PRIMARY KEY, bucket INT, rare INT, payload VARCHAR(20), \
@@ -397,7 +403,7 @@ fn analyzed_composite_index_dominates_single_equality_index() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     let values = (1..=2000)
         .map(|id| format!("({id}, {}, {id}, 'payload')", id % 4))
         .collect::<Vec<_>>()
@@ -451,10 +457,11 @@ fn analyzed_composite_index_dominates_single_equality_index() {
 
 #[test]
 fn explain_uses_the_lowercase_field_name_identity() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE lc (UPPER_COL BIGINT NOT NULL)", &mut catalog)
         .unwrap();
-    let plan = explain_plan("SELECT SUM(UPPER_COL) FROM lc", &catalog, &crate::StmtContext::for_query());
+    let plan = explain_plan("SELECT SUM(UPPER_COL) FROM lc", &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())));
     assert!(
         plan.iter()
             .any(|line| line.contains("sum(test.lc.upper_col)")),
@@ -468,6 +475,7 @@ fn explain_uses_the_lowercase_field_name_identity() {
 
 #[test]
 fn a_common_handle_table_path_is_a_table_scan() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE ch (id VARCHAR(50) NOT NULL, part BIGINT NOT NULL, created DATE NOT NULL, \
@@ -478,7 +486,7 @@ fn a_common_handle_table_path_is_a_table_scan() {
         &mut catalog,
     )
     .unwrap();
-    let plan = explain_plan("SELECT * FROM ch WHERE part > 199999", &catalog, &crate::StmtContext::for_query());
+    let plan = explain_plan("SELECT * FROM ch WHERE part > 199999", &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())));
     assert!(
         plan.iter()
             .any(|line| line.contains("TableFullScan") && line.contains("table:ch")),
@@ -492,6 +500,7 @@ fn a_common_handle_table_path_is_a_table_scan() {
 
 #[test]
 fn a_covering_nonclustered_primary_key_beats_the_table_scan() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create_with_mode(
         "CREATE TABLE np (id VARCHAR(50) NOT NULL, part BIGINT NOT NULL, created DATE NOT NULL, \
@@ -504,7 +513,7 @@ fn a_covering_nonclustered_primary_key_beats_the_table_scan() {
     )
     .unwrap();
     assert!(has_primary_index(&catalog, "np"));
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO np VALUES ('1', 200000, '2022-12-29'), ('2', 200000, '2023-01-01')",
         &mut catalog,
@@ -561,8 +570,9 @@ fn a_covering_nonclustered_primary_key_beats_the_table_scan() {
 /// ```
 #[test]
 fn a_handle_column_reads_back_in_its_own_type() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
 
     // A `bit` primary key: the handle holds the integer, the column is BIT,
     // and the datum must be a bit value -- appending an integer datum to the
@@ -869,8 +879,9 @@ fn the_keyword_is_refused_on_a_secondary_key() {
 /// row -- both were wrong-range regressions upstream.
 #[test]
 fn issue_50051_unsigned_boundaries_range_correctly() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     crate::run_create_table_on(
         "CREATE TABLE tt (c BIGINT UNSIGNED NOT NULL, d INT NOT NULL, PRIMARY KEY (c, d))",
         &mut catalog,

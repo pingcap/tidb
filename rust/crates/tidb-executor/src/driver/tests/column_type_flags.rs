@@ -50,7 +50,7 @@ fn flag_table() -> SessionExtendedInfoSchema {
     run_insert_on(
         "INSERT INTO y VALUES (1990, 1, 1, 1, 'x')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())),
     )
     .unwrap();
     catalog
@@ -78,8 +78,9 @@ fn flag_table() -> SessionExtendedInfoSchema {
 /// answered `-10`.
 #[test]
 fn year_and_bit_columns_are_unsigned() {
+    let store = crate::test_store::store();
     let catalog = flag_table();
-    let query = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query());
+    let query = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())));
 
     // Go's `ErrDataOutOfRange` message is `%s value is out of range in '%s'`;
     // an unsigned underflow spells the first `%s` `BIGINT UNSIGNED` and the

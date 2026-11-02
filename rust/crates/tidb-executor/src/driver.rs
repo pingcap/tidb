@@ -1039,7 +1039,8 @@ mod field_name_tests {
     /// named `NULL`, whatever case the source text used.
     #[test]
     fn a_null_literal_column_is_named_uppercase_null() {
-        let ctx = crate::StmtContext::for_query();
+        let store = crate::test_store::store();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let (columns, _) = run_select_meta_on("select null", &tidb_infoschema_perfschema::mock_catalog(), &ctx).unwrap();
         assert_eq!(columns[0].0, "NULL");
         // A parenthesized / unary-plus NULL reaches the same rule.
@@ -1130,9 +1131,10 @@ mod field_name_tests {
     /// column.
     #[test]
     fn a_parenthesized_or_unary_plus_column_is_named_like_the_column() {
+        let store = crate::test_store::store();
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on("CREATE TABLE t (a INT)", &mut catalog).unwrap();
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         for sql in [
             "select (a) from t",
             "select + a from t",

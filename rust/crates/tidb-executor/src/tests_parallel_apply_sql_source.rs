@@ -26,7 +26,7 @@ use tidb_datatype::{Datum, StringDatum};
 use tidb_charset::Collation;
 
 fn ctx() -> StmtContext {
-    StmtContext::for_query().with_parallel_apply(true)
+    StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())).with_parallel_apply(true)
 }
 
 /// testkit's `result.Sort()`: rows compared as an ordered multiset. The key

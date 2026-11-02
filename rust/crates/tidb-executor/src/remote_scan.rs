@@ -572,7 +572,7 @@ mod tests {
         }
         commit(&fixture.buffer, &fixture.snapshot);
         let mut catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]);
+        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]).with_txn_store(Box::new(fixture.store.clone()));
         let (rows, ops) = capture_storage_ops(|| {
             run_select_on(
                 "SELECT _tidb_rowid FROM t ORDER BY _tidb_rowid",
@@ -626,7 +626,7 @@ mod tests {
             }
             commit(&fixture.buffer, &fixture.snapshot);
             let mut catalog = catalog_of(fixture.table);
-            let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]);
+            let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]).with_txn_store(Box::new(fixture.store.clone()));
             let (changed, ops) = capture_storage_ops(|| {
                 crate::run_update_on(
                     "UPDATE t SET b=b+100 WHERE a>=1 AND a<=3 AND a<>2",
@@ -778,7 +778,7 @@ mod tests {
         }
         commit(&fixture.buffer, &fixture.snapshot);
         let mut catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]);
+        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]).with_txn_store(Box::new(fixture.store.clone()));
         assert_eq!(
             crate::run_update_on(
                 "UPDATE t SET b=b+100 WHERE a>=1 AND a<=18446744073709551615 AND b<>20",
@@ -846,7 +846,7 @@ mod tests {
     fn virtual_dependency_expansion_preserves_reader_output() {
         for primary in ["PRIMARY KEY", ""] {
             let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-            let ctx = crate::StmtContext::for_query();
+            let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()));
             crate::run_create_table_on(
                 &format!(
                     "CREATE TABLE t (a BIGINT {primary}, b BIGINT AS (a+10), \
@@ -1023,7 +1023,7 @@ mod tests {
             // The UPDATE is staged, not committed: the reads that follow run
             // in its transaction, where Go reads the table through a union
             // scan.
-            let dirty = crate::StmtContext::for_query_in_dirty_transaction(&[91]);
+            let dirty = crate::StmtContext::for_query_in_dirty_transaction(&[91]).with_txn_store(Box::new(fixture.store.clone()));
             assert_eq!(
                 run_select_on("SELECT * FROM t ORDER BY a", &catalog, &dirty).unwrap(),
                 vec![
@@ -1120,6 +1120,7 @@ mod tests {
                     &tidb_exprctx::NoColumns,
                 )
                 .unwrap();
+            let ctx = ctx.clone().with_txn_store(Box::new(fixture.store.clone()));
             let catalog = catalog_of(fixture.table);
             for (condition, expected) in [("b=1", vec![110]), ("b IN (1,4,1,99)", vec![110, 40])] {
                 let sql = format!("SELECT c FROM t WHERE {predicate} AND {condition}");
@@ -1509,7 +1510,7 @@ mod tests {
             commit(&fixture.buffer, &fixture.snapshot);
             let region = Arc::clone(&fixture.region);
             let catalog = catalog_of(fixture.table);
-            let ctx = adaptive_read_ctx();
+            let ctx = adaptive_read_ctx().with_txn_store(Box::new(fixture.store.clone()));
             for (hint, output) in [
                 ("INL_JOIN", "i.b"),
                 ("INL_HASH_JOIN", "i.b"),
@@ -1648,7 +1649,7 @@ mod tests {
         ] {
             region.sent.lock().unwrap().clear();
             assert_eq!(
-                run_select_on(sql, &catalog, &adaptive_read_ctx()).unwrap(),
+                run_select_on(sql, &catalog, &adaptive_read_ctx().with_txn_store(Box::new(fixture.store.clone()))).unwrap(),
                 expected
             );
             let requests = region.read_estimates();
@@ -1783,7 +1784,7 @@ mod tests {
         ] {
             region.sent.lock().unwrap().clear();
             let expected = values.into_iter().map(|value| vec![Datum::Int(value)]).collect::<Vec<_>>();
-            assert_eq!(run_select_on(sql, &catalog, &adaptive_read_ctx()).unwrap(), expected);
+            assert_eq!(run_select_on(sql, &catalog, &adaptive_read_ctx().with_txn_store(Box::new(fixture.store.clone()))).unwrap(), expected);
             let requests = region.read_estimates();
             assert!(requests.iter().any(|(index, bytes)| !index && *bytes >= 1),
                 "partition table tasks must use shared request policy: {sql}; {requests:?}");
@@ -1827,7 +1828,7 @@ mod tests {
         let rows = run_select_on(
             "SELECT b FROM t USE INDEX(ia) WHERE a < 3 ORDER BY a",
             &catalog,
-            &adaptive_read_ctx(),
+            &adaptive_read_ctx().with_txn_store(Box::new(fixture.store.clone())),
         )
         .unwrap();
         assert_eq!(rows, vec![vec![Datum::Int(10)], vec![Datum::Int(20)]]);
@@ -1891,7 +1892,7 @@ mod tests {
             let region = Arc::clone(&fixture.region);
             region.reverse_unordered.store(true, Ordering::SeqCst);
             let catalog = catalog_of(fixture.table);
-            let ctx = adaptive_read_ctx();
+            let ctx = adaptive_read_ctx().with_txn_store(Box::new(fixture.store.clone()));
             let rows = run_select_on("SELECT /*+ USE_INDEX_MERGE(t, ia, ib) */ a,b FROM t WHERE a < 3 OR b < 20 ORDER BY a",
                 &catalog, &ctx).unwrap();
             assert_eq!(
@@ -1987,7 +1988,7 @@ mod tests {
         let catalog = catalog_of(fixture.table);
         // `for_dml(error_for_division_by_zero, strict, ignore_err)` with the INSERT arm's
         // statement class: the read half of `INSERT INTO u SELECT a FROM t`.
-        let ctx = crate::StmtContext::for_dml(true, true, false)
+        let ctx = crate::StmtContext::for_dml(true, true, false).with_txn_store(Box::new(fixture.store.clone()))
             // TiDB's default `sql_mode` bits that `GetTypeFlagsForInsert`
             // reads; without them `IgnoreZeroInDate` is true and the flags
             // would be 136 rather than 8.
@@ -2009,7 +2010,7 @@ mod tests {
         );
         assert_ne!(
             flags[0],
-            crate::StmtContext::for_query().push_down_flags(),
+            crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone())).push_down_flags(),
             "hardcoding one statement's flags would make these equal"
         );
     }
@@ -2234,7 +2235,7 @@ mod tests {
         assert!(!fixture.buffer.is_empty(), "the writes are staged");
 
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]);
+        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]).with_txn_store(Box::new(fixture.store.clone()));
         assert_eq!(
             run_select_on("SELECT a, b FROM t WHERE a > 5 ORDER BY a", &catalog, &ctx).unwrap(),
             vec![
@@ -2292,7 +2293,7 @@ mod tests {
             .unwrap();
 
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]);
+        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]).with_txn_store(Box::new(fixture.store.clone()));
         assert_eq!(
             run_select_on("SELECT a FROM t LIMIT 3", &catalog, &ctx).unwrap(),
             vec![

@@ -23,7 +23,7 @@ use crate::{
 use tidb_datatype::Datum;
 
 fn ctx() -> StmtContext {
-    StmtContext::for_query()
+    StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()))
 }
 
 fn create(catalog: &mut SessionExtendedInfoSchema, sql: &str) {

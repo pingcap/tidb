@@ -118,6 +118,7 @@ fn a_key_part_longer_than_the_limit_is_1071() {
 /// serve it precisely because the stored index is not a prefix index.
 #[test]
 fn a_full_length_char_prefix_is_an_ordinary_index() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE t (a VARCHAR(10), KEY idx (a(10)))",
@@ -127,7 +128,7 @@ fn a_full_length_char_prefix_is_an_ordinary_index() {
     run_insert_on(
         "INSERT INTO t VALUES ('abcdefghij'), ('x')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     // The index covers the whole column, so an equality still answers
@@ -135,7 +136,7 @@ fn a_full_length_char_prefix_is_an_ordinary_index() {
     let rows = run_select_on(
         "SELECT a FROM t WHERE a = 'abcdefghij'",
         &catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(

@@ -56,7 +56,7 @@ impl tidb_privilege::cluster_privilege_load::PrivilegeTables for SessionPrivileg
             columns,
         );
         let ids: Vec<i64> = stored.columns().iter().map(|column| column.read().id).collect();
-        let mut store = tidb_executor::statement_store(self.ctx, stored);
+        let mut store = tidb_executor::statement_store(self.ctx);
         let rows = stored
             .scan_rows_with_context(&mut *store, &self.decode)
             .map_err(

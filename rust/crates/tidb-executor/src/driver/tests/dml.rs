@@ -17,10 +17,11 @@ use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
 
 #[test]
 fn insert_set_operation_source_uses_the_common_query_plan() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE insert_union_src (v BIGINT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE insert_union_dst (v BIGINT)", &mut catalog).unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO insert_union_src VALUES (2), (1)",
         &mut catalog,
@@ -271,13 +272,14 @@ fn retryable_storage_errors_keep_their_transaction_identity() {
 /// branch in `all_clustered_insert_keys_absent`.
 #[test]
 fn clustered_batch_insert_keeps_primary_duplicate_errors() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE batch_insert (id BIGINT PRIMARY KEY, value INT)",
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO batch_insert VALUES (1, 10), (2, 20), (3, 30)",
         &mut catalog,
@@ -311,6 +313,7 @@ fn clustered_batch_insert_keeps_primary_duplicate_errors() {
 /// root fast plan.
 #[test]
 fn a_consumed_handle_range_update_keeps_its_table_reader() {
+    let store = crate::test_store::store();
     use crate::explain::explain_update_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -320,7 +323,7 @@ fn a_consumed_handle_range_update_keeps_its_table_reader() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     let stmt =
         tidb_parser::parse("UPDATE target SET value = 1 WHERE id BETWEEN 10 AND 20").unwrap();
     let Stmt::Dml(dml) = &stmt else {
@@ -354,6 +357,7 @@ fn a_consumed_handle_range_update_keeps_its_table_reader() {
 /// the write still removes exactly the rows the `WHERE` admits.
 #[test]
 fn a_delete_on_a_secondary_index_reads_through_it() {
+    let store = crate::test_store::store();
     use crate::explain::explain_delete_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -363,7 +367,7 @@ fn a_delete_on_a_secondary_index_reads_through_it() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO t1 VALUES (1, 10, 100), (2, 20, 200), (3, 10, 300)",
         &mut catalog,
@@ -426,12 +430,13 @@ fn a_delete_on_a_secondary_index_reads_through_it() {
 /// declared columns instead. Do not "fix" this back to a constant.
 #[test]
 fn dml_positional_order_by_resolves_to_column() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO t VALUES (1, 30), (2, 20), (3, 10)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -439,7 +444,7 @@ fn dml_positional_order_by_resolves_to_column() {
         run_update_on(
             "UPDATE t SET a = a + 100 ORDER BY 2 LIMIT 1",
             &mut catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         1
@@ -448,7 +453,7 @@ fn dml_positional_order_by_resolves_to_column() {
         run_select_on(
             "SELECT a, b FROM t ORDER BY b",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![
@@ -462,14 +467,14 @@ fn dml_positional_order_by_resolves_to_column() {
     run_insert_on(
         "INSERT INTO t2 VALUES (1, 30), (2, 20), (3, 10)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
         run_delete_on(
             "DELETE FROM t2 ORDER BY 2 LIMIT 1",
             &mut catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         1
@@ -478,7 +483,7 @@ fn dml_positional_order_by_resolves_to_column() {
         run_select_on(
             "SELECT a, b FROM t2 ORDER BY b",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![
@@ -497,9 +502,10 @@ fn dml_positional_order_by_resolves_to_column() {
 /// instead of silently touching nothing.
 #[test]
 fn limit_zero_dml_still_validates_the_statement() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE lz (a BIGINT, b BIGINT)", &mut catalog).unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on("INSERT INTO lz VALUES (1, 10), (2, 20)", &mut catalog, &ctx).unwrap();
 
     assert_eq!(
@@ -551,12 +557,13 @@ fn limit_zero_dml_still_validates_the_statement() {
 
 #[test]
 fn update_and_delete_rows() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE w (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO w VALUES (1, 10), (2, 20), (3, 30)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -565,7 +572,7 @@ fn update_and_delete_rows() {
         run_update_on(
             "UPDATE w SET b = b + 1 WHERE a >= 2",
             &mut catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         2
@@ -574,7 +581,7 @@ fn update_and_delete_rows() {
         run_select_on(
             "SELECT a, b FROM w",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![
@@ -589,7 +596,7 @@ fn update_and_delete_rows() {
         run_update_on(
             "UPDATE w SET b = b WHERE a = 1",
             &mut catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         0
@@ -601,7 +608,7 @@ fn update_and_delete_rows() {
         run_update_on(
             "UPDATE w SET a = 7, b = a WHERE a = 1",
             &mut catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         1
@@ -610,7 +617,7 @@ fn update_and_delete_rows() {
         run_select_on(
             "SELECT a, b FROM w WHERE a = 7",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(7), Datum::Int(1)]]
@@ -621,7 +628,7 @@ fn update_and_delete_rows() {
         run_update_on(
             "UPDATE w SET b = 0",
             &mut catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         3
@@ -632,7 +639,7 @@ fn update_and_delete_rows() {
         run_delete_on(
             "DELETE FROM w WHERE a >= 3",
             &mut catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         2
@@ -641,7 +648,7 @@ fn update_and_delete_rows() {
         run_select_on(
             "SELECT a FROM w",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(2)]]
@@ -653,7 +660,7 @@ fn update_and_delete_rows() {
         run_delete_on(
             "DELETE FROM w",
             &mut catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         1
@@ -662,7 +669,7 @@ fn update_and_delete_rows() {
         run_select_on(
             "SELECT a FROM w",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         Vec::<Vec<Datum>>::new()
@@ -670,14 +677,14 @@ fn update_and_delete_rows() {
     run_insert_on(
         "INSERT INTO w VALUES (9, 9)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
         run_select_on(
             "SELECT a FROM w",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(9)]]
@@ -690,14 +697,14 @@ fn update_and_delete_rows() {
     assert!(run_update_on(
         "UPDATE w SET zzz = 1",
         &mut catalog,
-        &crate::StmtContext::for_query()
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
     )
     .is_err());
     assert_eq!(
         run_update_on(
             "UPDATE IGNORE w SET a = 1",
             &mut catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         1
@@ -706,7 +713,7 @@ fn update_and_delete_rows() {
         run_select_on(
             "SELECT a, b FROM w",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(1), Datum::Int(9)]]
@@ -715,13 +722,14 @@ fn update_and_delete_rows() {
 
 #[test]
 fn write_diagnostics_batch_single_update_reports_source_row() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE wr (id INT PRIMARY KEY, v TINYINT)",
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_dml(false, true, false);
+    let ctx = crate::StmtContext::for_dml(false, true, false).with_txn_store(Box::new(store.clone()));
     run_insert_on("INSERT INTO wr VALUES (1, 1), (2, 2)", &mut catalog, &ctx).unwrap();
     let error = run_update_on("UPDATE wr SET v = id * 100 ORDER BY id", &mut catalog, &ctx)
         .unwrap_err()
@@ -732,6 +740,7 @@ fn write_diagnostics_batch_single_update_reports_source_row() {
 
 #[test]
 fn write_diagnostics_batch_join_update_reports_source_row() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE wr (id INT PRIMARY KEY, v TINYINT)",
@@ -739,7 +748,7 @@ fn write_diagnostics_batch_join_update_reports_source_row() {
     )
     .unwrap();
     crate::run_create_table_on("CREATE TABLE ws (id INT PRIMARY KEY)", &mut catalog).unwrap();
-    let ctx = crate::StmtContext::for_dml(false, true, false);
+    let ctx = crate::StmtContext::for_dml(false, true, false).with_txn_store(Box::new(store.clone()));
     run_insert_on("INSERT INTO wr VALUES (1, 1), (2, 2)", &mut catalog, &ctx).unwrap();
     run_insert_on("INSERT INTO ws VALUES (1), (2)", &mut catalog, &ctx).unwrap();
     let error = run_update_on(

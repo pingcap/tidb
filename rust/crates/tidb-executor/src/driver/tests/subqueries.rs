@@ -43,6 +43,7 @@ use super::*;
 /// chose an IndexJoin driving 800k lookups.
 #[test]
 fn an_uncorrelated_join_subquery_with_a_filter_keeps_its_table_statistics() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     for table in [
         "CREATE TABLE supplier (s_suppkey BIGINT PRIMARY KEY CLUSTERED, \
@@ -52,7 +53,7 @@ fn an_uncorrelated_join_subquery_with_a_filter_keeps_its_table_statistics() {
     ] {
         crate::run_create_table_on(table, &mut catalog).unwrap();
     }
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     for insert in [
         "INSERT INTO supplier VALUES (1, 3, 100.00)",
         "INSERT INTO partsupp VALUES (1, 1, 10.00)",
@@ -144,6 +145,7 @@ fn an_uncorrelated_join_subquery_with_a_filter_keeps_its_table_statistics() {
 /// preserved DataSource together with its ordinary local predicates.
 #[test]
 fn evaluated_scalar_predicate_is_pushed_below_a_sibling_anti_semi_join() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE customer (c_custkey BIGINT PRIMARY KEY CLUSTERED, \
@@ -152,7 +154,7 @@ fn evaluated_scalar_predicate_is_pushed_below_a_sibling_anti_semi_join() {
     )
     .unwrap();
     crate::run_create_table_on("CREATE TABLE orders (o_custkey BIGINT)", &mut catalog).unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO customer VALUES (1, '20-1', 100.00), (2, '40-2', 10.00)",
         &mut catalog,
@@ -309,9 +311,10 @@ fn evaluated_scalar_predicate_is_pushed_below_a_sibling_anti_semi_join() {
 /// predicate. The non-evaluating behavior is an opt-in session variable.
 #[test]
 fn plain_explain_evaluates_and_labels_an_uncorrelated_scalar_subquery() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE balances (v DECIMAL(10,2))", &mut catalog).unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO balances VALUES (1.00), (3.00)",
         &mut catalog,
@@ -522,7 +525,7 @@ fn explaining_a_correlated_scalar_type_reads_no_storage() {
     .unwrap();
     crate::run_create_table_on("CREATE TABLE inner_u (k BIGINT PRIMARY KEY)", &mut catalog)
         .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()));
     run_insert_on("INSERT INTO outer_t VALUES (1)", &mut catalog, &ctx).unwrap();
     run_insert_on("INSERT INTO inner_t VALUES (1, 2.50)", &mut catalog, &ctx).unwrap();
     scale_analyzed_tpcc_table(&mut catalog, "outer_t", 10_000, &[("k", 10_000)], &ctx);
@@ -781,6 +784,7 @@ fn explaining_a_correlated_scalar_type_reads_no_storage() {
 /// aggregate column instead of remaining an opaque per-row subquery.
 #[test]
 fn correlated_avg_predicate_decorrelates_to_grouped_join() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -816,7 +820,7 @@ fn correlated_avg_predicate_decorrelates_to_grouped_join() {
         select,
         &catalog,
         "test",
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         ExplainFormat::Brief,
     )
     .unwrap();
@@ -850,6 +854,7 @@ fn correlated_avg_predicate_decorrelates_to_grouped_join() {
 
 #[test]
 fn correlated_sum_predicate_pulls_above_unique_outer_join() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -882,7 +887,7 @@ fn correlated_sum_predicate_pulls_above_unique_outer_join() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     let part_values = (1..=128)
         .map(|key| {
             let name = if key == 1 {
@@ -1212,19 +1217,20 @@ fn correlated_sum_predicate_pulls_above_unique_outer_join() {
 /// NestedLoopApplyExec loop.
 #[test]
 fn correlated_subqueries() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE o (id BIGINT, v BIGINT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE i (id BIGINT, w BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO o VALUES (1, 10), (2, 20), (3, 30)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     run_insert_on(
         "INSERT INTO i VALUES (1, 10), (2, 5), (2, 25), (4, 40)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -1233,7 +1239,7 @@ fn correlated_subqueries() {
         run_select_on(
             "SELECT id FROM o WHERE v = (SELECT MAX(w) FROM i WHERE i.id = o.id)",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(1)]]
@@ -1244,7 +1250,7 @@ fn correlated_subqueries() {
         run_select_on(
             "SELECT id FROM o WHERE v < (SELECT MAX(w) FROM i WHERE i.id = o.id)",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(2)]]
@@ -1256,7 +1262,7 @@ fn correlated_subqueries() {
         run_select_on(
             "SELECT id FROM o WHERE (SELECT MAX(w) FROM i WHERE i.id = o.id) IS NULL",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(3)]]
@@ -1267,7 +1273,7 @@ fn correlated_subqueries() {
         run_select_on(
             "SELECT id FROM o WHERE EXISTS (SELECT 1 FROM i WHERE i.id = o.id)",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
@@ -1276,7 +1282,7 @@ fn correlated_subqueries() {
         run_select_on(
             "SELECT id FROM o WHERE NOT EXISTS (SELECT 1 FROM i WHERE i.id = o.id)",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(3)]]
@@ -1287,7 +1293,7 @@ fn correlated_subqueries() {
              AND NOT EXISTS (SELECT 1 FROM i WHERE i.id = o.id AND i.w > 20) \
              ORDER BY id",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(1)]]
@@ -1298,7 +1304,7 @@ fn correlated_subqueries() {
         run_select_on(
             "SELECT id FROM o WHERE EXISTS (SELECT 1 FROM i WHERE i.w = v)",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(1)]]
@@ -1310,7 +1316,7 @@ fn correlated_subqueries() {
     assert!((run_select_on(
         "SELECT id FROM o WHERE v = (SELECT w FROM i WHERE i.id = o.id)",
         &catalog,
-        &crate::StmtContext::for_query()
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
     ))
     .is_err_and(|error| error.equal(&tidb_exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW)));
 
@@ -1321,7 +1327,7 @@ fn correlated_subqueries() {
         run_select_on(
             "SELECT id FROM o WHERE v IN (SELECT w FROM i WHERE i.id = o.id)",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(1)]]
@@ -1330,7 +1336,7 @@ fn correlated_subqueries() {
         run_select_on(
             "SELECT id FROM o WHERE v NOT IN (SELECT w FROM i WHERE i.id = o.id)",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(2)], vec![Datum::Int(3)]]
@@ -1339,7 +1345,7 @@ fn correlated_subqueries() {
         run_select_on(
             "SELECT id FROM o WHERE v > ANY (SELECT w FROM i WHERE i.id = o.id)",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(2)]]
@@ -1348,7 +1354,7 @@ fn correlated_subqueries() {
         run_select_on(
             "SELECT id FROM o WHERE v > ALL (SELECT w FROM i WHERE i.id = o.id)",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(3)]]
@@ -1365,19 +1371,20 @@ fn correlated_subqueries() {
 /// [`grouped_correlated_subqueries`] doubled.
 #[test]
 fn correlated_exists_apply_answers_once_per_outer_row() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE t (g BIGINT, v BIGINT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE s (k BIGINT, x BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO t VALUES (1, 10), (1, 20), (2, 5), (3, 100), (NULL, 7)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     run_insert_on(
         "INSERT INTO s VALUES (1, 1), (1, 2), (2, 3)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     // `g = 1` matches TWO `s` rows and `g = 2` matches one, yet the row count
@@ -1387,7 +1394,7 @@ fn correlated_exists_apply_answers_once_per_outer_row() {
         run_select_on(
             "SELECT g, EXISTS(SELECT 1 FROM s WHERE s.k = t.g) FROM t ORDER BY g",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![
@@ -1426,19 +1433,20 @@ fn correlated_exists_apply_answers_once_per_outer_row() {
 /// ```
 #[test]
 fn a_having_subquery_may_only_correlate_to_the_aggregations_output() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE ht (a INT, b INT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE hs (x INT, y INT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO ht VALUES (1, 1), (2, 2)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     run_insert_on(
         "INSERT INTO hs VALUES (1, 5)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -1450,7 +1458,7 @@ fn a_having_subquery_may_only_correlate_to_the_aggregations_output() {
         "SELECT a FROM ht GROUP BY a HAVING a IN (SELECT x FROM hs WHERE hs.y = ht.b)",
         "SELECT max(b) FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) > 0",
     ] {
-        let error = run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap_err();
+        let error = run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))).unwrap_err();
         assert!(
             error.equal(&tidb_plannererrors::ERR_UNKNOWN_COLUMN),
             "expected 1054 for `{sql}`, got {error:?}"
@@ -1468,19 +1476,19 @@ fn a_having_subquery_may_only_correlate_to_the_aggregations_output() {
     assert!(run_select_on(
         "SELECT a FROM ht GROUP BY a HAVING (SELECT y FROM hs WHERE hs.x = ht.a) > 0",
         &catalog,
-        &crate::StmtContext::for_query()
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
     )
     .is_ok());
     assert!(run_select_on(
         "SELECT a FROM ht GROUP BY a HAVING (SELECT count(*) FROM hs) > 0",
         &catalog,
-        &crate::StmtContext::for_query()
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
     )
     .is_ok());
     assert!(run_select_on(
         "SELECT a, b FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) > 0",
         &catalog,
-        &crate::StmtContext::for_query()
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
     )
     .is_ok());
 }
@@ -1498,8 +1506,9 @@ fn a_having_subquery_may_only_correlate_to_the_aggregations_output() {
 /// for the group keys and the aggregate arguments alike.
 #[test]
 fn an_aggregate_over_a_correlated_exists_decorrelates() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     crate::run_create_table_on("CREATE TABLE w (g VARCHAR(5), v INT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO w VALUES ('a',1),('a',2),('b',3),('b',4),('c',NULL)",

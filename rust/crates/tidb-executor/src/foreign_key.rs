@@ -152,7 +152,7 @@ fn lookup_handles(
             "foreign key table changed after planning",
         ));
     };
-    let mut store = crate::statement_store(ctx, kv);
+    let mut store = crate::statement_store(ctx);
     std::sync::Arc::make_mut(kv)
         .foreign_key_handles(&mut *store, index, key, &ctx.session_zone(), limit)
         .map_err(|error| crate::driver::kv_read_error("foreign key lookup failed", error))
@@ -478,7 +478,7 @@ fn cascade_at_depth(
                         "foreign key table changed during cascade",
                     ));
                 };
-                let mut store = crate::statement_store(ctx, kv);
+                let mut store = crate::statement_store(ctx);
                 let row = std::sync::Arc::make_mut(kv)
                     .get_row_by_handle_with_context(
                         &mut *store,

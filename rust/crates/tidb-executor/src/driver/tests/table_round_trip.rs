@@ -10,13 +10,14 @@ use super::*;
 
 #[test]
 fn select_from_table() {
+    let store = crate::test_store::store();
     let catalog = test_catalog();
     // Column projection.
     assert_eq!(
         run_select_on(
             "SELECT a FROM t",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![
@@ -30,7 +31,7 @@ fn select_from_table() {
         run_select_on(
             "SELECT * FROM t WHERE t.a > 1",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![
@@ -42,7 +43,7 @@ fn select_from_table() {
         run_select_on(
             "SELECT a + b FROM t WHERE a = 2",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(22)]]
@@ -58,9 +59,10 @@ fn select_from_table() {
 /// `field_name(0) == "COUNT(1)"`; after, it is the written text.
 #[test]
 fn count_star_field_keeps_its_written_label() {
+    let store = crate::test_store::store();
     let catalog = test_catalog();
     let field_name = |sql: &str| {
-        run_select_meta_on(sql, &catalog, &crate::StmtContext::for_query())
+        run_select_meta_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
             .unwrap()
             .0
             .into_iter()
@@ -87,7 +89,7 @@ fn count_star_field_keeps_its_written_label() {
     // also surfaces in `ErrWrongGroupField`'s message, which Go quotes
     // with the field's written text too.
     let group_by_err = |sql: &str| {
-        run_select_meta_on(sql, &catalog, &crate::StmtContext::for_query())
+        run_select_meta_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
             .unwrap_err()
             .to_mysql_error()
             .message
@@ -104,12 +106,13 @@ fn count_star_field_keeps_its_written_label() {
 
 #[test]
 fn insert_then_select_round_trip() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO t VALUES (1, 30), (2, 20), (3, 10)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     // Full-row insert.
@@ -117,7 +120,7 @@ fn insert_then_select_round_trip() {
         run_insert_on(
             "INSERT INTO t VALUES (4, 40), (5, 50)",
             &mut catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         2
@@ -127,7 +130,7 @@ fn insert_then_select_round_trip() {
         run_insert_on(
             "INSERT INTO t (a) VALUES (6)",
             &mut catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         1
@@ -136,7 +139,7 @@ fn insert_then_select_round_trip() {
         run_select_on(
             "SELECT a, b FROM t WHERE a > 3 ORDER BY a",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![
@@ -149,13 +152,13 @@ fn insert_then_select_round_trip() {
     assert!(run_insert_on(
         "INSERT INTO t (a) VALUES (1, 2)",
         &mut catalog,
-        &crate::StmtContext::for_query()
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
     )
     .is_err());
     assert!(run_insert_on(
         "INSERT INTO missing VALUES (1)",
         &mut catalog,
-        &crate::StmtContext::for_query()
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
     )
     .is_err());
 }
@@ -165,6 +168,7 @@ fn insert_then_select_round_trip() {
 /// values), not a value matrix.
 #[test]
 fn sql_round_trips_through_real_tikv_bytes() {
+    let store = crate::test_store::store();
     use tidb_table::tables::TableCommon;
     use tidb_datatype::FieldTypeCode;
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -207,7 +211,7 @@ fn sql_round_trips_through_real_tikv_bytes() {
         run_insert_on(
             "INSERT INTO kt VALUES (1, 10), (2, 20), (3, 30)",
             &mut catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         3
@@ -216,7 +220,7 @@ fn sql_round_trips_through_real_tikv_bytes() {
         run_select_on(
             "SELECT a, b FROM kt WHERE a > 1 ORDER BY b DESC",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![
@@ -228,7 +232,7 @@ fn sql_round_trips_through_real_tikv_bytes() {
         run_select_on(
             "SELECT a + b FROM kt WHERE a = 1",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(11)]]

@@ -22,6 +22,7 @@
 
     #[test]
     fn schema_versions_distinguish_rebuilt_and_divergent_catalogs() {
+        let store = crate::test_store::store();
         let mut original = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on("CREATE TABLE epoch(a INT)", &mut original).unwrap();
         let snapshot = original.clone();
@@ -35,7 +36,7 @@
         crate::run_insert_on(
             "INSERT INTO epoch VALUES (1)",
             &mut original,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .unwrap();
         assert_eq!(before_write, original.metadata_version());
@@ -246,18 +247,19 @@
     /// detach of the table entry has nothing to invalidate.
     #[test]
     fn independent_statement_contexts_do_not_share_staged_writes() {
+        let store = crate::test_store::store();
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on("CREATE TABLE cd(a INT PRIMARY KEY, b INT)", &mut catalog)
             .unwrap();
         let mut active_transaction = catalog.clone();
-        let transaction_ctx = crate::StmtContext::for_query();
+        let transaction_ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         crate::run_insert_on(
             "INSERT INTO cd VALUES (1, 10)",
             &mut active_transaction,
             &transaction_ctx,
         )
         .unwrap();
-        let autocommit_ctx = crate::StmtContext::for_query();
+        let autocommit_ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         crate::run_insert_on(
             "INSERT INTO cd VALUES (2, 20)",
             &mut catalog,

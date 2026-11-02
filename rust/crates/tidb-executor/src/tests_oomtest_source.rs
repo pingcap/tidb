@@ -39,13 +39,13 @@ use crate::{
 };
 
 fn permitting() -> StmtContext {
-    StmtContext::for_query()
+    StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()))
 }
 
 /// A context whose quota cancels any statement that accounts a single row
 /// (Go: `tk.Session().GetSessionVars().MemQuotaQuery = 1`).
 fn cancelling() -> StmtContext {
-    StmtContext::for_query().with_mem_quota(1, OomAction::Cancel)
+    StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())).with_mem_quota(1, OomAction::Cancel)
 }
 
 fn is_memory_exceeded(error: &crate::DriverError) -> bool {
@@ -301,6 +301,7 @@ fn delete_exec_charges_the_session_query_quota() {
 /// join that returns Go's checked row `1 1 1 1 1`.
 #[test]
 fn after_the_query_the_surviving_oom_action_is_the_log_level_one() {
+    let store = crate::test_store::store();
     let session = SessionMemory::new(-1, OomAction::Log, 7);
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     for name in ["t0", "t1", "t2", "t3", "t4"] {
@@ -314,7 +315,7 @@ fn after_the_query_the_surviving_oom_action_is_the_log_level_one() {
     }
 
     let statement = session.statement();
-    let ctx = StmtContext::for_query_with_memory(statement.clone());
+    let ctx = StmtContext::for_query_with_memory(statement.clone()).with_txn_store(Box::new(store.clone()));
     let got = run_select_on(
         "select * from t0 join t1 join t2 join t3 join t4 order by t0.a",
         &catalog,

@@ -24,11 +24,11 @@ use crate::{
 use tidb_datatype::Datum;
 
 fn query_ctx() -> StmtContext {
-    StmtContext::for_query()
+    StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()))
 }
 
 fn dml_ctx() -> StmtContext {
-    StmtContext::for_dml(false, true, false)
+    StmtContext::for_dml(false, true, false).with_txn_store(Box::new(crate::test_store::store()))
 }
 
 fn int_value(datum: &Datum) -> i64 {

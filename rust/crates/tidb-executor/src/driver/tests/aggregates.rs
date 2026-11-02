@@ -10,13 +10,14 @@ use super::*;
 
 #[test]
 fn aggregation_hints_are_lowered_from_the_shared_physical_plan() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE hinted_agg (g BIGINT, v BIGINT)", &mut catalog)
         .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO hinted_agg VALUES (2,20),(1,10),(2,21),(3,30)",
         &mut catalog,
@@ -134,13 +135,14 @@ fn aggregation_hints_are_lowered_from_the_shared_physical_plan() {
 
 #[test]
 fn a_computed_projection_column_explains_as_column_not_its_alias() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE alias_agg (g BIGINT, v BIGINT)", &mut catalog)
         .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on("INSERT INTO alias_agg VALUES (1,10)", &mut catalog, &ctx).unwrap();
 
     // Go `buildProjectionField`: a computed field's fresh `Column` has NO
@@ -180,12 +182,13 @@ fn a_computed_projection_column_explains_as_column_not_its_alias() {
 
 #[test]
 fn distinct_aggregation_family_is_lowered_from_the_shared_physical_plan() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE hinted_distinct (g BIGINT)", &mut catalog).unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO hinted_distinct VALUES (2),(1),(2),(3)",
         &mut catalog,
@@ -233,6 +236,7 @@ fn distinct_aggregation_family_is_lowered_from_the_shared_physical_plan() {
 /// instead of scanning the unrelated `k` index.
 #[test]
 fn a_shared_aggregate_access_receipt_keeps_the_table_range() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -242,7 +246,7 @@ fn a_shared_aggregate_access_receipt_keeps_the_table_range() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     let stmt =
         tidb_parser::parse("SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN 100 AND 199").unwrap();
     let Stmt::Query(query) = &stmt else {
@@ -288,12 +292,13 @@ fn a_shared_aggregate_access_receipt_keeps_the_table_range() {
 /// `lt(l_shipdate, 1997-01-01 00:00:00.000000)` for exactly this reason.
 #[test]
 fn a_constant_date_add_in_a_predicate_folds_before_push_down() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE t (d DATE NOT NULL)", &mut catalog).unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     // The AND is load-bearing: it is a lazy short-circuit parent, which is
     // what the deferred top-level fold refuses to descend through.
     let sql = "SELECT * FROM t WHERE d >= '1996-01-01' \
@@ -332,6 +337,7 @@ fn a_constant_date_add_in_a_predicate_folds_before_push_down() {
 /// materialized Projection.
 #[test]
 fn aggregate_push_down_substitutes_child_projection_before_injection() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -361,7 +367,7 @@ fn aggregate_push_down_substitutes_child_projection_before_injection() {
     let QueryStmt::Select(select) = &**query else {
         panic!("not a SELECT");
     };
-    let ctx = crate::StmtContext::for_query().with_only_full_group_by(true);
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_only_full_group_by(true);
     let (_, rows) =
         explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
     let operator = |row: usize| match &rows[row][0] {
@@ -500,6 +506,7 @@ fn aggregate_push_down_substitutes_child_projection_before_injection() {
 /// between HashAgg and Sort.
 #[test]
 fn grouped_order_by_projects_visible_fields_below_sort() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -533,7 +540,7 @@ fn grouped_order_by_projects_visible_fields_below_sort() {
     let QueryStmt::Select(select) = &**query else {
         panic!("not a SELECT");
     };
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     let (_, rows) =
         explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
     let operators = rows
@@ -592,6 +599,7 @@ fn grouped_order_by_projects_visible_fields_below_sort() {
 /// the dimension name NDV before the fact table raises the row count again.
 #[test]
 fn grouped_rows_follow_the_reordered_join_tree() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -611,7 +619,7 @@ fn grouped_rows_follow_the_reordered_join_tree() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO fact VALUES (1,1,10),(2,2,20)",
         &mut catalog,
@@ -722,6 +730,7 @@ fn grouped_rows_follow_the_reordered_join_tree() {
 /// restores the written `[group, count]` order.
 #[test]
 fn grouped_partial_count_carries_the_group_key() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -733,7 +742,7 @@ fn grouped_partial_count_carries_the_group_key() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO order_line VALUES (1,1,1,1),(1,1,1,2),(2,2,1,1),(1,1,2,1)",
         &mut catalog,
@@ -786,6 +795,7 @@ fn grouped_partial_count_carries_the_group_key() {
 /// a meaningless input order (TPCC condition 06).
 #[test]
 fn derived_table_order_by_is_removed_unless_top_level_limit_or_disabled() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -800,7 +810,7 @@ fn derived_table_order_by_is_removed_unless_top_level_limit_or_disabled() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
 
     let operators = |ctx: &crate::StmtContext, sql: &str| -> Vec<String> {
         let stmt = tidb_parser::parse(sql).unwrap();
@@ -871,6 +881,7 @@ fn derived_table_order_by_is_removed_unless_top_level_limit_or_disabled() {
 /// answered an arbitrary row as the extreme.
 #[test]
 fn max_min_over_a_clustered_column_the_index_does_not_rank_answers_the_true_extreme() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE ox (a VARCHAR(3) NOT NULL, b VARCHAR(8) NOT NULL, c INT NOT NULL, \
@@ -878,7 +889,7 @@ fn max_min_over_a_clustered_column_the_index_does_not_rank_answers_the_true_extr
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO ox VALUES ('a01','20220101',3,'x'),\
          ('a02','20220102',42,'y'),\
@@ -899,13 +910,14 @@ fn max_min_over_a_clustered_column_the_index_does_not_rank_answers_the_true_extr
 
 #[test]
 fn max_over_a_derived_sum_materializes_coprocessor_topn_keys() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE topn_cast (id BIGINT PRIMARY KEY, v BIGINT)",
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO topn_cast VALUES (1,7),(2,42),(3,9),(4,NULL)",
         &mut catalog,
@@ -925,6 +937,7 @@ fn max_over_a_derived_sum_materializes_coprocessor_topn_keys() {
 
 #[test]
 fn derived_aggregate_null_filter_refreshes_source_statistics() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -935,7 +948,7 @@ fn derived_aggregate_null_filter_refreshes_source_statistics() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO district VALUES (1,1,10),(2,1,NULL),(1,2,20)",
         &mut catalog,
@@ -976,6 +989,7 @@ fn derived_aggregate_null_filter_refreshes_source_statistics() {
 /// the same mistake).
 #[test]
 fn a_narrow_covering_index_range_prices_the_common_handle_once() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -985,7 +999,7 @@ fn a_narrow_covering_index_range_prices_the_common_handle_once() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     let sql = "SELECT o_w_id, o_d_id, count(*) FROM orders WHERE o_w_id = 1                GROUP BY o_w_id, o_d_id";
     let stmt = tidb_parser::parse(sql).unwrap();
     let Stmt::Query(query) = &stmt else {
@@ -1025,6 +1039,7 @@ fn a_narrow_covering_index_range_prices_the_common_handle_once() {
 /// pseudo-statistics fixture selects this pair (2026-09-07).
 #[test]
 fn global_sum_expression_uses_partial_and_final_stream_agg() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -1035,7 +1050,7 @@ fn global_sum_expression_uses_partial_and_final_stream_agg() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO revenue VALUES \
             (1,100.00,0.05,1),(2,200.00,0.10,2),(3,300.00,0.20,4)",
@@ -1085,6 +1100,7 @@ fn global_sum_expression_uses_partial_and_final_stream_agg() {
 /// StreamAgg, including the decimal input projection required by SUM.
 #[test]
 fn joined_integer_sum_uses_root_stream_agg() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -1103,7 +1119,7 @@ fn joined_integer_sum_uses_root_stream_agg() {
     // CPU cost loses; with the default five final workers it picks HashAgg.
     // The tpcds matrix this test was authored from ran every concurrency
     // variable at 1, so pin the same serial session.
-    let ctx = crate::StmtContext::for_query().with_hashagg_concurrency(1, 1);
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_hashagg_concurrency(1, 1);
     run_insert_on(
         "INSERT INTO sum_orders VALUES (1,10,7),(2,20,11),(3,30,13)",
         &mut catalog,
@@ -1147,6 +1163,7 @@ fn joined_integer_sum_uses_root_stream_agg() {
 /// Live Go selects StreamAgg at both stages for this pseudo-statistics fixture.
 #[test]
 fn global_avg_uses_count_sum_partial_and_final_stream_agg() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -1156,7 +1173,7 @@ fn global_avg_uses_count_sum_partial_and_final_stream_agg() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO avg_revenue VALUES (10,100.00,1),(20,200.00,2),(30,300.00,3)",
         &mut catalog,
@@ -1203,6 +1220,7 @@ fn global_avg_uses_count_sum_partial_and_final_stream_agg() {
 /// projection used by the one-row plan is absent.
 #[test]
 fn global_integer_sum_uses_gos_stream_agg_and_cast_projection() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -1212,7 +1230,7 @@ fn global_integer_sum_uses_gos_stream_agg_and_cast_projection() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO sum_range VALUES (1, 10), (2, 20)",
         &mut catalog,
@@ -1260,6 +1278,7 @@ fn global_integer_sum_uses_gos_stream_agg_and_cast_projection() {
 /// equality is an access condition, so no Selection survives above PointGet.
 #[test]
 fn global_count_over_point_get_uses_gos_stream_agg_without_selection() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -1275,7 +1294,7 @@ fn global_count_over_point_get_uses_gos_stream_agg_without_selection() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO point_count VALUES \
             (1, 10, 'one', 'pad'), (2, 20, 'two', 'pad')",
@@ -1312,6 +1331,7 @@ fn global_count_over_point_get_uses_gos_stream_agg_without_selection() {
 /// places a partial StreamAgg over that scan below the IndexReader.
 #[test]
 fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -1321,7 +1341,7 @@ fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO count_ranges VALUES (1, 1), (2, 15), (3, 20)",
         &mut catalog,
@@ -1556,13 +1576,14 @@ fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
 
 #[test]
 fn aggregate_selects() {
+    let store = crate::test_store::store();
     let catalog = test_catalog();
     // Global aggregates: rows (1,30),(2,20),(3,10).
     assert_eq!(
         run_select_on(
             "SELECT COUNT(*), SUM(a) FROM t",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         // SUM is a DECIMAL in MySQL even over a BIGINT column.
@@ -1576,7 +1597,7 @@ fn aggregate_selects() {
     let mut groups = run_select_on(
         "SELECT a, COUNT(*) FROM t WHERE b >= 20 GROUP BY a",
         &catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     groups.sort_by_key(|row| match row[0] {
@@ -1595,7 +1616,7 @@ fn aggregate_selects() {
         run_select_on(
             "SELECT COUNT(a) FROM t WHERE a > 100",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(0)]]
@@ -1604,7 +1625,7 @@ fn aggregate_selects() {
         run_select_on(
             "SELECT a, COUNT(*) FROM t WHERE a > 100 GROUP BY a",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         Vec::<Vec<Datum>>::new()
@@ -1614,7 +1635,7 @@ fn aggregate_selects() {
         run_select_on(
             "SELECT MIN(a), MAX(b) FROM t",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(1), Datum::Int(30)]]
@@ -1624,7 +1645,7 @@ fn aggregate_selects() {
         run_select_on(
             "SELECT AVG(a) FROM t",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Decimal(tidb_datatype::Decimal::from_literal(
@@ -1637,7 +1658,7 @@ fn aggregate_selects() {
         run_select_on(
             "SELECT COUNT(DISTINCT a), COUNT(DISTINCT 1) FROM t",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(3), Datum::Int(1)]]
@@ -1647,7 +1668,7 @@ fn aggregate_selects() {
         run_select_on(
             "SELECT MIN(a), MAX(a), AVG(a) FROM t WHERE a > 100",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Null, Datum::Null, Datum::Null]]
@@ -1656,12 +1677,13 @@ fn aggregate_selects() {
 
 #[test]
 fn float_sum_and_avg_use_the_real_domain() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE f (v FLOAT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO f VALUES (1.25), (2.5), (NULL)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -1669,7 +1691,7 @@ fn float_sum_and_avg_use_the_real_domain() {
         run_select_on(
             "SELECT SUM(v), AVG(v) FROM f",
             &catalog,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .unwrap(),
         vec![vec![Datum::Real(3.75), Datum::Real(1.875)]],
@@ -1682,11 +1704,12 @@ fn float_sum_and_avg_use_the_real_domain() {
 /// the final projection).
 #[test]
 fn aggregate_having_and_order_by() {
+    let store = crate::test_store::store();
     // Go's SERIAL HashAgg emits its groups in `groupKeys` first-seen order;
     // the parallel pipeline shuffles them by final worker. The assertions
     // below that do not write an ORDER BY therefore pin the serial path,
     // which is what Go selects with both hashagg concurrencies at 1.
-    let ctx = || crate::StmtContext::for_query().with_hashagg_concurrency(1, 1);
+    let ctx = || crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_hashagg_concurrency(1, 1);
     let mut catalog = test_catalog();
     crate::run_create_table_on("CREATE TABLE g (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
@@ -1797,12 +1820,13 @@ fn aggregate_having_and_order_by() {
 /// aggregates. The plain path silently returned duplicates before.
 #[test]
 fn select_distinct() {
+    let store = crate::test_store::store();
     // Go's SERIAL HashAgg emits its groups in `groupKeys` first-seen order
     // (`unparallelExec` walks that slice), while the parallel pipeline -- the
     // default concurrency -- shuffles them by final worker. The order-sensitive
     // assertions below therefore pin the serial path, which is what Go selects
     // when both `tidb_hashagg_{partial,final}_concurrency` are 1.
-    let ctx = || crate::StmtContext::for_query().with_hashagg_concurrency(1, 1);
+    let ctx = || crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_hashagg_concurrency(1, 1);
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE d2 (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
@@ -1893,6 +1917,7 @@ fn select_distinct() {
 /// ordinary root HashAgg shape instead of returning a trace-only error.
 #[test]
 fn explain_distinct_scalar_subquery_with_filter() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -1905,7 +1930,7 @@ fn explain_distinct_scalar_subquery_with_filter() {
     run_insert_on(
         "INSERT INTO date_dim VALUES (1201, 2000, 2), (1201, 2000, 2)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -1922,7 +1947,7 @@ fn explain_distinct_scalar_subquery_with_filter() {
         select,
         &catalog,
         "test",
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         ExplainFormat::Brief,
     )
     .unwrap();
@@ -1946,7 +1971,7 @@ fn explain_distinct_scalar_subquery_with_filter() {
         "{rows:#?}"
     );
     assert_eq!(
-        run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap(),
+        run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))).unwrap(),
         vec![vec![Datum::Int(1201)]]
     );
 }
@@ -1981,7 +2006,7 @@ fn bit_aggregates_are_unsigned() {
             run_insert_on(
                 &format!("INSERT INTO b VALUES ({literal})"),
                 &mut catalog,
-                &crate::StmtContext::for_query(),
+                &crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())),
             )
             .unwrap();
         }
@@ -2012,7 +2037,7 @@ fn bit_aggregates_are_unsigned() {
     ];
     for (rows, expected) in cases {
         let out =
-            run_select_on(query, &catalog_with(rows), &crate::StmtContext::for_query()).unwrap();
+            run_select_on(query, &catalog_with(rows), &crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()))).unwrap();
         assert_eq!(out.len(), 1);
         let folds: Vec<u64> = out[0].iter().map(unsigned).collect();
         assert_eq!(folds, expected.to_vec());
@@ -2064,7 +2089,7 @@ fn aggregates_read_the_arguments_collation() {
         run_insert_on(
             &format!("INSERT INTO g VALUES {list}"),
             &mut catalog,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())),
         )
         .unwrap();
         catalog
@@ -2072,7 +2097,7 @@ fn aggregates_read_the_arguments_collation() {
 
     let catalog = catalog_with(&["a", "B", "A"]);
     let row = |sql: &str| {
-        run_select_on(sql, &catalog, &crate::StmtContext::for_query())
+        run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())))
             .unwrap()
             .remove(0)
     };
@@ -2096,7 +2121,7 @@ fn aggregates_read_the_arguments_collation() {
     // 'B','a' the byte order is the REVERSE of the collation order.
     let catalog = catalog_with(&["B", "a"]);
     let row = |sql: &str| {
-        run_select_on(sql, &catalog, &crate::StmtContext::for_query())
+        run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())))
             .unwrap()
             .remove(0)
     };
@@ -2111,7 +2136,7 @@ fn aggregates_read_the_arguments_collation() {
 
     let catalog = catalog_with(&["b", "A", "a", "B"]);
     let row = |sql: &str| {
-        run_select_on(sql, &catalog, &crate::StmtContext::for_query())
+        run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())))
             .unwrap()
             .remove(0)
     };
@@ -2134,6 +2159,7 @@ fn aggregates_read_the_arguments_collation() {
 /// missing group-key emission.
 #[test]
 fn a_computed_distinct_argument_round_trips_through_the_cop_partial_aggregation() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE g (s VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)",
@@ -2143,7 +2169,7 @@ fn a_computed_distinct_argument_round_trips_through_the_cop_partial_aggregation(
     run_insert_on(
         "INSERT INTO g VALUES ('a'), ('B'), ('A')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -2154,7 +2180,7 @@ fn a_computed_distinct_argument_round_trips_through_the_cop_partial_aggregation(
         run_select_on(
             "SELECT COUNT(DISTINCT CONCAT(s, '')), COUNT(*) FROM g",
             &catalog,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .unwrap()
         .remove(0),
@@ -2166,7 +2192,7 @@ fn a_computed_distinct_argument_round_trips_through_the_cop_partial_aggregation(
     let rows = run_select_on(
         "SELECT s, COUNT(DISTINCT CONCAT(s, '')) FROM g GROUP BY s ORDER BY s",
         &catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(rows.len(), 2);
@@ -2180,8 +2206,9 @@ fn a_computed_distinct_argument_round_trips_through_the_cop_partial_aggregation(
 /// physical planner and agree on the output columns.
 #[test]
 fn a_delivered_grouped_aggregate_matches_the_planned_statement() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     crate::run_create_table_on(
         "CREATE TABLE cost_receipt (id INT PRIMARY KEY, k INT, c VARCHAR(20))",
         &mut catalog,
@@ -2228,8 +2255,9 @@ fn a_delivered_grouped_aggregate_matches_the_planned_statement() {
 
 #[test]
 fn grouped_aggregation_enumerates_families_over_one_planned_child() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     crate::run_create_table_on(
         "CREATE TABLE shared_child (id INT PRIMARY KEY, k INT, INDEX idx_k(k))",
         &mut catalog,
@@ -2257,11 +2285,12 @@ fn grouped_aggregation_enumerates_families_over_one_planned_child() {
 
 #[test]
 fn explain_uses_the_common_physical_plan_without_legacy_ast_execution() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     crate::run_create_table_on(
         "CREATE TABLE explain_common_plan (id INT PRIMARY KEY, k INT)",
         &mut catalog,

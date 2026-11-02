@@ -33,7 +33,7 @@
 use crate::{run_create_table_on, run_insert_on, run_select_on, SessionExtendedInfoSchema, StmtContext};
 
 fn query_ctx() -> StmtContext {
-    StmtContext::for_query()
+    StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()))
 }
 
 /// `pkg/table/tables/test/partition/partition_test.go:111::TestPartitionAddRecord`.

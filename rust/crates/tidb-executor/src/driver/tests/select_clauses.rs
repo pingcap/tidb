@@ -39,6 +39,7 @@ fn select_with_where() {
 
 #[test]
 fn an_explicit_case_insensitive_collation_controls_comparison() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE collated (a VARCHAR(10) COLLATE utf8mb4_bin) \
@@ -48,7 +49,7 @@ fn an_explicit_case_insensitive_collation_controls_comparison() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO collated VALUES ('AA'), ('aa'), ('AAA'), ('aaa')",
         &mut catalog,
@@ -123,13 +124,14 @@ fn an_explicit_case_insensitive_collation_controls_comparison() {
 /// three-valued NULL behavior, then joins the candidates with `OR`.
 #[test]
 fn row_in_matches_go_tuple_and_null_semantics() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE stock (id INT PRIMARY KEY, w_id INT, i_id INT)",
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO stock VALUES \
          (1, 1, 1), (2, 2, 2), (3, 1, 3), (4, 1, NULL), \
@@ -198,13 +200,14 @@ fn limit_and_order_by_wire_up() {
 
 #[test]
 fn select_from_table_order_limit() {
+    let store = crate::test_store::store();
     let catalog = test_catalog();
     // ORDER BY a column that is not projected (sort runs below projection).
     assert_eq!(
         run_select_on(
             "SELECT a FROM t ORDER BY b",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![
@@ -217,7 +220,7 @@ fn select_from_table_order_limit() {
         run_select_on(
             "SELECT a FROM t ORDER BY b DESC LIMIT 2",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
@@ -262,15 +265,16 @@ fn select_from_table_order_limit() {
 /// ```
 #[test]
 fn plain_having_filters_and_sees_only_the_select_list() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE ht (a INT, b INT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO ht VALUES (1, 10), (2, 20)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
-    let run = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query());
+    let run = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())));
 
     // The clause FILTERS -- this is the whole point, and every row-set below
     // was two rows before.
@@ -400,22 +404,23 @@ fn plain_having_filters_and_sees_only_the_select_list() {
 /// ```
 #[test]
 fn an_empty_correlated_having_subquery_is_null_and_drops_its_row() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE ht (a INT, b INT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE hs (x INT, y INT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO ht VALUES (1, 10), (2, 20)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     run_insert_on(
         "INSERT INTO hs VALUES (10, 5)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
-    let run = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query());
+    let run = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())));
     let first = vec![vec![Datum::Int(1), Datum::Int(10)]];
     let second = vec![vec![Datum::Int(2), Datum::Int(20)]];
     let none = Vec::<Vec<Datum>>::new();
@@ -527,26 +532,27 @@ fn an_empty_correlated_having_subquery_is_null_and_drops_its_row() {
 /// leaked as a third result column (`1 | 10 | 5`).
 #[test]
 fn a_having_scalar_subquery_does_not_leak_its_value_as_a_result_column() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE ht (a INT, b INT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE hs (x INT, y INT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO ht VALUES (1, 10), (2, 20)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     run_insert_on(
         "INSERT INTO hs VALUES (10, 5)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
         run_select_on(
             "SELECT a, b FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) > 0",
             &catalog,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .unwrap(),
         vec![vec![Datum::Int(1), Datum::Int(10)]]
@@ -558,9 +564,10 @@ fn a_having_scalar_subquery_does_not_leak_its_value_as_a_result_column() {
 /// `TableSampleExecutor` returns each range's first record.
 #[test]
 fn table_sample_regions_uses_the_ordinary_physical_executor_path() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE smp (a BIGINT PRIMARY KEY)", &mut catalog).unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on("INSERT INTO smp VALUES (1), (2), (3)", &mut catalog, &ctx).unwrap();
 
     assert_eq!(
@@ -668,9 +675,10 @@ fn table_sample_regions_uses_the_ordinary_physical_executor_path() {
 /// ```
 #[test]
 fn an_unknown_column_names_its_clause() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE uc (a INT)", &mut catalog).unwrap();
-    let run = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query());
+    let run = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())));
 
     for (sql, column, clause) in [
         ("SELECT no_col FROM uc", "no_col", "field list"),
@@ -712,6 +720,7 @@ fn an_unknown_column_names_its_clause() {
 /// (chunk column index out of bounds).
 #[test]
 fn a_derived_aggregate_answers_its_output() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE dt (id BIGINT PRIMARY KEY, g BIGINT, v BIGINT)",
@@ -721,10 +730,10 @@ fn a_derived_aggregate_answers_its_output() {
     run_insert_on(
         "INSERT INTO dt VALUES (1,1,10),(2,1,20),(3,2,30),(4,2,40),(5,2,50)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
-    let run = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query());
+    let run = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())));
 
     let rows =
         run("SELECT * FROM (SELECT g, sum(v) AS t FROM dt GROUP BY g) s ORDER BY g").unwrap();

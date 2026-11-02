@@ -14,7 +14,7 @@
 //! 1048 warning and store `''`. The Rust gate is
 //! `driver/dml.rs`'s `bad_null_level` (`!ctx.ignore_err() && (ctx.strict()
 //! || insert.rows.len() == 1)`), driven by
-//! `StmtContext::for_dml(_, strict, ignore_err)`.
+//! `StmtContext::for_dml(_, strict, ignore_err).with_txn_store(Box::new(crate::test_store::store()))`.
 
 use crate::{
     run_create_table_on, run_insert_reporting, run_select_on, run_update_on, SessionExtendedInfoSchema, StmtContext,
@@ -25,7 +25,7 @@ fn select_col1(catalog: &SessionExtendedInfoSchema, id: i64) -> String {
     run_select_on(
         &format!("select col1 from tn where id = {id}"),
         catalog,
-        &StmtContext::for_query(),
+        &StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())),
     )
     .expect("select succeeds")
     .remove(0)
@@ -39,7 +39,7 @@ fn all_rows(catalog: &SessionExtendedInfoSchema) -> Vec<Vec<String>> {
     run_select_on(
         "select id, col1 from tn order by id",
         catalog,
-        &StmtContext::for_query(),
+        &StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())),
     )
     .expect("select succeeds")
     .into_iter()
@@ -69,10 +69,11 @@ fn all_rows(catalog: &SessionExtendedInfoSchema) -> Vec<Vec<String>> {
 /// `ON DUPLICATE KEY UPDATE` arms are the gap test below.
 #[test]
 fn non_strict_insert_null_semantics_follow_the_values_path() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let strict = StmtContext::for_dml(false, true, false);
-    let strict_ignore = StmtContext::for_dml(false, true, true);
-    let non_strict = StmtContext::for_dml(false, false, false);
+    let strict = StmtContext::for_dml(false, true, false).with_txn_store(Box::new(store.clone()));
+    let strict_ignore = StmtContext::for_dml(false, true, true).with_txn_store(Box::new(store.clone()));
+    let non_strict = StmtContext::for_dml(false, false, false).with_txn_store(Box::new(store.clone()));
 
     run_create_table_on(
         "create table tn (id int primary key, col1 varchar(10) not null default '')",

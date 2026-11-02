@@ -1946,7 +1946,7 @@ pub fn open_prepared_point_get(
     let TableEntry::Kv(kv) = table.as_ref() else {
         return Ok(None);
     };
-    crate::statement_store(stmt_ctx, kv).set_snapshot_read_options(stmt_ctx.snapshot_read_options(0.0));
+    crate::statement_store(stmt_ctx).set_snapshot_read_options(stmt_ctx.snapshot_read_options(0.0));
     let schema = fast_point_schema(kv, &plan.output);
     let columns = plan.output.columns.clone();
     // The point plan's output names: each column is a column of the one
@@ -2010,7 +2010,7 @@ impl Executor for PreparedPointGetExecutor {
         let TableEntry::Kv(table) = self.table.as_ref() else {
             unreachable!("validated point table")
         };
-        let mut reader = table.point_reader(crate::statement_store(&self.context, table));
+        let mut reader = table.point_reader(crate::statement_store(&self.context));
         let before = reader.point_rpc_counts();
         let decode_error = |error: tidb_table::tables::KvTableError| {
             ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))

@@ -65,6 +65,7 @@ fn kv<'a>(catalog: &'a SessionExtendedInfoSchema, name: &str) -> &'a crate::Tabl
 /// copies `TableInfo`, which never held a row.
 #[test]
 fn like_copies_the_structure_and_none_of_the_rows() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE src (a BIGINT, b VARCHAR(10), KEY k (a), UNIQUE KEY u (b))",
@@ -74,7 +75,7 @@ fn like_copies_the_structure_and_none_of_the_rows() {
     run_insert_on(
         "INSERT INTO src VALUES (1, 'x'), (2, 'y')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -95,7 +96,7 @@ fn like_copies_the_structure_and_none_of_the_rows() {
         run_select_on(
             "SELECT a FROM dst",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .len(),
@@ -106,14 +107,14 @@ fn like_copies_the_structure_and_none_of_the_rows() {
     run_insert_on(
         "INSERT INTO dst VALUES (9, 'z')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
         run_select_on(
             "SELECT a FROM src",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .len(),
@@ -127,6 +128,7 @@ fn like_copies_the_structure_and_none_of_the_rows() {
 /// counter. This is the reset that a shallow struct copy would silently lose.
 #[test]
 fn like_does_not_copy_the_auto_increment_value() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE src (id BIGINT PRIMARY KEY AUTO_INCREMENT, v BIGINT)",
@@ -137,7 +139,7 @@ fn like_does_not_copy_the_auto_increment_value() {
         run_insert_on(
             "INSERT INTO src (v) VALUES (1)",
             &mut catalog,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .unwrap();
     }
@@ -146,7 +148,7 @@ fn like_does_not_copy_the_auto_increment_value() {
     run_insert_on(
         "INSERT INTO dst (v) VALUES (7)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -154,7 +156,7 @@ fn like_does_not_copy_the_auto_increment_value() {
         run_select_on(
             "SELECT id FROM dst",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(1)]]
@@ -252,6 +254,7 @@ fn like_reports_missing_source_and_existing_target() {
 /// records under one physical id would interleave their rows.
 #[test]
 fn like_copies_partitioning_with_fresh_physical_ids() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE src (a BIGINT) PARTITION BY HASH (a) PARTITIONS 4",
@@ -299,14 +302,14 @@ fn like_copies_partitioning_with_fresh_physical_ids() {
     run_insert_on(
         "INSERT INTO dst VALUES (1), (2), (3)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
         run_select_on(
             "SELECT a FROM src",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .len(),

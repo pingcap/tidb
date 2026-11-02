@@ -576,7 +576,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                 let (columns, rows) = self.with_catalog_mut(|catalog| {
                     let table =
                         admin_check_table_mut(catalog, &database, &name, "admin check index")?;
-                    let mut store = crate::statement_store(&ctx, table);
+                    let mut store = crate::statement_store(&ctx);
                     crate::admin_check::check_index_ranges(
                         table,
                         &mut *store,
@@ -661,7 +661,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
         let fast_check = self.session_vars().system_bool("tidb_enable_fast_table_check", true);
         self.with_catalog_mut(|catalog| {
             let table = admin_check_table_mut(catalog, &database, &name, statement)?;
-            let mut store = crate::statement_store(&ctx, table);
+            let mut store = crate::statement_store(&ctx);
             crate::admin_check::check_table(
                 table,
                 &mut *store,

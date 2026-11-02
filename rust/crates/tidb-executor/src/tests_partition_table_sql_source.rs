@@ -26,7 +26,7 @@ use tidb_datatype::Datum;
 use tidb_charset::Collation;
 
 fn ctx() -> StmtContext {
-    StmtContext::for_query()
+    StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()))
 }
 
 /// Go `partition_table_test.go::TestIdexMerge`, with fixed draws spanning

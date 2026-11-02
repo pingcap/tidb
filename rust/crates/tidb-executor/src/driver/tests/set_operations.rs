@@ -12,12 +12,13 @@ use super::*;
 /// preserve the same rows and column names.
 #[test]
 fn common_table_expressions() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE c1 (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO c1 VALUES (1, 10), (2, 20), (3, 30)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -25,7 +26,7 @@ fn common_table_expressions() {
         run_select_on(
             "WITH c AS (SELECT a FROM c1 WHERE a > 1) SELECT a FROM c",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(2)], vec![Datum::Int(3)]]
@@ -35,7 +36,7 @@ fn common_table_expressions() {
         run_select_on(
             "WITH c AS (SELECT a, b FROM c1) SELECT SUM(b) FROM c WHERE a >= 2",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Decimal(tidb_datatype::Decimal::from_int(50))]]
@@ -45,7 +46,7 @@ fn common_table_expressions() {
         run_select_on(
             "WITH c (x) AS (SELECT a FROM c1 WHERE a = 3) SELECT x FROM c",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(3)]]
@@ -57,7 +58,7 @@ fn common_table_expressions() {
             "WITH c AS (SELECT a FROM c1 WHERE a > 1), d AS (SELECT a FROM c WHERE a > 2) \
              SELECT a FROM d",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(3)]]
@@ -67,7 +68,7 @@ fn common_table_expressions() {
         run_select_on(
             "WITH c AS (SELECT a FROM c1 WHERE a = 2) SELECT c1.b FROM c JOIN c1 ON c.a = c1.a",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(20)]]
@@ -77,7 +78,7 @@ fn common_table_expressions() {
         run_select_on(
             "WITH c1 AS (SELECT 9 AS a) SELECT a FROM c1",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(9)]]
@@ -90,7 +91,7 @@ fn common_table_expressions() {
             "WITH RECURSIVE c (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 3) \
              SELECT n FROM c",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![
@@ -103,7 +104,7 @@ fn common_table_expressions() {
     assert!(run_select_on(
         "WITH c (x, y) AS (SELECT a FROM c1) SELECT x FROM c",
         &catalog,
-        &crate::StmtContext::for_query()
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
     )
     .is_err());
 }
@@ -113,11 +114,12 @@ fn common_table_expressions() {
 /// the shared materialization path rather than duplicating the CTE body.
 #[test]
 fn single_use_cte_explain_keeps_base_statistics_and_multiple_uses_materialize() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     crate::run_create_table_on(
         "CREATE TABLE warehouse (w_id BIGINT, w_name VARCHAR(16))",
         &mut catalog,
@@ -192,24 +194,25 @@ fn single_use_cte_explain_keeps_base_statistics_and_multiple_uses_materialize() 
 /// for the same data: u1 = 1,2,2,3 and u2 = 2,3,4.
 #[test]
 fn set_operations() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE u1 (a BIGINT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE u2 (a BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO u1 VALUES (1), (2), (2), (3)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     run_insert_on(
         "INSERT INTO u2 VALUES (2), (3), (4)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
     let sorted = |sql: &str, catalog: &SessionExtendedInfoSchema| {
-        let mut got: Vec<i64> = run_select_on(sql, catalog, &crate::StmtContext::for_query())
+        let mut got: Vec<i64> = run_select_on(sql, catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
             .unwrap()
             .into_iter()
             .map(|row| match row[0] {
@@ -221,7 +224,7 @@ fn set_operations() {
         got
     };
     let listed = |sql: &str, catalog: &SessionExtendedInfoSchema| {
-        run_select_on(sql, catalog, &crate::StmtContext::for_query())
+        run_select_on(sql, catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
             .unwrap()
             .into_iter()
             .map(|row| match row[0] {
@@ -265,7 +268,7 @@ fn set_operations() {
         ),
     ] {
         assert!(matches!(
-            run_select_on(sql, &catalog, &crate::StmtContext::for_query()),
+            run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))),
             Err(crate::driver::DriverError::Unsupported(reason)) if reason == message
         ));
     }
@@ -309,7 +312,7 @@ fn set_operations() {
     assert!(run_select_on(
         "SELECT a FROM u1 UNION SELECT a, a FROM u2",
         &catalog,
-        &crate::StmtContext::for_query()
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
     )
     .is_err_and(
         |error| error.equal(&tidb_plannererrors::ERR_WRONG_NUMBER_OF_COLUMNS_IN_SELECT)
@@ -323,6 +326,7 @@ fn set_operations() {
 /// each fold, not the independently materialized term counts.
 #[test]
 fn intersect_and_except_explain_as_go_semi_join_chains() {
+    let store = crate::test_store::store();
     use crate::explain::{explain_analyze_set_opr_stmt, explain_set_opr_stmt};
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -331,7 +335,7 @@ fn intersect_and_except_explain_as_go_semi_join_chains() {
         crate::run_create_table_on(&format!("CREATE TABLE {table} (a BIGINT)"), &mut catalog)
             .unwrap();
     }
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on("INSERT INTO sx1 VALUES (1),(2),(2),(3)", &mut catalog, &ctx).unwrap();
     run_insert_on("INSERT INTO sx2 VALUES (2),(3),(4)", &mut catalog, &ctx).unwrap();
     run_insert_on("INSERT INTO sx3 VALUES (3),(4),(5)", &mut catalog, &ctx).unwrap();
@@ -403,13 +407,14 @@ fn intersect_and_except_explain_as_go_semi_join_chains() {
 /// observable.
 #[test]
 fn union_distinct_propagates_duplicate_agnostic_outer_join_elimination() {
+    let store = crate::test_store::store();
     use crate::explain::explain_set_opr_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE ul (id BIGINT PRIMARY KEY)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE ur (k BIGINT)", &mut catalog).unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on("INSERT INTO ul VALUES (1),(2)", &mut catalog, &ctx).unwrap();
     run_insert_on("INSERT INTO ur VALUES (1),(1)", &mut catalog, &ctx).unwrap();
 
@@ -455,8 +460,9 @@ fn union_distinct_propagates_duplicate_agnostic_outer_join_elimination() {
 /// fold does not finish this test at all.
 #[test]
 fn a_distinct_fixpoint_dedups_incrementally() {
+    let store = crate::test_store::store();
     let catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query().with_cte_max_recursion_depth(200_000);
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_cte_max_recursion_depth(200_000);
     let rows = run_select_on(
         "WITH RECURSIVE cte(a,b) AS (SELECT 1,1 UNION SELECT a+1,b+1 FROM cte \
          WHERE cte.a < 100000) SELECT count(*), max(a), min(a) FROM cte",
@@ -497,8 +503,9 @@ fn a_distinct_fixpoint_dedups_incrementally() {
 /// ```
 #[test]
 fn a_recursive_block_is_cast_into_the_seed_schema() {
+    let store = crate::test_store::store();
     let catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     let run = |sql: &str| run_select_on(sql, &catalog, &ctx).unwrap();
 
     // `d` is the seed's bigint, so `concat(d, 1)` is cast BACK to a bigint --

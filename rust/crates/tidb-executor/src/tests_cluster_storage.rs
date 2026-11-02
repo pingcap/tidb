@@ -86,7 +86,7 @@ use tidb_txnkv::Key;
             let mut table = mutation_batch_table(store.clone());
             let old = [Datum::Int(1), Datum::Int(10)];
             let new = [Datum::Int(1), Datum::Int(20)];
-            let ctx = crate::StmtContext::for_dml(false, true, ignore)
+            let ctx = crate::StmtContext::for_dml(false, true, ignore).with_txn_store(Box::new(store.clone()))
                 .with_pessimistic_transaction(pessimistic);
             table
                 .insert_row_with_row_id_checked(&mut store, &old, None, 0, &ctx, false)
@@ -127,7 +127,7 @@ use tidb_txnkv::Key;
         let mut table = mutation_batch_table(store.clone());
         let old = [Datum::Int(1), Datum::Null];
         let new = [Datum::Int(2), Datum::Null];
-        let ctx = crate::StmtContext::default().with_pessimistic_transaction(true);
+        let ctx = crate::StmtContext::default().with_txn_store(Box::new(store.clone())).with_pessimistic_transaction(true);
         table
             .insert_row_with_row_id_checked(&mut store, &old, None, 0, &ctx, false)
             .unwrap();
@@ -206,7 +206,7 @@ use tidb_txnkv::Key;
                 ..Default::default()
             },
         ));
-        let ctx = crate::StmtContext::default();
+        let ctx = crate::StmtContext::default().with_txn_store(Box::new(store.clone()));
         let first = [Datum::Int(0), Datum::Int(10)];
         let second = [Datum::Int(1), Datum::Int(20)];
         for row in [&first, &second] {
@@ -304,7 +304,7 @@ use tidb_txnkv::Key;
                     false,
                 );
             }
-            let ctx = crate::StmtContext::default().with_pessimistic_transaction(pessimistic);
+            let ctx = crate::StmtContext::default().with_txn_store(Box::new(store.clone())).with_pessimistic_transaction(pessimistic);
             let row = [Datum::Int(7)];
             let handle = TableHandle::Int(1);
             table
@@ -473,7 +473,7 @@ use tidb_txnkv::Key;
             }],
             store.clone_box(),
         );
-        let ctx = crate::StmtContext::default();
+        let ctx = crate::StmtContext::default().with_txn_store(Box::new(store.clone()));
         let row = [Datum::Int(7)];
         table.add_index(
             Index {
@@ -636,7 +636,7 @@ use tidb_txnkv::Key;
                     column_offsets: vec![1],
                     clustered_primary: false,
                 };
-                let ctx = crate::StmtContext::default();
+                let ctx = crate::StmtContext::default().with_txn_store(Box::new(store.clone()));
                 if operation != "backfill" {
                     table.add_index(index.clone(), false);
                 }
@@ -705,7 +705,7 @@ use tidb_txnkv::Key;
                 assert_eq!(
                     table
                         .get_row_by_handle(
-                            &mut *crate::statement_store(&ctx, &table),
+                            &mut *crate::statement_store(&ctx),
                             &TableHandle::Int(1),
                             &ctx.session_zone(),
                         )

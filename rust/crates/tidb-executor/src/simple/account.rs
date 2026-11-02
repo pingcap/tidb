@@ -430,7 +430,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             };
             let table = std::sync::Arc::make_mut(table);
             let text = |datum: &Datum| tidb_datatype::datum_text::sysvar_datum_text(datum).unwrap_or_default();
-            let mut store = crate::statement_store(&ctx, table);
+            let mut store = crate::statement_store(&ctx);
             let rows = table
                 .scan_rows_with_context(&mut *store, &decode_context)
                 .map_err(crate::ddl::index_backfill_error)?;

@@ -232,6 +232,7 @@ use tidb_charset::Collation;
     /// real TiKV-format bytes and metadata as tidb-model structs.
     #[test]
     fn create_insert_select_from_sql() {
+        let store = crate::test_store::store();
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         assert!(run_create_table_on(
             "CREATE TABLE t (a BIGINT, b BIGINT UNSIGNED, s VARCHAR(10))",
@@ -243,7 +244,7 @@ use tidb_charset::Collation;
             run_insert_on(
                 "INSERT INTO t (a, s) VALUES (7, 'x')",
                 &mut catalog,
-                &crate::StmtContext::for_query()
+                &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
             )
             .unwrap(),
             1
@@ -251,7 +252,7 @@ use tidb_charset::Collation;
         let rows = run_select_on(
             "SELECT a, s FROM t",
             &catalog,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .unwrap();
         assert_eq!(rows.len(), 1);
@@ -480,6 +481,7 @@ use tidb_charset::Collation;
     /// zero-padded to its flen -- while `VARBINARY(3)` keeps the two bytes.
     #[test]
     fn binary_column_zero_pads_to_its_length() {
+        let store = crate::test_store::store();
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         run_create_table_on(
             "CREATE TABLE tb (b BINARY(3), vb VARBINARY(3))",
@@ -489,13 +491,13 @@ use tidb_charset::Collation;
         run_insert_on(
             "INSERT INTO tb VALUES ('ab','ab')",
             &mut catalog,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .unwrap();
         let rows = run_select_on(
             "SELECT b, vb FROM tb",
             &catalog,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .unwrap();
         let bytes = |value: &Datum| match value {

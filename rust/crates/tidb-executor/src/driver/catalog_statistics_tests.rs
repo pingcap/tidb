@@ -214,6 +214,7 @@
 
     #[test]
     fn determinate_load_requests_one_analyzed_column_per_visited_table() {
+        let store = crate::test_store::store();
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         let (mut catalog, handle, table_id, column_id) = analyzed_lite_catalog();
         let loader = Arc::new(RecordingLoader::default());
@@ -223,7 +224,7 @@
             ..Default::default()
         };
 
-        let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(100, true, 0);
+        let context = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(100, true, 0);
         catalog
             .request_statistics_load(&usage, &context)
             .expect("start synchronous load");
@@ -245,6 +246,7 @@
 
     #[test]
     fn a_singleflight_transport_timeout_activates_statement_failure_before_wait_timer() {
+        let store = crate::test_store::store();
         let handle = Arc::new(StatsHandle::default());
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         // Go master TestSyncWaitStatsLoadWithFailedResultBeforeTimer: prepare
@@ -266,7 +268,7 @@
                     "sync load took too long to return".to_owned(),
                 ))
                 .unwrap();
-            let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(100, pseudo, 1000);
+            let context = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(100, pseudo, 1000);
             context.install_pending_statistics_load(
                 vec![receiver],
                 vec![requested],
@@ -305,6 +307,7 @@
 
     #[test]
     fn delivered_worker_errors_complete_the_wait_and_record_latency() {
+        let store = crate::test_store::store();
         let handle = Arc::new(StatsHandle::default());
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         use tidb_stats_handle_metrics::{SYNC_LOAD_HISTOGRAM, SYNC_LOAD_TOTAL};
@@ -318,7 +321,7 @@
             },
             full_load: true,
         };
-        let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(100, false, 1000);
+        let context = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(100, false, 1000);
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         sender
             .send(tidb_stats_handle_syncload::sync_load::SyncLoadOutcome::Item {
@@ -355,6 +358,7 @@
 
     #[test]
     fn statistics_wait_timeout_and_closed_channel_record_consumption() {
+        let store = crate::test_store::store();
         let handle = Arc::new(StatsHandle::default());
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         use tidb_stats_handle_metrics::{SYNC_LOAD_TIMEOUT_TOTAL, SYNC_LOAD_TOTAL};
@@ -369,7 +373,7 @@
                 },
                 full_load: true,
             };
-            let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(100, false, 1);
+            let context = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(100, false, 1);
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);
             let sender = if closed {
                 drop(sender);
@@ -404,6 +408,7 @@
 
     #[test]
     fn histograms_in_flight_cleans_completed_statistics_items() {
+        let store = crate::test_store::store();
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         let (mut catalog, handle, table_id, column_id) = analyzed_lite_catalog();
         handle.set_item_loader(
@@ -427,7 +432,7 @@
             .collect(),
             ..Default::default()
         };
-        let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(0, true, 0);
+        let context = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(0, true, 0);
 
         catalog
             .request_statistics_load(&usage, &context)
@@ -511,6 +516,7 @@
 
     #[test]
     fn failed_async_load_removes_the_item_and_returns_the_storage_error() {
+        let store = crate::test_store::store();
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         let (mut catalog, handle, table_id, column_id) = analyzed_lite_catalog();
         let loader = Arc::new(RecordingLoader {
@@ -528,7 +534,7 @@
             predicate_columns: [(requested, true)].into_iter().collect(),
             ..Default::default()
         };
-        let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(0, true, 0);
+        let context = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(0, true, 0);
 
         catalog
             .request_statistics_load(&usage, &context)
@@ -845,12 +851,13 @@
     /// `LoadNeededHistograms`.
     #[test]
     fn pruned_indexes_do_not_enter_async_statistics_demand() {
+        let store = crate::test_store::store();
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         clear_async_statistics_items();
 
         for (partitioned, static_prune) in [(false, false), (true, false), (true, true)] {
             let (catalog, handle, table_id, partition_ids, indexes) = index_pruning_catalog(partitioned);
-            let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle))
+            let context = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_stats_handle(Arc::clone(&handle))
                 .with_stats_load_policy(0, true, 0)
                 .with_opt_index_prune_threshold(1)
                 .with_static_partition_prune(static_prune);
@@ -934,13 +941,14 @@
 
     #[test]
     fn ordinary_planning_runs_both_statistics_rule_points() {
+        let store = crate::test_store::store();
         let _guard = STATS_LOAD_TEST_LOCK.lock().unwrap();
         let (mut catalog, handle, table_id, column_id) = analyzed_lite_catalog();
         let loader = Arc::new(RecordingLoader::default());
         handle.set_item_loader(loader.clone(), StatisticsLoadWorkers::new());
         let usage_list = tidb_stats_handle_usage::SessionStatsList::new();
         let usage = usage_list.new_session_stats_item();
-        let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle))
+        let context = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_stats_handle(Arc::clone(&handle))
             .with_stats_load_policy(100, true, 0)
             .with_plan_replayer_capture(true)
             .with_column_stats_usage(crate::stmt_ctx_build::col_stats_usage_updater(&Some(Arc::clone(&usage))));
@@ -1028,6 +1036,7 @@
 
     #[test]
     fn original_collect_predicate_columns_cases_match_before_and_after_optimization() {
+        let store = crate::test_store::store();
         let handle = Arc::new(StatsHandle::default());
         let catalog = stats_usage_fixture();
         let cases: &[(&str, &[(&str, &str)])] = &[
@@ -1148,7 +1157,7 @@
             else {
                 panic!("original case is not a query")
             };
-            let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle));
+            let context = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_stats_handle(Arc::clone(&handle));
             let (before, after) =
                 super::planner_bridge::statistics_usage_before_and_after_logical_optimization(
                     &query, &catalog, "test", &context,
@@ -1181,6 +1190,7 @@
 
     #[test]
     fn original_collect_histogram_needed_columns_cases_match() {
+        let store = crate::test_store::store();
         let handle = Arc::new(StatsHandle::default());
         let catalog = stats_usage_fixture();
         let cases: &[(&str, &[(&str, &str, bool)])] = &[
@@ -1226,7 +1236,7 @@
             else {
                 panic!("original case is not a query")
             };
-            let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle));
+            let context = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_stats_handle(Arc::clone(&handle));
             let (_, usage) =
                 super::planner_bridge::statistics_usage_before_and_after_logical_optimization(
                     &query, &catalog, "test", &context,
@@ -1248,7 +1258,7 @@
             .map(|(table, column)| (column_item(&catalog, table, column), true))
             .collect::<std::collections::HashMap<_, _>>();
 
-        let dynamic = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle));
+        let dynamic = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_stats_handle(Arc::clone(&handle));
         let (_, dynamic_usage) =
             super::planner_bridge::statistics_usage_before_and_after_logical_optimization(
                 &query, &catalog, "test", &dynamic,
@@ -1257,7 +1267,7 @@
         assert_eq!(dynamic_usage.predicate_columns, expected);
         assert!(dynamic_usage.table_partition_ids.is_empty());
 
-        let static_prune = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_static_partition_prune(true);
+        let static_prune = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_stats_handle(Arc::clone(&handle)).with_static_partition_prune(true);
         let (_, static_usage) =
             super::planner_bridge::statistics_usage_before_and_after_logical_optimization(
                 &query,

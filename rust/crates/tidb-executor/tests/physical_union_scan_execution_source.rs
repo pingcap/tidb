@@ -23,8 +23,9 @@ use tidb_sessionctx::StmtContext;
 
 #[test]
 fn dirty_table_union_scan_plan_executes_conditions_and_index_order() {
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = StmtContext::for_query();
+    let ctx = StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_create_table_on(
         "CREATE TABLE union_scan_build (\
             id BIGINT PRIMARY KEY, value BIGINT, INDEX value_idx(value))",

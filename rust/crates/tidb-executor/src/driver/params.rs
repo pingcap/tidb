@@ -276,7 +276,7 @@ mod tests {
         crate::run_insert_on(
             "INSERT INTO p VALUES (1,10),(2,20),(3,30)",
             &mut catalog,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())),
         )
         .unwrap();
         catalog
@@ -284,7 +284,7 @@ mod tests {
 
     fn run_prepared_select(sql: &str, values: Vec<Datum>) -> Vec<Vec<Datum>> {
         let catalog = prepared_catalog();
-        let context = crate::StmtContext::for_query().with_prepared_params(values.into());
+        let context = crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())).with_prepared_params(values.into());
         crate::run_select_on(sql, &catalog, &context).unwrap()
     }
 
@@ -346,6 +346,7 @@ mod tests {
 
     #[test]
     fn prepared_typed_markers_match_go_result_metadata_on_type_changes() {
+        let store = crate::test_store::store();
         use tidb_datatype::{FieldTypeCode as C, FieldTypeFlags as F};
         let catalog = tidb_infoschema_perfschema::mock_catalog();
         let sql = "SELECT POW(?,?), IFNULL(?,11), ? + 11, ? AS marker";
@@ -372,7 +373,7 @@ mod tests {
                 ],
             ),
         ] {
-            let ctx = crate::StmtContext::for_query().with_prepared_params(
+            let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_prepared_params(
                 vec![
                     Datum::Int(2),
                     Datum::Int(3),

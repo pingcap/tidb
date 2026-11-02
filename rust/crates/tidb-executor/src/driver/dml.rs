@@ -1839,7 +1839,7 @@ fn run_insert_rows(
                     let handle = &conflict.handle;
                     let table = target(catalog, &database, &table_name);
                     let existing = table
-                        .get_row_by_handle(&mut *crate::statement_store(ctx, table), handle, &ctx.session_zone())
+                        .get_row_by_handle(&mut *crate::statement_store(ctx), handle, &ctx.session_zone())
                         .map_err(|e| kv_read_error("row read failed", e))?;
                     if existing.as_deref() == Some(row) {
                         // Go `batchCheckAndInsert`: an identical row behind the
@@ -2207,7 +2207,7 @@ fn apply_on_duplicate(
         unreachable!("ODKU targets a byte-backed table")
     };
     let auto_increment_offset = table.auto_increment_column_offset();
-    let mut store = crate::statement_store(ctx, table);
+    let mut store = crate::statement_store(ctx);
     let Some(existing) = std::sync::Arc::make_mut(table)
         .get_row_by_handle(&mut *store, handle, &ctx.session_zone())
         .map_err(|e| kv_read_error("row read failed", e))?

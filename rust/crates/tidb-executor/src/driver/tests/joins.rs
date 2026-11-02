@@ -10,19 +10,20 @@ use super::*;
 /// wildcard expansion, and a three-table left-deep chain.
 #[test]
 fn joins() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE l (id BIGINT, v BIGINT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE r (id BIGINT, w BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO l VALUES (1, 10), (2, 20), (3, 30)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     run_insert_on(
         "INSERT INTO r VALUES (1, 100), (3, 300), (3, 301)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -31,7 +32,7 @@ fn joins() {
         run_select_on(
             "SELECT l.id, l.v, r.w FROM l JOIN r ON l.id = r.id ORDER BY l.id, r.w",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![
@@ -46,7 +47,7 @@ fn joins() {
         run_select_on(
             "SELECT l.id, r.w FROM l LEFT JOIN r ON l.id = r.id ORDER BY l.id, r.w",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![
@@ -62,7 +63,7 @@ fn joins() {
         run_select_on(
             "SELECT l.id FROM l LEFT JOIN r ON l.id = r.id WHERE r.id IS NULL",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(2)]]
@@ -72,7 +73,7 @@ fn joins() {
         run_select_on(
             "SELECT l.id, r.w FROM l LEFT JOIN r ON l.id = r.id AND r.w > 200 ORDER BY l.id, r.w",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![
@@ -88,7 +89,7 @@ fn joins() {
         run_select_on(
             "SELECT l.v, r.id FROM l RIGHT JOIN r ON l.id = r.id AND l.v > 100 ORDER BY r.id",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![
@@ -103,7 +104,7 @@ fn joins() {
         run_select_on(
             "SELECT l.id FROM l, r",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .len(),
@@ -115,7 +116,7 @@ fn joins() {
         run_select_on(
             "SELECT * FROM l JOIN r ON l.id = r.id",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .first()
@@ -127,7 +128,7 @@ fn joins() {
         run_select_on(
             "SELECT r.* FROM l JOIN r ON l.id = r.id",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .first()
@@ -141,14 +142,14 @@ fn joins() {
     assert!(run_select_on(
         "SELECT id FROM l JOIN r ON l.id = r.id",
         &catalog,
-        &crate::StmtContext::for_query()
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
     )
     .is_err());
     assert_eq!(
         run_select_on(
             "SELECT v, w FROM l JOIN r ON l.id = r.id",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .len(),
@@ -160,7 +161,7 @@ fn joins() {
         run_select_on(
             "SELECT a.id FROM l AS a JOIN r AS b ON a.id = b.id",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .len(),
@@ -172,14 +173,14 @@ fn joins() {
     run_insert_on(
         "INSERT INTO m VALUES (3)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
         run_select_on(
             "SELECT COUNT(*) FROM l JOIN r ON l.id = r.id JOIN m ON m.id = r.id",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(2)]]
@@ -194,7 +195,7 @@ fn joins() {
         "SELECT * FROM l JOIN r USING (id)",
     ] {
         assert_eq!(
-            run_select_on(sql, &catalog, &crate::StmtContext::for_query())
+            run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
                 .unwrap()
                 .first()
                 .unwrap()
@@ -207,7 +208,7 @@ fn joins() {
         run_select_on(
             "SELECT id FROM l JOIN r USING (id)",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .len(),
@@ -221,6 +222,7 @@ fn joins() {
 /// returns nil and the physical search sees an ordinary anti-semi join.
 #[test]
 fn outer_join_inner_key_is_null_becomes_anti_semi_join() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -232,7 +234,7 @@ fn outer_join_inner_key_is_null_becomes_anti_semi_join() {
     )
     .unwrap();
     crate::run_create_table_on("CREATE TABLE anti_d (id BIGINT)", &mut catalog).unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO anti_l VALUES (1,10),(2,20),(3,30)",
         &mut catalog,
@@ -383,13 +385,14 @@ fn outer_join_inner_key_is_null_becomes_anti_semi_join() {
 /// profiles by an extra `SelectionFactor`, which flipped the join order.
 #[test]
 fn a_join_filter_is_charged_only_to_the_filtered_side() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE a (x INT NOT NULL, y INT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE b (x INT NOT NULL)", &mut catalog).unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     // The scaled histogram keeps the ANALYZEd bucket bounds, so the fixture
     // needs a real spread for the range predicate to land inside them.
     let a_rows: Vec<String> = (1..=100).map(|v| format!("({v}, {v})")).collect();
@@ -452,13 +455,14 @@ fn a_join_filter_is_charged_only_to_the_filtered_side() {
 /// same constant from the statement predicate.
 #[test]
 fn a_join_equality_propagates_its_constant_to_the_other_side() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE a (x INT NOT NULL, y INT)", &mut catalog).unwrap();
     crate::run_create_table_on("CREATE TABLE b (x INT NOT NULL)", &mut catalog).unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     let a_rows: Vec<String> = (1..=100).map(|v| format!("({v}, {v})")).collect();
     run_insert_on(
         &format!("INSERT INTO a VALUES {}", a_rows.join(",")),
@@ -531,6 +535,7 @@ fn a_join_equality_propagates_its_constant_to_the_other_side() {
 /// wildcard needs the columns no index carries, so that leaf keeps its scan.
 #[test]
 fn a_join_leaf_reads_a_covering_index_without_moving_a_row() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -545,7 +550,7 @@ fn a_join_leaf_reads_a_covering_index_without_moving_a_row() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO jl VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z')",
         &mut catalog,
@@ -617,6 +622,7 @@ fn a_join_leaf_reads_a_covering_index_without_moving_a_row() {
 /// checks both the access-path shape and the result-preservation contract.
 #[test]
 fn a_join_leaf_uses_a_single_table_constant_for_access() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -631,7 +637,7 @@ fn a_join_leaf_uses_a_single_table_constant_for_access() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO lp VALUES (1, 10), (2, 20), (3, 30)",
         &mut catalog,
@@ -689,6 +695,7 @@ fn a_join_leaf_uses_a_single_table_constant_for_access() {
 /// Selection above it keeps that scale).
 #[test]
 fn an_index_join_probe_displays_the_outer_probe_count() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -708,7 +715,7 @@ fn an_index_join_probe_displays_the_outer_probe_count() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO order_line VALUES \
             (3627, 7, 1, 1, 100), (3630, 7, 1, 1, 101), \
@@ -817,6 +824,7 @@ fn an_index_join_probe_displays_the_outer_probe_count() {
 /// get even though `c_w_id` is not written as a constant.
 #[test]
 fn a_complete_common_handle_equality_is_a_point_get() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -834,7 +842,7 @@ fn a_complete_common_handle_equality_is_a_point_get() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO customer VALUES (629, 6, 1, 'Smith')",
         &mut catalog,
@@ -900,6 +908,7 @@ fn a_complete_common_handle_equality_is_a_point_get() {
 /// lowering it. The assertion below pins the complete row set.
 #[test]
 fn a_parent_does_not_consume_an_order_its_child_does_not_deliver() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     for ddl in [
         "CREATE TABLE bot (a BIGINT PRIMARY KEY, k BIGINT)",
@@ -908,7 +917,7 @@ fn a_parent_does_not_consume_an_order_its_child_does_not_deliver() {
     ] {
         crate::run_create_table_on(ddl, &mut catalog).unwrap();
     }
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     // `mid` is written so that joining on `k` emits its rows in an order that
     // is NOT `mid.a` ascending -- which is the whole point: the promise says
     // `mid.a`, the hash join delivers `bot.a`.
@@ -971,6 +980,7 @@ fn a_parent_does_not_consume_an_order_its_child_does_not_deliver() {
 /// handle batches -- is what makes it fail.
 #[test]
 fn a_leaf_delivers_only_the_order_its_scan_walks_in() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     for ddl in [
         "CREATE TABLE il (h BIGINT PRIMARY KEY, s BIGINT NOT NULL, KEY ks (s))",
@@ -978,7 +988,7 @@ fn a_leaf_delivers_only_the_order_its_scan_walks_in() {
     ] {
         crate::run_create_table_on(ddl, &mut catalog).unwrap();
     }
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     for insert in [
         "INSERT INTO il VALUES (1, 30), (2, 10), (3, 20)",
         "INSERT INTO ir VALUES (1, 20), (2, 30), (3, 10)",
@@ -1028,6 +1038,7 @@ fn a_leaf_delivers_only_the_order_its_scan_walks_in() {
 ///    [`a_leaf_delivers_only_the_order_its_scan_walks_in`] measured.
 #[test]
 fn a_leaf_asked_for_an_index_order_walks_the_index_and_says_so() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -1037,7 +1048,7 @@ fn a_leaf_asked_for_an_index_order_walks_the_index_and_says_so() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO oi VALUES (1), (2), (2), (3)",
         &mut catalog,
@@ -1106,6 +1117,7 @@ fn a_leaf_asked_for_an_index_order_walks_the_index_and_says_so() {
 /// the scans unordered and makes the selected merge plan unexecutable.
 #[test]
 fn a_forced_merge_lowers_the_planner_selected_sort_enforcers() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -1118,7 +1130,7 @@ fn a_forced_merge_lowers_the_planner_selected_sort_enforcers() {
     ] {
         crate::run_create_table_on(ddl, &mut catalog).unwrap();
     }
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     for insert in [
         "INSERT INTO ncl VALUES (1, 1, 10), (2, 1, 20)",
         "INSERT INTO ncr VALUES (1, 1, 100), (2, 1, 200)",
@@ -1194,6 +1206,7 @@ fn a_forced_merge_lowers_the_planner_selected_sort_enforcers() {
 /// t2.a`. The shared planner must preserve those three physical receipts.
 #[test]
 fn a_join_hint_decides_the_family_before_any_cost_is_compared() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -1203,7 +1216,7 @@ fn a_join_hint_decides_the_family_before_any_cost_is_compared() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on("INSERT INTO hj VALUES (1), (2), (3)", &mut catalog, &ctx).unwrap();
 
     let joins_of = |sql: &str| {
@@ -1283,6 +1296,7 @@ fn a_join_hint_decides_the_family_before_any_cost_is_compared() {
 /// (`buildRangesForIndexJoin`'s last slot) and extends the point range.
 #[test]
 fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE district (d_id INT NOT NULL, d_w_id INT NOT NULL, d_next_o_id INT, PRIMARY KEY (d_w_id,d_id))",
@@ -1294,7 +1308,7 @@ fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO district VALUES (1,1,30),(2,1,NULL)",
         &mut catalog,
@@ -1394,6 +1408,7 @@ fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
 /// from bounding the preserved-side read the way Go's eliminated plan does.
 #[test]
 fn nested_unread_left_join_chain_eliminates_to_fixpoint() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -1413,7 +1428,7 @@ fn nested_unread_left_join_chain_eliminates_to_fixpoint() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
 
     let plan_mentions = |sql: &str, table: &str| {
         let stmt = tidb_parser::parse(sql).unwrap();
@@ -1476,6 +1491,7 @@ fn nested_unread_left_join_chain_eliminates_to_fixpoint() {
 /// exactly what an index join's build side returned here before the fix.
 #[test]
 fn a_join_leaf_limit_counts_after_its_residual_selection() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE jr_core (pk BIGINT PRIMARY KEY CLUSTERED, mi VARCHAR(8), m BIGINT, \
@@ -1488,7 +1504,7 @@ fn a_join_leaf_limit_counts_after_its_residual_selection() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     // Sixty entries share one (mi, m) prefix; every second entry carries the
     // residual's value, so a capped RAW entry read answers half the truth.
     let core_values = (1..=60)

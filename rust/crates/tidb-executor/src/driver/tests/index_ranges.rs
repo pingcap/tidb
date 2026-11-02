@@ -92,6 +92,7 @@ fn planner_index_path(
 /// the remaining range, then applies the shipped 0.01 ordering-risk ratio.
 #[test]
 fn ordered_limit_adjusts_the_common_handle_scan_estimate() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -103,7 +104,7 @@ fn ordered_limit_adjusts_the_common_handle_scan_estimate() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO new_order VALUES (1,1,1),(2,1,1),(1,2,1),(1,1,2)",
         &mut catalog,
@@ -265,6 +266,7 @@ fn ordered_limit_adjusts_the_common_handle_scan_estimate() {
 /// two-child IndexLookUp, not an IndexReader with a root identity projection.
 #[test]
 fn non_covering_random_points_use_index_lookup_without_identity_projection() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -274,7 +276,7 @@ fn non_covering_random_points_use_index_lookup_without_identity_projection() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO lookup_shape VALUES (1, 1, 'a', 'x'), (2, 2, 'b', 'y')",
         &mut catalog,
@@ -316,6 +318,7 @@ fn non_covering_random_points_use_index_lookup_without_identity_projection() {
 /// rows is invisible to the range text alone.
 #[test]
 fn multi_column_and_multi_range_scans_read_the_same_rows_as_a_full_scan() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE m (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, KEY ab (a, b))",
@@ -326,11 +329,11 @@ fn multi_column_and_multi_range_scans_read_the_same_rows_as_a_full_scan() {
         "INSERT INTO m VALUES (1, 1, 1), (2, 1, 5), (3, 1, 9), (4, 2, 5), \
          (5, 3, 5), (6, NULL, 1), (7, 2, NULL)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     let ids = |sql: &str| {
-        let mut ids: Vec<i64> = run_select_on(sql, &catalog, &crate::StmtContext::for_query())
+        let mut ids: Vec<i64> = run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
             .unwrap()
             .into_iter()
             .map(|row| match row[0] {
@@ -372,6 +375,7 @@ fn multi_column_and_multi_range_scans_read_the_same_rows_as_a_full_scan() {
 /// index covers instead of scanning the table, with Go's range semantics.
 #[test]
 fn index_range_scans() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE r (id BIGINT PRIMARY KEY, score BIGINT, KEY score_idx (score))",
@@ -381,12 +385,12 @@ fn index_range_scans() {
     run_insert_on(
         "INSERT INTO r VALUES (1, 10), (2, 20), (3, 30), (4, 20), (5, NULL)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
     let ids = |sql: &str, catalog: &SessionExtendedInfoSchema| {
-        let mut got: Vec<i64> = run_select_on(sql, catalog, &crate::StmtContext::for_query())
+        let mut got: Vec<i64> = run_select_on(sql, catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
             .unwrap()
             .into_iter()
             .map(|row| match row[0] {
@@ -457,14 +461,14 @@ fn index_range_scans() {
     run_update_on(
         "UPDATE r SET score = 99 WHERE id = 1",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(ids("SELECT id FROM r WHERE score > 50", &catalog), vec![1]);
     run_delete_on(
         "DELETE FROM r WHERE id = 1",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
@@ -478,6 +482,7 @@ fn index_range_scans() {
 /// -- including the NULL entries a unique index stores non-distinctly.
 #[test]
 fn index_range_scan_over_a_unique_index() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE u2 (id BIGINT PRIMARY KEY, code BIGINT UNIQUE)",
@@ -487,13 +492,13 @@ fn index_range_scan_over_a_unique_index() {
     run_insert_on(
         "INSERT INTO u2 VALUES (1, 100), (2, 200), (3, 300), (4, NULL)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     let mut ids: Vec<Datum> = run_select_on(
         "SELECT id FROM u2 WHERE code >= 200",
         &catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap()
     .into_iter()
@@ -509,7 +514,7 @@ fn index_range_scan_over_a_unique_index() {
         run_select_on(
             "SELECT id FROM u2 WHERE code IS NULL",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap(),
         vec![vec![Datum::Int(4)]]
@@ -639,6 +644,7 @@ fn index_ranges_are_built_the_way_go_builds_them() {
 /// ``'ab`q', 'abAq', 'abzz', 'abcq'``.
 #[test]
 fn a_like_over_a_case_insensitive_index_returns_gos_rows() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE ci (a VARCHAR(50) COLLATE utf8mb4_general_ci, KEY idx (a))",
@@ -648,11 +654,11 @@ fn a_like_over_a_case_insensitive_index_returns_gos_rows() {
     run_insert_on(
         "INSERT INTO ci VALUES ('ab`q'), ('abAq'), ('abzz'), ('abcq'), ('abéxx')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     let rows = |sql: &str| {
-        let mut out: Vec<String> = run_select_on(sql, &catalog, &crate::StmtContext::for_query())
+        let mut out: Vec<String> = run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
             .unwrap()
             .iter()
             .map(|row| datum_text_for_test(&row[0]))
@@ -684,6 +690,7 @@ fn a_like_over_a_case_insensitive_index_returns_gos_rows() {
 /// `[abc  ]` and `[abc  x]`.
 #[test]
 fn a_like_with_trailing_spaces_starts_at_the_trimmed_key() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE bn (a VARCHAR(50) COLLATE utf8mb4_bin, KEY idx (a))",
@@ -693,13 +700,13 @@ fn a_like_with_trailing_spaces_starts_at_the_trimmed_key() {
     run_insert_on(
         "INSERT INTO bn VALUES ('abc  '), ('abc  x'), ('abc'), ('abd')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     let mut got: Vec<String> = run_select_on(
         "SELECT a FROM bn WHERE a LIKE 'abc  %'",
         &catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap()
     .iter()
@@ -785,6 +792,7 @@ fn a_non_unique_index_ranges_on_the_clustered_handle_too() {
 /// `c2` value (so a dimension read in the wrong order would still find rows).
 #[test]
 fn a_handle_range_reads_the_rows_a_full_scan_reads() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE h (c1 BIGINT PRIMARY KEY, c2 BIGINT, c3 BIGINT, INDEX c2 (c2))",
@@ -795,11 +803,11 @@ fn a_handle_range_reads_the_rows_a_full_scan_reads() {
         "INSERT INTO h VALUES (-9, 1, 0), (-1, 1, 0), (0, 1, 0), (1, 1, 0), (2, 1, 0), \
          (3, 1, 0), (4, 2, 0), (5, NULL, 0), (6, -1, 0), (7, 0, 0)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     let ids = |sql: &str| {
-        let mut ids: Vec<i64> = run_select_on(sql, &catalog, &crate::StmtContext::for_query())
+        let mut ids: Vec<i64> = run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
             .unwrap()
             .into_iter()
             .map(|row| match row[0] {
@@ -860,6 +868,7 @@ fn a_handle_range_reads_the_rows_a_full_scan_reads() {
 /// reach it. Go states the same condition as `!path.Index.Unique`.
 #[test]
 fn a_unique_index_gets_no_handle_dimension() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE u (c1 BIGINT PRIMARY KEY, c2 BIGINT, UNIQUE KEY uc2 (c2))",
@@ -869,7 +878,7 @@ fn a_unique_index_gets_no_handle_dimension() {
     run_insert_on(
         "INSERT INTO u VALUES (1, 10), (2, 20), (3, 30)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("u") else {
@@ -890,7 +899,7 @@ fn a_unique_index_gets_no_handle_dimension() {
     let rows = run_select_on(
         "SELECT c1 FROM u USE INDEX (uc2) WHERE c2 = 20 AND c1 > 1",
         &catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(rows.len(), 1);
@@ -916,6 +925,7 @@ fn a_unique_index_gets_no_handle_dimension() {
 /// ```
 #[test]
 fn an_unsigned_clustered_handle_gets_no_handle_dimension() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE hu (c1 BIGINT UNSIGNED PRIMARY KEY, c2 INT, INDEX c2 (c2))",
@@ -926,13 +936,13 @@ fn an_unsigned_clustered_handle_gets_no_handle_dimension() {
         "INSERT INTO hu VALUES (1, 1), (9223372036854775807, 1), \
          (9223372036854775808, 1), (18446744073709551615, 1)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     let rows = run_select_on(
         "SELECT c1 FROM hu USE INDEX (c2) WHERE c2 = 1 AND c1 > 1",
         &catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     let mut read: Vec<String> = rows.iter().map(|row| format!("{:?}", row[0])).collect();
@@ -955,6 +965,7 @@ fn an_unsigned_clustered_handle_gets_no_handle_dimension() {
 /// `(1 1,1 +inf]` -- TWO dimensions, from the two DECLARED columns.
 #[test]
 fn a_handle_that_is_already_a_key_part_is_not_appended_again() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE hd (c1 BIGINT PRIMARY KEY, c2 INT, INDEX c2c1 (c2, c1))",
@@ -964,7 +975,7 @@ fn a_handle_that_is_already_a_key_part_is_not_appended_again() {
     run_insert_on(
         "INSERT INTO hd VALUES (1, 1), (2, 1), (3, 1)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("hd") else {
@@ -992,7 +1003,7 @@ fn a_handle_that_is_already_a_key_part_is_not_appended_again() {
     let rows = run_select_on(
         "SELECT c1 FROM hd USE INDEX (c2c1) WHERE c2 = 1 AND c1 > 1",
         &catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(rows.len(), 2);
@@ -1016,6 +1027,7 @@ fn a_handle_that_is_already_a_key_part_is_not_appended_again() {
 /// ```
 #[test]
 fn a_prefix_key_part_takes_the_handle_dimension_behind_it() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE hp (c1 BIGINT PRIMARY KEY, s VARCHAR(20), INDEX sp (s(3)))",
@@ -1026,11 +1038,11 @@ fn a_prefix_key_part_takes_the_handle_dimension_behind_it() {
         "INSERT INTO hp VALUES (1, 'abcdef'), (2, 'abcdef'), (3, 'abcdef'), \
          (4, 'abcxyz'), (5, 'zzz')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     let ids = |sql: &str| {
-        let mut ids: Vec<i64> = run_select_on(sql, &catalog, &crate::StmtContext::for_query())
+        let mut ids: Vec<i64> = run_select_on(sql, &catalog, &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
             .unwrap()
             .into_iter()
             .map(|row| match row[0] {
@@ -1075,6 +1087,7 @@ fn a_prefix_key_part_takes_the_handle_dimension_behind_it() {
 /// `[1 2,1 2]` for `where c1 = 1 and c2 = 2`, and returns the row.
 #[test]
 fn a_handle_that_leads_its_index_is_not_appended_behind_it() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE hr (c1 BIGINT PRIMARY KEY, c2 INT, INDEX c1c2 (c1, c2))",
@@ -1084,13 +1097,13 @@ fn a_handle_that_leads_its_index_is_not_appended_behind_it() {
     run_insert_on(
         "INSERT INTO hr VALUES (1, 2), (2, 2), (3, 2)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     let rows = run_select_on(
         "SELECT c1 FROM hr USE INDEX (c1c2) WHERE c1 = 1 AND c2 = 2",
         &catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(rows.len(), 1, "the row was lost: {rows:?}");
@@ -1105,6 +1118,7 @@ fn a_handle_that_leads_its_index_is_not_appended_behind_it() {
 /// pushed-Limit plan.
 #[test]
 fn a_descending_handle_limit_answers_the_largest_ids() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -1114,7 +1128,7 @@ fn a_descending_handle_limit_answers_the_largest_ids() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO walk VALUES (1,10),(2,20),(3,30),(5,50),(100,1)",
         &mut catalog,
@@ -1175,6 +1189,7 @@ fn a_descending_handle_limit_answers_the_largest_ids() {
 /// order at all and planned a TopN.
 #[test]
 fn an_ascending_handle_order_limit_pushes_a_limit_not_a_topn() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -1184,7 +1199,7 @@ fn an_ascending_handle_order_limit_pushes_a_limit_not_a_topn() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO walk VALUES (1,10),(2,20),(3,30),(5,50),(100,1)",
         &mut catalog,
@@ -1230,6 +1245,7 @@ fn an_ascending_handle_order_limit_pushes_a_limit_not_a_topn() {
 /// hbx-web3's two-key flex query.
 #[test]
 fn partial_index_topn_eliminates_identity_projection() {
+    let store = crate::test_store::store();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -1239,7 +1255,7 @@ fn partial_index_topn_eliminates_identity_projection() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO flex_plan VALUES (1,10,3,1),(1,10,2,2),(1,9,1,3),(2,20,1,4)",
         &mut catalog,

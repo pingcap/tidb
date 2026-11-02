@@ -28,7 +28,7 @@ use crate::{
 };
 
 fn query_ctx() -> StmtContext {
-    StmtContext::for_query()
+    StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()))
 }
 
 /// `pkg/table/tables/index_test.go:601::TestExtractColumnsFromCondition`.

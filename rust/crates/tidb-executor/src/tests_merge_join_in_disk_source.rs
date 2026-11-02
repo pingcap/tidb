@@ -22,7 +22,7 @@ use crate::{run_create_table_on, run_insert_on, run_select_on, SessionExtendedIn
 use tidb_datatype::Datum;
 
 fn ctx() -> StmtContext {
-    StmtContext::for_query()
+    StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()))
 }
 
 /// testkit's `result.Sort()`: NULL first, then numbers numerically, then text.
@@ -63,6 +63,7 @@ fn select_sorted(catalog: &SessionExtendedInfoSchema, sql: &str, context: &StmtC
 /// run-to-completion-under-overrun contract through the statement driver.
 #[test]
 fn merge_join_in_disk_rows_under_log_quota() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on("create table t(c1 int, c2 int)", &mut catalog).unwrap();
     run_create_table_on("create table t1(c1 int, c2 int)", &mut catalog).unwrap();
@@ -70,7 +71,7 @@ fn merge_join_in_disk_rows_under_log_quota() {
     run_insert_on("insert into t1 values (1,3),(4,4)", &mut catalog, &ctx()).unwrap();
 
     let sql = "select /*+ TIDB_SMJ(t) */ * from t1 left outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20";
-    let log_ctx = StmtContext::for_query().with_mem_quota(1, OomAction::Log);
+    let log_ctx = StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_mem_quota(1, OomAction::Log);
     assert_eq!(
         run_select_on(sql, &catalog, &log_ctx).unwrap(),
         vec![vec![
@@ -91,6 +92,7 @@ fn merge_join_in_disk_rows_under_log_quota() {
 /// `merge_join_tracker_and_shuffle_gaps` test below.
 #[test]
 fn shuffle_merge_join_in_disk_rows_under_log_quota() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on("create table t(c1 int, c2 int)", &mut catalog).unwrap();
     run_create_table_on("create table t1(c1 int, c2 int)", &mut catalog).unwrap();
@@ -123,7 +125,7 @@ fn shuffle_merge_join_in_disk_rows_under_log_quota() {
     .unwrap();
 
     let sql = "select /*+ TIDB_SMJ(t) */ * from t1 left outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20";
-    let log_ctx = StmtContext::for_query().with_mem_quota(1, OomAction::Log);
+    let log_ctx = StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_mem_quota(1, OomAction::Log);
     let rows = select_sorted(&catalog, sql, &log_ctx);
     assert_eq!(
         rows.len(),

@@ -12,6 +12,7 @@ use super::*;
 /// never collides.
 #[test]
 fn unique_indexes() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE u (id BIGINT PRIMARY KEY, email VARCHAR(32) UNIQUE, v BIGINT)",
@@ -21,7 +22,7 @@ fn unique_indexes() {
     run_insert_on(
         "INSERT INTO u VALUES (1, 'a@x', 10), (2, 'b@x', 20)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -29,7 +30,7 @@ fn unique_indexes() {
     let error = run_insert_on(
         "INSERT INTO u VALUES (3, 'a@x', 30)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap_err();
     assert!(
@@ -44,7 +45,7 @@ fn unique_indexes() {
         run_select_on(
             "SELECT id FROM u",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .len(),
@@ -55,7 +56,7 @@ fn unique_indexes() {
     assert!((run_update_on(
         "UPDATE u SET email = 'a@x' WHERE id = 2",
         &mut catalog,
-        &crate::StmtContext::for_query()
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
     ))
     .is_err_and(|error| error.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS)));
     assert_eq!(
@@ -63,7 +64,7 @@ fn unique_indexes() {
             &run_select_on(
                 "SELECT email FROM u WHERE id = 2",
                 &catalog,
-                &crate::StmtContext::for_query()
+                &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
             )
             .unwrap()[0][0]
         ),
@@ -73,13 +74,13 @@ fn unique_indexes() {
     run_update_on(
         "UPDATE u SET email = 'c@x' WHERE id = 1",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     run_insert_on(
         "INSERT INTO u VALUES (4, 'a@x', 40)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -87,13 +88,13 @@ fn unique_indexes() {
     run_delete_on(
         "DELETE FROM u WHERE id = 4",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     run_insert_on(
         "INSERT INTO u VALUES (5, 'a@x', 50)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -101,20 +102,20 @@ fn unique_indexes() {
     run_insert_on(
         "INSERT INTO u VALUES (6, NULL, 60)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     run_insert_on(
         "INSERT INTO u VALUES (7, NULL, 70)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
         run_select_on(
             "SELECT id FROM u",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .len(),
@@ -126,6 +127,7 @@ fn unique_indexes() {
 /// rows with the same value are two entries (Go's non-distinct path).
 #[test]
 fn a_non_unique_index_accepts_repeats() {
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE n (id BIGINT PRIMARY KEY, tag VARCHAR(8), KEY tag_idx (tag))",
@@ -135,14 +137,14 @@ fn a_non_unique_index_accepts_repeats() {
     run_insert_on(
         "INSERT INTO n VALUES (1, 'x'), (2, 'x'), (3, 'y')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
         run_select_on(
             "SELECT id FROM n",
             &catalog,
-            &crate::StmtContext::for_query()
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
         )
         .unwrap()
         .len(),
@@ -154,7 +156,7 @@ fn a_non_unique_index_accepts_repeats() {
 /// unique-key lookup a point read (Go's PointGetPlan on a unique key).
 #[test]
 fn a_unique_index_entry_points_at_its_row() {
-    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
+    let store = crate::test_store::store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE k (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE)",
@@ -218,7 +220,7 @@ fn index_lookup_pushdown_hint_reaches_the_shared_physical_reader() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()));
     run_insert_on(
         "INSERT INTO lookup_hint VALUES (1, 2, 10), (2, 1, 20)",
         &mut catalog,
@@ -251,7 +253,7 @@ fn index_lookup_pushdown_hint_reaches_the_shared_physical_reader() {
         vec![vec![Datum::Int(10)], vec![Datum::Int(20)]]
     );
 
-    let conflict_ctx = crate::StmtContext::for_query();
+    let conflict_ctx = crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()));
     let conflict = "SELECT /*+ INDEX_LOOKUP_PUSHDOWN(lookup_hint, ia) NO_INDEX_LOOKUP_PUSHDOWN(lookup_hint) */ b FROM lookup_hint WHERE a > 0";
     let plan = physical(conflict, &conflict_ctx);
     assert!(lookup(&plan).is_none_or(|reader| !reader.index_lookup_push_down));

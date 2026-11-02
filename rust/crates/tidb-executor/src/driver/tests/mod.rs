@@ -39,7 +39,7 @@ fn test_catalog() -> SessionExtendedInfoSchema {
     run_insert_on(
         "INSERT INTO t VALUES (1, 30), (2, 20), (3, 10)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())),
     )
     .unwrap();
     catalog

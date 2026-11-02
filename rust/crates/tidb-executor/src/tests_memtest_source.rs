@@ -32,6 +32,7 @@ use crate::{
 /// `StmtCtx.MemTracker.BytesConsumed()` before and after the batch).
 #[test]
 fn insert_update_tracker_bytes_return_to_baseline_on_cleanup() {
+    let store = crate::test_store::store();
     let session = SessionMemory::new(-1, OomAction::Cancel, 7);
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on("create table t (id int)", &mut catalog).unwrap();
@@ -43,7 +44,7 @@ fn insert_update_tracker_bytes_return_to_baseline_on_cleanup() {
     let baseline = session.bytes_consumed();
     for id in 1..=3 {
         let memory = statement(&session);
-        let ctx = StmtContext::for_query_with_memory(memory.clone());
+        let ctx = StmtContext::for_query_with_memory(memory.clone()).with_txn_store(Box::new(store.clone()));
         run_insert_on(
             &format!("insert into t (id) values ({id})"),
             &mut catalog,
@@ -61,7 +62,7 @@ fn insert_update_tracker_bytes_return_to_baseline_on_cleanup() {
     // Go: the same contract for three UPDATEs.
     for id in 4..=6 {
         let memory = statement(&session);
-        let ctx = StmtContext::for_query_with_memory(memory.clone());
+        let ctx = StmtContext::for_query_with_memory(memory.clone()).with_txn_store(Box::new(store.clone()));
         run_update_on(
             &format!("update t set id = {id} where id = {}", id - 3),
             &mut catalog,
@@ -81,7 +82,7 @@ fn insert_update_tracker_bytes_return_to_baseline_on_cleanup() {
     let rows = run_select_on(
         "select id from t order by id",
         &catalog,
-        &StmtContext::for_query(),
+        &StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(rows.len(), 3);

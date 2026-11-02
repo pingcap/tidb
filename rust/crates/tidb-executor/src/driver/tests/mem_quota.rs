@@ -20,12 +20,12 @@ use tidb_vardef::OomAction;
 
 /// A context whose quota cancels any statement that accounts a single row.
 fn cancelling() -> crate::StmtContext {
-    crate::StmtContext::for_query().with_mem_quota(1, OomAction::Cancel)
+    crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())).with_mem_quota(1, OomAction::Cancel)
 }
 
 /// The shipped default: 1GiB, CANCEL. Nothing in these fixtures approaches it.
 fn permitting() -> crate::StmtContext {
-    crate::StmtContext::for_query()
+    crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()))
 }
 
 fn seeded() -> SessionExtendedInfoSchema {
@@ -173,8 +173,9 @@ fn a_cancelled_cascade_repoints_no_child_row() {
 /// it overruns -- the write path must honour that too, not only the sort.
 #[test]
 fn log_lets_an_over_quota_write_finish() {
+    let store = crate::test_store::store();
     let mut catalog = seeded();
-    let logging = crate::StmtContext::for_query().with_mem_quota(1, OomAction::Log);
+    let logging = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_mem_quota(1, OomAction::Log);
     assert_eq!(
         run_update_on("UPDATE t SET b = b + 1", &mut catalog, &logging).unwrap(),
         3
@@ -230,7 +231,7 @@ fn selection_cached_chunk_is_part_of_the_query_quota() {
 
 /// The corpus's own quota: `1 << 18` bytes, CANCEL.
 fn corpus_quota() -> crate::StmtContext {
-    crate::StmtContext::for_query().with_mem_quota(1 << 18, OomAction::Cancel)
+    crate::StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())).with_mem_quota(1 << 18, OomAction::Cancel)
 }
 
 /// `n` rows of `(i, i * 10)` in a fresh `t`.

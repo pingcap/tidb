@@ -19,11 +19,11 @@ use crate::{run_create_table_on, run_insert_reporting, run_select_on, SessionExt
 use tidb_datatype::Datum;
 
 fn dml_ctx() -> StmtContext {
-    StmtContext::for_dml(false, true, false)
+    StmtContext::for_dml(false, true, false).with_txn_store(Box::new(crate::test_store::store()))
 }
 
 fn select_ints(catalog: &SessionExtendedInfoSchema, sql: &str) -> Vec<i64> {
-    run_select_on(sql, catalog, &StmtContext::for_query())
+    run_select_on(sql, catalog, &StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store())))
         .expect("select succeeds")
         .into_iter()
         .map(|row| match &row[0] {
