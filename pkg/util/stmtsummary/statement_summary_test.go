@@ -929,92 +929,6 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 	return reader
 }
 
-<<<<<<< HEAD
-=======
-func TestColumnValueFactoryDoubleUintMetrics(t *testing.T) {
-	const uintMetricSum = uint64(1 << 63)
-	stats := &stmtSummaryStats{
-		execCount:                    2,
-		commitCount:                  2,
-		sumRocksdbDeleteSkippedCount: uintMetricSum,
-		sumRocksdbKeySkippedCount:    uintMetricSum,
-		sumRocksdbBlockCacheHitCount: uintMetricSum,
-		sumRocksdbBlockReadCount:     uintMetricSum,
-		sumRocksdbBlockReadByte:      uintMetricSum,
-		sumIARemoteReadSegmentCount:  uintMetricSum,
-		sumIARemoteReadSegmentSize:   uintMetricSum,
-		sumWriteKeys:                 246,
-		sumWriteSize:                 468,
-		sumPrewriteRegionNum:         6,
-		sumTxnRetry:                  4,
-		sumAffectedRows:              uintMetricSum,
-	}
-	avgUintMetric := float64(uintMetricSum) / float64(stats.execCount)
-	cases := []struct {
-		name     string
-		expected any
-	}{
-		{name: RocksdbDeleteSkippedCountStr, expected: float64(uintMetricSum)},
-		{name: AvgRocksdbDeleteSkippedCountStr, expected: avgUintMetric},
-		{name: RocksdbKeySkippedCountStr, expected: float64(uintMetricSum)},
-		{name: AvgRocksdbKeySkippedCountStr, expected: avgUintMetric},
-		{name: RocksdbBlockCacheHitCountStr, expected: float64(uintMetricSum)},
-		{name: AvgRocksdbBlockCacheHitCountStr, expected: avgUintMetric},
-		{name: RocksdbBlockReadCountStr, expected: float64(uintMetricSum)},
-		{name: AvgRocksdbBlockReadCountStr, expected: avgUintMetric},
-		{name: RocksdbBlockReadByteStr, expected: float64(uintMetricSum)},
-		{name: AvgRocksdbBlockReadByteStr, expected: avgUintMetric},
-		{name: AvgIARemoteReadSegmentCountStr, expected: avgUintMetric},
-		{name: AvgIARemoteReadSegmentSizeStr, expected: avgUintMetric},
-		{name: WriteKeysStr, expected: float64(stats.sumWriteKeys)},
-		{name: AvgWriteKeysStr, expected: float64(stats.sumWriteKeys) / float64(stats.commitCount)},
-		{name: WriteSizeStr, expected: float64(stats.sumWriteSize)},
-		{name: AvgWriteSizeStr, expected: float64(stats.sumWriteSize) / float64(stats.commitCount)},
-		{name: PrewriteRegionsStr, expected: float64(stats.sumPrewriteRegionNum)},
-		{name: AvgPrewriteRegionsStr, expected: float64(stats.sumPrewriteRegionNum) / float64(stats.commitCount)},
-		{name: TxnRetryStr, expected: float64(stats.sumTxnRetry)},
-		{name: AvgTxnRetryStr, expected: float64(stats.sumTxnRetry) / float64(stats.commitCount)},
-		{name: AffectedRowsStr, expected: float64(uintMetricSum)},
-		{name: AvgAffectedRowsStr, expected: avgUintMetric},
-	}
-
-	for _, tc := range cases {
-		factory, ok := columnValueFactoryMap[tc.name]
-		require.Truef(t, ok, "missing column value factory: %s", tc.name)
-		datum := types.NewDatum(factory(nil, nil, nil, stats))
-		require.Equal(t, tc.expected, datum.GetValue(), tc.name)
-
-		row := chunk.MutRowFromTypes([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)})
-		row.SetDatums(datum)
-		require.Equal(t, tc.expected, row.ToRow().GetFloat64(0), tc.name)
-	}
-
-	chunkStats := &stmtSummaryStats{
-		execCount:                    1,
-		commitCount:                  1,
-		sumRocksdbBlockCacheHitCount: 60,
-		sumRocksdbBlockReadCount:     21103,
-	}
-	chunkCases := []struct {
-		name     string
-		expected float64
-	}{
-		{name: RocksdbBlockCacheHitCountStr, expected: 60},
-		{name: AvgRocksdbBlockCacheHitCountStr, expected: 60},
-		{name: RocksdbBlockReadCountStr, expected: 21103},
-		{name: AvgRocksdbBlockReadCountStr, expected: 21103},
-	}
-	for _, tc := range chunkCases {
-		factory, ok := columnValueFactoryMap[tc.name]
-		require.Truef(t, ok, "missing column value factory: %s", tc.name)
-		datum := types.NewDatum(factory(nil, nil, nil, chunkStats))
-
-		row := chunk.MutRowFromTypes([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)})
-		row.SetDatums(datum)
-		require.Equal(t, tc.expected, row.ToRow().GetFloat64(0), tc.name)
-	}
-}
-
 func TestExecutionAverageColumnsUseExecCount(t *testing.T) {
 	stats := &stmtSummaryStats{
 		execCount:            2,
@@ -1086,7 +1000,6 @@ func BenchmarkStmtSummaryByDigestInitTableNames(b *testing.B) {
 	}
 }
 
->>>>>>> 78cac443a4f (planner, util: fix statement summary history and display correctness (#70159))
 // Test stmtSummaryByDigest.ToDatum.
 func TestToDatum(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()

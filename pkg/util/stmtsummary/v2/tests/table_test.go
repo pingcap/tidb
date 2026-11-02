@@ -19,11 +19,8 @@ import (
 	"fmt"
 	"math"
 	"os"
-<<<<<<< HEAD
-	"strconv"
-=======
 	"path/filepath"
->>>>>>> 78cac443a4f (planner, util: fix statement summary history and display correctness (#70159))
+	"strconv"
 	"testing"
 	"time"
 
