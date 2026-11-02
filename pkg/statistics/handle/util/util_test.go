@@ -15,16 +15,21 @@
 package util_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -156,4 +161,72 @@ func TestTableItemByIDForInitStatsAvoidsV1PartitionScan(t *testing.T) {
 
 	_, ok = getter.TableItemByIDForInitStats(is, 1<<60)
 	require.False(t, ok)
+}
+
+// failingStatsGlobalAccessor fails after the first statistics settings have been applied.
+type failingStatsGlobalAccessor struct{ variable.GlobalVarAccessor }
+
+func (a failingStatsGlobalAccessor) GetGlobalSysVar(name string) (string, error) {
+	if name == vardef.TiDBAnalyzeVersion {
+		return "", errors.New("statistics settings unavailable")
+	}
+	return a.GlobalVarAccessor.GetGlobalSysVar(name)
+}
+
+func TestUpdateSCtxVarsForStatsWithRestore(t *testing.T) {
+	t.Run("unloaded session variables", func(t *testing.T) {
+		sctx := mock.NewContext()
+		vars := sctx.GetSessionVars()
+		vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
+		_, loaded := vars.GetSystemVar(vardef.TiDBAnalyzeStoreBatchSize)
+		require.False(t, loaded)
+		restore, err := util.UpdateSCtxVarsForStatsWithRestore(sctx)
+		require.NoError(t, err)
+		restore()
+		value, loaded := vars.GetSystemVar(vardef.TiDBAnalyzeStoreBatchSize)
+		require.True(t, loaded)
+		require.Equal(t, fmt.Sprint(vardef.DefTiDBAnalyzeStoreBatchSize), value)
+		require.Equal(t, vardef.DefTiDBAnalyzeStoreBatchSize, vars.AnalyzeStoreBatchSize)
+	})
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			sctx := mock.NewContext()
+			vars := sctx.GetSessionVars()
+			accessor := variable.NewMockGlobalAccessor4Tests()
+			vars.GlobalVarsAccessor = accessor
+			require.NoError(t, accessor.SetGlobalSysVar(context.Background(), vardef.TiDBAnalyzePartitionConcurrency, "3"))
+			require.NoError(t, accessor.SetGlobalSysVar(context.Background(), vardef.TiDBAnalyzeVersion, "2"))
+			require.NoError(t, accessor.SetGlobalSysVar(context.Background(), vardef.TiDBAnalyzeStoreBatchSize, "6"))
+			require.NoError(t, accessor.SetGlobalSysVar(context.Background(), vardef.TimeZone, "+03:00"))
+			require.NoError(t, vars.SetSystemVar(vardef.TimeZone, "+08:00"))
+			require.NoError(t, vars.SetSystemVar(vardef.TiDBAnalyzeStoreBatchSize, "7"))
+			vars.StmtCtx.SetTimeZone(time.UTC)
+			vars.AnalyzePartitionConcurrency = 1
+			vars.AnalyzeVersion = 1
+			vars.EnableAsyncMergeGlobalStats = false
+			vars.AnalyzeSkipColumnTypes = map[string]struct{}{"json": {}}
+			originTZ := vars.TimeZone
+			if fail {
+				vars.GlobalVarsAccessor = failingStatsGlobalAccessor{accessor}
+			}
+			restore, err := util.UpdateSCtxVarsForStatsWithRestore(sctx)
+			if fail {
+				require.ErrorContains(t, err, "statistics settings unavailable")
+				require.Nil(t, restore)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, 3, vars.AnalyzePartitionConcurrency)
+				require.Equal(t, 6, vars.AnalyzeStoreBatchSize)
+				require.Equal(t, 3*3600, func() int { _, offset := time.Now().In(vars.TimeZone).Zone(); return offset }())
+				restore()
+			}
+			require.Equal(t, 1, vars.AnalyzePartitionConcurrency)
+			require.Equal(t, 1, vars.AnalyzeVersion)
+			require.Equal(t, 7, vars.AnalyzeStoreBatchSize)
+			require.False(t, vars.EnableAsyncMergeGlobalStats)
+			require.Equal(t, map[string]struct{}{"json": {}}, vars.AnalyzeSkipColumnTypes)
+			require.Same(t, originTZ, vars.TimeZone)
+			require.Same(t, time.UTC, vars.StmtCtx.TimeZone())
+		})
+	}
 }

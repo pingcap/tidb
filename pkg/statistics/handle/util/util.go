@@ -34,9 +34,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec/mock"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 const (
@@ -303,4 +305,56 @@ func IsSpecialGlobalIndex(idx *model.IndexInfo, tblInfo *model.TableInfo) bool {
 		}
 	}
 	return false
+}
+
+// UpdateSCtxVarsForStatsWithRestore applies current statistics settings to a borrowed
+// session and restores its original settings on failure or when the returned function runs.
+func UpdateSCtxVarsForStatsWithRestore(sctx sessionctx.Context) (func(), error) {
+	vars := sctx.GetSessionVars()
+	originAnalyzeSkipColumnTypes := vars.AnalyzeSkipColumnTypes
+	originEnableAsyncMergeGlobalStats := vars.EnableAsyncMergeGlobalStats
+	originEnableHistoricalStats := vars.EnableHistoricalStats
+	originEnableAnalyzeSnapshot := vars.EnableAnalyzeSnapshot
+	originSkipMissingPartitionStats := vars.SkipMissingPartitionStats
+	originAnalyzePartitionConcurrency := vars.AnalyzePartitionConcurrency
+	originAnalyzeVersion := vars.AnalyzeVersion
+	originAnalyzeStoreBatchSize := vars.AnalyzeStoreBatchSize
+	originLockWaitTimeout := vars.LockWaitTimeout
+	originTimeZone := vars.TimeZone
+	originPruneMode := vars.PartitionPruneMode.Load()
+	originStmtTimeZone := vars.StmtCtx.TimeZone()
+	// Session variables are loaded lazily; resolve cached values before setup.
+	originBatchSize, err := vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBAnalyzeStoreBatchSize)
+	if err != nil {
+		return nil, err
+	}
+	originTimeZoneValue, err := vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TimeZone)
+	if err != nil {
+		return nil, err
+	}
+	restore := func() {
+		if err := vars.SetSystemVar(vardef.TiDBAnalyzeStoreBatchSize, originBatchSize); err != nil {
+			logutil.BgLogger().Warn("restore analyze store batch size failed", zap.Error(err))
+		}
+		if err := vars.SetSystemVar(vardef.TimeZone, originTimeZoneValue); err != nil {
+			logutil.BgLogger().Warn("restore statistics session time zone failed", zap.Error(err))
+		}
+		vars.AnalyzeSkipColumnTypes = originAnalyzeSkipColumnTypes
+		vars.EnableAsyncMergeGlobalStats = originEnableAsyncMergeGlobalStats
+		vars.EnableHistoricalStats = originEnableHistoricalStats
+		vars.EnableAnalyzeSnapshot = originEnableAnalyzeSnapshot
+		vars.SkipMissingPartitionStats = originSkipMissingPartitionStats
+		vars.AnalyzePartitionConcurrency = originAnalyzePartitionConcurrency
+		vars.AnalyzeVersion = originAnalyzeVersion
+		vars.AnalyzeStoreBatchSize = originAnalyzeStoreBatchSize
+		vars.LockWaitTimeout = originLockWaitTimeout
+		vars.TimeZone = originTimeZone
+		vars.PartitionPruneMode.Store(originPruneMode)
+		vars.StmtCtx.SetTimeZone(originStmtTimeZone)
+	}
+	if err := UpdateSCtxVarsForStats(sctx); err != nil {
+		restore()
+		return nil, err
+	}
+	return restore, nil
 }

@@ -30,7 +30,10 @@ import (
 	meta "github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	basic "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -112,6 +115,7 @@ type recordingSessionContext struct {
 	restrictedMLogPurgeMinRate              []int
 	restrictedMLogPurgeRateBudgetRatio      []float64
 	restrictedMLogPurgeDeleteTiFlashThreads []int64
+	restrictedAnalyzePartitionConcurrency   []int
 	restrictedRows                          map[string][]chunk.Row
 	restrictedErrs                          map[string]error
 	restrictedAffectedRows                  map[string][]uint64
@@ -197,6 +201,7 @@ func (s *recordingSessionContext) ExecRestrictedSQL(_ context.Context, _ []sqlex
 	s.restrictedMLogPurgeMinRate = append(s.restrictedMLogPurgeMinRate, s.GetSessionVars().MLogPurgeMinRate)
 	s.restrictedMLogPurgeRateBudgetRatio = append(s.restrictedMLogPurgeRateBudgetRatio, s.GetSessionVars().MLogPurgeRateBudgetRatio)
 	s.restrictedMLogPurgeDeleteTiFlashThreads = append(s.restrictedMLogPurgeDeleteTiFlashThreads, s.GetSessionVars().MLogPurgeDeleteTiFlashThreads)
+	s.restrictedAnalyzePartitionConcurrency = append(s.restrictedAnalyzePartitionConcurrency, s.GetSessionVars().AnalyzePartitionConcurrency)
 	if seq, ok := s.restrictedAffectedRows[sql]; ok {
 		pos := s.restrictedAffectedPos[sql]
 		if pos < len(seq) {
@@ -305,14 +310,18 @@ type mockMVServiceHelper struct {
 	fetchAccumulationTasks            map[int64]*mlogAccumulationTask
 	fetchAccumulationRowCounts        map[int64]uint64
 	fetchViews                        map[int64]*mviewTask
+	fetchAnalyzeTasks                 map[int64]*mlogAnalyzeTask
 	fetchLogsErr                      error
 	fetchAccumulationTasksErr         error
 	fetchAccumulationRowCountsErr     error
 	fetchViewsErr                     error
+	fetchAnalyzeTasksErr              error
 	fetchLogsCalls                    atomic.Int32
 	fetchAccumulationTaskCalls        atomic.Int32
 	fetchAccumulationRowCountCalls    atomic.Int32
 	fetchViewCalls                    atomic.Int32
+	fetchAnalyzeTaskCalls             atomic.Int32
+	analyzeMLogCalls                  atomic.Int32
 	serverRefreshCalls                atomic.Int32
 	historyGCCalls                    atomic.Int32
 	refreshManualCancelBackoffApplied bool
@@ -335,8 +344,12 @@ type mockMVServiceHelper struct {
 	lastMViewHistoryGCMaxRecords      atomic.Uint64
 	lastMLogHistoryGCMaxRecords       atomic.Uint64
 
-	lastRefreshID int64
-	lastPurgeID   int64
+	lastRefreshID      int64
+	lastPurgeID        int64
+	lastAnalyzeID      atomic.Int64
+	analyzeMLogErr     error
+	analyzeMLogEntered chan struct{}
+	blockAnalyzeMLog   chan struct{}
 
 	syncRefreshAlertMu              sync.Mutex
 	lastRefreshAlertAt              time.Time
@@ -703,4 +716,52 @@ func setThreeNodeRefreshAlertOwnersForTest(svc *MVService, selfID string) {
 		"nodeC": {ID: "nodeC"},
 	})
 	svc.sch.mu.Unlock()
+}
+
+type recordingStatsHandle struct {
+	statstypes.StatsHandle
+	stats map[int64]*statistics.Table
+}
+
+type recordingSysProcTracker struct {
+	sysproctrack.Tracker
+}
+
+func (h *recordingStatsHandle) GetNonPseudoPhysicalTableStats(physicalTableID int64) (*statistics.Table, bool) {
+	statsTbl, ok := h.stats[physicalTableID]
+	return statsTbl, ok
+}
+
+func (*recordingStatsHandle) AutoAnalyzeProcID() uint64 { return 1 }
+
+func (*recordingStatsHandle) ReleaseAutoAnalyzeProcID(uint64) {}
+
+func (*recordingSysProcTracker) Track(uint64, sysproctrack.TrackProc) error { return nil }
+
+func (*recordingSysProcTracker) UnTrack(uint64) {}
+
+func (m *mockMVServiceHelper) LoadAllTiDBMVLogAnalyzeTasks(context.Context, basic.SessionPool) (map[int64]*mlogAnalyzeTask, error) {
+	m.fetchAnalyzeTaskCalls.Add(1)
+	if m.fetchAnalyzeTasksErr != nil {
+		return nil, m.fetchAnalyzeTasksErr
+	}
+	if m.fetchAnalyzeTasks == nil {
+		return map[int64]*mlogAnalyzeTask{}, nil
+	}
+	return m.fetchAnalyzeTasks, nil
+}
+
+func (m *mockMVServiceHelper) AnalyzeMVLog(_ context.Context, _ basic.SessionPool, mlogID int64) error {
+	m.lastAnalyzeID.Store(mlogID)
+	m.analyzeMLogCalls.Add(1)
+	if m.analyzeMLogEntered != nil {
+		select {
+		case m.analyzeMLogEntered <- struct{}{}:
+		default:
+		}
+	}
+	if m.blockAnalyzeMLog != nil {
+		<-m.blockAnalyzeMLog
+	}
+	return m.analyzeMLogErr
 }

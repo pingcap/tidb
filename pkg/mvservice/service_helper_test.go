@@ -30,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -93,7 +95,7 @@ func TestRegisterMVServiceBootstrapAndDDLHandler(t *testing.T) {
 	svc := RegisterMVService(context.Background(), func(id notifier.HandlerID, handler notifier.SchemaChangeHandler) {
 		gotHandlerID = id
 		gotHandler = handler
-	}, mockSessionPool{}, func() {
+	}, mockSessionPool{}, nil, nil, func() {
 		called.Add(1)
 	})
 	require.NotNil(t, svc)
@@ -108,6 +110,7 @@ func TestRegisterMVServiceBootstrapAndDDLHandler(t *testing.T) {
 	}, svc.GetTaskBackpressureConfig())
 	require.NotNil(t, svc.refreshExecutor.backpressure.Load())
 	require.NotNil(t, svc.purgeExecutor.backpressure.Load())
+	require.NotNil(t, svc.mlogAnalyzeExecutor.backpressure.Load())
 
 	createTable := notifier.NewCreateTableEvent(&meta.TableInfo{ID: 1})
 	require.NoError(t, gotHandler(context.Background(), nil, createTable))
@@ -1531,4 +1534,146 @@ func TestServerHelperCleanupStaleMVRefreshAlerts(t *testing.T) {
 	require.Len(t, se.executedRestrictedArg, 2)
 	require.Empty(t, se.executedRestrictedArg[0])
 	require.Empty(t, se.executedRestrictedArg[1])
+}
+
+func TestNeedAnalyzeMLog(t *testing.T) {
+	oldAutoAnalyzeMinCnt := statistics.AutoAnalyzeMinCnt
+	statistics.AutoAnalyzeMinCnt = 1000
+	t.Cleanup(func() {
+		statistics.AutoAnalyzeMinCnt = oldAutoAnalyzeMinCnt
+	})
+
+	analyzedStats := func(realtimeCnt, modifyCnt int64, lastAnalyzeVersion uint64) *statistics.Table {
+		columns := map[int64]*statistics.Column{
+			1: {StatsVer: statistics.Version2},
+		}
+		return &statistics.Table{
+			HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, realtimeCnt, modifyCnt, columns, nil),
+			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(1, 0),
+			LastAnalyzeVersion:    lastAnalyzeVersion,
+		}
+	}
+	unanalyzedStats := func(realtimeCnt int64) *statistics.Table {
+		return &statistics.Table{
+			HistColl: *statistics.NewHistCollWithColsAndIdxs(0, realtimeCnt, 0, nil, nil),
+		}
+	}
+	analyzeVersion := oracle.GoTimeToTS(time.Now())
+
+	tests := []struct {
+		name      string
+		stats     *statistics.Table
+		ratio     float64
+		need      bool
+		reason    string
+		reasonHas string
+	}{
+		{
+			name:  "nil stats",
+			ratio: 0.5,
+		},
+		{
+			name: "pseudo stats",
+			stats: func() *statistics.Table {
+				stats := unanalyzedStats(statistics.AutoAnalyzeMinCnt + 1)
+				stats.Pseudo = true
+				return stats
+			}(),
+			ratio: 0.5,
+		},
+		{
+			name:  "below min count",
+			stats: unanalyzedStats(statistics.AutoAnalyzeMinCnt - 1),
+			ratio: 0,
+		},
+		{
+			name:   "unanalyzed reaches min count even when ratio disabled",
+			stats:  unanalyzedStats(statistics.AutoAnalyzeMinCnt),
+			ratio:  0,
+			need:   true,
+			reason: "mlog unanalyzed",
+		},
+		{
+			name:  "analyzed modify trigger disabled by zero ratio",
+			stats: analyzedStats(1000, 2000, analyzeVersion),
+			ratio: 0,
+		},
+		{
+			name:  "analyzed below ratio",
+			stats: analyzedStats(1000, 200, analyzeVersion),
+			ratio: 0.5,
+		},
+		{
+			name:      "analyzed above ratio",
+			stats:     analyzedStats(1000, 600, analyzeVersion),
+			ratio:     0.5,
+			need:      true,
+			reasonHas: "too many mlog modifications",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			need, reason := needAnalyzeMLog(tt.stats, tt.ratio)
+			require.Equal(t, tt.need, need)
+			if tt.reason != "" {
+				require.Equal(t, tt.reason, reason)
+			}
+			if tt.reasonHas != "" {
+				require.Contains(t, reason, tt.reasonHas)
+			}
+			if !tt.need {
+				require.Empty(t, reason)
+			}
+		})
+	}
+}
+
+func TestServerHelperAnalyzeMVLogTemporarilyUpdatesStatsSessionVars(t *testing.T) {
+	se := newRecordingSessionContext()
+	pool := recordingSessionPool{se: se}
+	_, mlogTable := buildMockMVBaseAndMVLogTables(101, 201, 101)
+	withMockInfoSchema(t, mlogTable)
+
+	vars := se.GetSessionVars()
+	mockGlobalAccessor := variable.NewMockGlobalAccessor4Tests()
+	mockGlobalAccessor.SessionVars = vars
+	vars.GlobalVarsAccessor = mockGlobalAccessor
+	vars.AnalyzePartitionConcurrency = 0
+	vars.AnalyzeVersion = statistics.Version1
+	vars.EnableAnalyzeSnapshot = false
+	vars.PartitionPruneMode.Store("static")
+	vars.AnalyzeSkipColumnTypes = map[string]struct{}{"json": {}}
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBAnalyzePartitionConcurrency, "3"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBAnalyzeVersion, "2"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBEnableAnalyzeSnapshot, "on"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBPartitionPruneMode, "dynamic"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBAnalyzeSkipColumnTypes, "blob"))
+	oldAnalyzeSkipColumnTypes := vars.AnalyzeSkipColumnTypes
+
+	statsHandle := &recordingStatsHandle{
+		stats: map[int64]*statistics.Table{
+			201: {
+				HistColl: statistics.HistColl{
+					StatsVer: statistics.Version2,
+				},
+			},
+		},
+	}
+	helper := &serviceHelper{
+		statsHandleGetter: func() statstypes.StatsHandle {
+			return statsHandle
+		},
+		sysProcTracker: &recordingSysProcTracker{},
+	}
+
+	err := helper.AnalyzeMVLog(context.Background(), pool, 201)
+	require.NoError(t, err)
+	require.Equal(t, []string{`ANALYZE TABLE %n.%n`}, se.executedRestrictedSQL)
+	require.Equal(t, []any{"test", "mlog1"}, se.executedRestrictedArg[0])
+	require.Equal(t, []int{3}, se.restrictedAnalyzePartitionConcurrency)
+	require.Equal(t, 0, vars.AnalyzePartitionConcurrency)
+	require.Equal(t, statistics.Version1, vars.AnalyzeVersion)
+	require.False(t, vars.EnableAnalyzeSnapshot)
+	require.Equal(t, "static", vars.PartitionPruneMode.Load())
+	require.Equal(t, oldAnalyzeSkipColumnTypes, vars.AnalyzeSkipColumnTypes)
 }

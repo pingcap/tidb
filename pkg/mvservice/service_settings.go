@@ -30,6 +30,7 @@ type Config struct {
 	RefreshTaskConcurrencyRatio float64
 	RefreshTaskTimeout          time.Duration
 	PurgeTaskTimeout            time.Duration
+	MLogAnalyzeTaskConcurrency  int
 
 	FetchInterval         time.Duration
 	BasicInterval         time.Duration
@@ -53,6 +54,7 @@ func DefaultMVServiceConfig() Config {
 		RefreshTaskConcurrencyRatio:  defaultMVRefreshTaskConcurrencyRatio,
 		RefreshTaskTimeout:           DefaultMVRefreshTaskTimeout,
 		PurgeTaskTimeout:             DefaultMVPurgeTaskTimeout,
+		MLogAnalyzeTaskConcurrency:   defaultMLogAnalyzeTaskConcurrency,
 		FetchInterval:                defaultMVFetchInterval,
 		BasicInterval:                defaultMVBasicInterval,
 		ServerRefreshInterval:        defaultServerRefreshInterval,
@@ -88,6 +90,9 @@ func normalizeMVServiceConfig(cfg Config) Config {
 	}
 	if cfg.PurgeTaskTimeout < 0 {
 		cfg.PurgeTaskTimeout = 0
+	}
+	if cfg.MLogAnalyzeTaskConcurrency <= 0 {
+		cfg.MLogAnalyzeTaskConcurrency = def.MLogAnalyzeTaskConcurrency
 	}
 	if cfg.FetchInterval <= 0 {
 		cfg.FetchInterval = def.FetchInterval
@@ -150,6 +155,10 @@ func NewMVService(ctx context.Context, se basic.SessionPool, helper Helper, cfg 
 		sch:             NewServerConsistentHash(ctx, cfg.ServerConsistentHashReplicas, helper),
 		refreshExecutor: NewTaskExecutor(refreshConcurrency, cfg.RefreshTaskTimeout),
 		purgeExecutor:   NewTaskExecutor(purgeConcurrency, cfg.PurgeTaskTimeout),
+		mlogAnalyzeExecutor: NewTaskExecutor(
+			cfg.MLogAnalyzeTaskConcurrency,
+			0,
+		),
 
 		notifier: NewNotifier(),
 		ctx:      ctx,
@@ -316,6 +325,7 @@ func (t *MVService) GetTaskBackpressureConfig() TaskBackpressureConfig {
 func (t *MVService) SetTaskBackpressureController(controller TaskBackpressureController) {
 	t.refreshExecutor.SetBackpressureController(controller)
 	t.purgeExecutor.SetBackpressureController(controller)
+	t.mlogAnalyzeExecutor.SetBackpressureController(controller)
 }
 
 // historyGCInterval returns history GC interval.
