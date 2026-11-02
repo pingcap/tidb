@@ -383,6 +383,20 @@ func TestStatementsSummaryExtractorConservativeTimeRange(t *testing.T) {
 		end       string
 	}{
 		{
+			name:      "ConstantLeftBeginLowerBound",
+			predicate: "'2022-12-27 02:00:00' <= summary_begin_time",
+		},
+		{
+			name:      "ConstantLeftEndUpperBound",
+			predicate: "'2022-12-27 03:00:00' >= summary_end_time",
+		},
+		{
+			name:      "ConstantLeftRange",
+			predicate: "'2022-12-27 03:00:00' >= summary_begin_time and '2022-12-27 02:00:00' <= summary_end_time",
+			start:     "2022-12-27T02:00:00Z",
+			end:       "2022-12-27T03:00:00Z",
+		},
+		{
 			name:      "CrossedEndpoints",
 			predicate: "summary_begin_time <= '2022-12-27 02:01:00' and summary_end_time >= '2022-12-27 02:02:00'",
 		},

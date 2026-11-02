@@ -581,6 +581,18 @@ func (helper extractHelper) extractTimeRange(
 		}
 
 		if colName == extractColName {
+			if _, columnOnRight := fn.GetArgs()[1].(*expression.Column); columnOnRight {
+				switch fnName {
+				case ast.GT:
+					fnName = ast.LT
+				case ast.GE:
+					fnName = ast.LE
+				case ast.LT:
+					fnName = ast.GT
+				case ast.LE:
+					fnName = ast.GE
+				}
+			}
 			timeType := types.NewFieldType(mysql.TypeDatetime)
 			timeType.SetDecimal(6)
 			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), timeType)
