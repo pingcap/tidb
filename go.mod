@@ -352,4 +352,4 @@ replace (
 replace github.com/tikv/pd/client => github.com/rleungx/pd/client v0.0.0-20261031094646-72804abadc07
 
 // Temporary source branch for https://github.com/tikv/client-go/pull/2154; use upstream after merge.
-replace github.com/tikv/client-go/v2 => github.com/wfxr/client-go/v2 v2.0.8-0.20261102030549-1a57cf72a124
+replace github.com/tikv/client-go/v2 => github.com/wfxr/client-go/v2 v2.0.8-0.20261102032726-734657b990a7
