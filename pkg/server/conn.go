@@ -100,7 +100,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -1926,7 +1925,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	if len(pointPlans) > 0 {
 		defer cc.ctx.ClearValue(plannercore.PointPlanKey)
 	}
-	var retryable bool
 	var lastStmt ast.StmtNode
 	var expiredStmtTaskID uint64
 	for i, stmt := range stmts {
@@ -1944,39 +1942,16 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			// Save the point plan in Session, so we don't need to build the point plan again.
 			cc.ctx.SetValue(plannercore.PointPlanKey, plannercore.PointPlanVal{Plan: pointPlans[i]})
 		}
-		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
+		err = cc.runStmtWithRetry(ctx, func(tiFlashErr error) (stmtRetrySafety, error) {
+			warns := parserWarns
+			if tiFlashErr != nil {
+				// Text execution attaches fallback and parser warnings before writing results.
+				warns = append(warns, contextutil.SQLWarn{Level: contextutil.WarnLevelError, Err: tiFlashErr})
+			}
+			return cc.handleStmt(ctx, stmt, warns, i == len(stmts)-1)
+		})
 		if err != nil {
-			action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
-			if txnErr != nil {
-				err = txnErr
-				break
-			}
-
-			if retryable && action == sessiontxn.StmtActionRetryReady {
-				cc.ctx.GetSessionVars().RetryInfo.Retrying = true
-				_, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
-				cc.ctx.GetSessionVars().RetryInfo.Retrying = false
-				if err != nil {
-					break
-				}
-				continue
-			}
-			if !retryable || !errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) {
-				break
-			}
-			_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-			if !allowTiFlashFallback {
-				break
-			}
-			// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
-			// server and fallback to TiKV.
-			warns := append(parserWarns, contextutil.SQLWarn{Level: contextutil.WarnLevelError, Err: err})
-			delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
-			_, err = cc.handleStmt(ctx, stmt, warns, i == len(stmts)-1)
-			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
-			if err != nil {
-				break
-			}
+			break
 		}
 	}
 
@@ -2250,12 +2225,12 @@ unwrapStmt:
 	return true
 }
 
-// The first return value indicates whether the call of handleStmt has no side effect and can be retried.
-// Currently, the first return value is used to fall back to TiKV when TiFlash is down.
+// The first return value indicates whether handleStmt can be repeated without
+// replaying client-visible output or other protocol side effects.
 func (cc *clientConn) handleStmt(
 	ctx context.Context, stmt ast.StmtNode,
 	warns []contextutil.SQLWarn, lastStmt bool,
-) (bool, error) {
+) (stmtRetrySafety, error) {
 	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	cc.audit(context.Background(), plugin.Starting)
@@ -2267,7 +2242,7 @@ func (cc *clientConn) handleStmt(
 			err := cc.preprocessLoadDataLocal(ctx)
 			defer cc.postprocessLoadDataLocal()
 			if err != nil {
-				return false, err
+				return stmtRetryUnsafe, err
 			}
 		}
 	}
@@ -2297,7 +2272,7 @@ func (cc *clientConn) handleStmt(
 		if sv := cc.ctx.GetSessionVars(); sv != nil && sv.StmtCtx != nil {
 			sv.StmtCtx.DetachMemDiskTracker()
 		}
-		return true, err
+		return stmtRetrySafe, err
 	}
 
 	status := cc.ctx.Status()
@@ -2309,7 +2284,7 @@ func (cc *clientConn) handleStmt(
 
 	if rs != nil {
 		if cc.getStatus() == connStatusShutdown {
-			return false, exeerrors.ErrQueryInterrupted
+			return stmtRetryUnsafe, exeerrors.ErrQueryInterrupted
 		}
 		cc.ctx.GetSessionVars().SQLKiller.SetFinishFunc(
 			func() {
@@ -2320,9 +2295,9 @@ func (cc *clientConn) handleStmt(
 		defer cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(false)
 		defer cc.ctx.GetSessionVars().SQLKiller.ClearFinishFunc()
 		if retryable, err := cc.writeResultSet(ctx, rs, false, status, 0); err != nil {
-			return retryable, err
+			return stmtRetrySafety(retryable), err
 		}
-		return false, nil
+		return stmtRetryUnsafe, nil
 	}
 
 	handled, err := cc.handleFileTransInConn(ctx, status)
@@ -2332,7 +2307,7 @@ func (cc *clientConn) handleStmt(
 			execStmt.(*executor.ExecStmt).FinishExecuteStmt(0, err, false)
 		}
 	}
-	return false, err
+	return stmtRetryUnsafe, err
 }
 
 // Preprocess LOAD DATA. Load data from a local file requires reading from the connection.
