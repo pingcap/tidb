@@ -1095,6 +1095,8 @@ impl Drop for Session {
             collector.delete();
         }
         self.advisory_locks.release_all();
+        // Go `session.Close`'s `WithdrawAllPreparedStmt`.
+        self.vars.withdraw_all_prepared_stmt();
     }
 }
 
@@ -2011,6 +2013,22 @@ impl Session {
     /// enter the session, so parsing here cannot depend on client input shape.
     #[must_use]
     pub fn wait_timeout(&self) -> Duration {
+        // Go `getWaitTimeout`: an open transaction may idle only
+        // `tidb_idle_transaction_timeout` seconds when that is set
+        // (`tidbOptPositiveInt32`: anything but a positive number is unset).
+        if self.in_transaction() {
+            static IDLE: tidb_variable::sysvar::StaticSysVarIndex =
+                tidb_variable::sysvar::StaticSysVarIndex::new("tidb_idle_transaction_timeout");
+            let idle = self
+                .vars
+                .system_value_at(IDLE.get())
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .filter(|seconds| *seconds > 0);
+            if let Some(seconds) = idle {
+                return Duration::from_secs(seconds as u64);
+            }
+        }
         // Read once per command (Go `getSessionVarsWaitTimeout`, one
         // `systems[name]` probe). The name-to-index step is resolved once
         // for the process so the per-command read is a plain slot read.

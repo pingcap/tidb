@@ -247,7 +247,7 @@ pub fn hash_partition_management(
         })
         .collect::<Vec<_>>();
     // Go `handlePartitionPlacement`: each policy must exist.
-    host.resolve_placement(&mut definitions)?;
+    host.handle_partition_placement(&mut definitions)?;
     // Go `buildPartitionDefinitionsInfo` ->
     // `rebuildStorageClassForPartitionDefinitions` over the reorganized list.
     assign_partition_storage_classes(table, &partition.kind, &[], &mut definitions, ctx)?;
@@ -513,6 +513,9 @@ pub fn plan_add_partitions(
     // Go reads a definition's comment and placement policy and ignores its
     // other options (`ENGINE`, `DATA DIRECTORY`, ...); subpartitions are not
     // ported.
+    // The comments the RANGE loop validated (and, outside strict mode,
+    // truncated); the other kinds take theirs verbatim.
+    let mut validated_comments: Vec<Option<String>> = vec![None; definitions.len()];
     if definitions
         .iter()
         .any(|definition| !definition.sub_partitions.is_empty())
@@ -596,8 +599,8 @@ pub fn plan_add_partitions(
                         // Go reaches these builders through the SAME
                         // `buildPartitionDefinitionsInfo` loop a CREATE uses, so
                         // an added partition's name faces the 64-rune rule at the
-                        // same point. Per-partition options are refused above, so
-                        // there is no comment to validate.
+                        // same point. Go's LIST loop takes the comment verbatim,
+                        // so there is no comment length to validate.
                         &mut |ordinal: usize| {
                             definitions.get(ordinal).map_or(Ok(()), |definition| {
                                 crate::table_partition::check_too_long_partition_name(
@@ -657,8 +660,8 @@ pub fn plan_add_partitions(
                     // Go reaches these builders through the SAME
                     // `buildPartitionDefinitionsInfo` loop a CREATE uses, so
                     // an added partition's name faces the 64-rune rule at the
-                    // same point. Per-partition options are refused above, so
-                    // there is no comment to validate.
+                    // same point. Go's LIST loop takes the comment verbatim,
+                    // so there is no comment length to validate.
                     &mut |ordinal: usize| {
                         definitions.get(ordinal).map_or(Ok(()), |definition| {
                             crate::table_partition::check_too_long_partition_name(&definition.name)
@@ -697,9 +700,10 @@ pub fn plan_add_partitions(
                         definitions.get(ordinal).map_or(Ok(()), |definition| {
                             // Go's RANGE loop validates the comment length
                             // (1793) before the name's.
-                            crate::table_partition::partition_definition_comment(
-                                definition, ctx, true,
-                            )?;
+                            validated_comments[ordinal] =
+                                Some(crate::table_partition::partition_definition_comment(
+                                    definition, ctx, true,
+                                )?);
                             crate::table_partition::check_too_long_partition_name(&definition.name)
                         })
                     },
@@ -777,6 +781,12 @@ pub fn plan_add_partitions(
                         ctx,
                         &mut |ordinal: usize| {
                             definitions.get(ordinal).map_or(Ok(()), |definition| {
+                                // Go's RANGE loop (COLUMNS too) validates the
+                                // comment length before the name's.
+                                validated_comments[ordinal] =
+                                    Some(crate::table_partition::partition_definition_comment(
+                                        definition, ctx, true,
+                                    )?);
                                 crate::table_partition::check_too_long_partition_name(
                                     &definition.name,
                                 )
@@ -824,7 +834,6 @@ pub fn plan_add_partitions(
     // (`ddl/partition.go:5210`), so leaving it empty here would print an
     // added LIST partition as `DEFAULT` and lose the values it was given.
     //
-    // Per-partition OPTIONS are refused above, so no comment can reach here.
     let list_field_types = match &added_kind {
         PartitionKind::ListColumns { field_types, .. } => field_types.clone(),
         _ => Vec::new(),
@@ -857,10 +866,18 @@ pub fn plan_add_partitions(
     let mut added_definitions = Vec::with_capacity(definitions.len());
     for (ordinal, definition) in definitions.iter().enumerate() {
         // The id is allocated once every check has passed, as Go's
-        // `assignPartitionIDs` runs last. Per-partition OPTIONS are refused
-        // on this path, so an added partition names no policy of its own.
+        // `assignPartitionIDs` runs last. Go `buildPartitionDefinitionsInfo`
+        // keeps the definition's comment and placement policy (resolved by
+        // the executor's `handlePartitionPlacement`).
+        let comment = match validated_comments[ordinal].take() {
+            Some(comment) => comment,
+            None => crate::table_partition::partition_definition_comment(definition, ctx, false)?,
+        };
         added_definitions.push(StoredDefinition {
             name: tidb_ast::CiString::new(definition.name.clone()),
+            comment,
+            placement_policy_ref: crate::table_partition::partition_definition_placement(definition)
+                .map(tidb_model::GoShared::new),
             less_than: range_bound_text(ordinal)?.into(),
             in_values: crate::table_partition::stored_in_values(
                 Some(definition),
@@ -1120,8 +1137,12 @@ pub trait ReorgHost {
     /// Go `genGlobalIDs`, one id.
     fn allocate_table_id(&mut self) -> i64;
     /// Go `handlePartitionPlacement`: every policy a new definition names
-    /// must exist, and the reference records its id.
-    fn resolve_placement(&self, definitions: &mut [StoredDefinition]) -> Result<(), MysqlError>;
+    /// must exist, and the reference records its id; under
+    /// `tidb_placement_mode = 'IGNORE'` the references are removed instead.
+    fn handle_partition_placement(
+        &mut self,
+        definitions: &mut [StoredDefinition],
+    ) -> Result<(), MysqlError>;
 }
 
 /// A partition reorganization planned against the table before it: Go's
@@ -1402,7 +1423,7 @@ pub fn reorganize_partitions(
                 ));
             }
         }
-        host.resolve_placement(&mut built[new_offset..new_offset + definitions.len()])?;
+        host.handle_partition_placement(&mut built[new_offset..new_offset + definitions.len()])?;
         info.definitions = built.into();
         let source_ids = dropped.iter().map(|ordinal| old[*ordinal].id).collect();
         (info, source_ids, new_offset)
@@ -1499,7 +1520,7 @@ pub fn alter_table_partitioning(
             &mut built,
             ctx,
         )?;
-        host.resolve_placement(&mut built)?;
+        host.handle_partition_placement(&mut built)?;
         info.definitions = built.into();
         // Go builds the reorganized table in the job's next state, and a KEY
         // method that resolved no column has no expression to build

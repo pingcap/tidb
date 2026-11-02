@@ -1842,6 +1842,15 @@ fn run_insert_rows(
                         .get_row_by_handle(&mut *crate::statement_store(ctx), handle, &ctx.session_zone())
                         .map_err(|e| kv_read_error("row read failed", e))?;
                     if existing.as_deref() == Some(row) {
+                        // Go `removeRow`: the identical row stays, its keys
+                        // locked as an unchanged row's.
+                        let mut key_set = update_record::LOCK_ROW_KEY;
+                        if ctx.lock_unchanged_keys() {
+                            key_set |= update_record::LOCK_UNIQUE_KEYS;
+                        }
+                        update_record::add_unchanged_keys_for_lock_by_row(
+                            table, handle, row, key_set, ctx,
+                        )?;
                         // Go `batchCheckAndInsert`: an identical row behind the
                         // record key counts as copied, one behind a unique key
                         // (`removeRow(inReplace=true)`) as affected.
@@ -1910,6 +1919,13 @@ fn run_insert_rows(
                 continue;
             } else if insert.ignore {
                 let conflict = conflicts.into_iter().next().expect("a conflict was found");
+                // Go `handleDuplicateKey` / `batchCheckAndInsert`: the key
+                // an IGNOREd row collided on joins the pessimistic locks.
+                if ctx.pessimistic_transaction() && ctx.lock_unchanged_keys() {
+                    if let Some(keys) = ctx.selected_lock_keys() {
+                        keys.insert(conflict.key);
+                    }
+                }
                 let warning = kv_write_error(conflict.error).to_mysql_error();
                 ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
             tidb_context::WarningLevel::Warning,

@@ -902,6 +902,13 @@ pub struct StmtContextData {
     /// read this value when deciding whether CHECK declarations are discarded
     /// with a warning or persisted and enforced.
     enable_check_constraint: bool,
+    /// Go `SessionVars.PlacementMode == PlacementModeIgnore`
+    /// (`@@tidb_placement_mode = 'IGNORE'`): placement options and placement
+    /// DDL are dropped with a note.
+    placement_mode_ignore: bool,
+    /// Go `SessionVars.LockUnchangedKeys` (`@@tidb_lock_unchanged_keys`):
+    /// an unchanged row's unique keys are locked too.
+    lock_unchanged_keys: bool,
     /// Go's query-scoped `kv.QueryCopStoreLimiter`, created once per
     /// statement when `tidb_query_cop_store_limit` is positive and shared by
     /// all coprocessor scans in that statement.
@@ -990,6 +997,9 @@ pub struct StmtContextData {
     /// fraction of an order-preserving access range expected to be scanned
     /// before the first LIMIT row is found.
     ordering_index_selectivity_ratio: f64,
+    /// Go `SessionVars.IndexJoinMaxScanRowsRatio`
+    /// (`@@tidb_opt_index_join_max_scan_rows_ratio`, default 0: off).
+    index_join_max_scan_rows_ratio: f64,
     /// Go `SessionVars.OptOrderingIdxSelThresh`: when a datasource has any
     /// sufficiently selective access path, index scans keep their original
     /// row estimate instead of applying `ExpectedCnt`.
@@ -1774,6 +1784,13 @@ context_configuration! {
         self
     }
 
+    /// Sets `@@tidb_opt_index_join_max_scan_rows_ratio` for this statement.
+    #[must_use]
+    pub fn with_index_join_max_scan_rows_ratio(mut self, ratio: f64) -> Self {
+        self.index_join_max_scan_rows_ratio = ratio;
+        self
+    }
+
     /// Sets `@@tidb_opt_ordering_index_selectivity_ratio` for this statement.
     #[must_use]
     pub fn with_ordering_index_selectivity_ratio(mut self, ratio: f64) -> Self {
@@ -2194,6 +2211,20 @@ context_configuration! {
     #[must_use]
     pub fn with_enable_check_constraint(mut self, enabled: bool) -> Self {
         self.enable_check_constraint = enabled;
+        self
+    }
+
+    /// Sets `@@tidb_placement_mode = 'IGNORE'` for this statement.
+    #[must_use]
+    pub fn with_placement_mode_ignore(mut self, ignore: bool) -> Self {
+        self.placement_mode_ignore = ignore;
+        self
+    }
+
+    /// Sets `@@tidb_lock_unchanged_keys` for this statement.
+    #[must_use]
+    pub fn with_lock_unchanged_keys(mut self, lock: bool) -> Self {
+        self.lock_unchanged_keys = lock;
         self
     }
 
@@ -2662,6 +2693,8 @@ impl StmtContext {
             default_week_format: 0,
             foreign_key_checks: true,
             enable_check_constraint: false,
+            placement_mode_ignore: false,
+            lock_unchanged_keys: tidb_vardef::defaults::DEF_TIDB_LOCK_UNCHANGED_KEYS,
             query_cop_store_limiter: None,
             pessimistic_lazy_dup_check: false,
             pessimistic_transaction: false,
@@ -2694,6 +2727,7 @@ impl StmtContext {
                 tidb_vardef::defaults::DEF_OPT_CARTESIAN_JOIN_ORDER_THRESHOLD,
             advanced_join_hint: tidb_vardef::defaults::DEF_TIDB_OPT_ADVANCED_JOIN_HINT,
             ordering_index_selectivity_ratio: 0.01,
+            index_join_max_scan_rows_ratio: 0.0,
             ordering_index_selectivity_threshold:
                 tidb_vardef::defaults::DEF_TIDB_OPT_ORDERING_IDX_SEL_THRESH,
             allow_projection_push_down: true,
@@ -3929,6 +3963,12 @@ impl StmtContext {
         self.cte_max_recursion_depth
     }
 
+    /// Go `SessionVars.IndexJoinMaxScanRowsRatio`.
+    #[must_use]
+    pub fn index_join_max_scan_rows_ratio(&self) -> f64 {
+        self.index_join_max_scan_rows_ratio
+    }
+
     /// Go `SessionVars.OptOrderingIdxSelRatio`.
     #[must_use]
     pub fn ordering_index_selectivity_ratio(&self) -> f64 {
@@ -4462,6 +4502,18 @@ impl StmtContext {
     #[must_use]
     pub fn enable_check_constraint(&self) -> bool {
         self.enable_check_constraint
+    }
+
+    /// Go `SessionVars.PlacementMode == PlacementModeIgnore`.
+    #[must_use]
+    pub fn placement_mode_ignore(&self) -> bool {
+        self.placement_mode_ignore
+    }
+
+    /// Go `SessionVars.LockUnchangedKeys`.
+    #[must_use]
+    pub fn lock_unchanged_keys(&self) -> bool {
+        self.lock_unchanged_keys
     }
 
     /// Whether this statement's INSERT defers duplicate detection to the

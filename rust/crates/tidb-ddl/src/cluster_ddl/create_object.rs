@@ -80,6 +80,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
                 OnExist::Error
             };
             create_table_with_info_job(
+                snapshot,
                 &catalog,
                 schema,
                 (**info).clone(),
@@ -101,6 +102,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
                 OnExist::Error
             };
             create_table_with_info_job(
+                snapshot,
                 &catalog,
                 schema,
                 (**info).clone(),
@@ -122,6 +124,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
                     OnExist::Error
                 };
                 create_table_with_info_job(
+                    snapshot,
                     &catalog,
                     schema,
                     info,
@@ -155,10 +158,11 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
 }
 
 /// Go `executor.createTableWithInfoJob`.
-pub(super) fn create_table_with_info_job(
+pub(super) fn create_table_with_info_job<S: MetaSnapshot>(
+    snapshot: &mut S,
     catalog: &SessionExtendedInfoSchema,
     schema: &str,
-    info: TableInfo,
+    mut info: TableInfo,
     on_exist: OnExist,
     job_context: &dyn DdlSessionContext,
     warnings: &mut Vec<tidb_context::SqlWarn>,
@@ -169,6 +173,7 @@ pub(super) fn create_table_with_info_job(
                 .generate_with_stack_by_args(&[(schema.to_owned()).into()]),
         ));
     };
+    handle_table_placement(snapshot, job_context, &mut info, warnings)?;
     let mut old_view_id = 0;
     if let Some(existing) = find_table(&database.read(), info.name.original()) {
         let existing = existing.read();

@@ -184,8 +184,8 @@ impl TestKit {
     /// Go `tk.Session().GetSessionVars().ClientCapability |=
     /// mysql.ClientFoundRows` (or `&^=`): the connection's negotiated
     /// `CLIENT_FOUND_ROWS` bit.
-    pub fn set_client_found_rows(&mut self, enabled: bool) {
-        self.session.set_client_found_rows(enabled);
+    pub fn set_client_capability(&mut self, capability: u32) {
+        self.session.set_client_capability(capability);
     }
 
     /// Go `dom.InfoSchema()` / `tk.Session().GetLatestInfoSchema()`: the

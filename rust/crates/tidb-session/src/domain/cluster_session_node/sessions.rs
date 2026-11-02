@@ -90,7 +90,7 @@ impl DomainSessions for Domain {
                 "127.0.0.1:0".parse().expect("loopback socket address"),
             ),
             identity: crate::domain::configured_user_store::AuthenticatedIdentity::internal(),
-            client_found_rows: false,
+            client_capability: 0,
             tls_state: None,
             compression_algorithm: tidb_mysql::consts::CompressionNone,
             compression_level: 0,
@@ -110,7 +110,19 @@ impl DomainSessions for Domain {
             format!("{}@{}", identity.username(), identity.host()),
             format!("{}@{}", identity.username(), context.peer_addr.host()),
         );
-        session.set_client_found_rows(context.client_found_rows);
+        session.set_client_capability(context.client_capability);
+        // Go `loadCommonGlobalVariablesIfNeeded`: a client that set
+        // `CLIENT_INTERACTIVE` starts with `wait_timeout = interactive_timeout`.
+        if context.client_capability & tidb_mysql::consts::ClientInteractive != 0 {
+            let interactive = session
+                .vars()
+                .system_value("interactive_timeout")
+                .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))?
+                .into_owned();
+            session
+                .set_session_sys_var("wait_timeout", interactive)
+                .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))?;
+        }
         session.set_tls_state(context.tls_state);
         session.set_compression_level(context.compression_level);
         session.set_compression_algorithm(context.compression_algorithm);
@@ -1083,7 +1095,7 @@ pub fn open_pool_session(
                 "127.0.0.1:0".parse().expect("loopback socket address"),
             ),
             identity: crate::domain::configured_user_store::AuthenticatedIdentity::internal(),
-            client_found_rows: false,
+            client_capability: 0,
             tls_state: None,
             compression_algorithm: tidb_mysql::consts::CompressionNone,
             compression_level: 0,

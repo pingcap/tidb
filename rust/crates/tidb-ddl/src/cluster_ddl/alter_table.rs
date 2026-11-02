@@ -545,6 +545,9 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             policy,
         } => {
             let (_, stored) = locate_table(catalog, schema, table)?;
+            if let Some(ignored) = check_ignore_placement_ddl(job_context) {
+                return Ok(Some(ignored));
+            }
             let stored = stored.read();
             if stored.temp_table_type != tidb_model::TempTableType::NONE {
                 return Err(coded_refusal(
@@ -577,6 +580,9 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             let (_, stored) = locate_table(catalog, schema, table)?;
             let stored = stored.read();
             let partition_id = find_partition_id(&stored, partition)?;
+            if let Some(ignored) = check_ignore_placement_ddl(job_context) {
+                return Ok(Some(ignored));
+            }
             let reference = check_and_normalize_placement_policy(snapshot, policy)?;
             shared_policy = reference
                 .as_ref()

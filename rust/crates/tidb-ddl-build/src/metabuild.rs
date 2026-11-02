@@ -49,6 +49,10 @@ impl crate::session_context::DdlSessionContext for StmtContext {
         StmtContext::enable_check_constraint(self)
     }
 
+    fn placement_mode_ignore(&self) -> bool {
+        StmtContext::placement_mode_ignore(self)
+    }
+
     fn foreign_key_checks(&self) -> bool {
         StmtContext::foreign_key_checks(self)
     }

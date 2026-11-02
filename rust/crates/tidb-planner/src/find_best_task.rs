@@ -415,6 +415,7 @@ pub fn exhaust_join(
     hash_force: (bool, bool),
     skip_hash_join: bool,
     forced_hash: bool,
+    index_join_scan_ratio_pruned: [bool; 2],
 ) -> Vec<EnumeratedJoin> {
     // Go `exhaustPhysicalPlans4LogicalJoin`: `if !p.IsNAAJ() && prop.IndexJoinProp
     // == nil { ...generate merge join and index join... }` -- merge join and
@@ -467,9 +468,61 @@ pub fn exhaust_join(
         spent.extend(out);
         return spent;
     }
-    out.extend(index_join_candidates(join, prop));
+    // Go `enableRatioPrune := len(hashJoins) > 0 && !hasForceIndexJoinFamilyHint(p)`
+    // (the hint half is in `index_join_scan_ratio_pruned`).
+    let pruned = if hashes.is_empty() {
+        [false; 2]
+    } else {
+        index_join_scan_ratio_pruned
+    };
+    out.extend(index_join_candidates(join, prop, pruned));
     out.extend(hashes);
     out
+}
+
+/// Go `indexJoinPruneMinProbeRows` / `indexJoinPruneMinBuildRows`.
+const INDEX_JOIN_PRUNE_MIN_PROBE_ROWS: f64 = 100_000.0;
+const INDEX_JOIN_PRUNE_MIN_BUILD_ROWS: f64 = 100.0;
+
+/// Go `shouldPruneIndexJoinByScanRatio`: an index join whose scan volume
+/// (`buildRows + buildRows*probeRowsOne`) reaches `threshold` times a hash
+/// join's (`buildRows + innerFullScanRows`) is not enumerated, once both
+/// sides have real statistics and the inputs are past Go's minimal gates.
+pub(crate) fn should_prune_index_join_by_scan_ratio(
+    threshold: f64,
+    build_rows: f64,
+    probe_rows_one: f64,
+    build: Option<&tidb_planner_property::stats_info::StatsInfo>,
+    probe: Option<&tidb_planner_property::stats_info::StatsInfo>,
+) -> bool {
+    use tidb_planner_property::stats_info::HistCollExt as _;
+    if threshold <= 0.0 || build_rows < INDEX_JOIN_PRUNE_MIN_BUILD_ROWS {
+        return false;
+    }
+    // Go `hasPseudoStatsForIndexJoinPrune`.
+    let pseudo = |stats: Option<&tidb_planner_property::stats_info::StatsInfo>| {
+        stats.and_then(|stats| stats.hist_coll()).is_none_or(|coll| coll.pseudo())
+    };
+    if pseudo(build) || pseudo(probe) {
+        return false;
+    }
+    // Go `getProbeFullScanRowsForIndexJoinPrune`.
+    let inner_full_scan_rows = probe
+        .and_then(|stats| stats.hist_coll())
+        .map_or(0.0, |coll| coll.realtime_count().max(0) as f64);
+    if inner_full_scan_rows <= 0.0 {
+        return false;
+    }
+    let index_join_probe_rows = build_rows * probe_rows_one;
+    if index_join_probe_rows < INDEX_JOIN_PRUNE_MIN_PROBE_ROWS {
+        return false;
+    }
+    let index_join_scan_rows = build_rows + index_join_probe_rows;
+    let hash_join_scan_rows = build_rows + inner_full_scan_rows;
+    if hash_join_scan_rows <= 0.0 {
+        return false;
+    }
+    index_join_scan_rows / hash_join_scan_rows >= threshold
 }
 
 /// `getEnforcedMergeJoin`: reorder the join keys so a required output order
@@ -615,13 +668,20 @@ fn merge_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
 }
 
 /// `tryToEnumerateIndexJoin` -> `enumerateIndexJoinByOuterIdx`.
-fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<EnumeratedJoin> {
+fn index_join_candidates(
+    join: &LogicalJoin,
+    prop: &PhysicalProperty,
+    scan_ratio_pruned: [bool; 2],
+) -> Vec<EnumeratedJoin> {
     let mut out = Vec::new();
     let (all, _) = prop.all_same_order();
     if !all {
         return out;
     }
     for outer_idx in index_join_outer_sides(join.join_type).iter().copied() {
+        if scan_ratio_pruned[outer_idx] {
+            continue;
+        }
         let outer_schema = if outer_idx == 0 {
             &join.left_schema
         } else {
@@ -892,7 +952,7 @@ mod tests {
             no_cop_push_down: true,
             ..PhysicalProperty::default()
         };
-        let candidates = exhaust_join(&join, &prop, true, (false, false), false, false);
+        let candidates = exhaust_join(&join, &prop, true, (false, false), false, false, [false; 2]);
         assert!(!candidates.is_empty());
         // Go enumerates both probe paths and join families before the inner
         // datasource checks available access paths; sort properties are not
@@ -913,5 +973,32 @@ mod tests {
                 assert!(child.no_cop_push_down);
             }
         }
+    }
+
+    /// Go `shouldPruneIndexJoinByScanRatio`: off at 0, off under pseudo or
+    /// tiny inputs, and on once the index join's scan volume reaches the
+    /// threshold times the hash join's.
+    #[test]
+    fn index_join_scan_ratio_prune_follows_go() {
+        use tidb_planner_property::stats_info::{loaded_hist_coll_for_test, StatsInfo};
+        let stats = |rows: f64, realtime: i64, pseudo: bool| {
+            StatsInfo::new(rows, [])
+                .with_hist_coll(loaded_hist_coll_for_test(pseudo, realtime, 0, [], []))
+        };
+        let build = stats(1_000.0, 1_000, false);
+        let probe = stats(10_000.0, 10_000, false);
+        // 1000 outer rows x 200 probe rows each = 200,000 index-join probe
+        // rows against a 10,000-row inner full scan.
+        let prune = |threshold, build: &StatsInfo, probe: &StatsInfo| {
+            should_prune_index_join_by_scan_ratio(threshold, build.row_count(), 200.0, Some(build), Some(probe))
+        };
+        assert!(!prune(0.0, &build, &probe));
+        assert!(prune(0.8, &build, &probe));
+        // (1000 + 200000) / (1000 + 10000) = 18.27...
+        assert!(!prune(20.0, &build, &probe));
+        assert!(!prune(0.8, &stats(1_000.0, 1_000, true), &probe));
+        assert!(!prune(0.8, &build, &stats(10_000.0, 10_000, true)));
+        assert!(!prune(0.8, &stats(50.0, 50, false), &probe));
+        assert!(!should_prune_index_join_by_scan_ratio(0.8, 1_000.0, 50.0, Some(&build), Some(&probe)));
     }
 }

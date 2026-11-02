@@ -388,6 +388,16 @@ impl MutationBuffer {
     /// Attach SQL staging to the native transaction. Pending statement writes
     /// must be attached before acquiring locks; an empty handle can also attach
     /// to a transaction that already owns locks without replacing its MemDB.
+    /// Go `kv.SizeLimits` for a transaction that is not open yet: the limits
+    /// its SQL writes are checked against until it opens (an open one keeps
+    /// the limits it activated with).
+    pub fn set_pending_size_limits(&self, entry_limit: u64, total_limit: u64) {
+        let mut state = self.state();
+        if state.memdb.bound.is_none() {
+            state.memdb.local.set_entry_size_limit(entry_limit, total_limit);
+        }
+    }
+
     pub fn bind_native(&self, owner: u64, access: NativeMemBufferAccess) {
         let mut state = self.state();
         if state
@@ -409,7 +419,11 @@ impl MutationBuffer {
         assert!(
             access(&mut |buffer| {
                 if buffer.is_empty() {
+                    // The transaction's own size limits (its activation's
+                    // `kv.SizeLimits`) stay in force over the SQL writes.
+                    let (entry_limit, total_limit) = buffer.entry_size_limit();
                     *buffer = local.take().unwrap();
+                    buffer.set_entry_size_limit(entry_limit, total_limit);
                 } else {
                     let local = local.as_ref().unwrap();
                     assert!(

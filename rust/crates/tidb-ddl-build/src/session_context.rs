@@ -67,6 +67,8 @@ pub trait DdlSessionContext: Send + Sync {
     fn append_error_parts(&self, code: u16, message: &str);
     /// Go `StmtCtx.AppendNote`.
     fn append_note_parts(&self, code: u16, message: &str);
+    /// Go `SessionVars.PlacementMode == PlacementModeIgnore`.
+    fn placement_mode_ignore(&self) -> bool;
     /// Go `setHypoTiFlashReplica`: adds (`add`) or removes a hypothetical
     /// TiFlash replica in `SessionVars.HypoTiFlashReplicas`, by lowercase
     /// schema and table name.
@@ -191,6 +193,10 @@ impl<T: DdlSessionContext + ?Sized> DdlSessionContext for std::sync::Arc<T> {
 
     fn append_note_parts(&self, code: u16, message: &str) {
         (**self).append_note_parts(code, message)
+    }
+
+    fn placement_mode_ignore(&self) -> bool {
+        (**self).placement_mode_ignore()
     }
 
     fn set_hypo_tiflash_replica(&self, schema: &str, table: &str, add: bool) {

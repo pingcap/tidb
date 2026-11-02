@@ -199,6 +199,21 @@ impl TxnManager {
             .with_temporary_tables(session.temporary_table_ids())
     }
 
+    /// Go `LazyTxn`'s activation sets `kv.SizeLimits` from the session's
+    /// `tidb_txn_entry_size_limit` (above 0) or the configured limit: a
+    /// statement whose transaction is not open yet writes under them.
+    pub fn set_pending_size_limits(&self, session: &Session) {
+        let entry_limit = session
+            .vars()
+            .system_value(tidb_vardef::tidb_vars::TIDB_TXN_ENTRY_SIZE_LIMIT)
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|limit| *limit > 0)
+            .unwrap_or_else(tidb_txnkv::txn_entry_size_limit);
+        self.buffer
+            .set_pending_size_limits(entry_limit, tidb_txnkv::txn_total_size_limit());
+    }
+
     /// Go `PrepareTxnCtx` for `autocommit = 0`: enters the transaction when the
     /// statement about to run needs one and none is entered.
     pub fn enter_if_autocommit_off(

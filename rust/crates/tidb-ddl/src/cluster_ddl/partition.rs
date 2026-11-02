@@ -140,7 +140,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
                 .map(|definition| definition.name.lowercase().to_owned())
                 .collect::<std::collections::HashSet<_>>();
             // `assignGIDsForJobs` draws the new partitions' ids.
-            let added = transformed
+            let mut added = transformed
                 .into_iter()
                 .filter(|definition| !old_names.contains(definition.name.lowercase()))
                 .map(|definition| tidb_model::partition::PartitionDefinition {
@@ -155,6 +155,12 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
                     warnings: notes,
                 }));
             }
+            // `handlePartitionPlacement`.
+            let mut host = super::reorganize_partition::AdmissionReorgHost::new(snapshot, job_context)?;
+            tidb_ddl_build::partition_ddl::ReorgHost::handle_partition_placement(&mut host, &mut added)
+                .map_err(DdlPlanError::from_mysql_error)?;
+            let mut notes = notes;
+            notes.extend(host.placement_note());
             let part_info = tidb_model::partition::PartitionInfo {
                 partition_type: partitioning.partition_type,
                 expr: partitioning.expr.clone(),

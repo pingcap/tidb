@@ -666,9 +666,8 @@ pub struct SessionContext {
     /// Identity established by ordinary password verification or validated
     /// process-wide skip-grant admission.
     pub identity: AuthenticatedIdentity,
-    /// Whether this client negotiated `CLIENT_FOUND_ROWS`, making UPDATE and
-    /// duplicate-key UPDATE report successfully matched unchanged rows.
-    pub client_found_rows: bool,
+    /// Go `cc.capability`, which `OpenCtx` hands to `SetClientCapability`.
+    pub client_capability: u32,
     /// Go `cc.tlsConn.ConnectionState()`, which `OpenCtx` hands to the
     /// session's `SetTLSState`: `None` for a connection without TLS.
     pub tls_state: Option<tidb_variable::vars::TlsConnectionState>,

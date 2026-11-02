@@ -2917,3 +2917,52 @@ fn binary_prepare_sees_a_table_created_by_another_connection() {
     };
     assert_eq!(rows, vec![vec![Datum::Int(7)]]);
 }
+
+/// Go `SessionVars.AddPreparedStmt`: a PREPARE past the GLOBAL
+/// `max_prepared_stmt_count` is refused (oracle at 0: `[variable:1461]
+/// Can't create more than maxPreparedStmtCount statements (current value:
+/// 0)`); -1 is unbounded. 0 refuses whatever other sessions of this process
+/// hold, so the check cannot race them.
+#[test]
+fn max_prepared_stmt_count_bounds_prepare() {
+    let mut session = Session::new();
+    session.run("set global max_prepared_stmt_count = 0").unwrap();
+    let error = session.run("prepare s from 'select 1'").unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Can't create more than maxPreparedStmtCount statements (current value: 0)"),
+        "{error}"
+    );
+    session.run("set global max_prepared_stmt_count = -1").unwrap();
+    session.run("prepare s from 'select 1'").unwrap();
+    session.run("deallocate prepare s").unwrap();
+}
+
+/// Go `LazyTxn`'s activation sets `kv.SizeLimits` from the session's
+/// `tidb_txn_entry_size_limit` when above 0 (oracle at 1024: `[kv:8025]
+/// entry too large, the max entry size is 1024, the size of data is 2028`).
+#[test]
+fn txn_entry_size_limit_bounds_one_entry() {
+    let mut session = Session::new();
+    session.run("create table t (a int primary key, b longtext)").unwrap();
+    session.run("set tidb_txn_entry_size_limit = 1024").unwrap();
+    let error = session
+        .run("insert into t values (1, repeat('x', 2000))")
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("entry too large, the max entry size is 1024, the size of data is 2028"),
+        "{error}"
+    );
+    // An explicit transaction keeps the limit it activated with.
+    session.run("begin").unwrap();
+    let error = session
+        .run("insert into t values (3, repeat('x', 2000))")
+        .unwrap_err();
+    assert!(error.to_string().contains("entry too large"), "{error}");
+    session.run("rollback").unwrap();
+    session.run("set tidb_txn_entry_size_limit = 0").unwrap();
+    session.run("insert into t values (2, repeat('x', 2000))").unwrap();
+}

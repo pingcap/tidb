@@ -38,6 +38,10 @@ pub struct SessionTransactionOptions {
     /// `temporaryTableKVFilter` keeps out of the commit. `None` for a
     /// transaction no SQL session owns.
     pub temporary_tables: Option<TemporaryTableIds>,
+    /// Go `SessionVars.TxnEntrySizeLimit` (`tidb_txn_entry_size_limit`): above
+    /// 0 it overrides the configured one-entry size limit for this
+    /// transaction (`LazyTxn` sets `kv.SizeLimits`).
+    pub entry_size_limit: u64,
 }
 
 /// The ids of a session's temporary tables, refreshed by the session as its
@@ -73,6 +77,9 @@ impl SessionTransactionOptions {
         }
         transaction.set_commit_protocol(self.commit_protocol);
         transaction.set_assertion_level(self.assertion_level);
+        if self.entry_size_limit > 0 {
+            transaction.set_entry_size_limit(self.entry_size_limit);
+        }
         if let Some(context) = self.kv_context {
             transaction.set_statement_kv_context(context);
         }
@@ -167,6 +174,7 @@ impl From<CommitProtocol> for SessionTransactionOptions {
             assertion_level: tidb_proto::KvrpcAssertionLevel::Off,
             kv_context: None,
             temporary_tables: None,
+            entry_size_limit: 0,
         }
     }
 }

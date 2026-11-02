@@ -285,6 +285,11 @@ impl<S: PdClient> RealTransaction<S> {
         transaction.set_enable_async_commit(protocol.async_commit);
         transaction.set_enable_one_pc(protocol.one_pc);
     }
+    /// Go `txn.SetOption(kv.SizeLimits, kv.TxnSizeLimits{Entry: limit, Total:
+    /// kv.TxnTotalSizeLimit.Load()})`: the session's one-entry limit.
+    pub fn set_entry_size_limit(&mut self, limit: u64) {
+        self.engine.set_size_limits(limit, tidb_txnkv::txn_total_size_limit());
+    }
     /// Sets Go's assertion level at transaction activation, before SQL staging.
     pub fn set_assertion_level(&mut self, level: tidb_proto::KvrpcAssertionLevel) {
         self.set_statement_assertion_level(level);

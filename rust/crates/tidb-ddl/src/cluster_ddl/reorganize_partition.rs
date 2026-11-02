@@ -29,9 +29,32 @@ use tidb_hack::GoToLower;
 
 /// The planner's ids at admission: placeholders the job submitter replaces
 /// (Go draws them in `assignGIDsForJobs`, not in the executor).
-struct AdmissionReorgHost {
+pub(super) struct AdmissionReorgHost {
     next: i64,
     policies: Vec<tidb_model::PolicyInfo>,
+    /// `tidb_placement_mode = 'IGNORE'`.
+    placement_mode_ignore: bool,
+    /// Go's `handlePartitionPlacement` note, once it removed a reference.
+    placement_ignored: bool,
+}
+
+impl AdmissionReorgHost {
+    pub(super) fn new<S: MetaSnapshot>(
+        snapshot: &mut S,
+        context: &dyn DdlSessionContext,
+    ) -> Result<Self, DdlPlanError> {
+        Ok(Self {
+            next: 0,
+            policies: load_policies(snapshot)?.policies,
+            placement_mode_ignore: context.placement_mode_ignore(),
+            placement_ignored: false,
+        })
+    }
+
+    /// The note `handlePartitionPlacement` appended, if any.
+    pub(super) fn placement_note(&self) -> Option<tidb_context::SqlWarn> {
+        self.placement_ignored.then(placement_ignored_note)
+    }
 }
 
 impl tidb_ddl_build::partition_ddl::ReorgHost for AdmissionReorgHost {
@@ -40,10 +63,17 @@ impl tidb_ddl_build::partition_ddl::ReorgHost for AdmissionReorgHost {
         self.next
     }
 
-    fn resolve_placement(
-        &self,
+    fn handle_partition_placement(
+        &mut self,
         definitions: &mut [tidb_model::partition::PartitionDefinition],
     ) -> Result<(), tidb_terror::MysqlError> {
+        if self.placement_mode_ignore {
+            // `removePartitionPlacement`.
+            for definition in definitions {
+                self.placement_ignored |= definition.placement_policy_ref.take().is_some();
+            }
+            return Ok(());
+        }
         for definition in definitions {
             if let Some(reference) = definition.placement_policy_ref.as_ref() {
                 let mut reference = reference.write();
@@ -115,10 +145,7 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
     let kv = tidb_ddl_build::partition_ddl::PartitionedTable::new(&stored)
         .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error)))?;
     let ctx = context.metabuild_context();
-    let mut host = AdmissionReorgHost {
-        next: 0,
-        policies: load_policies(snapshot)?.policies,
-    };
+    let mut host = AdmissionReorgHost::new(snapshot, job_context)?;
     let planned = match action {
         tidb_ast::AlterPartitionAction::Reorganize {
             names, definitions, ..
@@ -310,16 +337,13 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
         part_info: GoField::new(Some(GoShared::new(part_info))),
         ..tidb_model::TablePartitionArgs::default()
     };
-    let warnings = planned
-        .warning
-        .map(|warning| {
-            vec![tidb_context::SqlWarn::with_code(
-                WarningLevel::Warning,
-                1105,
-                warning.to_owned(),
-            )]
-        })
-        .unwrap_or_default();
+    let warnings = host
+        .placement_note()
+        .into_iter()
+        .chain(planned.warning.map(|warning| {
+            tidb_context::SqlWarn::with_code(WarningLevel::Warning, 1105, warning.to_owned())
+        }))
+        .collect();
     let built = AddIndexSubmission::Job(
         Box::new(tidb_ddl_jobsubmit::JobSpec {
             job,

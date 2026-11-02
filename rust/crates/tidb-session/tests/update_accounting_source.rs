@@ -20,7 +20,7 @@ fn update_accounting_modes() {
     assert_eq!(tk.affected_rows(), 0);
 
     // With CLIENT_FOUND_ROWS: the matching row counts even unchanged.
-    tk.set_client_found_rows(true);
+    tk.set_client_capability(tidb_mysql::consts::ClientFoundRows);
     tk.must_exec("update t set b = 'xyz' where a = 1");
     assert_eq!(tk.affected_rows(), 1);
 }

@@ -268,6 +268,9 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn ordering_index_selectivity_ratio(&self) -> f64 {
         StmtContext::ordering_index_selectivity_ratio(self)
     }
+    fn index_join_max_scan_rows_ratio(&self) -> f64 {
+        StmtContext::index_join_max_scan_rows_ratio(self)
+    }
     fn ordering_index_selectivity_threshold(&self) -> f64 {
         StmtContext::ordering_index_selectivity_threshold(self)
     }

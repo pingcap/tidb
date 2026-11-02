@@ -145,8 +145,7 @@ const CLIENT_MULTI_STATEMENTS: u32 = 1 << 16;
 const CLIENT_MULTI_RESULTS: u32 = 1 << 17;
 /// `CLIENT_LOCAL_FILES`: client-local transfer used by LOAD STATS.
 const CLIENT_LOCAL_FILES: u32 = 1 << 7;
-/// Go's `defaultCapability` (`pkg/server/server.go`) restricted to what this
-/// node actually serves.
+/// Go's `defaultCapability` (`pkg/server/server.go`).
 ///
 /// `CLIENT_CONNECT_WITH_DB` is load-bearing beyond selecting a schema. A real
 /// libmysqlclient sets that bit in its *response* unconditionally, but only
@@ -154,7 +153,10 @@ const CLIENT_LOCAL_FILES: u32 = 1 << 7;
 /// here therefore produced a response whose capability flags promised a field
 /// the packet did not contain, so every field after the auth data -- database,
 /// auth plugin, connection attributes -- was read one field early.
-const SERVER_CAPABILITIES: u32 = CLIENT_PROTOCOL_41
+const SERVER_CAPABILITIES: u32 = tidb_mysql::consts::ClientLongPassword
+    | tidb_mysql::consts::ClientLongFlag
+    | tidb_mysql::consts::ClientInteractive
+    | CLIENT_PROTOCOL_41
     | CLIENT_COMPRESS
     | CLIENT_CONNECT_WITH_DB
     | CLIENT_FOUND_ROWS
@@ -1636,7 +1638,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         connection_id,
         peer_addr,
         identity,
-        client_found_rows: capabilities & CLIENT_FOUND_ROWS != 0,
+        client_capability: capabilities,
         tls_state: socket.negotiated_tls().map(|(cipher_suite, version)| {
             tidb_variable::vars::TlsConnectionState {
                 version,

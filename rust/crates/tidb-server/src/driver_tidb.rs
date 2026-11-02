@@ -213,6 +213,8 @@ impl QuerySession for Session {
         if let Some(prepared) = statement.prepared_ast() {
             Session::close_prepared(self, prepared);
         }
+        // Go `TiDBStatement.Close`'s `RemovePreparedStmt`.
+        tidb_executor::sessionctx::SessionContext::session_vars_mut(self).remove_prepared_stmt();
     }
     fn execute_stmt<'a>(
         &'a mut self,
@@ -230,7 +232,12 @@ impl QuerySession for Session {
         self.node_conn().select_database(name)
     }
     fn prepare_general(&mut self, sql: &str) -> Result<PreparedGeneral, SqlQueryError> {
-        self.node_conn().prepare_general(sql)
+        let prepared = self.node_conn().prepare_general(sql)?;
+        // Go `PrepareExec`'s `vars.AddPreparedStmt`.
+        tidb_executor::sessionctx::SessionContext::session_vars_mut(self)
+            .add_prepared_stmt()
+            .map_err(|error| tidb_executor::ddl_exec::map_error(error.into()))?;
+        Ok(prepared)
     }
     fn execute_general<'a>(
         &'a mut self,

@@ -103,6 +103,7 @@ pub struct StatementVarSnapshot {
     advanced_join_reorder: bool,
     constraint_check_in_place: bool,
     ordering_index_selectivity_ratio: f64,
+    index_join_max_scan_rows_ratio: f64,
     ordering_index_selectivity_threshold: f64,
     allow_projection_push_down: bool,
     enable_inl_join_inner_multi_pattern: bool,
@@ -1136,6 +1137,12 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .ok()
                 .and_then(|value| value.parse::<f64>().ok())
                 .unwrap_or(0.01),
+            index_join_max_scan_rows_ratio: self
+                .session_vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_INDEX_JOIN_MAX_SCAN_ROWS_RATIO)
+                .ok()
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(0.0),
             ordering_index_selectivity_threshold: self
                 .session_vars()
                 .get_system(tidb_vardef::tidb_vars::TIDB_OPT_ORDERING_IDX_SEL_THRESH)
@@ -1401,6 +1408,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let advanced_join_reorder = snapshot.advanced_join_reorder;
         let constraint_check_in_place = snapshot.constraint_check_in_place;
         let ordering_index_selectivity_ratio = snapshot.ordering_index_selectivity_ratio;
+        let index_join_max_scan_rows_ratio = snapshot.index_join_max_scan_rows_ratio;
         let ordering_index_selectivity_threshold = snapshot.ordering_index_selectivity_threshold;
         let allow_projection_push_down = snapshot.allow_projection_push_down;
         let enable_inl_join_inner_multi_pattern = snapshot.enable_inl_join_inner_multi_pattern;
@@ -1572,6 +1580,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_tiflash_pre_agg_mode(tiflash_pre_agg_mode.clone())
                     .with_partial_ordered_index_for_topn(partial_ordered_index_for_topn)
                     .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
+                    .with_index_join_max_scan_rows_ratio(index_join_max_scan_rows_ratio)
                     .with_ordering_index_selectivity_threshold(ordering_index_selectivity_threshold)
                     .with_projection_push_down(allow_projection_push_down)
                     .with_inl_join_inner_multi_pattern(enable_inl_join_inner_multi_pattern)
@@ -1642,7 +1651,9 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_user_vars(self.user_vars().clone())
                     .with_previous_statement(self.session_vars().last_insert_id, self.session_vars().prev_row_count)
                     .with_last_found_rows(self.session_vars().last_found_rows)
-                    .with_client_found_rows(self.session_vars().client_found_rows)
+                    .with_client_found_rows(
+                    self.session_vars().client_capability & tidb_mysql::consts::ClientFoundRows != 0,
+                )
                     .with_week_and_division_scale(week_format, div_scale)
                     .with_windowing_use_high_precision(windowing_use_high_precision)
                     .with_pipelined_window_exec(enable_pipelined_window_exec)
@@ -1692,6 +1703,8 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                         self.session_vars().query_cop_store_limit() as isize,
                     ))
                     .with_enable_check_constraint(self.enable_check_constraint())
+                    .with_placement_mode_ignore(self.placement_mode_ignore())
+                    .with_lock_unchanged_keys(self.lock_unchanged_keys())
                     .with_sysdate_is_now(sysdate_is_now)
                     .with_replica_read(replica_read)
                     .with_read_consistency(read_replica_scope, is_staleness)
@@ -1781,7 +1794,9 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_user_vars(self.user_vars().clone())
                 .with_previous_statement(self.session_vars().last_insert_id, self.session_vars().prev_row_count)
                 .with_last_found_rows(self.session_vars().last_found_rows)
-                .with_client_found_rows(self.session_vars().client_found_rows)
+                .with_client_found_rows(
+                    self.session_vars().client_capability & tidb_mysql::consts::ClientFoundRows != 0,
+                )
                 .with_week_and_division_scale(week_format, div_scale)
                 .with_windowing_use_high_precision(windowing_use_high_precision)
                 .with_pipelined_window_exec(enable_pipelined_window_exec)
@@ -1835,6 +1850,8 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_auto_increment_step(increment, offset)
                 .with_foreign_key_checks(self.foreign_key_checks())
                 .with_enable_check_constraint(self.enable_check_constraint())
+                .with_placement_mode_ignore(self.placement_mode_ignore())
+                    .with_lock_unchanged_keys(self.lock_unchanged_keys())
                 .with_constraint_check_in_place(constraint_check_in_place)
                 .with_pessimistic_check_in_prewrite(
                     !self.pessimistic_constraint_check_in_place()
@@ -1862,6 +1879,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_tiflash_pre_agg_mode(tiflash_pre_agg_mode.clone())
                 .with_partial_ordered_index_for_topn(partial_ordered_index_for_topn)
                 .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
+                .with_index_join_max_scan_rows_ratio(index_join_max_scan_rows_ratio)
                 .with_ordering_index_selectivity_threshold(ordering_index_selectivity_threshold)
                 .with_projection_push_down(allow_projection_push_down)
                 .with_inl_join_inner_multi_pattern(enable_inl_join_inner_multi_pattern)
@@ -1924,6 +1942,22 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
     /// for an unreadable value is OFF -- that is what a stock TiDB does.
     fn enable_check_constraint(&self) -> bool {
         self.session_vars().enable_check_constraint()
+    }
+
+    /// Go `SessionVars.PlacementMode` (`@@tidb_placement_mode`), `IGNORE`
+    /// against `STRICT`.
+    fn lock_unchanged_keys(&self) -> bool {
+        self.session_vars()
+            .system_value(tidb_vardef::tidb_vars::TIDB_LOCK_UNCHANGED_KEYS)
+            .map_or(tidb_vardef::defaults::DEF_TIDB_LOCK_UNCHANGED_KEYS, |value| {
+                tidb_vardef::option_values::tidb_opt_on(&value)
+            })
+    }
+
+    fn placement_mode_ignore(&self) -> bool {
+        self.session_vars()
+            .system_value(tidb_vardef::tidb_vars::TIDB_PLACEMENT_MODE)
+            .is_ok_and(|mode| mode.eq_ignore_ascii_case("IGNORE"))
     }
 
     /// Go `SessionVars.EnableClusteredIndex`, fed to `BuildTableInfo` through

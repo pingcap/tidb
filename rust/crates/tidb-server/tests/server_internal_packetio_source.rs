@@ -339,6 +339,55 @@ fn session_wait_timeout_closes_the_next_idle_command_read() {
     );
 }
 
+/// Go `getWaitTimeout`: inside a transaction the command read times out
+/// after `tidb_idle_transaction_timeout`, outside one after `wait_timeout`.
+#[test]
+fn idle_transaction_timeout_closes_an_idle_transaction() {
+    let (address, worker) = start_server();
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    authenticate(&mut client, &mut reader, 0, 0);
+
+    for sql in ["SET tidb_idle_transaction_timeout = 1", "BEGIN"] {
+        let mut command = vec![COM_QUERY];
+        command.extend_from_slice(sql.as_bytes());
+        write_raw_packet(&mut client, 0, &command);
+        reader.set_sequence(1);
+        assert_eq!(reader.read_packet().unwrap()[0], 0, "{sql} OK");
+    }
+
+    std::thread::sleep(Duration::from_millis(1_300));
+    let write_failed = try_write_raw_packet(&mut client, 0, &[COM_PING]).is_err();
+    reader.set_sequence(1);
+    let timed_out = write_failed || reader.read_packet().is_err();
+    if !timed_out {
+        write_raw_packet(&mut client, 0, &[COM_QUIT]);
+    }
+    let _ = worker.join().unwrap();
+    assert!(timed_out, "an idle transaction must be closed");
+}
+
+#[test]
+fn idle_transaction_timeout_does_not_apply_outside_a_transaction() {
+    let (address, worker) = start_server();
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    authenticate(&mut client, &mut reader, 0, 0);
+
+    let mut command = vec![COM_QUERY];
+    command.extend_from_slice(b"SET tidb_idle_transaction_timeout = 1");
+    write_raw_packet(&mut client, 0, &command);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0, "SET OK");
+
+    std::thread::sleep(Duration::from_millis(1_300));
+    write_raw_packet(&mut client, 0, &[COM_PING]);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0, "COM_PING remains live");
+    write_raw_packet(&mut client, 0, &[COM_QUIT]);
+    assert!(worker.join().unwrap().is_ok());
+}
+
 #[test]
 fn zero_wait_timeout_clears_the_previous_command_deadline() {
     let (address, worker) = start_server();

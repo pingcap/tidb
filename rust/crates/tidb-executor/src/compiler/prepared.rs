@@ -544,6 +544,8 @@ pub trait PrepareExec: super::CompilerSession {
         self.check_table_privilege_requests(&privilege_requests)?;
         let id = self.allocate_prepared_statement_id();
         let schema_version = self.with_catalog_mut(|catalog| Ok(catalog.schema_version()))?;
+        // Go `PrepareExec`'s `vars.AddPreparedStmt`.
+        self.session_vars_mut().add_prepared_stmt().map_err(DriverError::from)?;
         let database = self.session_vars().current_db.clone();
         self.prepared_statements_mut().insert(
             name.to_owned(),
@@ -585,6 +587,8 @@ pub trait PrepareExec: super::CompilerSession {
     fn deallocate_prepared_statement(&mut self, name: &str) -> Result<(), DriverError> {
         match self.prepared_statements_mut().remove(name) {
             Some(prepared) => {
+                // Go `DeallocateExec`'s `vars.RemovePreparedStmt`.
+                self.session_vars_mut().remove_prepared_stmt();
                 self.release_prepared_plans(
                     prepared.select_plan.as_deref(),
                     prepared.dml_plan.as_deref(),

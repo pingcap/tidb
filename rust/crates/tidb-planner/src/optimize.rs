@@ -122,6 +122,8 @@ pub trait OptimizeContext: tidb_exprctx::Columns + PlanCacheMarker + HintWarning
     fn partial_ordered_index_for_topn(&self) -> bool;
     /// Go `SessionVars.OptOrderingIdxSelRatio`.
     fn ordering_index_selectivity_ratio(&self) -> f64;
+    /// Go `SessionVars.IndexJoinMaxScanRowsRatio`.
+    fn index_join_max_scan_rows_ratio(&self) -> f64;
     /// Go `SessionVars.OptOrderingIdxSelThresh`.
     fn ordering_index_selectivity_threshold(&self) -> f64;
     /// Go `SessionVars.AllowProjectionPushDown`.
@@ -463,6 +465,7 @@ pub fn physical_optimize<C: OptimizeContext>(
     .with_range_quota(ctx.range_max_size(), ctx.range_fallback_handler())
     .with_selectivity_factor(ctx.selectivity_factor())
     .with_ordering_index_selectivity_ratio(ctx.ordering_index_selectivity_ratio())
+    .with_index_join_max_scan_rows_ratio(ctx.index_join_max_scan_rows_ratio())
     .with_ordering_index_selectivity_threshold(ctx.ordering_index_selectivity_threshold())
     .with_projection_push_down(ctx.allow_projection_push_down())
     .with_heavy_function_optimize(

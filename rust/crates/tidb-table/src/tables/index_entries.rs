@@ -430,6 +430,32 @@ impl TableCommon {
         .map(|(key, _)| key)
     }
 
+    /// Go `addUnchangedKeysForLockByRow`'s `lockUniqueKeys` half: one key
+    /// per public unique index (`idx.FetchValues` + `GenIndexKey`) of the row
+    /// as it stands; a clustered primary key is the record key itself.
+    pub fn unchanged_unique_lock_keys(
+        &self,
+        handle: &TableHandle,
+        row: &[Datum],
+        ctx: &dyn tidb_exprctx::Columns,
+    ) -> Result<Vec<Vec<u8>>, KvTableError> {
+        let zone = ctx.time_zone();
+        let physical_id = self.record_physical_id(row, ctx)?;
+        let mut keys = Vec::new();
+        for index in self.indexes.iter() {
+            if !index.read().unique
+                || index.read().state != tidb_model::SchemaState::PUBLIC
+                || index.clustered_primary
+            {
+                continue;
+            }
+            let values = self.index_values(index, row);
+            let (key, _) = self.index_key_of_values(index, values, handle, physical_id, &zone)?;
+            keys.push(key);
+        }
+        Ok(keys)
+    }
+
     /// Go `GenIndexKey` over one value tuple.
     fn index_key_of_values(
         &self,

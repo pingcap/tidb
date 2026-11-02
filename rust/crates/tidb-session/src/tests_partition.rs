@@ -4821,3 +4821,164 @@ fn placement_policy_default_names_no_policy() {
         "{shown}"
     );
 }
+
+/// Go `AddTablePartitions` runs `handlePartitionPlacement` over the added
+/// definitions: a policy they name resolves by id (the job's
+/// `checkPlacementPolicyRefValidAndCanNonValidJob` looks it up by id), and an
+/// unknown one is 8239 at admission.
+#[test]
+fn add_partition_resolves_its_placement_policy() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE PLACEMENT POLICY p1 FOLLOWERS=1",
+        "CREATE TABLE t (a INT) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10))",
+        "ALTER TABLE t ADD PARTITION (PARTITION p1 VALUES LESS THAN (20) PLACEMENT POLICY p1)",
+    ] {
+        session
+            .run(sql)
+            .unwrap_or_else(|err| panic!("{sql}: {err:?}"));
+    }
+    let shown = show_create(&mut session, "t");
+    assert!(
+        shown.contains(
+            "PARTITION `p1` VALUES LESS THAN (20) /*T![placement] PLACEMENT POLICY=`p1` */"
+        ),
+        "{shown}"
+    );
+    let rendered = session
+        .run("ALTER TABLE t ADD PARTITION (PARTITION p2 VALUES LESS THAN (30) PLACEMENT POLICY nope)")
+        .expect_err("an unknown policy")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 8239);
+    // `buildPartitionDefinitionsInfo` keeps an added definition's comment
+    // too. Oracle: real TiDB answers `p1|hello` and `p1|bye`.
+    for sql in [
+        "ALTER TABLE t ADD PARTITION (PARTITION p3 VALUES LESS THAN (40) COMMENT 'hello')",
+        "CREATE TABLE l (a INT) PARTITION BY LIST (a) (PARTITION p0 VALUES IN (1))",
+        "ALTER TABLE l ADD PARTITION (PARTITION p1 VALUES IN (2) COMMENT 'bye')",
+    ] {
+        session
+            .run(sql)
+            .unwrap_or_else(|err| panic!("{sql}: {err:?}"));
+    }
+    assert_eq!(
+        tests_support::row_text(session.run(
+            "SELECT table_name, partition_name, partition_comment FROM information_schema.partitions \
+             WHERE table_schema = 'test' AND table_name IN ('t', 'l') ORDER BY table_name, partition_name"
+        )),
+        [
+            ["l", "p0", ""],
+            ["l", "p1", "bye"],
+            ["t", "p0", ""],
+            ["t", "p1", ""],
+            ["t", "p3", "hello"],
+        ]
+        .map(|row| row.map(str::to_owned).to_vec())
+        .to_vec()
+    );
+}
+
+/// `tidb_placement_mode = 'IGNORE'` (Go `checkIgnorePlacementDDL` and the
+/// `handleXxxPlacement` helpers): placement DDL does nothing, placement
+/// options are dropped, and each such statement notes so; unknown policies
+/// are never looked up. Oracle: real TiDB over the same statements.
+#[test]
+fn placement_mode_ignore_drops_placement_with_go_s_note() {
+    const IGNORED: &str = "Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'";
+    let mut session = Session::new();
+    for sql in [
+        "CREATE PLACEMENT POLICY p1 FOLLOWERS=1",
+        "CREATE DATABASE d3 PLACEMENT POLICY p1",
+        "CREATE TABLE t (a INT) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10))",
+        "CREATE TABLE src (a INT) PLACEMENT POLICY p1 PARTITION BY RANGE (a) \
+         (PARTITION p0 VALUES LESS THAN (10) PLACEMENT POLICY p1)",
+        "CREATE TABLE dst LIKE src",
+        "SET tidb_placement_mode = 'IGNORE'",
+    ] {
+        session
+            .run(sql)
+            .unwrap_or_else(|err| panic!("{sql}: {err:?}"));
+    }
+    let note = vec!["Note".to_owned(), "1105".to_owned(), IGNORED.to_owned()];
+    for sql in [
+        "CREATE PLACEMENT POLICY p2 FOLLOWERS=1",
+        "CREATE OR REPLACE PLACEMENT POLICY IF NOT EXISTS x FOLLOWERS=1",
+        "ALTER PLACEMENT POLICY p1 FOLLOWERS=2",
+        "DROP PLACEMENT POLICY p1",
+        "CREATE DATABASE d2 PLACEMENT POLICY nope",
+        "ALTER DATABASE d2 PLACEMENT POLICY nope",
+        "CREATE TABLE d3.t (a INT)",
+        "CREATE TABLE t9 (a INT) PLACEMENT POLICY nope PARTITION BY RANGE (a) \
+         (PARTITION p0 VALUES LESS THAN (10) PLACEMENT POLICY nope2)",
+        "ALTER TABLE t PLACEMENT POLICY nope",
+        "ALTER TABLE t PARTITION p0 PLACEMENT POLICY nope",
+        "ALTER TABLE t ADD PARTITION (PARTITION p3 VALUES LESS THAN (40) PLACEMENT POLICY nope)",
+        "CREATE TABLE dst2 LIKE src",
+    ] {
+        session
+            .run(sql)
+            .unwrap_or_else(|err| panic!("{sql}: {err:?}"));
+        assert_eq!(
+            tests_support::row_text(session.run("SHOW WARNINGS")),
+            vec![note.clone()],
+            "{sql}"
+        );
+    }
+    // Go `BuildTableInfoWithLike` copies the source's placement, which
+    // `handleTablePlacement` resolves (or, under IGNORE, removes).
+    let shown = show_create(&mut session, "dst");
+    assert!(
+        shown.contains("COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */")
+            && shown.contains("LESS THAN (10) /*T![placement] PLACEMENT POLICY=`p1` */"),
+        "{shown}"
+    );
+    // The ignored statements changed nothing.
+    assert!(crate::tests_support::show_create_policy(&mut session, "p1").contains("FOLLOWERS=1"));
+    session
+        .run("SHOW CREATE PLACEMENT POLICY p2")
+        .expect_err("p2 was never created");
+    for (object, sql) in [
+        ("d2", "SHOW CREATE DATABASE d2"),
+        ("d3.t", "SHOW CREATE TABLE d3.t"),
+        ("t9", "SHOW CREATE TABLE t9"),
+        ("dst2", "SHOW CREATE TABLE dst2"),
+    ] {
+        let shown = format!("{:?}", tests_support::row_text(session.run(sql)));
+        assert!(!shown.contains("PLACEMENT"), "{object}: {shown}");
+    }
+    // A reorganization drops the new definitions' placement before the job
+    // raises its statistics warning.
+    session
+        .run(
+            "ALTER TABLE t REORGANIZE PARTITION p3 INTO \
+             (PARTITION p3 VALUES LESS THAN (35) PLACEMENT POLICY nope, \
+              PARTITION p4 VALUES LESS THAN (40))",
+        )
+        .expect("reorganize");
+    let warnings = tests_support::row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 2, "{warnings:?}");
+    assert_eq!(warnings[0], note);
+    assert_eq!(warnings[1][0], "Warning");
+    // Go `createTableWithInfoJob`: `handleTablePlacement` before the
+    // existence check, so the placement note comes first.
+    session
+        .run("CREATE TABLE IF NOT EXISTS t (a INT) PLACEMENT POLICY nope")
+        .expect("if not exists");
+    assert_eq!(
+        tests_support::row_text(session.run("SHOW WARNINGS")),
+        vec![
+            note.clone(),
+            vec![
+                "Note".to_owned(),
+                "1050".to_owned(),
+                "Table 'test.t' already exists".to_owned()
+            ],
+        ]
+    );
+    let shown = show_create(&mut session, "t");
+    assert!(!shown.contains("nope"), "{shown}");
+    assert!(
+        shown.contains("PARTITION `p3` VALUES LESS THAN (35),\n PARTITION `p4` VALUES LESS THAN (40))"),
+        "{shown}"
+    );
+}

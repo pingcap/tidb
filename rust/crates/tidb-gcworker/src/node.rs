@@ -128,7 +128,7 @@ impl GcSessionFactory for NodeGcSessions {
                 "127.0.0.1:0".parse().expect("loopback socket address"),
             ),
                         identity: tidb_session::domain::configured_user_store::AuthenticatedIdentity::internal(),
-                        client_found_rows: false,
+                        client_capability: 0,
                         tls_state: None,
                         compression_algorithm: tidb_mysql::consts::CompressionNone,
                         compression_level: 0,

@@ -103,14 +103,12 @@ impl<'a> UpdateRecords<'a> {
             )
         })?;
         if old == new {
-            // Go `addUnchangedKeysForLockByRow` locks an unchanged row only in
-            // a pessimistic transaction.
-            if let (TableEntry::Kv(kv), Some(keys), true) = (
-                entry,
-                ctx.selected_lock_keys(),
-                ctx.pessimistic_transaction(),
-            ) {
-                keys.insert(kv.row_lock_key(id, old, ctx).map_err(kv_write_error)?);
+            if let TableEntry::Kv(kv) = entry {
+                let mut key_set = LOCK_ROW_KEY;
+                if ctx.lock_unchanged_keys() {
+                    key_set |= LOCK_UNIQUE_KEYS;
+                }
+                add_unchanged_keys_for_lock_by_row(kv, id, old, key_set, ctx)?;
             }
             return Ok(UpdateOutcome::Unchanged);
         }
@@ -255,6 +253,15 @@ impl<'a> UpdateRecords<'a> {
         if let Err(error) = result {
             return ignored_write_error(error, ignore, ctx);
         }
+        // Go `updateRecord`: a row whose handle stayed locks its unique keys
+        // as they were.
+        if ctx.lock_unchanged_keys() {
+            if let Some(TableEntry::Kv(kv)) = catalog.get_in(database, name) {
+                if !kv.handle_columns_changed(old, new) {
+                    add_unchanged_keys_for_lock_by_row(kv, id, old, LOCK_UNIQUE_KEYS, ctx)?;
+                }
+            }
+        }
         if let Some(index) = fk_target {
             let accountant = ctx
                 .statement_memory()
@@ -328,6 +335,41 @@ impl<'a> UpdateRecords<'a> {
         }
         Ok(())
     }
+}
+
+/// Go `lockRowKey` / `lockUniqueKeys`: which keys
+/// [`add_unchanged_keys_for_lock_by_row`] locks.
+pub(crate) const LOCK_ROW_KEY: u8 = 1 << 0;
+pub(crate) const LOCK_UNIQUE_KEYS: u8 = 1 << 1;
+
+/// Go `addUnchangedKeysForLockByRow`: in a pessimistic transaction, the
+/// keys of a row the statement leaves as it is join the keys the statement
+/// locks (`TxnCtx.AddUnchangedKeyForLock`).
+pub(crate) fn add_unchanged_keys_for_lock_by_row(
+    table: &tidb_table::tables::TableCommon,
+    handle: &tidb_table::tables::TableHandle,
+    row: &[Datum],
+    key_set: u8,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let Some(keys) = ctx.selected_lock_keys() else {
+        return Ok(());
+    };
+    if !ctx.pessimistic_transaction() || key_set == 0 {
+        return Ok(());
+    }
+    if key_set & LOCK_ROW_KEY != 0 {
+        keys.insert(table.row_lock_key(handle, row, ctx).map_err(kv_write_error)?);
+    }
+    if key_set & LOCK_UNIQUE_KEYS != 0 {
+        for key in table
+            .unchanged_unique_lock_keys(handle, row, ctx)
+            .map_err(kv_write_error)?
+        {
+            keys.insert(key);
+        }
+    }
+    Ok(())
 }
 
 fn ignored_write_error(

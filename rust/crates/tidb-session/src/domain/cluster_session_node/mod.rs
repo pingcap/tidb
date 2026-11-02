@@ -691,6 +691,7 @@ impl<'s> ClusterServerSession<'s> {
             resource_group,
             node.follower.schema_version(),
         );
+        node.txn.set_pending_size_limits(&self.session);
         // Go `SetOptionsOnTxnActive` reads the session values when the
         // transaction activates, so a pending one follows each statement's.
         if let Some(transaction) = &self.node.txn.explicit {

@@ -64,7 +64,7 @@ pub(crate) fn session_context_with_identity(
         connection_id,
         peer_addr: peer_addr.into(),
         identity,
-        client_found_rows: false,
+        client_capability: 0,
         tls_state: None,
         compression_algorithm: tidb_mysql::consts::CompressionNone,
         compression_level: 0,

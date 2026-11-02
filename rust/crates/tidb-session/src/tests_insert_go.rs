@@ -689,7 +689,7 @@ fn update_and_odku_row_outcomes_follow_go() {
         .run("create table m6 (a int primary key, b int unique)")
         .unwrap();
     session.run("insert into m6 values (1,1),(2,2)").unwrap();
-    session.set_client_found_rows(true);
+    session.set_client_capability(tidb_mysql::consts::ClientFoundRows);
     assert!(matches!(
         session.run("update ignore m6 set b=2 where a=1").unwrap(),
         crate::StmtResult::Affected(0)
@@ -698,7 +698,7 @@ fn update_and_odku_row_outcomes_follow_go() {
         session.statement_message(),
         "Rows matched: 1  Changed: 0  Warnings: 1"
     );
-    session.set_client_found_rows(false);
+    session.set_client_capability(0);
 
     session
         .run("create table m7 (id int auto_increment primary key, k int unique, v int)")

@@ -832,6 +832,9 @@ pub struct RowConflict {
     /// `toBeCheckedRow.handleKey`) rather than one of its unique keys; REPLACE
     /// in `LOAD DATA` counts the two removals differently.
     pub on_record_key: bool,
+    /// The candidate's key that collided (Go `keyValueWithDupInfo.newKey`):
+    /// its record key, or the unique index entry's key.
+    pub key: Vec<u8>,
 }
 
 /// A reader's range iterator under a statement budget: each entry it moves
@@ -2192,6 +2195,15 @@ impl TableCommon {
         }
     }
 
+    /// Go `updateRecord`'s `handleChanged`: a column the handle is built
+    /// from (`IsPKHandleColumn` / `IsCommonHandleColumn`) changed.
+    #[must_use]
+    pub fn handle_columns_changed(&self, old: &[Datum], new: &[Datum]) -> bool {
+        self.handle_column_offsets()
+            .into_iter()
+            .any(|offset| old.get(offset) != new.get(offset))
+    }
+
     /// Builds one enforced, writable CHECK constraint from persisted metadata.
     pub fn add_check_constraint(
         &mut self,
@@ -3040,6 +3052,7 @@ impl TableCommon {
                     _ => row_id.expect("explicit heap handle").to_string(),
                 };
                 found.push(RowConflict {
+                    key: encode_row_key_with_handle(physical_id, &handle.record_handle()),
                     handle,
                     error: KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
                         &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_generate_by_args(&[
@@ -3068,7 +3081,7 @@ impl TableCommon {
                 if !entry.distinct {
                     continue;
                 }
-                let value = match store.get(&Key::from_bytes(entry.key)) {
+                let value = match store.get(&Key::from_bytes(entry.key.clone())) {
                     Ok(value) if !value.is_empty() => value,
                     Ok(_) | Err(StorageError::NotFound) => continue,
                     Err(error) => return Err(error.into()),
@@ -3100,6 +3113,7 @@ impl TableCommon {
                             ]),
                         )),
                         on_record_key: false,
+                        key: entry.key,
                     });
                 }
             }

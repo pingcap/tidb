@@ -390,3 +390,23 @@ fn mixed_set_reads_its_subqueries_through_the_node() {
         .collect();
     assert_eq!(rendered, ["2", "2", "latin1"]);
 }
+
+/// Go `loadCommonGlobalVariablesIfNeeded`: a client that negotiated
+/// `CLIENT_INTERACTIVE` starts with `wait_timeout = interactive_timeout`;
+/// any other client keeps `wait_timeout`.
+#[test]
+fn an_interactive_client_waits_for_interactive_timeout() {
+    let node = MockNode::start();
+    let globals = GlobalSysvars::from_cluster_rows([(
+        "interactive_timeout".to_owned(),
+        "7".to_owned(),
+    )]);
+    let factory = factory_with_globals(&node, globals).shared();
+    let mut interactive = session_context(61);
+    interactive.client_capability = tidb_mysql::consts::ClientInteractive;
+    let session = factory.open_session(interactive).expect("interactive session");
+    assert_eq!(session.vars().system_value("wait_timeout").unwrap(), "7");
+    assert_eq!(session.wait_timeout(), std::time::Duration::from_secs(7));
+    let session = factory.open_session(session_context(62)).expect("batch session");
+    assert_eq!(session.vars().system_value("wait_timeout").unwrap(), "28800");
+}

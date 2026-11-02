@@ -73,6 +73,9 @@ pub fn prepare_alter_schema_job_submission<S: MetaSnapshot>(
                         .generate_with_stack_by_args(&[(name.clone()).into()]),
                 ));
             }
+            if let Some(ignored) = check_ignore_placement_ddl(job_context) {
+                return Ok(Some(ignored));
+            }
             let reference = check_and_normalize_placement_policy(snapshot, placement_policy)?;
             let policy = reference
                 .as_ref()

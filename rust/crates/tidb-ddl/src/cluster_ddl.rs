@@ -1557,6 +1557,19 @@ pub fn lower_ddl_with_context(
             lower_create_index(create, default_schema, false, context).map(Some)
         }
         DdlStmt::DropIndex(drop) => lower_drop_index(drop, default_schema).map(Some),
+        // Go `checkIgnorePlacementDDL` comes first in each of them.
+        DdlStmt::CreatePlacementPolicy(_)
+        | DdlStmt::AlterPlacementPolicy(_)
+        | DdlStmt::DropPlacementPolicy(_)
+            if context.placement_mode_ignore() =>
+        {
+            context.append_note_parts(tidb_errno::errcode::ErrUnknown, PLACEMENT_IGNORED);
+            Ok(Some(DdlStatement::AcceptedNoOp {
+                schema: String::new(),
+                table: String::new(),
+                warning: None,
+            }))
+        }
         DdlStmt::CreatePlacementPolicy(create) => {
             // Go checks the pairing before building the settings, so a
             // statement wrong in both ways reports the contradiction
@@ -1762,6 +1775,65 @@ fn check_and_normalize_placement_policy<S: MetaSnapshot>(
         id: policy.id,
         name: CiString::new(name),
     })))
+}
+
+/// Go `checkAndNormalizePlacementPolicy` over a reference: resolved by its
+/// name, `default` meaning none.
+fn normalize_placement_policy_ref<S: MetaSnapshot>(
+    snapshot: &mut S,
+    reference: Option<tidb_model::GoShared<tidb_model::PolicyRefInfo>>,
+) -> Result<Option<tidb_model::GoShared<tidb_model::PolicyRefInfo>>, DdlPlanError> {
+    match reference {
+        Some(reference) => {
+            let name = reference.read().name.original().to_owned();
+            check_and_normalize_placement_policy(snapshot, &name)
+        }
+        None => Ok(None),
+    }
+}
+
+/// Go `handleTablePlacement`: the table's and its partitions' references
+/// resolved, or, under `tidb_placement_mode = 'IGNORE'`, removed with a note.
+pub(super) fn handle_table_placement<S: MetaSnapshot>(
+    snapshot: &mut S,
+    context: &dyn DdlSessionContext,
+    info: &mut TableInfo,
+    warnings: &mut Vec<tidb_context::SqlWarn>,
+) -> Result<(), DdlPlanError> {
+    if context.placement_mode_ignore() && remove_table_placement(info) {
+        warnings.push(placement_ignored_note());
+        return Ok(());
+    }
+    info.placement_policy_ref =
+        normalize_placement_policy_ref(snapshot, info.placement_policy_ref.take())?;
+    if let Some(partition) = info.partition.as_ref() {
+        let definitions = partition.read().definitions.snapshot();
+        for (index, definition) in definitions.iter().enumerate() {
+            let resolved =
+                normalize_placement_policy_ref(snapshot, definition.placement_policy_ref.clone())?;
+            partition.read().definitions.update(index, |definition| {
+                definition.placement_policy_ref = resolved;
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Go `removeTablePlacement`: whether there was any.
+fn remove_table_placement(info: &mut TableInfo) -> bool {
+    let mut removed = info.placement_policy_ref.take().is_some();
+    if let Some(partition) = info.partition.as_ref() {
+        let definitions = partition.read().definitions.snapshot();
+        for (index, definition) in definitions.iter().enumerate() {
+            if definition.placement_policy_ref.is_some() {
+                removed = true;
+                partition.read().definitions.update(index, |definition| {
+                    definition.placement_policy_ref = None;
+                });
+            }
+        }
+    }
+    removed
 }
 
 fn find_policy<S: MetaSnapshot>(
@@ -4937,6 +5009,31 @@ fn new_check_constraint_job(
     job
 }
 
+/// The note Go's placement handlers append under `tidb_placement_mode =
+/// 'IGNORE'` (`checkIgnorePlacementDDL`, `handleXxxPlacement`).
+pub(crate) const PLACEMENT_IGNORED: &str = "Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'";
+
+pub(crate) fn placement_ignored_note() -> tidb_context::SqlWarn {
+    tidb_context::SqlWarn::with_code(
+        WarningLevel::Note,
+        tidb_errno::errcode::ErrUnknown,
+        PLACEMENT_IGNORED,
+    )
+}
+
+/// Go `checkIgnorePlacementDDL`: under `tidb_placement_mode = 'IGNORE'` a
+/// placement statement changes nothing and notes so.
+pub(crate) fn check_ignore_placement_ddl(
+    context: &dyn DdlSessionContext,
+) -> Option<add_index::AddIndexSubmission> {
+    context
+        .placement_mode_ignore()
+        .then(|| add_index::AddIndexSubmission::AlreadySatisfied {
+            detail: "placement is ignored".to_owned(),
+            warnings: vec![placement_ignored_note()],
+        })
+}
+
 /// The job fields Go's executor sets on every statement's job literal
 /// (`Version`, `Type`, `BinlogInfo`, `CDCWriteSource`, `SQLMode`) and those
 /// `DoDDLJobWrapper` adds: `TraceInfo` and `setDDLJobQuery`'s query.
@@ -8021,6 +8118,30 @@ fn build_create_table_info<S: MetaSnapshot>(
     let fk_check = build.context.foreign_key_checks();
     crate::foreign_key_build::check_table_foreign_keys_valid(catalog, schema, &info, fk_check)
         .map_err(DdlPlanError::Admission)?;
+    // Go `BuildTableInfoWithStmt`: the written `PLACEMENT POLICY`, or else,
+    // for a non-temporary table, the schema's default. A written `default`
+    // is a reference there (cleared only by `handleTablePlacement`), so it
+    // takes no default.
+    let written_policy = build
+        .create
+        .table_options
+        .iter()
+        .find_map(|option| match option {
+            tidb_ast::TableOption::PlacementPolicy(name) => Some(name.clone()),
+            _ => None,
+        });
+    if let Some(name) = written_policy {
+        info.placement_policy_ref = Some(tidb_model::GoShared::new(tidb_model::PolicyRefInfo {
+            id: 0,
+            name: CiString::new(name),
+        }));
+    } else if info.temp_table_type == tidb_model::TempTableType::NONE {
+        if let Some(reference) = database.read().placement_policy_ref.as_ref() {
+            info.placement_policy_ref = Some(tidb_model::GoShared::new(reference.read().clone()));
+        }
+    }
+    // `createTableWithInfoJob`, ahead of its existence check.
+    handle_table_placement(snapshot, build.context.as_ref(), &mut info, warnings)?;
     if let Some(existing) = find_table(&database.read(), table) {
         let existing = existing.read();
         if if_not_exists {
@@ -8044,49 +8165,6 @@ fn build_create_table_info<S: MetaSnapshot>(
         ));
     }
     check_table_info_valid_extra(&info, warnings)?;
-    // Go `CreateTableWithInfo` resolves a table's `PLACEMENT POLICY = name`
-    // against the policies in the infoschema and refuses an unknown one with
-    // `ErrPlacementPolicyNotExists` (8239). The reference records the
-    // policy's ID as well as its name, because placement bundles resolve by
-    // id.
-    let written_policy = build
-        .create
-        .table_options
-        .iter()
-        .find_map(|option| match option {
-            tidb_ast::TableOption::PlacementPolicy(name) => Some(name.clone()),
-            _ => None,
-        });
-    if let Some(policy_name) = &written_policy {
-        // Go `checkAndNormalizePlacementPolicy`: `default` is no policy.
-        info.placement_policy_ref = check_and_normalize_placement_policy(snapshot, policy_name)?;
-    }
-    // Go `handleTablePlacement`: every partition that names a policy of its
-    // own resolves it BY id too (`default` clears it).
-    if let Some(partition) = info.partition.as_ref() {
-        let definitions = partition.read().definitions.snapshot();
-        for (index, definition) in definitions.iter().enumerate() {
-            let Some(reference) = definition.placement_policy_ref.as_ref() else {
-                continue;
-            };
-            let written = reference.read().name.original().to_owned();
-            let resolved = check_and_normalize_placement_policy(snapshot, &written)?;
-            partition.read().definitions.update(index, |definition| {
-                definition.placement_policy_ref = resolved;
-            });
-        }
-    }
-    // Go `BuildTableInfoWithStmt`: a non-temporary table that names no
-    // placement takes the schema's default. A written `default` is a
-    // reference there (cleared only afterwards), so it does not.
-    if written_policy.is_none()
-        && info.placement_policy_ref.is_none()
-        && info.temp_table_type == tidb_model::TempTableType::NONE
-    {
-        if let Some(reference) = database.read().placement_policy_ref.as_ref() {
-            info.placement_policy_ref = Some(tidb_model::GoShared::new(reference.read().clone()));
-        }
-    }
     Ok(Ok(info))
 }
 

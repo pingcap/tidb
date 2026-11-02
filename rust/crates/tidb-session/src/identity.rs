@@ -1272,11 +1272,9 @@ impl Session {
         self.session_memory.bytes_consumed()
     }
 
-    /// Records whether the MySQL front end negotiated `CLIENT_FOUND_ROWS`.
-    /// Go stores the complete client capability word on `SessionVars`; this
-    /// session currently consumes only the affected-row bit.
-    pub fn set_client_found_rows(&mut self, enabled: bool) {
-        self.vars.client_found_rows = enabled;
+    /// Go `session.SetClientCapability`.
+    pub fn set_client_capability(&mut self, capability: u32) {
+        self.vars.client_capability = capability;
     }
 
     /// Installs the server/domain advisory-lock authority before this session

@@ -1856,6 +1856,68 @@ fn global_bindings_do_not_depend_on_unrelated_staged_writes() {
     }
 }
 
+/// Go `TestLockUnchangedUniqueKeys` (`UniqueAndRowUnchanged`,
+/// `UniqueAndRowChanged`): with `tidb_lock_unchanged_keys` ON a pessimistic
+/// UPDATE (reading through `sk`, as Go's test forces, so no point get on
+/// `uk` locks it) that leaves a unique key as it was locks that key
+/// (`addUnchangedKeysForLockByRow`), so another transaction's INSERT of the
+/// same key waits; OFF, it finds the duplicate at once.
+#[test]
+fn lock_unchanged_keys_locks_the_unique_keys_an_update_kept() {
+    let (stack, _users) = cop_backed_stack();
+    let mut writer = stack
+        .factory
+        .open_session(session_context(124))
+        .expect("writer");
+    let mut other = stack
+        .factory
+        .open_session(session_context(125))
+        .expect("other");
+    other
+        .node_conn()
+        .execute_write("SET innodb_lock_wait_timeout=1")
+        .expect("bounded lock wait");
+    for lock in [true, false] {
+        for (case, update) in [
+            ("unchanged", "UPDATE test.uk_lock FORCE INDEX(sk) SET v = 10 WHERE k = 1"),
+            ("changed", "UPDATE test.uk_lock FORCE INDEX(sk) SET v = 11 WHERE k = 1"),
+        ] {
+            for sql in [
+                format!("SET tidb_lock_unchanged_keys = {}", if lock { "ON" } else { "OFF" }),
+                "DROP TABLE IF EXISTS test.uk_lock".to_owned(),
+                "CREATE TABLE test.uk_lock (k INT, v INT, UNIQUE KEY uk(k), KEY sk(k))".to_owned(),
+                "INSERT INTO test.uk_lock VALUES (1, 10)".to_owned(),
+            ] {
+                writer.node_conn().execute_write(&sql).expect("setup");
+            }
+            writer
+                .node_conn()
+                .control_transaction("BEGIN PESSIMISTIC")
+                .expect("begin writer");
+            writer.node_conn().execute_write(update).expect("update");
+            other
+                .node_conn()
+                .control_transaction("BEGIN PESSIMISTIC")
+                .expect("begin other");
+            let code = other
+                .node_conn()
+                .execute_write("INSERT INTO test.uk_lock VALUES (1, 10)")
+                .expect_err("the key exists")
+                .code;
+            let expected = if lock { 1205 } else { 1062 };
+            assert_eq!(code, expected, "{case}, tidb_lock_unchanged_keys = {lock}");
+            other
+                .node_conn()
+                .control_transaction("ROLLBACK")
+                .expect("rollback other");
+            writer
+                .node_conn()
+                .control_transaction("ROLLBACK")
+                .expect("rollback writer");
+        }
+    }
+}
+
 #[test]
 fn unchanged_updates_lock_only_matched_rows() {
     let (stack, _users) = cop_backed_stack();

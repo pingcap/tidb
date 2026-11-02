@@ -502,7 +502,7 @@ fn open_session_as_with_stats_lock(
             connection_id: 2,
             peer_addr: peer_addr.into(),
             identity,
-            client_found_rows: false,
+            client_capability: 0,
             tls_state: None,
             compression_algorithm: tidb_mysql::consts::CompressionNone,
             compression_level: 0,

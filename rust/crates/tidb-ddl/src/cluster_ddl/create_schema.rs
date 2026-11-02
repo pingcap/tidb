@@ -62,7 +62,12 @@ pub fn create_schema<S: MetaSnapshot>(
     tidb_ddl_build::check_too_long_identifier(&name.go_to_lower())
         .map_err(DdlPlanError::from_mysql_error)?;
     // Go `handleDatabasePlacement`.
+    let mut warnings = Vec::new();
     let placement_policy_ref = match placement_policy {
+        Some(_) if job_context.placement_mode_ignore() => {
+            warnings.push(placement_ignored_note());
+            None
+        }
         Some(policy) => check_and_normalize_placement_policy(snapshot, policy)?,
         None => None,
     };
@@ -101,5 +106,5 @@ pub fn create_schema<S: MetaSnapshot>(
         snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
     )?;
     let [spec] = specs;
-    Ok(Some(AddIndexSubmission::Job(Box::new(spec), Vec::new())))
+    Ok(Some(AddIndexSubmission::Job(Box::new(spec), warnings)))
 }

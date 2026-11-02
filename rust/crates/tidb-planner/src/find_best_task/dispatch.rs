@@ -116,6 +116,9 @@ pub struct DispatchContext<'a> {
     /// Go `SessionVars.OptOrderingIdxSelRatio`, used by the ordered LIMIT
     /// row-count adjustment for table and index scans.
     pub ordering_index_selectivity_ratio: f64,
+    /// Go `SessionVars.IndexJoinMaxScanRowsRatio`: index joins whose scan
+    /// volume against a hash join's reaches it are pruned (0 disables).
+    pub index_join_max_scan_rows_ratio: f64,
     /// Go `SessionVars.OptOrderingIdxSelThresh`, which can disable expected-
     /// count adjustment when any datasource path is sufficiently selective.
     pub ordering_index_selectivity_threshold: f64,
@@ -234,6 +237,7 @@ impl<'a> DispatchContext<'a> {
             range_fallback_handler: None,
             expression_evaluator: &tidb_ranger::points::evaluate_static,
             ordering_index_selectivity_ratio: 0.01,
+            index_join_max_scan_rows_ratio: 0.0,
             ordering_index_selectivity_threshold:
                 tidb_vardef::defaults::DEF_TIDB_OPT_ORDERING_IDX_SEL_THRESH,
             allow_projection_push_down: true,
@@ -403,6 +407,13 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_ordering_index_selectivity_ratio(mut self, ratio: f64) -> Self {
         self.ordering_index_selectivity_ratio = ratio;
+        self
+    }
+
+    /// The dispatch context with Go's `IndexJoinMaxScanRowsRatio` attached.
+    #[must_use]
+    pub const fn with_index_join_max_scan_rows_ratio(mut self, ratio: f64) -> Self {
+        self.index_join_max_scan_rows_ratio = ratio;
         self
     }
 
@@ -881,6 +892,39 @@ fn exhaust_physical_plans(
                     );
                 }
             }
+            // Go `enumerateIndexJoinByOuterIdx`'s ratio prune, per outer side:
+            // `buildRows` the outer child's rows, `avgInnerRowCnt` the
+            // equal-condition output per outer row. A forced index-join
+            // family hint keeps every index join (`hasForceIndexJoinFamilyHint`).
+            let force_index_join_family = op.prefer_any(&[
+                join_hint_flags::RIGHT_AS_INLJ_INNER,
+                join_hint_flags::RIGHT_AS_INLHJ_INNER,
+                join_hint_flags::RIGHT_AS_INLMJ_INNER,
+                join_hint_flags::LEFT_AS_INLJ_INNER,
+                join_hint_flags::LEFT_AS_INLHJ_INNER,
+                join_hint_flags::LEFT_AS_INLMJ_INNER,
+            ]);
+            let index_join_scan_ratio_pruned: [bool; 2] = std::array::from_fn(|outer_idx| {
+                if force_index_join_family {
+                    return false;
+                }
+                let build = plan.children().get(outer_idx).and_then(LogicalPlan::stats_info);
+                let probe = plan.children().get(1 - outer_idx).and_then(LogicalPlan::stats_info);
+                let build_rows =
+                    build.map_or(0.0, tidb_planner_property::stats_info::StatsInfo::row_count);
+                let avg_inner_row_count = if build_rows > 0.0 {
+                    op.equal_cond_out_cnt / build_rows
+                } else {
+                    0.0
+                };
+                crate::find_best_task::should_prune_index_join_by_scan_ratio(
+                    ctx.index_join_max_scan_rows_ratio,
+                    build_rows,
+                    avg_inner_row_count,
+                    build,
+                    probe,
+                )
+            });
             let all_join_candidates = crate::find_best_task::exhaust_join(
                 &reduced,
                 prop,
@@ -888,6 +932,7 @@ fn exhaust_physical_plans(
                 (hash_hints.force_left, hash_hints.force_right),
                 skip_hash_join,
                 hash_hints.forced,
+                index_join_scan_ratio_pruned,
             );
             let (hash_candidates, other_candidates): (Vec<_>, Vec<_>) = all_join_candidates
                 .into_iter()

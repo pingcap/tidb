@@ -64,7 +64,7 @@ pub fn set_options_on_txn_active(vars: &tidb_variable::SessionVars) -> SessionTr
         vars.system_value(name)
             .expect("transaction options are registered")
     };
-    options_from_values(
+    let mut options = options_from_values(
         get(TIDB_ENABLE_ASYNC_COMMIT).as_ref(),
         get(TIDB_ENABLE1_PC).as_ref(),
         match tidb_opt_assertion_level(get(TIDB_TXN_ASSERTION_LEVEL).as_ref()) {
@@ -72,7 +72,13 @@ pub fn set_options_on_txn_active(vars: &tidb_variable::SessionVars) -> SessionTr
             AssertionLevel::Fast => tidb_proto::KvrpcAssertionLevel::Fast,
             AssertionLevel::Strict => tidb_proto::KvrpcAssertionLevel::Strict,
         },
-    )
+    );
+    // Go `LazyTxn`'s activation: "overwrite entry size limit by sys var".
+    options.entry_size_limit = get(tidb_vardef::tidb_vars::TIDB_TXN_ENTRY_SIZE_LIMIT)
+        .as_ref()
+        .parse::<u64>()
+        .unwrap_or(0);
+    options
 }
 
 /// The options built from the three session values a transaction captures;
@@ -90,6 +96,7 @@ pub fn options_from_values(
         assertion_level,
         kv_context: None,
         temporary_tables: None,
+        entry_size_limit: 0,
     }
 }
 

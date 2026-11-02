@@ -312,6 +312,9 @@ pub struct SessionVars {
     /// The GLOBAL values this session read for variables `SkipInit` left
     /// out of its copy; see [`Self::unseeded_global_value`].
     first_read_globals: FirstReadGlobals,
+    /// Go `len(SessionVars.PreparedStmts)`: the prepared statements this
+    /// session holds in [`PREPARED_STMT_COUNT`].
+    prepared_stmt_entries: i64,
     /// Go `SessionVars.InMultiStmts`: the running COM_QUERY text holds more
     /// than one statement, which keeps the non-prepared plan cache out.
     /// (Go `SessionVars.InMultiStmts`.)
@@ -344,10 +347,9 @@ pub struct SessionVars {
     /// answers NULL like `CURRENT_USER()` does for an unauthenticated one.
     /// (Go `SessionVars.ConnectionID`.)
     pub connection_id: Option<u64>,
-    /// Go `SessionVars.ClientCapability & mysql.ClientFoundRows`: negotiated
-    /// once by the front end and copied into every statement context.
-    /// (Go `SessionVars.ClientCapability & ClientFoundRows`.)
-    pub client_found_rows: bool,
+    /// Go `SessionVars.ClientCapability`: the capability word the front end
+    /// negotiated (`cc.capability`).
+    pub client_capability: u32,
     /// Go `SessionVars.PrevLastInsertID`: the id `LAST_INSERT_ID()` reports,
     /// which only a statement that ALLOCATED an auto value updates.
     /// (Go `SessionVars.LastInsertID`.)
@@ -544,7 +546,7 @@ impl Default for SessionVars {
             active_roles: std::sync::Arc::default(),
             login_user: None,
             connection_id: None,
-            client_found_rows: false,
+            client_capability: 0,
             last_insert_id: 0,
             in_set_session_states_stmt: false,
             statement_insert_id: 0,
@@ -597,11 +599,55 @@ impl Default for SessionVars {
             session_resolved: ResolvedGlobals::default(),
             globals: None,
             first_read_globals: FirstReadGlobals::default(),
+            prepared_stmt_entries: 0,
         }
     }
 }
 
+/// Go `variable.PreparedStmtCount`: the prepared statements every session of
+/// this process holds, which `max_prepared_stmt_count` bounds.
+pub static PREPARED_STMT_COUNT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
 impl SessionVars {
+    /// Go `SessionVars.AddPreparedStmt`: one more prepared statement, refused
+    /// with `ErrMaxPreparedStmtCountReached` when it would pass the GLOBAL
+    /// `max_prepared_stmt_count` (-1: unbounded).
+    ///
+    /// # Errors
+    ///
+    /// `ErrMaxPreparedStmtCountReached`.
+    pub fn add_prepared_stmt(&mut self) -> Result<(), tidb_terror::TerrorError> {
+        use std::sync::atomic::Ordering;
+        let max = self
+            .globals
+            .as_ref()
+            .and_then(|globals| globals.get("max_prepared_stmt_count").ok())
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_MAX_PREPARED_STMT_COUNT);
+        let count = PREPARED_STMT_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
+        if max >= 0 && count > max {
+            PREPARED_STMT_COUNT.fetch_sub(1, Ordering::SeqCst);
+            return Err(crate::variable_errors::ERR_MAX_PREPARED_STMT_COUNT_REACHED
+                .generate_with_stack_by_args(&[max.into()]));
+        }
+        self.prepared_stmt_entries += 1;
+        Ok(())
+    }
+
+    /// Go `SessionVars.RemovePreparedStmt` for a statement this session held.
+    pub fn remove_prepared_stmt(&mut self) {
+        if self.prepared_stmt_entries > 0 {
+            self.prepared_stmt_entries -= 1;
+            PREPARED_STMT_COUNT.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Go `SessionVars.WithdrawAllPreparedStmt`, at session close.
+    pub fn withdraw_all_prepared_stmt(&mut self) {
+        let entries = std::mem::take(&mut self.prepared_stmt_entries);
+        PREPARED_STMT_COUNT.fetch_sub(entries, std::sync::atomic::Ordering::SeqCst);
+    }
+
     /// Go `GetSession`'s `tidb_last_txn_info` getter.
     pub fn last_txn_info_value(&self) -> String {
         self.last_txn_info.clone()

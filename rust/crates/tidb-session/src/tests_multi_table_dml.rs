@@ -163,7 +163,7 @@ fn multi_table_update_counts_changed_rows_only() {
 #[test]
 fn multi_table_update_counts_unchanged_targets_for_client_found_rows() {
     let mut session = Session::new();
-    session.set_client_found_rows(true);
+    session.set_client_capability(tidb_mysql::consts::ClientFoundRows);
     session
         .run("CREATE TABLE fq1 (id INT PRIMARY KEY, v INT)")
         .unwrap();
@@ -1508,7 +1508,7 @@ fn shared_update_record_checks_final_statement_parent_rows() {
 #[test]
 fn shared_update_record_odku_ignore_keeps_earlier_writes() {
     let mut session = Session::new();
-    session.set_client_found_rows(true);
+    session.set_client_capability(tidb_mysql::consts::ClientFoundRows);
     session
         .run("CREATE TABLE od_ignore (id INT PRIMARY KEY, u INT UNIQUE)")
         .unwrap();
