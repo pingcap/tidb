@@ -25814,3 +25814,52 @@ fn a_tiflash_fallback_rerun_reads_tikv_and_carries_the_timeout() {
     session.set_tiflash_fallback(false);
     assert_eq!(rows(&mut session, "SHOW WARNINGS"), expected[expected.len() - 1..]);
 }
+
+/// Go `JobSubmitter`: the CREATE TABLEs eight sessions submit at once go
+/// through the node's one submit loop, which may merge those queued together
+/// into CREATE TABLES jobs (`tidb_enable_fast_create_table`, on by default).
+/// Merged or not, every statement succeeds with its own table, and the job
+/// history accounts for each table once.
+#[test]
+fn concurrent_create_tables_go_through_one_submit_loop() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let barrier = std::sync::Barrier::new(8);
+    std::thread::scope(|scope| {
+        for worker in 0u64..8 {
+            let barrier = &barrier;
+            scope.spawn(move || {
+                let mut session = factory
+                    .open_session(session_context(170 + worker))
+                    .expect("session opens");
+                barrier.wait();
+                rows(&mut session, &format!("CREATE TABLE test.fast_{worker} (id int primary key)"));
+                rows(&mut session, &format!("INSERT INTO test.fast_{worker} VALUES ({worker})"));
+            });
+        }
+    });
+    let mut session = factory
+        .open_session(session_context(179))
+        .expect("session opens");
+    for worker in 0..8 {
+        assert_eq!(
+            rows(&mut session, &format!("SELECT id FROM test.fast_{worker}"))[0][0].get_int64(),
+            worker
+        );
+    }
+    let jobs = displayed(rows(
+        &mut session,
+        "SELECT job_type, table_name FROM information_schema.ddl_jobs \
+         WHERE table_name LIKE 'fast_%' OR job_type = 'create tables'",
+    ));
+    // A CREATE TABLES row names its tables, comma-separated.
+    let mut created: Vec<String> = jobs
+        .iter()
+        .flat_map(|job| {
+            assert!(job[0] == "create table" || job[0] == "create tables", "{jobs:?}");
+            job[1].split(',').map(str::to_owned).collect::<Vec<_>>()
+        })
+        .collect();
+    created.sort();
+    assert_eq!(created, (0..8).map(|worker| format!("fast_{worker}")).collect::<Vec<_>>(), "{jobs:?}");
+}

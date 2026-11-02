@@ -222,7 +222,7 @@ pub fn prepare_cluster_ddl_parsed(
 }
 
 /// Why a catalog change did not happen.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ClusterDdlError {
     /// The change could not be planned from the observed catalog.
     Plan(DdlPlanError),
@@ -1185,8 +1185,8 @@ pub fn submit_check_constraint_job_with_retry<S: StoreClient>(
 /// What submitting an ADD INDEX came to.
 pub enum AddIndexSubmitted {
     /// The job queued, by id and action, with the executor's statement
-    /// warnings.
-    Job(i64, ActionType, Vec<tidb_context::SqlWarn>),
+    /// warnings, and the id a merged CREATE TABLE gave the statement's table.
+    Job(i64, ActionType, Vec<tidb_context::SqlWarn>, Option<i64>),
     /// `IF NOT EXISTS` over an existing index: nothing queued.
     AlreadySatisfied(ClusterDdlReport),
 }
@@ -1478,6 +1478,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
     backfiller: &dyn IndexBackfiller,
     auto_ids: Option<&Arc<tidb_autoid::auto_id_client::AutoIdClient>>,
     done_channels: Option<&DdlJobDoneChMap>,
+    submitter: Option<&crate::job_submitter::JobSubmitter>,
 ) -> Result<AddIndexSubmitted, ClusterDdlError> {
     // Go `CalcMaxNodeCountByStoresNum` reads PD's store list.
     let store_count = opener
@@ -1576,7 +1577,17 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
         })?;
         crate::cluster_ddl::placement_policy::set_placement_policy_id(&spec, policy_id);
     }
-    // Go `BeforeInsertWithAssignedIDs: s.registerJobDoneChannels`.
+    // Go `deliveryJob`: the node's submit loop inserts the job, maybe merged
+    // with others (`BeforeInsertWithAssignedIDs: s.registerJobDoneChannels`).
+    if let Some(submitter) = submitter {
+        let submitted = submitter.delivery_job(spec)?;
+        return Ok(AddIndexSubmitted::Job(
+            submitted.job_id,
+            submitted.action,
+            warnings,
+            submitted.merged_table_id,
+        ));
+    }
     gen_global_ids_and_insert_jobs_with_retry(
         opener,
         std::slice::from_mut(&mut spec),
@@ -1587,6 +1598,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
         spec.job.id,
         spec.job.type_,
         warnings,
+        None,
     ))
 }
 

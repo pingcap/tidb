@@ -55,6 +55,11 @@ pub fn set_ddl_error_count_limit(limit: i64) {
 pub static MAX_AUTO_ANALYZE_TIME: AtomicI64 =
     AtomicI64::new(defaults::DEF_TIDB_MAX_AUTO_ANALYZE_TIME);
 
+/// Go `vardef.EnableFastCreateTable`: the DDL submitter merges CREATE TABLE
+/// jobs.
+pub static ENABLE_FAST_CREATE_TABLE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(defaults::DEF_TIDB_ENABLE_FAST_CREATE_TABLE);
+
 /// Go `vardef.TableCacheLease`: the read lease of a cached table, in seconds.
 pub static TABLE_CACHE_LEASE: AtomicI64 = AtomicI64::new(defaults::DEF_TIDB_TABLE_CACHE_LEASE);
 

@@ -1079,6 +1079,7 @@ impl GlobalSysvars {
                 | TIDB_STATS_CACHE_MEM_QUOTA
                 | TIDB_MAX_AUTO_ANALYZE_TIME
                 | TIDB_TABLE_CACHE_LEASE
+                | TIDB_ENABLE_FAST_CREATE_TABLE
                 | PD_ENABLE_FOLLOWER_HANDLE_REGION
                 | TIDB_ENABLE_TSO_FOLLOWER_PROXY
                 | TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME
@@ -1268,6 +1269,10 @@ impl GlobalSysvars {
                 if let Ok(value) = value.parse::<i64>() {
                     tidb_vardef::MAX_AUTO_ANALYZE_TIME.store(value, SeqCst);
                 }
+            }
+            TIDB_ENABLE_FAST_CREATE_TABLE => {
+                tidb_vardef::ENABLE_FAST_CREATE_TABLE
+                    .store(tidb_vardef::option_values::tidb_opt_on(value), SeqCst);
             }
             TIDB_TABLE_CACHE_LEASE => {
                 if let Ok(value) = value.parse::<i64>() {

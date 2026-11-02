@@ -42,6 +42,7 @@ pub mod stat;
 pub mod ddl_history;
 pub mod cluster_ddl;
 pub mod job_txn;
+mod job_submitter;
 pub mod ddl_affinity;
 pub mod ddl_delete_range;
 pub mod ddl_history_table;

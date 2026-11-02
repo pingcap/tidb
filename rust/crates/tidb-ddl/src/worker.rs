@@ -621,6 +621,8 @@ where
     /// Go `detectAndUpdateJobVersion`'s background re-detection, while some
     /// peer is still older than job version 2 / global index V1.
     job_version_detector: Option<(Sender<()>, JoinHandle<()>)>,
+    /// Go `JobSubmitter`: every job this node's sessions submit.
+    submitter: crate::job_submitter::JobSubmitter,
 }
 
 impl<S> RealClusterDdl<S>
@@ -786,6 +788,11 @@ where
             timeout,
             notifier,
             schema_sync,
+            submitter: crate::job_submitter::JobSubmitter::start(
+                Arc::clone(&scheduler.opener),
+                scheduler.timeout,
+                Arc::clone(&scheduler.ddl_job_done_ch_map),
+            ),
             scheduler,
             owner,
             server_state,
@@ -2717,6 +2724,7 @@ where
                 &KvTableIndexBackfiller::new(&self.scheduler.row_ids, &self.scheduler.session_pool),
                 self.auto_ids.as_ref(),
                 Some(&self.scheduler.ddl_job_done_ch_map),
+                Some(&self.submitter),
             )
             .map_err(cluster_ddl_error)?
             {
@@ -2727,9 +2735,17 @@ where
                     ddl_job_id,
                     action,
                     executor_warnings,
+                    merged_table_id,
                 ) => {
                     self.notify_new_job_submitted();
                     let mut report = self.wait_persisted_job(ddl_job_id, action)?;
+                    // A merged CREATE TABLE created this statement's table
+                    // under the id its submission assigned.
+                    if let (Some(table_id), ClusterDdlReport::Applied { created_id, .. }) =
+                        (merged_table_id, &mut report)
+                    {
+                        *created_id = Some(table_id);
+                    }
                     self.refresh_catalog();
                     // The executor's warnings precede the job's.
                     let (ClusterDdlReport::Applied { warnings, .. }
