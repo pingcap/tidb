@@ -53,7 +53,29 @@ pub struct SessionTransactionOptions {
     /// and `tidb_backoff_weight`, which scale the client's backoffs.
     pub backoff_lock_fast: i32,
     pub backoff_weight: i32,
+    /// Go `kv.CommitTSUpperBoundCheck`, set by `SetOptionsBeforeCommit`: the
+    /// write leases of the cached tables the transaction wrote.
+    pub commit_ts_upper_bound_check: Option<CommitTsUpperBoundCheck>,
 }
+
+/// Go `kv.CommitTSUpperBoundCheck`'s `func(commitTS uint64) bool`: a commit
+/// ts it refuses fails the commit.
+#[derive(Clone)]
+pub struct CommitTsUpperBoundCheck(pub std::sync::Arc<dyn Fn(u64) -> bool + Send + Sync>);
+
+impl std::fmt::Debug for CommitTsUpperBoundCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CommitTsUpperBoundCheck")
+    }
+}
+
+impl PartialEq for CommitTsUpperBoundCheck {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for CommitTsUpperBoundCheck {}
 
 /// The ids of a session's temporary tables, refreshed by the session as its
 /// infoschema changes; read by the commit's filter when it runs. Equal when
@@ -93,6 +115,9 @@ impl SessionTransactionOptions {
         }
         transaction.set_causal_consistency(!self.guarantee_linearizability);
         transaction.set_kv_variables(self.backoff_lock_fast, self.backoff_weight);
+        if let Some(check) = self.commit_ts_upper_bound_check {
+            transaction.set_commit_ts_upper_bound_check(check);
+        }
         if let Some(context) = self.kv_context {
             transaction.set_statement_kv_context(context);
         }
@@ -206,6 +231,7 @@ impl From<CommitProtocol> for SessionTransactionOptions {
             low_resolution_tso: false,
             backoff_lock_fast: tikv_client::kv::DEF_BACKOFF_LOCK_FAST,
             backoff_weight: tikv_client::kv::DEF_BACKOFF_WEIGHT,
+            commit_ts_upper_bound_check: None,
         }
     }
 }

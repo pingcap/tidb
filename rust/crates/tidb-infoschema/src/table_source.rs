@@ -305,6 +305,14 @@ impl SourceTable {
             .is_some_and(|info| info.read().temp_table_type == tidb_model::TempTableType::LOCAL)
     }
 
+    /// Go `TableInfo.TableCacheStatusType == model.TableCacheStatusEnable`.
+    #[must_use]
+    pub fn is_cache_enabled(&self) -> bool {
+        self.table_info.as_ref().is_some_and(|info| {
+            info.read().table_cache_status_type == tidb_model::TableCacheStatusType::ENABLE
+        })
+    }
+
     /// Go `TableInfo.TableCacheStatusType != model.TableCacheStatusDisable`.
     #[must_use]
     pub fn is_cached(&self) -> bool {

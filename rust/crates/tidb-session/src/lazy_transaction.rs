@@ -291,6 +291,17 @@ impl OpenClusterTransaction for LazyClusterTransaction {
         }
     }
 
+    /// A transaction never opened wrote nothing, so it has no commit to
+    /// check.
+    fn set_commit_ts_upper_bound_check(
+        &mut self,
+        check: tidb_store_driver_txn::session_commit_protocol::CommitTsUpperBoundCheck,
+    ) {
+        if let Some(transaction) = self.shared.state().open.as_mut() {
+            transaction.set_commit_ts_upper_bound_check(check);
+        }
+    }
+
     fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
         self.lazy_snapshot(|transaction| transaction.snapshot())
     }

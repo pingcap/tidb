@@ -172,6 +172,9 @@ impl DomainSessions for Domain {
         if let Some(client) = self.kv_client.as_ref() {
             storage = storage.with_client(Arc::clone(client));
         }
+        storage = storage.with_kv_storage(Arc::new(
+            tidb_domain_core::cluster_transactions::ClusterKvStorage(Arc::clone(&self.transactions)),
+        ));
         // Go's one infoschema per schema version: the node builds it once
         // and every session takes a clone.
         let loaded = self.catalog.get_latest();
@@ -255,6 +258,8 @@ impl DomainSessions for Domain {
             let historical_storage = storage.snapshot_only();
             let historical_slot = Arc::clone(&slot);
             let auto_ids = Arc::clone(&self.auto_ids);
+            let cached_table_session: Arc<tidb_domain_core::cluster_session::CachedTableSessionFactory> =
+                Arc::from(self.cached_table_session_factory());
             let globals = self.global_vars.clone();
             // Go plans a stale read from the domain's current statistics.
             let statistics_view = Arc::clone(&self.statistics_view);
@@ -280,6 +285,7 @@ impl DomainSessions for Domain {
                         Some(Arc::clone(&statistics_view)),
                         auto_ids.as_ref(),
                         None,
+                        Some(cached_table_session.as_ref()),
                     );
                     (built.catalog, metadata.into_snapshot())
                 };
@@ -301,6 +307,8 @@ impl DomainSessions for Domain {
             let transactions = Arc::clone(&self.transactions);
             let catalogs = Arc::clone(&self.catalog);
             let auto_ids = Arc::clone(&self.auto_ids);
+            let cached_table_session: Arc<tidb_domain_core::cluster_session::CachedTableSessionFactory> =
+                Arc::from(self.cached_table_session_factory());
             let globals = self.global_vars.clone();
             let statistics_view = Arc::clone(&self.statistics_view);
             let restricted_sql = Arc::new(NodeRestrictedSql {
@@ -329,6 +337,7 @@ impl DomainSessions for Domain {
                     Some(Arc::clone(&statistics_view)),
                     auto_ids.as_ref(),
                     None,
+                    Some(cached_table_session.as_ref()),
                 );
                 drop(metadata);
                 drop(hold);

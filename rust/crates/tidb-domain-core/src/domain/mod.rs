@@ -606,6 +606,9 @@ pub struct Domain {
     pub global_config_syncer: Option<Arc<tidb_domain_globalconfigsync::GlobalConfigSyncer>>,
     pub bindings: Option<Arc<dyn tidb_bindinfo::cluster_binding_seam::ClusterBindings>>,
     pub binding_session_factory: Weak<Domain>,
+    /// The domain as the schema builder reaches it once [`Self::shared`] has
+    /// made it: Go `Builder.factory` takes the domain's internal sessions.
+    schema_builder_domain: Arc<std::sync::OnceLock<Weak<Domain>>>,
     /// The `SHOW STATUS` providers this domain registered as it started its
     /// DDL and binding handle, unregistered when it closes.
     statistics: Vec<Arc<dyn tidb_variable::statusvar::Statistics>>,
@@ -814,8 +817,15 @@ impl Domain {
     pub fn shared(mut self) -> Arc<Self> {
         Arc::new_cyclic(|factory| {
             self.binding_session_factory = factory.clone();
+            let _ = self.schema_builder_domain.set(factory.clone());
             self
         })
+    }
+
+    /// Go `Builder.factory` for this domain's schema images.
+    #[must_use]
+    pub fn cached_table_session_factory(&self) -> Box<crate::cluster_session::CachedTableSessionFactory> {
+        cached_table_session_factory(Arc::clone(&self.schema_builder_domain))
     }
 
     /// Install the node-owned global-binding authority before opening sessions.
@@ -859,10 +869,18 @@ impl Domain {
         .skipped;
         // Go's loader builds each version's `InfoSchema` before `InfoCache`
         // holds it; the domain owns the auto-id allocators the build needs.
+        let schema_builder_domain = Arc::new(std::sync::OnceLock::new());
         catalog.install_schema_builder(Box::new({
             let auto_ids = Arc::clone(&auto_ids);
+            let cached_table_session = cached_table_session_factory(Arc::clone(&schema_builder_domain));
             move |loaded, previous| {
-                let built = cluster_session_catalog_with_templates(loaded, None, auto_ids.as_ref(), previous);
+                let built = cluster_session_catalog_with_templates(
+                    loaded,
+                    None,
+                    auto_ids.as_ref(),
+                    previous,
+                    Some(cached_table_session.as_ref()),
+                );
                 let mut schema = built.catalog;
                 schema.set_skipped_tables(built.skipped);
                 schema
@@ -888,6 +906,7 @@ impl Domain {
             statistics: Vec::new(),
             global_config_syncer: None,
             binding_session_factory: Weak::new(),
+            schema_builder_domain,
             data_lock_waits,
             ddl,
             accounts,
@@ -3489,5 +3508,73 @@ impl Domain {
         let notifier = ddl_notifier::build_notifier(self, std::time::Duration::ZERO);
         tidb_owner::Listener::on_become_owner(notifier.as_ref());
         notifier
+    }
+}
+
+/// Go `Builder.factory` as `tableFromMeta` uses it: an internal session from
+/// the domain's pool, never returned (Go keeps it with the cached table), as
+/// its SQL executor. The session is taken at the executor's first statement:
+/// images are built before the domain that owns the pool is running.
+fn cached_table_session_factory(
+    domain: Arc<std::sync::OnceLock<Weak<Domain>>>,
+) -> Box<crate::cluster_session::CachedTableSessionFactory> {
+    Box::new(move || {
+        Ok(Arc::new(CachedTableSessionExecutor {
+            domain: Arc::clone(&domain),
+            session: std::sync::OnceLock::new(),
+        }) as Arc<dyn tidb_sqlexec::SqlExecutor>)
+    })
+}
+
+/// One cached table's internal session, taken from the pool at first use.
+struct CachedTableSessionExecutor {
+    domain: Arc<std::sync::OnceLock<Weak<Domain>>>,
+    session: std::sync::OnceLock<Arc<dyn tidb_sqlexec::SqlExecutor>>,
+}
+
+impl CachedTableSessionExecutor {
+    fn executor(&self) -> tidb_sqlexec::Result<&Arc<dyn tidb_sqlexec::SqlExecutor>> {
+        if let Some(executor) = self.session.get() {
+            return Ok(executor);
+        }
+        let domain = self
+            .domain
+            .get()
+            .and_then(Weak::upgrade)
+            .ok_or_else(|| crate::sys_session::stats_session_error("the domain is not running"))?;
+        let session = domain.advanced_sys_session_pool().get()?;
+        let executor = session.with_session_context(|context| {
+            Ok::<_, tidb_syssession::SysSessionError>(tidb_syssession::SessionContext::sql_executor(
+                context,
+            ))
+        })?;
+        Ok(self.session.get_or_init(|| executor))
+    }
+}
+
+impl tidb_sqlexec::SqlExecutor for CachedTableSessionExecutor {
+    fn execute(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+    ) -> tidb_sqlexec::Result<Vec<Box<dyn tidb_sqlexec::RecordSet>>> {
+        self.executor()?.execute(context, sql)
+    }
+
+    fn execute_internal(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+        arguments: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+        self.executor()?.execute_internal(context, sql, arguments)
+    }
+
+    fn execute_stmt(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        statement: &tidb_ast::Stmt,
+    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+        self.executor()?.execute_stmt(context, statement)
     }
 }

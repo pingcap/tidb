@@ -38,6 +38,20 @@ use tidb_txnkv::{
 };
 
 
+/// Go `kv.Storage` as `kv.RunInNewTxn` reads through it.
+pub trait KvStorage: Send + Sync + fmt::Debug {
+    /// Go `kv.RunInNewTxn` of a read: `f` reads a new transaction's snapshot
+    /// at the transaction's start ts.
+    ///
+    /// # Errors
+    ///
+    /// The transaction's or `f`'s error.
+    fn run_in_new_txn(
+        &self,
+        f: &mut dyn FnMut(u64, &mut dyn TableStorage) -> Result<(), StorageError>,
+    ) -> Result<(), StorageError>;
+}
+
 /// A failure reported by a storage backend.
 ///
 /// Kept typed through the table and SQL adapters so a diagnostic's text never
@@ -393,6 +407,12 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
     /// requests are sent through. `None` for a backend with no coprocessor,
     /// which is the in-process engine.
     fn client(&self) -> Option<std::sync::Arc<dyn tidb_txnkv::Client>> {
+        None
+    }
+
+    /// Go `sctx.GetStore()`: the storage new transactions begin on. `None`
+    /// for a backend that has none, which is the in-process engine.
+    fn kv_storage(&self) -> Option<std::sync::Arc<dyn KvStorage>> {
         None
     }
 

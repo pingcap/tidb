@@ -56,6 +56,11 @@ impl TempTable {
 /// built fresh for each transaction.
 pub type TxnTemporaryTables = Arc<Mutex<HashMap<i64, Arc<TempTable>>>>;
 
+/// Go `TxnCtx.CachedTables`: the cached tables this transaction wrote, by id
+/// (Go `map[int64]any`, the table's handle), built fresh for each
+/// transaction.
+pub type TxnCachedTables = Arc<Mutex<std::collections::BTreeMap<i64, Arc<dyn std::any::Any + Send + Sync>>>>;
+
 /// Go `TemporaryTableHandler`.
 #[derive(Clone, Debug)]
 pub struct TemporaryTableHandler {

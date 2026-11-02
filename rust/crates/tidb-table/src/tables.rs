@@ -593,6 +593,10 @@ pub struct TableCommon {
     /// Writes ignore it: a row's partition is a function of the ROW (Go's
     /// `locatePartition`), never of the statement's restriction.
     pub(crate) read_partitions: Option<Vec<i64>>,
+    /// Go `cachedTable`'s runtime when the table is cached (`TableFromMeta`'s
+    /// `newCachedTable`), shared by every clone of the table as Go shares the
+    /// one table object of an infoschema.
+    cached: Option<std::sync::Arc<cache::CachedTable>>,
 }
 
 /// Go PointGetExecutor keeps immutable table metadata and a separate snapshot.
@@ -1141,6 +1145,7 @@ impl TableCommon {
             check_constraint_infos: std::sync::Arc::new(Vec::new()),
             partition: None,
             read_partitions: None,
+            cached: None,
         };
         table.refresh_from_meta();
         table
@@ -3806,6 +3811,7 @@ impl TableCommon {
         // writes take the caller's ctx (`GetCreateIdxOpt`), so they are its
         // siblings.
         let _add_record = tidb_tracing::start_thread_region("table.AddRecord");
+        self.txn_ctx_add_cached_table(ctx, true)?;
         self.with_txn_staging(store, ctx, |table, store| {
                 table.insert_row_in(
                     store,
@@ -3891,6 +3897,7 @@ impl TableCommon {
         lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
         let _add_record = tidb_tracing::start_thread_region("table.AddRecord");
+        self.txn_ctx_add_cached_table(ctx, true)?;
         self.with_txn_staging(store, ctx, |table, store| {
                 table.insert_row_in(
                     store,
@@ -3924,6 +3931,7 @@ impl TableCommon {
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<TableHandle, KvTableError> {
         let _add_record = tidb_tracing::start_thread_region("table.AddRecord");
+        self.txn_ctx_add_cached_table(ctx, true)?;
         self.with_txn_staging(store, ctx, |table, store| {
                 table.insert_row_in(
                     store,
@@ -4211,6 +4219,7 @@ impl TableCommon {
         row: &[Datum],
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
+        self.txn_ctx_add_cached_table(ctx, true)?;
         self.with_txn_staging(store, ctx, |table, store| table.update_row_in(store, handle, old_row, row, ctx))
     }
 
@@ -4533,6 +4542,7 @@ impl TableCommon {
         handle: &TableHandle,
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
+        self.txn_ctx_add_cached_table(ctx, false)?;
         self.with_txn_staging(store, ctx, |table, store| table.delete_row_in(store, handle, ctx))
     }
 
@@ -4579,6 +4589,7 @@ impl TableCommon {
         old_row: &[Datum],
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
+        self.txn_ctx_add_cached_table(ctx, false)?;
         self.with_txn_staging(store, ctx, |table, store| table.delete_old_row_in(store, handle, old_row, ctx))
     }
 

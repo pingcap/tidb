@@ -1078,6 +1078,7 @@ impl GlobalSysvars {
                 | TIDB_ANALYZE_DEFAULT_NUM_TOP_N
                 | TIDB_STATS_CACHE_MEM_QUOTA
                 | TIDB_MAX_AUTO_ANALYZE_TIME
+                | TIDB_TABLE_CACHE_LEASE
                 | PD_ENABLE_FOLLOWER_HANDLE_REGION
                 | TIDB_ENABLE_TSO_FOLLOWER_PROXY
                 | TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME
@@ -1266,6 +1267,11 @@ impl GlobalSysvars {
             TIDB_MAX_AUTO_ANALYZE_TIME => {
                 if let Ok(value) = value.parse::<i64>() {
                     tidb_vardef::MAX_AUTO_ANALYZE_TIME.store(value, SeqCst);
+                }
+            }
+            TIDB_TABLE_CACHE_LEASE => {
+                if let Ok(value) = value.parse::<i64>() {
+                    tidb_vardef::TABLE_CACHE_LEASE.store(value, SeqCst);
                 }
             }
             PD_ENABLE_FOLLOWER_HANDLE_REGION

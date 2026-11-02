@@ -174,6 +174,8 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
     fn statement_ended_txn_start_ts(&self) -> Option<u64>;
     /// Whether the statement began a transaction.
     fn statement_began_txn(&self) -> bool;
+    /// Go `StmtCtx.WaitLockLeaseTime`.
+    fn wait_lock_lease_time(&self) -> std::time::Duration;
     /// Go `TxnCtx.StartTS` and `TxnCtx.GetForUpdateTS()`.
     fn txn_start_and_for_update_ts(&self) -> (u64, u64);
     /// The statement's warnings as the slow log prints them.
@@ -448,7 +450,8 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
             // Go `TxnCtx.IsExplicit`, which an ended transaction's context
             // keeps until the next statement replaces it.
             is_explicit_txn: self.in_txn() || self.statement_ended_txn_start_ts().is_some(),
-            is_write_cache_table: false,
+            // Go `stmtCtx.WaitLockLeaseTime > 0`.
+            is_write_cache_table: !self.wait_lock_lease_time().is_zero(),
             is_sync_stats_failed: !observation.routed && plan.is_sync_stats_failed,
             prepared: observation.prepared,
             plan_from_cache: !observation.routed && self.session_vars().found_in_plan_cache,

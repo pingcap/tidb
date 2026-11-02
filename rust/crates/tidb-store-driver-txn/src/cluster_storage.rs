@@ -1097,6 +1097,8 @@ pub struct ClusterTableStorage {
     /// Go `kv.Storage.GetClient()`: the node's coprocessor client, when it
     /// was given one. `None` keeps every scan on the byte-level merge below.
     client: Option<Arc<dyn tidb_txnkv::Client>>,
+    /// Go `sctx.GetStore()`: the node's storage new transactions begin on.
+    kv_storage: Option<Arc<dyn tidb_kv::storage::KvStorage>>,
 }
 
 impl ClusterTableStorage {
@@ -1109,6 +1111,7 @@ impl ClusterTableStorage {
             truncated: false,
             mpp_client: None,
             client: None,
+            kv_storage: None,
         }
     }
 
@@ -1144,6 +1147,13 @@ impl ClusterTableStorage {
     #[must_use]
     pub fn with_client(mut self, client: Arc<dyn tidb_txnkv::Client>) -> Self {
         self.client = Some(client);
+        self
+    }
+
+    /// Gives this session's tables the node's storage (Go `sctx.GetStore()`).
+    #[must_use]
+    pub fn with_kv_storage(mut self, storage: Arc<dyn tidb_kv::storage::KvStorage>) -> Self {
+        self.kv_storage = Some(storage);
         self
     }
 
@@ -1444,6 +1454,10 @@ impl TableStorage for ClusterTableStorage {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
             .start_ts()
+    }
+
+    fn kv_storage(&self) -> Option<Arc<dyn tidb_kv::storage::KvStorage>> {
+        self.kv_storage.clone()
     }
 
     /// A truncated handle has no coprocessor: its reads fall to `iter`,

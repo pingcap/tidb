@@ -55,6 +55,9 @@ pub fn set_ddl_error_count_limit(limit: i64) {
 pub static MAX_AUTO_ANALYZE_TIME: AtomicI64 =
     AtomicI64::new(defaults::DEF_TIDB_MAX_AUTO_ANALYZE_TIME);
 
+/// Go `vardef.TableCacheLease`: the read lease of a cached table, in seconds.
+pub static TABLE_CACHE_LEASE: AtomicI64 = AtomicI64::new(defaults::DEF_TIDB_TABLE_CACHE_LEASE);
+
 /// Go `vardef.AnalyzeDefaultNumBuckets`.
 pub static ANALYZE_DEFAULT_NUM_BUCKETS: AtomicU64 =
     AtomicU64::new(defaults::DEF_TIDB_ANALYZE_DEFAULT_NUM_BUCKETS as u64);

@@ -728,6 +728,17 @@ impl<S: PdClient> RealTransaction<S> {
             .collect();
         Ok(values)
     }
+    /// Go `txn.SetOption(kv.CommitTSUpperBoundCheck, check)`.
+    pub fn set_commit_ts_upper_bound_check(
+        &mut self,
+        check: crate::session_commit_protocol::CommitTsUpperBoundCheck,
+    ) {
+        self.engine
+            .transaction_mut()
+            .inner_mut()
+            .set_commit_timestamp_upper_bound_check(move |commit_ts| (check.0)(commit_ts));
+    }
+
     /// Attaches the SQL schema validity check to the native commit lifecycle.
     pub fn set_schema_lease(&mut self, lease: SchemaLease) {
         self.engine

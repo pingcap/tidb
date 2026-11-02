@@ -1173,6 +1173,10 @@ impl tidb_executor::exec_stmt_observation::ExecStmtObservation for Session {
         self.active_resource_group.clone()
     }
 
+    fn wait_lock_lease_time(&self) -> std::time::Duration {
+        Session::wait_lock_lease_time(self)
+    }
+
     fn statement_ended_txn_start_ts(&self) -> Option<u64> {
         self.statement_ended_txn_start_ts
     }

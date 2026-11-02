@@ -461,6 +461,15 @@ pub trait OpenClusterTransaction: Send {
     /// does without the option.
     fn set_schema_lease_checker(&mut self, _checker: Arc<dyn SchemaLeaseChecker>) {}
 
+    /// Go `SetOptionsBeforeCommit`'s `kv.CommitTSUpperBoundCheck`: the
+    /// commit fails on a commit ts the check refuses. A tier with no commit
+    /// ts commits unchecked.
+    fn set_commit_ts_upper_bound_check(
+        &mut self,
+        _check: tidb_store_driver_txn::session_commit_protocol::CommitTsUpperBoundCheck,
+    ) {
+    }
+
     /// One statement's read handle. Dropping it ends the statement, never the
     /// transaction.
     fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String>;
@@ -1776,6 +1785,13 @@ where
         SessionTransaction::set_schema_lease_checker(self, checker);
     }
 
+    fn set_commit_ts_upper_bound_check(
+        &mut self,
+        check: tidb_store_driver_txn::session_commit_protocol::CommitTsUpperBoundCheck,
+    ) {
+        SessionTransaction::set_commit_ts_upper_bound_check(self, check);
+    }
+
     fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
         SessionTransaction::snapshot(self).map_err(|error| error.to_string())
     }
@@ -2040,5 +2056,32 @@ mod write_conflict_rewrite_tests {
             try_replace_write_conflict_error(error.clone(), Redaction::Disabled, tables),
             error
         );
+    }
+}
+
+/// Go `kv.Storage` as `kv.RunInNewTxn` reads through it: a fresh snapshot of
+/// the cluster, under an empty transaction buffer.
+pub struct ClusterKvStorage(pub Arc<dyn ClusterTransactions>);
+
+impl fmt::Debug for ClusterKvStorage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ClusterKvStorage")
+    }
+}
+
+impl tidb_kv::storage::KvStorage for ClusterKvStorage {
+    fn run_in_new_txn(
+        &self,
+        f: &mut dyn FnMut(u64, &mut dyn tidb_kv::storage::TableStorage) -> Result<(), StorageError>,
+    ) -> Result<(), StorageError> {
+        // Go's internal transactions run in the default resource group.
+        let snapshot = self.0.open_snapshot("default").map_err(StorageError::Backend)?;
+        let start_ts = snapshot.start_ts();
+        let mut slot = tidb_store_driver_txn::cluster_storage::SwappableSnapshot::new();
+        slot.bind(snapshot);
+        let snapshot: Arc<Mutex<dyn ClusterSnapshot>> = Arc::new(Mutex::new(slot));
+        let mut storage =
+            tidb_store_driver_txn::cluster_storage::ClusterTableStorage::new(MutationBuffer::new(), snapshot);
+        f(start_ts, &mut storage)
     }
 }

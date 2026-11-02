@@ -7391,6 +7391,57 @@ impl crate::mem_reader::MemRowsIter for ReaderMemRowsIter {
 /// buffer themselves or read disk only). A backend without a separate
 /// snapshot keeps its merged reader, as does a reader shape Go's builder has
 /// no arm for.
+/// Go `executorBuilder.getCacheTable` / `UnionScanExec.handleCachedTable`:
+/// the rows of a cached table whose lease covers the statement's read ts. A
+/// read outside it takes the read lock (and loads the copy) in the
+/// background, unless the statement writes the table -- `lock_in_insert`
+/// false is `getCacheTable`'s INSERT exception -- or only explains.
+fn cached_table_data(
+    table: &tidb_table::tables::TableCommon,
+    ctx: &crate::StmtContext,
+    lock_in_insert: bool,
+) -> Option<Arc<tidb_kv::mem_buffer::MemBufferSnapshot>> {
+    if table.cache_status() != tidb_model::TableCacheStatusType::ENABLE {
+        return None;
+    }
+    let cached = table.cached_table()?;
+    let store = crate::statement_store(ctx);
+    let start_ts = store.start_ts();
+    let lease_duration = std::time::Duration::from_secs(
+        tidb_vardef::TABLE_CACHE_LEASE
+            .load(std::sync::atomic::Ordering::SeqCst)
+            .max(0) as u64,
+    );
+    let (data, loading) = cached.try_read_from_cache(start_ts, lease_duration);
+    if let Some(data) = data {
+        ctx.set_read_from_table_cache();
+        return Some(data);
+    }
+    let writes_table = match ctx.statement_class() {
+        crate::StatementClass::Update
+        | crate::StatementClass::Delete => true,
+        crate::StatementClass::Insert => lock_in_insert,
+        _ => false,
+    };
+    if !loading && !writes_table && !ctx.in_explain_stmt() {
+        if let Some(kv_storage) = store.kv_storage() {
+            cached.update_lock_for_read(kv_storage, start_ts, lease_duration);
+        }
+    }
+    None
+}
+
+/// Go `UnionIter(memBuffer, cacheTable)`: the buffer's entries over the
+/// cached rows, its tombstones hiding theirs.
+fn union_cache_under_buffer(
+    cache: &tidb_kv::mem_buffer::MemBufferSnapshot,
+    buffer: &tidb_kv::mem_buffer::MemBufferSnapshot,
+) -> Arc<tidb_kv::mem_buffer::MemBufferSnapshot> {
+    let mut entries = cache.entries.clone();
+    entries.extend(buffer.entries.iter().map(|(key, value)| (key.clone(), value.clone())));
+    Arc::new(tidb_kv::mem_buffer::MemBufferSnapshot { entries })
+}
+
 fn build_union_scan(
     plan: &PhysicalPlan,
     union_scan: &tidb_planner_core_operator_physicalop::PhysicalUnionScan,
@@ -7470,9 +7521,25 @@ fn build_union_scan(
     let snapshot = crate::statement_store(ctx).mem_buffer_snapshot(&ranges).ok_or_else(|| {
         DriverError::unsupported("a union scan's storage has no membuffer to read")
     })?;
-    let child = build_with_state(child_plan, catalog, ctx, state)?;
+    // Go `handleCachedTable`: a cached table read inside its lease reads the
+    // in-memory copy, which `getSnapIter` unions under the buffer, and its
+    // reader is a dummy (`setDummy`).
+    let cache_table = cached_table_data(&table, ctx, true);
+    let (child, mem_snapshot) = match &cache_table {
+        Some(cache) => (
+            Box::new(crate::table_dual::TableDualExec::new(
+                meta(ctx, child_plan, plan_schema(child_plan)?),
+                0,
+            )) as Box<dyn Executor>,
+            union_cache_under_buffer(cache, &snapshot),
+        ),
+        None => (
+            build_with_state(child_plan, catalog, ctx, state)?,
+            Arc::clone(&snapshot),
+        ),
+    };
     let mut mem_state = BuildState {
-        reader_storage: ReaderStorage::MemBuffer(Arc::clone(&snapshot)),
+        reader_storage: ReaderStorage::MemBuffer(mem_snapshot),
         untraced: true,
         has_lock: state.has_lock,
         ..BuildState::default()
@@ -7577,7 +7644,7 @@ fn build_union_scan(
             table_record_id: reader.table_id,
             // The readers on both sides fill the virtual columns already.
             virtual_column_index: Vec::new(),
-            cache_table: false,
+            cache_table: cache_table.is_some(),
             partition_id_map: std::collections::BTreeSet::new(),
             keep_order: reader.keep_order,
             compare_exec: crate::union_scan::CompareExec {

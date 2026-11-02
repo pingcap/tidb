@@ -1576,11 +1576,13 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 std::sync::Arc::clone(&self.staged_writes_ref())
             },
             txn_temporary_tables: Arc::clone(self.txn_temporary_tables_ref()),
+            txn_cached_tables: Arc::clone(self.txn_cached_tables_ref()),
             temporary_table_data: self.temporary_table_data_ref().cloned(),
             txn_store: self.txn_store(),
             retry_auto_ids: Arc::clone(&self.retry_auto_ids_ref()),
             row_id_shards: Arc::clone(&self.row_id_shards_ref()),
             planned_apply: Arc::clone(&self.planned_apply_ref()),
+            read_from_table_cache: Arc::clone(self.read_from_table_cache_ref()),
             sequences: Some(self.sequence_snapshot()),
             sequence_state: Arc::clone(self.sequence_last_values_ref()),
             resource_group_name: self.active_resource_group().to_owned(),
@@ -2304,6 +2306,8 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn planned_apply_ref(&self) -> &Arc<std::sync::atomic::AtomicBool>;
     /// Go `SessionVars` / `StmtCtx` state `planned_apply`, mutably.
     fn planned_apply_mut(&mut self) -> &mut Arc<std::sync::atomic::AtomicBool>;
+    /// Go `StmtCtx.ReadFromTableCache`'s session cell.
+    fn read_from_table_cache_ref(&self) -> &Arc<std::sync::atomic::AtomicBool>;
     /// Go `SessionVars` / `StmtCtx` state `prepared_params`, read.
     fn prepared_params_ref(&self) -> &Option<Arc<[Datum]>>;
     /// Go `SessionVars` / `StmtCtx` state `prepared_params`, mutably.
@@ -2356,6 +2360,8 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn staged_writes_ref(&self) -> &std::sync::Arc<tidb_kv::staged_writes::StagedWrites>;
     /// Go `TxnCtx.TemporaryTables`, read.
     fn txn_temporary_tables_ref(&self) -> &tidb_tblctx::temporary_table::TxnTemporaryTables;
+    /// Go `TxnCtx.CachedTables`.
+    fn txn_cached_tables_ref(&self) -> &tidb_tblctx::temporary_table::TxnCachedTables;
     /// Go `sctx.Txn()`: a handle on the session's store.
     fn txn_store(&self) -> Option<Box<dyn tidb_kv::storage::TableStorage>>;
     /// Go `SessionVars.TemporaryTableData`, read.

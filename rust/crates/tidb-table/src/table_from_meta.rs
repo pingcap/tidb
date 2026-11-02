@@ -817,6 +817,13 @@ pub fn cluster_table(
     if let Some(partition) = table.partition.as_ref().filter(|p| p.read().enable) {
         kv_table.set_partition_reorg(partition_double_write_for(&columns, &partition.read())?);
     }
+    // Go `TableFromMeta`: a non-partitioned table whose cache status is not
+    // DISABLE is a `cachedTable`.
+    if table.partition.is_none()
+        && table.table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE
+    {
+        kv_table.set_cached_table(std::sync::Arc::new(crate::tables::cache::CachedTable::new(table.id)));
+    }
     Ok(kv_table)
 }
 

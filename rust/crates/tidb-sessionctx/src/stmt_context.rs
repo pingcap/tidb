@@ -482,6 +482,8 @@ pub struct StmtContextSessionState {
     pub staged_writes: Arc<tidb_kv::staged_writes::StagedWrites>,
     /// Go `TxnCtx.TemporaryTables` of the current transaction.
     pub txn_temporary_tables: tidb_tblctx::temporary_table::TxnTemporaryTables,
+    /// Go `TxnCtx.CachedTables`.
+    pub txn_cached_tables: tidb_tblctx::temporary_table::TxnCachedTables,
     /// Go `SessionVars.TemporaryTableData`.
     pub temporary_table_data: Option<tidb_variable::temporary_table_data::SessionData>,
     /// Go `sctx.Txn()`: the store every table of the session reads and
@@ -493,6 +495,8 @@ pub struct StmtContextSessionState {
     pub row_id_shards: Arc<Mutex<RowIdShardGenerator>>,
     /// Session's statement-plan Apply publication cell.
     pub planned_apply: Arc<AtomicBool>,
+    /// The session's cell for Go `StmtCtx.ReadFromTableCache`.
+    pub read_from_table_cache: Arc<AtomicBool>,
     /// Current catalog sequence snapshot; `None` reaches no sequence.
     pub sequences: Option<Arc<dyn SequenceSchema>>,
     /// Go `SessionVars.SequenceState`: the session's per-sequence `LASTVAL`.
@@ -557,11 +561,13 @@ impl Default for StmtContextSessionState {
             current_tso: CurrentTso::default(),
             staged_writes: Arc::default(),
             txn_temporary_tables: Arc::default(),
+            txn_cached_tables: Arc::default(),
             temporary_table_data: None,
             txn_store: None,
             retry_auto_ids: Arc::default(),
             row_id_shards: Arc::default(),
             planned_apply: Arc::default(),
+            read_from_table_cache: Arc::default(),
             sequences: None,
             sequence_state: Arc::default(),
             resource_group_name: "default".to_owned(),
@@ -715,6 +721,9 @@ pub struct StmtContextData {
     /// `getTableScanPenalty` surcharges EVERY risky full table scan, hinted
     /// or not. An atomic because parallel stats/agg workers share the ctx.
     index_force: Arc<AtomicBool>,
+    /// Go `StmtCtx.ReadFromTableCache`: a read of this statement was served
+    /// by a cached table's in-memory copy.
+    read_from_table_cache: Arc<AtomicBool>,
     /// The exact Go `func(string)` value copied from the session context.
     breakpoint_notify_func: Option<Arc<dyn Fn(String) + Send + Sync + 'static>>,
     division_by_zero: ErrorLevel,
@@ -896,6 +905,8 @@ pub struct StmtContextData {
     /// Go `TxnCtx.TemporaryTables`: what this transaction wrote to each
     /// temporary table.
     txn_temporary_tables: tidb_tblctx::temporary_table::TxnTemporaryTables,
+    /// Go `TxnCtx.CachedTables`: the cached tables this transaction wrote.
+    txn_cached_tables: tidb_tblctx::temporary_table::TxnCachedTables,
     /// Go `SessionVars.TemporaryTableData`.
     temporary_table_data: Option<tidb_variable::temporary_table_data::SessionData>,
     /// Go `sctx.Txn()`, see [`StmtContextSessionState::txn_store`].
@@ -2747,6 +2758,7 @@ impl StmtContext {
             used_stats_info: Arc::default(),
             before_executor_first_run: session.before_executor_first_run,
             index_force: Arc::default(),
+            read_from_table_cache: Arc::clone(&session.read_from_table_cache),
             breakpoint_notify_func: session.breakpoint_notify_func,
             division_by_zero,
             bad_null: if strict {
@@ -2813,6 +2825,7 @@ impl StmtContext {
             current_tso: session.current_tso,
             staged_writes: session.staged_writes,
             txn_temporary_tables: session.txn_temporary_tables,
+            txn_cached_tables: session.txn_cached_tables,
             temporary_table_data: session.temporary_table_data,
             txn_store: session.txn_store,
             given_insert_id: Arc::default(),
@@ -4396,6 +4409,17 @@ impl StmtContext {
     /// carries a hint-forced access path somewhere.
     pub fn set_index_force(&self) {
         self.0.index_force.store(true, Ordering::Release);
+    }
+
+    /// Go `StmtCtx.ReadFromTableCache = true`.
+    pub fn set_read_from_table_cache(&self) {
+        self.0.read_from_table_cache.store(true, Ordering::Release);
+    }
+
+    /// Go `StmtCtx.ReadFromTableCache`.
+    #[must_use]
+    pub fn read_from_table_cache(&self) -> bool {
+        self.0.read_from_table_cache.load(Ordering::Acquire)
     }
 
     /// Go `StatementContext.GetIndexForce` (`stmtctx.go:1011`).
@@ -5984,6 +6008,18 @@ impl tidb_tblctx::MutateContext for StmtContext {
             table_id,
             self.temporary_table_data.as_ref(),
         ))
+    }
+
+    fn add_cached_table_handle_to_txn(
+        &self,
+        table_id: i64,
+        handle: Arc<dyn std::any::Any + Send + Sync>,
+    ) {
+        self.txn_cached_tables
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(table_id)
+            .or_insert(handle);
     }
 
     fn statement_memory(&self) -> tidb_variable::mem_quota::StatementMemory {

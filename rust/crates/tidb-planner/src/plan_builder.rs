@@ -3655,7 +3655,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut table_ids = vec![table.table_id()];
         table_ids.extend(table.partition_definition_ids().iter().copied());
         let dirty = self.source.table_has_dirty_content(&table_ids);
-        if !(dirty || table.is_local_temporary() || table.is_cached()) {
+        if !(dirty || table.is_local_temporary() || table.is_cache_enabled()) {
             return Ok(LogicalPlan::DataSource(data_source));
         }
         let handle_cols = data_source.handle_cols.clone();

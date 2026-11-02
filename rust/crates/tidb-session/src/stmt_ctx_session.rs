@@ -129,6 +129,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.planned_apply
     }
 
+    fn read_from_table_cache_ref(&self) -> &Arc<std::sync::atomic::AtomicBool> {
+        &self.read_from_table_cache
+    }
+
     fn prepared_params_ref(&self) -> &Option<Arc<[Datum]>> {
         &self.prepared_params
     }
@@ -231,6 +235,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
 
     fn txn_temporary_tables_ref(&self) -> &tidb_tblctx::temporary_table::TxnTemporaryTables {
         &self.txn_temporary_tables
+    }
+
+    fn txn_cached_tables_ref(&self) -> &tidb_tblctx::temporary_table::TxnCachedTables {
+        &self.txn_cached_tables
     }
 
     fn txn_store(&self) -> Option<Box<dyn tidb_kv::storage::TableStorage>> {

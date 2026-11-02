@@ -463,6 +463,9 @@ pub struct Session {
     /// Go `TxnCtx.TemporaryTables`: built fresh for each transaction
     /// ([`Session::reset_transaction_scope`]).
     txn_temporary_tables: tidb_tblctx::temporary_table::TxnTemporaryTables,
+    /// Go `TxnCtx.CachedTables`: the cached tables this transaction wrote,
+    /// whose write locks its commit takes.
+    txn_cached_tables: tidb_tblctx::temporary_table::TxnCachedTables,
     /// The transaction store and the published temporary tables (see
     /// [`temptable::SessionTemporaryTables`]).
     temporary: temptable::SessionTemporaryTables,
@@ -813,6 +816,12 @@ pub struct Session {
     /// statement now running planned an Apply. Read by the prepared plan
     /// cache (Go's `PhysicalApply` refusal) and cleared per statement.
     planned_apply: Arc<std::sync::atomic::AtomicBool>,
+    /// Go `StmtCtx.ReadFromTableCache` of the statement now running, which
+    /// `FinishExecuteStmt` counts.
+    read_from_table_cache: Arc<std::sync::atomic::AtomicBool>,
+    /// Go `StmtCtx.WaitLockLeaseTime`: how long this statement's commit
+    /// waited for cached tables' write locks.
+    wait_lock_lease_time: std::time::Duration,
     /// Go StmtCtx.MPPQueryInfo, shared by contexts of the current statement.
     mpp_query_info: Arc<tidb_executor::MppQueryInfo>,
     /// The cluster runner may retry after the session closes an attempt.
@@ -885,6 +894,7 @@ impl Session {
             local_temporary_tables: Vec::new(),
             temporary_table_data: None,
             txn_temporary_tables: std::sync::Arc::default(),
+            txn_cached_tables: std::sync::Arc::default(),
             temporary: temptable::SessionTemporaryTables::default(),
             info_schema: None,
             hypo_indexes: Arc::default(),
@@ -999,6 +1009,8 @@ impl Session {
             pushdown_blacklists: blacklist::PushdownBlacklists::default(),
             client_local_file_reader: None,
             planned_apply: Arc::default(),
+            read_from_table_cache: Arc::default(),
+            wait_lock_lease_time: std::time::Duration::ZERO,
             mpp_query_info: Arc::default(),
             external_mpp_query_scope: false,
             mpp_attempt_completed: false,
@@ -2772,8 +2784,46 @@ impl Session {
         self.warnings.clear();
     }
 
+    /// Go `session.doCommit`'s cached-table step: the write locks of the
+    /// cached tables the transaction wrote, held until the returned value
+    /// drops; the wait counts in `StmtCtx.WaitLockLeaseTime`.
+    pub(crate) fn start_cached_table_renew_lease(
+        &mut self,
+    ) -> Result<
+        Option<crate::txn_manager::CachedTableRenewLease>,
+        tidb_store_driver_error::sql_query_error::SqlQueryError,
+    > {
+        let now = std::time::Instant::now();
+        let renew = crate::txn_manager::CachedTableRenewLease::start(&self.txn_cached_tables)?;
+        if renew.is_some() {
+            self.wait_lock_lease_time += now.elapsed();
+        }
+        Ok(renew)
+    }
+
+    /// Go `StmtCtx.WaitLockLeaseTime` of the running statement.
+    #[must_use]
+    pub fn wait_lock_lease_time(&self) -> std::time::Duration {
+        self.wait_lock_lease_time
+    }
+
+    /// Go `StmtCtx.ReadFromTableCache` of the last statement.
+    #[must_use]
+    pub fn read_from_table_cache(&self) -> bool {
+        self.read_from_table_cache
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
     fn finish_statement_state(&mut self, result: &Result<StatementCompletion, DriverError>) {
         self.move_parse_warnings_behind_execution(result.is_ok());
+        // Go `FinishExecuteStmt`: a statement that read a cached table's
+        // in-memory copy counts once.
+        if self
+            .read_from_table_cache
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            tidb_metrics::server::READ_FROM_TABLECACHE_TOTAL.inc();
+        }
         // Go ExecStmt.FinishExecuteStmt clears MPPQueryInfo only at completion.
         // Retained readers are detached from the next statement's counters;
         // ordinary completion reuses the allocation. Retries never reset it.

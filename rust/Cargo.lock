@@ -7732,6 +7732,7 @@ dependencies = [
  "tidb-hack",
  "tidb-kv",
  "tidb-metabuild",
+ "tidb-metrics",
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",

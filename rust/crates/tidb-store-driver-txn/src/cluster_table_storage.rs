@@ -649,6 +649,8 @@ where
     /// with the physical tables the commit writes (Go
     /// `SetOptionsBeforeCommit`, `base.go:560-616`).
     schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
+    /// Go `kv.CommitTSUpperBoundCheck` (`SetOptionsBeforeCommit`).
+    commit_ts_upper_bound_check: Option<crate::session_commit_protocol::CommitTsUpperBoundCheck>,
     /// The outcome of a lock a statement handle took during execution,
     /// shared with every handle of this transaction and taken by the
     /// statement owner when the statement fails.
@@ -863,6 +865,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             pessimistic: false,
             fair_locking: false,
             schema_lease_checker: None,
+            commit_ts_upper_bound_check: None,
             statement_lock_failure: Arc::default(),
             bound_buffer: Arc::default(),
         })
@@ -890,6 +893,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             pessimistic: false,
             fair_locking: false,
             schema_lease_checker: None,
+            commit_ts_upper_bound_check: None,
             statement_lock_failure: Arc::default(),
             bound_buffer: Arc::default(),
         })
@@ -918,6 +922,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             pessimistic: true,
             fair_locking: false,
             schema_lease_checker: None,
+            commit_ts_upper_bound_check: None,
             statement_lock_failure: Arc::default(),
             bound_buffer: Arc::default(),
         })
@@ -950,6 +955,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             pessimistic: true,
             fair_locking: false,
             schema_lease_checker: None,
+            commit_ts_upper_bound_check: None,
             statement_lock_failure: Arc::default(),
             bound_buffer: Arc::default(),
         })
@@ -1288,6 +1294,14 @@ impl<S: StoreClient> SessionTransaction<S> {
         self.schema_lease_checker = Some(checker);
     }
 
+    /// Go `SetOptionsBeforeCommit`'s `kv.CommitTSUpperBoundCheck`.
+    pub fn set_commit_ts_upper_bound_check(
+        &mut self,
+        check: crate::session_commit_protocol::CommitTsUpperBoundCheck,
+    ) {
+        self.commit_ts_upper_bound_check = Some(check);
+    }
+
     /// Publishes the staged writes together with `extra`, as one transaction at
     /// this transaction's own `start_ts`.
     ///
@@ -1353,6 +1367,9 @@ impl<S: StoreClient> SessionTransaction<S> {
                 if let Some(lease) = schema_lease {
                     transaction.set_schema_lease(lease);
                 }
+                if let Some(check) = self.commit_ts_upper_bound_check.clone() {
+                    transaction.set_commit_ts_upper_bound_check(check);
+                }
                 transaction.commit(mutations, &call)
             }
             SessionTransactionState::Pessimistic {
@@ -1360,6 +1377,9 @@ impl<S: StoreClient> SessionTransaction<S> {
             } => {
                 if let Some(lease) = schema_lease {
                     transaction.set_schema_lease(lease);
+                }
+                if let Some(check) = self.commit_ts_upper_bound_check.clone() {
+                    transaction.set_commit_ts_upper_bound_check(check);
                 }
                 transaction.commit(mutations, &call)
             }

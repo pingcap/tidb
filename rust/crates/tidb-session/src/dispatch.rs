@@ -1794,6 +1794,11 @@ impl Session {
         // The Apply channel describes THIS statement's plan.
         self.planned_apply
             .store(false, std::sync::atomic::Ordering::Relaxed);
+        // Go's statement context starts without `ReadFromTableCache` and
+        // without `WaitLockLeaseTime`.
+        self.read_from_table_cache
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.wait_lock_lease_time = std::time::Duration::ZERO;
         self.rewrite_fts_for_planning(&mut stmt)?;
         // Go's row-id shard generator belongs to the TRANSACTION, so a
         // statement that IS its own transaction starts a fresh run. Inside an

@@ -98,6 +98,16 @@ pub trait MutateContext: tidb_exprctx::Columns + Send + Sync {
         None
     }
 
+    /// Go `GetCachedTableSupport().AddCachedTableHandleToTxn`: the
+    /// transaction records the cached table it writes, the first handle per
+    /// table kept. Nothing for a context with no session transaction.
+    fn add_cached_table_handle_to_txn(
+        &self,
+        _table_id: i64,
+        _handle: std::sync::Arc<dyn std::any::Any + Send + Sync>,
+    ) {
+    }
+
     /// The statement's memory and disk quota.
     fn statement_memory(&self) -> tidb_variable::mem_quota::StatementMemory;
 

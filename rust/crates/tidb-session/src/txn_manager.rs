@@ -387,6 +387,9 @@ impl TxnManager {
         resource_group: &str,
     ) -> Result<(), SqlQueryError> {
         let bindings_changed = hooks.binding_records_changed(&self.buffer);
+        let renew = session.start_cached_table_renew_lease()?;
+        let mut options = Self::statement_transaction_options(session);
+        options.commit_ts_upper_bound_check = renew.as_ref().map(CachedTableRenewLease::commit_ts_check);
         let temporary = session
             .stage_temporary_data_commit(&self.buffer)
             .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))?;
@@ -395,9 +398,10 @@ impl TxnManager {
             read_ts,
             resource_group,
             hooks.schema_lease_checker(),
-            Self::statement_transaction_options(session),
+            options,
             session.transaction_observer(),
         );
+        drop(renew);
         Session::finish_temporary_data_commit(temporary, committed.is_ok());
         match committed {
             Ok(committed) => {
@@ -442,10 +446,15 @@ impl TxnManager {
                     transaction.set_schema_lease_checker(checker);
                 }
                 let bindings_changed = hooks.binding_records_changed(&self.buffer);
+                let renew = session.start_cached_table_renew_lease()?;
+                if let Some(renew) = &renew {
+                    transaction.set_commit_ts_upper_bound_check(renew.commit_ts_check());
+                }
                 let temporary = session
                     .stage_temporary_data_commit(&self.buffer)
                     .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))?;
                 let committed = transaction.commit(&self.buffer);
+                drop(renew);
                 Session::finish_temporary_data_commit(temporary, committed.is_ok());
                 return match committed {
                     Ok(committed) => {
@@ -519,10 +528,15 @@ impl TxnManager {
         if let Some(start_ts) = start_ts {
             session.record_started_txn_info(start_ts);
         }
+        let renew = session.start_cached_table_renew_lease()?;
+        if let Some(renew) = &renew {
+            transaction.set_commit_ts_upper_bound_check(renew.commit_ts_check());
+        }
         let temporary = session
             .stage_temporary_data_commit(&self.buffer)
             .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))?;
         let commit_result = transaction.commit(&self.buffer);
+        drop(renew);
         Session::finish_temporary_data_commit(temporary, commit_result.is_ok());
         if let Some(observer) = session.transaction_observer() {
             observer.finished();
@@ -607,5 +621,80 @@ impl TxnManager {
         // Rollback needs the native buffer's lock flags to release every key.
         self.buffer.reset();
         result
+    }
+}
+
+/// Go `cachedTableRenewLease` (`session.go`): before a transaction that wrote
+/// cached tables commits, each table's write lock is taken and kept alive
+/// until the commit ends; the commit refuses a commit ts past any of the
+/// write leases.
+pub(crate) struct CachedTableRenewLease {
+    leases: Vec<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+    exits: Vec<std::sync::mpsc::Sender<()>>,
+}
+
+impl CachedTableRenewLease {
+    /// Go `start`: waits until every table's `LockForWrite` returned.
+    pub(crate) fn start(
+        tables: &tidb_tblctx::temporary_table::TxnCachedTables,
+    ) -> Result<Option<Self>, SqlQueryError> {
+        let tables: Vec<_> = tables
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect();
+        if tables.is_empty() {
+            return Ok(None);
+        }
+        let (wg, done) = std::sync::mpsc::channel();
+        let mut renew = Self {
+            leases: Vec::with_capacity(tables.len()),
+            exits: Vec::with_capacity(tables.len()),
+        };
+        for raw in tables {
+            let table = raw
+                .downcast::<tidb_table::tables::cache::CachedTable>()
+                .map_err(|_| SqlQueryError::unknown("a cached table handle is not a cached table"))?;
+            let lease = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let (exit, exit_rx) = std::sync::mpsc::channel();
+            let (thread_lease, thread_wg) = (std::sync::Arc::clone(&lease), wg.clone());
+            std::thread::spawn(move || {
+                table.write_lock_and_keep_alive(&exit_rx, &thread_lease, &thread_wg);
+            });
+            renew.leases.push(lease);
+            renew.exits.push(exit);
+        }
+        drop(wg);
+        let mut failure = None;
+        for _ in 0..renew.leases.len() {
+            if let Ok(Err(error)) = done.recv() {
+                failure = Some(error);
+            }
+        }
+        match failure {
+            Some(error) => Err(SqlQueryError::unknown(error.to_string())),
+            None => Ok(Some(renew)),
+        }
+    }
+
+    /// Go `commitTSCheck`: a commit ts at or past a write lease fails the
+    /// commit.
+    pub(crate) fn commit_ts_check(&self) -> tidb_store_driver_txn::session_commit_protocol::CommitTsUpperBoundCheck {
+        let leases = self.leases.clone();
+        tidb_store_driver_txn::session_commit_protocol::CommitTsUpperBoundCheck(std::sync::Arc::new(
+            move |commit_ts| {
+                leases
+                    .iter()
+                    .all(|lease| commit_ts < lease.load(std::sync::atomic::Ordering::SeqCst))
+            },
+        ))
+    }
+}
+
+/// Go `stop`: the keep-alives end with the commit.
+impl Drop for CachedTableRenewLease {
+    fn drop(&mut self) {
+        self.exits.clear();
     }
 }

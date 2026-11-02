@@ -748,6 +748,7 @@ impl Session {
         // The fresh `TxnCtx`'s `TemporaryTables`, after the old transaction
         // committed under its own.
         self.txn_temporary_tables = std::sync::Arc::default();
+        self.txn_cached_tables = std::sync::Arc::default();
         let stale_ts = match as_of {
             Some(ts) => Some(ts),
             None => match self.vars.use_txn_read_ts() {
@@ -784,6 +785,7 @@ impl Session {
         self.leave_txn_ctx_for_commit();
         let committed = txn.commit_txn(self);
         self.txn_temporary_tables = std::sync::Arc::default();
+        self.txn_cached_tables = std::sync::Arc::default();
         committed
     }
 
@@ -1150,6 +1152,7 @@ impl Session {
             // stay until here, because its COMMIT reads them
             // (`commitTxnWithTemporaryData`) after the scope reset above.
             self.txn_temporary_tables = std::sync::Arc::default();
+            self.txn_cached_tables = std::sync::Arc::default();
             self.reset_transaction_scope();
         }
     }
