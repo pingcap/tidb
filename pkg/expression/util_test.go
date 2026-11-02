@@ -419,7 +419,6 @@ func TestDisableParseJSONFlag4Expr(t *testing.T) {
 }
 
 func TestSQLDigestTextRetriever(t *testing.T) {
-
 	t.Run("empty digests do not trigger lookups", func(t *testing.T) {
 		for _, global := range []bool{false, true} {
 			for _, unresolved := range []bool{false, true} {
