@@ -31,8 +31,16 @@ use crate::KvTableReader;
 use crate::RowDecodeContextExt;
 use crate::{admin_check, run_create_table_on, run_insert_on, SessionExtendedInfoSchema, RowDecodeContext};
 
-fn ctx() -> crate::StmtContext {
-    crate::StmtContext::for_query()
+/// The test's one store: Go's tests run every statement in the mock
+/// store's transaction.
+type Store = tidb_store_driver_txn::cluster_storage::ClusterTableStorage;
+
+fn store() -> Store {
+    tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0
+}
+
+fn ctx(store: &Store) -> crate::StmtContext {
+    crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
 }
 
 fn create(catalog: &mut SessionExtendedInfoSchema, sql: &str) {
@@ -40,8 +48,8 @@ fn create(catalog: &mut SessionExtendedInfoSchema, sql: &str) {
         .unwrap_or_else(|error| panic!("create {sql:?} failed: {error:?}"));
 }
 
-fn insert(catalog: &mut SessionExtendedInfoSchema, sql: &str) {
-    run_insert_on(sql, catalog, &ctx())
+fn insert(catalog: &mut SessionExtendedInfoSchema, store: &Store, sql: &str) {
+    run_insert_on(sql, catalog, &ctx(store))
         .unwrap_or_else(|error| panic!("insert {sql:?} failed: {error:?}"));
 }
 
@@ -71,18 +79,19 @@ fn check_context() -> RowDecodeContext {
 /// (`pkg/util/consistency/errors.go`, `ErrAdminCheckInconsistentWithColInfo`).
 #[test]
 fn admin_check_detects_generated_column_index_value_corruption() {
+    let mut store = store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "CREATE TABLE t(pk int PRIMARY KEY CLUSTERED, val int, \
          gen int GENERATED ALWAYS AS (val * pk) VIRTUAL, KEY idx_gen(gen))",
     );
-    insert(&mut catalog, "INSERT INTO t(pk, val) VALUES (2, 5)");
+    insert(&mut catalog, &store, "INSERT INTO t(pk, val) VALUES (2, 5)");
 
     let mut table = kv_table_of(&catalog, "t");
     let context = check_context();
     // Go: the initial "ADMIN CHECK TABLE t" passes.
-    let checked = { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, None, &context, true) }
+    let checked = { let mut store = store.clone(); admin_check::check_table(&mut table, &mut store, None, &context, true) }
         .expect("the consistent table must pass");
     assert_eq!(checked, 1, "exactly idx_gen is checked");
 
@@ -93,7 +102,7 @@ fn admin_check_detects_generated_column_index_value_corruption() {
         .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_gen"))
         .expect("idx_gen exists");
     let Some((old_entry_key, _)) = table
-        .with_own_store(|table, store| table.index_entries_for_check(store, index.read().id))
+        .index_entries_for_check(&mut store, index.read().id)
         .expect("index entries")
         .into_iter()
         .next()
@@ -101,7 +110,7 @@ fn admin_check_detects_generated_column_index_value_corruption() {
         panic!("the index holds one entry");
     };
     let rows = table
-        .scan_rows_with_handles_recomputed(&mut *table.store().clone_box(), &context)
+        .scan_rows_with_handles_recomputed(&mut store.clone(), &context)
         .expect("rows readable");
     let (handle, row) = &rows[0];
     let mut wrong_row = row.clone();
@@ -111,22 +120,20 @@ fn admin_check_detects_generated_column_index_value_corruption() {
         .expect("the wrong-value key encodes")
         .remove(0);
     table
-        .with_own_store(|table, store| table.delete_raw_key_for_test(store, &old_entry_key))
+        .delete_raw_key_for_test(&mut store, &old_entry_key)
         .expect("old entry dropped");
-    let mut storage = table.swap_storage(Box::new(tidb_kv::storage::MemTableStorage::default()));
     let crafted_handle = tidb_txnkv::Handle::Int(tidb_txnkv::IntHandle::new(match handle {
         tidb_table::tables::TableHandle::Int(value) => *value,
         other => panic!("unexpected handle {other:?}"),
     }));
-    storage
-        .set(
-            tidb_txnkv::Key::from_bytes(wrong_key),
-            tidb_tablecodec::encode_handle_in_unique_index_value(&crafted_handle, false),
-        )
-        .expect("wrong entry written");
-    table.swap_storage(storage);
+    tidb_kv::storage::TableStorage::set(
+        &mut store,
+        tidb_txnkv::Key::from_bytes(wrong_key),
+        tidb_tablecodec::encode_handle_in_unique_index_value(&crafted_handle, false),
+    )
+    .expect("wrong entry written");
 
-    let error = { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, None, &context, true) }
+    let error = { let mut store = store.clone(); admin_check::check_table(&mut table, &mut store, None, &context, true) }
         .expect_err("the corrupted generated-column index must be refused");
     let admin_check::AdminCheckError::ValueMismatch(mismatch) = &error else {
         panic!("expected the value-mismatch shape, got {error:?}");
@@ -154,6 +161,7 @@ fn admin_check_detects_generated_column_index_value_corruption() {
 /// in `admin_check_enum_pointget_plan_shape` below.
 #[test]
 fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
+    let store = store();
     let context = check_context();
 
     // Test 1: enum column with a unique index. (Each Go section drops and
@@ -166,17 +174,17 @@ fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
          status enum('active', 'inactive', 'pending'), unique key uk_status(status))",
     );
     insert(
-        &mut catalog,
+        &mut catalog, &store,
         "insert into admin_test values (1, 'active'), (2, 'inactive'), (3, 'pending')",
     );
     let mut table = kv_table_of(&catalog, "admin_test");
     assert_eq!(
-        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, None, &context, true) }.expect("table check"),
+        { let mut store = store.clone(); admin_check::check_table(&mut table, &mut store, None, &context, true) }.expect("table check"),
         1,
         "the whole-table check covers uk_status"
     );
     assert_eq!(
-        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, Some("uk_status"), &context, true) }.expect("index check"),
+        { let mut store = store.clone(); admin_check::check_table(&mut table, &mut store, Some("uk_status"), &context, true) }.expect("index check"),
         1,
         "exactly the named index is checked"
     );
@@ -185,7 +193,7 @@ fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
     // tier has the one consistency path, so a second pass stands in.
     let mut table = kv_table_of(&catalog, "admin_test");
     assert_eq!(
-        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, Some("uk_status"), &context, true) }
+        { let mut store = store.clone(); admin_check::check_table(&mut table, &mut store, Some("uk_status"), &context, true) }
             .expect("index check again"),
         1
     );
@@ -198,16 +206,16 @@ fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
         "create table admin_test (id int primary key, name varchar(50), unique key uk_name(name))",
     );
     insert(
-        &mut catalog,
+        &mut catalog, &store,
         "insert into admin_test values (1, 'alice'), (2, 'bob'), (3, 'charlie')",
     );
     let mut table = kv_table_of(&catalog, "admin_test");
     assert_eq!(
-        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, None, &context, true) }.expect("table check"),
+        { let mut store = store.clone(); admin_check::check_table(&mut table, &mut store, None, &context, true) }.expect("table check"),
         1
     );
     assert_eq!(
-        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, Some("uk_name"), &context, true) }.expect("index check"),
+        { let mut store = store.clone(); admin_check::check_table(&mut table, &mut store, Some("uk_name"), &context, true) }.expect("index check"),
         1
     );
     drop(table);
@@ -220,17 +228,17 @@ fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
          unique key uk_composite(id, type))",
     );
     insert(
-        &mut catalog,
+        &mut catalog, &store,
         "insert into admin_test values (1, 'A', 100), (2, 'B', 200), (3, 'C', 300)",
     );
     let mut table = kv_table_of(&catalog, "admin_test");
     assert_eq!(
-        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, Some("uk_composite"), &context, true) }
+        { let mut store = store.clone(); admin_check::check_table(&mut table, &mut store, Some("uk_composite"), &context, true) }
             .expect("composite index check"),
         1
     );
     assert_eq!(
-        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, None, &context, true) }.expect("composite table check"),
+        { let mut store = store.clone(); admin_check::check_table(&mut table, &mut store, None, &context, true) }.expect("composite table check"),
         1
     );
 }
@@ -241,23 +249,24 @@ fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
 /// index checks when only one of three table rows is indexed.
 #[test]
 fn admin_check_counts_only_rows_matching_partial_index_predicate() {
+    let store = store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table t (a int, b int, key idx_b (b) where a > 0)",
     );
     insert(
-        &mut catalog,
+        &mut catalog, &store,
         "insert into t values (1, 10), (-1, 20), (null, 30)",
     );
     let mut table = kv_table_of(&catalog, "t");
     let context = check_context();
     assert_eq!(
-        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, None, &context, true) }.expect("partial table check"),
+        { let mut store = store.clone(); admin_check::check_table(&mut table, &mut store, None, &context, true) }.expect("partial table check"),
         1
     );
     assert_eq!(
-        { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, Some("idx_b"), &context, true) }.expect("partial index check"),
+        { let mut store = store.clone(); admin_check::check_table(&mut table, &mut store, Some("idx_b"), &context, true) }.expect("partial index check"),
         1
     );
 }
@@ -272,6 +281,7 @@ fn admin_check_counts_only_rows_matching_partial_index_predicate() {
 /// concurrency for the check logic itself.
 #[test]
 fn admin_check_table_runs_concurrently_over_one_hundred_rows() {
+    let store = store();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
@@ -279,7 +289,7 @@ fn admin_check_table_runs_concurrently_over_one_hundred_rows() {
     );
     for i in 0..100 {
         insert(
-            &mut catalog,
+            &mut catalog, &store,
             &format!("insert into t_concurrent values ({i}, {})", i * 10),
         );
     }
@@ -287,6 +297,7 @@ fn admin_check_table_runs_concurrently_over_one_hundred_rows() {
     let workers: Vec<_> = (0..5)
         .map(|_| {
             let catalog = std::sync::Arc::clone(&catalog);
+            let store = store.clone();
             std::thread::spawn(move || {
                 let mut table = {
                     let Some(crate::TableEntry::Kv(table)) =
@@ -296,7 +307,7 @@ fn admin_check_table_runs_concurrently_over_one_hundred_rows() {
                     };
                     (**table).clone()
                 };
-                { let mut store = table.store().clone_box(); admin_check::check_table(&mut table, &mut *store, None, &check_context(), true) }
+                { let mut store = store.clone(); admin_check::check_table(&mut table, &mut store, None, &check_context(), true) }
                     .map_err(|error| format!("{error:?}"))
             })
         })
