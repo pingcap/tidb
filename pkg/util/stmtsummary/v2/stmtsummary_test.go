@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/prometheus/client_golang/prometheus"
@@ -409,6 +410,62 @@ func TestDefaultConfig(t *testing.T) {
 
 	// Verify RefreshInterval (should be 1800 = 30 min)
 	require.Equal(t, uint32(1800), ss.RefreshInterval())
+}
+
+func TestNewStmtSummaryLoggerInitError(t *testing.T) {
+	dir := t.TempDir()
+	ss, err := NewStmtSummary(&Config{Filename: dir})
+	require.Error(t, err)
+	require.Nil(t, ss)
+}
+
+func TestSetupDisablesPersistentOnLoggerInitError(t *testing.T) {
+	// Preserve the global v2 instance and install a sentinel to verify that a
+	// failed setup does not publish a nil result over an existing instance.
+	prev := GlobalStmtSummary
+	t.Cleanup(func() { GlobalStmtSummary = prev })
+	existing := &StmtSummary{}
+	GlobalStmtSummary = existing
+
+	// Preserve the cluster config too; Setup mutates it on the fix branch.
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+
+	// Mirror the operator's intent: allocate persistent mode but point the log
+	// file at an *existing directory*. log.InitLogger refuses this with
+	// "can't use directory as log file name" deterministically across
+	// darwin/linux, so the chosen failure trigger does not depend on permission
+	// quirks of the CI container.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryEnablePersistent = true
+		conf.Instance.StmtSummaryFilename = t.TempDir()
+	})
+
+	// Simulate the startup call: cmd/tidb-server/main.go#setupStmtSummary.
+	err := Setup(&Config{
+		Filename: config.GetGlobalConfig().Instance.StmtSummaryFilename,
+	})
+	require.Error(t, err, "Setup must surface the logger init error")
+	require.ErrorContains(t, err, "stmtsummary v2 persistent mode disabled; falling back to v1 in-memory aggregation")
+
+	// NewStmtSummary returned (nil, error), so Setup must not publish that nil
+	// result over the previously installed instance.
+	require.Same(t, existing, GlobalStmtSummary)
+
+	// This is the invariant the reviewer asked for: persistent mode MUST be
+	// flipped off so the v2 proxy functions become no-ops and the v1 path
+	// (StmtSummaryByDigestMap, which is always available) absorbs traffic
+	// instead of dereferencing a nil GlobalStmtSummary.
+	require.False(t,
+		config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent,
+		"V2-11 follow-up: Setup must disable persistent mode on init failure to avoid nil deref in Add/Enabled wrappers")
+
+	// Direct evidence that the runtime no longer crashes: the Add() proxy is
+	// the line that panicked under the original (return-nil) fix. With the
+	// persistent flag flipped off it must route to v1 without panicking.
+	require.NotPanics(t, func() {
+		Add(GenerateStmtExecInfo4Test("digest_setup_fallback_does_not_panic"))
+	})
 }
 
 // TestEvictedConcurrentWithRotate verifies that Evicted() is safe to call
