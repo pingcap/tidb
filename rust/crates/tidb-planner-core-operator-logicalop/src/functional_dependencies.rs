@@ -796,7 +796,7 @@ mod tests {
                     info
                 }),
         ];
-        source.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+        source.set_table_indices(vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 1,
             name: tidb_ast::CiString::new("bc"),
             columns: vec![
@@ -816,7 +816,7 @@ mod tests {
             unique: true,
             state: tidb_model::SchemaState::PUBLIC,
             ..tidb_model::IndexInfo::default()
-        })];
+        })]);
         if with_not_null_filter {
             source.all_conds.push(Expression::ScalarFunction(scalar(
                 "eq",

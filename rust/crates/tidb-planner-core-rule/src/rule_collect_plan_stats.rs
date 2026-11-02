@@ -1004,7 +1004,7 @@ mod tests {
             .base
             .set_schema(Some(Schema::new(vec![first.clone(), second.clone()])));
         source.table_columns = vec![first.clone(), second];
-        source.indexes = vec![
+        source.set_table_indices(vec![
             tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 101,
                 columns: vec![tidb_model::IndexColumn {
@@ -1021,11 +1021,11 @@ mod tests {
                 }].into(),
                 ..tidb_model::IndexInfo::default()
             }),
-        ];
+        ]);
         source.enumerated_paths = vec![
             AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
-            tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
-            tidb_planner_util::path::AccessPath::index_path(source.indexes[1].clone()),
+            tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone()),
+            tidb_planner_util::path::AccessPath::index_path(source.table_indices()[1].clone()),
         ];
         source.pushed_down_conds = vec![Expression::ScalarFunction(ScalarFunction::new(
             CiString::new("eq"),

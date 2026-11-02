@@ -162,7 +162,7 @@ fn datasource_prunes_partial_paths_and_marks_the_ordinary_cached_plan() {
             };
             info
         })];
-    source.indexes = vec![
+    source.set_table_indices(vec![
         tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 10,
             name: tidb_ast::CiString::new("partial"),
@@ -174,11 +174,11 @@ fn datasource_prunes_partial_paths_and_marks_the_ordinary_cached_plan() {
             name: tidb_ast::CiString::new("ordinary"),
             ..tidb_model::IndexInfo::default()
         }),
-    ];
+    ]);
     source.enumerated_paths = vec![
         AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
-        tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
-        tidb_planner_util::path::AccessPath::index_path(source.indexes[1].clone()),
+        tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone()),
+        tidb_planner_util::path::AccessPath::index_path(source.table_indices()[1].clone()),
     ];
     source.pushed_down_conds = vec![compare("lt", integer_column(1), integer(0))];
     source.check_partial_indexes(&NoResolver, false, true);
@@ -186,19 +186,19 @@ fn datasource_prunes_partial_paths_and_marks_the_ordinary_cached_plan() {
         source.enumerated_paths,
         vec![
             AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
-            tidb_planner_util::path::AccessPath::index_path(source.indexes[1].clone()),
+            tidb_planner_util::path::AccessPath::index_path(source.table_indices()[1].clone()),
         ]
     );
 
     source
         .enumerated_paths
-        .insert(1, tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()));
+        .insert(1, tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone()));
     source.pushed_down_conds = vec![compare("gt", integer_column(1), integer(5))];
     source.path_by_index_id_mut(10).unwrap().forced = true;
     source.check_partial_indexes(&NoResolver, true, true);
     assert_eq!(
         source.enumerated_paths,
-        vec![tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())]
+        vec![tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())]
     );
     assert_eq!(
         source.path_by_index_id(10).unwrap().noncacheable_reason.as_deref(),

@@ -3675,7 +3675,6 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         data_source.public_enumerated_paths = public_paths;
         data_source.enumerated_paths = resolution.paths;
-        data_source.indexes = table.indexes.clone();
         self.set_preferred_store_type(&mut data_source);
 
         data_source

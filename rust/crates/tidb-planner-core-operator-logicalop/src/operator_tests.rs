@@ -1258,7 +1258,7 @@ fn data_source_unique_index_keys_keep_nullability_and_pruning_semantics() {
                 info
             }),
     ];
-    source.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+    source.set_table_indices(vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
         columns: vec![
             tidb_model::IndexColumn {
                 name: tidb_ast::CiString::new("a"),
@@ -1272,7 +1272,7 @@ fn data_source_unique_index_keys_keep_nullability_and_pruning_semantics() {
         unique: true,
         state: tidb_model::SchemaState::PUBLIC,
         ..tidb_model::IndexInfo::default()
-    })];
+    })]);
     let mut output = schema(&[1, 2]);
     for column in &mut output.columns {
         column

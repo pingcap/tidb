@@ -96,7 +96,7 @@ fn column(offset: usize, name: &str, primary: bool) -> SourceColumn {
 /// subquery needs. `hs.a` deliberately shares `t.a`'s name so a rewrite that
 /// appends the inner side cannot be resolved by an unqualified `a`.
 fn catalog() -> TestCatalog {
-    TestCatalog {
+    let mut catalog = TestCatalog {
         current_database: "test".to_owned(),
         tables: vec![
             SourceTable {
@@ -132,7 +132,16 @@ fn catalog() -> TestCatalog {
                 ..SourceTable::default()
             },
         ],
+    };
+    // Go hands the planner each table's `TableInfo`, as `planner_view` does.
+    for table in &mut catalog.tables {
+        let db = tidb_model::GoShared::new(tidb_model::DBInfo {
+            name: tidb_ast::CiString::new(table.db_name.clone()),
+            ..tidb_model::DBInfo::default()
+        });
+        table.attach_resolve_metadata(db, None);
     }
+    catalog
 }
 
 struct Harness {
@@ -765,7 +774,7 @@ fn test_dynamic_partition_pruning_retains_global_index_paths() {
     assert_eq!(flags & flags::PARTITION_PROCESSOR, 0);
     assert!(source
         .enumerated_paths
-        .contains(&tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())));
+        .contains(&tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())));
 
     let mut builder = harness.builder();
     let (plan, flags) = builder
@@ -780,7 +789,7 @@ fn test_dynamic_partition_pruning_retains_global_index_paths() {
     assert_ne!(flags & flags::PARTITION_PROCESSOR, 0);
     assert!(!source
         .enumerated_paths
-        .contains(&tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())));
+        .contains(&tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())));
 }
 
 #[test]
@@ -822,7 +831,7 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
     };
     assert_eq!(
         source.enumerated_paths,
-        vec![tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())]
+        vec![tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())]
     );
     assert!(source.enumerated_paths[0].forced);
 
@@ -838,7 +847,7 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
     };
     assert_eq!(
         source.enumerated_paths,
-        vec![tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())]
+        vec![tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())]
     );
     assert!(source.enumerated_paths[0].forced);
 
@@ -1674,7 +1683,7 @@ fn a_built_data_source_enumerates_its_access_paths() {
         data_source.enumerated_paths,
         vec![
             AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
-            tidb_planner_util::path::AccessPath::index_path(data_source.indexes[0].clone()),
+            tidb_planner_util::path::AccessPath::index_path(data_source.table_indices()[0].clone()),
         ]
     );
     // Nothing is derived at build time; statistics derivation fills the paths.

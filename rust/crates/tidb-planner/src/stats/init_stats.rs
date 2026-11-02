@@ -40,7 +40,7 @@ pub fn init_stats(
         .map(|map| {
             let map = read(map);
             source
-                .indexes
+                .table_indices()
                 .iter()
                 .map(|index| index.read().id)
                 .filter(|id| map.has_analyzed(*id, true))
@@ -126,14 +126,14 @@ pub fn init_stats(
         &source.table_columns,
         // Go `statistics.PrepareCols4MVIndex`, which the planner injects.
         |_, index_info, _| {
-            let index = source.indexes.iter().find(|index| index.read().id == index_info.id)?;
-            crate::access_path::prepare_cols_for_mv_index(source, index)
+            let index = source.table_indices().into_iter().find(|index| index.read().id == index_info.id)?;
+            crate::access_path::prepare_cols_for_mv_index(source, &index)
         },
     );
     // Go `fillIndexPath` extends `Idx2ColUniqueIDs` with the integer handle
     // for the paths in `AllPossibleAccessPaths` whose map entry covers every
     // index column; this collection is consumed after path preparation.
-    for index in &source.indexes {
+    for index in &source.table_indices() {
         let has_possible_path = source.enumerated_paths.iter().any(|path| {
             path.index_info()
                 .is_some_and(|candidate| candidate.read().id == index.read().id)
@@ -325,7 +325,7 @@ use tidb_charset::Collation;
                 .base
                 .base
                 .set_schema(Some(Schema::new(vec![a_column.clone(), j_column.clone()])));
-            source.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+            source.set_table_indices(vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 7,
                 name: tidb_ast::CiString::new("mv_j"),
                 columns: vec![tidb_model::IndexColumn {
@@ -337,8 +337,8 @@ use tidb_charset::Collation;
                 state: tidb_model::SchemaState::PUBLIC,
                 mv_index: multi_valued,
                 ..tidb_model::IndexInfo::default()
-            })];
-            source.enumerated_paths = vec![tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())];
+            })]);
+            source.enumerated_paths = vec![tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())];
             // Go `ds.TableInfo`: columns a and j, and the index on j.
             let table_info = tidb_model::TableInfo {
                 columns: vec![

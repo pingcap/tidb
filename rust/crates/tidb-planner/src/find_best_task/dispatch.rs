@@ -5959,6 +5959,17 @@ mod tests {
             schema.columns = vec![pk.clone(), b.clone()];
             base.base.set_schema(Some(schema));
             LogicalPlan::DataSource(DataSource {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 3,
+                    name: tidb_ast::CiString::new("ib"),
+                    columns: vec![tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new("b"),
+                        offset: 1,
+                        length: -1,
+                        ..tidb_model::IndexColumn::default()
+                    }].into(),
+                    ..tidb_model::IndexInfo::default()
+                })]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
                 base,
                 physical_table_id: 7,
                 pk_is_handle: true,
@@ -5986,17 +5997,6 @@ mod tests {
                 ],
                 pushed_down_conds: conds,
                 enumerated_paths: paths,
-                indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
-                    id: 3,
-                    name: tidb_ast::CiString::new("ib"),
-                    columns: vec![tidb_model::IndexColumn {
-                        name: tidb_ast::CiString::new("b"),
-                        offset: 1,
-                        length: -1,
-                        ..tidb_model::IndexColumn::default()
-                    }].into(),
-                    ..tidb_model::IndexInfo::default()
-                })],
                 ..DataSource::default()
             })
         };
@@ -6205,6 +6205,7 @@ mod tests {
                 ..tidb_model::IndexInfo::default()
             });
         let source = LogicalPlan::DataSource(DataSource {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![index_0.clone()]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
             base,
             table_id: 7,
             physical_table_id: 7,
@@ -6243,7 +6244,6 @@ mod tests {
             common_handle_lens: vec![UNSPECIFIED_LENGTH; 2],
             pushed_down_conds: vec![cond],
             enumerated_paths: vec![tidb_planner_util::path::AccessPath::index_path(index_0.clone())],
-            indexes: vec![index_0],
             ..DataSource::default()
         });
         let task = find_best_task(&source, &PhysicalProperty::default(), &mut ctx).expect("plans");
@@ -6368,7 +6368,7 @@ mod tests {
         );
 
         ds.enumerated_paths = vec![tidb_planner_util::path::AccessPath::index_path(index.clone())];
-        ds.indexes = vec![index];
+        ds.set_table_indices(vec![index]);
         ds.table_stats = Some(StatsInfo::new(10.0, []));
         let mut plan = LogicalPlan::DataSource(ds);
         let context = crate::rule::rule_tests::test_context(&allocator);
@@ -6476,6 +6476,7 @@ mod tests {
             ];
             base.base.set_schema(Some(schema));
             LogicalPlan::DataSource(DataSource {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![index_0.clone()]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
                 base,
                 physical_table_id: 7,
                 columns: vec![
@@ -6502,7 +6503,6 @@ mod tests {
                     AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
                     tidb_planner_util::path::AccessPath::index_path(index_0.clone()),
                 ],
-                indexes: vec![index_0],
                 ..DataSource::default()
             })
         };
@@ -6589,11 +6589,11 @@ mod tests {
         common.is_common_handle = true;
         common.common_handle_cols = vec![common.base.base.schema().unwrap().columns[0].clone()];
         common.common_handle_lens = vec![-1];
-        assert!(index_path_is_single_scan(&common, &common.indexes[0], true));
+        assert!(index_path_is_single_scan(&common, &common.table_indices()[0], true));
         common.common_handle_lens = vec![1];
         assert!(!index_path_is_single_scan(
             &common,
-            &common.indexes[0],
+            &common.table_indices()[0],
             true
         ));
     }
@@ -6625,6 +6625,7 @@ mod tests {
                 ..tidb_model::IndexInfo::default()
             });
         let mut source = DataSource {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![index_0.clone()]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
             base,
             physical_table_id: 7,
             columns: vec![tidb_model::GoShared::new({
@@ -6637,7 +6638,6 @@ mod tests {
                     info
                 })],
             enumerated_paths: vec![tidb_planner_util::path::AccessPath::index_path(index_0.clone())],
-            indexes: vec![index_0],
             ..DataSource::default()
         };
         let partial = PhysicalProperty {
@@ -6674,7 +6674,7 @@ mod tests {
             Some(PhysicalPlan::IndexScan(scan)) if scan.keep_order && !scan.desc
         ));
 
-        let full_length = tidb_model::GoShared::new(source.indexes[0].read().clone_like_go());
+        let full_length = tidb_model::GoShared::new(source.table_indices()[0].read().clone_like_go());
         full_length.read().columns.get(0).unwrap().write().length = 20;
         assert!(
             match_partial_order_property(
@@ -6831,6 +6831,23 @@ mod tests {
         base.base.set_stats(Some(StatsInfo::new(100.0, [])));
         base.base.set_schema(Some(Schema::new(vec![a.clone(), b])));
         let source = DataSource {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+                columns: vec![
+                    tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new("a"),
+                        offset: 0,
+                        length: -1,
+                        ..tidb_model::IndexColumn::default()
+                    },
+                    tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new("b"),
+                        offset: 1,
+                        length: -1,
+                        ..tidb_model::IndexColumn::default()
+                    },
+                ].into(),
+                ..tidb_model::IndexInfo::default()
+            })]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
             base,
             columns: vec![
                 tidb_model::GoShared::new({
@@ -6863,28 +6880,11 @@ mod tests {
                     )),
                 ],
             ))],
-            indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
-                columns: vec![
-                    tidb_model::IndexColumn {
-                        name: tidb_ast::CiString::new("a"),
-                        offset: 0,
-                        length: -1,
-                        ..tidb_model::IndexColumn::default()
-                    },
-                    tidb_model::IndexColumn {
-                        name: tidb_ast::CiString::new("b"),
-                        offset: 1,
-                        length: -1,
-                        ..tidb_model::IndexColumn::default()
-                    },
-                ].into(),
-                ..tidb_model::IndexInfo::default()
-            })],
             ..DataSource::default()
         };
         let order_by_b = PhysicalProperty::new(TaskType::Root, &[12], false, f64::MAX, false);
 
-        assert!(index_path_matches_order(&source, &source.indexes[0], &order_by_b, None).matched());
+        assert!(index_path_matches_order(&source, &source.table_indices()[0], &order_by_b, None).matched());
     }
 
     #[test]

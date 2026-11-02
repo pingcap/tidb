@@ -149,11 +149,6 @@ pub struct DataSource {
     pub ast_index_hints: Vec<tidb_ast::IndexHint>,
     /// Go `IndexHints`: comment-style hints matched to this DataSource.
     pub index_hints: Vec<DataSourceIndexHint>,
-    /// The catalog's index metadata, in the SAME order
-    /// [`Self::enumerated_paths`]' `Index { index }` offsets address — what
-    /// Go reads off `ds.TableInfo.Indices` when it fills `path.IdxCols`
-    /// (`fillIndexPath`). Filled beside the newborn path list.
-    pub indexes: Vec<tidb_model::GoShared<tidb_model::IndexInfo>>,
     /// Go `TableInfo.PKIsHandle`.
     pub pk_is_handle: bool,
     /// Latest-schema public index IDs used by `ExtractFD` for a connected
@@ -269,7 +264,7 @@ impl DataSource {
     pub fn index_keys(&self, self_schema: &Schema) -> (Vec<Vec<Column>>, Vec<Vec<Column>>) {
         let mut strong = Vec::new();
         let mut nullable = Vec::new();
-        for index in &self.indexes {
+        for index in &self.table_indices() {
             if !index.read().unique || !index.read().is_public() {
                 continue;
             }
@@ -351,6 +346,29 @@ impl DataSource {
         self.enumerated_paths
             .iter()
             .find(|path| path.index.as_ref().is_some_and(|index| index.read().id == id))
+    }
+
+    /// Go `ds.TableInfo.Indices`.
+    #[must_use]
+    pub fn table_indices(&self) -> Vec<tidb_model::GoShared<tidb_model::IndexInfo>> {
+        self.table_info
+            .as_ref()
+            .map(|info| info.read().indices.iter_deref().collect())
+            .unwrap_or_default()
+    }
+
+    /// Points `ds.TableInfo` at a copy whose `Indices` are `indexes`, for a
+    /// fixture without a catalog. The shared `TableInfo` is never written
+    /// through: other occurrences keep theirs.
+    pub fn set_table_indices(&mut self, indexes: Vec<tidb_model::GoShared<tidb_model::IndexInfo>>) {
+        let mut info = self
+            .table_info
+            .as_ref()
+            .map(|info| info.read().clone())
+            .unwrap_or_default();
+        info.indices =
+            tidb_model::GoSharedPointerSlice::from_handles(indexes.into_iter().map(Some).collect());
+        self.table_info = Some(tidb_model::GoShared::new(info));
     }
 
     /// The TiKV table path (Go `IsTiKVTablePath`).
@@ -482,7 +500,7 @@ impl DataSource {
             return;
         };
         let in_pseudo_table = if is_index {
-            self.indexes
+            self.table_indices()
                 .iter()
                 .any(|index| index.read().id == item_id && index.read().is_public())
         } else {
@@ -1123,7 +1141,6 @@ impl DataSource {
             public_enumerated_paths: self.public_enumerated_paths.clone(),
             ast_index_hints: self.ast_index_hints.clone(),
             index_hints: self.index_hints.clone(),
-            indexes: self.indexes.clone(),
             pk_is_handle: self.pk_is_handle,
             fd_latest_public_index_ids: self.fd_latest_public_index_ids.clone(),
             fd_latest_index_lookup_failed: self.fd_latest_index_lookup_failed,

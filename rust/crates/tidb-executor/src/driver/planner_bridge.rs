@@ -3672,7 +3672,7 @@ mod statistics_initialization_tests {
             .base
             .base
             .set_schema(Some(Schema::new(vec![column.clone()])));
-        source.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+        source.set_table_indices(vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 9,
             name: tidb_ast::CiString::new("ia"),
             columns: vec![tidb_model::IndexColumn {
@@ -3683,13 +3683,13 @@ mod statistics_initialization_tests {
             }].into(),
             state: tidb_model::SchemaState::PUBLIC,
             ..tidb_model::IndexInfo::default()
-        })];
+        })]);
 
         for id in [10, 11] {
-            let index = tidb_model::GoShared::new(source.indexes[0].read().clone_like_go());
+            let index = tidb_model::GoShared::new(source.table_indices()[0].read().clone_like_go());
             index.write().id = id;
             index.write().name = tidb_ast::CiString::new(format!("ia_{id}"));
-            source.indexes.push(index);
+            { let mut indexes = source.table_indices(); indexes.push(index); source.set_table_indices(indexes); }
         }
         source.table_columns = vec![column.clone()];
         source.physical_table_id = 7;
@@ -3888,7 +3888,7 @@ mod statistics_initialization_tests {
             .base
             .base
             .set_schema(Some(Schema::new(vec![column.clone()])));
-        source.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+        source.set_table_indices(vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 9,
             name: tidb_ast::CiString::new("ia"),
             columns: vec![tidb_model::IndexColumn {
@@ -3899,8 +3899,8 @@ mod statistics_initialization_tests {
             }].into(),
             state: tidb_model::SchemaState::PUBLIC,
             ..tidb_model::IndexInfo::default()
-        })];
-        source.enumerated_paths = vec![tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())];
+        })]);
+        source.enumerated_paths = vec![tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())];
         let mut parameter = Constant::new(Datum::Int(1), field_type);
         parameter.param_marker = Some(ParamMarker { order: 0 });
         let comparison = Expression::ScalarFunction(ScalarFunction::new(

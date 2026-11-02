@@ -89,7 +89,7 @@ fn column(offset: usize, name: &str, primary: bool) -> SourceColumn {
 
 /// `CREATE TABLE test.t (a BIGINT PRIMARY KEY, b BIGINT, c BIGINT)`.
 fn catalog() -> TestCatalog {
-    TestCatalog {
+    let mut catalog = TestCatalog {
         current_database: "test".to_owned(),
         tables: vec![SourceTable {
             table_id: 100,
@@ -117,7 +117,16 @@ fn catalog() -> TestCatalog {
             handle_col_offsets: vec![0],
             ..SourceTable::default()
         }],
+    };
+    // Go hands the planner each table's `TableInfo`, as `planner_view` does.
+    for table in &mut catalog.tables {
+        let db = tidb_model::GoShared::new(tidb_model::DBInfo {
+            name: tidb_ast::CiString::new(table.db_name.clone()),
+            ..tidb_model::DBInfo::default()
+        });
+        table.attach_resolve_metadata(db, None);
     }
+    catalog
 }
 
 struct Harness {

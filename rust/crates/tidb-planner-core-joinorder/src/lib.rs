@@ -2360,7 +2360,7 @@ fn table_has_index_matching_ordering(
         group_selection_conditions,
         parent_filters,
     );
-    data_source.indexes.iter().any(|index| {
+    data_source.table_indices().iter().any(|index| {
         index.read().is_public()
             && !index.read().invisible
             && index_matches_ordering(
@@ -2666,7 +2666,7 @@ mod tests {
             .set_schema(Some(Schema::new(vec![column(1), column(2), column(3)])));
         let mut data_source = DataSource::new(base, 1, "t");
         data_source.table_columns = vec![column(1), column(2), column(3)];
-        data_source.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+        data_source.set_table_indices(vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
             state: tidb_model::SchemaState::PUBLIC,
             columns: vec![
                 tidb_model::IndexColumn {
@@ -2686,7 +2686,7 @@ mod tests {
                 },
             ].into(),
             ..tidb_model::IndexInfo::default()
-        })];
+        })]);
 
         assert!(ds_satisfies_ordering(
             &data_source,
@@ -2720,7 +2720,7 @@ mod tests {
             &[]
         ));
 
-        data_source.indexes[0].write().invisible = true;
+        data_source.table_indices()[0].write().invisible = true;
         assert!(!ds_satisfies_ordering(
             &data_source,
             &[column(1)],

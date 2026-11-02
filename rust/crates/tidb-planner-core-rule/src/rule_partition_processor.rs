@@ -102,7 +102,7 @@ pub fn resolve_index_hints_for_partition(
     });
     let table = tidb_infoschema::table_source::SourceTable {
         table_name: source.table_name.clone(),
-        indexes: source.indexes.clone(),
+        indexes: source.table_indices(),
         pk_is_handle: source.pk_is_handle,
         is_common_handle: source.is_common_handle,
         common_handle_version: source.common_handle_version,

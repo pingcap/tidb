@@ -364,7 +364,7 @@ mod tests {
         let mut source = DataSource::new(base, table_id, table);
         source.table_columns = vec![column(table_id)];
         if indexed {
-            source.indexes.push(tidb_model::GoShared::new(tidb_model::IndexInfo {
+            source.set_table_indices(vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                 state: tidb_model::SchemaState::PUBLIC,
                 columns: vec![tidb_model::IndexColumn {
                     name: tidb_ast::CiString::new("a"),
@@ -372,7 +372,7 @@ mod tests {
                     ..tidb_model::IndexColumn::default()
                 }].into(),
                 ..tidb_model::IndexInfo::default()
-            }));
+            })]);
         }
         LogicalPlan::DataSource(source)
     }

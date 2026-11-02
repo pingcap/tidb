@@ -423,6 +423,24 @@ mod tests {
             .set_schema(Some(Schema::new(vec![handle.clone(), other.clone()])));
         let table = AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None);
         let mut source = DataSource {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id: 11,
+                columns: vec![
+                    tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new("b"),
+                        offset: 1,
+                        length: -1,
+                        ..tidb_model::IndexColumn::default()
+                    },
+                    tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new("a"),
+                        offset: 0,
+                        length: -1,
+                        ..tidb_model::IndexColumn::default()
+                    },
+                ].into(),
+                ..tidb_model::IndexInfo::default()
+            })]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
             base,
             handle_is_int: true,
             handle_cols: vec![handle.clone()],
@@ -446,27 +464,9 @@ mod tests {
                         info
                     }),
             ],
-            indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
-                id: 11,
-                columns: vec![
-                    tidb_model::IndexColumn {
-                        name: tidb_ast::CiString::new("b"),
-                        offset: 1,
-                        length: -1,
-                        ..tidb_model::IndexColumn::default()
-                    },
-                    tidb_model::IndexColumn {
-                        name: tidb_ast::CiString::new("a"),
-                        offset: 0,
-                        length: -1,
-                        ..tidb_model::IndexColumn::default()
-                    },
-                ].into(),
-                ..tidb_model::IndexInfo::default()
-            })],
             ..DataSource::default()
         };
-        let index = AccessPath::index_path(source.indexes[0].clone());
+        let index = AccessPath::index_path(source.table_indices()[0].clone());
         source.enumerated_paths = vec![index.clone()];
         let condition =
             Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(

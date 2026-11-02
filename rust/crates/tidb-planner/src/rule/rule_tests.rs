@@ -2228,8 +2228,7 @@ mod partition_index_hints {
             restored: format!("/*+ USE_INDEX(t, {name}) */"),
         };
         let mut source = DataSource {
-            table_name: "t".to_owned(),
-            indexes: vec![
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![
                 tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("idx_all"),
@@ -2245,7 +2244,8 @@ mod partition_index_hints {
                     name: tidb_ast::CiString::new("idx_p1"),
                     ..tidb_model::IndexInfo::default()
                 }),
-            ],
+            ]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
+            table_name: "t".to_owned(),
             index_hints: vec![
                 hinted("idx_all", &[]),
                 hinted("idx_p0", &["p0"]),
@@ -2261,9 +2261,9 @@ mod partition_index_hints {
         };
         source.public_enumerated_paths = vec![
             AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
-            tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
-            tidb_planner_util::path::AccessPath::index_path(source.indexes[1].clone()),
-            tidb_planner_util::path::AccessPath::index_path(source.indexes[2].clone()),
+            tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone()),
+            tidb_planner_util::path::AccessPath::index_path(source.table_indices()[1].clone()),
+            tidb_planner_util::path::AccessPath::index_path(source.table_indices()[2].clone()),
         ];
 
         // `PARTITION(P1)` applies to the partition written `P1` only.
@@ -2274,8 +2274,8 @@ mod partition_index_hints {
         assert_eq!(
             source.enumerated_paths,
             vec![
-                tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
-                tidb_planner_util::path::AccessPath::index_path(source.indexes[2].clone())
+                tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone()),
+                tidb_planner_util::path::AccessPath::index_path(source.table_indices()[2].clone())
             ]
         );
         assert_eq!(
@@ -2291,12 +2291,12 @@ mod partition_index_hints {
     #[test]
     fn table_syntax_index_hints_survive_per_partition_resolution() {
         let mut source = DataSource {
-            table_name: "t".to_owned(),
-            indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 1,
                 name: tidb_ast::CiString::new("ia"),
                 ..tidb_model::IndexInfo::default()
-            })],
+            })]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
+            table_name: "t".to_owned(),
             ast_index_hints: vec![tidb_ast::IndexHint {
                 kind: tidb_ast::IndexHintKind::Use,
                 scope: tidb_ast::IndexHintScope::All,
@@ -2308,13 +2308,13 @@ mod partition_index_hints {
         };
         source.public_enumerated_paths = vec![
             AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
-            tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
+            tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone()),
         ];
 
         tidb_planner_core_rule::rule_partition_processor::resolve_index_hints_for_partition(&crate::rule::rule_tests::test_context(&tidb_planner_core_base::PlanIdAllocator::new()), &mut source, "p0").expect("paths resolve");
         assert_eq!(
             source.enumerated_paths,
-            vec![tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())]
+            vec![tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())]
         );
         assert_eq!(
             source.enumerated_paths.iter().filter(|path| path.forced).filter_map(|path| path.index_info()).map(|index| index.read().id).collect::<Vec<_>>(),
