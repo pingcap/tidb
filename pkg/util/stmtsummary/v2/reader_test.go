@@ -17,9 +17,11 @@ package stmtsummary
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +51,7 @@ func TestStmtFileRotationTimeZone(t *testing.T) {
 		{"NewYorkFold", "America/New_York", "2024-11-03T01-45-00.000", true},
 		{"NewYorkGap", "America/New_York", "2024-03-10T02-30-00.000", true},
 		{"LordHoweFold", "Australia/Lord_Howe", "2024-04-07T01-45-00.000", true},
+		{"LordHoweGap", "Australia/Lord_Howe", "2024-10-06T02-15-00.000", true},
 		{"NewYorkAfterFold", "America/New_York", "2024-11-03T03-45-00.000", false},
 		{"UTC", "UTC", "2024-11-03T01-45-00.000", false},
 	} {
@@ -75,33 +78,59 @@ func TestStmtFileRotationTimeZone(t *testing.T) {
 func TestHistoryReaderRotationTimeFold(t *testing.T) {
 	restore := config.RestoreFunc()
 	t.Cleanup(restore)
-	loc, err := time.LoadLocation("America/New_York")
-	require.NoError(t, err)
 	oldLocal := time.Local
-	time.Local = loc
 	t.Cleanup(func() { time.Local = oldLocal })
-	dir := t.TempDir()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Instance.StmtSummaryFilename = filepath.Join(dir, "tidb-statements.log")
-	})
-	// The file spans the fall-back transition and rotates at the second 01:45.
-	// Parsing its name as the first 01:45 must not hide the later matching row.
-	path := filepath.Join(dir, "tidb-statements-2024-11-03T01-45-00.000.log")
-	first, err := time.Parse(time.RFC3339, "2024-11-03T04:00:00Z")
-	require.NoError(t, err)
-	match, err := time.Parse(time.RFC3339, "2024-11-03T06:25:00Z")
-	require.NoError(t, err)
-	content := fmt.Sprintf("{\"begin\":%d,\"end\":%d,\"digest\":\"early\"}\n{\"begin\":%d,\"end\":%d,\"digest\":\"matching\"}\n",
-		first.Unix(), first.Unix()+600, match.Unix(), match.Unix()+300)
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
-	columns := []*model.ColumnInfo{{Name: ast.NewCIStr(DigestStr)}}
-	reader, err := NewHistoryReader(context.Background(), columns, "", time.UTC, nil, true, nil,
-		[]*StmtTimeRange{{Begin: match.Unix() - 300, End: match.Unix() + 900}}, 2)
-	require.NoError(t, err)
-	defer reader.Close()
-	rows := readAllRows(t, reader)
-	require.Len(t, rows, 1)
-	require.Equal(t, "matching", rows[0][0].GetString())
+	for _, tc := range []struct {
+		name, zone, stamp, first, match string
+	}{
+		{"NewYork", "America/New_York", "2024-11-03T01-45-00.000", "2024-11-03T04:00:00Z", "2024-11-03T06:25:00Z"},
+		{"LordHowe", "Australia/Lord_Howe", "2024-04-07T01-45-00.000", "2024-04-06T13:00:00Z", "2024-04-06T15:05:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			loc, err := time.LoadLocation(tc.zone)
+			require.NoError(t, err)
+			time.Local = loc
+			dir := t.TempDir()
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.Instance.StmtSummaryFilename = filepath.Join(dir, "tidb-statements.log")
+			})
+			// The file spans the fall-back transition and rotates at the second
+			// 01:45. An earlier interpretation must not hide the later row.
+			path := filepath.Join(dir, "tidb-statements-"+tc.stamp+".log")
+			first, err := time.Parse(time.RFC3339, tc.first)
+			require.NoError(t, err)
+			match, err := time.Parse(time.RFC3339, tc.match)
+			require.NoError(t, err)
+			content := fmt.Sprintf("{\"begin\":%d,\"end\":%d,\"digest\":\"early\"}\n{\"begin\":%d,\"end\":%d,\"digest\":\"matching\"}\n",
+				first.Unix(), first.Unix()+600, match.Unix(), match.Unix()+300)
+			require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+			window := &StmtTimeRange{Begin: match.Unix() - 300, End: match.Unix() + 900}
+
+			// A direct JSON full scan is independent of filename parsing and
+			// all optimized reader checks, including local-time uniqueness.
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			var reference []string
+			for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+				var record StmtRecord
+				require.NoError(t, json.Unmarshal([]byte(line), &record))
+				if record.Begin <= window.End && record.End >= window.Begin {
+					reference = append(reference, record.Digest)
+				}
+			}
+			require.Equal(t, []string{"matching"}, reference)
+
+			columns := []*model.ColumnInfo{{Name: ast.NewCIStr(DigestStr)}}
+			reader, err := NewHistoryReader(context.Background(), columns, "", time.UTC, nil, true, nil, []*StmtTimeRange{window}, 2)
+			require.NoError(t, err)
+			defer reader.Close()
+			var actual []string
+			for _, row := range readAllRows(t, reader) {
+				actual = append(actual, row[0].GetString())
+			}
+			require.Equal(t, reference, actual)
+		})
+	}
 }
 
 func TestTimeRangeOverlap(t *testing.T) {

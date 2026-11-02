@@ -349,6 +349,7 @@ func TestStatementsSummaryExtractorPreparedTimeRangeDST(t *testing.T) {
 		{"NewYorkFold", "America/New_York", "2024-11-03 01:30:00", true},
 		{"NewYorkGap", "America/New_York", "2024-03-10 02:30:00", true},
 		{"LordHoweFold", "Australia/Lord_Howe", "2024-04-07 01:45:00", true},
+		{"LordHoweGap", "Australia/Lord_Howe", "2024-10-06 02:15:00", true},
 		{"NewYorkAfterFold", "America/New_York", "2024-11-03 03:30:00", false},
 		{"UTC", "+00:00", "2024-11-03 01:30:00", false},
 	} {
