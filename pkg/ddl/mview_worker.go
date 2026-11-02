@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
@@ -592,7 +591,7 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		return nil, errors.Trace(err)
 	}
 	restore, err := InitMViewSession(sessVars, mviewTableInfo.MaterializedView,
-		currentDB, job.ReorgMeta.ResourceGroupName, vardef.GetDDLReorgRowFormat() != vardef.DefTiDBRowFormatV1)
+		currentDB, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		restoreExecution()
 		return nil, errors.Trace(err)

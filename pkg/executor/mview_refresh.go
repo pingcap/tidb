@@ -452,7 +452,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	)
 
 	restoreSessVars, err := ddl.InitMViewSession(sessVars, tblInfo.MaterializedView,
-		schemaName.O, e.Ctx().GetSessionVars().StmtCtx.ResourceGroupName, sessVars.RowEncoder.Enable)
+		schemaName.O, e.Ctx().GetSessionVars().StmtCtx.ResourceGroupName)
 	if err != nil {
 		return err
 	}
@@ -1044,7 +1044,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	)
 
 	restoreBuildSessVars, err := ddl.InitMViewSession(buildSessVars, tblInfo.MaterializedView,
-		schemaName.O, e.Ctx().GetSessionVars().StmtCtx.ResourceGroupName, buildSessVars.RowEncoder.Enable)
+		schemaName.O, e.Ctx().GetSessionVars().StmtCtx.ResourceGroupName)
 	if err != nil {
 		return 0, err
 	}

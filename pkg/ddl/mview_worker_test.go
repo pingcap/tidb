@@ -488,11 +488,11 @@ func TestInitMViewSession(t *testing.T) {
 		DefinitionSQLMode:               mysql.ModeNoBackslashEscapes,
 		DefinitionDivPrecisionIncrement: 9,
 		DefinitionTimeZone:              model.TimeZoneLocation{Name: "Asia/Shanghai"},
-	}, "mv_db", "mv_group", true)
+	}, "mv_db", "mv_group")
 	require.NoError(t, err)
 	require.True(t, sessVars.EnableMView)
 	require.Equal(t, "mv_db", sessVars.CurrentDB)
-	require.True(t, sessVars.RowEncoder.Enable)
+	require.False(t, sessVars.RowEncoder.Enable)
 	require.Equal(t, "mv_group", sessVars.ResourceGroupName)
 	require.Equal(t, "mv_group", sessVars.StmtCtx.ResourceGroupName)
 	require.Equal(t, 9, sessVars.DivPrecisionIncrement)

@@ -231,7 +231,6 @@ func InitMViewSession(
 	sessVars *variable.SessionVars,
 	mviewInfo *model.MaterializedViewInfo,
 	currentDB, resourceGroup string,
-	rowEncoderEnabled bool,
 ) (func(), error) {
 	if mviewInfo == nil {
 		return nil, errors.New("materialized view: invalid materialized view metadata")
@@ -243,7 +242,6 @@ func InitMViewSession(
 	}
 
 	originalDB := sessVars.CurrentDB
-	originalRowFormat := sessVars.RowEncoder.Enable
 	originalResourceGroup := sessVars.ResourceGroupName
 	originalStmtResourceGroup := sessVars.StmtCtx.ResourceGroupName
 	origEnableMView := sessVars.EnableMView
@@ -261,7 +259,6 @@ func InitMViewSession(
 	originalVars := make(map[string]string, 3)
 	restore := func() {
 		sessVars.CurrentDB = originalDB
-		sessVars.RowEncoder.Enable = originalRowFormat
 		sessVars.ResourceGroupName = originalResourceGroup
 		sessVars.StmtCtx.ResourceGroupName = originalStmtResourceGroup
 		if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, variable.BoolToOnOff(origEnableMView)); err != nil {
@@ -294,7 +291,6 @@ func InitMViewSession(
 		originalVars[assignment.name] = oldValue
 	}
 	sessVars.CurrentDB = currentDB
-	sessVars.RowEncoder.Enable = rowEncoderEnabled
 	if resourceGroup != "" {
 		sessVars.ResourceGroupName = resourceGroup
 	}
