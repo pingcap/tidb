@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -213,6 +214,18 @@ func isValidMaterializedViewLogBaseTable(schemaLowerName string, tblInfo *model.
 		tblInfo.MaterializedViewLog == nil
 }
 
+// formatSQLMode formats mode as the value of the sql_mode variable.
+func formatSQLMode(mode mysql.SQLMode) string {
+	names := make([]string, 0, len(mysql.Str2SQLMode))
+	for name, m := range mysql.Str2SQLMode {
+		if mode&m != 0 {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return strings.Join(names, ",")
+}
+
 // InitMViewSession applies the MV definition and maintenance state and returns its restore function.
 func InitMViewSession(
 	sessVars *variable.SessionVars,
@@ -259,7 +272,7 @@ func InitMViewSession(
 		sessVars.StmtCtx.SetErrLevels(origErrLevels)
 	}
 	for _, assignment := range []struct{ name, value string }{
-		{vardef.SQLModeVar, variable.FormatSQLMode(mviewInfo.DefinitionSQLMode)},
+		{vardef.SQLModeVar, formatSQLMode(mviewInfo.DefinitionSQLMode)},
 		{vardef.TimeZone, timeutil.ZoneName(loc)},
 		{vardef.DivPrecisionIncrement, strconv.Itoa(mviewInfo.DefinitionDivPrecisionIncrement)},
 	} {
