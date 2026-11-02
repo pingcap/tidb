@@ -50,11 +50,7 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 24,
-=======
-    shard_count = 31,
->>>>>>> 427d7379682 (stmtsummary: decode only requested history text (#71820))
+    shard_count = 27,
     deps = [
         "//pkg/config",
         "//pkg/meta/model",
@@ -65,11 +61,7 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util",
-<<<<<<< HEAD
-=======
-        "//pkg/util/chunk",
         "//pkg/util/plancodec",
->>>>>>> 427d7379682 (stmtsummary: decode only requested history text (#71820))
         "//pkg/util/set",
         "//pkg/util/stmtsummary",
         "@com_github_prometheus_client_golang//prometheus",

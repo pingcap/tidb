@@ -27,8 +27,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/stretchr/testify/require"
@@ -37,7 +37,7 @@ import (
 func projectionColumns(names ...string) []*model.ColumnInfo {
 	columns := make([]*model.ColumnInfo, len(names))
 	for i, name := range names {
-		columns[i] = &model.ColumnInfo{Name: ast.NewCIStr(name)}
+		columns[i] = &model.ColumnInfo{Name: pmodel.NewCIStr(name)}
 	}
 	return columns
 }
@@ -48,7 +48,6 @@ func TestHistoryProjection(t *testing.T) {
 	record.Add(info)
 	record.Begin, record.End = 1672128520, 1672128580
 	record.NormalizedSQL = "select ? from t"
-	record.BindingSQL = "select /*+ use_index(t, idx) */ ? from t"
 	record.SampleSQL = "select 'sample' from t"
 	record.PrevSQL = "select 'previous' from t"
 	record.SamplePlan = plancodec.PlanDiscardedEncoded
@@ -83,7 +82,7 @@ func TestHistoryProjection(t *testing.T) {
 	require.Nil(t, makeStmtRecordProjection(allColumns), "full-column queries retain full decoding")
 
 	// Exercise all bounded text-field combinations, including the full path.
-	textColumns := []string{DigestTextStr, BindingDigestTextStr, QuerySampleTextStr, PrevSampleTextStr,
+	textColumns := []string{DigestTextStr, QuerySampleTextStr, PrevSampleTextStr,
 		PlanStr, BinaryPlan, PlanHint, PlanCacheUnqualifiedLastReasonStr}
 	for mask := 0; mask < 1<<len(textColumns); mask++ {
 		var names []string
@@ -106,7 +105,6 @@ func TestHistoryProjection(t *testing.T) {
 	projected, _, err := p.parse(raw)
 	require.NoError(t, err)
 	require.Empty(t, projected.NormalizedSQL)
-	require.Empty(t, projected.BindingSQL)
 	require.Empty(t, projected.SampleSQL)
 	require.Empty(t, projected.PrevSQL)
 	require.Empty(t, projected.SamplePlan)
@@ -117,8 +115,8 @@ func TestHistoryProjection(t *testing.T) {
 
 	planRecord, _, err := makeStmtRecordProjection(projectionColumns(PlanStr)).parse(raw)
 	require.NoError(t, err)
-	require.Equal(t, full.NormalizedSQL, planRecord.NormalizedSQL, "PLAN error diagnostics need normalized SQL")
-	require.Empty(t, planRecord.SampleSQL, "PLAN does not need unrequested sample SQL")
+	require.Equal(t, full.SampleSQL, planRecord.SampleSQL, "PLAN error diagnostics need sample SQL")
+	require.Empty(t, planRecord.NormalizedSQL, "PLAN does not need unrequested normalized SQL")
 
 	selected, _, err := makeStmtRecordProjection(projectionColumns(DigestTextStr)).parse(raw)
 	require.NoError(t, err)
@@ -142,6 +140,7 @@ func TestHistoryProjectionJSONCompatibility(t *testing.T) {
 			`{"digest":"d","sample_sql":"\ud800","normalized_sql":"a` + string([]byte{0xff}) + `b"}`,
 			`{"digest":"d","evicted":true,"sample_sql":"text"}`,
 			`{"digest":"d","unknown":{"nested":[true,null,1]},"sample_sql":null}`,
+			`{"binding_sql":123,"digest":"d"}`,
 			`null`,
 			`{"sample_sql":123}`,
 			`{"sample_sql":{},"sample_sql":"valid"}`,
@@ -198,7 +197,7 @@ func TestHistoryProjectionReader(t *testing.T) {
 		if !projected {
 			// Selecting all text fields establishes the full-decoder baseline
 			// before NewHistoryReader starts its background goroutines.
-			columns = append(columns, projectionColumns(DigestTextStr, BindingDigestTextStr, QuerySampleTextStr,
+			columns = append(columns, projectionColumns(DigestTextStr, QuerySampleTextStr,
 				PrevSampleTextStr, PlanStr, BinaryPlan, PlanHint, PlanCacheUnqualifiedLastReasonStr)...)
 		}
 		reader, err := NewHistoryReader(context.Background(), columns, "", time.UTC,
@@ -235,7 +234,7 @@ func BenchmarkHistoryProjection(b *testing.B) {
 			{"aggregate", projectionColumns(DigestStr, ExecCountStr, SumLatencyStr)},
 			{"sample", projectionColumns(QuerySampleTextStr)},
 			{"plan", projectionColumns(PlanStr)},
-			{"all-text", projectionColumns(DigestTextStr, BindingDigestTextStr, QuerySampleTextStr, PrevSampleTextStr, PlanStr, BinaryPlan, PlanHint, PlanCacheUnqualifiedLastReasonStr)},
+			{"all-text", projectionColumns(DigestTextStr, QuerySampleTextStr, PrevSampleTextStr, PlanStr, BinaryPlan, PlanHint, PlanCacheUnqualifiedLastReasonStr)},
 		} {
 			for _, projected := range []bool{false, true} {
 				name := columns.name + "/full"
@@ -266,6 +265,53 @@ func fmtSize(size int) string {
 	return "32KiB"
 }
 
+// Use a projection-specific fixture so this backport does not depend on the
+// digest-prefilter change.
+func benchmarkHistoryProjectionRows(b *testing.B, textSize int, allText bool) {
+	const recordCount = 200
+	defer config.RestoreFunc()()
+	filename := filepath.Join(b.TempDir(), "tidb-statements.log")
+	config.UpdateGlobal(func(conf *config.Config) { conf.Instance.StmtSummaryFilename = filename })
+	file, err := os.Create(filename)
+	require.NoError(b, err)
+	for i := range recordCount {
+		digest := fmt.Sprintf("digest_%06d", i)
+		record := stmtPersistedRecord{StmtRecord: StmtRecord{
+			Begin: 1672128520, End: 1672128580, Digest: digest, ExecCount: 10, StmtType: "Select",
+			NormalizedSQL: "select ? from t", SampleSQL: strings.Repeat("s", textSize), SampleBinaryPlan: strings.Repeat("p", textSize),
+		}}
+		line, err := json.Marshal(record)
+		require.NoError(b, err)
+		_, err = file.Write(append(line, '\n'))
+		require.NoError(b, err)
+	}
+	require.NoError(b, file.Close())
+	names := []string{DigestStr, ExecCountStr}
+	if allText {
+		names = append(names, DigestTextStr, QuerySampleTextStr, PrevSampleTextStr,
+			PlanStr, BinaryPlan, PlanHint, PlanCacheUnqualifiedLastReasonStr)
+	}
+	columns := projectionColumns(names...)
+	expected := recordCount
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		reader, err := NewHistoryReader(context.Background(), columns, "", time.UTC, nil, false, nil, nil, 2)
+		require.NoError(b, err)
+		count := 0
+		for {
+			rows, err := reader.Rows()
+			require.NoError(b, err)
+			if rows == nil {
+				break
+			}
+			count += len(rows)
+		}
+		require.NoError(b, reader.Close())
+		require.Equal(b, expected, count)
+	}
+}
+
 // BenchmarkHistoryReaderProjection compares narrow and all-text history queries
 // without a digest predicate, independently of digest prefiltering.
 func BenchmarkHistoryReaderProjection(b *testing.B) {
@@ -276,7 +322,7 @@ func BenchmarkHistoryReaderProjection(b *testing.B) {
 				columns = "all-text"
 			}
 			b.Run(fmt.Sprintf("%dB/%s", size, columns), func(b *testing.B) {
-				benchmarkHistoryReaderRows(b, 0, false, size, allText)
+				benchmarkHistoryProjectionRows(b, size, allText)
 			})
 		}
 	}
@@ -298,7 +344,7 @@ func BenchmarkHistoryProjectionMetadata(b *testing.B) {
 			var before, after runtime.MemStats
 			runtime.ReadMemStats(&before)
 			start := time.Now()
-			textColumns := []string{DigestTextStr, BindingDigestTextStr, QuerySampleTextStr, PrevSampleTextStr,
+			textColumns := []string{DigestTextStr, QuerySampleTextStr, PrevSampleTextStr,
 				PlanStr, BinaryPlan, PlanHint, PlanCacheUnqualifiedLastReasonStr}
 			limit := 1
 			if allMasks {

@@ -32,14 +32,13 @@ type stmtRecordProjection struct {
 // Keep these bits in the same order as projectedTextFields.
 const (
 	projectedNormalizedSQL uint8 = 1 << iota
-	projectedBindingSQL
 	projectedSampleSQL
 	projectedPrevSQL
 	projectedSamplePlan
 	projectedSampleBinaryPlan
 	projectedPlanHint
 	projectedPlanCacheUnqualifiedLastReason
-	projectedAllText = projectedNormalizedSQL | projectedBindingSQL | projectedSampleSQL | projectedPrevSQL |
+	projectedAllText = projectedNormalizedSQL | projectedSampleSQL | projectedPrevSQL |
 		projectedSamplePlan | projectedSampleBinaryPlan | projectedPlanHint | projectedPlanCacheUnqualifiedLastReason
 )
 
@@ -48,7 +47,6 @@ var projectedTextFields = [...]struct {
 	jsonName string
 }{
 	{"NormalizedSQL", "normalized_sql"},
-	{"BindingSQL", "binding_sql"},
 	{"SampleSQL", "sample_sql"},
 	{"PrevSQL", "prev_sql"},
 	{"SamplePlan", "sample_plan"},
@@ -57,7 +55,7 @@ var projectedTextFields = [...]struct {
 	{"PlanCacheUnqualifiedLastReason", "plan_cache_unqualified_last_reason"},
 }
 
-// Eight text fields permit at most 256 decoder types, regardless of the number
+// Seven text fields permit at most 128 decoder types, regardless of the number
 // of queries or column combinations. Each immutable type is built only once.
 var stmtRecordProjections [1 << len(projectedTextFields)]struct {
 	once       sync.Once
@@ -70,15 +68,13 @@ func makeStmtRecordProjection(columns []*model.ColumnInfo) *stmtRecordProjection
 		switch column.Name.O {
 		case DigestTextStr:
 			selected |= projectedNormalizedSQL
-		case BindingDigestTextStr:
-			selected |= projectedBindingSQL
 		case QuerySampleTextStr:
 			selected |= projectedSampleSQL
 		case PrevSampleTextStr:
 			selected |= projectedPrevSQL
 		case PlanStr:
-			// PLAN's error diagnostic also includes the normalized SQL.
-			selected |= projectedSamplePlan | projectedNormalizedSQL
+			// PLAN's error diagnostic also includes the sample SQL.
+			selected |= projectedSamplePlan | projectedSampleSQL
 		case BinaryPlan:
 			selected |= projectedSampleBinaryPlan
 		case PlanHint:
