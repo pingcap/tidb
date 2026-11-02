@@ -1062,6 +1062,34 @@ func TestIssue71999(t *testing.T) {
 	}
 }
 
+func TestIssue72561(t *testing.T) {
+	// A non-covering index without statistics, whose access column has no statistics either, must not
+	// prune the full table scan when its own estimate reads most of the table.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(id bigint primary key, a int, payload varchar(200))")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("insert into t select a, mod(a, 900), repeat('x', 200) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 900) select a from x) as subquery")
+	testKit.MustExec("insert into t select id + 900, a, payload from t")
+	testKit.MustExec("analyze table t columns id")
+	testKit.MustExec("create index idx_a on t(a)")
+	inList := make([]string, 0, 900)
+	for i := range 900 {
+		inList = append(inList, strconv.Itoa(i))
+	}
+	broad := "explain format='brief' select sum(length(payload)) from t where a in (" + strings.Join(inList, ",") + ")"
+	for _, preferRange := range []string{"0", "1"} {
+		testKit.MustExec("set @@tidb_opt_prefer_range_scan=" + preferRange)
+		// Every row matches, and the estimate of idx_a is ~90% of the table.
+		testKit.MustQuery(broad).CheckContain("TableFullScan")
+		// A selective missing-statistics index is still chosen.
+		testKit.MustQuery("explain format='brief' select sum(length(payload)) from t where a = 5").CheckContain("idx_a(a)")
+	}
+}
+
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)

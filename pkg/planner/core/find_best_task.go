@@ -917,6 +917,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		lhsFullMatch := isFullIndexMatch(lhs)
 		rhsFullMatch := isFullIndexMatch(rhs)
 		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhs.eqOrInCount, rhs.eqOrInCount)
+		// A broad index lookup must not prune a table path on predicate counts alone.
+		if (pseudoResult > 0 && !canPseudoWinnerPrune(lhs, rhs)) || (pseudoResult < 0 && !canPseudoWinnerPrune(rhs, lhs)) {
+			pseudoResult = 0
+		}
 		// Predicate counts alone cannot justify pruning an index on different columns.
 		// The winner must also strictly dominate the other path's access conditions.
 		if pseudoResult > 0 && comparable1 && accessResult > 0 && totalSum >= 0 {
@@ -1018,6 +1022,22 @@ func hasStatsForEstimation(c *candidatePath, statsTbl *statistics.Table) bool {
 		found++
 	}
 	return found == len(c.accessCondsColMap)
+}
+
+// pseudoIndexMaxTableRatio is the largest fraction of a table path's rows that a non-covering index
+// may be estimated to read and still prune that table path via the missing-statistics rules.
+const pseudoIndexMaxTableRatio = 0.1
+
+// canPseudoWinnerPrune returns false if winner is a non-covering index whose own estimate reads a large
+// part of the table path loser. A table lookup per row can then cost more than scanning the table, so
+// both paths are left for cost comparison. The estimate of an index without statistics is unreliable,
+// but it still scales with the number of ranges. For example, a single column IN list with 900 values
+// is estimated to read 90% of the table. See https://github.com/pingcap/tidb/issues/72561.
+func canPseudoWinnerPrune(winner, loser *candidatePath) bool {
+	if !loser.path.IsTablePath() || winner.path.IsTablePath() || winner.path.IsSingleScan {
+		return true
+	}
+	return winner.path.CountAfterAccess <= loser.path.CountAfterAccess*pseudoIndexMaxTableRatio
 }
 
 func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount int) int {

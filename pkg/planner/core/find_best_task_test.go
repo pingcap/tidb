@@ -288,4 +288,22 @@ func testMissingStatsIndexVsFullScan(t *testing.T) {
 		result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, tbl, idx)
 		require.Equal(t, -1, result, "reversed: preferRange=%v", preferRange)
 	}
+
+	// A non-covering missing-statistics index estimated to read most of the table must not prune
+	// the full table scan, see https://github.com/pingcap/tidb/issues/72561.
+	broad := &candidatePath{
+		path:              &util.AccessPath{Index: &model.IndexInfo{ID: 1}, Ranges: make(ranger.Ranges, 900), CountAfterAccess: 900},
+		accessCondsColMap: map[int64]int{1: -1, 2: -1},
+		eqOrInCount:       2,
+	}
+	result, missingStats := compareCandidates(ctx.GetPlanCtx(), stats, prop, broad, tbl)
+	require.Equal(t, 0, result)
+	require.False(t, missingStats)
+	result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, tbl, broad)
+	require.Equal(t, 0, result)
+	// A covering index has no table lookups, so it may still prune the full table scan.
+	broad.path.IsSingleScan = true
+	result, missingStats = compareCandidates(ctx.GetPlanCtx(), stats, prop, broad, tbl)
+	require.Equal(t, 1, result)
+	require.True(t, missingStats)
 }
