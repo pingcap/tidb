@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -210,6 +211,70 @@ func isValidMaterializedViewLogBaseTable(schemaLowerName string, tblInfo *model.
 		tblInfo.MaterializedView == nil &&
 		tblInfo.MaterializedViewShadow == nil &&
 		tblInfo.MaterializedViewLog == nil
+}
+
+// InitMViewSession applies the MV definition and maintenance state and returns its restore function.
+func InitMViewSession(
+	sessVars *variable.SessionVars,
+	mviewInfo *model.MaterializedViewInfo,
+) (func(), error) {
+	if mviewInfo == nil {
+		return nil, errors.New("materialized view: invalid materialized view metadata")
+	}
+	timezone := mviewInfo.DefinitionTimeZone.Clone()
+	loc, err := timezone.GetLocation()
+	if err != nil {
+		return nil, errors.Annotate(err, "materialized view: invalid definition timezone")
+	}
+
+	origEnableMView := sessVars.EnableMView
+	if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, "on"); err != nil {
+		return nil, errors.Annotate(err, "materialized view: failed to enable materialized view support")
+	}
+	origSQLMode := sessVars.SQLMode
+	origDivPrecisionIncrement := sessVars.DivPrecisionIncrement
+	origTimeZone := sessVars.TimeZone
+	origMViewMaintenance := sessVars.InMViewMaintenance
+	origStmtCtxTimeZone := sessVars.StmtCtx.TimeZone()
+	origTypeFlags := sessVars.StmtCtx.TypeFlags()
+	origErrLevels := sessVars.StmtCtx.ErrLevels()
+
+	originalVars := make(map[string]string, 3)
+	restore := func() {
+		if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, variable.BoolToOnOff(origEnableMView)); err != nil {
+			logutil.DDLLogger().Warn("materialized view: failed to restore materialized view enablement", zap.Error(err))
+		}
+		for name, value := range originalVars {
+			if err := sessVars.SetSystemVar(name, value); err != nil {
+				logutil.DDLLogger().Warn("materialized view: failed to restore session variable", zap.String("name", name), zap.Error(err))
+			}
+		}
+		sessVars.SQLMode = origSQLMode
+		sessVars.DivPrecisionIncrement = origDivPrecisionIncrement
+		sessVars.InMViewMaintenance = origMViewMaintenance
+		sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, origSQLMode.HasNoBackslashEscapesMode())
+		sessVars.TimeZone = origTimeZone
+		sessVars.StmtCtx.SetTimeZone(origStmtCtxTimeZone)
+		sessVars.StmtCtx.SetTypeFlags(origTypeFlags)
+		sessVars.StmtCtx.SetErrLevels(origErrLevels)
+	}
+	for _, assignment := range []struct{ name, value string }{
+		{vardef.SQLModeVar, variable.FormatSQLMode(mviewInfo.DefinitionSQLMode)},
+		{vardef.TimeZone, timeutil.ZoneName(loc)},
+		{vardef.DivPrecisionIncrement, strconv.Itoa(mviewInfo.DefinitionDivPrecisionIncrement)},
+	} {
+		oldValue, err := sessVars.SetSystemVarWithOldStateAsRet(assignment.name, assignment.value)
+		if err != nil {
+			restore()
+			return nil, errors.Annotatef(err, "materialized view: failed to set %s", assignment.name)
+		}
+		originalVars[assignment.name] = oldValue
+	}
+	sessVars.InMViewMaintenance = true
+	sessVars.StmtCtx.SetTimeZone(loc)
+	sessVars.StmtCtx.SetTypeFlags(expression.MaterializedScheduleTypeFlagsWithSQLMode(sessVars.SQLMode))
+	sessVars.StmtCtx.SetErrLevels(expression.MaterializedScheduleErrLevelsWithSQLMode(sessVars.SQLMode))
+	return restore, nil
 }
 
 // ApplyMViewExecutionSessionVars applies MV execution vars onto a session and returns a restore closure.

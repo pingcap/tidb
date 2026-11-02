@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -452,7 +451,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		refreshExecutionVars.IsolationReadEngines,
 	)
 
-	restoreSessVars, err := initRefreshMaterializedViewSession(sessVars, tblInfo.MaterializedView)
+	restoreSessVars, err := ddl.InitMViewSession(sessVars, tblInfo.MaterializedView)
 	if err != nil {
 		return err
 	}
@@ -1043,7 +1042,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		buildSessVars.MViewMaintainImportDiskQuota,
 	)
 
-	restoreBuildSessVars, err := initRefreshMaterializedViewSession(buildSessVars, tblInfo.MaterializedView)
+	restoreBuildSessVars, err := ddl.InitMViewSession(buildSessVars, tblInfo.MaterializedView)
 	if err != nil {
 		return 0, err
 	}
@@ -1501,69 +1500,6 @@ func getMVRefreshOutOfPlaceShadowTableID(
 		return 0, errors.New("refresh materialized view complete OUT OF PLACE: invalid shadow table id")
 	}
 	return shadowTableID, nil
-}
-
-func initRefreshMaterializedViewSession(
-	sessVars *variable.SessionVars,
-	mviewInfo *model.MaterializedViewInfo,
-) (func(), error) {
-	if mviewInfo == nil {
-		return nil, errors.New("refresh materialized view: invalid materialized view metadata")
-	}
-	timezone := mviewInfo.DefinitionTimeZone.Clone()
-	loc, err := timezone.GetLocation()
-	if err != nil {
-		return nil, errors.Annotate(err, "refresh materialized view: invalid definition timezone")
-	}
-
-	origEnableMView := sessVars.EnableMView
-	if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, "on"); err != nil {
-		return nil, errors.Annotate(err, "refresh materialized view: failed to enable materialized view support")
-	}
-	origSQLMode := sessVars.SQLMode
-	origDivPrecisionIncrement := sessVars.DivPrecisionIncrement
-	origTimeZone := sessVars.TimeZone
-	origMViewMaintenance := sessVars.InMViewMaintenance
-	origStmtCtxTimeZone := sessVars.StmtCtx.TimeZone()
-	origTypeFlags := sessVars.StmtCtx.TypeFlags()
-	origErrLevels := sessVars.StmtCtx.ErrLevels()
-
-	originalVars := make(map[string]string, 3)
-	restore := func() {
-		if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, variable.BoolToOnOff(origEnableMView)); err != nil {
-			logutil.BgLogger().Warn("refresh materialized view: failed to restore materialized view enablement", zap.Error(err))
-		}
-		for name, value := range originalVars {
-			if err := sessVars.SetSystemVar(name, value); err != nil {
-				logutil.BgLogger().Warn("refresh materialized view: failed to restore session variable", zap.String("name", name), zap.Error(err))
-			}
-		}
-		sessVars.SQLMode = origSQLMode
-		sessVars.DivPrecisionIncrement = origDivPrecisionIncrement
-		sessVars.InMViewMaintenance = origMViewMaintenance
-		sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, origSQLMode.HasNoBackslashEscapesMode())
-		sessVars.TimeZone = origTimeZone
-		sessVars.StmtCtx.SetTimeZone(origStmtCtxTimeZone)
-		sessVars.StmtCtx.SetTypeFlags(origTypeFlags)
-		sessVars.StmtCtx.SetErrLevels(origErrLevels)
-	}
-	for _, assignment := range []struct{ name, value string }{
-		{vardef.SQLModeVar, variable.FormatSQLMode(mviewInfo.DefinitionSQLMode)},
-		{vardef.TimeZone, timeutil.ZoneName(loc)},
-		{vardef.DivPrecisionIncrement, strconv.Itoa(mviewInfo.DefinitionDivPrecisionIncrement)},
-	} {
-		oldValue, err := sessVars.SetSystemVarWithOldStateAsRet(assignment.name, assignment.value)
-		if err != nil {
-			restore()
-			return nil, errors.Annotatef(err, "refresh materialized view: failed to set %s", assignment.name)
-		}
-		originalVars[assignment.name] = oldValue
-	}
-	sessVars.InMViewMaintenance = true
-	sessVars.StmtCtx.SetTimeZone(loc)
-	sessVars.StmtCtx.SetTypeFlags(expression.MaterializedScheduleTypeFlagsWithSQLMode(sessVars.SQLMode))
-	sessVars.StmtCtx.SetErrLevels(expression.MaterializedScheduleErrLevelsWithSQLMode(sessVars.SQLMode))
-	return restore, nil
 }
 
 func validateRefreshMaterializedViewStmt(s *ast.RefreshMaterializedViewStmt, isInternalSQL bool) (ast.RefreshMaterializedViewMode, string, error) {

@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	executil "github.com/pingcap/tidb/pkg/executor/internal/util"
@@ -360,7 +361,7 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewQueryExec(
 	if err != nil {
 		return nil, err
 	}
-	restoreDefinitionSession, err := initRefreshMaterializedViewSession(sctx.GetSessionVars(), mviewInfo)
+	restoreDefinitionSession, err := ddl.InitMViewSession(sctx.GetSessionVars(), mviewInfo)
 	if err != nil {
 		_ = cleanup()
 		return nil, err

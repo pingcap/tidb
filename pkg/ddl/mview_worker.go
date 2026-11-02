@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
@@ -579,28 +580,32 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing reorg metadata")
 	}
 	sessVars := sessCtx.GetSessionVars() //nolint:forbidigo
-	restore := restoreSessCtx(sessCtx)
-	originalMaintenance := sessVars.InMViewMaintenance
-	originalDB := sessVars.CurrentDB
-	if err := initSessCtx(sessCtx, job.ReorgMeta); err != nil {
-		restore(sessCtx)
-		return nil, errors.Trace(err)
+	if mviewTableInfo == nil || mviewTableInfo.MaterializedView == nil {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing materialized view metadata")
 	}
 	target, err := MViewExecutionSessionVarsFromJob(job, sessVars)
 	if err != nil {
-		restore(sessCtx)
 		return nil, errors.Trace(err)
-	}
-	if mviewTableInfo != nil && mviewTableInfo.MaterializedView != nil {
-		target.DivPrecisionIncrement = mviewTableInfo.MaterializedView.DefinitionDivPrecisionIncrement
 	}
 	restoreExecution, err := ApplyMViewExecutionSessionVars(sessVars, target)
 	if err != nil {
-		restore(sessCtx)
 		return nil, errors.Trace(err)
 	}
+	restore, err := InitMViewSession(sessVars, mviewTableInfo.MaterializedView)
+	if err != nil {
+		restoreExecution()
+		return nil, errors.Trace(err)
+	}
+	originalDB := sessVars.CurrentDB
+	originalRowFormat := sessVars.RowEncoder.Enable
+	originalResourceGroup := sessVars.ResourceGroupName
+	originalStmtResourceGroup := sessVars.StmtCtx.ResourceGroupName
 	sessVars.CurrentDB = currentDB
-	sessVars.InMViewMaintenance = true
+	sessVars.RowEncoder.Enable = vardef.GetDDLReorgRowFormat() != vardef.DefTiDBRowFormatV1
+	sessVars.StmtCtx.ResourceGroupName = job.ReorgMeta.ResourceGroupName
+	if job.ReorgMeta.ResourceGroupName != "" {
+		sessVars.ResourceGroupName = job.ReorgMeta.ResourceGroupName
+	}
 	failpoint.InjectCall("createMaterializedViewBuildMaintainMemQuotaApplied", sessVars.MemQuotaQuery)
 	failpoint.InjectCall(
 		"createMaterializedViewBuildTiFlashSessionVarsApplied",
@@ -622,10 +627,12 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		sessVars.MViewMaintainImportDiskQuota,
 	)
 	return func() {
+		restore()
 		restoreExecution()
-		restore(sessCtx)
-		sessVars.InMViewMaintenance = originalMaintenance
 		sessVars.CurrentDB = originalDB
+		sessVars.RowEncoder.Enable = originalRowFormat
+		sessVars.ResourceGroupName = originalResourceGroup
+		sessVars.StmtCtx.ResourceGroupName = originalStmtResourceGroup
 	}, nil
 }
 
