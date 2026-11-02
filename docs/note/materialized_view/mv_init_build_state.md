@@ -11,6 +11,22 @@ The goal is to separate:
 The state is part of MV object metadata, instead of being inferred indirectly
 from refresh metadata tables.
 
+## Idempotent creation
+
+Both creation statements support `IF NOT EXISTS`:
+
+```sql
+CREATE MATERIALIZED VIEW LOG IF NOT EXISTS ON t (a, b);
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv (a, s, cnt)
+AS SELECT a, SUM(b), COUNT(*) FROM t GROUP BY a;
+```
+
+When the target name already exists, the statement succeeds with Note 1050,
+following `CREATE TABLE IF NOT EXISTS`. Existing definitions, physical IDs,
+data, and maintenance metadata are preserved, and the MV initial build is skipped.
+The same behavior applies if a concurrent creator wins after the initial existence
+check. Other creation errors retain their usual behavior.
+
 ## Motivation
 
 Today `CREATE MATERIALIZED VIEW` creates the MV object first and then runs the

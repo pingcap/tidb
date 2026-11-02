@@ -4,9 +4,14 @@ use test;
 
 create table t_mv_txn_66385 (a int not null, b int not null);
 insert into t_mv_txn_66385 values (1, 10), (1, 5), (2, 7);
-create materialized view log on t_mv_txn_66385 (a, b) purge next date_add(now(), interval 1 hour);
-create materialized view mv_txn_66385 (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
+create materialized view log if not exists on t_mv_txn_66385 (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view log if not exists on t_mv_txn_66385 (a);
+show warnings;
+create materialized view if not exists mv_txn_66385 (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
 select a, sum(b), count(1) from t_mv_txn_66385 group by a;
+create materialized view if not exists mv_txn_66385 (a, cnt) as
+select a, count(1) from t_mv_txn_66385 group by a;
+show warnings;
 
 -- error 1105
 refresh materialized view mv_txn_66385 with async mode complete in place;

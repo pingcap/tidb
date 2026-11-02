@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
 
@@ -30,6 +31,7 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
+	tikv.EnableFailpoints()
 	testDataMap.LoadTestSuiteData("testdata", "plan_normalized_suite")
 	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")

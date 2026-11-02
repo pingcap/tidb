@@ -39,6 +39,129 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCreateMaterializedViewIfNotExists(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10)")
+	tk.MustExec("create materialized view log if not exists on t (a, b)")
+	tk.MustExec("create materialized view if not exists mv (a, s, cnt) as select a, sum(b), count(*) from t group by a")
+	tk.MustQuery("select * from mv").Check(testkit.Rows("1 10 1"))
+
+	mv, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	log, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t"))
+	require.NoError(t, err)
+	mvInfo, logInfo := mv.Meta().Clone(), log.Meta().Clone()
+	refreshInfo := tk.MustQuery("select * from mysql.tidb_mview_refresh_info").Rows()
+	sourceInfo := tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info").Rows()
+	purgeInfo := tk.MustQuery("select * from mysql.tidb_mlog_purge_info").Rows()
+	tk.MustExec("insert into t values (2, 20)")
+	logRows := tk.MustQuery("select * from `$mlog$t`").Rows()
+
+	tk.MustExec("create materialized view log if not exists on t (a)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1050 Table 'test.$mlog$t' already exists"))
+	tk.MustExec("create materialized view if not exists mv (a, cnt) as select a, count(*) from t group by a")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1050 Table 'test.mv' already exists"))
+	tk.MustQuery("select * from mv").Check(testkit.Rows("1 10 1"))
+	require.Equal(t, logRows, tk.MustQuery("select * from `$mlog$t`").Rows())
+	require.Equal(t, refreshInfo, tk.MustQuery("select * from mysql.tidb_mview_refresh_info").Rows())
+	require.Equal(t, sourceInfo, tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info").Rows())
+	require.Equal(t, purgeInfo, tk.MustQuery("select * from mysql.tidb_mlog_purge_info").Rows())
+	mv, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	log, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t"))
+	require.NoError(t, err)
+	require.Equal(t, mvInfo, mv.Meta().Clone())
+	require.Equal(t, logInfo, log.Meta().Clone())
+
+	tk.MustGetErrCode("create materialized view log on t (a)", 1050)
+	tk.MustGetErrCode("create materialized view mv (a, cnt) as select a, count(*) from t group by a", 1050)
+	tk.MustGetErrCode("create materialized view log if not exists on missing (a)", 1146)
+	tk.MustGetErrCode("create materialized view if not exists missing_mv (a, cnt) as select a, count(*) from missing group by a", 1146)
+	tk.MustExec("create table occupied (a int)")
+	tk.MustExec("create materialized view if not exists occupied (a, cnt) as select a, count(*) from t group by a")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1050 Table 'test.occupied' already exists"))
+}
+
+func TestCreateMaterializedViewIfNotExistsConcurrent(t *testing.T) {
+	for _, isLog := range []bool{false, true} {
+		t.Run(fmt.Sprintf("mlog=%t", isLog), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t (a int not null)")
+			tk.MustExec("insert into t values (1)")
+			sql := "create materialized view if not exists mv (a, cnt) as select a, count(*) from t group by a"
+			action, target := model.ActionCreateMaterializedView, "mv"
+			if isLog {
+				sql = "create materialized view log if not exists on t (a)"
+				action, target = model.ActionCreateMaterializedViewLog, "$mlog$t"
+			} else {
+				tk.MustExec("create materialized view log on t (a)")
+			}
+
+			entered, release := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(release) }) }
+			defer unblock()
+			var paused atomic.Bool
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+				if job.Type == action && job.TableName == target && paused.CompareAndSwap(false, true) {
+					close(entered)
+					<-release
+				}
+			})
+			type result struct {
+				err   error
+				notes int
+			}
+			done := make(chan result, 2)
+			var wg sync.WaitGroup
+			create := func() {
+				defer wg.Done()
+				creator := testkit.NewTestKit(t, store)
+				creator.MustExec("use test")
+				err := creator.ExecToErr(sql)
+				done <- result{err: err, notes: len(creator.Session().GetSessionVars().StmtCtx.GetWarnings())}
+			}
+			defer func() { unblock(); wg.Wait() }()
+			wg.Add(1)
+			go create()
+			select {
+			case <-entered:
+			case <-time.After(10 * time.Second):
+				t.Fatal("timeout waiting for first create job")
+			}
+			wg.Add(1)
+			go create()
+			require.Eventually(t, func() bool {
+				return fmt.Sprint(tk.MustQuery("select count(*) from mysql.tidb_ddl_job").Rows()[0][0]) == "2"
+			}, 10*time.Second, 10*time.Millisecond, "both creators must pass the existence precheck before either job creates the object")
+			unblock()
+			notes := 0
+			for range 2 {
+				select {
+				case res := <-done:
+					require.NoError(t, res.err)
+					notes += res.notes
+				case <-time.After(20 * time.Second):
+					t.Fatal("timeout waiting for concurrent create")
+				}
+			}
+			require.Equal(t, 1, notes)
+			tk.MustQuery("select count(*) from information_schema.tables where table_schema='test' and table_name='" + target + "'").Check(testkit.Rows("1"))
+			tk.MustQuery("select count(*) from mysql.tidb_mlog_purge_info").Check(testkit.Rows("1"))
+			if !isLog {
+				tk.MustQuery("select * from mv").Check(testkit.Rows("1 1"))
+				tk.MustQuery("select count(*) from mysql.tidb_mview_refresh_info").Check(testkit.Rows("1"))
+				tk.MustQuery("select count(*) from mysql.tidb_mview_fast_refresh_source_info").Check(testkit.Rows("1"))
+			}
+		})
+	}
+}
+
 func TestCreateMaterializedViewBuildReadTSQueryTypeAlignment(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

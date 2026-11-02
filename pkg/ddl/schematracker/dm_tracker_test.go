@@ -23,8 +23,11 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -36,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -558,6 +562,110 @@ PARTITION pCentral VALUES IN (16, 17, 18, 19, 20)
 
 	sql = "ALTER TABLE test.employees11 DROP PARTITION pEast;"
 	execAlter(t, tracker, sql)
+}
+
+func TestCreateMaterializedViewLogIfNotExists(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int, b int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	parseStmt := func(sql string) *ast.CreateMaterializedViewLogStmt {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		return stmt.(*ast.CreateMaterializedViewLogStmt)
+	}
+
+	err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log if not exists on test.t (a)"))
+	require.NoError(t, err)
+	baseInfo := mustTableByName(t, tracker, "test", "t").Clone()
+	mlogInfo := mustTableByName(t, tracker, "test", "$mlog$t").Clone()
+
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (b)"))
+	require.Truef(t, infoschema.ErrTableExists.Equal(err), "err %v", err)
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log if not exists on test.t (b)"))
+	require.NoError(t, err)
+	require.Equal(t, baseInfo, mustTableByName(t, tracker, "test", "t").Clone())
+	require.Equal(t, mlogInfo, mustTableByName(t, tracker, "test", "$mlog$t").Clone())
+
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log if not exists on test.missing (a)"))
+	require.Truef(t, infoschema.ErrTableNotExists.Equal(err), "err %v", err)
+}
+
+type materializedViewLogExecutor struct {
+	ddl.Executor
+	afterCreate func(*ast.CreateMaterializedViewLogStmt)
+}
+
+func (e *materializedViewLogExecutor) CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt) error {
+	err := e.Executor.CreateMaterializedViewLog(ctx, stmt)
+	if err == nil {
+		e.afterCreate(stmt)
+	}
+	return err
+}
+
+func TestCreateMaterializedViewLogIfNotExistsConcurrentWithDDLChecker(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	realDDL, realExecutor := dom.DDL(), dom.DDLExecutor()
+	created, release := make(chan struct{}), make(chan struct{})
+	executor := &materializedViewLogExecutor{
+		Executor: realExecutor,
+		afterCreate: func(stmt *ast.CreateMaterializedViewLogStmt) {
+			if stmt.Cols[0].L == "a" {
+				close(created)
+				<-release
+			}
+		},
+	}
+	checker := schematracker.NewChecker(realDDL, executor, dom.InfoCache())
+	checker.CreateTestDB(nil)
+	dom.SetDDL(realDDL, checker)
+	t.Cleanup(func() { dom.SetDDL(realDDL, realExecutor) })
+
+	first, second := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
+	first.MustExec("use test")
+	second.MustExec("use test")
+	first.MustExec("create table t (a int, b int)")
+
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	var wg sync.WaitGroup
+	defer func() { unblock(); wg.Wait() }()
+	var firstErr, secondErr error
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		firstErr = first.ExecToErr("create materialized view log if not exists on t (a)")
+	}()
+	select {
+	case <-created:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for the first real DDL to finish")
+	}
+
+	secondDone := make(chan struct{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(secondDone)
+		secondErr = second.ExecToErr("create materialized view log if not exists on t (b)")
+	}()
+	// Without serialization, the second call can populate the tracker with column b
+	// while the real log contains column a. A serialized call waits for the first
+	// call to finish updating and checking the tracker.
+	select {
+	case <-secondDone:
+	case <-time.After(time.Second):
+	}
+	unblock()
+	wg.Wait()
+	require.NoError(t, firstErr)
+	require.NoError(t, secondErr)
+	first.MustQuery("show warnings").Check(testkit.Rows())
+	second.MustQuery("show warnings").Check(testkit.Rows("Note 1050 Table 'test.$mlog$t' already exists"))
+	first.MustQuery("select column_name from information_schema.columns where table_schema = 'test' and table_name = '$mlog$t' order by ordinal_position").Check(testkit.Rows("a", model.MaterializedViewLogDMLTypeColumnName, model.MaterializedViewLogOldNewColumnName))
 }
 
 func TestCreateMaterializedViewLogScheduleExprTypeCheck(t *testing.T) {

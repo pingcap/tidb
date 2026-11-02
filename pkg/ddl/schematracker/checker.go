@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/ngaut/pools"
@@ -59,6 +60,7 @@ func init() {
 type Checker struct {
 	realDDL      ddl.DDL
 	tracker      SchemaTracker
+	mviewLogMu   sync.Mutex
 	closed       atomic.Bool
 	realExecutor ddl.Executor
 	infoCache    *infoschema.InfoCache
@@ -278,6 +280,11 @@ func (d *Checker) CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) e
 
 // CreateMaterializedViewLog implements the DDL interface.
 func (d *Checker) CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt) error {
+	// Keep real DDL and tracker updates in the same order when concurrent
+	// IF NOT EXISTS statements specify different log definitions.
+	d.mviewLogMu.Lock()
+	defer d.mviewLogMu.Unlock()
+
 	err := d.realExecutor.CreateMaterializedViewLog(ctx, stmt)
 	if err != nil || d.closed.Load() {
 		return err

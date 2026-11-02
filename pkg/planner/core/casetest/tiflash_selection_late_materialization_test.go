@@ -15,13 +15,16 @@
 package casetest
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/stretchr/testify/require"
 )
@@ -34,9 +37,21 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 	tk.MustExec("create table t1 (a int, b int, c int, t time, index idx(a, b, c, t))")
 	tk.MustExec("insert into t1 values(1,1,1,'08:00:00'), (2,2,2,'09:00:00'), (3,3,3,'10:00:00')")
 	for i := 0; i < 14; i++ {
+		if i == 13 {
+			// Reproduce ANALYZE racing with the final insert's secondary commits.
+			testfailpoint.Enable(t, "tikvclient/beforeCommitSecondaries", `return("skip")`)
+		}
 		tk.MustExec("insert into t1(a,b,c,t) select a,b,c,t from t1;")
 	}
+	// Unistore's ANALYZE bypasses locks. Read the table records to resolve pending
+	// secondary commits before collecting statistics; the covering index is insufficient.
+	tk.MustQuery("select count(*) from t1 ignore index(idx)").Check(testkit.Rows("49152"))
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t1;")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+	require.NoError(t, err)
+	require.Equal(t, int64(49152), h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta()).RealtimeCount)
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// Create virtual `tiflash` replica info.
