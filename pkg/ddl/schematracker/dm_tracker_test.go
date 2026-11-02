@@ -560,6 +560,35 @@ PARTITION pCentral VALUES IN (16, 17, 18, 19, 20)
 	execAlter(t, tracker, sql)
 }
 
+func TestCreateMaterializedViewLogIfNotExists(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int, b int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	parseStmt := func(sql string) *ast.CreateMaterializedViewLogStmt {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		return stmt.(*ast.CreateMaterializedViewLogStmt)
+	}
+
+	err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log if not exists on test.t (a)"))
+	require.NoError(t, err)
+	baseInfo := mustTableByName(t, tracker, "test", "t").Clone()
+	mlogInfo := mustTableByName(t, tracker, "test", "$mlog$t").Clone()
+
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (b)"))
+	require.Truef(t, infoschema.ErrTableExists.Equal(err), "err %v", err)
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log if not exists on test.t (b)"))
+	require.NoError(t, err)
+	require.Equal(t, baseInfo, mustTableByName(t, tracker, "test", "t").Clone())
+	require.Equal(t, mlogInfo, mustTableByName(t, tracker, "test", "$mlog$t").Clone())
+
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log if not exists on test.missing (a)"))
+	require.Truef(t, infoschema.ErrTableNotExists.Equal(err), "err %v", err)
+}
+
 func TestCreateMaterializedViewLogScheduleExprTypeCheck(t *testing.T) {
 	tracker := schematracker.NewSchemaTracker(2)
 	tracker.CreateTestDB(nil)

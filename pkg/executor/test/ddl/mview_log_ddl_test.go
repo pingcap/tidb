@@ -154,6 +154,19 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	tk.MustGetErrMsg("create materialized view log on t (a)", "[schema:1050]Table 'test.$mlog$t' already exists")
 }
 
+func TestCreateMaterializedViewLogIfNotExistsWithDDLChecker(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create materialized view log if not exists on t (a)")
+
+	tk.MustExec("create materialized view log if not exists on t (b)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1050 Table 'test.$mlog$t' already exists"))
+	tk.MustGetErrCode("create materialized view log on t (b)", 1050)
+	tk.MustGetErrCode("create materialized view log if not exists on missing (a)", 1146)
+}
+
 func TestCreateMaterializedViewLogPurgeInfoFailureRollback(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
