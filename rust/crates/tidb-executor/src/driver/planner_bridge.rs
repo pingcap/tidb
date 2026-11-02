@@ -3568,7 +3568,6 @@ mod statistics_initialization_tests {
         );
         source.derived_access_paths = Some(tidb_planner_util::path::DerivedAccessPaths {
             paths: Vec::new(),
-            min_selectivity: 0.01,
             index_merge_max_count: None,
         });
 

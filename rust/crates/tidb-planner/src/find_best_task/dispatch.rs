@@ -3093,12 +3093,7 @@ fn find_best_task_4_logical_data_source_paths(
         ordinary_paths = preparation.paths;
         heuristic_selected = preparation.heuristic_selected;
     }
-    let access_path_min_selectivity = ds
-        .derived_access_paths
-        .as_ref()
-        .map_or(ds.access_path_min_selectivity, |paths| {
-            paths.min_selectivity
-        });
+    let access_path_min_selectivity = ds.access_path_min_selectivity;
     let ordered = !prop.is_sort_item_empty();
     let partial_order = prop.partial_order_info.as_ref();
     let desc = if ordered {

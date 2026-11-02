@@ -413,12 +413,7 @@ pub(super) fn build_converged_union_index_merge_task(
         let Some(datasource_rows) = datasource_rows else {
             return rows;
         };
-        let min_selectivity = ds
-            .derived_access_paths
-            .as_ref()
-            .map_or(ds.access_path_min_selectivity, |paths| {
-                paths.min_selectivity
-            });
+        let min_selectivity = ds.access_path_min_selectivity;
         if !table
             && super::dispatch::ignore_index_scan_expected_count(
                 ctx.ordering_index_selectivity_threshold,
@@ -1361,7 +1356,7 @@ mod tests {
             plan_id_before,
             "candidate derivation allocates no physical plans"
         );
-        assert_eq!(derived_source.derived_access_paths.as_ref().unwrap().min_selectivity, 0.0,
+        assert_eq!(derived_source.access_path_min_selectivity, 0.0,
             "Go reads unset CountAfterIndex for an unfinished union at this stage");
         let mut cloned_source = derived_source.clone_shallow();
         cloned_source

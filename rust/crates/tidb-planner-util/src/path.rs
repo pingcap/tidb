@@ -21,14 +21,12 @@
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 
-/// Go's post-derivation PossibleAccessPaths and their shared minimum selectivity.
+/// Go's post-derivation PossibleAccessPaths.
 #[derive(Clone, Debug)]
 pub struct DerivedAccessPaths {
     /// Ordinary and index-merge paths compete through one retained
     /// collection (Go `PossibleAccessPaths` after `generateIndexMergePath`).
     pub paths: Vec<AccessPath>,
-    /// Includes merge estimates before ordered-index expected-count adjustment.
-    pub min_selectivity: f64,
     /// Go `generateIndexMergePath`'s `maxRowCount`: the largest index-merge
     /// `CountAfterAccess`, present only when merges were built from more
     /// conditions (`AllConds`) than the DataSource statistics saw

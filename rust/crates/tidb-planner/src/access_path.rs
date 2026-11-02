@@ -301,10 +301,13 @@ pub(crate) fn derive_access_paths(
             source.index_merge_hints.clear();
             message.to_owned()
         });
+    // Go `getGeneralAttributesFromPaths`' `AccessPathMinSelectivity`, which
+    // includes merge estimates before ordered-index expected-count
+    // adjustment.
+    source.access_path_min_selectivity = min_selectivity;
     Ok((
         DerivedAccessPaths {
             paths,
-            min_selectivity,
             index_merge_max_count,
         },
         index_merge_warning,

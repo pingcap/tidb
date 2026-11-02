@@ -135,7 +135,10 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
     and `IndexMergeAccessMVIndex`; `UnionIndexMergePath`, `IndexMergePath`
     and the `DerivedAccessPath` enum are gone. The union's plan-cache check
     reads the statement flag at physical time (Go `UseCache()`), not a copy.
-- [ ] 3d. `DerivedAccessPaths` (paths + min selectivity + max merge count)
+- [x] 3d-1 (2026-11-02): derivation writes Go's
+  `DataSource.AccessPathMinSelectivity`; `DerivedAccessPaths.min_selectivity`
+  (a second copy every reader had to choose between) is gone.
+- [ ] 3d. `DerivedAccessPaths` (paths + max merge count)
   dissolves into Go's `DataSource.PossibleAccessPaths` /
   `AllPossibleAccessPaths` / `AccessPathMinSelectivity`; today
   `enumerated_paths` and `derived_access_paths.paths` are two lists where Go
