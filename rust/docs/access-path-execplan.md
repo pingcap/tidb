@@ -186,8 +186,9 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
   index paths included (`fillIndexPath`, then `deriveIndexPathStats` in the
   heuristics loop, whose `len(path.Ranges) == 0` rule can select it, and
   `getGeneralAttributesFromPaths` reads its `CountAfterIndex`). Rust's
-  ordinary fill skips multi-valued indexes, so such a path has no
-  `CountAfterIndex` and stays out of the minimum selectivity.
+  ordinary fill skipped multi-valued indexes until 2026-11-02; it now
+  fills them as Go does (the physical conversion still reads them only
+  through index merge, as Go's `convertToIndexScan` does).
 - The physical task builders (`dispatch.rs`, `candidate_preparation.rs`)
   keep their three-way TiKV-table / TiFlash / index split for now; step 4
   moves them onto Go's per-path fields.

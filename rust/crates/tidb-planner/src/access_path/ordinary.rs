@@ -188,7 +188,10 @@ pub(crate) fn fill_ordinary_index_paths(
             continue;
         };
         let index = &index;
-        if index.read().mv_index || index.read().is_columnar_index() {
+        // Go `deriveStats4DataSource` fills every non-table path, a
+        // multi-valued index's included; a columnar index is a TiFlash table
+        // path in Go and never reaches here.
+        if index.read().is_columnar_index() {
             continue;
         }
         let mut path = source.all_possible_access_paths[position].clone();
