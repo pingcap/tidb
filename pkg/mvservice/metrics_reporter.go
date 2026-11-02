@@ -54,6 +54,10 @@ func (h *serviceHelper) reportMetrics(s *MVService) {
 	// MVService metrics
 	tidbmetrics.MVServiceMVRefreshTotalGauge.Set(float64(s.metrics.mvCount.Load()))
 	tidbmetrics.MVServiceMVLogPurgeTotalGauge.Set(float64(s.metrics.mvLogCount.Load()))
+	alertWarningCount, alertOverdueCount := s.refreshAlertMetricCounts()
+	tidbmetrics.MVServiceMVRefreshWarningGauge.Set(float64(alertWarningCount))
+	tidbmetrics.MVServiceMVRefreshOverdueGauge.Set(float64(alertOverdueCount))
+	tidbmetrics.MVServiceMVLogAccumulationGauge.Set(float64(s.metrics.mvLogAccumulationCount.Load()))
 }
 
 func (h *serviceHelper) reportTaskExecutorMetrics(component string, metrics taskExecutorMetricsSnapshot, cache *taskExecutorReportCache) {
