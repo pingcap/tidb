@@ -678,7 +678,7 @@ func benchmarkHistoryReaderRows(b *testing.B, matchPercent int, withDigestFilter
 	config.UpdateGlobal(func(conf *config.Config) { conf.Instance.StmtSummaryFilename = filename })
 	file, err := os.Create(filename)
 	require.NoError(b, err)
-	for i := 0; i < recordCount; i++ {
+	for i := range recordCount {
 		digest := fmt.Sprintf("digest_%06d", i)
 		if i%100 < matchPercent {
 			digest = target
