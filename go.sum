@@ -745,8 +745,6 @@ github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/rivo/uniseg v0.1.0/go.mod h1:J6wj4VEh+S6ZtnVlnTBMWIodfgj8LQOQFoIToxlJtxc=
 github.com/rivo/uniseg v0.2.0/go.mod h1:J6wj4VEh+S6ZtnVlnTBMWIodfgj8LQOQFoIToxlJtxc=
-github.com/rleungx/pd/client v0.0.0-20261102032042-d6a269157e0a h1:wv+uGPGt3kJvG61i+UvnXYx1snwt0siZQXPzolDVDiY=
-github.com/rleungx/pd/client v0.0.0-20261102032042-d6a269157e0a/go.mod h1:fweSBGq5ttgEo7LWqaYBO8xBGyTAgeI527qnerw+Zfg=
 github.com/robfig/cron/v3 v3.0.1 h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs=
 github.com/robfig/cron/v3 v3.0.1/go.mod h1:eQICP3HwyT7UooqI/z+Ov+PtYAWygg1TEWWzGIFLtro=
 github.com/rogpeppe/fastuuid v1.2.0/go.mod h1:jVj6XXZzXRy/MSR5jhDC/2q6DgLz+nrA6LYCDYWNEvQ=
@@ -844,6 +842,8 @@ github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
 github.com/tikv/client-go/v2 v2.0.8-0.20261102074332-2f0c30e3fb58 h1:igU6jIxkubYNHcVZVKC6ujbunD27wIaDyfVPqmWfDHg=
 github.com/tikv/client-go/v2 v2.0.8-0.20261102074332-2f0c30e3fb58/go.mod h1:KesxUO7XmjgnlFDJPIv9YfMOpV0DDEcteTYwR4IVMuo=
+github.com/tikv/pd/client v0.0.0-20261102082917-b90022db077a h1:WkIhr8eZ3yZoTetn6e43XtudL8+MFV450W5+RE7PFhg=
+github.com/tikv/pd/client v0.0.0-20261102082917-b90022db077a/go.mod h1:fweSBGq5ttgEo7LWqaYBO8xBGyTAgeI527qnerw+Zfg=
 github.com/timakin/bodyclose v0.0.0-20260723120731-857993a2939c h1:d/FUP8GD4QiY/rdFzZmBu3KqL9eBNVzMu7W/5pGkaMM=
 github.com/timakin/bodyclose v0.0.0-20260723120731-857993a2939c/go.mod h1:sDHLK7rb/59v/ZxZ7KtymgcoxuUMxjXq8gtu9VMOK8M=
 github.com/tklauser/go-sysconf v0.3.9/go.mod h1:11DU/5sG7UexIrp/O6g35hrWzu0JxlwQ3LSFUzyeuhs=

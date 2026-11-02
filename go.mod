@@ -125,7 +125,7 @@ require (
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a
 	github.com/tikv/client-go/v2 v2.0.8-0.20261102074332-2f0c30e3fb58
-	github.com/tikv/pd/client v0.0.0-20260609141937-b01426f6b08b
+	github.com/tikv/pd/client v0.0.0-20261102082917-b90022db077a
 	github.com/timakin/bodyclose v0.0.0-20260723120731-857993a2939c
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -364,6 +364,3 @@ replace (
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
-
-// Temporary source branch for https://github.com/tikv/pd/pull/11464; use upstream after merge.
-replace github.com/tikv/pd/client => github.com/rleungx/pd/client v0.0.0-20261102032042-d6a269157e0a
