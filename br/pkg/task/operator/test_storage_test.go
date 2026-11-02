@@ -62,4 +62,29 @@ func TestStorageConfigLogRedaction(t *testing.T) {
 			require.Equal(t, original, cfg, "logging must not mutate execution arguments")
 		})
 	}
+
+	t.Run("malformed endpoints", func(t *testing.T) {
+		core, logs := observer.New(zap.InfoLevel)
+		ctx := context.WithValue(context.Background(), logutil.CtxLogKey, zap.New(core))
+		cfg := TestStorageConfig{StorageURI: "s3://redaction-repro/prefix"}
+		const endpoint = "FAKE_USER:FAKE_PASS@host:9000"
+		cfg.S3.Endpoint = endpoint
+		cfg.GCS.Endpoint = endpoint
+		cfg.Azblob.Endpoint = endpoint
+		original := cfg.BackendOptions
+		// The invalid S3 endpoint stops backend parsing before any storage request.
+		require.ErrorContains(t, RunTestStorage(ctx, cfg), "failed to parse storage backend")
+		entries := logs.FilterMessage("Starting external storage test").All()
+		require.Len(t, entries, 1)
+		logged, err := json.Marshal(entries[0].ContextMap())
+		require.NoError(t, err)
+		require.NotContains(t, string(logged), "FAKE_USER")
+		require.NotContains(t, string(logged), "FAKE_PASS")
+		loggedOptions, ok := entries[0].ContextMap()["options"].(storage.BackendOptions)
+		require.True(t, ok)
+		require.Equal(t, storage.InvalidURLPlaceholder, loggedOptions.S3.Endpoint)
+		require.Equal(t, storage.InvalidURLPlaceholder, loggedOptions.GCS.Endpoint)
+		require.Equal(t, storage.InvalidURLPlaceholder, loggedOptions.Azblob.Endpoint)
+		require.Equal(t, original, cfg.BackendOptions)
+	})
 }

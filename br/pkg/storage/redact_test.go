@@ -76,6 +76,35 @@ func TestBackendOptionsRedacted(t *testing.T) {
 
 	opts.S3.Endpoint = "https://FAKE_USER:FAKE_PASS@host/path%zz?sig=FAKE_SIGNATURE"
 	require.Equal(t, InvalidURLPlaceholder, opts.Redacted().S3.Endpoint)
+
+	for _, tc := range []struct {
+		endpoint string
+		expected string
+	}{
+		{"", ""},
+		{"https://host:9000/path", "https://host:9000/path"},
+		{"http://FAKE_USER:FAKE_PASS@host:9000/path?sig=FAKE_TOKEN#FAKE_FRAGMENT", "http://host:9000/path"},
+		{"FAKE_USER:FAKE_PASS@host:9000", InvalidURLPlaceholder},
+		{"//FAKE_USER:FAKE_PASS@host:9000", InvalidURLPlaceholder},
+		{"https:FAKE_USER:FAKE_PASS@host:9000", InvalidURLPlaceholder},
+		{"https:///FAKE_USER:FAKE_PASS@host:9000", InvalidURLPlaceholder},
+		{"https://FAKE_USER:FAKE_PASS@host:port", InvalidURLPlaceholder},
+		{"https://FAKE_USER:FAKE_PASS@host%zz", InvalidURLPlaceholder},
+		{"/local/path#FAKE_FRAGMENT", InvalidURLPlaceholder},
+	} {
+		t.Run(tc.endpoint, func(t *testing.T) {
+			opts := BackendOptions{}
+			opts.S3.Endpoint = tc.endpoint
+			opts.GCS.Endpoint = tc.endpoint
+			opts.Azblob.Endpoint = tc.endpoint
+			original := opts
+			redacted := opts.Redacted()
+			require.Equal(t, tc.expected, redacted.S3.Endpoint)
+			require.Equal(t, tc.expected, redacted.GCS.Endpoint)
+			require.Equal(t, tc.expected, redacted.Azblob.Endpoint)
+			require.Equal(t, original, opts)
+		})
+	}
 }
 
 func TestParseBackendRejectsMalformedQuery(t *testing.T) {

@@ -33,12 +33,27 @@ func (o BackendOptions) Redacted() BackendOptions {
 	o.Azblob.SASToken = maskIfSet(o.Azblob.SASToken)
 	o.Azblob.EncryptionKey = maskIfSet(o.Azblob.EncryptionKey)
 	// Endpoints can carry userinfo or signed query credentials.
-	o.S3.Endpoint = RedactURL(o.S3.Endpoint)
-	o.GCS.Endpoint = RedactURL(o.GCS.Endpoint)
-	o.Azblob.Endpoint = RedactURL(o.Azblob.Endpoint)
+	o.S3.Endpoint = redactEndpoint(o.S3.Endpoint)
+	o.GCS.Endpoint = redactEndpoint(o.GCS.Endpoint)
+	o.Azblob.Endpoint = redactEndpoint(o.Azblob.Endpoint)
 	return o
 }
 
+// Unlike storage URLs, endpoints cannot be local paths. Require a scheme and
+// host so that RedactURL cannot return malformed credential-bearing input as-is.
+func redactEndpoint(endpoint string) string {
+	if endpoint == "" {
+		return ""
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return InvalidURLPlaceholder
+	}
+	return RedactURL(endpoint)
+}
+
+// maskIfSet masks a credential, leaving an unset one empty so that the
+// redacted output does not suggest that it is configured.
 func maskIfSet(secret string) string {
 	if secret == "" {
 		return ""
