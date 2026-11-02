@@ -456,6 +456,10 @@ mod tests {
 
     struct Fixture {
         table: TableCommon,
+        /// The store the table is built over and the test writes through:
+        /// clones share its buffer and snapshot, as Go's mock store's
+        /// transaction is one.
+        store: ClusterTableStorage,
         buffer: MutationBuffer,
         snapshot: Arc<Mutex<MockSnapshot>>,
         returned: Arc<AtomicU64>,
@@ -537,12 +541,13 @@ mod tests {
         });
         let storage = ClusterTableStorage::new(buffer.clone(), handle)
             .with_client(Arc::clone(&region) as Arc<dyn tidb_txnkv::Client>);
-        let mut table = TableCommon::with_storage(91, columns, Box::new(storage));
+        let mut table = TableCommon::with_storage(91, columns, Box::new(storage.clone()));
         if let Some(offset) = pk_handle_offset {
             table.set_pk_handle_offset(offset);
         }
         Fixture {
             table,
+            store: storage,
             buffer,
             snapshot,
             returned,
@@ -558,7 +563,7 @@ mod tests {
         for a in [100, 200] {
             let handle = fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a + 10)], &tidb_exprctx::NoColumns))
+                .insert_row(&mut fixture.store, &[Datum::Int(a), Datum::Int(a + 10)], &tidb_exprctx::NoColumns)
                 .unwrap();
             let tidb_table::tables::TableHandle::Int(handle) = handle else {
                 unreachable!()
@@ -614,9 +619,9 @@ mod tests {
             for row in [[1, 10], [2, 20], [3, 30], [4, 40]] {
                 fixture
                     .table
-                    .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(row[0]), Datum::Int(row[1])],
+                    .insert_row(&mut fixture.store, &[Datum::Int(row[0]), Datum::Int(row[1])],
                         &tidb_exprctx::NoColumns,
-                    ))
+                    )
                     .unwrap();
             }
             commit(&fixture.buffer, &fixture.snapshot);
@@ -670,15 +675,15 @@ mod tests {
             for c in 1..=4 {
                 fixture
                     .table
-                    .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Int(b), Datum::Int(c), Datum::Int(10)],
+                    .insert_row(&mut fixture.store, &[Datum::Int(1), Datum::Int(b), Datum::Int(c), Datum::Int(10)],
                         &tidb_exprctx::NoColumns,
-                    ))
+                    )
                     .unwrap();
             }
         }
         commit(&fixture.buffer, &fixture.snapshot);
         let mut catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         let (rows, reads) = capture_storage_ops(|| {
             run_select_on(
             "SELECT v FROM t WHERE (a,b) IN ((1,1),(1,3)) AND c=2 AND v>0 ORDER BY b DESC LIMIT 1",
@@ -768,7 +773,7 @@ mod tests {
         for (a, b) in [(0, 10), (1, 20), (1_u64 << 63, 30), (u64::MAX, 40)] {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::UInt(a), Datum::Int(b)], &tidb_exprctx::NoColumns))
+                .insert_row(&mut fixture.store, &[Datum::UInt(a), Datum::Int(b)], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -942,17 +947,17 @@ mod tests {
             for a in [1, 2, 3] {
                 fixture
                     .table
-                    .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Null, Datum::Int(a + 20)],
+                    .insert_row(&mut fixture.store, &[Datum::Int(a), Datum::Null, Datum::Int(a + 20)],
                         &tidb_exprctx::NoColumns,
-                    ))
+                    )
                     .unwrap();
             }
             commit(&fixture.buffer, &fixture.snapshot);
-            let ctx = crate::StmtContext::for_query();
+            let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
             let handles = [TableHandle::Int(3), TableHandle::Int(1)];
             let staged = fixture
                 .table
-                .build_table_reader_from_routed_handles(&mut *fixture.table.store().clone_box(), 
+                .build_table_reader_from_routed_handles(&mut fixture.store.clone(), 
                     &handles,
                     None,
                     &[1],
@@ -1084,36 +1089,36 @@ mod tests {
                 handles.push(
                     fixture
                         .table
-                        .with_own_store(|table, store| table.insert_row(store, &[key.clone(), Datum::Int(b), Datum::Int(b * 10)],
+                        .insert_row(&mut fixture.store, &[key.clone(), Datum::Int(b), Datum::Int(b * 10)],
                             &tidb_exprctx::NoColumns,
-                        ))
+                        )
                         .unwrap(),
                 );
             }
             commit(&fixture.buffer, &fixture.snapshot);
             fixture
                 .table
-                .with_own_store(|table, store| table.update_row_with_context(store, &handles[0],
+                .update_row_with_context(&mut fixture.store, &handles[0],
                     &[key.clone(), Datum::Int(1), Datum::Int(110)],
                     &ctx,
-                ))
+                )
                 .unwrap();
             fixture
                 .table
-                .with_own_store(|table, store| table.delete_row_with_context(store, &handles[1], &ctx))
+                .delete_row_with_context(&mut fixture.store, &handles[1], &ctx)
                 .unwrap();
             fixture
                 .table
-                .with_own_store(|table, store| table.update_row_with_context(store, &handles[2],
+                .update_row_with_context(&mut fixture.store, &handles[2],
                     &[key.clone(), Datum::Int(13), Datum::Int(130)],
                     &ctx,
-                ))
+                )
                 .unwrap();
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[key.clone(), Datum::Int(0), Datum::Int(0)],
+                .insert_row(&mut fixture.store, &[key.clone(), Datum::Int(0), Datum::Int(0)],
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .unwrap();
             let catalog = catalog_of(fixture.table);
             for (condition, expected) in [("b=1", vec![110]), ("b IN (1,4,1,99)", vec![110, 40])] {
@@ -1194,15 +1199,15 @@ mod tests {
         for row in [[1, 10], [1, 20], [2, 30]] {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(row[0]), Datum::Int(row[1])],
+                .insert_row(&mut fixture.store, &[Datum::Int(row[0]), Datum::Int(row[1])],
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
 
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         let (rows, ops) = capture_storage_ops(|| {
             run_select_on("SELECT a, b FROM t WHERE a = 1 ORDER BY b", &catalog, &ctx).unwrap()
         });
@@ -1224,15 +1229,15 @@ mod tests {
         for row in [[1, 10], [1, 20], [2, 30]] {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(row[0]), Datum::Int(row[1])],
+                .insert_row(&mut fixture.store, &[Datum::Int(row[0]), Datum::Int(row[1])],
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
 
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         let (rows, ops) = capture_storage_ops(|| {
             run_select_on("SELECT a, b FROM t WHERE a = 1 ORDER BY b", &catalog, &ctx).unwrap()
         });
@@ -1254,9 +1259,9 @@ mod tests {
         for row in [[1, 10], [1, 20], [2, 30], [3, 40]] {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(row[0]), Datum::Int(row[1])],
+                .insert_row(&mut fixture.store, &[Datum::Int(row[0]), Datum::Int(row[1])],
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -1276,11 +1281,11 @@ mod tests {
                 })
                 .collect(),
         );
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         let mut source = IndexJoinLookupExec::new_with_context(
             ExecutorMeta::new(schema, 0, 32, 1024),
             fixture.table.clone(),
-            fixture.table.store().clone_box(),
+            Box::new(fixture.store.clone()),
             LookupObject::CommonHandle,
             crate::RowDecodeContext::for_query(&ctx),
         );
@@ -1347,9 +1352,9 @@ mod tests {
         for row in [[1, 10], [2, 20]] {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(row[0]), Datum::Int(row[1])],
+                .insert_row(&mut fixture.store, &[Datum::Int(row[0]), Datum::Int(row[1])],
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -1381,11 +1386,11 @@ mod tests {
             field.clone(),
             vec![Expression::Column(left), Expression::Column(right)],
         ));
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         let mut lookup = IndexJoinLookupExec::new_with_context(
             ExecutorMeta::new(schema(2), 0, 32, 1024),
             fixture.table.clone(),
-            fixture.table.store().clone_box(),
+            Box::new(fixture.store.clone()),
             LookupObject::CommonHandle,
             crate::RowDecodeContext::for_query(&ctx),
         );
@@ -1442,15 +1447,15 @@ mod tests {
         for row in [[1, 10], [2, 20], [3, 30]] {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(row[0]), Datum::Int(row[1])],
+                .insert_row(&mut fixture.store, &[Datum::Int(row[0]), Datum::Int(row[1])],
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
         let region = Arc::clone(&fixture.region);
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
 
         let rows = run_select_on(
             "SELECT /*+ TIDB_SMJ(t1, t2) */ t1.a FROM t t1 JOIN t t2 ON t1.a=t2.a",
@@ -1496,9 +1501,9 @@ mod tests {
             for row in [[1, 10], [2, 20]] {
                 fixture
                     .table
-                    .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(row[0]), Datum::Int(row[1])],
+                    .insert_row(&mut fixture.store, &[Datum::Int(row[0]), Datum::Int(row[1])],
                         &tidb_exprctx::NoColumns,
-                    ))
+                    )
                     .unwrap();
             }
             commit(&fixture.buffer, &fixture.snapshot);
@@ -1546,7 +1551,7 @@ mod tests {
                 handles.push(
                     fixture
                         .table
-                        .with_own_store(|table, store| table.insert_row(store, &row.map(Datum::Int), &tidb_exprctx::NoColumns))
+                        .insert_row(&mut fixture.store, &row.map(Datum::Int), &tidb_exprctx::NoColumns)
                         .unwrap(),
                 );
             }
@@ -1558,7 +1563,7 @@ mod tests {
             for keep in [vec![1], vec![1, 0], vec![]] {
                 let staged = fixture
                     .table
-                    .build_table_reader_from_routed_handles(&mut *fixture.table.store().clone_box(), 
+                    .build_table_reader_from_routed_handles(&mut fixture.store.clone(), 
                         &handles,
                         None,
                         &keep,
@@ -1620,7 +1625,7 @@ mod tests {
         for row in [[1, 30, 100], [2, 20, 200], [3, 10, 300]] {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &row.map(Datum::Int), &tidb_exprctx::NoColumns))
+                .insert_row(&mut fixture.store, &row.map(Datum::Int), &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -1668,7 +1673,7 @@ mod tests {
         for row in [[1, 30], [2, 20], [3, 10], [4, 40]] {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &row.map(Datum::Int), &tidb_exprctx::NoColumns))
+                .insert_row(&mut fixture.store, &row.map(Datum::Int), &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -1676,7 +1681,7 @@ mod tests {
             for desc in [false, true] {
                 let mut cursor = fixture
                     .table
-                    .pushdown_row_cursor_with_context(&mut *fixture.table.store().clone_box(), 
+                    .pushdown_row_cursor_with_context(&mut fixture.store.clone(), 
                         &[1],
                         &[],
                         projected.then_some([0].as_slice()),
@@ -1755,7 +1760,7 @@ mod tests {
         for row in [[1, 30, 100], [2, 20, 200], [3, 10, 300], [4, 40, 400]] {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &row.map(Datum::Int), &tidb_exprctx::NoColumns))
+                .insert_row(&mut fixture.store, &row.map(Datum::Int), &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -1813,7 +1818,7 @@ mod tests {
         for row in [[1, 10], [2, 20], [3, 30]] {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &row.map(Datum::Int), &tidb_exprctx::NoColumns))
+                .insert_row(&mut fixture.store, &row.map(Datum::Int), &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -1879,7 +1884,7 @@ mod tests {
             for row in [[1, 30], [2, 20], [3, 10]] {
                 fixture
                     .table
-                    .with_own_store(|table, store| table.insert_row(store, &row.map(Datum::Int), &tidb_exprctx::NoColumns))
+                    .insert_row(&mut fixture.store, &row.map(Datum::Int), &tidb_exprctx::NoColumns)
                     .unwrap();
             }
             commit(&fixture.buffer, &fixture.snapshot);
@@ -1938,13 +1943,13 @@ mod tests {
         let mut fixture = fixture();
         fixture
             .table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut fixture.store, &[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns)
             .unwrap();
         commit(&fixture.buffer, &fixture.snapshot);
         let region = Arc::clone(&fixture.region);
 
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         run_select_on("SELECT a FROM t", &catalog, &ctx).unwrap();
 
         let flags = region.requested_flags();
@@ -1974,7 +1979,7 @@ mod tests {
         let mut fixture = fixture();
         fixture
             .table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut fixture.store, &[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns)
             .unwrap();
         commit(&fixture.buffer, &fixture.snapshot);
         let region = Arc::clone(&fixture.region);
@@ -2026,7 +2031,7 @@ mod tests {
         let mut fixture = fixture();
         fixture
             .table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut fixture.store, &[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns)
             .unwrap();
         commit(&fixture.buffer, &fixture.snapshot);
         let region = Arc::clone(&fixture.region);
@@ -2034,7 +2039,7 @@ mod tests {
             Some((1292, "Truncated incorrect DOUBLE value: '12abc'".to_owned()));
 
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         run_select_on("SELECT a FROM t", &catalog, &ctx).unwrap();
 
         assert_eq!(
@@ -2057,7 +2062,7 @@ mod tests {
         for a in 1..=100 {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
+                .insert_row(&mut fixture.store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -2065,7 +2070,7 @@ mod tests {
         fixture.scanned.store(0, Ordering::Relaxed);
 
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         let rows = run_select_on("SELECT a FROM t WHERE a > 97", &catalog, &ctx).unwrap();
         assert_eq!(
             rows,
@@ -2102,14 +2107,14 @@ mod tests {
         for a in 1..=100 {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
+                .insert_row(&mut fixture.store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
         fixture.returned.store(0, Ordering::Relaxed);
 
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         assert_eq!(
             run_select_on("SELECT a FROM t WHERE a > 97 AND a < 97", &catalog, &ctx).unwrap(),
             Vec::<Vec<Datum>>::new()
@@ -2162,14 +2167,14 @@ mod tests {
         for a in 1..=100 {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
+                .insert_row(&mut fixture.store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
         fixture.scanned.store(0, Ordering::Relaxed);
 
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         let rows = run_select_on("SELECT a FROM t LIMIT 4", &catalog, &ctx).unwrap();
         assert_eq!(rows.len(), 4);
         assert_eq!(
@@ -2192,39 +2197,39 @@ mod tests {
             .store(true, Ordering::Relaxed);
         let committed_low = fixture
             .table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut fixture.store, &[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns)
             .unwrap();
         fixture
             .table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(9), Datum::Int(90)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut fixture.store, &[Datum::Int(9), Datum::Int(90)], &tidb_exprctx::NoColumns)
             .unwrap();
         let committed_moved = fixture
             .table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(2), Datum::Int(20)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut fixture.store, &[Datum::Int(2), Datum::Int(20)], &tidb_exprctx::NoColumns)
             .unwrap();
         commit(&fixture.buffer, &fixture.snapshot);
 
         // One open transaction stages all four shapes.
         fixture
             .table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(7), Datum::Int(70)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut fixture.store, &[Datum::Int(7), Datum::Int(70)], &tidb_exprctx::NoColumns)
             .unwrap();
         fixture
             .table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(3), Datum::Int(30)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut fixture.store, &[Datum::Int(3), Datum::Int(30)], &tidb_exprctx::NoColumns)
             .unwrap();
         fixture
             .table
-            .with_own_store(|table, store| table.update_row_with_context(store, &committed_moved,
+            .update_row_with_context(&mut fixture.store, &committed_moved,
                 &[Datum::Int(8), Datum::Int(80)],
                 &crate::StmtContext::for_dml(false, false, false),
-            ))
+            )
             .unwrap();
         fixture
             .table
-            .with_own_store(|table, store| table.delete_row_with_context(store, &committed_low,
+            .delete_row_with_context(&mut fixture.store, &committed_low,
                 &crate::StmtContext::for_dml(false, false, false),
-            ))
+            )
             .unwrap();
         assert!(!fixture.buffer.is_empty(), "the writes are staged");
 
@@ -2267,7 +2272,7 @@ mod tests {
         for a in 1..=6 {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
+                .insert_row(&mut fixture.store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -2275,15 +2280,15 @@ mod tests {
         // 1..3, of which only one survives the overlay.
         fixture
             .table
-            .with_own_store(|table, store| table.delete_row_with_context(store, &TableHandle::Int(1),
+            .delete_row_with_context(&mut fixture.store, &TableHandle::Int(1),
                 &crate::StmtContext::for_dml(false, false, false),
-            ))
+            )
             .unwrap();
         fixture
             .table
-            .with_own_store(|table, store| table.delete_row_with_context(store, &TableHandle::Int(2),
+            .delete_row_with_context(&mut fixture.store, &TableHandle::Int(2),
                 &crate::StmtContext::for_dml(false, false, false),
-            ))
+            )
             .unwrap();
 
         let catalog = catalog_of(fixture.table);
@@ -2320,7 +2325,7 @@ mod tests {
             };
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), b], &tidb_exprctx::NoColumns))
+                .insert_row(&mut fixture.store, &[Datum::Int(a), b], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -2334,7 +2339,7 @@ mod tests {
     fn a_decimal_sum_over_null_rows_the_predicate_admits_does_not_crash() {
         let fixture = decimal_aggregate_fixture();
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         let (rows, wire) = run_counting(
             "SELECT COUNT(*), COUNT(b), SUM(b) FROM t WHERE a > 97",
             &catalog,
@@ -2370,13 +2375,13 @@ mod tests {
         for a in 1..=100 {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Null], &tidb_exprctx::NoColumns))
+                .insert_row(&mut fixture.store, &[Datum::Int(a), Datum::Null], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
         fixture.returned.store(0, Ordering::Relaxed);
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
 
         let (rows, wire) = run_counting(
             "SELECT COUNT(*), COUNT(b), SUM(b) FROM t",
@@ -2409,7 +2414,7 @@ mod tests {
     fn a_decimal_sum_over_zero_matched_rows_does_not_crash() {
         let fixture = decimal_aggregate_fixture();
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         let (rows, wire) = run_counting(
             "SELECT COUNT(*), COUNT(b), SUM(b) FROM t WHERE a > 10000",
             &catalog,
@@ -2432,7 +2437,7 @@ mod tests {
             };
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), b], &tidb_exprctx::NoColumns))
+                .insert_row(&mut fixture.store, &[Datum::Int(a), b], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -2469,7 +2474,7 @@ mod tests {
     fn an_aggregate_does_not_forfeit_the_pushed_predicate() {
         let fixture = aggregate_fixture();
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
 
         // The control: the same predicate WITHOUT an aggregate has always
         // narrowed the wire, so a difference below is the aggregate's doing
@@ -2520,7 +2525,7 @@ mod tests {
     fn a_pushed_predicate_does_not_move_an_aggregate_value() {
         let fixture = aggregate_fixture();
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
 
         // An empty input: SUM is NULL, COUNT is 0 -- and AVG is NULL, which is
         // what makes it something other than SUM/COUNT.
@@ -2586,12 +2591,12 @@ mod tests {
         for a in 1..=100 {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
+                .insert_row(&mut fixture.store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
 
         let (rows, ops) =
             capture_storage_ops(|| run_select_on("SELECT b FROM t WHERE a = 5", &catalog, &ctx));
@@ -2667,13 +2672,13 @@ mod tests {
         for a in 1..=10 {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
+                .insert_row(&mut fixture.store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
         let region = Arc::clone(&fixture.region);
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
 
         let rows =
             run_select_on("SELECT b FROM t WHERE a BETWEEN 5 AND 7", &catalog, &ctx).unwrap();
@@ -2703,13 +2708,13 @@ mod tests {
         for a in 1..=10 {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
+                .insert_row(&mut fixture.store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
         let region = Arc::clone(&fixture.region);
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         let statement = tidb_parser::parse("SELECT b FROM t WHERE a BETWEEN ? AND ?").unwrap();
         let plan = Arc::new(
             build_prepared_select_plan(&statement, 2, &catalog, DEFAULT_DATABASE, &ctx)
@@ -2764,7 +2769,7 @@ mod tests {
         let fixture = aggregate_fixture();
         let region = Arc::clone(&fixture.region);
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         region.refuse.store(true, Ordering::Relaxed);
         let error = run_select_on("SELECT a FROM t WHERE a > 97", &catalog, &ctx).unwrap_err();
         assert!(
@@ -2781,12 +2786,12 @@ mod tests {
         for a in 1..=20 {
             fixture
                 .table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
+                .insert_row(&mut fixture.store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(fixture.store.clone()));
         assert_eq!(
             run_select_on("SELECT a FROM t WHERE b + 1 > 190", &catalog, &ctx).unwrap(),
             vec![vec![Datum::Int(19)], vec![Datum::Int(20)]],
