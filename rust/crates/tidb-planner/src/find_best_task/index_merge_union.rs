@@ -1343,8 +1343,7 @@ mod tests {
         };
         assert!(
             derived_source
-                .possible_access_paths
-                .as_ref()
+                .possible_paths()
                 .is_some_and(|paths| paths
                     .iter()
                     .all(|path| !path.partial_alternative_index_paths.is_empty())
@@ -1403,8 +1402,8 @@ mod tests {
         assert_eq!(prepared.merges.len(), 1);
         assert_eq!(allocator.current(), before_convergence,
             "merge convergence must finish before physical allocation");
-        let retained = &derived_source.possible_access_paths.as_ref().unwrap();
-        let retained_union = &retained[0];
+        let retained = derived_source.possible_paths().unwrap();
+        let retained_union = retained[0];
         assert!(!retained_union.partial_alternative_index_paths.is_empty());
         for property in [
             &advisory,
@@ -1482,14 +1481,17 @@ mod tests {
             unreachable!()
         };
         let first_index = surviving_source.table_indices()[0].clone();
+        let all = surviving_source.all_possible_access_paths.clone();
         surviving_source
             .possible_access_paths
             .as_mut()
             .unwrap()
-            .retain(|path| {
-                path.partial_alternative_index_paths.is_empty()
-                    && path.partial_index_paths.is_empty()
-                    && path.index_info().is_some_and(|index| index.ptr_eq(&first_index))
+            .retain(|path| match path {
+                tidb_planner_core_operator_logicalop::data_source::PossibleAccessPath::Shared(position) => all
+                    [*position]
+                    .index_info()
+                    .is_some_and(|index| index.ptr_eq(&first_index)),
+                tidb_planner_core_operator_logicalop::data_source::PossibleAccessPath::IndexMerge(_) => false,
             });
         let before_survivor = allocator.current();
         let mut survivor_context = DispatchContext::new(&allocator, &coster, 1.0)

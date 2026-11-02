@@ -124,7 +124,11 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
   - [ ] 2c: the rest of `FilledIndexPath`'s fields (the detached ranges and
     conditions, the filters, `CountAfterIndex`) and `FilledTablePath`
     (`common_columns` = the table path's `IdxCols`, the ranges, the counts)
-    flatten into Go's (`IdxCols`,
+    flatten. Next design (tried 2026-11-02, 43 sites): `fill_index_path`
+    returns a filled `AccessPath` (Go `fillIndexPath` fills `*AccessPath`)
+    instead of a `FilledIndexPath`, so `IndexFilters`, `TableFilters` (one
+    field with the merges' `TableFilters`) and `CountAfterIndex` live on the
+    path and each caller adopts the returned path rather than copying fields into Go's (`IdxCols`,
     `Ranges`, `AccessConds`, `IndexFilters`, `TableFilters`,
     `CountAfterIndex`), and `declared_columns` / `row_estimate` take Go's
     names.
@@ -154,9 +158,10 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
   `PossibleAccessPaths` after derivation (`possible_access_paths`, None until
   derived) beside `all_possible_access_paths`; derivation returns
   `generateIndexMergePath`'s `maxRowCount` for the caller to cap the rows.
-  The two lists are still clones where Go shares one set of pointers;
-  readers of grown state go to the live `all_possible_access_paths` entry
-  (`path_by_index_id`).
+  2026-11-02: the lists share paths as Go's pointers do --
+  `possible_access_paths` entries are `PossibleAccessPath::Shared(position)`
+  into `all_possible_access_paths` or an `IndexMerge` path, resolved by
+  `DataSource::possible_paths`.
 - [ ] 4. Consumers moved.
 - [ ] 5. Old types deleted.
 

@@ -93,6 +93,17 @@ pub struct DataSourceIndexHint {
     pub restored: String,
 }
 
+/// One entry of Go's `PossibleAccessPaths` after derivation. Go's list holds
+/// pointers: an ordinary path is the same object `AllPossibleAccessPaths`
+/// holds, an index-merge path one only this list holds.
+#[derive(Clone, Debug)]
+pub enum PossibleAccessPath {
+    /// The `AllPossibleAccessPaths` entry at this position.
+    Shared(usize),
+    /// An index-merge path `generateIndexMergePath` added.
+    IndexMerge(tidb_planner_util::path::AccessPath),
+}
+
 /// Go `logicalop.DataSource` (`logical_datasource.go:58`).
 #[derive(Clone, Debug, Default)]
 pub struct DataSource {
@@ -194,8 +205,9 @@ pub struct DataSource {
     pub table_stats: Option<StatsInfo>,
     /// Go `PossibleAccessPaths` after statistics derivation: the grown paths
     /// plus the index-merge paths `generateIndexMergePath` adds, which
-    /// physical search consumes. None until derived.
-    pub possible_access_paths: Option<Vec<tidb_planner_util::path::AccessPath>>,
+    /// physical search consumes; read through
+    /// [`Self::possible_paths`]. None until derived.
+    pub possible_access_paths: Option<Vec<PossibleAccessPath>>,
     /// Go `StatisticTable`: the table's statistics `initStats` attached, if
     /// any (None is Go's pseudo table).
     pub statistic_table: Option<std::sync::Arc<tidb_stats::Table>>,
@@ -520,6 +532,23 @@ impl DataSource {
             .unwrap_or_default();
         update(&mut info);
         self.table_info = Some(tidb_model::GoShared::new(info));
+    }
+
+    /// Go `PossibleAccessPaths` after derivation, each entry the live path:
+    /// an ordinary one is the very `AllPossibleAccessPaths` entry, as Go's
+    /// two lists share pointers. None until derived.
+    #[must_use]
+    pub fn possible_paths(&self) -> Option<Vec<&tidb_planner_util::path::AccessPath>> {
+        let paths = self.possible_access_paths.as_ref()?;
+        Some(
+            paths
+                .iter()
+                .map(|path| match path {
+                    PossibleAccessPath::Shared(position) => &self.all_possible_access_paths[*position],
+                    PossibleAccessPath::IndexMerge(path) => path,
+                })
+                .collect(),
+        )
     }
 
     /// Go `ds.TableInfo.Indices`.

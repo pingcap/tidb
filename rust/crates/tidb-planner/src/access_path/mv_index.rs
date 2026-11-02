@@ -840,7 +840,7 @@ pub(crate) fn generate_and_index_merge_4_composed_index(
 /// IndexMerge path, every path not reading it is dropped.
 pub(crate) fn clean_access_path_for_mv_index_hint(
     ds: &DataSource,
-    paths: &mut Vec<AccessPath>,
+    paths: &mut Vec<tidb_planner_core_operator_logicalop::data_source::PossibleAccessPath>,
 ) {
     let forced: std::collections::BTreeSet<i64> = ds
         .all_possible_access_paths
@@ -853,10 +853,14 @@ pub(crate) fn clean_access_path_for_mv_index_hint(
     if forced.is_empty() {
         return;
     }
-    let reads_forced = |path: &AccessPath| {
-        path.partial_index_paths
-            .iter()
-            .any(|partial| partial.index.as_ref().is_some_and(|index| forced.contains(&index.read().id)))
+    let reads_forced = |path: &tidb_planner_core_operator_logicalop::data_source::PossibleAccessPath| {
+        matches!(
+            path,
+            tidb_planner_core_operator_logicalop::data_source::PossibleAccessPath::IndexMerge(path)
+                if path.partial_index_paths.iter().any(|partial| {
+                    partial.index.as_ref().is_some_and(|index| forced.contains(&index.read().id))
+                })
+        )
     };
     if paths.iter().any(reads_forced) {
         paths.retain(reads_forced);

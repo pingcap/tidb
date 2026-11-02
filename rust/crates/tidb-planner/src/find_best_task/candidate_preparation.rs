@@ -322,8 +322,8 @@ pub(super) fn prepare_access_paths<'a>(
             .as_ref()
             .is_some_and(|paths| paths.heuristic_selected)
     {
-        if let Some(paths) = &ds.possible_access_paths {
-            for (position, path) in paths.iter().enumerate() {
+        if let Some(paths) = ds.possible_paths() {
+            for (position, path) in paths.into_iter().enumerate() {
                 if !path.partial_alternative_index_paths.is_empty() {
                     if let Some(path) =
                         super::index_merge_union::converge_union_index_merge_path(

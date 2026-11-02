@@ -19,6 +19,7 @@
 //! generic Rust candidate cannot silently become an index scan.
 
 use tidb_planner_util::path::{IndexLookUpPushDownByType, AccessPath};
+use tidb_planner_core_operator_logicalop::data_source::PossibleAccessPath;
 use tidb_sessionctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
 
 pub(crate) mod index_merge;
@@ -103,7 +104,7 @@ pub(crate) fn derive_access_paths(
     no_index_merge_hint: bool,
     prefix_single_scan: bool,
     use_plan_cache: bool,
-) -> Result<(Vec<AccessPath>, Option<f64>, Option<String>), tidb_planner_core_base::PlanError> {
+) -> Result<(Vec<PossibleAccessPath>, Option<f64>, Option<String>), tidb_planner_core_base::PlanError> {
     // Go `deriveTablePathStats` over the TiKV table path.
     if let Some(position) = source.all_possible_access_paths.iter().position(|path| path.is_tikv_table_path()) {
         let filled = ordinary::fill_table_path(
@@ -115,10 +116,10 @@ pub(crate) fn derive_access_paths(
     }
     let table_path = source.filled_table_path().cloned();
     ordinary::fill_ordinary_index_paths(source, context, prefix_single_scan)?;
-    let mut paths = source
-        .all_possible_access_paths
-        .iter()
-        .cloned()
+    // Go's `PossibleAccessPaths` holds the same path pointers as
+    // `AllPossibleAccessPaths` until the index-merge paths join it.
+    let mut paths = (0..source.all_possible_access_paths.len())
+        .map(PossibleAccessPath::Shared)
         .collect::<Vec<_>>();
     let mut min_selectivity = source
         .table_stats
@@ -290,7 +291,7 @@ pub(crate) fn derive_access_paths(
         if merges.is_empty() && index_merge_warning.is_none() {
             index_merge_warning = Some("IndexMerge is inapplicable");
         }
-        paths.extend(merges);
+        paths.extend(merges.into_iter().map(PossibleAccessPath::IndexMerge));
         // Go `cleanAccessPathForMVIndexHint`.
         mv_index::clean_access_path_for_mv_index_hint(source, &mut paths);
     }

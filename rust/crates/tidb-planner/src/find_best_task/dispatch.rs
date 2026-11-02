@@ -3034,11 +3034,11 @@ fn find_best_task_4_logical_data_source_paths(
     // (`matchProperty:1082`), the basic prefix arm for an index
     // (`matchProperty:1095`) — and the admitted scan carries
     // `KeepOrder`/`Desc` (`convertToTableScan:2834`).
-    let mut ordinary_paths = ds.possible_access_paths.as_ref().map_or_else(
+    let mut ordinary_paths = ds.possible_paths().map_or_else(
         || ds.all_possible_access_paths.iter().collect::<Vec<_>>(),
         |paths| {
             paths
-                .iter()
+                .into_iter()
                 .filter(|path| {
                     path.partial_index_paths.is_empty()
                         && path.partial_alternative_index_paths.is_empty()
@@ -3052,7 +3052,8 @@ fn find_best_task_4_logical_data_source_paths(
     let merge_candidates = preparation.merges;
     let merge_positions = preparation.merge_positions;
     let preparation = preparation.ordinary;
-    if let (Some(prepared_paths), Some(derived)) = (&preparation, &ds.possible_access_paths) {
+    let derived = ds.possible_paths();
+    if let (Some(prepared_paths), Some(derived)) = (&preparation, &derived) {
         if prepared_paths.heuristic_selected {
             if let (Some(path), Some(sink)) = (prepared_paths.paths.first(), ctx.mpp_warning_sink)
             {
@@ -4893,7 +4894,7 @@ fn heuristic_selection_note(
 /// order of `PossibleAccessPaths`, when pruning removed any.
 fn pruning_info_message(
     ds: &tidb_planner_core_operator_logicalop::DataSource,
-    derived: &[tidb_planner_util::path::AccessPath],
+    derived: &[&tidb_planner_util::path::AccessPath],
     ordinary: &[&tidb_planner_util::path::AccessPath],
     merges: &[super::candidate_preparation::PreparedMerge<'_>],
     merge_positions: &[usize],
@@ -4916,7 +4917,7 @@ fn pruning_info_message(
     let mut names = Vec::new();
     for (position, path) in derived.iter().enumerate() {
         if path.partial_index_paths.is_empty() && path.partial_alternative_index_paths.is_empty() {
-            if ordinary.iter().any(|kept| std::ptr::eq(*kept, path)) {
+            if ordinary.iter().any(|kept| std::ptr::eq(*kept, *path)) {
                 names.push(path_name(path));
             }
         } else {
