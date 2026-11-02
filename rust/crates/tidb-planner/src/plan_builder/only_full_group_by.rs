@@ -538,7 +538,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .any(|map| map.get(&index).is_some_and(|other| pinned.contains(other)))
         };
 
-        for index in &table.indexes {
+        for index in &table.table_indices() {
             if !index.read().unique {
                 continue;
             }

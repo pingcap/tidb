@@ -203,7 +203,7 @@ fn static_global_index_point_lookup(
         return false;
     }
 
-    table.indexes.iter().any(|index| {
+    table.table_indices().iter().any(|index| {
         let index = index.read();
         if !index.global
             || !index.unique

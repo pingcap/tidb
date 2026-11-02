@@ -92,16 +92,7 @@ fn catalog() -> TestCatalog {
     let mut catalog = TestCatalog {
         current_database: "test".to_owned(),
         tables: vec![SourceTable {
-            table_id: 100,
-            table_name: "t".to_owned(),
-            db_name: "test".to_owned(),
-            physical_table_id: 100,
-            columns: vec![
-                column(0, "a", true),
-                column(1, "b", false),
-                column(2, "c", false),
-            ],
-            indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 1,
                 name: tidb_ast::CiString::new("idx_b"),
                 columns: vec![tidb_model::IndexColumn {
@@ -112,7 +103,16 @@ fn catalog() -> TestCatalog {
                 }].into(),
                 state: tidb_model::SchemaState::PUBLIC,
                 ..tidb_model::IndexInfo::default()
-            })],
+            })]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
+            table_id: 100,
+            table_name: "t".to_owned(),
+            db_name: "test".to_owned(),
+            physical_table_id: 100,
+            columns: vec![
+                column(0, "a", true),
+                column(1, "b", false),
+                column(2, "c", false),
+            ],
             pk_is_handle: true,
             handle_col_offsets: vec![0],
             ..SourceTable::default()
@@ -226,7 +226,7 @@ fn extract_fd_source_projection_and_aggregation_cases() {
     assert!(grouped_fd.group_by_cols().has(2));
 
     let harness = Harness::new();
-    harness.catalog.tables[0].indexes[0].write().unique = true;
+    harness.catalog.tables[0].table_indices()[0].write().unique = true;
     let mut builder = harness.builder();
     let (filtered, _) = builder
         .build_select(&parse_select("SELECT a, c FROM t WHERE b = 1"))
@@ -246,7 +246,7 @@ fn find<'a>(plan: &'a LogicalPlan, tp: &str) -> Option<&'a LogicalPlan> {
 #[test]
 fn possible_properties_use_equalities_above_the_data_source() {
     let mut harness = Harness::new();
-    harness.catalog.tables[0].indexes.push(tidb_model::GoShared::new(tidb_model::IndexInfo {
+    { let mut indexes = harness.catalog.tables[0].table_indices(); indexes.push(tidb_model::GoShared::new(tidb_model::IndexInfo {
         id: 2,
         name: tidb_ast::CiString::new("idx_bc"),
         columns: vec![
@@ -265,7 +265,7 @@ fn possible_properties_use_equalities_above_the_data_source() {
         ].into(),
         state: tidb_model::SchemaState::PUBLIC,
         ..tidb_model::IndexInfo::default()
-    }));
+    })); harness.catalog.tables[0].set_table_indices(indexes); }
     let mut builder = harness.builder();
     let (plan, _) = builder
         .build_select(&parse_select(
@@ -1253,7 +1253,7 @@ fn single_table_delete_prunes_the_read_to_the_handle_and_index_columns() {
         (None, Some(3))
     );
     let partial = Harness::new();
-    partial.catalog.tables[0].indexes[0].write().condition_expr_string = "`c` > 0".to_owned();
+    partial.catalog.tables[0].table_indices()[0].write().condition_expr_string = "`c` > 0".to_owned();
     assert_eq!(
         build_delete(&partial, "SELECT * FROM t", false),
         (None, Some(3))

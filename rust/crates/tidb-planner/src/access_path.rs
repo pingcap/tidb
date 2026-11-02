@@ -360,8 +360,8 @@ pub fn get_possible_access_paths(
     // through the implicit `_tidb_rowid`. `handle_is_int()` would misread
     // that case — the first version of this port did, and the test caught it.
     let is_common_handle = table.is_common_handle;
-    let mut paths = Vec::with_capacity(table.indexes.len() + 1);
-    let primary_index = table.indexes.iter().find(|index| index.read().primary).cloned();
+    let mut paths = Vec::with_capacity(table.table_indices().len() + 1);
+    let primary_index = table.table_indices().iter().find(|index| index.read().primary).cloned();
     paths.push(AccessPath::table_path(
         tidb_kv::store_type::StoreType::TiKv,
         is_common_handle,
@@ -378,7 +378,7 @@ pub fn get_possible_access_paths(
     let mut check_latest_schema =
         (is_for_update_read || !repeatable_read) && connection_id.is_some_and(|id| id > 0);
     let mut latest_indexes = None;
-    for index in &table.indexes {
+    for index in &table.table_indices() {
         if !index.read().is_public() {
             continue;
         }
@@ -789,10 +789,9 @@ mod enumeration_tests {
     }
 
     fn table(indexes: Vec<tidb_model::GoShared<tidb_model::IndexInfo>>) -> SourceTable {
-        SourceTable {
-            indexes,
-            ..SourceTable::default()
-        }
+        let mut table = SourceTable::default();
+        table.set_table_indices(indexes);
+        table
     }
 
     fn get_possible_access_paths(
@@ -891,7 +890,7 @@ mod enumeration_tests {
             paths,
             vec![
                 AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
-                tidb_planner_util::path::AccessPath::index_path(source.indexes[1].clone()),
+                tidb_planner_util::path::AccessPath::index_path(source.table_indices()[1].clone()),
             ]
         );
     }
@@ -906,7 +905,7 @@ mod enumeration_tests {
         source.table_id = 42;
         let latest = LatestIndexSchema {
             schema_meta_version: 8,
-            table_indexes: BTreeMap::from([(42, vec![source.indexes[0].clone()])]),
+            table_indexes: BTreeMap::from([(42, vec![source.table_indices()[0].clone()])]),
         };
         let hypo = index("hypo");
         hypo.write().id = -1;
@@ -926,11 +925,11 @@ mod enumeration_tests {
             vec![
                 AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
                 AccessPath::table_path(tidb_kv::store_type::StoreType::TiFlash, false, None),
-                tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
+                tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone()),
                 tidb_planner_util::path::AccessPath::index_path(hypo),
             ]
         );
-        assert_eq!(source.indexes.len(), 1);
+        assert_eq!(source.table_indices().len(), 1);
     }
 
     #[test]

@@ -3200,7 +3200,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         // `:5102` "Try to substitute generate column only if there is an index
         // on generate column."
-        if table.indexes.iter().any(|index| {
+        if table.table_indices().iter().any(|index| {
             index.read().is_public()
                 && index.read().columns.iter_deref().any(|index_column| {
                     table

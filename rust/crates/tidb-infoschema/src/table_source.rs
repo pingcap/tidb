@@ -116,8 +116,6 @@ pub struct SourceTable {
     pub partition_definition_ids: Vec<i64>,
     /// Go `TableInfo.Columns`, in offset order.
     pub columns: Vec<SourceColumn>,
-    /// Go `TableInfo.Indices`, in declaration order.
-    pub indexes: Vec<tidb_model::GoShared<tidb_model::IndexInfo>>,
     /// Go `TableInfo.PKIsHandle`.
     pub pk_is_handle: bool,
     /// Go `TableInfo.IsCommonHandle`.
@@ -148,6 +146,27 @@ pub struct SourceTable {
 }
 
 impl SourceTable {
+    /// Go `TableInfo.Indices`, in declaration order.
+    #[must_use]
+    pub fn table_indices(&self) -> Vec<GoShared<tidb_model::IndexInfo>> {
+        self.table_info
+            .as_ref()
+            .map(|info| info.read().indices.iter_deref().collect())
+            .unwrap_or_default()
+    }
+
+    /// Points `TableInfo` at a copy whose `Indices` are `indexes`; the shared
+    /// `TableInfo` is never written through.
+    pub fn set_table_indices(&mut self, indexes: Vec<GoShared<tidb_model::IndexInfo>>) {
+        let mut info = self
+            .table_info
+            .as_ref()
+            .map(|info| info.read().clone())
+            .unwrap_or_default();
+        info.indices = GoSharedPointerSlice::from_handles(indexes.into_iter().map(Some).collect());
+        self.table_info = Some(GoShared::new(info));
+    }
+
     /// Whether the table has an available TiFlash replica, the one Go
     /// `getPossibleAccessPaths` generates a TiFlash path for.
     #[must_use]
@@ -176,12 +195,17 @@ impl SourceTable {
             .iter()
             .map(|column| Some(column.info.clone()))
             .collect();
-        let indices = self.indexes.iter().cloned().map(Some).collect();
+        // Indices a caller already set (`set_table_indices`) stay.
+        let indices = self
+            .table_info
+            .as_ref()
+            .map(|info| info.read().indices.clone())
+            .unwrap_or_default();
         self.table_info = Some(GoShared::new(TableInfo {
             id: self.table_id,
             name: tidb_ast::CiString::new(self.table_name.clone()),
             columns: GoSharedPointerSlice::from_handles(columns),
-            indices: GoSharedPointerSlice::from_handles(indices),
+            indices,
             state: SchemaState::PUBLIC,
             pk_is_handle: self.pk_is_handle,
             is_common_handle: self.is_common_handle,

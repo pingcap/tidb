@@ -161,7 +161,7 @@ fn mark_cluster_table(
     table.handle_col_offsets = vec![offset];
     table.common_handle_col_offsets = vec![offset];
     table.common_handle_lens = vec![tidb_datatype::UNSPECIFIED_LENGTH];
-    table.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+    let primary = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
         name: tidb_ast::CiString::new("primary"),
         table: tidb_ast::CiString::new(table.table_name.clone()),
         columns: vec![tidb_model::IndexColumn {
@@ -176,6 +176,7 @@ fn mark_cluster_table(
         primary: true,
         ..tidb_model::IndexInfo::default()
     })];
+    table.set_table_indices(primary);
 }
 
 pub fn is_virtual_schema_table(database: &str, name: &str) -> bool {
@@ -633,7 +634,6 @@ fn kv_source_table(
             .map(|pi| pi.read().definitions.map_visible(|definition| definition.id))
             .unwrap_or_default(),
         columns,
-        indexes,
         pk_is_handle: info.pk_is_handle,
         is_common_handle: info.is_common_handle,
         common_handle_version: info.common_handle_version,

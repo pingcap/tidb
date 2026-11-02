@@ -73,7 +73,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             || table.columns.iter().any(|column| column.read().hidden)
             || table.columns.iter().any(|column| column.read().is_generated())
             || table
-                .indexes
+                .table_indices()
                 .iter()
                 .any(|index| !index.read().condition_expr_string.is_empty())
         {
@@ -88,7 +88,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         for offset in &table.common_handle_col_offsets {
             keep[*offset] = true;
         }
-        for index in &table.indexes {
+        for index in &table.table_indices() {
             for column in index.read().columns.iter_deref() {
                 keep[column.read().offset as usize] = true;
             }
@@ -197,7 +197,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 || table.columns.iter().any(|column| column.read().hidden)
                 || table.columns.iter().any(|column| column.read().is_generated())
                 || table
-                    .indexes
+                    .table_indices()
                     .iter()
                     .any(|index| !index.read().condition_expr_string.is_empty());
             let mut needed = vec![false; table.columns.len()];
@@ -209,7 +209,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             for offset in &table.common_handle_col_offsets {
                 needed[*offset] = true;
             }
-            for index in &table.indexes {
+            for index in &table.table_indices() {
                 for column in index.read().columns.iter_deref() {
                     needed[column.read().offset as usize] = true;
                 }

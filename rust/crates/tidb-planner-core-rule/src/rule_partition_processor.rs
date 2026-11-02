@@ -101,8 +101,8 @@ pub fn resolve_index_hints_for_partition(
                 .any(|partition| partition == partition_name)
     });
     let table = tidb_infoschema::table_source::SourceTable {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((source.table_indices()).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
         table_name: source.table_name.clone(),
-        indexes: source.table_indices(),
         pk_is_handle: source.pk_is_handle,
         is_common_handle: source.is_common_handle,
         common_handle_version: source.common_handle_version,

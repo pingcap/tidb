@@ -100,12 +100,7 @@ fn catalog() -> TestCatalog {
         current_database: "test".to_owned(),
         tables: vec![
             SourceTable {
-                table_id: 100,
-                table_name: "t".to_owned(),
-                db_name: "test".to_owned(),
-                physical_table_id: 100,
-                columns: vec![column(0, "a", true), column(1, "b", false)],
-                indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("idx_b"),
                     columns: vec![tidb_model::IndexColumn {
@@ -116,7 +111,12 @@ fn catalog() -> TestCatalog {
                     }].into(),
                     state: tidb_model::SchemaState::PUBLIC,
                     ..tidb_model::IndexInfo::default()
-                })],
+                })]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
+                table_id: 100,
+                table_name: "t".to_owned(),
+                db_name: "test".to_owned(),
+                physical_table_id: 100,
+                columns: vec![column(0, "a", true), column(1, "b", false)],
                 pk_is_handle: true,
                 handle_col_offsets: vec![0],
                 ..SourceTable::default()
@@ -758,7 +758,7 @@ fn test_dynamic_partition_pruning_retains_global_index_paths() {
     let table = &mut harness.tables_mut()[0];
     table.is_partitioned = true;
     table.partition_definition_names = vec!["p0".to_owned(), "p1".to_owned()];
-    table.indexes[0].write().global = true;
+    table.table_indices()[0].write().global = true;
 
     let mut builder = harness.builder();
     builder.set_partition_processor_enabled(false);
@@ -1156,8 +1156,8 @@ fn test_lookup_pushdown_rejects_go_unsupported_index_metadata() {
         (false, true, "multi-valued index is not supported"),
     ] {
         let mut harness = Harness::new();
-        harness.tables_mut()[0].indexes[0].write().global = global;
-        harness.tables_mut()[0].indexes[0].write().mv_index = multi_valued;
+        harness.tables_mut()[0].table_indices()[0].write().global = global;
+        harness.tables_mut()[0].table_indices()[0].write().mv_index = multi_valued;
         let warnings = WarningColumns::default();
         let mut builder = PlanBuilder::new(
             &harness.catalog,
@@ -1236,7 +1236,7 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
             "common handle table with old encoding version is not supported",
         ),
         (
-            |table, _| table.indexes[0].write().global = true,
+            |table, _| table.table_indices()[0].write().global = true,
             "the global index in partition table is not supported",
         ),
         (
@@ -1248,7 +1248,7 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
             "cached table is not supported",
         ),
         (
-            |table, _| table.indexes[0].write().mv_index = true,
+            |table, _| table.table_indices()[0].write().mv_index = true,
             "multi-valued index is not supported",
         ),
         (

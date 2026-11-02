@@ -525,7 +525,6 @@ fn source_table(table: GoShared<TableInfo>) -> SourceTable {
             }
         })
         .collect();
-    let indexes = info.indices.iter_deref().collect();
     let (partition_definition_names, partition_definition_ids) = info
         .partition
         .as_ref()
@@ -564,7 +563,6 @@ fn source_table(table: GoShared<TableInfo>) -> SourceTable {
         partition_definition_names,
         partition_definition_ids,
         columns,
-        indexes,
         pk_is_handle: info.pk_is_handle,
         handle_col_offsets,
         ..SourceTable::default()
