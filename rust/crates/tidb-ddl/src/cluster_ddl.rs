@@ -5248,7 +5248,6 @@ fn dispatch_persisted_action(
                 txn,
                 catalog,
                 active,
-                start_ts,
                 reorg_outcome,
                 row_ids,
             )
@@ -6861,7 +6860,7 @@ fn plan_cancel_persisted_ddl_job(
             return partition::rollingback_add_table_partition(txn, catalog, active, start_ts);
         }
         ActionType::ACTION_EXCHANGE_TABLE_PARTITION => {
-            return exchange_partition::rollingback_exchange_table_partition(txn, catalog, active, start_ts);
+            return exchange_partition::rollingback_exchange_table_partition(txn, catalog, active);
         }
         ActionType::ACTION_REORGANIZE_PARTITION
         | ActionType::ACTION_ALTER_TABLE_PARTITIONING

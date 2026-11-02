@@ -688,8 +688,21 @@ pub(super) fn table_step_with_diff(
     } else {
         (0, SchemaDiff::default())
     };
+    // Go `updateTable`'s `needUpdateTs`: a public table's `UpdateTS` moves,
+    // except under the jobs that keep the table's identity in place.
+    let need_update_ts = info.state == SchemaState::PUBLIC
+        && !matches!(
+            active.job.type_,
+            ActionType::ACTION_TRUNCATE_TABLE
+                | ActionType::ACTION_TRUNCATE_TABLE_PARTITION
+                | ActionType::ACTION_RENAME_TABLE
+                | ActionType::ACTION_RENAME_TABLES
+                | ActionType::ACTION_EXCHANGE_TABLE_PARTITION
+        );
     let mut info = info.clone_like_go();
-    info.update_ts = start_ts;
+    if need_update_ts {
+        info.update_ts = start_ts;
+    }
     meta.update_table(database_id, &mut info)
         .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
     // The step's meta writes are its transaction's.
@@ -1036,7 +1049,7 @@ fn plan_write_reorganization(
                 // Go `runReorgJobAndHandleErr` turns a non-retryable failure
                 // into a rollback.
                 let (write, error) =
-                    convert_add_index_to_rollback(txn, active, &mut info, &indexes, error)?;
+                    convert_add_index_to_rollback(txn, active, &mut info, &indexes, error, start_ts)?;
                 return Ok(PersistedDdlActionStep {
                     write,
                     update_raw_args: true,
@@ -1261,7 +1274,9 @@ fn convert_add_index_to_rollback(
     info: &mut TableInfo,
     indexes: &[GoShared<IndexInfo>],
     error: DdlPlanError,
+    start_ts: u64,
 ) -> Result<(DdlWrite, DdlPlanError), DdlPlanError> {
+    let original_state = indexes[0].read().state;
     let mut drop_args = tidb_model::ModifyIndexArgs {
         partition_ids: partition_ids(info).into(),
         op_type: tidb_model::IndexOp::ROLLBACK_ADD_INDEX,
@@ -1294,13 +1309,17 @@ fn convert_add_index_to_rollback(
         .fill_finished_args(Some(GoShared::new(drop_args)));
     active.job.schema_state = SchemaState::DELETE_ONLY;
     active.job.state = JobState::ROLLINGBACK;
+    // Go `updateVersionAndTableInfo(..., originalState != StateDeleteOnly)`.
     let database_id = active.job.schema_id;
-    let mut info = info.clone_like_go();
-    info.update_ts = 0;
-    let meta = txn.meta();
-    meta.update_table(database_id, &mut info)
-        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
-    Ok((job_only_write(active.job.id, Vec::new()), error))
+    let write = update_version_and_table_info(
+        txn,
+        active,
+        database_id,
+        info,
+        original_state != SchemaState::DELETE_ONLY,
+        start_ts,
+    )?;
+    Ok((write, error))
 }
 
 /// Go `onDropIndex` for a rolled-back ADD INDEX: delete-only ->
@@ -1526,7 +1545,7 @@ pub(super) fn rollingback_add_index(
         tidb_dbterror::ERR_CANCELLED_DDL_JOB
             .generate(tidb_errno::errname::ErrCancelledDDLJob.raw),
     );
-    let (write, error) = convert_add_index_to_rollback(txn, active, &mut info, &indexes, error)?;
+    let (write, error) = convert_add_index_to_rollback(txn, active, &mut info, &indexes, error, start_ts)?;
     Ok(PersistedDdlActionStep {
         write,
         update_raw_args: true,

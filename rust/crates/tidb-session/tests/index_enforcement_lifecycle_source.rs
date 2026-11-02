@@ -28,3 +28,19 @@ fn unique_index_enforcement_follows_add_and_drop() {
         .run("insert into t values (3, 5, 7)")
         .expect("the same row inserts once the index is gone");
 }
+
+/// Go `convertAddIdxJob2RollbackJob`: an ADD UNIQUE INDEX whose backfill
+/// meets a duplicate turns into a rollback under a version of its own
+/// (`updateVersionAndTableInfo`), so the failed statement publishes six
+/// versions -- delete-only, write-only, write-reorganization, the
+/// conversion, delete-reorganization, none -- as a TiDB does (59 -> 65 by
+/// `ADMIN SHOW DDL`).
+#[test]
+fn failed_add_unique_index_publishes_go_s_versions() {
+    let mut tk = crate::support::testkit::TestKit::new();
+    tk.must_exec("create table t (a int)");
+    tk.must_exec("insert into t values (1), (1)");
+    let before = tk.schema_version();
+    tk.must_get_err_code("alter table t add unique index i(a)", 1062);
+    assert_eq!(tk.schema_version() - before, 6);
+}

@@ -71,3 +71,29 @@ fn repartition_moves_rows_and_refuses_a_multi_schema_change() {
         assert_eq!(rows(&mut session, "SELECT a FROM t PARTITION (p0)"), "2");
     }
 }
+
+/// Go `updateTable`'s `needUpdateTs`: a TRUNCATE PARTITION (like TRUNCATE
+/// TABLE, RENAME and EXCHANGE PARTITION) leaves the table's `UpdateTS`,
+/// which `information_schema.tables.CREATE_TIME` shows, where it was; an
+/// ADD PARTITION moves it.
+#[test]
+fn truncate_partition_keeps_the_tables_update_ts() {
+    let mut session = Session::new();
+    session
+        .run(
+            "create table t (a int primary key) partition by range (a) \
+             (partition p0 values less than (10), partition p1 values less than (20))",
+        )
+        .unwrap();
+    let create_time = "select create_time from information_schema.tables \
+                       where table_schema = 'test' and table_name = 't'";
+    let created = crate::support::text_rows(&mut session, create_time);
+    // CREATE_TIME has second precision.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    session.run("alter table t truncate partition p1").unwrap();
+    assert_eq!(crate::support::text_rows(&mut session, create_time), created);
+    session
+        .run("alter table t add partition (partition p2 values less than (30))")
+        .unwrap();
+    assert_ne!(crate::support::text_rows(&mut session, create_time), created);
+}

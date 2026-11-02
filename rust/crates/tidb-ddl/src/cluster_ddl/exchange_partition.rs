@@ -233,7 +233,6 @@ fn exchange_step(
     args: &ExchangeArgs,
     standalone: &TableInfo,
     partitioned: Option<&TableInfo>,
-    start_ts: u64,
 ) -> Result<DdlWrite, DdlPlanError> {
     let meta = txn.meta();
     let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
@@ -244,12 +243,12 @@ fn exchange_step(
     };
     exchange_diff(active, args, partitioned.is_some(), &mut diff);
     let (schema_version, diff) = update_schema_version(&meta, active, diff)?;
+    // Go `updateTable` leaves `UpdateTS` alone under EXCHANGE PARTITION
+    // (`needUpdateTs`).
     let mut standalone = standalone.clone_like_go();
-    standalone.update_ts = start_ts;
     meta.update_table(active.job.schema_id, &mut standalone).map_err(meta_error)?;
     if let Some(partitioned) = partitioned {
         let mut partitioned = partitioned.clone_like_go();
-        partitioned.update_ts = start_ts;
         meta.update_table(args.pt_schema_id, &mut partitioned).map_err(meta_error)?;
     }
     let mut write = job_only_write(active.job.id, Vec::new());
@@ -263,7 +262,6 @@ pub(super) fn on_exchange_table_partition(
     txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
-    start_ts: u64,
     reorg_outcome: Option<&ReorgOutcome>,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -287,7 +285,7 @@ pub(super) fn on_exchange_table_partition(
     }
     let mut standalone = checked_job_table(catalog, active, true)?.read().clone_like_go();
     if active.job.is_rollingback() {
-        return rollback_exchange_table_partition(txn, catalog, active, &args, standalone, start_ts);
+        return rollback_exchange_table_partition(txn, catalog, active, &args, standalone);
     }
     let Some(partitioned) = stored_table_by_ids(catalog, args.pt_schema_id, args.pt_table_id)
     else {
@@ -382,7 +380,6 @@ pub(super) fn on_exchange_table_partition(
             &args,
             &standalone,
             constrained.then_some(&partitioned),
-            start_ts,
         )?;
         return Ok(action_step(write));
     }
@@ -501,7 +498,6 @@ pub(super) fn on_exchange_table_partition(
     };
     standalone.id = original_partition_id;
     standalone.exchange_partition_info = None;
-    partitioned.update_ts = start_ts;
     {
         // Go: `DropTableOrView` of the standalone table under its old id,
         // `UpdateTable` of the partitioned one, `CreateTableOrView` of the
@@ -563,7 +559,7 @@ pub(super) fn on_exchange_table_partition(
     label_rules.push(label_write, Some(LABEL_RULES_NOTIFY_ERROR))?;
     active.job.schema_state = SchemaState::PUBLIC;
     check_table_info_valid(&standalone)?;
-    let mut write = exchange_step(txn, active, &args, &standalone, None, start_ts)?;
+    let mut write = exchange_step(txn, active, &args, &standalone, None)?;
     if !tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string()) {
         append_schema_change_mutations(
             catalog,
@@ -599,7 +595,6 @@ fn rollback_exchange_table_partition(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &ExchangeArgs,
     mut standalone: TableInfo,
-    start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     standalone.exchange_partition_info = None;
     active.job.state = JobState::ROLLBACK_DONE;
@@ -629,7 +624,6 @@ fn rollback_exchange_table_partition(
         args,
         &standalone,
         partitioned.as_ref(),
-        start_ts,
     )?;
     Ok(action_step(write))
 }
@@ -639,14 +633,13 @@ pub(super) fn rollingback_exchange_table_partition(
     txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
-    start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     if active.job.schema_state == SchemaState::NONE {
         return Err(cancelled_ddl_job(active));
     }
     let (_, args) = exchange_args(active)?;
     let standalone = checked_job_table(catalog, active, true)?.read().clone_like_go();
-    rollback_exchange_table_partition(txn, catalog, active, &args, standalone, start_ts)
+    rollback_exchange_table_partition(txn, catalog, active, &args, standalone)
 }
 
 /// Go `partitionMaxValue`.

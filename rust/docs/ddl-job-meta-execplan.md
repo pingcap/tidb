@@ -101,9 +101,11 @@ Per step: `cargo test -p tidb-ddl` (lib and `tests/`), then the scratchpad
   plan; the port of Go's meta writers in `tidb_meta` was unused by the DDL
   owner.
 
-- (2026-11-02) Go's `updateTable` sets `UpdateTS` only for a public table
-  outside truncate / rename / exchange (`needUpdateTs`); Rust's helper sets
-  it always. Kept as is in step 3 (a behavior change of its own).
+- (2026-11-02) Fixed: Go's `updateTable` sets `UpdateTS` (what
+  `information_schema.tables.CREATE_TIME` shows) only for a public table
+  outside truncate / rename / exchange (`needUpdateTs`); Rust's helper set it
+  always and EXCHANGE PARTITION stamped both tables. Test
+  `truncate_partition_keeps_the_tables_update_ts`.
 
 - (2026-11-02) PARTITION BY / REMOVE PARTITIONING deleted the old table key
   as a raw mutation and then `UpdateTable`d the new id, which meta did not
@@ -116,8 +118,11 @@ Per step: `cargo test -p tidb-ddl` (lib and `tests/`), then the scratchpad
   mark the job non-revertible), so the revertible loop runs in a nested
   transaction that reaches the step only when every sub-job stepped,
   keeping `multi_schema_change_failed_alter_keeps_rebases_*` as it was.
-- (2026-11-02) Not yet Go: `convertAddIdxJob2RollbackJob` bumps the version
-  (`updateVersionAndTableInfo`) where Rust writes the table alone.
+- (2026-11-02) Fixed: `convertAddIdxJob2RollbackJob` publishes a version
+  (`updateVersionAndTableInfo`) where Rust wrote the table alone with
+  `UpdateTS` 0; a failed ADD UNIQUE INDEX now publishes Go's six versions
+  (oracle: `ADMIN SHOW DDL` 59 -> 65; test
+  `failed_add_unique_index_publishes_go_s_versions`, 5 before the fix).
 
 ## Decision Log
 
