@@ -129,11 +129,11 @@ pub fn cluster_session_catalog_with_templates(
         catalog.set_policy(policy.clone());
     }
     for database in &loaded.databases {
-        let schema = database.name.original().to_owned();
+        let schema = database.read().name.original().to_owned();
         // Go `Builder.createSchemaTablesForDB`: the schema holds its
         // `DBInfo` -- charset, collation, placement and all.
-        catalog.register_database_info(tidb_model::GoShared::new(database.clone()));
-        for table in database.deprecated_tables.iter_deref() {
+        catalog.register_database_info(database.clone());
+        for table in database.read().deprecated_tables.iter_deref() {
             let table = table.read();
             if table.is_view() {
                 let name = table.name.original();
@@ -153,7 +153,7 @@ pub fn cluster_session_catalog_with_templates(
                 // (`infoschema.loadSequence`); SHOW TABLES lists it and
                 // NEXTVAL/LASTVAL/SETVAL resolve against it. Skipping it here
                 // is what made `SELECT nextval(...)` answer 1146 on this tier.
-                match auto_ids.sequence_allocator_for(database.id, &table) {
+                match auto_ids.sequence_allocator_for(database.read().id, &table) {
                     Some(sequence) => catalog
                         .register_sequence_in(&schema, table.name.original(), sequence)
                         .expect("the schema was created just above this loop"),
@@ -165,7 +165,7 @@ pub fn cluster_session_catalog_with_templates(
                 continue;
             }
             let auto = AutoIdSource::In {
-                db_id: database.id,
+                db_id: database.read().id,
                 ids: auto_ids,
             };
             // A cached template clone carries neutral storage and valid
@@ -554,12 +554,12 @@ use tidb_table::table_from_meta::kv_index;
             resource_groups: Vec::new(),
             policies: Vec::new(),
             schema_version: 7,
-            databases: vec![DBInfo {
+            databases: vec![tidb_model::GoShared::new(DBInfo {
                 id: 5,
                 name: CiString::new("app"),
                 deprecated_tables: vec![table].into(),
                 ..DBInfo::default()
-            }],
+            })],
         }
     }
 
@@ -612,8 +612,8 @@ use tidb_table::table_from_meta::kv_index;
             state: SchemaState::PUBLIC,
             ..TableInfo::default()
         };
-        let mut catalog = one_table_catalog(public.clone());
-        catalog.databases[0].deprecated_tables = vec![
+        let catalog = one_table_catalog(public.clone());
+        catalog.databases[0].write().deprecated_tables = vec![
             public,
             TableInfo {
                 id: 402,

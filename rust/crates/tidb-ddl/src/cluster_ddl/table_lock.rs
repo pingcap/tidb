@@ -42,14 +42,14 @@ pub fn prepare_table_lock_job_submission<S: MetaSnapshot>(
                 let database = catalog
                     .databases
                     .iter()
-                    .find(|database| database.id == table.schema_id)?;
+                    .find(|database| database.read().id == table.schema_id)?;
                 let stored = database
-                    .deprecated_tables
+                    .read().deprecated_tables
                     .iter_deref()
                     .find(|stored| stored.read().id == table.table_id)?;
                 let stored = stored.read();
                 Some(tidb_model::InvolvingSchemaInfo {
-                    database: database.name.lowercase().to_owned().into(),
+                    database: database.read().name.lowercase().to_owned().into(),
                     table: stored.name.lowercase().to_owned().into(),
                     ..tidb_model::InvolvingSchemaInfo::default()
                 })

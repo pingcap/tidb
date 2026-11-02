@@ -32,27 +32,7 @@ use tidb_model::index::{IndexColumn, IndexInfo};
 use tidb_model::table::ViewInfo;
 use tidb_model::{GoAny, GoShared, SchemaState, TableInfo};
 
-/// Go `DBInfo.Deprecated.Tables` as the test fixtures read and edit it.
-trait DeprecatedTables {
-    fn tables(&self) -> Vec<tidb_model::table_info::TableInfo>;
-    fn with_tables<R>(&mut self, edit: impl FnOnce(&mut Vec<tidb_model::table_info::TableInfo>) -> R) -> R;
-}
-
-impl DeprecatedTables for tidb_model::db::DBInfo {
-    fn tables(&self) -> Vec<tidb_model::table_info::TableInfo> {
-        self.deprecated_tables
-            .iter_deref()
-            .map(|table| table.read().clone())
-            .collect()
-    }
-
-    fn with_tables<R>(&mut self, edit: impl FnOnce(&mut Vec<tidb_model::table_info::TableInfo>) -> R) -> R {
-        let mut tables = self.tables();
-        let result = edit(&mut tables);
-        self.deprecated_tables = tables.into();
-        result
-    }
-}
+use super::mock_seams::DeprecatedTables;
 
 
 /// A session on a node that publishes `catalog`, the tables its catalog
@@ -69,12 +49,12 @@ fn one_database(tables: Vec<TableInfo>) -> ClusterCatalog {
         resource_groups: Vec::new(),
         policies: Vec::new(),
         schema_version: 7,
-        databases: vec![DBInfo {
+        databases: vec![tidb_model::GoShared::new(DBInfo {
             id: 5,
             name: CiString::new("app"),
             deprecated_tables: tables.into(),
             ..DBInfo::default()
-        }],
+        })],
     }
 }
 
@@ -896,9 +876,9 @@ fn a_stored_database_charset_survives_the_load() {
         state: SchemaState::PUBLIC,
         ..TableInfo::default()
     };
-    let mut catalog_source = one_table_catalog(table);
-    catalog_source.databases[0].charset = "latin1".to_owned();
-    catalog_source.databases[0].collate = "latin1_bin".to_owned();
+    let catalog_source = one_table_catalog(table);
+    catalog_source.databases[0].write().charset = "latin1".to_owned();
+    catalog_source.databases[0].write().collate = "latin1_bin".to_owned();
     let (session, skipped, _node) = node_session(catalog_source);
     assert!(skipped.is_empty());
     let catalog = session.shared_catalog();

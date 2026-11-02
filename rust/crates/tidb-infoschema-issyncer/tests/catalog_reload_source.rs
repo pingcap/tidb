@@ -179,10 +179,10 @@ fn a_create_table_diff_adds_exactly_that_table() {
     };
     assert_eq!(applied, 1);
     assert_eq!(next.schema_version, 101);
-    assert_eq!(tables(&next.databases[0]).len(), 2);
+    assert_eq!(tables(&next.databases[0].read()).len(), 2);
     assert!(next.find_table("campaign", "notes").is_some());
     // The catalog the node was already serving is untouched.
-    assert_eq!(tables(&catalog.databases[0]).len(), 1);
+    assert_eq!(tables(&catalog.databases[0].read()).len(), 1);
 }
 
 #[test]
@@ -196,7 +196,7 @@ fn a_drop_table_diff_removes_exactly_that_table() {
         panic!("expected a published catalog, got {reloaded:?}");
     };
     assert_eq!(next.schema_version, 101);
-    assert!(tables(&next.databases[0]).is_empty());
+    assert!(tables(&next.databases[0].read()).is_empty());
     assert!(next.find_table("campaign", "rows").is_none());
 }
 
@@ -215,7 +215,7 @@ fn a_truncate_table_diff_swaps_the_old_table_id_for_the_new_one() {
 
     let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let next = reloaded.catalog().expect("published catalog");
-    assert_eq!(tables(&next.databases[0]).len(), 1);
+    assert_eq!(tables(&next.databases[0].read()).len(), 1);
     let (_, table) = next.find_table("campaign", "rows").expect("table survives");
     let table = table.read();
     assert_eq!(table.id, 90);
@@ -248,7 +248,7 @@ fn a_rename_table_diff_within_the_same_database_renames_in_place() {
         panic!("expected an incremental diff reload, got {reloaded:?}");
     };
     assert_eq!(applied, 1);
-    assert_eq!(tables(&next.databases[0]).len(), 1);
+    assert_eq!(tables(&next.databases[0].read()).len(), 1);
     assert!(next.find_table("campaign", "rows").is_none());
     let (_, table) = next
         .find_table("campaign", "entries")
@@ -293,15 +293,15 @@ fn a_rename_table_diff_across_databases_moves_the_table() {
     let campaign = next
         .databases
         .iter()
-        .find(|db| db.name.lowercase() == "campaign")
+        .find(|db| db.read().name.lowercase() == "campaign")
         .expect("campaign database");
     assert!(
-        tables(&campaign).is_empty(),
+        tables(&campaign.read()).is_empty(),
         "the old database keeps no stale copy"
     );
     let (db, table) = next.find_table("ledger", "rows").expect("moved table");
     let table = table.read();
-    assert_eq!(db.id, 4);
+    assert_eq!(db.read().id, 4);
     assert_eq!(table.id, 77);
 }
 
@@ -349,10 +349,10 @@ fn a_rename_tables_diff_moves_every_affected_table() {
     let campaign = next
         .databases
         .iter()
-        .find(|db| db.name.lowercase() == "campaign")
+        .find(|db| db.read().name.lowercase() == "campaign")
         .expect("campaign database");
     assert_eq!(
-        tables(&campaign).len(),
+        tables(&campaign.read()).len(),
         1,
         "only the renamed-in-place table stays"
     );
@@ -364,7 +364,7 @@ fn a_rename_tables_diff_moves_every_affected_table() {
     assert_eq!(entries.id, 77);
     let (notes_db, notes) = next.find_table("ledger", "notes").expect("moved table");
     let notes = notes.read();
-    assert_eq!(notes_db.id, 4);
+    assert_eq!(notes_db.read().id, 4);
     assert_eq!(notes.id, 78);
 }
 
@@ -440,7 +440,7 @@ fn create_and_drop_schema_diffs_add_and_remove_a_database() {
     assert!(created
         .databases
         .iter()
-        .any(|db| db.name.lowercase() == "ledger"));
+        .any(|db| db.read().name.lowercase() == "ledger"));
 
     snapshot.remove(&key::database_kv_key(4));
     snapshot.commit_diff(102, &diff_json(102, ActionType::ACTION_DROP_SCHEMA, 4, 0));
@@ -448,7 +448,7 @@ fn create_and_drop_schema_diffs_add_and_remove_a_database() {
     let dropped = dropped.catalog().expect("published catalog");
     assert_eq!(dropped.schema_version, 102);
     assert_eq!(dropped.databases.len(), catalog.databases.len());
-    assert!(dropped.databases.iter().all(|db| db.id != 4));
+    assert!(dropped.databases.iter().all(|db| db.read().id != 4));
 }
 
 #[test]
@@ -466,7 +466,7 @@ fn a_create_tables_diff_adds_every_affected_table() {
 
     let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let next = reloaded.catalog().expect("published catalog");
-    assert_eq!(tables(&next.databases[0]).len(), 3);
+    assert_eq!(tables(&next.databases[0].read()).len(), 3);
     assert!(next.find_table("campaign", "notes").is_some());
     assert!(next.find_table("campaign", "tags").is_some());
 }
@@ -826,7 +826,7 @@ fn a_schema_level_diff_in_the_default_tier_touches_no_table() {
         "modify schema read only",
     );
     assert_eq!(next.schema_version, 101);
-    assert_eq!(tables(&next.databases[0]).len(), 1);
+    assert_eq!(tables(&next.databases[0].read()).len(), 1);
 }
 
 /// Go `getTableIDs`'s drop case: a table whose stored copy is still in a
@@ -857,7 +857,7 @@ fn a_drop_table_diff_keeps_a_table_the_store_still_holds_in_a_non_none_state() {
         reload_cluster_catalog(&mut snapshot, &kept, None).expect("reload runs"),
         "final drop step",
     );
-    assert!(tables(&gone.databases[0]).is_empty());
+    assert!(tables(&gone.databases[0].read()).is_empty());
 }
 
 /// `DROP VIEW` and `DROP SEQUENCE` share `getTableIDs`'s drop case.
@@ -874,7 +874,7 @@ fn drop_view_and_drop_sequence_diffs_drop_like_drop_table() {
             reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
             "drop view/sequence",
         );
-        assert!(tables(&next.databases[0]).is_empty(), "{action}");
+        assert!(tables(&next.databases[0].read()).is_empty(), "{action}");
     }
 }
 
@@ -896,8 +896,8 @@ fn a_create_or_replace_view_diff_drops_the_old_view_id() {
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "create or replace view",
     );
-    assert_eq!(tables(&next.databases[0]).len(), 1);
-    assert_eq!(tables(&next.databases[0])[0].id, 90);
+    assert_eq!(tables(&next.databases[0].read()).len(), 1);
+    assert_eq!(tables(&next.databases[0].read())[0].id, 90);
 }
 
 /// `RECOVER TABLE` and `CREATE SEQUENCE` only add (`getTableIDs`'s first case).
@@ -913,7 +913,7 @@ fn recover_table_and_create_sequence_diffs_add_the_table() {
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "recover table",
     );
-    assert_eq!(tables(&next.databases[0]).len(), 2);
+    assert_eq!(tables(&next.databases[0].read()).len(), 2);
 
     snapshot.put(key::table_kv_key(3, 79), go_table(79, "Seq", "seq"));
     snapshot.commit_diff(
@@ -924,7 +924,7 @@ fn recover_table_and_create_sequence_diffs_add_the_table() {
         reload_cluster_catalog(&mut snapshot, &next, None).expect("reload runs"),
         "create sequence",
     );
-    assert_eq!(tables(&next.databases[0]).len(), 3);
+    assert_eq!(tables(&next.databases[0].read()).len(), 3);
 }
 
 /// Go `applyRecoverSchema`: the database comes back with the tables the
@@ -991,9 +991,9 @@ fn a_modify_schema_charset_diff_copies_the_fresh_fields_onto_the_loaded_database
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "modify schema charset",
     );
-    assert_eq!(next.databases[0].charset, "latin1");
-    assert_eq!(next.databases[0].collate, "latin1_bin");
-    assert_eq!(tables(&next.databases[0]).len(), 1);
+    assert_eq!(next.databases[0].read().charset, "latin1");
+    assert_eq!(next.databases[0].read().collate, "latin1_bin");
+    assert_eq!(tables(&next.databases[0].read()).len(), 1);
 }
 
 /// Placement-policy and masking-policy diffs touch maps this catalog does
@@ -1013,7 +1013,7 @@ fn policy_diffs_change_nothing_and_stay_incremental() {
         );
         assert_eq!(next.schema_version, 101, "{action}");
         assert_eq!(next.databases.len(), catalog.databases.len(), "{action}");
-        assert_eq!(tables(&next.databases[0]).len(), 1, "{action}");
+        assert_eq!(tables(&next.databases[0].read()).len(), 1, "{action}");
     }
 }
 
@@ -1075,7 +1075,7 @@ fn an_exchange_partition_diff_reloads_the_normal_and_the_partitioned_table() {
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "exchange partition",
     );
-    let mut ids: Vec<i64> = next.databases[0].deprecated_tables.iter_deref().map(|t| t.read().id).collect();
+    let mut ids: Vec<i64> = next.databases[0].read().deprecated_tables.iter_deref().map(|t| t.read().id).collect();
     ids.sort_unstable();
     assert_eq!(ids, vec![90, 95]);
 }
@@ -1102,7 +1102,7 @@ fn refresh_meta_diffs_follow_the_store() {
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "refresh meta drop",
     );
-    assert!(tables(&next.databases[0]).is_empty());
+    assert!(tables(&next.databases[0].read()).is_empty());
 
     snapshot.commit_diff(102, &refresh(102, 3, 78));
     let next = diffs_reload(
@@ -1139,7 +1139,7 @@ fn a_flashback_cluster_diff_without_regenerate_changes_nothing() {
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "flashback",
     );
-    assert_eq!(tables(&next.databases[0]).len(), 1);
+    assert_eq!(tables(&next.databases[0].read()).len(), 1);
 }
 
 #[test]
@@ -1167,7 +1167,7 @@ fn common_alter_table_diffs_reload_only_the_changed_table_incrementally() {
             .catalog()
             .expect("seed catalog published")
             .clone();
-        assert_eq!(tables(&catalog.databases[0]).len(), 2);
+        assert_eq!(tables(&catalog.databases[0].read()).len(), 2);
 
         // A second, untouched table exists purely to prove the reload did not
         // fall back to walking the whole catalog: an incremental reload never
@@ -1205,7 +1205,7 @@ fn common_alter_table_diffs_reload_only_the_changed_table_incrementally() {
         // the count -- the diff reloaded table 77 in place, it did not walk
         // the whole catalog; the catalog the node was already serving is
         // untouched too.
-        assert_eq!(tables(&next.databases[0]).len(), 2, "action {action}");
+        assert_eq!(tables(&next.databases[0].read()).len(), 2, "action {action}");
         let (_, notes) = next
             .find_table("campaign", "notes")
             .expect("table 78 survives untouched");
@@ -1215,7 +1215,7 @@ fn common_alter_table_diffs_reload_only_the_changed_table_incrementally() {
             2,
             "action {action} does not touch table 78"
         );
-        assert_eq!(tables(&catalog.databases[0]).len(), 2, "action {action}");
+        assert_eq!(tables(&catalog.databases[0].read()).len(), 2, "action {action}");
     }
 }
 
@@ -1301,7 +1301,7 @@ fn a_large_version_gap_takes_the_full_load_instead_of_replaying() {
         FullReloadReason::TooManyDiffs { from: 100, to: far }
     );
     assert_eq!(next.schema_version, far);
-    assert_eq!(tables(&next.databases[0]).len(), 2);
+    assert_eq!(tables(&next.databases[0].read()).len(), 2);
 }
 
 #[test]
@@ -1336,7 +1336,7 @@ fn an_empty_diff_in_the_middle_only_advances_the_version() {
     };
     assert_eq!(applied, 1);
     assert_eq!(next.schema_version, 102);
-    assert_eq!(tables(&next.databases[0]).len(), 2);
+    assert_eq!(tables(&next.databases[0].read()).len(), 2);
 }
 
 #[test]

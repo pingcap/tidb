@@ -17,27 +17,7 @@ use tidb_ddl::real_tikv_ddl::classify_session_ddl_commit_error;
 use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause, UndeterminedTransaction};
 
-/// Go `DBInfo.Deprecated.Tables` as the test fixtures read and edit it.
-trait DeprecatedTables {
-    fn tables(&self) -> Vec<tidb_model::table_info::TableInfo>;
-    fn with_tables<R>(&mut self, edit: impl FnOnce(&mut Vec<tidb_model::table_info::TableInfo>) -> R) -> R;
-}
-
-impl DeprecatedTables for tidb_model::db::DBInfo {
-    fn tables(&self) -> Vec<tidb_model::table_info::TableInfo> {
-        self.deprecated_tables
-            .iter_deref()
-            .map(|table| table.read().clone())
-            .collect()
-    }
-
-    fn with_tables<R>(&mut self, edit: impl FnOnce(&mut Vec<tidb_model::table_info::TableInfo>) -> R) -> R {
-        let mut tables = self.tables();
-        let result = edit(&mut tables);
-        self.deprecated_tables = tables.into();
-        result
-    }
-}
+use super::mock_seams::DeprecatedTables;
 
 
 /// Supplies the authority's report without reimplementing its DDL planner.
@@ -582,10 +562,10 @@ fn create_and_drop_database_route_to_the_catalog_writer() {
     let database = catalog
         .databases
         .iter()
-        .find(|database| database.name.lowercase() == "extra")
+        .find(|database| database.read().name.lowercase() == "extra")
         .expect("the created database is published");
-    assert_eq!(database.charset, "utf8");
-    assert_eq!(database.collate, "utf8_general_ci");
+    assert_eq!(database.read().charset, "utf8");
+    assert_eq!(database.read().collate, "utf8_general_ci");
     assert_eq!(database.tables()[0].charset, "utf8");
     assert_eq!(database.tables()[0].collate, "utf8_general_ci");
     drop(catalog);

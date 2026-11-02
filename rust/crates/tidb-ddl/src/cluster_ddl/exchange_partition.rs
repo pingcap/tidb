@@ -290,7 +290,7 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
     if !catalog
         .databases
         .iter()
-        .any(|database| database.id == args.pt_schema_id)
+        .any(|database| database.read().id == args.pt_schema_id)
     {
         return Err(cancel_ddl_job(
             active,
@@ -423,8 +423,8 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
                     catalog
                         .databases
                         .iter()
-                        .find(|database| database.id == id)
-                        .map(|database| database.name.lowercase().to_owned())
+                        .find(|database| database.read().id == id)
+                        .map(|database| database.read().name.lowercase().to_owned())
                         .unwrap_or_default()
                 };
                 let check = ExchangePartitionValidation {
@@ -569,8 +569,8 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
     let partitioned_schema = catalog
         .databases
         .iter()
-        .find(|database| database.id == args.pt_schema_id)
-        .map(|database| database.name.lowercase().to_owned())
+        .find(|database| database.read().id == args.pt_schema_id)
+        .map(|database| database.read().name.lowercase().to_owned())
         .unwrap_or_default();
     let swap = ExchangePartitionLabelSwap {
         partitioned_schema,

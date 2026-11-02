@@ -208,7 +208,6 @@ use tidb_domain_core::cluster_account_seam::ClusterAccountWriter;
 #[cfg(test)]
 use tidb_executor::cluster_analyze_seam::ClusterAnalyze;
 use tidb_domain_core::cluster_session::{cluster_session_catalog_with_templates, SkippedTable};
-use tidb_table::table_from_meta::TableAutoIds;
 use tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::domain::pipeline_session::MaterializedResultSetSource;
 use crate::domain::session_api::{ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext};
@@ -1966,7 +1965,7 @@ impl<'s> ClusterServerSession<'s> {
             let found = loaded
                 .databases
                 .iter()
-                .flat_map(|database| database.deprecated_tables.iter_deref())
+                .flat_map(|database| database.read().deprecated_tables.iter_deref())
                 .find(|table| table.read().id == *id);
             if let Some(table) = found {
                 tidb_ddl::pre_split::pre_split_and_scatter(

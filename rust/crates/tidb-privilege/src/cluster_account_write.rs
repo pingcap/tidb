@@ -593,10 +593,10 @@ fn locate<'catalog>(
     catalog
         .databases
         .iter()
-        .find(|database| database.name.lowercase() == SYSTEM_DB)
+        .find(|database| database.read().name.lowercase() == SYSTEM_DB)
         .and_then(|database| {
             database
-                .deprecated_tables
+                .read().deprecated_tables
                 .iter_deref()
                 .find(|stored| stored.read().name.lowercase() == table)
         })
@@ -943,7 +943,7 @@ fn system_db_id(catalog: &ClusterCatalog) -> Result<i64, AccountWriteError> {
     catalog
         .databases
         .iter()
-        .find(|database| database.name.lowercase() == SYSTEM_DB)
-        .map(|database| database.id)
+        .find(|database| database.read().name.lowercase() == SYSTEM_DB)
+        .map(|database| database.read().id)
         .ok_or_else(|| AccountWriteError::MissingTable(SYSTEM_DB.to_owned()))
 }

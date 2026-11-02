@@ -146,11 +146,11 @@ fn loads_databases_tables_and_schema_version_from_stored_bytes() {
     // schemas (`RegisterVirtualTable`), never stored.
     assert_eq!(catalog.databases.len(), 1);
     let database = &catalog.databases[0];
-    assert_eq!(database.id, 3);
-    assert_eq!(database.name.original(), "Campaign");
+    assert_eq!(database.read().id, 3);
+    assert_eq!(database.read().name.original(), "Campaign");
     // Allocator fields in the same hash must not be mistaken for tables.
     let tables = database
-        .deprecated_tables
+        .read().deprecated_tables
         .iter_deref()
         .map(|table| table.read().clone())
         .collect::<Vec<_>>();
@@ -166,7 +166,7 @@ fn absent_schema_version_reads_as_go_zero() {
     snapshot.put(key::database_kv_key(3), GO_DBINFO);
     let catalog = fetch_all_schemas_with_tables(&mut snapshot).expect("catalog loads");
     assert_eq!(catalog.schema_version, 0);
-    assert!(catalog.databases[0].deprecated_tables.iter_deref().next().is_none());
+    assert!(catalog.databases[0].read().deprecated_tables.iter_deref().next().is_none());
 }
 
 #[test]

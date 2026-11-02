@@ -151,12 +151,12 @@ fn ids_and_versions_are_the_classic_go_ones() {
         catalog
             .databases
             .iter()
-            .find(|database| database.name.lowercase() == name)
+            .find(|database| database.read().name.lowercase() == name)
             .unwrap_or_else(|| panic!("the bootstrap created {name}"))
     };
-    assert_eq!(database("mysql").id, 1);
-    assert_eq!(database("sys").id, 2);
-    assert_eq!(database("test").id, 114);
+    assert_eq!(database("mysql").read().id, 1);
+    assert_eq!(database("sys").read().id, 2);
+    assert_eq!(database("test").read().id, 114);
 
     let mysql = database("mysql");
     let created = BOOTSTRAP_TABLES
@@ -164,7 +164,7 @@ fn ids_and_versions_are_the_classic_go_ones() {
         .filter(|table| !MATERIALIZED_VIEW_TABLES.contains(&table.name));
     for (position, table) in created.enumerate() {
         let stored = mysql
-            .deprecated_tables
+            .read().deprecated_tables
             .iter_deref()
             .find(|stored| stored.read().name.lowercase() == table.name)
             .unwrap_or_else(|| panic!("mysql.{} was created", table.name));
@@ -173,7 +173,7 @@ fn ids_and_versions_are_the_classic_go_ones() {
     }
     let view = |db: &str, name: &str| {
         database(db)
-            .deprecated_tables
+            .read().deprecated_tables
             .iter_deref()
             .find(|table| table.read().name.lowercase() == name)
             .unwrap_or_else(|| panic!("{db}.{name} was created"))
@@ -190,7 +190,7 @@ fn ids_and_versions_are_the_classic_go_ones() {
     assert_eq!(int_key(&mut store, key::next_global_id_kv_key()), 116);
     // The five materialized-view tables are not Go's, in this layout.
     assert!(mysql
-        .deprecated_tables
+        .read().deprecated_tables
         .iter_deref()
         .all(|table| !MATERIALIZED_VIEW_TABLES.contains(&table.read().name.lowercase())));
     // `InitDDLTables` leaves no schema version of its own: version 1 is `sys`.
@@ -371,7 +371,7 @@ fn the_first_user_table_is_117() {
     let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
     let (database, table) = catalog.find_table("test", "t1").expect("t1 was created");
     let table = table.read();
-    assert_eq!((database.id, table.id), (114, 117));
+    assert_eq!((database.read().id, table.id), (114, 117));
 }
 
 /// A node joining a bootstrapped cluster of either layout reads `mysql.*` by

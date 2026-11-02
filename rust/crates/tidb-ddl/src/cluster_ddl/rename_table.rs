@@ -81,10 +81,10 @@ fn extract_tbl_infos(
     tables.insert(key(&pair.from_schema, &pair.from_table), None);
     tables.insert(key(&pair.to_schema, &pair.to_table), Some(table_id));
     Ok(Some((
-        old_database.id,
-        old_database.name.clone(),
-        new_database.id,
-        new_database.name.clone(),
+        old_database.read().id,
+        old_database.read().name.clone(),
+        new_database.read().id,
+        new_database.read().name.clone(),
         table_id,
     )))
 }
@@ -98,7 +98,7 @@ fn check_renamable(
     let Some(table) = catalog
         .databases
         .iter()
-        .flat_map(|database| database.deprecated_tables.iter_deref())
+        .flat_map(|database| database.read().deprecated_tables.iter_deref())
         .find(|table| table.read().id == table_id)
     else {
         return Ok(());
@@ -271,8 +271,8 @@ impl<'a> EvolvingTables<'a> {
             .catalog
             .databases
             .iter()
-            .find(|database| database.id == schema_id)?
-            .deprecated_tables
+            .find(|database| database.read().id == schema_id)?
+            .read().deprecated_tables
             .iter_deref()
             .find(|table| table.read().id == table_id)?
             .read()
@@ -332,7 +332,7 @@ fn referred_foreign_keys(
 ) -> Vec<(String, String, String)> {
     let mut referred = Vec::new();
     for database in &catalog.databases {
-        for child in database.deprecated_tables.iter_deref() {
+        for child in database.read().deprecated_tables.iter_deref() {
             let child = child.read();
             for fk in child.foreign_keys.iter_deref() {
                 let fk = fk.read();
@@ -341,7 +341,7 @@ fn referred_foreign_keys(
                 }
                 if fk.ref_schema.lowercase() == schema && fk.ref_table.lowercase() == table {
                     referred.push((
-                        database.name.lowercase().to_owned(),
+                        database.read().name.lowercase().to_owned(),
                         child.name.lowercase().to_owned(),
                         fk.name.lowercase().to_owned(),
                     ));
@@ -419,7 +419,7 @@ fn rename_one(
     let Some(new_database) = catalog
         .databases
         .iter()
-        .find(|database| database.id == new_schema_id)
+        .find(|database| database.read().id == new_schema_id)
     else {
         return Err(cancel_ddl_job(
             active,
@@ -433,7 +433,7 @@ fn rename_one(
     label_rules
         .push(
             label_rules::update_label_rules(
-                new_database.name.lowercase(),
+                new_database.read().name.lowercase(),
                 &LabelRuleTable::from_table_info(&table),
                 &old_rules,
                 old_rules.old_rule_ids(),
@@ -476,8 +476,9 @@ fn rename_one(
                     continue;
                 };
                 let child_id = child.read().id;
-                helper.loaded.push((child_key, database.id, child_id));
-                (database.id, child_id)
+                let database_id = database.read().id;
+                helper.loaded.push((child_key, database_id, child_id));
+                (database_id, child_id)
             }
         };
         let Some(mut child) = tables.get(schema_id, table_id) else {
@@ -492,7 +493,7 @@ fn rename_one(
         };
         {
             let mut fk = fk.write();
-            fk.ref_schema = new_database.name.clone();
+            fk.ref_schema = new_database.read().name.clone();
             fk.ref_table = info.new_table_name.clone();
         }
         let _ = &mut child;
@@ -540,10 +541,10 @@ pub(super) fn on_rename_table(
             let table = catalog
                 .databases
                 .iter()
-                .find(|database| database.id == info.new_schema_id)
+                .find(|database| database.read().id == info.new_schema_id)
                 .and_then(|database| {
                     database
-                        .deprecated_tables
+                        .read().deprecated_tables
                         .iter_deref()
                         .find(|table| table.read().id == info.table_id)
                 });
@@ -596,7 +597,7 @@ pub(super) fn on_rename_table(
         let Some(database) = catalog
             .databases
             .iter()
-            .find(|database| database.id == info.new_schema_id)
+            .find(|database| database.read().id == info.new_schema_id)
         else {
             return Err(cancel_ddl_job(
                 active,
@@ -611,7 +612,7 @@ pub(super) fn on_rename_table(
             ));
         };
         if database
-            .deprecated_tables
+            .read().deprecated_tables
             .iter_deref()
             .any(|table| table.read().name.lowercase() == info.new_table_name.lowercase())
         {

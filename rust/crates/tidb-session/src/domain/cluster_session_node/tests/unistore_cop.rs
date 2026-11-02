@@ -4521,10 +4521,10 @@ fn drop_schema_ddl_retires_all_statistics_like_go() {
         let database = catalog
             .databases
             .iter()
-            .find(|database| database.name.lowercase() == "stats_drop_schema")
+            .find(|database| database.read().name.lowercase() == "stats_drop_schema")
             .expect("created database is published");
         let mut ids = Vec::new();
-        for table in database.deprecated_tables.iter_deref() {
+        for table in database.read().deprecated_tables.iter_deref() {
             let table = table.read();
             if let Some(partition) = &table.partition {
                 ids.extend(

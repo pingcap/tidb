@@ -142,7 +142,7 @@ struct ReplicaTable {
 fn replica_tables(catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog) -> Vec<ReplicaTable> {
     let mut tables = Vec::new();
     for database in &catalog.databases {
-        for stored in database.deprecated_tables.iter_deref() {
+        for stored in database.read().deprecated_tables.iter_deref() {
             let stored = stored.read();
             let Some(replica) = &stored.tiflash_replica else {
                 continue;
@@ -908,7 +908,7 @@ mod tests {
         // The image is a copy: write a fresh pointer rather than through
         // the shared one.
         let database = &mut Arc::make_mut(&mut image).databases[0];
-        let mut table = database.deprecated_tables.get(0).unwrap().read().clone();
+        let mut table = database.read().deprecated_tables.get(0).unwrap().read().clone();
         table.partition =
             Some(tidb_model::GoShared::new(tidb_model::PartitionInfo {
                 enable: true,
@@ -924,7 +924,9 @@ mod tests {
                 .into(),
                 ..Default::default()
             }));
-        database.deprecated_tables = vec![table].into();
+        let mut copy = database.read().clone();
+        copy.deprecated_tables = vec![table].into();
+        *database = tidb_model::GoShared::new(copy);
         let tables = replica_tables(&image);
         assert_eq!(
             tables.iter().map(|table| table.id).collect::<Vec<_>>(),
@@ -1186,7 +1188,7 @@ mod tests {
                 resource_groups: Vec::new(),
                 policies: Vec::new(),
                 schema_version: 1,
-                databases: vec![tidb_model::db::DBInfo {
+                databases: vec![tidb_model::GoShared::new(tidb_model::db::DBInfo {
                     deprecated_tables: tables
                         .iter()
                         .map(|&(id, available)| tidb_model::table_info::TableInfo {
@@ -1203,7 +1205,7 @@ mod tests {
                         .collect::<Vec<_>>()
                         .into(),
                     ..Default::default()
-                }],
+                })],
             },
         ))
     }

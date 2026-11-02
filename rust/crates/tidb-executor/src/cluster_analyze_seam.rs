@@ -194,7 +194,7 @@ where
             let targets = catalog
                 .databases
                 .iter()
-                .flat_map(|database| database.deprecated_tables.iter_deref())
+                .flat_map(|database| database.read().deprecated_tables.iter_deref())
                 .flat_map(|table| StatsTarget::for_table(&table.read()))
                 .collect();
             (targets, loader)

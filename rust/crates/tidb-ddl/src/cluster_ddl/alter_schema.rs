@@ -45,7 +45,7 @@ pub fn prepare_alter_schema_job_submission<S: MetaSnapshot>(
                         .generate_with_stack_by_args(&[(name.clone()).into()]),
                 ));
             };
-            if database.charset == *charset && database.collate == *collate {
+            if database.read().charset == *charset && database.read().collate == *collate {
                 return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                     detail: format!("database `{name}` is already {charset}/{collate}"),
                     warnings: Vec::new(),
@@ -91,8 +91,8 @@ pub fn prepare_alter_schema_job_submission<S: MetaSnapshot>(
     };
     let database = find_database(&catalog, name).expect("checked above");
     let mut job = session_job(job_context, action);
-    job.schema_id = database.id;
-    job.schema_name = database.name.lowercase().to_owned().into();
+    job.schema_id = database.read().id;
+    job.schema_name = database.read().name.lowercase().to_owned().into();
     let mut involving = vec![tidb_model::InvolvingSchemaInfo {
         database: job.schema_name.clone(),
         table: tidb_model::job::INVOLVING_ALL.into(),
@@ -142,7 +142,7 @@ pub(super) fn on_modify_schema_charset_and_collate<S: MetaSnapshot>(
     let Some(database) = catalog
         .databases
         .iter()
-        .find(|database| database.id == active.job.schema_id)
+        .find(|database| database.read().id == active.job.schema_id)
     else {
         return Err(cancel_ddl_job(
             active,
@@ -156,7 +156,7 @@ pub(super) fn on_modify_schema_charset_and_collate<S: MetaSnapshot>(
             ),
         ));
     };
-    let mut info = database.clone();
+    let mut info = database.read().clone();
     let unchanged = if active.job.type_ == ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE {
         let (charset, collate) = {
             let args = args.read();
@@ -192,7 +192,7 @@ pub(super) fn on_modify_schema_charset_and_collate<S: MetaSnapshot>(
             JobState::DONE,
             SchemaState::PUBLIC,
             0,
-            Some(GoShared::new(database.clone())),
+            Some(GoShared::new(database.read().clone())),
         );
         return Ok(action_step(job_only_write(active.job.id, Vec::new())));
     }
@@ -250,20 +250,21 @@ pub fn schema_tiflash_replica_tables<'catalog>(
                 .generate_with_stack_by_args(&[name.into()]),
         )));
     };
-    if tidb_metadef::is_mem_or_sys_db(database.name.lowercase()) {
+    if tidb_metadef::is_mem_or_sys_db(database.read().name.lowercase()) {
         return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
             &tidb_dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_SYS_OR_MEM_TABLE
                 .generate_with_stack_by_args(&[]),
         )));
     }
-    let tables = database.deprecated_tables.iter_deref().collect::<Vec<_>>();
+    let tables = database.read().deprecated_tables.iter_deref().collect::<Vec<_>>();
     if tables.is_empty() {
         return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
             &tidb_infoschema::infoschema_errors::ERR_EMPTY_DATABASE
                 .generate_with_stack(format!("Empty database '{name}'")),
         )));
     }
-    Ok((database.name.original().to_owned(), tables))
+    let name = database.read().name.original().to_owned();
+    Ok((name, tables))
 }
 
 /// Go `getPendingTiFlashTableCount`'s count: tables outside the memory and
@@ -273,8 +274,8 @@ pub fn pending_tiflash_table_count(catalog: &ClusterCatalog) -> u32 {
     let count = catalog
         .databases
         .iter()
-        .filter(|database| !tidb_metadef::is_mem_or_sys_db(database.name.lowercase()))
-        .flat_map(|database| database.deprecated_tables.iter_deref())
+        .filter(|database| !tidb_metadef::is_mem_or_sys_db(database.read().name.lowercase()))
+        .flat_map(|database| database.read().deprecated_tables.iter_deref())
         .filter(|table| {
             table
                 .read()

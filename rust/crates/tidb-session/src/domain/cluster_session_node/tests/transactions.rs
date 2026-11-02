@@ -443,10 +443,10 @@ fn table_delta_follows_commit_rollback_and_savepoint_lifecycle() {
         .get_latest()
         .databases
         .iter()
-        .find(|database| database.name.lowercase() == "app")
+        .find(|database| database.read().name.lowercase() == "app")
         .and_then(|database| {
             database
-                .deprecated_tables
+                .read().deprecated_tables
                 .iter_deref()
                 .find(|table| table.read().name.lowercase() == "t")
         })

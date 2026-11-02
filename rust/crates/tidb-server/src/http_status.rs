@@ -567,7 +567,7 @@ fn find_table_by_id(
     catalog
         .databases
         .iter()
-        .find_map(|database| database.deprecated_tables.iter_deref().find(|table| table.read().id == id))
+        .find_map(|database| database.read().deprecated_tables.iter_deref().find(|table| table.read().id == id))
 }
 
 /// Go `SchemaHandler.ServeHTTP` (`tikvhandler/tikv_handler.go`): the three
@@ -663,7 +663,7 @@ fn schema_response(
                     out.push(',');
                 }
                 match encode(tidb_infoschema::cluster_catalog::stored_db_info_json(
-                    &database,
+                    &database.read(),
                 )) {
                     Ok(body) => out.push_str(&body),
                     Err(error) => return Some(Err(error)),
@@ -677,7 +677,7 @@ fn schema_response(
         [database] => {
             let Some(found) = catalog.databases.iter().find(|candidate| {
                 candidate
-                    .name
+                    .read().name
                     .original()
                     .eq_ignore_ascii_case(database)
             }) else {
@@ -687,7 +687,7 @@ fn schema_response(
             // caller that wants the listing without every column.
             if form("id_name_only") == Some("true") {
                 let mut out = String::from("[");
-                for (index, table) in found.deprecated_tables.iter_deref().enumerate() {
+                for (index, table) in found.read().deprecated_tables.iter_deref().enumerate() {
                     let table = table.read();
                     if index > 0 {
                         out.push(',');
@@ -703,7 +703,7 @@ fn schema_response(
                 return Some(Ok(out));
             }
             let mut out = String::from("[");
-            for (index, table) in found.deprecated_tables.iter_deref().enumerate() {
+            for (index, table) in found.read().deprecated_tables.iter_deref().enumerate() {
                 if index > 0 {
                     out.push(',');
                 }
@@ -722,13 +722,13 @@ fn schema_response(
                 .iter()
                 .find(|candidate| {
                     candidate
-                        .name
+                        .read().name
                         .original()
                         .eq_ignore_ascii_case(database)
                 })
                 .and_then(|database| {
                     database
-                        .deprecated_tables
+                        .read().deprecated_tables
                         .iter_deref()
                         .find(|candidate| candidate.read().name.original().eq_ignore_ascii_case(table))
                 });
@@ -754,7 +754,7 @@ mod schema_route_tests {
             resource_groups: Vec::new(),
             policies: Vec::new(),
             schema_version: 7,
-            databases,
+            databases: databases.into_iter().map(tidb_model::GoShared::new).collect(),
         };
         Arc::new(move || catalog.clone())
     }

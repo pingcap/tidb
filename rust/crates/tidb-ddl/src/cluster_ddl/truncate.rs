@@ -41,7 +41,7 @@ pub fn prepare_truncate_table_job_submission<S: MetaSnapshot>(
         let database = find_database(&catalog, schema).expect("located above");
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
-                (database.name.original().to_owned()).into(),
+                (database.read().name.original().to_owned()).into(),
                 (stored.name.original().to_owned()).into(),
             ]),
         ));

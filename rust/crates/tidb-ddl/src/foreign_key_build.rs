@@ -112,7 +112,7 @@ fn check_valid(
     // Go `is.GetTableReferredForeignKeys`: children created earlier with
     // `foreign_key_checks=0` that reference this (new) table.
     for database in &catalog.databases {
-        for child in database.deprecated_tables.iter_deref() {
+        for child in database.read().deprecated_tables.iter_deref() {
             let child = child.read();
             for fk in child.foreign_keys.iter_deref() {
                 let fk = fk.read();
@@ -171,7 +171,7 @@ pub(crate) fn get_table_referred_foreign_keys(
     );
     let mut referred = Vec::new();
     for database in &catalog.databases {
-        for child in database.deprecated_tables.iter_deref() {
+        for child in database.read().deprecated_tables.iter_deref() {
             let child = child.read();
             for fk in child.foreign_keys.iter_deref() {
                 let fk = fk.read();
@@ -185,7 +185,7 @@ pub(crate) fn get_table_referred_foreign_keys(
                     cols: tidb_model::serde_helpers::GoValueSlice::allocated(
                         fk.ref_cols.snapshot(),
                     ),
-                    child_schema: database.name.clone(),
+                    child_schema: database.read().name.clone(),
                     child_table: child.name.clone(),
                     child_fk_name: fk.name.clone(),
                 });

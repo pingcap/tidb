@@ -1554,7 +1554,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
             let table = catalog
                 .databases
                 .iter()
-                .flat_map(|database| database.deprecated_tables.iter_deref())
+                .flat_map(|database| database.read().deprecated_tables.iter_deref())
                 .find(|table| table.read().id == table_id)
                 .ok_or_else(|| ClusterDdlError::Backfill(format!("table {table_id} is gone")))?;
             let table = table.read();

@@ -611,7 +611,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             let stored = stored.read();
             let rule = label_rules::table_attributes_rule(
                 attributes,
-                database.name.lowercase(),
+                database.read().name.lowercase(),
                 &LabelRuleTable::from_table_info(&stored),
             )
             .map_err(invalid_attributes_spec)?;
@@ -644,7 +644,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             let partition_id = find_partition_id(&stored, partition)?;
             let rule = label_rules::partition_attributes_rule(
                 attributes,
-                database.name.lowercase(),
+                database.read().name.lowercase(),
                 stored.name.lowercase(),
                 &partition.go_to_lower(),
                 partition_id,
@@ -785,7 +785,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
         } => {
             let Some((database, stored)) = catalog.databases.iter().find_map(|database| {
                 database
-                    .deprecated_tables
+                    .read().deprecated_tables
                     .iter_deref()
                     .find(|stored| {
                         let stored = stored.read();
@@ -819,9 +819,9 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                 job_context,
                 ActionType::ACTION_UPDATE_TI_FLASH_REPLICA_STATUS,
             );
-            job.schema_id = database.id;
+            job.schema_id = database.read().id;
             job.table_id = stored.id;
-            job.schema_name = database.name.lowercase().to_owned().into();
+            job.schema_name = database.read().name.lowercase().to_owned().into();
             job.table_name = stored.name.lowercase().to_owned().into();
             return Ok(Some(AddIndexSubmission::Job(
                 Box::new(tidb_ddl_jobsubmit::JobSpec {

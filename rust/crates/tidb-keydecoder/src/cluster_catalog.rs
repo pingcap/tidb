@@ -23,12 +23,12 @@ impl KeyInfoCatalog for ClusterCatalog {
     fn resolve_physical_table(&self, physical_id: i64) -> Option<KeyInfoTableLookup> {
         for database in &self.databases {
             if let Some(table) = database
-                .deprecated_tables
+                .read().deprecated_tables
                 .iter_deref()
                 .find(|table| table.read().id == physical_id)
             {
                 return Some(KeyInfoTableLookup::Resolved(table_info(
-                    database,
+                    &database.read(),
                     &table.read(),
                     0,
                     String::new(),
@@ -36,7 +36,7 @@ impl KeyInfoCatalog for ClusterCatalog {
             }
         }
         for database in &self.databases {
-            for table in database.deprecated_tables.iter_deref() {
+            for table in database.read().deprecated_tables.iter_deref() {
                 let table = table.read();
                 let Some(partition) = table.partition.as_ref() else {
                     continue;
@@ -49,7 +49,7 @@ impl KeyInfoCatalog for ClusterCatalog {
                     .find(|definition| definition.id == physical_id)
                 {
                     return Some(KeyInfoTableLookup::Resolved(table_info(
-                        database,
+                        &database.read(),
                         &table,
                         definition.id,
                         definition.name.original().to_owned(),

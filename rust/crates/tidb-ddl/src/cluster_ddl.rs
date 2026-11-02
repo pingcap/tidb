@@ -1668,7 +1668,7 @@ fn rebuilt_bundles_for_policy(
     };
     let mut bundles = Vec::new();
     for database in &catalog.databases {
-        for table in database.deprecated_tables.iter_deref() {
+        for table in database.read().deprecated_tables.iter_deref() {
             let table = table.read();
             let definitions = table
                 .partition
@@ -1783,7 +1783,7 @@ fn find_policy<S: MetaSnapshot>(
 /// partition still names this policy.
 fn policy_referenced(catalog: &ClusterCatalog, policy: &CiString) -> bool {
     catalog.databases.iter().any(|database| {
-        database.deprecated_tables.iter_deref().any(|table| {
+        database.read().deprecated_tables.iter_deref().any(|table| {
             let table = table.read();
             if table
                 .placement_policy_ref
@@ -3881,16 +3881,17 @@ fn apply_table_charset_and_collate(
     // Go resolves the table's ORIGINAL pair against its database before
     // comparing, so a table that never named one is judged by what it
     // actually inherited.
+    let database_info = database.read();
     let (from_charset, from_collate) = resolve_charset_collation(
         &[
             (
                 if info.charset.is_empty() {
-                    database.charset.as_str()
+                    database_info.charset.as_str()
                 } else {
                     info.charset.as_str()
                 },
                 if info.collate.is_empty() {
-                    database.collate.as_str()
+                    database_info.collate.as_str()
                 } else {
                     info.collate.as_str()
                 },
@@ -4811,9 +4812,9 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
             if catalog
                 .databases
                 .iter()
-                .find(|database| database.id == schema_id)
+                .find(|database| database.read().id == schema_id)
                 .is_some_and(|database| {
-                    database.deprecated_tables.iter_deref().any(|candidate| {
+                    database.read().deprecated_tables.iter_deref().any(|candidate| {
                         let candidate = candidate.read();
                         candidate.constraints.iter_deref().any(|existing| {
                             existing.read().name.lowercase() == constraint.name.lowercase()
@@ -5572,7 +5573,7 @@ fn plan_persisted_check_constraint_job_step(
     let database = catalog
         .databases
         .iter()
-        .find(|db| db.id == active.job.schema_id)
+        .find(|db| db.read().id == active.job.schema_id)
         .expect("checked_job_table checked the database");
     let cancelling = active.job.is_cancelling();
     let mut info = stored.clone_like_go();
@@ -5612,7 +5613,7 @@ fn plan_persisted_check_constraint_job_step(
             // after its first WRITE_ONLY publication, not based on the current
             // metadata state. This also governs cancellation conversion.
             if constraint_handle.read().state != SchemaState::WRITE_ONLY
-                && database.deprecated_tables.iter_deref().any(|table| {
+                && database.read().deprecated_tables.iter_deref().any(|table| {
                     let table = table.read();
                     table
                         .constraints
@@ -5669,7 +5670,7 @@ fn plan_persisted_check_constraint_job_step(
                         }
                     }
                     wanted = constraint.name.lowercase().to_owned();
-                    if database.deprecated_tables.iter_deref().any(|table| {
+                    if database.read().deprecated_tables.iter_deref().any(|table| {
                         let table = table.read();
                         table
                             .constraints
@@ -5731,7 +5732,7 @@ fn plan_persisted_check_constraint_job_step(
                             let constraint_name = constraint.name.original().to_owned();
                             drop(constraint);
                             validation = Some(CheckConstraintValidation {
-                                schema: database.name.original().to_owned(),
+                                schema: database.read().name.original().to_owned(),
                                 table: Box::new(info.clone_like_go()),
                                 constraint_name,
                             });
@@ -5891,7 +5892,7 @@ fn plan_persisted_check_constraint_job_step(
                         let constraint_name = constraint.name.original().to_owned();
                         drop(constraint);
                         validation = Some(CheckConstraintValidation {
-                            schema: database.name.original().to_owned(),
+                            schema: database.read().name.original().to_owned(),
                             table: Box::new(info.clone_like_go()),
                             constraint_name,
                         });
@@ -5917,14 +5918,14 @@ fn plan_persisted_check_constraint_job_step(
     let diff = if schema_changed {
         info.update_ts = start_ts;
         mutations.push(BufferMutation::set(
-            key::table_kv_key(database.id, info.id),
+            key::table_kv_key(database.read().id, info.id),
             value::serialize_table_info(&info)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
         )?);
         let diff = SchemaDiff {
             version: schema_version,
             action_type: active.job.type_,
-            schema_id: database.id,
+            schema_id: database.read().id,
             table_id: info.id,
             ..SchemaDiff::default()
         };
@@ -6018,7 +6019,7 @@ fn plan_persisted_create_schema_job_step(
     let id_taken = catalog
         .databases
         .iter()
-        .any(|database| database.id == db_info.id);
+        .any(|database| database.read().id == db_info.id);
     if name_taken || id_taken {
         return Err(cancel_ddl_job(
             active,
@@ -6117,7 +6118,7 @@ fn plan_persisted_create_tables_job_step(
     let database = catalog
         .databases
         .iter()
-        .find(|database| database.id == active.job.schema_id)
+        .find(|database| database.read().id == active.job.schema_id)
         .ok_or_else(|| {
             cancel_ddl_job(
                 active,
@@ -6151,17 +6152,17 @@ fn plan_persisted_create_tables_job_step(
         // `TableInfo.ID` (the batch job's own TableID stays 0); the owner
         // keeps the submitted IDs verbatim.
         let name_taken = database
-            .deprecated_tables
+            .read().deprecated_tables
             .iter_deref()
             .any(|table| table.read().name.lowercase() == table_info.name.lowercase());
         let id_taken = database
-            .deprecated_tables
+            .read().deprecated_tables
             .iter_deref()
             .any(|table| table.read().id == table_info.id);
         if name_taken || id_taken {
             cancel_reason = Some(format!(
                 "table '{}.{}' already exists (id {})",
-                database.name.original(),
+                database.read().name.original(),
                 table_info.name.original(),
                 table_info.id
             ));
@@ -6189,7 +6190,7 @@ fn plan_persisted_create_tables_job_step(
             info.state = SchemaState::PUBLIC;
             info.update_ts = start_ts;
             mutations.push(BufferMutation::set(
-                key::table_kv_key(database.id, info.id),
+                key::table_kv_key(database.read().id, info.id),
                 value::serialize_table_info(info)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
             )?);
@@ -6201,7 +6202,7 @@ fn plan_persisted_create_tables_job_step(
         let mut diff = SchemaDiff {
             version: schema_version,
             action_type: active.job.type_,
-            schema_id: database.id,
+            schema_id: database.read().id,
             table_id: first_id,
             ..SchemaDiff::default()
         };
@@ -6209,8 +6210,8 @@ fn plan_persisted_create_tables_job_step(
             table_infos
                 .iter()
                 .map(|info| tidb_model::AffectedOption {
-                    schema_id: database.id,
-                    old_schema_id: database.id,
+                    schema_id: database.read().id,
+                    old_schema_id: database.read().id,
                     table_id: info.id,
                     old_table_id: info.id,
                     ..tidb_model::AffectedOption::default()
@@ -6298,8 +6299,8 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
     let Some(database) = catalog
         .databases
         .iter()
-        .find(|database| database.id == active.job.schema_id)
-        .map(|database| database.clone())
+        .find(|database| database.read().id == active.job.schema_id)
+        .map(|database| database.read().clone())
     else {
         return Err(cancel_ddl_job(
             active,
@@ -6332,10 +6333,10 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
         let tables = catalog
             .databases
             .iter()
-            .find(|database| database.id == db_info.id)
+            .find(|database| database.read().id == db_info.id)
             .map(|database| {
                 database
-                    .deprecated_tables
+                    .read().deprecated_tables
                     .iter_deref()
                     .map(|table| LabelRuleTable::from_table_info(&table.read()))
                     .collect::<Vec<_>>()
@@ -6376,10 +6377,10 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
         let tables: Vec<TableInfo> = catalog
             .databases
             .iter()
-            .find(|database| database.id == db_info.id)
+            .find(|database| database.read().id == db_info.id)
             .map(|database| {
                 database
-                    .deprecated_tables
+                    .read().deprecated_tables
                     .iter_deref()
                     .map(|table| TableInfo::clone_like_go(&table.read()))
                     .collect()
@@ -6481,7 +6482,7 @@ fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
     let database = catalog
         .databases
         .iter()
-        .find(|db| db.id == active.job.schema_id)
+        .find(|db| db.read().id == active.job.schema_id)
         .expect("checked_job_table checked the database");
 
     let schema_version = schema_version + 1;
@@ -6537,19 +6538,19 @@ fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
     let diff = SchemaDiff {
         version: schema_version,
         action_type: active.job.type_,
-        schema_id: database.id,
+        schema_id: database.read().id,
         table_id: table.id,
         old_table_id: table.id,
         ..SchemaDiff::default()
     };
     if table.state != SchemaState::NONE {
         mutations.push(BufferMutation::set(
-            key::table_kv_key(database.id, table.id),
+            key::table_kv_key(database.read().id, table.id),
             value::serialize_table_info(&table)
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
         )?);
     } else {
-        let database_id = database.id;
+        let database_id = database.read().id;
         mutations.push(BufferMutation::delete(key::table_kv_key(
             database_id,
             table.id,
@@ -6573,7 +6574,7 @@ fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
         // Go `asyncNotifyEvent(NewDropTableEvent)` for a table.
         if !table.is_sequence()
             && !table.is_view()
-            && !tidb_metadef::is_mem_or_sys_db(&database.name.lowercase().go_to_lower())
+            && !tidb_metadef::is_mem_or_sys_db(&database.read().name.lowercase().go_to_lower())
         {
             append_schema_change_mutations(
                 catalog,
@@ -6861,7 +6862,7 @@ fn plan_cancel_persisted_ddl_job(
             let database = catalog
                 .databases
                 .iter()
-                .find(|db| db.id == active.job.schema_id)
+                .find(|db| db.read().id == active.job.schema_id)
                 .ok_or_else(|| {
                     cancel_ddl_job(
                         active,
@@ -6872,7 +6873,7 @@ fn plan_cancel_persisted_ddl_job(
                         ),
                     )
                 })?;
-            database.state == SchemaState::PUBLIC
+            database.read().state == SchemaState::PUBLIC
         }
         ActionType::ACTION_DROP_TABLE
         | ActionType::ACTION_DROP_VIEW
@@ -6955,7 +6956,7 @@ fn checked_job_table<'a>(
     let database = catalog
         .databases
         .iter()
-        .find(|db| db.id == active.job.schema_id)
+        .find(|db| db.read().id == active.job.schema_id)
         .ok_or_else(|| {
             cancel_ddl_job(
                 active,
@@ -6970,7 +6971,7 @@ fn checked_job_table<'a>(
             )
         })?;
     let table = database
-        .deprecated_tables
+        .read().deprecated_tables
         .iter_deref()
         .find(|table| table.read().id == active.job.table_id)
         .ok_or_else(|| {
@@ -7911,7 +7912,7 @@ pub fn plan_ddl<S: MetaSnapshot>(
     // Go `executor.AlterTable` refuses a view or a sequence before any
     // specification is looked at, whichever specification the statement carries.
     if let Some((schema, table)) = alter_table_target(statement) {
-        if let Some(stored) = find_database(&catalog, schema).and_then(|db| find_table(db, table)) {
+        if let Some(stored) = find_database(&catalog, schema).and_then(|db| find_table(&db.read(), table)) {
             refuse_non_base_table(&stored.read(), schema, table)?;
         }
     }
@@ -8055,7 +8056,7 @@ fn build_create_table_info<S: MetaSnapshot>(
     // `Indices` slice even when the builder left it nil, turning Go's
     // persisted `"index_info":null` into `[]`.
     let mut info = build
-        .for_database(&database.charset, &database.collate)
+        .for_database(&database.read().charset, &database.read().collate)
         .map_err(DdlPlanError::Admission)?;
     // Go `checkTTLInfoValid`'s foreign-key half, which reads the infoschema
     // the builder does not see.
@@ -8075,7 +8076,7 @@ fn build_create_table_info<S: MetaSnapshot>(
     let fk_check = build.context.foreign_key_checks();
     crate::foreign_key_build::check_table_foreign_keys_valid(catalog, schema, &info, fk_check)
         .map_err(DdlPlanError::Admission)?;
-    if let Some(existing) = find_table(database, table) {
+    if let Some(existing) = find_table(&database.read(), table) {
         let existing = existing.read();
         if if_not_exists {
             // Go `createTableWithInfoJob`: `ErrTableExists` as a note.
@@ -8137,7 +8138,7 @@ fn build_create_table_info<S: MetaSnapshot>(
         && info.placement_policy_ref.is_none()
         && info.temp_table_type == tidb_model::TempTableType::NONE
     {
-        if let Some(reference) = database.placement_policy_ref.as_ref() {
+        if let Some(reference) = database.read().placement_policy_ref.as_ref() {
             info.placement_policy_ref = Some(tidb_model::GoShared::new(reference.read().clone()));
         }
     }
@@ -8412,8 +8413,8 @@ fn stored_table_by_ids(
     catalog
         .databases
         .iter()
-        .find(|database| database.id == schema_id)?
-        .deprecated_tables
+        .find(|database| database.read().id == schema_id)?
+        .read().deprecated_tables
         .iter_deref()
         .find(|table| table.read().id == table_id)
 }
@@ -8524,7 +8525,7 @@ fn locate_table<'catalog>(
                 .generate_with_stack_by_args(&[(schema.to_owned()).into()]),
         ));
     };
-    let Some(stored) = find_table(database, table) else {
+    let Some(stored) = find_table(&database.read(), table) else {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
                 (schema.to_owned()).into(),
@@ -8532,7 +8533,7 @@ fn locate_table<'catalog>(
             ]),
         ));
     };
-    Ok((database.id, stored))
+    Ok((database.read().id, stored))
 }
 
 /// The name an added index takes: as written, or Go `GetName4AnonymousIndex`
@@ -8814,7 +8815,7 @@ fn append_schema_change_mutations(
         let ids = row_ids.ok_or_else(|| {
             DdlPlanError::Encode(format!("mysql.{NOTIFIER_TABLE_NAME} has no row-ID allocator"))
         })?;
-        Some(ids.row_allocator_for(system_database.id, &table))
+        Some(ids.row_allocator_for(system_database.read().id, &table))
     } else {
         None
     };
@@ -8912,12 +8913,12 @@ fn event_partition_info(definitions: Vec<PartitionDefinition>) -> PartitionInfo 
 fn find_database<'catalog>(
     catalog: &'catalog ClusterCatalog,
     name: &str,
-) -> Option<&'catalog DBInfo> {
+) -> Option<&'catalog GoShared<DBInfo>> {
     let name = name.go_to_lower();
     catalog
         .databases
         .iter()
-        .find(|database| database.name.lowercase() == name)
+        .find(|database| database.read().name.lowercase() == name)
 }
 
 fn find_table<'database>(

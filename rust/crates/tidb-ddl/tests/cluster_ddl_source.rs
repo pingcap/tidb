@@ -953,7 +953,7 @@ fn persisted_action_panic_preserves_checkpoint_and_discards_unfinished_metadata(
         apply(&mut store, &step.write);
         let after = fetch_all_schemas_with_tables(&mut store).unwrap();
         assert_eq!(after.schema_version, catalog.schema_version);
-        assert!(!after.databases.iter().any(|db| db.id == 991));
+        assert!(!after.databases.iter().any(|db| db.read().id == 991));
         if limit > 0 {
             let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
             assert_eq!(active.job.state, JobState::CANCELLING);
@@ -1503,7 +1503,7 @@ fn persisted_cancel_uses_physical_drop_state() {
             let (db, table) = catalog.find_table("u6", "cancel_drop").unwrap();
             let table = table.read();
             if action == ActionType::ACTION_DROP_SCHEMA {
-                let mut db = db.clone();
+                let mut db = db.read().clone();
                 db.state = state;
                 store.put(
                     key::database_kv_key(db.id),
@@ -1513,7 +1513,7 @@ fn persisted_cancel_uses_physical_drop_state() {
                 let mut table = table.clone_like_go();
                 table.state = state;
                 store.put(
-                    key::table_kv_key(db.id, id),
+                    key::table_kv_key(db.read().id, id),
                     value::serialize_table_info(&table).unwrap(),
                 );
             }
@@ -2374,7 +2374,7 @@ fn history_table_failure_is_logged_and_the_job_still_finishes() {
             apply_mutations(&mut store, &mutations);
             let (db, table) = catalog.find_table("mysql", "tidb_ddl_history").unwrap();
             let table = table.read();
-            store.pairs.remove(&key::table_kv_key(db.id, table.id));
+            store.pairs.remove(&key::table_kv_key(db.read().id, table.id));
             let step = plan_worker_step(&mut store, 900, 10_000).unwrap();
             assert!(step.terminal);
             apply(&mut store, &step.write);
@@ -4804,9 +4804,9 @@ fn tiflash_batch_truncate_table_resets_all_availability() {
     let table = catalog
         .databases
         .iter()
-        .find(|db| db.name.lowercase() == "u6")
+        .find(|db| db.read().name.lowercase() == "u6")
         .unwrap()
-        .deprecated_tables
+        .read().deprecated_tables
         .iter_deref()
         .find(|t| t.read().name.lowercase() == "tfparts")
         .unwrap();

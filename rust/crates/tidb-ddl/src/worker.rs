@@ -1095,7 +1095,7 @@ mod schema_sync_tests {
         if remove_mdl_table {
             let (schema, table) = catalog.find_table("mysql", "tidb_mdl_info").unwrap();
             let table = table.read();
-            mutations.push(BufferMutation::delete(key::table_kv_key(schema.id, table.id)).unwrap());
+            mutations.push(BufferMutation::delete(key::table_kv_key(schema.read().id, table.id)).unwrap());
         }
         if recover {
             // Another job published a newer diff; the newest reserved version
@@ -1561,7 +1561,7 @@ mod schema_sync_tests {
         assert!(!catalog
             .databases
             .iter()
-            .any(|database| database.id == 505));
+            .any(|database| database.read().id == 505));
 
         // Another job can finish while the paused job remains in the queue.
         let mut other = paused_job.clone();
@@ -1648,7 +1648,7 @@ mod schema_sync_tests {
                 .unwrap()
                 .databases
                 .iter()
-                .any(|db| db.id == 601)
+                .any(|db| db.read().id == 601)
         );
 
         let set_limit = |limit: i64| {
@@ -2129,7 +2129,7 @@ mod schema_sync_tests {
         let stored_table = after
             .databases
             .iter()
-            .flat_map(|db| db.deprecated_tables.iter_deref())
+            .flat_map(|db| db.read().deprecated_tables.iter_deref())
             .find(|table| table.read().id == 701)
             .unwrap();
         let stored_table = stored_table.read();
@@ -2223,7 +2223,7 @@ mod schema_sync_tests {
         let stored_table = after
             .databases
             .iter()
-            .flat_map(|db| db.deprecated_tables.iter_deref())
+            .flat_map(|db| db.read().deprecated_tables.iter_deref())
             .find(|table| table.read().id == 701)
             .unwrap();
         let stored_table = stored_table.read();

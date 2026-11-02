@@ -43,7 +43,7 @@ fn catalog() -> ClusterCatalog {
         resource_groups: Vec::new(),
         policies: Vec::new(),
         schema_version: 1,
-        databases: vec![DBInfo {
+        databases: vec![GoShared::new(DBInfo {
             id: 1,
             name: CiString::new("test"),
             deprecated_tables: vec![
@@ -83,7 +83,7 @@ fn catalog() -> ClusterCatalog {
             ]
             .into(),
             ..DBInfo::default()
-        }],
+        })],
     }
 }
 

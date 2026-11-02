@@ -47,7 +47,7 @@ fn check_policy_not_in_use(
 ) -> Result<(), DdlPlanError> {
     let named_by_database = catalog.databases.iter().any(|database| {
         database
-            .placement_policy_ref
+            .read().placement_policy_ref
             .as_ref()
             .is_some_and(|reference| reference.read().name.lowercase() == policy.lowercase())
     });

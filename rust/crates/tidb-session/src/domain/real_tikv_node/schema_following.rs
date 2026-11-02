@@ -109,7 +109,7 @@ fn stats_targets(catalog: &ClusterCatalog) -> Vec<tidb_stats_handle_syncload::re
     catalog
         .databases
         .iter()
-        .flat_map(|database| database.deprecated_tables.iter_deref())
+        .flat_map(|database| database.read().deprecated_tables.iter_deref())
         .flat_map(|table| {
             tidb_stats_handle_syncload::real_tikv_stats::StatsTarget::for_table(&table.read())
         })
@@ -393,7 +393,7 @@ mod tests {
             resource_groups: Vec::new(),
             policies: Vec::new(),
             schema_version: table_id,
-            databases: vec![DBInfo {
+            databases: vec![tidb_model::GoShared::new(DBInfo {
                 deprecated_tables: vec![TableInfo {
                     id: table_id,
                     columns: vec![column].into(),
@@ -401,7 +401,7 @@ mod tests {
                 }]
                 .into(),
                 ..DBInfo::default()
-            }],
+            })],
         }
     }
 

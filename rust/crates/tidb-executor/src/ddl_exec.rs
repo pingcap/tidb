@@ -864,7 +864,7 @@ pub trait TemporaryTableDdlExec:
         let ctx = self.ddl_statement_context();
         let mut warnings = Vec::new();
         let built = tidb_ddl::cluster_ddl::create_object::build_session_temporary_table_info(
-            database,
+            &database.read(),
             create,
             table,
             like.as_ref().map(|(source_schema, source)| (*source_schema, &**source)),
@@ -878,8 +878,8 @@ pub trait TemporaryTableDdlExec:
         for warning in warnings {
             self.append_sql_warning(warning);
         }
-        tidb_temptable::get_temporary_table_ddl(self)
-            .create_local_temporary_table(database, info)
+        let database = database.read().clone();
+        tidb_temptable::get_temporary_table_ddl(self).create_local_temporary_table(&database, info)
     }
 }
 

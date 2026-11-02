@@ -1172,7 +1172,7 @@ fn get_modify_column_info(
     let Some(database) = catalog
         .databases
         .iter()
-        .find(|database| database.id == active.job.schema_id)
+        .find(|database| database.read().id == active.job.schema_id)
     else {
         return Err(cancel_ddl_job(
             active,
@@ -1186,7 +1186,7 @@ fn get_modify_column_info(
             ),
         ));
     };
-    let schema = database.name.original().to_owned();
+    let schema = database.read().name.original().to_owned();
     let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
     let old = if args.old_column_id > 0 {
         tidb_model::column::find_column_info_by_id(&info.columns, args.old_column_id)
@@ -1929,7 +1929,7 @@ fn adjust_foreign_key_children(
     }
     let mut children: Vec<(i64, TableInfo)> = Vec::new();
     for database in &catalog.databases {
-        for child in database.deprecated_tables.iter_deref() {
+        for child in database.read().deprecated_tables.iter_deref() {
             let child = child.read();
             if child.id == info.id {
                 continue;
@@ -1940,7 +1940,7 @@ fn adjust_foreign_key_children(
                 changed |= rename_ref_cols(&mut *fk.write());
             }
             if changed {
-                children.push((database.id, child_info));
+                children.push((database.read().id, child_info));
             }
         }
     }

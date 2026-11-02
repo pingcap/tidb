@@ -906,10 +906,10 @@ fn find_statement_table<'catalog>(
     catalog
         .databases
         .iter()
-        .find(|database| database.name.lowercase() == statement.schema.go_to_lower().as_str())
+        .find(|database| database.read().name.lowercase() == statement.schema.go_to_lower().as_str())
         .and_then(|database| {
             database
-                .deprecated_tables
+                .read().deprecated_tables
                 .iter_deref()
                 .find(|stored| stored.read().name.lowercase() == statement.table.go_to_lower().as_str())
         })

@@ -64,7 +64,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
                 schema,
                 name,
                 *or_replace,
-                find_table(database, name).map(|table| table.read().view.is_some()),
+                find_table(&database.read(), name).map(|table| table.read().view.is_some()),
             )
             .map_err(|error| match error.code {
                 tidb_mysql::errors::errcode::ErrTableExists => DdlPlanError::from(
@@ -170,7 +170,7 @@ pub(super) fn create_table_with_info_job(
         ));
     };
     let mut old_view_id = 0;
-    if let Some(existing) = find_table(database, info.name.original()) {
+    if let Some(existing) = find_table(&database.read(), info.name.original()) {
         let existing = existing.read();
         let exists = || {
             DdlPlanError::from(
@@ -221,8 +221,8 @@ pub(super) fn create_table_with_info_job(
         ActionType::ACTION_CREATE_TABLE
     };
     let mut job = session_job(job_context, action);
-    job.schema_id = database.id;
-    job.schema_name = database.name.lowercase().to_owned().into();
+    job.schema_id = database.read().id;
+    job.schema_name = database.read().name.lowercase().to_owned().into();
     job.table_name = info.name.lowercase().to_owned().into();
     let shared = create_table::get_shared_involving_schema_info(&info);
     if !shared.is_empty() {
@@ -303,7 +303,7 @@ fn build_create_table_like_info(
         &info,
     )
     .map_err(DdlPlanError::Admission)?;
-    if let Some(existing) = find_table(database, table) {
+    if let Some(existing) = find_table(&database.read(), table) {
         let existing = existing.read();
         if *if_not_exists {
             return Ok(Err(AddIndexSubmission::AlreadySatisfied {
@@ -424,11 +424,11 @@ fn create_table_args(
 fn job_database<'a>(
     catalog: &'a ClusterCatalog,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
-) -> Result<&'a DBInfo, DdlPlanError> {
+) -> Result<&'a GoShared<DBInfo>, DdlPlanError> {
     catalog
         .databases
         .iter()
-        .find(|database| database.id == active.job.schema_id)
+        .find(|database| database.read().id == active.job.schema_id)
         .ok_or_else(|| {
             cancel_ddl_job(
                 active,
@@ -497,12 +497,12 @@ pub(super) fn on_create_view<S: MetaSnapshot>(
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let (handle, or_replace, old_view_id) = create_table_args(active)?;
     let database = job_database(catalog, active)?;
-    let database_id = database.id;
-    let schema = database.name.original().to_owned();
+    let database_id = database.read().id;
+    let schema = database.read().name.original().to_owned();
     let mut info = handle.read().clone_like_go();
     info.state = SchemaState::NONE;
     let old = database
-        .deprecated_tables
+        .read().deprecated_tables
         .iter_deref()
         .find(|table| table.read().name.lowercase() == info.name.lowercase())
         .map(|table| table.read().id);
@@ -559,12 +559,12 @@ pub(super) fn on_create_sequence(
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let (handle, _, _) = create_table_args(active)?;
     let database = job_database(catalog, active)?;
-    let database_id = database.id;
-    let schema = database.name.original().to_owned();
+    let database_id = database.read().id;
+    let schema = database.read().name.original().to_owned();
     let mut info = handle.read().clone_like_go();
     // Go `checkTableNotExists`.
     if database
-        .deprecated_tables
+        .read().deprecated_tables
         .iter_deref()
         .any(|table| table.read().name.lowercase() == info.name.lowercase())
     {
@@ -631,7 +631,7 @@ fn build_alter_sequence_job(
                 .generate_with_stack_by_args(&[(schema.clone()).into()]),
         ));
     };
-    let Some(stored) = find_table(database, name) else {
+    let Some(stored) = find_table(&database.read(), name) else {
         if *if_exists {
             return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                 detail: format!("sequence `{schema}`.`{name}` does not exist"),
@@ -657,9 +657,9 @@ fn build_alter_sequence_job(
     tidb_ddl_build::sequence::alter_sequence_options(tidb_model::table::SequenceInfo::clone(&old), options, schema, name)
         .map_err(DdlPlanError::from_mysql_error)?;
     let mut job = session_job(job_context, ActionType::ACTION_ALTER_SEQUENCE);
-    job.schema_id = database.id;
+    job.schema_id = database.read().id;
     job.table_id = stored.id;
-    job.schema_name = database.name.lowercase().to_owned().into();
+    job.schema_name = database.read().name.lowercase().to_owned().into();
     job.table_name = stored.name.lowercase().to_owned().into();
     let args = tidb_model::AlterSequenceArgs {
         ident: tidb_model::Ident {

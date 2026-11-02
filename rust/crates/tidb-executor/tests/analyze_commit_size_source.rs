@@ -268,10 +268,10 @@ fn analyze_job_rows(store: &mut MetaStore) -> Vec<SystemRow<'static>> {
     let table = catalog
         .databases
         .iter()
-        .find(|database| database.name.lowercase() == "mysql")
+        .find(|database| database.read().name.lowercase() == "mysql")
         .and_then(|database| {
             database
-                .deprecated_tables
+                .read().deprecated_tables
                 .iter_deref()
                 .find(|table| table.read().name.lowercase() == "analyze_jobs")
         })
@@ -2729,10 +2729,10 @@ fn insert_column_stats_uses_go_origin_default_branches() {
         catalog
             .databases
             .iter()
-            .find(|database| database.name.lowercase() == "mysql")
+            .find(|database| database.read().name.lowercase() == "mysql")
             .and_then(|database| {
                 database
-                    .deprecated_tables
+                    .read().deprecated_tables
                     .iter_deref()
                     .find(|table| table.read().name.lowercase() == name)
             })
@@ -2928,10 +2928,10 @@ fn exchange_partition_stats_update_matches_go_clamping_and_locked_rows() {
     let locked_table = catalog
         .databases
         .iter()
-        .find(|database| database.name.lowercase() == "mysql")
+        .find(|database| database.read().name.lowercase() == "mysql")
         .and_then(|database| {
             database
-                .deprecated_tables
+                .read().deprecated_tables
                 .iter_deref()
                 .find(|table| table.read().name.lowercase() == "stats_table_locked")
         })
@@ -3063,10 +3063,10 @@ fn stats_delta_updates_match_go_positive_negative_and_locked_rows() {
     let locked_table = catalog
         .databases
         .iter()
-        .find(|database| database.name.lowercase() == "mysql")
+        .find(|database| database.read().name.lowercase() == "mysql")
         .and_then(|database| {
             database
-                .deprecated_tables
+                .read().deprecated_tables
                 .iter_deref()
                 .find(|table| table.read().name.lowercase() == "stats_table_locked")
         })
@@ -3193,10 +3193,10 @@ fn loaded_stats_usage_replaces_timestamps_in_one_plan() {
     let table = catalog
         .databases
         .iter()
-        .find(|database| database.name.lowercase() == "mysql")
+        .find(|database| database.read().name.lowercase() == "mysql")
         .and_then(|database| {
             database
-                .deprecated_tables
+                .read().deprecated_tables
                 .iter_deref()
                 .find(|table| table.read().name.lowercase() == "column_stats_usage")
         })
@@ -3534,10 +3534,10 @@ fn loaded_stats_history_requires_the_exact_current_meta_version() {
     let table = catalog
         .databases
         .iter()
-        .find(|database| database.name.lowercase() == "mysql")
+        .find(|database| database.read().name.lowercase() == "mysql")
         .and_then(|database| {
             database
-                .deprecated_tables
+                .read().deprecated_tables
                 .iter_deref()
                 .find(|table| table.read().name.lowercase() == "stats_meta_history")
         })
@@ -3591,10 +3591,10 @@ fn historical_stats_data_round_trips_through_stats_history() {
     let table = catalog
         .databases
         .iter()
-        .find(|database| database.name.lowercase() == "mysql")
+        .find(|database| database.read().name.lowercase() == "mysql")
         .and_then(|database| {
             database
-                .deprecated_tables
+                .read().deprecated_tables
                 .iter_deref()
                 .find(|table| table.read().name.lowercase() == "stats_history")
         })
@@ -3659,10 +3659,10 @@ fn historical_stats_data_plans_one_statement_per_block() {
     let history = catalog
         .databases
         .iter()
-        .find(|database| database.name.lowercase() == "mysql")
+        .find(|database| database.read().name.lowercase() == "mysql")
         .and_then(|database| {
             database
-                .deprecated_tables
+                .read().deprecated_tables
                 .iter_deref()
                 .find(|table| table.read().name.lowercase() == "stats_history")
         })

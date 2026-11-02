@@ -145,10 +145,10 @@ pub(crate) fn resolve_cluster_load_stats(
         .databases
         .iter()
         .find(|database| {
-            database.name.lowercase() == json.database_name.to_lowercase().as_str()
+            database.read().name.lowercase() == json.database_name.to_lowercase().as_str()
         })
         .and_then(|database| {
-            database.deprecated_tables.iter_deref().find(|table| {
+            database.read().deprecated_tables.iter_deref().find(|table| {
                 table.read().name.lowercase() == json.table_name.to_lowercase().as_str()
             })
         })
@@ -339,12 +339,12 @@ mod tests {
             resource_groups: Vec::new(),
             policies: Vec::new(),
             schema_version: 1,
-            databases: vec![DBInfo {
+            databases: vec![tidb_model::GoShared::new(DBInfo {
                 id: 1,
                 name: CiString::new("test"),
                 deprecated_tables: vec![table()].into(),
                 ..DBInfo::default()
-            }],
+            })],
         }
     }
 

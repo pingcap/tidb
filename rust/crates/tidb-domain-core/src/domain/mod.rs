@@ -493,7 +493,7 @@ impl tidb_stats_handle_syncload::sync_load::StatisticsItemLoader for ClusterStat
             let Some(table) = catalog
                 .databases
                 .iter()
-                .flat_map(|database| database.deprecated_tables.iter_deref())
+                .flat_map(|database| database.read().deprecated_tables.iter_deref())
                 .find(|table| table.read().id == item.table_id)
             else {
                 continue;
@@ -1426,7 +1426,7 @@ impl Domain {
                     continue;
                 };
                 if matches!(
-                    database,
+                    database.as_str(),
                     "information_schema"
                         | "performance_schema"
                         | "metrics_schema"
@@ -1672,7 +1672,7 @@ impl Domain {
             catalog
                 .databases
                 .iter()
-                .flat_map(|database| database.deprecated_tables.iter_deref())
+                .flat_map(|database| database.read().deprecated_tables.iter_deref())
                 .find(|table| table.read().id == table_id)
                 .map(|table| Arc::new(table.read().clone()))
         });
@@ -2208,7 +2208,7 @@ impl InfoSchemaView for ClusterHistoricalSchemaView {
         self.catalog
             .databases
             .iter()
-            .flat_map(|database| database.deprecated_tables.iter_deref())
+            .flat_map(|database| database.read().deprecated_tables.iter_deref())
             .find(|table| table.read().id == table_id)
             .map(|table| {
                 let table = table.read();
@@ -2223,7 +2223,7 @@ impl InfoSchemaView for ClusterHistoricalSchemaView {
         self.catalog
             .databases
             .iter()
-            .flat_map(|database| database.deprecated_tables.iter_deref())
+            .flat_map(|database| database.read().deprecated_tables.iter_deref())
             .find(|table| {
                 let table = table.read();
                 table.get_partition_info().is_some_and(|partition| {
@@ -2247,10 +2247,10 @@ impl InfoSchemaView for ClusterHistoricalSchemaView {
     fn schema_by_table(&self, table: &TableMeta) -> Option<String> {
         self.catalog.databases.iter().find_map(|database| {
             database
-                .deprecated_tables
+                .read().deprecated_tables
                 .iter_deref()
                 .any(|candidate| candidate.read().id == table.id)
-                .then(|| database.name.original().to_owned())
+                .then(|| database.read().name.original().to_owned())
         })
     }
 }
@@ -2397,7 +2397,7 @@ impl ClusterHistoricalStatsHandle {
         catalog
             .databases
             .iter()
-            .flat_map(|database| database.deprecated_tables.iter_deref())
+            .flat_map(|database| database.read().deprecated_tables.iter_deref())
             .find(|table| {
                 let table = table.read();
                 table.id == physical_id
@@ -2791,7 +2791,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
         let table_info = catalog
             .databases
             .iter()
-            .flat_map(|database| database.deprecated_tables.iter_deref())
+            .flat_map(|database| database.read().deprecated_tables.iter_deref())
             .find(|candidate| candidate.read().id == table.id)
             .ok_or_else(|| format!("cannot get table by id {}", table.id))?;
         let table_info = table_info.read();
@@ -3044,12 +3044,12 @@ pub fn system_time_timestamp(value: SystemTime) -> Result<tidb_datatype::Time, S
     .map_err(|error| error.to_string())
 }
 
-pub(crate) fn stats_delta_table(catalog: &ClusterCatalog, physical_id: i64) -> Option<(&str, Option<i64>)> {
+pub(crate) fn stats_delta_table(catalog: &ClusterCatalog, physical_id: i64) -> Option<(String, Option<i64>)> {
     for database in &catalog.databases {
-        for table in database.deprecated_tables.iter_deref() {
+        for table in database.read().deprecated_tables.iter_deref() {
             let table = table.read();
             if table.id == physical_id {
-                return Some((database.name.lowercase(), None));
+                return Some((database.read().name.lowercase().to_owned(), None));
             }
             if table.partition.as_ref().is_some_and(|partition| {
                 partition
@@ -3059,7 +3059,7 @@ pub(crate) fn stats_delta_table(catalog: &ClusterCatalog, physical_id: i64) -> O
                     .iter()
                     .any(|definition| definition.id == physical_id)
             }) {
-                return Some((database.name.lowercase(), Some(table.id)));
+                return Some((database.read().name.lowercase().to_owned(), Some(table.id)));
             }
         }
     }
@@ -3258,7 +3258,7 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueSource
             .map_err(|error| error.to_string())?;
         let mut tables = Vec::new();
         for database in &catalog.databases {
-            for table in database.deprecated_tables.iter_deref() {
+            for table in database.read().deprecated_tables.iter_deref() {
                 let table = table.read();
                 let global_stats = statistics
                     .get(&table.id)
@@ -3279,7 +3279,7 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueSource
                     }
                 }
                 tables.push(InventoryTable {
-                    schema_name: database.name.original().to_owned(),
+                    schema_name: database.read().name.original().to_owned(),
                     table: Arc::new(table.clone()),
                     global_stats,
                     partition_stats,
@@ -3317,12 +3317,12 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext
         let catalog = factory.catalog.get_latest();
         for database in &catalog.databases {
             if let Some(table) = database
-                .deprecated_tables
+                .read().deprecated_tables
                 .iter_deref()
                 .find(|table| table.read().id == table_id)
             {
                 return tidb_stats_handle_autoanalyze_priorityqueue::TableLookup::Found {
-                    schema_name: database.name.original().to_owned(),
+                    schema_name: database.read().name.original().to_owned(),
                     table: Arc::new(table.read().clone()),
                 };
             }

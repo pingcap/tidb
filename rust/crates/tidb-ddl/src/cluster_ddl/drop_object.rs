@@ -109,7 +109,7 @@ pub fn drop_table_object<S: MetaSnapshot>(
             let Some(database) = find_database(&catalog, schema) else {
                 return missing();
             };
-            let Some(stored) = find_table(database, table) else {
+            let Some(stored) = find_table(&database.read(), table) else {
                 return missing();
             };
             let stored = stored.read();
@@ -121,7 +121,7 @@ pub fn drop_table_object<S: MetaSnapshot>(
                 &catalog,
                 job_context,
                 ActionType::ACTION_DROP_TABLE,
-                database.id,
+                database.read().id,
                 schema,
                 &stored,
                 &identifiers,
@@ -133,7 +133,7 @@ pub fn drop_table_object<S: MetaSnapshot>(
                 return Ok(None);
             };
             let stored = find_database(&catalog, schema)
-                .and_then(|db| find_table(db, name).map(|table| (db.id, table)));
+                .and_then(|db| find_table(&db.read(), name).map(|table| (db.read().id, table)));
             let Some((db_id, table)) = stored else {
                 if *if_exists {
                     return Ok(Some(AddIndexSubmission::AlreadySatisfied {
@@ -162,7 +162,7 @@ pub fn drop_table_object<S: MetaSnapshot>(
         }
         DdlStatement::DropSequence { schema, name } => {
             let found = find_database(&catalog, schema).and_then(|database| {
-                find_table(database, name).map(|table| (database.id, table))
+                find_table(&database.read(), name).map(|table| (database.read().id, table))
             });
             let Some((db_id, stored)) = found else {
                 return Err(coded_refusal(
@@ -206,19 +206,19 @@ pub fn drop_table_object<S: MetaSnapshot>(
             // Go `DropSchema`: `checkDatabaseHasForeignKeyReferred`.
             check_database_has_foreign_key_referred(
                 &catalog,
-                &database,
+                &database.read(),
                 job_context.foreign_key_checks(),
             )?;
             let mut job = job_for(
                 job_context,
                 ActionType::ACTION_DROP_SCHEMA,
-                database.id,
-                database.name.original(),
+                database.read().id,
+                database.read().name.original(),
             );
-            job.schema_state = database.state;
+            job.schema_state = database.read().state;
             job.involving_schema_info =
                 GoSharedSlice::from_vec(vec![tidb_model::InvolvingSchemaInfo {
-                    database: database.name.lowercase().to_owned().into(),
+                    database: database.read().name.lowercase().to_owned().into(),
                     table: tidb_model::job::INVOLVING_ALL.into(),
                     ..tidb_model::InvolvingSchemaInfo::default()
                 }]);
@@ -309,10 +309,10 @@ pub(super) fn check_database_has_foreign_key_referred(
     let tables: Vec<(String, String)> = catalog
         .databases
         .iter()
-        .find(|loaded| loaded.id == database.id)
+        .find(|loaded| loaded.read().id == database.id)
         .map(|loaded| {
             loaded
-                .deprecated_tables
+                .read().deprecated_tables
                 .iter_deref()
                 .map(|table| (schema_name.clone(), table.read().name.original().to_owned()))
                 .collect()

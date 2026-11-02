@@ -272,10 +272,10 @@ fn user_table<'a>(
     catalog
         .databases
         .iter()
-        .find(|database| database.name.lowercase() == schema.go_to_lower())
+        .find(|database| database.read().name.lowercase() == schema.go_to_lower())
         .and_then(|database| {
             database
-                .deprecated_tables
+                .read().deprecated_tables
                 .iter_deref()
                 .find(|stored| stored.read().name.lowercase() == table.go_to_lower())
         })

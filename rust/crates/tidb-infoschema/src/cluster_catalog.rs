@@ -156,7 +156,7 @@ pub struct ClusterCatalog {
     pub schema_version: i64,
     /// Every database, in stored key order, its `Deprecated.Tables` the
     /// tables stored under it (Go `fetchAllSchemasWithTables`).
-    pub databases: Vec<DBInfo>,
+    pub databases: Vec<GoShared<DBInfo>>,
     /// Go `Mutator.ListResourceGroups`: the stored resource groups, with
     /// meta's default group when none is stored under that name.
     pub resource_groups: Vec<tidb_model::ResourceGroupInfo>,
@@ -170,36 +170,38 @@ impl ClusterCatalog {
     /// by case-insensitive name and its tables, a stored one, else one of
     /// the virtual schemas every infoschema serves (`initVirtualTables`).
     #[must_use]
-    pub fn schema_by_name(&self, schema: &str) -> Option<&DBInfo> {
+    pub fn schema_by_name(&self, schema: &str) -> Option<GoShared<DBInfo>> {
         let lower = schema.go_to_lower();
         self.databases
             .iter()
-            .find(|database| database.name.lowercase() == lower)
+            .find(|database| database.read().name.lowercase() == lower)
+            .cloned()
             .or_else(|| crate::virtual_tables::virtual_schema(schema))
     }
 
     /// Go `InfoSchema.TableByName`: a stored table, else one of the virtual
     /// schemas every infoschema serves (`initVirtualTables`).
     #[must_use]
-    pub fn table_by_name(&self, schema: &str, table: &str) -> Option<(&DBInfo, GoShared<TableInfo>)> {
+    pub fn table_by_name(&self, schema: &str, table: &str) -> Option<(GoShared<DBInfo>, GoShared<TableInfo>)> {
         self.find_table(schema, table)
             .or_else(|| crate::virtual_tables::virtual_table(schema, table))
     }
 
     /// Finds one table by case-insensitive schema and table name.
     #[must_use]
-    pub fn find_table(&self, schema: &str, table: &str) -> Option<(&DBInfo, GoShared<TableInfo>)> {
+    pub fn find_table(&self, schema: &str, table: &str) -> Option<(GoShared<DBInfo>, GoShared<TableInfo>)> {
         let schema = schema.go_to_lower();
         let table = table.go_to_lower();
         self.databases
             .iter()
-            .filter(|database| database.name.lowercase() == schema)
+            .filter(|database| database.read().name.lowercase() == schema)
             .find_map(|database| {
-                database
+                let found = database
+                    .read()
                     .deprecated_tables
                     .iter_deref()
-                    .find(|stored| stored.read().name.lowercase() == table)
-                    .map(|stored| (database, stored))
+                    .find(|stored| stored.read().name.lowercase() == table)?;
+                Some((database.clone(), found))
             })
     }
 }
@@ -260,7 +262,7 @@ pub fn fetch_all_schemas_with_tables<S: MetaSnapshot>(
         let mut info = value::parse_db_info(&stored)
             .map_err(|error| ClusterCatalogError::Decode(format!("DBInfo: {error}")))?;
         info.deprecated_tables = load_database_tables(snapshot, info.id)?.into();
-        databases.push(info);
+        databases.push(GoShared::new(info));
     }
 
     Ok(ClusterCatalog {
@@ -395,7 +397,7 @@ impl BuiltSchema {
             schema.set_policy(policy.clone());
         }
         for database in &loaded.databases {
-            schema.register_database_info(GoShared::new(database.clone()));
+            schema.register_database_info(database.clone());
         }
         Self {
             loaded,

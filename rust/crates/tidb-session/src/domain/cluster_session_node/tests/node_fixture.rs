@@ -221,12 +221,12 @@ pub(super) fn loaded_catalog() -> ClusterCatalog {
         }],
         policies: Vec::new(),
         schema_version: 11,
-        databases: vec![DBInfo {
+        databases: vec![tidb_model::GoShared::new(DBInfo {
             id: 5,
             name: CiString::new("app"),
             deprecated_tables: vec![t, g, pending, acct, hnd, ai].into(),
             ..DBInfo::default()
-        }],
+        })],
     }
 }
 
