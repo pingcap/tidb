@@ -2456,6 +2456,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	cop.IdxMergePartPlans = scans
 	cop.IdxMergeIsIntersection = path.IndexMergeIsIntersection
 	cop.IdxMergeAccessMVIndex = path.IndexMergeAccessMVIndex
+	cop.IdxMergeMVCoveredConds = path.IndexMergeMVCoveredConds
 	cop.IdxMergePartPlansMatchResults = candidate.partialPathMatchResults
 	cop.IdxMergeMatchWithAdvisorySortItems = candidate.matchWithAdvisorySortItems
 	if len(globalRemainingFilters) != 0 {

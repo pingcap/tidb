@@ -783,15 +783,84 @@ func generateANDIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, 
 			path.IndexFilters = append(path.IndexFilters, clonedIdxFilters...)
 		}
 
-		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, buildPartialPathUp4MVIndex(
+		indexMergePath := buildPartialPathUp4MVIndex(
 			partialPaths,
 			isIntersection,
 			tableFilters,
 			ds.TableStats.HistColl,
-		),
 		)
+		if mvIndexRangeCoversJSONPredicates(ds.SCtx(), ds.Table.Meta(), ds.PossibleAccessPaths[idx].Index, partialPaths) {
+			indexMergePath.IndexMergeMVCoveredConds = collectMVCoveredJSONConds(accessFilters)
+		}
+		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, indexMergePath)
 	}
 	return nil
+}
+
+// mvIndexRangeCoversJSONPredicates reports whether the ranges built for this MVIndex enforce the JSON
+// predicates exactly. Ranges for floating-point array elements are built from float values, which cannot
+// represent every JSON number (for example integers larger than 2^53), so such ranges only over-approximate
+// the predicate and the recheck must be kept. Similarly, if a predicate's range on the array column is not a
+// single point, it was not converted into an exact index range and the scan does not enforce the predicate.
+func mvIndexRangeCoversJSONPredicates(sctx planctx.PlanContext, tableInfo *model.TableInfo, idxInfo *model.IndexInfo, partialPaths []*util.AccessPath) bool {
+	tc := sctx.GetSessionVars().StmtCtx.TypeCtx()
+	colInfos := tableInfo.Cols()
+	for i := range idxInfo.Columns {
+		colMeta := colInfos[idxInfo.Columns[i].Offset]
+		if !colMeta.FieldType.IsArray() {
+			continue
+		}
+		switch colMeta.FieldType.ArrayType().GetType() {
+		case mysql.TypeFloat, mysql.TypeDouble:
+			return false
+		}
+		for _, partialPath := range partialPaths {
+			if !rangesRestrictColumnToPoint(tc, partialPath.Ranges, i) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// rangesRestrictColumnToPoint reports whether every range restricts the column at colIdx to a single value.
+// A full range means the predicate was not converted into an exact index range, so the recheck must be kept.
+func rangesRestrictColumnToPoint(tc types.Context, ranges ranger.Ranges, colIdx int) bool {
+	if len(ranges) == 0 {
+		return false
+	}
+	for _, ran := range ranges {
+		if len(ran.LowVal) != len(ran.HighVal) || len(ran.LowVal) <= colIdx || len(ran.Collators) <= colIdx {
+			return false
+		}
+		lo, hi := ran.LowVal[colIdx], ran.HighVal[colIdx]
+		if lo.Kind() == types.KindMinNotNull || hi.Kind() == types.KindMaxValue {
+			return false
+		}
+		cmp, err := lo.Compare(tc, &hi, ran.Collators[colIdx])
+		if err != nil || cmp != 0 || ran.LowExclude || ran.HighExclude {
+			return false
+		}
+	}
+	return true
+}
+
+// collectMVCoveredJSONConds returns the JSON predicates among accessFilters. The ranges built for a single MVIndex
+// enforce these exactly (unsafe type conversions and empty arrays are rejected while building them), so rows
+// returned by the path always satisfy them. The caller must make sure the MVIndex ranges are exact.
+func collectMVCoveredJSONConds(accessFilters []expression.Expression) []expression.Expression {
+	var covered []expression.Expression
+	for _, f := range accessFilters {
+		sf, ok := f.(*expression.ScalarFunction)
+		if !ok {
+			continue
+		}
+		switch sf.FuncName.L {
+		case ast.JSONMemberOf, ast.JSONContains, ast.JSONOverlaps:
+			covered = append(covered, f)
+		}
+	}
+	return covered
 }
 
 // buildPartialPathUp4MVIndex builds these partial paths up to a complete index merge path.
