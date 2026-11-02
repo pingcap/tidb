@@ -305,7 +305,14 @@ CARGO_INCREMENTAL=0`.
     `MutationBuffer` and an `EmptySnapshot` (what production tables already
     read through), or an `Arc`-shared in-memory store. First build that
     fixture store and the `StmtContext` builder that carries it; then
-    convert fixtures file by file. Landed meanwhile (60bb0e7176b):
+    convert fixtures file by file. 2026-11-02: the shared store exists --
+    `tidb_store_driver_txn::cluster_storage_test_util::storage(&[])` is a
+    `ClusterTableStorage` whose clones share one `MutationBuffer` (a
+    `MemTableStorage` clone deep-copies). Building each fixture table over a
+    clone of it makes the table's own store and the test's store one store,
+    so a file converts without the fallback seeing different rows; the
+    statement side needs a `StmtContext::with_txn_store` builder (none
+    exists yet). Landed meanwhile (60bb0e7176b):
     `insert_row` / `insert_row_with_row_id` take the store, fixtures lend
     the table's own.
   - [ ] (d) delete the field and its accessors.
