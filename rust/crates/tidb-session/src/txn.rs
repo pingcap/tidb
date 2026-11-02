@@ -182,13 +182,6 @@ impl TemporaryTableOverlay {
         temporary: &crate::temptable::SessionTemporaryTables,
         body: impl FnOnce(&mut SessionExtendedInfoSchema) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
-        // Go: a temporary table writes through the session's transaction
-        // like any other table (`sctx.Txn()`).
-        if let Some(store) = &temporary.txn_store {
-            for (_, _, table) in &mut self.local {
-                table.replace_storage(store.clone_box());
-            }
-        }
         let mut kinds: std::collections::HashMap<i64, tidb_model::TempTableType> = self
             .local
             .iter()
@@ -287,24 +280,6 @@ fn run_discovering_temporary_overlay<T>(
     temporary.publish(kinds);
     let discovered = (!overlay.local.is_empty() || !overlay.global.is_empty()).then_some(overlay);
     (value, discovered)
-}
-
-/// The image of the catalog a statement started from, restored on ANY exit
-/// that is not an explicit disarm -- an `Err` returned by the statement, and
-/// a panic unwinding out of it (see [`Session::with_staged_catalog`]).
-struct CatalogStage<'a> {
-    /// The catalog the statement mutates in place.
-    catalog: &'a mut SessionExtendedInfoSchema,
-    /// The statement's stage, taken away once the statement has succeeded.
-    stage: Option<tidb_infoschema::StatementStage>,
-}
-
-impl Drop for CatalogStage<'_> {
-    fn drop(&mut self) {
-        if let Some(stage) = self.stage.take() {
-            self.catalog.end_statement_stage(stage, false);
-        }
-    }
 }
 
 impl Session {
@@ -1157,72 +1132,21 @@ impl Session {
         self.global_temporary_data.clear();
     }
 
-    /// Runs one DML statement under a STAGE of the catalog this statement sees,
-    /// so a statement that fails partway leaves the tables as it found them.
+    /// Runs one DML statement over the catalog this statement sees.
     ///
-    /// This is Go's statement-level rollback. A statement opens a staging
-    /// handle on the transaction's membuffer (`pkg/kv/union_store.go`:
-    /// `MemBuffer.Staging()`), writes into it, and
-    /// `pkg/executor/adapter.go` chooses between
-    /// `pkg/session/session.go`'s `StmtCommit` -- `Release()`, folding the
-    /// stage into the transaction -- and `StmtRollback` -- `Cleanup()`,
-    /// dropping it. The transaction itself is untouched either way, which is
-    /// why a failed statement inside `BEGIN` discards only its own writes and
-    /// the statements around it survive to `COMMIT`.
-    ///
-    /// The in-process stores (the temporary tables) keep Go's staging undo
-    /// log themselves (`TableStorage::staging` / `cleanup` / `release`), and
-    /// `SessionExtendedInfoSchema::begin_statement_stage` opens one stage on each. A KV-backed
-    /// table's writes go to the store session's `MutationBuffer`, whose
-    /// statement savepoint the convergence node takes over the buffer itself
-    /// (`tidb_server`'s `ClusterServerSession::with_statement`:
-    /// `MutationBuffer::staged()` before the statement, `restore()` on its
-    /// error arm) -- the same `Staging()`/`Cleanup()` pair one tier down.
-    ///
-    /// The `_tidb_rowid` a row without a clustered handle gets is NOT undone
-    /// either, and for the same reason: Go allocates it from the very counter
-    /// the AUTO_INCREMENT column uses (`autoid.NewAllocatorsFromTblInfo`
-    /// builds one `RowIDAllocType` allocator for both), so a handle a failed
-    /// statement consumed stays consumed.
-    ///
-    /// AUTO_INCREMENT deliberately survives the cleanup: Go allocates ids
-    /// outside transaction semantics and never returns a consumed one, and
-    /// the stage covers rows only -- so the burn is retained with no
-    /// exclusion rule here (captured: a failed one-row insert into an `AUTO_INCREMENT` table
-    /// stores nothing and the next successful insert skips the burned id).
-    ///
-    /// Making this the one door every mutating statement goes through is the
-    /// point: the restore lives in a guard's `Drop`, so no exit of `body` --
-    /// and no DML arm added later -- can forget it.
-    ///
-    /// The guard rather than an error arm is what makes a PANIC take the same
-    /// path as an `Err`. An `inspect_err` restore is skipped entirely when
-    /// `body` unwinds, so a caught panic would leave a HALF-APPLIED statement
-    /// in the in-process rows.
+    /// Go's statement-level rollback stages the transaction's membuffer
+    /// (`MemBuffer.Staging()`, then `StmtCommit`'s `Release()` or
+    /// `StmtRollback`'s `Cleanup()`); every table writes through the
+    /// session's transaction store, whose `MutationBuffer` the statement
+    /// lifecycle checkpoints around each statement (`statement_lifecycle`),
+    /// so a failed statement inside `BEGIN` discards only its own writes.
+    /// AUTO_INCREMENT and `_tidb_rowid` ids a failed statement consumed stay
+    /// consumed, as Go allocates them outside transaction semantics.
     pub(crate) fn with_staged_catalog<T>(
         &mut self,
         body: impl FnOnce(&mut SessionExtendedInfoSchema) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
-        // Go stages a statement's writes on the transaction's membuffer
-        // (`MemBuffer.Staging()`) and `StmtRollback` cleans the stage up. A
-        // store session's `MutationBuffer` checkpoint is that stage for its
-        // KV-backed tables; the in-process stores (temporary tables) open
-        // their own here.
-        self.with_catalog_mut(|catalog| {
-            let stage = catalog.begin_statement_stage();
-            let mut guard = CatalogStage {
-                catalog,
-                stage: Some(stage),
-            };
-            // `?` and an unwind both drop the guard while it is still armed,
-            // which cleans the stage up; only reaching the release below keeps
-            // the statement's writes.
-            let value = body(guard.catalog)?;
-            if let Some(stage) = guard.stage.take() {
-                guard.catalog.end_statement_stage(stage, true);
-            }
-            Ok(value)
-        })
+        self.with_catalog_mut(body)
     }
 
     /// Go `serverStatus2Str` over this session's status bits: the `State`

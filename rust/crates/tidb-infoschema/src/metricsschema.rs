@@ -64,10 +64,7 @@ pub fn tables() -> HashMap<String, Arc<TableEntry>> {
                     .expect("every numbered metric table has a definition");
                 let mut info = go_table_info(name, def);
                 info.id = id;
-                let table = tidb_table::table_from_meta::cluster_table(
-                    &info,
-                    &tidb_kv::storage::MemTableStorage::new(),
-                    &tidb_table::table_from_meta::AutoIdSource::Unavailable,
+                let table = tidb_table::table_from_meta::cluster_table(&info, &tidb_table::table_from_meta::AutoIdSource::Unavailable,
                 )
                 .unwrap_or_else(|error| panic!("metrics_schema.{name} cannot load: {error}"));
                 scratch

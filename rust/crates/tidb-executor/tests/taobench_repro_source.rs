@@ -372,10 +372,9 @@ impl TableStorage for CapturingStore {
 
 fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<DagRequest>>>) -> (TableCommon, CapturingStore) {
     let mut store = CapturingStore::new(captured);
-    let mut table = TableCommon::with_storage(
+    let mut table = TableCommon::new(
         459,
         edges_columns(),
-        store.clone_box(),
     );
     table.add_index(
         Index {

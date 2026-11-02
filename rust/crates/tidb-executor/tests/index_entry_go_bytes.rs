@@ -138,7 +138,7 @@ fn table_with_collation(columns: Vec<tidb_table::column::Column>, use_new_collat
         written: Arc::clone(&written),
     };
     (
-        TableCommon::with_storage_and_collation(TABLE_ID, columns, store.clone_box(), use_new_collation),
+        TableCommon::with_collation(TABLE_ID, columns, use_new_collation),
         written,
         store,
     )

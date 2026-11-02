@@ -227,10 +227,9 @@ mod tests {
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
         let buffer = MutationBuffer::new();
         let mut store = ClusterTableStorage::new(buffer.clone(), handle);
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             91,
             vec![column("a", 1), column("b", 2)],
-            Box::new(store.clone()),
         );
 
         // Committed half: one row above the predicate, one below.

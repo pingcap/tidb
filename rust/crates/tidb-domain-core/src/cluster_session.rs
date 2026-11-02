@@ -36,10 +36,9 @@
 //!
 //! [`configure_loaded_table`]: tidb_infoschema::cluster_catalog::configure_loaded_table
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_stats_handle_syncload::stats_watch::{StatsSnapshot, TableStatsState};
-use tidb_store_driver_txn::cluster_storage::ClusterTableStorage;
 use tidb_infoschema::{SessionExtendedInfoSchema, ViewDef};
 #[cfg(test)]
 use tidb_model::GoShared;
@@ -84,16 +83,10 @@ pub struct ClusterSessionCatalog {
 #[must_use]
 pub fn cluster_session_catalog(
     loaded: &ClusterCatalog,
-    storage: &ClusterTableStorage,
     stats: &StatsSnapshot,
     auto_ids: &dyn TableAutoIds,
 ) -> ClusterSessionCatalog {
-    cluster_session_catalog_with_templates(
-        loaded,
-        Some(snapshot_statistics_view(stats)),
-        auto_ids,
-        storage,
-    )
+    cluster_session_catalog_with_templates(loaded, Some(snapshot_statistics_view(stats)), auto_ids)
 }
 
 /// A statistics view over one fixed snapshot, for a catalog built outside a
@@ -138,7 +131,7 @@ impl SessionCatalogs {
             }
         }
         let built =
-            cluster_session_catalog_with_templates(loaded, None, auto_ids, &detached_storage());
+            cluster_session_catalog_with_templates(loaded, None, auto_ids);
         self.built = Some((loaded.schema_version, built.clone()));
         built
     }
@@ -153,9 +146,6 @@ pub fn cluster_session_catalog_with_templates(
     // through this view of it.
     statistics: Option<Arc<tidb_stats_handle::StatisticsView>>,
     auto_ids: &dyn TableAutoIds,
-    // Neutral storage over which CACHED-MISS tables are built for the
-    // template set; sessions rebind their own seam afterwards either way.
-    template_storage: &ClusterTableStorage,
 ) -> ClusterSessionCatalog {
     let mut catalog = tidb_infoschema_perfschema::catalog();
     catalog.set_schema_meta_version(loaded.schema_version);
@@ -212,7 +202,7 @@ pub fn cluster_session_catalog_with_templates(
             };
             // A cached template clone carries neutral storage and valid
             // process-wide allocator handles; only the store needs rebinding.
-            let built = cluster_table(&table, template_storage, &auto);
+            let built = cluster_table(&table, &auto);
             match built {
                 Ok(kv_table) => {
                     // Go: a table is metadata; the session's statements read
@@ -312,6 +302,8 @@ fn cluster_view(table: &TableInfo) -> Result<ViewDef, String> {
 mod tests {
     use tidb_executor::KvTableDdl;
 use super::*;
+use std::sync::Mutex;
+use tidb_store_driver_txn::cluster_storage::ClusterTableStorage;
 use tidb_table::table_from_meta::kv_index;
 
     use std::collections::BTreeMap;
@@ -373,7 +365,7 @@ use tidb_table::table_from_meta::kv_index;
         let buffer = MutationBuffer::new();
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
         (
-            ClusterTableStorage::new(buffer.clone(), handle),
+            tidb_store_driver_txn::cluster_storage::ClusterTableStorage::new(buffer.clone(), handle),
             buffer,
             snapshot,
         )
@@ -393,8 +385,7 @@ use tidb_table::table_from_meta::kv_index;
             state: SchemaState::PUBLIC,
             ..TableInfo::default()
         };
-        let (storage, _, _) = cluster_storage();
-        let Err(message) = cluster_table(&table, &storage, &AutoIdSource::Unavailable) else {
+        let Err(message) = cluster_table(&table, &AutoIdSource::Unavailable) else {
             panic!("an invalid generated expression must not become an ordinary column");
         };
         assert!(message.contains("generated column v"));
@@ -413,8 +404,7 @@ use tidb_table::table_from_meta::kv_index;
             max_index_id: 23,
             ..TableInfo::default()
         };
-        let (storage, _, _) = cluster_storage();
-        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable).unwrap();
+        let loaded = cluster_table(&table, &AutoIdSource::Unavailable).unwrap();
         assert_eq!(loaded.next_column_id(), 18);
         assert_eq!(loaded.next_index_id(), 24);
         // Go `BuildTableInfoWithLike` keeps the source's id high-water marks.
@@ -427,7 +417,7 @@ use tidb_table::table_from_meta::kv_index;
         )
         .unwrap();
         info.id = 303;
-        let copy = cluster_table(&info, &storage, &AutoIdSource::Unavailable).unwrap();
+        let copy = cluster_table(&info, &AutoIdSource::Unavailable).unwrap();
         assert_eq!(copy.next_column_id(), 18);
         assert_eq!(copy.next_index_id(), 24);
     }
@@ -443,8 +433,7 @@ use tidb_table::table_from_meta::kv_index;
             table_cache_status_type: tidb_model::TableCacheStatusType::ENABLE,
             ..TableInfo::default()
         };
-        let (storage, _, _) = cluster_storage();
-        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+        let loaded = cluster_table(&table, &AutoIdSource::Unavailable)
             .expect("the cached table is otherwise ordinary");
         assert!(loaded.is_cached());
     }
@@ -471,8 +460,7 @@ use tidb_table::table_from_meta::kv_index;
             })),
             ..TableInfo::default()
         };
-        let (storage, _, _) = cluster_storage();
-        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+        let loaded = cluster_table(&table, &AutoIdSource::Unavailable)
             .expect("the locked table is otherwise ordinary");
         assert!(loaded.is_locked());
         assert_eq!(
@@ -483,7 +471,6 @@ use tidb_table::table_from_meta::kv_index;
 
     #[test]
     fn a_cluster_table_retains_column_publication_state_for_point_reads() {
-        let (storage, _, _) = cluster_storage();
         for state in [SchemaState::PUBLIC, SchemaState::WRITE_ONLY] {
             let mut value = column(2, 1, "v", false);
             value.state = state;
@@ -495,7 +482,7 @@ use tidb_table::table_from_meta::kv_index;
                 state: SchemaState::PUBLIC,
                 ..TableInfo::default()
             };
-            let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable).unwrap();
+            let loaded = cluster_table(&table, &AutoIdSource::Unavailable).unwrap();
             assert_eq!(loaded.all_columns_public(), state == SchemaState::PUBLIC);
         }
     }
@@ -509,7 +496,6 @@ use tidb_table::table_from_meta::kv_index;
     /// it rather than panic.
     #[test]
     fn a_cluster_table_builds_a_nonpublic_generated_column() {
-        let (storage, _, _) = cluster_storage();
         for state in [
             SchemaState::DELETE_ONLY,
             SchemaState::WRITE_ONLY,
@@ -527,7 +513,7 @@ use tidb_table::table_from_meta::kv_index;
                 state: SchemaState::PUBLIC,
                 ..TableInfo::default()
             };
-            let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable).unwrap();
+            let loaded = cluster_table(&table, &AutoIdSource::Unavailable).unwrap();
             let [nonpublic] = loaded.nonpublic_columns() else {
                 panic!("the {state:?} column is carried as non-public");
             };
@@ -571,8 +557,7 @@ use tidb_table::table_from_meta::kv_index;
             state: SchemaState::PUBLIC,
             ..TableInfo::default()
         };
-        let (storage, _, _) = cluster_storage();
-        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable).unwrap();
+        let loaded = cluster_table(&table, &AutoIdSource::Unavailable).unwrap();
         assert_eq!(loaded.common_handle_offsets(), [0, 1]);
         assert_eq!(loaded.common_handle_prefix_lengths(), [2, -1]);
     }
@@ -626,11 +611,9 @@ use tidb_table::table_from_meta::kv_index;
             state: SchemaState::PUBLIC,
             ..TableInfo::default()
         };
-        let (storage, _, _) = cluster_storage();
         let homes = LocalTableAutoIds::default();
         let built = cluster_session_catalog(
             &one_table_catalog(table.clone()),
-            &storage,
             &StatsSnapshot::new(),
             &homes,
         );
@@ -674,10 +657,8 @@ use tidb_table::table_from_meta::kv_index;
             },
         ]
         .into();
-        let (storage, _, _) = cluster_storage();
         let built = cluster_session_catalog(
             &catalog,
-            &storage,
             &StatsSnapshot::new(),
             &LocalTableAutoIds::default(),
         );
@@ -758,7 +739,7 @@ use tidb_table::table_from_meta::kv_index;
 
         // The rows the backfill will walk, staged with their values given,
         // so staging them asks no counter either.
-        let mut writer = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+        let mut writer = cluster_table(&table, &AutoIdSource::Unavailable)
             .expect("the writer builds this table");
         for id in 1..=3 {
             writer
@@ -768,7 +749,7 @@ use tidb_table::table_from_meta::kv_index;
         assert_eq!(buffer.len(), 3, "three rows are staged for the walk");
 
         // Now the backfill's own view of the same table: no counter at all.
-        let mut walked = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+        let mut walked = cluster_table(&table, &AutoIdSource::Unavailable)
             .expect("the backfill builds this table");
         let index =
             kv_index(&tidb_model::GoShared::new(index(1, "vi", "v", 1, -1)), &walked.columns())
@@ -822,8 +803,7 @@ use tidb_table::table_from_meta::kv_index;
             partition: Some(GoShared::new(partition)),
             ..TableInfo::default()
         };
-        let (storage, _, _) = cluster_storage();
-        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+        let loaded = cluster_table(&table, &AutoIdSource::Unavailable)
             .expect("a HASH-partitioned table loads");
         loaded
             .partition()
@@ -886,7 +866,7 @@ use tidb_table::table_from_meta::kv_index;
                 ..TableInfo::default()
             };
             let (storage, _, _) = cluster_storage();
-            let mut loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+            let mut loaded = cluster_table(&table, &AutoIdSource::Unavailable)
                 .expect("a reorganizing table loads");
             let handle = loaded
                 .insert_row(&mut storage.clone(), &[Datum::Int(3)], &tidb_exprctx::NoColumns)
@@ -959,8 +939,7 @@ use tidb_table::table_from_meta::kv_index;
             partition: Some(GoShared::new(partition)),
             ..TableInfo::default()
         };
-        let (storage, _, _) = cluster_storage();
-        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+        let loaded = cluster_table(&table, &AutoIdSource::Unavailable)
             .expect("a KEY-partitioned table loads");
         loaded.partition().expect("the routing spec came back");
         assert_eq!(loaded.record_physical_ids(), vec![501, 502]);
@@ -996,9 +975,8 @@ use tidb_table::table_from_meta::kv_index;
             partition: Some(GoShared::new(partition)),
             ..TableInfo::default()
         };
-        let (storage, _, _) = cluster_storage();
         let loaded =
-            cluster_table(&table, &storage, &AutoIdSource::Unavailable).expect("the table loads");
+            cluster_table(&table, &AutoIdSource::Unavailable).expect("the table loads");
         assert!(
             loaded.partition().is_none(),
             "disabled partitioning must not route"
@@ -1038,8 +1016,7 @@ use tidb_table::table_from_meta::kv_index;
             partition: Some(GoShared::new(partition)),
             ..TableInfo::default()
         };
-        let (storage, _, _) = cluster_storage();
-        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+        let loaded = cluster_table(&table, &AutoIdSource::Unavailable)
             .expect("a RANGE-partitioned table loads");
         let spec = loaded.partition().expect("the routing spec came back");
         assert_eq!(loaded.record_physical_ids(), vec![701, 702]);
@@ -1087,8 +1064,7 @@ use tidb_table::table_from_meta::kv_index;
             partition: Some(GoShared::new(partition)),
             ..TableInfo::default()
         };
-        let (storage, _, _) = cluster_storage();
-        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+        let loaded = cluster_table(&table, &AutoIdSource::Unavailable)
             .expect("a LIST COLUMNS table loads");
         let spec = loaded.partition().expect("the routing spec came back");
         assert_eq!(loaded.record_physical_ids(), vec![801, 802]);
@@ -1146,10 +1122,3 @@ use tidb_table::table_from_meta::kv_index;
     }
 }
 
-/// Storage bound to no snapshot, used only to decide which tables a catalog
-/// *could* be built over. Deciding that reads a `TableInfo`, never a row.
-pub fn detached_storage() -> ClusterTableStorage {
-    let slot: Arc<Mutex<dyn tidb_kv::cluster_storage::ClusterSnapshot>> =
-        Arc::new(Mutex::new(tidb_store_driver_txn::cluster_storage::SwappableSnapshot::new()));
-    ClusterTableStorage::new(tidb_store_driver_txn::cluster_storage::MutationBuffer::new(), slot)
-}

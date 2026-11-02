@@ -6637,14 +6637,13 @@ mod remote_cursor_tests {
                 captured: std::sync::Arc::clone(&captured),
                 ..RequestCapture::default()
             };
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             91,
             vec![
                 bigint_column(1, "id"),
                 bigint_column(2, "a"),
                 bigint_column(3, "v"),
             ],
-            store.clone_box(),
         );
         table.set_pk_handle_offset(0);
         table.add_index(
@@ -6711,14 +6710,12 @@ mod remote_cursor_tests {
         assert_eq!(request.limit(), Some(1));
     }
 
-    fn index_selection_table(capture: RequestCapture, prefix_length: i64) -> TableCommon {
+    fn index_selection_table(prefix_length: i64) -> TableCommon {
         let a = bigint_column(2, "a");
         a.info.write().field_type = FieldType::new(tidb_datatype::FieldTypeCode::Varchar).with_flen(20);
-        let store = capture;
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             91,
             vec![bigint_column(1, "id"), a, bigint_column(3, "v")],
-            store.clone_box(),
         )
         .with_new_collation_mode(true);
         table.set_pk_handle_offset(0);
@@ -6783,7 +6780,7 @@ mod remote_cursor_tests {
                 ..RequestCapture::default()
             };
             let store = capture.clone();
-            let mut table = index_selection_table(store.clone(), prefix)
+            let mut table = index_selection_table(prefix)
                 .with_new_collation_mode(new_collation);
             if common {
                 table.clear_pk_handle();
@@ -6864,7 +6861,7 @@ mod remote_cursor_tests {
             {
                 let capture = RequestCapture::default();
                 let store = capture.clone();
-                let mut table = index_selection_table(store.clone(), -1);
+                let mut table = index_selection_table(-1);
                 table.clear_pk_handle();
                 // Stored source columns [a, v], with _tidb_rowid inserted at
                 // extra_slot. Neither source nor wire positions are table offsets.
@@ -6936,7 +6933,7 @@ mod remote_cursor_tests {
                 ..RequestCapture::default()
             };
             let store = capture.clone();
-            let mut table = index_selection_table(store.clone(), 2);
+            let mut table = index_selection_table(2);
             let (projected, expected_ids, expected_handle, expected_projection) = if common {
                 table.clear_pk_handle();
                 table.set_common_handle_offsets(vec![0, 1]);
@@ -6987,7 +6984,7 @@ mod remote_cursor_tests {
                 ..RequestCapture::default()
             };
             let store = capture.clone();
-            let mut table = index_selection_table(store.clone(), index_prefix);
+            let mut table = index_selection_table(index_prefix);
             table.clear_pk_handle();
             table.set_common_handle_offsets(vec![0, 1]);
             table.set_common_handle_version(1);
@@ -7058,8 +7055,7 @@ mod remote_cursor_tests {
             (20, "abcdef", "ab"),
             (2, "ab", "abcdef"),
         ] {
-            let store = RequestCapture::default();
-            let mut table = index_selection_table(store.clone(), index_length)
+            let mut table = index_selection_table(index_length)
                 .with_new_collation_mode(false);
             table.clear_pk_handle();
             table.set_common_handle_offsets(vec![1]);
@@ -7108,7 +7104,7 @@ mod remote_cursor_tests {
             ..RequestCapture::default()
         };
         let store = capture.clone();
-        let mut table = index_selection_table(store.clone(), 2);
+        let mut table = index_selection_table(2);
         let column = column_at(1, table.columns()[1].read().field_type.clone());
         let null = call("isnull", vec![column.clone()]);
         let nested = call("not", vec![null]);
@@ -7207,10 +7203,9 @@ mod remote_cursor_tests {
             let store = PartitionRequestCapture {
                     captured: std::sync::Arc::clone(&captured),
                 };
-            let mut table = TableCommon::with_storage(
+            let mut table = TableCommon::new(
                 92,
                 vec![bigint_column(1, "id"), bigint_column(2, "v")],
-                store.clone_box(),
             );
             if common_handle {
                 table.set_common_handle_offsets(vec![0]);
@@ -7271,10 +7266,9 @@ mod remote_cursor_tests {
             let store = PartitionRequestCapture {
                     captured: std::sync::Arc::clone(&captured),
                 };
-            let mut table = TableCommon::with_storage(
+            let mut table = TableCommon::new(
                 93,
                 vec![bigint_column(1, "id"), bigint_column(2, "v")],
-                store.clone_box(),
             );
             table.set_common_handle_offsets(vec![0]);
             let statement = PushdownStatementContext::default();
@@ -7320,10 +7314,9 @@ mod remote_cursor_tests {
         let store = PartitionRequestCapture {
                 captured: std::sync::Arc::clone(&captured),
             };
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             91,
             vec![bigint_column(1, "id")],
-            store.clone_box(),
         );
         table.set_pk_handle_offset(0);
         table.set_partition(tidb_table::partition_routing::PartitionExpr {
@@ -7541,14 +7534,13 @@ mod remote_cursor_tests {
                 captured: std::sync::Arc::clone(&captured),
                 ..RequestCapture::default()
             };
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             91,
             vec![
                 bigint_column(1, "a"),
                 bigint_column(2, "b"),
                 bigint_column(3, "c"),
             ],
-            store.clone_box(),
         );
         table.set_common_handle_offsets(vec![0, 1]);
         table.add_index(
@@ -7672,14 +7664,13 @@ mod remote_cursor_tests {
                 captured: std::sync::Arc::clone(&captured),
                 ..RequestCapture::default()
             };
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             91,
             vec![
                 bigint_column(1, "a"),
                 bigint_column(2, "b"),
                 bigint_column(3, "c"),
             ],
-            store.clone_box(),
         );
         // idx_a carries only `a` (offset 0); the aggregate below groups by
         // `c` (offset 2), which this index does not carry in any position.
@@ -8425,10 +8416,9 @@ mod remote_cursor_tests {
                 captured: std::sync::Arc::clone(&captured),
                 ..RequestCapture::default()
             };
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             91,
             vec![bigint_column(1, "v")],
-            store.clone_box(),
         );
         let handles = vec![
             TableHandle::Int(8),
@@ -8479,10 +8469,9 @@ mod remote_cursor_tests {
     #[test]
     fn handle_batch_get_preserves_projection_duplicates_and_missing_rows() {
         let mut store = MemTableStorage::new();
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             91,
             vec![bigint_column(1, "id"), bigint_column(2, "v")],
-            store.clone_box(),
         );
         table.set_pk_handle_offset(0);
         table

@@ -541,7 +541,7 @@ mod tests {
         });
         let storage = ClusterTableStorage::new(buffer.clone(), handle)
             .with_client(Arc::clone(&region) as Arc<dyn tidb_txnkv::Client>);
-        let mut table = TableCommon::with_storage(91, columns, Box::new(storage.clone()));
+        let mut table = TableCommon::new(91, columns);
         if let Some(offset) = pk_handle_offset {
             table.set_pk_handle_offset(offset);
         }

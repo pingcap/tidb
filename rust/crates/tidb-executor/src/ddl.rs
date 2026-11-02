@@ -155,10 +155,7 @@ pub fn create_table_in_catalog(
     info.state = tidb_model::SchemaState::PUBLIC;
     let db_id = catalog.database_id(&database).unwrap_or_default();
     let auto_ids = tidb_table::table_from_meta::LocalTableAutoIds::default();
-    let table = tidb_table::table_from_meta::cluster_table(
-        &info,
-        &tidb_kv::storage::MemTableStorage::new(),
-        &tidb_table::table_from_meta::AutoIdSource::In { db_id, ids: &auto_ids },
+    let table = tidb_table::table_from_meta::cluster_table(&info, &tidb_table::table_from_meta::AutoIdSource::In { db_id, ids: &auto_ids },
     )
     .map_err(DriverError::unsupported)?;
     catalog.register_kv_in(&database, &name, table)?;

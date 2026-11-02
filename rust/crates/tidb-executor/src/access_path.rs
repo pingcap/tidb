@@ -6946,7 +6946,7 @@ use std::collections::HashMap;
         let storage = CountingStorage::default();
         let gets = Arc::clone(&storage.gets);
         let mut store = storage;
-        let mut table = TableCommon::with_storage(77, vec![column("id", 1)], store.clone_box());
+        let mut table = TableCommon::new(77, vec![column("id", 1)]);
         table.set_pk_handle_offset(0);
         table.set_partition(tidb_table::partition_routing::PartitionExpr {
             kind: tidb_table::partition_routing::PartitionKind::Hash,
@@ -7002,7 +7002,7 @@ use std::collections::HashMap;
             let batch_keys = Arc::clone(&storage.batch_keys);
             let mut store = storage;
             let mut table =
-                TableCommon::with_storage(77, vec![column("p", 1), column("v", 2)], store.clone_box());
+                TableCommon::new(77, vec![column("p", 1), column("v", 2)]);
             table.set_partition(tidb_table::partition_routing::PartitionExpr {
                 kind: tidb_table::partition_routing::PartitionKind::Hash,
                 expr: Expression::Column(tidb_expr::column::Column::new(0, long())),
@@ -7213,10 +7213,9 @@ use std::collections::HashMap;
     #[test]
     fn mapped_point_read_retains_hidden_columns_required_by_the_plan() {
         let mut store = MemTableStorage::default();
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             77,
             vec![column("id", 1)],
-            store.clone_box(),
         );
         table.add_hidden_column(column("hidden", 2));
         table
@@ -7257,10 +7256,9 @@ use std::collections::HashMap;
         let entries = Arc::clone(&store.entries);
         let gets = Arc::clone(&store.gets);
         let mut store = store;
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             77,
             vec![column("a", 1), column("b", 2), column("c", 3)],
-            store.clone_box(),
         );
         if indexed {
             table
@@ -7477,10 +7475,9 @@ use std::collections::HashMap;
                 request: Arc::clone(&request),
                 table_requests: Arc::clone(&table_requests),
             };
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             89,
             vec![column("a", 1), column("b", 2)],
-            store.clone_box(),
         );
         table.add_index(
             tidb_table::tables::Index {
@@ -7649,10 +7646,9 @@ use std::collections::HashMap;
                                 request: Arc::default(),
                                 table_requests: Arc::default(),
                             };
-                        let mut table = TableCommon::with_storage(
+                        let mut table = TableCommon::new(
                             89,
                             vec![column("a", 1), column("b", 2)],
-                            store.clone_box(),
                         );
                         if reader == "common" {
                             table.set_common_handle_offsets(vec![0, 1]);
@@ -7897,10 +7893,9 @@ use std::collections::HashMap;
                 closed: Arc::default(),
                 require_closed_before_get: Arc::clone(&check_close),
             };
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             89,
             vec![column("a", 1), column("b", 2)],
-            store.clone_box(),
         );
         table.add_index(
             tidb_table::tables::Index {
@@ -8107,10 +8102,9 @@ use std::collections::HashMap;
     #[test]
     fn lookup_worker_width_uses_the_session_value_without_a_rust_cap() {
         let store = MemTableStorage::default();
-        let table = TableCommon::with_storage(
+        let table = TableCommon::new(
             91,
             vec![column("a", 1)],
-            store.clone_box(),
         );
         let mut source = IndexRangeSourceExec::new_with_context(
             ExecutorMeta::new(Schema::new(vec![]), 0, 1, 32),
@@ -8138,10 +8132,9 @@ use std::collections::HashMap;
     #[test]
     fn ten_point_lookup_stays_inline_like_go() {
         let store = MemTableStorage::default();
-        let table = TableCommon::with_storage(
+        let table = TableCommon::new(
             92,
             vec![column("a", 1)],
-            store.clone_box(),
         );
         let mut source = IndexRangeSourceExec::new_with_context(
             ExecutorMeta::new(Schema::new(vec![]), 0, 32, 32),
@@ -8204,10 +8197,9 @@ use std::collections::HashMap;
         let store = CountingStorage::default();
         let entries = Arc::clone(&store.entries);
         let mut store = store;
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             78,
             vec![column("a", 1)],
-            store.clone_box() as Box<dyn TableStorage>,
         );
         for i in 1..=ROWS {
             table
@@ -8402,10 +8394,9 @@ let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())
         let store = CountingStorage::default();
         let entries = Arc::clone(&store.entries);
         let mut store = store;
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             79,
             vec![column("w_id", 1), column("d_id", 2), column("o_id", 3)],
-            store.clone_box(),
         );
         table.set_common_handle_offsets(vec![0, 1, 2]);
         table
@@ -8468,7 +8459,7 @@ let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())
         let store = CountingStorage::default();
         let entries = Arc::clone(&store.entries);
         let mut store = store;
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             80,
             vec![
                 column("w_id", 1),
@@ -8477,7 +8468,6 @@ let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())
                 column("line_number", 4),
                 column("amount", 5),
             ],
-            store.clone_box(),
         );
         table.set_common_handle_offsets(vec![0, 1, 2, 3]);
         table
@@ -8607,7 +8597,7 @@ let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())
     #[test]
     fn an_extreme_over_a_handle_column_the_index_does_not_rank_lowers_the_cop_topn_instead() {
         let mut store = MemTableStorage::default();
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             91,
             vec![
                 column("a", 1),
@@ -8615,7 +8605,6 @@ let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())
                 column("c", 3),
                 column("d", 4),
             ],
-            store.clone_box(),
         );
         table.set_common_handle_offsets(vec![0, 1, 2]);
         table
@@ -8815,10 +8804,9 @@ let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())
     /// them by handle.
     fn crossed_order_table() -> (TableCommon, MemTableStorage) {
         let mut store = MemTableStorage::default();
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             81,
             vec![column("a", 1), column("b", 2), column("c", 3)],
-            store.clone_box(),
         );
         table
             .create_index_with_context(&mut store, tidb_table::tables::Index {
@@ -9001,10 +8989,9 @@ let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())
     /// disagree. See that test for the layout.
     fn paired_order_table(n: i64) -> (TableCommon, MemTableStorage) {
         let mut store = MemTableStorage::default();
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             82,
             vec![column("a", 1), column("b", 2), column("c", 3)],
-            store.clone_box(),
         );
         table
             .create_index_with_context(&mut store, tidb_table::tables::Index {

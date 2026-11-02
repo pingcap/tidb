@@ -3047,10 +3047,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
             let ids = DdlTransactionAutoIds {
                 storage: storage.clone(),
             };
-            let mut table = cluster_table(
-                &reorg.table,
-                &storage,
-                &AutoIdSource::In {
+            let mut table = cluster_table(&reorg.table, &AutoIdSource::In {
                     db_id: reorg.schema_id,
                     ids: &ids,
                 },
@@ -3116,7 +3113,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 }
             }
         }
-        let mut table = cluster_table(&info, &storage, &AutoIdSource::Unavailable)
+        let mut table = cluster_table(&info, &AutoIdSource::Unavailable)
             .map_err(exchange_validation_internal)?
             .with_new_collation_mode(tidb_datatype::new_collation_enabled());
         match work {
@@ -3285,7 +3282,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         buffer: &MutationBuffer,
     ) -> Result<(), LockSqlError> {
         let mut storage = ClusterTableStorage::new(buffer.clone(), snapshot);
-        let mut probe = cluster_table(table, &storage, &AutoIdSource::Unavailable)
+        let mut probe = cluster_table(table, &AutoIdSource::Unavailable)
             .map_err(exchange_validation_internal)?;
         probe.enable_cache(&mut storage).map_err(|error| {
             let error = match error {

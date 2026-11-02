@@ -210,9 +210,8 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
         for path in tables {
             paths.push(self.split_table_path(path)?);
         }
-        let (contexts, client) = self.with_catalog_mut(|catalog| {
+        let contexts = self.with_catalog_mut(|catalog| {
             let mut contexts = Vec::with_capacity(paths.len());
-            let mut client = None;
             for (database, name) in &paths {
                 match catalog.table_in(database, name) {
                     // Go `checkAdminCheckTableGrammar` (`preprocess.go:908`).
@@ -223,15 +222,6 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                         ));
                     }
                     Some(crate::TableEntry::Kv(table)) => {
-                        // Every table of a session shares one storage, so
-                        // one coprocessor client and one snapshot: Go
-                        // `GetClient()` and `getSnapshotTS()`.
-                        if client.is_none() {
-                            client = table
-                                .store()
-                                .client()
-                                .map(|client| (client, table.store().start_ts()));
-                        }
                         contexts.push(crate::checksum::ChecksumContext::new(
                             database, table,
                         ));
@@ -249,7 +239,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                     }
                 }
             }
-            Ok((contexts, client))
+            Ok(contexts)
         })?;
         // Go `getChecksumTableConcurrency`.
         let concurrency = self
@@ -263,8 +253,11 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             .get_system(tidb_vardef::tidb_vars::TIDB_EXPLICIT_REQUEST_SOURCE_TYPE)
             .unwrap_or_default();
         let ctx = self.statement_context(false);
-        let (client, start_ts) = match client {
-            Some((client, start_ts)) => (Some(client), start_ts),
+        // Go `GetClient()` and `getSnapshotTS()`: the session transaction's
+        // coprocessor client and snapshot.
+        let store = crate::statement_store(&ctx);
+        let (client, start_ts) = match store.client() {
+            Some(client) => (Some(client), store.start_ts()),
             None => (None, 0),
         };
         let tables = crate::checksum::ChecksumTableExec::new(

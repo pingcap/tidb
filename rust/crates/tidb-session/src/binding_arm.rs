@@ -100,7 +100,9 @@ impl Session {
         let global = self.global_binding_cache.as_ref().map(|cache| cache.load());
         let has_global = match &global {
             Some(cache) => cache.size() != 0,
-            None => self.has_global_binding_rows(),
+            // A session without the domain's binding cache reads
+            // `mysql.bind_info` itself (Go always has the cache).
+            None => true,
         };
         if self.session_bindings.is_empty() && !has_global {
             return None;
@@ -299,35 +301,6 @@ impl Session {
             .unwrap_or_else(|_| "utf8mb4_bin".to_owned())
     }
 
-    /// Whether `mysql.bind_info` can hold a user binding at all: any row
-    /// beyond the builtin lock row (`crate::bootstrap`). Go answers the same
-    /// question from its binding cache's size; this tier's cache IS the
-    /// table, and a ROW COUNT reads no row bytes, which keeps the per-
-    /// statement fast path free of `bind_info` decodes -- measured by the
-    /// column-prune probes, which would otherwise see this table's columns
-    /// under every statement.
-    ///
-    /// Rows marked `deleted` keep the gate open; the load skips them. That
-    /// is the correct cost shape: a catalog where global bindings were NEVER
-    /// used pays one integer compare, one that used them pays the read.
-    ///
-    /// The count must not touch the storage seam: iterating keys shows up in
-    /// the storage-op counters the plan-cache tests measure statements by.
-    /// `TableCommon::len` is a stored size, and every row writes exactly one
-    /// record key plus one key per index (NULLs are indexed), so more keys
-    /// than one row's worth means a second row exists.
-    fn has_global_binding_rows(&mut self) -> bool {
-        self.with_catalog_mut(|catalog| {
-            Ok(match catalog.table_in("mysql", "bind_info") {
-                Some(tidb_infoschema::TableEntry::Kv(table)) => {
-                    table.len() > 1 + table.indexes().len()
-                }
-                _ => false,
-            })
-        })
-        .unwrap_or(false)
-    }
-
     /// Go `bindingOperator.GCBinding` on this internal session: the Domain
     /// binding owner invokes it through the shared internal writer and lock
     /// row.
@@ -344,9 +317,6 @@ impl Session {
                 loaded.create(binding.as_ref().clone());
             }
             return Ok(loaded);
-        }
-        if !self.has_global_binding_rows() {
-            return Ok(binding::SessionBindings::default());
         }
         let ctx = self.statement_context(false);
         let (_, rows) = self.with_catalog_mut(|catalog| {

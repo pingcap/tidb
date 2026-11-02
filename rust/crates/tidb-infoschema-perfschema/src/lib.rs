@@ -294,10 +294,7 @@ pub fn run_create_system_table_in(
     info.db_id = catalog.database_id(database).unwrap_or_default();
     info.state = tidb_model::SchemaState::PUBLIC;
     let auto_ids = tidb_table::table_from_meta::LocalTableAutoIds::default();
-    let table = tidb_table::table_from_meta::cluster_table(
-        &info,
-        &tidb_kv::storage::MemTableStorage::new(),
-        &tidb_table::table_from_meta::AutoIdSource::In { db_id: info.db_id, ids: &auto_ids },
+    let table = tidb_table::table_from_meta::cluster_table(&info, &tidb_table::table_from_meta::AutoIdSource::In { db_id: info.db_id, ids: &auto_ids },
     )
     .map_err(tidb_driver_error::DriverError::unsupported)?;
     let name = info.name.original().to_owned();

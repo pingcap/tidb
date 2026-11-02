@@ -897,7 +897,7 @@ fn test_table_from_meta_with_collate_uses_fixed_mode() {
     // TestTableFromMetaWithCollateUsesFixedMode. The table captures the
     // supplied persisted mode instead of consulting process-global state.
     for use_new_collation in [false, true] {
-        let table = TableCommon::with_storage_and_collation(
+        let table = TableCommon::with_collation(
             1,
             vec![tidb_table::column::Column {
                 info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
@@ -912,7 +912,6 @@ fn test_table_from_meta_with_collate_uses_fixed_mode() {
                 default_value: None,
                 origin_default: None,
             }],
-            Box::new(MemTableStorage::new()),
             use_new_collation,
         );
         assert_eq!(table.use_new_collation(), use_new_collation);

@@ -25,7 +25,6 @@ use std::sync::{Arc, Mutex};
 use tidb_datatype::FieldTypeFlags;
 use crate::sequence::SequenceDef;
 use crate::tables::{Index, TableCommon, TableAutoId};
-use tidb_kv::storage::TableStorage;
 use tidb_model::{GoAnyView, GoShared, SchemaState, TableInfo};
 
 /// Go `mysql.PriKeyFlag`: what marks the column `PKIsHandle` points at.
@@ -283,11 +282,7 @@ pub fn new_temporary_table_from_table_info(
 ) -> Result<TableCommon, String> {
     table.id = table_id;
     table.state = SchemaState::PUBLIC;
-    let mut kv_table = cluster_table(
-        &table,
-        &tidb_kv::storage::MemTableStorage::new(),
-        &AutoIdSource::Unavailable,
-    )?;
+    let mut kv_table = cluster_table(&table, &AutoIdSource::Unavailable)?;
     kv_table.use_local_temporary_auto_id();
     Ok(kv_table)
 }
@@ -306,7 +301,6 @@ pub fn new_temporary_table_from_table_info(
 /// execution code.)
 pub fn cluster_table(
     table: &TableInfo,
-    storage: &dyn TableStorage,
     auto: &AutoIdSource<'_>,
 ) -> Result<TableCommon, String> {
     if table.is_view() {
@@ -549,7 +543,7 @@ pub fn cluster_table(
     for column in &columns {
         kv_columns.push(build_column(column)?);
     }
-    let mut kv_table = TableCommon::loaded(table.clone(), kv_columns, storage.clone_box());
+    let mut kv_table = TableCommon::loaded(table.clone(), kv_columns);
     kv_table.set_all_columns_public(
         table
             .columns

@@ -247,10 +247,9 @@ fn a_clustered_table_without_a_stored_primary_index_sends_its_primary_ids() {
     let mut store = RecordingStore {
             captured: Arc::clone(&captured),
         };
-    let mut table = TableCommon::with_storage(
+    let mut table = TableCommon::new(
         TABLE_ID,
         vec![binary_pk_column(), plain_column()],
-        store.clone_box(),
     );
     table.set_common_handle_offsets(vec![0]);
 
@@ -278,10 +277,9 @@ fn a_stored_primary_index_yields_the_same_ids() {
     let mut store = RecordingStore {
             captured: Arc::clone(&captured),
         };
-    let mut table = TableCommon::with_storage(
+    let mut table = TableCommon::new(
         TABLE_ID,
         vec![binary_pk_column(), plain_column()],
-        store.clone_box(),
     );
     table.set_common_handle_offsets(vec![0]);
     table.add_index(Index {

@@ -51,7 +51,7 @@ use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, Table
 use crate::bdr_role_store;
 use crate::cluster_account_seam::ClusterAccountWriter;
 use crate::cluster_session::{
-    cluster_session_catalog, detached_storage, SessionCatalogs, SkippedTable,
+    cluster_session_catalog, SessionCatalogs, SkippedTable,
 };
 use tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock;
 use crate::cluster_sysvar_seam::ClusterSysvarWriter;
@@ -857,7 +857,6 @@ impl Domain {
         )));
         let boot_skipped = cluster_session_catalog(
             &catalog.get_latest(),
-            &detached_storage(),
             &stats.load(),
             auto_ids.as_ref(),
         )

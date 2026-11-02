@@ -8802,10 +8802,7 @@ fn register_tables(catalog: &mut SessionExtendedInfoSchema) {
         }
         info.max_column_id = i64::try_from(info.columns.len()).unwrap_or(0);
         info.max_index_id = i64::try_from(info.indices.len()).unwrap_or(0);
-        let table = tidb_table::table_from_meta::cluster_table(
-            &info,
-            &tidb_kv::storage::MemTableStorage::new(),
-            &tidb_table::table_from_meta::AutoIdSource::Unavailable,
+        let table = tidb_table::table_from_meta::cluster_table(&info, &tidb_table::table_from_meta::AutoIdSource::Unavailable,
         )
         .unwrap_or_else(|error| panic!("information_schema.{name} cannot load: {error}"));
         // The schema exists in every catalog this is called on (see

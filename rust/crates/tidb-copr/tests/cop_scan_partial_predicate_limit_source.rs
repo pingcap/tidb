@@ -345,7 +345,7 @@ fn column(name: &str, id: i64, unsigned: bool) -> tidb_table::column::Column {
 /// `RefineComparedConstant` rather than sending it as written. So `tag = '7'`
 /// stays behind while `id > 0` travels. That is the partial lowering the cap
 /// must not accompany.
-fn fixture() -> (SessionExtendedInfoSchema, Arc<FakeRegion>) {
+fn fixture() -> (SessionExtendedInfoSchema, Arc<FakeRegion>, ClusterTableStorage) {
     let region = Arc::new(FakeRegion::default());
     let factory = Arc::new(FakeFactory {
         region: Arc::clone(&region),
@@ -356,18 +356,18 @@ fn fixture() -> (SessionExtendedInfoSchema, Arc<FakeRegion>) {
     let storage = ClusterTableStorage::new(MutationBuffer::new(), snapshot)
         .with_client(client as Arc<dyn tidb_txnkv::Client>);
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    catalog.register_kv("t", TableCommon::with_storage(91, columns, Box::new(storage)));
-    (catalog, region)
+    catalog.register_kv("t", TableCommon::new(91, columns));
+    (catalog, region, storage)
 }
 
 #[test]
 fn simple_scan_limit_preserves_request_builder_concurrency_and_limit_size() {
     for (limit, concurrency) in [(1, 1), (100_000, 15)] {
-        let (catalog, region) = fixture();
+        let (catalog, region, storage) = fixture();
         let rows = run_select_on(
             &format!("SELECT id FROM t LIMIT {limit}"),
             &catalog,
-            &StmtContext::for_query(),
+            &StmtContext::for_query().with_txn_store(Box::new(storage.clone())),
         )
         .unwrap();
         assert_eq!(rows.len(), (limit as usize).min(region_rows().len()));
@@ -392,11 +392,11 @@ fn simple_scan_limit_preserves_request_builder_concurrency_and_limit_size() {
 /// removed four of them, and the statement answered one row.
 #[test]
 fn a_limit_over_a_partly_lowered_predicate_returns_every_qualifying_row() {
-    let (catalog, region) = fixture();
+    let (catalog, region, storage) = fixture();
     let rows = run_select_on(
         "SELECT id FROM t WHERE id > 0 AND tag = '7' LIMIT 5",
         &catalog,
-        &StmtContext::for_query(),
+        &StmtContext::for_query().with_txn_store(Box::new(storage.clone())),
     )
     .expect("the scan is served by the coprocessor");
     assert_eq!(
@@ -435,12 +435,12 @@ fn a_limit_over_a_partly_lowered_predicate_returns_every_qualifying_row() {
 #[test]
 fn coprocessor_response_is_pulled_by_query_worker() {
     let query_thread = std::thread::current().id();
-    let (catalog, region) = fixture();
+    let (catalog, region, storage) = fixture();
 
     let rows = run_select_on(
         "SELECT id FROM t WHERE id > 0",
         &catalog,
-        &StmtContext::for_query(),
+        &StmtContext::for_query().with_txn_store(Box::new(storage.clone())),
     )
     .expect("the scan is served by the coprocessor");
     assert_eq!(rows.len(), region_rows().len());
@@ -469,11 +469,11 @@ fn coprocessor_response_is_pulled_by_query_worker() {
 /// carry over.
 #[test]
 fn a_limit_over_a_partly_lowered_builtin_predicate_returns_every_qualifying_row() {
-    let (catalog, region) = fixture();
+    let (catalog, region, storage) = fixture();
     let rows = run_select_on(
         "SELECT id FROM t WHERE round(id) AND tag = '7' LIMIT 5",
         &catalog,
-        &StmtContext::for_query(),
+        &StmtContext::for_query().with_txn_store(Box::new(storage.clone())),
     )
     .expect("the scan is served by the coprocessor");
     assert_eq!(
@@ -512,11 +512,11 @@ fn a_limit_over_a_partly_lowered_builtin_predicate_returns_every_qualifying_row(
 /// and the rows the cap admits are the rows the query wants.
 #[test]
 fn a_limit_over_a_fully_lowered_builtin_predicate_travels_with_it() {
-    let (catalog, region) = fixture();
+    let (catalog, region, storage) = fixture();
     let rows = run_select_on(
         "SELECT id FROM t WHERE round(id) LIMIT 5",
         &catalog,
-        &StmtContext::for_query(),
+        &StmtContext::for_query().with_txn_store(Box::new(storage.clone())),
     )
     .expect("the scan is served by the coprocessor");
     assert_eq!(
@@ -576,8 +576,8 @@ fn a_root_only_predicate_is_not_swallowed_by_the_access_receipt() {
             ints(&[20, 19, 17]),
         ),
     ] {
-        let (catalog, region) = fixture();
-        let rows = run_select_on(sql, &catalog, &StmtContext::for_query())
+        let (catalog, region, storage) = fixture();
+        let rows = run_select_on(sql, &catalog, &StmtContext::for_query().with_txn_store(Box::new(storage.clone())))
             .expect("the scan is served by the coprocessor");
         assert_eq!(
             rows,
@@ -757,8 +757,8 @@ fn a_descending_scan_marks_both_the_dag_and_dist_sql_request() {
 
 #[test]
 fn adaptive_small_scan_and_execution_deadline_reach_coprocessor() {
-    let (catalog, region) = fixture();
-    let ctx = StmtContext::for_query()
+    let (catalog, region, storage) = fixture();
+    let ctx = StmtContext::for_query().with_txn_store(Box::new(storage.clone()))
         .with_replica_read(tidb_txnkv::ReplicaReadType::ClosestAdaptive)
         .with_stats_load_policy(0, true, 731);
     let rows = run_select_on("SELECT id FROM t LIMIT 1", &catalog, &ctx).unwrap();
@@ -774,9 +774,9 @@ fn adaptive_small_scan_and_execution_deadline_reach_coprocessor() {
 
 #[test]
 fn adaptive_small_scan_falls_back_after_region_tasks_exist() {
-    let (catalog, region) = fixture();
+    let (catalog, region, storage) = fixture();
     let ctx =
-        StmtContext::for_query().with_replica_read(tidb_txnkv::ReplicaReadType::ClosestAdaptive);
+        StmtContext::for_query().with_txn_store(Box::new(storage.clone())).with_replica_read(tidb_txnkv::ReplicaReadType::ClosestAdaptive);
     run_select_on("SELECT id FROM t LIMIT 1", &catalog, &ctx).unwrap();
     assert_eq!(
         region.observations.lock().unwrap()[0].adaptive_mode_after_adjustment,
@@ -829,8 +829,8 @@ fn coprocessor_read_policy_preserves_large_reads_and_explicit_modes() {
             1,
         ),
     ] {
-        let (catalog, region) = fixture();
-        let context = StmtContext::for_query()
+        let (catalog, region, storage) = fixture();
+        let context = StmtContext::for_query().with_txn_store(Box::new(storage.clone()))
             .with_replica_read(mode)
             .with_coprocessor_read_policy(CoprocessorReadPolicy {
                 closest_read_threshold: threshold,
@@ -852,9 +852,9 @@ fn coprocessor_read_policy_preserves_large_reads_and_explicit_modes() {
 
 #[test]
 fn read_consistency_scan_preserves_transaction_scope_and_staleness() {
-    let (catalog, region) = fixture();
+    let (catalog, region, storage) = fixture();
     for (scope, stale) in [("zone-a", true), ("zone-b", false), ("global", false)] {
-        let context = StmtContext::for_query()
+        let context = StmtContext::for_query().with_txn_store(Box::new(storage.clone()))
             .with_replica_read(tidb_txnkv::ReplicaReadType::Follower)
             .with_read_consistency(scope, stale);
         assert_eq!(

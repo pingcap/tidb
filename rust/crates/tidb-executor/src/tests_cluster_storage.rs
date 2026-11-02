@@ -23,11 +23,11 @@ use tidb_store_driver_txn::cluster_storage_test_util::*;
 use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
 use std::sync::{Arc, Mutex};
 use tidb_txnkv::Key;
-    fn mutation_batch_table(store: ClusterTableStorage) -> tidb_table::tables::TableCommon {
+    fn mutation_batch_table() -> tidb_table::tables::TableCommon {
         use tidb_table::tables::TableCommon;
         use tidb_table::tables::Index;
         use tidb_datatype::{FieldType, FieldTypeCode};
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             42,
             ["id", "v"]
                 .iter()
@@ -46,7 +46,6 @@ use tidb_txnkv::Key;
                     origin_default: None,
                 })
                 .collect(),
-            store.clone_box(),
         );
         table.set_pk_handle_offset(0);
         table.add_index(
@@ -83,7 +82,7 @@ use tidb_txnkv::Key;
             [(true, false, 0), (false, false, 1), (true, true, 1)]
         {
             let (mut store, snapshot, buffer) = storage(&[]);
-            let mut table = mutation_batch_table(store.clone());
+            let mut table = mutation_batch_table();
             let old = [Datum::Int(1), Datum::Int(10)];
             let new = [Datum::Int(1), Datum::Int(20)];
             let ctx = crate::StmtContext::for_dml(false, true, ignore).with_txn_store(Box::new(store.clone()))
@@ -124,7 +123,7 @@ use tidb_txnkv::Key;
         use tidb_table::tables::TableHandle;
         use tidb_datatype::Datum;
         let (mut store, snapshot, buffer) = storage(&[]);
-        let mut table = mutation_batch_table(store.clone());
+        let mut table = mutation_batch_table();
         let old = [Datum::Int(1), Datum::Null];
         let new = [Datum::Int(2), Datum::Null];
         let ctx = crate::StmtContext::default().with_txn_store(Box::new(store.clone())).with_pessimistic_transaction(true);
@@ -163,7 +162,7 @@ use tidb_txnkv::Key;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::expression::{Column, Expression};
         let (mut store, _, buffer) = storage(&[]);
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             42,
             ["v", "payload"]
                 .iter()
@@ -182,7 +181,6 @@ use tidb_txnkv::Key;
                     origin_default: None,
                 })
                 .collect(),
-            store.clone_box(),
         );
         let mut column = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
         column.index = 0;
@@ -262,7 +260,7 @@ use tidb_txnkv::Key;
 
         for (lazy, pessimistic) in [(false, false), (false, true), (true, false), (true, true)] {
             let (mut store, snapshot, buffer) = storage(&[]);
-            let mut table = TableCommon::with_storage(
+            let mut table = TableCommon::new(
                 42,
                 vec![tidb_table::column::Column {
                     info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
@@ -277,7 +275,6 @@ use tidb_txnkv::Key;
                     default_value: None,
                     origin_default: None,
                 }],
-                store.clone_box(),
             );
             for (id, unique) in [(1, true), (2, false)] {
                 table.add_index(
@@ -456,7 +453,7 @@ use tidb_txnkv::Key;
         let buffer = MutationBuffer::new();
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
         let mut store = ClusterTableStorage::new(buffer.clone(), handle);
-        let mut table = TableCommon::with_storage(
+        let mut table = TableCommon::new(
             42,
             vec![tidb_table::column::Column {
                 info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
@@ -471,7 +468,6 @@ use tidb_txnkv::Key;
                 default_value: None,
                 origin_default: None,
             }],
-            store.clone_box(),
         );
         let ctx = crate::StmtContext::default().with_txn_store(Box::new(store.clone()));
         let row = [Datum::Int(7)];
@@ -593,7 +589,7 @@ use tidb_txnkv::Key;
                 StorageError::Sql(crate::MysqlError::from_terror(&tidb_kv::kv_errors::ERR_WRITE_CONFLICT.generate_with_stack("write conflict"))),
             ] {
                 let (mut store, snapshot, buffer) = storage(&[]);
-                let mut table = TableCommon::with_storage(
+                let mut table = TableCommon::new(
                     42,
                     ["id", "v"]
                         .into_iter()
@@ -612,7 +608,6 @@ use tidb_txnkv::Key;
                             origin_default: None,
                         })
                         .collect(),
-                    store.clone_box(),
                 );
                 table.set_name("index_errors");
                 table.set_pk_handle_offset(0);

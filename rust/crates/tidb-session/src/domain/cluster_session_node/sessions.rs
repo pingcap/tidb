@@ -274,7 +274,6 @@ impl DomainSessions for Domain {
                         &loaded,
                         Some(Arc::clone(&statistics_view)),
                         auto_ids.as_ref(),
-                        &historical_storage,
                     );
                     (built.catalog, metadata.into_snapshot())
                 };
@@ -295,7 +294,6 @@ impl DomainSessions for Domain {
         {
             let transactions = Arc::clone(&self.transactions);
             let catalogs = Arc::clone(&self.catalog);
-            let connection_storage = storage.snapshot_only();
             let auto_ids = Arc::clone(&self.auto_ids);
             let globals = self.global_vars.clone();
             let statistics_view = Arc::clone(&self.statistics_view);
@@ -324,7 +322,6 @@ impl DomainSessions for Domain {
                     &loaded,
                     Some(Arc::clone(&statistics_view)),
                     auto_ids.as_ref(),
-                    &connection_storage,
                 );
                 drop(metadata);
                 drop(hold);

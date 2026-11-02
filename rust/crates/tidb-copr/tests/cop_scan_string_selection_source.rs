@@ -293,7 +293,7 @@ impl RealTiKvSessionTransportFactory for FakeFactory {
 
 /// `t(id BIGINT, s VARCHAR(20) COLLATE <collation>)` read through a real
 /// coprocessor reader.
-fn fixture(collation: &str) -> (SessionExtendedInfoSchema, Arc<FakeRegion>) {
+fn fixture(collation: &str) -> (SessionExtendedInfoSchema, Arc<FakeRegion>, ClusterTableStorage) {
     let region = Arc::new(FakeRegion::default());
     let factory = Arc::new(FakeFactory {
         region: Arc::clone(&region),
@@ -333,8 +333,8 @@ fn fixture(collation: &str) -> (SessionExtendedInfoSchema, Arc<FakeRegion>) {
     let storage = ClusterTableStorage::new(MutationBuffer::new(), snapshot)
         .with_client(client as Arc<dyn tidb_txnkv::Client>);
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    catalog.register_kv("t", TableCommon::with_storage(93, columns, Box::new(storage)));
-    (catalog, region)
+    catalog.register_kv("t", TableCommon::new(93, columns));
+    (catalog, region, storage)
 }
 
 /// The rows a `SELECT id, s` returns for the given fixture ids.
@@ -376,11 +376,11 @@ fn sole_observation(region: &FakeRegion) -> Observation {
 #[test]
 fn a_string_comparison_travels_and_the_collation_decides_which_rows_return() {
     // A case-insensitive collation: `'A'` and `'a'` are one value.
-    let (catalog, region) = fixture("utf8mb4_general_ci");
+    let (catalog, region, storage) = fixture("utf8mb4_general_ci");
     let rows = run_select_on(
         "SELECT id, s FROM t WHERE s = 'a'",
         &catalog,
-        &StmtContext::for_query(),
+        &StmtContext::for_query().with_txn_store(Box::new(storage.clone())),
     )
     .expect("the scan is served by the coprocessor");
     let observation = sole_observation(&region);
@@ -397,11 +397,11 @@ fn a_string_comparison_travels_and_the_collation_decides_which_rows_return() {
     assert_eq!(rows, expected("utf8mb4_general_ci", &[1, 2]));
 
     // The same statement over a binary collation: `'A'` is a different value.
-    let (catalog, region) = fixture("utf8mb4_bin");
+    let (catalog, region, storage) = fixture("utf8mb4_bin");
     let rows = run_select_on(
         "SELECT id, s FROM t WHERE s = 'a'",
         &catalog,
-        &StmtContext::for_query(),
+        &StmtContext::for_query().with_txn_store(Box::new(storage.clone())),
     )
     .expect("the scan is served by the coprocessor");
     assert_eq!(sole_observation(&region).rows_sent, 1);
@@ -418,11 +418,11 @@ fn a_string_comparison_travels_and_the_collation_decides_which_rows_return() {
 /// from a byte one.
 #[test]
 fn the_multibyte_row_is_selected_by_the_collator_and_not_by_its_bytes() {
-    let (catalog, region) = fixture("utf8mb4_general_ci");
+    let (catalog, region, storage) = fixture("utf8mb4_general_ci");
     let rows = run_select_on(
         "SELECT id, s FROM t WHERE s < 'azb'",
         &catalog,
-        &StmtContext::for_query(),
+        &StmtContext::for_query().with_txn_store(Box::new(storage.clone())),
     )
     .expect("the scan is served by the coprocessor");
     let observation = sole_observation(&region);
@@ -439,11 +439,11 @@ fn the_multibyte_row_is_selected_by_the_collator_and_not_by_its_bytes() {
     // 'b', above 'a') sorts below by its byte value and comes in. A count-only
     // assertion would call these two answers identical, so the ids are what
     // separate them.
-    let (catalog, region) = fixture("utf8mb4_bin");
+    let (catalog, region, storage) = fixture("utf8mb4_bin");
     let rows = run_select_on(
         "SELECT id, s FROM t WHERE s < 'azb'",
         &catalog,
-        &StmtContext::for_query(),
+        &StmtContext::for_query().with_txn_store(Box::new(storage.clone())),
     )
     .expect("the scan is served by the coprocessor");
     assert_eq!(sole_observation(&region).rows_sent, 3);
@@ -462,11 +462,11 @@ fn the_multibyte_row_is_selected_by_the_collator_and_not_by_its_bytes() {
 /// makes every accepted case look like this one.
 #[test]
 fn a_refused_string_comparison_still_answers_right_and_sends_the_whole_relation() {
-    let (catalog, region) = fixture("latin1_bin");
+    let (catalog, region, storage) = fixture("latin1_bin");
     let rows = run_select_on(
         "SELECT id, s FROM t WHERE s = 'a'",
         &catalog,
-        &StmtContext::for_query(),
+        &StmtContext::for_query().with_txn_store(Box::new(storage.clone())),
     )
     .expect("the scan is served by the coprocessor");
     let observation = sole_observation(&region);
@@ -512,8 +512,8 @@ fn a_refused_string_comparison_still_answers_right_and_sends_the_whole_relation(
 #[test]
 fn each_request_carries_the_issuing_statements_time_zone() {
     let zoned = |zone: tidb_datatype::SessionTimeZone| {
-        let (catalog, region) = fixture("utf8mb4_bin");
-        let context = StmtContext::for_query().with_clock((0, 0, 0), zone);
+        let (catalog, region, storage) = fixture("utf8mb4_bin");
+        let context = StmtContext::for_query().with_txn_store(Box::new(storage.clone())).with_clock((0, 0, 0), zone);
         run_select_on("SELECT id, s FROM t WHERE s = 'a'", &catalog, &context)
             .expect("the scan is served by the coprocessor");
         sole_observation(&region).time_zone
@@ -531,8 +531,8 @@ fn each_request_carries_the_issuing_statements_time_zone() {
 /// holds and what the resource-control context on the wire is keyed by.
 #[test]
 fn the_request_carries_the_statement_concurrency_and_resource_group() {
-    let (catalog, region) = fixture("utf8mb4_bin");
-    let context = StmtContext::for_query().with_resource_group_name("analytics");
+    let (catalog, region, storage) = fixture("utf8mb4_bin");
+    let context = StmtContext::for_query().with_txn_store(Box::new(storage.clone())).with_resource_group_name("analytics");
     run_select_on("SELECT id, s FROM t WHERE s = 'a'", &catalog, &context)
         .expect("the scan is served by the coprocessor");
     let observation = sole_observation(&region);
@@ -545,8 +545,8 @@ fn the_request_carries_the_statement_concurrency_and_resource_group() {
 /// session that set it to 3 keeps at most 3 region tasks in flight.
 #[test]
 fn the_request_carries_the_sessions_distsql_scan_concurrency() {
-    let (catalog, region) = fixture("utf8mb4_bin");
-    let context = StmtContext::for_query().with_dist_sql_scan_concurrency(3);
+    let (catalog, region, storage) = fixture("utf8mb4_bin");
+    let context = StmtContext::for_query().with_txn_store(Box::new(storage.clone())).with_dist_sql_scan_concurrency(3);
     run_select_on("SELECT id, s FROM t WHERE s = 'a'", &catalog, &context)
         .expect("the scan is served by the coprocessor");
     assert_eq!(sole_observation(&region).concurrency, 3);
@@ -558,11 +558,11 @@ fn the_request_carries_the_sessions_distsql_scan_concurrency() {
 #[test]
 fn each_request_carries_the_statements_division_scale() {
     let default_observation = {
-        let (catalog, region) = fixture("utf8mb4_bin");
+        let (catalog, region, storage) = fixture("utf8mb4_bin");
         run_select_on(
             "SELECT id, s FROM t WHERE s = 'a'",
             &catalog,
-            &StmtContext::for_query(),
+            &StmtContext::for_query().with_txn_store(Box::new(storage.clone())),
         )
         .expect("the scan is served by the coprocessor");
         sole_observation(&region).div_precision_increment
@@ -572,8 +572,8 @@ fn each_request_carries_the_statements_division_scale() {
         "the default division scale is omitted from the wire"
     );
 
-    let (catalog, region) = fixture("utf8mb4_bin");
-    let context = StmtContext::for_query().with_week_and_division_scale(0, 5);
+    let (catalog, region, storage) = fixture("utf8mb4_bin");
+    let context = StmtContext::for_query().with_txn_store(Box::new(storage.clone())).with_week_and_division_scale(0, 5);
     run_select_on("SELECT id, s FROM t WHERE s = 'a'", &catalog, &context)
         .expect("the scan is served by the coprocessor");
     assert_eq!(
@@ -593,8 +593,8 @@ fn each_request_carries_the_statements_division_scale() {
 /// carried one and dropped the other would still compile.
 #[test]
 fn each_request_carries_the_statements_priority_and_cache_policy() {
-    let (catalog, region) = fixture("utf8mb4_bin");
-    let context = StmtContext::for_query()
+    let (catalog, region, storage) = fixture("utf8mb4_bin");
+    let context = StmtContext::for_query().with_txn_store(Box::new(storage.clone()))
         .with_statement_priority(tidb_ast::StatementPriority::High)
         .with_not_fill_cache(true);
     run_select_on("SELECT id, s FROM t WHERE s = 'a'", &catalog, &context)
@@ -610,11 +610,11 @@ fn each_request_carries_the_statements_priority_and_cache_policy() {
         "SQL_NO_CACHE travels as kv.Request.NotFillCache"
     );
 
-    let (catalog, region) = fixture("utf8mb4_bin");
+    let (catalog, region, storage) = fixture("utf8mb4_bin");
     run_select_on(
         "SELECT id, s FROM t WHERE s = 'a'",
         &catalog,
-        &StmtContext::for_query(),
+        &StmtContext::for_query().with_txn_store(Box::new(storage.clone())),
     )
     .expect("the scan is served by the coprocessor");
     let observation = sole_observation(&region);

@@ -320,7 +320,6 @@ fn trace_of(stmt: &Stmt) -> &tidb_ast::TraceStmt {
     trace
 }
 
-pub(crate) use tidb_domain_core::cluster_session::detached_storage;
 use tidb_domain_core::domain::*;
 pub(crate) use tidb_domain_core::sys_session::stats_session_error;
 pub(crate) use tidb_domain_core::util::is_analyze_table_sql;

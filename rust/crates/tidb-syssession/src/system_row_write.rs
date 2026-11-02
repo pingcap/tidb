@@ -141,10 +141,7 @@ impl TableWriter {
         context: Arc<dyn tidb_tblctx::MutateContext>,
     ) -> Result<Self, RowEncodeError> {
         let writes = CapturedWrites::default();
-        let table = tidb_table::table_from_meta::cluster_table(
-            info,
-            &writes,
-            &tidb_table::table_from_meta::AutoIdSource::Unavailable,
+        let table = tidb_table::table_from_meta::cluster_table(info, &tidb_table::table_from_meta::AutoIdSource::Unavailable,
         )
         .map_err(|reason| {
             encode_error(format!("{} cannot be written: {reason}", table_name(info)))

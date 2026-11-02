@@ -68,7 +68,7 @@ pub use table_meta::{
 pub use index_entries::index_key_bounds;
 use table_meta::NonPublicIndex;
 
-use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
+use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
 use tidb_autoid::AutoIdAllocator;
 use row_decoder::fill_handle_columns;
 pub use row_decoder::fill_row_checksum;
@@ -499,9 +499,6 @@ pub struct TableCommon {
     /// planner rewrite `(v MEMBER OF (source))` onto this index's stored
     /// element keys.
     mv_key_part_sources: std::collections::BTreeMap<i64, String>,
-    /// The byte store, reached through the [`TableStorage`] seam (module
-    /// doc), so a TiKV-backed backend replaces it without touching this file.
-    pub(crate) store: Box<dyn TableStorage>,
     /// The statement budget a reader's own copy counts its scanned keys
     /// against (see [`Self::count_keys_read`]); `None` on catalog tables and
     /// on reads Go serves outside the coprocessor.
@@ -595,51 +592,6 @@ pub struct TableCommon {
     /// Writes ignore it: a row's partition is a function of the ROW (Go's
     /// `locatePartition`), never of the statement's restriction.
     pub(crate) read_partitions: Option<Vec<i64>>,
-}
-
-/// What a table holds while [`TableCommon::with_own_store`] has lent its
-/// store out: any access through the table then is a bug, and fails loudly.
-#[derive(Clone, Copy, Debug)]
-struct DetachedStorage;
-
-impl DetachedStorage {
-    fn misuse() -> ! {
-        panic!("a table's store was reached through the table while lent to a call")
-    }
-}
-
-impl TableStorage for DetachedStorage {
-    fn get(&mut self, _key: &Key) -> Result<Vec<u8>, StorageError> {
-        Self::misuse()
-    }
-
-    fn set(&mut self, _key: Key, _value: Vec<u8>) -> Result<(), StorageError> {
-        Self::misuse()
-    }
-
-    fn delete(&mut self, _key: Key) -> Result<(), StorageError> {
-        Self::misuse()
-    }
-
-    fn iter(
-        &mut self,
-        _start: Option<&Key>,
-        _upper_bound: Option<&Key>,
-    ) -> Result<Box<dyn StorageIterator>, StorageError> {
-        Self::misuse()
-    }
-
-    fn key_count(&self) -> usize {
-        Self::misuse()
-    }
-
-    fn clear(&mut self) {
-        Self::misuse()
-    }
-
-    fn clone_box(&self) -> Box<dyn TableStorage> {
-        Self::misuse()
-    }
 }
 
 /// Go PointGetExecutor keeps immutable table metadata and a separate snapshot.
@@ -972,25 +924,9 @@ fn compose_row_id_shard(shard_bits: u64, shard: i64, id: i64) -> i64 {
 const ROW_ID_BIT_LENGTH: u64 = 64;
 
 impl TableCommon {
-    /// Builds an empty table over the in-process backend.
-    #[must_use]
     /// The mutable view a DDL takes of the shared column metadata --
     /// Go's "build a new TableInfo": the first mutation after a share
     /// copies, an unshared table edits in place.
-    /// Replaces the byte store of this table copy with `store`, keeping every
-    /// other binding (columns, indexes, allocators) untouched.
-    ///
-    /// This is the session-rebinding seam for SHARED table templates: a
-    /// factory builds each loaded table once per schema version over neutral
-    /// storage, and every connection clones that template and swaps in its own
-    /// [`TableStorage`] -- the snapshot slot and staged-write buffer its
-    /// statements read and write through. Go reaches the same shape by giving
-    /// each session pointers to one shared `table.Table`; this tier's tables
-    /// own their store by value, so the rebinding is an explicit swap.
-    pub fn replace_storage(&mut self, store: Box<dyn TableStorage>) {
-        self.store = store;
-    }
-
     pub fn columns_mut(&mut self) -> &mut Vec<crate::column::Column> {
         std::sync::Arc::make_mut(&mut self.columns)
     }
@@ -1004,17 +940,6 @@ impl TableCommon {
     /// Re-keys the table under another physical id (a partition's).
     pub fn set_table_id(&mut self, id: i64) {
         self.table_id = id;
-    }
-
-    /// The storage seam this table reads and writes through.
-    #[must_use]
-    pub fn store(&self) -> &dyn TableStorage {
-        &*self.store
-    }
-
-    /// The storage seam, mutably (rebinding a table to a statement's store).
-    pub fn store_mut(&mut self) -> &mut Box<dyn TableStorage> {
-        &mut self.store
     }
 
     /// The shared column list.
@@ -1130,36 +1055,23 @@ impl TableCommon {
         std::sync::Arc::make_mut(&mut self.indexes)
     }
 
-    pub fn new(table_id: i64, columns: Vec<crate::column::Column>) -> Self {
-        TableCommon::with_storage(table_id, columns, Box::new(MemTableStorage::new()))
-    }
-
-    /// Builds an empty table over the given backend.
-    ///
-    /// This is the one place a table's storage is chosen. A TiKV-backed tier
-    /// hands every table a handle to the same transactional backend here; the
-    /// table's own code is already written against the trait, so nothing else
-    /// changes.
+    /// Builds an empty table from columns alone (a test fixture's or a
+    /// synthesized table's). Its rows live in the statement's store, as Go's
+    /// table reaches them through `sctx.Txn()`.
     #[must_use]
-    pub fn with_storage(
-        table_id: i64,
-        columns: Vec<crate::column::Column>,
-        store: Box<dyn TableStorage>,
-    ) -> Self {
-        Self::with_storage_and_collation(table_id, columns, store, new_collation_enabled())
+    pub fn new(table_id: i64, columns: Vec<crate::column::Column>) -> Self {
+        Self::with_collation(table_id, columns, new_collation_enabled())
     }
 
-    /// Builds an empty table over the given backend with an already captured
-    /// persisted collation mode.
+    /// [`Self::new`] with an already captured persisted collation mode.
     ///
     /// This mirrors Go `TableFromMetaWithCollate`: loaders and DDL backfills
     /// that already own the cluster/job setting pass it once, and every key
     /// and index value generated by the table uses that immutable copy.
     #[must_use]
-    pub fn with_storage_and_collation(
+    pub fn with_collation(
         table_id: i64,
         columns: Vec<crate::column::Column>,
-        store: Box<dyn TableStorage>,
         use_new_collation: bool,
     ) -> Self {
         // A table built from columns alone: its `TableInfo` lists them in
@@ -1177,24 +1089,19 @@ impl TableCommon {
             ),
             ..tidb_model::TableInfo::default()
         };
-        Self::over_meta(meta, columns, store, use_new_collation)
+        Self::over_meta(meta, columns, use_new_collation)
     }
 
     /// Go `TableFromMeta`'s table over the `TableInfo` it was loaded from:
     /// `columns` are `meta`'s public columns, sharing its `ColumnInfo`s.
     #[must_use]
-    pub fn loaded(
-        meta: tidb_model::TableInfo,
-        columns: Vec<crate::column::Column>,
-        store: Box<dyn TableStorage>,
-    ) -> Self {
-        Self::over_meta(meta, columns, store, new_collation_enabled())
+    pub fn loaded(meta: tidb_model::TableInfo, columns: Vec<crate::column::Column>) -> Self {
+        Self::over_meta(meta, columns, new_collation_enabled())
     }
 
     fn over_meta(
         meta: tidb_model::TableInfo,
         columns: Vec<crate::column::Column>,
-        store: Box<dyn TableStorage>,
         use_new_collation: bool,
     ) -> Self {
         let table_id = meta.id;
@@ -1206,7 +1113,6 @@ impl TableCommon {
             columns: std::sync::Arc::new(columns),
             hidden_offsets: Vec::new(),
             mv_key_part_sources: std::collections::BTreeMap::new(),
-            store,
             keys_read: None,
             pk_handle_offset: None,
             indexes: std::sync::Arc::new(Vec::new()),
@@ -1885,22 +1791,6 @@ impl TableCommon {
         self.meta.read().auto_id_cache
     }
 
-    /// Exchanges this table's row storage for `store`, returning the one it
-    /// held.
-    ///
-    /// The ONE caller is the session's GLOBAL temporary table overlay. Go
-    /// keeps such a table's `TableInfo` in the shared infoschema and its rows
-    /// in the SESSION -- reads go through
-    /// `temptable.TemporaryTableSnapshotInterceptor`, which answers an empty
-    /// iterator for a global temporary table so the shared store is never
-    /// read at all. This tier has one table object per name, so the swap is
-    /// how a session gets its own rows under the shared schema; without it,
-    /// two connections writing the same global temporary table would see each
-    /// other's rows, which is the single thing the type exists to prevent.
-    pub fn swap_storage(&mut self, store: Box<dyn TableStorage>) -> Box<dyn TableStorage> {
-        std::mem::replace(&mut self.store, store)
-    }
-
     /// Go `TempTableFromMeta`, the entry `TxnCtx.TemporaryTables` holds for a
     /// GLOBAL temporary table: empty rows and `NewAllocatorFromTempTblInfo`'s
     /// in-memory allocator, ONE for the auto-increment column and
@@ -1932,13 +1822,6 @@ impl TableCommon {
             auto_id: std::mem::replace(&mut self.auto_id, data.auto_id),
             row_id: std::mem::replace(&mut self.row_id, data.row_id),
         }
-    }
-
-    /// Whether this table's row backend is rolled back by the cluster
-    /// session's outer statement savepoint rather than by a catalog image.
-    #[must_use]
-    pub fn has_external_statement_rollback(&self) -> bool {
-        self.store.has_external_statement_rollback()
     }
 
     /// Counts the keys this copy's range scans and handle lookups process
@@ -2691,21 +2574,6 @@ impl TableCommon {
             zone,
             self.use_new_collation,
         )
-    }
-
-    /// Empties the table, keeping its schema and indexes.
-    ///
-    /// Go implements TRUNCATE by replacing the table with a fresh one that has
-    /// the same definition and a new id, which is why the rows, the index
-    /// entries and the auto-increment counter all start over. Captured from
-    /// TiDB: after truncating, the next auto-increment insert gets 1 again.
-    pub fn truncate(&mut self) -> Result<(), AutoIdStoreError> {
-        self.store.clear();
-        self.auto_id.reset()?;
-        if let Some(row_id) = &self.row_id {
-            row_id.reset()?;
-        }
-        self.auto_random_id.reset()
     }
 
     /// Go `temptable.TruncateLocalTemporaryTable` retains metadata but gives
@@ -3819,18 +3687,6 @@ impl TableCommon {
             .is_some_and(|column| column.read().field_type.is_unsigned())
     }
 
-    /// The number of stored rows.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.store.key_count()
-    }
-
-    /// Whether the table has no rows.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.store.key_count() == 0
-    }
-
     /// Every raw key this table's backend currently holds, in key order:
     /// record keys and index keys together.
     ///
@@ -3937,22 +3793,6 @@ impl TableCommon {
                     true,
                 )
             })
-    }
-
-    /// Runs `f` over this table's metadata and the store the table still
-    /// owns, passed apart as Go passes the transaction to every table call.
-    /// The boundary of the storage split (`docs/storage-split-execplan.md`):
-    /// the store is moved out for the call, so nothing inside can reach it
-    /// through `self`, and it is put back even when `f` unwinds.
-    pub fn with_own_store<R>(
-        &mut self,
-        f: impl FnOnce(&mut Self, &mut dyn TableStorage) -> R,
-    ) -> R {
-        let mut store = std::mem::replace(&mut self.store, Box::new(DetachedStorage));
-        let result =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self, &mut *store)));
-        self.store = store;
-        result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     }
 
     /// Runs one row write with the statement's transaction staging attached

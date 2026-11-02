@@ -367,7 +367,7 @@ impl TableCommon {
     /// A copy sharing this table's storage, for state changes in tests.
     pub fn clone_for_test_nonpublic(&self) -> TableCommon {
         let mut copy =
-            TableCommon::with_storage(self.table_id, self.columns.to_vec(), self.store.clone_box());
+            TableCommon::new(self.table_id, self.columns.to_vec());
         copy.nonpublic_columns = Arc::clone(&self.nonpublic_columns);
         copy
     }
