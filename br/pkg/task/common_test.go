@@ -39,7 +39,6 @@ func TestUrlNoQuery(t *testing.T) {
 	for _, testCase := range []struct{ name, input, expected string }{
 		{flagStorage, "s3://FAKE_FLAG_USER:FAKE_FLAG_PASS@bucket/path?token=FAKE_FLAG_QUERY#FAKE_FLAG_FRAGMENT", "s3://bucket/path"},
 		{FlagStreamFullBackupStorage, "s3://FAKE_FLAG_USER:FAKE_FLAG_PASS@bucket/path?token=FAKE_FLAG_QUERY", "s3://bucket/path"},
-		{FlagPiTRAddIndexSQLStorage, "s3://FAKE_FLAG_USER:FAKE_FLAG_PASS@bucket/path?token=FAKE_FLAG_QUERY", "s3://bucket/path"},
 		{flagCheckpointStorage, "local://FAKE_FLAG_USER:FAKE_FLAG_PASS@/tmp/checkpoint?token=FAKE_FLAG_QUERY", "local:///tmp/checkpoint"},
 		{"azblob.account-key", "FAKE_FLAG_AZURE_KEY", "<redacted>"},
 		{"azblob.sas-token", "FAKE_FLAG_SAS", "<redacted>"},

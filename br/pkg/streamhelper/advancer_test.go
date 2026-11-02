@@ -1044,7 +1044,7 @@ func TestRedactBackend(t *testing.T) {
 	}
 
 	redacted := redact.TaskInfoRedacted{Info: info}
-	require.Equal(t, redacted.String(), "storage:<s3:<endpoint:\"http://localhost:9000\" bucket:\"test\" prefix:\"test\" access_key:\"[REDACTED]\" secret_access_key:\"[REDACTED]\" sse_kms_key_id:\"[REDACTED]\" > > name:\"test\" ")
+	require.Equal(t, redacted.String(), "storage:<s3:<endpoint:\"http://localhost:9000\" bucket:\"test\" prefix:\"test\" access_key:\"[REDACTED]\" secret_access_key:\"[REDACTED]\" sse_kms_key_id:\"[REDACTED]\" session_token:\"[REDACTED]\" > > name:\"test\" ")
 	require.Equal(t, info.String(), "storage:<s3:<endpoint:\"http://localhost:9000\" bucket:\"test\" prefix:\"test\" access_key:\"12abCD!@#[]{}?/\\\\\" secret_access_key:\"12abCD!@#[]{}?/\\\\\" > > name:\"test\" ")
 
 	info.Storage = &backup.StorageBackend{

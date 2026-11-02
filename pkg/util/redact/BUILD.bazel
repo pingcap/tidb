@@ -20,20 +20,12 @@ go_test(
     srcs = ["redact_test.go"],
     embed = [":redact"],
     flaky = True,
-<<<<<<< HEAD
-    deps = ["@com_github_stretchr_testify//require"],
-=======
     deps = [
-        "@com_github_gogo_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",
-        "@com_github_pingcap_kvproto//pkg/errorpb",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
     ],
->>>>>>> 3c21da08aa8 (br: prevent credentials from leaking into logs and errors (#72214))
 )

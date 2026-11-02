@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package objstore
+package storage
 
 import (
 	"context"
@@ -25,10 +25,6 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/pkg/objstore/ossstore"
-	"github.com/pingcap/tidb/pkg/objstore/s3like"
-	"github.com/pingcap/tidb/pkg/objstore/s3store"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,7 +46,6 @@ func TestMalformedEndpointDoesNotLeakCredentials(t *testing.T) {
 		{"gcs", false},
 		{"s3", true},
 		{"ks3", true},
-		{"oss", true},
 	} {
 		for _, endpoint := range []string{
 			"https://FAKE_USER:FAKE_PASS@host/path%zz?sig=FAKE_SIGNATURE",
@@ -68,7 +63,7 @@ func TestMalformedEndpointDoesNotLeakCredentials(t *testing.T) {
 					defer cancel()
 
 					// When the parser accepts the backend, construct the real SDK-backed storage.
-					_, err = New(ctx, backend, &storeapi.Options{
+					_, err = New(ctx, backend, &ExternalStorageOptions{
 						NoCredentials: true,
 						HTTPClient:    &http.Client{Transport: rejectEndpointTransport{t: t}},
 					})
@@ -88,7 +83,7 @@ func TestMalformedEndpointDoesNotLeakCredentials(t *testing.T) {
 }
 
 func TestMalformedS3BackendDoesNotLeakCredentials(t *testing.T) {
-	for _, provider := range []string{"", "aws", "minio", s3like.KS3SDKProvider, s3like.OSSProvider} {
+	for _, provider := range []string{"", "aws", "minio", ks3SDKProvider} {
 		for _, entry := range []string{"dispatcher", "constructor"} {
 			for _, endpoint := range []string{
 				"https://FAKE_USER:FAKE_PASS@host/path%zz?sig=FAKE_SIGNATURE",
@@ -105,17 +100,15 @@ func TestMalformedS3BackendDoesNotLeakCredentials(t *testing.T) {
 					require.NoError(t, err)
 					ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 					defer cancel()
-					opts := &storeapi.Options{HTTPClient: &http.Client{Transport: rejectEndpointTransport{t: t}}}
+					opts := &ExternalStorageOptions{HTTPClient: &http.Client{Transport: rejectEndpointTransport{t: t}}}
 
 					// When constructing through either public entry point.
 					if entry == "dispatcher" {
 						_, err = New(ctx, &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: backend}}, opts)
-					} else if provider == s3like.KS3SDKProvider {
-						_, err = s3store.NewKS3Storage(ctx, backend, opts)
-					} else if provider == s3like.OSSProvider {
-						_, err = ossstore.NewOSSStorage(ctx, backend, opts)
+					} else if provider == ks3SDKProvider {
+						_, err = NewKS3Storage(ctx, backend, opts)
 					} else {
-						_, err = s3store.NewS3Storage(ctx, backend, opts)
+						_, err = NewS3Storage(ctx, backend, opts)
 					}
 
 					// Then rejection occurs before SDK errors, logs or credential mutation.

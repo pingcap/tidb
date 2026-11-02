@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -344,13 +343,7 @@ func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 	config := immutableRestoreConfig{
 		CmdName:           cmdName,
 		UpstreamClusterID: cfg.UpstreamClusterID,
-<<<<<<< HEAD
-		Storage:           ast.RedactURL(cfg.Storage),
-=======
 		Storage:           storageURLForRestoreHash(cfg.Storage),
-		Layout:            layout,
-		BackupID:          backupID,
->>>>>>> 3c21da08aa8 (br: prevent credentials from leaking into logs and errors (#72214))
 		FilterStr:         cfg.FilterStr,
 		WithSysTable:      cfg.WithSysTable,
 		FastLoadSysTables: cfg.FastLoadSysTables,
@@ -362,7 +355,7 @@ func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 	}
 	hash := sha256.Sum256(data)
 	// The legacy hash input can contain secrets; log a separately redacted copy.
-	config.Storage = objstore.RedactURL(cfg.Storage)
+	config.Storage = storage.RedactURL(cfg.Storage)
 	data, err = json.Marshal(config)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -668,7 +661,7 @@ func (cfg *RestoreConfig) newStorageCheckpointMetaManagerPITR(
 	log.Info("creating storage checkpoint meta managers for PiTR",
 		zap.Uint64("restoreID", restoreID),
 		zap.Uint64("downstreamClusterID", downstreamClusterID),
-		zap.String("checkpointStorage", cfg.CheckpointStorage),
+		zap.String("checkpointStorage", storage.RedactURL(cfg.CheckpointStorage)),
 		zap.Bool("hasFullBackupStorage", len(cfg.FullBackupStorage) > 0))
 
 	_, checkpointStorage, err := GetStorage(ctx, cfg.CheckpointStorage, &cfg.Config)

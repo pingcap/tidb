@@ -328,8 +328,6 @@ func TestBRIESecureText(t *testing.T) {
 			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix?region=us-west-2'\E$`,
 		},
 		{
-<<<<<<< HEAD
-=======
 			input:   `backup database * to 's3://bucket/prefix?sse-kms-context={"tenant":"#context-value"}'`,
 			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix'\E$`,
 		},
@@ -350,7 +348,6 @@ func TestBRIESecureText(t *testing.T) {
 			secured: `^\QBACKUP DATABASE * TO '(invalid URL)'\E$`,
 		},
 		{
->>>>>>> 3c21da08aa8 (br: prevent credentials from leaking into logs and errors (#72214))
 			// we need to use regexp to match to avoid the random ordering since a map was used.
 			// unfortunately Go's regexp doesn't support lookahead assertion, so the test case below
 			// has false positives.
@@ -361,8 +358,6 @@ func TestBRIESecureText(t *testing.T) {
 			input:   "backup database * to 'gcs://bucket/prefix?access-key=irrelevant&credentials-file=/home/user/secrets.txt'",
 			secured: `^\QBACKUP DATABASE * TO 'gcs://bucket/prefix?credentials-file=xxxxxx'\E$`,
 		},
-<<<<<<< HEAD
-=======
 		{
 			input:   "backup database * to 'azure://container/prefix?account-name=acct&endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsig%3Dsecret&sas-token=token'",
 			secured: `^\QBACKUP DATABASE * TO 'azure://container/prefix?account-name=acct&endpoint=xxxxxx&sas-token=xxxxxx'\E$`,
@@ -375,7 +370,6 @@ func TestBRIESecureText(t *testing.T) {
 			input:   "backup database * to 'azure://c/p?account-name=a&sas-token=sv=2020-08-04&ss=b&sig=SECRETSIG'",
 			secured: `^\QBACKUP DATABASE * TO 'azure://c/p?account-name=a&sas-token=xxxxxx'\E$`,
 		},
->>>>>>> 3c21da08aa8 (br: prevent credentials from leaking into logs and errors (#72214))
 	}
 
 	p := parser.New()
@@ -470,11 +464,6 @@ func TestRedactURL(t *testing.T) {
 		{args{"gcs://bucket/file?"}, "gcs://bucket/file"},
 		{args{"local:///tmp/backup?"}, "local:///tmp/backup"},
 		{args{"s3://bucket/file"}, "s3://bucket/file"},
-<<<<<<< HEAD
-		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file?other-key=123"},
-		{args{"s3://bucket/file?access-key=123"}, "s3://bucket/file?access-key=xxxxxx"},
-		{args{"s3://bucket/file?secret-access-key=123"}, "s3://bucket/file?secret-access-key=xxxxxx"},
-=======
 		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file"},
 		{args{"s3://bucket/file?acl=private&force-path-style=true&provider=aws&region=us-east-1&sse=AES256&storage-class=STANDARD"}, "s3://bucket/file?acl=private&force-path-style=true&provider=aws&region=us-east-1&sse=AES256&storage-class=STANDARD"},
 		{args{"ks3://bucket/file?region=us-east-1&unknown-key=secret"}, "ks3://bucket/file?region=us-east-1"},
@@ -506,7 +495,6 @@ func TestRedactURL(t *testing.T) {
 		{args{"ks3://bucket/file?secret-access-key=123"}, "ks3://bucket/file?secret-access-key=xxxxxx"},
 		{args{"oss://bucket/file?access-key=123"}, "oss://bucket/file?access-key=xxxxxx"},
 		{args{"oss://bucket/file?secret-access-key=123"}, "oss://bucket/file?secret-access-key=xxxxxx"},
->>>>>>> 3c21da08aa8 (br: prevent credentials from leaking into logs and errors (#72214))
 		// underline
 		{args{"s3://bucket/file?access_key=123"}, "s3://bucket/file?access_key=xxxxxx"},
 		{args{"s3://bucket/file?secret_access_key=123"}, "s3://bucket/file?secret_access_key=xxxxxx"},
@@ -515,8 +503,6 @@ func TestRedactURL(t *testing.T) {
 		{args{"azblob://c/p?account-name=a&sas-token=sv=2020-08-04&ss=b&sig=SECRETSIG"}, "azblob://c/p?account-name=a&sas-token=xxxxxx"},
 		{args{"azblob://container/file?sas-token=123"}, "azblob://container/file?sas-token=xxxxxx"},
 		{args{"azure://container/file?account-name=test&sas_token=123"}, "azure://container/file?account-name=test&sas_token=xxxxxx"},
-<<<<<<< HEAD
-=======
 		{args{"azure://container/file?account-name=test&account-key=123"}, "azure://container/file?account-key=xxxxxx&account-name=test"},
 		{args{"azure://container/file?access-tier=Hot&account-name=test&encryption-scope=scope"}, "azure://container/file?access-tier=Hot&account-name=test&encryption-scope=scope"},
 		{args{"azblob://container/file?encryption-key=123"}, "azblob://container/file?encryption-key=xxxxxx"},
@@ -531,7 +517,6 @@ func TestRedactURL(t *testing.T) {
 		{args{"oss://bucket/file?EndPoint=first-secret&EndPoint=second-secret"}, "oss://bucket/file?EndPoint=xxxxxx"},
 		{args{"s3://user:pass@b/p?region=r"}, "s3://b/p?region=r"},
 		{args{"gs://user:pass@bucket/file"}, "gs://bucket/file"},
->>>>>>> 3c21da08aa8 (br: prevent credentials from leaking into logs and errors (#72214))
 	}
 	for _, tt := range tests {
 		t.Run(tt.args.str, func(t *testing.T) {

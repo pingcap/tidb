@@ -28,12 +28,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/kvproto/pkg/errorpb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/parser/ast"
->>>>>>> 3c21da08aa8 (br: prevent credentials from leaking into logs and errors (#72214))
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -269,6 +264,7 @@ func (t TaskInfoRedacted) String() string {
 				s3Copy.Endpoint = ast.RedactURL(s3Copy.Endpoint)
 				s3Copy.AccessKey = "[REDACTED]"
 				s3Copy.SecretAccessKey = "[REDACTED]"
+				s3Copy.SessionToken = "[REDACTED]"
 				s3Copy.SseKmsKeyId = "[REDACTED]"
 				storageCopy.Backend = &backup.StorageBackend_S3{S3: &s3Copy}
 			}

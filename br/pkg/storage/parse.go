@@ -12,45 +12,15 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
 // BackendOptions further configures the storage backend not expressed by the
 // storage URL.
 type BackendOptions struct {
-<<<<<<< HEAD:br/pkg/storage/parse.go
 	S3     S3BackendOptions     `json:"s3" toml:"s3"`
 	GCS    GCSBackendOptions    `json:"gcs" toml:"gcs"`
 	Azblob AzblobBackendOptions `json:"azblob" toml:"azblob"`
-=======
-	S3     s3like.S3BackendOptions `json:"s3" toml:"s3"`
-	GCS    GCSBackendOptions       `json:"gcs" toml:"gcs"`
-	Azblob AzblobBackendOptions    `json:"azblob" toml:"azblob"`
-}
-
-// Redacted returns a copy of the options with the credentials masked, so that
-// the options can be logged. The receiver is not modified.
-func (o BackendOptions) Redacted() BackendOptions {
-	o.S3.AccessKey = maskIfSet(o.S3.AccessKey)
-	o.S3.SecretAccessKey = maskIfSet(o.S3.SecretAccessKey)
-	o.S3.SessionToken = maskIfSet(o.S3.SessionToken)
-	o.S3.SseKmsContext = maskIfSet(o.S3.SseKmsContext)
-	o.Azblob.AccountKey = maskIfSet(o.Azblob.AccountKey)
-	o.Azblob.SASToken = maskIfSet(o.Azblob.SASToken)
-	o.Azblob.EncryptionKey = maskIfSet(o.Azblob.EncryptionKey)
-	// A SAS token or userinfo may be written into the endpoint.
-	o.S3.Endpoint = RedactURL(o.S3.Endpoint)
-	o.GCS.Endpoint = RedactURL(o.GCS.Endpoint)
-	o.Azblob.Endpoint = RedactURL(o.Azblob.Endpoint)
-	return o
-}
-
-// maskIfSet masks a credential, leaving an unset one empty so that the
-// redacted output does not suggest that it is configured.
-func maskIfSet(secret string) string {
-	if secret == "" {
-		return ""
-	}
-	return ast.RedactedValue
 }
 
 // InvalidURLPlaceholder replaces a value that cannot be parsed as a URL.
@@ -63,7 +33,6 @@ const InvalidURLPlaceholder = ast.InvalidURLPlaceholder
 // A value with neither "://" nor "?" is a local path and is returned unchanged.
 func RedactURL(rawURL string) string {
 	return ast.RedactURL(rawURL)
->>>>>>> 3c21da08aa8 (br: prevent credentials from leaking into logs and errors (#72214)):pkg/objstore/parse.go
 }
 
 // ParseRawURL parse raw url to url object.
@@ -74,7 +43,7 @@ func ParseRawURL(rawURL string) (*url.URL, error) {
 	rawURL = strings.ReplaceAll(rawURL, "+", "%2B")
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "parse storage URL failed: invalid format")
 	}
 	return u, nil
 }
@@ -126,7 +95,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 
 	case "s3", "ks3":
 		if u.Host == "" {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for s3 in %s", rawURL)
+			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for s3 in %s", RedactURL(rawURL))
 		}
 		prefix := strings.Trim(u.Path, "/")
 		s3 := &backuppb.S3{Bucket: u.Host, Prefix: prefix}
@@ -145,7 +114,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 
 	case "gs", "gcs":
 		if u.Host == "" {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for gcs in %s", rawURL)
+			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for gcs in %s", RedactURL(rawURL))
 		}
 		prefix := strings.Trim(u.Path, "/")
 		gcs := &backuppb.GCS{Bucket: u.Host, Prefix: prefix}
@@ -161,7 +130,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 
 	case "azure", "azblob":
 		if u.Host == "" {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for azblob in %s", rawURL)
+			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for azblob in %s", RedactURL(rawURL))
 		}
 		prefix := strings.Trim(u.Path, "/")
 		azblob := &backuppb.AzureBlobStorage{Bucket: u.Host, Prefix: prefix}

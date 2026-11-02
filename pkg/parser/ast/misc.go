@@ -15,8 +15,10 @@ package ast
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -3729,10 +3731,6 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-<<<<<<< HEAD
-// RedactURL redacts the secret tokens in the URL. only S3 url need redaction for now.
-// if the url is not a valid url, return the original string.
-=======
 // RedactedValue replaces a secret in redacted output.
 const RedactedValue = "xxxxxx"
 
@@ -3745,19 +3743,18 @@ const InvalidURLPlaceholder = "(invalid URL)"
 // redacts sensitive values, and removes fragments.
 // Queries for other schemes are removed entirely.
 // Plain local paths are unchanged; an invalid URL is replaced by InvalidURLPlaceholder.
->>>>>>> 3c21da08aa8 (br: prevent credentials from leaking into logs and errors (#72214))
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
-	u, err := url.Parse(str)
-	if err != nil {
+	if !strings.Contains(str, "://") && !strings.Contains(str, "?") {
 		return str
 	}
-<<<<<<< HEAD
-=======
+	u, err := url.Parse(str)
+	if err != nil {
+		return InvalidURLPlaceholder
+	}
 	u.User = nil
 	u.Fragment = ""
 	u.RawFragment = ""
->>>>>>> 3c21da08aa8 (br: prevent credentials from leaking into logs and errors (#72214))
 	scheme := u.Scheme
 	failpoint.Inject("forceRedactURL", func() {
 		scheme = "s3"
@@ -3767,28 +3764,6 @@ func RedactURL(str string) string {
 	// Unknown keys may be new secrets, misspellings, or parts of split secret values.
 	var queryKeys map[string]bool
 	switch strings.ToLower(scheme) {
-<<<<<<< HEAD
-	case "s3", "ks3":
-		redactKeys = map[string]struct{}{
-			"access-key":        {},
-			"secret-access-key": {},
-			"session-token":     {},
-		}
-	case "azure", "azblob":
-		redactKeys = map[string]struct{}{
-			"sas-token": {},
-		}
-	}
-
-	if len(redactKeys) > 0 {
-		values := u.Query()
-		for k := range values {
-			// see below on why we normalize key
-			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
-			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
-			if _, ok := redactKeys[normalizedKey]; ok {
-				values[k] = []string{"xxxxxx"}
-=======
 	case "s3", "ks3", "oss":
 		queryKeys = map[string]bool{
 			// Endpoints can embed userinfo or signed query credentials.
@@ -3856,7 +3831,6 @@ func RedactURL(str string) string {
 					return u.String()
 				}
 				values[k] = []string{RedactedValue}
->>>>>>> 3c21da08aa8 (br: prevent credentials from leaking into logs and errors (#72214))
 			}
 		}
 		// In go1.25.5, url.Values.Encode() will sort the keys.

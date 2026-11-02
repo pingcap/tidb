@@ -395,10 +395,7 @@ var mustReportCredErr = false
 const gcsClientCnt = 16
 
 // NewGCSStorage creates a GCS external storage implementation.
-<<<<<<< HEAD:br/pkg/storage/gcs.go
 func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*GCSStorage, error) {
-=======
-func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *storeapi.Options) (*GCSStorage, error) {
 	// url.Parse only checks syntax. SDK normalization and validation can reject
 	// endpoints accepted here and expose endpoint credentials in SDK errors.
 	// Error redaction should be fixed upstream rather than duplicating SDK rules here.
@@ -406,7 +403,6 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *storeapi.Option
 		// Do not retain the parser error, which contains the credential-bearing URL.
 		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid GCS endpoint URL")
 	}
->>>>>>> 3c21da08aa8 (br: prevent credentials from leaking into logs and errors (#72214)):pkg/objstore/gcs.go
 	var clientOps []option.ClientOption
 	if opts.NoCredentials {
 		clientOps = append(clientOps, option.WithoutAuthentication())

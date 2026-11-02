@@ -196,7 +196,7 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	if options.Endpoint != "" {
 		u, err := url.Parse(options.Endpoint)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid S3 endpoint URL")
 		}
 		if u.Scheme == "" {
 			return errors.Errorf("scheme not found in endpoint")
@@ -370,6 +370,10 @@ func (p pingcapLogger) Logf(classification logging.Classification, format string
 
 // NewS3Storage initialize a new s3 storage for metadata.
 func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
+	// Reject malformed endpoints before SDK errors or logs can expose credentials.
+	if _, err := url.Parse(backend.Endpoint); err != nil {
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid S3 endpoint URL")
+	}
 	qs := *backend
 
 	// Start with default configuration loading

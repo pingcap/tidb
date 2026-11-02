@@ -896,28 +896,28 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 
 func TestHash(t *testing.T) {
 	t.Run("legacy storage identity", func(t *testing.T) {
-		// Fixed fingerprints from upstream cb395494e6, before log redaction
-		// switched to query allowlists. Do not derive these from a redactor.
+		// Fixed fingerprints from release-8.5 at 0947841c67f, before this
+		// redaction change. Do not derive these from the current redactor.
 		for _, tc := range []struct{ storage, hash string }{
 			{"s3://bucket/prefix?endpoint=https%3A%2F%2FUSER%3APASS%40host%2F%3Fsig%3DPRIVATE", "fe3c78a5c211c56d07879b55a4fc8898c8c010914f23c57e9b5e414510044258"},
-			{"s3://bucket/prefix?access-key=OLD&secret-access-key=OLD&session-token=OLD&unknown=PRIVATE#fragment", "233a506b0c6104b8e1a9f0b6b9037746b5feb666f660639f6377fdd506ddba00"},
-			{"s3://bucket/prefix?access-key=NEW&secret-access-key=NEW&session-token=NEW&unknown=PRIVATE#fragment", "233a506b0c6104b8e1a9f0b6b9037746b5feb666f660639f6377fdd506ddba00"},
+			{"s3://bucket/prefix?access-key=OLD&secret-access-key=OLD&session-token=OLD&unknown=PRIVATE#fragment", "7ec6870457fed519ec939b31942504e386c951873b3e975359d0299500c021ed"},
+			{"s3://bucket/prefix?access-key=NEW&secret-access-key=NEW&session-token=NEW&unknown=PRIVATE#fragment", "7ec6870457fed519ec939b31942504e386c951873b3e975359d0299500c021ed"},
 			{"ks3://bucket/prefix?Access_Key=OLD&region=us&region=eu&unknown=PRIVATE", "7c7fda3ac06086e5005499793032e3bb88b4023314a8388080e00a73f924b465"},
-			{"oss://bucket/prefix?secret_access_key=OLD&unknown=PRIVATE", "4e2d4f12aa5f3f7fa100c1a51835795b10fb05e71b13638d2a51cd30d863848a"},
-			{"azure://bucket/prefix?account-name=a&account-key=OLD&sas-token=OLD&encryption-key=OLD&endpoint=https%3A%2F%2Facct.example%2F%3Fsig%3DOLD&unknown=PRIVATE", "53c7b03446de70c03835d410bd1ef190d19cbf426f4fdc97694119969e540bd8"},
-			{"azure://bucket/prefix?account-name=a&account-key=NEW&sas-token=NEW&encryption-key=NEW&endpoint=https%3A%2F%2Facct.example%2F%3Fsig%3DNEW&unknown=PRIVATE", "53c7b03446de70c03835d410bd1ef190d19cbf426f4fdc97694119969e540bd8"},
+			{"oss://bucket/prefix?secret_access_key=OLD&unknown=PRIVATE", "0b473be6ae8d1ec6e245eaa3b05b57f79577a30a23404d1f71fb7a9cb3eb1e22"},
+			{"azure://bucket/prefix?account-name=a&account-key=OLD&sas-token=OLD&encryption-key=OLD&endpoint=https%3A%2F%2Facct.example%2F%3Fsig%3DOLD&unknown=PRIVATE", "3411c6c0083bf43bb12f698a70ed2c47ba6f1f148c6663057053c1cd398aadfc"},
+			{"azure://bucket/prefix?account-name=a&account-key=NEW&sas-token=NEW&encryption-key=NEW&endpoint=https%3A%2F%2Facct.example%2F%3Fsig%3DNEW&unknown=PRIVATE", "51cd702cda032335ff3b21ee046ae3bed88cfceb0d35fd1026e3603a40e58568"},
 			{"azblob://bucket/prefix?sas-token=OLD&unknown=PRIVATE", "c393c116cfacdd72a17a362d6d77010bec115c1e8ed02c0239c84dcb8565b918"},
-			{"gcs://USER:PASS@bucket/prefix?credentials-file=PRIVATE&endpoint=https://host#fragment", "04035e672cd2a23d49fbe665e32afd841137467cdce1aaec48e53988a49596f8"},
+			{"gcs://USER:PASS@bucket/prefix?credentials-file=PRIVATE&endpoint=https://host#fragment", "59e4c3912e67d4ba5c4e149205688838cc60f3b382b15b479c6a58ef9007fcdf"},
 			{"gs://bucket/prefix?credentials-file=PRIVATE#fragment", "6b3cc728a592e0e19a3ea155bb91215ddc648ae5bf5f6f804986298e62d1a7bb"},
 			{"local:///tmp/backup?token=PRIVATE#fragment", "0718bbd6d889bac22194be91cc6d839b2ee29eadc413e5473df5c1ac417c6186"},
 			{"file:///tmp/backup?token=PRIVATE#fragment", "32c00f90ed7653acf8edb1c74330785dec41ae97a643cce2a6886d33b92eae84"},
-			{"hdfs://USER:PASS@host/backup?token=PRIVATE#fragment", "5dad05b451f17eefcb775d59c6670ad23c3e3e9159f3efa8dd4376873320d467"},
+			{"hdfs://USER:PASS@host/backup?token=PRIVATE#fragment", "ee00f0fc1b60a45b546f49771c5f4fdd14f2a2a7e2e223f94435a18b6d02c01c"},
 			{"noop:///?token=PRIVATE#fragment", "3fc302be854edc6c384670a4fa657babeaa1039757f69b5560e7ed86c0a8a55a"},
-			{"https://USER:PASS@host/backup?token=PRIVATE#fragment", "d8ef4d086065cf10124072fdb4b525312fd180d4c538b7ec07c1992333a2fdda"},
+			{"https://USER:PASS@host/backup?token=PRIVATE#fragment", "9fc5ee9acdc4ca8615a14e97a5bd08d5cdafe1bb1df60b89331882828751bf71"},
 			{"/tmp/my files/100%off#name", "661e02efb345b11d525b1b74546af9304cecbf63d70b524b019dfdcc73825353"},
-			{"s3://bucket/path%zz?access-key=PRIVATE", "8b0ebe72ce02bf2c4ac35186bbcd858128cdc0310f85bd96df344b450a53e4b5"},
-			{"s3://bucket/prefix?sse=aws:kms&sse-kms-context=%7B%7D", "dc9ba73da5fb5694c1465c8d703e1f313363e13ba46ece58c334b2c7f945c386"},
-			{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"a":"x&region=PRIVATE"}`, "d08121c7e023c9f81050ea57d70db8afa8edaa999206b91d369c54b619733dda"},
+			{"s3://bucket/path%zz?access-key=PRIVATE", "a4a666f84db7812fef562ddfbc92a47fe5dd8af24097acbdeccfac84a5304dff"},
+			{"s3://bucket/prefix?sse=aws:kms&sse-kms-context=%7B%7D", "414e818bf635a531040f781c16668d82092686de9cba4825ff793a6feeaf78e1"},
+			{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"a":"x&region=PRIVATE"}`, "48d8d21e32d699d5cd2a634aff57b3a0b4c2a0273ac9ba28a582c91bd6e26593"},
 			{"s3://bucket/prefix?unknown=PRIVATE%zz", "d08121c7e023c9f81050ea57d70db8afa8edaa999206b91d369c54b619733dda"},
 			{"s3://bucket/prefix?", "0af7d308ff4fdd6ea242b8675c77c83d6610bd4f7aad4072626ee7f1185b7520"},
 			{"gcs://bucket/prefix?", "14561c3b3a958e20ad879ffe3a4ea01c7f9af7b1448fc172b9360fb73de0d59c"},
@@ -960,8 +960,11 @@ func TestHash(t *testing.T) {
 			{"s3://bucket/prefix?endpoint=https://first", "s3://bucket/prefix?endpoint=https://second", false},
 			{"gcs://bucket/prefix?credentials=old#fragment", "gcs://bucket/prefix?credentials=new#fragment", false},
 			{"gcs://bucket/prefix", "gcs://bucket/prefix?", false},
-			{"azure://bucket/prefix?endpoint=https://first", "azure://bucket/prefix?endpoint=https://second", true},
-			{"s3://bucket/first%zz", "s3://bucket/second%zz", true},
+			{"azure://bucket/prefix?endpoint=https://first", "azure://bucket/prefix?endpoint=https://second", false},
+			{"azure://bucket/prefix?sas-token=old", "azure://bucket/prefix?sas-token=new", true},
+			{"s3://user:old@bucket/prefix", "s3://user:new@bucket/prefix", false},
+			{"s3://bucket/prefix#first", "s3://bucket/prefix#second", false},
+			{"s3://bucket/first%zz", "s3://bucket/second%zz", false},
 		} {
 			t.Run(tc.first, func(t *testing.T) {
 				first := &task.RestoreConfig{Config: task.Config{Storage: tc.first}}

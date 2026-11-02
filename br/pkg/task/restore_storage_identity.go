@@ -15,63 +15,35 @@
 package task
 
 import (
-	"encoding/json"
 	"net/url"
-	"slices"
 	"strings"
 )
 
-// storageURLForRestoreHash freezes the legacy ast.RedactURL representation used
-// by persisted restore checkpoints. Do not replace it with a logging redactor:
-// stricter log policies must not change checkpoint identity. Recognized credential
-// values are masked, but their query keys remain part of the identity.
-// The result can still contain secrets in other query parameters or fragments
-// and must never be logged. The literals and URL serialization are also part of
-// the checkpoint format, including historical handling of malformed URLs.
+// storageURLForRestoreHash freezes release-8.5's legacy ast.RedactURL
+// representation used by persisted restore checkpoints. Do not replace it with
+// a logging redactor: stricter log policies must not change checkpoint identity.
+// This value can contain secrets and must never be logged.
 func storageURLForRestoreHash(rawURL string) string {
-	if !strings.Contains(rawURL, "://") && !strings.Contains(rawURL, "?") {
-		return rawURL
-	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return "(invalid URL)"
+		return rawURL
 	}
-	u.User = nil
 	var credentialKeys map[string]struct{}
 	switch strings.ToLower(u.Scheme) {
-	case "s3", "ks3", "oss":
+	case "s3", "ks3":
 		credentialKeys = map[string]struct{}{
 			"access-key":        {},
 			"secret-access-key": {},
 			"session-token":     {},
-			"sse-kms-context":   {},
 		}
 	case "azure", "azblob":
-		credentialKeys = map[string]struct{}{
-			"account-key":    {},
-			"encryption-key": {},
-			"sas-token":      {},
-			"endpoint":       {},
-		}
+		credentialKeys = map[string]struct{}{"sas-token": {}}
 	}
 	if len(credentialKeys) > 0 {
-		u.Fragment = ""
-		u.RawFragment = ""
-		values, err := url.ParseQuery(u.RawQuery)
-		if err != nil {
-			u.RawQuery = ""
-			return u.String()
-		}
-		for key, vs := range values {
+		values := u.Query()
+		for key := range values {
 			normalizedKey := strings.ToLower(strings.ReplaceAll(key, "_", "-"))
 			if _, ok := credentialKeys[normalizedKey]; ok {
-				// Preserve the legacy treatment of split encryption contexts.
-				if normalizedKey == "sse-kms-context" && slices.ContainsFunc(vs, func(v string) bool {
-					return !json.Valid([]byte(v))
-				}) {
-					u.RawQuery = ""
-					return u.String()
-				}
 				values[key] = []string{"xxxxxx"}
 			}
 		}
