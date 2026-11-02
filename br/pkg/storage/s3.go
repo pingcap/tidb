@@ -98,7 +98,7 @@ type S3Storage struct {
 
 // Features implements FeatureProvider.
 func (*S3Storage) Features() Features {
-	return FeatureStrongConsistency
+	return FeatureStrongConsistency | FeatureSupportsStartAfter
 }
 
 func (*S3Storage) MarkStrongConsistency() {
@@ -916,6 +916,9 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		Bucket:  aws.String(rs.options.Bucket),
 		Prefix:  aws.String(prefix),
 		MaxKeys: aws.Int32(int32(maxKeys)),
+	}
+	if opt.StartAfter != "" {
+		req.Marker = aws.String(rs.options.Prefix + opt.StartAfter)
 	}
 
 	for {

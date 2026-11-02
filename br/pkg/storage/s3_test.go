@@ -1420,6 +1420,59 @@ func TestWalkDir(t *testing.T) {
 }
 
 // TestWalkDirBucket checks WalkDir retrieves all directory content under a bucket.
+func TestS3WalkDirStartAfter(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		prefix     string
+		startAfter string
+	}{
+		{name: "with_storage_prefix", prefix: "root/", startAfter: "data/a"},
+		{name: "without_storage_prefix", startAfter: "data/a"},
+		{name: "nonexistent_anchor_with_trailing_slash", prefix: "root/", startAfter: "data/a/"},
+		{name: "empty_start_after", prefix: "root/"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := createS3Suite(t)
+			store := NewS3StorageForTest(s.s3, &backuppb.S3{Bucket: "bucket", Prefix: tc.prefix})
+			page := 0
+			s.s3.EXPECT().ListObjects(gomock.Any(), gomock.Any(), gomock.Any()).Times(2).
+				DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, _ ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+					require.Equal(t, tc.prefix+"data/", aws.ToString(input.Prefix))
+					require.Equal(t, int32(1), aws.ToInt32(input.MaxKeys))
+					if page == 0 {
+						if tc.startAfter == "" {
+							require.Nil(t, input.Marker)
+						} else {
+							require.Equal(t, tc.prefix+tc.startAfter, aws.ToString(input.Marker))
+						}
+					} else {
+						require.Equal(t, tc.prefix+"data/b", aws.ToString(input.Marker))
+					}
+					page++
+					name := "data/b"
+					if page == 2 {
+						name = "data/c"
+					}
+					return &s3.ListObjectsOutput{
+						IsTruncated: aws.Bool(page == 1),
+						Contents: []types.Object{{
+							Key: aws.String(tc.prefix + name), Size: aws.Int64(1),
+						}},
+					}, nil
+				})
+			var files []string
+			err := store.WalkDir(context.Background(), &WalkOption{
+				SubDir: "data", StartAfter: tc.startAfter, ListCount: 1,
+			}, func(name string, _ int64) error {
+				files = append(files, name)
+				return nil
+			})
+			require.NoError(t, err)
+			require.Equal(t, []string{"data/b", "data/c"}, files)
+		})
+	}
+}
+
 func TestWalkDirWithEmptyPrefix(t *testing.T) {
 	controller := gomock.NewController(t)
 	s3API := mock.NewMockS3API(controller)
