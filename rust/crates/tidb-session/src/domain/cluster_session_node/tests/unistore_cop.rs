@@ -25710,3 +25710,77 @@ fn tiflash_reads_plan_as_go_mpp_fragments() {
     assert_eq!(plan, expected);
 }
 
+
+/// Go `clientConn.handleQuery`'s TiFlash fallback, the session's half:
+/// `tidb_allow_fallback_to_tikv` naming TiFlash admits a TiFlash server
+/// timeout; the re-run plans without TiFlash; and its fresh statement context
+/// appends the parser's warnings, then the timeout as an Error, behind its
+/// own once it has run (`handleStmt`'s `warns`).
+#[test]
+fn a_tiflash_fallback_rerun_reads_tikv_and_carries_the_timeout() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(114))
+        .expect("session opens");
+    for sql in [
+        "CREATE TABLE test.fb (a int)",
+        "ALTER TABLE test.fb SET HYPO TIFLASH REPLICA 1",
+    ] {
+        session.node_conn().execute_write(sql).expect(sql);
+    }
+    assert!(!session.tiflash_fallback_allowed(tidb_errno::errcode::ErrTiFlashServerTimeout));
+    session
+        .node_conn()
+        .execute_write("SET tidb_allow_fallback_to_tikv = 'tiflash'")
+        .unwrap();
+    assert!(session.tiflash_fallback_allowed(tidb_errno::errcode::ErrTiFlashServerTimeout));
+    assert!(!session.tiflash_fallback_allowed(tidb_errno::errcode::ErrWriteConflict));
+
+    let reader_task = |session: &mut Session| {
+        displayed(rows(session, "EXPLAIN FORMAT='brief' SELECT * FROM test.fb"))
+            .into_iter()
+            .map(|row| row[2].clone())
+            .collect::<Vec<_>>()
+    };
+    assert!(reader_task(&mut session).iter().any(|task| task == "mpp[tiflash]"));
+    session.set_tiflash_fallback(true);
+    assert!(reader_task(&mut session).iter().all(|task| task != "mpp[tiflash]"));
+    session.set_tiflash_fallback(false);
+    assert!(reader_task(&mut session).iter().any(|task| task == "mpp[tiflash]"));
+
+    // The statement alone: its parser warning.
+    let sql = "SELECT /*+ WRONG_HINT_SYNTAX(xyz) */ 1";
+    let run = |session: &mut Session, reopen: bool| {
+        use crate::domain::resultset_source::ResultSetSource;
+        let stmt = session.parse_at_statement_boundary(sql).expect("parses");
+        if reopen {
+            let timeout = tidb_store_driver_error::sql_query_error::SqlQueryError::new(
+                tidb_errno::errcode::ErrTiFlashServerTimeout,
+                *b"HY000",
+                "TiFlash server timeout",
+            );
+            session.reopen_statement_boundary(Some(&timeout));
+        }
+        let mut result = session
+            .node_conn()
+            .execute_stmt(sql, &stmt)
+            .expect("runs")
+            .expect("a result set");
+        let source = result.source();
+        while !source.next_batch(8).expect("batch").is_empty() {}
+        source.finish().expect("finish");
+        source.close().expect("close");
+        drop(result);
+        rows(session, "SHOW WARNINGS")
+    };
+    let parser_warnings = run(&mut session, false);
+    assert!(!parser_warnings.is_empty(), "the hint warns");
+    let mut expected = parser_warnings;
+    expected.push(vec![
+        Datum::new_string("Error"),
+        Datum::UInt(u64::from(tidb_errno::errcode::ErrTiFlashServerTimeout)),
+        Datum::new_string("TiFlash server timeout"),
+    ]);
+    assert_eq!(run(&mut session, true), expected);
+}

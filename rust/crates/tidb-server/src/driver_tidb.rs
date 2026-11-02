@@ -78,6 +78,18 @@ impl QuerySession for Session {
         Session::set_retrying(self, retrying);
     }
 
+    fn tiflash_fallback_allowed(&self, code: u16) -> bool {
+        Session::tiflash_fallback_allowed(self, code)
+    }
+
+    fn set_tiflash_fallback(&mut self, on: bool) {
+        Session::set_tiflash_fallback(self, on);
+    }
+
+    fn reopen_statement_boundary(&mut self, fallback_error: Option<&SqlQueryError>) {
+        Session::reopen_statement_boundary(self, fallback_error);
+    }
+
     fn record_parse_failure(&mut self, error: &SqlQueryError) {
         self.record_parse_failure_coded(error.code, error.message.clone(), error.identity);
     }

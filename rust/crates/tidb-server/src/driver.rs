@@ -105,6 +105,22 @@ pub trait QuerySession {
     /// Go `RetryInfo.Retrying` around the connection's re-run of a statement.
     fn set_retrying(&mut self, _retrying: bool) {}
 
+    /// Go `clientConn.handleQuery`'s TiFlash fallback condition: a TiFlash
+    /// server timeout under `tidb_allow_fallback_to_tikv` naming TiFlash.
+    /// Default: never.
+    fn tiflash_fallback_allowed(&self, _code: u16) -> bool {
+        false
+    }
+
+    /// Go `delete(IsolationReadEngines, kv.TiFlash)` for the fallback's
+    /// re-run (`on`), and the restore after it.
+    fn set_tiflash_fallback(&mut self, _on: bool) {}
+
+    /// Go `handleStmt(ctx, stmt, warns, ...)` for a re-run: a fresh statement
+    /// context that appends the parser's warnings, then `fallback_error` at
+    /// the Error level, behind the statement's own once it has run.
+    fn reopen_statement_boundary(&mut self, _fallback_error: Option<&SqlQueryError>) {}
+
     /// Go `clientConn.addQueryMetrics`' transaction-write SLI finalizer,
     /// called after the SQL command has written its response.
     fn finish_execute_stmt(&mut self, _cost: Duration) {}

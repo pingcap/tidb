@@ -290,8 +290,46 @@ impl Session {
         // has run (`handleStmt`); they are recorded here and moved behind the
         // execution's own warnings when the statement completes.
         let parsed = self.warnings[parse_warnings_start.min(self.warnings.len())..].to_vec();
+        self.statement_parse_warnings.clone_from(&parsed);
         self.parse_warnings = (!parsed.is_empty()).then_some((parse_warnings_start, parsed));
         Ok(stmt)
+    }
+
+    /// Go `clientConn.handleQuery` re-running a statement that failed before
+    /// any row reached the client (`StmtActionRetryReady`, or the TiFlash
+    /// fallback): `handleStmt` resets the statement context and, once the
+    /// statement has run, appends `warns` -- the parser's warnings, then the
+    /// fallback's error at the Error level -- behind its own.
+    pub fn reopen_statement_boundary(
+        &mut self,
+        fallback_error: Option<&tidb_store_driver_error::sql_query_error::SqlQueryError>,
+    ) {
+        let mut carried = self.statement_parse_warnings.clone();
+        carried.extend(fallback_error.map(|error| {
+            SqlWarn::from_error(WarningLevel::Error, error.code, error.message.clone(), error.identity)
+        }));
+        self.warnings.clone_from(&carried);
+        self.parse_warnings = (!carried.is_empty()).then_some((0, carried));
+        self.statement_boundary_open = true;
+    }
+
+    /// Go `delete(IsolationReadEngines, kv.TiFlash)` around the fallback's
+    /// re-run, and its restoring `IsolationReadEngines[kv.TiFlash]` after.
+    pub fn set_tiflash_fallback(&mut self, on: bool) {
+        self.tiflash_fallback = on;
+    }
+
+    /// Go `clientConn.handleQuery`: a TiFlash server timeout falls back to
+    /// TiKV when `tidb_allow_fallback_to_tikv` names TiFlash.
+    #[must_use]
+    pub fn tiflash_fallback_allowed(&self, code: u16) -> bool {
+        code == tidb_errno::errcode::ErrTiFlashServerTimeout
+            && self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_ALLOW_FALLBACK_TO_TIKV)
+                .is_ok_and(|value| {
+                    value.split(',').any(|engine| engine.trim().eq_ignore_ascii_case("tiflash"))
+                })
     }
 
     /// Go `clientConn.handleStmt`: the parser's warnings follow the warnings

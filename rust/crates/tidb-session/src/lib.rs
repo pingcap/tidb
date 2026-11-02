@@ -722,6 +722,12 @@ pub struct Session {
     /// start in [`Self::warnings`]; see
     /// [`Self::move_parse_warnings_behind_execution`].
     pub(crate) parse_warnings: Option<(usize, Vec<SqlWarn>)>,
+    /// Go `parserWarns`: the current command's parser warnings, which the
+    /// connection hands every re-run of the statement.
+    pub(crate) statement_parse_warnings: Vec<SqlWarn>,
+    /// Go `clientConn.handleQuery`'s TiFlash fallback: TiFlash is out of
+    /// `IsolationReadEngines` for the statement's re-run.
+    pub(crate) tiflash_fallback: bool,
     /// Go `ExecStmt.OutputNames` of the statement's materialized query
     /// result, one per column; empty for any other result. With
     /// `last_result_current_db` they give Go `recordSet.Fields()`, which the
@@ -972,6 +978,8 @@ impl Session {
             plan_cache_invalidation,
             stats_handle,
             parse_warnings: None,
+            statement_parse_warnings: Vec::new(),
+            tiflash_fallback: false,
             last_result_output_names: Vec::new(),
             last_result_current_db: String::new(),
             user_vars: tidb_variable::user_vars::UserVars::new(),

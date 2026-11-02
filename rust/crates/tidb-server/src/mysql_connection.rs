@@ -2384,9 +2384,20 @@ fn run_connection_commands<S: QuerySession>(
                                         if !retried && engine.retry_after_query_error(error.code) {
                                             retried = true;
                                             engine.set_retrying(true);
+                                            engine.reopen_statement_boundary(None);
+                                            continue 'attempt;
+                                        }
+                                        // Go: a TiFlash server timeout falls
+                                        // back to TiKV, the error carried as
+                                        // an Error-level warning.
+                                        if !retried && engine.tiflash_fallback_allowed(error.code) {
+                                            retried = true;
+                                            engine.set_tiflash_fallback(true);
+                                            engine.reopen_statement_boundary(Some(&error));
                                             continue 'attempt;
                                         }
                                         engine.set_retrying(false);
+                                        engine.set_tiflash_fallback(false);
                                         write_query_error_at(
                                             output,
                                             sequence,
@@ -2452,6 +2463,10 @@ fn run_connection_commands<S: QuerySession>(
                                             break 'statements;
                                         }
                                     }
+                                    // The re-run is over (Go clears
+                                    // `Retrying` and restores TiFlash).
+                                    engine.set_retrying(false);
+                                    engine.set_tiflash_fallback(false);
                                     write_affected_rows_ok_with_info(
                                         output,
                                         sequence,
@@ -2501,9 +2516,20 @@ fn run_connection_commands<S: QuerySession>(
                                 {
                                     retried = true;
                                     engine.set_retrying(true);
+                                    engine.reopen_statement_boundary(None);
+                                    continue 'attempt;
+                                }
+                                if error.retryable
+                                    && !retried
+                                    && engine.tiflash_fallback_allowed(error.cause.code)
+                                {
+                                    retried = true;
+                                    engine.set_tiflash_fallback(true);
+                                    engine.reopen_statement_boundary(Some(&SqlQueryError::from(error.cause.clone())));
                                     continue 'attempt;
                                 }
                                 engine.set_retrying(false);
+                                engine.set_tiflash_fallback(false);
                                 write_error(
                                     output,
                                     1,
@@ -2527,6 +2553,7 @@ fn run_connection_commands<S: QuerySession>(
                         break 'attempt;
                         }
                         engine.set_retrying(false);
+                        engine.set_tiflash_fallback(false);
                         record_client_warnings(&*output, &*engine);
                     }
                     if !aborted {

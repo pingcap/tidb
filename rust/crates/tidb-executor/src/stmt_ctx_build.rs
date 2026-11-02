@@ -1480,7 +1480,18 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         } else {
             "global".into()
         };
-        let isolation_read_engines = snapshot.isolation_read_engines.clone();
+        // Go's TiFlash fallback re-runs a statement with TiFlash deleted from
+        // `IsolationReadEngines`.
+        let isolation_read_engines = if self.tiflash_fallback() {
+            snapshot
+                .isolation_read_engines
+                .split(',')
+                .filter(|engine| !engine.trim().eq_ignore_ascii_case("tiflash"))
+                .collect::<Vec<_>>()
+                .join(",")
+        } else {
+            snapshot.isolation_read_engines.clone()
+        };
         let max_allowed_packet = snapshot.max_allowed_packet;
         let group_concat_max_len = snapshot.group_concat_max_len;
         let apply_cache_capacity = snapshot.apply_cache_capacity;
@@ -2399,6 +2410,8 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// The Go pessimistic provider that takes this statement's
     /// `AdviseOptimizeWithPlan`, if any.
     fn pessimistic_txn_provider(&self) -> Option<tidb_sessionctx::PessimisticTxnProvider>;
+    /// Go's TiFlash fallback: TiFlash is out of `IsolationReadEngines`.
+    fn tiflash_fallback(&self) -> bool;
     /// The TiFlash cluster Go's `handleFineGrainedShuffle` asks, where the
     /// session has one.
     fn tiflash_cluster_info(&self) -> Option<Arc<dyn tidb_sessionctx::TiFlashClusterInfo>>;

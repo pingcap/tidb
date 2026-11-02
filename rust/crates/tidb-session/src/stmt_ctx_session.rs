@@ -343,6 +343,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         self.stmt_rc_check_ts
     }
 
+    fn tiflash_fallback(&self) -> bool {
+        self.tiflash_fallback
+    }
+
     fn pessimistic_txn_provider(&self) -> Option<tidb_sessionctx::PessimisticTxnProvider> {
         Session::pessimistic_txn_provider(self)
     }

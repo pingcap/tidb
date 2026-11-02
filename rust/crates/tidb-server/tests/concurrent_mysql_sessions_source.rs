@@ -1032,6 +1032,14 @@ impl QuerySession for RetrySession {
     fn set_retrying(&mut self, retrying: bool) {
         self.retrying = retrying;
     }
+
+    fn reopen_statement_boundary(&mut self, fallback_error: Option<&SqlQueryError>) {
+        self.log
+            .0
+            .lock()
+            .unwrap()
+            .push(format!("reopen {:?}", fallback_error.map(|error| error.code)));
+    }
 }
 
 /// Go `clientConn.handleQuery`: a statement that failed before any row
@@ -1064,6 +1072,108 @@ fn a_statement_its_transaction_retries_is_re_run_once_before_the_client_sees_it(
     server.join().unwrap().unwrap();
     assert_eq!(
         *log.0.lock().unwrap(),
-        ["execute retrying=false", "execute retrying=true"]
+        ["execute retrying=false", "reopen None", "execute retrying=true"]
+    );
+}
+
+struct FallbackFactory(Arc<RetryLog>);
+
+struct FallbackSession {
+    log: Arc<RetryLog>,
+    fallback: bool,
+}
+
+impl QuerySessionFactory for FallbackFactory {
+    type Session = FallbackSession;
+
+    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        Ok(FallbackSession {
+            log: Arc::clone(&self.0),
+            fallback: false,
+        })
+    }
+}
+
+impl QuerySession for FallbackSession {
+    fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        Ok(tidb_parser::parse(sql).expect("a statement"))
+    }
+
+    /// TiFlash times out while it is a read engine; the TiKV re-run succeeds.
+    fn execute_stmt<'a>(
+        &'a mut self,
+        _sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
+        self.log
+            .0
+            .lock()
+            .unwrap()
+            .push(format!("execute fallback={}", self.fallback));
+        if self.fallback {
+            Ok(None)
+        } else {
+            Err(SqlQueryError::new(9012, *b"HY000", "TiFlash server timeout"))
+        }
+    }
+
+    fn tiflash_fallback_allowed(&self, code: u16) -> bool {
+        code == 9012
+    }
+
+    fn set_tiflash_fallback(&mut self, on: bool) {
+        self.fallback = on;
+    }
+
+    fn reopen_statement_boundary(&mut self, fallback_error: Option<&SqlQueryError>) {
+        self.log
+            .0
+            .lock()
+            .unwrap()
+            .push(format!("reopen {:?}", fallback_error.map(|error| error.code)));
+    }
+}
+
+/// Go `clientConn.handleQuery`: a statement that met a TiFlash server
+/// timeout before any row reached the client is re-run once with TiFlash
+/// out of `IsolationReadEngines` -- the error carried into the re-run as a
+/// warning -- and TiFlash is back for the next statement.
+#[test]
+fn a_tiflash_timeout_falls_back_to_tikv_once() {
+    let log = Arc::new(RetryLog::default());
+    let node = ConcurrentSqlNode::bind(
+        &config(),
+        Arc::new(FallbackFactory(Arc::clone(&log))),
+        users().into(),
+    )
+    .unwrap();
+    let address = node.local_addr().unwrap();
+    let shutdown = node.shutdown_handle();
+    let server = std::thread::spawn(move || node.serve_connections(1));
+    let (mut client, mut reader) = authenticate(address);
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    for _ in 0..2 {
+        write_packet(&mut client, 0, &[&[COM_QUERY][..], b"SELECT 1"].concat());
+        reader.set_sequence(1);
+        assert_eq!(reader.read_packet().unwrap()[0], 0, "the TiKV re-run's OK");
+    }
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    drop(reader);
+    drop(client);
+    shutdown.shutdown();
+    server.join().unwrap().unwrap();
+    assert_eq!(
+        *log.0.lock().unwrap(),
+        [
+            "execute fallback=false",
+            "reopen Some(9012)",
+            "execute fallback=true",
+            // The second statement reads TiFlash again.
+            "execute fallback=false",
+            "reopen Some(9012)",
+            "execute fallback=true",
+        ]
     );
 }
