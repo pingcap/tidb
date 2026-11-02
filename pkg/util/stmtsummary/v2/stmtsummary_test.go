@@ -410,18 +410,7 @@ func TestDefaultConfig(t *testing.T) {
 	// Verify RefreshInterval (should be 1800 = 30 min)
 	require.Equal(t, uint32(1800), ss.RefreshInterval())
 }
-<<<<<<< HEAD
-=======
 
-// TestNewStmtSummaryLoggerInitError closes V2-11 in the statement-summary
-// audit: when the configured stmt log file cannot be opened,
-// log.InitLogger returns an error and NewStmtSummary must surface that error
-// instead of silently degrading to a no-op logger. A no-op fallback would make
-// persistent mode look enabled while silently dropping every rotated window.
-//
-// We trigger the error by pointing Filename at an existing directory, which
-// `log.InitLogger` rejects with "can't use directory as log file name" without
-// relying on filesystem permission differences between platforms.
 func TestNewStmtSummaryLoggerInitError(t *testing.T) {
 	dir := t.TempDir()
 	ss, err := NewStmtSummary(&Config{Filename: dir})
@@ -429,22 +418,6 @@ func TestNewStmtSummaryLoggerInitError(t *testing.T) {
 	require.Nil(t, ss)
 }
 
-// TestSetupDisablesPersistentOnLoggerInitError exercises the *startup call
-// chain* that produces the V2-11 nil-panic regression pointed out in review.
-//
-// When NewStmtSummary fails, publishing its nil result while the cluster
-// config still has `tidb_stmt_summary_enable_persistent = true` lets every
-// public proxy in this package (Add, Enabled, ...) dereference nil.
-// On the buggy code the very first SQL call would dereference a nil
-// pointer and the server would crash again; the logger init error had traded
-// silent data loss for a hard boot-loop. Now Setup must remedy the half-
-// constructed state by explicitly disabling persistent mode so the wrappers
-// fall back to the in-memory v1 aggregation (stmtsummary.StmtSummaryByDigestMap).
-//
-// The test goes end-to-end through:
-//   - the public Setup entrypoint (the same one cmd/tidb-server calls);
-//   - the post-Setup invariant that StmtSummaryEnablePersistent flipped off;
-//   - an actual Add() probe, which used to be the line that panicked.
 func TestSetupDisablesPersistentOnLoggerInitError(t *testing.T) {
 	// Preserve the global v2 instance and install a sentinel to verify that a
 	// failed setup does not publish a nil result over an existing instance.
@@ -493,40 +466,3 @@ func TestSetupDisablesPersistentOnLoggerInitError(t *testing.T) {
 		Add(GenerateStmtExecInfo4Test("digest_setup_fallback_does_not_panic"))
 	})
 }
-
-// TestEvictedConcurrentWithRotate verifies that Evicted() is safe to call
-// concurrently with rotate (V2-25 data race fix).
-func TestEvictedConcurrentWithRotate(t *testing.T) {
-	ss := NewStmtSummary4Test(2)
-	defer ss.Close()
-
-	ss.Add(GenerateStmtExecInfo4Test("digest1"))
-	ss.Add(GenerateStmtExecInfo4Test("digest2"))
-	ss.Add(GenerateStmtExecInfo4Test("digest3"))
-
-	var wg sync.WaitGroup
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 100; i++ {
-			_ = ss.Evicted()
-		}
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 50; i++ {
-			ss.windowLock.Lock()
-			ss.rotate(timeNow())
-			ss.windowLock.Unlock()
-			ss.Add(GenerateStmtExecInfo4Test("digest_new"))
-			ss.Add(GenerateStmtExecInfo4Test("digest_new2"))
-			ss.Add(GenerateStmtExecInfo4Test("digest_new3"))
-		}
-	}()
-
-	wg.Wait()
-}
->>>>>>> 0a42bea5f50 (stmtsummary: surface logger init failures, drop leaked time-excluded FDs, fix absolute-path file pruning (#70175))
