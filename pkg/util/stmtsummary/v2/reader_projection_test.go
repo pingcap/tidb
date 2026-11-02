@@ -84,7 +84,7 @@ func TestHistoryProjection(t *testing.T) {
 	// Exercise all bounded text-field combinations, including the full path.
 	textColumns := []string{DigestTextStr, QuerySampleTextStr, PrevSampleTextStr,
 		PlanStr, BinaryPlan, PlanHint, PlanCacheUnqualifiedLastReasonStr}
-	for mask := 0; mask < 1<<len(textColumns); mask++ {
+	for mask := range 1 << len(textColumns) {
 		var names []string
 		for i, name := range textColumns {
 			if mask&(1<<i) != 0 {
@@ -350,7 +350,7 @@ func BenchmarkHistoryProjectionMetadata(b *testing.B) {
 			if allMasks {
 				limit = 1 << len(textColumns)
 			}
-			for mask := 0; mask < limit; mask++ {
+			for mask := range limit {
 				var names []string
 				for i, name := range textColumns {
 					if mask&(1<<i) != 0 {
