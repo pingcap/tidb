@@ -230,6 +230,8 @@ func formatSQLMode(mode mysql.SQLMode) string {
 func InitMViewSession(
 	sessVars *variable.SessionVars,
 	mviewInfo *model.MaterializedViewInfo,
+	currentDB, resourceGroup string,
+	rowEncoderEnabled bool,
 ) (func(), error) {
 	if mviewInfo == nil {
 		return nil, errors.New("materialized view: invalid materialized view metadata")
@@ -240,6 +242,10 @@ func InitMViewSession(
 		return nil, errors.Annotate(err, "materialized view: invalid definition timezone")
 	}
 
+	originalDB := sessVars.CurrentDB
+	originalRowFormat := sessVars.RowEncoder.Enable
+	originalResourceGroup := sessVars.ResourceGroupName
+	originalStmtResourceGroup := sessVars.StmtCtx.ResourceGroupName
 	origEnableMView := sessVars.EnableMView
 	if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, "on"); err != nil {
 		return nil, errors.Annotate(err, "materialized view: failed to enable materialized view support")
@@ -254,6 +260,10 @@ func InitMViewSession(
 
 	originalVars := make(map[string]string, 3)
 	restore := func() {
+		sessVars.CurrentDB = originalDB
+		sessVars.RowEncoder.Enable = originalRowFormat
+		sessVars.ResourceGroupName = originalResourceGroup
+		sessVars.StmtCtx.ResourceGroupName = originalStmtResourceGroup
 		if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, variable.BoolToOnOff(origEnableMView)); err != nil {
 			logutil.DDLLogger().Warn("materialized view: failed to restore materialized view enablement", zap.Error(err))
 		}
@@ -283,6 +293,12 @@ func InitMViewSession(
 		}
 		originalVars[assignment.name] = oldValue
 	}
+	sessVars.CurrentDB = currentDB
+	sessVars.RowEncoder.Enable = rowEncoderEnabled
+	if resourceGroup != "" {
+		sessVars.ResourceGroupName = resourceGroup
+	}
+	sessVars.StmtCtx.ResourceGroupName = sessVars.ResourceGroupName
 	sessVars.InMViewMaintenance = true
 	sessVars.StmtCtx.SetTimeZone(loc)
 	sessVars.StmtCtx.SetTypeFlags(expression.MaterializedScheduleTypeFlagsWithSQLMode(sessVars.SQLMode))

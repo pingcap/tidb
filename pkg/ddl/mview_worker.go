@@ -591,20 +591,11 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	restore, err := InitMViewSession(sessVars, mviewTableInfo.MaterializedView)
+	restore, err := InitMViewSession(sessVars, mviewTableInfo.MaterializedView,
+		currentDB, job.ReorgMeta.ResourceGroupName, vardef.GetDDLReorgRowFormat() != vardef.DefTiDBRowFormatV1)
 	if err != nil {
 		restoreExecution()
 		return nil, errors.Trace(err)
-	}
-	originalDB := sessVars.CurrentDB
-	originalRowFormat := sessVars.RowEncoder.Enable
-	originalResourceGroup := sessVars.ResourceGroupName
-	originalStmtResourceGroup := sessVars.StmtCtx.ResourceGroupName
-	sessVars.CurrentDB = currentDB
-	sessVars.RowEncoder.Enable = vardef.GetDDLReorgRowFormat() != vardef.DefTiDBRowFormatV1
-	sessVars.StmtCtx.ResourceGroupName = job.ReorgMeta.ResourceGroupName
-	if job.ReorgMeta.ResourceGroupName != "" {
-		sessVars.ResourceGroupName = job.ReorgMeta.ResourceGroupName
 	}
 	failpoint.InjectCall("createMaterializedViewBuildMaintainMemQuotaApplied", sessVars.MemQuotaQuery)
 	failpoint.InjectCall(
@@ -629,10 +620,6 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 	return func() {
 		restore()
 		restoreExecution()
-		sessVars.CurrentDB = originalDB
-		sessVars.RowEncoder.Enable = originalRowFormat
-		sessVars.ResourceGroupName = originalResourceGroup
-		sessVars.StmtCtx.ResourceGroupName = originalStmtResourceGroup
 	}, nil
 }
 

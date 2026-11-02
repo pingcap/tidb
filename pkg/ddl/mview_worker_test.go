@@ -480,13 +480,21 @@ func TestInitMViewSession(t *testing.T) {
 		require.NoError(t, sessVars.SetSystemVar(name, value))
 	}
 	sessVars.StmtCtx.SetTimeZone(time.UTC)
+	sessVars.CurrentDB = "before"
+	sessVars.RowEncoder.Enable = false
+	sessVars.ResourceGroupName = "before_group"
+	sessVars.StmtCtx.ResourceGroupName = "before_statement_group"
 	restore, err := InitMViewSession(sessVars, &model.MaterializedViewInfo{
 		DefinitionSQLMode:               mysql.ModeNoBackslashEscapes,
 		DefinitionDivPrecisionIncrement: 9,
 		DefinitionTimeZone:              model.TimeZoneLocation{Name: "Asia/Shanghai"},
-	})
+	}, "mv_db", "mv_group", true)
 	require.NoError(t, err)
 	require.True(t, sessVars.EnableMView)
+	require.Equal(t, "mv_db", sessVars.CurrentDB)
+	require.True(t, sessVars.RowEncoder.Enable)
+	require.Equal(t, "mv_group", sessVars.ResourceGroupName)
+	require.Equal(t, "mv_group", sessVars.StmtCtx.ResourceGroupName)
 	require.Equal(t, 9, sessVars.DivPrecisionIncrement)
 	require.True(t, sessVars.HasStatusFlag(mysql.ServerStatusNoBackslashEscaped))
 	workerVars := variable.NewSessionVars(nil)
@@ -502,6 +510,10 @@ func TestInitMViewSession(t *testing.T) {
 	require.Equal(t, sessVars.DivPrecisionIncrement, workerVars.DivPrecisionIncrement)
 	restore()
 	require.False(t, sessVars.EnableMView)
+	require.Equal(t, "before", sessVars.CurrentDB)
+	require.False(t, sessVars.RowEncoder.Enable)
+	require.Equal(t, "before_group", sessVars.ResourceGroupName)
+	require.Equal(t, "before_statement_group", sessVars.StmtCtx.ResourceGroupName)
 	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
 	require.False(t, sessVars.HasStatusFlag(mysql.ServerStatusNoBackslashEscaped))
 	require.Equal(t, time.UTC, sessVars.StmtCtx.TimeZone())

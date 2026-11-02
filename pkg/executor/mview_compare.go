@@ -361,7 +361,9 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewQueryExec(
 	if err != nil {
 		return nil, err
 	}
-	restoreDefinitionSession, err := ddl.InitMViewSession(sctx.GetSessionVars(), mviewInfo)
+	sessVars := sctx.GetSessionVars()
+	restoreDefinitionSession, err := ddl.InitMViewSession(sessVars, mviewInfo,
+		sessVars.CurrentDB, sessVars.ResourceGroupName, sessVars.RowEncoder.Enable)
 	if err != nil {
 		_ = cleanup()
 		return nil, err

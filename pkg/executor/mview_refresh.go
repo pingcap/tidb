@@ -451,7 +451,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		refreshExecutionVars.IsolationReadEngines,
 	)
 
-	restoreSessVars, err := ddl.InitMViewSession(sessVars, tblInfo.MaterializedView)
+	restoreSessVars, err := ddl.InitMViewSession(sessVars, tblInfo.MaterializedView,
+		schemaName.O, e.Ctx().GetSessionVars().StmtCtx.ResourceGroupName, sessVars.RowEncoder.Enable)
 	if err != nil {
 		return err
 	}
@@ -1042,11 +1043,13 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		buildSessVars.MViewMaintainImportDiskQuota,
 	)
 
-	restoreBuildSessVars, err := ddl.InitMViewSession(buildSessVars, tblInfo.MaterializedView)
+	restoreBuildSessVars, err := ddl.InitMViewSession(buildSessVars, tblInfo.MaterializedView,
+		schemaName.O, e.Ctx().GetSessionVars().StmtCtx.ResourceGroupName, buildSessVars.RowEncoder.Enable)
 	if err != nil {
 		return 0, err
 	}
 	defer restoreBuildSessVars()
+	failpoint.InjectCall("refreshMaterializedViewAfterInitSession", buildSessVars.SQLMode, buildSessVars.Location().String(), buildSctx)
 
 	origInMViewMaintenance := buildSessVars.InMViewMaintenance
 	buildSessVars.InMViewMaintenance = true

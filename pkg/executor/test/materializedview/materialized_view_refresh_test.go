@@ -1798,8 +1798,12 @@ group by a`)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterInitSession", func(mode mysql.SQLMode, tz string, sctx sessionctx.Context) {
 		require.Equal(t, expectedSQLMode, mode)
 		require.Equal(t, expectedTimeZone, tz)
+		require.Equal(t, "test", sctx.GetSessionVars().CurrentDB)
+		require.Equal(t, "mv_refresh", sctx.GetSessionVars().ResourceGroupName)
+		require.Equal(t, "mv_refresh", sctx.GetSessionVars().StmtCtx.ResourceGroupName)
 		var captured sessionstates.SessionStates
 		require.NoError(t, sctx.EncodeStates(context.Background(), &captured))
+		require.Equal(t, "mv_refresh", captured.ResourceGroupName)
 		states := &sessionstates.SessionStates{
 			SystemVars: make(map[string]string, 3),
 			Status:     uint32(worker.Session().GetSessionVars().Status()),
@@ -1817,6 +1821,8 @@ group by a`)
 	tk.MustExec("set @@session.sql_mode = ''")
 	tk.MustExec("set @@session.time_zone = '-01:00'")
 	tk.MustExec("set @@session.div_precision_increment = 2")
+	tk.MustExec("create resource group mv_refresh ru_per_sec = 1000000")
+	tk.MustExec("set resource group mv_refresh")
 	for _, mode := range []string{"complete delta apply", "complete out of place"} {
 		tk.MustExec("refresh materialized view mv " + mode)
 		tk.MustQuery("select a, s, cnt from mv").Check(testkit.Rows("1 10 1"))
