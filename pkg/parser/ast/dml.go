@@ -3171,6 +3171,10 @@ const (
 	ShowEngines
 	ShowDatabases
 	ShowTables
+	ShowMaterializedViews
+	ShowMaterializedViewLogs
+	ShowMaterializedViewRemainLogs
+	ShowMaterializedViewLogWaitPurge
 	ShowTableStatus
 	ShowColumns
 	ShowWarnings
@@ -3180,6 +3184,8 @@ const (
 	ShowCollation
 	ShowCreateTable
 	ShowCreateView
+	ShowCreateMaterializedView
+	ShowCreateMaterializedViewLog
 	ShowCreateUser
 	ShowCreateSequence
 	ShowCreatePlacementPolicy
@@ -3348,6 +3354,28 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		if err := n.Table.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore ShowStmt.VIEW")
 		}
+	case ShowCreateMaterializedView:
+		ctx.WriteKeyWord("CREATE MATERIALIZED VIEW ")
+		if err := n.Table.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.MATERIALIZED VIEW")
+		}
+	case ShowCreateMaterializedViewLog:
+		ctx.WriteKeyWord("CREATE MATERIALIZED VIEW LOG ON ")
+		if err := n.Table.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.MATERIALIZED VIEW LOG")
+		}
+	case ShowMaterializedViewRemainLogs:
+		ctx.WriteKeyWord("MATERIALIZED VIEW ")
+		if err := n.Table.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.MATERIALIZED VIEW")
+		}
+		ctx.WriteKeyWord(" REMAIN_LOGS")
+	case ShowMaterializedViewLogWaitPurge:
+		ctx.WriteKeyWord("MATERIALIZED VIEW LOG ON ")
+		if err := n.Table.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.MATERIALIZED VIEW LOG")
+		}
+		ctx.WriteKeyWord(" WAIT_PURGE")
 	case ShowCreateDatabase:
 		ctx.WriteKeyWord("CREATE DATABASE ")
 		if n.IfNotExists {
@@ -3554,6 +3582,12 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			restoreOptFull()
 			ctx.WriteKeyWord("TABLES")
 			restoreShowDatabaseNameOpt()
+		case ShowMaterializedViews:
+			ctx.WriteKeyWord("MATERIALIZED VIEWS")
+			restoreShowDatabaseNameOpt()
+		case ShowMaterializedViewLogs:
+			ctx.WriteKeyWord("MATERIALIZED VIEW LOGS")
+			restoreShowDatabaseNameOpt()
 		case ShowOpenTables:
 			ctx.WriteKeyWord("OPEN TABLES")
 			restoreShowDatabaseNameOpt()
@@ -3721,13 +3755,14 @@ func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
 func (n *ShowStmt) NeedLimitRSRow() bool {
 	switch n.Tp {
 	// Show statements need to have consistence behavior with MySQL Does
-	case ShowEngines, ShowDatabases, ShowTables, ShowColumns, ShowTableStatus, ShowWarnings,
+	case ShowEngines, ShowDatabases, ShowTables, ShowMaterializedViews, ShowMaterializedViewLogs, ShowColumns, ShowTableStatus, ShowWarnings,
 		ShowCharset, ShowVariables, ShowStatus, ShowCollation, ShowIndex, ShowPlugins:
 		return true
 	default:
 		// There are five classes of Show STMT.
 		// 1) The STMT Only return one row:
-		//    ShowCreateTable, ShowCreateView, ShowCreateUser, ShowCreateDatabase, ShowMasterStatus,
+		//    ShowCreateTable, ShowCreateView, ShowCreateMaterializedView, ShowCreateMaterializedViewLog,
+		//    ShowCreateUser, ShowCreateDatabase, ShowMasterStatus,
 		//
 		// 2) The STMT is a MySQL syntax extend, so just keep it behavior as before:
 		//    ShowCreateSequence, ShowCreatePlacementPolicy, ShowConfig, ShowStatsExtended,

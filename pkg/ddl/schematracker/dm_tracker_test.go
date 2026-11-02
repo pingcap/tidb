@@ -717,9 +717,11 @@ func TestCreateMaterializedViewLogScheduleExprTypeCheck(t *testing.T) {
 	}
 
 	err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with 1 next date_add(now(), interval 1 hour)"))
-	require.ErrorContains(t, err, "PURGE START WITH expression must return DATETIME/TIMESTAMP")
+	require.ErrorContains(t, err, "PURGE START WITH expression must return DATE/DATETIME/TIMESTAMP")
 	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with now() next 1"))
-	require.ErrorContains(t, err, "PURGE NEXT expression must return DATETIME/TIMESTAMP")
+	require.ErrorContains(t, err, "PURGE NEXT expression must return DATE/DATETIME/TIMESTAMP")
+	execCreate(t, tracker, "create table test.t_date (a int)")
+	require.NoError(t, tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t_date (a) purge next cast('2030-01-02' as date)")))
 
 	stmt := parseStmt("create materialized view log on test.t (a) purge start with now() next now()")
 	stmt.Purge.Next = nil
@@ -733,6 +735,7 @@ func TestCreateMaterializedViewLogRejectMaterializedObjects(t *testing.T) {
 	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, "create table test.t (a int)")
 	execCreate(t, tracker, "create table test.mv (a int)")
+	execCreate(t, tracker, "create table test.shadow (a int)")
 
 	sctx := mock.NewContext()
 	p := parser.New()
@@ -751,6 +754,12 @@ func TestCreateMaterializedViewLogRejectMaterializedObjects(t *testing.T) {
 	require.NoError(t, tracker.PutTable(ast.NewCIStr("test"), mvInfo))
 	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.mv (a)"))
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "mv", "BASE TABLE").Error(), err.Error())
+
+	shadowInfo := mustTableByName(t, tracker, "test", "shadow").Clone()
+	shadowInfo.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: 1}
+	require.NoError(t, tracker.PutTable(ast.NewCIStr("test"), shadowInfo))
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.shadow (a)"))
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "shadow", "BASE TABLE").Error(), err.Error())
 }
 
 func TestCreateMaterializedViewLogTruncatesLongPhysicalName(t *testing.T) {
@@ -775,6 +784,7 @@ func TestDropMaterializedViewLog(t *testing.T) {
 	tracker := schematracker.NewSchemaTracker(2)
 	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, "create table test.t (a int)")
+	execCreate(t, tracker, "create table test.shadow (a int)")
 
 	sctx := mock.NewContext()
 	p := parser.New()
@@ -790,6 +800,14 @@ func TestDropMaterializedViewLog(t *testing.T) {
 	require.ErrorIs(t, err, infoschema.ErrTableNotExists)
 	baseTable := mustTableByName(t, tracker, "test", "t")
 	require.Nil(t, baseTable.MaterializedViewBase)
+
+	shadowInfo := mustTableByName(t, tracker, "test", "shadow").Clone()
+	shadowInfo.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: 1}
+	require.NoError(t, tracker.PutTable(ast.NewCIStr("test"), shadowInfo))
+	dropShadowStmt, err := p.ParseOneStmt("drop materialized view log on test.shadow", "", "")
+	require.NoError(t, err)
+	err = tracker.DropMaterializedViewLog(sctx, dropShadowStmt.(*ast.DropMaterializedViewLogStmt))
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "shadow", "BASE TABLE").Error(), err.Error())
 }
 
 func TestDropMaterializedViewLogWithDependentMaterializedView(t *testing.T) {

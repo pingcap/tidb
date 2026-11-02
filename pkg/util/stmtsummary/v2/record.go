@@ -96,7 +96,7 @@ type StmtRecord struct {
 	MaxRocksdbBlockReadCount       uint64        `json:"max_rocksdb_block_read_count"`
 	SumRocksdbBlockReadByte        uint64        `json:"sum_rocksdb_block_read_byte"`
 	MaxRocksdbBlockReadByte        uint64        `json:"max_rocksdb_block_read_byte"`
-	IAExecCount                    int64         `json:"ia_remote_exec_count"`
+	IAExecCount                    int64         `json:"ia_exec_count"`
 	SumIARemoteReadSegmentCount    uint64        `json:"sum_ia_remote_read_segment_count"`
 	MaxIARemoteReadSegmentCount    uint64        `json:"max_ia_remote_read_segment_count"`
 	SumIARemoteReadSegmentSize     uint64        `json:"sum_ia_remote_read_segment_size"`
@@ -209,6 +209,12 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		binPlan = plancodec.BinaryPlanDiscardedEncoded
 	}
 	bindingSQL, bindingDigest := info.LazyInfo.GetBindingSQLAndDigest()
+	sampleSQL := info.StmtCtx.OriginalSQL
+	if info.SensitiveStmt != nil {
+		sampleSQL = info.SensitiveStmt.SecureText()
+	} else if info.SampleParams != nil {
+		sampleSQL += info.SampleParams.String()
+	}
 	return &StmtRecord{
 		SchemaName:    info.SchemaName,
 		Digest:        info.Digest,
@@ -219,7 +225,7 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		IsInternal:    info.IsInternal,
 		BindingSQL:    bindingSQL,
 		BindingDigest: bindingDigest,
-		SampleSQL:     formatSQL(info.LazyInfo.GetOriginalSQL()),
+		SampleSQL:     formatSQL(sampleSQL),
 		Charset:       info.Charset,
 		Collation:     info.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
@@ -464,7 +470,7 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	// Networks
 	r.StmtNetworkTrafficSummary.Add(&tikvExecDetails)
 	// RU
-	r.StmtRUSummary.Add(info.RUDetail, info.TotalRUV2)
+	r.StmtRUSummary.Add(info.RUDetail)
 
 	r.StorageKV = info.StmtCtx.IsTiKV.Load()
 	r.StorageMPP = info.StmtCtx.IsTiFlash.Load()
@@ -745,7 +751,6 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		KeyspaceID:        1,
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.2, 3.4, 2*time.Millisecond),
-		TotalRUV2:         12345,
 		TiKVExecDetails:   &util.ExecDetails{},
 		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
 		LazyInfo:          &mockLazyInfo{},

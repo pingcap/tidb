@@ -640,6 +640,21 @@ func (ti *TableImporter) Allocators() autoid.Allocators {
 	return ti.encTable.Allocators(nil)
 }
 
+// StartDiskQuotaCheck starts a background goroutine to check disk quota.
+// The returned function stops the checker and waits for it to finish.
+func (ti *TableImporter) StartDiskQuotaCheck(ctx context.Context) (stop func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
+	eg.Go(func() error {
+		ti.CheckDiskQuota(egCtx)
+		return nil
+	})
+	return func() {
+		cancel()
+		_ = eg.Wait()
+	}
+}
+
 // CheckDiskQuota checks disk quota.
 func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 	var locker sync.Locker
@@ -707,7 +722,9 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 					err = ingestctrl.ConvertToErrFoundConflictRecords(err, ti.encTable)
 				}
 				importErr = multierr.Append(importErr, err)
+				continue
 			}
+			failpoint.InjectCall("afterDiskQuotaImport")
 		}
 		if importErr != nil {
 			// discuss: should we return the error and cancel the import?
@@ -770,6 +787,8 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		mu       sync.Mutex
 		checksum = verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
 	)
+	stopDiskQuotaCheck := ti.StartDiskQuotaCheck(ctx)
+
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 	for range ti.ThreadCnt {
 		eg.Go(func() error {
@@ -783,7 +802,11 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 			return ProcessChunk(egCtx, &chunk, ti, dataEngine, indexEngine, ti.logger, chunkChecksum, nil)
 		})
 	}
-	if err = eg.Wait(); err != nil {
+	err = eg.Wait()
+	// Stop disk quota checker before final engine close/import to avoid racing
+	// with FlushAllEngines/UnsafeImportAndReset.
+	stopDiskQuotaCheck()
+	if err != nil {
 		return 0, err
 	}
 

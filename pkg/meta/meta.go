@@ -190,11 +190,11 @@ const (
 	BaseNextGenBootTableVersion NextGenBootTableVersion = 1
 	// MaskingPolicyNextGenBootTableVersion adds mysql.tidb_masking_policy.
 	MaskingPolicyNextGenBootTableVersion NextGenBootTableVersion = 2
-	// MaterializedViewNextGenBootTableVersion adds materialized view maintenance metadata tables.
-	MaterializedViewNextGenBootTableVersion NextGenBootTableVersion = 3
 	// StorageClassTransitionNextGenBootTableVersion adds
 	// mysql.tidb_storage_class_transition_history.
-	StorageClassTransitionNextGenBootTableVersion NextGenBootTableVersion = 4
+	StorageClassTransitionNextGenBootTableVersion NextGenBootTableVersion = 3
+	// MaterializedViewNextGenBootTableVersion adds materialized view maintenance metadata tables.
+	MaterializedViewNextGenBootTableVersion NextGenBootTableVersion = 4
 )
 
 // DDLTableVersion is to display ddl related table versions
@@ -1205,6 +1205,7 @@ func splitRangeInt64Max(n int64) [][]string {
 
 // IterAllTables iterates all the table at once, in order to avoid oom. It can use at most 15 concurrency to iterate.
 // This function is optimized for 'many databases' scenario. Only 1 concurrency can work for 'many tables in one database' scenario.
+// It calls fn from the worker goroutines, but never concurrently.
 func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

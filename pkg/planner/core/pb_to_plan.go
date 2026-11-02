@@ -75,9 +75,9 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 	case tipb.ExecType_TypeLimit:
 		p, err = b.pbToLimit(e)
 	case tipb.ExecType_TypeAggregation:
-		p, err = b.pbToAgg(e, false)
+		p, err = b.pbToAgg(e, subPlan.Schema(), false)
 	case tipb.ExecType_TypeStreamAgg:
-		p, err = b.pbToAgg(e, true)
+		p, err = b.pbToAgg(e, subPlan.Schema(), true)
 	case tipb.ExecType_TypeKill:
 		p, err = b.pbToKill(e)
 	case tipb.ExecType_TypeBroadcastQuery:
@@ -219,10 +219,20 @@ func (b *PBPlanBuilder) pbToLimit(e *tipb.Executor) (base.PhysicalPlan, error) {
 	return p, nil
 }
 
-func (b *PBPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (base.PhysicalPlan, error) {
+func (b *PBPlanBuilder) pbToAgg(e *tipb.Executor, inputSchema *expression.Schema, isStreamAgg bool) (base.PhysicalPlan, error) {
 	aggFuncs, groupBys, err := b.getAggInfo(e)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	// PB column references carry offsets but no UniqueIDs. Restore their input
+	// identities before InjectProjBelowAgg compares expressions for reuse, or a
+	// grouping column can be mistaken for a different aggregate argument.
+	cols := expression.ExtractAllColumnsFromExpressions(groupBys, nil)
+	for _, agg := range aggFuncs {
+		cols = append(cols, expression.ExtractAllColumnsFromExpressions(agg.Args, nil)...)
+	}
+	for _, col := range cols {
+		col.UniqueID = inputSchema.Columns[col.Index].UniqueID
 	}
 	schema := b.buildAggSchema(aggFuncs, groupBys)
 	baseAgg := physicalop.BasePhysicalAgg{

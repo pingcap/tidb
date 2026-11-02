@@ -90,5 +90,8 @@ func TestIndexAdvisorEmptyResult(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, c int, key(a, b, c))`)
 	tk.MustQuery(`recommend index run for 'select * from t where a=1 and b=1 and c=1'`).Check(testkit.Rows())
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105  Considered 3 indexable columns(test.t.a, test.t.b, test.t.c), 3 or more index candidates(test.t(a), test.t(b), test.t(c)), no sufficiently beneficial indexes were found."))
+	warnings := tk.MustQuery(`show warnings`)
+	warnings.Check(testkit.Rows("Warning 1105  Considered 3 indexable columns(test.t.a, test.t.b, test.t.c), 3 or more index candidates(test.t(a), test.t(b), test.t(c)), no sufficiently beneficial indexes were found."))
+	tk.MustQuery(`recommend index return result for 'select * from t where a=1 and b=1 and c=1'`).Check(testkit.Rows())
+	require.Equal(t, warnings.Rows(), tk.MustQuery(`show warnings`).Rows())
 }

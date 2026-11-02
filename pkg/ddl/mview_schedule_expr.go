@@ -29,14 +29,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"go.uber.org/zap"
 )
 
 // BuildAndValidateMViewScheduleExpr restores an AST expression into canonical SQL and
-// validates that its expression type is DATETIME/TIMESTAMP.
+// validates that its expression type is DATE/DATETIME/TIMESTAMP.
 func BuildAndValidateMViewScheduleExpr(sctx sessionctx.Context, expr ast.ExprNode, clause string) (string, error) {
 	exprSQL, err := restoreNodeToCanonicalSQL(expr)
 	if err != nil {
@@ -54,22 +52,22 @@ func BuildAndValidateMViewScheduleExpr(sctx sessionctx.Context, expr ast.ExprNod
 	}
 
 	tp := ft.GetType()
-	if tp != mysql.TypeDatetime && tp != mysql.TypeTimestamp {
+	if tp != mysql.TypeDate && tp != mysql.TypeDatetime && tp != mysql.TypeTimestamp {
 		return "", dbterror.ErrGeneralUnsupportedDDL.GenWithStack(
-			fmt.Sprintf("%s expression must return DATETIME/TIMESTAMP, but got %s", clause, types.TypeStr(tp)),
+			fmt.Sprintf("%s expression must return DATE/DATETIME/TIMESTAMP, but got %s", clause, types.TypeStr(tp)),
 		)
 	}
 	return exprSQL, nil
 }
 
-func deriveCreateMaterializedScheduleNextUnixSeconds(
+func deriveMaterializedScheduleNextUnixSecondsForDDL(
 	ctx context.Context,
 	ddlSess *sess.Session,
 	schemaName string,
 	tableName string,
 	startExpr string,
 	nextExpr string,
-	scheduleTimeZone *time.Location,
+	scheduleSQLMode mysql.SQLMode,
 	logNullUpdate func(schemaName string, tableName string, nullExprClause string, startExpr string, nextExpr string),
 ) (nextUnixSeconds *int64, shouldUpdate bool, err error) {
 	// shouldUpdate reports whether the persisted NEXT_* value should be overwritten.
@@ -78,6 +76,8 @@ func deriveCreateMaterializedScheduleNextUnixSeconds(
 	if startExpr == "" && nextExpr == "" {
 		return nil, true, nil
 	}
+	restore := expression.SetMaterializedScheduleEvalSession(ddlSess.Session(), scheduleSQLMode)
+	defer restore()
 
 	nowTime, err := loadCreateMaterializedViewScheduleNow(ctx, ddlSess)
 	if err != nil {
@@ -86,7 +86,7 @@ func deriveCreateMaterializedScheduleNextUnixSeconds(
 
 	// START WITH takes precedence unless it is near now and NEXT is present.
 	if startExpr != "" {
-		startAt, err := evalCreateMaterializedViewScheduleExprToDatetime(ddlSess, startExpr)
+		startAt, err := expression.EvalMaterializedScheduleExpr(ddlSess.Session(), startExpr, scheduleSQLMode)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -95,17 +95,17 @@ func deriveCreateMaterializedScheduleNextUnixSeconds(
 			return nil, true, nil
 		}
 		if nextExpr == "" {
-			nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(startAt, scheduleTimeZone)
+			nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(startAt)
 			return nextUnixSeconds, true, errors.Trace(err)
 		}
 
-		goNow, err := nowTime.GoTime(scheduleTimeZone)
+		goNow, err := nowTime.GoTime(time.UTC)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
 		nearNowThreshold := types.NewTime(types.FromGoTime(goNow.Add(10*time.Second)), nowTime.Type(), nowTime.Fsp())
 		if startAt.Compare(nearNowThreshold) < 0 {
-			nextAt, err := evalCreateMaterializedViewScheduleExprToDatetime(ddlSess, nextExpr)
+			nextAt, err := expression.EvalMaterializedScheduleExpr(ddlSess.Session(), nextExpr, scheduleSQLMode)
 			if err != nil {
 				return nil, false, errors.Trace(err)
 			}
@@ -113,15 +113,15 @@ func deriveCreateMaterializedScheduleNextUnixSeconds(
 				logNullUpdate(schemaName, tableName, "NEXT", startExpr, nextExpr)
 				return nil, true, nil
 			}
-			nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt, scheduleTimeZone)
+			nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt)
 			return nextUnixSeconds, true, errors.Trace(err)
 		}
-		nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(startAt, scheduleTimeZone)
+		nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(startAt)
 		return nextUnixSeconds, true, errors.Trace(err)
 	}
 
 	if nextExpr != "" {
-		nextAt, err := evalCreateMaterializedViewScheduleExprToDatetime(ddlSess, nextExpr)
+		nextAt, err := expression.EvalMaterializedScheduleExpr(ddlSess.Session(), nextExpr, scheduleSQLMode)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -129,7 +129,7 @@ func deriveCreateMaterializedScheduleNextUnixSeconds(
 			logNullUpdate(schemaName, tableName, "NEXT", startExpr, nextExpr)
 			return nil, true, nil
 		}
-		nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt, scheduleTimeZone)
+		nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt)
 		return nextUnixSeconds, true, errors.Trace(err)
 	}
 	return
@@ -191,42 +191,6 @@ func logCreateMaterializedViewLogNextUnixSecondsUpdateNull(
 	)
 }
 
-func setCreateMaterializedViewScheduleEvalSession(
-	sctx sessionctx.Context,
-	sqlMode mysql.SQLMode,
-	scheduleTimeZone *time.Location,
-) func() {
-	sessVars := sctx.GetSessionVars() //nolint:forbidigo
-	originalSQLMode := sessVars.SQLMode
-	originalTypeFlags := sessVars.StmtCtx.TypeFlags()
-	originalErrLevels := sessVars.StmtCtx.ErrLevels()
-
-	var originalTZ *time.Location
-	if sessVars.TimeZone != nil {
-		tz := *sessVars.TimeZone
-		originalTZ = &tz
-	}
-	originalStmtTZ := sessVars.StmtCtx.TimeZone()
-
-	sessVars.SQLMode = sqlMode
-	sessVars.StmtCtx.SetTypeFlags(expression.MaterializedScheduleTypeFlagsWithSQLMode(sqlMode))
-	sessVars.StmtCtx.SetErrLevels(expression.MaterializedScheduleErrLevelsWithSQLMode(sqlMode))
-	sessVars.TimeZone = scheduleTimeZone
-	sessVars.StmtCtx.SetTimeZone(scheduleTimeZone)
-
-	return func() {
-		sessVars.SQLMode = originalSQLMode
-		sessVars.StmtCtx.SetErrLevels(originalErrLevels)
-		sessVars.StmtCtx.SetTypeFlags(originalTypeFlags)
-		sessVars.TimeZone = originalTZ
-		if originalStmtTZ != nil {
-			sessVars.StmtCtx.SetTimeZone(originalStmtTZ)
-			return
-		}
-		sessVars.StmtCtx.SetTimeZone(sessVars.Location())
-	}
-}
-
 func loadCreateMaterializedViewScheduleNow(ctx context.Context, ddlSess *sess.Session) (types.Time, error) {
 	rows, err := ddlSess.Execute(ctx, "SELECT NOW(6)", "mview-refresh-info-next-time-now")
 	if err != nil {
@@ -236,35 +200,6 @@ func loadCreateMaterializedViewScheduleNow(ctx context.Context, ddlSess *sess.Se
 		return types.ZeroTime, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: failed to evaluate refresh schedule expression")
 	}
 	return rows[0].GetTime(0), nil
-}
-
-func evalCreateMaterializedViewScheduleExprToDatetime(ddlSess *sess.Session, exprSQL string) (*types.Time, error) {
-	exprNode, err := generatedexpr.ParseExpression(exprSQL)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	builtExpr, err := expression.BuildSimpleExpr(ddlSess.Session().GetExprCtx(), exprNode)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	evalCtx := ddlSess.Session().GetExprCtx().GetEvalCtx()
-	v, err := builtExpr.Eval(evalCtx, chunk.Row{})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if v.IsNull() {
-		return nil, nil
-	}
-
-	targetTp := types.NewFieldType(mysql.TypeDatetime)
-	targetTp.SetDecimal(types.MaxFsp)
-	datetimeV, err := v.ConvertTo(evalCtx.TypeCtx(), targetTp)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	t := datetimeV.GetMysqlTime()
-	return &t, nil
 }
 
 func deriveCreateMaterializedViewNextUnixSeconds(
@@ -277,11 +212,7 @@ func deriveCreateMaterializedViewNextUnixSeconds(
 	if mviewInfo == nil {
 		return nil, false, nil
 	}
-	tz, err := mviewInfo.RefreshScheduleTimeZone.GetLocation()
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-	return deriveCreateMaterializedScheduleNextUnixSeconds(ctx, ddlSess, mviewSchemaName, mvTableName, mviewInfo.RefreshStartWith, mviewInfo.RefreshNext, tz, logCreateMaterializedViewNextUnixSecondsUpdateNull)
+	return deriveMaterializedScheduleNextUnixSecondsForDDL(ctx, ddlSess, mviewSchemaName, mvTableName, mviewInfo.RefreshStartWith, mviewInfo.RefreshNext, mviewInfo.RefreshScheduleSQLMode, logCreateMaterializedViewNextUnixSecondsUpdateNull)
 }
 
 func deriveCreateMaterializedViewLogNextUnixSeconds(
@@ -294,9 +225,5 @@ func deriveCreateMaterializedViewLogNextUnixSeconds(
 	if mlogInfo == nil {
 		return nil, false, nil
 	}
-	tz, err := mlogInfo.PurgeScheduleTimeZone.GetLocation()
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-	return deriveCreateMaterializedScheduleNextUnixSeconds(ctx, ddlSess, mlogSchemaName, mlogTableName, mlogInfo.PurgeStartWith, mlogInfo.PurgeNext, tz, logCreateMaterializedViewLogNextUnixSecondsUpdateNull)
+	return deriveMaterializedScheduleNextUnixSecondsForDDL(ctx, ddlSess, mlogSchemaName, mlogTableName, mlogInfo.PurgeStartWith, mlogInfo.PurgeNext, mlogInfo.PurgeScheduleSQLMode, logCreateMaterializedViewLogNextUnixSecondsUpdateNull)
 }

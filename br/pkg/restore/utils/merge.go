@@ -10,8 +10,8 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"go.uber.org/zap"
 )
 
 // MergeRangesStat holds statistics for the MergeRanges.
@@ -54,9 +54,9 @@ func MergeAndRewriteFileRanges(
 		// Assert that it has the same end key.
 		if !bytes.Equal(filesMap[string(file.StartKey)][0].EndKey, file.EndKey) {
 			log.Panic("there are two files having the same start key, but different end key",
-				zap.ByteString("start key", file.StartKey),
-				zap.ByteString("file 1 end key", file.EndKey),
-				zap.ByteString("file 2 end key", filesMap[string(file.StartKey)][0].EndKey),
+				logutil.Key("start key", file.StartKey),
+				logutil.Key("file 1 end key", file.EndKey),
+				logutil.Key("file 2 end key", filesMap[string(file.StartKey)][0].EndKey),
 			)
 		}
 		// We skips all default cf files because we don't range overlap.

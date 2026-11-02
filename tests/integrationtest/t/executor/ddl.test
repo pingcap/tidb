@@ -383,6 +383,12 @@ create table t_v2(a int, b int);
 create view v as select * from t_v1;
 create or replace view v  as select * from t_v2;
 select * from information_schema.views where table_name ='v' and table_schema='executor__ddl';
+drop view if exists v_check_bare, v_check_cascaded, v_check_local;
+create view v_check_bare as select * from t_v1 with check option;
+create view v_check_cascaded as select * from t_v1 with cascaded check option;
+create view v_check_local as select * from t_v1 with local check option;
+select table_name, check_option from information_schema.views where table_schema='executor__ddl' and table_name in ('v_check_bare','v_check_cascaded','v_check_local') order by table_name;
+drop view v_check_bare, v_check_cascaded, v_check_local;
 
 # TestTooLargeIdentifierLength
 drop database if exists aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;

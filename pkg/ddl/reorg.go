@@ -80,6 +80,9 @@ type reorgCtx struct {
 	snapshotVer uint64
 	// maxProgress is the historical maximum progress to prevent progress regression.
 	maxProgress atomicutil.Float64
+	// ru is collected by a background reorg function and transferred to the
+	// foreground worker when it receives the result.
+	ru atomicutil.Float64
 
 	mu struct {
 		sync.Mutex
@@ -95,7 +98,23 @@ type reorgCtx struct {
 // receiver determine if the result is from reorg function of previous DDL owner in this instance.
 type reorgFnResult struct {
 	ownerTS int64
+	ru      float64
 	err     error
+}
+
+func stageReorgResultRU(jobCtx *jobContext, result reorgFnResult) {
+	if result.err == nil {
+		jobCtx.pendingReorgRU += result.ru
+	}
+}
+
+func accountPendingReorgRU(jobCtx *jobContext, job *model.Job, transitionErr error) {
+	ru := jobCtx.pendingReorgRU
+	jobCtx.pendingReorgRU = 0
+	failpoint.InjectCall("accountPendingReorgRU", job.ID, ru, transitionErr == nil)
+	if transitionErr == nil {
+		job.RU += ru
+	}
 }
 
 func newReorgExprCtx() *exprstatic.ExprContext {
@@ -320,6 +339,21 @@ func (rc *reorgCtx) getSnapshotVer() uint64 {
 	return atomic.LoadUint64(&rc.snapshotVer)
 }
 
+func (rc *reorgCtx) setRU(ru float64) {
+	rc.ru.Store(ru)
+}
+
+// increaseRU adds the RU collected by one unit of reorganization work, such as
+// a committed backfill transaction. It is additive because a reorganization can
+// span many transactions and DDL rounds, while setRU overwrites the value.
+func (rc *reorgCtx) increaseRU(ru float64) {
+	rc.ru.Add(ru)
+}
+
+func (rc *reorgCtx) getRU() float64 {
+	return rc.ru.Load()
+}
+
 // setMaxProgress updates the maximum progress if the new progress is greater.
 // It returns the current maximum progress (which may be unchanged if newProgress <= oldMax).
 // This prevents progress regression when statistics change during backfill.
@@ -409,7 +443,7 @@ func (w *worker) runReorgJob(
 		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.Job.GetRowCount())
 		w.wg.Run(func() {
 			err := reorgFn()
-			rc.doneCh <- reorgFnResult{ownerTS: beOwnerTS, err: err}
+			rc.doneCh <- reorgFnResult{ownerTS: beOwnerTS, ru: rc.getRU(), err: err}
 		})
 	}
 
@@ -439,6 +473,7 @@ func (w *worker) runReorgJob(
 				d.removeReorgCtx(job.ID)
 				return err
 			}
+			stageReorgResultRU(jobCtx, res)
 			rowCount := rc.getRowCount()
 			job.SetRowCount(rowCount)
 			if snapshotVer := rc.getSnapshotVer(); snapshotVer != 0 {

@@ -445,6 +445,8 @@ func TestMaterializedViewDDLStatements(t *testing.T) {
 		{"ALTER MATERIALIZED VIEW mv REFRESH", true, "ALTER MATERIALIZED VIEW \x60mv\x60 REFRESH"},
 		{"ALTER MATERIALIZED VIEW LOG ON t PURGE, ADD COLUMN (b,c)", true, "ALTER MATERIALIZED VIEW LOG ON \x60t\x60 PURGE, ADD COLUMN (\x60b\x60, \x60c\x60)"},
 		{"ALTER MATERIALIZED VIEW LOG ON t PURGE", true, "ALTER MATERIALIZED VIEW LOG ON \x60t\x60 PURGE"},
+		{"PURGE MATERIALIZED VIEW LOG ON t", true, "PURGE MATERIALIZED VIEW LOG ON \x60t\x60"},
+		{"PURGE MATERIALIZED VIEW LOG ON test.t", true, "PURGE MATERIALIZED VIEW LOG ON \x60test\x60.\x60t\x60"},
 		{"DROP MATERIALIZED VIEW IF EXISTS mv", true, "DROP MATERIALIZED VIEW IF EXISTS \x60mv\x60"},
 		{"DROP MATERIALIZED VIEW LOG IF EXISTS ON t", true, "DROP MATERIALIZED VIEW LOG IF EXISTS ON \x60t\x60"},
 	}
@@ -454,6 +456,7 @@ func TestMaterializedViewDDLStatements(t *testing.T) {
 		&ast.CreateMaterializedViewLogStmt{}, &ast.CreateMaterializedViewLogStmt{},
 		&ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{},
 		&ast.AlterMaterializedViewLogStmt{}, &ast.AlterMaterializedViewLogStmt{},
+		&ast.PurgeMaterializedViewLogStmt{}, &ast.PurgeMaterializedViewLogStmt{},
 		&ast.DropMaterializedViewStmt{}, &ast.DropMaterializedViewLogStmt{},
 	}
 	p := parser.New()
@@ -462,6 +465,38 @@ func TestMaterializedViewDDLStatements(t *testing.T) {
 		require.NoError(t, err, tc.src)
 		require.IsType(t, wantTypes[i], stmt, tc.src)
 	}
+}
+
+func TestRefreshMaterializedViewStatements(t *testing.T) {
+	table := []testCase{
+		{"REFRESH MATERIALIZED VIEW mv FAST", true, "REFRESH MATERIALIZED VIEW `mv` FAST"},
+		{"REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE FAST", true, "REFRESH MATERIALIZED VIEW `mv` WITH ASYNC MODE FAST"},
+		{"REFRESH MATERIALIZED VIEW mv FAST AS OF TIMESTAMP '2021-04-15 00:00:00' WITH PROFILE", true, "REFRESH MATERIALIZED VIEW `mv` FAST AS OF TIMESTAMP _UTF8MB4'2021-04-15 00:00:00' WITH PROFILE"},
+		{"REFRESH MATERIALIZED VIEW mv COMPLETE", false, ""},
+		{"REFRESH MATERIALIZED VIEW mv COMPLETE IN PLACE", true, "REFRESH MATERIALIZED VIEW `mv` COMPLETE IN PLACE"},
+		{"REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE COMPLETE OUT OF PLACE DRY RUN", true, "REFRESH MATERIALIZED VIEW `mv` WITH ASYNC MODE COMPLETE OUT OF PLACE DRY RUN"},
+		{"REFRESH MATERIALIZED VIEW mv COMPLETE DELTA APPLY WITH PROFILE", true, "REFRESH MATERIALIZED VIEW `mv` COMPLETE DELTA APPLY WITH PROFILE"},
+		{"REFRESH MATERIALIZED VIEW mv FAST OUT OF PLACE", false, ""},
+		{"REFRESH MATERIALIZED VIEW mv COMPLETE OUT OF PLACE DELTA APPLY", false, ""},
+		{"CANCEL MATERIALIZED VIEW REFRESH JOB", false, ""},
+		{"CANCEL MATERIALIZED VIEW REFRESH JOB 42", true, "CANCEL MATERIALIZED VIEW REFRESH JOB 42"},
+	}
+	RunTest(t, table, false, false)
+
+	p := parser.New()
+	stmt, err := p.ParseOneStmt("REFRESH MATERIALIZED VIEW mv COMPLETE DELTA APPLY", "", "")
+	require.NoError(t, err)
+	refreshStmt, ok := stmt.(*ast.RefreshMaterializedViewStmt)
+	require.True(t, ok)
+	require.Equal(t, ast.RefreshMaterializedViewTypeComplete, refreshStmt.Type)
+	require.Equal(t, ast.RefreshMaterializedViewCompleteTypeDeltaApply, refreshStmt.CompleteType)
+
+	stmt, err = p.ParseOneStmt("CANCEL MATERIALIZED VIEW REFRESH JOB 42", "", "")
+	require.NoError(t, err)
+	cancelStmt, ok := stmt.(*ast.CancelMaterializedViewJobStmt)
+	require.True(t, ok)
+	require.Equal(t, ast.CancelMaterializedViewJobTypeRefresh, cancelStmt.Tp)
+	require.Equal(t, int64(42), cancelStmt.JobID)
 }
 
 func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
@@ -619,6 +654,18 @@ func TestRecommendIndex(t *testing.T) {
 			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1"},
 		{"recommend index run for 'select * from t where a=1' with A = 1, B = 2", true,
 			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1, B = 2"},
+		{"recommend index return result for 'select * from t where a=1'", true,
+			"RECOMMEND INDEX RETURN RESULT FOR 'select * from t where a=1'"},
+		{"recommend index return result for 'select * from t where a=1' with A = 1, B = 2", true,
+			"RECOMMEND INDEX RETURN RESULT FOR 'select * from t where a=1' WITH A = 1, B = 2"},
+		{"recommend index return result for ''", true, "RECOMMEND INDEX RETURN RESULT FOR ''"},
+		{"recommend index return result", false, ""},
+		{"recommend index return result with A = 1", false, ""},
+		{"recommend index return for 'select * from t'", false, ""},
+		{"recommend index return results for 'select * from t'", false, ""},
+		{"recommend index `return` `result` for 'select * from t'", false, ""},
+		{"recommend index return result for select * from t", false, ""},
+		{"select return, result from result", true, "SELECT `return`,`result` FROM `result`"},
 		{"recommend index show option", true, "RECOMMEND INDEX SHOW OPTION"},
 		{"recommend index apply 1", true, "RECOMMEND INDEX APPLY 1"},
 		{"recommend index ignore 1", true, "RECOMMEND INDEX IGNORE 1"},
@@ -627,6 +674,16 @@ func TestRecommendIndex(t *testing.T) {
 		{"recommend index set A = 1, B = 2, C = 3", true, "RECOMMEND INDEX SET A = 1, B = 2, C = 3"},
 	}
 	RunTest(t, table, false, false)
+
+	p := parser.New()
+	for _, sql := range []string{
+		`recommend index run for 'select * from t where a=1'`,
+		`recommend index return result for 'select * from t where a=1'`,
+	} {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		require.True(t, ast.IsReadOnly(stmt, true), sql)
+	}
 }
 
 func TestAdminStmt(t *testing.T) {
@@ -1276,6 +1333,10 @@ AAAAAAAAAAAA5gm5Mg==
 		{"cancel distribution job", false, ""},
 		{"cancel distribution job 1", true, "CANCEL DISTRIBUTION JOB 1"},
 
+		// for cancel materialized view log purge job
+		{"cancel materialized view log purge job", false, ""},
+		{"cancel materialized view log purge job 1", true, "CANCEL MATERIALIZED VIEW LOG PURGE JOB 1"},
+
 		// for show table next_row_id.
 		{"show table t1.t1 next_row_id", true, "SHOW TABLE `t1`.`t1` NEXT_ROW_ID"},
 		{"show table t1 next_row_id", true, "SHOW TABLE `t1` NEXT_ROW_ID"},
@@ -1471,6 +1532,36 @@ func TestDBAStmt(t *testing.T) {
 		// for show create view
 		{"show create view test.t", true, "SHOW CREATE VIEW `test`.`t`"},
 		{"show create view t", true, "SHOW CREATE VIEW `t`"},
+		// for show create materialized view
+		{"show create materialized view test.t", true, "SHOW CREATE MATERIALIZED VIEW `test`.`t`"},
+		{"show create materialized view t", true, "SHOW CREATE MATERIALIZED VIEW `t`"},
+		// for show create materialized view log
+		{"show create materialized view log on test.t", true, "SHOW CREATE MATERIALIZED VIEW LOG ON `test`.`t`"},
+		{"show create materialized view log on t", true, "SHOW CREATE MATERIALIZED VIEW LOG ON `t`"},
+		// for show materialized views
+		{"show materialized views", true, "SHOW MATERIALIZED VIEWS"},
+		{"show materialized views from test", true, "SHOW MATERIALIZED VIEWS IN `test`"},
+		{"show materialized views from 'test'", false, ""},
+		{"show materialized views in test like 'mv%'", true, "SHOW MATERIALIZED VIEWS IN `test` LIKE _UTF8MB4'mv%'"},
+		{"show materialized views where mview_id = 1", true, "SHOW MATERIALIZED VIEWS WHERE `mview_id`=1"},
+		// for show materialized view
+		{"show materialized view mv remain_logs", true, "SHOW MATERIALIZED VIEW `mv` REMAIN_LOGS"},
+		{"show materialized view test.mv remain_logs", true, "SHOW MATERIALIZED VIEW `test`.`mv` REMAIN_LOGS"},
+		{"show materialized view mv", false, ""},
+		{"show materialized view mv like 'mv%'", false, ""},
+		{"show materialized view mv where mview_id = 1", false, ""},
+		// for show materialized view logs
+		{"show materialized view logs", true, "SHOW MATERIALIZED VIEW LOGS"},
+		{"show materialized view logs from test", true, "SHOW MATERIALIZED VIEW LOGS IN `test`"},
+		{"show materialized view logs from 'test'", false, ""},
+		{"show materialized view logs in test like '$mlog$%'", true, "SHOW MATERIALIZED VIEW LOGS IN `test` LIKE _UTF8MB4'$mlog$%'"},
+		{"show materialized view logs where mlog_id = 1", true, "SHOW MATERIALIZED VIEW LOGS WHERE `mlog_id`=1"},
+		// for show materialized view log
+		{"show materialized view log on t wait_purge", true, "SHOW MATERIALIZED VIEW LOG ON `t` WAIT_PURGE"},
+		{"show materialized view log on test.t wait_purge", true, "SHOW MATERIALIZED VIEW LOG ON `test`.`t` WAIT_PURGE"},
+		{"show materialized view log on t", false, ""},
+		{"show materialized view log on t like '$mlog$%'", false, ""},
+		{"show materialized view log on t where mlog_id = 1", false, ""},
 		// for show create database
 		{"show create database d1", true, "SHOW CREATE DATABASE `d1`"},
 		{"show create database if not exists d1", true, "SHOW CREATE DATABASE IF NOT EXISTS `d1`"},
@@ -6369,6 +6460,7 @@ func TestView(t *testing.T) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with local check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` WITH LOCAL CHECK OPTION"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with cascaded check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t`"},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = current_user view v as select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t`"},
 
 		// create view with `(` select statement `)`
@@ -6383,6 +6475,7 @@ func TestView(t *testing.T) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t)", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t`)"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t) with local check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t`) WITH LOCAL CHECK OPTION"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t) with cascaded check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t`)"},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t) with check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t`)"},
 		{"create or replace algorithm = merge definer = current_user view v as (select * from t)", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS (SELECT * FROM `t`)"},
 
 		// create view with union statement
@@ -6397,6 +6490,7 @@ func TestView(t *testing.T) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union select * from t with local check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION SELECT * FROM `t` WITH LOCAL CHECK OPTION"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union select * from t with cascaded check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION SELECT * FROM `t`"},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union select * from t with check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = current_user view v as select * from t union select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t` UNION SELECT * FROM `t`"},
 
 		// create view with union all statement
@@ -6411,6 +6505,7 @@ func TestView(t *testing.T) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union all select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION ALL SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union all select * from t with local check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION ALL SELECT * FROM `t` WITH LOCAL CHECK OPTION"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union all select * from t with cascaded check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION ALL SELECT * FROM `t`"},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union all select * from t with check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION ALL SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = current_user view v as select * from t union all select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t` UNION ALL SELECT * FROM `t`"},
 
 		// create view with `(` union statement `)`
@@ -6425,7 +6520,11 @@ func TestView(t *testing.T) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t union all select * from t)", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t` UNION ALL SELECT * FROM `t`)"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t union all select * from t) with local check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t` UNION ALL SELECT * FROM `t`) WITH LOCAL CHECK OPTION"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t union all select * from t) with cascaded check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t` UNION ALL SELECT * FROM `t`)"},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t union all select * from t) with check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t` UNION ALL SELECT * FROM `t`)"},
 		{"create or replace algorithm = merge definer = current_user view v as select * from t union all select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t` UNION ALL SELECT * FROM `t`"},
+		{"create view v as select * from t with check option", true, "CREATE ALGORITHM = UNDEFINED DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t`"},
+		{"create view v as select * from t with check", false, ""},
+		{"create view v as select * from t with cascaded local check option", false, ""},
 	}
 	RunTest(t, table, false, false)
 
@@ -6460,6 +6559,15 @@ func TestView(t *testing.T) {
 	require.Equal(t, "select c,d,e from t", v.Select.Text())
 	require.Equal(t, ast.SecurityDefiner, v.Security)
 	require.Equal(t, ast.CheckOptionCascaded, v.CheckOption)
+
+	// A bare `WITH CHECK OPTION` is the unqualified form of the clause. MySQL treats
+	// it as CASCADED, and the clause is not part of the select statement text.
+	st, err = p.ParseOneStmt("create view v as select * from t with check option", "", "")
+	require.NoError(t, err)
+	v, ok = st.(*ast.CreateViewStmt)
+	require.True(t, ok)
+	require.Equal(t, ast.CheckOptionCascaded, v.CheckOption)
+	require.Equal(t, "select * from t", v.Select.Text())
 
 	src = `
 CREATE VIEW v1 AS SELECT * FROM t;
@@ -6710,6 +6818,17 @@ func TestAnalyze(t *testing.T) {
 		{"analyze table t with 0.1 samplerate", true, "ANALYZE TABLE `t` WITH 0.1 SAMPLERATE"},
 		{"analyze table t with 0.05 ndvrate", true, "ANALYZE TABLE `t` WITH 0.05 NDVRATE"},
 		{"analyze table t with 0.05 ndvrate 0.00001 samplerate", true, "ANALYZE TABLE `t` WITH 0.05 NDVRATE, 0.00001 SAMPLERATE"},
+		{"analyze table t with default buckets", true, "ANALYZE TABLE `t` WITH DEFAULT BUCKETS"},
+		{"analyze table t with default topn", true, "ANALYZE TABLE `t` WITH DEFAULT TOPN"},
+		{"analyze table t with default samples", true, "ANALYZE TABLE `t` WITH DEFAULT SAMPLES"},
+		{"analyze table t with default samplerate", true, "ANALYZE TABLE `t` WITH DEFAULT SAMPLERATE"},
+		{"analyze table t with default samples, 0.1 samplerate", true, "ANALYZE TABLE `t` WITH DEFAULT SAMPLES, 0.1 SAMPLERATE"},
+		{"analyze table t with default buckets, default topn, default samples, default samplerate", true, "ANALYZE TABLE `t` WITH DEFAULT BUCKETS, DEFAULT TOPN, DEFAULT SAMPLES, DEFAULT SAMPLERATE"},
+		{"analyze table t with 4 buckets, default topn", true, "ANALYZE TABLE `t` WITH 4 BUCKETS, DEFAULT TOPN"},
+		{"analyze table t partition a with default buckets", true, "ANALYZE TABLE `t` PARTITION `a` WITH DEFAULT BUCKETS"},
+		{"analyze table t with default cmsketch width", false, ""},
+		{"analyze table t with default cmsketch depth", false, ""},
+		{"analyze table t with default ndvrate", true, "ANALYZE TABLE `t` WITH DEFAULT NDVRATE"},
 		{"analyze no_write_to_binlog table t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t1`"},
 		{"analyze local table t,t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t`,`t1`"},
 	}
@@ -7790,6 +7909,11 @@ func TestCTEMerge(t *testing.T) {
 
 func TestAsOfClause(t *testing.T) {
 	table := []testCase{
+		{"COMPARE MATERIALIZED VIEW mv AS OF TIMESTAMP '2026-01-01 00:00:00'", true, "COMPARE MATERIALIZED VIEW `mv` AS OF TIMESTAMP _UTF8MB4'2026-01-01 00:00:00'"},
+		{"COMPARE MATERIALIZED VIEW test.mv AS OF TIMESTAMP '2026-01-01 00:00:00' OUTPUT INTO TABLE test.diff", true, "COMPARE MATERIALIZED VIEW `test`.`mv` AS OF TIMESTAMP _UTF8MB4'2026-01-01 00:00:00' OUTPUT INTO TABLE `test`.`diff`"},
+		{"COMPARE MATERIALIZED VIEW mv", false, ""},
+		{"COMPARE MATERIALIZED VIEW mv OUTPUT INTO TABLE diff", false, ""},
+
 		{"SELECT * FROM `t` AS /* comment */ a;", true, "SELECT * FROM `t` AS `a`"},
 		{"SELECT * FROM `t` AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW());", true, "SELECT * FROM `t` AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())"},
 		{"select * from `t` as of timestamp '2021-04-15 00:00:00'", true, "SELECT * FROM `t` AS OF TIMESTAMP _UTF8MB4'2021-04-15 00:00:00'"},

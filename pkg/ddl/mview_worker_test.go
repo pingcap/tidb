@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	parser_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -52,6 +54,59 @@ func TestInitCreateMaterializedViewBuildSessionAppliesDefinitionDivPrecisionIncr
 	require.Equal(t, "before", sessVars.CurrentDB)
 }
 
+func TestAnalyzeMVColumnUsageGroupByAlias(t *testing.T) {
+	sel, err := parseSelectFromSQL("select a as k, count(1) from t group by k")
+	require.NoError(t, err)
+
+	usage, err := analyzeMVColumnUsage(sel, "a")
+	require.NoError(t, err)
+	require.Empty(t, usage.unsupportedReason)
+	require.Equal(t, []int{0}, usage.directOutputOffsets)
+	require.True(t, usage.isGroupKey)
+}
+
+func TestAnalyzeMVColumnUsageWhereReferenceUnsupported(t *testing.T) {
+	sel, err := parseSelectFromSQL("select a, count(1) from t where b > 0 group by a")
+	require.NoError(t, err)
+
+	usage, err := analyzeMVColumnUsage(sel, "b")
+	require.NoError(t, err)
+	require.Equal(t, "WHERE clause", usage.unsupportedReason)
+	require.Empty(t, usage.directOutputOffsets)
+	require.False(t, usage.isGroupKey)
+}
+
+func TestFieldTypeForMVRelatedColumnClearsBaseOnlyFlags(t *testing.T) {
+	oldRelatedFT := parser_types.NewFieldType(mysql.TypeLong)
+	oldRelatedFT.AddFlag(mysql.UniqueKeyFlag)
+	oldRelatedCol := &model.ColumnInfo{FieldType: *oldRelatedFT}
+
+	baseNewFT := parser_types.NewFieldType(mysql.TypeLonglong)
+	baseNewFT.AddFlag(mysql.NotNullFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag |
+		mysql.PreventNullInsertFlag | mysql.GeneratedColumnFlag | mysql.PriKeyFlag)
+	baseNewCol := &model.ColumnInfo{FieldType: *baseNewFT}
+
+	newFieldType := fieldTypeForMVRelatedColumn(oldRelatedCol, baseNewCol)
+	require.True(t, mysql.HasNotNullFlag(newFieldType.GetFlag()))
+	require.True(t, mysql.HasUniKeyFlag(newFieldType.GetFlag()))
+	require.False(t, mysql.HasPriKeyFlag(newFieldType.GetFlag()))
+	require.False(t, mysql.HasAutoIncrementFlag(newFieldType.GetFlag()))
+	require.False(t, mysql.HasOnUpdateNowFlag(newFieldType.GetFlag()))
+	require.False(t, mysql.HasPreventNullInsertFlag(newFieldType.GetFlag()))
+	require.Zero(t, newFieldType.GetFlag()&mysql.GeneratedColumnFlag)
+}
+
+func TestAnalyzeMVColumnUsageGroupByOrdinal(t *testing.T) {
+	sel, err := parseSelectFromSQL("select a, count(1) from t group by 1")
+	require.NoError(t, err)
+
+	usage, err := analyzeMVColumnUsage(sel, "a")
+	require.NoError(t, err)
+	require.Empty(t, usage.unsupportedReason)
+	require.Equal(t, []int{0}, usage.directOutputOffsets)
+	require.True(t, usage.isGroupKey)
+}
+
 func TestUpdateMaterializedViewBaseInfoOnCreateMissingBaseTable(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -69,6 +124,35 @@ func TestUpdateMaterializedViewBaseInfoOnCreateMissingBaseTable(t *testing.T) {
 		require.Error(t, err)
 		require.True(t, infoschema.ErrTableNotExists.Equal(err))
 		require.Equal(t, model.JobStateCancelled, job.State)
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func TestGetTableInfoAndCancelNonExistJob(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	err = kv.RunInNewTxn(context.Background(), store, true, func(_ context.Context, txn kv.Transaction) error {
+		metaMut := meta.NewMutator(txn)
+		require.NoError(t, metaMut.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}))
+
+		for _, tc := range []struct {
+			name     string
+			tableID  int64
+			schemaID int64
+		}{
+			{name: "missing table", tableID: 2, schemaID: 1},
+			{name: "missing database", tableID: 2, schemaID: 2},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				job := &model.Job{State: model.JobStateRunning}
+				_, err := getTableInfoAndCancelNonExistJob(metaMut, job, tc.tableID, tc.schemaID)
+				require.Error(t, err)
+				require.Equal(t, model.JobStateCancelled, job.State)
+			})
+		}
 		return nil
 	})
 	require.NoError(t, err)
@@ -105,6 +189,67 @@ func TestUpdateMaterializedViewBaseInfoOnDropWithoutBaseTables(t *testing.T) {
 	extraInfos, err := updateMaterializedViewBaseInfoOnDrop(&jobContext{}, &model.Job{TableID: droppingTable.ID}, droppingTable)
 	require.NoError(t, err)
 	require.Empty(t, extraInfos)
+}
+
+func TestBuildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(t *testing.T) {
+	base := &model.TableInfo{
+		ID:   1,
+		Name: ast.NewCIStr("base"),
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{
+			MLogID:   2,
+			MViewIDs: []int64{3},
+		},
+	}
+	mlog := &model.TableInfo{
+		ID:   2,
+		Name: ast.NewCIStr("$mlog$base"),
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID:       base.ID,
+			DependentMViewIDs: []int64{3},
+		},
+	}
+	oldMView := &model.TableInfo{
+		ID:   3,
+		Name: ast.NewCIStr("mv"),
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{base.ID},
+		},
+	}
+	shadow := &model.TableInfo{
+		ID:   4,
+		Name: ast.NewCIStr("__mv_shadow"),
+		MaterializedViewShadow: &model.MaterializedViewShadowInfo{
+			SourceMViewID: oldMView.ID,
+		},
+	}
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, oldMView, shadow})
+
+	involving, err := buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
+		context.Background(), is, ast.NewCIStr("test"), oldMView.ID, shadow.ID,
+	)
+	require.NoError(t, err)
+	require.Equal(t, []model.InvolvingSchemaInfo{
+		{Database: "test", Table: "mv", Mode: model.ExclusiveInvolving},
+		{Database: "test", Table: "base", Mode: model.ExclusiveInvolving},
+		{Database: "test", Table: "__mv_shadow", Mode: model.ExclusiveInvolving},
+		{Database: "test", Table: "$mlog$base", Mode: model.ExclusiveInvolving},
+	}, involving)
+
+	// A MLog that does not list the old MV is unrelated to this cutover and is
+	// intentionally omitted from the involving-schema lock set.
+	mlog.MaterializedViewLog.DependentMViewIDs = nil
+	involving, err = buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
+		context.Background(), is, ast.NewCIStr("test"), oldMView.ID, shadow.ID,
+	)
+	require.NoError(t, err)
+	require.Len(t, involving, 3)
+	require.NotContains(t, involving, model.InvolvingSchemaInfo{Database: "test", Table: "$mlog$base", Mode: model.ExclusiveInvolving})
+
+	oldMView.MaterializedView.BaseTableIDs = []int64{base.ID, shadow.ID}
+	_, err = buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
+		context.Background(), is, ast.NewCIStr("test"), oldMView.ID, shadow.ID,
+	)
+	require.ErrorContains(t, err, "materialized view must reference exactly one base table")
 }
 
 func TestBuildDropTableInvolvingSchemaInfo(t *testing.T) {

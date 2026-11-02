@@ -17,6 +17,7 @@ package globalstats_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -28,9 +29,11 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -639,6 +642,46 @@ func TestGlobalStatsNDV(t *testing.T) {
 	tk.MustExec("insert into t values (31), (33), (34)")
 	tk.MustExec("insert into t values (1), (2), (3)")
 	checkNDV(13, 3, 3, 3, 4)
+
+	// The FMSketch keeps up to 10000 hashes, so it estimates the NDV of the
+	// 32768 rows of tu, except for the column and index of the single-column
+	// unique key on a, which take the exact row count.
+	tk.MustExec(`create table tu (a int, b int not null, c int, primary key (a) nonclustered,
+	unique key ab(a, b), key ic(c)) partition by hash(a) partitions 2`)
+	tk.MustExec("insert into tu values (1, 1, 1)")
+	for n := 1; n < 1<<15; n *= 2 {
+		tk.MustExec(fmt.Sprintf("insert into tu select a + %d, b + %d, c + %d from tu", n, n, n))
+	}
+	// Two rows of tg move from p0 to p1, and only p1 is analyzed again. The
+	// stale stats of p0 and the new stats of p1 then both hold the values 1
+	// and 2 of c, which the global unique index uc keeps distinct. The
+	// partition NDVs would count them twice, so the global NDV of c and uc
+	// comes from the merged FMSketch, which counts them once.
+	tk.MustExec("create table tg (a int, c int, unique key uc(c) global) partition by hash(a) partitions 2")
+	tk.MustExec("insert into tg values (0, 1), (2, 2), (4, 3), (6, 4), (8, null), (10, null), (1, 5), (3, 6)")
+	tk.MustExec("analyze table tg")
+	tk.MustExec("update tg set a = a + 11 where a in (0, 2)")
+	ndvs := func(tbl string) (ndvs []string) {
+		for _, r := range tk.MustQuery("show stats_histograms where table_name = ?", tbl).Sort().Rows() {
+			ndvs = append(ndvs, fmt.Sprintf("%v %v %v", r[2], r[3], r[6]))
+		}
+		return ndvs
+	}
+	for _, async := range []int{0, 1} {
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_enable_async_merge_global_stats = %d", async))
+		tk.MustExec("analyze table tu")
+		require.Equal(t, []string{
+			"global PRIMARY 32768", "global a 32768", "global ab 32516", "global b 32236", "global c 32236", "global ic 32236",
+			"p0 PRIMARY 16384", "p0 a 16384", "p0 ab 16384", "p0 b 16384", "p0 c 16384", "p0 ic 16384",
+			"p1 PRIMARY 16384", "p1 a 16384", "p1 ab 16202", "p1 b 16128", "p1 c 16128", "p1 ic 16128",
+		}, ndvs("tu"))
+		tk.MustExec("analyze table tg partition p1")
+		require.Equal(t, []string{
+			"global a 8", "global c 6", "global uc 6",
+			"p0 a 6", "p0 c 4", "p0 uc 4",
+			"p1 a 4", "p1 c 4", "p1 uc 4",
+		}, ndvs("tg"))
+	}
 }
 
 func TestGlobalStatsIndexNDV(t *testing.T) {
@@ -1168,4 +1211,160 @@ func TestGlobalStatsMergePathConsistency(t *testing.T) {
 		"global TopN should be identical between async and blocking merge")
 	require.Equal(t, blockingBuckets, asyncBuckets,
 		"global buckets should be identical between async and blocking merge")
+}
+
+func TestGlobalStatsSampledNDV(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ndv (a int, b int, primary key (a) nonclustered, key idx(b)) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20))")
+	tk.MustExec("insert into ndv values (1,1),(2,2),(11,1),(12,2)")
+	tk.MustExec("analyze table ndv")
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ndv"))
+	require.NoError(t, err)
+	tbl := table.Meta()
+	part0, part1 := tbl.Partition.Definitions[0].ID, tbl.Partition.Definitions[1].ID
+	colA, colB, idx, pk := tbl.Columns[0].ID, tbl.Columns[1].ID, tbl.FindIndexByName("idx").ID, tbl.FindIndexByName("primary").ID
+	tk.MustExec("update mysql.stats_meta set count=10 where table_id in (?,?)", part0, part1)
+	// sampledSketch returns a saved sketch of 10 rows, of which selected were
+	// sampled for NDV and 3 are NULL, with the given singleton hashes.
+	sampledSketch := func(selected int64, hashes ...uint64) []byte {
+		wire, err := (&tipb.RowSampleCollector{Count: 10, NdvSampleCount: &selected,
+			NullCounts: []int64{3}, FmSketch: []*tipb.FMSketch{{Hashset: hashes}}}).Marshal()
+		require.NoError(t, err)
+		return append([]byte{0, 1}, wire...)
+	}
+	// fullSketch returns a saved full-input sketch with the given hashes.
+	fullSketch := func(mask uint64, hashes ...uint64) []byte {
+		wire, err := (&tipb.FMSketch{Mask: mask, Hashset: hashes}).Marshal()
+		require.NoError(t, err)
+		return wire
+	}
+	data := sampledSketch(3, 1, 2)
+	// setSketches saves the sketches of the two partitions. Each subtest calls it, so
+	// that no subtest depends on the sketches of the subtest before it.
+	setSketches := func(p0, p1 []byte) {
+		tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id=?", p0, part0)
+		tk.MustExec("update mysql.stats_fm_sketch set value=? where table_id=?", p1, part1)
+	}
+	// emptyTopNAndHist leaves column b with no buckets and no TopN, as for a mostly
+	// NULL column whose samples had only NULLs.
+	emptyTopNAndHist := func() {
+		tk.MustExec("delete from mysql.stats_buckets where table_id in (?,?) and is_index=0 and hist_id=?", part0, part1, colB)
+		tk.MustExec("delete from mysql.stats_top_n where table_id in (?,?) and is_index=0 and hist_id=?", part0, part1, colB)
+		tk.MustExec("update mysql.stats_histograms set null_count=10 where table_id in (?,?) and is_index=0 and hist_id=?", part0, part1, colB)
+	}
+	h := dom.StatsHandle()
+	opts := map[ast.AnalyzeOptionType]uint64{ast.AnalyzeOptNumBuckets: 10, ast.AnalyzeOptNumTopN: 0}
+	mergedNDV := func(t *testing.T, async, isIndex bool, id int64) int64 {
+		tk.MustExec(fmt.Sprintf("set tidb_enable_async_merge_global_stats=%t", async))
+		merged, err := globalstats.MergePartitionStats2GlobalStats(tk.Session(), h, opts, dom.InfoSchema(), tbl, isIndex, []int64{id})
+		require.NoError(t, err)
+		return merged.Hg[0].NDV
+	}
+	// checkNDV checks the global NDV of column b from the blocking and the async merge.
+	checkNDV := func(t *testing.T, want int64) {
+		for _, async := range []bool{false, true} {
+			require.Equal(t, want, mergedNDV(t, async, false, colB))
+		}
+	}
+
+	t.Run("a value in two partitions counts once", func(t *testing.T) {
+		// The two partitions sampled the same values 1 and 2, for the column and the index.
+		setSketches(data, data)
+		checkNDV(t, 2)
+		for _, async := range []bool{false, true} {
+			require.Equal(t, int64(2), mergedNDV(t, async, true, idx))
+		}
+	})
+	t.Run("each partition uses its own scale", func(t *testing.T) {
+		// p1 sampled 2 of its 10 rows, so its singleton 2 counts sqrt(10/2). Value 1 is
+		// in the two partitions and counts once.
+		setSketches(sampledSketch(3, 1), sampledSketch(2, 1, 2))
+		checkNDV(t, int64(math.Round(1+math.Sqrt(5))))
+	})
+	t.Run("full-input values are not scaled", func(t *testing.T) {
+		// The value 1 of full-input p0 counts once, and the singleton 2 of p1 keeps its
+		// scale, so the NDV is the same as with two sampled partitions.
+		setSketches(fullSketch(0, 1), sampledSketch(2, 1, 2))
+		checkNDV(t, int64(math.Round(1+math.Sqrt(5))))
+	})
+	t.Run("a partition without a sketch is ignored", func(t *testing.T) {
+		// A full-input merge does the same. Values 1 and 2 are then singletons of p0
+		// only, and each counts sqrt(10/3).
+		setSketches(data, data)
+		tk.MustExec("delete from mysql.stats_fm_sketch where table_id=? and is_index=0 and hist_id=?", part1, colB)
+		t.Cleanup(func() {
+			tk.MustExec("insert into mysql.stats_fm_sketch values (?, 0, ?, ?)", part1, colB, data)
+		})
+		checkNDV(t, int64(math.Round(2*math.Sqrt(10./3))))
+	})
+	t.Run("unique columns and indexes keep the exact NDV", func(t *testing.T) {
+		// The primary key keeps column a unique. Its column and index NDV must
+		// count all four rows seen by ANALYZE, not the two sampled hashes.
+		setSketches(data, data)
+		for _, async := range []bool{false, true} {
+			require.Equal(t, int64(4), mergedNDV(t, async, false, colA))
+			require.Equal(t, int64(4), mergedNDV(t, async, true, pk))
+		}
+	})
+	t.Run("deletes after ANALYZE keep the limit", func(t *testing.T) {
+		// Deletes can bring the row count down to the NULL count of the last ANALYZE, here
+		// 8 and 8, so a limit of count minus NULL count would be 0. The limit uses the 2
+		// non-NULL rows that each TopN and histogram holds, and the NDV stays 3.
+		setSketches(sampledSketch(3, 1), sampledSketch(2, 1, 2))
+		tk.MustExec("update mysql.stats_histograms set null_count=8 where table_id in (?,?) and is_index=0 and hist_id=?", part0, part1, colB)
+		tk.MustExec("update mysql.stats_meta set count=8 where table_id in (?,?)", part0, part1)
+		t.Cleanup(func() {
+			tk.MustExec("update mysql.stats_histograms set null_count=0 where table_id in (?,?) and is_index=0 and hist_id=?", part0, part1, colB)
+			tk.MustExec("update mysql.stats_meta set count=10 where table_id in (?,?)", part0, part1)
+		})
+		checkNDV(t, int64(math.Round(1+math.Sqrt(5))))
+	})
+	t.Run("ANALYZE of one partition merges with a locked one", func(t *testing.T) {
+		// ANALYZE of p0 saves a full-input sketch, and the locked p1 keeps its sampled one.
+		// The global merge accepts this mix, so the statement finishes with no warning.
+		setSketches(data, data)
+		tk.MustExec("lock stats ndv partition p1")
+		t.Cleanup(func() {
+			tk.MustExec("unlock stats ndv partition p1")
+			// ANALYZE saved the real row count of p0.
+			tk.MustExec("update mysql.stats_meta set count=10 where table_id=?", part0)
+		})
+		tk.MustExec("analyze table ndv partition p0")
+		tk.MustQuery("show warnings").CheckNotContain("merge global stats failed")
+		tk.MustQuery("select state from mysql.analyze_jobs where table_name='ndv' and job_info like '%merge global stats%' order by id desc limit 1").Check(testkit.Rows("finished"))
+	})
+
+	// The subtests below call emptyTopNAndHist, which the subtests above cannot undo,
+	// so they must stay last.
+	t.Run("sketches limit the NDV of a mostly NULL column", func(t *testing.T) {
+		// The TopN and histogram give a limit of 0. Each sketch adds its 7 non-NULL rows.
+		emptyTopNAndHist()
+		setSketches(data, data)
+		checkNDV(t, 2)
+	})
+	t.Run("a full-input sketch adds its NDV to the limit", func(t *testing.T) {
+		// A full-input sketch has no row counts, so p0 adds its NDV of 10. With the 7
+		// rows of p1, the limit is 17, and the values 1 to 10 all count.
+		emptyTopNAndHist()
+		setSketches(fullSketch(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), data)
+		checkNDV(t, 10)
+	})
+	t.Run("a full-input sketch that dropped hashes", func(t *testing.T) {
+		// p0 dropped half of its hashes (mask 1), so it adds its estimated NDV, 2 * 5 = 10.
+		// The merge must also drop hash 1 of p1, because that mask rejects it.
+		emptyTopNAndHist()
+		setSketches(fullSketch(1, 2, 4, 6, 8, 10), data)
+		checkNDV(t, 10)
+	})
+	t.Run("each partition has its own source for the limit", func(t *testing.T) {
+		// p0 adds the 2 rows of its new TopN and histogram, and p1, which still has none,
+		// adds the 7 rows of its sketch. The limit of 9 cuts the estimate of 10.
+		emptyTopNAndHist()
+		tk.MustExec("analyze table ndv partition p0")
+		tk.MustExec("update mysql.stats_meta set count=10 where table_id=?", part0)
+		setSketches(fullSketch(0, 1, 2), sampledSketch(7, 3, 4, 5, 6, 7, 8, 9))
+		checkNDV(t, 9)
+	})
 }

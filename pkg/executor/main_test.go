@@ -61,6 +61,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/ttl/ttlworker.(*JobManager).jobLoop"),
 		// backoff function will lead to sleep, so there is a high probability of goroutine leak while it's doing backoff.
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/config/retry.(*Config).createBackoffFn.newBackoffFn.func2"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/config/retry.newBackoffFn.func1"),
 	}
 	callback := func(i int) int {
 		testDataMap.GenerateOutputIfNeeded()

@@ -38,6 +38,7 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/regionsplit"
 	"go.uber.org/zap"
 )
 
@@ -481,18 +482,9 @@ func evalConstExprNodes(
 			return nil, err
 		}
 
-		d, err := evaluatedVal.ConvertTo(evalCtx.TypeCtx(), &col.FieldType)
+		d, err := regionsplit.ConvertValueToColumnType(evaluatedVal, col, evalCtx.TypeCtx())
 		if err != nil {
-			if !types.ErrTruncated.Equal(err) &&
-				!types.ErrTruncatedWrongVal.Equal(err) &&
-				!types.ErrBadNumber.Equal(err) {
-				return nil, err
-			}
-			valStr, err1 := evaluatedVal.ToString()
-			if err1 != nil {
-				return nil, err
-			}
-			return nil, types.ErrTruncated.GenWithStack("Incorrect value: '%-.128s' for column '%.192s'", valStr, col.Name.O)
+			return nil, err
 		}
 		values = append(values, d)
 	}

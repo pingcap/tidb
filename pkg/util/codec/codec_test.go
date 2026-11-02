@@ -1270,6 +1270,18 @@ func TestHashChunkColumns(t *testing.T) {
 		require.Equal(t, rowHash[2].Sum64(), vecHash[2].Sum64())
 	}
 
+	// A null-safe key must not clear a null-rejecting flag from an earlier key.
+	for i := range 12 {
+		hasNull = []bool{false, false, false}
+		selected := []bool{true, false, true, false}
+		require.NoError(t, HashChunkSelected(typeCtx, vecHash, chk, tps[i], i, buf, hasNull, selected, true))
+		require.Equal(t, []bool{false, false, false}, hasNull)
+		require.NoError(t, HashChunkSelected(typeCtx, vecHash, chk, tps[i], i, buf, hasNull, selected, false))
+		require.Equal(t, []bool{true, false, true}, hasNull)
+		require.NoError(t, HashChunkSelected(typeCtx, vecHash, chk, tps[i], i, buf, hasNull, selected, true))
+		require.Equal(t, []bool{true, false, true}, hasNull, "type %v", tps[i])
+	}
+
 	// Test hash value of every single column that is not `Null`
 	for i := 12; i < len(tps); i++ {
 		hasNull = []bool{false, false, false}

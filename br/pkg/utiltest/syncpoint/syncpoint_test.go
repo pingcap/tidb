@@ -52,6 +52,8 @@ func TestSequence(t *testing.T) {
 	require.Equal(t, "b", <-events)
 	require.Equal(t, "c", <-events)
 
+	// Registered hits after the declared sequence should be ignored.
+	triggerSyncScriptPoint("sync-script-a")
 	script.EndSeq()
 	wg.Wait()
 }

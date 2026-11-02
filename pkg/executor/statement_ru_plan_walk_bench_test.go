@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
@@ -45,6 +46,7 @@ func newStatementRUForestBenchmark(
 ) (*plannercore.FlatPhysicalPlan, *execdetails.RuntimeStatsColl) {
 	b.Helper()
 	fixture := newStatementRUSimpleSelectFixture(b)
+	fixture.owner.calculationSetup.fullReport = false
 	planCtx := fixture.stmt.Ctx.(*mock.Context)
 	stmtCtx := planCtx.GetSessionVars().StmtCtx
 	base := stmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
@@ -186,6 +188,7 @@ func BenchmarkStatementRUExecutionDetailsAggregation(b *testing.B) {
 
 func BenchmarkStatementRUTreeTraversal(b *testing.B) {
 	fixture := newStatementRUSimpleSelectFixture(b)
+	fixture.owner.calculationSetup.fullReport = false
 	flat := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
 	setup := fixture.owner.calculationSetup
 	stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
@@ -342,6 +345,7 @@ func BenchmarkStatementRUPointDirectCalculator(b *testing.B) {
 
 func BenchmarkStatementRUPointGeneralCalculator(b *testing.B) {
 	fixture := newStatementRUSimpleSelectFixture(b)
+	fixture.owner.calculationSetup.fullReport = false
 	plan := newStatementRUPointLookupPlanForTest(fixture, false)
 	flat := plannercore.FlattenPhysicalPlan(plan, false)
 	runtimeStats := execdetails.NewRuntimeStatsColl(nil)
@@ -370,8 +374,9 @@ func BenchmarkStatementRUPointGeneralCalculator(b *testing.B) {
 
 func BenchmarkStatementRUFinalizePublication(b *testing.B) {
 	fixture := newStatementRUSimpleSelectFixture(b)
+	fixture.owner.calculationSetup.fullReport = false
 	calculator := statementRUCalculator{
-		units: statementRURawUnits{
+		units: ruv2.StmtUnits{
 			CPUWork:              5,
 			ScanBytes:            10,
 			NetBytes:             20,
@@ -381,6 +386,7 @@ func BenchmarkStatementRUFinalizePublication(b *testing.B) {
 		},
 	}
 
+	calculator.recordOperatorUnits(statementRUTiDB, calculator.units)
 	// This timer covers value-only freeze plus both existing publication
 	// boundaries. It excludes operator traversal and terminal lifecycle.
 	b.ReportAllocs()
@@ -396,6 +402,7 @@ func BenchmarkStatementRUFinalizePublication(b *testing.B) {
 
 func BenchmarkStatementRUSyntheticTerminal(b *testing.B) {
 	fixture := newStatementRUSimpleSelectFixture(b)
+	fixture.owner.calculationSetup.fullReport = false
 	stmt := fixture.stmt
 	stmtCtx := stmt.Ctx.GetSessionVars().StmtCtx
 	flat := stmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
@@ -430,6 +437,7 @@ func BenchmarkStatementRUSyntheticTerminal(b *testing.B) {
 
 func BenchmarkStatementRUOwnerSetup(b *testing.B) {
 	fixture := newStatementRUSimpleSelectFixture(b)
+	fixture.owner.calculationSetup.fullReport = false
 	stmt := fixture.stmt
 	stmtCtx := stmt.Ctx.GetSessionVars().StmtCtx
 	stmtCtx.SetFlatPlan(nil)
@@ -441,5 +449,23 @@ func BenchmarkStatementRUOwnerSetup(b *testing.B) {
 	for b.Loop() {
 		installStatementRUOwner(stmt)
 		statementRUExecStmtSink = stmt
+	}
+}
+
+func BenchmarkStatementRUReportingModes(b *testing.B) {
+	for _, mode := range []string{"result", "full"} {
+		b.Run(mode, func(b *testing.B) {
+			flat, stats := newStatementRUForestBenchmark(b, 0, 0)
+			setup := statementRUCalculationSetup{frontendCompileBytes: 23, fullReport: mode == "full"}
+			b.ReportAllocs()
+			for b.Loop() {
+				finalized, ok := calculateStatementRU(flat, stats, nil, statementRUWriteSnapshot{}, setup, true)
+				if !ok {
+					b.Fatal("calculation failed")
+				}
+				publishStatementRUFinalizedSnapshot(nil, finalized)
+				statementRUFinalizedSink = finalized
+			}
+		})
 	}
 }

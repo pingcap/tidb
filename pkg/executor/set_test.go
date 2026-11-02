@@ -36,12 +36,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/plugin"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
@@ -985,6 +987,20 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_opt_range_max_size").Check(testkit.Rows("1048576"))
 	tk.MustExec("set session tidb_opt_range_max_size = 2097152")
 	tk.MustQuery("select @@session.tidb_opt_range_max_size").Check(testkit.Rows("2097152"))
+
+	// test tidb_opt_range_max_count
+	tk.MustQuery("select @@tidb_opt_range_max_count").Check(testkit.Rows("1000"))
+	tk.MustExec("set global tidb_opt_range_max_count = -1")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_opt_range_max_count value: '-1'"))
+	tk.MustQuery("select @@global.tidb_opt_range_max_count").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_opt_range_max_count = 1024")
+	tk.MustQuery("select @@global.tidb_opt_range_max_count").Check(testkit.Rows("1024"))
+	tk.MustExec("set session tidb_opt_range_max_count = 2048")
+	tk.MustQuery("select @@session.tidb_opt_range_max_count").Check(testkit.Rows("2048"))
+	tk.MustExec("set session tidb_opt_range_max_count = 0")
+	require.Zero(t, tk.Session().GetSessionVars().RangeMaxCount)
+	tk.MustExec("set global tidb_opt_range_max_count = default")
+	tk.MustQuery("select @@global.tidb_opt_range_max_count").Check(testkit.Rows("1000"))
 
 	// test for password validation
 	tk.MustQuery("SELECT @@GLOBAL.validate_password.enable").Check(testkit.Rows("0"))
@@ -1974,4 +1990,52 @@ func TestSetTiDBServiceScopeCaseInsensitive(t *testing.T) {
 	require.Equal(t, "background", vardef.ServiceScope.Load())
 	require.Equal(t, "background", config.GetGlobalConfig().Instance.TiDBServiceScope)
 	tk.MustQuery("select role from mysql.dist_framework_meta where host=':4000'").Check(testkit.Rows("background"))
+}
+
+func TestSetVariableWithoutPrivilegeManager(t *testing.T) {
+	t.Run("sem v2 read-only variable", func(t *testing.T) {
+		require.NoError(t, semv2.EnableBy(&semv2.Config{
+			Version:     "1.0",
+			TiDBVersion: "v0.0.0",
+			RestrictedVariables: []semv2.VariableRestriction{
+				{Name: vardef.TiDBEnable1PC, Readonly: true},
+				{Name: vardef.TiDBEnableAsyncCommit, Readonly: true},
+			},
+		}))
+		t.Cleanup(semv2.Disable)
+
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+
+		// Internal sessions, such as the sessions used by the TTL job manager, have
+		// no privilege manager bound. Setting a variable which is read-only under SEM
+		// must not panic for them, otherwise those internal workers cannot work.
+		privilege.BindPrivilegeManager(tk.Session(), nil)
+		tk.MustExec("set tidb_enable_1pc=ON")
+		tk.MustExec("set tidb_enable_async_commit=ON")
+	})
+
+	t.Run("variable requiring dynamic privileges", func(t *testing.T) {
+		sysVarName := "executor_test_dynamic_privileges"
+		variable.RegisterSysVar(&variable.SysVar{
+			Scope:    vardef.ScopeGlobal | vardef.ScopeSession,
+			Name:     sysVarName,
+			Value:    "1",
+			MinValue: 0,
+			MaxValue: 100,
+			Type:     vardef.TypeInt,
+			RequireDynamicPrivileges: func(_ bool, _ bool) []string {
+				return []string{"TEST_DYNAMIC_PRIVILEGE"}
+			},
+		})
+		t.Cleanup(func() { variable.UnregisterSysVar(sysVarName) })
+
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+
+		// Same as above: the nil privilege manager must be skipped instead of
+		// dereferenced when the variable requires dynamic privileges.
+		privilege.BindPrivilegeManager(tk.Session(), nil)
+		tk.MustExec("set @@" + sysVarName + "=2")
+	})
 }

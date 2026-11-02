@@ -256,6 +256,7 @@ func setStorageClassTransitionTargets(operation *storageClassTransitionOperation
 func stageStorageClassTransitions(
 	ctx context.Context,
 	se *sess.Session,
+	manager *storageClassTransitionManager,
 	tblInfo *model.TableInfo,
 	old map[int64]physicalStorageClass,
 	schemaVersion int64,
@@ -277,7 +278,7 @@ func stageStorageClassTransitions(
 		if !storageClassTransitionTouches(operation, changed) {
 			continue
 		}
-		superseded, err := supersedeStorageClassTransition(ctx, se, operation, finishTime)
+		superseded, err := supersedeStorageClassTransition(ctx, se, manager, operation, finishTime)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -329,19 +330,30 @@ func storageClassTransitionTouches(
 func supersedeStorageClassTransition(
 	ctx context.Context,
 	se *sess.Session,
+	manager *storageClassTransitionManager,
 	operation *storageClassTransitionOperation,
 	finishTime time.Time,
 ) (bool, error) {
+	// Persist the owner's last successful observation with the terminal state.
+	// Unknown counts stay NULL, including after an owner change. Leave the cache
+	// intact because the surrounding DDL transaction can still roll back.
+	var totalReplicas, completedReplicas any
+	if observed, ok := manager.cachedObservation(operation); ok {
+		totalReplicas = observed.TotalReplicas
+		completedReplicas = observed.CompletedReplicas
+	}
 	duration := finishTime.Sub(operation.StartTime)
 	if duration < 0 {
 		duration = 0
 	}
 	_, err := se.Execute(ctx,
 		`UPDATE mysql.tidb_storage_class_transition_history
-		 SET state = %?, finish_time = %?, duration = %?
+		 SET state = %?, total_replicas = %?, completed_replicas = %?, finish_time = %?, duration = %?
 		 WHERE table_id = %? AND start_ts = %? AND direction = %? AND state = %?`,
 		"supersede-storage-class-transition",
 		storageClassTransitionStateSuperseded,
+		totalReplicas,
+		completedReplicas,
 		finishTime,
 		uint64(duration/time.Second),
 		operation.TableID,
@@ -543,6 +555,7 @@ func storageClassTransitionTopologyIsStable(tblInfo *model.TableInfo) bool {
 func reconcileStorageClassTransitionTopology(
 	ctx context.Context,
 	se *sess.Session,
+	manager *storageClassTransitionManager,
 	tblInfo *model.TableInfo,
 	operation *storageClassTransitionOperation,
 	schemaVersion int64,
@@ -557,7 +570,7 @@ func reconcileStorageClassTransitionTopology(
 		}
 	}()
 
-	superseded, err := supersedeStorageClassTransition(ctx, se, operation, time.Now())
+	superseded, err := supersedeStorageClassTransition(ctx, se, manager, operation, time.Now())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -728,6 +741,21 @@ func sameStorageClassTransitionStatus(a, b StorageClassTransitionStatus) bool {
 	return a.TableID == b.TableID && a.schemaVersion == b.schemaVersion && a.startTS == b.startTS &&
 		a.PartitionID == b.PartitionID && a.Direction == b.Direction && a.StartTime.Equal(b.StartTime) &&
 		slices.Equal(a.PhysicalTableIDs, b.PhysicalTableIDs)
+}
+
+func (m *storageClassTransitionManager) cachedObservation(
+	operation *storageClassTransitionOperation,
+) (StorageClassTransitionStatus, bool) {
+	if m == nil {
+		return StorageClassTransitionStatus{}, false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	observed, ok := m.mu.observed[operation.key()]
+	if !ok || !observed.StatusValid || !sameStorageClassTransitionStatus(observed, operation.StorageClassTransitionStatus) {
+		return StorageClassTransitionStatus{}, false
+	}
+	return observed, true
 }
 
 func (m *storageClassTransitionManager) setActive(
@@ -949,7 +977,7 @@ func (m *storageClassTransitionManager) poll(
 		}
 		tbl, exists := is.TableByID(ctx, operation.TableID)
 		if !exists {
-			if _, err := supersedeStorageClassTransition(ctx, se, operation, time.Now()); err != nil {
+			if _, err := supersedeStorageClassTransition(ctx, se, m, operation, time.Now()); err != nil {
 				logutil.DDLLogger().Warn("supersede orphaned storage class transition failed",
 					zap.Int64("tableID", key.tableID), zap.Uint64("startTS", key.startTS), zap.String("direction", key.direction), zap.Error(err))
 				continue
@@ -957,17 +985,21 @@ func (m *storageClassTransitionManager) poll(
 			delete(active, key)
 			continue
 		}
-		eligible[key] = operation
-		if storageClassTransitionTargetsExist(tbl.Meta(), operation) || !storageClassTransitionTopologyIsStable(tbl.Meta()) {
+		if storageClassTransitionTargetsExist(tbl.Meta(), operation) {
+			eligible[key] = operation
 			continue
 		}
-		if err := reconcileStorageClassTransitionTopology(ctx, se, tbl.Meta(), operation, latestSchemaVersion); err != nil {
+		// Obsolete physical ranges cannot prove completion, even while the
+		// partition topology is changing or reconciliation needs to retry.
+		if !storageClassTransitionTopologyIsStable(tbl.Meta()) {
+			continue
+		}
+		if err := reconcileStorageClassTransitionTopology(ctx, se, m, tbl.Meta(), operation, latestSchemaVersion); err != nil {
 			logutil.DDLLogger().Warn("reconcile storage class transition topology failed",
 				zap.Int64("tableID", key.tableID), zap.Uint64("startTS", key.startTS), zap.String("direction", key.direction), zap.Error(err))
 			continue
 		}
 		delete(active, key)
-		delete(eligible, key)
 	}
 	m.setActive(active)
 	if len(eligible) == 0 {

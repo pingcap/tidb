@@ -137,6 +137,15 @@ test_online_filter_restore() {
         exit 1
     fi
     
+    # Conflicts, including log-only tables, must fail before checkpoint
+    # persistence so the failed restore cannot block the next test's task.
+    registry_count=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_restore_registry" | awk 'NR==2 {print $2}')
+    if [ "$registry_count" != "0" ]; then
+        echo "Expected target conflicts to fail before checkpoints and leave no restore registrations"
+        run_sql "SELECT * FROM mysql.tidb_restore_registry"
+        exit 1
+    fi
+
     run_sql "DROP DATABASE $DB;"
     verify_no_unexpected_tables 0 "$DB" || {
         echo "Found unexpected number of tables after failed restore attempts"
@@ -145,10 +154,20 @@ test_online_filter_restore() {
 
     echo "case 4: During online pitr user should not able to modify tables that are in restore (make sure table mode set to restore)"
     export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/before-set-table-mode-to-normal=return(true)"
-    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.table*" || restore_fail=1
-    
+    restore_fail=0
+    case4_log="$TEST_DIR/$TASK_NAME/case4-restore.log"
+    # Capture terminal output: the integration harness sets BR_LOG_TO_TERM.
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.table*" > "$case4_log" 2>&1 || restore_fail=1
+    cat "$case4_log"
+
     if [ $restore_fail -ne 1 ]; then
         echo "Expected restore to fail due to failpoint"
+        exit 1
+    fi
+    if ! grep -q "fail before setting table mode to normal" "$case4_log"; then
+        echo "Restore failed before the expected table-mode failpoint"
+        cat "$case4_log"
+        exit 1
     fi
 
     # verify tables are in restore mode by attempting to drop them

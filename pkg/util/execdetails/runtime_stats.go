@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
-	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 const (
@@ -77,6 +76,12 @@ const (
 	TpHashStateRuntimeStats
 	// TpWriteRuntimeStats is the type for processed DML work.
 	TpWriteRuntimeStats
+	// TpJoinedRowsRuntimeStats is the type for join pairs before residual filtering.
+	TpJoinedRowsRuntimeStats
+	// TpMViewDeltaMergeAggRuntimeStats is the type for MV delta merge aggregation.
+	TpMViewDeltaMergeAggRuntimeStats
+	// TpMViewCompleteDeltaApplyRuntimeStats is the type for MV complete delta apply.
+	TpMViewCompleteDeltaApplyRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -106,6 +111,40 @@ func (s *WriteRuntimeStats) Clone() RuntimeStats { return &WriteRuntimeStats{CPU
 func (s *WriteRuntimeStats) Merge(other RuntimeStats) {
 	if other, ok := other.(*WriteRuntimeStats); ok {
 		s.CPUWork += other.CPUWork
+	}
+}
+
+// JoinedRowsRuntimeStats counts candidate pairs processed before other conditions.
+// Each join worker owns its counter until Close; it is not concurrency-safe.
+// Null-extension rows and pairs skipped by semi-join short circuit are excluded.
+type JoinedRowsRuntimeStats struct {
+	Rows int64
+}
+
+// AddRows preserves a negative overflow sentinel through subsequent updates.
+func (s *JoinedRowsRuntimeStats) AddRows(rows int64) {
+	if s.Rows < 0 || rows < 0 || rows > math.MaxInt64-s.Rows {
+		s.Rows = -1
+		return
+	}
+	s.Rows += rows
+}
+
+// String keeps accounting evidence out of EXPLAIN runtime-stat rendering.
+func (*JoinedRowsRuntimeStats) String() string { return "" }
+
+// Tp implements RuntimeStats.
+func (*JoinedRowsRuntimeStats) Tp() int { return TpJoinedRowsRuntimeStats }
+
+// Clone implements RuntimeStats.
+func (s *JoinedRowsRuntimeStats) Clone() RuntimeStats {
+	return &JoinedRowsRuntimeStats{Rows: s.Rows}
+}
+
+// Merge implements RuntimeStats.
+func (s *JoinedRowsRuntimeStats) Merge(other RuntimeStats) {
+	if other, ok := other.(*JoinedRowsRuntimeStats); ok {
+		s.AddRows(other.Rows)
 	}
 }
 
@@ -575,6 +614,7 @@ type RuntimeStatsColl struct {
 	rootStats                  map[int]*RootRuntimeStats
 	copStats                   map[int]*CopRuntimeStats
 	analyzeScanBytes           map[int]float64
+	tiFlashExecutionUnits      map[int]TiFlashExecutionUnits
 	copResponseSummaryExpected map[int]copResponseSummaryExpectation
 	stmtCopStats               StmtCopRuntimeStats
 	mu                         sync.Mutex
@@ -599,6 +639,7 @@ func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
 		for k := range reuse.copStats {
 			delete(reuse.copStats, k)
 		}
+		clear(reuse.tiFlashExecutionUnits)
 		for k := range reuse.analyzeScanBytes {
 			delete(reuse.analyzeScanBytes, k)
 		}
@@ -614,12 +655,15 @@ func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
 	}
 }
 
-// EstimateScanBytes estimates physical scan bytes from one logical scan request.
-// It intentionally runs before scan details from independent requests are merged
-// because the ratio is not linear across requests.
-func EstimateScanBytes(totalKeys, processedKeys, processedBytes int64) (float64, bool) {
-	if totalKeys < 0 || processedKeys < 0 || processedBytes < 0 {
+// EstimateScanBytes prefers backend-reported total bytes for a logical scan
+// request and falls back to the processed-byte ratio when total bytes are zero.
+// Run it before merging independent requests because the fallback is not linear.
+func EstimateScanBytes(totalKeys, processedKeys, processedBytes, totalBytes int64) (float64, bool) {
+	if totalKeys < 0 || processedKeys < 0 || processedBytes < 0 || totalBytes < 0 {
 		return 0, false
+	}
+	if totalBytes > 0 {
+		return float64(totalBytes), true
 	}
 	if processedKeys == 0 {
 		return 0, processedBytes == 0
@@ -864,6 +908,21 @@ func (e *RuntimeStatsColl) GetRootWriteCPUWork(planID int) (float64, bool) {
 		for _, stats := range root.groupRss {
 			if provider, ok := stats.(*WriteRuntimeStats); ok {
 				return provider.CPUWork, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// GetRootJoinedRows returns candidate pairs, distinguishing missing evidence from zero.
+// Like the producer counters, this evidence is consumed after executor teardown.
+func (e *RuntimeStatsColl) GetRootJoinedRows(planID int) (int64, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if root := e.rootStats[planID]; root != nil {
+		for _, stats := range root.groupRss {
+			if provider, ok := stats.(*JoinedRowsRuntimeStats); ok {
+				return provider.Rows, true
 			}
 		}
 	}
@@ -1339,44 +1398,20 @@ func (e *RuntimeStatsWithCommit) formatLockKeysDetails(buf *bytes.Buffer, label 
 	buf.WriteString("}")
 }
 
-// RURuntimeStats wraps RU details and statement-level RU v2 metrics for EXPLAIN output.
-// RUVersion controls which RU accounting version produces output:
-//   - 1 (v1): shows RRU + WRU
-//   - 2 (v2): shows total RU from v2 metrics
-//   - 0 / unknown: defaults to v1
+// RURuntimeStats wraps RU v1 details for EXPLAIN output.
 type RURuntimeStats struct {
 	*util.RUDetails
-	Metrics   *RUV2Metrics
-	Weights   RUV2Weights
-	RUVersion rmclient.RUVersion
 }
 
 // String implements the RuntimeStats interface.
 func (e *RURuntimeStats) String() string {
-	switch e.RUVersion {
-	case rmclient.RUVersionV2:
-		var tiKVRU, tiFlashRU float64
-		if e.RUDetails != nil {
-			tiKVRU = e.RUDetails.TiKVRUV2()
-			tiFlashRU = e.RUDetails.TiflashRU()
-		}
-		totalRU := e.Metrics.TotalRU(e.Weights, tiKVRU, tiFlashRU)
-		if totalRU == 0 {
-			return ""
-		}
-		buf := bytes.NewBuffer(make([]byte, 0, 8))
-		buf.WriteString("RU:")
-		buf.WriteString(strconv.FormatFloat(totalRU, 'f', 2, 64))
-		return buf.String()
-	default: // v1 or unknown
-		if e.RUDetails != nil {
-			buf := bytes.NewBuffer(make([]byte, 0, 8))
-			buf.WriteString("RU:")
-			buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
-			return buf.String()
-		}
+	if e.RUDetails == nil {
+		return ""
 	}
-	return ""
+	buf := bytes.NewBuffer(make([]byte, 0, 8))
+	buf.WriteString("RU:")
+	buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
+	return buf.String()
 }
 
 // Clone implements the RuntimeStats interface.
@@ -1390,9 +1425,6 @@ func (e *RURuntimeStats) Clone() RuntimeStats {
 	}
 	return &RURuntimeStats{
 		RUDetails: ruDetails,
-		Metrics:   e.Metrics.Clone(),
-		Weights:   e.Weights,
-		RUVersion: e.RUVersion,
 	}
 }
 
@@ -1403,17 +1435,6 @@ func (e *RURuntimeStats) Merge(other RuntimeStats) {
 			e.RUDetails.Merge(tmp.RUDetails)
 		} else if e.RUDetails == nil && tmp.RUDetails != nil {
 			e.RUDetails = tmp.RUDetails.Clone()
-		}
-		if e.Metrics != nil {
-			e.Metrics.Merge(tmp.Metrics)
-		} else {
-			e.Metrics = tmp.Metrics.Clone()
-		}
-		if e.Weights == (RUV2Weights{}) {
-			e.Weights = tmp.Weights
-		}
-		if e.RUVersion == 0 {
-			e.RUVersion = tmp.RUVersion
 		}
 	}
 }

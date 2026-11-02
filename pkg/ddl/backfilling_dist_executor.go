@@ -20,11 +20,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -45,6 +47,18 @@ const (
 	BackfillTaskMetaVersion1
 )
 
+// BackfillTaskSummary is the execution summary of a backfill task.
+type BackfillTaskSummary struct {
+	// IndexKVSize is currently collected only for global-sort backfills and is
+	// primarily used for NextGen resource accounting.
+	IndexKVSize uint64 `json:"index_kv_size,omitempty"`
+	// MergeTempIndexTxnKVSize is the total size of the transactions committed
+	// while merging the temporary index. The merge writes through transactions
+	// instead of ingest, so it is accounted separately from IndexKVSize. It is
+	// collected on a best-effort basis, see mergeTempIndexExecutor.RunSubtask.
+	MergeTempIndexTxnKVSize uint64 `json:"merge_temp_index_txn_kv_size,omitempty"`
+}
+
 // BackfillTaskMeta is the dist task meta for backfilling index.
 type BackfillTaskMeta struct {
 	Job model.Job `json:"job"`
@@ -57,6 +71,8 @@ type BackfillTaskMeta struct {
 	CloudStorageURI string `json:"cloud_storage_uri"`
 	EstimateRowSize int    `json:"estimate_row_size"`
 	MergeTempIndex  bool   `json:"merge_temp_index"`
+
+	Summary *BackfillTaskSummary `json:"summary,omitempty"`
 
 	Version int `json:"version,omitempty"`
 }
@@ -242,6 +258,10 @@ func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 func (*backfillDistExecutor) IsRetryableError(err error) bool {
 	if isIndexInfoNotFoundErr(err) {
 		return false
+	}
+	// Retry in DXF so NextGen can continue after storage capacity is expanded.
+	if kerneltype.IsNextGen() && errdef.IsKVDiskFullError(err) {
+		return true
 	}
 	return common.IsRetryableError(err) || isRetryableError(err, true)
 }

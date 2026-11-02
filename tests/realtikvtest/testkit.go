@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.opencensus.io/stats/view"
@@ -61,11 +62,21 @@ var (
 	mockPortAlloc = uberatomic.NewInt32(4000)
 )
 
+// CurrentPDAddr returns the PD address derived from the current -tikv-path value.
+// It parses flags on demand so callers don't depend on TestMain ordering.
+func CurrentPDAddr() string {
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+	return mustParsePDAddr(*TiKVPath)
+}
+
 // RunTestMain run common setups for all real tikv tests.
 func RunTestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	*WithRealTiKV = true
 	flag.Parse()
+	PDAddr = CurrentPDAddr()
 	vardef.SetSchemaLease(5 * time.Second)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
@@ -101,6 +112,14 @@ func RunTestMain(m *testing.M) {
 		return i
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
+}
+
+func mustParsePDAddr(tikvPath string) string {
+	pdAddrs, _, _, err := tikvcfg.ParsePath(tikvPath)
+	if err != nil {
+		panic(err)
+	}
+	return strings.Join(pdAddrs, ",")
 }
 
 type realtikvStoreOption struct {
@@ -217,6 +236,16 @@ func PrepareForCrossKSTestWithNewCollation(
 			Dom:   dom,
 		}
 	}
+	// Bootstrapping a user keyspace resets the global mock server info registry
+	// (see MockGlobalServerInfoManagerEntry.Close), which drops the entry of the
+	// SYSTEM domain registered when it started. Only the SYSTEM domain runs the
+	// DXF task executor in tests (user keyspace domains skip DXF, see
+	// Domain.InitDistTaskLoop), so re-register it; otherwise distributed tasks
+	// such as global-sort ADD INDEX cannot find a live executor and never
+	// generate subtasks.
+	if len(userKSs) > 0 {
+		res[keyspace.System].Dom.InitInfo4Test()
+	}
 	return res
 }
 
@@ -304,6 +333,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 	tk.MustExec("use test")
 
 	if !option.retainData {
+		tk.MustExec("delete from mysql.tidb_import_jobs;")
 		tk.MustExec("delete from mysql.tidb_global_task;")
 		tk.MustExec("delete from mysql.tidb_background_subtask;")
 		tk.MustExec("delete from mysql.tidb_ddl_job;")
@@ -341,6 +371,8 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 func UpdateTiDBConfig() {
 	// need a real PD
 	config.UpdateGlobal(func(conf *config.Config) {
+		// Ignore -tikv-path here: it may be used in `init`,
+		// where flags are not parsed.
 		conf.Path = "127.0.0.1:2379"
 		if kerneltype.IsNextGen() {
 			conf.TiKVWorkerURL = "localhost:19000"
@@ -354,6 +386,43 @@ func UpdateTiDBConfig() {
 // GetNextGenObjStoreURI returns a next-gen object store URI for testing.
 func GetNextGenObjStoreURI(path string) string {
 	return getNextGenObjStoreURIWithArgs(path, "&provider=minio")
+}
+
+// SetupNextGenGlobalSort configures the global `tidb_cloud_storage_uri` to point
+// at the NextGen test object store so that DDL requiring global sort (such as
+// ADD INDEX / MODIFY COLUMN) can run on the NextGen kernel. It is a no-op on the
+// Classic kernel and clears the variable again when the test finishes.
+//
+// The setting takes effect through the process-global vardef.CloudStorageURI
+// (see handle.GetCloudStorageURI), while the value stored in
+// `mysql.global_variables` is per keyspace. A domain co-hosted in the same
+// process whose stored value differs therefore overwrites the process-global
+// value when its sysvar cache is refreshed. Tests that bootstrap several
+// keyspace domains at once must use SetupNextGenGlobalSortForAllKeyspaces
+// instead.
+func SetupNextGenGlobalSort(t *testing.T, tk *testkit.TestKit) {
+	t.Helper()
+	if !kerneltype.IsNextGen() {
+		return
+	}
+	tk.MustExec(fmt.Sprintf("set global tidb_cloud_storage_uri = '%s'", GetNextGenObjStoreURI("addindex/"+t.Name())))
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_cloud_storage_uri = ''")
+	})
+}
+
+// SetupNextGenGlobalSortForAllKeyspaces calls SetupNextGenGlobalSort for every
+// keyspace runtime in runtimes, so that all co-hosted keyspace domains store the
+// same URI and none of them resets the process-global value on sysvar cache
+// refresh.
+func SetupNextGenGlobalSortForAllKeyspaces(t *testing.T, runtimes map[string]*KSRuntime) {
+	t.Helper()
+	if !kerneltype.IsNextGen() {
+		return
+	}
+	for _, rt := range runtimes {
+		SetupNextGenGlobalSort(t, testkit.NewTestKit(t, rt.Store))
+	}
 }
 
 func getNextGenObjStoreURIWithArgs(path string, args string) string {

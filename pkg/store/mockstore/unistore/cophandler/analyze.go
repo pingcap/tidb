@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -75,6 +76,9 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 		return resp
 	}
 	y.Assert(len(ranges) >= 1)
+	if kerneltype.IsNextGen() {
+		dbReader.ScanDetail = &kvrpcpb.ScanDetailV2{}
+	}
 	if analyzeReq.Tp == tipb.AnalyzeType_TypeIndex {
 		resp, err = handleAnalyzeIndexReq(dbReader, ranges, analyzeReq, req.StartTs)
 	} else if analyzeReq.Tp == tipb.AnalyzeType_TypeCommonHandle {
@@ -90,6 +94,9 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 		resp = &coprocessor.Response{
 			OtherError: err.Error(),
 		}
+	}
+	if dbReader.ScanDetail != nil {
+		resp.ExecDetailsV2 = &kvrpcpb.ExecDetailsV2{ScanDetailV2: dbReader.ScanDetail}
 	}
 	return resp
 }

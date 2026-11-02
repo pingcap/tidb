@@ -29,8 +29,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
-	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -58,16 +56,16 @@ type StoreHelper interface {
 	GetTiKVCodec() tikvclient.Codec
 }
 
-// engineManager manages all engines, either local or external.
+// engineManager manages local engines. External engines are owned by their
+// callers, see Backend.IngestExternalEngine.
 type engineManager struct {
 	BackendConfig
 	StoreHelper
-	engines        sync.Map // sync version of map[uuid.UUID]*Engine
-	externalEngine map[uuid.UUID]engineapi.Engine
-	bufferPool     *membuf.Pool
-	duplicateDB    *pebble.DB
-	keyAdapter     common.KeyAdapter
-	logger         log.Logger
+	engines     sync.Map // sync version of map[uuid.UUID]*Engine
+	bufferPool  *membuf.Pool
+	duplicateDB *pebble.DB
+	keyAdapter  common.KeyAdapter
+	logger      log.Logger
 }
 
 var inMemTest = false
@@ -103,14 +101,13 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 		opts = append(opts, membuf.WithAllocator(alloc))
 	}
 	return &engineManager{
-		BackendConfig:  config,
-		StoreHelper:    storeHelper,
-		engines:        sync.Map{},
-		externalEngine: map[uuid.UUID]engineapi.Engine{},
-		bufferPool:     membuf.NewPool(opts...),
-		duplicateDB:    duplicateDB,
-		keyAdapter:     keyAdapter,
-		logger:         logger,
+		BackendConfig: config,
+		StoreHelper:   storeHelper,
+		engines:       sync.Map{},
+		bufferPool:    membuf.NewPool(opts...),
+		duplicateDB:   duplicateDB,
+		keyAdapter:    keyAdapter,
+		logger:        logger,
 	}, nil
 }
 
@@ -291,38 +288,7 @@ func (em *engineManager) closeEngine(
 	ctx context.Context,
 	cfg *backend.EngineConfig,
 	engineUUID uuid.UUID,
-) (errRet error) {
-	if externalCfg := cfg.External; externalCfg != nil {
-		ts := cfg.TS
-		if ts == 0 {
-			physical, logical, err := em.GetTS(ctx)
-			if err != nil {
-				return err
-			}
-			ts = oracle.ComposeTS(physical, logical)
-		}
-		externalEngine := globalsort.NewExternalEngine(
-			ctx,
-			externalCfg.ExtStore,
-			externalCfg.DataFiles,
-			externalCfg.StatFiles,
-			externalCfg.StartKey,
-			externalCfg.EndKey,
-			externalCfg.JobKeys,
-			externalCfg.SplitKeys,
-			int(em.WorkerConcurrency.Load()),
-			ts,
-			externalCfg.TotalFileSize,
-			externalCfg.TotalKVCount,
-			externalCfg.CheckHotspot,
-			externalCfg.MemCapacity,
-			externalCfg.OnDup,
-			externalCfg.FilePrefix,
-		)
-		em.externalEngine[engineUUID] = externalEngine
-		return nil
-	}
-
+) error {
 	// flush mem table to storage, to free memory,
 	// ask others' advise, looks like unnecessary, but with this we can control memory precisely.
 	engineI, ok := em.engines.Load(engineUUID)
@@ -367,24 +333,6 @@ func (em *engineManager) getImportedKVCount(engineUUID uuid.UUID) int64 {
 	return e.importedKVCount.Load()
 }
 
-// getExternalEngineKVStatistics returns kv statistics of some engine.
-func (em *engineManager) getExternalEngineKVStatistics(engineUUID uuid.UUID) (
-	totalKVSize int64, totalKVCount int64) {
-	v, ok := em.externalEngine[engineUUID]
-	if !ok {
-		return 0, 0
-	}
-	return v.ImportedStatistics()
-}
-
-func (em *engineManager) getExternalEngineConflictInfo(engineUUID uuid.UUID) engineapi.ConflictInfo {
-	v, ok := em.externalEngine[engineUUID]
-	if !ok {
-		return engineapi.ConflictInfo{}
-	}
-	return v.ConflictInfo()
-}
-
 // resetEngine reset the engine and reclaim the space.
 func (em *engineManager) resetEngine(
 	ctx context.Context,
@@ -394,12 +342,6 @@ func (em *engineManager) resetEngine(
 	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
 	localEngine := em.lockEngine(engineUUID, importMutexStateClose)
 	if localEngine == nil {
-		if engineI, ok := em.externalEngine[engineUUID]; ok {
-			extEngine := engineI.(*globalsort.Engine)
-			extEngine.Reset()
-			return nil
-		}
-
 		logutil.Logger(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 		return nil
 	}
@@ -448,11 +390,6 @@ func (em *engineManager) cleanupEngine(ctx context.Context, engineUUID uuid.UUID
 	localEngine := em.lockEngine(engineUUID, importMutexStateClose)
 	// release this engine after import success
 	if localEngine == nil {
-		if extEngine, ok := em.externalEngine[engineUUID]; ok {
-			retErr := extEngine.Close()
-			delete(em.externalEngine, engineUUID)
-			return retErr
-		}
 		logutil.Logger(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 		return nil
 	}
@@ -527,12 +464,6 @@ func (em *engineManager) engineFileSizes() (res []backend.EngineFileSize) {
 }
 
 func (em *engineManager) close() {
-	for _, e := range em.externalEngine {
-		if err := e.Close(); err != nil {
-			em.logger.Warn("close external engine failed", zap.String("id", e.ID()), zap.Error(err))
-		}
-	}
-	em.externalEngine = map[uuid.UUID]engineapi.Engine{}
 	allLocalEngines := em.lockAllEnginesUnless(importMutexStateClose, 0)
 	for _, e := range allLocalEngines {
 		if err := e.Close(); err != nil {
@@ -581,11 +512,6 @@ func (em *engineManager) close() {
 			em.logger.Warn("remove local db file failed", zap.Error(err))
 		}
 	}
-}
-
-func (em *engineManager) getExternalEngine(uuid uuid.UUID) (engineapi.Engine, bool) {
-	e, ok := em.externalEngine[uuid]
-	return e, ok
 }
 
 func (em *engineManager) totalMemoryConsume() int64 {

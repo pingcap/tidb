@@ -165,13 +165,13 @@
       {
         "SQL": "select /*+ hash_join_build(t1) */ * from t1, t2 where t1.k1<=>t2.k1; -- Doesn't support null safe eq predicate",
         "Plan": [
-          "HashJoin root  inner join, equal:[nulleq(test.t1.k1, test.t2.k1)]",
-          "├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
-          "│ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─TableFullScan mpp[tiflash] table:t1 keep order:false",
-          "└─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan mpp[tiflash] table:t2 keep order:false"
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin mpp[tiflash]  inner join, equal:[nulleq(test.t1.k1, test.t2.k1)]",
+          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan mpp[tiflash] table:t1 keep order:false",
+          "    └─TableFullScan(Probe) mpp[tiflash] table:t2 keep order:false"
         ]
       }
     ]
