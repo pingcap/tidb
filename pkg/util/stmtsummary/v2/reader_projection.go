@@ -77,8 +77,8 @@ func makeStmtRecordProjection(columns []*model.ColumnInfo) *stmtRecordProjection
 		case PrevSampleTextStr:
 			selected |= projectedPrevSQL
 		case PlanStr:
-			// PLAN's error diagnostic also includes the normalized SQL.
-			selected |= projectedSamplePlan | projectedNormalizedSQL
+			// PLAN's error diagnostic also includes the sample SQL.
+			selected |= projectedSamplePlan | projectedSampleSQL
 		case BinaryPlan:
 			selected |= projectedSampleBinaryPlan
 		case PlanHint:
