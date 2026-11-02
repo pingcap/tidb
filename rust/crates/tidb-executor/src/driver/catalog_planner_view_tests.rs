@@ -202,6 +202,7 @@
     /// by that same statement's write before anything else could reuse it.
     #[test]
     fn ordinary_dml_through_get_mut_in_does_not_rebuild_the_id_directory() {
+        let mut store = tidb_kv::storage::MemTableStorage::new();
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on("CREATE TABLE od(a INT PRIMARY KEY, b INT)", &mut catalog)
             .unwrap();
@@ -217,9 +218,9 @@
             panic!("od is not a KV table")
         };
         Arc::make_mut(od)
-            .with_own_store(|table, store| table.insert_row(store, &[tidb_datatype::Datum::Int(1), tidb_datatype::Datum::Int(2)],
+            .insert_row(&mut store, &[tidb_datatype::Datum::Int(1), tidb_datatype::Datum::Int(2)],
                 &tidb_exprctx::NoColumns,
-            ))
+            )
             .unwrap();
         assert!(
             Arc::ptr_eq(&directory, &catalog.table_id_names),
