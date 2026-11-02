@@ -1320,12 +1320,19 @@ impl Session {
         self.server_info_syncer = Some(syncer);
     }
 
+    /// Go `SessionVars.GetReplicaRead`: replica read only serves a read-only
+    /// statement (`StmtCtx.IsReadOnly`) that reads without timestamp checks
+    /// (`StmtCtx.RCCheckTS`, `tidb_rc_write_check_ts`); then the statement
+    /// hint wins over the domain switch. Planner eligibility and execution
+    /// must use the same decision.
     fn effective_replica_read(
         &self,
         mode: tidb_txnkv::ReplicaReadType,
+        read_only: bool,
     ) -> tidb_txnkv::ReplicaReadType {
-        // Go GetReplicaRead gives the statement hint priority over the domain
-        // switch. Planner eligibility and execution must use the same decision.
+        if !read_only || self.stmt_rc_check_ts() || self.rc_write_check_ts() {
+            return tidb_txnkv::ReplicaReadType::Leader;
+        }
         if self.stmt_hints.has_replica_read_hint {
             return tidb_txnkv::ReplicaReadType::from_raw(self.stmt_hints.replica_read);
         }

@@ -394,8 +394,12 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::statement_cop_response_sink(self)
     }
 
-    fn effective_replica_read(&self, mode: tidb_txnkv::ReplicaReadType) -> tidb_txnkv::ReplicaReadType {
-        Session::effective_replica_read(self, mode)
+    fn effective_replica_read(
+        &self,
+        mode: tidb_txnkv::ReplicaReadType,
+        read_only: bool,
+    ) -> tidb_txnkv::ReplicaReadType {
+        Session::effective_replica_read(self, mode, read_only)
     }
 
     fn current_tso(&self) -> tidb_exprctx::CurrentTso {

@@ -1126,3 +1126,73 @@ fn snapshot_read_policy_follows_deferred_max_ts_batch_and_explicit_execution() {
         }
     }
 }
+
+/// Go `SessionVars.GetReplicaRead`: replica read only serves a read-only
+/// statement (`StmtCtx.IsReadOnly`), and a statement under `RCCheckTS` or
+/// `tidb_rc_write_check_ts` reads the leader. A replica-read hint on any other
+/// statement is ignored with a warning.
+#[test]
+fn replica_read_serves_only_read_only_statements_off_check_ts() {
+    let (mut session, node) = open_session();
+    seed(&mut session);
+    let last_replica_read = |session: &mut Session, sql: &str| {
+        node.read_options.lock().unwrap().clear();
+        let _ = rows(session, sql);
+        node.read_options
+            .lock()
+            .unwrap()
+            .last()
+            .expect("the statement read")
+            .replica_read
+    };
+    session
+        .node_conn()
+        .execute_write("SET tidb_replica_read = 'follower'")
+        .unwrap();
+    session.node_conn().execute_write("BEGIN PESSIMISTIC").unwrap();
+    assert_eq!(
+        last_replica_read(&mut session, "SELECT v FROM t WHERE id IN (1, 2)"),
+        tidb_txnkv::ReplicaReadType::Follower
+    );
+    assert_eq!(
+        last_replica_read(&mut session, "SELECT v FROM t WHERE id IN (1, 2) FOR UPDATE"),
+        tidb_txnkv::ReplicaReadType::Leader
+    );
+    session.node_conn().execute_write("ROLLBACK").unwrap();
+
+    session
+        .node_conn()
+        .execute_write("SET transaction_isolation = 'READ-COMMITTED'")
+        .unwrap();
+    session
+        .node_conn()
+        .execute_write("SET tidb_rc_write_check_ts = ON")
+        .unwrap();
+    assert_eq!(
+        last_replica_read(&mut session, "SELECT v FROM t WHERE id IN (1, 2)"),
+        tidb_txnkv::ReplicaReadType::Leader
+    );
+    session
+        .node_conn()
+        .execute_write("SET tidb_rc_write_check_ts = OFF")
+        .unwrap();
+    session
+        .node_conn()
+        .execute_write("SET transaction_isolation = 'REPEATABLE-READ'")
+        .unwrap();
+
+    session
+        .node_conn()
+        .execute_write("UPDATE /*+ read_consistent_replica() */ t SET v = 11 WHERE v = 10")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SHOW WARNINGS"),
+        vec![vec![
+            Datum::new_string("Warning"),
+            Datum::UInt(1105),
+            Datum::new_string("Ignore replica read hint for non-read-only statement"),
+        ]]
+    );
+    let _ = rows(&mut session, "SELECT /*+ read_consistent_replica() */ v FROM t WHERE v > 0");
+    assert!(rows(&mut session, "SHOW WARNINGS").is_empty());
+}

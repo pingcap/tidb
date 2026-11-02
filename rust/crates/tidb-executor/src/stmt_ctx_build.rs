@@ -882,7 +882,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         is_dml: bool,
     ) -> crate::StmtContext {
         let mut ctx = self
-            .statement_context(is_dml)
+            .statement_context_of(is_dml, false, stmt.is_read_only(true))
             .with_statement_priority(statement_priority(stmt))
             .with_not_fill_cache(crate::sessionctx::statement_not_fill_cache(stmt))
             .with_client_warning_counts(self.sys_error_count(), self.sys_warning_count());
@@ -986,8 +986,8 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .session_vars()
                     .get_system("transaction_isolation")
                     .is_ok_and(|value| value.eq_ignore_ascii_case("REPEATABLE-READ")),
-                leader_read: self.effective_replica_read(self.session_vars().replica_read())
-                    == crate::ReplicaReadType::Leader,
+                // The statement's `GetReplicaRead` replaces this per statement.
+                leader_read: self.session_vars().replica_read() == crate::ReplicaReadType::Leader,
                 staleness: read_staleness,
                 historical_read: self.session_vars().snapshot_ts() != 0,
                 max_keys_read: self.session_vars().max_keys_read(true),
@@ -1322,10 +1322,21 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         is_dml: bool,
         ignore_err: bool,
     ) -> crate::StmtContext {
+        self.statement_context_of(is_dml, ignore_err, !is_dml)
+    }
+
+    /// [`Self::statement_context_ignoring`] for a statement whose Go
+    /// `StmtCtx.IsReadOnly` is `read_only`.
+    fn statement_context_of(
+        &self,
+        is_dml: bool,
+        ignore_err: bool,
+        read_only: bool,
+    ) -> crate::StmtContext {
         // A transaction's reads that skip its own writes (`TABLESAMPLE`, Go
         // `GetSnapshot(TxnCtx.StartTS)`) go to the store snapshot under the
         // session's tables (`ClusterTableStorage::snapshot_first`).
-        self.session_statement_context(is_dml, ignore_err)
+        self.session_statement_context(is_dml, ignore_err, read_only)
             .with_hypo_state(
                 self.hypo_indexes(),
                 Arc::clone(&self.hypo_tiflash_replicas_ref()),
@@ -1336,6 +1347,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         &self,
         is_dml: bool,
         ignore_err: bool,
+        read_only: bool,
     ) -> crate::StmtContext {
         // Go hands the same `SessionVars` to every expression, which is where
         // `DATABASE()` and `VERSION()` read from.
@@ -1436,7 +1448,10 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         } else {
             snapshot.mem_quota
         };
-        let replica_read = self.effective_replica_read(snapshot.replica_read);
+        let replica_read = self.effective_replica_read(snapshot.replica_read, read_only);
+        // Go `checkIndexLookUpPushDownSupported` reads the statement's
+        // `GetReplicaRead`.
+        index_lookup_push_down_session.leader_read = replica_read == crate::ReplicaReadType::Leader;
         // Go's stale provider selects the instance scope independently of the
         // replica preference. tidb_snapshot uses the ordinary provider even
         // though this adapter shares the historical catalog implementation.
@@ -1818,7 +1833,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_block_encryption_mode(block_encryption_mode)
                 .with_decode_key_from_string(self.decode_key_from_string())
                 .with_sysdate_is_now(sysdate_is_now)
-                .with_replica_read(crate::ReplicaReadType::Leader)
+                .with_replica_read(replica_read)
                 .with_coprocessor_read_policy(snapshot.coprocessor_read_policy.clone())
                 .with_lazy_clock(snapshot.timestamp, zone)
                 .with_parser_config(self.session_vars().build_parser_switches())
@@ -2397,8 +2412,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// coprocessor response details, `None` while the instance switch is OFF
     /// (Go's `copIteratorWorker.stats` is only created when it is ON).
     fn statement_cop_response_sink(&self) -> Option<Arc<dyn crate::CopResponseSink>>;
-    /// Session primitive.
-    fn effective_replica_read(&self, mode: crate::ReplicaReadType) -> crate::ReplicaReadType;
+    /// Go `SessionVars.GetReplicaRead` for a statement whose
+    /// `StmtCtx.IsReadOnly` is `read_only`.
+    fn effective_replica_read(&self, mode: crate::ReplicaReadType, read_only: bool) -> crate::ReplicaReadType;
     /// The live transaction timestamp authority used by storage integration.
     fn current_tso(&self) -> crate::CurrentTso;
     /// Runs `body` over the catalog the open transaction reads: a stale

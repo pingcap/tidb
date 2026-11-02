@@ -2329,6 +2329,13 @@ impl Session {
         self.stmt_rc_check_ts
     }
 
+    /// Go `SessionVars.RcWriteCheckTS`, set by `tidb_rc_write_check_ts`.
+    pub(crate) fn rc_write_check_ts(&self) -> bool {
+        self.vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_RC_WRITE_CHECK_TS)
+            .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value))
+    }
+
     /// Go `RetryInfo.Retrying`, set around a statement the connection
     /// re-runs.
     pub fn set_retrying(&mut self, retrying: bool) {

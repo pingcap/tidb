@@ -880,6 +880,14 @@ impl Session {
         }
         let set_vars = std::mem::take(&mut stmt_hints.set_vars);
         self.stmt_hints = stmt_hints;
+        // Go `GetReplicaRead`: a replica-read hint only serves a read-only
+        // statement, and the statement is warned once.
+        if self.stmt_hints.has_replica_read_hint && !stmt.is_read_only(true) {
+            const IGNORED: &str = "Ignore replica read hint for non-read-only statement";
+            if !self.warnings.iter().any(|warning| warning.message() == IGNORED) {
+                self.append_warning(tidb_context::WarningLevel::Warning, 1105, IGNORED.to_owned());
+            }
+        }
         for (name, value) in set_vars {
             let name = name.to_ascii_lowercase();
             let is_fix_control = name == tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL;

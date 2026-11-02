@@ -584,7 +584,7 @@ fn closest_adaptive_balances_zones_and_updates_existing_sessions() {
         session.stmt_hints.has_replica_read_hint = true;
         session.stmt_hints.replica_read = ReplicaReadType::Follower.raw();
         assert_eq!(
-            session.effective_replica_read(ReplicaReadType::ClosestAdaptive),
+            session.effective_replica_read(ReplicaReadType::ClosestAdaptive, true),
             ReplicaReadType::Follower
         );
         assert_eq!(
