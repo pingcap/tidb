@@ -5268,7 +5268,7 @@ fn dispatch_persisted_action(
             txn, catalog, active, start_ts, row_ids,
         ),
         ActionType::ACTION_CREATE_TABLES => {
-            plan_persisted_create_tables_job_step(txn, catalog, active, start_ts)
+            plan_persisted_create_tables_job_step(txn, catalog, active, start_ts, row_ids)
         }
         ActionType::ACTION_CREATE_VIEW => {
             create_object::on_create_view(txn, catalog, active, start_ts)
@@ -5384,7 +5384,7 @@ fn dispatch_persisted_action(
             drop_index::on_drop_index(txn, catalog, active, start_ts)
         }
         ActionType::ACTION_TRUNCATE_TABLE => truncate::on_truncate_table(
-            txn, catalog, active, start_ts, row_ids,
+            txn, catalog, active, row_ids,
         ),
         ActionType::ACTION_ADD_COLUMN => {
             add_column::on_add_column(txn, catalog, active, start_ts, row_ids)
@@ -6041,7 +6041,6 @@ fn plan_persisted_check_constraint_job_step(
     // Go `updateVersionAndTableInfo`; a step that changed nothing only
     // checkpoints the job.
     let (schema_version, diff) = if schema_changed {
-        info.update_ts = start_ts;
         let database_id = database.read().id;
         let write = add_index::update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
         (write.schema_version, write.diff)
@@ -6217,6 +6216,7 @@ fn plan_persisted_create_tables_job_step(
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
 
@@ -6245,7 +6245,7 @@ fn plan_persisted_create_tables_job_step(
 
     let handles: Vec<Option<GoShared<tidb_model::CreateTableArgs>>> =
         args.read().tables.get().handles();
-    let mut table_infos = Vec::new();
+    let mut tables = Vec::new();
     let mut cancel_reason: Option<String> = None;
     for handle in handles {
         let Some(table_args) = handle else {
@@ -6257,28 +6257,7 @@ fn plan_persisted_create_tables_job_step(
                 Some("CREATE TABLES job carries a table with nil table_info".to_owned());
             break;
         };
-        let table_info = info_handle.read().clone();
-        // Go `onCreateTables`: the submitter already allocated every
-        // `TableInfo.ID` (the batch job's own TableID stays 0); the owner
-        // keeps the submitted IDs verbatim.
-        let name_taken = database
-            .read().deprecated_tables
-            .iter_deref()
-            .any(|table| table.read().name.lowercase() == table_info.name.lowercase());
-        let id_taken = database
-            .read().deprecated_tables
-            .iter_deref()
-            .any(|table| table.read().id == table_info.id);
-        if name_taken || id_taken {
-            cancel_reason = Some(format!(
-                "table '{}.{}' already exists (id {})",
-                database.read().name.original(),
-                table_info.name.original(),
-                table_info.id
-            ));
-            break;
-        }
-        table_infos.push(table_info);
+        tables.push((info_handle, table_args.read().fk_check.get()));
     }
 
     if let Some(reason) = cancel_reason {
@@ -6293,15 +6272,35 @@ fn plan_persisted_create_tables_job_step(
     }
 
     let database_id = database.read().id;
+    let schema = database.read().name.original().to_owned();
+    let mut placement_bundles = Vec::new();
+    let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
+    let mut table_infos = Vec::new();
+    // Go: a stub job per table runs `createSequenceWithCheck` or
+    // `createTable`; any failure cancels the batch.
+    for (handle, fk_check) in tables {
+        let mut info = handle.read().clone_like_go();
+        if info.sequence.is_some() {
+            create_object::create_sequence_with_check(txn, active, database_id, &mut info, start_ts)
+        } else {
+            create_table::create_table(
+                txn,
+                catalog,
+                &database,
+                active,
+                &mut info,
+                fk_check,
+                start_ts,
+                &mut placement_bundles,
+                &mut affinity_groups,
+            )
+        }
+        .map_err(|error| cancel_ddl_job(active, error))?;
+        *handle.write() = info.clone_like_go();
+        table_infos.push(info);
+    }
     let first_id = table_infos.first().map(|info| info.id).unwrap_or(0);
     let meta = txn.meta();
-    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
-    // Go `createTable` per table (`createTableOrViewWithCheck`).
-    for info in &mut table_infos {
-        info.state = SchemaState::PUBLIC;
-        info.update_ts = start_ts;
-        meta.create_table_or_view(database_id, info).map_err(meta_error)?;
-    }
     // Go `SetSchemaDiffForCreateTables` (`pkg/ddl/schema_version.go:36`): one
     // `AffectedOption` per created table, each naming its schema and table
     // IDs on both sides -- Go's `applyCreateTables` applies the batch to
@@ -6329,23 +6328,21 @@ fn plan_persisted_create_tables_job_step(
             ..SchemaDiff::default()
         },
     )?;
-    let mutations = Vec::new();
+    // Go `asyncNotifyEvent` per table, the table's position its sub-job id.
+    let mut mutations = Vec::new();
+    if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
+        let events: Vec<_> = table_infos
+            .iter()
+            .enumerate()
+            .map(|(position, info)| {
+                (position as i64, SchemaChangeEvent::create_table(info.clone_like_go()))
+            })
+            .collect();
+        append_schema_change_mutations(catalog, ddl_job_id, &events, &mut mutations, row_ids)?;
+    }
 
     active.job.state = JobState::DONE;
     active.job.schema_state = SchemaState::PUBLIC;
-    // Go `createTable` for each table of the batch.
-    let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate {
-        create_error_context: Some(CREATE_TABLE_AFFINITY_ERROR),
-        ..crate::ddl_affinity::AffinityGroupUpdate::default()
-    };
-    for info in &table_infos {
-        affinity_groups.create_table_affinity_groups_in_pd(info).map_err(|error| {
-            cancel_ddl_job(
-                active,
-                pd_step_error(Some(CREATE_TABLE_AFFINITY_ERROR), error),
-            )
-        })?;
-    }
     // Go onCreateTables uses SetTableInfos, including an empty batch;
     // selecting only the first table also leaves an empty batch RUNNING.
     active
@@ -6367,7 +6364,7 @@ fn plan_persisted_create_tables_job_step(
             mdl_info_update: None,
             label_rules: Vec::new(),
             warnings: Vec::new(),
-            placement_bundles: Vec::new(),
+            placement_bundles,
             affinity_groups,
             resource_group_update: None,
         },
@@ -8209,23 +8206,51 @@ fn apply_create_table(
     let meta = txn.meta();
     meta.create_table_or_view(db_id, info)
         .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
-    let mut writes = Vec::new();
-    // Go `handleAutoIncID` seeds the allocator when the table option asks for
-    // a first id above 1, to `AutoIncID - 1` (the counter holds the id last
-    // handed out). Which key it is, is Go's `SepAutoInc` choice.
+    // Go: "Updating auto id meta kv is done in a separate txn"; here it is
+    // the job's, the ids being bound to a table no one reads before the
+    // version publishes.
+    handle_auto_inc_id(txn, db_id, info)
+}
+
+/// Go `handleAutoIncID`: each allocator `NewAllocatorsFromTblInfo` gives the
+/// table is rebased, without allocating, to the first id the table option
+/// asks for; a rebase only moves a counter forward.
+fn handle_auto_inc_id(txn: &mut JobTxn<'_>, db_id: i64, info: &TableInfo) -> Result<(), DdlPlanError> {
+    let has_row_id = !info.pk_is_handle && !info.is_common_handle;
+    let has_auto_inc_id = info.get_auto_increment_col_info().is_some();
+    let sep_auto_inc = info.sep_auto_inc();
+    let meta = txn.meta();
+    let auto_ids = meta.auto_ids(db_id, info.id);
+    let row_id = (has_row_id || (has_auto_inc_id && !sep_auto_inc)).then(|| auto_ids.row_id());
+    let increment = (has_auto_inc_id && sep_auto_inc).then(|| auto_ids.increment_id(info.version));
+    let random = info.contains_auto_random_bits().then(|| auto_ids.random_id());
+    let auto_inc_unsigned = info.is_auto_inc_col_unsigned();
+    let mut rebases = Vec::new();
     if info.auto_inc_id > 1 {
-        writes.push(BufferMutation::set(
-            tidb_autoid::cluster_auto_id::auto_id_key_for(db_id, info),
-            value::encode_int_value(info.auto_inc_id - 1),
-        )?);
+        let allocator = if sep_auto_inc { &increment } else { &row_id };
+        rebases.push((allocator, info.auto_inc_id - 1, auto_inc_unsigned));
     }
-    if info.auto_random_bits > 0 && info.auto_rand_id > 1 {
-        writes.push(BufferMutation::set(
-            tidb_autoid::cluster_auto_id::auto_random_id_key_for(db_id, info),
-            value::encode_int_value(info.auto_rand_id - 1),
-        )?);
+    if info.auto_inc_id_extra != 0 {
+        rebases.push((&row_id, info.auto_inc_id_extra - 1, auto_inc_unsigned));
     }
-    txn.stage(&writes);
+    if info.auto_rand_id > 1 {
+        rebases.push((&random, info.auto_rand_id - 1, info.is_auto_random_bit_col_unsigned()));
+    }
+    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+    for (allocator, end, unsigned) in rebases {
+        let Some(allocator) = allocator else {
+            continue;
+        };
+        let current = allocator.get().map_err(meta_error)?;
+        let behind = if unsigned {
+            (current as u64) < (end as u64)
+        } else {
+            current < end
+        };
+        if behind {
+            allocator.put(end).map_err(meta_error)?;
+        }
+    }
     Ok(())
 }
 
@@ -8241,7 +8266,6 @@ fn apply_truncate_table(
     stored: &TableInfo,
     new_table_id: i64,
     new_partition_ids: &[i64],
-    start_ts: u64,
     placement_bundles: &mut Vec<tidb_placement::Bundle>,
     affinity_groups: &mut crate::ddl_affinity::AffinityGroupUpdate,
     label_rules: &mut LabelRuleSteps,
@@ -8274,7 +8298,6 @@ fn apply_truncate_table(
                 .update(ordinal, |definition| definition.id = *id);
         }
     }
-    info.update_ts = start_ts;
     // Go: `DropTableOrView` and `GetAutoIDAccessors(...).Del()` of the old
     // id (the allocators travel with the table id; deleting them is what
     // restarts the counters), then `CreateTableOrView` under the new one.

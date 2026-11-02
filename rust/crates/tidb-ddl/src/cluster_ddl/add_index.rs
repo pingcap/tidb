@@ -1308,8 +1308,8 @@ fn convert_add_index_to_rollback(
         .job
         .fill_finished_args(Some(GoShared::new(drop_args)));
     active.job.schema_state = SchemaState::DELETE_ONLY;
-    active.job.state = JobState::ROLLINGBACK;
-    // Go `updateVersionAndTableInfo(..., originalState != StateDeleteOnly)`.
+    // Go `updateVersionAndTableInfo(..., originalState != StateDeleteOnly)`,
+    // then the job rolls back.
     let database_id = active.job.schema_id;
     let write = update_version_and_table_info(
         txn,
@@ -1319,6 +1319,7 @@ fn convert_add_index_to_rollback(
         original_state != SchemaState::DELETE_ONLY,
         start_ts,
     )?;
+    active.job.state = JobState::ROLLINGBACK;
     Ok((write, error))
 }
 

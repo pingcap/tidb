@@ -528,6 +528,45 @@ pub(super) fn on_create_view(
     object_step(txn, active, diff, &info)
 }
 
+/// Go `createSequenceWithCheck`, which `onCreateSequence` and
+/// `onCreateTables` share.
+pub(super) fn create_sequence_with_check(
+    txn: &mut JobTxn<'_>,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    database_id: i64,
+    info: &mut TableInfo,
+    start_ts: u64,
+) -> Result<(), DdlPlanError> {
+    let state = info.state;
+    if !matches!(state, SchemaState::NONE | SchemaState::PUBLIC) {
+        return Err(DdlPlanError::from(
+            tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+                FormatArg::from("sequence"),
+                FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
+            ]),
+        ));
+    }
+    info.state = SchemaState::PUBLIC;
+    info.update_ts = start_ts;
+    check_table_info_valid(info).map_err(|error| cancel_ddl_job(active, error))?;
+    let increment_and_start = info
+        .sequence
+        .as_ref()
+        .map(|sequence| {
+            let sequence = sequence.read();
+            (sequence.increment, sequence.start)
+        })
+        .ok_or_else(|| DdlPlanError::Encode("CREATE SEQUENCE has no sequence".to_owned()))?;
+    // Go `CreateSequenceAndSetSeqValue`.
+    let meta = txn.meta();
+    meta.create_sequence_and_set_seq_value(
+        database_id,
+        info,
+        sequence_base_for(increment_and_start.0, increment_and_start.1),
+    )
+    .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))
+}
+
 /// Go `onCreateSequence`.
 pub(super) fn on_create_sequence(
     txn: &mut JobTxn<'_>,
@@ -551,26 +590,7 @@ pub(super) fn on_create_sequence(
             table_exists_in_owner(&schema, info.name.original()),
         ));
     }
-    // Go `createSequenceWithCheck`.
-    info.state = SchemaState::PUBLIC;
-    info.update_ts = start_ts;
-    check_table_info_valid(&info).map_err(|error| cancel_ddl_job(active, error))?;
-    let increment_and_start = info
-        .sequence
-        .as_ref()
-        .map(|sequence| {
-            let sequence = sequence.read();
-            (sequence.increment, sequence.start)
-        })
-        .ok_or_else(|| DdlPlanError::Encode("CREATE SEQUENCE has no sequence".to_owned()))?;
-    // Go `CreateSequenceAndSetSeqValue`.
-    let meta = txn.meta();
-    meta.create_sequence_and_set_seq_value(
-        database_id,
-        &info,
-        sequence_base_for(increment_and_start.0, increment_and_start.1),
-    )
-    .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+    create_sequence_with_check(txn, active, database_id, &mut info, start_ts)?;
     *handle.write() = info.clone_like_go();
     let diff = SchemaDiff {
         action_type: active.job.type_,

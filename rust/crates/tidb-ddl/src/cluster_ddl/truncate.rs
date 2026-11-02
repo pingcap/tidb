@@ -104,7 +104,6 @@ pub(super) fn on_truncate_table(
     txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
-    start_ts: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = tidb_model::get_truncate_table_args(&mut active.job)
@@ -161,7 +160,6 @@ pub(super) fn on_truncate_table(
         &stored,
         new_table_id,
         &new_partition_ids,
-        start_ts,
         &mut placement_bundles,
         &mut affinity_groups,
         &mut label_rules,

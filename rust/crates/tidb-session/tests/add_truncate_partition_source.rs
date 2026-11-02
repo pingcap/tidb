@@ -97,3 +97,27 @@ fn truncate_partition_keeps_the_tables_update_ts() {
         .unwrap();
     assert_ne!(crate::support::text_rows(&mut session, create_time), created);
 }
+
+/// Go `onTruncateTable` re-creates the table under its new id from the old
+/// `TableInfo` and `onRenameTable` moves it as it is: neither stamps
+/// `UpdateTS`, so `CREATE_TIME` stays; an ADD COLUMN moves it.
+#[test]
+fn truncate_and_rename_table_keep_the_tables_update_ts() {
+    let mut session = Session::new();
+    session.run("create table t (a int)").unwrap();
+    let create_time = |table: &str| {
+        format!(
+            "select create_time from information_schema.tables \
+             where table_schema = 'test' and table_name = '{table}'"
+        )
+    };
+    let created = crate::support::text_rows(&mut session, &create_time("t"));
+    // CREATE_TIME has second precision.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    session.run("truncate table t").unwrap();
+    assert_eq!(crate::support::text_rows(&mut session, &create_time("t")), created);
+    session.run("rename table t to t2").unwrap();
+    assert_eq!(crate::support::text_rows(&mut session, &create_time("t2")), created);
+    session.run("alter table t2 add column b int").unwrap();
+    assert_ne!(crate::support::text_rows(&mut session, &create_time("t2")), created);
+}

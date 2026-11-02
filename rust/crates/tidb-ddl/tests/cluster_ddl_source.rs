@@ -6184,3 +6184,113 @@ pub(crate) fn lower_ddl(
 fn ddl_context(context: &tidb_sessionctx::StmtContext) -> tidb_ddl::cluster_ddl::DdlContext {
     std::sync::Arc::new(context.clone())
 }
+
+/// The stored int of a meta hash field (`TxStructure.HGetInt64`; 0 when unset).
+fn meta_int(store: &MetaStore, db_id: i64, field: &[u8]) -> Option<i64> {
+    store
+        .pairs
+        .get(&tidb_tablecodec::table_key::encode_meta_key(&key::db_key(db_id), field))
+        .map(|value| std::str::from_utf8(value).unwrap().parse().unwrap())
+}
+
+/// Go `handleAutoIncID` rebases only the allocators `NewAllocatorsFromTblInfo`
+/// gives a table: an integer handle without an AUTO_INCREMENT column has no
+/// row-id allocator, so its AUTO_INCREMENT option seeds nothing.
+#[test]
+fn create_table_seeds_only_the_allocators_the_table_has() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.seeded (id BIGINT AUTO_INCREMENT PRIMARY KEY) AUTO_INCREMENT=100",
+        7,
+    );
+    apply(&mut store, &write);
+    let seeded = write.created_id.unwrap();
+    assert_eq!(meta_int(&store, 112, &key::auto_table_id_key(seeded)), Some(99));
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.unseeded (id BIGINT PRIMARY KEY) AUTO_INCREMENT=100",
+        8,
+    );
+    apply(&mut store, &write);
+    assert_eq!(meta_int(&store, 112, &key::auto_table_id_key(write.created_id.unwrap())), None);
+}
+
+/// Go `onCreateTables` runs `createTable` (or `createSequenceWithCheck`) for
+/// every table of the batch under a stub job: each table's allocators are
+/// rebased (`AutoIncIDExtra` too), a sequence gets its first value, the
+/// table's `UpdateTS` is the job's start, and every table is announced to
+/// the notifier under its position.
+#[test]
+fn a_create_tables_job_creates_each_table_as_create_table_does() {
+    let mut store = bootstrapped();
+    let template = |sql: &str, id: i64| {
+        let DdlStatement::CreateTable { build, .. } = statement(sql) else {
+            panic!("a CREATE TABLE");
+        };
+        let mut info = build.template().clone_like_go();
+        info.id = id;
+        info
+    };
+    let auto_inc = template(
+        "CREATE TABLE batch_auto (id BIGINT AUTO_INCREMENT PRIMARY KEY) AUTO_INCREMENT=100",
+        501,
+    );
+    let mut extra = template("CREATE TABLE batch_extra (v INT)", 502);
+    extra.auto_inc_id_extra = 50;
+    let sequence = tidb_model::table_info::TableInfo {
+        id: 503,
+        name: tidb_ast::CiString::new("batch_sequence"),
+        sequence: Some(GoShared::new(tidb_model::table::SequenceInfo {
+            start: 5,
+            increment: 1,
+            min_value: 1,
+            max_value: 1000,
+            ..Default::default()
+        })),
+        ..Default::default()
+    };
+    let catalog = load_info_schema(&mut store).unwrap();
+    let queue = DdlJobTable::locate(&catalog).unwrap();
+    let mut job = Job::default();
+    job.id = 900;
+    job.schema_id = 112;
+    job.schema_name = "u6".into();
+    job.type_ = ActionType::ACTION_CREATE_TABLES;
+    job.state = JobState::QUEUEING;
+    job.version = JobVersion::V2;
+    job.binlog_info = Some(GoShared::new(tidb_model::HistoryInfo::default()));
+    job.fill_args(Some(GoShared::new(tidb_model::BatchCreateTableArgs {
+        tables: tidb_model::GoField::new(
+            [auto_inc, extra, sequence]
+                .into_iter()
+                .map(|info| tidb_model::CreateTableArgs {
+                    table_info: tidb_model::GoField::new(Some(GoShared::new(info))),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+        ),
+    })));
+    let mut mutations = Vec::new();
+    queue
+        .append_insert(&mut job, false, "112", "501,502,503", true, &mut mutations)
+        .unwrap();
+    apply_mutations(&mut store, &mutations);
+    let step = plan_worker_step(&mut store, job.id, 10_000).unwrap();
+    apply(&mut store, &step.write);
+
+    assert_eq!(meta_int(&store, 112, &key::auto_table_id_key(501)), Some(99));
+    assert_eq!(meta_int(&store, 112, &key::auto_table_id_key(502)), Some(49));
+    assert_eq!(meta_int(&store, 112, &key::sequence_key(503)), Some(4));
+    let catalog = load_info_schema(&mut store).unwrap();
+    let (_, created) = catalog.table_info_by_name("u6", "batch_auto").unwrap();
+    assert_eq!(created.read().update_ts, 10_000);
+    assert_eq!(
+        notifier_events(&mut store, &step.write)
+            .into_iter()
+            .map(|(sub_job, event)| (sub_job, event.get_create_table_info().id))
+            .collect::<Vec<_>>(),
+        [(0, 501), (1, 502), (2, 503)]
+    );
+}

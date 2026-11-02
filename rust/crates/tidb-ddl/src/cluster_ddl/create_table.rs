@@ -144,6 +144,76 @@ pub(super) fn get_shared_involving_schema_info(
     involving
 }
 
+/// Go `createTable`, which `onCreateTable` and `onCreateTables` share: the
+/// owner's checks, then the table public with its placement bundles,
+/// affinity groups and allocator rebases. It neither bumps the schema version
+/// nor finishes the job.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn create_table(
+    txn: &mut JobTxn<'_>,
+    catalog: &SessionExtendedInfoSchema,
+    database: &GoShared<tidb_model::db::DBInfo>,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    info: &mut TableInfo,
+    fk_check: bool,
+    start_ts: u64,
+    placement_bundles: &mut Vec<tidb_placement::Bundle>,
+    affinity_groups: &mut crate::ddl_affinity::AffinityGroupUpdate,
+) -> Result<(), DdlPlanError> {
+    let database_id = database.read().id;
+    let schema = database.read().name.original().to_owned();
+    // Go: `checkTableNotExists`, then `checkConstraintNamesNotExists`, then
+    // `checkTableForeignKeyValidInOwner` and `allocateFKIndexID`.
+    info.state = SchemaState::NONE;
+    if database
+        .read().deprecated_tables
+        .iter_deref()
+        .any(|table| {
+            let table = table.read();
+            table.name.lowercase() == info.name.lowercase() || table.id == info.id
+        })
+    {
+        return Err(cancel_ddl_job(
+            active,
+            DdlPlanError::from(
+                tidb_dbterror::CLASS_SCHEMA
+                    .new_std(tidb_errno::errcode::ErrTableExists)
+                    .generate(format!(
+                        "Table '{}.{}' already exists",
+                        schema,
+                        info.name.original()
+                    )),
+            ),
+        ));
+    }
+    for constraint in info.constraints.iter_deref() {
+        let wanted = constraint.read().name.lowercase().to_owned();
+        if database.read().deprecated_tables.iter_deref().any(|table| {
+            let table = table.read();
+            table
+                .constraints
+                .iter_deref()
+                .any(|existing| existing.read().name.lowercase() == wanted)
+        }) {
+            return Err(cancel_ddl_job(
+                active,
+                DdlPlanError::from(
+                    tidb_dbterror::CLASS_SCHEMA
+                        .new_std(tidb_errno::errcode::ErrCheckConstraintDupName)
+                        .generate_with_stack_by_args(&[FormatArg::from(wanted.as_str())]),
+                ),
+            ));
+        }
+    }
+    crate::foreign_key_build::check_table_foreign_key_valid_in_owner(
+        catalog, &schema, info, fk_check,
+    )
+    .map_err(|error| cancel_ddl_job(active, DdlPlanError::Admission(error)))?;
+    info.state = SchemaState::PUBLIC;
+    apply_create_table(txn, database_id, info, start_ts, placement_bundles, affinity_groups)
+        .map_err(|error| cancel_ddl_job(active, error))
+}
+
 /// Go `onCreateTable`.
 pub(super) fn on_create_table(
     txn: &mut JobTxn<'_>,
@@ -193,72 +263,26 @@ pub(super) fn on_create_table(
     let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
     let finished = match info.state {
         SchemaState::NONE | SchemaState::PUBLIC => {
-            // Go `createTable`: `checkTableNotExists`, then
-            // `checkConstraintNamesNotExists`, then
-            // `checkTableForeignKeyValidInOwner` and `allocateFKIndexID`.
-            info.state = SchemaState::NONE;
-            if database
-                .read().deprecated_tables
-                .iter_deref()
-                .any(|table| {
-                    let table = table.read();
-                    table.name.lowercase() == info.name.lowercase() || table.id == info.id
-                })
-            {
-                return Err(cancel_ddl_job(
-                    active,
-                    DdlPlanError::from(
-                        tidb_dbterror::CLASS_SCHEMA
-                            .new_std(tidb_errno::errcode::ErrTableExists)
-                            .generate(format!(
-                                "Table '{}.{}' already exists",
-                                schema,
-                                info.name.original()
-                            )),
-                    ),
-                ));
-            }
-            for constraint in info.constraints.iter_deref() {
-                let wanted = constraint.read().name.lowercase().to_owned();
-                if database.read().deprecated_tables.iter_deref().any(|table| {
-                    let table = table.read();
-                    table
-                        .constraints
-                        .iter_deref()
-                        .any(|existing| existing.read().name.lowercase() == wanted)
-                }) {
-                    return Err(cancel_ddl_job(
-                        active,
-                        DdlPlanError::from(
-                            tidb_dbterror::CLASS_SCHEMA
-                                .new_std(tidb_errno::errcode::ErrCheckConstraintDupName)
-                                .generate_with_stack_by_args(&[FormatArg::from(wanted.as_str())]),
-                        ),
-                    ));
-                }
-            }
-            crate::foreign_key_build::check_table_foreign_key_valid_in_owner(
-                catalog, &schema, &mut info, fk_check,
-            )
-            .map_err(|error| cancel_ddl_job(active, DdlPlanError::Admission(error)))?;
-            // Go `createTableWithForeignKeys` creates the table delete-only
-            // first, so a cascading action reaches it before any statement
-            // can.
-            info.state = if has_foreign_keys {
-                SchemaState::DELETE_ONLY
-            } else {
-                SchemaState::PUBLIC
-            };
-            apply_create_table(
+            create_table(
                 txn,
-                database_id,
+                catalog,
+                &database,
+                active,
                 &mut info,
+                fk_check,
                 start_ts,
                 &mut placement_bundles,
                 &mut affinity_groups,
-            )
-            .map_err(|error| cancel_ddl_job(active, error))?;
+            )?;
+            // Go `createTableWithForeignKeys`: the table goes delete-only
+            // first (`updateVersionAndTableInfo`, whose version is the one
+            // below), so a cascading action reaches it before any statement
+            // can.
             if has_foreign_keys {
+                info.state = SchemaState::DELETE_ONLY;
+                let meta = txn.meta();
+                meta.update_table(database_id, &mut info)
+                    .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
                 active.job.schema_state = SchemaState::DELETE_ONLY;
             }
             !has_foreign_keys
