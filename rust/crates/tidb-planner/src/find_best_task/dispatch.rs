@@ -3164,9 +3164,9 @@ fn find_best_task_4_logical_data_source_paths(
                     let ranges = ds
                         .possible_access_paths
                         .as_ref()
-                        .and_then(|_| ds.filled_table_path())
+                        .and_then(|_| ds.tikv_table_path())
                         .filter(|_| prop.index_join_prop.is_none())
-                        .map(|path| &path.detached.ranges);
+                        .map(|path| &path.ranges);
                     let order_match = table_path_matches_order(ds, prop, ranges);
                     if !order_match.matched() {
                         continue 'paths;
@@ -3187,37 +3187,40 @@ fn find_best_task_4_logical_data_source_paths(
                 let table_path = if let Some(path) = ds
                     .possible_access_paths
                     .as_ref()
-                    .and_then(|_| ds.filled_table_path())
+                    .and_then(|_| ds.tikv_table_path())
                     .filter(|_| prop.index_join_prop.is_none())
                 {
                     path
                 } else {
-                    fallback_table_path = crate::access_path::ordinary::fill_table_path(
+                    let mut filled = tidb_planner_util::path::AccessPath::clone(path);
+                    crate::access_path::ordinary::fill_table_path(
                         ds,
-                        primary_index.as_ref(),
+                        &mut filled,
                         &ctx.access_path_derivation_context(),
                     )?;
+                    fallback_table_path = filled;
                     &fallback_table_path
                 };
-                let handle_column = table_path.handle_column.as_ref();
-                let handle_type = &table_path.handle_type;
+                let (handle_column, handle_type) = crate::access_path::ordinary::table_path_handle(ds);
+                let handle_column = handle_column.as_ref();
+                let handle_type = &handle_type;
                 let common_handle = primary_index.as_ref();
                 let (common_columns, common_lengths): (Vec<_>, Vec<_>) =
-                    table_path.common_columns.iter().cloned().unzip();
+                    table_path.idx_cols.iter().cloned().unzip();
                 // Go `buildDataSource2TableScanByIndexJoinProp`: a common
                 // handle probes through its `indexJoinPathBuild` result, an
                 // integer handle through the full integer range with every
                 // pushed condition as a filter (`getIndexJoinIntPKPathInfo`).
                 let (ranges, table_access_conds, mut table_filters) = match &prop.index_join_prop {
                     None => {
-                        let ranges = table_path.detached.ranges.clone();
+                        let ranges = table_path.ranges.clone();
                         if ranges.is_empty() {
                             return Ok(empty_range_dual_task(ds, ctx));
                         }
                         (
                             ranges,
-                            table_path.detached.access_conds.clone(),
-                            table_path.detached.remained_conds.clone(),
+                            table_path.access_conds.clone(),
+                            table_path.table_filters.clone(),
                         )
                     }
                     Some(_) => match &index_join_result {
@@ -3259,7 +3262,7 @@ fn find_best_task_4_logical_data_source_paths(
                     .table_stats
                     .clone()
                     .or_else(|| ds.base.base.stats_info().cloned());
-                let mut count_after_access = table_path.count_after_access;
+                let mut count_after_access = table_path.count_after_access();
                 // Go `deriveTablePathStats` returns before
                 // `adjustCountAfterAccess` for a correlated integer handle.
                 let correlated_int_handle =

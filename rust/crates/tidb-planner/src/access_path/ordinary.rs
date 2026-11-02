@@ -12,7 +12,7 @@
 //! Range/filter derivation shared by ordinary and index-merge alternatives.
 
 use tidb_planner_property::stats_info::HistCollExt as _;
-use tidb_planner_util::path::{FilledTablePath, AccessPath};
+use tidb_planner_util::path::AccessPath;
 use super::AccessPathDerivationContext;
 use tidb_planner_core_operator_logicalop::DataSource;
 use tidb_planner_core_base::PlanError;
@@ -271,15 +271,9 @@ pub(crate) fn fill_ordinary_index_paths(
     Ok(())
 }
 
-/// Derive a table alternative from its own conditions without applying the
-/// ordinary datasource output-count lower bound to merge partials.
-pub(crate) fn detach_table_path(
-    source: &DataSource,
-    primary_index: Option<&tidb_model::GoShared<tidb_model::IndexInfo>>,
-    conditions: &[Expression],
-    context: &AccessPathDerivationContext<'_>,
-    correlated_access: bool,
-) -> Result<FilledTablePath, PlanError> {
+/// Go `GetPKIsHandleCol` (or the `_tidb_rowid` handle) and the type the
+/// integer ranger converts handle ranges to.
+pub(crate) fn table_path_handle(source: &DataSource) -> (Option<Column>, tidb_datatype::FieldType) {
     let handle_column = source
         .base
         .base
@@ -296,6 +290,23 @@ pub(crate) fn detach_table_path(
         .as_ref()
         .and_then(|column| column.ret_type.clone())
         .unwrap_or_else(|| tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong));
+    (handle_column, handle_type)
+}
+
+/// Derive a table alternative from its own conditions without applying the
+/// ordinary datasource output-count lower bound to merge partials: `path`'s
+/// `IdxCols` (a common handle's), ranges, access conditions and
+/// `TableFilters`. A common-handle path carries its PRIMARY index.
+pub(crate) fn detach_table_path(
+    source: &DataSource,
+    path: &mut AccessPath,
+    conditions: &[Expression],
+    context: &AccessPathDerivationContext<'_>,
+    correlated_access: bool,
+) -> Result<(), PlanError> {
+    let (handle_column, handle_type) = table_path_handle(source);
+    let primary_index = path.index.clone();
+    let primary_index = primary_index.as_ref();
     let common_index = primary_index;
     let common_columns =
         common_index.map_or_else(Vec::new, |index| source.index_range_columns(index));
@@ -379,16 +390,17 @@ pub(crate) fn detach_table_path(
         }
         detached
     };
-    Ok(FilledTablePath {
-        handle_column,
-        handle_type,
-        common_columns,
-        detached,
-        count_after_access: None,
-        min_count_after_access: 0.0,
-        max_count_after_access: 0.0,
-        correlated_access_count,
-    })
+    path.idx_cols = common_columns;
+    path.ranges = detached.ranges;
+    path.access_conds = detached.access_conds;
+    path.eq_cond_count = detached.eq_cond_count;
+    path.eq_or_in_cond_count = detached.eq_or_in_count;
+    path.is_dnf_cond = detached.is_dnf_cond;
+    path.min_access_conds_for_dnf_cond = detached.min_access_conds_for_dnf_cond;
+    path.table_filters = detached.remained_conds;
+    path.correlated_access_count = correlated_access_count;
+    path.row_estimate = None;
+    Ok(())
 }
 
 /// `eq(handle, correlated_col)` in either argument order.
@@ -431,21 +443,22 @@ pub(crate) fn prune_estimate_range(
         .collect()
 }
 
+/// Go `deriveTablePathStats` / `deriveCommonHandleTablePathStats` over the
+/// pushed conditions, filling `path` and its `CountAfterAccess` bounds.
 pub(crate) fn fill_table_path(
     source: &DataSource,
-    primary_index: Option<&tidb_model::GoShared<tidb_model::IndexInfo>>,
+    path: &mut AccessPath,
     context: &AccessPathDerivationContext<'_>,
-) -> Result<FilledTablePath, PlanError> {
-    let mut filled =
-        detach_table_path(source, primary_index, &source.pushed_down_conds, context, true)?;
-    let common_index = primary_index;
+) -> Result<(), PlanError> {
+    detach_table_path(source, path, &source.pushed_down_conds, context, true)?;
+    let common_index = path.index.clone();
+    let common_index = common_index.as_ref();
     // Go `deriveTablePathStats` answers one row for a correlated integer
     // handle and returns before `adjustCountAfterAccess`.
-    if common_index.is_none() && filled.correlated_access_count > 0 {
-        filled.count_after_access = Some(1.0);
-        return Ok(filled);
+    if common_index.is_none() && path.correlated_access_count > 0 {
+        path.row_estimate = Some(tidb_stats::RowEstimate::new(1.0, 0.0, 0.0));
+        return Ok(());
     }
-    let detached = &filled.detached;
     let stats = source
         .table_stats
         .as_ref()
@@ -455,28 +468,28 @@ pub(crate) fn fill_table_path(
     // index's statistics over the ranges `detachCondAndBuildRangeForPath`
     // built, which also set the path's bounds.
     let common_estimate = match common_index {
-        Some(index) if !source.pushed_down_conds.is_empty() && !filled.common_columns.is_empty() => {
+        Some(index) if !source.pushed_down_conds.is_empty() && !path.idx_cols.is_empty() => {
             Some(super::index_merge::estimate_index_ranges(
                 source,
                 index,
-                &detached.ranges,
-                &filled.common_columns,
+                &path.ranges,
+                &path.idx_cols,
                 context,
             )?)
         }
         _ => None,
     };
-    if !detached.access_conds.is_empty() {
+    if !path.access_conds.is_empty() {
         count_after_access = match common_index {
             Some(_) => common_estimate
                 .map(|estimate| estimate.est)
                 .or(count_after_access),
-            None => Some(estimate_int_table_path(source, &filled, context)?),
+            None => Some(estimate_int_table_path(source, path, context)?),
         };
     }
-    if filled.correlated_access_count > 0 {
-        let first = detached.eq_or_in_count;
-        let columns = filled.common_columns[first..first + filled.correlated_access_count]
+    if path.correlated_access_count > 0 {
+        let first = path.eq_or_in_cond_count;
+        let columns = path.idx_cols[first..first + path.correlated_access_count]
             .iter()
             .map(|(column, _)| column.clone())
             .collect::<Vec<_>>();
@@ -502,17 +515,17 @@ pub(crate) fn fill_table_path(
             max_count_after_access = max_count_after_access.max(*count);
         }
     }
-    filled.count_after_access = count_after_access;
-    filled.min_count_after_access = min_count_after_access;
-    filled.max_count_after_access = max_count_after_access;
-    Ok(filled)
+    path.row_estimate = count_after_access.map(|count| {
+        tidb_stats::RowEstimate::new(count, min_count_after_access, max_count_after_access)
+    });
+    Ok(())
 }
 
 /// Estimate an integer table path from its own typed ranges and the source
 /// histogram population. Merge partials must not reuse another path's count.
 pub(crate) fn estimate_int_table_path(
     source: &DataSource,
-    path: &FilledTablePath,
+    path: &AccessPath,
     context: &AccessPathDerivationContext<'_>,
 ) -> Result<f64, PlanError> {
     let Some(stats) = source
@@ -520,14 +533,14 @@ pub(crate) fn estimate_int_table_path(
         .as_ref()
         .or_else(|| source.base.base.stats_info())
     else {
-        return Ok(path.detached.ranges.len() as f64);
+        return Ok(path.ranges.len() as f64);
     };
-    if path.detached.access_conds.is_empty() && !path.detached.ranges.is_empty() {
+    if path.access_conds.is_empty() && !path.ranges.is_empty() {
         return Ok(stats.row_count());
     }
+    let (handle_column, handle_type) = table_path_handle(source);
     let hist = stats.hist_coll();
-    let column = path
-        .handle_column
+    let column = handle_column
         .as_ref()
         .and_then(|column| hist?.histogram_for_estimation(column.unique_id));
     let column = column.as_ref().map(|column| {
@@ -536,7 +549,6 @@ pub(crate) fn estimate_int_table_path(
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     });
     let ranges = path
-        .detached
         .ranges
         .iter()
         .map(|range| {
@@ -551,7 +563,7 @@ pub(crate) fn estimate_int_table_path(
     tidb_planner_cardinality::row_count_estimator::get_row_count_by_column_ranges(
         column.as_deref(),
         &ranges,
-        path.handle_type.collation(),
+        handle_type.collation(),
         hist.map_or(stats.row_count() as i64, |hist| hist.realtime_count()),
         hist.map_or(0, |hist| hist.modify_count()),
         true,

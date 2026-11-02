@@ -106,7 +106,7 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
     id-keyed `DataSource.derived_index_paths` are gone, and readers find the
     live path with `DataSource::path_by_index_id`.
   - [x] 2b (2026-11-02): the TiKV table path carries its
-    `deriveTablePathStats` result (`filled_table`);
+    `deriveTablePathStats` result (then `filled_table`, flattened in 2c-4);
     `DerivedAccessPaths.table_path` is gone. Go also fills the TiFlash table
     path; Rust's TiFlash readers still read the TiKV path's result.
   - [x] 2d (2026-11-02): Go's `Forced`, `ForceKeepOrder`,
@@ -130,10 +130,14 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
     `CountAfterIndex` (Go leaves 0 on a path it never fills: Rust still skips
     multi-valued indexes there). A point get's residual is `IndexFilters`
     then `TableFilters`, as Go appends them.
-  - [ ] 2c-4: `FilledTablePath` flattens the same way (`common_columns` =
-    the table path's `IdxCols`, the ranges and conditions, the counts =
-    `row_estimate`); its handle column and type are read from the
-    `DataSource` where used, as Go's `GetPKIsHandleCol` is.
+  - [x] 2c-4 (2026-11-02): the table path's fill is the same fields
+    (`idx_cols` = a common handle's `IdxCols`, the ranges and conditions,
+    `table_filters`, and `row_estimate` = `CountAfterAccess` and bounds);
+    `fill_table_path` / `detach_table_path` fill the `AccessPath` in place,
+    the handle column and type are read from the `DataSource` where used
+    (Go `GetPKIsHandleCol`), and `FilledTablePath` and
+    `DataSource::filled_table_path` are gone. Merge partials tell a table
+    partial by `IsTablePath`, as Go does.
 - [ ] 3. Index merge produces it.
   - [x] 3a (2026-11-02): a finished merge's partials are `AccessPath`s (Go
     `PartialIndexPaths`); `IndexMergePartial` is gone. Go's per-path

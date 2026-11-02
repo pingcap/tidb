@@ -64,39 +64,39 @@ pub(super) fn prepare_ordinary_paths<'a>(
                 if prop.partial_order_info.is_some() {
                     continue;
                 }
-                let table = ds.filled_table_path()?;
+                let table = ds.tikv_table_path()?;
                 let columns = tidb_planner_util::column_length::Col2Len::from_pairs(
-                    table.detached.access_conds.iter().flat_map(|condition| {
+                    table.access_conds.iter().flat_map(|condition| {
                         tidb_expr::simple_expr::extract_columns(condition)
                             .into_iter()
                             .map(|column| (column.unique_id, -1))
                     }),
                 );
-                let metrics = table.count_after_access.map(|access| CandidateMetrics {
+                let metrics = table.row_estimate.map(|estimate| CandidateMetrics {
                     access_columns: columns.clone(),
                     index_columns: Default::default(),
                     table_path: true,
                     single_scan: true,
                     pseudo: table_pseudo,
-                    matches_property: table_path_matches_order(ds, prop, Some(&table.detached.ranges))
+                    matches_property: table_path_matches_order(ds, prop, Some(&table.ranges))
                         .matched(),
                     eq_or_in_count: super::candidate::equality_facts(
-                        &table.detached.access_conds,
-                        table.detached.eq_or_in_count,
-                        table.detached.is_dnf_cond,
-                        table.detached.min_access_conds_for_dnf_cond,
+                        &table.access_conds,
+                        table.eq_or_in_cond_count,
+                        table.is_dnf_cond,
+                        table.min_access_conds_for_dnf_cond,
                     )
                     .0,
-                    count_after_access: access,
+                    count_after_access: estimate.est,
                     count_after_index: 0.0,
-                    min_count_after_access: table.min_count_after_access,
-                    max_count_after_access: table.max_count_after_access,
+                    min_count_after_access: estimate.min_est,
+                    max_count_after_access: estimate.max_est,
                     ..Default::default()
                 });
                 let primary = primary_index.as_ref();
                 let heuristic = HeuristicPath {
-                    range_count: table.detached.ranges.len(),
-                    only_points: table.detached.ranges.iter().all(|range| {
+                    range_count: table.ranges.len(),
+                    only_points: table.ranges.iter().all(|range| {
                         primary.map_or_else(
                             || range.is_point_nullable(),
                             |index| {
@@ -107,7 +107,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
                     }),
                     unique: true,
                     single_scan: true,
-                    table_filter_count: table.detached.remained_conds.len(),
+                    table_filter_count: table.table_filters.len(),
                     access_columns: columns,
                 };
                 (metrics, Some(heuristic))
@@ -243,7 +243,7 @@ fn range_scan_flags(
     let prefer_merge = !ds.index_merge_hints.is_empty() || ds.prefer_index_merge_by_fix_control;
     match path.index_info() {
         None if !path.is_tiflash_path() => {
-            let Some(table) = ds.filled_table_path() else {
+            let Some(table) = ds.tikv_table_path() else {
                 return (false, false);
             };
             // A table path is always a single scan; like an index path it is
@@ -251,7 +251,7 @@ fn range_scan_flags(
             (
                 (prop.is_sort_item_empty() || metrics.is_some_and(|metrics| metrics.matches_property))
                     && !tidb_ranger::types::has_full_range(
-                        &table.detached.ranges,
+                        &table.ranges,
                         ds.table_scan_penalty.unsigned_int_handle,
                     ),
                 path.forced,

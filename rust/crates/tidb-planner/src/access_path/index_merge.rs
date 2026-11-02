@@ -148,63 +148,55 @@ fn prepare_union_index_merge_path_for_or(
                     }
                 }
                 let (pushable, rejected) = partition_partial_filters(&usable, ctx);
-                if let Ok(mut filled) =
-                    super::ordinary::detach_table_path(ds, primary_index, &pushable, ctx, false)
-                        .and_then(|mut filled| {
-                            filled.count_after_access = Some(match primary_index {
+                let mut path = AccessPath::table_path(
+                    tidb_kv::store_type::StoreType::TiKv,
+                    primary.is_some(),
+                    primary.cloned(),
+                );
+                let estimated =
+                    super::ordinary::detach_table_path(ds, &mut path, &pushable, ctx, false)
+                        .and_then(|()| {
+                            Ok(match primary_index {
                                 // Go `deriveCommonHandleTablePathStats`: the
                                 // PRIMARY index's histogram over these ranges.
                                 Some(index) => estimate_index_ranges(
                                     ds,
                                     index,
-                                    &filled.detached.ranges,
-                                    &filled.common_columns,
+                                    &path.ranges,
+                                    &path.idx_cols,
                                     ctx,
                                 )?
                                 .est,
-                                None => super::ordinary::estimate_int_table_path(ds, &filled, ctx)?,
-                            });
-                            Ok(filled)
-                        })
-                {
+                                None => super::ordinary::estimate_int_table_path(ds, &path, ctx)?,
+                            })
+                        });
+                if let Ok(rows) = estimated {
                     // Go accessPathsForConds drops only a full range; an
                     // empty one (`a between 2 and 1`) stays a partial.
                     let unsigned_int_handle = primary.is_none()
                         && ds.pk_is_handle()
-                        && filled.handle_type.is_unsigned();
-                    if !filled
-                        .detached
+                        && super::ordinary::table_path_handle(ds).1.is_unsigned();
+                    if !path
                         .ranges
                         .iter()
                         .any(|range| range.is_full_range(unsigned_int_handle))
                     {
-                        let rows = filled
-                            .count_after_access
-                            .expect("table partial was estimated");
-                        let result = &mut filled.detached;
                         // Go conservatively rechecks the source OR even when the
                         // table partial can evaluate its residuals: conversion
                         // narrows the partial schema to handles only.
                         let keep_source_filter = keep_branch_filter
                             || !rejected.is_empty()
-                            || !result.remained_conds.is_empty();
+                            || !path.table_filters.is_empty();
                         if !tidb_expr::infer_pushdown::can_exprs_push_down(
-                            &result.remained_conds,
+                            &path.table_filters,
                             tidb_kv::store_type::StoreType::TiKv,
                             ctx.expr_pushdown_blacklist,
                         ) {
-                            result.remained_conds.clear();
+                            path.table_filters.clear();
                         }
-                        branch.push(vec![AccessPath {
-                            filled_table: Some(filled),
-                            row_estimate: Some(tidb_stats::RowEstimate::new(rows, rows, rows)),
-                            keep_index_merge_or_source_filter: keep_source_filter,
-                            ..AccessPath::table_path(
-                                tidb_kv::store_type::StoreType::TiKv,
-                                primary.is_some(),
-                                primary.cloned(),
-                            )
-                        }]);
+                        path.row_estimate = Some(tidb_stats::RowEstimate::new(rows, rows, rows));
+                        path.keep_index_merge_or_source_filter = keep_source_filter;
+                        branch.push(vec![path]);
                     }
                 }
             }
@@ -385,8 +377,8 @@ pub(crate) fn estimate_union_access(
                         })
                         .collect(),
                 )
-            } else if let Some(filled) = &first.filled_table {
-                tidb_expr::simple_expr::compose_cnf_condition(filled.detached.access_conds.clone())
+            } else if first.is_table_path() {
+                tidb_expr::simple_expr::compose_cnf_condition(first.access_conds.clone())
             } else {
                 let mut conditions = first.access_conds.clone();
                 conditions.extend(first.index_filters.iter().cloned());
@@ -447,10 +439,9 @@ fn collect_unfinished_filters(
         .ok()?;
         path.ranges
     } else {
-        super::ordinary::detach_table_path(ds, None, &pushable, ctx, false)
-            .ok()?
-            .detached
-            .ranges
+        let mut path = AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None);
+        super::ordinary::detach_table_path(ds, &mut path, &pushable, ctx, false).ok()?;
+        path.ranges
     };
     if !ranges
         .iter()
@@ -515,9 +506,9 @@ pub(crate) fn compare_alternatives(
 ) -> std::cmp::Ordering {
     let attributes = |alternative: &[AccessPath]| {
         let first = &alternative[0];
-        let (point, rows, global) = if let Some(filled) = &first.filled_table {
+        let (point, rows, global) = if first.is_table_path() {
             (
-                filled.detached.ranges.iter().all(|range| range.is_point_nullable()),
+                first.ranges.iter().all(|range| range.is_point_nullable()),
                 first.count_after_access().unwrap_or(0.0),
                 false,
             )

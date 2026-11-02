@@ -1253,7 +1253,6 @@ impl InitStats<'_> {
             path.table_filters.clear();
             path.count_after_index = None;
             path.correlated_access_count = 0;
-            path.filled_table = None;
             path.is_single_scan = None;
         }
         source.access_path_min_selectivity = 1.0;

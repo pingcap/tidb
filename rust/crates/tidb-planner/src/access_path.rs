@@ -107,14 +107,11 @@ pub(crate) fn derive_access_paths(
 ) -> Result<(Vec<PossibleAccessPath>, Option<f64>, Option<String>), tidb_planner_core_base::PlanError> {
     // Go `deriveTablePathStats` over the TiKV table path.
     if let Some(position) = source.all_possible_access_paths.iter().position(|path| path.is_tikv_table_path()) {
-        let filled = ordinary::fill_table_path(
-            source,
-            source.all_possible_access_paths[position].index.as_ref(),
-            context,
-        )?;
-        source.all_possible_access_paths[position].filled_table = Some(filled);
+        let mut path = source.all_possible_access_paths[position].clone();
+        ordinary::fill_table_path(source, &mut path, context)?;
+        source.all_possible_access_paths[position] = path;
     }
-    let table_path = source.filled_table_path().cloned();
+    let table_path = source.tikv_table_path().cloned();
     ordinary::fill_ordinary_index_paths(source, context, prefix_single_scan)?;
     // Go's `PossibleAccessPaths` holds the same path pointers as
     // `AllPossibleAccessPaths` until the index-merge paths join it.
@@ -137,10 +134,10 @@ pub(crate) fn derive_access_paths(
                         return table_path
                             .as_ref()
                             .filter(|_| source.is_common_handle() && !source.pushed_down_conds.is_empty())
-                            .and_then(|path| path.count_after_access);
+                            .and_then(AccessPath::count_after_access);
                     }
                     if path.is_table_path() {
-                        return table_path.as_ref().and_then(|path| path.count_after_access);
+                        return table_path.as_ref().and_then(AccessPath::count_after_access);
                     }
                     path.count_after_index.or_else(|| path.count_after_access())
                 })
@@ -192,7 +189,7 @@ pub(crate) fn derive_access_paths(
                         .any(|path| match path.index_info() {
                             None => table_path
                                 .as_ref()
-                                .is_some_and(|path| !path.detached.access_conds.is_empty()),
+                                .is_some_and(|path| !path.access_conds.is_empty()),
                             Some(_) => !path.access_conds.is_empty(),
                         });
             }

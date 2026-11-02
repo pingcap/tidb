@@ -79,7 +79,7 @@ fn partial_matches_order(
             })
             .then(Vec::new);
     }
-    if let Some(filled) = &lead.filled_table {
+    if lead.is_table_path() {
         // Go `matchProperty` over a table path: the integer handle alone, or
         // a clustered common handle's key columns (its `IdxCols`) after the
         // prefix its ranges pin.
@@ -97,10 +97,10 @@ fn partial_matches_order(
             return None;
         }
         return key_columns_match_order(
-            &filled.common_columns,
-            &filled.detached.ranges,
+            &lead.idx_cols,
+            &lead.ranges,
             items,
-            allow_groups(&filled.detached.access_conds),
+            allow_groups(&lead.access_conds),
         );
     }
     index_partial_matches_order(
@@ -292,7 +292,7 @@ pub(super) fn converge_union_index_merge_path<'a>(
                 // exact predicate in AccessConds. Filters handled by table/MV
                 // paths ... still need the global Selection."
                 let lead = &partial[0];
-                if lead.filled_table.is_some() || is_mv_alternative(partial) {
+                if lead.is_table_path() || is_mv_alternative(partial) {
                     return false;
                 }
                 let index = lead.index_info().expect("an index alternative reads its index");
@@ -444,10 +444,9 @@ pub(super) fn build_converged_union_index_merge_task(
         .zip(partial_groups)
     {
         let lead = &partial[0];
-        if let Some(filled) = &lead.filled_table {
+        if lead.is_table_path() {
             let rows = &lead.count_after_access().unwrap_or(0.0);
-            let detached = &filled.detached;
-            let ranges = &detached.ranges;
+            let ranges = &lead.ranges;
             let mut schema_columns = partial_handle_columns(ds, ctx)?;
             // Go `convertToPartialTableScan`: the partition id rides
             // along an ordered partial of a dynamically pruned table.
@@ -455,7 +454,8 @@ pub(super) fn build_converged_union_index_merge_task(
                 super::dispatch::add_extra_phys_tbl_id_column(&mut schema_columns, ctx);
             }
             // Go PhysicalTableScan.TP: IsFullScan holds for no ranges too.
-            let unsigned_int_handle = ds.pk_is_handle() && filled.handle_type.is_unsigned();
+            let unsigned_int_handle = ds.pk_is_handle()
+                && crate::access_path::ordinary::table_path_handle(ds).1.is_unsigned();
             let scan_kind = if ranges
                 .iter()
                 .all(|range| range.is_full_range(unsigned_int_handle))
@@ -475,7 +475,7 @@ pub(super) fn build_converged_union_index_merge_task(
                     *rows,
                     matched.matched(),
                     true,
-                    !detached.remained_conds.is_empty(),
+                    !lead.table_filters.is_empty(),
                 ),
                 ctx,
             )));
@@ -494,7 +494,7 @@ pub(super) fn build_converged_union_index_merge_task(
                     keep_order: matched.matched(),
                     desc,
                     ranges: ranges.clone(),
-                    range_rebuild: partial_table_range_rebuild(ds, filled),
+                    range_rebuild: partial_table_range_rebuild(ds, lead),
                     table_scan_penalty: ds.table_scan_penalty,
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
@@ -519,8 +519,8 @@ pub(super) fn build_converged_union_index_merge_task(
                 .expect("partial scan was just built");
             // Go convertToPartialTableScan removes residuals referring
             // to columns lost when the partial schema becomes handles.
-            let filters = detached
-                .remained_conds
+            let filters = lead
+                .table_filters
                 .iter()
                 .filter(|condition| {
                     tidb_expr::simple_expr::extract_columns(condition)
@@ -804,20 +804,21 @@ pub(crate) fn partial_index_range_rebuild(
 /// handle, which `buildRangeForTableScan` re-detaches on a plan-cache hit.
 fn partial_table_range_rebuild(
     ds: &DataSource,
-    filled: &tidb_planner_util::path::FilledTablePath,
+    path: &AccessPath,
 ) -> Option<tidb_planner_core_operator_physicalop::range_rebuild::TableRangeRebuild> {
-    let access_conds = &filled.detached.access_conds;
+    let access_conds = &path.access_conds;
     if access_conds.is_empty() {
         return None;
     }
     Some(if ds.common_handle_cols.is_empty() {
+        let (_, handle_type) = crate::access_path::ordinary::table_path_handle(ds);
         tidb_planner_core_operator_physicalop::range_rebuild::TableRangeRebuild::int_handle(
             access_conds.clone(),
-            filled.handle_type.clone(),
-            ds.pk_is_handle() && filled.handle_type.is_unsigned(),
+            handle_type.clone(),
+            ds.pk_is_handle() && handle_type.is_unsigned(),
         )
     } else {
-        let (columns, lengths) = filled.common_columns.iter().cloned().unzip();
+        let (columns, lengths) = path.idx_cols.iter().cloned().unzip();
         tidb_planner_core_operator_physicalop::range_rebuild::TableRangeRebuild::common_handle(
             access_conds.clone(),
             columns,

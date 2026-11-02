@@ -43,7 +43,8 @@ pub struct AccessPath {
     /// shortening the key.
     pub full_idx_cols: Option<Vec<Option<(Column, i64)>>>,
     /// Go `IdxCols` / `IdxColLens`: the usable key prefix `fillIndexPath`
-    /// derives (eligible handles included), which ranges are built over.
+    /// derives (eligible handles included), or a common-handle table path's
+    /// PRIMARY key columns, which ranges are built over.
     pub idx_cols: Vec<(Column, i64)>,
     /// Go `IsUkShardIndexPath`: a unique secondary index of more than one
     /// column led by a `tidb_shard()` generated column.
@@ -55,7 +56,7 @@ pub struct AccessPath {
     /// Go `CountAfterAccess` with its `MinCountAfterAccess` /
     /// `MaxCountAfterAccess` skyline bounds, adjusted together.
     pub row_estimate: Option<tidb_stats::RowEstimate>,
-    /// Go `Ranges`: an index path's ranges, set by `fillIndexPath`.
+    /// Go `Ranges`, set by `fillIndexPath` or `deriveTablePathStats`.
     pub ranges: tidb_ranger::types::Ranges,
     /// Go `AccessConds`.
     pub access_conds: Vec<Expression>,
@@ -76,9 +77,6 @@ pub struct AccessPath {
     /// moved from the filters: `index_col = correlated_col` equalities, at
     /// most one closing range, whose ranges are rebuilt per execution.
     pub correlated_access_count: usize,
-    /// The TiKV table path's `deriveTablePathStats` result: ranges, access
-    /// conditions, table filters and counts.
-    pub filled_table: Option<FilledTablePath>,
     /// Go `Forced`: a USE/FORCE INDEX hint names this path.
     pub forced: bool,
     /// Go `ForceKeepOrder` (`ORDER_INDEX` hint).
@@ -102,9 +100,9 @@ pub struct AccessPath {
     /// Go `IndexMergeORSourceFilter`: the OR condition a union merge was
     /// built from.
     pub index_merge_or_source_filter: Option<Expression>,
-    /// Go `TableFilters`: an index path's filters that need the table row
-    /// or a full prefix-index value, or an index merge's filters above the
-    /// partial paths.
+    /// Go `TableFilters`: a table path's residual, an index path's filters
+    /// that need the table row or a full prefix-index value, or an index
+    /// merge's filters above the partial paths.
     pub table_filters: Vec<Expression>,
     /// Go `IndexMergeIsIntersection`.
     pub index_merge_is_intersection: bool,
@@ -224,29 +222,3 @@ pub enum IndexLookUpPushDownByType {
     /// Go `IndexLookUpPushDownBySysVar`.
     SysVar,
 }
-
-/// Logical integer/common-handle ranges and residuals shared by table candidates.
-#[derive(Clone, Debug)]
-pub struct FilledTablePath {
-    /// Integer handle present in the source schema, including an explicit rowid.
-    pub handle_column: Option<Column>,
-    /// The integer ranger's conversion type.
-    pub handle_type: tidb_datatype::FieldType,
-    /// Usable leading clustered-primary-key columns and their prefix lengths.
-    pub common_columns: Vec<(Column, i64)>,
-    /// Access ranges, absorbed conditions and residual table filters.
-    pub detached: tidb_ranger::detacher::DetachRangeResult,
-    /// Access count before a physical property's LIMIT/probe adjustment.
-    pub count_after_access: Option<f64>,
-    /// Go's retained lower access-count bound.
-    pub min_count_after_access: f64,
-    /// Go's retained upper access-count bound.
-    pub max_count_after_access: f64,
-    /// Access conditions over a correlated column, whose ranges the executor
-    /// rebuilds per outer row: the integer handle's `pk = correlated_col`
-    /// (`deriveTablePathStats`), or the common handle's split prefix.
-    pub correlated_access_count: usize,
-}
-
-
-
