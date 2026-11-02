@@ -148,6 +148,17 @@ pub fn seed(
 /// `tidb_mem_oom_action` is `CANCEL` and `tidb_enable_auto_analyze` is `ON`.
 const GLOBAL_VARIABLES_FIXTURE: &str = include_str!("global_variables_fixture.tsv");
 
+/// The `mysql.global_variables` rows a bootstrapped cluster holds, as
+/// `(name, value)`: what a test node that never ran the bootstrap loads.
+#[cfg(test)]
+pub(crate) fn bootstrapped_global_variables() -> Vec<(String, String)> {
+    GLOBAL_VARIABLES_FIXTURE
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .collect()
+}
+
 /// Parses [`GLOBAL_VARIABLES_FIXTURE`] into one seed row per global variable.
 ///
 /// A blank line is skipped (there are none in the captured fixture, but an

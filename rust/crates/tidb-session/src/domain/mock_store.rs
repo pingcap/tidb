@@ -337,6 +337,20 @@ impl NodeConn {
         self.mock_store().stack.rpc.set_send_hook(hook);
     }
 
+    /// The committed value of one raw key, read at a fresh timestamp.
+    #[cfg(test)]
+    pub(crate) fn get_key_for_test(&self, key: &[u8]) -> Result<Option<Vec<u8>>, String> {
+        let version = self.fresh_timestamp_for_test()?;
+        let handler = self.mock_store().stack.rpc.handler();
+        let handler = handler
+            .lock()
+            .map_err(|_| "kv handler poisoned".to_owned())?;
+        handler
+            .store
+            .get(key, version)
+            .map_err(|error| format!("get: {error:?}"))
+    }
+
     /// commits the delete of `key` straight into the embedded store.
     #[cfg(test)]
     pub(crate) fn delete_key_for_test(&self, key: &[u8]) -> Result<(), String> {

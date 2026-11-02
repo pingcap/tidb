@@ -1247,7 +1247,7 @@ impl Session {
                 ]),
             ));
         }
-        let output = self.run_statement_as_of(ts, stripped);
+        let output = self.run_statement_as_of(ts, stripped, true);
         Some(output).transpose()
     }
 
@@ -1286,8 +1286,9 @@ impl Session {
         &mut self,
         ts: u64,
         stripped: Stmt,
+        is_staleness: bool,
     ) -> Result<PendingExecution, DriverError> {
-        self.open_stale_transaction(ts)?;
+        self.open_stale_transaction(ts, is_staleness)?;
         match self.execute_parsed_statement_inner("", stripped, None, None, None) {
             Ok(PendingExecution::Query(mut query)) => {
                 query.transaction_end = if self.is_autocommit() || self.vars.snapshot_ts() != 0 {
@@ -1495,7 +1496,9 @@ impl Session {
             && (!scan.names.is_empty() || prepared.is_some() || self.vars.snapshot_ts() != 0)
         {
             if let Some(ts) = self.configured_historical_read_ts()? {
-                return self.run_statement_as_of(ts, stmt);
+                // `tidb_snapshot` comes first and is no staleness read.
+                let is_staleness = self.vars.snapshot_ts() == 0;
+                return self.run_statement_as_of(ts, stmt, is_staleness);
             }
         }
         // Go `DDLExec.executeCreateView` preprocesses the view's SELECT as a
@@ -2201,7 +2204,7 @@ impl Session {
     /// view body, and every DDL, pass it.
     pub fn validate_statement_read_only_in_staleness(&self, stmt: &Stmt) -> Result<(), DriverError> {
         if !self.vars.restricted_sql
-            && (self.historical_read_ts().is_some()
+            && (self.is_staleness_txn()
                 || self.vars.txn_read_ts() != 0
                 || self.external_timestamp_read_enabled())
         {
@@ -2227,19 +2230,91 @@ impl Session {
         Ok(())
     }
 
-    /// Go `ExecStmt`'s history-read refusal (`adapter.go:1067,1152`): a write
-    /// under `tidb_snapshot`, once the statement has compiled.
+    /// Go `ExecStmt`'s refusals for a session reading at `tidb_snapshot` or a
+    /// low-resolution TSO, once the statement has compiled: a write executor
+    /// (`adapter.go:1152`), and a SELECT whose lock is taken -- under
+    /// `tidb_snapshot` in a pessimistic transaction only
+    /// (`handlePessimisticSelectForUpdate`, `adapter.go:1067`).
     pub fn validate_snapshot_write(&self, stmt: &Stmt) -> Result<(), DriverError> {
-        let checked = matches!(stmt, Stmt::Dml(_) | Stmt::Ddl(_) | Stmt::Query(_))
-            || matches!(stmt, Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::Explain(
-                _,
-            ) | tidb_ast::AdminStmt::Trace(_)));
-        if self.vars.snapshot_ts() != 0 && checked && !stmt.is_read_only(true) {
+        let writes = Self::is_write_executor(stmt);
+        if self.vars.snapshot_ts() != 0
+            && (writes
+                || (self.is_select_for_update(stmt) && self.statement_txn_mode().is_pessimistic()))
+        {
             return Err(DriverError::unsupported(
                 "can not execute write statement when 'tidb_snapshot' is set",
             ));
         }
+        if self.use_low_resolution_tso() {
+            if writes {
+                return Err(DriverError::unsupported(
+                    "can not execute write statement when 'tidb_low_resolution_tso' is set",
+                ));
+            }
+            if self.is_select_for_update(stmt) {
+                return Err(DriverError::unsupported(
+                    "can not execute select for update statement when 'tidb_low_resolution_tso' is set",
+                ));
+            }
+        }
         Ok(())
+    }
+
+    /// Go `handleNoDelayExecutor`'s switch on the executor (`DeleteExec`,
+    /// `InsertExec`, `UpdateExec`, `ReplaceExec`, `LoadDataExec`, `DDLExec`,
+    /// `ImportIntoExec`), which `handleNoDelay` hands an `EXPLAIN ANALYZE`'s
+    /// analyzed executor.
+    fn is_write_executor(stmt: &Stmt) -> bool {
+        match stmt {
+            Stmt::Dml(dml) => matches!(
+                dml.as_ref(),
+                tidb_ast::DmlStmt::Insert(_)
+                    | tidb_ast::DmlStmt::Update(_)
+                    | tidb_ast::DmlStmt::Delete(_)
+                    | tidb_ast::DmlStmt::ImportInto(_)
+                    | tidb_ast::DmlStmt::LoadData(_)
+            ),
+            Stmt::Ddl(_) => true,
+            Stmt::Admin(admin) => match admin.as_ref() {
+                tidb_ast::AdminStmt::Explain(explain) if explain.analyze => {
+                    explain.statement().is_some_and(Self::is_write_executor)
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// Go `SessionVars.UseLowResolutionTSO`: a user connection's
+    /// `tidb_low_resolution_tso`.
+    pub(crate) fn use_low_resolution_tso(&self) -> bool {
+        !self.vars.restricted_sql
+            && self.vars.connection_id.is_some_and(|id| id > 0)
+            && self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_LOW_RESOLUTION_TSO)
+                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value))
+    }
+
+    /// Go `ExecStmt.isSelectForUpdate`: a SELECT whose lock the executor
+    /// builder keeps (`hasLock`), which `PessimisticLockEligible` allows only
+    /// inside a transaction or with autocommit off, and which a `FOR SHARE`
+    /// the no-op switch admitted never takes.
+    fn is_select_for_update(&self, stmt: &Stmt) -> bool {
+        let Stmt::Query(query) = stmt else {
+            return false;
+        };
+        let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+            return false;
+        };
+        let Some(lock) = &select.lock else {
+            return false;
+        };
+        let takes_lock = match lock.kind {
+            tidb_ast::LockKind::Update => true,
+            tidb_ast::LockKind::Share => self.vars.shared_lock_promotion_enabled(),
+        };
+        takes_lock && (!self.is_autocommit() || self.in_transaction())
     }
 
     pub(crate) fn external_timestamp_read_enabled(&self) -> bool {

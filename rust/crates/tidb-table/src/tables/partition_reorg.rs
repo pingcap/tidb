@@ -203,8 +203,9 @@ impl TableCommon {
         lazy_dup_check: bool,
         pessimistic: bool,
         check_in_prewrite: bool,
+        row_encoding: tidb_tblctx::RowEncodingConfig,
     ) -> Result<(), KvTableError> {
-        let value = self.encode_row_value(row, zone)?;
+        let value = self.encode_row_value(row, zone, row_encoding, handle)?;
         let key = Key::from_bytes(super::encode_row_key_with_handle(
             physical_id,
             &handle.record_handle(),
@@ -299,6 +300,7 @@ impl TableCommon {
         pessimistic: bool,
         check_in_prewrite: bool,
         ctx: &dyn tidb_exprctx::Columns,
+        row_encoding: tidb_tblctx::RowEncodingConfig,
     ) -> Result<(), KvTableError> {
         if self.reorg_delete_only() || !self.reorganizes(physical_id) {
             return Ok(());
@@ -314,6 +316,7 @@ impl TableCommon {
             lazy_dup_check,
             pessimistic,
             check_in_prewrite,
+            row_encoding,
         )
     }
 
@@ -459,6 +462,7 @@ impl TableCommon {
                 lazy_dup_check,
                 pessimistic,
                 check_in_prewrite,
+                ctx.row_encoding_config(),
             )?;
         }
         Ok(())

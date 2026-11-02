@@ -304,6 +304,13 @@ impl<S: PdClient> RealTransaction<S> {
             .inner_mut()
             .set_assertion_level(level);
     }
+    /// Go `KVTxn.SetCausalConsistency`.
+    pub fn set_causal_consistency(&mut self, causal: bool) {
+        self.engine
+            .transaction_mut()
+            .inner_mut()
+            .set_causal_consistency(causal);
+    }
     /// Go `KVTxn.SetKVFilter`: the commit leaves out every buffered pair the
     /// filter calls unnecessary (Go's driver installs `TiDBKVFilter`).
     pub fn set_kv_filter(&mut self, filter: Arc<dyn tikv_client::KvFilter>) {

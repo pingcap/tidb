@@ -71,6 +71,8 @@ use tidb_ddl_build::table_info_build::{build_table_info_from_ast, DdlAdmissionEr
 
 mod jobs;
 mod rows;
+#[cfg(test)]
+pub(crate) use rows::bootstrapped_global_variables;
 
 pub use rows::{BootstrapEnvironment, SeedRow, SeedValue};
 

@@ -715,3 +715,62 @@ fn update_and_odku_row_outcomes_follow_go() {
         .unwrap();
     assert_eq!(session.statement_insert_id(), 2);
 }
+
+/// Go `MutateContext.GetRowEncodingConfig`: a write encodes its row in the
+/// session's `RowEncoder` format (`tidb_row_format_version`: 1 is the old
+/// `colID, value` layout, 2 the `rowcodec` one starting with `CodecVer`
+/// 128) and appends the row checksum (`rowFlagChecksum`, 1 << 1, in the
+/// header) when `IsRowLevelChecksumEnabled`.
+#[test]
+fn writes_follow_the_session_row_encoding_config() {
+    const CODEC_VER: u8 = 128;
+    const ROW_FLAG_CHECKSUM: u8 = 1 << 1;
+    let stored = |session: &mut Session, id: i64| -> Vec<u8> {
+        let key = session
+            .with_committed_catalog_mut(|catalog| {
+                let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
+                else {
+                    panic!("t is not stored as bytes");
+                };
+                Ok(tidb_tablecodec::table_key::encode_row_key_with_handle(
+                    table.table_id(),
+                    &tidb_tablecodec::table_key::RecordHandle::Int(id),
+                ))
+            })
+            .unwrap();
+        session
+            .get_store_key_for_test(&key)
+            .expect("read the key")
+            .expect("the row is stored")
+    };
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (id INT PRIMARY KEY, v VARCHAR(10))")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1, 'a')").unwrap();
+    let v2 = stored(&mut session, 1);
+    assert_eq!(v2[0], CODEC_VER);
+    assert_eq!(v2[1] & ROW_FLAG_CHECKSUM, 0, "no checksum by default");
+
+    session.run("SET tidb_row_format_version = 1").unwrap();
+    session.run("INSERT INTO t VALUES (2, 'b')").unwrap();
+    assert_ne!(stored(&mut session, 2)[0], CODEC_VER, "version 1 layout");
+
+    // `NewSessionVars` copied `vardef.EnableRowLevelChecksum`: a session
+    // created while it is on.
+    session.vars.enable_row_level_checksum = true;
+    session.run("INSERT INTO t VALUES (3, 'c')").unwrap();
+    assert_ne!(stored(&mut session, 3)[0], CODEC_VER, "no checksum without format 2");
+    session.run("SET tidb_row_format_version = 2").unwrap();
+    session.run("INSERT INTO t VALUES (4, 'd')").unwrap();
+    session.run("UPDATE t SET v = 'e' WHERE id = 1").unwrap();
+    for id in [4, 1] {
+        let value = stored(&mut session, id);
+        assert_eq!(value[0], CODEC_VER);
+        assert_ne!(value[1] & ROW_FLAG_CHECKSUM, 0, "row {id} carries its checksum");
+    }
+    assert_eq!(
+        row_text(session.run("SELECT id, v FROM t ORDER BY id")),
+        [["1", "e"], ["2", "b"], ["3", "c"], ["4", "d"]]
+    );
+}

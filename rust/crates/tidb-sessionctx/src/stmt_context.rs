@@ -909,6 +909,9 @@ pub struct StmtContextData {
     /// Go `SessionVars.LockUnchangedKeys` (`@@tidb_lock_unchanged_keys`):
     /// an unchanged row's unique keys are locked too.
     lock_unchanged_keys: bool,
+    /// Go `MutateContext.GetRowEncodingConfig` over the session's
+    /// `IsRowLevelChecksumEnabled` and `RowEncoder`.
+    row_encoding_config: tidb_tblctx::RowEncodingConfig,
     /// Go's query-scoped `kv.QueryCopStoreLimiter`, created once per
     /// statement when `tidb_query_cop_store_limit` is positive and shared by
     /// all coprocessor scans in that statement.
@@ -2221,6 +2224,13 @@ context_configuration! {
         self
     }
 
+    /// Sets the row encoding writes use (Go `GetRowEncodingConfig`).
+    #[must_use]
+    pub fn with_row_encoding_config(mut self, config: tidb_tblctx::RowEncodingConfig) -> Self {
+        self.row_encoding_config = config;
+        self
+    }
+
     /// Sets `@@tidb_lock_unchanged_keys` for this statement.
     #[must_use]
     pub fn with_lock_unchanged_keys(mut self, lock: bool) -> Self {
@@ -2695,6 +2705,7 @@ impl StmtContext {
             enable_check_constraint: false,
             placement_mode_ignore: false,
             lock_unchanged_keys: tidb_vardef::defaults::DEF_TIDB_LOCK_UNCHANGED_KEYS,
+            row_encoding_config: tidb_tblctx::RowEncodingConfig::default(),
             query_cop_store_limiter: None,
             pessimistic_lazy_dup_check: false,
             pessimistic_transaction: false,
@@ -5770,6 +5781,10 @@ impl tidb_tblctx::MutateContext for StmtContext {
 
     fn tmp_table_max_size(&self) -> i64 {
         StmtContext::tmp_table_max_size(self)
+    }
+
+    fn row_encoding_config(&self) -> tidb_tblctx::RowEncodingConfig {
+        self.row_encoding_config
     }
 
     fn add_temporary_table_to_txn(

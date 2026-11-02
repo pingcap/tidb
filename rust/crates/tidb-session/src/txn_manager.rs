@@ -197,6 +197,7 @@ impl TxnManager {
         set_options_on_txn_active(session.vars())
             .with_statement_kv_context(session.statement_kv_context_cell())
             .with_temporary_tables(session.temporary_table_ids())
+            .with_guarantee_linearizability(session.guarantee_linearizability())
     }
 
     /// Go `LazyTxn`'s activation sets `kv.SizeLimits` from the session's

@@ -240,6 +240,7 @@ fn session_activation_retains_options_after_timestamp_future_failure() {
             kv_context: None,
             temporary_tables: None,
             entry_size_limit: 0,
+            guarantee_linearizability: true,
         };
         let pending = transactions
             .prepare_autocommit_write("default", pessimistic, false, options)

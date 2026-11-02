@@ -350,6 +350,9 @@ pub struct SessionVars {
     /// Go `SessionVars.ClientCapability`: the capability word the front end
     /// negotiated (`cc.capability`).
     pub client_capability: u32,
+    /// Go `SessionVars.EnableRowLevelChecksum`: `NewSessionVars` copies
+    /// `vardef.EnableRowLevelChecksum` when the session is created.
+    pub enable_row_level_checksum: bool,
     /// Go `SessionVars.PrevLastInsertID`: the id `LAST_INSERT_ID()` reports,
     /// which only a statement that ALLOCATED an auto value updates.
     /// (Go `SessionVars.LastInsertID`.)
@@ -547,6 +550,8 @@ impl Default for SessionVars {
             login_user: None,
             connection_id: None,
             client_capability: 0,
+            enable_row_level_checksum: tidb_vardef::ENABLE_ROW_LEVEL_CHECKSUM
+                .load(std::sync::atomic::Ordering::SeqCst),
             last_insert_id: 0,
             in_set_session_states_stmt: false,
             statement_insert_id: 0,

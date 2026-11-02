@@ -689,6 +689,8 @@ impl KvTableBackfill for TableCommon {
             .then(|| tidb_table::tables::null_timestamp_substitute(&target.read().field_type, cast_context))
             .flatten();
         let flags = cast_context.reorg_type_flags_with_sql_mode();
+        let checksum_needed =
+            tidb_vardef::ENABLE_ROW_LEVEL_CHECKSUM.load(std::sync::atomic::Ordering::SeqCst);
         let statement_warnings = cast_context.take_warnings();
         let mut warnings: Vec<(u16, String, i64)> = Vec::new();
         let mut failure = None;
@@ -753,8 +755,14 @@ impl KvTableBackfill for TableCommon {
                         .unwrap_or(tidb_datatype::Datum::Null)
                 });
             }
-            let encoded = self.encode_row_value(&write_row, &zone)?;
-            let _ = handle;
+            // Go `updateColumnWorker`: the reorg context's row encoder, and
+            // the checksum when `vardef.EnableRowLevelChecksum` was on as
+            // the worker started.
+            let row_encoding = tidb_tblctx::RowEncodingConfig {
+                is_row_level_checksum_enabled: checksum_needed,
+                row_format_v2: cast_context.row_encoding_config().row_format_v2,
+            };
+            let encoded = self.encode_row_value(&write_row, &zone, row_encoding, &handle)?;
             store.set(Key::from_bytes(key), encoded)?;
             batch.added += 1;
         }

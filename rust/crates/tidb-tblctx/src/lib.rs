@@ -25,6 +25,25 @@ pub mod temporary_table;
 
 pub use static_mutate::{resolve_statement_clock, StaticMutateContext};
 
+/// Go `tblctx.RowEncodingConfig`: how a write encodes its row values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RowEncodingConfig {
+    /// Go `IsRowLevelChecksumEnabled`: append the row's checksum.
+    pub is_row_level_checksum_enabled: bool,
+    /// Go `RowEncoder.Enable`: the version 2 row format
+    /// (`tidb_row_format_version = 2`), else the version 1 layout.
+    pub row_format_v2: bool,
+}
+
+impl Default for RowEncodingConfig {
+    fn default() -> Self {
+        Self {
+            is_row_level_checksum_enabled: false,
+            row_format_v2: true,
+        }
+    }
+}
+
 /// Go `table.MutateContext` together with its expression context
 /// (`GetExprCtx`), which is the supertrait.
 pub trait MutateContext: tidb_exprctx::Columns + Send + Sync {
@@ -60,6 +79,9 @@ pub trait MutateContext: tidb_exprctx::Columns + Send + Sync {
 
     /// Whether a write maintains indices it does not touch (inside a transaction, or under a foreign-key cascade).
     fn writes_untouched_indices(&self) -> bool;
+
+    /// Go `GetRowEncodingConfig`.
+    fn row_encoding_config(&self) -> RowEncodingConfig;
 
     /// Go `GetRowIDShardGenerator`: the shard a batch of row ids takes.
     fn next_row_id_shard(&self, count: u64) -> u64;

@@ -97,6 +97,7 @@ pub fn options_from_values(
         kv_context: None,
         temporary_tables: None,
         entry_size_limit: 0,
+        guarantee_linearizability: true,
     }
 }
 

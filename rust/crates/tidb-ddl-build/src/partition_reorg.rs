@@ -136,6 +136,7 @@ impl KvTablePartitionReorg for TableCommon {
                         false,
                         false,
                         false,
+                        ctx.row_encoding_config(),
                     )?;
                     rewritten = true;
                 }

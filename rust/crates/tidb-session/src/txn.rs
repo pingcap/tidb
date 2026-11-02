@@ -76,6 +76,14 @@ pub(crate) struct TxnCtx {
     /// The transaction's savepoint stack, oldest first -- Go
     /// `TxnCtx.Savepoints` (`pkg/sessionctx/variable/session.go`).
     savepoints: tidb_variable::savepoints::SavepointStack<Savepoint>,
+    /// Go `EnterNewTxnWithBeginStmt`: a `BEGIN` opened the transaction, and
+    /// whether it said `WITH CAUSAL CONSISTENCY ONLY` (the provider's
+    /// `causalConsistencyOnly`); `None` for one a statement opened.
+    begin_stmt: Option<bool>,
+    /// Go `TxnCtx.IsStaleness`: a staleness provider's transaction (`AS OF`,
+    /// `READ ONLY AS OF`, `tidb_read_staleness`, `tidb_txn_read_ts`), not a
+    /// `tidb_snapshot` read.
+    is_staleness: bool,
 }
 
 impl TxnCtx {
@@ -309,7 +317,7 @@ impl Session {
             return Ok(());
         }
         let mode = self.resolve_begin_txn_mode(tidb_ast::TransactionMode::Default);
-        self.open_txn_ctx(mode);
+        self.open_txn_ctx(mode, None);
         Ok(())
     }
 
@@ -411,7 +419,7 @@ impl Session {
     /// Go `NewTxn`'s fresh `TxnCtx`: the context of a transaction the store
     /// session opens alongside it. The store transaction publishes its own
     /// `StartTS` (`@@tidb_current_ts`) and `TIDB_TRX` row when it activates.
-    fn open_txn_ctx(&mut self, mode: SessionTxnMode) {
+    fn open_txn_ctx(&mut self, mode: SessionTxnMode, begin_stmt: Option<bool>) {
         // Go `txnManager.newProviderWithRequest` picks the provider from
         // `IsolationLevelForNewTxn`, which honors `SET TRANSACTION`.
         let read_committed = self
@@ -426,7 +434,26 @@ impl Session {
             read_committed,
             stale: None,
             savepoints: tidb_variable::savepoints::SavepointStack::default(),
+            begin_stmt,
+            is_staleness: false,
         });
+    }
+
+    /// Go `SetOptionsOnTxnActive`'s `kv.GuaranteeLinearizability`: off under
+    /// `tidb_guarantee_linearizability = OFF` or `WITH CAUSAL CONSISTENCY
+    /// ONLY`; otherwise on unless the transaction is an autocommit statement's
+    /// (its start timestamp already follows every earlier commit).
+    pub(crate) fn guarantee_linearizability(&self) -> bool {
+        let begin_stmt = self.txn_ctx.as_ref().and_then(|ctx| ctx.begin_stmt);
+        if begin_stmt == Some(true)
+            || !self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_GUARANTEE_LINEARIZABILITY)
+                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value))
+        {
+            return false;
+        }
+        !self.is_autocommit() || self.vars.snapshot_ts() > 0 || begin_stmt.is_some()
     }
 
     /// Go `CalculateAsOfTsExpr` (`pkg/sessiontxn/staleread/util.go:41-86`),
@@ -533,6 +560,11 @@ impl Session {
     }
 
     /// Effective historical timestamp of the active statement or stale transaction.
+    /// Go `TxnCtx.IsStaleness`.
+    pub(crate) fn is_staleness_txn(&self) -> bool {
+        self.txn_ctx.as_ref().is_some_and(|txn| txn.is_staleness)
+    }
+
     pub fn historical_read_ts(&self) -> Option<u64> {
         self.statement_snapshot
             .as_ref()
@@ -547,7 +579,11 @@ impl Session {
     /// `START TRANSACTION READ ONLY AS OF TIMESTAMP <resolved ts>`: the Go
     /// stale transaction (`StalenessTxnContextProvider`), whose `StartTS` IS
     /// the as-of timestamp and whose reads all see the store as of it.
-    pub(crate) fn open_stale_transaction(&mut self, ts: u64) -> Result<(), DriverError> {
+    pub(crate) fn open_stale_transaction(
+        &mut self,
+        ts: u64,
+        is_staleness: bool,
+    ) -> Result<(), DriverError> {
         let provider = self.historical_read_provider.as_ref().ok_or_else(|| {
             DriverError::unsupported(
                 "historical reads require the store's historical read provider",
@@ -566,6 +602,8 @@ impl Session {
             read_committed: false,
             stale: Some((ts, read)),
             savepoints: tidb_variable::savepoints::SavepointStack::default(),
+            begin_stmt: Some(false),
+            is_staleness,
         });
         self.current_tso().publish(ts);
         if let Some(observer) = self.transaction_observer() {
@@ -718,10 +756,10 @@ impl Session {
             },
         };
         match stale_ts {
-            Some(ts) => self.open_stale_transaction(ts)?,
+            Some(ts) => self.open_stale_transaction(ts, true)?,
             None => {
                 let mode = self.resolve_begin_txn_mode(begin.mode);
-                self.open_txn_ctx(mode);
+                self.open_txn_ctx(mode, Some(begin.causal_consistency_only));
             }
         }
         // Go sets `InTxn` only once `ActivateTxn` succeeded

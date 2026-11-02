@@ -340,6 +340,10 @@ impl MutateContext for StaticMutateContext {
         64 << 20
     }
 
+    fn row_encoding_config(&self) -> crate::RowEncodingConfig {
+        crate::RowEncodingConfig::default()
+    }
+
     fn statement_memory(&self) -> StatementMemory {
         self.shared.memory.clone()
     }

@@ -101,6 +101,11 @@ pub static CONNECT_ATTRS_LONGEST_SEEN: AtomicI64 = AtomicI64::new(0);
 /// were truncated.
 pub static CONNECT_ATTRS_LOST: AtomicI64 = AtomicI64::new(0);
 
+/// Go `vardef.EnableRowLevelChecksum` (`tidb_enable_row_level_checksum`):
+/// new sessions and column backfills read it.
+pub static ENABLE_ROW_LEVEL_CHECKSUM: AtomicBool =
+    AtomicBool::new(defaults::DEF_TIDB_ENABLE_ROW_LEVEL_CHECKSUM);
+
 /// Go `vardef.EnableForeignKey`: DDL feature policy, independent of session row checks.
 pub static ENABLE_FOREIGN_KEY: AtomicBool = AtomicBool::new(true);
 

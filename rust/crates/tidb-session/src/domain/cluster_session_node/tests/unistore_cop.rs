@@ -1856,6 +1856,73 @@ fn global_bindings_do_not_depend_on_unrelated_staged_writes() {
     }
 }
 
+/// Go `ExecStmt` under `tidb_low_resolution_tso` (`UseLowResolutionTSO`, a
+/// user connection): a write statement and a SELECT that takes its lock
+/// (`isSelectForUpdate`: inside a transaction) are refused with 1105; an
+/// autocommit `FOR UPDATE` takes no lock and reads.
+#[test]
+fn low_resolution_tso_refuses_writes_and_locking_reads() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(126))
+        .expect("session");
+    for sql in [
+        "CREATE TABLE test.lowres (a INT)",
+        "SET tidb_low_resolution_tso = ON",
+    ] {
+        session.node_conn().execute_write(sql).expect("setup");
+    }
+    let refused = |session: &mut Session, sql: &str| {
+        let error = session
+            .node_conn()
+            .execute_write(sql)
+            .expect_err("refused");
+        (error.code, error.message)
+    };
+    assert_eq!(
+        refused(&mut session, "INSERT INTO test.lowres VALUES (1)"),
+        (
+            1105,
+            "can not execute write statement when 'tidb_low_resolution_tso' is set".to_owned()
+        )
+    );
+    assert_eq!(
+        refused(&mut session, "CREATE TABLE test.lowres2 (a INT)").1,
+        "can not execute write statement when 'tidb_low_resolution_tso' is set"
+    );
+    rows(&mut session, "SELECT * FROM test.lowres FOR UPDATE");
+    session
+        .node_conn()
+        .control_transaction("BEGIN")
+        .expect("begin");
+    let error = session
+        .node_conn()
+        .execute("SELECT * FROM test.lowres FOR UPDATE")
+        .err()
+        .expect("a locking read in a transaction is refused");
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (
+            1105,
+            "can not execute select for update statement when 'tidb_low_resolution_tso' is set"
+        )
+    );
+    rows(&mut session, "SELECT * FROM test.lowres");
+    session
+        .node_conn()
+        .control_transaction("ROLLBACK")
+        .expect("rollback");
+    session
+        .node_conn()
+        .execute_write("SET tidb_low_resolution_tso = OFF")
+        .expect("off");
+    session
+        .node_conn()
+        .execute_write("INSERT INTO test.lowres VALUES (1)")
+        .expect("a write runs again");
+}
+
 /// Go `TestLockUnchangedUniqueKeys` (`UniqueAndRowUnchanged`,
 /// `UniqueAndRowChanged`): with `tidb_lock_unchanged_keys` ON a pessimistic
 /// UPDATE (reading through `sk`, as Go's test forces, so no point get on
@@ -12684,6 +12751,31 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
         .node_conn()
         .execute_write("CREATE DATABASE forbidden_history")
         .is_err());
+    // Go `handlePessimisticSelectForUpdate`: a locking read is refused only
+    // where its lock is taken in a pessimistic transaction; EXPLAIN without
+    // ANALYZE runs nothing. Oracle: real TiDB under the same snapshot.
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t FOR UPDATE")),
+        vec![vec!["1", "10"]]
+    );
+    rows(&mut session, "EXPLAIN UPDATE t SET v=30");
+    session.node_conn().control_transaction("BEGIN PESSIMISTIC").unwrap();
+    let error = session
+        .node_conn()
+        .execute("SELECT * FROM t FOR UPDATE")
+        .err()
+        .expect("a pessimistic locking read under tidb_snapshot");
+    assert_eq!(
+        error.message,
+        "can not execute write statement when 'tidb_snapshot' is set"
+    );
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
+    session.node_conn().control_transaction("BEGIN OPTIMISTIC").unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t FOR UPDATE")),
+        vec![vec!["1", "10"]]
+    );
+    session.node_conn().control_transaction("ROLLBACK").unwrap();
     rows(&mut session, "SET autocommit=0");
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t")),

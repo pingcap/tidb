@@ -1705,6 +1705,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_enable_check_constraint(self.enable_check_constraint())
                     .with_placement_mode_ignore(self.placement_mode_ignore())
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
+                    .with_row_encoding_config(self.row_encoding_config())
                     .with_sysdate_is_now(sysdate_is_now)
                     .with_replica_read(replica_read)
                     .with_read_consistency(read_replica_scope, is_staleness)
@@ -1852,6 +1853,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_enable_check_constraint(self.enable_check_constraint())
                 .with_placement_mode_ignore(self.placement_mode_ignore())
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
+                    .with_row_encoding_config(self.row_encoding_config())
                 .with_constraint_check_in_place(constraint_check_in_place)
                 .with_pessimistic_check_in_prewrite(
                     !self.pessimistic_constraint_check_in_place()
@@ -1946,6 +1948,24 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
 
     /// Go `SessionVars.PlacementMode` (`@@tidb_placement_mode`), `IGNORE`
     /// against `STRICT`.
+    /// Go `MutateContext.GetRowEncodingConfig`: `RowEncoder.Enable` follows
+    /// `tidb_row_format_version` (1 off, 2 on), and the checksum
+    /// `IsRowLevelChecksumEnabled` (the flag, format 2, not internal SQL).
+    fn row_encoding_config(&self) -> tidb_tblctx::RowEncodingConfig {
+        let vars = self.session_vars();
+        let row_format_v2 = vars
+            .system_value(tidb_vardef::tidb_vars::TIDB_ROW_FORMAT_VERSION)
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .is_none_or(|version| version != 1);
+        tidb_tblctx::RowEncodingConfig {
+            is_row_level_checksum_enabled: vars.enable_row_level_checksum
+                && row_format_v2
+                && !vars.restricted_sql,
+            row_format_v2,
+        }
+    }
+
     fn lock_unchanged_keys(&self) -> bool {
         self.session_vars()
             .system_value(tidb_vardef::tidb_vars::TIDB_LOCK_UNCHANGED_KEYS)

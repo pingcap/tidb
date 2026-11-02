@@ -1042,6 +1042,8 @@ impl GlobalSysvars {
                 | PERFORMANCE_SCHEMA_SESSION_CONNECT_ATTRS_SIZE
                 | TIDB_TTL_JOB_ENABLE
                 | TIDB_ENABLE_FOREIGN_KEY
+                | TIDB_ENABLE_ROW_LEVEL_CHECKSUM
+                | TIDB_ENABLE_TS_VALIDATION
                 | TIDB_ENABLE_CHECK_CONSTRAINT
                 | TIDB_DDL_ENABLE_FAST_REORG
                 | TIDB_ENABLE_MDL
@@ -1103,6 +1105,13 @@ impl GlobalSysvars {
             TIDB_FORCE_PRIORITY => tidb_vardef::FORCE_PRIORITY
                 .store(tidb_mysql::priority_from_str(value).as_enum(), SeqCst),
             TIDB_ENABLE_FOREIGN_KEY => tidb_vardef::ENABLE_FOREIGN_KEY.store(on, SeqCst),
+            // Go `SetGlobal`: `oracles.EnableTSValidation.Store(TiDBOptOn(val))`.
+            TIDB_ENABLE_TS_VALIDATION => {
+                tikv_client::oracle::oracles::ENABLE_TS_VALIDATION.store(on, SeqCst)
+            }
+            TIDB_ENABLE_ROW_LEVEL_CHECKSUM => {
+                tidb_vardef::ENABLE_ROW_LEVEL_CHECKSUM.store(on, SeqCst)
+            }
             TIDB_ENABLE_CHECK_CONSTRAINT => tidb_vardef::ENABLE_CHECK_CONSTRAINT.store(on, SeqCst),
             TIDB_DDL_ENABLE_FAST_REORG => tidb_vardef::ENABLE_FAST_REORG.store(on, SeqCst),
             // Go's `TiDBEnableMDL` hook runs `SwitchMDL` -> `SetEnableMDL`. A

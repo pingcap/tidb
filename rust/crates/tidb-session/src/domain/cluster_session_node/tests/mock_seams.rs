@@ -686,10 +686,13 @@ pub(super) struct MockSysvarWriter {
 }
 
 impl MockSysvarWriter {
+    /// A bootstrapped cluster's `mysql.global_variables`, as every Go node
+    /// finds them.
     pub(super) fn new() -> Self {
+        let rows = crate::mysql_bootstrap::bootstrapped_global_variables();
         Self {
-            stored: GlobalSysvars::default(),
-            live: GlobalSysvars::default(),
+            stored: GlobalSysvars::from_cluster_rows(rows.clone()),
+            live: GlobalSysvars::from_cluster_rows(rows),
             persists: Arc::new(AtomicBool::new(true)),
         }
     }

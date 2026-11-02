@@ -2518,11 +2518,15 @@ impl TableCommon {
         Ok(TableHandle::Common(padded.encoded().to_vec()))
     }
 
-    /// The row value bytes, omitting lossless handle columns.
+    /// The row value bytes, omitting lossless handle columns, in the format
+    /// `config` names, with the row checksum over `handle` when it asks for
+    /// one (Go `EncodeRowBuffer.WriteMemBufferEncoded`).
     pub fn encode_row_value(
         &self,
         row: &[Datum],
         zone: &SessionTimeZone,
+        config: tidb_tblctx::RowEncodingConfig,
+        handle: &TableHandle,
     ) -> Result<Vec<u8>, KvTableError> {
         let mut ids = Vec::with_capacity(self.columns.len());
         let mut values = Vec::with_capacity(self.columns.len());
@@ -2564,7 +2568,14 @@ impl TableCommon {
                 }
             }
         }
-        encode_table_row(Some(zone), &values, &ids, true, None)
+        // Go `rowcodec.RawChecksum{Handle: handle}`.
+        let checksum = config.is_row_level_checksum_enabled.then(|| {
+            tidb_rowcodec::RowChecksumPolicy::RawHandle(match handle {
+                TableHandle::Int(value) => tidb_rowcodec::Handle::Int(*value),
+                TableHandle::Common(bytes) => tidb_rowcodec::Handle::Common(vec![bytes.clone()]),
+            })
+        });
+        encode_table_row(Some(zone), &values, &ids, config.row_format_v2, checksum.as_ref())
             .map_err(|e| KvTableError::Encode(format!("{e:?}")))
     }
 
@@ -3966,7 +3977,6 @@ impl TableCommon {
         let write_row =
             self.insert_write_row(row, stats_ctx, tidb_exprctx::Columns::type_flags(ctx), &zone)?;
         let row = write_row.as_deref().unwrap_or(row);
-        let value = self.encode_row_value(row, &zone)?;
         // Go `addRecord`: every record key is unique. A clustered key derives
         // it from visible columns; a heap table derives it from `_tidb_rowid`,
         // which `FORCE AUTO_INCREMENT` can intentionally rewind -- or which
@@ -3995,6 +4005,11 @@ impl TableCommon {
             Some(handle) => handle,
             None => self.handle_of_row(row, &zone, shard)?,
         };
+        let row_encoding = stats_ctx.map_or_else(
+            tidb_tblctx::RowEncodingConfig::default,
+            tidb_tblctx::MutateContext::row_encoding_config,
+        );
+        let value = self.encode_row_value(row, &zone, row_encoding, &handle)?;
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
         let physical_id = self.record_physical_id(row, ctx)?;
         let key = Key::from_bytes(encode_row_key_with_handle(
@@ -4063,6 +4078,7 @@ impl TableCommon {
             pessimistic,
             check_in_prewrite,
             ctx,
+            row_encoding,
         )?;
         if let Some(stats_ctx) = stats_ctx {
             stats_ctx.update_delta_for_table(physical_id, 1, 1);
@@ -4458,7 +4474,7 @@ impl TableCommon {
             }
         }
         // The handle columns stay out of the value, as on insert.
-        let value = self.encode_row_value(row, &zone)?;
+        let value = self.encode_row_value(row, &zone, ctx.row_encoding_config(), &new_handle)?;
         // An update can move the row TWICE over: onto a new handle, and --
         // when the update changes a partitioning column -- into a different
         // partition. Both are the same move, because both change the record

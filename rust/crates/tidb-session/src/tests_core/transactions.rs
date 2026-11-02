@@ -996,3 +996,27 @@ fn set_transaction_isolation_level_applies_to_the_next_transaction_only() {
     session.run("COMMIT").unwrap();
     assert!(!begin_is_rc(&mut session));
 }
+
+/// Go `SetOptionsOnTxnActive`'s `kv.GuaranteeLinearizability`: on for a
+/// transaction a `BEGIN` or `autocommit = 0` opened, off for an autocommit
+/// statement's, for `WITH CAUSAL CONSISTENCY ONLY`, and under
+/// `tidb_guarantee_linearizability = OFF`.
+#[test]
+fn guarantee_linearizability_follows_go() {
+    let mut session = Session::new();
+    assert!(!session.guarantee_linearizability(), "an autocommit statement");
+    session.run("BEGIN").unwrap();
+    assert!(session.guarantee_linearizability(), "BEGIN");
+    session.run("COMMIT").unwrap();
+    session.run("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY").unwrap();
+    assert!(!session.guarantee_linearizability(), "causal consistency only");
+    session.run("COMMIT").unwrap();
+    session.run("SET autocommit = 0").unwrap();
+    assert!(session.guarantee_linearizability(), "autocommit off");
+    session.run("SET tidb_guarantee_linearizability = OFF").unwrap();
+    assert!(!session.guarantee_linearizability(), "the variable off");
+    session.run("SET autocommit = 1").unwrap();
+    session.run("BEGIN").unwrap();
+    assert!(!session.guarantee_linearizability(), "BEGIN with the variable off");
+    session.run("COMMIT").unwrap();
+}

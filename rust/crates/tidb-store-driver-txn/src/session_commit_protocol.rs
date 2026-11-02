@@ -42,6 +42,10 @@ pub struct SessionTransactionOptions {
     /// 0 it overrides the configured one-entry size limit for this
     /// transaction (`LazyTxn` sets `kv.SizeLimits`).
     pub entry_size_limit: u64,
+    /// Go `kv.GuaranteeLinearizability`: the async-commit / 1PC commit fetches
+    /// a timestamp before prewrite; off, the transaction is causally
+    /// consistent only (`KVTxn.SetCausalConsistency(true)`).
+    pub guarantee_linearizability: bool,
 }
 
 /// The ids of a session's temporary tables, refreshed by the session as its
@@ -80,6 +84,7 @@ impl SessionTransactionOptions {
         if self.entry_size_limit > 0 {
             transaction.set_entry_size_limit(self.entry_size_limit);
         }
+        transaction.set_causal_consistency(!self.guarantee_linearizability);
         if let Some(context) = self.kv_context {
             transaction.set_statement_kv_context(context);
         }
@@ -92,6 +97,13 @@ impl SessionTransactionOptions {
         context: tidb_txnkv::StatementKvContextCell,
     ) -> Self {
         self.kv_context = Some(context);
+        self
+    }
+
+    /// Go `SetOptionsOnTxnActive`'s `kv.GuaranteeLinearizability`.
+    #[must_use]
+    pub fn with_guarantee_linearizability(mut self, guarantee: bool) -> Self {
+        self.guarantee_linearizability = guarantee;
         self
     }
 
@@ -175,6 +187,7 @@ impl From<CommitProtocol> for SessionTransactionOptions {
             kv_context: None,
             temporary_tables: None,
             entry_size_limit: 0,
+            guarantee_linearizability: true,
         }
     }
 }

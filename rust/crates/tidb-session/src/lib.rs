@@ -2528,6 +2528,12 @@ impl Session {
         self.node().set_store_send_hook(hook);
     }
 
+    /// The committed value of one raw key in this session's store.
+    #[cfg(test)]
+    pub(crate) fn get_store_key_for_test(&self, key: &[u8]) -> Result<Option<Vec<u8>>, String> {
+        self.node().get_key_for_test(key)
+    }
+
     /// Commits the delete of one raw key into this session's store, as Go's
     /// corruption tests do through a transaction of their own.
     #[cfg(test)]
@@ -3319,7 +3325,7 @@ impl tidb_executor::sessionctx::SessionContext for Session {
     }
 
     fn txn_is_staleness(&self) -> bool {
-        self.historical_read_ts().is_some()
+        self.is_staleness_txn()
     }
 
     fn set_system_var(&mut self, name: &str, value: String) -> Result<(), DriverError> {

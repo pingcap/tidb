@@ -3002,3 +3002,39 @@ fn set_value_conversion_and_validation_follow_go() {
         assert_eq!(error(&mut session, sql), (code, message.to_owned()), "{sql}");
     }
 }
+
+/// Go `tidb_enable_ts_validation`'s `SetGlobal` stores client-go's
+/// `oracles.EnableTSValidation`, and `tidb_enable_row_level_checksum`'s
+/// stores `vardef.EnableRowLevelChecksum`; a load that carries no row
+/// publishes the registry defaults (ON, OFF).
+#[test]
+fn ts_validation_global_hook_updates_the_client_switch() {
+    use std::sync::atomic::Ordering::SeqCst;
+    use tidb_vardef::ENABLE_ROW_LEVEL_CHECKSUM;
+    use tikv_client::oracle::oracles::ENABLE_TS_VALIDATION;
+    let _serialised = process_switch_tests();
+    struct Restore(bool, bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            ENABLE_TS_VALIDATION.store(self.0, SeqCst);
+            ENABLE_ROW_LEVEL_CHECKSUM.store(self.1, SeqCst);
+        }
+    }
+    let _restore = Restore(
+        ENABLE_TS_VALIDATION.load(SeqCst),
+        ENABLE_ROW_LEVEL_CHECKSUM.load(SeqCst),
+    );
+    let globals = tidb_domain::global_sysvars::GlobalSysvars::new();
+    globals
+        .set(tidb_vardef::tidb_vars::TIDB_ENABLE_TS_VALIDATION, "OFF".to_owned())
+        .unwrap();
+    assert!(!ENABLE_TS_VALIDATION.load(SeqCst));
+    globals
+        .set(tidb_vardef::tidb_vars::TIDB_ENABLE_ROW_LEVEL_CHECKSUM, "ON".to_owned())
+        .unwrap();
+    assert!(ENABLE_ROW_LEVEL_CHECKSUM.load(SeqCst));
+    let fresh_cluster = tidb_domain::global_sysvars::GlobalSysvars::new();
+    fresh_cluster.load_from_cluster([("autocommit".to_owned(), "ON".to_owned())]);
+    assert!(ENABLE_TS_VALIDATION.load(SeqCst));
+    assert!(!ENABLE_ROW_LEVEL_CHECKSUM.load(SeqCst));
+}
