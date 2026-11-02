@@ -19,12 +19,10 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"strconv"
-<<<<<<< HEAD
-=======
 	"strings"
 	"sync/atomic"
->>>>>>> 63cd22c529a (planner: prune statement summary history for prepared time parameters (#71707))
 	"testing"
 	"time"
 
@@ -566,8 +564,6 @@ func TestStmtSummaryHistoryTableOther(t *testing.T) {
 		))
 }
 
-<<<<<<< HEAD
-=======
 func TestStmtSummaryHistoryOpenEndedTimeRange(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
@@ -900,7 +896,6 @@ func TestStmtSummaryHistoryPreparedTimeRangeDST(t *testing.T) {
 	}
 }
 
->>>>>>> 63cd22c529a (planner: prune statement summary history for prepared time parameters (#71707))
 func TestPerformanceSchemaforNonPrepPlanCache(t *testing.T) {
 	setupStmtSummary()
 	defer closeStmtSummary()

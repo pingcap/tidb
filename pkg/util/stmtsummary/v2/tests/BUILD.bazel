@@ -8,11 +8,7 @@ go_test(
         "table_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 14,
-=======
-    shard_count = 19,
->>>>>>> 63cd22c529a (planner: prune statement summary history for prepared time parameters (#71707))
+    shard_count = 17,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",

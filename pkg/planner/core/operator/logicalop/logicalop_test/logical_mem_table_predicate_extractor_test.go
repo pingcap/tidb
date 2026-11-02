@@ -45,6 +45,12 @@ import (
 )
 
 func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessionapi.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool) {
+	memTable, ok, _ := getLogicalMemTableWithRemained(t, dom, se, parser, sql)
+	return memTable, ok
+}
+
+func getLogicalMemTableWithRemained(t *testing.T, dom *domain.Domain, se sessionapi.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool, []expression.Expression) {
+	se.GetSessionVars().PlanColumnID.Store(0)
 	stmt, err := parser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 
@@ -59,14 +65,18 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessionapi.Session,
 
 	// Obtain the leaf plan
 	leafPlan := logicalPlan
+	var remained []expression.Expression
 	for len(leafPlan.Children()) > 0 {
+		if selection, ok := leafPlan.(*logicalop.LogicalSelection); ok {
+			remained = append(remained, selection.Conditions...)
+		}
 		leafPlan = leafPlan.Children()[0]
 	}
 	switch lg := leafPlan.(type) {
 	case *logicalop.LogicalMemTable:
-		return lg, true
+		return lg, true, remained
 	case *logicalop.LogicalTableDual:
-		return nil, false
+		return nil, false, remained
 	}
 	panic("unreachable")
 }
@@ -254,8 +264,6 @@ func timestamp(t *testing.T, s string) int64 {
 	return tt.UnixMilli()
 }
 
-<<<<<<< HEAD
-=======
 func TestStatementsSummaryExtractorOpenEndedTimeRange(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	se, err := session.CreateSession4Test(store)
@@ -299,8 +307,10 @@ func TestStatementsSummaryExtractorOpenEndedTimeRange(t *testing.T) {
 
 	tk := testkit.NewTestKitWithSession(t, store, se)
 	tk.MustExec("set time_zone = '+08:00'")
+	// This branch renders the bound in the session time zone without clamping
+	// it to MaxDatetime. The logical bound is checked above.
 	tk.MustQuery("explain select * from information_schema.statements_summary where summary_end_time >= '2020-01-01 00:00:00'").MultiCheckContain([]string{
-		"end_time: 9999-12-31 23:59:59.999999",
+		"end_time: " + maxTime.In(se.GetSessionVars().Location()).Format("2006-01-02 15:04:05.999999"),
 	})
 }
 
@@ -457,7 +467,6 @@ func TestStatementsSummaryExtractorConservativeTimeRange(t *testing.T) {
 	}
 }
 
->>>>>>> 63cd22c529a (planner: prune statement summary history for prepared time parameters (#71707))
 func TestClusterLogTableExtractor(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 

@@ -358,12 +358,8 @@ func (r *HistoryReader) scheduleTasks(
 		func() {
 			for _, file := range r.files.files {
 				select {
-<<<<<<< HEAD
 				case filesCh <- file.file:
-=======
-				case filesCh <- file:
-					failpoint.InjectCall("stmtSummaryHistoryScanFile", file.path)
->>>>>>> 63cd22c529a (planner: prune statement summary history for prepared time parameters (#71707))
+					failpoint.InjectCall("stmtSummaryHistoryScanFile", file.file.Name())
 				case <-ctx.Done():
 					return
 				}
@@ -516,7 +512,7 @@ func parseBeginTsAndReseek(file *os.File) (int64, error) {
 
 func parseEndTs(file *os.File) (int64, error) {
 	// tidb-statements.log
-	filename := config.GetGlobalConfig().Instance.StmtSummaryFilename
+	filename := filepath.Base(config.GetGlobalConfig().Instance.StmtSummaryFilename)
 	// .log
 	ext := filepath.Ext(filename)
 	// tidb-statements
@@ -768,19 +764,7 @@ func (w *stmtParseWorker) handleLines(
 
 	rows := make([][]types.Datum, 0, len(lines))
 	for _, line := range lines {
-<<<<<<< HEAD
-=======
-		if w.checker.digests != nil {
-			// Cheap digest pre-filter: records whose digest cannot match skip the full
-			// unmarshal. Only keys are walked — values are skipped byte-wise — and the
-			// last case-insensitive digest key wins, matching the full decode; anything not
-			// cheaply skippable falls back to the full decode.
-			if digest, ok := extractDigest(line); ok && !w.checker.isDigestValid(digest) {
-				continue
-			}
-		}
 		failpoint.InjectCall("stmtSummaryHistoryParseRecord")
->>>>>>> 63cd22c529a (planner: prune statement summary history for prepared time parameters (#71707))
 		record, skipped, err := w.parse(line)
 		if err != nil {
 			// ignore invalid lines

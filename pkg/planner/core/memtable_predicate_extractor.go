@@ -219,24 +219,19 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 	// SELECT * FROM t1 WHERE c='rhs'
 	// SELECT * FROM t1 WHERE 'lhs'=c
 	constant, ok := args[1-colIdx].(*expression.Constant)
-<<<<<<< HEAD
-	if !ok || constant.DeferredExpr != nil {
-		return "", nil
-=======
 	if !ok {
-		return "", nil, false
->>>>>>> 63cd22c529a (planner: prune statement summary history for prepared time parameters (#71707))
+		return "", nil
 	}
 	v := constant.Value
 	if constant.DeferredExpr != nil {
 		if !helper.enableDeferredConst || !expression.IsRuntimeConstExpr(constant.DeferredExpr) ||
 			expression.IsMutableEffectsExpr(constant.DeferredExpr) {
-			return "", nil, false
+			return "", nil
 		}
 		var err error
 		v, err = constant.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
-			return "", nil, false
+			return "", nil
 		}
 		// The extracted range belongs to this execution's bindings. Even an
 		// empty-range plan must not cache it for the next execution.
@@ -1686,22 +1681,19 @@ func (e *StatementsSummaryExtractor) findCoarseTimeRange(
 }
 
 func (e *StatementsSummaryExtractor) buildTimeRange(start, end int64) *TimeRange {
-	const defaultStatementsDuration = time.Hour
 	var startTime, endTime time.Time
 	if start == 0 && end == 0 {
 		return nil
 	}
 	if start != 0 {
 		startTime = e.convertToTime(start)
+	} else {
+		startTime, _ = types.MinDatetime.GoTime(time.UTC)
 	}
 	if end != 0 {
 		endTime = e.convertToTime(end)
-	}
-	if start == 0 {
-		startTime = endTime.Add(-defaultStatementsDuration)
-	}
-	if end == 0 {
-		endTime = startTime.Add(defaultStatementsDuration)
+	} else {
+		endTime, _ = types.MaxDatetime.GoTime(time.UTC)
 	}
 	return &TimeRange{StartTime: startTime, EndTime: endTime}
 }
