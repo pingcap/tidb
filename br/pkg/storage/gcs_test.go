@@ -315,6 +315,7 @@ func TestNewGCSStorage(t *testing.T) {
 		require.Equal(t, "", gcs.CredentialsBlob)
 	}
 	mustReportCredErr = true
+	t.Cleanup(func() { mustReportCredErr = false })
 	{
 		fakeCredentialsFile, err := os.CreateTemp(testDir, "fakeCredentialsFile")
 		require.NoError(t, err)
@@ -397,11 +398,12 @@ func TestNewGCSStorage(t *testing.T) {
 	// without http client
 	{
 		gcs := &backuppb.GCS{
-			Bucket:          bucketName,
-			Prefix:          "a/b",
-			StorageClass:    "NEARLINE",
-			PredefinedAcl:   "private",
-			CredentialsBlob: `{"type": "service_account"}`,
+			Bucket:        bucketName,
+			Prefix:        "a/b",
+			StorageClass:  "NEARLINE",
+			PredefinedAcl: "private",
+			// No token request is made; these fields satisfy client construction.
+			CredentialsBlob: `{"type":"service_account","client_email":"test@example.com","private_key":"unused-test-key","token_uri":"https://oauth2.googleapis.com/token"}`,
 		}
 		_, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  false,
