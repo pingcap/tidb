@@ -65,6 +65,14 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	return dm.getWithFilter(store, nil, nil)
 }
 
+// GetOrCreateWithFilter gets or creates the domain for store with a schema filter.
+//
+// Caveat: If there is already a domain opened with your `store`, the filter passed in will be ignored and
+// the actual schema filter of the returned `Domain` is the one when the domain was created.
+func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
+	return dm.getWithFilter(store, filter, nil)
+}
+
 // GetOrCreateBRDomain gets or creates the domain used by standalone BR.
 // An existing domain keeps its original RPC eligibility and schema filter.
 func (dm *domainMap) GetOrCreateBRDomain(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
