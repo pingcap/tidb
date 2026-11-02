@@ -95,6 +95,7 @@ pub mod optimize;
 #[cfg(test)]
 mod partidx_tests;
 pub mod post_optimize;
+mod fine_grained_shuffle;
 #[cfg(test)]
 mod physical_tests;
 pub mod chunk_reuse;

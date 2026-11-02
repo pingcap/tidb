@@ -4222,3 +4222,29 @@ fn projection_derive_stats_panics_when_the_schema_outgrows_the_exprs_like_go() {
     }))
     .is_err());
 }
+
+/// Go `preparePossibleProperties` reads the session: a TiFlash-backed source
+/// reports `HasTiFlash` up the tree only while TiFlash is an isolation-read
+/// engine and MPP is allowed, and an operator above takes its child's flag.
+#[test]
+fn possible_properties_take_the_session_tiflash_and_mpp_switches() {
+    let mut source = DataSource::new(BaseLogicalPlan::default(), 7, "t");
+    source.used_hypo_tiflash_replica = true;
+    let window_over = |source: &DataSource| {
+        let mut window = LogicalWindow::default();
+        window
+            .base
+            .set_children(vec![LogicalPlan::DataSource(source.clone())]);
+        LogicalPlan::Window(window)
+    };
+    let has_tiflash = |plan: LogicalPlan, isolation: bool, mpp: bool| {
+        let (plan, info) = crate::prepare_possible_properties(plan, isolation, mpp);
+        let LogicalPlan::Window(window) = plan else {
+            unreachable!("the root is the window");
+        };
+        (info.has_tiflash, window.base.has_tiflash())
+    };
+    assert_eq!(has_tiflash(window_over(&source), true, true), (true, true));
+    assert_eq!(has_tiflash(window_over(&source), false, true), (false, false));
+    assert_eq!(has_tiflash(window_over(&source), true, false), (false, false));
+}

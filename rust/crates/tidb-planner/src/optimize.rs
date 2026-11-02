@@ -68,6 +68,10 @@ pub trait OptimizeContext: tidb_exprctx::Columns + PlanCacheMarker + HintWarning
     fn index_lookup_push_down_session(&self) -> tidb_sessionctx::IndexLookupPushDownSession;
     /// Go `SessionVars.IsolationReadEngines`.
     fn isolation_read_engines(&self) -> &str;
+    /// Go `SessionVars`' inputs to `handleFineGrainedShuffle`.
+    fn tiflash_fine_grained_shuffle(&self) -> tidb_sessionctx::TiFlashFineGrainedShuffleSession;
+    /// The TiFlash cluster `handleFineGrainedShuffle` sizes streams from.
+    fn tiflash_cluster_info(&self) -> Option<&std::sync::Arc<dyn tidb_sessionctx::TiFlashClusterInfo>>;
     /// Go `SessionVars.GetEnableIndexMerge()`.
     fn index_merge(&self) -> bool;
     /// Go `StmtCtx.NoIndexMergeHint`.
@@ -320,8 +324,18 @@ pub fn optimize_logical<C: OptimizeContext>(
     let begin_physical_opt = Instant::now();
     optimized.recursive_derive_stats_with_context(&[], &rule_context)?;
     ctx.finish_stats_derive(begin_physical_opt);
-    let logical = prepare_possible_properties(optimized).0;
+    let logical = prepare_possible_properties_for(ctx, optimized);
     Ok(logical)
+}
+
+/// Go `preparePossibleProperties` with the session's reads: TiFlash in
+/// `IsolationReadEngines`, and `IsMPPAllowed()`.
+pub fn prepare_possible_properties_for<C: OptimizeContext>(ctx: &C, plan: LogicalPlan) -> LogicalPlan {
+    let tiflash_in_isolation_read = ctx
+        .isolation_read_engines()
+        .split(',')
+        .any(|engine| engine.trim().eq_ignore_ascii_case("tiflash"));
+    prepare_possible_properties(plan, tiflash_in_isolation_read, ctx.optimizer_cost_env().session.mpp_allowed).0
 }
 
 /// Go `DataSource.CheckPartialIndexes` over every source, which Go's
@@ -537,6 +551,8 @@ pub fn physical_optimize<C: OptimizeContext>(
     if ctx.enable_parallel_apply() {
         crate::post_optimize::enable_parallel_apply(&mut physical, ctx.executor_concurrency());
     }
+    // Go postOptimize: handleFineGrainedShuffle.
+    crate::fine_grained_shuffle::handle_fine_grained_shuffle(ctx, &mut physical);
     // Go postOptimize: disableReuseChunkIfNeeded.
     if ctx.is_alloc_valid()
         && crate::chunk_reuse::should_disable_reuse_chunk(

@@ -1612,7 +1612,7 @@ impl DriverCteOptimizer<'_> {
         optimized.recursive_derive_stats_with_context(&[], rule_context)?;
         ctx.phase_durations()
             .finish_stats_derive(begin_physical_opt);
-        let logical = prepare_possible_properties(optimized).0;
+        let logical = tidb_planner::optimize::prepare_possible_properties_for(ctx, optimized);
         let physical = physical_plan_for_logical(&logical, self.plan_ids, self.column_ids, ctx)?;
         Ok((logical, physical))
     }

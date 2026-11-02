@@ -109,7 +109,12 @@ fn data_source_orders(source: &super::DataSource, inherited_fixed: &[i64]) -> Ve
     orders
 }
 
-struct Prepare;
+/// Go `preparePossibleProperties`' session reads: whether
+/// `IsolationReadEngines` holds TiFlash, and `IsMPPAllowed()`.
+struct Prepare {
+    tiflash_in_isolation_read: bool,
+    mpp_allowed: bool,
+}
 
 impl OwnedRewrite for Prepare {
     type Down = Vec<i64>;
@@ -122,7 +127,11 @@ impl OwnedRewrite for Prepare {
     ) -> Descend<Self::Down, Self::Up> {
         if let LogicalPlan::DataSource(source) = node {
             let orders = data_source_orders(source, &fixed);
-            return Descend::Stop(source.prepare_possible_properties(orders, false, false));
+            return Descend::Stop(source.prepare_possible_properties(
+                orders,
+                self.tiflash_in_isolation_read,
+                self.mpp_allowed,
+            ));
         }
         if let LogicalPlan::Selection(selection) = node {
             fixed.extend(equality_fixed_columns(&selection.conditions));
@@ -167,7 +176,7 @@ impl OwnedRewrite for Prepare {
             },
             LogicalPlan::DataSource(operator) => {
                 let orders = data_source_orders(operator, &[]);
-                operator.prepare_possible_properties(orders, false, false)
+                operator.prepare_possible_properties(orders, self.tiflash_in_isolation_read, self.mpp_allowed)
             }
             LogicalPlan::Sort(operator) => operator.prepare_possible_properties(first),
             LogicalPlan::TopN(operator) => operator.prepare_possible_properties(first),
@@ -200,6 +209,17 @@ impl OwnedRewrite for Prepare {
 /// Runs Go's `preparePossibleProperties` over `plan`, returning the updated
 /// tree and its root property inventory.
 #[must_use]
-pub fn prepare_possible_properties(plan: LogicalPlan) -> (LogicalPlan, PossiblePropertiesInfo) {
-    fold_owned(&mut Prepare, plan, Vec::new())
+pub fn prepare_possible_properties(
+    plan: LogicalPlan,
+    tiflash_in_isolation_read: bool,
+    mpp_allowed: bool,
+) -> (LogicalPlan, PossiblePropertiesInfo) {
+    fold_owned(
+        &mut Prepare {
+            tiflash_in_isolation_read,
+            mpp_allowed,
+        },
+        plan,
+        Vec::new(),
+    )
 }

@@ -158,6 +158,17 @@ impl ClusterTopology {
         }
     }
 
+    /// Go `infoschema.GetStoreServerInfo`: the TiKV and TiFlash stores PD
+    /// lists. A node without PD discovery has no store to ask.
+    pub fn store_servers(&self) -> Result<Vec<ClusterServer>, String> {
+        let Some(discovery) = &self.discovery else {
+            return Err("pd unavailable".to_owned());
+        };
+        let mut servers: Vec<_> = discovery.stores()?.into_iter().map(|store| store.server).collect();
+        resolve_servers(&mut servers)?;
+        Ok(servers)
+    }
+
     /// Go GetClusterServerInfo retriever ordering and fail-on-retriever-error contract.
     /// Warnings remain available to the statement even when a later retriever fails.
     pub fn servers(&self, warnings: &mut Vec<String>) -> Result<Vec<ClusterServer>, String> {

@@ -385,6 +385,42 @@ pub enum PessimisticTxnProvider {
     },
 }
 
+/// Go `SessionVars`' inputs to `handleFineGrainedShuffle` and
+/// `PhysicalHashJoin.CanTiFlashUseHashJoinV2`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TiFlashFineGrainedShuffleSession {
+    /// `TiFlashFineGrainedShuffleStreamCount`.
+    pub stream_count: i64,
+    /// `TiFlashMaxThreads`.
+    pub max_threads: i64,
+    /// The session half of `CanTiFlashUseHashJoinV2`: an optimized
+    /// `TiFlashHashJoinVersion` with no TiFlash spill configured.
+    pub hash_join_v2: bool,
+}
+
+/// One TiFlash server, as Go's `infoschema.ServerInfo` names it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TiFlashServer {
+    /// `Address`.
+    pub address: String,
+    /// `StatusAddr`.
+    pub status_address: String,
+    /// `StartTimestamp`.
+    pub start_timestamp: i64,
+}
+
+/// The TiFlash cluster as Go's fine-grained shuffle pass asks it.
+pub trait TiFlashClusterInfo: Send + Sync {
+    /// Go `infoschema.GetTiFlashServerInfo`.
+    fn tiflash_server_info(&self) -> Result<Vec<TiFlashServer>, String>;
+
+    /// Go `getTiFlashServerMinLogicalCores`: the fewest logical cores among
+    /// `servers` (from `GlobalMPPServerInfoManager`, refreshing servers it
+    /// does not know through their hardware info), or `None` when no
+    /// server's count is known.
+    fn min_logical_cores(&self, servers: &[TiFlashServer]) -> Option<u64>;
+}
+
 /// Go `stmtctx.StatementContext`, in the part evaluation actually reads: the
 /// warning buffer and the error levels that decide whether a tolerable
 /// condition warns or fails the statement.
@@ -932,6 +968,11 @@ pub struct StmtContextData {
     /// The Go pessimistic transaction-context provider that takes this
     /// statement's `AdviseOptimizeWithPlan`, if any.
     pessimistic_txn_provider: Option<PessimisticTxnProvider>,
+    /// The session inputs of Go's `handleFineGrainedShuffle`.
+    tiflash_fine_grained_shuffle: TiFlashFineGrainedShuffleSession,
+    /// The TiFlash servers Go's `handleFineGrainedShuffle` sizes streams
+    /// from; `None` where the statement has no cluster to ask.
+    tiflash_cluster_info: Option<Arc<dyn TiFlashClusterInfo>>,
     /// Go `StmtCtx.WeakConsistency` (`isWeakConsistencyRead`): an autocommit
     /// read-only statement under `tidb_read_consistency = 'weak'` reads at
     /// RC isolation.
@@ -2279,6 +2320,18 @@ context_configuration! {
         self
     }
 
+    /// Sets the session inputs of Go's `handleFineGrainedShuffle`.
+    #[must_use]
+    pub fn with_tiflash_fine_grained_shuffle(
+        mut self,
+        session: TiFlashFineGrainedShuffleSession,
+        cluster: Option<Arc<dyn TiFlashClusterInfo>>,
+    ) -> Self {
+        self.tiflash_fine_grained_shuffle = session;
+        self.tiflash_cluster_info = cluster;
+        self
+    }
+
     /// Sets `@@tidb_hash_exchange_with_new_collation` for this statement.
     #[must_use]
     pub fn with_hash_exchange_with_new_collation(mut self, allowed: bool) -> Self {
@@ -2764,6 +2817,8 @@ impl StmtContext {
                 tidb_vardef::defaults::DEF_TIDB_HASH_EXCHANGE_WITH_NEW_COLLATION,
             rc_check_ts: false,
             pessimistic_txn_provider: None,
+            tiflash_fine_grained_shuffle: TiFlashFineGrainedShuffleSession::default(),
+            tiflash_cluster_info: None,
             weak_consistency: false,
             row_encoding_config: tidb_tblctx::RowEncodingConfig::default(),
             query_cop_store_limiter: None,
@@ -4598,6 +4653,18 @@ impl StmtContext {
     #[must_use]
     pub fn pessimistic_txn_provider(&self) -> Option<PessimisticTxnProvider> {
         self.pessimistic_txn_provider
+    }
+
+    /// The session inputs of Go's `handleFineGrainedShuffle`.
+    #[must_use]
+    pub fn tiflash_fine_grained_shuffle(&self) -> TiFlashFineGrainedShuffleSession {
+        self.tiflash_fine_grained_shuffle
+    }
+
+    /// The TiFlash cluster Go's `handleFineGrainedShuffle` asks.
+    #[must_use]
+    pub fn tiflash_cluster_info(&self) -> Option<&Arc<dyn TiFlashClusterInfo>> {
+        self.tiflash_cluster_info.as_ref()
     }
 
     /// Go `SessionVars.HashExchangeWithNewCollation`.

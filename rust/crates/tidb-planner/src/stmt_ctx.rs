@@ -187,6 +187,12 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn isolation_read_engines(&self) -> &str {
         StmtContext::isolation_read_engines(self)
     }
+    fn tiflash_fine_grained_shuffle(&self) -> tidb_sessionctx::TiFlashFineGrainedShuffleSession {
+        StmtContext::tiflash_fine_grained_shuffle(self)
+    }
+    fn tiflash_cluster_info(&self) -> Option<&Arc<dyn tidb_sessionctx::TiFlashClusterInfo>> {
+        StmtContext::tiflash_cluster_info(self)
+    }
     fn index_merge(&self) -> bool {
         StmtContext::index_merge(self)
     }

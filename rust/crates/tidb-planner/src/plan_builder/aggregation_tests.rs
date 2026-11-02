@@ -268,7 +268,7 @@ fn possible_properties_use_equalities_above_the_data_source() {
             "SELECT c, COUNT(*) FROM t WHERE b = 1 GROUP BY c",
         ))
         .expect("the grouped select builds");
-    let (plan, _) = prepare_possible_properties(plan);
+    let (plan, _) = prepare_possible_properties(plan, false, false);
     let LogicalPlan::Aggregation(aggregation) =
         find(&plan, "Aggregation").expect("the plan contains an aggregation")
     else {

@@ -1722,6 +1722,10 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
                     .with_rc_check_ts(self.stmt_rc_check_ts())
                     .with_pessimistic_txn_provider(self.pessimistic_txn_provider())
+                    .with_tiflash_fine_grained_shuffle(
+                        self.tiflash_fine_grained_shuffle_session(),
+                        self.tiflash_cluster_info(),
+                    )
                     .with_weak_consistency(self.stmt_weak_consistency())
                     .with_hash_exchange_with_new_collation(
                         self.session_vars()
@@ -1881,6 +1885,10 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
                     .with_rc_check_ts(self.stmt_rc_check_ts())
                     .with_pessimistic_txn_provider(self.pessimistic_txn_provider())
+                    .with_tiflash_fine_grained_shuffle(
+                        self.tiflash_fine_grained_shuffle_session(),
+                        self.tiflash_cluster_info(),
+                    )
                     .with_weak_consistency(self.stmt_weak_consistency())
                     .with_hash_exchange_with_new_collation(
                         self.session_vars()
@@ -2368,6 +2376,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// The Go pessimistic provider that takes this statement's
     /// `AdviseOptimizeWithPlan`, if any.
     fn pessimistic_txn_provider(&self) -> Option<tidb_sessionctx::PessimisticTxnProvider>;
+    /// The TiFlash cluster Go's `handleFineGrainedShuffle` asks, where the
+    /// session has one.
+    fn tiflash_cluster_info(&self) -> Option<Arc<dyn tidb_sessionctx::TiFlashClusterInfo>>;
     /// Go `StmtCtx.WeakConsistency`, decided when the statement started.
     fn stmt_weak_consistency(&self) -> bool;
     /// Go `SessionVars.IsAutocommit()`: whether each statement stands on its
@@ -2417,6 +2428,45 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// coprocessor response details, `None` while the instance switch is OFF
     /// (Go's `copIteratorWorker.stats` is only created when it is ON).
     fn statement_cop_response_sink(&self) -> Option<Arc<dyn crate::CopResponseSink>>;
+    /// Go `SessionVars`' inputs to `handleFineGrainedShuffle` and the
+    /// session half of `CanTiFlashUseHashJoinV2`.
+    fn tiflash_fine_grained_shuffle_session(&self) -> tidb_sessionctx::TiFlashFineGrainedShuffleSession {
+        use tidb_vardef::tidb_vars;
+        let vars = self.session_vars();
+        let int = |name: &str, default: i64| {
+            vars.get_system(name)
+                .ok()
+                .and_then(|value| value.trim().parse::<i64>().ok())
+                .unwrap_or(default)
+        };
+        let spill_ratio = vars
+            .get_system(tidb_vars::TIFLASH_QUERY_SPILL_RATIO)
+            .ok()
+            .and_then(|value| value.trim().parse::<f64>().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_TIFLASH_QUERY_SPILL_RATIO);
+        let version = vars
+            .get_system(tidb_vars::TIFLASH_HASH_JOIN_VERSION)
+            .unwrap_or_else(|_| tidb_vardef::defaults::DEF_TIFLASH_HASH_JOIN_VERSION.into());
+        // Go: spill is not supported by hash join v2 yet.
+        let spill = int(
+            tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN,
+            tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_JOIN,
+        ) > 0
+            || (int(
+                tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
+                tidb_vardef::defaults::DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
+            ) > 0
+                && spill_ratio > 0.0);
+        tidb_sessionctx::TiFlashFineGrainedShuffleSession {
+            stream_count: int(
+                tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT,
+                tidb_vardef::defaults::DEF_TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT,
+            ),
+            max_threads: int(tidb_vars::TIDB_MAX_TIFLASH_THREADS, tidb_vardef::defaults::DEF_TIFLASH_MAX_THREADS),
+            hash_join_v2: tidb_executor_join_joinversion::is_optimized_version(&version) && !spill,
+        }
+    }
+
     /// Go `SessionVars.GetReplicaRead` for a statement whose
     /// `StmtCtx.IsReadOnly` is `read_only`.
     fn effective_replica_read(&self, mode: crate::ReplicaReadType, read_only: bool) -> crate::ReplicaReadType;

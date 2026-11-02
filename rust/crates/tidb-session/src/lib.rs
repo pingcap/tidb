@@ -1126,6 +1126,7 @@ use tidb_bindinfo::binding;
 mod binding_arm;
 mod compiler_session;
 mod stmt_ctx_session;
+mod tiflash_cluster;
 mod execute_prepared;
 pub use binding_arm::GlobalBindingWriter;
 use tidb_bindinfo::binding_cache;

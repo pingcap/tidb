@@ -347,6 +347,15 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::pessimistic_txn_provider(self)
     }
 
+    fn tiflash_cluster_info(&self) -> Option<std::sync::Arc<dyn tidb_sessionctx::TiFlashClusterInfo>> {
+        self.cluster_topology.as_ref().map(|topology| {
+            std::sync::Arc::new(crate::tiflash_cluster::SessionTiFlashCluster {
+                topology: std::sync::Arc::clone(topology),
+                diagnostics: self.cluster_diagnostics.clone(),
+            }) as std::sync::Arc<dyn tidb_sessionctx::TiFlashClusterInfo>
+        })
+    }
+
     fn stmt_weak_consistency(&self) -> bool {
         self.stmt_weak_consistency
     }
