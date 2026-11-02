@@ -5311,6 +5311,14 @@ impl StmtContext {
         self.txn_store.clone()
     }
 
+    /// The statement runs over `store`, as Go's `sctx.Txn()` (a test
+    /// context over its mock store).
+    #[must_use]
+    pub fn with_txn_store(mut self, store: Box<dyn tidb_kv::storage::TableStorage>) -> Self {
+        self.txn_store = Some(store);
+        self
+    }
+
     /// The shared handle behind [`Self::staged_writes`], for a coprocessor
     /// context ([`tidb_distsql::remote_scan::PushdownStatementContext`]) built once
     /// per statement and carried by executors that outlive this borrow.

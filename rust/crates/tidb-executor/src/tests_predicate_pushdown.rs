@@ -226,21 +226,22 @@ mod tests {
         let snapshot = Arc::new(Mutex::new(MockSnapshot::default()));
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
         let buffer = MutationBuffer::new();
+        let mut store = ClusterTableStorage::new(buffer.clone(), handle);
         let mut table = TableCommon::with_storage(
             91,
             vec![column("a", 1), column("b", 2)],
-            Box::new(ClusterTableStorage::new(buffer.clone(), handle)),
+            Box::new(store.clone()),
         );
 
         // Committed half: one row above the predicate, one below.
         let committed_low = table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut store, &[Datum::Int(1), Datum::Int(10)], &tidb_exprctx::NoColumns)
             .unwrap();
         table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(9), Datum::Int(90)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut store, &[Datum::Int(9), Datum::Int(90)], &tidb_exprctx::NoColumns)
             .unwrap();
         let committed_moved = table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(2), Datum::Int(20)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut store, &[Datum::Int(2), Datum::Int(20)], &tidb_exprctx::NoColumns)
             .unwrap();
         commit(&buffer, &snapshot);
         assert!(buffer.is_empty(), "nothing is staged after the commit");
@@ -251,27 +252,28 @@ mod tests {
         //   * an UPDATE that lifts a committed row across the boundary,
         //   * a DELETE of a committed row that satisfies it.
         table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(7), Datum::Int(70)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut store, &[Datum::Int(7), Datum::Int(70)], &tidb_exprctx::NoColumns)
             .unwrap();
         table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(3), Datum::Int(30)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut store, &[Datum::Int(3), Datum::Int(30)], &tidb_exprctx::NoColumns)
             .unwrap();
         table
-            .with_own_store(|table, store| table.update_row_with_context(store, &committed_moved,
+            .update_row_with_context(&mut store, &committed_moved,
                 &[Datum::Int(8), Datum::Int(80)],
                 &crate::StmtContext::for_dml(false, false, false),
-            ))
+            )
             .unwrap();
         table
-            .with_own_store(|table, store| table.delete_row_with_context(store, &committed_low,
+            .delete_row_with_context(&mut store, &committed_low,
                 &crate::StmtContext::for_dml(false, false, false),
-            ))
+            )
             .unwrap();
         assert!(!buffer.is_empty(), "the writes are staged, not committed");
 
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
-        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]);
+        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91])
+            .with_txn_store(Box::new(store));
         assert_eq!(
             run_select_on("SELECT a, b FROM t WHERE a > 5 ORDER BY a", &catalog, &ctx).unwrap(),
             vec![
@@ -348,14 +350,15 @@ mod tests {
     #[test]
     fn splitting_a_where_does_not_change_its_result() {
         let mut table = TableCommon::new(92, vec![column("a", 1), column("b", 2)]);
+        let mut store = tidb_kv::storage::MemTableStorage::new();
         for (a, b) in [(1, 10), (5, 50), (7, 70), (9, 90)] {
             table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(b)], &tidb_exprctx::NoColumns))
+                .insert_row(&mut store, &[Datum::Int(a), Datum::Int(b)], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store));
         let cases: [(&str, Vec<Vec<Datum>>); 5] = [
             (
                 "SELECT a FROM t WHERE a > 5",
@@ -401,17 +404,18 @@ mod tests {
     #[test]
     fn the_composed_predicates_keep_mysqls_three_valued_answers() {
         let mut table = TableCommon::new(93, vec![column("a", 1), column("b", 2)]);
+        let mut store = tidb_kv::storage::MemTableStorage::new();
         for (a, b) in [
             (Datum::Int(1), Datum::Int(10)),
             (Datum::Int(2), Datum::Null),
             (Datum::Null, Datum::Int(30)),
             (Datum::Int(4), Datum::Int(40)),
         ] {
-            table.with_own_store(|table, store| table.insert_row(store, &[a, b], &tidb_exprctx::NoColumns)).unwrap();
+            table.insert_row(&mut store, &[a, b], &tidb_exprctx::NoColumns).unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store));
         let int = |value: i64| vec![Datum::Int(value)];
         let cases: [(&str, Vec<Vec<Datum>>); 10] = [
             ("SELECT a FROM t WHERE a IS NULL", vec![vec![Datum::Null]]),
@@ -465,6 +469,7 @@ mod tests {
     #[test]
     fn a_pushed_math_builtin_answers_what_the_same_selection_answered() {
         let mut table = TableCommon::new(94, vec![column("a", 1), column("b", 2)]);
+        let mut store = tidb_kv::storage::MemTableStorage::new();
         for (a, b) in [
             (Datum::Int(0), Datum::Int(3)),
             (Datum::Int(1), Datum::Int(0)),
@@ -472,11 +477,11 @@ mod tests {
             (Datum::Int(7), Datum::Int(7)),
             (Datum::Null, Datum::Int(1)),
         ] {
-            table.with_own_store(|table, store| table.insert_row(store, &[a, b], &tidb_exprctx::NoColumns)).unwrap();
+            table.insert_row(&mut store, &[a, b], &tidb_exprctx::NoColumns).unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store));
         let int = |value: i64| vec![Datum::Int(value)];
         let cases: [(&str, Vec<Vec<Datum>>); 8] = [
             // `SIN(0)` is 0, which is false; the NULL row is UNKNOWN.
@@ -532,14 +537,15 @@ mod tests {
     #[test]
     fn a_call_outside_the_catalog_stays_above_the_scan() {
         let mut table = TableCommon::new(95, vec![column("a", 1), column("b", 2)]);
+        let mut store = tidb_kv::storage::MemTableStorage::new();
         for a in [1_i64, 2, 3] {
             table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns))
+                .insert_row(&mut store, &[Datum::Int(a), Datum::Int(a * 10)], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store));
         // `TAN` is deliberately absent from Go's TiKV whitelist (the comment
         // cites Rust's LLVM math precision), `ABS` is on it but has no catalog
         // row yet, and `SIN(a + 1)` has an argument the description cannot

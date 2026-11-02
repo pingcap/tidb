@@ -44,15 +44,16 @@ fn auto_id_owner_separates_hidden_handles_from_single_point_values() {
 
 #[test]
 fn auto_id_owner_explicit_hidden_handle_does_not_rebase_auto_increment() {
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     let mut table = test_table();
     table.set_auto_increment_offset(0);
     table.init_auto_id_cache(1);
     table
-        .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(1), Datum::Null],
+        .insert_row_with_row_id(&mut store, &[Datum::Int(1), Datum::Null],
             Some(700),
             0,
             &crate::StmtContext::for_dml(false, false, false),
-        ))
+        )
         .unwrap();
     assert_eq!(table.auto_id().alloc(1, 1).unwrap(), 1);
 }
@@ -111,6 +112,7 @@ fn test_table() -> TableCommon {
 
 #[test]
 fn writable_check_constraints_guard_insert_and_update() {
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     let mut table = test_table();
     let expression = tidb_model::generated_expr::parse_expression("a > 0")
         .expect("persisted CHECK expression parses");
@@ -123,29 +125,29 @@ fn writable_check_constraints_guard_insert_and_update() {
         .expect("persisted CHECK expression builds");
 
     let handle = table
-        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Null], &tidb_exprctx::NoColumns))
+        .insert_row(&mut store, &[Datum::Int(1), Datum::Null], &tidb_exprctx::NoColumns)
         .expect("TRUE passes CHECK");
     table
-        .with_own_store(|table, store| table.insert_row(store, &[Datum::Null, Datum::Null], &tidb_exprctx::NoColumns))
+        .insert_row(&mut store, &[Datum::Null, Datum::Null], &tidb_exprctx::NoColumns)
         .expect("UNKNOWN passes CHECK");
     assert!(matches!(
-        table.with_own_store(|table, store| table.insert_row(store, &[Datum::Int(-1), Datum::Null], &tidb_exprctx::NoColumns)),
+        table.insert_row(&mut store, &[Datum::Int(-1), Datum::Null], &tidb_exprctx::NoColumns),
         Err(KvTableError::Mysql(error))
             if error.equal(&tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED)
                 && error.message == "Check constraint 'positive_a' is violated."
     ));
     assert!(matches!(
-        table.with_own_store(|table, store| table.update_row_with_context(store, &handle,
+        table.update_row_with_context(&mut store, &handle,
             &[Datum::Int(-1), Datum::Null],
             &crate::StmtContext::for_dml(false, false, false),
-        )),
+        ),
         Err(KvTableError::Mysql(error))
             if error.equal(&tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED)
                 && error.message == "Check constraint 'positive_a' is violated."
     ));
     assert_eq!(
         table
-            .scan_rows_with_context(&mut *table.store().clone_box(), &RowDecodeContext::for_test_query_utc())
+            .scan_rows_with_context(&mut store, &RowDecodeContext::for_test_query_utc())
             .expect("scan preserved rows")[0][0],
         Datum::Int(1),
         "failed UPDATE must leave the original row"
@@ -355,6 +357,7 @@ fn test_extract_columns_from_condition() {
 /// is the PRIMARY KEY over `PriKeyFlag` columns.
 #[test]
 fn column_and_index_mutators_keep_the_table_info_in_step() {
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     let column = |name: &str, id: i64| tidb_table::column::Column {
         info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
             id: id,
@@ -438,7 +441,7 @@ fn column_and_index_mutators_keep_the_table_info_in_step() {
         let part = index.columns.get(0).unwrap();
         assert_eq!((part.read().name.original(), part.read().offset), ("z", 3));
     }
-    assert!(table.with_own_store(|table, store| table.drop_index(store, "iz")).unwrap());
+    assert!(table.drop_index(&mut store, "iz").unwrap());
     assert!(table.meta().read().find_index_by_id(9).is_none());
 
     table.set_common_handle_offsets(vec![1]);
@@ -454,6 +457,7 @@ fn column_and_index_mutators_keep_the_table_info_in_step() {
 
 #[test]
 fn drop_index_removes_orphan_entries_without_decoding_rows() {
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     let mut table = TableCommon::new(42, Vec::new());
     table.add_index(
         Index {
@@ -477,20 +481,21 @@ fn drop_index_removes_orphan_entries_without_decoding_rows() {
         2,
         b"neighbor",
     ));
-    table.store_mut().set(retired.clone(), vec![1]).unwrap();
-    table.store_mut().set(retained.clone(), vec![2]).unwrap();
-    assert!(table.with_own_store(|table, store| table.drop_index(store, "retired")).unwrap());
+    store.set(retired.clone(), vec![1]).unwrap();
+    store.set(retained.clone(), vec![2]).unwrap();
+    assert!(table.drop_index(&mut store, "retired").unwrap());
     assert!(matches!(
-        table.store_mut().get(&retired),
+        store.get(&retired),
         Err(StorageError::NotFound)
     ));
-    assert_eq!(table.store_mut().get(&retained).unwrap(), vec![2]);
+    assert_eq!(store.get(&retained).unwrap(), vec![2]);
 }
 
 #[test]
 fn drop_index_covers_all_partition_ranges_and_global_ownership() {
     use tidb_table::partition_routing::{PartitionKind, PartitionExpr};
     for global in [false, true] {
+        let mut store = tidb_kv::storage::MemTableStorage::new();
         let mut table = TableCommon::new(42, Vec::new());
         table.set_partition(PartitionExpr {
             kind: PartitionKind::Hash,
@@ -535,9 +540,9 @@ fn drop_index_covers_all_partition_ranges_and_global_ownership() {
             })
             .collect();
         for key in &keys {
-            table.store_mut().set(key.clone(), vec![1]).unwrap();
+            store.set(key.clone(), vec![1]).unwrap();
         }
-        assert!(table.with_own_store(|table, store| table.drop_index(store, "retired")).unwrap());
+        assert!(table.drop_index(&mut store, "retired").unwrap());
         for (id, key) in [42, 43, 44, 45].into_iter().zip(&keys) {
             let removed = if global {
                 id == 42
@@ -545,17 +550,18 @@ fn drop_index_covers_all_partition_ranges_and_global_ownership() {
                 id == 43 || id == 44
             };
             assert_eq!(
-                matches!(table.store_mut().get(key), Err(StorageError::NotFound)),
+                matches!(store.get(key), Err(StorageError::NotFound)),
                 removed,
                 "global={global}, table={id}"
             );
         }
-        assert!(!table.with_own_store(|table, store| table.drop_index(store, "retired")).unwrap());
+        assert!(!table.drop_index(&mut store, "retired").unwrap());
     }
 }
 
 #[test]
 fn update_rewrites_only_index_entries_whose_bytes_change() {
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     // Go `pkg/table/tables/tables.go ::
     // rebuildUpdateRecordIndices` skips an index whose columns are all
     // untouched, and `pkg/executor/write.go :: updateRecord` arms that
@@ -632,39 +638,39 @@ fn update_rewrites_only_index_entries_whose_bytes_change() {
         false,
     );
     table
-        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(10)],
+        .insert_row(&mut store, &[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(10)],
             &tidb_exprctx::NoColumns,
-        ))
+        )
         .unwrap();
     let handle = TableHandle::Int(1);
-    let before = table.with_own_store(|table, store| table.index_entries_for_check(store, 1)).unwrap();
+    let before = table.index_entries_for_check(&mut store, 1).unwrap();
     assert_eq!(before.len(), 1);
 
     // Update a NON-indexed column only: the index entry must survive
     // byte-identical.
     table
-        .with_own_store(|table, store| table.update_row_with_old_context(store, &handle,
+        .update_row_with_old_context(&mut store, &handle,
             Some(&[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(10)]),
             &[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(11)],
             &crate::StmtContext::for_dml(false, false, false),
-        ))
+        )
         .unwrap();
-    let after_untouched = table.with_own_store(|table, store| table.index_entries_for_check(store, 1)).unwrap();
+    let after_untouched = table.index_entries_for_check(&mut store, 1).unwrap();
     assert_eq!(after_untouched, before, "untouched index stayed as it was");
     let rows = table
-        .scan_rows_with_handles_with_context(&mut *table.store().clone_box(), &RowDecodeContext::for_test_query_utc())
+        .scan_rows_with_handles_with_context(&mut store, &RowDecodeContext::for_test_query_utc())
         .unwrap();
     assert_eq!(rows[0].1[2], Datum::Int(11), "the row itself did update");
 
     // Update the INDEXED column: the entry moves to the new key.
     table
-        .with_own_store(|table, store| table.update_row_with_old_context(store, &handle,
+        .update_row_with_old_context(&mut store, &handle,
             Some(&[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(11)]),
             &[Datum::Int(1), Datum::Bytes(b"s9".to_vec()), Datum::Int(11)],
             &crate::StmtContext::for_dml(false, false, false),
-        ))
+        )
         .unwrap();
-    let after_touched = table.with_own_store(|table, store| table.index_entries_for_check(store, 1)).unwrap();
+    let after_touched = table.index_entries_for_check(&mut store, 1).unwrap();
     assert_eq!(
         after_touched.len(),
         1,
@@ -675,6 +681,7 @@ fn update_rewrites_only_index_entries_whose_bytes_change() {
 
 #[test]
 fn row_conflicts_only_include_matching_partial_indexes() {
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     let mut table = test_table();
     table.set_name("partial_conflicts");
     table.set_pk_handle_offset(0);
@@ -706,20 +713,20 @@ fn row_conflicts_only_include_matching_partial_indexes() {
         .add_partial_index_condition(1, "unique_s", &condition, &SessionTimeZone::utc(), b'\\')
         .unwrap();
     table
-        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Bytes(b"same".to_vec())],
+        .insert_row(&mut store, &[Datum::Int(1), Datum::Bytes(b"same".to_vec())],
             &tidb_exprctx::NoColumns,
-        ))
+        )
         .unwrap();
     assert!(table
-        .with_own_store(|table, store| table.row_conflicts(store, &[Datum::Int(-1), Datum::Bytes(b"same".to_vec())],
+        .row_conflicts(&mut store, &[Datum::Int(-1), Datum::Bytes(b"same".to_vec())],
             &tidb_exprctx::NoColumns
-        ))
+        )
         .unwrap()
         .is_empty());
     let conflicts = table
-        .with_own_store(|table, store| table.row_conflicts(store, &[Datum::Int(2), Datum::Bytes(b"same".to_vec())],
+        .row_conflicts(&mut store, &[Datum::Int(2), Datum::Bytes(b"same".to_vec())],
             &tidb_exprctx::NoColumns,
-        ))
+        )
         .unwrap();
     assert_eq!(conflicts.len(), 1);
     assert_eq!(conflicts[0].handle, TableHandle::Int(1));
@@ -763,6 +770,7 @@ fn a_nonpublic_index_is_written_by_its_backfill_state() {
             Some(b'm'),
         ),
     ] {
+        let mut store = tidb_kv::storage::MemTableStorage::new();
         let mut table = test_table();
         let index = Index {
             info: tidb_model::GoShared::new(tidb_model::IndexInfo {
@@ -786,11 +794,11 @@ fn a_nonpublic_index_is_written_by_its_backfill_state() {
         };
         table.add_nonpublic_index(index.clone(), state, backfill);
         let row = [Datum::Int(7), Datum::Null];
-        table.with_own_store(|table, store| table.insert_row(store, &row, &tidb_exprctx::NoColumns)).unwrap();
+        table.insert_row(&mut store, &row, &tidb_exprctx::NoColumns).unwrap();
         // No reader sees an index a DDL has not made public.
-        assert!(table.with_own_store(|table, store| table.index_entries_for_check(store, 1)).is_err());
+        assert!(table.index_entries_for_check(&mut store, 1).is_err());
         let handle = table
-            .scan_rows_with_handles_with_context(&mut *table.store().clone_box(), &RowDecodeContext::for_test_query_utc())
+            .scan_rows_with_handles_with_context(&mut store, &RowDecodeContext::for_test_query_utc())
             .unwrap()[0]
             .0
             .clone();
@@ -803,12 +811,12 @@ fn a_nonpublic_index_is_written_by_its_backfill_state() {
         let mut temp_key = key.clone();
         tidb_tablecodec::index_key_to_temp_index_key(&mut temp_key).unwrap();
         assert_eq!(
-            table.with_own_store(|table, store| table.stored_raw_value(store, &key)).is_some(),
+            table.stored_raw_value(&mut store, &key).is_some(),
             index_written,
             "{state:?} {backfill:?}"
         );
         let history = table
-            .with_own_store(|table, store| table.stored_raw_value(store, &temp_key))
+            .stored_raw_value(&mut store, &temp_key)
             .map(|raw| tidb_tablecodec::decode_temp_index_value(&raw).unwrap());
         assert_eq!(
             history
@@ -818,15 +826,15 @@ fn a_nonpublic_index_is_written_by_its_backfill_state() {
             "{state:?} {backfill:?}"
         );
         table
-            .with_own_store(|table, store| table.delete_row_with_context(store, &handle, &crate::StmtContext::for_dml(false, false, false)))
+            .delete_row_with_context(&mut store, &handle, &crate::StmtContext::for_dml(false, false, false))
             .unwrap();
         assert!(
-            table.with_own_store(|table, store| table.stored_raw_value(store, &key)).is_none(),
+            table.stored_raw_value(&mut store, &key).is_none(),
             "{state:?} {backfill:?}"
         );
         if backfill != BackfillState::INAPPLICABLE {
             let history = tidb_tablecodec::decode_temp_index_value(
-                &table.with_own_store(|table, store| table.stored_raw_value(store, &temp_key)).unwrap(),
+                &table.stored_raw_value(&mut store, &temp_key).unwrap(),
             )
             .unwrap();
             assert!(history.last().unwrap().delete, "{state:?} {backfill:?}");
@@ -836,6 +844,7 @@ fn a_nonpublic_index_is_written_by_its_backfill_state() {
 
 #[test]
 fn test_unique_index_multiple_null_entries() {
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     // Direct port of
     // pkg/table/tables/tables_test.go::TestUniqueIndexMultipleNullEntries.
     // NULL-bearing UNIQUE keys are non-distinct and carry the row handle,
@@ -867,19 +876,19 @@ fn test_unique_index_multiple_null_entries() {
     );
 
     table
-        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Null], &tidb_exprctx::NoColumns))
+        .insert_row(&mut store, &[Datum::Int(1), Datum::Null], &tidb_exprctx::NoColumns)
         .unwrap();
     table
-        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(2), Datum::Null], &tidb_exprctx::NoColumns))
+        .insert_row(&mut store, &[Datum::Int(2), Datum::Null], &tidb_exprctx::NoColumns)
         .unwrap();
     assert_eq!(
         table
-            .scan_rows_with_context(&mut *table.store().clone_box(), &RowDecodeContext::for_test_query_utc())
+            .scan_rows_with_context(&mut store, &RowDecodeContext::for_test_query_utc())
             .unwrap()
             .len(),
         2
     );
-    assert_eq!(table.with_own_store(|table, store| table.index_entries_for_check(store, 1)).unwrap().len(), 2);
+    assert_eq!(table.index_entries_for_check(&mut store, 1).unwrap().len(), 2);
 }
 
 #[test]
@@ -912,6 +921,7 @@ fn test_table_from_meta_with_collate_uses_fixed_mode() {
 
 #[test]
 fn test_iter_records() {
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     // Direct port of pkg/table/tables/tables_test.go::TestIterRecords.
     // Record iteration crosses the signed-handle ordering boundary and
     // preserves NULL in a non-handle column.
@@ -937,14 +947,14 @@ fn test_iter_records() {
     );
     table.set_pk_handle_offset(0);
     table
-        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(-1), Datum::Int(2)], &tidb_exprctx::NoColumns))
+        .insert_row(&mut store, &[Datum::Int(-1), Datum::Int(2)], &tidb_exprctx::NoColumns)
         .unwrap();
     table
-        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(2), Datum::Null], &tidb_exprctx::NoColumns))
+        .insert_row(&mut store, &[Datum::Int(2), Datum::Null], &tidb_exprctx::NoColumns)
         .unwrap();
 
     let rows = table
-        .scan_rows_with_handles_with_context(&mut *table.store().clone_box(), &RowDecodeContext::for_test_query_utc())
+        .scan_rows_with_handles_with_context(&mut store, &RowDecodeContext::for_test_query_utc())
         .unwrap();
     assert_eq!(rows.len(), 2);
     assert_eq!(
@@ -965,18 +975,19 @@ fn test_iter_records() {
 /// UPDATE/DELETE addresses the row it read.
 #[test]
 fn scan_reports_the_handles_the_key_codec_wrote() {
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     let mut t = test_table();
     let mut handles = Vec::new();
     for i in 0..3 {
         handles.push(
-            t.with_own_store(|table, store| table.insert_row(store, &[Datum::Int(i * 10), Datum::Bytes(b"x".to_vec())],
+            t.insert_row(&mut store, &[Datum::Int(i * 10), Datum::Bytes(b"x".to_vec())],
                 &tidb_exprctx::NoColumns,
-            ))
+            )
             .unwrap(),
         );
     }
     let scanned: Vec<TableHandle> = t
-        .scan_rows_with_handles_with_context(&mut *t.store().clone_box(), &RowDecodeContext::for_test_query_utc())
+        .scan_rows_with_handles_with_context(&mut store, &RowDecodeContext::for_test_query_utc())
         .unwrap()
         .into_iter()
         .map(|(handle, _)| handle)
@@ -984,24 +995,24 @@ fn scan_reports_the_handles_the_key_codec_wrote() {
     assert_eq!(scanned, handles);
 
     // A row written under an explicit handle round-trips too.
-    t.with_own_store(|table, store| table.update_row_with_context(store, &handles[1],
+    t.update_row_with_context(&mut store, &handles[1],
         &[Datum::Int(99), Datum::Bytes(b"y".to_vec())],
         &crate::StmtContext::for_dml(false, false, false),
-    ))
+    )
     .unwrap();
     let rows = t
-        .scan_rows_with_handles_with_context(&mut *t.store().clone_box(), &RowDecodeContext::for_test_query_utc())
+        .scan_rows_with_handles_with_context(&mut store, &RowDecodeContext::for_test_query_utc())
         .unwrap();
     assert_eq!(rows.len(), 3, "update replaced in place, it did not append");
     assert_eq!(rows[1].0, handles[1]);
     assert_eq!(rows[1].1[0], Datum::Int(99));
 
-    t.with_own_store(|table, store| table.delete_row_with_context(store, &handles[0],
+    t.delete_row_with_context(&mut store, &handles[0],
         &crate::StmtContext::for_dml(false, false, false),
-    ))
+    )
     .unwrap();
     let after: Vec<TableHandle> = t
-        .scan_rows_with_handles_with_context(&mut *t.store().clone_box(), &RowDecodeContext::for_test_query_utc())
+        .scan_rows_with_handles_with_context(&mut store, &RowDecodeContext::for_test_query_utc())
         .unwrap()
         .into_iter()
         .map(|(handle, _)| handle)
@@ -1011,23 +1022,24 @@ fn scan_reports_the_handles_the_key_codec_wrote() {
 
 #[test]
 fn scan_covers_the_whole_table_and_stops_at_its_range() {
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     let mut t = test_table();
     for i in 0..3 {
-        t.with_own_store(|table, store| table.insert_row(store, &[Datum::Int(i), Datum::Bytes(b"x".to_vec())],
+        t.insert_row(&mut store, &[Datum::Int(i), Datum::Bytes(b"x".to_vec())],
             &tidb_exprctx::NoColumns,
-        ))
+        )
         .unwrap();
     }
     // A row of the next table id, written into the same storage layout.
     let mut neighbour = TableCommon::new(t.table_id() + 1, t.columns().to_vec());
     neighbour
-        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(99), Datum::Bytes(b"y".to_vec())],
+        .insert_row(&mut store, &[Datum::Int(99), Datum::Bytes(b"y".to_vec())],
             &tidb_exprctx::NoColumns,
-        ))
+        )
         .unwrap();
 
     let rows = t
-        .scan_rows_with_context(&mut *t.store().clone_box(), &RowDecodeContext::for_test_query_utc())
+        .scan_rows_with_context(&mut store, &RowDecodeContext::for_test_query_utc())
         .unwrap();
     assert_eq!(
         rows.len(),
@@ -1037,7 +1049,7 @@ fn scan_covers_the_whole_table_and_stops_at_its_range() {
     assert_eq!(rows[2][0], Datum::Int(2));
     assert_eq!(
         neighbour
-            .scan_rows_with_context(&mut *neighbour.store().clone_box(), &RowDecodeContext::for_test_query_utc())
+            .scan_rows_with_context(&mut store, &RowDecodeContext::for_test_query_utc())
             .unwrap()
             .len(),
         1
@@ -1046,17 +1058,18 @@ fn scan_covers_the_whole_table_and_stops_at_its_range() {
 
 #[test]
 fn insert_encodes_real_bytes_and_scan_decodes() {
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     let mut t = test_table();
     let mut s1 = Datum::Null;
     s1.set_bytes(b"hello".to_vec());
-    t.with_own_store(|table, store| table.insert_row(store, &[Datum::Int(7), s1.clone()], &tidb_exprctx::NoColumns))
+    t.insert_row(&mut store, &[Datum::Int(7), s1.clone()], &tidb_exprctx::NoColumns)
         .unwrap();
-    t.with_own_store(|table, store| table.insert_row(store, &[Datum::Int(8), Datum::Null], &tidb_exprctx::NoColumns))
+    t.insert_row(&mut store, &[Datum::Int(8), Datum::Null], &tidb_exprctx::NoColumns)
         .unwrap();
-    assert_eq!(t.len(), 2);
+    assert_eq!(store.key_count(), 2);
 
     let rows = t
-        .scan_rows_with_context(&mut *t.store().clone_box(), &RowDecodeContext::for_test_query_utc())
+        .scan_rows_with_context(&mut store, &RowDecodeContext::for_test_query_utc())
         .unwrap();
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0][0], Datum::Int(7));
@@ -1072,10 +1085,11 @@ fn insert_encodes_real_bytes_and_scan_decodes() {
 
 #[test]
 fn table_scan_exec_emits_chunks() {
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     let mut t = test_table();
     let mut s = Datum::Null;
     s.set_bytes(b"x".to_vec());
-    t.with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), s], &tidb_exprctx::NoColumns))
+    t.insert_row(&mut store, &[Datum::Int(1), s], &tidb_exprctx::NoColumns)
         .unwrap();
 
     let mut out_cols = Vec::new();
@@ -1087,7 +1101,7 @@ fn table_scan_exec_emits_chunks() {
     let mut scan = TableScanExec::new_with_context(
         ExecutorMeta::new(Schema::new(out_cols), 0, 4, 1024),
         t.clone(),
-        t.store().clone_box(),
+        store.clone_box(),
         RowDecodeContext::for_test_query_utc(),
         tidb_distsql::remote_scan::PushdownStatementContext::default(),
     );
@@ -1124,6 +1138,7 @@ fn record_keys_are_the_real_format() {
 /// `5` is four bytes.
 #[test]
 fn a_short_common_handle_indexes_under_the_key_the_delete_path_computes() {
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     let mut decimal_type = FieldType::new(FieldTypeCode::NewDecimal);
     decimal_type.set_flen(4);
     decimal_type.set_decimal(0);
@@ -1182,28 +1197,28 @@ fn a_short_common_handle_indexes_under_the_key_the_delete_path_computes() {
         false,
     );
     let written = t
-        .with_own_store(|table, store| table.insert_row(store, &[
+        .insert_row(&mut store, &[
                 Datum::Decimal(tidb_datatype::Decimal::from_int(5)),
                 Datum::Int(42),
             ],
             &tidb_exprctx::NoColumns,
-        ))
+        )
         .unwrap();
     // The handle a WRITE derives from the row and the handle a READ
     // derives from the record key must be the same handle, or every
     // index entry the write filed is unreachable.
     let scanned = t
-        .scan_rows_with_handles_with_context(&mut *t.store().clone_box(), &RowDecodeContext::for_test_query_utc())
+        .scan_rows_with_handles_with_context(&mut store, &RowDecodeContext::for_test_query_utc())
         .unwrap();
     assert_eq!(scanned.len(), 1);
     assert_eq!(scanned[0].0, written, "the write and the read disagree");
 
-    t.with_own_store(|table, store| table.delete_row_with_context(store, &scanned[0].0,
+    t.delete_row_with_context(&mut store, &scanned[0].0,
         &crate::StmtContext::for_dml(false, false, false),
-    ))
+    )
     .unwrap();
     assert_eq!(
-        t.stored_keys(&mut *t.store().clone_box()).unwrap(),
+        t.stored_keys(&mut store).unwrap(),
         Vec::<Vec<u8>>::new(),
         "the delete left orphaned index entries behind"
     );
