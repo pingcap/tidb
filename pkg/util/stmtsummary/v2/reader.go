@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -357,7 +358,12 @@ func (r *HistoryReader) scheduleTasks(
 		func() {
 			for _, file := range r.files.files {
 				select {
+<<<<<<< HEAD
 				case filesCh <- file.file:
+=======
+				case filesCh <- file:
+					failpoint.InjectCall("stmtSummaryHistoryScanFile", file.path)
+>>>>>>> 63cd22c529a (planner: prune statement summary history for prepared time parameters (#71707))
 				case <-ctx.Done():
 					return
 				}
@@ -762,6 +768,19 @@ func (w *stmtParseWorker) handleLines(
 
 	rows := make([][]types.Datum, 0, len(lines))
 	for _, line := range lines {
+<<<<<<< HEAD
+=======
+		if w.checker.digests != nil {
+			// Cheap digest pre-filter: records whose digest cannot match skip the full
+			// unmarshal. Only keys are walked — values are skipped byte-wise — and the
+			// last case-insensitive digest key wins, matching the full decode; anything not
+			// cheaply skippable falls back to the full decode.
+			if digest, ok := extractDigest(line); ok && !w.checker.isDigestValid(digest) {
+				continue
+			}
+		}
+		failpoint.InjectCall("stmtSummaryHistoryParseRecord")
+>>>>>>> 63cd22c529a (planner: prune statement summary history for prepared time parameters (#71707))
 		record, skipped, err := w.parse(line)
 		if err != nil {
 			// ignore invalid lines
