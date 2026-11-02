@@ -222,7 +222,7 @@ func verifyCumulativeTableUnsupported(t *testing.T, tableName string) {
 	data := infoschema.NewData()
 	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	infoSchemaBuilder := infoschema.NewBuilder(nil, schemaCacheSize, nil, data, schemaCacheSize > 0)
-	err := infoSchemaBuilder.InitWithDBInfos(nil, nil, nil, nil, 0)
+	err := infoSchemaBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	infoSchema := infoSchemaBuilder.Build(math.MaxUint64)
 	table, err := infoSchema.TableByName(context.Background(), metadef.InformationSchemaName, ast.NewCIStr(tableName))
