@@ -25783,4 +25783,34 @@ fn a_tiflash_fallback_rerun_reads_tikv_and_carries_the_timeout() {
         Datum::new_string("TiFlash server timeout"),
     ]);
     assert_eq!(run(&mut session, true), expected);
+
+    // Go `executePlanCacheStmt`: the binary re-run's statement context
+    // starts empty (no parser warnings travel), and the timeout is appended
+    // once the re-run has answered.
+    let statement = session
+        .node_conn()
+        .prepare_general("SELECT a FROM test.fb")
+        .expect("prepares");
+    session.set_tiflash_fallback(true);
+    {
+        let crate::domain::session_api::GeneralExecuteOutcome::Rows(mut result) = session
+            .node_conn()
+            .execute_general(&statement, &[])
+            .expect("the TiKV re-run")
+        else {
+            panic!("SELECT returns rows")
+        };
+        use crate::domain::resultset_source::ResultSetSource;
+        let source = result.source();
+        while !source.next_batch(8).expect("batch").is_empty() {}
+        source.finish().expect("finish");
+        source.close().expect("close");
+    }
+    session.append_statement_error(&tidb_store_driver_error::sql_query_error::SqlQueryError::new(
+        tidb_errno::errcode::ErrTiFlashServerTimeout,
+        *b"HY000",
+        "TiFlash server timeout",
+    ));
+    session.set_tiflash_fallback(false);
+    assert_eq!(rows(&mut session, "SHOW WARNINGS"), expected[expected.len() - 1..]);
 }

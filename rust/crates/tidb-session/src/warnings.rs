@@ -313,6 +313,17 @@ impl Session {
         self.statement_boundary_open = true;
     }
 
+    /// Go `StmtCtx.AppendError(prevErr)`: the binary protocol's TiFlash
+    /// fallback files the timeout after its re-run.
+    pub fn append_statement_error(&mut self, error: &tidb_store_driver_error::sql_query_error::SqlQueryError) {
+        self.append_sql_warning(SqlWarn::from_error(
+            WarningLevel::Error,
+            error.code,
+            error.message.clone(),
+            error.identity,
+        ));
+    }
+
     /// Go `delete(IsolationReadEngines, kv.TiFlash)` around the fallback's
     /// re-run, and its restoring `IsolationReadEngines[kv.TiFlash]` after.
     pub fn set_tiflash_fallback(&mut self, on: bool) {

@@ -121,6 +121,10 @@ pub trait QuerySession {
     /// the Error level, behind the statement's own once it has run.
     fn reopen_statement_boundary(&mut self, _fallback_error: Option<&SqlQueryError>) {}
 
+    /// Go `StmtCtx.AppendError(prevErr)` after the binary protocol's TiFlash
+    /// fallback re-run.
+    fn append_statement_error(&mut self, _error: &SqlQueryError) {}
+
     /// Go `clientConn.addQueryMetrics`' transaction-write SLI finalizer,
     /// called after the SQL command has written its response.
     fn finish_execute_stmt(&mut self, _cost: Duration) {}

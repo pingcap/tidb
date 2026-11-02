@@ -90,6 +90,10 @@ impl QuerySession for Session {
         Session::reopen_statement_boundary(self, fallback_error);
     }
 
+    fn append_statement_error(&mut self, error: &SqlQueryError) {
+        Session::append_statement_error(self, error);
+    }
+
     fn record_parse_failure(&mut self, error: &SqlQueryError) {
         self.record_parse_failure_coded(error.code, error.message.clone(), error.identity);
     }

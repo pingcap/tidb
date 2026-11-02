@@ -2792,6 +2792,19 @@ fn run_connection_commands<S: QuerySession>(
                         .template()
                         .filter(|stmt| engine.should_install_connection_alive(stmt))
                         .and_then(|_| set_sql_killer_connection_alive(engine, &connection_alive));
+                    // Go `executePlanCacheStmt`: an execute that failed
+                    // before any of its rows reached the client is re-run
+                    // once when its transaction answers
+                    // `StmtActionRetryReady`, or with TiFlash deleted from
+                    // the read engines after a TiFlash server timeout; the
+                    // fallback's timeout is appended after the re-run.
+                    let mut retried = false;
+                    let mut fallback_error = None;
+                    'attempt: loop {
+                    // An error not yet written, one a re-run may answer
+                    // instead (Go's `retryable`), and whether the execute
+                    // raised it (rather than the first row's write).
+                    let mut unanswered: Option<(SqlQueryError, bool)> = None;
                     // Go's read-only cursor: the execute materializes the
                     // rows, holds them on the statement, and answers with
                     // only the column definitions plus an EOF whose
@@ -2831,9 +2844,7 @@ fn run_connection_commands<S: QuerySession>(
                             Ok(GeneralExecuteOutcome::Write(outcome)) => {
                                 write_outcome = Some(outcome);
                             }
-                            Err(error) => {
-                                write_query_error(output, &error, protocol_41)?;
-                            }
+                            Err(error) => unanswered = Some((error, true)),
                         }
                         if let Some(outcome) = write_outcome {
                             let info = engine.statement_info();
@@ -2850,9 +2861,7 @@ fn run_connection_commands<S: QuerySession>(
                             queries += 1;
                             commands.stmt_execute_successes += 1;
                         }
-                        record_client_warnings(&*output, &*engine);
-                        return Ok(None);
-                    }
+                    } else {
                     let mut write_outcome = None;
                     match engine.execute_general(general, &values) {
                         Ok(GeneralExecuteOutcome::Rows(mut result)) => {
@@ -2878,6 +2887,9 @@ fn run_connection_commands<S: QuerySession>(
                                     queries += 1;
                                     commands.stmt_execute_successes += 1;
                                 }
+                                Err(error) if !error.bytes_escaped && error.retryable => {
+                                    unanswered = Some((SqlQueryError::from(error.cause), false));
+                                }
                                 Err(error) if !error.bytes_escaped => {
                                     write_error(
                                         output,
@@ -2901,9 +2913,7 @@ fn run_connection_commands<S: QuerySession>(
                         Ok(GeneralExecuteOutcome::Write(outcome)) => {
                             write_outcome = Some(outcome);
                         }
-                        Err(error) => {
-                            write_query_error(output, &error, protocol_41)?;
-                        }
+                        Err(error) => unanswered = Some((error, true)),
                     }
                     if let Some(outcome) = write_outcome {
                         let info = engine.statement_info();
@@ -2920,6 +2930,41 @@ fn run_connection_commands<S: QuerySession>(
                         queries += 1;
                         commands.stmt_execute_successes += 1;
                     }
+                    }
+                    if let Some((error, executed)) = unanswered {
+                        if !retried && engine.retry_after_query_error(error.code) {
+                            retried = true;
+                            engine.set_retrying(true);
+                            continue 'attempt;
+                        }
+                        if !retried && engine.tiflash_fallback_allowed(error.code) {
+                            retried = true;
+                            engine.set_tiflash_fallback(true);
+                            fallback_error = Some(error);
+                            continue 'attempt;
+                        }
+                        if executed {
+                            write_query_error(output, &error, protocol_41)?;
+                        } else {
+                            write_error(
+                                output,
+                                1,
+                                error.code,
+                                error.state,
+                                error.message,
+                                protocol_41,
+                            )?;
+                        }
+                    }
+                    break 'attempt;
+                    }
+                    // Go appends the timeout before its deferred restore of
+                    // TiFlash.
+                    if let Some(error) = &fallback_error {
+                        engine.append_statement_error(error);
+                    }
+                    engine.set_retrying(false);
+                    engine.set_tiflash_fallback(false);
                     record_client_warnings(&*output, &*engine);
                     engine.finish_execute_stmt(execute_started.elapsed());
                 }

@@ -1025,6 +1025,33 @@ impl QuerySession for RetrySession {
         }
     }
 
+    fn prepare_general(
+        &mut self,
+        sql: &str,
+    ) -> Result<tidb_server::PreparedGeneral, SqlQueryError> {
+        Ok(tidb_server::PreparedGeneral::new(sql.to_owned(), 0, Vec::new()))
+    }
+
+    /// The binary execute meets the same retryable conflict.
+    fn execute_general<'a>(
+        &'a mut self,
+        _statement: &tidb_server::PreparedGeneral,
+        _values: &[tidb_param::PreparedValue],
+    ) -> Result<tidb_server::GeneralExecuteOutcome<'a>, SqlQueryError> {
+        self.log
+            .0
+            .lock()
+            .unwrap()
+            .push(format!("execute retrying={}", self.retrying));
+        if self.retrying {
+            Ok(tidb_server::GeneralExecuteOutcome::Write(
+                tidb_executor::ddl_exec::WriteOutcome::default(),
+            ))
+        } else {
+            Err(SqlQueryError::new(9007, *b"HY000", "write conflict"))
+        }
+    }
+
     fn retry_after_query_error(&self, code: u16) -> bool {
         code == 9007
     }
@@ -1117,6 +1144,41 @@ impl QuerySession for FallbackSession {
         }
     }
 
+    fn prepare_general(
+        &mut self,
+        sql: &str,
+    ) -> Result<tidb_server::PreparedGeneral, SqlQueryError> {
+        Ok(tidb_server::PreparedGeneral::new(sql.to_owned(), 0, Vec::new()))
+    }
+
+    /// The binary execute times out on TiFlash the same way.
+    fn execute_general<'a>(
+        &'a mut self,
+        _statement: &tidb_server::PreparedGeneral,
+        _values: &[tidb_param::PreparedValue],
+    ) -> Result<tidb_server::GeneralExecuteOutcome<'a>, SqlQueryError> {
+        self.log
+            .0
+            .lock()
+            .unwrap()
+            .push(format!("execute fallback={}", self.fallback));
+        if self.fallback {
+            Ok(tidb_server::GeneralExecuteOutcome::Write(
+                tidb_executor::ddl_exec::WriteOutcome::default(),
+            ))
+        } else {
+            Err(SqlQueryError::new(9012, *b"HY000", "TiFlash server timeout"))
+        }
+    }
+
+    fn append_statement_error(&mut self, error: &SqlQueryError) {
+        self.log
+            .0
+            .lock()
+            .unwrap()
+            .push(format!("append {} fallback={}", error.code, self.fallback));
+    }
+
     fn tiflash_fallback_allowed(&self, code: u16) -> bool {
         code == 9012
     }
@@ -1174,6 +1236,76 @@ fn a_tiflash_timeout_falls_back_to_tikv_once() {
             "execute fallback=false",
             "reopen Some(9012)",
             "execute fallback=true",
+        ]
+    );
+}
+
+/// Go `executePlanCacheStmt`: a binary execute that failed before any row
+/// reached the client is re-run once -- under `RetryInfo.Retrying` when its
+/// transaction answers `StmtActionRetryReady`, or with TiFlash out of the read
+/// engines after a TiFlash server timeout, whose error is appended after the
+/// re-run (no parser warnings travel; the statement context resets itself).
+/// Both switches are off again for the next execute.
+#[test]
+fn a_binary_execute_retries_and_falls_back_once_like_go() {
+    fn run<F: QuerySessionFactory + 'static>(factory: F) {
+        let node = ConcurrentSqlNode::bind(&config(), Arc::new(factory), users().into()).unwrap();
+        let address = node.local_addr().unwrap();
+        let shutdown = node.shutdown_handle();
+        let server = std::thread::spawn(move || node.serve_connections(1));
+        let (mut client, mut reader) = authenticate(address);
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        write_packet(
+            &mut client,
+            0,
+            &[&[tidb_server::command::COM_STMT_PREPARE][..], b"SELECT 1"].concat(),
+        );
+        reader.set_sequence(1);
+        let prepared = reader.read_packet().unwrap();
+        assert_eq!(prepared[0], 0, "the prepare OK");
+        let statement_id = &prepared[1..5];
+        for _ in 0..2 {
+            let execute = [
+                &[tidb_server::command::COM_STMT_EXECUTE][..],
+                statement_id,
+                &[0, 1, 0, 0, 0],
+            ]
+            .concat();
+            write_packet(&mut client, 0, &execute);
+            reader.set_sequence(1);
+            assert_eq!(reader.read_packet().unwrap()[0], 0, "the re-run's OK");
+        }
+        write_packet(&mut client, 0, &[COM_QUIT]);
+        drop(reader);
+        drop(client);
+        shutdown.shutdown();
+        server.join().unwrap().unwrap();
+    }
+    let log = Arc::new(RetryLog::default());
+    run(RetryFactory(Arc::clone(&log)));
+    assert_eq!(
+        *log.0.lock().unwrap(),
+        [
+            "execute retrying=false",
+            "execute retrying=true",
+            "execute retrying=false",
+            "execute retrying=true",
+        ]
+    );
+    let log = Arc::new(RetryLog::default());
+    run(FallbackFactory(Arc::clone(&log)));
+    assert_eq!(
+        *log.0.lock().unwrap(),
+        [
+            "execute fallback=false",
+            "execute fallback=true",
+            // Appended after the re-run, before TiFlash is restored.
+            "append 9012 fallback=true",
+            "execute fallback=false",
+            "execute fallback=true",
+            "append 9012 fallback=true",
         ]
     );
 }
