@@ -16,6 +16,7 @@ package tables
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,7 +37,7 @@ import (
 )
 
 func TestCompareIndexData(t *testing.T) {
-	// dimensions of the domain of compareIndexData
+	// dimensions of the domain of compareIndexDataWithMVCache
 	// 	 1. table structure, where we only care about column types that influence truncating values
 	//	 2. comparison of row data & index data
 
@@ -83,9 +84,114 @@ func TestCompareIndexData(t *testing.T) {
 		}
 		indexInfo := &model.IndexInfo{Name: ast.NewCIStr("i0"), Columns: indexCols}
 
-		err := compareIndexData(collate.NewCollationEnabled(), tc, cols, data.indexData, data.inputData, indexInfo, &model.TableInfo{Name: ast.NewCIStr("t")}, nil)
+		err := compareIndexDataWithMVCache(collate.NewCollationEnabled(), tc, cols, data.indexData, data.inputData, indexInfo, &model.TableInfo{Name: ast.NewCIStr("t")}, nil, nil)
 		require.Equal(t, data.correct, err == nil, "case id = %v", caseID)
 	}
+
+	// The cache of sorted array elements must reach the same verdict as the per-element scan.
+	testMVIndexCompare(t)
+}
+
+// checkMVIndexWithAndWithoutCache runs the multi-valued index check with and without the sorted
+// element cache and asserts that both paths reach the same verdict.
+func checkMVIndexWithAndWithoutCache(t *testing.T, tc types.Context, cols []*table.Column,
+	indexInfo *model.IndexInfo, tableInfo *model.TableInfo, indexData, row []types.Datum,
+) error {
+	t.Helper()
+	withoutCache := compareIndexDataWithMVCache(
+		true, tc, cols, indexData, row, indexInfo, tableInfo, nil, nil)
+	// Start from a zero cache to also cover the lazy allocation in compareMVIndexVal.
+	var cache mvIndexSortedElems
+	for range 3 {
+		// The first iteration populates the cache, the others hit it.
+		withCache := compareIndexDataWithMVCache(
+			true, tc, cols, indexData, row, indexInfo, tableInfo, nil, &cache)
+		require.Equal(t, withoutCache == nil, withCache == nil,
+			"cached and uncached multi-valued index checks disagreed")
+	}
+	return withoutCache
+}
+
+func testMVIndexCompare(t *testing.T) {
+	tc := types.DefaultStmtNoWarningContext
+
+	arrayFT := types.NewFieldType(mysql.TypeJSON)
+	arrayFT.SetArray(true)
+	cols := []*table.Column{{ColumnInfo: &model.ColumnInfo{
+		ID: 1, Name: ast.NewCIStr("arr"), Offset: 0, State: model.StatePublic, FieldType: *arrayFT,
+	}}}
+	indexInfo := &model.IndexInfo{
+		ID: 1, Name: ast.NewCIStr("idx_mv"), State: model.StatePublic, MVIndex: true,
+		Columns: []*model.IndexColumn{
+			{Name: ast.NewCIStr("arr"), Offset: 0, Length: types.UnspecifiedLength},
+		},
+	}
+	tableInfo := &model.TableInfo{Name: ast.NewCIStr("t")}
+	newJSONRow := func(s string) []types.Datum {
+		bj, err := types.ParseBinaryJSONFromString(s)
+		require.NoError(t, err)
+		return []types.Datum{types.NewJSONDatum(bj)}
+	}
+
+	t.Run("mv index/hit", func(t *testing.T) {
+		elems := make([]string, 0, 500)
+		for i := range 500 {
+			elems = append(elems, fmt.Sprintf("%d", i))
+		}
+		row := newJSONRow("[" + strings.Join(elems, ",") + "]")
+		err := checkMVIndexWithAndWithoutCache(t, tc, cols, indexInfo, tableInfo,
+			[]types.Datum{types.NewIntDatum(499)}, row)
+		require.NoError(t, err)
+	})
+	t.Run("mv index/miss", func(t *testing.T) {
+		row := newJSONRow("[3, 1, 2, 2]")
+		err := checkMVIndexWithAndWithoutCache(t, tc, cols, indexInfo, tableInfo,
+			[]types.Datum{types.NewIntDatum(4)}, row)
+		require.Error(t, err)
+		require.True(t, ErrInconsistentIndexedValue.Equal(err))
+	})
+	t.Run("mv index/empty array", func(t *testing.T) {
+		row := newJSONRow("[]")
+		err := checkMVIndexWithAndWithoutCache(t, tc, cols, indexInfo, tableInfo,
+			[]types.Datum{types.NewIntDatum(1)}, row)
+		require.NoError(t, err)
+	})
+	t.Run("mv index/typed elements", func(t *testing.T) {
+		row := newJSONRow(`[1, "a", [2], {"b": 3}]`)
+		err := checkMVIndexWithAndWithoutCache(t, tc, cols, indexInfo, tableInfo,
+			[]types.Datum{types.NewStringDatum("a")}, row)
+		require.NoError(t, err)
+		err = checkMVIndexWithAndWithoutCache(t, tc, cols, indexInfo, tableInfo,
+			[]types.Datum{types.NewStringDatum("b")}, row)
+		require.Error(t, err)
+	})
+
+	t.Run("mv index/null element", func(t *testing.T) {
+		// The write path never stores an array containing JSON null (the array cast rejects null
+		// elements), but if one ever appears, it is just the smallest element to the sorter and
+		// never matches a non-NULL indexed value.
+		row := newJSONRow(`[null, 1]`)
+		err := checkMVIndexWithAndWithoutCache(t, tc, cols, indexInfo, tableInfo,
+			[]types.Datum{types.NewIntDatum(1)}, row)
+		require.NoError(t, err)
+		err = checkMVIndexWithAndWithoutCache(t, tc, cols, indexInfo, tableInfo,
+			[]types.Datum{types.NewIntDatum(2)}, row)
+		require.Error(t, err)
+	})
+
+	// A NULL index value only occurs when the column itself is NULL, which never takes the
+	// multi-valued path, so both paths must report a mismatch.
+	idxVal := types.NewDatum(nil)
+	var emptyCache mvIndexSortedElems
+	row := newJSONRow("[1, 2]")
+	cmp, err := compareMVIndexVal(tc, &row[0], &idxVal, 0, &emptyCache)
+	require.NoError(t, err)
+	require.NotEqual(t, 0, cmp)
+	// The NULL index value returns early, before the cache is needed, so the cache stays unallocated.
+	require.Nil(t, emptyCache)
+	cmp, err = compareMVIndexVal(tc, &row[0], &idxVal, 0, nil)
+	require.NoError(t, err)
+	require.NotEqual(t, 0, cmp)
 }
 
 func TestCheckRowInsertionConsistency(t *testing.T) {
@@ -378,7 +484,7 @@ func requireDecodedIndexValuesMatchRow(
 		require.NoError(t, err)
 		indexData = append(indexData, datum)
 	}
-	require.NoError(t, compareIndexData(table.encoder.UseNewCollate(), tc, table.Columns, indexData, row, indexInfo, table.Meta(), nil))
+	require.NoError(t, compareIndexDataWithMVCache(table.encoder.UseNewCollate(), tc, table.Columns, indexData, row, indexInfo, table.Meta(), nil, nil))
 }
 
 func buildIndexKeyValue(index table.Index, rowToInsert []types.Datum, tc types.Context,
