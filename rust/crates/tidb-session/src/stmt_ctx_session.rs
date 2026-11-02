@@ -343,6 +343,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         self.stmt_rc_check_ts
     }
 
+    fn pessimistic_txn_provider(&self) -> Option<tidb_sessionctx::PessimisticTxnProvider> {
+        Session::pessimistic_txn_provider(self)
+    }
+
     fn stmt_weak_consistency(&self) -> bool {
         self.stmt_weak_consistency
     }

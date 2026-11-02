@@ -76,6 +76,7 @@ pub mod ddl_jobs;
 pub mod infoschema_reader;
 pub mod memtable_retrievers;
 pub mod compact_table;
+mod isolation_advise;
 pub mod set;
 pub mod simple;
 pub mod index_lookup_stats;

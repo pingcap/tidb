@@ -1721,6 +1721,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_placement_mode_ignore(self.placement_mode_ignore())
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
                     .with_rc_check_ts(self.stmt_rc_check_ts())
+                    .with_pessimistic_txn_provider(self.pessimistic_txn_provider())
                     .with_weak_consistency(self.stmt_weak_consistency())
                     .with_hash_exchange_with_new_collation(
                         self.session_vars()
@@ -1879,6 +1880,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_placement_mode_ignore(self.placement_mode_ignore())
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
                     .with_rc_check_ts(self.stmt_rc_check_ts())
+                    .with_pessimistic_txn_provider(self.pessimistic_txn_provider())
                     .with_weak_consistency(self.stmt_weak_consistency())
                     .with_hash_exchange_with_new_collation(
                         self.session_vars()
@@ -2363,6 +2365,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn in_transaction(&self) -> bool;
     /// Go `StmtCtx.RCCheckTS`, decided when the statement started.
     fn stmt_rc_check_ts(&self) -> bool;
+    /// The Go pessimistic provider that takes this statement's
+    /// `AdviseOptimizeWithPlan`, if any.
+    fn pessimistic_txn_provider(&self) -> Option<tidb_sessionctx::PessimisticTxnProvider>;
     /// Go `StmtCtx.WeakConsistency`, decided when the statement started.
     fn stmt_weak_consistency(&self) -> bool;
     /// Go `SessionVars.IsAutocommit()`: whether each statement stands on its

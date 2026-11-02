@@ -2329,6 +2329,27 @@ impl Session {
         self.stmt_rc_check_ts
     }
 
+    /// The Go provider whose `AdviseOptimizeWithPlan` this statement's plan
+    /// reaches: a pessimistic transaction's statement that reads neither a
+    /// `tidb_snapshot` nor a stale timestamp (both providers return early
+    /// for those); read committed takes no advice for a retried statement
+    /// (`RetryInfo.Retrying`).
+    pub(crate) fn pessimistic_txn_provider(&self) -> Option<tidb_sessionctx::PessimisticTxnProvider> {
+        if !self.in_transaction()
+            || !self.statement_txn_mode().is_pessimistic()
+            || self.historical_read_ts().is_some()
+            || self.txn_is_stale_read()
+        {
+            return None;
+        }
+        if !self.is_read_committed() {
+            return Some(tidb_sessionctx::PessimisticTxnProvider::RepeatableRead);
+        }
+        (!self.retrying).then(|| tidb_sessionctx::PessimisticTxnProvider::ReadCommitted {
+            rc_write_check_ts: self.rc_write_check_ts(),
+        })
+    }
+
     /// Go `SessionVars.RcWriteCheckTS`, set by `tidb_rc_write_check_ts`.
     pub(crate) fn rc_write_check_ts(&self) -> bool {
         self.vars

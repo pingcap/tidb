@@ -39,6 +39,15 @@ pub trait ClusterSnapshot: fmt::Debug + Send {
     /// Installs immutable statement policy on the native snapshot, where available.
     fn set_snapshot_read_options(&mut self, _options: tidb_txnkv::SnapshotReadOptions) {}
 
+    /// Go `AdviseOptimizeWithPlan`'s answer for a pessimistic statement whose
+    /// plan needs no fresh for-update timestamp: the statement keeps the
+    /// transaction's latest one (repeatable read's
+    /// `optimizeForNotFetchingLatestTS`, read committed's
+    /// `ConstantFuture(latestOracleTS)`), and with `check_ts` reads it under
+    /// `RCCheckTS` isolation (read committed's `checkTSInWriteStmt`). Every
+    /// other snapshot ignores the advice.
+    fn advise_keep_for_update_ts(&mut self, _check_ts: bool) {}
+
     /// Binds the session's statement ctx values (Go `RUDetails` and
     /// resource-group taggers) to every read this snapshot serves.
     fn set_statement_kv_context(&mut self, _context: &tidb_txnkv::StatementKvContextCell) {}

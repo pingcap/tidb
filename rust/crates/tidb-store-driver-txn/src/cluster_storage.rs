@@ -889,6 +889,12 @@ impl ClusterSnapshot for SwappableSnapshot {
         }
     }
 
+    fn advise_keep_for_update_ts(&mut self, check_ts: bool) {
+        if let Some(snapshot) = self.bound.as_mut() {
+            snapshot.advise_keep_for_update_ts(check_ts);
+        }
+    }
+
     fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
         if let Some(snapshot) = self.bound.as_mut() {
             snapshot.set_statement_kv_context(context);
@@ -989,6 +995,10 @@ impl CommittedOnlySnapshot {
 impl ClusterSnapshot for CommittedOnlySnapshot {
     fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
         self.inner().set_snapshot_read_options(options);
+    }
+
+    fn advise_keep_for_update_ts(&mut self, check_ts: bool) {
+        self.inner().advise_keep_for_update_ts(check_ts);
     }
 
     fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
@@ -1173,6 +1183,13 @@ impl TableStorage for ClusterTableStorage {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .set_snapshot_read_options(options);
+    }
+
+    fn advise_keep_for_update_ts(&self, check_ts: bool) {
+        self.snapshot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .advise_keep_for_update_ts(check_ts);
     }
 
     fn has_external_statement_rollback(&self) -> bool {

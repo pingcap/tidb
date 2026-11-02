@@ -694,21 +694,17 @@ impl OpenClusterTransaction for MockSessionTransaction {
         self.snapshot_at(self.cluster.timestamp())
     }
 
-    fn fresh_statement_snapshot(&self, _locking: bool) -> Result<Box<dyn ClusterSnapshot>, String> {
-        if !self.pessimistic {
-            return Err("only a pessimistic transaction reads at a statement timestamp".to_owned());
-        }
-        self.snapshot_at(self.cluster.timestamp())
-    }
-
     /// The fixture's snapshot takes no locks during execution, so every
     /// statement reads at a fresh timestamp and its keys are locked by the
     /// statement's lock step.
     fn deferred_statement_snapshot(
         &self,
-        locking: bool,
+        _locking: bool,
     ) -> Result<Box<dyn ClusterSnapshot>, String> {
-        self.fresh_statement_snapshot(locking)
+        if !self.pessimistic {
+            return Err("only a pessimistic transaction reads at a statement timestamp".to_owned());
+        }
+        self.snapshot_at(self.cluster.timestamp())
     }
 
     fn snapshot_at(&self, read_ts: u64) -> Result<Box<dyn ClusterSnapshot>, String> {

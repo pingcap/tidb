@@ -344,10 +344,6 @@ impl OpenClusterTransaction for LazyClusterTransaction {
         self.lazy_snapshot(|transaction| transaction.fresh_locking_snapshot())
     }
 
-    fn fresh_statement_snapshot(&self, locking: bool) -> Result<Box<dyn ClusterSnapshot>, String> {
-        self.lazy_snapshot(move |transaction| transaction.fresh_statement_snapshot(locking))
-    }
-
     fn deferred_statement_snapshot(
         &self,
         locking: bool,

@@ -372,6 +372,19 @@ impl PlannerWarningAppender {
     }
 }
 
+/// The Go pessimistic transaction-context provider a statement's
+/// `AdviseOptimizeWithPlan` reaches (`pkg/sessiontxn/isolation`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PessimisticTxnProvider {
+    /// `PessimisticRRTxnContextProvider`.
+    RepeatableRead,
+    /// `PessimisticRCTxnContextProvider`, with `SessionVars.RcWriteCheckTS`.
+    ReadCommitted {
+        /// `tidb_rc_write_check_ts`.
+        rc_write_check_ts: bool,
+    },
+}
+
 /// Go `stmtctx.StatementContext`, in the part evaluation actually reads: the
 /// warning buffer and the error levels that decide whether a tolerable
 /// condition warns or fails the statement.
@@ -916,6 +929,9 @@ pub struct StmtContextData {
     /// READ-COMMITTED transaction reads at the transaction's latest
     /// timestamp and fails with a write conflict on newer data.
     rc_check_ts: bool,
+    /// The Go pessimistic transaction-context provider that takes this
+    /// statement's `AdviseOptimizeWithPlan`, if any.
+    pessimistic_txn_provider: Option<PessimisticTxnProvider>,
     /// Go `StmtCtx.WeakConsistency` (`isWeakConsistencyRead`): an autocommit
     /// read-only statement under `tidb_read_consistency = 'weak'` reads at
     /// RC isolation.
@@ -2256,6 +2272,13 @@ context_configuration! {
         self
     }
 
+    /// Sets the pessimistic provider that takes this statement's plan advice.
+    #[must_use]
+    pub fn with_pessimistic_txn_provider(mut self, provider: Option<PessimisticTxnProvider>) -> Self {
+        self.pessimistic_txn_provider = provider;
+        self
+    }
+
     /// Sets `@@tidb_hash_exchange_with_new_collation` for this statement.
     #[must_use]
     pub fn with_hash_exchange_with_new_collation(mut self, allowed: bool) -> Self {
@@ -2740,6 +2763,7 @@ impl StmtContext {
             hash_exchange_with_new_collation:
                 tidb_vardef::defaults::DEF_TIDB_HASH_EXCHANGE_WITH_NEW_COLLATION,
             rc_check_ts: false,
+            pessimistic_txn_provider: None,
             weak_consistency: false,
             row_encoding_config: tidb_tblctx::RowEncodingConfig::default(),
             query_cop_store_limiter: None,
@@ -4567,6 +4591,13 @@ impl StmtContext {
     #[must_use]
     pub fn rc_check_ts(&self) -> bool {
         self.rc_check_ts
+    }
+
+    /// The pessimistic provider that takes this statement's
+    /// `AdviseOptimizeWithPlan`.
+    #[must_use]
+    pub fn pessimistic_txn_provider(&self) -> Option<PessimisticTxnProvider> {
+        self.pessimistic_txn_provider
     }
 
     /// Go `SessionVars.HashExchangeWithNewCollation`.

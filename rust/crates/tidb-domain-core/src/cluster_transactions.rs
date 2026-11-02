@@ -506,13 +506,6 @@ pub trait OpenClusterTransaction: Send {
         Err("only a pessimistic transaction opens a current locking snapshot".to_owned())
     }
 
-    /// A statement handle at a fresh statement timestamp, which also moves
-    /// the for-update timestamp: Go's pessimistic READ-COMMITTED provider
-    /// (`getStmtTS`) gives every statement its own.
-    fn fresh_statement_snapshot(&self, _locking: bool) -> Result<Box<dyn ClusterSnapshot>, String> {
-        Err("only a pessimistic transaction reads at a statement timestamp".to_owned())
-    }
-
     /// A pessimistic statement handle whose for-update timestamp its first
     /// act decides (Go `optimizeForNotFetchingLatestTS`): a locking point
     /// read keeps the current one, any other read advances it.
@@ -1814,11 +1807,6 @@ where
 
     fn fresh_locking_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
         SessionTransaction::fresh_locking_snapshot(self).map_err(|error| error.to_string())
-    }
-
-    fn fresh_statement_snapshot(&self, locking: bool) -> Result<Box<dyn ClusterSnapshot>, String> {
-        SessionTransaction::fresh_statement_snapshot(self, locking)
-            .map_err(|error| error.to_string())
     }
 
     fn deferred_statement_snapshot(

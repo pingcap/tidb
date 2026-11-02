@@ -980,7 +980,9 @@ impl StatementLifecycle<'_> {
                 // Go's pessimistic READ-COMMITTED provider reads every
                 // statement at its own fresh timestamp (`getStmtTS`), so a
                 // statement sees what peers committed after BEGIN; repeatable
-                // read keeps the start timestamp.
+                // read keeps the start timestamp. The timestamp is a future
+                // the first read or lock resolves, unless the plan advises
+                // keeping the latest one (`AdviseOptimizeWithPlan`).
                 None if transaction.is_pessimistic() && self.session.is_read_committed() => {
                     // `prepareStmtTS`: under `RCCheckTS` the statement reads
                     // at the latest timestamp the transaction fetched
@@ -988,15 +990,15 @@ impl StatementLifecycle<'_> {
                     if self.session.stmt_rc_check_ts() {
                         transaction.snapshot_at_for(transaction.for_update_ts(), locking)
                     } else {
-                        transaction.fresh_statement_snapshot(locking)
+                        transaction.deferred_statement_snapshot(locking)
                     }
                 }
                 // Go's pessimistic DML and locking reads read at
                 // `GetStmtForUpdateTS`, a fresh timestamp, so they see rows
-                // peers committed after BEGIN -- unless the plan starts with
-                // a locking point read, whose lock answers the latest row
-                // (`AdviseOptimizeWithPlan` -> `optimizeForNotFetchingLatestTS`).
-                // The deferred handle lets the executor's first act decide.
+                // peers committed after BEGIN -- unless the plan advises
+                // keeping the current one (`AdviseOptimizeWithPlan` ->
+                // `optimizeForNotFetchingLatestTS`). The deferred handle
+                // resolves at the statement's first read or lock.
                 None if (is_dml || shape == StatementReadShape::LockingRead)
                     && transaction.is_pessimistic() =>
                 {

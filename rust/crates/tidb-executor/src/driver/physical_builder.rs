@@ -7767,6 +7767,7 @@ pub(super) fn open_query(
         super::begin_run_stmt_region();
     }
     prepare_execution_plan(physical, catalog, ctx)?;
+    crate::isolation_advise::advise_optimize_with_plan(ctx, physical, false);
     crate::explain::publish_physical_process_info(ctx, physical, catalog);
     let root = build(physical, catalog, ctx)?;
     let columns = match query {

@@ -1182,12 +1182,11 @@ impl<S: StoreClient> SessionTransaction<S> {
     }
 
     /// One pessimistic statement's handle whose for-update timestamp is
-    /// decided by what the statement does first, Go's
-    /// `AdviseOptimizeWithPlan` -> `optimizeForNotFetchingLatestTS`: a plan
-    /// whose first act is a locking point read
-    /// ([`ClusterSnapshot::lock_keys_for_read`]) does not fetch a new
-    /// for-update timestamp -- the lock answers the latest row -- while any
-    /// other first read advances it (`GetStmtForUpdateTS`) and reads there.
+    /// resolved lazily, Go's statement timestamp future: the first read or
+    /// lock fetches a fresh one (`GetStmtForUpdateTS`) and reads there,
+    /// unless the plan advised keeping the latest one
+    /// ([`ClusterSnapshot::advise_keep_for_update_ts`], Go
+    /// `AdviseOptimizeWithPlan`).
     pub fn deferred_statement_snapshot(
         &self,
         locking: bool,
@@ -1214,6 +1213,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             read_ts,
             deferred_read_ts: std::sync::atomic::AtomicU64::new(0),
             advance_on_first_read: std::sync::atomic::AtomicBool::new(advance_on_first_read),
+            check_ts_in_write_stmt: false,
             read_options: Default::default(),
             locking,
             fair_locking: self.fair_locking,
@@ -1448,6 +1448,10 @@ impl fmt::Debug for MutationOverlaySnapshot {
 impl ClusterSnapshot for MutationOverlaySnapshot {
     fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
         self.snapshot.set_snapshot_read_options(options);
+    }
+
+    fn advise_keep_for_update_ts(&mut self, check_ts: bool) {
+        self.snapshot.advise_keep_for_update_ts(check_ts);
     }
 
     fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
@@ -1754,6 +1758,9 @@ struct SessionSnapshot<S: StoreClient> {
     /// Whether this statement may use rows returned with pessimistic locks.
     locking: bool,
     read_options: tidb_txnkv::SnapshotReadOptions,
+    /// Go `checkTSInWriteStmt`: the statement keeps the latest timestamp
+    /// and reads it under `RCCheckTS` isolation.
+    check_ts_in_write_stmt: bool,
     /// `@@tidb_pessimistic_txn_fair_locking` as the transaction captured it.
     fair_locking: bool,
     /// See [`SessionTransaction::take_statement_lock_failure`].
@@ -1808,6 +1815,17 @@ impl<S: StoreClient> fmt::Debug for SessionSnapshot<S> {
 impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
     fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
         self.read_options = options;
+        self.read_options.rc_check_ts |= self.check_ts_in_write_stmt;
+    }
+
+    fn advise_keep_for_update_ts(&mut self, check_ts: bool) {
+        use std::sync::atomic::Ordering;
+        // Only a handle whose timestamp is still unresolved has one to keep.
+        if self.deferred_read_ts.load(Ordering::Acquire) == 0 {
+            self.advance_on_first_read.store(false, Ordering::Release);
+        }
+        self.check_ts_in_write_stmt = check_ts;
+        self.read_options.rc_check_ts |= check_ts;
     }
 
     fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
@@ -2051,15 +2069,12 @@ impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
         wait: LockWaitTime,
         only_if_exists: bool,
     ) -> Result<(), StorageError> {
-        use std::sync::atomic::Ordering;
         if keys.is_empty() {
             return Ok(());
         }
-        // Go `optimizeForNotFetchingLatestTS`: a plan that starts with a
-        // locking point read keeps the current for-update timestamp.
-        if self.deferred_read_ts.load(Ordering::Acquire) == 0 {
-            self.advance_on_first_read.store(false, Ordering::Release);
-        }
+        // Go `newLockCtx` -> `GetStmtForUpdateTS`: the lock resolves the
+        // statement's for-update timestamp as a read does.
+        self.statement_read_ts()?;
         self.lock_in_statement(keys, wait, true, only_if_exists)
     }
 
@@ -2068,6 +2083,7 @@ impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
     /// returned values. The statement has read already, so its for-update
     /// timestamp stands.
     fn do_lock_keys(&mut self, keys: &[Key], wait: LockWaitTime) -> Result<(), StorageError> {
+        self.statement_read_ts()?;
         self.lock_in_statement(keys, wait, false, false)
     }
 }
@@ -2415,6 +2431,7 @@ mod tests {
             read_ts: None,
             deferred_read_ts: std::sync::atomic::AtomicU64::new(0),
             advance_on_first_read: std::sync::atomic::AtomicBool::new(false),
+            check_ts_in_write_stmt: false,
             read_options: Default::default(),
             locking: false,
             fair_locking: false,
@@ -2597,6 +2614,7 @@ mod tests {
             read_ts: None,
             deferred_read_ts: std::sync::atomic::AtomicU64::new(0),
             advance_on_first_read: std::sync::atomic::AtomicBool::new(false),
+            check_ts_in_write_stmt: false,
             read_options: Default::default(),
             locking: false,
             fair_locking: false,
@@ -2617,6 +2635,7 @@ mod tests {
             read_ts: Some(200),
             deferred_read_ts: std::sync::atomic::AtomicU64::new(0),
             advance_on_first_read: std::sync::atomic::AtomicBool::new(false),
+            check_ts_in_write_stmt: false,
             read_options: Default::default(),
             locking: false,
             fair_locking: false,

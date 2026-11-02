@@ -10938,6 +10938,95 @@ fn a_pessimistic_range_update_reports_its_advanced_for_update_ts() {
         .expect("rollback");
 }
 
+/// Go `AdviseOptimizeWithPlan`: a pessimistic statement whose plan reads
+/// only through locking point gets (or an INSERT without SELECT) keeps the
+/// transaction's for-update timestamp instead of fetching a new one --
+/// repeatable read always (`notNeedGetLatestTSFromPD`), read committed under
+/// `tidb_rc_write_check_ts` (`planSkipGetTsoFromPD`, reusing the latest
+/// oracle timestamp). Each `kept` / advanced step was captured from Go.
+#[test]
+fn pessimistic_point_writes_keep_the_for_update_ts_as_go_advises() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(110))
+        .expect("session opens");
+    rows(&mut session, "CREATE TABLE test.adv (a int primary key, b int)");
+    rows(&mut session, "INSERT INTO test.adv VALUES (1, 1), (2, 2)");
+    // (start_ts, for_update_ts) of the statement before.
+    let last_query_ts = |session: &mut Session| {
+        let info = rows(session, "SELECT @@tidb_last_query_info");
+        let tidb_datatype::Datum::String(info) = &info[0][0] else {
+            panic!("tidb_last_query_info is a string: {info:?}");
+        };
+        let info: serde_json::Value =
+            serde_json::from_slice(info.bytes()).expect("tidb_last_query_info is JSON");
+        (
+            info["start_ts"].as_u64().expect("start_ts"),
+            info["for_update_ts"].as_u64().expect("for_update_ts"),
+        )
+    };
+    let cases: [(&str, &str, &[(&str, bool)]); 3] = [
+        (
+            "REPEATABLE-READ",
+            "OFF",
+            &[
+                ("SELECT * FROM test.adv WHERE a = 1 FOR UPDATE", true),
+                ("INSERT INTO test.adv VALUES (3, 3)", true),
+                ("UPDATE test.adv SET b = 9 WHERE b = 2", false),
+                ("UPDATE test.adv SET b = 8 WHERE a = 1", true),
+            ],
+        ),
+        (
+            "READ-COMMITTED",
+            "OFF",
+            &[
+                ("UPDATE test.adv SET b = 7 WHERE a = 1", false),
+                ("INSERT INTO test.adv VALUES (4, 4)", true),
+            ],
+        ),
+        (
+            "READ-COMMITTED",
+            "ON",
+            &[
+                ("UPDATE test.adv SET b = 6 WHERE a = 1", true),
+                ("INSERT INTO test.adv VALUES (5, 5)", true),
+                ("UPDATE test.adv SET b = 5 WHERE b = 2", false),
+                ("SELECT * FROM test.adv WHERE a = 2 FOR UPDATE", true),
+            ],
+        ),
+    ];
+    for (isolation, rc_write_check_ts, statements) in cases {
+        rows(
+            &mut session,
+            &format!(
+                "SET transaction_isolation = '{isolation}', tidb_rc_write_check_ts = {rc_write_check_ts}"
+            ),
+        );
+        session
+            .node_conn()
+            .control_transaction("BEGIN PESSIMISTIC")
+            .expect("begin");
+        // The first statement is measured against the transaction's start.
+        let mut previous = None;
+        for (sql, kept) in statements {
+            rows(&mut session, sql);
+            let (start_ts, current) = last_query_ts(&mut session);
+            let previous_ts = previous.unwrap_or(start_ts);
+            assert_eq!(
+                current == previous_ts,
+                *kept,
+                "{isolation} rc_write_check_ts={rc_write_check_ts}: {sql} moved for_update_ts {previous_ts} -> {current}"
+            );
+            previous = Some(current);
+        }
+        session
+            .node_conn()
+            .control_transaction("ROLLBACK")
+            .expect("rollback");
+    }
+}
+
 /// Go's locking point reads lock inside `Next` exactly the keys their
 /// isolation names (`PointGetExecutor.Next` / `getAndLock`,
 /// `BatchPointGetExec.initialize`): repeatable read locks a unique index key

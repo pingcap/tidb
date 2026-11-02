@@ -351,6 +351,10 @@ impl ClusterSnapshot for TemporaryTableSnapshotInterceptor {
         self.snap.set_snapshot_read_options(options);
     }
 
+    fn advise_keep_for_update_ts(&mut self, check_ts: bool) {
+        self.snap.advise_keep_for_update_ts(check_ts);
+    }
+
     fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
         self.snap.set_statement_kv_context(context);
     }
