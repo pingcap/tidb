@@ -991,19 +991,6 @@ impl TableCommon {
         self.store = store;
     }
 
-    /// See [`TableStorage::snapshot_reader`].
-    pub fn snapshot_reader(&self) -> Option<Box<dyn TableStorage>> {
-        self.store.snapshot_reader()
-    }
-
-    /// See [`TableStorage::mem_buffer_snapshot`].
-    pub fn mem_buffer_snapshot(
-        &self,
-        ranges: &[(Key, Key)],
-    ) -> Option<std::sync::Arc<tidb_kv::mem_buffer::MemBufferSnapshot>> {
-        self.store.mem_buffer_snapshot(ranges)
-    }
-
     pub fn columns_mut(&mut self) -> &mut Vec<crate::column::Column> {
         std::sync::Arc::make_mut(&mut self.columns)
     }
@@ -1954,12 +1941,6 @@ impl TableCommon {
         self.store.has_external_statement_rollback()
     }
 
-    /// Go snapshot runtime `CmdGet` and `CmdBatchGet` totals for this table's
-    /// statement snapshot.
-    pub fn point_rpc_counts(&mut self) -> (u64, u64) {
-        self.store.point_rpc_counts()
-    }
-
     /// Counts the keys this copy's range scans and handle lookups process
     /// against the statement's budget, as Go's coprocessor reads add each
     /// response's `ScanDetail.ProcessedKeys`. Reader executors install it on
@@ -2009,18 +1990,6 @@ impl TableCommon {
             Some(budget) if keys > 0 => budget.add(keys),
             _ => Ok(()),
         }
-    }
-
-    /// Installs point-reader options on the same backend that serves its keys.
-    pub fn configure_snapshot_read(&self, ctx: &dyn tidb_tblctx::MutateContext, avg_row_bytes: f64) {
-        self.store
-            .set_snapshot_read_options(ctx.snapshot_read_options(avg_row_bytes));
-    }
-
-    /// Installs exactly `options` on the backend that serves this table's
-    /// keys (Go `snapshot.SetOption` of a point reader's options).
-    pub fn set_snapshot_read_options(&self, options: tidb_txnkv::SnapshotReadOptions) {
-        self.store.set_snapshot_read_options(options);
     }
 
     /// Go `PointGetExecutor`: this table's metadata over the snapshot
