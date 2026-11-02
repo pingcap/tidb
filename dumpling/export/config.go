@@ -348,6 +348,23 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 			NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
 		}
 	}
+	if driverCfg.TLS.CipherSuites == nil {
+		// Some legacy MySQL servers only support RSA key exchange. Go 1.27 removed
+		// the tlsrsakex switch, so enable the required suites on MySQL connections
+		// while retaining modern suites and respecting an explicit cipher policy.
+		driverCfg.TLS = driverCfg.TLS.Clone()
+		for _, suite := range tls.CipherSuites() {
+			if slices.Contains(suite.SupportedVersions, tls.VersionTLS12) {
+				driverCfg.TLS.CipherSuites = append(driverCfg.TLS.CipherSuites, suite.ID)
+			}
+		}
+		driverCfg.TLS.CipherSuites = append(driverCfg.TLS.CipherSuites,
+			tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_RSA_WITH_AES_128_CBC_SHA,
+			tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+		)
+	}
 	if conf.AllowCleartextPasswords {
 		driverCfg.AllowCleartextPasswords = true
 	}

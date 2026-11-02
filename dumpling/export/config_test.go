@@ -3,10 +3,18 @@
 package export
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
+	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -16,6 +24,101 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGetDriverConfigTLSCipherSuites(t *testing.T) {
+	for _, configured := range []bool{false, true} {
+		t.Run(fmt.Sprintf("configured=%t", configured), func(t *testing.T) {
+			conf := DefaultConfig()
+			if configured {
+				conf.Security.TLS = &tls.Config{MinVersion: tls.VersionTLS12, ServerName: "mysql.example"}
+			}
+			driverCfg := conf.GetDriverConfig("")
+			require.Equal(t, !configured, driverCfg.AllowFallbackToPlaintext)
+			require.Equal(t, !configured, driverCfg.TLS.InsecureSkipVerify)
+			require.Equal(t, uint16(tls.VersionTLS12), driverCfg.TLS.MinVersion)
+			for _, suite := range []uint16{
+				tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_RSA_WITH_AES_128_CBC_SHA,
+				tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			} {
+				require.Contains(t, driverCfg.TLS.CipherSuites, suite)
+			}
+			if configured {
+				require.Nil(t, conf.Security.TLS.CipherSuites)
+				require.Equal(t, "mysql.example", driverCfg.TLS.ServerName)
+				require.NotSame(t, conf.Security.TLS, driverCfg.TLS)
+			}
+		})
+	}
+
+	// An explicit cipher policy, including an empty list, must not be widened.
+	for _, suites := range [][]uint16{{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256}, {}} {
+		conf := DefaultConfig()
+		conf.Security.TLS = &tls.Config{MinVersion: tls.VersionTLS12, CipherSuites: suites}
+		require.Equal(t, suites, conf.GetDriverConfig("").TLS.CipherSuites)
+	}
+}
+
+func TestGetDriverConfigTLSHandshake(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		DNSNames:     []string{"localhost"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	for _, withCA := range []bool{false, true} {
+		for _, suite := range []uint16{
+			tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_RSA_WITH_AES_128_CBC_SHA,
+			tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		} {
+			t.Run(fmt.Sprintf("CA=%t/%s", withCA, tls.CipherSuiteName(suite)), func(t *testing.T) {
+				conf := DefaultConfig()
+				if withCA {
+					conf.Security.SSLCABytes = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+				}
+				require.NoError(t, buildTLSConfig(conf))
+				listener, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
+					Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}},
+					MinVersion:   tls.VersionTLS12,
+					MaxVersion:   tls.VersionTLS12,
+					CipherSuites: []uint16{suite},
+				})
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, listener.Close()) })
+				serverErr := make(chan error, 1)
+				go func() {
+					conn, err := listener.Accept()
+					if err != nil {
+						serverErr <- err
+						return
+					}
+					defer conn.Close()
+					if err = conn.SetDeadline(time.Now().Add(5 * time.Second)); err == nil {
+						err = conn.(*tls.Conn).Handshake()
+					}
+					serverErr <- err
+				}()
+				client, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", listener.Addr().String(), conf.GetDriverConfig("").TLS)
+				require.NoError(t, err)
+				defer client.Close()
+				require.Equal(t, suite, client.ConnectionState().CipherSuite)
+				require.NoError(t, <-serverErr)
+			})
+		}
+	}
+}
 
 func TestCreateExternalStorage(t *testing.T) {
 	mockConfig := defaultConfigForTest(t)

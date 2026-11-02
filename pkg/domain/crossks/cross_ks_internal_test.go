@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -74,12 +75,14 @@ func newRuntimeHandleTestManager(targetKS string) (*Manager, *runtimeEntry, *run
 
 func newRuntimeHandleTestSessionManager(targetStore *runtimeHandleTestStore, sessPool *runtimeHandleTestSessPool) *SessionManager {
 	ctx, cancel := context.WithCancel(context.Background())
+	etcdCli := clientv3.NewCtxClient(context.Background())
 	return &SessionManager{
 		ctx:             ctx,
 		cancel:          cancel,
 		exitCh:          make(chan struct{}),
 		store:           targetStore,
-		etcdCli:         clientv3.NewCtxClient(context.Background()),
+		etcdCli:         etcdCli,
+		autoidClient:    autoid.NewClientDiscover(etcdCli),
 		schemaVerSyncer: schemaver.NewMemSyncer(),
 		sessPool:        sessPool,
 	}

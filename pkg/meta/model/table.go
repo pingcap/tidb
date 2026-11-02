@@ -1329,11 +1329,6 @@ func (pi *PartitionInfo) SetOriginalPartitionIDs() {
 // session should not see (may be duplicate errors on insert/update though)
 // For example during truncate or drop partition.
 func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
-	// TODO:
-	// Drop partition:
-	// TODO: Make similar changes as in Truncate Partition:
-	// Add a state blocking read and write in the partitions to be dropped,
-	// to avoid situations like https://github.com/pingcap/tidb/issues/55888
 	// Add partition:
 	// TODO: Add tests!
 	// Exchange Partition:
@@ -1374,7 +1369,7 @@ func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
 	case ActionAddTablePartition:
 		// TODO: Add tests for ADD PARTITION multi-domain with Global Index!
 		if len(pi.AddingDefinitions) > 0 {
-			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			ids := make([]int64, 0, len(pi.AddingDefinitions))
 			for _, def := range pi.AddingDefinitions {
 				ids = append(ids, def.ID)
 			}

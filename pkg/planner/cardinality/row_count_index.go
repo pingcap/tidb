@@ -451,6 +451,15 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
 func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRange *ranger.Range, idxCols []*expression.Column) (sel float64, minSel float64, maxSel float64, success bool, err error) {
+	idxHasStats := idx.Histogram.Len() > 0 || idx.TopN.Num() > 0
+	return expBackoffEstimationByColIDs(sctx, coll, coll.Idx2ColUniqueIDs[idx.Histogram.ID], idx.NDV, len(idx.Info.Columns), idxHasStats, indexRange, idxCols)
+}
+
+// expBackoffEstimationByColIDs is the core of expBackoffEstimation. It does not require index statistics:
+// colsIDs are the unique IDs of the index columns, idxNDV is the index NDV (0 if unknown), numIdxCols is the
+// number of index columns, and idxHasStats indicates whether the index itself has a histogram or TopN.
+func expBackoffEstimationByColIDs(sctx planctx.PlanContext, coll *statistics.HistColl, colsIDs []int64, idxNDV int64, numIdxCols int, idxHasStats bool,
+	indexRange *ranger.Range, idxCols []*expression.Column) (sel float64, minSel float64, maxSel float64, success bool, err error) {
 	tmpRan := []*ranger.Range{
 		{
 			LowVal:    make([]types.Datum, 1),
@@ -458,7 +467,6 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 			Collators: make([]collate.Collator, 1),
 		},
 	}
-	colsIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
 	singleColumnEstResults := make([]float64, 0, len(indexRange.LowVal))
 	minSel, maxSel = 1.0, 1.0
 	// The following codes uses Exponential Backoff to reduce the impact of independent assumption. It works like:
@@ -523,8 +531,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 			// statistics. See https://github.com/pingcap/tidb/issues/69134.
 			// Any other column lacking statistics keeps the existing behavior:
 			// skip it and estimate from the remaining columns.
-			if i < len(idxCols) && idxCols[i] != nil && idxCols[i].VirtualExpr != nil &&
-				(idx.Histogram.Len() > 0 || idx.TopN.Num() > 0) {
+			if i < len(idxCols) && idxCols[i] != nil && idxCols[i].VirtualExpr != nil && idxHasStats {
 				return 0, 0, 0, false, nil
 			}
 			continue
@@ -548,13 +555,13 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 	// is less than the number of index columns - use 90% of the bound to differentiate a subset from full index match.
 	// If there is an individual column selectivity that goes below this bound, use that selectivity only.
 	histNDV := coll.RealtimeCount
-	if idx.NDV > 0 {
-		histNDV = idx.NDV
+	if idxNDV > 0 {
+		histNDV = idxNDV
 	}
 	idxLowBound := 1 / float64(min(histNDV, coll.RealtimeCount))
 	minBound := idxLowBound
 	// Adjust idxLowBound upwards if we have not used all index columns.
-	if l < len(idx.Info.Columns) {
+	if l < numIdxCols {
 		idxLowBound /= 0.9
 	}
 	// maxSel is the "best" selectivity from all maximum of single column selectivities.

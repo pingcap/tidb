@@ -3080,6 +3080,41 @@ func (s *SessionVars) GetSessionStatesSystemVar(name string) (string, bool, erro
 	return "", false, nil
 }
 
+// getSnapshotTSState preserves the effective timestamp, which can differ from
+// the cached string after changing time_zone or setting tx_read_ts.
+func getSnapshotTSState(s *SessionVars) (string, bool, error) {
+	if s.SnapshotTS == 0 {
+		return "", false, nil
+	}
+	// Preserve the client's spelling when it still denotes the effective timestamp.
+	if value, ok := s.systems[vardef.TiDBSnapshot]; ok {
+		if ts, err := parseTSFromNumberOrTime(s, value); err == nil && ts == s.SnapshotTS {
+			return value, true, nil
+		}
+	}
+	return strconv.FormatUint(s.SnapshotTS, 10), true, nil
+}
+
+// getTxnReadTSState must not replay a timestamp that has been consumed or cleared
+// by tidb_snapshot. Keep the existing datetime syntax for session-state compatibility.
+func getTxnReadTSState(s *SessionVars) (string, bool, error) {
+	ts := s.TxnReadTS.PeakTxnReadTS()
+	if ts == 0 {
+		return "", false, nil
+	}
+	value := oracle.GetTimeFromTS(ts).In(s.Location()).Format("2006-01-02 15:04:05.000")
+	// A timezone change can make the local time ambiguous during a DST rollback.
+	// Refuse migration if the datetime cannot represent the exact timestamp.
+	restoredTS, err := parseTSFromNumberOrTime(s, value)
+	if err != nil {
+		return "", false, err
+	}
+	if restoredTS != ts {
+		return "", false, sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("tx_read_ts cannot be represented in the session time zone")
+	}
+	return value, true, nil
+}
+
 // GetGlobalSystemVar gets a global system variable.
 func (s *SessionVars) GetGlobalSystemVar(ctx context.Context, name string) (string, error) {
 	sv := GetSysVar(name)

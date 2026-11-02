@@ -34,6 +34,61 @@ import (
 
 var explainRUForestRowsSink [][]string
 
+func TestMViewRefreshMLogIsEmpty(t *testing.T) {
+	ctx := mock.NewContext()
+	stats := &property.StatsInfo{RowCount: 1}
+	dual := func(rows int) base.PhysicalPlan {
+		return physicalop.PhysicalTableDual{RowCount: rows}.Init(ctx, stats, 0)
+	}
+	projection := func(input base.PhysicalPlan) base.PhysicalPlan {
+		p := physicalop.PhysicalProjection{}.Init(ctx, stats, 0)
+		p.SetChildren(input)
+		return p
+	}
+	aggregation := func(input base.PhysicalPlan, grouped, stream bool) base.PhysicalPlan {
+		agg := &physicalop.BasePhysicalAgg{}
+		if grouped {
+			agg.GroupByItems = []expression.Expression{&expression.Column{}}
+		}
+		var p base.PhysicalPlan
+		if stream {
+			p = agg.InitForStream(ctx, stats, 0, expression.NewSchema())
+		} else {
+			p = agg.InitForHash(ctx, stats, 0, expression.NewSchema())
+		}
+		p.SetChildren(input)
+		return p
+	}
+	join := func(left, right base.PhysicalPlan) base.PhysicalPlan {
+		p := physicalop.PhysicalHashJoin{BasePhysicalJoin: physicalop.BasePhysicalJoin{
+			JoinType: base.LeftOuterJoin,
+		}}.Init(ctx, stats, 0)
+		p.SetChildren(left, right)
+		return projection(p)
+	}
+	zeroEstimate := physicalop.PhysicalTableScan{}.Init(ctx, 0)
+	zeroEstimate.SetStats(&property.StatsInfo{RowCount: 0})
+	for _, tc := range []struct {
+		name  string
+		plan  base.PhysicalPlan
+		empty bool
+	}{
+		{"zero-row Dual", dual(0), true},
+		{"one-row Dual", dual(1), false},
+		{"empty grouped mlog", join(aggregation(projection(dual(0)), true, false), dual(1)), true},
+		{"empty stream aggregation", join(aggregation(dual(0), true, true), dual(1)), true},
+		{"empty MV side", join(aggregation(dual(1), true, false), dual(0)), false},
+		{"scalar hash aggregation", join(aggregation(dual(0), false, false), dual(1)), false},
+		{"scalar stream aggregation", join(aggregation(dual(0), false, true), dual(1)), false},
+		{"zero estimate", zeroEstimate, false},
+		{"nil plan", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.empty, mviewRefreshMLogIsEmpty(tc.plan))
+		})
+	}
+}
+
 func TestMViewPhysicalPlanExplainInfo(t *testing.T) {
 	deltaMerge := &MViewDeltaMerge{
 		AggInfos: []mview.AggInfo{{

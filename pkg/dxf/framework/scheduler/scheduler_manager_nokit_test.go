@@ -287,8 +287,8 @@ func TestExpiredFileCleanLoopEnabled(t *testing.T) {
 	taskMgr.EXPECT().GetAllNodes(gomock.Any()).Return(nil, nil).AnyTimes()
 	taskMgr.EXPECT().GetCleanupTasks(gomock.Any()).Return(nil, nil).AnyTimes()
 	taskMgr.EXPECT().GetTopUnfinishedTasks(gomock.Any()).Return(nil, nil).AnyTimes()
-	// The NextGen cleanup loop triggers the orphan data monitor on startup.
-	// Reporting an active task keeps the monitor from reaching the real object
+	// The NextGen cleanup loop triggers the orphan data cleaner on startup.
+	// Reporting an active task keeps the cleaner from reaching the real object
 	// store.
 	taskMgr.EXPECT().GetActiveTaskCountsByKeyspace(gomock.Any()).Return(
 		&storage.ActiveTaskSummary{Total: 1}, nil).AnyTimes()
@@ -331,9 +331,9 @@ func TestStopResetsOrphanDataGauge(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mgr := NewManager(context.Background(), nil, mock.NewMockTaskManager(ctrl), "1", proto.NodeResourceForTest)
-	// Install a real monitor regardless of the kernel type so the reset path is
+	// Install a real cleaner regardless of the kernel type so the reset path is
 	// exercised deterministically.
-	mgr.orphanMonitor = orphandata.NewMonitor(orphandata.Config{})
+	mgr.orphanCleaner = orphandata.NewCleaner(orphandata.Config{})
 	t.Cleanup(func() { metrics.GlobalSortOrphanDataSize.Reset() })
 
 	metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(42)
@@ -552,7 +552,7 @@ func TestSchedulerCleanTask(t *testing.T) {
 		loopCtx, cancel := context.WithCancel(context.Background())
 		mgr := NewManager(loopCtx, nil, taskMgr, "1", proto.NodeResourceForTest)
 		cleanupStarted := make(chan struct{})
-		monitorStarted := make(chan struct{})
+		orphanCleanerStarted := make(chan struct{})
 		loopDone := make(chan struct{})
 		taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).DoAndReturn(func(context.Context) ([]*proto.Task, error) {
 			close(cleanupStarted)
@@ -560,7 +560,7 @@ func TestSchedulerCleanTask(t *testing.T) {
 		})
 		if kerneltype.IsNextGen() {
 			taskMgr.EXPECT().GetActiveTaskCountsByKeyspace(mgr.ctx).DoAndReturn(func(context.Context) (*storage.ActiveTaskSummary, error) {
-				close(monitorStarted)
+				close(orphanCleanerStarted)
 				return &storage.ActiveTaskSummary{Total: 1}, nil
 			})
 		}
@@ -576,9 +576,9 @@ func TestSchedulerCleanTask(t *testing.T) {
 		}
 		if kerneltype.IsNextGen() {
 			select {
-			case <-monitorStarted:
+			case <-orphanCleanerStarted:
 			case <-time.After(3 * time.Second):
-				t.Fatal("cleanup task loop did not request the orphan data monitor")
+				t.Fatal("cleanup task loop did not request the orphan data cleaner")
 			}
 		}
 		cancel()

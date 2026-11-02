@@ -31,6 +31,12 @@ import (
 
 const dropSchemaTTLRestoreRegistrationsLogKey = "drop_schema_ttl_restore_registrations_failed"
 
+type dropSchemaTTLTableInfo struct {
+	id      int64
+	name    string
+	enabled bool
+}
+
 func onCreateSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	args, err := model.GetCreateSchemaArgs(job)
@@ -177,13 +183,31 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 	switch dbInfo.State {
 	case model.StatePublic:
 		// public -> write only
-		var tables []*model.TableInfo
-		tables, err = metaMut.ListTables(jobCtx.stepCtx, job.SchemaID)
+		var (
+			ttlTables []dropSchemaTTLTableInfo
+			ruleIDs   []string
+		)
+		codec := jobCtx.store.GetCodec()
+		err = metaMut.IterTables(job.SchemaID, func(tblInfo *model.TableInfo) error {
+			if err := jobCtx.stepCtx.Err(); err != nil {
+				return err
+			}
+			if tblInfo.TTLInfo != nil {
+				ttlTables = append(ttlTables, dropSchemaTTLTableInfo{
+					id:      tblInfo.ID,
+					name:    tblInfo.Name.O,
+					enabled: tblInfo.TTLInfo.Enable,
+				})
+			}
+			rules := append(getPartitionRuleIDs(codec, job.SchemaName, tblInfo), label.NewRuleID(codec, job.SchemaName, tblInfo.Name.L, ""))
+			ruleIDs = append(ruleIDs, rules...)
+			return nil
+		})
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		if jobCtx.oldDDLCtx != nil {
-			if err := w.dropSchemaTTLTablesFromExternalWorkload(jobCtx.ctx, job, job.SchemaName, tables); err != nil {
+			if err := w.dropSchemaTTLTablesFromExternalWorkload(jobCtx.ctx, job, job.SchemaName, ttlTables); err != nil {
 				return ver, err
 			}
 		}
@@ -191,11 +215,6 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		err = metaMut.UpdateDatabase(dbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
-		}
-		var ruleIDs []string
-		for _, tblInfo := range tables {
-			rules := append(getPartitionRuleIDs(jobCtx.store.GetCodec(), job.SchemaName, tblInfo), label.NewRuleID(jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, ""))
-			ruleIDs = append(ruleIDs, rules...)
 		}
 		patch := label.NewRulePatch([]*label.Rule{}, ruleIDs)
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
@@ -212,16 +231,44 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		}
 	case model.StateDeleteOnly:
 		dbInfo.State = model.StateNone
-		var tables []*model.TableInfo
-		tables, err = metaMut.ListTables(jobCtx.stepCtx, job.SchemaID)
+		var (
+			miniTables         []*notifier.MiniTableInfoForSchemaEvent
+			mviewIDs           []int64
+			mlogIDs            []int64
+			allDroppedTableIDs []int64
+			affinityErr        error
+		)
+		affinityGroupIDs := make(map[string]struct{})
+		allDroppedTableIDs = make([]int64, 0)
+		codec := jobCtx.store.GetCodec()
+		err = metaMut.IterTables(job.SchemaID, func(tblInfo *model.TableInfo) error {
+			if err := jobCtx.stepCtx.Err(); err != nil {
+				return err
+			}
+			miniTables = append(miniTables, notifier.NewMiniTableInfoForSchemaEvent(tblInfo))
+			if tblInfo.Affinity != nil && affinityErr == nil {
+				affinityErr = collectTableAffinityGroupIDs(codec, tblInfo, affinityGroupIDs)
+			}
+			if tblInfo.MaterializedView != nil {
+				mviewIDs = append(mviewIDs, tblInfo.ID)
+			}
+			if tblInfo.MaterializedViewLog != nil {
+				mlogIDs = append(mlogIDs, tblInfo.ID)
+			}
+			allDroppedTableIDs = appendPhysicalTableIDs(allDroppedTableIDs, tblInfo)
+			return nil
+		})
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
 		// Best-effort cleanup - log errors but continue with DROP DATABASE
-		if err := batchDeleteTableAffinityGroups(jobCtx, tables); err != nil {
+		if affinityErr == nil {
+			affinityErr = batchDeleteTableAffinityGroups(jobCtx, affinityGroupIDs)
+		}
+		if affinityErr != nil {
 			logutil.DDLLogger().Warn("failed to delete affinity groups for batch tables, but operation will continue",
-				zap.Error(err),
+				zap.Error(affinityErr),
 				zap.Int64("databaseID", dbInfo.ID))
 		}
 
@@ -241,16 +288,6 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 			break
 		}
 
-		mviewIDs := make([]int64, 0)
-		mlogIDs := make([]int64, 0)
-		for _, tblInfo := range tables {
-			if tblInfo.MaterializedView != nil {
-				mviewIDs = append(mviewIDs, tblInfo.ID)
-			}
-			if tblInfo.MaterializedViewLog != nil {
-				mlogIDs = append(mlogIDs, tblInfo.ID)
-			}
-		}
 		// Refresh and purge records drive MView and MLog maintenance, so their
 		// cleanup must roll back DROP DATABASE on failure. Refresh alerts are
 		// advisory state, so retaining stale alerts is preferable to blocking DDL.
@@ -271,12 +308,12 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		// Split tables into multiple jobs to avoid too big records in the notifier.
 		const tooManyTablesThreshold = 100000
 		tablesPerJob := 100
-		if len(tables) > tooManyTablesThreshold {
+		if len(miniTables) > tooManyTablesThreshold {
 			tablesPerJob = 500
 		}
-		for i := 0; i < len(tables); i += tablesPerJob {
-			end := min(i+tablesPerJob, len(tables))
-			dropSchemaEvent := notifier.NewDropSchemaEvent(dbInfo, tables[i:end])
+		for i := 0; i < len(miniTables); i += tablesPerJob {
+			end := min(i+tablesPerJob, len(miniTables))
+			dropSchemaEvent := notifier.NewDropSchemaEvent(dbInfo, miniTables[i:end])
 			err = asyncNotifyEvent(jobCtx, dropSchemaEvent, job, int64(i/tablesPerJob), w.sess)
 			if err != nil {
 				return ver, errors.Trace(err)
@@ -284,7 +321,7 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		}
 		// Finish this job.
 		job.FillFinishedArgs(&model.DropSchemaArgs{
-			AllDroppedTableIDs: getIDs(tables),
+			AllDroppedTableIDs: allDroppedTableIDs,
 		})
 		job.FinishDBJob(model.JobStateDone, model.StateNone, ver, dbInfo)
 	default:
@@ -408,29 +445,26 @@ func (w *worker) dropSchemaTTLTablesFromExternalWorkload(
 	ctx context.Context,
 	job *model.Job,
 	schemaName string,
-	tables []*model.TableInfo,
+	tables []dropSchemaTTLTableInfo,
 ) error {
-	tablesNeedingCompensation := make([]*model.TableInfo, 0, len(tables))
+	tablesNeedingCompensation := make([]dropSchemaTTLTableInfo, 0, len(tables))
 	for _, tblInfo := range tables {
-		if tblInfo.TTLInfo == nil {
-			continue
-		}
-		if err := w.deleteTTLTableFromExternalWorkload(ctx, tblInfo.ID); err != nil {
+		if err := w.deleteTTLTableFromExternalWorkload(ctx, tblInfo.id); err != nil {
 			for i := len(tablesNeedingCompensation) - 1; i >= 0; i-- {
 				restoreTblInfo := tablesNeedingCompensation[i]
-				if compensateErr := w.registerTTLTableToExternalWorkload(ctx, restoreTblInfo); compensateErr != nil {
+				if compensateErr := w.registerTTLTableIDToExternalWorkload(ctx, restoreTblInfo.id); compensateErr != nil {
 					logutil.DDLLogger().Warn("drop schema TTL external workload compensation failed",
 						zap.String("keyword", dropSchemaTTLRestoreRegistrationsLogKey),
 						zap.String("dbName", schemaName),
-						zap.Int64("tableID", restoreTblInfo.ID),
-						zap.String("tableName", restoreTblInfo.Name.O),
+						zap.Int64("tableID", restoreTblInfo.id),
+						zap.String("tableName", restoreTblInfo.name),
 						zap.Error(compensateErr),
 						zap.NamedError("deleteTTLTableErr", err))
 				}
 			}
 			return cancelJobOnExternalTTLWorkloadError(job, err)
 		}
-		if tblInfo.TTLInfo.Enable {
+		if tblInfo.enabled {
 			tablesNeedingCompensation = append(tablesNeedingCompensation, tblInfo)
 		}
 	}
@@ -452,11 +486,13 @@ func checkSchemaExistAndCancelNotExistJob(t *meta.Mutator, job *model.Job) (*mod
 func getIDs(tables []*model.TableInfo) []int64 {
 	ids := make([]int64, 0, len(tables))
 	for _, t := range tables {
-		ids = append(ids, t.ID)
-		if t.GetPartitionInfo() != nil {
-			ids = append(ids, getPartitionIDs(t)...)
-		}
+		ids = appendPhysicalTableIDs(ids, t)
 	}
 
 	return ids
+}
+
+func appendPhysicalTableIDs(dst []int64, tblInfo *model.TableInfo) []int64 {
+	dst = append(dst, tblInfo.ID)
+	return append(dst, getPartitionIDs(tblInfo)...)
 }

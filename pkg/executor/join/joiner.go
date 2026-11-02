@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -62,6 +63,7 @@ var (
 //  5. filter, inline projection
 //  6. filter, inline projection to empty column
 type Joiner interface {
+	joinedRowsCollector
 	// TryToMatchInners tries to join an outer row with a batch of inner rows. When
 	// 'inners.Len != 0' but all the joined rows are filtered, the outer row is
 	// considered unmatched. Otherwise, the outer row is matched and some joined
@@ -218,7 +220,44 @@ const (
 	outerRowHasNull
 )
 
+// joinedRowsCollector is owned by one worker and published only after it stops.
+type joinedRowsCollector interface {
+	resetJoinedRows(enabled bool)
+	registerJoinedRows(stats *execdetails.RuntimeStatsColl, planID int)
+}
+
+type joinRowCounter struct {
+	joinedRows *execdetails.JoinedRowsRuntimeStats
+}
+
+func (c *joinRowCounter) resetJoinedRows(enabled bool) {
+	c.joinedRows = nil
+	if enabled {
+		c.joinedRows = &execdetails.JoinedRowsRuntimeStats{}
+	}
+}
+
+func (c *joinRowCounter) addJoinedRow() {
+	if c.joinedRows != nil {
+		c.joinedRows.AddRows(1)
+	}
+}
+
+func (c *joinRowCounter) addJoinedRows(rows int64) {
+	if c.joinedRows != nil {
+		c.joinedRows.AddRows(rows)
+	}
+}
+
+func (c *joinRowCounter) registerJoinedRows(stats *execdetails.RuntimeStatsColl, planID int) {
+	if c.joinedRows != nil && stats != nil {
+		stats.RegisterStats(planID, c.joinedRows)
+		c.joinedRows = nil
+	}
+}
+
 type baseJoiner struct {
+	joinRowCounter
 	ctx          sessionctx.Context
 	conditions   []expression.Expression
 	defaultInner chunk.Row
@@ -242,7 +281,8 @@ func (j *baseJoiner) initDefaultInner(innerTypes []*types.FieldType, defaultInne
 	j.defaultInner = mutableRow.ToRow()
 }
 
-func (*baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row, lUsed, rUsed []int) {
+func (j *baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row, lUsed, rUsed []int) {
+	j.addJoinedRow()
 	// Call AppendRow() first to increment the virtual rows.
 	// Fix: https://github.com/pingcap/tidb/issues/5771
 	lWide := chk.AppendRowByColIdxs(lhs, lUsed)
@@ -253,6 +293,7 @@ func (*baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row, lUse
 // It should not consider `j.lUsed` and `j.rUsed`, because the columns which
 // need to be used in `j.conditions` may not exist in outputs.
 func (j *baseJoiner) makeShallowJoinRow(isRightJoin bool, inner, outer chunk.Row) {
+	j.addJoinedRow()
 	if !isRightJoin {
 		inner, outer = outer, inner
 	}
@@ -369,6 +410,7 @@ func (j *semiJoiner) TryToMatchInners(outer chunk.Row, inners chunk.Iterator, ch
 	}
 
 	if len(j.conditions) == 0 {
+		j.addJoinedRow()
 		chk.AppendRowByColIdxs(outer, j.lUsed) // TODO: need test numVirtualRow
 		inners.ReachEnd()
 		return true, false, nil
@@ -398,7 +440,10 @@ func (j *semiJoiner) TryToMatchOuters(outers chunk.Iterator, inner chunk.Row, ch
 	outerRowStatus = outerRowStatus[:0]
 	outer, numToAppend := outers.Current(), chk.RequiredRows()-chk.NumRows()
 	if len(j.conditions) == 0 {
-		for ; outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
+		initialRemainCap := numToAppend
+		defer func() { j.addJoinedRows(int64(initialRemainCap - numToAppend)) }()
+		for ; outer != outers.End() && numToAppend > 0; outer = outers.Next() {
+			numToAppend--
 			chk.AppendRowByColIdxs(outer, j.lUsed)
 			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		}
@@ -463,6 +508,7 @@ func (naaj *nullAwareAntiSemiJoiner) TryToMatchInners(outer chunk.Row, inners ch
 	}
 	// Step2: conditions come from other condition.
 	if len(naaj.conditions) == 0 {
+		naaj.addJoinedRow()
 		// once there is no other condition, that means right ride has non-empty valid rows. (all matched)
 		inners.ReachEnd()
 		return true, false, nil
@@ -514,6 +560,7 @@ func (j *antiSemiJoiner) TryToMatchInners(outer chunk.Row, inners chunk.Iterator
 	}
 
 	if len(j.conditions) == 0 {
+		j.addJoinedRow()
 		inners.ReachEnd()
 		return true, false, nil
 	}
@@ -540,7 +587,10 @@ func (j *antiSemiJoiner) TryToMatchOuters(outers chunk.Iterator, inner chunk.Row
 	outerRowStatus = outerRowStatus[:0]
 	numToAppend := chk.RequiredRows() - chk.NumRows()
 	if len(j.conditions) == 0 {
+		var joinedRows int64
+		defer func() { j.addJoinedRows(joinedRows) }()
 		for ; outers.Current() != outers.End(); outers.Next() {
+			joinedRows++
 			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		}
 		return outerRowStatus, nil
@@ -589,6 +639,7 @@ func (j *leftOuterSemiJoiner) TryToMatchInners(outer chunk.Row, inners chunk.Ite
 	}
 
 	if len(j.conditions) == 0 {
+		j.addJoinedRow()
 		j.onMatch(outer, chk)
 		inners.ReachEnd()
 		return true, false, nil
@@ -617,7 +668,10 @@ func (j *leftOuterSemiJoiner) TryToMatchOuters(outers chunk.Iterator, inner chun
 	outerRowStatus = outerRowStatus[:0]
 	outer, numToAppend := outers.Current(), chk.RequiredRows()-chk.NumRows()
 	if len(j.conditions) == 0 {
-		for ; outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
+		initialRemainCap := numToAppend
+		defer func() { j.addJoinedRows(int64(initialRemainCap - numToAppend)) }()
+		for ; outer != outers.End() && numToAppend > 0; outer = outers.Next() {
+			numToAppend--
 			j.onMatch(outer, chk)
 			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		}
@@ -680,6 +734,7 @@ func (naal *nullAwareAntiLeftOuterSemiJoiner) TryToMatchInners(outer chunk.Row, 
 	// nullAwareAntiLeftOuterSemiJoiner conditions only contain inner filters. in EvalBool, any filter null or false will contribute
 	//     to false matched, in other words, the isNull is permanently false.
 	if len(naal.conditions) == 0 {
+		naal.addJoinedRow()
 		// no inner filter other condition means all matched. (inners are valid source)
 		naal.onMatch(outer, chk, opt...)
 		inners.ReachEnd()
@@ -755,6 +810,7 @@ func (j *antiLeftOuterSemiJoiner) TryToMatchInners(outer chunk.Row, inners chunk
 	}
 
 	if len(j.conditions) == 0 {
+		j.addJoinedRow()
 		j.onMatch(outer, chk)
 		inners.ReachEnd()
 		return true, false, nil
@@ -783,7 +839,10 @@ func (j *antiLeftOuterSemiJoiner) TryToMatchOuters(outers chunk.Iterator, inner 
 	outerRowStatus = outerRowStatus[:0]
 	outer, numToAppend := outers.Current(), chk.RequiredRows()-chk.NumRows()
 	if len(j.conditions) == 0 {
-		for ; outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
+		initialRemainCap := numToAppend
+		defer func() { j.addJoinedRows(int64(initialRemainCap - numToAppend)) }()
+		for ; outer != outers.End() && numToAppend > 0; outer = outers.Next() {
+			numToAppend--
 			j.onMatch(outer, chk)
 			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		}

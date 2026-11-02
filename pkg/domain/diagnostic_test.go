@@ -16,9 +16,11 @@ package domain
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -26,7 +28,52 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
+
+func TestDiagnosticServerID(t *testing.T) {
+	if !intest.InTest {
+		t.Skip("requires intest")
+	}
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	client := cluster.RandClient()
+	ctx := context.Background()
+	defer diagnosticmode.SetForTest(true)()
+	original := config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(original)
+	for _, bits32 := range []bool{false, true} {
+		config.UpdateGlobal(func(c *config.Config) { c.Enable32BitsConnectionID = bits32 })
+		t.Run(fmt.Sprintf("32bits=%v", bits32), func(t *testing.T) {
+			first := &Domain{etcdClient: client}
+			second := &Domain{etcdClient: client}
+			info, err := infosync.GlobalInfoSyncerInit(ctx, "diagnostic", first.ServerID,
+				client, client, nil, nil, keyspace.CodecV1, true, nil)
+			require.NoError(t, err)
+			require.NoError(t, first.acquireServerID(ctx))
+			defer first.releaseServerID(ctx)
+			require.NoError(t, second.acquireServerID(ctx))
+			defer second.releaseServerID(ctx)
+			require.NotZero(t, first.ServerID())
+			require.NotEqual(t, first.ServerID(), second.ServerID())
+			require.NotNil(t, first.serverIDSession)
+			require.NoError(t, first.refreshServerIDTTL(ctx))
+			require.NoError(t, info.ServerInfoSyncer().StoreServerInfo(ctx))
+			resp, err := client.Get(ctx, "/tidb/server/info/", clientv3.WithPrefix())
+			require.NoError(t, err)
+			require.Empty(t, resp.Kvs)
+			require.Equal(t, first.ServerID(), info.ServerInfoSyncer().GetLocalServerInfo().ServerIDGetter())
+			firstID := first.ServerID()
+			first.releaseServerID(ctx)
+			resp, err = client.Get(ctx, fmt.Sprintf("%s/%d", serverIDEtcdPath, firstID))
+			require.NoError(t, err)
+			require.Empty(t, resp.Kvs)
+			require.Zero(t, first.ServerID())
+		})
+	}
+}
 
 func TestStartDiagnostic(t *testing.T) {
 	if !intest.InTest {

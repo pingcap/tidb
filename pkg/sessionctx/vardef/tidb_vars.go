@@ -93,6 +93,9 @@ const (
 	// TiDBAutoAnalyzeRatio will run if (table modify count)/(table row count) is greater than this value.
 	TiDBAutoAnalyzeRatio = "tidb_auto_analyze_ratio"
 
+	// TiDBMLogAutoAnalyzeRatio controls automatic analysis of materialized view logs.
+	TiDBMLogAutoAnalyzeRatio = "tidb_mlog_auto_analyze_ratio"
+
 	// TiDBAnalyzeSampledNDVThreshold is the row count above which ANALYZE
 	// estimates the NDV of a table or partition from sampled rows. Zero turns
 	// sampled NDV off.
@@ -162,6 +165,19 @@ const (
 
 	// TiDBMemQuotaQuery controls the memory quota of a query.
 	TiDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
+	// TiDBMViewTaskMax controls MV background task concurrency; 0 uses GOMAXPROCS.
+	TiDBMViewTaskMax = "tidb_mview_task_max"
+	// TiDBMViewTaskRefreshRatio controls the refresh share of MV task concurrency.
+	TiDBMViewTaskRefreshRatio = "tidb_mview_task_refresh_ratio"
+	// TiDBMViewTaskThresholdCPU controls the CPU usage threshold for task backpressure.
+	TiDBMViewTaskThresholdCPU = "tidb_mview_task_threshold_cpu"
+	// TiDBMViewTaskThresholdMemory controls the memory usage threshold for task backpressure.
+	TiDBMViewTaskThresholdMemory = "tidb_mview_task_threshold_memory"
+	// TiDBMViewRefreshHistTime controls refresh history retention in hours.
+	TiDBMViewRefreshHistTime = "tidb_mview_refresh_hist_time"
+	// TiDBMLogPurgeHistTime controls purge history retention in hours.
+	TiDBMLogPurgeHistTime = "tidb_mlog_purge_hist_time"
+
 	// TiDBMViewMaintainMemQuota controls the memory quota used by MV maintenance sessions.
 	TiDBMViewMaintainMemQuota = "tidb_mview_maintain_mem_quota"
 	// TiDBMViewMaintainIsolationReadEngines controls the isolation read engines used by MV maintenance sessions.
@@ -1547,6 +1563,7 @@ const (
 	DefTiDBAnalyzeStoreBatchSize        = 4
 	DefBuildStatsConcurrency            = 2
 	DefBuildSamplingStatsConcurrency    = 2
+	DefMLogAutoAnalyzeRatio             = 10.0
 	DefAutoAnalyzeRatio                 = 0.5
 	DefAutoAnalyzeStartTime             = "00:00 +0000"
 	DefAutoAnalyzeEndTime               = "23:59 +0000"
@@ -1780,6 +1797,12 @@ const (
 	DefMaxAllowedPacket                        uint64 = config.DefMaxAllowedPacket
 	DefTiDBEnableBatchDML                             = false
 	DefTiDBMemQuotaQuery                              = memory.DefMemQuotaQuery // 1GB
+	DefTiDBMViewTaskMax                               = 0
+	DefTiDBMViewTaskRefreshRatio                      = 0.6
+	DefTiDBMViewTaskThresholdCPU                      = 0.8
+	DefTiDBMViewTaskThresholdMemory                   = 0.8
+	DefTiDBMViewRefreshHistTime                       = 168
+	DefTiDBMLogPurgeHistTime                          = 168
 	DefTiDBMViewMaintainMemQuota                      = int64(2 * size.GB)
 	DefTiDBMLogPurgeBatchSize                         = 10000
 	DefTiDBMLogPurgeMinRate                           = 2000

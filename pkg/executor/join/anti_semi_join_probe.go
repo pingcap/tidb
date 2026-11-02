@@ -199,6 +199,7 @@ func (a *antiSemiJoinProbe) probeForLeftSideBuildNoOtherCondition(sqlKiller *sql
 			candidateRow := tagHelper.toUnsafePointer(a.matchedRowsHeaders[a.currentProbeRow])
 			if !meta.isCurrentRowUsedWithAtomic(candidateRow) {
 				if isKeyMatched(meta.keyMode, a.serializedKeys[a.currentProbeRow], candidateRow, meta) {
+					a.addJoinedRow()
 					meta.setUsedFlag(candidateRow)
 				} else {
 					a.probeCollision++
@@ -276,6 +277,7 @@ func (a *antiSemiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Ch
 		if a.matchedRowsHeaders[a.currentProbeRow] != 0 {
 			candidateRow := tagHelper.toUnsafePointer(a.matchedRowsHeaders[a.currentProbeRow])
 			if isKeyMatched(meta.keyMode, a.serializedKeys[a.currentProbeRow], candidateRow, meta) {
+				a.addJoinedRow()
 				matched = true
 				a.matchedRowsHeaders[a.currentProbeRow] = 0
 			} else {

@@ -1,0 +1,98 @@
+use test;
+set tidb_mview_enable = on;
+create table t_mv_txn_66385 (a int not null, b int not null);
+insert into t_mv_txn_66385 values (1, 10), (1, 5), (2, 7);
+create materialized view log on t_mv_txn_66385 (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv_txn_66385 (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
+select a, sum(b), count(1) from t_mv_txn_66385 group by a;
+refresh materialized view mv_txn_66385 with async mode complete in place;
+Error 1105 (HY000): refresh materialized view: WITH ASYNC MODE is not supported yet
+begin;
+refresh materialized view mv_txn_66385 complete in place;
+Error 1105 (HY000): cannot run REFRESH MATERIALIZED VIEW in explicit transaction
+rollback;
+prepare stmt from "refresh materialized view mv_txn_66385 complete in place";
+begin;
+execute stmt;
+Error 1105 (HY000): cannot run REFRESH MATERIALIZED VIEW in explicit transaction
+rollback;
+deallocate prepare stmt;
+set autocommit = 0;
+select @@tidb_current_ts = 0;
+@@tidb_current_ts = 0
+1
+refresh materialized view mv_txn_66385 complete in place;
+select @@tidb_current_ts = 0;
+@@tidb_current_ts = 0
+1
+insert into t_mv_txn_66385 values (3, 4);
+select @@tidb_current_ts > 0;
+@@tidb_current_ts > 0
+1
+refresh materialized view mv_txn_66385 complete in place;
+Error 1105 (HY000): cannot run REFRESH MATERIALIZED VIEW in explicit transaction
+rollback;
+set autocommit = 1;
+drop materialized view mv_txn_66385;
+drop materialized view log on t_mv_txn_66385;
+drop table if exists t_mv_txn_66385;
+create table t_mv_inc_67017 (a int not null, b int not null);
+insert into t_mv_inc_67017 values (1, 10), (1, 5), (2, 7);
+create materialized view log on t_mv_inc_67017 (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv_inc_67017 (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
+select a, sum(b), count(1) from t_mv_inc_67017 group by a;
+select * from mv_inc_67017 order by a;
+a	s	cnt
+1	15	2
+2	7	1
+insert into t_mv_inc_67017 values (2, 3), (3, 4);
+refresh materialized view mv_inc_67017 complete delta apply;
+select * from mv_inc_67017 order by a;
+a	s	cnt
+1	15	2
+2	10	2
+3	4	1
+select refresh_commit_tso > refresh_read_tso from mysql.tidb_mview_refresh_hist
+where mview_schema = 'test' and mview_name = 'mv_inc_67017' and refresh_status = 'success';
+refresh_commit_tso > refresh_read_tso
+1
+drop materialized view mv_inc_67017;
+drop materialized view log on t_mv_inc_67017;
+drop table if exists t_mv_inc_67017;
+create table t_mv_ddl_70457 (a int not null, b int not null);
+insert into t_mv_ddl_70457 values (1, 10), (1, 5), (2, 7);
+create materialized view log on t_mv_ddl_70457 (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv_ddl_70457 (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
+select a, sum(b), count(1) from t_mv_ddl_70457 group by a;
+create index idx_a on mv_ddl_70457 (a);
+drop index idx_a on mv_ddl_70457;
+create index idx_expr on mv_ddl_70457 ((a + 1));
+Error 8200 (HY000): Unsupported ADD INDEX on materialized view table that changes writable columns
+alter table mv_ddl_70457 add index idx_expr2 ((a + 1));
+Error 8200 (HY000): Unsupported ADD INDEX on materialized view table that changes writable columns
+desc mv_ddl_70457;
+Field	Type	Null	Key	Default	Extra
+a	int	NO	PRI	NULL	
+s	decimal(32,0)	YES		NULL	
+cnt	bigint	NO		NULL	
+drop materialized view mv_ddl_70457;
+drop materialized view log on t_mv_ddl_70457;
+drop table if exists t_mv_ddl_70457;
+create table t_mv_empty_mlog (a int not null, b int not null, key idx_a(a));
+create materialized view log on t_mv_empty_mlog (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv_empty_mlog (a, cnt, mx, mn) refresh fast as
+select a, count(1), max(b), min(b) from t_mv_empty_mlog where false group by a;
+insert into t_mv_empty_mlog values (1, 10), (1, 20);
+refresh materialized view mv_empty_mlog fast;
+select * from mv_empty_mlog;
+a	cnt	mx	mn
+refresh materialized view mv_empty_mlog fast;
+select count(*) from mysql.tidb_mview_refresh_hist
+where mview_schema = 'test' and mview_name = 'mv_empty_mlog' and refresh_status = 'success'
+and refresh_commit_tso > refresh_read_tso;
+count(*)
+2
+drop materialized view mv_empty_mlog;
+drop materialized view log on t_mv_empty_mlog;
+drop table t_mv_empty_mlog;
+set tidb_mview_enable = off;

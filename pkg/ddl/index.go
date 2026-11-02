@@ -645,7 +645,8 @@ func DropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	col := indexInfo.Columns[0]
 	// other index may still cover this col
 	for _, index := range tblInfo.Indices {
-		if index.Name.L == indexInfo.Name.L {
+		// Compare IDs, since a partition reorganization keeps index copies with the same name.
+		if index.ID == indexInfo.ID {
 			continue
 		}
 
@@ -2261,12 +2262,13 @@ func onDropIndex(sctx sessionctx.Context, jobCtx *jobContext, job *model.Job) (v
 	return ver, errors.Trace(err)
 }
 
-// RemoveDependentHiddenColumns removes hidden columns by the indexInfo.
+// RemoveDependentHiddenColumns removes the hidden columns used by the index, except those still
+// used by another index, e.g. a copy of the index made by a partition reorganization.
 func RemoveDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	hiddenColOffs := make([]int, 0)
 	for _, indexColumn := range idxInfo.Columns {
 		col := tblInfo.Columns[indexColumn.Offset]
-		if col.Hidden {
+		if col.Hidden && !isColumnUsedByOtherIndex(tblInfo, idxInfo.ID, col.Offset) {
 			hiddenColOffs = append(hiddenColOffs, col.Offset)
 		}
 	}
@@ -2278,6 +2280,22 @@ func RemoveDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.Index
 		tblInfo.MoveColumnInfo(offset, endOffset)
 	}
 	tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(hiddenColOffs)]
+}
+
+// isColumnUsedByOtherIndex checks whether the column is used by an index other than
+// indexID, e.g. a copy of the index made by a partition reorganization.
+func isColumnUsedByOtherIndex(tblInfo *model.TableInfo, indexID int64, offset int) bool {
+	for _, idx := range tblInfo.Indices {
+		if idx.ID == indexID {
+			continue
+		}
+		for _, col := range idx.Columns {
+			if col.Offset == offset {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func removeIndexInfo(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {

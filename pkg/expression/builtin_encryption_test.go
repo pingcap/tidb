@@ -589,13 +589,13 @@ func TestCompress(t *testing.T) {
 		in     any
 		expect any
 	}{
-		{"", "hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
+		{"", "hello world", string(decodeHex("0B000000789C000B00F4FF68656C6C6F20776F726C6403001A0B045D"))},
 		{"", "", ""},
 		{"", nil, nil},
-		{"utf8mb4", "hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
-		{"gbk", "hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
-		{"utf8mb4", "你好", string(decodeHex("06000000789C7AB277C1D3A57B01010000FFFF10450489"))},
-		{"gbk", "你好", string(decodeHex("04000000789C3AF278D76140000000FFFF07F40325"))},
+		{"utf8mb4", "hello world", string(decodeHex("0B000000789C000B00F4FF68656C6C6F20776F726C6403001A0B045D"))},
+		{"gbk", "hello world", string(decodeHex("0B000000789C000B00F4FF68656C6C6F20776F726C6403001A0B045D"))},
+		{"utf8mb4", "你好", string(decodeHex("06000000789C000600F9FFE4BDA0E5A5BD030010450489"))},
+		{"gbk", "你好", string(decodeHex("04000000789C000400FBFFC4E3BAC3030007F40325"))},
 	}
 	for _, test := range tests {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, test.chs)
@@ -619,9 +619,10 @@ func TestUncompress(t *testing.T) {
 		in     any
 		expect any
 	}{
-		{decodeHex("0B000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), "hello world"},         // zlib result from MySQL
-		{decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"), "hello world"}, // zlib result from TiDB
-		{decodeHex("02000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), nil},                   // wrong length in the first four bytes
+		{decodeHex("0B000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), "hello world"},           // zlib result from MySQL
+		{decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"), "hello world"},   // zlib result from TiDB
+		{decodeHex("0B000000789C000B00F4FF68656C6C6F20776F726C6403001A0B045D"), "hello world"}, // zlib result from Go 1.27
+		{decodeHex("02000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), nil},                     // wrong length in the first four bytes
 		{decodeHex(""), ""},
 		{"1", nil},
 		{"1234", nil},

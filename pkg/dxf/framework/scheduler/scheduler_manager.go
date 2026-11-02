@@ -104,23 +104,22 @@ func (sm *Manager) getSchedulers() []Scheduler {
 	return slices.Clone(sm.mu.schedulers)
 }
 
-type orphanDataMonitor interface {
-	// Trigger scans and publishes the orphan data size. It runs synchronously
-	// on the caller's goroutine and can block for the duration of a storage
-	// scan, so callers must not expect to react to context cancellation until
-	// the scan returns.
+type orphanDataCleaner interface {
+	// Trigger measures orphan data and deletes a bounded batch of scanned
+	// objects. It runs synchronously on the caller's goroutine and can block
+	// while storage operations finish, including after context cancellation.
 	Trigger(context.Context)
 	// Reset clears the published orphan data size, so an instance that no
 	// longer owns the scheduler stops exporting a stale value.
 	Reset()
 }
 
-// noopOrphanDataMonitor is used when orphan data monitoring is not enabled.
-type noopOrphanDataMonitor struct{}
+// noopOrphanDataCleaner is used when orphan data cleanup is not enabled.
+type noopOrphanDataCleaner struct{}
 
-func (noopOrphanDataMonitor) Trigger(context.Context) {}
+func (noopOrphanDataCleaner) Trigger(context.Context) {}
 
-func (noopOrphanDataMonitor) Reset() {}
+func (noopOrphanDataCleaner) Reset() {}
 
 type orphanDataActiveProducerChecker struct {
 	taskMgr TaskManager
@@ -163,9 +162,9 @@ type Manager struct {
 	nodeRes *proto.NodeResource
 	// initialized on demand
 	metricCollector *dxfmetric.Collector
-	// orphanMonitor publishes global-sort orphan data size while this node owns
-	// the scheduler. It is a no-op when orphan data monitoring is not enabled.
-	orphanMonitor orphanDataMonitor
+	// orphanCleaner measures and cleans global-sort orphan data while this
+	// node owns the scheduler. It is a no-op when cleanup is not enabled.
+	orphanCleaner orphanDataCleaner
 }
 
 // NewManager creates a scheduler struct.
@@ -199,19 +198,19 @@ func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serv
 		nodeRes:  nodeRes,
 	}
 	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)
-	schedulerManager.orphanMonitor = newOrphanDataMonitor(schedulerManager)
+	schedulerManager.orphanCleaner = newOrphanDataCleaner(schedulerManager)
 
 	return schedulerManager
 }
 
-// newOrphanDataMonitor builds the orphan data monitor for this manager. Orphan
+// newOrphanDataCleaner builds the orphan data cleaner for this manager. Orphan
 // global-sort data only exists in the NextGen kernel, where cloud storage is
-// the shared spill area; elsewhere monitoring is a no-op.
-func newOrphanDataMonitor(sm *Manager) orphanDataMonitor {
+// the shared spill area; elsewhere cleanup is a no-op.
+func newOrphanDataCleaner(sm *Manager) orphanDataCleaner {
 	if !kerneltype.IsNextGen() {
-		return noopOrphanDataMonitor{}
+		return noopOrphanDataCleaner{}
 	}
-	return orphandata.NewMonitor(orphandata.Config{
+	return orphandata.NewCleaner(orphandata.Config{
 		ActiveProducerChecker: orphanDataActiveProducerChecker{taskMgr: sm.taskMgr},
 		GetStorageURI:         func() string { return handle.GetCloudStorageURI(sm.ctx, sm.store) },
 		Logger:                sm.logger,
@@ -264,7 +263,7 @@ func (sm *Manager) Stop() {
 	// The orphan data size is only meaningful while this node owns the
 	// scheduler. Reset it on owner change, otherwise a former owner keeps
 	// exporting the last value it observed.
-	sm.orphanMonitor.Reset()
+	sm.orphanCleaner.Reset()
 }
 
 // Initialized check the manager initialized.
@@ -466,7 +465,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 func (sm *Manager) cleanTaskLoop() {
 	sm.logger.Info("cleanup loop start")
 	sm.drainCleanTaskBatches()
-	sm.orphanMonitor.Trigger(sm.ctx)
+	sm.orphanCleaner.Trigger(sm.ctx)
 	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
@@ -478,7 +477,7 @@ func (sm *Manager) cleanTaskLoop() {
 			sm.drainCleanTaskBatches()
 		case <-ticker.C:
 			sm.drainCleanTaskBatches()
-			sm.orphanMonitor.Trigger(sm.ctx)
+			sm.orphanCleaner.Trigger(sm.ctx)
 		}
 	}
 }

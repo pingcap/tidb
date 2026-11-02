@@ -2948,6 +2948,9 @@ func (s *session) validateStatementInTxn(stmtNode ast.StmtNode) error {
 	if _, ok := stmtToValidate.(*ast.PurgeMaterializedViewLogStmt); ok {
 		return errors.New("cannot run PURGE MATERIALIZED VIEW LOG in explicit transaction")
 	}
+	if _, ok := stmtToValidate.(*ast.RefreshMaterializedViewStmt); ok {
+		return errors.New("cannot run REFRESH MATERIALIZED VIEW in explicit transaction")
+	}
 	return nil
 }
 
@@ -4813,6 +4816,12 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		}
 	}
 
+	if !intest.InTest {
+		if err = dom.StartMVService(); err != nil {
+			return nil, err
+		}
+	}
+
 	// This only happens in testing, since the failure of loading or parsing sql file
 	// would panic the bootstrapping.
 	if intest.EnableInternalCheck && failToLoadOrParseSQLFile {
@@ -5009,9 +5018,18 @@ func createCrossKSSession(currKSStore kv.Storage, targetKS string, validator val
 	if err != nil {
 		return nil, err
 	}
+	globalVars, err := dom.GetKSGlobalVarAccessor(targetKS)
+	if err != nil {
+		return nil, err
+	}
 	// TODO: use the schema validator of the target keyspace when we implement
 	// the info schema syncer for cross keyspace access.
-	return createSessionWithOpt(store, nil, validator, infoCache, nil)
+	s, err := createSessionWithOpt(store, nil, validator, infoCache, nil)
+	if err != nil {
+		return nil, err
+	}
+	s.sessionVars.GlobalVarsAccessor = globalVars
+	return s, nil
 }
 
 func createSessionWithOpt(
@@ -5074,6 +5092,32 @@ func attachStatsCollector(s *session, dom *domain.Domain) *session {
 	}
 
 	return s
+}
+
+// AttachStatsCollectorForInternalSession lazily attaches the same collectors used by
+// regular sessions for a specific internal session when the caller knows it will touch
+// user tables. This intentionally keeps index usage collection enabled as well when
+// tidb_enable_collect_execution_info is on, because internal maintenance SQL should be
+// reflected in usage accounting just like foreground SQL.
+// It returns a restore function that detaches only the collectors attached by this call.
+func (s *session) AttachStatsCollectorForInternalSession() func() {
+	dom, ok := s.dom.(*domain.Domain)
+	if !ok || dom == nil {
+		return func() {}
+	}
+	hadStatsCollector := s.statsCollector != nil
+	hadIdxUsageCollector := s.idxUsageCollector != nil
+	attachStatsCollector(s, dom)
+	return func() {
+		if !hadStatsCollector && s.statsCollector != nil {
+			s.statsCollector.Delete()
+			s.statsCollector = nil
+		}
+		if !hadIdxUsageCollector && s.idxUsageCollector != nil {
+			s.idxUsageCollector.Flush()
+			s.idxUsageCollector = nil
+		}
+	}
 }
 
 // detachStatsCollector removes the stats collector in the session
@@ -5797,34 +5841,6 @@ func (s *session) SetMemoryFootprintChangeHook() {
 
 func (s *session) EncodeStates(ctx context.Context,
 	sessionStates *sessionstates.SessionStates) error {
-	// Transaction status is hard to encode, so we do not support it.
-	s.txn.mu.Lock()
-	valid := s.txn.Valid()
-	s.txn.mu.Unlock()
-	if valid {
-		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has an active transaction")
-	}
-	// Data in local temporary tables is hard to encode, so we do not support it.
-	// Check temporary tables here to avoid circle dependency.
-	if s.sessionVars.LocalTemporaryTables != nil {
-		localTempTables := s.sessionVars.LocalTemporaryTables.(*infoschema.SessionTables)
-		if localTempTables.Count() > 0 {
-			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has local temporary tables")
-		}
-	}
-	// The advisory locks will be released when the session is closed.
-	if len(s.advisoryLocks) > 0 {
-		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has advisory locks")
-	}
-	// The TableInfo stores session ID and server ID, so the session cannot be migrated.
-	if len(s.lockedTables) > 0 {
-		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has locked tables")
-	}
-	// It's insecure to migrate sandBoxMode because users can fake it.
-	if s.InSandBoxMode() {
-		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session is in sandbox mode")
-	}
-
 	if err := s.sessionVars.EncodeSessionStates(ctx, sessionStates); err != nil {
 		return err
 	}
@@ -5881,6 +5897,38 @@ func (s *session) EncodeStates(ctx context.Context,
 		if err := handler.EncodeSessionStates(ctx, s, sessionStates); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// CheckCanMigrateStates implements sessionctx.Context.
+func (s *session) CheckCanMigrateStates() error {
+	// Transaction status is hard to encode, so we do not support it.
+	s.txn.mu.Lock()
+	valid := s.txn.Valid()
+	s.txn.mu.Unlock()
+	if valid {
+		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has an active transaction")
+	}
+	// Data in local temporary tables is hard to encode, so we do not support it.
+	// Check temporary tables here to avoid circle dependency.
+	if s.sessionVars.LocalTemporaryTables != nil {
+		localTempTables := s.sessionVars.LocalTemporaryTables.(*infoschema.SessionTables)
+		if localTempTables.Count() > 0 {
+			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has local temporary tables")
+		}
+	}
+	// The advisory locks will be released when the session is closed.
+	if len(s.advisoryLocks) > 0 {
+		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has advisory locks")
+	}
+	// The TableInfo stores session ID and server ID, so the session cannot be migrated.
+	if len(s.lockedTables) > 0 {
+		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has locked tables")
+	}
+	// It's insecure to migrate sandBoxMode because users can fake it.
+	if s.InSandBoxMode() {
+		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session is in sandbox mode")
 	}
 	return nil
 }
