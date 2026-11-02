@@ -15,6 +15,7 @@
 //! Material contracts from `pkg/util/rowDecoder`.
 
 use tidb_executor::KvTableDdl;
+use tidb_kv::storage::TableStorage as _;
 use tidb_executor::KvTableReader;
 use tidb_datatype::{
     CoreTime, Datum, Decimal, FieldType, FieldTypeCode, FieldTypeFlags, MySqlDuration,
@@ -98,7 +99,7 @@ fn encode(ids: &[i64], values: &[Datum], new_format: bool, zone: &SessionTimeZon
 /// Run the source fixtures through one reader across multiple small chunks,
 /// including a reopen, so decoder reuse cannot retain a preceding row's data.
 fn assert_point_chunks(
-    mut table: TableCommon,
+    table: TableCommon,
     rows: &[(TableHandle, Vec<u8>, Vec<Datum>)],
     zone: &SessionTimeZone,
 ) {
@@ -122,7 +123,6 @@ fn assert_point_chunks(
             )
             .unwrap();
     }
-    table.replace_storage(Box::new(storage));
     let types = table
         .columns()
         .iter()
@@ -138,7 +138,7 @@ fn assert_point_chunks(
     let mut source = tidb_executor::access_path::HandleSourceExec::new_with_context(
         tidb_executor_internal_exec::ExecutorMeta::new(schema, 0, 8, 8),
         table.clone(),
-        table.store().clone_box(),
+        storage.clone_box(),
         rows.iter().map(|(handle, _, _)| handle.clone()).collect(),
         query_context(zone),
     );
@@ -450,12 +450,13 @@ fn restored_common_handle_value_wins_over_its_lossy_sort_key_even_when_fast_path
 
     let statement = StmtContext::for_query().with_time_zone(zone.clone());
     let mut table = TableCommon::new(43, columns.clone());
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     table.set_common_handle_offsets(vec![0]);
     table
-        .with_own_store(|table, store| table.insert_row(store, &[Datum::new_string("abc"), Datum::Int(9)], &statement))
+        .insert_row(&mut store, &[Datum::new_string("abc"), Datum::Int(9)], &statement)
         .unwrap();
     let (_, stored) = table
-        .row_cursor_with_context(&mut *table.store().clone_box(), &RowDecodeContext::for_query(&statement))
+        .row_cursor_with_context(&mut *store.clone_box(), &RowDecodeContext::for_query(&statement))
         .unwrap()
         .next_row()
         .unwrap()
@@ -468,12 +469,13 @@ fn restored_common_handle_value_wins_over_its_lossy_sort_key_even_when_fast_path
     // while Go's table decoder must materialize this handle component when
     // the table explicitly disables new collations.
     let mut old_collation_table = TableCommon::new(44, columns).with_new_collation_mode(false);
+    let mut old_collation_table_store = tidb_kv::storage::MemTableStorage::new();
     old_collation_table.set_common_handle_offsets(vec![0]);
     old_collation_table
-        .with_own_store(|table, store| table.insert_row(store, &[Datum::new_string("abc"), Datum::Int(10)], &statement))
+        .insert_row(&mut old_collation_table_store, &[Datum::new_string("abc"), Datum::Int(10)], &statement)
         .unwrap();
     let (_, stored) = old_collation_table
-        .row_cursor_with_context(&mut *old_collation_table.store().clone_box(), &RowDecodeContext::for_query(&statement))
+        .row_cursor_with_context(&mut *old_collation_table_store.clone_box(), &RowDecodeContext::for_query(&statement))
         .unwrap()
         .next_row()
         .unwrap()
@@ -519,14 +521,15 @@ fn projected_row_decoder_keeps_common_handle_component_positions() {
 
     let statement = StmtContext::for_query().with_time_zone(zone.clone());
     let mut table = TableCommon::new(42, columns);
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     table.set_common_handle_offsets(vec![0, 1]);
     table
-        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(100), Datum::new_string("abc"), Datum::Int(9)],
+        .insert_row(&mut store, &[Datum::Int(100), Datum::new_string("abc"), Datum::Int(9)],
             &statement,
-        ))
+        )
         .unwrap();
     let mut cursor = table
-        .row_cursor_projected_with_context(&mut *table.store().clone_box(), 
+        .row_cursor_projected_with_context(&mut *store.clone_box(), 
             Some(&[1]),
             None,
             &RowDecodeContext::for_query(&statement),
@@ -734,18 +737,17 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
     generated.generated = Some(generated_column("a + 1", true, &columns, &zone));
     columns.push(generated);
     let mut table = TableCommon::new(42, columns);
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     let handle = table
         // Table.AddRecord consumes an already materialized mutation row.
-        .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(2), Datum::Int(3)], &statement))
+        .insert_row(&mut store, &[Datum::Int(2), Datum::Int(3)], &statement)
         .unwrap();
 
     // Stored reads preserve the value written under the old expression.
     let rewritten = generated_column("a + 2", true, &table.columns()[..1], &zone);
     table.columns_mut()[1].generated = Some(rewritten);
     let read = table
-        .with_own_store(|table, store| {
-            table.get_row_by_handle_with_context(store, &handle, &RowDecodeContext::for_query(&statement))
-        })
+        .get_row_by_handle_with_context(&mut store, &handle, &RowDecodeContext::for_query(&statement))
         .unwrap()
         .unwrap();
     assert_eq!(read, [Datum::Int(2), Datum::Int(3)]);
@@ -771,9 +773,9 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
         column_offsets: vec![1],
         clustered_primary: false,
     };
-    table.with_own_store(|table, store| table.create_index_with_context(store, index, &statement)).unwrap();
+    table.create_index_with_context(&mut store, index, &statement).unwrap();
     let handles = table
-        .scan_index_range(&mut *table.store().clone_box(), 
+        .scan_index_range(&mut *store.clone_box(), 
             7,
             &tidb_ranger::types::Range {
                 low_val: vec![Datum::Int(4)],
@@ -788,13 +790,17 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
     assert_eq!(handles, std::slice::from_ref(&handle));
     assert_eq!(
         {
-            let mut store = table.store().clone_box();
+            let mut store = store.clone_box();
             check_table(&mut table, &mut *store, None, &RowDecodeContext::for_query(&statement), true)
                 .unwrap()
         },
         1
     );
 
+    // ANALYZE reads the statement's store (Go `sctx.Txn()`).
+    let analyze_statement = StmtContext::for_query()
+        .with_time_zone(zone.clone())
+        .with_txn_store(Box::new(store.clone()));
     let statistics = analyze_kv_table(
         &mut table,
         &AnalyzeOptions {
@@ -802,7 +808,7 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
             ..AnalyzeOptions::default()
         },
         None,
-        &statement,
+        &analyze_statement,
     )
     .unwrap();
     assert_eq!(statistics.hist_coll.realtime_count, 1);
@@ -978,18 +984,19 @@ fn legacy_generated_enum_set_cursor_preserves_members_and_declared_collation() {
             let mut generated = column(2, "generated", field_type);
             generated.generated = Some(generated_column("source", false, &[source.clone()], &zone));
             let mut table = TableCommon::new(42, vec![source, generated]).with_new_collation_mode(mode);
+            let mut store = tidb_kv::storage::MemTableStorage::new();
             table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::new_string("a"), Datum::Null], &statement))
+                .insert_row(&mut store, &[Datum::new_string("a"), Datum::Null], &statement)
                 .unwrap();
             let context = RowDecodeContext::for_query(&statement);
             let (_, row) = table
-                .row_cursor_with_context(&mut *table.store().clone_box(), &context)
+                .row_cursor_with_context(&mut *store.clone_box(), &context)
                 .unwrap()
                 .next_row()
                 .unwrap()
                 .unwrap();
             let (_, projected) = table
-                .row_cursor_projected_with_context(&mut *table.store().clone_box(), Some(&[1]), None, &context)
+                .row_cursor_projected_with_context(&mut *store.clone_box(), Some(&[1]), None, &context)
                 .unwrap()
                 .next_row()
                 .unwrap()
