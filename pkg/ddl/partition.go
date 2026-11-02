@@ -158,25 +158,10 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 			}
 		}
 
-		if tblInfo.TiFlashReplica != nil {
-			// Must set placement rule, and make sure it succeeds.
-			if err := infosync.ConfigureTiFlashPDForPartitions(true, &tblInfo.Partition.AddingDefinitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); err != nil {
-				logutil.DDLLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
-				return ver, errors.Trace(err)
-			}
-		}
-
-		_, err = alterTablePartitionBundles(jobCtx.metaMut, tblInfo, tblInfo.Partition.AddingDefinitions)
-		if err != nil {
-			job.State = model.JobStateCancelled
+		if err := configureAddPartitionTiFlashRules(tblInfo); err != nil {
 			return ver, errors.Trace(err)
 		}
-
-		ids := getIDs([]*model.TableInfo{tblInfo})
-		for _, p := range tblInfo.Partition.AddingDefinitions {
-			ids = append(ids, p.ID)
-		}
-		if _, err := alterTableLabelRule(jobCtx.store.GetCodec(), job.SchemaName, tblInfo, ids); err != nil {
+		if err := applyAddPartitionPlacementAndLabelRules(jobCtx, job, tblInfo); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
@@ -249,6 +234,32 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func configureAddPartitionTiFlashRules(tblInfo *model.TableInfo) error {
+	if tblInfo.TiFlashReplica == nil {
+		return nil
+	}
+	if err := infosync.ConfigureTiFlashPDForPartitions(true, &tblInfo.Partition.AddingDefinitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); err != nil {
+		logutil.DDLLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
+		return err
+	}
+	return nil
+}
+
+// applyAddPartitionPlacementAndLabelRules publishes placement before extending the
+// table label. These effects are not atomic; a label error can leave placement
+// rules installed. The caller retains ADD PARTITION's cancellation policy.
+func applyAddPartitionPlacementAndLabelRules(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo) error {
+	if _, err := alterTablePartitionBundles(jobCtx.metaMut, tblInfo, tblInfo.Partition.AddingDefinitions); err != nil {
+		return errors.Trace(err)
+	}
+	ids := getIDs([]*model.TableInfo{tblInfo})
+	for _, p := range tblInfo.Partition.AddingDefinitions {
+		ids = append(ids, p.ID)
+	}
+	_, err := alterTableLabelRule(jobCtx.store.GetCodec(), job.SchemaName, tblInfo, ids)
+	return err
 }
 
 // alterTableLabelRule updates Label Rules if they exists
@@ -2378,14 +2389,9 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 	}
 	var deleteIndices []model.TableIDIndexID
 	for _, indexInfo := range dropIndices {
-		DropIndexColumnFlag(tblInfo, indexInfo)
-		RemoveDependentHiddenColumns(tblInfo, indexInfo)
-		removeIndexInfo(tblInfo, indexInfo)
-		if indexInfo.Global {
-			deleteIndices = append(deleteIndices, model.TableIDIndexID{TableID: tblInfo.ID, IndexID: indexInfo.ID})
-		}
-		// All other indexes has only been applied to new partitions, that is deleted in whole,
-		// including indexes.
+		// Preserve rollback's per-index cleanup order: each removal is visible to
+		// the next index's column-flag and hidden-column cleanup.
+		deleteIndices = append(deleteIndices, removePartitionIndexes(tblInfo, []*model.IndexInfo{indexInfo})...)
 	}
 	if tblInfo.Partition != nil {
 		tblInfo.Partition.ClearReorgIntermediateInfo()
@@ -2474,26 +2480,8 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		// the overlapping range of the higher range partition or LIST default partition.
 		// Their physical data and standalone placement bundles remain until delete-range GC.
 		tblInfo.Partition.Definitions, tblInfo.Partition.DroppingDefinitions = splitPartitionDefinitions(tblInfo.Partition.Definitions, partNames)
-		err = dropLabelRules(jobCtx.stepCtx, jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, partNames)
-		if err != nil {
+		if err = applyDropPartitionLabelAndPlacementRules(jobCtx, job, tblInfo, partNames); err != nil {
 			// TODO: Add failpoint error/cancel injection and test failure/rollback and cancellation!
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the label rules")
-		}
-
-		if _, err := alterTableLabelRule(jobCtx.store.GetCodec(), job.SchemaName, tblInfo, getIDs([]*model.TableInfo{tblInfo})); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, err
-		}
-
-		var bundles []*placement.Bundle
-		bundles, err = buildDropPartitionBundles(metaMut, tblInfo, tblInfo.Partition.DroppingDefinitions)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, err
-		}
-
-		if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
@@ -2548,6 +2536,23 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
 	return ver, errors.Trace(err)
+}
+
+// applyDropPartitionLabelAndPlacementRules removes partition labels, updates the
+// table label, then publishes placement bundles. Earlier effects remain if a later
+// step fails. Standalone bundles for dropped data are retained until delete-range GC.
+func applyDropPartitionLabelAndPlacementRules(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo, partNames []string) error {
+	if err := dropLabelRules(jobCtx.stepCtx, jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, partNames); err != nil {
+		return errors.Wrapf(err, "failed to notify PD the label rules")
+	}
+	if _, err := alterTableLabelRule(jobCtx.store.GetCodec(), job.SchemaName, tblInfo, getIDs([]*model.TableInfo{tblInfo})); err != nil {
+		return err
+	}
+	bundles, err := buildDropPartitionBundles(jobCtx.metaMut, tblInfo, tblInfo.Partition.DroppingDefinitions)
+	if err != nil {
+		return err
+	}
+	return infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 }
 
 func removeTiFlashAvailablePartitionIDs(tblInfo *model.TableInfo, pids []int64) {
@@ -2753,7 +2758,10 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		if err = clearTruncatePartitionTiflashStatus(tblInfo, newDefinitions, oldIDs); err != nil {
 			return ver, errors.Trace(err)
 		}
-		if err = updateTruncatePartitionLabelRules(jobCtx, job, jobCtx.metaMut, oldDefinitions, newDefinitions, tblInfo, oldIDs); err != nil {
+		if err = publishTruncatePartitionPlacementBundles(jobCtx.metaMut, tblInfo, oldDefinitions, newDefinitions); err != nil {
+			return ver, errors.Trace(err)
+		}
+		if err = updateTruncatePartitionLabelRules(jobCtx, job, newDefinitions, tblInfo); err != nil {
 			return ver, errors.Trace(err)
 		}
 		var scatterScope string
@@ -2884,7 +2892,10 @@ func clearTruncatePartitionTiflashStatus(tblInfo *model.TableInfo, newPartitions
 	return nil
 }
 
-func updateTruncatePartitionLabelRules(jobCtx *jobContext, job *model.Job, t *meta.Mutator, oldPartitions, newPartitions []model.PartitionDefinition, tblInfo *model.TableInfo, oldIDs []int64) error {
+// publishTruncatePartitionPlacementBundles installs the replacement layout while
+// preserving the old partitions' placement until delete-range GC. Publication is
+// separate from label updates, so a later label failure does not undo these rules.
+func publishTruncatePartitionPlacementBundles(t *meta.Mutator, tblInfo *model.TableInfo, oldPartitions, newPartitions []model.PartitionDefinition) error {
 	bundles, err := buildTruncatePartitionBundles(t, tblInfo, oldPartitions, newPartitions)
 	if err != nil {
 		return err
@@ -2894,9 +2905,12 @@ func updateTruncatePartitionLabelRules(jobCtx *jobContext, job *model.Job, t *me
 	if err != nil {
 		return errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
+	return nil
+}
 
+func updateTruncatePartitionLabelRules(jobCtx *jobContext, job *model.Job, newPartitions []model.PartitionDefinition, tblInfo *model.TableInfo) error {
 	tableID := label.NewRuleID(jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, "")
-	oldPartRules := make([]string, 0, len(oldIDs))
+	oldPartRules := make([]string, 0, len(newPartitions))
 	for _, newPartition := range newPartitions {
 		oldPartRuleID := label.NewRuleID(jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, newPartition.Name.L)
 		oldPartRules = append(oldPartRules, oldPartRuleID)
@@ -3429,35 +3443,7 @@ func (w *worker) prepareReorganizePartition(jobCtx *jobContext, job *model.Job, 
 			failpoint.Return(ver, errors.New("Injected error by reorgPartCancel1"))
 		}
 	})
-	// Once external changes succeed, subsequent errors require rollback.
-	changesMade := false
-	if tblInfo.TiFlashReplica != nil {
-		// Must set placement rule, and make sure it succeeds.
-		if err := infosync.ConfigureTiFlashPDForPartitions(true, &tblInfo.Partition.AddingDefinitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); err != nil {
-			logutil.DDLLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-		changesMade = true
-		// In the next step, StateDeleteOnly, wait to verify the TiFlash replicas are OK
-	}
-
-	changed, err := alterTablePartitionBundles(metaMut, tblInfo, tblInfo.Partition.AddingDefinitions)
-	if err != nil {
-		if !changesMade {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-		return rollbackReorganizePartitionWithErr(jobCtx, job, err)
-	}
-	changesMade = changesMade || changed
-
-	ids := getIDs([]*model.TableInfo{tblInfo})
-	for _, p := range tblInfo.Partition.AddingDefinitions {
-		ids = append(ids, p.ID)
-	}
-	changed, err = alterTableLabelRule(jobCtx.store.GetCodec(), job.SchemaName, tblInfo, ids)
-	changesMade = changesMade || changed
+	changesMade, err := applyReorganizePartitionExternalEffects(jobCtx, job, tblInfo)
 	if err != nil {
 		if !changesMade {
 			job.State = model.JobStateCancelled
@@ -3479,6 +3465,39 @@ func (w *worker) prepareReorganizePartition(jobCtx *jobContext, job *model.Job, 
 	// Assume we cannot have more than MaxUint64 rows, set the progress to 1/10 of that.
 	getBackfillProgressByTableID(tblInfo.ID, metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String(), "").Set(0.1 / float64(math.MaxUint64))
 	return ver, nil
+}
+
+// applyReorganizePartitionExternalEffects configures TiFlash, publishes placement
+// bundles, then extends the table label, before writes to new partitions begin.
+// The effects are not atomic. changesMade preserves the existing failure policy:
+// it records successful prior effects, ignoring the bundle helper's changed flag
+// on error. False does not prove nothing was applied: a failing TiFlash or PD
+// request can have partial effects. The caller decides cancellation or rollback.
+func applyReorganizePartitionExternalEffects(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo) (changesMade bool, err error) {
+	if tblInfo.TiFlashReplica != nil {
+		if err := infosync.ConfigureTiFlashPDForPartitions(true, &tblInfo.Partition.AddingDefinitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); err != nil {
+			logutil.DDLLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
+			return false, errors.Trace(err)
+		}
+		changesMade = true
+		// StateDeleteOnly waits for the configured TiFlash replicas before writes.
+	}
+
+	changed, err := alterTablePartitionBundles(jobCtx.metaMut, tblInfo, tblInfo.Partition.AddingDefinitions)
+	if err != nil {
+		if !changesMade {
+			return false, errors.Trace(err)
+		}
+		return changesMade, err
+	}
+	changesMade = changesMade || changed
+
+	ids := getIDs([]*model.TableInfo{tblInfo})
+	for _, p := range tblInfo.Partition.AddingDefinitions {
+		ids = append(ids, p.ID)
+	}
+	changed, err = alterTableLabelRule(jobCtx.store.GetCodec(), job.SchemaName, tblInfo, ids)
+	return changesMade || changed, err
 }
 
 // validateReorganizePartition rechecks the current schema and normalizes the
@@ -3524,6 +3543,30 @@ func (w *worker) validateReorganizePartition(job *model.Job, tblInfo *model.Tabl
 		return checkColumnsPartitionType(&tmpTblInfo)
 	}
 	return checkPartitionFuncType(sctx.GetExprCtx(), partInfo.Expr, job.SchemaName, tblInfo)
+}
+
+type partitionIndexRole byte
+
+const (
+	partitionIndexUnchanged partitionIndexRole = iota
+	partitionIndexOld
+	partitionIndexNew
+)
+
+// getPartitionIndexRole interprets the persisted old/new map without conflating
+// an unchanged index with an old replacement index, whose map value is false.
+func getPartitionIndexRole(partInfo *model.PartitionInfo, indexID int64) partitionIndexRole {
+	if partInfo == nil {
+		return partitionIndexUnchanged
+	}
+	isNew, changed := partInfo.DDLChangedIndex[indexID]
+	if !changed {
+		return partitionIndexUnchanged
+	}
+	if isNew {
+		return partitionIndexNew
+	}
+	return partitionIndexOld
 }
 
 // prepareReorganizePartitionIndexes stages replacement indexes with distinct IDs
@@ -3673,18 +3716,15 @@ func (w *worker) backfillReorganizePartition(jobCtx *jobContext, job *model.Job,
 	})
 
 	for _, index := range tblInfo.Indices {
-		isNew, ok := tblInfo.Partition.DDLChangedIndex[index.ID]
-		if !ok {
-			continue
-		}
-		if isNew {
+		switch getPartitionIndexRole(tblInfo.Partition, index.ID) {
+		case partitionIndexNew:
 			// Newly created index, replacing old unique/global index
 			index.State = model.StatePublic
-			continue
+		case partitionIndexOld:
+			// Old index, should not be visible any longer,
+			// but needs to be kept up-to-date in case rollback happens.
+			index.State = model.StateWriteOnly
 		}
-		// Old index, should not be visible any longer,
-		// but needs to be kept up-to-date in case rollback happens.
-		index.State = model.StateWriteOnly
 	}
 	firstPartIdx, lastPartIdx, idMap, err2 := getReplacedPartitionIDs(partNames, tblInfo.Partition)
 	if err2 != nil {
@@ -3723,8 +3763,7 @@ func retireReorganizePartitionIndexes(job *model.Job, tblInfo *model.TableInfo) 
 	// prevent duplicate-key errors when an older client inserts a deleted value again.
 	// After transitioning to StatePublic, rollback is no longer allowed.
 	for _, index := range tblInfo.Indices {
-		isNew, ok := tblInfo.Partition.DDLChangedIndex[index.ID]
-		if !ok || isNew {
+		if getPartitionIndexRole(tblInfo.Partition, index.ID) != partitionIndexOld {
 			continue
 		}
 		// The old index is no longer visible, but we still need to delete its
@@ -3829,19 +3868,29 @@ func removeReplacedPartitionIndexes(tblInfo *model.TableInfo, args *model.TableP
 		if indexInfo.State == model.StateDeleteOnly {
 			// Drop the old indexes, see onDropIndex
 			indexInfo.State = model.StateNone
-			DropIndexColumnFlag(tblInfo, indexInfo)
-			RemoveDependentHiddenColumns(tblInfo, indexInfo)
 			dropIndices = append(dropIndices, indexInfo)
 		}
 	}
+	args.OldGlobalIndexes = append(args.OldGlobalIndexes, removePartitionIndexes(tblInfo, dropIndices)...)
+}
+
+// removePartitionIndexes removes only the explicitly selected indexes. Callers
+// own their state transitions and schema synchronization before removal.
+func removePartitionIndexes(tblInfo *model.TableInfo, indexes []*model.IndexInfo) []model.TableIDIndexID {
+	for _, indexInfo := range indexes {
+		DropIndexColumnFlag(tblInfo, indexInfo)
+		RemoveDependentHiddenColumns(tblInfo, indexInfo)
+	}
 	// Local index data is removed with the dropped partitions; global index data
 	// needs separate delete-range cleanup.
-	for _, indexInfo := range dropIndices {
+	var cleanup []model.TableIDIndexID
+	for _, indexInfo := range indexes {
 		removeIndexInfo(tblInfo, indexInfo)
 		if indexInfo.Global {
-			args.OldGlobalIndexes = append(args.OldGlobalIndexes, model.TableIDIndexID{TableID: tblInfo.ID, IndexID: indexInfo.ID})
+			cleanup = append(cleanup, model.TableIDIndexID{TableID: tblInfo.ID, IndexID: indexInfo.ID})
 		}
 	}
+	return cleanup
 }
 
 // recreateTableForPartitioningChange replaces table metadata under the new table
@@ -3943,7 +3992,7 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 			// that no reader uses and that DML never maintains.
 			continue
 		}
-		if isNew, ok := tbl.Meta().GetPartitionInfo().DDLChangedIndex[index.ID]; ok && !isNew {
+		if getPartitionIndexRole(tbl.Meta().GetPartitionInfo(), index.ID) == partitionIndexOld {
 			// Skip old replaced indexes, but rebuild all other indexes
 			continue
 		}
