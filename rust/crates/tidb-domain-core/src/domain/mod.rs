@@ -51,7 +51,7 @@ use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, Table
 use crate::bdr_role_store;
 use crate::cluster_account_seam::ClusterAccountWriter;
 use crate::cluster_session::{
-    cluster_session_catalog, SessionCatalogs, SkippedTable,
+    cluster_session_catalog, cluster_session_catalog_with_templates, SkippedTable,
 };
 use tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock;
 use crate::cluster_sysvar_seam::ClusterSysvarWriter;
@@ -687,10 +687,6 @@ pub struct Domain {
     pub statistics_view: Arc<tidb_stats_handle::StatisticsView>,
     /// Go Domain starts one statistics-load pool, shared by user and internal sessions.
     pub stats_load_workers: std::sync::OnceLock<Arc<tidb_stats_handle_syncload::sync_load::StatisticsLoadWorkers>>,
-    /// The session catalog of the latest schema version, built once and
-    /// shared by every session -- Go's one `infoschema` per schema version
-    /// (see [`SessionCatalogs`]).
-    pub session_catalogs: Arc<Mutex<SessionCatalogs>>,
     /// The store's regions every session of this node reads (Go
     /// `kv.SplittableStore` and the region cache).
     pub region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
@@ -861,6 +857,18 @@ impl Domain {
             auto_ids.as_ref(),
         )
         .skipped;
+        // Go's loader builds each version's `InfoSchema` before `InfoCache`
+        // holds it; the domain owns the auto-id allocators the build needs.
+        catalog.install_schema_builder(Box::new({
+            let auto_ids = Arc::clone(&auto_ids);
+            move |loaded| {
+                let built = cluster_session_catalog_with_templates(loaded, None, auto_ids.as_ref());
+                tidb_infoschema::cluster_catalog::BuiltSchema {
+                    schema: built.catalog,
+                    skipped: built.skipped,
+                }
+            }
+        }));
         let stats_usage = Arc::new(tidb_stats_handle_usage::StatsUsageHandle::new());
         stats_usage.start_worker();
         let data_lock_waits = Arc::new(ClusterDataLockWaits {
@@ -911,7 +919,6 @@ impl Domain {
             schema_pins: Arc::new(tidb_ddl::schema_sync::SchemaPinRegistry::default()),
             schema_validator: None,
             stats_load_workers: std::sync::OnceLock::new(),
-            session_catalogs: Arc::new(Mutex::new(SessionCatalogs::default())),
             region_store: None,
             take_snapshot: std::sync::OnceLock::new(),
             etcd_client: std::sync::OnceLock::new(),

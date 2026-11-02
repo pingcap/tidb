@@ -357,3 +357,22 @@ pub fn normalize_diff_loaded_table_info(table: &mut TableInfo) {
     old_utf8_to_utf8mb4(table);
 }
 
+/// Why one loaded table is not part of the built schema this tier serves.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SkippedTable {
+    /// Fully qualified stored name, `schema.table`.
+    pub name: String,
+    /// Exact, self-contained explanation.
+    pub reason: String,
+}
+
+/// Go `infoschema.InfoSchema` as `Builder.InitWithDBInfos` builds it from one
+/// loaded schema version: the image every session of that version shares,
+/// and the tables this tier cannot serve.
+#[derive(Clone, Debug)]
+pub struct BuiltSchema {
+    /// The schema image sessions clone.
+    pub schema: crate::SessionExtendedInfoSchema,
+    /// Tables the cluster has that this tier cannot serve.
+    pub skipped: Vec<SkippedTable>,
+}

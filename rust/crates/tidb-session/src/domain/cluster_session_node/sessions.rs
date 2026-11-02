@@ -163,11 +163,7 @@ impl DomainSessions for Domain {
         let loaded = self.catalog.get_latest();
         // Go's one infoschema per schema version: the node builds it once
         // and every session takes a clone.
-        let mut built = self
-            .session_catalogs
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&loaded, self.auto_ids.as_ref());
+        let built = self.catalog.built(&loaded);
         let statistics_loading = ClusterStatisticsLoading {
             view: Arc::clone(&self.statistics_view),
             loader: Arc::new(ClusterStatisticsItemLoader {
@@ -197,10 +193,8 @@ impl DomainSessions for Domain {
             slot: Arc::clone(&slot),
             follower: catalog_follower::CatalogFollower::new(
                 Arc::clone(&self.catalog),
-                Arc::clone(&self.session_catalogs),
-                Arc::clone(&self.auto_ids),
                 loaded.schema_version,
-                built.skipped,
+                built.skipped.clone(),
             ),
             commit_hooks: Box::new({
                 let bindings = self.bindings.clone();
@@ -221,7 +215,7 @@ impl DomainSessions for Domain {
             parked_local_infile: None,
             store: None,
         });
-        let mut session = Session::over_catalog(crate::SharedCatalog::new(built.catalog), node);
+        let mut session = Session::over_catalog(crate::SharedCatalog::new(built.schema.clone()), node);
         session.set_transaction_store(Box::new(storage.clone()));
         session.set_stats_handle(stats_handle);
         session.set_global_id_generator(Arc::new(ClusterGlobalIds {

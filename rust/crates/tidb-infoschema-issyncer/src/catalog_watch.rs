@@ -90,7 +90,13 @@ use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use tidb_infoschema::cluster_catalog::ClusterCatalog;
+use tidb_infoschema::cluster_catalog::{BuiltSchema, ClusterCatalog};
+
+/// What builds a loaded version's [`BuiltSchema`] (Go's loader runs
+/// `infoschema.NewBuilder(...).InitWithDBInfos` before inserting the result
+/// into `InfoCache`); the domain installs it, as only the domain holds the
+/// auto-id allocators the tables are built over.
+pub type SchemaBuilder = Box<dyn Fn(&ClusterCatalog) -> BuiltSchema + Send + Sync>;
 
 /// Go `infoschema.InfoCache`: the catalog every query reads, replaced whole by
 /// the reload thread.
@@ -106,6 +112,11 @@ pub struct InfoCache {
     /// schema validator's update and the publication, so two reload paths
     /// never interleave their validator updates.
     reload: Mutex<()>,
+    /// The installed [`SchemaBuilder`].
+    builder: std::sync::OnceLock<SchemaBuilder>,
+    /// Go `InfoCache`'s `InfoSchema` per schema version: each version's
+    /// image, built once and shared by every session of that version.
+    built: Mutex<std::collections::BTreeMap<i64, Arc<BuiltSchema>>>,
 }
 
 impl InfoCache {
@@ -121,7 +132,50 @@ impl InfoCache {
             )])),
             capacity: AtomicUsize::new(16),
             reload: Mutex::new(()),
+            builder: std::sync::OnceLock::new(),
+            built: Mutex::new(std::collections::BTreeMap::new()),
         }
+    }
+
+    /// Installs what builds each version's [`BuiltSchema`]; the first
+    /// installation wins.
+    pub fn install_schema_builder(&self, builder: SchemaBuilder) {
+        let _ = self.builder.set(builder);
+    }
+
+    /// Go `InfoCache.GetByVersion` answering the built `InfoSchema`: the
+    /// image of `loaded`'s schema version, built at most once (the newest
+    /// versions are kept, as the catalogs are).
+    ///
+    /// # Panics
+    ///
+    /// No [`SchemaBuilder`] was installed.
+    #[must_use]
+    pub fn built(&self, loaded: &ClusterCatalog) -> Arc<BuiltSchema> {
+        let version = loaded.schema_version;
+        if let Some(found) = self
+            .built
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&version)
+        {
+            return Arc::clone(found);
+        }
+        let builder = self
+            .builder
+            .get()
+            .expect("the domain installs the schema builder before sessions open");
+        // Built outside the lock: a build reads every table's metadata.
+        let image = Arc::new(builder(loaded));
+        let mut built = self
+            .built
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let found = Arc::clone(built.entry(version).or_insert(image));
+        while built.len() > self.capacity.load(Ordering::Relaxed).max(1) {
+            built.pop_first();
+        }
+        found
     }
 
     /// Serializes one reload (load, validator update, publication), as Go's

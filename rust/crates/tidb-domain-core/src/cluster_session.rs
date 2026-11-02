@@ -53,14 +53,7 @@ const PRI_KEY_FLAG: u32 = 1 << 1;
 use tidb_table::table_from_meta::cluster_table;
 use tidb_table::table_from_meta::{AutoIdSource, TableAutoIds};
 
-/// Why one loaded table is not part of the session's catalog.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SkippedTable {
-    /// Fully qualified stored name, `schema.table`.
-    pub name: String,
-    /// Exact, self-contained explanation.
-    pub reason: String,
-}
+pub use tidb_infoschema::cluster_catalog::SkippedTable;
 
 /// One session's catalog over cluster storage, plus every table left out.
 #[derive(Clone, Debug)]
@@ -109,31 +102,6 @@ impl tidb_stats_handle::StatisticsSource for SnapshotStatisticsSource {
             .get(&physical_id)
             .and_then(TableStatsState::loaded)
             .cloned()
-    }
-}
-
-/// Go's one `infoschema` per schema version, shared by every session: the
-/// node builds a version's session catalog once, over neutral storage, and
-/// each session takes a clone (its database maps are `Arc`-shared, copied
-/// only by a session's own copy-on-write change). A table is metadata; a
-/// session's statements read and write through `sctx.Txn()`.
-#[derive(Default)]
-pub struct SessionCatalogs {
-    built: Option<(i64, ClusterSessionCatalog)>,
-}
-
-impl SessionCatalogs {
-    /// The session catalog of `loaded`'s schema version, built at most once.
-    pub fn get(&mut self, loaded: &ClusterCatalog, auto_ids: &dyn TableAutoIds) -> ClusterSessionCatalog {
-        if let Some((version, built)) = &self.built {
-            if *version == loaded.schema_version {
-                return built.clone();
-            }
-        }
-        let built =
-            cluster_session_catalog_with_templates(loaded, None, auto_ids);
-        self.built = Some((loaded.schema_version, built.clone()));
-        built
     }
 }
 

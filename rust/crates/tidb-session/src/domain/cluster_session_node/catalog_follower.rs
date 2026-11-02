@@ -25,26 +25,15 @@
 
 use std::sync::Arc;
 
-use tidb_store_driver_txn::cluster_storage::ClusterTableStorage;
 use crate::txn_manager::TxnManager;
 use crate::Session;
 
-use super::{
-    cluster_session_catalog_with_templates,
-    InfoCache, SkippedTable, TableAutoIds,
-};
+use super::{InfoCache, SkippedTable};
 
 /// See the module documentation.
 pub(super) struct CatalogFollower {
     /// The node's catalog, which this connection follows.
     catalog: Arc<InfoCache>,
-    /// The handles every table of the session was built over, kept so the
-    /// connection's catalog can be rebuilt after a DDL without disturbing the
-    /// snapshot slot or the staged writes.
-    session_catalogs: Arc<std::sync::Mutex<tidb_domain_core::cluster_session::SessionCatalogs>>,
-    /// The node's auto-increment allocators, needed on every rebuild so the
-    /// rebuilt tables keep the ranges the old ones had reserved.
-    auto_ids: Arc<dyn TableAutoIds>,
     /// The schema version the session's tables were built from. A move in
     /// `catalog` past this is what makes the connection rebuild them.
     schema_version: i64,
@@ -56,15 +45,11 @@ pub(super) struct CatalogFollower {
 impl CatalogFollower {
     pub(super) fn new(
         catalog: Arc<InfoCache>,
-        session_catalogs: Arc<std::sync::Mutex<tidb_domain_core::cluster_session::SessionCatalogs>>,
-        auto_ids: Arc<dyn TableAutoIds>,
         schema_version: i64,
         skipped: Vec<SkippedTable>,
     ) -> Self {
         Self {
             catalog,
-            session_catalogs,
-            auto_ids,
             schema_version,
             skipped,
         }
@@ -94,19 +79,15 @@ impl CatalogFollower {
         if loaded.schema_version == self.schema_version {
             return;
         }
-        let built = self
-            .session_catalogs
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .get(&loaded, self.auto_ids.as_ref());
+        let built = self.catalog.built(&loaded);
         let shared = session.shared_catalog();
         let mut catalog = shared.lock().unwrap_or_else(|poison| poison.into_inner());
-        *catalog = built.catalog;
+        *catalog = built.schema.clone();
         drop(catalog);
         self.schema_version = loaded.schema_version;
         session.set_plan_cache_schema_version(loaded.schema_version as u64);
         session.set_info_schema(Arc::clone(&loaded));
-        self.skipped = built.skipped;
+        self.skipped = built.skipped.clone();
     }
 }
 
