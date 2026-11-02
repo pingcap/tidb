@@ -375,6 +375,12 @@ CARGO_INCREMENTAL=0`.
     policies / resource_groups 13 each, in 73 files (28 in `tidb-ddl`).
   - [ ] `InfoCache` publishes the built image (folding `SessionCatalogs`
     in) instead of `Arc<ClusterCatalog>`; readers switch.
+    2026-11-02 (68c5e376923): `InfoCache` holds each version's
+    `BuiltSchema` (image + skipped tables), built once through the
+    `SchemaBuilder` the domain installs; `SessionCatalogs` is gone and
+    sessions take `InfoCache::built`. Left: the `ClusterCatalog` readers
+    (DDL, stats, syssession) move to the image, and the reload applies
+    schema diffs to the image (Go `Builder.ApplyDiff`).
     Go's shape for this: the domain's loader builds the infoschema and
     inserts it into `InfoCache`; so the image builder
     (`cluster_session_catalog_with_templates`, domain-core) runs where
