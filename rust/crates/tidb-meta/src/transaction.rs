@@ -450,17 +450,8 @@ impl<J: DdlJobCodec> LastJobIterator<J> for HistoryDdlJobIterator<J> {
     }
 }
 
-/// Go `model.AutoIDGroup`, kept here because `meta.go` only consumes its three
-/// scalar allocator values.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct AutoIdGroup {
-    /// `_tidb_rowid` allocator value.
-    pub row_id: i64,
-    /// Separate `AUTO_INCREMENT` allocator value.
-    pub increment_id: i64,
-    /// `AUTO_RANDOM` allocator value.
-    pub random_id: i64,
-}
+/// Go `model.AutoIDGroup`.
+pub use tidb_model::AutoIdGroup;
 
 /// Go `model.TableNameInfo` returned by the fast table-list path.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

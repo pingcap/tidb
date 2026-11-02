@@ -1718,3 +1718,83 @@ pub(crate) fn go_test_get_rename_index_args() {
         );
     }
 }
+
+/// Go `RecoverArgs` through `FillArgs` / `Encode` / `Decode`, against the
+/// bytes Go's own `model` package writes (`testdata/recover_args_go.txt`:
+/// v1 table, v1 schema, v2 table, v2 schema), and back through
+/// `GetRecoverArgs`.
+#[test]
+fn recover_args_encode_and_decode_as_go() {
+    let go = include_str!("testdata/recover_args_go.txt")
+        .lines()
+        .collect::<Vec<_>>();
+    let table = GoShared::new(RecoverTableInfo {
+        schema_id: 2,
+        table_info: Some(GoShared::new(TableInfo {
+            id: 7,
+            name: tidb_ast::CiString::new("t"),
+            ..Default::default()
+        })),
+        drop_job_id: 9,
+        snapshot_ts: 11,
+        auto_ids: AutoIdGroup {
+            row_id: 3,
+            increment_id: 4,
+            random_id: 5,
+        },
+        old_schema_name: "test".to_owned(),
+        old_table_name: "t".to_owned(),
+    });
+    let table_args = GoShared::new(RecoverArgs {
+        recover_info: Some(GoShared::new(RecoverSchemaInfo {
+            recover_table_infos: Some(vec![table.clone()]),
+            ..Default::default()
+        })),
+        check_flag: 1,
+        affected_physical_ids: Vec::new(),
+    });
+    let schema_args = GoShared::new(RecoverArgs {
+        recover_info: Some(GoShared::new(RecoverSchemaInfo {
+            db_info: Some(GoShared::new(crate::db::DBInfo {
+                id: 2,
+                name: tidb_ast::CiString::new("test"),
+                ..Default::default()
+            })),
+            recover_table_infos: Some(vec![table]),
+            load_tables_on_execute: true,
+            drop_job_id: 12,
+            snapshot_ts: 13,
+            old_schema_name: tidb_ast::CiString::new("Test"),
+        })),
+        check_flag: 2,
+        affected_physical_ids: Vec::new(),
+    });
+    let cases = [
+        (JobVersion::V1, ActionType::ACTION_RECOVER_TABLE, &table_args, go[0]),
+        (JobVersion::V1, ActionType::ACTION_RECOVER_SCHEMA, &schema_args, go[1]),
+        (JobVersion::V2, ActionType::ACTION_RECOVER_TABLE, &table_args, go[2]),
+        (JobVersion::V2, ActionType::ACTION_RECOVER_SCHEMA, &schema_args, go[3]),
+    ];
+    for (version, action, args, go_bytes) in cases {
+        let mut job = encoded_job(version, action, args.clone());
+        assert_eq!(job.raw_args.as_ref().unwrap().get(), go_bytes, "{version:?} {action}");
+        let decoded = get_recover_args(&mut job)
+            .unwrap_or_else(|error| panic!("{version:?} {action}: {error}"))
+            .unwrap();
+        let decoded = decoded.read();
+        assert_eq!(decoded.check_flag, args.read().check_flag);
+        let tables = decoded.recover_table_infos();
+        let first = tables[0].read();
+        assert_eq!(
+            (first.schema_id, first.drop_job_id, first.snapshot_ts, first.auto_ids.random_id),
+            (2, 9, 11, 5)
+        );
+        assert_eq!(first.table_info.as_ref().unwrap().read().id, 7);
+        if action == ActionType::ACTION_RECOVER_SCHEMA {
+            let info = decoded.recover_info.as_ref().unwrap().read();
+            assert_eq!(info.db_info.as_ref().unwrap().read().id, 2);
+            assert_eq!((info.drop_job_id, info.old_schema_name.original()), (12, "Test"));
+            assert!(info.load_tables_on_execute);
+        }
+    }
+}

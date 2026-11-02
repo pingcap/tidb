@@ -110,7 +110,8 @@ pub use job_args::{
     IndexArgSplitOpt, IndexOp, JobArgs, JobArgsValue, TiFlashReplicaSpec, LockTablesArgs,
     ModifyColumnArgs, ModifyIndexArgs, ModifySchemaArgs, ModifyTableAutoIDCacheArgs,
     ModifyTableCharsetAndCollateArgs, ModifyTableCommentArgs, ModifyTableEngineAttributeArgs,
-    PlacementPolicyArgs, RebaseAutoIDArgs, RefreshMetaArgs, RenameTableArgs, RenameTablesArgs,
+    PlacementPolicyArgs, RebaseAutoIDArgs, RecoverArgs, RecoverSchemaInfo, RecoverTableInfo,
+    AutoIdGroup, get_recover_args, RefreshMetaArgs, RenameTableArgs, RenameTablesArgs,
     ResourceGroupArgs, SetDefaultValueArgs, SetTiFlashReplicaArgs, ShardRowIDArgs, TableColumnArgs,
     TableIDIndexID, TablePartitionArgs, TruncateTableArgs, UpdateTiFlashReplicaStatusArgs,
 };

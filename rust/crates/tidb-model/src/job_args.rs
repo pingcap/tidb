@@ -434,6 +434,8 @@ pub enum JobArgsValue {
     AlterTtlInfo(Option<GoShared<AlterTTLInfoArgs>>),
     /// `*model.PlacementPolicyArgs`, including a typed nil pointer.
     PlacementPolicy(Option<GoShared<PlacementPolicyArgs>>),
+    /// `*model.RecoverArgs`, including a typed nil pointer.
+    Recover(Option<GoShared<RecoverArgs>>),
     /// `*model.LockTablesArgs`, including a typed nil pointer.
     LockTables(Option<GoShared<LockTablesArgs>>),
     /// `*model.AlterTablePlacementArgs`, including a typed nil pointer.
@@ -499,6 +501,7 @@ impl JobArgsValue {
             Self::AlterSequence(value) => job.fill_args(value.clone()),
             Self::AlterTtlInfo(value) => job.fill_args(value.clone()),
             Self::PlacementPolicy(value) => job.fill_args(value.clone()),
+            Self::Recover(value) => job.fill_args(value.clone()),
             Self::LockTables(value) => job.fill_args(value.clone()),
             Self::AlterTablePlacement(value) => job.fill_args(value.clone()),
             Self::AlterTableAttributes(value) => job.fill_args(value.clone()),
@@ -545,6 +548,7 @@ impl JobArgsValue {
             Self::AlterSequence(_) => "AlterSequenceArgs",
             Self::AlterTtlInfo(_) => "AlterTTLInfoArgs",
             Self::PlacementPolicy(_) => "PlacementPolicyArgs",
+            Self::Recover(_) => "RecoverArgs",
             Self::LockTables(_) => "LockTablesArgs",
             Self::AlterTablePlacement(_) => "AlterTablePlacementArgs",
             Self::AlterTableAttributes(_) => "AlterTableAttributesArgs",
@@ -594,6 +598,7 @@ impl JobArgsValue {
             Self::AlterSequence(value) => value.as_ref().map(GoShared::identity_address),
             Self::AlterTtlInfo(value) => value.as_ref().map(GoShared::identity_address),
             Self::PlacementPolicy(value) => value.as_ref().map(GoShared::identity_address),
+            Self::Recover(value) => value.as_ref().map(GoShared::identity_address),
             Self::LockTables(value) => value.as_ref().map(GoShared::identity_address),
             Self::AlterTablePlacement(value) => value.as_ref().map(GoShared::identity_address),
             Self::AlterTableAttributes(value) => value.as_ref().map(GoShared::identity_address),
@@ -734,6 +739,11 @@ impl JobArgsValue {
             .go_json_projection(),
             Self::PlacementPolicy(value) => GoTypedPointer::new(
                 model_type("PlacementPolicyArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::Recover(value) => GoTypedPointer::new(
+                model_type("RecoverArgs", GoTypeKind::Struct),
                 value.clone(),
             )
             .go_json_projection(),
@@ -973,6 +983,10 @@ pub use alter::*;
 #[path = "job_args_column.rs"]
 mod column;
 pub use column::*;
+
+#[path = "job_args_recover.rs"]
+mod recover;
+pub use recover::*;
 
 #[path = "job_args_compat.rs"]
 mod compat;

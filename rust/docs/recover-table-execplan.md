@@ -70,9 +70,13 @@ Oracle: `./gorun` refuses FLASHBACK because its store has no
 
 ## Progress
 
-- [ ] M1: model. `RecoverArgs`, `RecoverSchemaInfo` and `RecoverTableInfo`
-  in `tidb-model` `job_args`, with Go JSON byte fixtures and
-  `get_recover_args` / `fill_args`.
+- [x] M1: model. `tidb-model` `job_args_recover.rs` holds `AutoIdGroup`
+  (moved from `tidb-meta`, which re-exports it), `RecoverTableInfo`,
+  `RecoverSchemaInfo` (its embedded `*DBInfo` is hand-serialized, Go's
+  keys first and in order) and `RecoverArgs` (`JobArgsValue::Recover`,
+  v1/v2, `get_recover_args`). Test `recover_args_encode_and_decode_as_go`
+  compares against `testdata/recover_args_go.txt`, the bytes Go's own
+  model package writes.
 - [ ] M2: job handlers. `onRecoverTable` and `recoverTable` in a new
   `cluster_ddl/recover_table.rs`, dispatched from `cluster_ddl.rs` (next to
   the CREATE TABLE arms), plus the finish hook that re-enables GC.
@@ -86,7 +90,9 @@ Oracle: `./gorun` refuses FLASHBACK because its store has no
 
 ## Surprises & Discoveries
 
-(None yet.)
+- `serde_json::Value` sorts object keys and cannot hand over raw JSON
+  members. The embedded `*DBInfo` is therefore written as text and read
+  back from text.
 
 ## Decision Log
 
