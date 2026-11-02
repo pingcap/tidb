@@ -553,3 +553,145 @@ func TestS3DefaultForceStylePath(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, s.GetS3().ForcePathStyle)
 }
+<<<<<<< HEAD:br/pkg/storage/parse_test.go
+=======
+
+func TestBackendOptionsRedacted(t *testing.T) {
+	opts := BackendOptions{}
+	opts.S3.AccessKey = "AKID"
+	opts.S3.SecretAccessKey = "SKEY"
+	opts.S3.SessionToken = "TOKEN"
+	opts.S3.SseKmsContext = `{"tenant":"context-value"}`
+	opts.S3.Region = "us-east-1"
+	opts.Azblob.AccountKey = "AZKEY"
+	opts.Azblob.SASToken = "SAS"
+	opts.Azblob.EncryptionKey = "ENC"
+	opts.Azblob.AccountName = "account"
+	opts.Azblob.Endpoint = "https://account.blob.core.windows.net/?sig=SAS"
+	opts.S3.Endpoint = "https://AKID:SKEY@s3.example.com"
+
+	redacted := opts.Redacted()
+	require.Equal(t, ast.RedactedValue, redacted.S3.AccessKey)
+	require.Equal(t, ast.RedactedValue, redacted.S3.SecretAccessKey)
+	require.Equal(t, ast.RedactedValue, redacted.S3.SessionToken)
+	require.Equal(t, ast.RedactedValue, redacted.S3.SseKmsContext)
+	require.Equal(t, `{"tenant":"context-value"}`, opts.S3.SseKmsContext)
+	require.Equal(t, ast.RedactedValue, redacted.Azblob.AccountKey)
+	require.Equal(t, ast.RedactedValue, redacted.Azblob.SASToken)
+	require.Equal(t, ast.RedactedValue, redacted.Azblob.EncryptionKey)
+	require.Equal(t, "us-east-1", redacted.S3.Region)
+	require.Equal(t, "account", redacted.Azblob.AccountName)
+	require.Equal(t, "https://account.blob.core.windows.net/", redacted.Azblob.Endpoint)
+	require.Equal(t, "https://s3.example.com", redacted.S3.Endpoint)
+	require.Equal(t, "AKID", opts.S3.AccessKey)
+	require.Equal(t, BackendOptions{}.Redacted(), BackendOptions{})
+
+	for _, tc := range []struct {
+		endpoint string
+		expected string
+	}{
+		{"", ""},
+		{"https://host:9000/path", "https://host:9000/path"},
+		{"http://FAKE_USER:FAKE_PASS@host:9000/path?sig=FAKE_TOKEN#FAKE_FRAGMENT", "http://host:9000/path"},
+		{"FAKE_USER:FAKE_PASS@host:9000", InvalidURLPlaceholder},
+		{"//FAKE_USER:FAKE_PASS@host:9000", InvalidURLPlaceholder},
+		{"https:FAKE_USER:FAKE_PASS@host:9000", InvalidURLPlaceholder},
+		{"https:///FAKE_USER:FAKE_PASS@host:9000", InvalidURLPlaceholder},
+		{"https://FAKE_USER:FAKE_PASS@host:port", InvalidURLPlaceholder},
+		{"https://FAKE_USER:FAKE_PASS@host%zz", InvalidURLPlaceholder},
+		{"/local/path#FAKE_FRAGMENT", InvalidURLPlaceholder},
+	} {
+		t.Run(tc.endpoint, func(t *testing.T) {
+			opts := BackendOptions{}
+			opts.S3.Endpoint = tc.endpoint
+			opts.GCS.Endpoint = tc.endpoint
+			opts.Azblob.Endpoint = tc.endpoint
+			original := opts
+			redacted := opts.Redacted()
+			require.Equal(t, tc.expected, redacted.S3.Endpoint)
+			require.Equal(t, tc.expected, redacted.GCS.Endpoint)
+			require.Equal(t, tc.expected, redacted.Azblob.Endpoint)
+			require.Equal(t, original, opts)
+		})
+	}
+}
+
+func TestRedactURL(t *testing.T) {
+	cases := []struct {
+		raw      string
+		expected string
+	}{
+		{"/local/path", "/local/path"},
+		{"/local/path#name", "/local/path#name"},
+		{"/data/my files/100%off", "/data/my files/100%off"},
+		{"/local/path?token=SECRET#FRAGMENT", "/local/path"},
+		{"file:///local/path?token=SECRET#FRAGMENT", "file:///local/path"},
+		{"local://USER:PASS@/local/path?token=SECRET#FRAGMENT", "local:///local/path"},
+		{"hdfs://USER:PASS@host/path?token=SECRET#FRAGMENT", "hdfs://host/path"},
+		{"noop:///?token=SECRET#FRAGMENT", "noop:///"},
+		{"gs://bucket/path?credentials=SECRET#FRAGMENT", "gs://bucket/path"},
+		{"gcs://USER:PASS@bucket/path?credentials=SECRET#FRAGMENT", "gcs://bucket/path"},
+		{"GCS://bucket/path?credentials=SECRET", "gcs://bucket/path"},
+		{"gcs://bucket/path?credentials=SECRET%zz", "gcs://bucket/path"},
+		{"local:///local/path?", "local:///local/path"},
+		{"https://host/path?", "https://host/path"},
+		{"s3://bucket/prefix", "s3://bucket/prefix"},
+		{"s3://bucket/prefix?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D", "s3://bucket/prefix?sse-kms-context=xxxxxx"},
+		{`s3://bucket/prefix?sse-kms-context={"tenant":"#context-value"}`, "s3://bucket/prefix"},
+		{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a&private-context-value"}`, "s3://bucket/prefix"},
+		{`s3://bucket/prefix?sse-kms-context={"tenant":"a&region=private-context-value"}`, "s3://bucket/prefix"},
+		{`s3://bucket/prefix?sse-kms-context=%7B%7D&sse-kms-context={"tenant":"a&region=private-context-value"}`, "s3://bucket/prefix"},
+		{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a;x&private-context-value"}`, "s3://bucket/prefix"},
+		{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a%zz&private-context-value"}`, "s3://bucket/prefix"},
+		{"s3://bucket/prefix?access-key=AKID&secret-access-key=SKEY&region=us", "s3://bucket/prefix?access-key=xxxxxx&region=us&secret-access-key=xxxxxx"},
+		{"s3://bucket/prefix?endpoint=https%3A%2F%2FUSER%3APASS%40host%2F%3Fsig%3DSECRET", "s3://bucket/prefix?endpoint=xxxxxx"},
+		{"ks3://bucket/prefix?access-key=AKID&region=us", "ks3://bucket/prefix?access-key=xxxxxx&region=us"},
+		{"oss://bucket/prefix?access-key=AKID&region=us", "oss://bucket/prefix?access-key=xxxxxx&region=us"},
+		{"azure://bucket/prefix?sas-token=SAS", "azure://bucket/prefix?sas-token=xxxxxx"},
+		{"azblob://bucket/prefix?account-name=a&sas-token=SAS", "azblob://bucket/prefix?account-name=a&sas-token=xxxxxx"},
+		{"azure://c/p?account-name=a&sas-token=sv=2020-08-04&ss=b&sig=SECRETSIG", "azure://c/p?account-name=a&sas-token=xxxxxx"},
+		{"s3://bucket:port/prefix?access-key=AKID&secret-access-key=SKEY", InvalidURLPlaceholder},
+		{"s3://bucket%zz/prefix?access-key=AKID&secret-access-key=SKEY", InvalidURLPlaceholder},
+		{"s3a://bucket/prefix?access-key=AKID&secret-access-key=SKEY", "s3a://bucket/prefix"},
+		{"s3://AKID:SKEY@bucket/prefix?access-key=AKID", "s3://bucket/prefix?access-key=xxxxxx"},
+		{"s3a://AKID:SKEY@bucket/prefix", "s3a://bucket/prefix"},
+		{"https://account.blob.core.windows.net/?sv=2022&sig=SAS", "https://account.blob.core.windows.net/"},
+	}
+	for _, c := range cases {
+		t.Run(c.raw, func(t *testing.T) {
+			require.Equal(t, c.expected, RedactURL(c.raw))
+		})
+	}
+}
+
+func TestParseRawURLErrorDoesNotLeakURL(t *testing.T) {
+	for _, raw := range []string{
+		"s3://bucket:port/prefix?access-key=AKID&secret-access-key=SKEY",
+		"s3://bucket%zz/prefix?access-key=AKID&secret-access-key=SKEY",
+		"s3://AKID:SKEY/bucket/prefix",
+	} {
+		_, err := ParseRawURL(raw)
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "AKID")
+		require.NotContains(t, err.Error(), "SKEY")
+
+		_, err = ParseBackend(raw, nil)
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "AKID")
+		require.NotContains(t, err.Error(), "SKEY")
+	}
+}
+
+func TestParseBackendMissingBucketDoesNotLeakUserinfo(t *testing.T) {
+	for _, raw := range []string{
+		"s3://AKID:SKEY@/prefix",
+		"gcs://AKID:SKEY@/prefix",
+		"azblob://AKID:SKEY@/prefix",
+	} {
+		_, err := ParseBackend(raw, nil)
+		require.ErrorContains(t, err, "please specify the bucket")
+		require.NotContains(t, err.Error(), "AKID")
+		require.NotContains(t, err.Error(), "SKEY")
+	}
+}
+>>>>>>> 1d19049f6e3 (br: redact malformed endpoints in backend option logs (#72602)):pkg/objstore/parse_test.go

@@ -17,9 +17,66 @@ import (
 // BackendOptions further configures the storage backend not expressed by the
 // storage URL.
 type BackendOptions struct {
+<<<<<<< HEAD:br/pkg/storage/parse.go
 	S3     S3BackendOptions     `json:"s3" toml:"s3"`
 	GCS    GCSBackendOptions    `json:"gcs" toml:"gcs"`
 	Azblob AzblobBackendOptions `json:"azblob" toml:"azblob"`
+=======
+	S3     s3like.S3BackendOptions `json:"s3" toml:"s3"`
+	GCS    GCSBackendOptions       `json:"gcs" toml:"gcs"`
+	Azblob AzblobBackendOptions    `json:"azblob" toml:"azblob"`
+}
+
+// Redacted returns a copy of the options with the credentials masked, so that
+// the options can be logged. The receiver is not modified.
+func (o BackendOptions) Redacted() BackendOptions {
+	o.S3.AccessKey = maskIfSet(o.S3.AccessKey)
+	o.S3.SecretAccessKey = maskIfSet(o.S3.SecretAccessKey)
+	o.S3.SessionToken = maskIfSet(o.S3.SessionToken)
+	o.S3.SseKmsContext = maskIfSet(o.S3.SseKmsContext)
+	o.Azblob.AccountKey = maskIfSet(o.Azblob.AccountKey)
+	o.Azblob.SASToken = maskIfSet(o.Azblob.SASToken)
+	o.Azblob.EncryptionKey = maskIfSet(o.Azblob.EncryptionKey)
+	// A SAS token or userinfo may be written into the endpoint.
+	o.S3.Endpoint = redactEndpoint(o.S3.Endpoint)
+	o.GCS.Endpoint = redactEndpoint(o.GCS.Endpoint)
+	o.Azblob.Endpoint = redactEndpoint(o.Azblob.Endpoint)
+	return o
+}
+
+// Unlike storage URLs, endpoints cannot be local paths. Require a scheme and
+// host so that RedactURL cannot return malformed credential-bearing input as-is.
+func redactEndpoint(endpoint string) string {
+	if endpoint == "" {
+		return ""
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return InvalidURLPlaceholder
+	}
+	return RedactURL(endpoint)
+}
+
+// maskIfSet masks a credential, leaving an unset one empty so that the
+// redacted output does not suggest that it is configured.
+func maskIfSet(secret string) string {
+	if secret == "" {
+		return ""
+	}
+	return ast.RedactedValue
+}
+
+// InvalidURLPlaceholder replaces a value that cannot be parsed as a URL.
+const InvalidURLPlaceholder = ast.InvalidURLPlaceholder
+
+// RedactURL masks the credentials in a storage URL or endpoint so that it can
+// be put into logs and error messages. An unparseable value is replaced by
+// InvalidURLPlaceholder, userinfo and fragments are removed, and queries are
+// dropped unless the scheme has a safe query allowlist in ast.RedactURL.
+// A value with neither "://" nor "?" is a local path and is returned unchanged.
+func RedactURL(rawURL string) string {
+	return ast.RedactURL(rawURL)
+>>>>>>> 1d19049f6e3 (br: redact malformed endpoints in backend option logs (#72602)):pkg/objstore/parse.go
 }
 
 // ParseRawURL parse raw url to url object.
