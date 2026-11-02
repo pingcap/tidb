@@ -31,22 +31,13 @@ use tidb_planner_property::stats_info::StatsInfo;
 pub fn init_stats(
     source: &mut DataSource,
     table_info: &tidb_model::TableInfo,
-    statistics: Option<&Table>,
+    statistics: Option<&std::sync::Arc<Table>>,
     row_count: f64,
     predicate_loaded: Option<(BTreeSet<i64>, BTreeSet<i64>)>,
 ) {
-    source.analyzed_index_ids = statistics
-        .and_then(|stats| stats.existence_map.as_ref())
-        .map(|map| {
-            let map = read(map);
-            source
-                .table_indices()
-                .iter()
-                .map(|index| index.read().id)
-                .filter(|id| map.has_analyzed(*id, true))
-                .collect()
-        })
-        .unwrap_or_default();
+    // Go `ds.StatisticTable`.
+    source.statistic_table = statistics.cloned();
+    let statistics = statistics.map(|statistics| &**statistics);
     let (loaded_columns, loaded_indexes) = predicate_loaded.unwrap_or_else(|| {
         (
             statistics
@@ -375,7 +366,7 @@ use tidb_charset::Collation;
             super::init_stats(
                 &mut source,
                 &table_info,
-                Some(statistics),
+                Some(&std::sync::Arc::new(statistics.clone())),
                 statistics.hist_coll.realtime_count as f64,
                 None,
             );

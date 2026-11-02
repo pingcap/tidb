@@ -196,8 +196,9 @@ pub struct DataSource {
     /// plus the index-merge paths `generateIndexMergePath` adds, which
     /// physical search consumes. None until derived.
     pub possible_access_paths: Option<Vec<tidb_planner_util::path::AccessPath>>,
-    /// Go ColAndIdxExistenceMap.HasAnalyzed, independent of payload eviction.
-    pub analyzed_index_ids: std::collections::BTreeSet<i64>,
+    /// Go `StatisticTable`: the table's statistics `initStats` attached, if
+    /// any (None is Go's pseudo table).
+    pub statistic_table: Option<std::sync::Arc<tidb_stats::Table>>,
     /// The table/session facts that Go retains on `PhysicalTableScan` for
     /// `getTableScanPenalty`.
     pub table_scan_penalty: TableScanPenaltyInput,
@@ -542,6 +543,20 @@ impl DataSource {
         info.indices =
             tidb_model::GoSharedPointerSlice::from_handles(indexes.into_iter().map(Some).collect());
         self.table_info = Some(tidb_model::GoShared::new(info));
+    }
+
+    /// Go `ds.StatisticTable.ColAndIdxExistenceMap.HasAnalyzed(id, true)`,
+    /// independent of payload eviction.
+    #[must_use]
+    pub fn index_has_analyzed(&self, id: i64) -> bool {
+        self.statistic_table
+            .as_ref()
+            .and_then(|table| table.existence_map.as_ref())
+            .is_some_and(|map| {
+                map.read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .has_analyzed(id, true)
+            })
     }
 
     /// The TiKV table path (Go `IsTiKVTablePath`).
@@ -1337,7 +1352,7 @@ impl DataSource {
             index_merge_skip_range_scan_check: self.index_merge_skip_range_scan_check,
             table_stats: self.table_stats.clone(),
             possible_access_paths: self.possible_access_paths.clone(),
-            analyzed_index_ids: self.analyzed_index_ids.clone(),
+            statistic_table: self.statistic_table.clone(),
             table_scan_penalty: self.table_scan_penalty,
             has_tiflash_replica: self.has_tiflash_replica,
         }

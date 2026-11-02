@@ -191,7 +191,7 @@ pub(crate) fn get_index_candidate(
         multi_valued: index.read().mv_index,
         global: index.read().global,
         matches_property,
-        pseudo: !source.analyzed_index_ids.contains(&index.read().id),
+        pseudo: !source.index_has_analyzed(index.read().id),
         full_index_match,
         eq_or_in_count,
         count_after_access: estimate.est,

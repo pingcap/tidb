@@ -1260,12 +1260,12 @@ impl InitStats<'_> {
         // while an ordinary/dynamic source keeps the logical table ID here.
         // `None` is the fresh `PseudoTable` -- a table without statistics,
         // and rule 2's answer to a zero `RealtimeCount`.
-        let statistics = crate::access_cost::get_stats_table(
+        let statistic_table = crate::access_cost::get_stats_table(
             self.context,
             self.catalog,
             source.physical_table_id,
         );
-        let statistics = statistics.as_deref();
+        let statistics = statistic_table.as_deref();
         let row_count = crate::access_cost::realtime_row_count(statistics);
         // Go `buildDataSource`: a table with an available TiFlash replica
         // marks the statement as reading TiFlash whenever MPP is allowed.
@@ -1297,7 +1297,7 @@ impl InitStats<'_> {
         tidb_planner::stats::init_stats::init_stats(
             source,
             &table_info.read(),
-            statistics,
+            statistic_table.as_ref(),
             row_count,
             predicate_loaded,
         );
