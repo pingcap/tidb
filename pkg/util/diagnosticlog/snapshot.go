@@ -79,7 +79,7 @@ func (p *Publisher) publish(start time.Time, write func(io.Writer, time.Time) er
 	}
 	name := filepath.Join(p.directory, "index-usage-"+start.Format("20060102T150405.000000Z")+"-"+hex.EncodeToString(id[:])+".jsonl")
 	tmp := name + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return "", err
 	}

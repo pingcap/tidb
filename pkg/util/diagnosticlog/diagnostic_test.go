@@ -160,6 +160,9 @@ func TestDiagnosticPublisherAtomicRetentionAndFailure(t *testing.T) {
 	require.Regexp(t, `index-usage-20261023T010003\.123456Z-[0-9a-f]{32}\.jsonl$`, first)
 	firstData, err := os.ReadFile(first)
 	require.NoError(t, err)
+	info, err := os.Stat(first)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	require.Contains(t, string(firstData), `"snapshot_time":"2026-10-23T01:00:03.123456Z"`)
 	_, err = publisher.Publish(at, func(w io.Writer, _ time.Time) error {
 		_, writeErr := io.WriteString(w, "incomplete\n")

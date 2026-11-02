@@ -13,6 +13,11 @@ log directory, falling back to the slow-query log directory. Collectors must bin
 that directory to the original node identity. This package does not upload files
 or aggregate data across nodes.
 
+Diagnostic files are created with owner-only permissions (0600). A file collector
+must use the TiDB file owner's UID or an existing authorized node-level reader;
+a shared group alone does not grant read access. Validate the deployed collector
+identity and directory traversal permissions before enabling collection.
+
 ## Deadlock
 
 The pessimistic-lock callback first applies the existing in-memory history policy,
