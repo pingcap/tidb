@@ -45,3 +45,19 @@ fn index_visibility_flips() {
         "{error}"
     );
 }
+
+/// Go `getPossibleAccessPaths` enumerates an invisible index when the
+/// session's `tidb_opt_use_invisible_indexes` is on (oracle: `IndexReader`
+/// over `index:k(a)` on, `TableFullScan` off).
+#[test]
+fn use_invisible_indexes_switch_enumerates_invisible_indexes() {
+    let mut session = Session::new();
+    session.run("create table t (a int, key k(a) invisible)").unwrap();
+    let plan = |session: &mut Session| rows(session, "explain format=brief select a from t where a = 1");
+    session.run("set tidb_opt_use_invisible_indexes = on").unwrap();
+    let on = plan(&mut session);
+    assert!(on.contains("index:k(a)"), "{on}");
+    session.run("set tidb_opt_use_invisible_indexes = off").unwrap();
+    let off = plan(&mut session);
+    assert!(off.contains("TableFullScan") && !off.contains("index:k(a)"), "{off}");
+}

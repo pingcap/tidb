@@ -1217,6 +1217,9 @@ pub struct StmtContextData {
     opt_prefix_index_single_scan: bool,
     /// Go `SessionVars.preferRangeScan` (`tidb_opt_prefer_range_scan`).
     prefer_range_scan: bool,
+    /// Go `SessionVars.OptimizerUseInvisibleIndexes`
+    /// (`tidb_opt_use_invisible_indexes`).
+    optimizer_use_invisible_indexes: bool,
     /// Go `SessionVars.AlwaysKeepJoinKey`.
     always_keep_join_key: bool,
     /// Go `SessionVars.EnableUnsafeSubstitute`.
@@ -1533,6 +1536,13 @@ context_configuration! {
     #[must_use]
     pub fn with_prefer_range_scan(mut self, enabled: bool) -> Self {
         self.prefer_range_scan = enabled;
+        self
+    }
+
+    /// Sets `@@tidb_opt_use_invisible_indexes` for this statement.
+    #[must_use]
+    pub fn with_optimizer_use_invisible_indexes(mut self, enabled: bool) -> Self {
+        self.optimizer_use_invisible_indexes = enabled;
         self
     }
 
@@ -2762,6 +2772,7 @@ impl StmtContext {
             range_max_size: tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_SIZE,
             opt_prefix_index_single_scan: true,
             prefer_range_scan: tidb_vardef::defaults::DEF_OPT_PREFER_RANGE_SCAN,
+            optimizer_use_invisible_indexes: false,
             always_keep_join_key: tidb_vardef::defaults::DEF_OPT_ALWAYS_KEEP_JOIN_KEY,
             enable_unsafe_substitute: false,
             enable_force_inline_cte: false,
@@ -5944,6 +5955,10 @@ impl Columns for StmtContext {
 
     fn connection_id(&self) -> Option<u64> {
         self.connection_id
+    }
+
+    fn optimizer_use_invisible_indexes(&self) -> bool {
+        self.optimizer_use_invisible_indexes
     }
 
     fn tidb_decode_key(&self, input: &[u8]) -> Vec<u8> {

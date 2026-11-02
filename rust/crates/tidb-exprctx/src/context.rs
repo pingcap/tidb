@@ -581,6 +581,13 @@ pub trait Columns {
         None
     }
 
+    /// Go `SessionVars.OptimizerUseInvisibleIndexes`
+    /// (`tidb_opt_use_invisible_indexes`), which `getPossibleAccessPaths`
+    /// reads: invisible indexes become access paths.
+    fn optimizer_use_invisible_indexes(&self) -> bool {
+        false
+    }
+
     /// Go `PrivilegeChecker.RequestVerification("", "", "",
     /// mysql.ProcessPriv)`, which `TIDB_DECODE_SQL_DIGESTS` asks when it is
     /// built and again when it evaluates. A resolver without a session is

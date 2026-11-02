@@ -85,6 +85,7 @@ pub struct StatementVarSnapshot {
     range_max_size: i64,
     opt_prefix_index_single_scan: bool,
     prefer_range_scan: bool,
+    optimizer_use_invisible_indexes: bool,
     always_keep_join_key: bool,
     allow_agg_push_down: bool,
     enable_3_stage_distinct_agg: bool,
@@ -1098,6 +1099,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 tidb_vardef::tidb_vars::TIDB_OPT_PREFIX_INDEX_SINGLE_SCAN,
             ),
             prefer_range_scan: on(tidb_vardef::tidb_vars::TIDB_OPT_PREFER_RANGE_SCAN),
+            optimizer_use_invisible_indexes: on(tidb_vardef::tidb_vars::TIDB_OPT_USE_INVISIBLE_INDEXES),
             always_keep_join_key: on(tidb_vardef::tidb_vars::TIDB_OPT_ALWAYS_KEEP_JOIN_KEY),
             allow_agg_push_down: on(tidb_vardef::tidb_vars::TIDB_OPT_AGG_PUSH_DOWN),
             enable_3_stage_distinct_agg: on(tidb_vardef::tidb_vars::TIDB_OPT3_STAGE_DISTINCT_AGG),
@@ -1372,6 +1374,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let range_max_size = snapshot.range_max_size;
         let opt_prefix_index_single_scan = snapshot.opt_prefix_index_single_scan;
         let prefer_range_scan = snapshot.prefer_range_scan;
+        let optimizer_use_invisible_indexes = snapshot.optimizer_use_invisible_indexes;
         let always_keep_join_key = snapshot.always_keep_join_key;
         let allow_agg_push_down = snapshot.allow_agg_push_down;
         let enable_3_stage_distinct_agg = snapshot.enable_3_stage_distinct_agg;
@@ -1676,6 +1679,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_range_max_size(range_max_size)
                     .with_opt_prefix_index_single_scan(opt_prefix_index_single_scan)
                     .with_prefer_range_scan(prefer_range_scan)
+                    .with_optimizer_use_invisible_indexes(optimizer_use_invisible_indexes)
                     .with_always_keep_join_key(always_keep_join_key)
                     .with_enable_unsafe_substitute(enable_unsafe_substitute)
                     .with_enable_force_inline_cte(enable_force_inline_cte)
@@ -1816,6 +1820,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_range_max_size(range_max_size)
                 .with_opt_prefix_index_single_scan(opt_prefix_index_single_scan)
                 .with_prefer_range_scan(prefer_range_scan)
+                .with_optimizer_use_invisible_indexes(optimizer_use_invisible_indexes)
                 .with_always_keep_join_key(always_keep_join_key)
                 .with_enable_unsafe_substitute(enable_unsafe_substitute)
                 .with_enable_force_inline_cte(enable_force_inline_cte)

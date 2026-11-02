@@ -731,8 +731,11 @@ fn index_access(
             .into_iter()
             .find(|index| index.read().id == index_id)
     };
+    // The plan's index, visible or not: `tidb_opt_use_invisible_indexes`
+    // lets a plan read an invisible one.
     let Some(index) = table
-        .plan_indexes()
+        .indexes()
+        .iter()
         .find(|index| index.read().id == index_id)
         .cloned()
         .or_else(hypo_index)

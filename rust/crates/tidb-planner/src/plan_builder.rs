@@ -816,9 +816,6 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// default ON): a derived table's `ORDER BY` is dropped unless the query is
     /// top level or carries a `LIMIT`.
     pub remove_orderby_in_subquery: bool,
-    /// Go `SessionVars.OptimizerUseInvisibleIndexes` (default OFF): whether
-    /// `getPossibleAccessPaths` may enumerate invisible indexes.
-    pub optimizer_use_invisible_indexes: bool,
     /// Go `capFlag & canExpandAST`: building a `CREATE VIEW` body, which
     /// skips the storage-engine check and expands the body's AST (see
     /// [`create_view`]).
@@ -1629,7 +1626,6 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             // Go `DefTiDBRemoveOrderbyInSubquery = true`.
             remove_orderby_in_subquery: true,
             // Go `DefTiDBOptimizerUseInvisibleIndexes = false`.
-            optimizer_use_invisible_indexes: false,
             can_expand_ast: false,
             is_create_view: false,
             renaming_view_name: None,
@@ -3494,7 +3490,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         let mut public_paths = crate::access_path::get_possible_access_paths(
             table,
-            self.optimizer_use_invisible_indexes,
+            self.ctx.optimizer_use_invisible_indexes(),
             self.source.latest_index_schema(),
             self.ctx.connection_id(),
             self.index_lookup_push_down_session.repeatable_read,
