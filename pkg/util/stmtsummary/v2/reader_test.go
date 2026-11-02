@@ -33,6 +33,77 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestStmtFileRotationTimeZone(t *testing.T) {
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	oldLocal := time.Local
+	t.Cleanup(func() { time.Local = oldLocal })
+	dir := t.TempDir()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryFilename = filepath.Join(dir, "tidb-statements.log")
+	})
+	for _, tc := range []struct {
+		name, zone, stamp string
+		unbounded         bool
+	}{
+		{"NewYorkFold", "America/New_York", "2024-11-03T01-45-00.000", true},
+		{"NewYorkGap", "America/New_York", "2024-03-10T02-30-00.000", true},
+		{"LordHoweFold", "Australia/Lord_Howe", "2024-04-07T01-45-00.000", true},
+		{"NewYorkAfterFold", "America/New_York", "2024-11-03T03-45-00.000", false},
+		{"UTC", "UTC", "2024-11-03T01-45-00.000", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			loc, err := time.LoadLocation(tc.zone)
+			require.NoError(t, err)
+			time.Local = loc
+			path := filepath.Join(dir, "tidb-statements-"+tc.stamp+".log")
+			require.NoError(t, os.WriteFile(path, []byte("{\"begin\":1,\"end\":2}\n"), 0o600))
+			file, err := openStmtFile(path)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, file.close()) }()
+			if tc.unbounded {
+				require.Zero(t, file.end, "ambiguous or nonexistent wall time must not prune")
+			} else {
+				end, err := time.ParseInLocation(logFileTimeFormat, tc.stamp, loc)
+				require.NoError(t, err)
+				require.Equal(t, end.Unix(), file.end)
+			}
+		})
+	}
+}
+
+func TestHistoryReaderRotationTimeFold(t *testing.T) {
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	loc, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	oldLocal := time.Local
+	time.Local = loc
+	t.Cleanup(func() { time.Local = oldLocal })
+	dir := t.TempDir()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryFilename = filepath.Join(dir, "tidb-statements.log")
+	})
+	// The file spans the fall-back transition and rotates at the second 01:45.
+	// Parsing its name as the first 01:45 must not hide the later matching row.
+	path := filepath.Join(dir, "tidb-statements-2024-11-03T01-45-00.000.log")
+	first, err := time.Parse(time.RFC3339, "2024-11-03T04:00:00Z")
+	require.NoError(t, err)
+	match, err := time.Parse(time.RFC3339, "2024-11-03T06:25:00Z")
+	require.NoError(t, err)
+	content := fmt.Sprintf("{\"begin\":%d,\"end\":%d,\"digest\":\"early\"}\n{\"begin\":%d,\"end\":%d,\"digest\":\"matching\"}\n",
+		first.Unix(), first.Unix()+600, match.Unix(), match.Unix()+300)
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	columns := []*model.ColumnInfo{{Name: ast.NewCIStr(DigestStr)}}
+	reader, err := NewHistoryReader(context.Background(), columns, "", time.UTC, nil, true, nil,
+		[]*StmtTimeRange{{Begin: match.Unix() - 300, End: match.Unix() + 900}}, 2)
+	require.NoError(t, err)
+	defer reader.Close()
+	rows := readAllRows(t, reader)
+	require.Len(t, rows, 1)
+	require.Equal(t, "matching", rows[0][0].GetString())
+}
+
 func TestTimeRangeOverlap(t *testing.T) {
 	require.False(t, timeRangeOverlap(1, 2, 3, 4))
 	require.False(t, timeRangeOverlap(3, 4, 1, 2))
