@@ -408,6 +408,20 @@ CARGO_INCREMENTAL=0`.
     not copies) -- `schema_by_name` / `find_table` / `table_by_name` then
     return pointers instead of `&DBInfo`, which ripples into every caller
     (~700 sites); it belongs with the loader flip, not before it.
+    Done 2026-11-02 (590cd09ee11): `ClusterCatalog.databases` is
+    `Vec<GoShared<DBInfo>>` -- Go `fetchAllSchemasWithTables`'
+    `[]*model.DBInfo` -- and the built image registers those very pointers;
+    the lookups answer pointers as `InfoSchema.SchemaByName` /
+    `TableByName` do. Every edit (the reload's `ApplyDiff` port, the DDL
+    planner's owned copies, the test mocks) copies the database into its
+    slot instead of writing through a pointer an older version shares; a
+    write through a read guard is a compile error, which is how each was
+    found. So `InfoCache` holds Go's shape: per version, one built
+    `InfoSchema` over the loader's shared `DBInfo`s.
+    Left (cost, not semantics): Go's `Builder.ApplyDiff` builds a version
+    from the previous one, copying untouched schemas and rebuilding only the
+    tables a diff changed; here each version's image is built whole from its
+    `DBInfo`s through the domain's builder.
     Go's shape for this: the domain's loader builds the infoschema and
     inserts it into `InfoCache`; so the image builder
     (`cluster_session_catalog_with_templates`, domain-core) runs where
