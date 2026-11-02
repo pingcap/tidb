@@ -51,7 +51,7 @@ pub(crate) fn fill_index_path(
     context: &AccessPathDerivationContext<'_>,
     prefix_single_scan: bool,
     correlated_access: bool,
-) -> Result<(FilledIndexPath, Vec<Option<(Column, i64)>>), PlanError> {
+) -> Result<(FilledIndexPath, Vec<Option<(Column, i64)>>, Vec<(Column, i64)>), PlanError> {
     let mut full_columns = source.index_info_2_full_cols(index);
     let mut columns = full_columns
         .iter()
@@ -101,13 +101,12 @@ pub(crate) fn fill_index_path(
             )
         });
     Ok((FilledIndexPath {
-        columns,
         detached,
         index_filters,
         table_filters,
         count_after_index: None,
         correlated_access_count,
-    }, full_columns))
+    }, full_columns, columns))
 }
 
 /// Go `deriveIndexPathStats` / `deriveCommonHandleTablePathStats`: when every
@@ -181,14 +180,14 @@ pub(crate) fn fill_ordinary_index_paths(
         if index.read().mv_index || index.read().is_columnar_index() {
             continue;
         }
-        let (mut filled, full_idx_cols) = fill_index_path(
+        let (mut filled, full_idx_cols, idx_cols) = fill_index_path(
             source, index, &source.pushed_down_conds, context, prefix_single_scan, true,
         )?;
         // Go `detachCondAndBuildRangeForPath`: the path's `CountAfterAccess`
         // and its bounds come from the index's statistics over the ranges
         // just built; a path with no usable key column keeps the realtime
         // row count `fillIndexPath` started from.
-        let derived = if filled.columns.is_empty() {
+        let derived = if idx_cols.is_empty() {
             let realtime = source
                 .table_stats
                 .as_ref()
@@ -200,7 +199,7 @@ pub(crate) fn fill_ordinary_index_paths(
                 source,
                 index,
                 &filled.detached.ranges,
-                &filled.columns,
+                &idx_cols,
                 context,
             )?
         };
@@ -208,7 +207,7 @@ pub(crate) fn fill_ordinary_index_paths(
         // Go adjusts access rows before computing CountAfterIndex, preserving
         // the old count as the lower risk bound. Both ordinary and cloned
         // intersection paths must see the same adjusted estimate.
-        let correlated_columns = filled.columns
+        let correlated_columns = idx_cols
             [filled.detached.eq_or_in_count..filled.detached.eq_or_in_count + filled.correlated_access_count]
             .iter()
             .map(|(column, _)| column.clone())
@@ -256,8 +255,10 @@ pub(crate) fn fill_ordinary_index_paths(
         path.row_estimate = estimate;
         filled.count_after_index = count_after_index;
         path.filled = Some(filled);
-        // Go `fillIndexPath` replaces `FullIdxCols`, the handle appended.
+        // Go `fillIndexPath` replaces `FullIdxCols`, the handle appended,
+        // and sets `IdxCols`.
         path.full_idx_cols = Some(full_idx_cols);
+        path.idx_cols = idx_cols;
     }
     Ok(())
 }

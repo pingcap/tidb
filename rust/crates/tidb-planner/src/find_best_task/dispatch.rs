@@ -3879,11 +3879,12 @@ fn find_best_task_4_logical_data_source_paths(
                 // column pruning. A missing later index column does not
                 // invalidate ranges on an earlier prefix; only the first
                 // unresolved position ends that prefix.
-                let filled_path = prop.index_join_prop.is_none().then(|| {
-                    ds.path_by_index_id(source_index.read().id).and_then(|path| path.filled.as_ref())
+                let filled_owner = prop.index_join_prop.is_none().then(|| {
+                    ds.path_by_index_id(source_index.read().id).filter(|path| path.filled.is_some())
                 }).flatten();
-                let resolved_index_prefix = filled_path.map_or_else(
-                    || ds.index_range_columns(source_index), |path| path.columns.clone(),
+                let filled_path = filled_owner.and_then(|path| path.filled.as_ref());
+                let resolved_index_prefix = filled_owner.map_or_else(
+                    || ds.index_range_columns(source_index), |path| path.idx_cols.clone(),
                 );
                 let declared_index_prefix_complete =
                     resolved_index_prefix.len() >= source_index.read().columns.len();

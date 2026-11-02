@@ -167,7 +167,7 @@ pub(crate) fn get_index_candidate(
         }
         Col2Len::from_pairs(result)
     }
-    let access_columns = extract(filled.detached.access_conds.iter(), filled.columns.iter());
+    let access_columns = extract(filled.detached.access_conds.iter(), path.idx_cols.iter());
     let index_columns = extract(
         filled
             .detached
@@ -482,8 +482,8 @@ mod skyline_tests {
             )),
             // The unresolved middle key cannot erase a later index filter.
             full_idx_cols: Some(vec![Some((a.clone(), -1)), None, Some((c.clone(), 4))]),
+            idx_cols: vec![(a.clone(), -1)],
             filled: Some(FilledIndexPath {
-                columns: vec![(a.clone(), -1)],
                 detached: tidb_ranger::detacher::DetachRangeResult {
                     access_conds: vec![eq(&a)],
                     eq_or_in_count: 1,

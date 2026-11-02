@@ -236,13 +236,13 @@ fn join_keys_contain_unique_index(
                 .map(|table| table.common_columns.iter().map(|(column, _)| column).collect())
                 .unwrap_or_default()
         } else {
-            let Some(filled) = source
+            let Some(path) = source
                 .path_by_index_id(index.read().id)
-                .and_then(|state| state.filled.as_ref())
+                .filter(|path| path.filled.is_some())
             else {
                 return false;
             };
-            filled.columns.iter().map(|(column, _)| column).collect()
+            path.idx_cols.iter().map(|(column, _)| column).collect()
         };
         !idx_cols.is_empty()
             && idx_cols.iter().all(|column| {

@@ -270,7 +270,7 @@ fn prepare_union_index_merge_path_for_or(
                 }
             }
             let (pushable, rejected) = partition_partial_filters(&usable, ctx);
-            let Ok((mut filled, full_idx_cols)) = super::ordinary::fill_index_path(
+            let Ok((mut filled, full_idx_cols, idx_cols)) = super::ordinary::fill_index_path(
                 ds,
                 source_index,
                 &pushable,
@@ -287,7 +287,7 @@ fn prepare_union_index_merge_path_for_or(
             if result.ranges.iter().any(|range| range.is_full_range(false)) {
                 continue;
             }
-            let Ok(rows) = estimate_partial_index_ranges(ds, source_index, &filled, ctx) else {
+            let Ok(rows) = estimate_partial_index_ranges(ds, source_index, &filled, &idx_cols, ctx) else {
                 continue;
             };
             let mut keep_source_filter =
@@ -306,6 +306,7 @@ fn prepare_union_index_merge_path_for_or(
             branch.push(vec![AccessPath {
                 filled: Some(filled),
                 full_idx_cols: Some(full_idx_cols),
+                idx_cols,
                 row_estimate: Some(tidb_stats::RowEstimate::new(rows, rows, rows)),
                 keep_index_merge_or_source_filter: keep_source_filter,
                 ..AccessPath::index_path(source_index.clone())
@@ -588,9 +589,10 @@ pub(super) fn estimate_partial_index_ranges(
     ds: &DataSource,
     source_index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     filled: &tidb_planner_util::path::FilledIndexPath,
+    idx_cols: &[(tidb_expr::column::Column, i64)],
     ctx: &AccessPathDerivationContext<'_>,
 ) -> Result<f64, PlanError> {
-    estimate_index_ranges(ds, source_index, &filled.detached.ranges, &filled.columns, ctx)
+    estimate_index_ranges(ds, source_index, &filled.detached.ranges, idx_cols, ctx)
         .map(|estimate| estimate.est)
 }
 

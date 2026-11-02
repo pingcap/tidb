@@ -42,6 +42,9 @@ pub struct AccessPath {
     /// until declared; unresolved positions remain None instead of
     /// shortening the key.
     pub full_idx_cols: Option<Vec<Option<(Column, i64)>>>,
+    /// Go `IdxCols` / `IdxColLens`: the usable key prefix `fillIndexPath`
+    /// derives (eligible handles included), which ranges are built over.
+    pub idx_cols: Vec<(Column, i64)>,
     /// Go `IsUkShardIndexPath`: a unique secondary index of more than one
     /// column led by a `tidb_shard()` generated column.
     pub is_uk_shard_index_path: bool,
@@ -214,8 +217,6 @@ pub enum IndexLookUpPushDownByType {
 /// Go's detached ranges and the subsequent index/table filter partition.
 #[derive(Clone, Debug)]
 pub struct FilledIndexPath {
-    /// Usable key layout at logical derivation, including eligible handles.
-    pub columns: Vec<(Column, i64)>,
     /// Range expressions and access-coverage metadata from the same detach run.
     pub detached: tidb_ranger::detacher::DetachRangeResult,
     /// Filters evaluated before the table lookup.

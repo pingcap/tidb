@@ -119,7 +119,12 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
   - [x] 2c-1 (2026-11-02): `FullIdxCols` is one path field
     (`full_idx_cols`, was `declared_columns` + `FilledIndexPath.full_columns`),
     replaced by the fill as Go's `fillIndexPath` does.
-  - [ ] 2c: the rest of `FilledIndexPath`'s fields flatten into Go's (`IdxCols`,
+  - [x] 2c-2 (2026-11-02): an index path's `IdxCols` / `IdxColLens` are a
+    path field (`idx_cols`); the merge helpers take the `AccessPath`.
+  - [ ] 2c: the rest of `FilledIndexPath`'s fields (the detached ranges and
+    conditions, the filters, `CountAfterIndex`) and `FilledTablePath`
+    (`common_columns` = the table path's `IdxCols`, the ranges, the counts)
+    flatten into Go's (`IdxCols`,
     `Ranges`, `AccessConds`, `IndexFilters`, `TableFilters`,
     `CountAfterIndex`), and `declared_columns` / `row_estimate` take Go's
     names.

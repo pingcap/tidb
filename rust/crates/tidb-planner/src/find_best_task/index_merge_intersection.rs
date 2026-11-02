@@ -74,7 +74,7 @@ pub(super) fn build_prepared_index_merge_task(
             desc: false,
             ranges: filled.detached.ranges.clone(),
             range_rebuild: crate::find_best_task::index_merge_union::partial_index_range_rebuild(
-                filled,
+                partial,
             ),
             covering_ranges: Vec::new(),
             tikv_pushdown: None,

@@ -74,7 +74,7 @@ fn partial_matches_order(
         return partial
             .iter()
             .all(|path| {
-                index_partial_matches_order(ds, index, path.filled_index_path(), items, false)
+                index_partial_matches_order(ds, index, path, items, false)
                     .is_some()
             })
             .then(Vec::new);
@@ -103,13 +103,12 @@ fn partial_matches_order(
             allow_groups(&filled.detached),
         );
     }
-    let filled = lead.filled_index_path();
     index_partial_matches_order(
         ds,
         lead.index_info().expect("an index alternative reads its index"),
-        filled,
+        lead,
         items,
-        allow_groups(&filled.detached),
+        allow_groups(&lead.filled_index_path().detached),
     )
 }
 
@@ -118,16 +117,17 @@ fn partial_matches_order(
 fn index_partial_matches_order(
     ds: &DataSource,
     index: &tidb_model::GoShared<tidb_model::IndexInfo>,
-    filled: &tidb_planner_util::path::FilledIndexPath,
+    path: &AccessPath,
     items: &[tidb_planner_property::SortItem],
     allow_groups: bool,
 ) -> Option<Vec<usize>> {
+    let filled = path.filled_index_path();
     if ds.path_by_index_id(index.read().id).is_some_and(|path| path.force_no_keep_order) {
         return None;
     }
     // Match the same normalized key layout used by ordinary ranges,
     // including eligible appended handles after fixed declared keys.
-    key_columns_match_order(&filled.columns, &filled.detached.ranges, items, allow_groups)
+    key_columns_match_order(&path.idx_cols, &filled.detached.ranges, items, allow_groups)
 }
 
 /// Go `isMatchProp` over one partial path's key columns: each sort column
@@ -580,7 +580,7 @@ pub(super) fn build_converged_union_index_merge_task(
                     ds,
                     ctx,
                     index,
-                    filled,
+                    path,
                     path.count_after_access().unwrap_or(0.0),
                     scan_rows,
                     matched.matched(),
@@ -599,7 +599,7 @@ pub(super) fn build_converged_union_index_merge_task(
                 ds,
                 ctx,
                 index,
-                filled,
+                lead,
                 *rows,
                 scan_rows,
                 matched.matched(),
@@ -791,12 +791,13 @@ fn keeps_phys_tbl_id(ds: &DataSource) -> bool {
 /// Go `PhysicalIndexScan.AccessCondition` / `IdxCols` / `IdxColLens` of a
 /// merge partial, which `rebuildRange` re-detaches on a plan-cache hit.
 pub(crate) fn partial_index_range_rebuild(
-    filled: &tidb_planner_util::path::FilledIndexPath,
+    path: &AccessPath,
 ) -> Option<tidb_planner_core_operator_physicalop::range_rebuild::IndexRangeRebuild> {
+    let filled = path.filled_index_path();
     if filled.detached.access_conds.is_empty() {
         return None;
     }
-    let (columns, lengths) = filled.columns.iter().cloned().unzip();
+    let (columns, lengths) = path.idx_cols.iter().cloned().unzip();
     Some(tidb_planner_core_operator_physicalop::range_rebuild::IndexRangeRebuild::new(
         filled.detached.access_conds.clone(),
         columns,
@@ -837,7 +838,7 @@ fn push_index_partial(
     ds: &DataSource,
     ctx: &DispatchContext<'_>,
     index: &tidb_model::GoShared<tidb_model::IndexInfo>,
-    filled: &tidb_planner_util::path::FilledIndexPath,
+    path: &AccessPath,
     rows: f64,
     scan_rows: f64,
     matched: bool,
@@ -845,6 +846,7 @@ fn push_index_partial(
     group_by_col_idxs: &[usize],
     partial_plans_raw: &mut Vec<PhysicalPlan>,
 ) -> Result<Vec<tidb_expr::expression::Expression>, PlanError> {
+    let filled = path.filled_index_path();
     let ranges = &filled.detached.ranges;
     let source_index = index;
     let mut schema_columns = partial_index_schema(ds, source_index, ctx)?;
@@ -878,7 +880,7 @@ fn push_index_partial(
         keep_order: matched,
         desc,
         ranges: ranges.clone(),
-        range_rebuild: partial_index_range_rebuild(filled),
+        range_rebuild: partial_index_range_rebuild(path),
         covering_ranges: Vec::new(),
         tikv_pushdown: None,
         db_name: ds.db_name.clone(),
