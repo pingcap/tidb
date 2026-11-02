@@ -452,7 +452,14 @@ CARGO_INCREMENTAL=0`.
     `table_info_by_name` answers a memory table as Go's `TableInfoByName`
     does and `CREATE TABLE ... LIKE` needs no fallback (test
     `a_loaded_image_answers_memory_tables_by_name`).
-    Left: (b) incremental `ApplyDiff` (cost).
+    (b) done 2026-11-02: a version's image takes over from the image in
+    force before it every schema whose `DBInfo` pointer is unchanged (Go
+    `Builder.copySchemaTables`; the reload copies a `DBInfo` only when a diff
+    edits it), with its built tables and skipped-table records
+    (`SessionExtendedInfoSchema::adopt_built_database`, the `previous`
+    argument of `SchemaBuilder`); test
+    `a_new_version_keeps_the_tables_of_untouched_schemas`. Granularity is the
+    schema, where Go rebuilds per table.
     (c) done 2026-11-02: the loader (`load_info_schema`,
     `fetch_all_schemas_with_tables`, `load_database_tables`,
     `get_schema_version`) and the reload's reads (`GetSchemaDiff`,

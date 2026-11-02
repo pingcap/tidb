@@ -861,8 +861,8 @@ impl Domain {
         // holds it; the domain owns the auto-id allocators the build needs.
         catalog.install_schema_builder(Box::new({
             let auto_ids = Arc::clone(&auto_ids);
-            move |loaded| {
-                let built = cluster_session_catalog_with_templates(loaded, None, auto_ids.as_ref());
+            move |loaded, previous| {
+                let built = cluster_session_catalog_with_templates(loaded, None, auto_ids.as_ref(), previous);
                 let mut schema = built.catalog;
                 schema.set_skipped_tables(built.skipped);
                 schema

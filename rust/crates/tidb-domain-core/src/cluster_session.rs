@@ -78,7 +78,7 @@ pub fn cluster_session_catalog(
     stats: &StatsSnapshot,
     auto_ids: &dyn TableAutoIds,
 ) -> ClusterSessionCatalog {
-    cluster_session_catalog_with_templates(loaded, Some(snapshot_statistics_view(stats)), auto_ids)
+    cluster_session_catalog_with_templates(loaded, Some(snapshot_statistics_view(stats)), auto_ids, None)
 }
 
 /// A statistics view over one fixed snapshot, for a catalog built outside a
@@ -113,6 +113,10 @@ pub fn cluster_session_catalog_with_templates(
     // through this view of it.
     statistics: Option<Arc<tidb_stats_handle::StatisticsView>>,
     auto_ids: &dyn TableAutoIds,
+    // Go `InitWithOldInfoSchema` + `ApplyDiff`: an image this builder built
+    // before, whose schemas the new one takes over where the `DBInfo` is
+    // the very same.
+    previous: Option<&SessionExtendedInfoSchema>,
 ) -> ClusterSessionCatalog {
     let mut catalog = tidb_infoschema_perfschema::catalog();
     catalog.set_schema_meta_version(loaded.schema_meta_version());
@@ -129,6 +133,21 @@ pub fn cluster_session_catalog_with_templates(
     }
     for database in &loaded.stored_schemas() {
         let schema = database.read().name.original().to_owned();
+        // Go `Builder.copySchemaTables`: a schema no diff touched keeps the
+        // tables the previous version built.
+        if let Some(previous) = previous {
+            if catalog.adopt_built_database(previous, database) {
+                let prefix = format!("{schema}.");
+                skipped.extend(
+                    previous
+                        .skipped_tables()
+                        .iter()
+                        .filter(|table| table.name.starts_with(&prefix))
+                        .cloned(),
+                );
+                continue;
+            }
+        }
         // Go `Builder.createSchemaTablesForDB`: the schema holds its
         // `DBInfo` -- charset, collation, placement and all.
         catalog.register_database_info(database.clone());

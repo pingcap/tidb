@@ -1011,3 +1011,28 @@ fn a_missing_ddl_table_is_masked_only_for_an_account_holding_nothing() {
         (1146, "Table 'app.Missing' doesn't exist")
     );
 }
+
+/// Go `Builder.copySchemaTables`: a version whose changes touched one
+/// schema keeps the table objects the previous version built for the others.
+#[test]
+fn a_new_version_keeps_the_tables_of_untouched_schemas() {
+    let (mut session, node) = open_session();
+    for sql in ["CREATE DATABASE other", "USE other", "CREATE TABLE kept (id BIGINT PRIMARY KEY)"] {
+        session.node_conn().execute_write(sql).expect(sql);
+    }
+    let kept = |catalog: &SessionExtendedInfoSchema| {
+        catalog
+            .tables_of("other")
+            .find(|(name, _)| name.as_str() == "kept")
+            .map(|(_, entry)| std::sync::Arc::clone(entry))
+            .expect("other.kept is built")
+    };
+    let before = node.catalog.get_latest();
+    session
+        .node_conn()
+        .execute_write("CREATE DATABASE third")
+        .expect("another schema changes");
+    let after = node.catalog.get_latest();
+    assert!(after.schema_meta_version() > before.schema_meta_version());
+    assert!(std::sync::Arc::ptr_eq(&kept(&before), &kept(&after)));
+}

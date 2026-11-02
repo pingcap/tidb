@@ -893,6 +893,33 @@ impl SessionExtendedInfoSchema {
         true
     }
 
+    /// Go `Builder.copySchemaTables` for a schema the diffs did not touch:
+    /// `previous`'s schema, its tables already built, when it holds this very
+    /// `DBInfo` pointer (a reload copies a `DBInfo` only when it edits it).
+    /// `false`, adopting nothing, otherwise.
+    pub fn adopt_built_database(
+        &mut self,
+        previous: &SessionExtendedInfoSchema,
+        info: &tidb_model::GoShared<tidb_model::db::DBInfo>,
+    ) -> bool {
+        let key = info.read().name.lowercase().to_owned();
+        let Some(database) = previous
+            .schema
+            .databases
+            .get(&key)
+            .filter(|database| database.info.ptr_eq(info))
+        else {
+            return false;
+        };
+        self.bump_metadata_version();
+        Arc::make_mut(&mut self.schema.databases).insert(key, Arc::clone(database));
+        // Both flags are sticky: a stale `true` only costs a scan.
+        self.schema.foreign_keys_present |= previous.schema.foreign_keys_present;
+        self.schema.table_locks_present |= previous.schema.table_locks_present;
+        self.bump_version();
+        true
+    }
+
     /// Go `Builder.createSchemaTablesForDB`: the schema `info` names, holding
     /// that very `DBInfo` pointer. `false` when the schema already existed
     /// (its pointer is replaced).

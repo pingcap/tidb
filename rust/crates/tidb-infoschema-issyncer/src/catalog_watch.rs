@@ -93,12 +93,18 @@ use std::time::Duration;
 use tidb_infoschema::SessionExtendedInfoSchema;
 
 /// What builds a loaded version's tables (Go's loader runs
-/// `infoschema.NewBuilder(...).InitWithDBInfos` before inserting the result
-/// into `InfoCache`): from the loaded schema image (its `DBInfo`s, policies,
-/// resource groups and version), the image with every table built. The domain
-/// installs it, as only the domain holds the auto-id allocators the tables
-/// are built over.
-pub type SchemaBuilder = Box<dyn Fn(&SessionExtendedInfoSchema) -> SessionExtendedInfoSchema + Send + Sync>;
+/// `infoschema.NewBuilder(...).InitWithDBInfos`, or `InitWithOldInfoSchema`
+/// then `ApplyDiff`, before inserting the result into `InfoCache`): from the
+/// loaded schema image (its `DBInfo`s, policies, resource groups and
+/// version) and the image in force before it, the image with every table
+/// built, a schema whose `DBInfo` the previous image already built taken
+/// from it. The domain installs it, as only the domain holds the auto-id
+/// allocators the tables are built over.
+pub type SchemaBuilder = Box<
+    dyn Fn(&SessionExtendedInfoSchema, Option<&SessionExtendedInfoSchema>) -> SessionExtendedInfoSchema
+        + Send
+        + Sync,
+>;
 
 /// Go `infoschema.InfoCache`: each schema version's built `InfoSchema`, the
 /// latest published, replaced whole by the reload thread.
@@ -137,13 +143,20 @@ impl InfoCache {
     }
 
     /// Go's loader building one version's `InfoSchema`.
-    fn build(&self, loaded: SessionExtendedInfoSchema) -> Arc<SessionExtendedInfoSchema> {
+    /// `previous` is an image this cache's builder built, whose schemas the
+    /// new one may take over (an image held before the builder was installed
+    /// has no tables to give).
+    fn build(
+        &self,
+        loaded: SessionExtendedInfoSchema,
+        previous: Option<&SessionExtendedInfoSchema>,
+    ) -> Arc<SessionExtendedInfoSchema> {
         let builder = self
             .builder
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         Arc::new(match builder.as_ref() {
-            Some(build) => build(&loaded),
+            Some(build) => build(&loaded, previous),
             None => loaded,
         })
     }
@@ -160,7 +173,7 @@ impl InfoCache {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for built in versions.values_mut() {
-            *built = self.build(built.metadata_copy());
+            *built = self.build(built.metadata_copy(), None);
         }
         let mut published = self
             .published
@@ -169,7 +182,7 @@ impl InfoCache {
         let version = published.schema_meta_version();
         *published = match versions.get(&version) {
             Some(built) => Arc::clone(built),
-            None => self.build(published.metadata_copy()),
+            None => self.build(published.metadata_copy(), None),
         };
     }
 
@@ -224,7 +237,7 @@ impl InfoCache {
         // The reserved counter may be ahead of the committed schema diff.
         // Use the same effective version as the live reload owner.
         loaded.set_schema_meta_version(version);
-        let built = self.build(loaded);
+        let built = self.build(loaded, Some(&self.get_latest()));
         let mut versions = self
             .historical
             .lock()
@@ -247,7 +260,7 @@ impl InfoCache {
     /// historical cache, as Go's insert keeps it for snapshot reads.
     pub fn upsert(&self, catalog: SessionExtendedInfoSchema) -> bool {
         // Built before any lock: a build reads every table's metadata.
-        let built = self.build(catalog);
+        let built = self.build(catalog, Some(&self.get_latest()));
         let version = built.schema_meta_version();
         // Publication and retained-version admission share the same lock order
         // as historical lookup, and holding the cache lock across the version

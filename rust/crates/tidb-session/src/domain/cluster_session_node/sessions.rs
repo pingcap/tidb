@@ -267,6 +267,7 @@ impl DomainSessions for Domain {
                         &loaded,
                         Some(Arc::clone(&statistics_view)),
                         auto_ids.as_ref(),
+                        None,
                     );
                     (built.catalog, metadata.into_snapshot())
                 };
@@ -315,6 +316,7 @@ impl DomainSessions for Domain {
                     &loaded,
                     Some(Arc::clone(&statistics_view)),
                     auto_ids.as_ref(),
+                    None,
                 );
                 drop(metadata);
                 drop(hold);
