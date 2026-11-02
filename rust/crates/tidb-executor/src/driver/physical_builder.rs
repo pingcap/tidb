@@ -8754,13 +8754,14 @@ use super::*;
     #[test]
     fn cached_physical_table_scan_emits_only_extra_handle() {
         let mut table = crate::TableCommon::new(41, vec![long_column("value", 1)]);
+        let mut store = tidb_kv::storage::MemTableStorage::new();
         for (row_id, value) in [(11, 100), (13, 200)] {
             table
-                .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(value)],
+                .insert_row_with_row_id(&mut store, &[Datum::Int(value)],
                     Some(row_id),
                     0,
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .expect("seed heap row");
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -8782,7 +8783,7 @@ use super::*;
             ..PhysicalTableScan::default()
         });
 
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let mut executor = build(&plan, &catalog, &ctx).expect("build cached table scan");
         executor.open().expect("open cached table scan");
         let mut output = executor.new_chunk();
@@ -8797,12 +8798,13 @@ use super::*;
     fn cached_physical_point_get_builds_direct_handle_read() {
         let mut table =
             crate::TableCommon::new(43, vec![long_column("id", 1), long_column("value", 2)]);
+        let mut store = tidb_kv::storage::MemTableStorage::new();
         table.set_pk_handle_offset(0);
         for value in 1..=3 {
             table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(value), Datum::Int(value * 10)],
+                .insert_row(&mut store, &[Datum::Int(value), Datum::Int(value * 10)],
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .expect("seed clustered row");
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -8828,7 +8830,7 @@ use super::*;
             select_lock: None,
         });
 
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let mut executor = build(&plan, &catalog, &ctx).expect("build cached point get");
         assert_eq!(executor.init_cap(), 1);
         assert_eq!(executor.max_chunk_size(), 1);
@@ -8846,9 +8848,10 @@ use super::*;
     fn cached_physical_point_get_resolves_unique_index_before_common_handle() {
         let mut table =
             crate::TableCommon::new(46, vec![long_column("id", 1), long_column("value", 2)]);
+        let mut store = tidb_kv::storage::MemTableStorage::new();
         table.set_common_handle_offsets(vec![0, 1]);
         table
-            .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
+            .create_index_with_context(&mut store, tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 8,
                         name: tidb_ast::CiString::new("value_uidx"),
@@ -8869,13 +8872,13 @@ use super::*;
                     clustered_primary: false,
                 },
                 &crate::StmtContext::for_query(),
-            ))
+            )
             .expect("create unique index");
         for value in 1..=3 {
             table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(value), Datum::Int(value * 10)],
+                .insert_row(&mut store, &[Datum::Int(value), Datum::Int(value * 10)],
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .expect("seed common-handle row");
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -8901,7 +8904,7 @@ use super::*;
             select_lock: None,
         });
 
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let mut executor = build(&plan, &catalog, &ctx).expect("build unique point get");
         executor.open().expect("open unique point get");
         let mut output = executor.new_chunk();
@@ -8917,12 +8920,13 @@ use super::*;
     fn cached_physical_batch_point_get_deduplicates_and_orders_handles() {
         let mut table =
             crate::TableCommon::new(44, vec![long_column("id", 1), long_column("value", 2)]);
+        let mut store = tidb_kv::storage::MemTableStorage::new();
         table.set_pk_handle_offset(0);
         for value in 1..=3 {
             table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(value), Datum::Int(value * 10)],
+                .insert_row(&mut store, &[Datum::Int(value), Datum::Int(value * 10)],
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .expect("seed clustered row");
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -8953,7 +8957,7 @@ use super::*;
             lock: false,
 });
 
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let mut executor = build(&plan, &catalog, &ctx).expect("build cached batch point get");
         executor.open().expect("open cached batch point get");
         let mut output = executor.new_chunk();
@@ -8969,9 +8973,10 @@ use super::*;
     fn cached_physical_batch_point_get_uses_batched_unique_index_lookup() {
         let mut table =
             crate::TableCommon::new(45, vec![long_column("id", 1), long_column("value", 2)]);
+        let mut store = tidb_kv::storage::MemTableStorage::new();
         table.set_pk_handle_offset(0);
         table
-            .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
+            .create_index_with_context(&mut store, tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 8,
                         name: tidb_ast::CiString::new("value_uidx"),
@@ -8992,13 +8997,13 @@ use super::*;
                     clustered_primary: false,
                 },
                 &crate::StmtContext::for_query(),
-            ))
+            )
             .expect("create unique index");
         for value in 1..=3 {
             table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(value), Datum::Int(value * 10)],
+                .insert_row(&mut store, &[Datum::Int(value), Datum::Int(value * 10)],
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .expect("seed unique-index row");
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -9029,7 +9034,7 @@ use super::*;
             lock: false,
 });
 
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let mut executor = build(&plan, &catalog, &ctx).expect("build unique batch point get");
         executor.open().expect("open unique batch point get");
         let mut output = executor.new_chunk();
@@ -9091,18 +9096,19 @@ use super::*;
     fn index_merge_partial_batches_grow_across_chunks_and_reset() {
         let mut table =
             crate::TableCommon::new(42, vec![long_column("id", 1), long_column("value", 2)]);
+        let mut store = tidb_kv::storage::MemTableStorage::new();
         table.set_pk_handle_offset(0);
         for id in 1..=19 {
             table
-                .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(id), Datum::Int(id * 10)],
+                .insert_row_with_row_id(&mut store, &[Datum::Int(id), Datum::Int(id * 10)],
                     None,
                     0,
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .unwrap();
         }
         table
-            .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
+            .create_index_with_context(&mut store, tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 7,
                         name: tidb_ast::CiString::new("value_idx"),
@@ -9122,14 +9128,15 @@ use super::*;
                     clustered_primary: false,
                 },
                 &crate::StmtContext::for_query(),
-            ))
+            )
             .unwrap();
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("im", table.clone());
-        let ctx = crate::StmtContext::for_query().with_executor_chunk_sizes(2, 2);
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_executor_chunk_sizes(2, 2);
         for quota in [1, -1] {
             let memory = crate::StatementMemory::new(quota, crate::OomAction::Cancel, 7);
             let memory_ctx = crate::StmtContext::for_query_with_memory(memory.clone())
+                .with_txn_store(Box::new(store.clone()))
                 .with_executor_chunk_sizes(2, 2);
             let executor = build(&table_scan(10, 42, 1, 19), &catalog, &memory_ctx).unwrap();
             let scratch_bytes = executor.new_chunk().memory_usage();
@@ -9213,7 +9220,7 @@ use super::*;
                 source: IndexRangeSourceExec::new_with_statement(
                     ExecutorMeta::new(two_long_schema(), 10, 2, 2),
                     table.clone(),
-                    table.store().clone_box(),
+                    Box::new(store.clone()),
                     7,
                     tidb_ranger::points::full_range(),
                     RowDecodeContext::for_query(&ctx),
@@ -9288,14 +9295,15 @@ use super::*;
     fn index_merge_partial_limit_counts_handles_before_union_dedup_only() {
         let mut table =
             crate::TableCommon::new(42, vec![long_column("id", 1), long_column("value", 2)]);
+        let mut store = tidb_kv::storage::MemTableStorage::new();
         table.set_pk_handle_offset(0);
         for id in 1..=19 {
             table
-                .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(id), Datum::Int(id * 10)],
+                .insert_row_with_row_id(&mut store, &[Datum::Int(id), Datum::Int(id * 10)],
                     None,
                     0,
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -9323,7 +9331,7 @@ use super::*;
                 }),
                 ..Default::default()
             });
-            let ctx = crate::StmtContext::for_query().with_executor_chunk_sizes(6, 6);
+            let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_executor_chunk_sizes(6, 6);
             let mut state = BuildState {
                 runtime_counters: Some(HashMap::new()),
                 ..Default::default()
@@ -9372,14 +9380,15 @@ use super::*;
     fn union_merge_delivers_table_tasks_before_draining_partials() {
         let mut table =
             crate::TableCommon::new(42, vec![long_column("id", 1), long_column("value", 2)]);
+        let mut store = tidb_kv::storage::MemTableStorage::new();
         table.set_pk_handle_offset(0);
         for id in 1..=19 {
             table
-                .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(id), Datum::Int(id * 10)],
+                .insert_row_with_row_id(&mut store, &[Datum::Int(id), Datum::Int(id * 10)],
                     None,
                     0,
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -9402,7 +9411,7 @@ use super::*;
             count: 1,
             ..Default::default()
         });
-        let ctx = crate::StmtContext::for_query().with_executor_chunk_sizes(6, 6);
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_executor_chunk_sizes(6, 6);
         let mut state = BuildState {
             runtime_counters: Some(HashMap::new()),
             ..Default::default()
@@ -9428,14 +9437,15 @@ use super::*;
     fn index_merge_table_tasks_execute_retained_operator_order() {
         let mut table =
             crate::TableCommon::new(42, vec![long_column("id", 1), long_column("value", 2)]);
+        let mut store = tidb_kv::storage::MemTableStorage::new();
         table.set_pk_handle_offset(0);
         for id in 1..=6 {
             table
-                .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(id), Datum::Int(id * 10)],
+                .insert_row_with_row_id(&mut store, &[Datum::Int(id), Datum::Int(id * 10)],
                     None,
                     0,
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -9495,7 +9505,7 @@ use super::*;
                     });
                     let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
                     env.session.index_lookup_size = batch_size as f64;
-                    let ctx = crate::StmtContext::for_query()
+                    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))
                         .with_optimizer_cost_env(env)
                         .with_executor_chunk_sizes(6, 6);
                     let mut executor = build(&plan, &catalog, &ctx).unwrap();
@@ -9536,6 +9546,7 @@ use super::*;
             for handle_kind in ["integer", "common", "heap"] {
                 let mut table =
                     crate::TableCommon::new(42, vec![long_column("id", 1), long_column("value", 2)]);
+                let mut store = tidb_kv::storage::MemTableStorage::new();
                 match handle_kind {
                     "integer" => table.set_pk_handle_offset(0),
                     "common" => table.set_common_handle_offsets(vec![0]),
@@ -9563,7 +9574,7 @@ use super::*;
                     ));
                 }
                 table
-                    .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
+                    .create_index_with_context(&mut store, tidb_table::tables::Index {
                             info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                                 id: 7,
                                 name: tidb_ast::CiString::new("value_idx"),
@@ -9584,17 +9595,17 @@ use super::*;
                             clustered_primary: false,
                         },
                         &crate::StmtContext::for_query(),
-                    ))
+                    )
                     .expect("create secondary index");
                 for value in 1..=4 {
                     table
-                        .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(value), Datum::Int(value * 10)],
+                        .insert_row_with_row_id(&mut store, &[Datum::Int(value), Datum::Int(value * 10)],
                             // The same hidden handle in different partitions
                             // must survive dedup AND fetch the correct record.
                             (partitioned && handle_kind == "heap").then_some((value + 1) / 2),
                             0,
                             &tidb_exprctx::NoColumns,
-                        ))
+                        )
                         .expect("seed row");
                 }
                 let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -9710,7 +9721,7 @@ use super::*;
                                     }
                                 }
                             }
-                            let ctx = crate::StmtContext::for_query();
+                            let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
                             let mut state = BuildState {
                                 runtime_counters: Some(HashMap::new()),
                                 ..Default::default()

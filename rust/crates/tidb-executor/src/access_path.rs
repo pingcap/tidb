@@ -6944,7 +6944,8 @@ use std::collections::HashMap;
     fn partition_batch_reads_only_the_partitions_its_keys_reach() {
         let storage = CountingStorage::default();
         let gets = Arc::clone(&storage.gets);
-        let mut table = TableCommon::with_storage(77, vec![column("id", 1)], Box::new(storage));
+        let mut store = storage;
+        let mut table = TableCommon::with_storage(77, vec![column("id", 1)], store.clone_box());
         table.set_pk_handle_offset(0);
         table.set_partition(tidb_table::partition_routing::PartitionExpr {
             kind: tidb_table::partition_routing::PartitionKind::Hash,
@@ -6967,7 +6968,7 @@ use std::collections::HashMap;
         ));
         for value in 1..=3 {
             table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(value)], &tidb_exprctx::NoColumns))
+                .insert_row(&mut store, &[Datum::Int(value)], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -6976,7 +6977,7 @@ use std::collections::HashMap;
         let mut rows = run_select_on(
             "SELECT id FROM routed_batch WHERE id IN (1,2,1)",
             &catalog,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .unwrap();
         rows.sort_by_key(|row| match row[0] {
@@ -6998,8 +6999,9 @@ use std::collections::HashMap;
             let storage = CountingStorage::default();
             let gets = Arc::clone(&storage.gets);
             let batch_keys = Arc::clone(&storage.batch_keys);
+            let mut store = storage;
             let mut table =
-                TableCommon::with_storage(77, vec![column("p", 1), column("v", 2)], Box::new(storage));
+                TableCommon::with_storage(77, vec![column("p", 1), column("v", 2)], store.clone_box());
             table.set_partition(tidb_table::partition_routing::PartitionExpr {
                 kind: tidb_table::partition_routing::PartitionKind::Hash,
                 expr: Expression::Column(tidb_expr::column::Column::new(0, long())),
@@ -7020,7 +7022,7 @@ use std::collections::HashMap;
                 },
             ));
             table
-                .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
+                .create_index_with_context(&mut store, tidb_table::tables::Index {
                         info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                             id: 1,
                             name: tidb_ast::CiString::new("idx"),
@@ -7041,17 +7043,17 @@ use std::collections::HashMap;
                         clustered_primary: false,
                     },
                     &crate::StmtContext::for_query(),
-                ))
+                )
                 .unwrap();
             // Row IDs belong to their physical record keyspaces. Global index
             // order alternates those keyspaces; a bare handle is insufficient.
             for (p, value, row_id) in [(0, 10, 7), (1, 20, 7), (0, 30, 8), (1, 40, 8)] {
                 table
-                    .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(p), Datum::Int(value)],
+                    .insert_row_with_row_id(&mut store, &[Datum::Int(p), Datum::Int(value)],
                         Some(row_id),
                         0,
                         &crate::StmtContext::for_query(),
-                    ))
+                    )
                     .unwrap();
             }
             let schema = Schema::new(vec![
@@ -7061,7 +7063,7 @@ use std::collections::HashMap;
             let mut source = IndexRangeSourceExec::new_with_context(
                 ExecutorMeta::new(schema, 0, 2, 32),
                 table.clone(),
-                table.store().clone_box(),
+                store.clone_box(),
                 1,
                 tidb_ranger::points::full_range(),
                 crate::RowDecodeContext::for_test_query_utc(),
@@ -7103,7 +7105,7 @@ use std::collections::HashMap;
                     let mut source = IndexRangeSourceExec::new_with_context(
                         ExecutorMeta::new(Schema::new(columns), 0, 2, 2),
                         table.clone(),
-                        table.store().clone_box(),
+                        store.clone_box(),
                         1,
                         tidb_ranger::points::full_range(),
                         crate::RowDecodeContext::for_test_query_utc(),
@@ -7209,18 +7211,19 @@ use std::collections::HashMap;
 
     #[test]
     fn mapped_point_read_retains_hidden_columns_required_by_the_plan() {
+        let mut store = MemTableStorage::default();
         let mut table = TableCommon::with_storage(
             77,
             vec![column("id", 1)],
-            Box::new(MemTableStorage::default()),
+            store.clone_box(),
         );
         table.add_hidden_column(column("hidden", 2));
         table
-            .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(7), Datum::Int(8)],
+            .insert_row_with_row_id(&mut store, &[Datum::Int(7), Datum::Int(8)],
                 Some(7),
                 0,
                 &crate::StmtContext::for_query(),
-            ))
+            )
             .unwrap();
         let schema = tidb_expr::schema::Schema::new(vec![
             tidb_expr::column::Column::new(2, long()),
@@ -7229,7 +7232,7 @@ use std::collections::HashMap;
         let mut source = HandleSourceExec::new_mapped_with_context(
             ExecutorMeta::new(schema, 0, 1, 1024),
             table.clone(),
-            table.store().clone_box(),
+            store.clone_box(),
             vec![TableHandle::Int(7)],
             vec![HandleOutputColumn::Stored(1), HandleOutputColumn::Stored(0)],
             tidb_table::tables::RowDecodeContext::for_test_query_utc(),
@@ -7248,18 +7251,19 @@ use std::collections::HashMap;
     /// an index on `b`. Row `i` is `(i, i, n - i)`, so `b` is unique and
     /// ascending while `c` descends -- the two orders the push-down rule has
     /// to tell apart.
-    fn table_of(n: i64, indexed: bool) -> (SessionExtendedInfoSchema, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+    fn table_of(n: i64, indexed: bool) -> (SessionExtendedInfoSchema, Arc<AtomicUsize>, Arc<AtomicUsize>, CountingStorage) {
         let store = CountingStorage::default();
         let entries = Arc::clone(&store.entries);
         let gets = Arc::clone(&store.gets);
+        let mut store = store;
         let mut table = TableCommon::with_storage(
             77,
             vec![column("a", 1), column("b", 2), column("c", 3)],
-            Box::new(store),
+            store.clone_box(),
         );
         if indexed {
             table
-                .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
+                .create_index_with_context(&mut store, tidb_table::tables::Index {
                         info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                             id: 1,
                             name: tidb_ast::CiString::new("ib"),
@@ -7279,14 +7283,14 @@ use std::collections::HashMap;
                         clustered_primary: false,
                     },
                     &crate::StmtContext::for_query(),
-                ))
+                )
                 .unwrap();
         }
         for i in 1..=n {
             table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(i), Datum::Int(i), Datum::Int(n - i)],
+                .insert_row(&mut store, &[Datum::Int(i), Datum::Int(i), Datum::Int(n - i)],
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -7294,7 +7298,7 @@ use std::collections::HashMap;
         // Only the reads the query performs are interesting.
         entries.store(0, Ordering::Relaxed);
         gets.store(0, Ordering::Relaxed);
-        (catalog, entries, gets)
+        (catalog, entries, gets, store)
     }
 
     fn first_column(rows: &[Vec<Datum>]) -> Vec<i64> {
@@ -7309,7 +7313,10 @@ use std::collections::HashMap;
     #[test]
     fn prefix_limit_resets_after_partial_reads_and_retains_a_group_across_batches() {
         use tidb_executor_internal_exec::table_access::TableAccess;
-        let ctx = crate::StmtContext::for_query();
+        // One store the statements write and the reader reads, as Go's mock
+        // store's transaction is.
+        let (store, _, _) = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]);
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on(
             "CREATE TABLE p (a VARCHAR(20), KEY idx(a(2)))",
@@ -7336,7 +7343,7 @@ use std::collections::HashMap;
         let mut source = IndexRangeSourceExec::new_with_context(
             ExecutorMeta::new(schema, 0, 1, 3),
             (**table).clone(),
-            (**table).store().clone_box(),
+            Box::new(store.clone()),
             index_id,
             tidb_ranger::points::full_range(),
             crate::RowDecodeContext::for_test_query_utc(),
@@ -7465,10 +7472,7 @@ use std::collections::HashMap;
         let gets = Arc::new(AtomicUsize::new(0));
         let table_requests = Arc::new(AtomicUsize::new(0));
         let request = Arc::new(std::sync::Mutex::new(None));
-        let mut table = TableCommon::with_storage(
-            89,
-            vec![column("a", 1), column("b", 2)],
-            Box::new(CoveringIndexStorage {
+        let mut store = CoveringIndexStorage {
                 failure: None,
                 closed: Arc::default(),
                 require_closed_before_get: Arc::default(),
@@ -7476,7 +7480,11 @@ use std::collections::HashMap;
                 gets: Arc::clone(&gets),
                 request: Arc::clone(&request),
                 table_requests: Arc::clone(&table_requests),
-            }),
+            };
+        let mut table = TableCommon::with_storage(
+            89,
+            vec![column("a", 1), column("b", 2)],
+            store.clone_box(),
         );
         table.add_index(
             tidb_table::tables::Index {
@@ -7502,11 +7510,11 @@ use std::collections::HashMap;
         );
 
         table
-            .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(42), Datum::Int(7)],
+            .insert_row_with_row_id(&mut store, &[Datum::Int(42), Datum::Int(7)],
                 Some(101),
                 0,
                 &crate::StmtContext::for_query(),
-            ))
+            )
             .unwrap();
         gets.store(0, Ordering::Relaxed);
         let mut output = tidb_expr::column::Column::new(2, long());
@@ -7514,7 +7522,7 @@ use std::collections::HashMap;
         let mut source = IndexJoinLookupExec::new_with_context(
             ExecutorMeta::new(Schema::new(vec![output]), 0, 1, 32),
             table.clone(),
-            table.store().clone_box(),
+            store.clone_box(),
             LookupObject::Index(1),
             crate::RowDecodeContext::for_test_query_utc(),
         );
@@ -7631,10 +7639,7 @@ use std::collections::HashMap;
                         }
                         let gets = Arc::new(AtomicUsize::new(0));
                         let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-                        let mut table = TableCommon::with_storage(
-                            89,
-                            vec![column("a", 1), column("b", 2)],
-                            Box::new(CoveringIndexStorage {
+                        let mut store = CoveringIndexStorage {
                                 failure: Some(LookupReadFailure {
                                     index: matches!(reader, "covering" | "lookup"),
                                     after_rows,
@@ -7647,7 +7652,11 @@ use std::collections::HashMap;
                                 gets: Arc::clone(&gets),
                                 request: Arc::default(),
                                 table_requests: Arc::default(),
-                            }),
+                            };
+                        let mut table = TableCommon::with_storage(
+                            89,
+                            vec![column("a", 1), column("b", 2)],
+                            store.clone_box(),
                         );
                         if reader == "common" {
                             table.set_common_handle_offsets(vec![0, 1]);
@@ -7675,11 +7684,11 @@ use std::collections::HashMap;
                             false,
                         );
                         table
-                            .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(42), Datum::Int(7)],
+                            .insert_row_with_row_id(&mut store, &[Datum::Int(42), Datum::Int(7)],
                                 Some(101),
                                 0,
                                 &crate::StmtContext::for_query(),
-                            ))
+                            )
                             .unwrap();
                         gets.store(0, Ordering::Relaxed);
                         let (object, key, offsets) = match reader {
@@ -7700,7 +7709,7 @@ use std::collections::HashMap;
                         let mut source = IndexJoinLookupExec::new_with_context(
                             ExecutorMeta::new(schema, 0, 1, 1),
                             table.clone(),
-                            table.store().clone_box(),
+                            store.clone_box(),
                             object,
                             crate::RowDecodeContext::for_test_query_utc(),
                         );
@@ -7766,7 +7775,7 @@ use std::collections::HashMap;
     #[test]
     fn native_covering_index_join_preserves_filters_order_and_probe_resets() {
         for descending in [false, true] {
-            let (catalog, _, gets) = table_of(8, true);
+            let (catalog, _, gets, store) = table_of(8, true);
             let crate::TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
                 panic!("storage-backed table");
             };
@@ -7784,7 +7793,7 @@ use std::collections::HashMap;
             let mut source = IndexJoinLookupExec::new_with_context(
                 ExecutorMeta::new(Schema::new(vec![b]), 0, 1, 1),
                 table.as_ref().clone(),
-                table.as_ref().store().clone_box(),
+                store.clone_box(),
                 LookupObject::Index(1),
                 crate::RowDecodeContext::for_test_query_utc(),
             );
@@ -7883,10 +7892,7 @@ use std::collections::HashMap;
         use tidb_executor_internal_exec::table_access::TableAccess;
         let check_close = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let request = Arc::new(std::sync::Mutex::new(None));
-        let mut table = TableCommon::with_storage(
-            89,
-            vec![column("a", 1), column("b", 2)],
-            Box::new(CoveringIndexStorage {
+        let mut store = CoveringIndexStorage {
                 failure: None,
                 inner: MemTableStorage::new(),
                 gets: Arc::default(),
@@ -7894,7 +7900,11 @@ use std::collections::HashMap;
                 table_requests: Arc::default(),
                 closed: Arc::default(),
                 require_closed_before_get: Arc::clone(&check_close),
-            }),
+            };
+        let mut table = TableCommon::with_storage(
+            89,
+            vec![column("a", 1), column("b", 2)],
+            store.clone_box(),
         );
         table.add_index(
             tidb_table::tables::Index {
@@ -7919,11 +7929,11 @@ use std::collections::HashMap;
             false,
         );
         table
-            .with_own_store(|table, store| table.insert_row_with_row_id(store, &[Datum::Int(42), Datum::Int(7)],
+            .insert_row_with_row_id(&mut store, &[Datum::Int(42), Datum::Int(7)],
                 Some(101),
                 0,
                 &crate::StmtContext::for_query(),
-            ))
+            )
             .unwrap();
         let mut source = IndexRangeSourceExec::new_with_context(
             ExecutorMeta::new(
@@ -7936,7 +7946,7 @@ use std::collections::HashMap;
                 32,
             ),
             table.clone(),
-            table.store().clone_box(),
+            store.clone_box(),
             1,
             tidb_ranger::points::full_range(),
             crate::RowDecodeContext::for_test_query_utc(),
@@ -8026,6 +8036,7 @@ use std::collections::HashMap;
     #[test]
     fn index_join_compare_filters_intersect_on_one_target_column() {
         let mut table = TableCommon::new(91, vec![column("a", 1), column("b", 2)]);
+        let store = tidb_kv::storage::MemTableStorage::new();
         table.add_index(
             tidb_table::tables::Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
@@ -8054,7 +8065,7 @@ use std::collections::HashMap;
         let mut source = IndexJoinLookupExec::new_with_context(
             ExecutorMeta::new(Schema::default(), 0, 1, 32),
             table.clone(),
-            table.store().clone_box(),
+            store.clone_box(),
             LookupObject::Index(1),
             crate::RowDecodeContext::for_test_query_utc(),
         );
@@ -8099,15 +8110,16 @@ use std::collections::HashMap;
     /// environment variable nor impose its former eight-worker ceiling.
     #[test]
     fn lookup_worker_width_uses_the_session_value_without_a_rust_cap() {
+        let store = MemTableStorage::default();
         let table = TableCommon::with_storage(
             91,
             vec![column("a", 1)],
-            Box::new(MemTableStorage::default()),
+            store.clone_box(),
         );
         let mut source = IndexRangeSourceExec::new_with_context(
             ExecutorMeta::new(Schema::new(vec![]), 0, 1, 32),
             table.clone(),
-            table.store().clone_box(),
+            store.clone_box(),
             1,
             tidb_ranger::points::full_range(),
             crate::RowDecodeContext::for_test_query_utc(),
@@ -8129,15 +8141,16 @@ use std::collections::HashMap;
 
     #[test]
     fn ten_point_lookup_stays_inline_like_go() {
+        let store = MemTableStorage::default();
         let table = TableCommon::with_storage(
             92,
             vec![column("a", 1)],
-            Box::new(MemTableStorage::default()),
+            store.clone_box(),
         );
         let mut source = IndexRangeSourceExec::new_with_context(
             ExecutorMeta::new(Schema::new(vec![]), 0, 32, 32),
             table.clone(),
-            table.store().clone_box(),
+            store.clone_box(),
             1,
             tidb_ranger::points::full_range(),
             crate::RowDecodeContext::for_test_query_utc(),
@@ -8157,8 +8170,8 @@ use std::collections::HashMap;
     /// never advanced past, let alone decoded into memory.
     #[test]
     fn a_limit_stops_the_full_scan_instead_of_reading_the_relation() {
-        let ctx = crate::StmtContext::for_query();
-        let (catalog, entries, _) = table_of(ROWS, false);
+        let (catalog, entries, _, store) = table_of(ROWS, false);
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let rows = run_select_on("SELECT a FROM t LIMIT 10", &catalog, &ctx).unwrap();
         assert_eq!(first_column(&rows), (1..=10).collect::<Vec<_>>());
         assert_eq!(
@@ -8169,7 +8182,8 @@ use std::collections::HashMap;
 
         // The same query without the LIMIT is the control: the counter really
         // does climb to the whole relation when nothing caps it.
-        let (catalog, entries, _) = table_of(ROWS, false);
+        let (catalog, entries, _, store) = table_of(ROWS, false);
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let rows = run_select_on("SELECT a FROM t", &catalog, &ctx).unwrap();
         assert_eq!(rows.len(), ROWS as usize);
         assert_eq!(entries.load(Ordering::Relaxed), ROWS as usize);
@@ -8179,8 +8193,8 @@ use std::collections::HashMap;
     /// `Limit` for `limit 2, 3` is `offset:0, count:5`.
     #[test]
     fn an_offset_is_added_to_the_pushed_cap() {
-        let ctx = crate::StmtContext::for_query();
-        let (catalog, entries, _) = table_of(ROWS, false);
+        let (catalog, entries, _, store) = table_of(ROWS, false);
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let rows = run_select_on("SELECT a FROM t LIMIT 2, 3", &catalog, &ctx).unwrap();
         assert_eq!(first_column(&rows), vec![3, 4, 5]);
         assert_eq!(entries.load(Ordering::Relaxed), 5);
@@ -8193,14 +8207,15 @@ use std::collections::HashMap;
     fn a_scan_reads_one_chunk_per_pull_not_the_whole_range() {
         let store = CountingStorage::default();
         let entries = Arc::clone(&store.entries);
+        let mut store = store;
         let mut table = TableCommon::with_storage(
             78,
             vec![column("a", 1)],
-            Box::new(store) as Box<dyn TableStorage>,
+            store.clone_box() as Box<dyn TableStorage>,
         );
         for i in 1..=ROWS {
             table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(i)], &tidb_exprctx::NoColumns))
+                .insert_row(&mut store, &[Datum::Int(i)], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         entries.store(0, Ordering::Relaxed);
@@ -8216,7 +8231,7 @@ use std::collections::HashMap;
         let mut scan = crate::kv_table::TableScanExec::new_with_context(
             meta,
             table.clone(),
-            table.store().clone_box(),
+            store.clone_box(),
             crate::RowDecodeContext::for_test_query_utc(),
             tidb_distsql::remote_scan::PushdownStatementContext::default(),
         );
@@ -8246,8 +8261,8 @@ use std::collections::HashMap;
     /// `a_double_read_costs_more_than_the_scan_it_replaces` below.
     #[test]
     fn an_order_by_the_index_satisfies_pushes_the_limit() {
-        let ctx = crate::StmtContext::for_query();
-        let (catalog, entries, gets) = table_of(ROWS, true);
+        let (catalog, entries, gets, store) = table_of(ROWS, true);
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let rows = run_select_on(
             "SELECT b FROM t WHERE b > 0 ORDER BY b LIMIT 5",
             &catalog,
@@ -8275,8 +8290,8 @@ use std::collections::HashMap;
     /// LIMIT slots and the answer is short by one row.
     #[test]
     fn a_covering_index_filter_counts_qualifying_rows_before_the_limit() {
-        let ctx = crate::StmtContext::for_query();
-        let (catalog, entries, _) = table_of(ROWS, true);
+        let (catalog, entries, _, store) = table_of(ROWS, true);
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let rows = run_select_on(
             "SELECT b FROM t WHERE MOD(b, 2) = 0 ORDER BY b LIMIT 5",
             &catalog,
@@ -8296,8 +8311,8 @@ use std::collections::HashMap;
     /// prefetch and decode a full 1,024-handle batch.
     #[test]
     fn an_ordered_double_read_starts_at_the_parent_required_rows() {
-        let ctx = crate::StmtContext::for_query();
-        let (catalog, entries, gets) = table_of(ROWS, true);
+        let (catalog, entries, gets, store) = table_of(ROWS, true);
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let rows = run_select_on(
             "SELECT * FROM t USE INDEX (ib) WHERE b > 0 AND c >= 0 ORDER BY b LIMIT 5",
             &catalog,
@@ -8324,18 +8339,18 @@ use std::collections::HashMap;
     /// instead of treating the empty queue as an unexpected stream end.
     #[test]
     fn a_missing_lookup_row_does_not_reopen_the_scanned_key_limit() {
-        let ctx = crate::StmtContext::for_query();
-        let (mut catalog, entries, gets) = table_of(ROWS, true);
+        let (mut catalog, entries, gets, mut store) = table_of(ROWS, true);
         let Some(tidb_infoschema::TableEntry::Kv(table)) =
             catalog.get_mut_in(tidb_infoschema::DEFAULT_DATABASE, "t")
         else {
             panic!("test table must be byte-backed");
         };
         Arc::make_mut(table)
-            .with_own_store(|table, store| table.delete_record_for_test(store, &TableHandle::Int(1)))
+            .delete_record_for_test(&mut store, &TableHandle::Int(1))
             .unwrap();
         entries.store(0, Ordering::Relaxed);
         gets.store(0, Ordering::Relaxed);
+let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
 
         let rows = run_select_on(
             "SELECT * FROM t USE INDEX (ib) WHERE b > 0 ORDER BY b LIMIT 5",
@@ -8360,8 +8375,8 @@ use std::collections::HashMap;
     /// `pkg/executor/distsql.go`.
     #[test]
     fn a_table_residual_keeps_growing_lookup_tasks() {
-        let ctx = crate::StmtContext::for_query();
-        let (catalog, entries, gets) = table_of(ROWS, true);
+        let (catalog, entries, gets, store) = table_of(ROWS, true);
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let rows = run_select_on(
             "SELECT a FROM t USE INDEX (ib) \
              WHERE b > 0 AND c < 5 ORDER BY b LIMIT 3",
@@ -8390,14 +8405,15 @@ use std::collections::HashMap;
     fn a_common_handle_equality_prefix_satisfies_order_and_pushes_the_limit() {
         let store = CountingStorage::default();
         let entries = Arc::clone(&store.entries);
+        let mut store = store;
         let mut table = TableCommon::with_storage(
             79,
             vec![column("w_id", 1), column("d_id", 2), column("o_id", 3)],
-            Box::new(store),
+            store.clone_box(),
         );
         table.set_common_handle_offsets(vec![0, 1, 2]);
         table
-            .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
+            .create_index_with_context(&mut store, tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("PRIMARY"),
@@ -8419,13 +8435,13 @@ use std::collections::HashMap;
                     clustered_primary: false,
                 },
                 &crate::StmtContext::default(),
-            ))
+            )
             .unwrap();
         for o_id in 1..=100 {
             table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1), Datum::Int(1), Datum::Int(o_id)],
+                .insert_row(&mut store, &[Datum::Int(1), Datum::Int(1), Datum::Int(o_id)],
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -8437,7 +8453,7 @@ use std::collections::HashMap;
              WHERE w_id = 1 AND d_id = 1 \
              ORDER BY o_id LIMIT 1",
             &catalog,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .unwrap();
         assert_eq!(first_column(&rows), vec![1]);
@@ -8455,6 +8471,7 @@ use std::collections::HashMap;
     fn a_common_handle_row_in_reads_only_the_named_prefixes() {
         let store = CountingStorage::default();
         let entries = Arc::clone(&store.entries);
+        let mut store = store;
         let mut table = TableCommon::with_storage(
             80,
             vec![
@@ -8464,11 +8481,11 @@ use std::collections::HashMap;
                 column("line_number", 4),
                 column("amount", 5),
             ],
-            Box::new(store),
+            store.clone_box(),
         );
         table.set_common_handle_offsets(vec![0, 1, 2, 3]);
         table
-            .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
+            .create_index_with_context(&mut store, tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("PRIMARY"),
@@ -8490,13 +8507,13 @@ use std::collections::HashMap;
                     clustered_primary: false,
                 },
                 &crate::StmtContext::default(),
-            ))
+            )
             .unwrap();
         for d_id in 1..=2 {
             for o_id in 1..=100 {
                 for line_number in 1..=2 {
                     table
-                        .with_own_store(|table, store| table.insert_row(store, &[
+                        .insert_row(&mut store, &[
                                 Datum::Int(1),
                                 Datum::Int(d_id),
                                 Datum::Int(o_id),
@@ -8504,7 +8521,7 @@ use std::collections::HashMap;
                                 Datum::Int(o_id * 10 + line_number),
                             ],
                             &tidb_exprctx::NoColumns,
-                        ))
+                        )
                         .unwrap();
                 }
             }
@@ -8517,7 +8534,7 @@ use std::collections::HashMap;
             "SELECT amount FROM order_line \
              WHERE (w_id, d_id, o_id) IN ((1, 1, 42), (1, 2, 43))",
             &catalog,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .unwrap();
         assert_eq!(rows.len(), 4);
@@ -8545,8 +8562,7 @@ use std::collections::HashMap;
     /// assertion below is `1`; before the fix it was `n`.
     #[test]
     fn the_double_read_issues_one_batch_get_per_index_batch() {
-        let ctx = crate::StmtContext::for_query();
-        let (catalog, _, gets) = table_of(ROWS, true);
+        let (catalog, _, gets, store) = table_of(ROWS, true);
         // Force the noncovering index path: the batching contract must not
         // depend on the cost model preferring it over a table scan.
         let list: Vec<String> = (1..=50).map(|value| value.to_string()).collect();
@@ -8554,6 +8570,7 @@ use std::collections::HashMap;
             "SELECT a FROM t USE INDEX(ib) WHERE b IN ({})",
             list.join(", ")
         );
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let rows = run_select_on(&query, &catalog, &ctx).unwrap();
         assert_eq!(rows.len(), 50);
         assert_eq!(
@@ -8569,8 +8586,8 @@ use std::collections::HashMap;
     /// `TopN_8` over `TableFullScan_16 | 20.00`).
     #[test]
     fn an_order_by_the_access_path_does_not_satisfy_reads_everything() {
-        let ctx = crate::StmtContext::for_query();
-        let (catalog, entries, _) = table_of(ROWS, true);
+        let (catalog, entries, _, store) = table_of(ROWS, true);
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let rows = run_select_on("SELECT a FROM t ORDER BY c LIMIT 5", &catalog, &ctx).unwrap();
         // c = ROWS - a descends, so the smallest c values are the last rows.
         assert_eq!(
@@ -8593,6 +8610,7 @@ use std::collections::HashMap;
     /// accepts the same column, which its executor schema carries.
     #[test]
     fn an_extreme_over_a_handle_column_the_index_does_not_rank_lowers_the_cop_topn_instead() {
+        let mut store = MemTableStorage::default();
         let mut table = TableCommon::with_storage(
             91,
             vec![
@@ -8601,11 +8619,11 @@ use std::collections::HashMap;
                 column("c", 3),
                 column("d", 4),
             ],
-            Box::new(MemTableStorage::default()),
+            store.clone_box(),
         );
         table.set_common_handle_offsets(vec![0, 1, 2]);
         table
-            .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
+            .create_index_with_context(&mut store, tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("k4"),
@@ -8625,7 +8643,7 @@ use std::collections::HashMap;
                     clustered_primary: false,
                 },
                 &crate::StmtContext::for_query(),
-            ))
+            )
             .unwrap();
         let mut exec = IndexRangeSourceExec::new_with_statement(
             {
@@ -8639,7 +8657,7 @@ use std::collections::HashMap;
                 )
             },
             table.clone(),
-            table.store().clone_box(),
+            store.clone_box(),
             1,
             tidb_ranger::points::full_range(),
             tidb_table::tables::RowDecodeContext::for_test_query_utc(),
@@ -8669,7 +8687,7 @@ use std::collections::HashMap;
                 )
             },
             table.clone(),
-            table.store().clone_box(),
+            store.clone_box(),
             1,
             tidb_ranger::points::full_range(),
             tidb_table::tables::RowDecodeContext::for_test_query_utc(),
@@ -8684,8 +8702,8 @@ use std::collections::HashMap;
     /// so the pushed cap reads only the requested suffix.
     #[test]
     fn a_descending_order_by_reads_the_index_backwards() {
-        let ctx = crate::StmtContext::for_query();
-        let (catalog, entries, _) = table_of(ROWS, true);
+        let (catalog, entries, _, store) = table_of(ROWS, true);
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let rows = run_select_on(
             "SELECT a FROM t WHERE b > 0 ORDER BY b DESC LIMIT 3",
             &catalog,
@@ -8701,8 +8719,8 @@ use std::collections::HashMap;
     /// after a storage batch once the Selection has produced enough rows.
     #[test]
     fn an_arithmetic_selection_allows_the_cap_to_push() {
-        let ctx = crate::StmtContext::for_query();
-        let (catalog, entries, _) = table_of(ROWS, false);
+        let (catalog, entries, _, store) = table_of(ROWS, false);
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let rows =
             run_select_on("SELECT a FROM t WHERE c + 1 > 1 LIMIT 3", &catalog, &ctx).unwrap();
         assert_eq!(first_column(&rows), vec![1, 2, 3]);
@@ -8717,8 +8735,8 @@ use std::collections::HashMap;
     /// counts rows that passed it -- and the answer is the unfiltered one.
     #[test]
     fn a_pushed_predicate_is_applied_below_the_cap() {
-        let ctx = crate::StmtContext::for_query();
-        let (catalog, entries, _) = table_of(ROWS, false);
+        let (catalog, entries, _, store) = table_of(ROWS, false);
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let rows = run_select_on("SELECT a FROM t WHERE a > 100 LIMIT 3", &catalog, &ctx).unwrap();
         assert_eq!(first_column(&rows), vec![101, 102, 103]);
         assert_eq!(
@@ -8732,8 +8750,8 @@ use std::collections::HashMap;
     /// rows the user never sees.
     #[test]
     fn distinct_blocks_the_cap() {
-        let ctx = crate::StmtContext::for_query();
-        let (catalog, entries, _) = table_of(ROWS, false);
+        let (catalog, entries, _, store) = table_of(ROWS, false);
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let rows = run_select_on("SELECT DISTINCT a FROM t LIMIT 3", &catalog, &ctx).unwrap();
         assert_eq!(rows.len(), 3);
         assert_eq!(entries.load(Ordering::Relaxed), ROWS as usize);
@@ -8744,8 +8762,7 @@ use std::collections::HashMap;
     /// what the scan really did.
     #[test]
     fn explain_analyze_act_rows_reflect_the_truncation() {
-        let ctx = crate::StmtContext::for_query();
-        let (catalog, _, _) = table_of(ROWS, false);
+        let (catalog, _, _, store) = table_of(ROWS, false);
         let stmt = tidb_parser::parse("SELECT a FROM t WHERE a > 0 LIMIT 4").unwrap();
         let tidb_ast::Stmt::Query(query) = &stmt else {
             panic!("the test statement must parse as a query");
@@ -8753,6 +8770,7 @@ use std::collections::HashMap;
         let tidb_ast::QueryStmt::Select(select) = &**query else {
             panic!("the test statement must parse as a SELECT");
         };
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         let (_, rows) = crate::explain::explain_analyze_select_stmt(
             select,
             &catalog,
@@ -8799,14 +8817,15 @@ use std::collections::HashMap;
     /// KEEP-ORDER case observable too: `ORDER BY b` leaves two pairs tied, and
     /// the index breaks those ties by `c` where a handle-ordered read breaks
     /// them by handle.
-    fn crossed_order_table() -> TableCommon {
+    fn crossed_order_table() -> (TableCommon, MemTableStorage) {
+        let mut store = MemTableStorage::default();
         let mut table = TableCommon::with_storage(
             81,
             vec![column("a", 1), column("b", 2), column("c", 3)],
-            Box::new(MemTableStorage::default()),
+            store.clone_box(),
         );
         table
-            .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
+            .create_index_with_context(&mut store, tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("ibc"),
@@ -8829,23 +8848,23 @@ use std::collections::HashMap;
                     clustered_primary: false,
                 },
                 &crate::StmtContext::for_query(),
-            ))
+            )
             .unwrap();
         for (a, b, c) in [(1, 2, 20), (2, 1, 30), (3, 2, 10), (4, 1, 40)] {
             table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(b), Datum::Int(c)],
+                .insert_row(&mut store, &[Datum::Int(a), Datum::Int(b), Datum::Int(c)],
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .unwrap();
         }
-        table
+        (table, store)
     }
 
     /// Reads [`crossed_order_table`] through an `IndexRangeSourceExec` over
     /// the whole of `ibc`, returning the `a` column in the order the source
     /// emitted it. `cap` is a pushed row cap, Go's `PushedLimit`.
     fn read_through_index(covering: bool, keep_order: bool, cap: Option<u64>) -> Vec<i64> {
-        let table = crossed_order_table();
+        let (table, store) = crossed_order_table();
         let columns: Vec<tidb_expr::column::Column> = (0..3i64)
             .map(|offset| {
                 let mut column = tidb_expr::column::Column::new(offset + 1, long());
@@ -8856,7 +8875,7 @@ use std::collections::HashMap;
         let mut exec = IndexRangeSourceExec::new_with_context(
             ExecutorMeta::new(tidb_expr::schema::Schema::new(columns), 0, 32, 1024),
             table.clone(),
-            table.store().clone_box(),
+            store.clone_box(),
             1,
             tidb_ranger::points::full_range(),
             crate::RowDecodeContext::for_test_query_utc(),
@@ -8972,9 +8991,10 @@ use std::collections::HashMap;
     /// unordered double read would answer handle-ascending.
     #[test]
     fn the_driver_offers_keep_order_to_an_order_by_the_index_produces() {
-        let ctx = crate::StmtContext::for_query();
+        let (table, store) = paired_order_table(200);
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store));
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-        catalog.register_kv("t", paired_order_table(200));
+        catalog.register_kv("t", table);
         let rows =
             run_select_on("SELECT a FROM t WHERE b = 50 ORDER BY b", &catalog, &ctx).unwrap();
         assert_eq!(first_column(&rows), vec![4, 3, 2, 1]);
@@ -8983,14 +9003,15 @@ use std::collections::HashMap;
     /// [`the_driver_offers_keep_order_to_an_order_by_the_index_produces`]'s
     /// table: `n` rows whose handle order, `b` order and `c` order all
     /// disagree. See that test for the layout.
-    fn paired_order_table(n: i64) -> TableCommon {
+    fn paired_order_table(n: i64) -> (TableCommon, MemTableStorage) {
+        let mut store = MemTableStorage::default();
         let mut table = TableCommon::with_storage(
             82,
             vec![column("a", 1), column("b", 2), column("c", 3)],
-            Box::new(MemTableStorage::default()),
+            store.clone_box(),
         );
         table
-            .with_own_store(|table, store| table.create_index_with_context(store, tidb_table::tables::Index {
+            .create_index_with_context(&mut store, tidb_table::tables::Index {
                     info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                         id: 1,
                         name: tidb_ast::CiString::new("ibc"),
@@ -9013,18 +9034,18 @@ use std::collections::HashMap;
                     clustered_primary: false,
                 },
                 &crate::StmtContext::for_query(),
-            ))
+            )
             .unwrap();
         for handle in 1..=n {
             let b = n / 4 - (handle - 1) / 4;
             let c = 4 - (handle - 1) % 4;
             table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(handle), Datum::Int(b), Datum::Int(c)],
+                .insert_row(&mut store, &[Datum::Int(handle), Datum::Int(b), Datum::Int(c)],
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .unwrap();
         }
-        table
+        (table, store)
     }
 }
 
