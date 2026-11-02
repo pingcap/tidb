@@ -557,3 +557,15 @@ func parseSchemaCacheSize(s *SessionVars, normalizedValue string, originalValue 
 
 	return 0, "", ErrTruncatedWrongValue.GenWithStackByArgs(vardef.TiDBSchemaCacheSize, originalValue)
 }
+
+// FormatSQLMode formats mode as the value of the sql_mode variable.
+func FormatSQLMode(mode mysql.SQLMode) string {
+	names := make([]string, 0, len(mysql.Str2SQLMode))
+	for name, m := range mysql.Str2SQLMode {
+		if mode&m != 0 {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return strings.Join(names, ",")
+}

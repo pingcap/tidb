@@ -17,8 +17,6 @@ package ddl
 import (
 	"context"
 	"math"
-	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -31,11 +29,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -211,7 +209,7 @@ func initSessCtx(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) erro
 	sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != vardef.DefTiDBRowFormatV1
 	// Simulate the sql mode environment in the worker sessionCtx.
 	sqlMode := reorgMeta.SQLMode
-	if err := sessCtx.GetSessionVars().SetSystemVar(vardef.SQLModeVar, formatSQLMode(sqlMode)); err != nil {
+	if err := sessCtx.GetSessionVars().SetSystemVar(vardef.SQLModeVar, variable.FormatSQLMode(sqlMode)); err != nil {
 		return errors.Trace(err)
 	}
 	loc, err := reorgTimeZoneWithTzLoc(reorgMeta.Location)
@@ -233,18 +231,6 @@ func initSessCtx(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) erro
 		sessCtx.GetSessionVars().ResourceGroupName = reorgMeta.ResourceGroupName //nolint:forbidigo
 	}
 	return nil
-}
-
-// formatSQLMode formats mode as the value of the sql_mode variable.
-func formatSQLMode(mode mysql.SQLMode) string {
-	names := make([]string, 0, len(mysql.Str2SQLMode))
-	for name, m := range mysql.Str2SQLMode {
-		if mode&m != 0 {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	return strings.Join(names, ",")
 }
 
 func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context) {

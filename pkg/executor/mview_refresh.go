@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -456,7 +457,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return err
 	}
 	defer restoreSessVars()
-	failpoint.InjectCall("refreshMaterializedViewAfterInitSession", sessVars.SQLMode, sessVars.Location().String())
+	failpoint.InjectCall("refreshMaterializedViewAfterInitSession", sessVars.SQLMode, sessVars.Location().String(), refreshSctx)
 
 	mviewID = tblInfo.ID
 	advisoryLockName, err := acquireMVRefreshAdvisoryLock(refreshSctx, schemaName, tblInfo)
@@ -1527,18 +1528,15 @@ func initRefreshMaterializedViewSession(
 	origTypeFlags := sessVars.StmtCtx.TypeFlags()
 	origErrLevels := sessVars.StmtCtx.ErrLevels()
 
-	sessVars.SQLMode = mviewInfo.DefinitionSQLMode
-	sessVars.DivPrecisionIncrement = mviewInfo.DefinitionDivPrecisionIncrement
-	sessVars.InMViewMaintenance = true
-	sessVars.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sessVars.SQLMode.HasNoBackslashEscapesMode())
-	sessVars.TimeZone = loc
-	sessVars.StmtCtx.SetTimeZone(loc)
-	sessVars.StmtCtx.SetTypeFlags(expression.MaterializedScheduleTypeFlagsWithSQLMode(sessVars.SQLMode))
-	sessVars.StmtCtx.SetErrLevels(expression.MaterializedScheduleErrLevelsWithSQLMode(sessVars.SQLMode))
-
-	return func() {
+	originalVars := make(map[string]string, 3)
+	restore := func() {
 		if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, variable.BoolToOnOff(origEnableMView)); err != nil {
 			logutil.BgLogger().Warn("refresh materialized view: failed to restore materialized view enablement", zap.Error(err))
+		}
+		for name, value := range originalVars {
+			if err := sessVars.SetSystemVar(name, value); err != nil {
+				logutil.BgLogger().Warn("refresh materialized view: failed to restore session variable", zap.String("name", name), zap.Error(err))
+			}
 		}
 		sessVars.SQLMode = origSQLMode
 		sessVars.DivPrecisionIncrement = origDivPrecisionIncrement
@@ -1548,7 +1546,24 @@ func initRefreshMaterializedViewSession(
 		sessVars.StmtCtx.SetTimeZone(origStmtCtxTimeZone)
 		sessVars.StmtCtx.SetTypeFlags(origTypeFlags)
 		sessVars.StmtCtx.SetErrLevels(origErrLevels)
-	}, nil
+	}
+	for _, assignment := range []struct{ name, value string }{
+		{vardef.SQLModeVar, variable.FormatSQLMode(mviewInfo.DefinitionSQLMode)},
+		{vardef.TimeZone, timeutil.ZoneName(loc)},
+		{vardef.DivPrecisionIncrement, strconv.Itoa(mviewInfo.DefinitionDivPrecisionIncrement)},
+	} {
+		oldValue, err := sessVars.SetSystemVarWithOldStateAsRet(assignment.name, assignment.value)
+		if err != nil {
+			restore()
+			return nil, errors.Annotatef(err, "refresh materialized view: failed to set %s", assignment.name)
+		}
+		originalVars[assignment.name] = oldValue
+	}
+	sessVars.InMViewMaintenance = true
+	sessVars.StmtCtx.SetTimeZone(loc)
+	sessVars.StmtCtx.SetTypeFlags(expression.MaterializedScheduleTypeFlagsWithSQLMode(sessVars.SQLMode))
+	sessVars.StmtCtx.SetErrLevels(expression.MaterializedScheduleErrLevelsWithSQLMode(sessVars.SQLMode))
+	return restore, nil
 }
 
 func validateRefreshMaterializedViewStmt(s *ast.RefreshMaterializedViewStmt, isInternalSQL bool) (ast.RefreshMaterializedViewMode, string, error) {

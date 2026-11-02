@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
@@ -100,24 +102,44 @@ func TestBuildMVRefreshOutOfPlaceShadowTableInfoSetsSource(t *testing.T) {
 	require.Equal(t, int64(42), shadow.MaterializedViewShadow.SourceMViewID)
 }
 
-func TestInitRefreshMaterializedViewSessionAppliesDefinitionDivPrecisionIncrement(t *testing.T) {
+func TestInitRefreshMaterializedViewSessionAppliesDefinitionSessionVars(t *testing.T) {
 	sessVars := variable.NewSessionVars(nil)
-	require.False(t, sessVars.EnableMView)
-	sessVars.DivPrecisionIncrement = 2
-	sessVars.TimeZone = time.UTC
+	original := map[string]string{vardef.SQLModeVar: "", vardef.TimeZone: "+00:00", vardef.DivPrecisionIncrement: "2"}
+	for name, value := range original {
+		require.NoError(t, sessVars.SetSystemVar(name, value))
+	}
 	sessVars.StmtCtx.SetTimeZone(time.UTC)
-
 	restore, err := initRefreshMaterializedViewSession(sessVars, &model.MaterializedViewInfo{
+		DefinitionSQLMode:               mysql.ModeNoBackslashEscapes,
 		DefinitionDivPrecisionIncrement: 9,
-		DefinitionTimeZone:              model.TimeZoneLocation{Name: "UTC"},
+		DefinitionTimeZone:              model.TimeZoneLocation{Name: "Asia/Shanghai"},
 	})
 	require.NoError(t, err)
 	require.True(t, sessVars.EnableMView)
 	require.Equal(t, 9, sessVars.DivPrecisionIncrement)
-
+	require.True(t, sessVars.HasStatusFlag(mysql.ServerStatusNoBackslashEscaped))
+	workerVars := variable.NewSessionVars(nil)
+	for name, expected := range map[string]string{vardef.SQLModeVar: "NO_BACKSLASH_ESCAPES", vardef.TimeZone: "Asia/Shanghai", vardef.DivPrecisionIncrement: "9"} {
+		value, keep, err := sessVars.GetSessionStatesSystemVar(name)
+		require.NoError(t, err)
+		require.True(t, keep)
+		require.Equal(t, expected, value, name)
+		require.NoError(t, workerVars.SetSystemVar(name, value))
+	}
+	require.Equal(t, sessVars.SQLMode, workerVars.SQLMode)
+	require.Equal(t, sessVars.Location(), workerVars.Location())
+	require.Equal(t, sessVars.DivPrecisionIncrement, workerVars.DivPrecisionIncrement)
 	restore()
 	require.False(t, sessVars.EnableMView)
 	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
+	require.False(t, sessVars.HasStatusFlag(mysql.ServerStatusNoBackslashEscaped))
+	require.Equal(t, time.UTC, sessVars.StmtCtx.TimeZone())
+	for name, expected := range original {
+		value, keep, err := sessVars.GetSessionStatesSystemVar(name)
+		require.NoError(t, err)
+		require.True(t, keep)
+		require.Equal(t, expected, value, name)
+	}
 }
 
 func TestBuildMVRefreshOutOfPlaceBuildSQLImportOptions(t *testing.T) {

@@ -807,3 +807,13 @@ func TestAssertionLevel(t *testing.T) {
 	require.Equal(t, AssertionLevelFast, tidbOptAssertionLevel(vardef.AssertionFastStr))
 	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel("bogus"))
 }
+
+func TestFormatSQLMode(t *testing.T) {
+	for _, s := range []string{"", mysql.DefaultSQLMode, "ANSI", "TRADITIONAL", "PAD_CHAR_TO_FULL_LENGTH,NO_BACKSLASH_ESCAPES"} {
+		mode, err := mysql.GetSQLMode(mysql.FormatSQLModeStr(s))
+		require.NoError(t, err)
+		got, err := mysql.GetSQLMode(FormatSQLMode(mode))
+		require.NoError(t, err)
+		require.Equal(t, mode, got, s)
+	}
+}

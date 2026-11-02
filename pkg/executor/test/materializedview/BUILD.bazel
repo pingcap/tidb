@@ -33,6 +33,7 @@ go_test(
         "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
