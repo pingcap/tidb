@@ -285,7 +285,11 @@ func checkTableIDInItems(t *testing.T, tableID int64) {
 							}
 						}
 						if !found {
-							done <- true
+							select {
+							case done <- true:
+							case <-ctx.Done():
+							}
+							return
 						}
 					case <-ctx.Done():
 						return
