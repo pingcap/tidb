@@ -258,7 +258,7 @@ CARGO_INCREMENTAL=0`.
        insert. The commit copy (item 5) walks only MODIFIED local tables.
   - [ ] Delete `TemporaryTableOverlay`, `TemporaryTableTxnData`,
     `swap_temporary_txn_data`.
-- [ ] Milestone 4: the `store` field is gone.
+- [x] Milestone 4: the `store` field is gone (2026-11-02, 00fd5c8dcd3).
   - [x] (a) (2026-11-02, 6c9320a2ade) `StmtContext::txn_store` is Go
     `sctx.Txn()`: `Session::transaction_store` answers the stale read's
     `HistoricalRead.store` while one is active, the session transaction's
@@ -284,7 +284,7 @@ CARGO_INCREMENTAL=0`.
     account and privilege tables) take the statement's store; several have
     no `StmtContext` in scope yet and need it threaded, as Go's do through
     `sctx`.
-  - [ ] (c) test fixtures hold a `MemTableStorage` (or a fixture catalog's
+  - [x] (c) test fixtures hold a `MemTableStorage` (or a fixture catalog's
     one) and pass it. Counted 2026-11-02 after 9a78dc42cdd: 359 sites in 37
     files, mostly `tidb-executor` unit tests (kv_table/tests.rs 61,
     remote_scan.rs 50, access_path.rs 36, table_scan.rs 27,
@@ -328,7 +328,20 @@ CARGO_INCREMENTAL=0`.
     shared cluster store (`cluster_storage_test_util::storage`), because
     `StmtContext::txn_store()` hands out clones and a `MemTableStorage`
     clone loses its writes.
-  - [ ] (d) delete the field and its accessors. 2026-11-02 (64cd2bb68df):
+    Done 2026-11-02 (86a224d24b5): every executor test statement runs over
+    one store -- `crate::test_store::store()`, a per-test-thread
+    `SharedMemStorage` (Go's testkit gives each test one mock store), or the
+    fixture's own store in its contexts; `statement_store(ctx)` is Go's
+    `sctx.Txn()` and panics on a context without one.
+  - [x] (d) delete the field and its accessors (00fd5c8dcd3). Also gone:
+    the constructors' and `cluster_table`'s storage parameters, the image
+    builders' template storage and `detached_storage`, the temporary
+    overlay's `replace_storage`, and the per-table statement staging
+    (`begin_statement_stage`; the transaction store's checkpoint in
+    `statement_lifecycle` is Go's `MemBuffer.Staging()`). ADMIN CHECKSUM
+    reads the statement store's client and start ts. A cache-less session
+    reads `mysql.bind_info` instead of gating on the table's key count.
+    Earlier, 2026-11-02 (64cd2bb68df):
     the own-store `snapshot_reader` / `mem_buffer_snapshot` /
     `point_rpc_counts` / snapshot-option setters are gone. Left in the
     library: `replace_storage` / `swap_storage` (the temporary-table overlay,
