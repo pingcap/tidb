@@ -101,6 +101,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/diagnosticlog"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/etcd"
@@ -2259,7 +2260,15 @@ func (do *Domain) asyncLoadHistogram() {
 func (do *Domain) indexUsageWorker() {
 	defer util.Recover(metrics.LabelDomain, "indexUsageWorker", nil, false)
 	gcStatsTicker := time.NewTicker(indexUsageGCDuration)
+	defer gcStatsTicker.Stop()
 	handle := do.StatsHandle()
+	var snapshotTimer *time.Timer
+	var snapshotTick <-chan time.Time
+	if diagnosticlog.IndexUsageEnabled() {
+		snapshotTimer = time.NewTimer(time.Hour)
+		snapshotTick = snapshotTimer.C
+		defer snapshotTimer.Stop()
+	}
 	defer func() {
 		logutil.BgLogger().Info("indexUsageWorker exited.")
 	}()
@@ -2267,6 +2276,12 @@ func (do *Domain) indexUsageWorker() {
 		select {
 		case <-do.exit:
 			return
+		case <-snapshotTick:
+			if err := diagnosticlog.PublishIndexUsage(handle.WriteIndexUsageSnapshot); err != nil {
+				statslogutil.StatsLogger().Warn("publish index usage snapshot failed", zap.Error(err))
+			}
+			// Reset after each attempt: never overlap or catch up missed exports.
+			snapshotTimer.Reset(time.Hour)
 		case <-gcStatsTicker.C:
 			if err := handle.GCIndexUsage(); err != nil {
 				statslogutil.StatsLogger().Error("gc index usage failed", zap.Error(err))

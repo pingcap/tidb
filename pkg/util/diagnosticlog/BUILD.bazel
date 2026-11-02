@@ -1,0 +1,41 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "diagnosticlog",
+    srcs = [
+        "deadlock.go",
+        "diagnostic.go",
+        "snapshot.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/diagnosticlog",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/metrics",
+        "//pkg/tablecodec",
+        "//pkg/util/resourcegrouptag",
+        "@com_github_tikv_client_go_v2//error",
+        "@in_gopkg_natefinch_lumberjack_v2//:lumberjack_v2",
+        "@org_golang_x_time//rate",
+    ],
+)
+
+go_test(
+    name = "diagnosticlog_test",
+    timeout = "short",
+    srcs = [
+        "async_test.go",
+        "diagnostic_test.go",
+    ],
+    embed = [":diagnosticlog"],
+    flaky = True,
+    deps = [
+        "//pkg/metrics",
+        "@com_github_pingcap_kvproto//pkg/deadlock",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_prometheus_client_golang//prometheus/testutil",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//error",
+        "@org_golang_x_time//rate",
+    ],
+)

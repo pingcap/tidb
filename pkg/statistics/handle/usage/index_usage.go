@@ -16,6 +16,8 @@ package usage
 
 import (
 	"context"
+	"io"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -59,4 +61,9 @@ func (u *statsUsageImpl) Close() {
 // GetIndexUsage returns the index usage information
 func (u *statsUsageImpl) GetIndexUsage(tableID int64, indexID int64) indexusage.Sample {
 	return u.idxUsageCollector.GetIndexUsage(tableID, indexID)
+}
+
+// WriteIndexUsageSnapshot exports cumulative in-memory counters without resetting them.
+func (u *statsUsageImpl) WriteIndexUsageSnapshot(w io.Writer, snapshotTime time.Time) error {
+	return u.idxUsageCollector.WriteSnapshot(w, snapshotTime)
 }

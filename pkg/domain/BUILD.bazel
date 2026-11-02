@@ -97,6 +97,7 @@ go_library(
         "//pkg/util/context",
         "//pkg/util/cpu",
         "//pkg/util/dbterror",
+        "//pkg/util/diagnosticlog",
         "//pkg/util/disttask",
         "//pkg/util/engine",
         "//pkg/util/etcd",

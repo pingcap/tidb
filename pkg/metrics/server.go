@@ -43,6 +43,8 @@ var (
 	PreparedStmtGauge               prometheus.Gauge
 	ExecuteErrorCounter             *prometheus.CounterVec
 	CriticalErrorCounter            prometheus.Counter
+	DiagnosticLogCounter            *prometheus.CounterVec
+	DiagnosticLogWriteDuration      *prometheus.HistogramVec
 
 	ServerStart = "server-start"
 	ServerStop  = "server-stop"
@@ -90,6 +92,15 @@ var (
 
 // InitServerMetrics initializes server metrics.
 func InitServerMetrics() {
+	DiagnosticLogWriteDuration = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "tidb", Subsystem: "server", Name: "diagnostic_log_write_duration_seconds",
+		Help:    "Time spent writing diagnostic log batches, including rotation.",
+		Buckets: prometheus.ExponentialBuckets(0.001, 2, 16),
+	}, []string{"type"})
+	DiagnosticLogCounter = metricscommon.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "tidb", Subsystem: "server", Name: "diagnostic_log_total",
+		Help: "Diagnostic collection outcomes by type and result.",
+	}, []string{"type", "result"})
 	PacketIOCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
