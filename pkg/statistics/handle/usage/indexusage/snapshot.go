@@ -25,9 +25,9 @@ import (
 const snapshotBatchSize = 2048
 
 type snapshotEntry struct {
+	LastUsedAt       *time.Time `json:"last_used_at"`
 	TableID          int64      `json:"table_id"`
 	IndexID          int64      `json:"index_id"`
-	LastUsedAt       *time.Time `json:"last_used_at"`
 	QueryTotal       uint64     `json:"query_total"`
 	KVReqTotal       uint64     `json:"kv_req_total"`
 	RowAccessTotal   uint64     `json:"row_access_total"`
@@ -92,8 +92,8 @@ func (c *Collector) writeSnapshot(w io.Writer, snapshotTime time.Time, batchSize
 		}
 	}
 	return encoder.Encode(struct {
-		RecordType   string    `json:"record_type"`
 		SnapshotTime time.Time `json:"snapshot_time"`
+		RecordType   string    `json:"record_type"`
 		RowCount     int       `json:"row_count"`
-	}{"footer", snapshotTime.UTC().Truncate(time.Microsecond), rows})
+	}{SnapshotTime: snapshotTime.UTC().Truncate(time.Microsecond), RecordType: "footer", RowCount: rows})
 }
