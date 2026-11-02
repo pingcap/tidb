@@ -180,6 +180,7 @@ go_test(
         "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/executor",
         "//pkg/expression",
         "//pkg/extension",
         "//pkg/keyspace",
