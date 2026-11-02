@@ -1045,35 +1045,6 @@ pub(super) fn materialize_physical_expression(expression: &mut Expression) {
     }
 }
 
-/// Go `StmtCtx.SetIndexForce()`'s statement-wide reach (`stats.go:165` →
-/// `plan_cost_ver2.go:1234`): every risky full table scan of the statement
-/// pays the penalty, hinted or not.
-fn stamp_statement_index_force(plan: LogicalPlan, forced: bool) -> LogicalPlan {
-    let mut visitor = StampIndexForce { forced };
-    fold_owned(&mut visitor, plan, ()).0
-}
-
-/// The stamping visitor behind [`stamp_statement_index_force`].
-struct StampIndexForce {
-    forced: bool,
-}
-
-impl OwnedRewrite for StampIndexForce {
-    type Down = ();
-    type Up = ();
-
-    fn descend(&mut self, node: &mut LogicalPlan, (): Self::Down) -> Descend<Self::Down, Self::Up> {
-        if let LogicalPlan::DataSource(source) = node {
-            source.table_scan_penalty.has_index_force = self.forced;
-        }
-        Descend::Children(vec![(); node.children().len()])
-    }
-
-    fn ascend(&mut self, node: LogicalPlan, _child_ups: Vec<()>) -> (LogicalPlan, ()) {
-        (node, ())
-    }
-}
-
 struct InitStats<'a> {
     error: Option<tidb_planner_core_base::PlanError>,
     catalog: &'a SessionExtendedInfoSchema,
@@ -2998,12 +2969,6 @@ fn optimize_built_logical(
             if self.record_used_stats.get() {
                 self.records_used_items.set(true);
             }
-            // Go reads `StmtCtx.GetIndexForce()` at PHYSICAL cost time
-            // (`plan_cost_ver2.go:1234`), after every source's deriveStats
-            // has run -- so a USE/FORCE on one occurrence surcharges every
-            // risky full scan of the statement. The walk above collected the
-            // flag; stamp the final value onto every source now.
-            let plan = stamp_statement_index_force(plan, self.context.get_index_force());
             Ok(plan)
         }
     }

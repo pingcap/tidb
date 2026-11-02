@@ -226,8 +226,6 @@ pub struct DataSource {
 pub struct TableScanPenaltyInput {
     /// Whether the scan carries `RangeInfo` (an index-join probe range).
     pub has_range_info: bool,
-    /// `tidb_opt_prefer_range_scan`.
-    pub allow_prefer_range_scan: bool,
     /// Whether the table's histogram collection is pseudo.
     pub pseudo_stats: bool,
     /// `GetAnalyzeRowCount()` truncated to an integer, as Go does.
@@ -236,8 +234,6 @@ pub struct TableScanPenaltyInput {
     pub modify_count: i64,
     /// Whether partition pruning conditions exist (a partition-level scan).
     pub has_partition_scan: bool,
-    /// Whether the statement used `USE`/`FORCE INDEX`.
-    pub has_index_force: bool,
     /// Go `getPlanCostVer24PhysicalTableScan`'s `unsignedIntHandle` (an
     /// unsigned integer primary key is the handle), which
     /// `ranger.HasFullRange` reads: such a table's full range starts at 0.

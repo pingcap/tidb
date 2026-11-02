@@ -103,15 +103,13 @@ fn serial_session() -> CostSessionOpts {
 }
 
 /// The penalty inputs for a scan of the analyzed 100-row `t`.
-fn t_penalty(has_index_force: bool) -> TableScanPenaltyInput {
+fn t_penalty() -> TableScanPenaltyInput {
     TableScanPenaltyInput {
         has_range_info: false,
-        allow_prefer_range_scan: true,
         pseudo_stats: false,
         analyze_row_count: 100,
         modify_count: 0,
         has_partition_scan: false,
-        has_index_force,
         unsigned_int_handle: false,
     }
 }
@@ -243,9 +241,10 @@ fn topn_plan(limit: u64) -> (String, String) {
             has_full_range_scan: true,
             penalty: TableScanPenaltyInput {
                 analyze_row_count: 1,
-                allow_prefer_range_scan: true,
                 ..TableScanPenaltyInput::default()
             },
+            allow_prefer_range_scan: true,
+            index_force: false,
         },
         &factors.tikv_scan,
         &vars,
@@ -321,7 +320,9 @@ fn table_range_scan_plan(rows: f64) -> (String, String) {
             row_size: int_row_size(3),
             is_child_of_inl: None,
             has_full_range_scan: false,
-            penalty: t_penalty(true),
+            penalty: t_penalty(),
+            allow_prefer_range_scan: true,
+            index_force: true,
         },
         &factors.tikv_scan,
         &vars,
@@ -406,7 +407,9 @@ fn table_full_scan_forced() -> CostVer2 {
             row_size: int_row_size(3),
             is_child_of_inl: None,
             has_full_range_scan: true,
-            penalty: t_penalty(true),
+            penalty: t_penalty(),
+            allow_prefer_range_scan: true,
+            index_force: true,
         },
         &Ver2Factors::default().tikv_scan,
         &CostFactorVars::default(),
@@ -425,7 +428,9 @@ fn test_golden_full_scan_penalty_is_charged_only_when_forced() {
             row_size: int_row_size(3),
             is_child_of_inl: None,
             has_full_range_scan: true,
-            penalty: t_penalty(false),
+            penalty: t_penalty(),
+            allow_prefer_range_scan: true,
+            index_force: false,
         },
         &Ver2Factors::default().tikv_scan,
         &CostFactorVars::default(),
@@ -679,7 +684,9 @@ fn test_golden_index_lookup_reader() {
                 row_size: int_row_size(3),
                 is_child_of_inl: Some(true),
                 has_full_range_scan: true,
-                penalty: t_penalty(true),
+                penalty: t_penalty(),
+                allow_prefer_range_scan: true,
+                index_force: true,
             },
             &factors.tikv_scan,
             &vars,
@@ -723,7 +730,9 @@ fn join_inputs() -> (CostVer2, CostVer2) {
                 row_size: int_row_size(3),
                 is_child_of_inl: None,
                 has_full_range_scan: full_range,
-                penalty: t_penalty(false),
+                penalty: t_penalty(),
+                allow_prefer_range_scan: true,
+                index_force: false,
             },
             &factors.tikv_scan,
             &vars,
@@ -938,10 +947,11 @@ fn test_golden_true_card_cost_trace() {
             is_child_of_inl: None,
             has_full_range_scan: true,
             penalty: TableScanPenaltyInput {
-                allow_prefer_range_scan: true,
                 pseudo_stats: true,
                 ..TableScanPenaltyInput::default()
             },
+            allow_prefer_range_scan: true,
+            index_force: false,
         },
         &factors.tikv_scan,
         &vars,
@@ -1068,6 +1078,8 @@ fn test_source_scan_clamps_apply_to_every_scan_but_a_row_id_scan() {
         is_child_of_inl,
         has_full_range_scan: false,
         penalty: TableScanPenaltyInput::default(),
+        allow_prefer_range_scan: true,
+        index_force: false,
     };
     // Not a row-id scan: 0.4 rows become 1 and 1.5 bytes become MIN_ROW_SIZE.
     let clamped = table_scan_cost(None, input(None), &factors.tikv_scan, &vars);

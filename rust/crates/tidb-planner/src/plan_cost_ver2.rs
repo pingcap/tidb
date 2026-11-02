@@ -683,8 +683,15 @@ pub fn index_scan_cost(
 }
 
 /// `getTableScanPenalty`: the extra row count charged to a risky full scan.
+/// Go reads `allow_prefer_range_scan` (`SessionVars.GetAllowPreferRangeScan()`)
+/// and `index_force` (`StmtCtx.GetIndexForce()`) at cost time.
 #[must_use]
-pub fn table_scan_penalty(input: TableScanPenaltyInput, rows: f64) -> f64 {
+pub fn table_scan_penalty(
+    input: TableScanPenaltyInput,
+    allow_prefer_range_scan: bool,
+    index_force: bool,
+    rows: f64,
+) -> f64 {
     if input.has_range_info {
         return 0.0;
     }
@@ -693,9 +700,9 @@ pub fn table_scan_penalty(input: TableScanPenaltyInput, rows: f64) -> f64 {
     let has_low_estimate = rows > 1.0
         && input.modify_count < input.analyze_row_count
         && (rows as i64) <= input.modify_count;
-    let prefer_range_scan_condition = input.allow_prefer_range_scan
+    let prefer_range_scan_condition = allow_prefer_range_scan
         && (has_unreliable_stats || has_high_modify_count || has_low_estimate);
-    if !(input.has_index_force || prefer_range_scan_condition) {
+    if !(index_force || prefer_range_scan_condition) {
         return 0.0;
     }
     let min_rows = MAX_PENALTY_ROW_COUNT.max(rows);
@@ -718,6 +725,10 @@ pub struct TableScanInput {
     pub has_full_range_scan: bool,
     /// The penalty inputs.
     pub penalty: TableScanPenaltyInput,
+    /// `SessionVars.GetAllowPreferRangeScan()`.
+    pub allow_prefer_range_scan: bool,
+    /// `StmtCtx.GetIndexForce()`.
+    pub index_force: bool,
 }
 
 /// `getPlanCostVer24PhysicalTableScan` for a non-TiFlash store.
@@ -744,7 +755,12 @@ pub fn table_scan_cost(
 
     let mut cost = scan_cost(option, rows, row_size, scan_factor);
     if !is_row_id_scan && input.has_full_range_scan {
-        let penalty_rows = table_scan_penalty(input.penalty, rows);
+        let penalty_rows = table_scan_penalty(
+            input.penalty,
+            input.allow_prefer_range_scan,
+            input.index_force,
+            rows,
+        );
         if penalty_rows > 0.0 {
             cost = sum_cost_ver2(&[cost, scan_cost(option, penalty_rows, row_size, scan_factor)]);
         }

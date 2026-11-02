@@ -159,15 +159,11 @@ pub fn init_stats(
     );
     source.table_scan_penalty = tidb_planner_core_operator_logicalop::data_source::TableScanPenaltyInput {
         has_range_info: false,
-        // Go's `tidb_opt_prefer_range_scan` default is ON. This executor
-        // does not expose a session override yet.
-        allow_prefer_range_scan: true,
         pseudo_stats: statistics.is_none_or(|statistics| statistics.hist_coll.pseudo),
         analyze_row_count: statistics
             .map_or(-1, |statistics| statistics.hist_coll.analyze_row_count() as i64),
         modify_count: statistics.map_or(0, |statistics| statistics.hist_coll.modify_count),
         has_partition_scan: false,
-        has_index_force: false,
         unsigned_int_handle: source.handle_is_int
             && source
                 .handle_cols

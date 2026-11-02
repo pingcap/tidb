@@ -3473,7 +3473,12 @@ fn render_physical_plan(
     if matches!(format, ExplainFormat::TidbJson | ExplainFormat::Binary) {
         // Go's binary operator carries `getPlanCost` (cost model ver2).
         let coster = matches!(format, ExplainFormat::Binary).then(|| {
-            Ver2Coster::from_env(statement_context.optimizer_cost_env()).with_explain_cache()
+            Ver2Coster::from_env(statement_context.optimizer_cost_env())
+                .with_scan_penalty_vars(
+                    statement_context.allow_prefer_range_scan(),
+                    statement_context.get_index_force(),
+                )
+                .with_explain_cache()
         });
         let roots = physical_explain_roots(
             coster.as_ref(),
@@ -3521,6 +3526,10 @@ fn render_physical_plan(
     ))
     .then(|| {
         let coster = Ver2Coster::from_env(statement_context.optimizer_cost_env())
+            .with_scan_penalty_vars(
+                statement_context.allow_prefer_range_scan(),
+                statement_context.get_index_force(),
+            )
             .with_explain_cache();
         if matches!(format, ExplainFormat::CostTrace) {
             // go prices `ExplainFormatCostTrace` with
@@ -3901,7 +3910,9 @@ pub fn query_plan_cost(
         )));
     }
     crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
-    let coster = Ver2Coster::from_env(ctx.optimizer_cost_env()).with_explain_cache();
+    let coster = Ver2Coster::from_env(ctx.optimizer_cost_env())
+        .with_scan_penalty_vars(ctx.allow_prefer_range_scan(), ctx.get_index_force())
+        .with_explain_cache();
     Ok(coster
         .plan_cost(&physical, tidb_planner_property::task_type::TaskType::Root, false)
         .value())

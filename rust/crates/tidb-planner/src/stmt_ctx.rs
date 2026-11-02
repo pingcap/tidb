@@ -178,6 +178,9 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn opt_prefix_index_single_scan(&self) -> bool {
         StmtContext::opt_prefix_index_single_scan(self)
     }
+    fn allow_prefer_range_scan(&self) -> bool {
+        StmtContext::allow_prefer_range_scan(self)
+    }
     fn index_merge(&self) -> bool {
         StmtContext::index_merge(self)
     }

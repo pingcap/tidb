@@ -77,6 +77,10 @@ pub struct Ver2Coster {
     factors: Ver2Factors,
     session_factors: CostFactorVars,
     session: CostSessionOpts,
+    /// Go `SessionVars.GetAllowPreferRangeScan()`, read by `getTableScanPenalty`.
+    allow_prefer_range_scan: bool,
+    /// Go `StmtCtx.GetIndexForce()`, read by `getTableScanPenalty`.
+    index_force: bool,
     cost_option: Option<tidb_planner_costusage::PlanCostOption>,
     // Go stores costs on physical nodes. EXPLAIN uses a temporary cache over
     // its immutable retained tree so child rendering reuses recursive costs.
@@ -135,6 +139,8 @@ impl Ver2Coster {
             factors,
             session_factors,
             session,
+            allow_prefer_range_scan: tidb_vardef::defaults::DEF_OPT_PREFER_RANGE_SCAN,
+            index_force: false,
             cost_option: None,
             explain_costs: None,
         }
@@ -147,9 +153,20 @@ impl Ver2Coster {
             factors: env.factors.clone(),
             session_factors: env.cost_factors.clone(),
             session: env.session.clone(),
+            allow_prefer_range_scan: tidb_vardef::defaults::DEF_OPT_PREFER_RANGE_SCAN,
+            index_force: false,
             cost_option: None,
             explain_costs: None,
         }
+    }
+
+    /// The statement's `tidb_opt_prefer_range_scan` and `StmtCtx.IndexForce`,
+    /// which Go's `getTableScanPenalty` reads at cost time.
+    #[must_use]
+    pub fn with_scan_penalty_vars(mut self, allow_prefer_range_scan: bool, index_force: bool) -> Self {
+        self.allow_prefer_range_scan = allow_prefer_range_scan;
+        self.index_force = index_force;
+        self
     }
 
     /// Cache costs while rendering one immutable retained plan forest.
@@ -439,6 +456,8 @@ impl Ver2Coster {
                                     scan.table_scan_penalty.unsigned_int_handle,
                                 ),
                             penalty: scan.table_scan_penalty,
+                            allow_prefer_range_scan: self.allow_prefer_range_scan,
+                            index_force: self.index_force,
                         },
                         self.factors.task_scan(
                             scan.is_temporary,

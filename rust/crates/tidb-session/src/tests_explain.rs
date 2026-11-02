@@ -5275,6 +5275,25 @@ fn verbose_explain_reports_statement_costs_and_runtime_columns() {
     assert!(update.iter().skip(1).all(|row| row[2].parse::<f64>().is_ok()), "{update:?}");
 }
 
+/// Go `getTableScanPenalty` reads `tidb_opt_prefer_range_scan` from the
+/// session at cost time: OFF, a pseudo-stats full scan pays no penalty
+/// (Go's costs, from gorun).
+#[test]
+fn table_scan_penalty_follows_prefer_range_scan() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t(a INT, b INT, KEY(b))").unwrap();
+    let query = "EXPLAIN FORMAT=verbose SELECT * FROM t";
+    let costs = |session: &mut Session| {
+        row_text(session.run(query))
+            .iter()
+            .map(|row| row[2].clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(costs(&mut session), ["387557.30", "4546159.48"]);
+    session.run("SET tidb_opt_prefer_range_scan = 0").unwrap();
+    assert_eq!(costs(&mut session), ["236018.65", "2273079.74"]);
+}
+
 /// Go TestOrderingIdxSelectivityRatioForJoin: the ordering penalty must
 /// reach the chosen index join through the ordinary child-cost lifecycle.
 #[test]

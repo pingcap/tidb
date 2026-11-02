@@ -62,6 +62,8 @@ pub trait OptimizeContext: tidb_exprctx::Columns + PlanCacheMarker + HintWarning
     fn opt_index_prune_threshold(&self) -> i32;
     /// Go `SessionVars.OptPrefixIndexSingleScan`.
     fn opt_prefix_index_single_scan(&self) -> bool;
+    /// Go `SessionVars.GetAllowPreferRangeScan()`.
+    fn allow_prefer_range_scan(&self) -> bool;
     /// Go `SessionVars.GetEnableIndexMerge()`.
     fn index_merge(&self) -> bool;
     /// Go `StmtCtx.NoIndexMergeHint`.
@@ -415,7 +417,8 @@ pub fn physical_optimize<C: OptimizeContext>(
 ) -> Result<PhysicalPlan, PlanError> {
     let begin_physical_opt = ctx.take_begin_physical_opt().unwrap_or_else(Instant::now);
     let optimizer_cost_env = ctx.optimizer_cost_env();
-    let coster = Ver2Coster::from_env(optimizer_cost_env);
+    let coster = Ver2Coster::from_env(optimizer_cost_env)
+        .with_scan_penalty_vars(ctx.allow_prefer_range_scan(), ctx.get_index_force());
     let evaluate = tidb_ranger::points::StatementRangerEvaluator(ctx);
     let mut dispatch = DispatchContext::new(
         plan_ids,
@@ -433,6 +436,7 @@ pub fn physical_optimize<C: OptimizeContext>(
     .with_tiflash_pre_agg_mode(ctx.tiflash_pre_agg_mode())
     .with_partial_ordered_index_for_topn(ctx.partial_ordered_index_for_topn())
     .with_opt_prefix_index_single_scan(ctx.opt_prefix_index_single_scan())
+    .with_allow_prefer_range_scan(ctx.allow_prefer_range_scan())
     .with_mpp_warning_sink(ctx)
     .with_plan_cache(
         tidb_exprctx::Columns::use_plan_cache(ctx),
@@ -483,6 +487,7 @@ pub fn physical_optimize<C: OptimizeContext>(
     // where `postOptimize` later put an operator between a parent and its
     // child. Keep the enumeration-time costs on the nodes the same way.
     Ver2Coster::from_env(optimizer_cost_env)
+        .with_scan_penalty_vars(ctx.allow_prefer_range_scan(), ctx.get_index_force())
         .with_explain_cache()
         .record_enumeration_costs(&mut physical);
     // Go physicalOptimize: "collect the warnings from task". Every task

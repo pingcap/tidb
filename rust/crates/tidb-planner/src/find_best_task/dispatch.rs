@@ -191,8 +191,7 @@ pub struct DispatchContext<'a> {
     /// Go `SessionVars.GetAllowPreferRangeScan()` (`tidb_opt_prefer_range_scan`,
     /// default ON): under unreliable statistics a range-scan path carrying an
     /// `=`/`IN` prefix wins over a full table scan even when its estimated
-    /// cost is higher. The executor does not expose the session override yet,
-    /// so callers use Go's default.
+    /// cost is higher.
     pub prefer_range_scan: bool,
     /// Go `BaseLogicalPlan.taskMap`, keyed by the logical plan object and
     /// property. Numeric plan IDs are explain identities and are deliberately
@@ -593,7 +592,7 @@ impl<'a> DispatchContext<'a> {
 
     /// Go `SessionVars.GetAllowPreferRangeScan()`.
     #[must_use]
-    pub const fn get_allow_prefer_range_scan(mut self, value: bool) -> Self {
+    pub const fn with_allow_prefer_range_scan(mut self, value: bool) -> Self {
         self.prefer_range_scan = value;
         self
     }
