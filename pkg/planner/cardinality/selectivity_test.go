@@ -1257,6 +1257,33 @@ func TestRangeStepOverflow(t *testing.T) {
 	tk.MustQuery("select * from t where col between '8499-1-23 2:14:38' and '9961-7-23 18:35:26'").Check(testkit.Rows())
 }
 
+// A TIMESTAMP range bound with no instant to convert, such as '2017-00-15', must not fail the
+// estimation in a session whose time zone isn't exactly UTC and fall back to the default selectivity.
+func TestInvalidTimestampBoundEstimationInNonUTCSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@time_zone = 'UTC'")
+	tk.MustExec("create table t (a int primary key, ts timestamp(6) null)")
+	values := make([]string, 0, 500)
+	for i := range 500 {
+		values = append(values, fmt.Sprintf("(%d, date_add('2017-02-20', interval %d minute))", i, i*55))
+	}
+	tk.MustExec("insert into t values " + strings.Join(values, ","))
+	tk.MustExec("analyze table t with 0 topn, 16 buckets")
+
+	estimate := func(timeZone, predicate string) string {
+		tk.MustExec("set @@time_zone = '" + timeZone + "'")
+		return tk.MustQuery("explain format = 'brief' select * from t where " + predicate).Rows()[0][1].(string)
+	}
+	for _, timeZone := range []string{"+00:00", "Asia/Shanghai", "America/New_York"} {
+		// Every row is after the bound, in any of these time zones.
+		require.Equal(t, "500.00", estimate(timeZone, "ts >= '2017-00-15'"), timeZone)
+	}
+	// +00:00 differs from UTC only in how the time zone is spelled, so the estimates must match.
+	require.Equal(t, estimate("UTC", "ts >= '2017-03-00'"), estimate("+00:00", "ts >= '2017-03-00'"))
+}
+
 func TestSmallRangeEstimation(t *testing.T) {
 	// Create mock table info
 	tblInfo := &model.TableInfo{

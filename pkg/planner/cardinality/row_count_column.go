@@ -90,6 +90,12 @@ func toStatsTimeZone(loc *time.Location, d *types.Datum) error {
 		return nil
 	}
 	if err := t.ConvertTimeZone(loc, time.UTC); err != nil {
+		// A value with no instant to shift, such as '2017-00-15' or a wall clock skipped by a DST
+		// change, can still be a range bound. Estimate it unshifted, as a UTC session would, rather
+		// than failing the estimation and falling back to the default selectivity.
+		if types.ErrWrongValue.Equal(err) {
+			return nil
+		}
 		return err
 	}
 	d.SetMysqlTime(t)
