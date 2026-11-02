@@ -25863,3 +25863,42 @@ fn concurrent_create_tables_go_through_one_submit_loop() {
     created.sort();
     assert_eq!(created, (0..8).map(|worker| format!("fast_{worker}")).collect::<Vec<_>>(), "{jobs:?}");
 }
+
+/// Go `sysvar.go`'s GC variables live in `mysql.tidb` (what the GC worker
+/// reads): SET GLOBAL writes the `tikv_gc_*` row (ON/OFF as true/false,
+/// `tidb_gc_concurrency` with its auto switch), and `@@global` reads it back,
+/// a direct edit of the row included. Pinned to the Go oracle's answers.
+#[test]
+fn gc_variables_live_in_mysql_tidb_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(181))
+        .expect("session opens");
+    let mut query = |sql: &str| displayed(rows(&mut session, sql));
+    query("set global tidb_gc_enable = OFF");
+    assert_eq!(
+        query("select variable_value from mysql.tidb where variable_name = 'tikv_gc_enable'"),
+        [["false"]]
+    );
+    assert_eq!(query("select @@global.tidb_gc_enable"), [["0"]]);
+    query("update mysql.tidb set variable_value = 'true' where variable_name = 'tikv_gc_enable'");
+    assert_eq!(query("select @@global.tidb_gc_enable"), [["1"]]);
+    query("set global tidb_gc_concurrency = 5");
+    assert_eq!(
+        query(
+            "select variable_name, variable_value from mysql.tidb where variable_name in \
+             ('tikv_gc_auto_concurrency', 'tikv_gc_concurrency') order by variable_name"
+        ),
+        [["tikv_gc_auto_concurrency", "false"], ["tikv_gc_concurrency", "5"]]
+    );
+    assert_eq!(query("select @@global.tidb_gc_concurrency"), [["5"]]);
+    query("set global tidb_gc_concurrency = -1");
+    assert_eq!(query("select @@global.tidb_gc_concurrency"), [["-1"]]);
+    query("set global tidb_gc_life_time = '20m'");
+    assert_eq!(
+        query("select variable_value from mysql.tidb where variable_name = 'tikv_gc_life_time'"),
+        [["20m0s"]]
+    );
+    assert_eq!(query("select @@global.tidb_gc_life_time"), [["20m0s"]]);
+}

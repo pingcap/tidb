@@ -77,6 +77,28 @@ Oracle: `./gorun` refuses FLASHBACK because its store has no
   v1/v2, `get_recover_args`). Test `recover_args_encode_and_decode_as_go`
   compares against `testdata/recover_args_go.txt`, the bytes Go's own
   model package writes.
+- [x] M1b (prerequisite found 2026-11-03; done): the GC system variables'
+  `mysql.tidb` backing. In Go, `tidb_gc_enable`, `tidb_gc_run_interval`,
+  `tidb_gc_life_time`, `tidb_gc_concurrency` and `tidb_gc_scan_lock_mode`
+  have GetGlobal / SetGlobal hooks (`sysvar.go:1060-1097`) that read and
+  write the `tikv_gc_*` rows of `mysql.tidb` (`getTiDBTableValue` /
+  `setTiDBTableValue`, which convert ON/OFF to true/false). Rust has
+  neither: `SET GLOBAL tidb_gc_enable = OFF` writes only
+  `mysql.global_variables`, and the GC worker (`tidb-gcworker`, which reads
+  `mysql.tidb`) never sees it. `gcutil.DisableGC` / `EnableGC` /
+  `CheckGCEnable`, which recover depends on, go through exactly these
+  hooks.
+  - The write side is `set_global_sys_var_through` in
+    `tidb-session/src/variables.rs`. Go runs the hook before persisting
+    `mysql.global_variables`.
+  - The read side is `GlobalSysvars::cached_global`, Go
+    `Domain.GetGlobalVar`, in `tidb-domain/src/global_sysvars.rs`.
+  - Done: `GlobalSysvars` has a GetGlobal hook registry beside the
+    SetGlobal one, and `Domain::shared` registers both for the five
+    variables (`register_gc_tidb_table_hooks`, over a pooled internal
+    session). The SET statement's scratch copy shares only the SetGlobal
+    hooks: its own reads must see the value being assigned. Test
+    `gc_variables_live_in_mysql_tidb_as_go`, pinned to the gorun answers.
 - [ ] M2: job handlers. `onRecoverTable` and `recoverTable` in a new
   `cluster_ddl/recover_table.rs`, dispatched from `cluster_ddl.rs` (next to
   the CREATE TABLE arms), plus the finish hook that re-enables GC.

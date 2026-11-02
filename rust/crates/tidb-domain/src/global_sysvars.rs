@@ -57,6 +57,9 @@ pub struct GlobalSysvars {
     /// Go `SysVar.SetGlobal` hooks other packages registered, by lowercase
     /// variable name.
     set_global_hooks: SetGlobalHooks,
+    /// Go `SysVar.GetGlobal` hooks other packages registered, by lowercase
+    /// variable name.
+    get_global_hooks: GetGlobalHooks,
     pd_region_policy: Arc<RwLock<Option<Arc<dyn PdRegionPolicy>>>>,
     external_timestamp: Arc<RwLock<Option<Arc<dyn ExternalTimestampProvider>>>>,
     /// Go `Domain.sysVarCache`: the global and session views every read and
@@ -158,10 +161,24 @@ impl std::fmt::Debug for SetGlobalHooks {
     }
 }
 
+/// Go `SysVar.GetGlobal` registered from outside the registry: the global
+/// value read from where the hook keeps it.
+pub type GetGlobalHook = Arc<dyn Fn() -> String + Send + Sync>;
+
+#[derive(Clone, Default)]
+struct GetGlobalHooks(Arc<RwLock<HashMap<String, GetGlobalHook>>>);
+
+impl std::fmt::Debug for GetGlobalHooks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("GetGlobalHooks")
+    }
+}
+
 impl Default for GlobalSysvars {
     fn default() -> Self {
         Self {
             set_global_hooks: SetGlobalHooks::default(),
+            get_global_hooks: GetGlobalHooks::default(),
             external_timestamp: Arc::default(),
             pd_region_policy: Arc::default(),
             cache: Arc::default(),
@@ -477,8 +494,32 @@ impl GlobalSysvars {
     /// so a statement's scratch copy runs the node's hooks.
     #[must_use]
     pub fn sharing_set_global_hooks(mut self, other: &Self) -> Self {
+        // Not the GetGlobal hooks: the statement's own reads of its scratch
+        // copy are of the values it assigns, which a hook would replace with
+        // the stored ones (Go hands SetGlobal the assigned value directly).
         self.set_global_hooks = other.set_global_hooks.clone();
         self
+    }
+
+    /// Go `variable.RegisterSysVar`'s `GetGlobal` for `name`, from a package
+    /// outside the registry.
+    pub fn register_get_global_hook(&self, name: &str, hook: GetGlobalHook) {
+        self.get_global_hooks
+            .0
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(name.to_ascii_lowercase(), hook);
+    }
+
+    fn run_get_global_hook(&self, name: &str) -> Option<String> {
+        let hook = self
+            .get_global_hooks
+            .0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&name.to_ascii_lowercase())
+            .cloned();
+        hook.map(|hook| hook())
     }
 
     /// Go `variable.RegisterSysVar`'s `SetGlobal` for `name`, from a
@@ -609,6 +650,9 @@ impl GlobalSysvars {
 
     /// Reads a node-wide value; oracle-backed variables bypass the cached image.
     pub fn get(&self, name: &str) -> Result<String, VarError> {
+        if let Some(value) = self.run_get_global_hook(name) {
+            return Ok(value);
+        }
         if name.eq_ignore_ascii_case("tidb_external_ts") {
             if let Some(provider) = self.external_timestamp_provider() {
                 return provider
@@ -864,6 +908,9 @@ impl GlobalSysvars {
     /// [`Self::get`].
     pub fn get_by_registry_index(&self, index: usize) -> Result<String, VarError> {
         let def = &tidb_variable::sysvar::SYS_VARS[index];
+        if let Some(value) = self.run_get_global_hook(def.name) {
+            return Ok(value);
+        }
         if def.name == "tidb_external_ts" {
             return self.get(def.name);
         }

@@ -818,6 +818,7 @@ impl Domain {
         Arc::new_cyclic(|factory| {
             self.binding_session_factory = factory.clone();
             let _ = self.schema_builder_domain.set(factory.clone());
+            register_gc_tidb_table_hooks(&self.global_vars, factory);
             self
         })
     }
@@ -3576,5 +3577,145 @@ impl tidb_sqlexec::SqlExecutor for CachedTableSessionExecutor {
         statement: &tidb_ast::Stmt,
     ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
         self.executor()?.execute_stmt(context, statement)
+    }
+}
+
+/// Go `sysvar.go`'s GC variables: their GetGlobal / SetGlobal read and write
+/// the `tikv_gc_*` rows of `mysql.tidb` (`getTiDBTableValue` /
+/// `setTiDBTableValue`), which the GC worker reads.
+fn register_gc_tidb_table_hooks(globals: &tidb_domain::global_sysvars::GlobalSysvars, domain: &Weak<Domain>) {
+    use tidb_vardef::tidb_vars::{
+        TIDB_GC_CONCURRENCY, TIDB_GC_ENABLE, TIDB_GC_LIFETIME, TIDB_GC_RUN_INTERVAL,
+        TIDB_GC_SCAN_LOCK_MODE,
+    };
+    let tidb_table = Arc::new(TiDBTableValues(domain.clone()));
+    let getter = |key: &'static str, default: &'static str| {
+        let tidb_table = Arc::clone(&tidb_table);
+        Arc::new(move || tidb_table.get_tidb_table_value_or(key, default))
+            as tidb_domain::global_sysvars::GetGlobalHook
+    };
+    let setter = |key: &'static str, comment: &'static str| {
+        let tidb_table = Arc::clone(&tidb_table);
+        Arc::new(move |value: &str| tidb_table.set_tidb_table_value(key, value, comment))
+            as tidb_domain::global_sysvars::SetGlobalHook
+    };
+    globals.register_get_global_hook(TIDB_GC_ENABLE, getter("tikv_gc_enable", "ON"));
+    globals.register_set_global_hook(TIDB_GC_ENABLE, setter("tikv_gc_enable", "Current GC enable status"));
+    globals.register_get_global_hook(TIDB_GC_RUN_INTERVAL, getter("tikv_gc_run_interval", "10m0s"));
+    globals.register_set_global_hook(
+        TIDB_GC_RUN_INTERVAL,
+        setter("tikv_gc_run_interval", "GC run interval, at least 10m, in Go format."),
+    );
+    globals.register_get_global_hook(TIDB_GC_LIFETIME, getter("tikv_gc_life_time", "10m0s"));
+    globals.register_set_global_hook(
+        TIDB_GC_LIFETIME,
+        setter(
+            "tikv_gc_life_time",
+            "All versions within life time will not be collected by GC, at least 10m, in Go format.",
+        ),
+    );
+    globals.register_get_global_hook(TIDB_GC_CONCURRENCY, {
+        let tidb_table = Arc::clone(&tidb_table);
+        Arc::new(move || {
+            if tidb_table.get_tidb_table_value_or("tikv_gc_auto_concurrency", "ON") == "ON" {
+                // The convention for "AUTO".
+                return "-1".to_owned();
+            }
+            tidb_table.get_tidb_table_value_or("tikv_gc_concurrency", "-1")
+        })
+    });
+    globals.register_set_global_hook(TIDB_GC_CONCURRENCY, {
+        let tidb_table = Arc::clone(&tidb_table);
+        Arc::new(move |value: &str| {
+            let auto_concurrency = if value == "-1" { "ON" } else { "OFF" };
+            // Both the auto switch and the concurrency.
+            tidb_table.set_tidb_table_value(
+                "tikv_gc_auto_concurrency",
+                auto_concurrency,
+                "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used",
+            )?;
+            tidb_table.set_tidb_table_value(
+                "tikv_gc_concurrency",
+                value,
+                "How many goroutines used to do GC parallel, [1, 256], default 2",
+            )
+        })
+    });
+    globals.register_get_global_hook(TIDB_GC_SCAN_LOCK_MODE, getter("tikv_gc_scan_lock_mode", "LEGACY"));
+    globals.register_set_global_hook(
+        TIDB_GC_SCAN_LOCK_MODE,
+        setter("tikv_gc_scan_lock_mode", "Mode of scanning locks, \"physical\" or \"legacy\""),
+    );
+}
+
+/// Go `GlobalVarAccessor.GetTiDBTableValue` / `SetTiDBTableValue`, on one of
+/// the domain's internal sessions.
+struct TiDBTableValues(Weak<Domain>);
+
+impl TiDBTableValues {
+    fn with_session<T>(
+        &self,
+        run: impl FnOnce(&dyn crate::sys_session::DomainSysSession) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let domain = self.0.upgrade().ok_or_else(|| "the domain is not running".to_owned())?;
+        domain
+            .advanced_sys_session_pool()
+            .with_session(|lease| {
+                lease.with_session_context(|context| {
+                    run(context).map_err(tidb_syssession::SysSessionError::new)
+                })
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    /// Go `getTiDBTableValue`: `true`/`false` read as ON/OFF; the default
+    /// when the row cannot be read.
+    fn get_tidb_table_value_or(&self, name: &str, default: &str) -> String {
+        let sql = tidb_sqlescape::escape_sql(
+            "SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME=%?",
+            &[tidb_sqlescape::SqlArg::String(name.as_bytes())],
+        );
+        let value = sql
+            .map_err(|error| error.to_string())
+            .and_then(|sql| {
+                self.with_session(|session| session.query_internal(&String::from_utf8_lossy(&sql)))
+            })
+            .ok()
+            .and_then(|rows| rows.into_iter().next())
+            .and_then(|row| row.into_iter().next())
+            .and_then(|value| match value {
+                tidb_datatype::Datum::String(text) => {
+                    Some(String::from_utf8_lossy(text.bytes()).into_owned())
+                }
+                tidb_datatype::Datum::Bytes(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
+                _ => None,
+            });
+        match value {
+            Some(value) if value.eq_ignore_ascii_case("true") => "ON".to_owned(),
+            Some(value) if value.eq_ignore_ascii_case("false") => "OFF".to_owned(),
+            Some(value) => value,
+            None => default.to_owned(),
+        }
+    }
+
+    /// Go `setTiDBTableValue`: ON/OFF stored as `true`/`false`.
+    fn set_tidb_table_value(&self, name: &str, value: &str, comment: &str) -> Result<(), String> {
+        let value = if value.eq_ignore_ascii_case("ON") {
+            "true"
+        } else if value.eq_ignore_ascii_case("OFF") {
+            "false"
+        } else {
+            value
+        };
+        let sql = tidb_sqlescape::escape_sql(
+            "REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)",
+            &[
+                tidb_sqlescape::SqlArg::String(name.as_bytes()),
+                tidb_sqlescape::SqlArg::String(value.as_bytes()),
+                tidb_sqlescape::SqlArg::String(comment.as_bytes()),
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+        self.with_session(|session| session.execute_internal_write(&String::from_utf8_lossy(&sql)).map(drop))
     }
 }
