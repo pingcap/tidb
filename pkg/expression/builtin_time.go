@@ -4380,6 +4380,11 @@ func (c *unixTimestampFunctionClass) getFunction(ctx BuildContext, args []Expres
 			// Treat types.ETString as unspecified decimal.
 			retDecimal = types.UnspecifiedLength
 			if cnst, ok := args[0].(*Constant); ok {
+				// The current string value determines both the return kind and scale.
+				// A later parameter value cannot reuse this builtin signature safely.
+				if MaybeOverOptimized4PlanCache(ctx, cnst) {
+					ctx.SetSkipPlanCache("UNIX_TIMESTAMP result type depends on a mutable string argument")
+				}
 				tmpStr, _, err := cnst.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 				if err != nil {
 					return nil, err
