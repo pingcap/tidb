@@ -856,8 +856,6 @@ func (w *indexIngestWorker) initSessCtx() error {
 		}
 		w.restore = restoreSessCtx(sessCtx)
 		if err := initSessCtx(sessCtx, w.reorgMeta); err != nil {
-			w.restore(sessCtx)
-			w.sessPool.Put(sessCtx)
 			return err
 		}
 		w.se = session.NewSession(sessCtx)
