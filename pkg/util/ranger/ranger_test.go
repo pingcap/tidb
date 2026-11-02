@@ -2661,3 +2661,65 @@ func TestBinCollationRangeForIndex(t *testing.T) {
 	require.Equal(t, "[eq(test.t.f, abc)]", expression.StringifyExpressionsWithCtx(ectx, remainedConds))
 	require.Equal(t, "[[\"\\x00A\\x00B\\x00C\",\"\\x00A\\x00B\\x00C\"]]", fmt.Sprintf("%v", ranges))
 }
+
+func TestInvalidTimestampRange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	for _, zone := range []string{"UTC", "+00:00", "Etc/UTC", "+08:00", "-05:00", "America/New_York"} {
+		t.Run(zone, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set time_zone = '" + zone + "'")
+			tk.MustExec("set sql_mode = 'ALLOW_INVALID_DATES'")
+			tk.MustExec("drop table if exists timestamp_range")
+			tk.MustExec("create table timestamp_range (k int, ts timestamp(6) null, index idx(k, ts), index ts_idx(ts))")
+			tk.MustExec(`insert into timestamp_range values
+				(0, '2017-02-28 00:00:00'), (1, '2017-02-28 00:00:00'),
+				(1, '2017-02-28 23:59:59.999999'), (1, '2017-03-01 00:00:00'),
+				(1, '2017-03-02 00:00:00'), (2, '2017-03-01 00:00:00'),
+				(1, '0000-00-00 00:00:00'), (1, null)`)
+			for _, bound := range []string{"cast('2017-02-30' as date)", "cast('2017-03-00 12:00:00' as datetime)", "cast('2017-00-10' as date)"} {
+				for _, op := range []string{"<", "<=", ">", ">=", "=", "!=", "<=>"} {
+					for _, idx := range []string{"idx", "ts_idx"} {
+						t.Run(bound+op+idx, func(t *testing.T) {
+							query := "select k, ts from timestamp_range %s where k = 1 and ts " + op + " " + bound + " order by k, ts"
+							expected := tk.MustQuery(fmt.Sprintf(query, "ignore index (idx, ts_idx)")).Rows()
+							require.Equal(t, expected, tk.MustQuery(fmt.Sprintf(query, "force index ("+idx+")")).Rows())
+						})
+					}
+				}
+			}
+			for _, predicate := range []string{
+				"k = 1 and ts >= cast('2017-02-28' as datetime) and ts < cast('2017-02-30' as date)",
+				"k = 1 and ts >= cast('2017-02-30' as date) and ts < cast('2017-03-02' as datetime)",
+				"k = 1 and ts in (cast('2017-02-30' as date), cast('2017-03-01' as date))",
+				"k = 1 and (ts < cast('2017-02-30' as date) or ts >= cast('2017-03-02' as date))",
+				"(k = 1 and ts < cast('2017-02-30' as date)) or (k = 2 and ts >= cast('2017-03-00' as date))",
+			} {
+				query := "select k, ts from timestamp_range %s where " + predicate + " order by k, ts"
+				expected := tk.MustQuery(fmt.Sprintf(query, "ignore index (idx, ts_idx)")).Rows()
+				tk.MustQuery(fmt.Sprintf(query, "force index (idx)")).Check(expected)
+			}
+
+			// A rejected timestamp bound must retain the preceding equality and the original filter.
+			tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("timestamp_range"))
+			require.NoError(t, err)
+			sctx := tk.Session()
+			for _, op := range []string{"<", ">="} {
+				selection := getSelectionFromQuery(t, sctx, "select * from timestamp_range where k = 1 and ts "+op+" cast('2017-02-30' as date)")
+				cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Meta().Columns, selection.Schema().Columns, tbl.Meta().Indices[0])
+				res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), selection.Conditions, cols, lengths, 0)
+				require.NoError(t, err)
+				require.Equal(t, "[[1,1]]", fmt.Sprint(res.Ranges))
+				require.Len(t, res.AccessConds, 1)
+				require.Len(t, res.RemainedConds, 1)
+				require.Contains(t, expression.StringifyExpressionsWithCtx(sctx.GetExprCtx().GetEvalCtx(), res.RemainedConds), "2017-02-30")
+				ranges, access, remained, err := ranger.BuildColumnRange(res.RemainedConds, sctx.GetRangerCtx(), cols[1].RetType, types.UnspecifiedLength, 0)
+				require.NoError(t, err)
+				require.Equal(t, "[[NULL,+inf]]", fmt.Sprint(ranges))
+				require.Empty(t, access)
+				require.Equal(t, res.RemainedConds, remained)
+				checkRangeFallbackAndReset(t, sctx, false)
+			}
+		})
+	}
+}
