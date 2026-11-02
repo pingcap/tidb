@@ -452,34 +452,19 @@ fn table_exists_in_owner(schema: &str, name: &str) -> DdlPlanError {
 
 /// One step publishing a new object under a new version.
 fn object_step(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
-    mut mutations: Vec<BufferMutation>,
     diff: SchemaDiff,
     info: &TableInfo,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    let schema_version = catalog.schema_meta_version() + 1;
-    let diff = SchemaDiff {
-        version: schema_version,
-        ..diff
-    };
-    mutations.push(BufferMutation::set(
-        key::schema_version_kv_key(),
-        value::encode_int_value(schema_version),
-    )?);
-    mutations.push(BufferMutation::set(
-        key::schema_diff_kv_key(schema_version),
-        value::serialize_schema_diff(&diff)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-    )?);
-    active.job.last_schema_version = schema_version;
+    let (schema_version, diff) = update_schema_version(&txn.meta(), active, diff)?;
     active.job.finish_table_job(
         JobState::DONE,
         SchemaState::PUBLIC,
         schema_version,
         Some(GoShared::new(info.clone_like_go())),
     );
-    let mut write = job_only_write(active.job.id, mutations);
+    let mut write = job_only_write(active.job.id, Vec::new());
     write.schema_version = schema_version;
     write.diff = diff;
     write.created_id = Some(info.id);
@@ -487,8 +472,8 @@ fn object_step(
 }
 
 /// Go `onCreateView`.
-pub(super) fn on_create_view<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn on_create_view(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -510,29 +495,18 @@ pub(super) fn on_create_view<S: MetaSnapshot>(
             table_exists_in_owner(&schema, info.name.original()),
         ));
     }
-    let mut mutations = Vec::new();
     info.state = SchemaState::PUBLIC;
     info.update_ts = start_ts;
+    let meta = txn.meta();
+    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
     if let Some(old) = old.filter(|_| or_replace) {
         // Go `DropTableOrView` and `GetAutoIDAccessors(...).Del()`.
-        mutations.push(BufferMutation::delete(key::table_kv_key(database_id, old))?);
-        for allocator in [
-            key::auto_table_id_kv_key(database_id, old),
-            key::auto_increment_id_kv_key(database_id, old),
-            key::auto_random_table_id_kv_key(database_id, old),
-        ] {
-            if snapshot.get(&allocator)?.is_some() {
-                mutations.push(BufferMutation::delete(allocator)?);
-            }
-        }
+        meta.drop_table_or_view(database_id, old).map_err(meta_error)?;
+        meta.auto_ids(database_id, old).delete().map_err(meta_error)?;
     }
     // Go `createTableOrViewWithCheck`.
     check_table_info_valid(&info).map_err(|error| cancel_ddl_job(active, error))?;
-    mutations.push(BufferMutation::set(
-        key::table_kv_key(database_id, info.id),
-        value::serialize_table_info(&info)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-    )?);
+    meta.create_table_or_view(database_id, &info).map_err(meta_error)?;
     *handle.write() = info.clone_like_go();
     // Go `SetSchemaDiffForCreateView`.
     let diff = SchemaDiff {
@@ -546,11 +520,12 @@ pub(super) fn on_create_view<S: MetaSnapshot>(
         },
         ..SchemaDiff::default()
     };
-    object_step(catalog, active, mutations, diff, &info)
+    object_step(txn, active, diff, &info)
 }
 
 /// Go `onCreateSequence`.
 pub(super) fn on_create_sequence(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -584,20 +559,13 @@ pub(super) fn on_create_sequence(
         })
         .ok_or_else(|| DdlPlanError::Encode("CREATE SEQUENCE has no sequence".to_owned()))?;
     // Go `CreateSequenceAndSetSeqValue`.
-    let mutations = vec![
-        BufferMutation::set(
-            key::table_kv_key(database_id, info.id),
-            value::serialize_table_info(&info)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?,
-        BufferMutation::set(
-            sequence_value_kv_key(database_id, info.id),
-            value::encode_int_value(sequence_base_for(
-                increment_and_start.0,
-                increment_and_start.1,
-            )),
-        )?,
-    ];
+    let meta = txn.meta();
+    meta.create_sequence_and_set_seq_value(
+        database_id,
+        &info,
+        sequence_base_for(increment_and_start.0, increment_and_start.1),
+    )
+    .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
     *handle.write() = info.clone_like_go();
     let diff = SchemaDiff {
         action_type: active.job.type_,
@@ -605,7 +573,7 @@ pub(super) fn on_create_sequence(
         table_id: info.id,
         ..SchemaDiff::default()
     };
-    object_step(catalog, active, mutations, diff, &info)
+    object_step(txn, active, diff, &info)
 }
 
 /// Go `executor.AlterSequence` up to `doDDLJob2`.
@@ -681,6 +649,7 @@ fn build_alter_sequence_job(
 
 /// Go `onAlterSequence`.
 pub(super) fn on_alter_sequence(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -740,7 +709,7 @@ pub(super) fn on_alter_sequence(
             value::encode_int_value(sequence_base_for(increment, value)),
         )?);
     }
-    let mut write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+    let mut write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
     write.mutations.extend(restart_write);
     active.job.finish_table_job(
         JobState::DONE,

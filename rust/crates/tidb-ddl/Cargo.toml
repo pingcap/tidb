@@ -59,6 +59,7 @@ tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-log = { path = "../tidb-log" }
 tidb-meta = { path = "../tidb-meta" }
+tidb-structure = { path = "../tidb-structure" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-owner = { path = "../tidb-owner" }

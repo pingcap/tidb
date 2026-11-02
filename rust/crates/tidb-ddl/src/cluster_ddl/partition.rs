@@ -678,8 +678,8 @@ fn check_add_partition_name_unique(
 }
 
 /// Go `onAddTablePartition`.
-pub(super) fn on_add_table_partition<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn on_add_table_partition(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -687,7 +687,7 @@ pub(super) fn on_add_table_partition<S: MetaSnapshot>(
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = table_partition_args(active)?;
     if active.job.is_rollingback() {
-        return rollback_like_drop_partition(snapshot, catalog, active, start_ts);
+        return rollback_like_drop_partition(txn, catalog, active, start_ts);
     }
     let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
     let partition = job_partition(active, &info)?;
@@ -728,10 +728,10 @@ pub(super) fn on_add_table_partition<S: MetaSnapshot>(
             }
             // `updateVersionAndTableInfoWithCheck`.
             check_table_info_valid(&info)?;
-            let mut write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+            let mut write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             for definition in &adding {
                 alter_table::check_placement_policy_ref_valid_and_can_non_valid_job(
-                    snapshot,
+                    txn,
                     &definition.placement_policy_ref,
                 )
                 .map_err(|error| cancel_ddl_job(active, error))?;
@@ -739,7 +739,7 @@ pub(super) fn on_add_table_partition<S: MetaSnapshot>(
             // Go configures TiFlash's PD rules for the new partitions here
             // (`ConfigureTiFlashPDForPartitions`); this node configures
             // none for any table yet.
-            let bundles = alter_table_partition_bundles(snapshot, &info, adding.clone())
+            let bundles = alter_table_partition_bundles(txn, &info, adding.clone())
                 .map_err(|error| cancel_ddl_job(active, error))?;
             // `alterTableLabelRule` over the table's ids and the adding ones.
             let mut spanning = info.clone_like_go();
@@ -805,7 +805,7 @@ pub(super) fn on_add_table_partition<S: MetaSnapshot>(
                 partition.ddl_state = SchemaState::NONE;
                 partition.ddl_action = ActionType::ACTION_NONE;
             }
-            let mut write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+            let mut write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 append_schema_change_mutations(
                     catalog,
@@ -836,8 +836,8 @@ pub(super) fn on_add_table_partition<S: MetaSnapshot>(
 /// Go `rollbackLikeDropPartition`, for an ADD PARTITION and a partition
 /// reorganization: the adding definitions (never used) go with their label
 /// rules, and the placement bundles are rebuilt without them.
-pub(super) fn rollback_like_drop_partition<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn rollback_like_drop_partition(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -923,9 +923,9 @@ pub(super) fn rollback_like_drop_partition<S: MetaSnapshot>(
     if let Some(partition) = &info.partition {
         partition.write().clear_reorg_intermediate_info();
     }
-    let bundles = alter_table_partition_bundles(snapshot, &info, Vec::new())
+    let bundles = alter_table_partition_bundles(txn, &info, Vec::new())
         .map_err(|error| cancel_ddl_job(active, error))?;
-    let mut write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+    let mut write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
     active.job.finish_table_job(
         JobState::ROLLBACK_DONE,
         SchemaState::NONE,
@@ -1006,8 +1006,8 @@ fn update_dropping_partition_info(
 }
 
 /// Go `onDropTablePartition`.
-pub(super) fn on_drop_table_partition<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn on_drop_table_partition(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -1042,7 +1042,7 @@ pub(super) fn on_drop_table_partition<S: MetaSnapshot>(
                 partition.ddl_action = active.job.type_;
             }
             active.job.schema_state = SchemaState::WRITE_ONLY;
-            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             Ok(action_step(write))
         }
         SchemaState::WRITE_ONLY => {
@@ -1059,15 +1059,15 @@ pub(super) fn on_drop_table_partition<S: MetaSnapshot>(
                 )
                 .map_err(|error| cancel_ddl_job(active, error))?;
             let dropping = partition.read().dropping_definitions.snapshot();
-            let mut bundles = dropped_partition_bundles(snapshot, &info, &dropping)
+            let mut bundles = dropped_partition_bundles(txn, &info, &dropping)
                 .map_err(|error| cancel_ddl_job(active, error))?;
             // The table's bundle loses the dropped partitions' rules.
             bundles.extend(
-                table_bundle(snapshot, &info).map_err(|error| cancel_ddl_job(active, error))?,
+                table_bundle(txn, &info).map_err(|error| cancel_ddl_job(active, error))?,
             );
             partition.write().ddl_state = SchemaState::DELETE_ONLY;
             active.job.schema_state = SchemaState::DELETE_ONLY;
-            let mut write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+            let mut write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             write.placement_bundles = bundles;
             write.label_rules = label_rules.steps;
             Ok(action_step(write))
@@ -1078,7 +1078,7 @@ pub(super) fn on_drop_table_partition<S: MetaSnapshot>(
             let partition = job_partition(active, &info)?;
             partition.write().ddl_state = SchemaState::DELETE_REORGANIZATION;
             active.job.schema_state = SchemaState::DELETE_REORGANIZATION;
-            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             Ok(action_step(write))
         }
         SchemaState::DELETE_REORGANIZATION => {
@@ -1091,7 +1091,7 @@ pub(super) fn on_drop_table_partition<S: MetaSnapshot>(
             if has_global_index(&info) {
                 let old_info = table_info_with_dropping_partitions(&info);
                 if let Some(step) = clean_global_index_entries_from_dropped_partitions(
-                    snapshot,
+                    txn,
                     catalog,
                     active,
                     &old_info,
@@ -1111,8 +1111,7 @@ pub(super) fn on_drop_table_partition<S: MetaSnapshot>(
             active.job.schema_state = SchemaState::NONE;
             // `SetSchemaDiffForDropTablePartition`.
             let affects = build_placement_affects(&physical_table_ids, &physical_table_ids);
-            let mut write = table_step_with_diff(
-                catalog,
+            let mut write = table_step_with_diff(txn,
                 active,
                 database_id,
                 &info,
@@ -1154,8 +1153,8 @@ pub(super) fn on_drop_table_partition<S: MetaSnapshot>(
 }
 
 /// Go `onTruncateTablePartition`.
-pub(super) fn on_truncate_table_partition<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn on_truncate_table_partition(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -1216,7 +1215,7 @@ pub(super) fn on_truncate_table_partition<S: MetaSnapshot>(
                 partition.ddl_state = SchemaState::WRITE_ONLY;
             }
             active.job.schema_state = SchemaState::WRITE_ONLY;
-            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             Ok(action_step(write))
         }
         SchemaState::WRITE_ONLY => {
@@ -1251,13 +1250,13 @@ pub(super) fn on_truncate_table_partition<S: MetaSnapshot>(
                 remove_tiflash_available_partition_ids(&info, &old_ids);
             }
             // `updateTruncatePartitionLabelRules`.
-            let policies = load_policies(snapshot)?;
+            let policies = load_policies(txn)?;
             let mut bundles =
                 tidb_placement::new_partition_list_bundles(&policies, &new_definitions)
                     .map_err(bundle_error)?;
-            bundles.extend(table_bundle(snapshot, &info)?);
+            bundles.extend(table_bundle(txn, &info)?);
             bundles.extend(dropped_partition_bundles(
-                snapshot,
+                txn,
                 &info,
                 &old_definitions,
             )?);
@@ -1275,7 +1274,7 @@ pub(super) fn on_truncate_table_partition<S: MetaSnapshot>(
                 partition.ddl_state = SchemaState::DELETE_ONLY;
             }
             active.job.schema_state = SchemaState::DELETE_ONLY;
-            let mut write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+            let mut write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             write.placement_bundles = bundles;
             write.label_rules = label_rules.steps;
             Ok(action_step(write))
@@ -1283,12 +1282,12 @@ pub(super) fn on_truncate_table_partition<S: MetaSnapshot>(
         SchemaState::DELETE_ONLY => {
             partition.write().ddl_state = SchemaState::DELETE_REORGANIZATION;
             active.job.schema_state = SchemaState::DELETE_REORGANIZATION;
-            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             Ok(action_step(write))
         }
         SchemaState::DELETE_REORGANIZATION => {
             if let Some(step) = clean_global_index_entries_from_dropped_partitions(
-                snapshot,
+                txn,
                 catalog,
                 active,
                 &table_info_with_dropping_partitions(&info),
@@ -1327,8 +1326,7 @@ pub(super) fn on_truncate_table_partition<S: MetaSnapshot>(
             // `SetSchemaDiffForTruncateTablePartition` with
             // `ShouldUpdateAffectedPartitions`.
             let affects = build_placement_affects(&old_ids, &new_ids);
-            let mut write = table_step_with_diff(
-                catalog,
+            let mut write = table_step_with_diff(txn,
                 active,
                 database_id,
                 &info,
@@ -1376,6 +1374,7 @@ pub(super) fn on_truncate_table_partition<S: MetaSnapshot>(
 /// Go `rollingbackAddTablePartition`, `rollingbackDropTablePartition` and
 /// `rollingbackTruncateTablePartition` (`convertTruncateTablePartitionJob2RollbackJob`).
 pub(super) fn rollingback_add_table_partition(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -1403,7 +1402,7 @@ pub(super) fn rollingback_add_table_partition(
                 ..tidb_model::TablePartitionArgs::default()
             });
             tidb_model::fill_rollback_args_for_add_partition(&mut active.job, Some(&args));
-            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             active.job.state = JobState::ROLLINGBACK;
             Ok(PersistedDdlActionStep {
                 write,
@@ -1452,7 +1451,7 @@ pub(super) fn rollingback_add_table_partition(
                 partition.ddl_action = ActionType::ACTION_NONE;
                 partition.ddl_state = SchemaState::NONE;
             }
-            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             Ok(action_step(write))
         }
     }

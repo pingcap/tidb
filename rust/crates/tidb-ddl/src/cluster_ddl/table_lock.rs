@@ -154,6 +154,7 @@ fn no_table_write(active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob) -> Dd
 /// session's lock (every holder's, for a cleanup), a version only when the
 /// lock changed; a table dropped since it was locked is skipped.
 fn unlock_tables(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &mut tidb_model::LockTablesArgs,
@@ -182,7 +183,7 @@ fn unlock_tables(
                 Some(next) => {
                     let mut info = stored.clone_like_go();
                     info.lock = next.map(GoShared::new);
-                    update_version_and_table_info(catalog, active, target.schema_id, &info, true, start_ts)?
+                    update_version_and_table_info(txn, active, target.schema_id, &info, true, start_ts)?
                 }
             }
         }
@@ -206,6 +207,7 @@ fn job_table<'a>(
 
 /// Go `onLockTables`.
 pub(super) fn on_lock_tables(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -213,7 +215,7 @@ pub(super) fn on_lock_tables(
     let mut args = lock_tables_args(active)?;
     // The session's earlier locks go first.
     if (args.index_of_unlock as usize) < args.unlock_tables.len() {
-        return unlock_tables(catalog, active, &mut args, start_ts).map(action_step);
+        return unlock_tables(txn, catalog, active, &mut args, start_ts).map(action_step);
     }
     // Another session's lock is checked once, before the first lock.
     if args.index_of_lock == 0 {
@@ -276,7 +278,7 @@ pub(super) fn on_lock_tables(
     };
     lock.ts = start_ts;
     info.lock = Some(GoShared::new(lock));
-    let write = update_version_and_table_info(catalog, active, target.schema_id, &info, true, start_ts)?;
+    let write = update_version_and_table_info(txn, active, target.schema_id, &info, true, start_ts)?;
     if finished {
         args.index_of_lock += 1;
         active.job.fill_args(Some(GoShared::new(args.clone())));
@@ -294,12 +296,13 @@ pub(super) fn on_lock_tables(
 
 /// Go `onUnlockTables`.
 pub(super) fn on_unlock_tables(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let mut args = lock_tables_args(active)?;
-    let write = unlock_tables(catalog, active, &mut args, start_ts)?;
+    let write = unlock_tables(txn, catalog, active, &mut args, start_ts)?;
     if args.index_of_unlock as usize == args.unlock_tables.len() {
         active.job.finish_table_job(
             JobState::DONE,

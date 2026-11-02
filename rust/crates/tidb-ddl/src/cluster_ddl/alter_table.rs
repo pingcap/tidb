@@ -1183,7 +1183,7 @@ fn revertible_point(
 /// Go: a multi-schema sub-job stops at its revertible point first, storing
 /// the table as it stands without a new version.
 fn revertible_point_with_table(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &TableInfo,
     with_check: bool,
@@ -1197,7 +1197,7 @@ fn revertible_point_with_table(
         check_table_info_valid(info)?;
     }
     let schema_id = active.job.schema_id;
-    let write = update_version_and_table_info(catalog, active, schema_id, info, false, start_ts)?;
+    let write = update_version_and_table_info(txn, active, schema_id, info, false, start_ts)?;
     Ok(Some(action_step(write)))
 }
 
@@ -1227,8 +1227,8 @@ fn nil_args(active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob) -> DdlP
 }
 
 /// The owner halves.
-pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn plan_persisted_alter_table_job_step(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -1329,7 +1329,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
             }
             if !force {
                 let adjusted =
-                    adjust_new_base_to_next_global_id(snapshot, kind, schema_id, &info, new_base)?;
+                    adjust_new_base_to_next_global_id(txn, kind, schema_id, &info, new_base)?;
                 if adjusted != new_base {
                     active.job.warning =
                         Some(GoShared::new(tidb_terror::TerrorError::synthesize(
@@ -1347,7 +1347,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                 AutoIdKind::Random => info.auto_rand_id = new_base,
             }
             rebase_auto_increment_counter(
-                snapshot,
+                txn,
                 kind,
                 schema_id,
                 &info,
@@ -1417,7 +1417,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
             match apply_index_visibility(&mut probe, &schema, &table, index.original(), invisible) {
                 Ok(AlterColumnOutcome::Applied) => {
                     if let Some(step) =
-                        revertible_point_with_table(catalog, active, &info, false, start_ts)?
+                        revertible_point_with_table(txn, active, &info, false, start_ts)?
                     {
                         return Ok(step);
                     }
@@ -1451,7 +1451,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
             match apply_rename_index(&mut probe, &schema, &table, &from, &to) {
                 Ok(AlterColumnOutcome::Applied) => {
                     if let Some(step) =
-                        revertible_point_with_table(catalog, active, &info, true, start_ts)?
+                        revertible_point_with_table(txn, active, &info, true, start_ts)?
                     {
                         return Ok(step);
                     }
@@ -1511,7 +1511,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                 .ok_or_else(|| nil_args(active))?
                 .read()
                 .clone_like_go();
-            if let Some(step) = revertible_point_with_table(catalog, active, &info, true, start_ts)?
+            if let Some(step) = revertible_point_with_table(txn, active, &info, true, start_ts)?
             {
                 return Ok(step);
             }
@@ -1553,7 +1553,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
             if bits < info.shard_row_id_bits {
                 info.shard_row_id_bits = bits;
             } else {
-                verify_no_overflow_shard_bits(snapshot, schema_id, &info, bits)
+                verify_no_overflow_shard_bits(txn, schema_id, &info, bits)
                     .map_err(|error| cancel_ddl_job(active, error))?;
                 info.shard_row_id_bits = bits;
                 info.max_shard_row_id_bits = bits;
@@ -1571,11 +1571,11 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                 .map_err(|error| args_error(active, error))?
                 .ok_or_else(|| nil_args(active))?;
             let reference = args.read().placement_policy_ref.clone();
-            check_placement_policy_ref_valid_and_can_non_valid_job(snapshot, &reference)
+            check_placement_policy_ref_valid_and_can_non_valid_job(txn, &reference)
                 .map_err(|error| cancel_ddl_job(active, error))?;
             let old_enables_placement = info.placement_policy_ref.is_some();
             info.placement_policy_ref = reference;
-            let policies = load_policies(snapshot)?;
+            let policies = load_policies(txn)?;
             match tidb_placement::new_table_bundle(&policies, &info)
                 .map_err(|error| cancel_ddl_job(active, placement_error(error)))?
             {
@@ -1613,9 +1613,9 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                 definition = Some(def.clone());
             });
             let definition = definition.expect("the partition was found above");
-            check_placement_policy_ref_valid_and_can_non_valid_job(snapshot, &reference)
+            check_placement_policy_ref_valid_and_can_non_valid_job(txn, &reference)
                 .map_err(|error| cancel_ddl_job(active, error))?;
-            let policies = load_policies(snapshot)?;
+            let policies = load_policies(txn)?;
             match tidb_placement::new_partition_bundle(&policies, &definition)
                 .map_err(|error| cancel_ddl_job(active, placement_error(error)))?
             {
@@ -1841,7 +1841,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
             if info.table_cache_status_type == from {
                 info.table_cache_status_type = tidb_model::TableCacheStatusType::SWITCHING;
                 check_table_info_valid(&info)?;
-                let write = update_version_and_table_info(catalog, active, schema_id, &info, true, start_ts)?;
+                let write = update_version_and_table_info(txn, active, schema_id, &info, true, start_ts)?;
                 return Ok(action_step(write));
             }
             if info.table_cache_status_type != tidb_model::TableCacheStatusType::SWITCHING {
@@ -1868,7 +1868,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
     if with_check {
         check_table_info_valid(&info)?;
     }
-    let mut write = update_version_and_table_info(catalog, active, schema_id, &info, true, start_ts)?;
+    let mut write = update_version_and_table_info(txn, active, schema_id, &info, true, start_ts)?;
     write.mutations.extend(counter_writes);
     write.placement_bundles = bundles;
     write.label_rules = label_steps;

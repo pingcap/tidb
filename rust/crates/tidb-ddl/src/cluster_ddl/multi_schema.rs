@@ -23,82 +23,7 @@
 
 use super::add_index::{action_step, update_version_and_table_info, AddIndexSubmission, ReorgOutcome};
 use super::*;
-use tidb_infoschema::cluster_catalog::MetaPairs;
 use tidb_model::{GoAny, JobArgs, MultiSchemaInfo, SubJob};
-use tidb_txnkv::transaction::BufferMutationOp;
-
-/// A snapshot that reads one step's earlier sub-job writes first: Go's
-/// sub-jobs share the step's transaction, so each sees the metadata the ones
-/// before it left.
-pub(super) struct MetaOverlay<'a> {
-    inner: &'a mut dyn MetaSnapshot,
-    staged: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
-}
-
-impl<'a> MetaOverlay<'a> {
-    pub(super) fn new(inner: &'a mut dyn MetaSnapshot) -> Self {
-        Self {
-            inner,
-            staged: BTreeMap::new(),
-        }
-    }
-
-    fn stage(&mut self, mutations: &[BufferMutation]) {
-        for mutation in mutations {
-            match mutation.kind() {
-                BufferMutationOp::Set => {
-                    self.staged
-                        .insert(mutation.key().to_vec(), Some(mutation.value().to_vec()));
-                }
-                BufferMutationOp::Delete => {
-                    self.staged.insert(mutation.key().to_vec(), None);
-                }
-                BufferMutationOp::Lock => {}
-            }
-        }
-    }
-
-    fn merge(&self, pairs: MetaPairs, keep: impl Fn(&[u8]) -> bool) -> MetaPairs {
-        let mut rows: BTreeMap<Vec<u8>, Vec<u8>> = pairs.into_iter().collect();
-        for (key, value) in &self.staged {
-            if !keep(key) {
-                continue;
-            }
-            match value {
-                Some(value) => {
-                    rows.insert(key.clone(), value.clone());
-                }
-                None => {
-                    rows.remove(key);
-                }
-            }
-        }
-        rows.into_iter().collect()
-    }
-}
-
-impl MetaSnapshot for MetaOverlay<'_> {
-    fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
-        match self.staged.get(key) {
-            Some(value) => Ok(value.clone()),
-            None => self.inner.get(key),
-        }
-    }
-
-    fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
-        let pairs = self.inner.scan_prefix(prefix)?;
-        Ok(self.merge(pairs, |key| key.starts_with(prefix)))
-    }
-
-    fn scan_range(&mut self, start: &[u8], end: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
-        let pairs = self.inner.scan_range(start, end)?;
-        Ok(self.merge(pairs, |key| key >= start && key < end))
-    }
-
-    fn auto_id_client(&self) -> Option<&std::sync::Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>> {
-        self.inner.auto_id_client()
-    }
-}
 
 /// The standalone statement one specification is, which its executor builds
 /// a job for.
@@ -834,7 +759,7 @@ struct SubJobStep {
 
 /// Go `runOneJobStep` on a sub-job's proxy job.
 fn run_sub_job_step(
-    overlay: &mut MetaOverlay<'_>,
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     sub: &GoShared<SubJob>,
@@ -864,7 +789,10 @@ fn run_sub_job_step(
         // Go `convertJob2RollbackJob`: the error goes on the proxy, and a
         // sub-job now rolling back or cancelled returns none.
         let ddl_job_id = proxy.job.id;
-        let (mut step, error) = match plan_cancel_persisted_ddl_job(catalog, &mut proxy, start_ts) {
+        let cancelled = run_in_job_txn(txn, start_ts, |txn| {
+            plan_cancel_persisted_ddl_job(txn, catalog, &mut proxy, start_ts)
+        });
+        let (mut step, error) = match cancelled {
             Ok(mut step) => {
                 let error = step.run_error.take();
                 (step, error)
@@ -891,7 +819,7 @@ fn run_sub_job_step(
         proxy.job.state = JobState::RUNNING;
     }
     match plan_persisted_action(
-        overlay,
+        txn,
         catalog,
         &mut proxy,
         start_ts,
@@ -960,8 +888,8 @@ fn flush_cancelling(sub_jobs: &[GoShared<SubJob>]) {
 }
 
 /// Go `onMultiSchemaChange`.
-pub(super) fn on_multi_schema_change<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn on_multi_schema_change(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -981,7 +909,6 @@ pub(super) fn on_multi_schema_change<S: MetaSnapshot>(
         .map(|sub| sub.expect("nil SubJob in MultiSchemaInfo.SubJobs"))
         .collect();
     let revertible = info.read().revertible;
-    let mut overlay = MetaOverlay::new(snapshot);
     if revertible {
         if active.job.is_rollingback() {
             // Roll back or cancel the sub-jobs in reverse order.
@@ -994,7 +921,7 @@ pub(super) fn on_multi_schema_change<S: MetaSnapshot>(
                     mut step,
                     run_error,
                 } = run_sub_job_step(
-                    &mut overlay,
+                    txn,
                     catalog,
                     active,
                     sub,
@@ -1047,7 +974,7 @@ pub(super) fn on_multi_schema_change<S: MetaSnapshot>(
                 mut step,
                 run_error,
             } = run_sub_job_step(
-                &mut overlay,
+                txn,
                 catalog,
                 active,
                 sub,
@@ -1077,7 +1004,7 @@ pub(super) fn on_multi_schema_change<S: MetaSnapshot>(
             if meta.read().analyze_state == tidb_model::reorg::analyze_state::NONE {
                 meta.write().analyze_state = tidb_model::reorg::analyze_state::SKIPPED;
                 let schema_id = active.job.schema_id;
-                let write = update_version_and_table_info(catalog, active, schema_id, &saved_info, true, start_ts)?;
+                let write = update_version_and_table_info(txn, active, schema_id, &saved_info, true, start_ts)?;
                 return Ok(action_step(write));
             }
         }
@@ -1088,6 +1015,9 @@ pub(super) fn on_multi_schema_change<S: MetaSnapshot>(
         let mut version = 0;
         let mut action_types = Vec::new();
         let mut sub_catalog: Option<SessionExtendedInfoSchema> = None;
+        // The sub-jobs' writes, which reach the step only when every one of
+        // them stepped (a failed one restores the table alone).
+        let mut subs = JobTxn::new(txn, start_ts);
         for (seq, sub) in sub_jobs.iter().enumerate() {
             if sub.read().is_finished() {
                 continue;
@@ -1098,7 +1028,7 @@ pub(super) fn on_multi_schema_change<S: MetaSnapshot>(
                 step,
                 run_error,
             } = run_sub_job_step(
-                &mut overlay,
+                &mut subs,
                 step_catalog,
                 active,
                 sub,
@@ -1128,16 +1058,20 @@ pub(super) fn on_multi_schema_change<S: MetaSnapshot>(
                     proxy.job.error.clone(),
                 );
                 // The table goes back to how it stood, under a new version.
+                drop(subs);
                 let schema_id = active.job.schema_id;
-                let write = update_version_and_table_info(catalog, active, schema_id, &saved_info, true, start_ts)?;
+                let write = update_version_and_table_info(txn, active, schema_id, &saved_info, true, start_ts)?;
                 return Ok(action_step(write));
             }
-            overlay.stage(&step.write.mutations);
+            // Go's sub-jobs share the step's transaction: the next one reads
+            // the metadata this one wrote.
+            subs.stage(&step.write.mutations);
             merge_write(&mut merged, step.write);
             action_types.push(sub.read().type_);
-            // The next sub-job reads the metadata this one left.
-            sub_catalog = Some(load_info_schema(&mut overlay)?);
+            sub_catalog = Some(load_info_schema(&mut subs)?);
         }
+        let written = subs.into_mutations()?;
+        txn.stage(&written);
         if action_types.len() > 1 {
             // Go `SetSchemaDiff` with every sub-job's action.
             let diff = SchemaDiff {
@@ -1148,15 +1082,9 @@ pub(super) fn on_multi_schema_change<S: MetaSnapshot>(
                 sub_action_types: action_types.into(),
                 ..SchemaDiff::default()
             };
-            let diff_key = key::schema_diff_kv_key(version);
-            merged
-                .mutations
-                .retain(|mutation| mutation.key() != diff_key.as_slice());
-            merged.mutations.push(BufferMutation::set(
-                diff_key,
-                value::serialize_schema_diff(&diff)
-                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-            )?);
+            let meta = txn.meta();
+            meta.set_schema_diff(&diff)
+                .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
             merged.diff = diff;
         }
         merged.schema_version = version;
@@ -1174,7 +1102,7 @@ pub(super) fn on_multi_schema_change<S: MetaSnapshot>(
             mut step,
             run_error,
         } = run_sub_job_step(
-            &mut overlay,
+            txn,
             catalog,
             active,
             sub,
@@ -1197,10 +1125,9 @@ pub(super) fn on_multi_schema_change<S: MetaSnapshot>(
     finish_multi_schema_job(catalog, active, &sub_jobs)
 }
 
-/// One sub-job's write joined to the step's: Go's sub-jobs write into the
-/// step's one transaction.
+/// One sub-job's write joined to the step's; its mutations are already the
+/// step transaction's (Go's sub-jobs write into the step's one transaction).
 fn merge_write(merged: &mut DdlWrite, write: DdlWrite) {
-    merged.mutations.extend(write.mutations);
     if merged.diff.version == 0 {
         merged.diff = write.diff;
     }

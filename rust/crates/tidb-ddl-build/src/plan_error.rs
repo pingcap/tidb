@@ -32,7 +32,7 @@ pub enum DdlPlanError {
     /// worker checkpoint. SQL projection belongs at the submitting connection.
     Source(TerrorError),
     /// The catalog could not be read or decoded.
-    SessionExtendedInfoSchema(ClusterCatalogError),
+    Meta(ClusterCatalogError),
     /// A source-defined DDL refusal reported as TiDB's generic 1105.
     Unsupported(String),
     /// A refusal raised by the shared admission code while the change was
@@ -59,7 +59,7 @@ impl fmt::Display for DdlPlanError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Source(error) => fmt::Display::fmt(error, formatter),
-            Self::SessionExtendedInfoSchema(error) => write!(formatter, "{error}"),
+            Self::Meta(error) => write!(formatter, "{error}"),
             Self::Unsupported(reason) => formatter.write_str(reason),
             Self::Admission(error) => formatter.write_str(&error.reason),
             Self::GlobalIdExhausted { wanted } => write!(
@@ -91,7 +91,7 @@ impl DdlPlanError {
             Self::Source(error) => error.to_sql_error().code,
             Self::Admission(error) => error.code,
             Self::Unsupported(_) => errcode::ErrUnknown,
-            Self::SessionExtendedInfoSchema(_)
+            Self::Meta(_)
             | Self::Encode(_)
             | Self::Mutations(_)
             | Self::GlobalIdExhausted { .. } => return None,
@@ -179,7 +179,7 @@ impl std::error::Error for DdlPlanError {
         match self {
             Self::Source(error) => Some(error),
             Self::Admission(error) => Some(error),
-            Self::SessionExtendedInfoSchema(error) => Some(error),
+            Self::Meta(error) => Some(error),
             Self::Mutations(error) => Some(error),
             _ => None,
         }
@@ -200,7 +200,7 @@ impl From<DdlAdmissionError> for DdlPlanError {
 
 impl From<ClusterCatalogError> for DdlPlanError {
     fn from(error: ClusterCatalogError) -> Self {
-        Self::SessionExtendedInfoSchema(error)
+        Self::Meta(error)
     }
 }
 
@@ -223,7 +223,7 @@ impl From<tidb_ddl_jobsubmit::JobSubmitError> for DdlPlanError {
     fn from(error: tidb_ddl_jobsubmit::JobSubmitError) -> Self {
         use tidb_ddl_jobsubmit::JobSubmitError;
         match error {
-            JobSubmitError::SessionExtendedInfoSchema(error) => Self::SessionExtendedInfoSchema(error),
+            JobSubmitError::Meta(error) => Self::Meta(error),
             JobSubmitError::Encode(detail) => Self::Encode(detail),
             JobSubmitError::Mutations(error) => Self::Mutations(error),
             JobSubmitError::GlobalIdExhausted { wanted } => Self::GlobalIdExhausted { wanted },

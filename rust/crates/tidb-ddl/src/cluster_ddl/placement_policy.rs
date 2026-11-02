@@ -245,58 +245,48 @@ fn stored_policy<S: MetaSnapshot>(
 /// One step publishing a policy change under a new version (Go
 /// `updateSchemaVersion` with the job's `SchemaID`).
 fn policy_step(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
-    mut mutations: Vec<BufferMutation>,
+    write: impl FnOnce(&JobMeta<'_, '_>) -> tidb_meta::Result<()>,
     bundles: Vec<tidb_placement::Bundle>,
 ) -> Result<DdlWrite, DdlPlanError> {
-    let schema_version = catalog.schema_meta_version() + 1;
-    let diff = SchemaDiff {
-        version: schema_version,
-        action_type: active.job.type_,
-        schema_id: active.job.schema_id,
-        ..SchemaDiff::default()
-    };
-    mutations.push(BufferMutation::set(
-        key::schema_version_kv_key(),
-        value::encode_int_value(schema_version),
-    )?);
-    mutations.push(BufferMutation::set(
-        key::schema_diff_kv_key(schema_version),
-        value::serialize_schema_diff(&diff)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-    )?);
-    active.job.last_schema_version = schema_version;
-    let mut write = job_only_write(active.job.id, mutations);
+    let meta = txn.meta();
+    write(&meta).map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+    let action_type = active.job.type_;
+    let schema_id = active.job.schema_id;
+    let (schema_version, diff) = update_schema_version(
+        &meta,
+        active,
+        SchemaDiff {
+            action_type,
+            schema_id,
+            ..SchemaDiff::default()
+        },
+    )?;
+    let mut write = job_only_write(active.job.id, Vec::new());
     write.schema_version = schema_version;
     write.diff = diff;
     write.placement_bundles = bundles;
     Ok(write)
 }
 
-/// Go `updateExistPlacementPolicy`: the policy, and the bundles of every
-/// object naming it.
+/// Go `updateExistPlacementPolicy`'s bundles: those of every object naming
+/// the policy (its `UpdatePolicy` is the step's write).
 fn update_exist_placement_policy(
     catalog: &SessionExtendedInfoSchema,
     policy: &tidb_model::PolicyInfo,
-) -> Result<(BufferMutation, Vec<tidb_placement::Bundle>), DdlPlanError> {
+) -> Result<Vec<tidb_placement::Bundle>, DdlPlanError> {
     let settings = policy
         .placement_settings
         .as_ref()
         .map(|settings| settings.read().clone())
         .unwrap_or_default();
-    let bundles = rebuilt_bundles_for_policy(catalog, &policy.name, &settings)?;
-    let mutation = BufferMutation::set(
-        key::policy_kv_key(policy.id),
-        value::serialize_policy_info(policy)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-    )?;
-    Ok((mutation, bundles))
+    rebuilt_bundles_for_policy(catalog, &policy.name, &settings)
 }
 
 /// Go `onCreatePlacementPolicy`.
-pub(super) fn on_create_placement_policy<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn on_create_placement_policy(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -317,7 +307,7 @@ pub(super) fn on_create_placement_policy<S: MetaSnapshot>(
         .map(|settings| settings.read().clone())
         .unwrap_or_default();
     check_policy_validation(&settings).map_err(|error| cancel_ddl_job(active, error))?;
-    let existing = find_policy(snapshot, policy.name.original())?;
+    let existing = find_policy(txn, policy.name.original())?;
     if let Some(existing) = existing {
         if !or_replace {
             return Err(cancel_ddl_job(
@@ -333,10 +323,10 @@ pub(super) fn on_create_placement_policy<S: MetaSnapshot>(
         }
         let mut replacement = existing.clone();
         replacement.placement_settings = Some(GoShared::new(settings));
-        let (mutation, bundles) = update_exist_placement_policy(catalog, &replacement)
+        let bundles = update_exist_placement_policy(catalog, &replacement)
             .map_err(|error| cancel_ddl_job(active, error))?;
         active.job.schema_id = replacement.id;
-        let write = policy_step(catalog, active, vec![mutation], bundles)?;
+        let write = policy_step(txn, active, |meta| meta.update_policy(&replacement), bundles)?;
         active.job.finish_db_job(
             JobState::DONE,
             SchemaState::PUBLIC,
@@ -347,13 +337,8 @@ pub(super) fn on_create_placement_policy<S: MetaSnapshot>(
     }
     let mut created = policy;
     created.state = SchemaState::PUBLIC;
-    let mutation = BufferMutation::set(
-        key::policy_kv_key(created.id),
-        value::serialize_policy_info(&created)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-    )?;
     active.job.schema_id = created.id;
-    let write = policy_step(catalog, active, vec![mutation], Vec::new())?;
+    let write = policy_step(txn, active, |meta| meta.create_policy(&created), Vec::new())?;
     active.job.finish_db_job(
         JobState::DONE,
         SchemaState::PUBLIC,
@@ -364,8 +349,8 @@ pub(super) fn on_create_placement_policy<S: MetaSnapshot>(
 }
 
 /// Go `onAlterPlacementPolicy`.
-pub(super) fn on_alter_placement_policy<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn on_alter_placement_policy(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -380,13 +365,13 @@ pub(super) fn on_alter_placement_policy<S: MetaSnapshot>(
             .unwrap_or_default();
         (args.policy_id, settings)
     };
-    let mut policy = stored_policy(snapshot, active, policy_id)?;
+    let mut policy = stored_policy(txn, active, policy_id)?;
     // Go returns the validation error without cancelling: it is retried.
     check_policy_validation(&settings)?;
     policy.placement_settings = Some(GoShared::new(settings));
-    let (mutation, bundles) = update_exist_placement_policy(catalog, &policy)
+    let bundles = update_exist_placement_policy(catalog, &policy)
         .map_err(|error| cancel_ddl_job(active, error))?;
-    let write = policy_step(catalog, active, vec![mutation], bundles)?;
+    let write = policy_step(txn, active, |meta| meta.update_policy(&policy), bundles)?;
     active.job.finish_db_job(
         JobState::DONE,
         SchemaState::PUBLIC,
@@ -397,31 +382,27 @@ pub(super) fn on_alter_placement_policy<S: MetaSnapshot>(
 }
 
 /// Go `onDropPlacementPolicy`.
-pub(super) fn on_drop_placement_policy<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn on_drop_placement_policy(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let policy_id = policy_args(active)?.read().policy_id;
-    let mut policy = stored_policy(snapshot, active, policy_id)?;
+    let mut policy = stored_policy(txn, active, policy_id)?;
     // Go `checkPlacementPolicyNotInUse`.
     check_policy_not_in_use(catalog, &policy.name)
         .map_err(|error| cancel_ddl_job(active, error))?;
     let finished = policy.state == SchemaState::DELETE_ONLY;
-    let mutation = match policy.state {
+    let drop = match policy.state {
         SchemaState::PUBLIC | SchemaState::WRITE_ONLY => {
             policy.state = if policy.state == SchemaState::PUBLIC {
                 SchemaState::WRITE_ONLY
             } else {
                 SchemaState::DELETE_ONLY
             };
-            BufferMutation::set(
-                key::policy_kv_key(policy.id),
-                value::serialize_policy_info(&policy)
-                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-            )?
+            false
         }
-        SchemaState::DELETE_ONLY => BufferMutation::delete(key::policy_kv_key(policy.id))?,
+        SchemaState::DELETE_ONLY => true,
         state => {
             return Err(DdlPlanError::from(
                 tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
@@ -431,7 +412,20 @@ pub(super) fn on_drop_placement_policy<S: MetaSnapshot>(
             ))
         }
     };
-    let write = policy_step(catalog, active, vec![mutation], Vec::new())?;
+    // Go `UpdatePolicy` on the way down, `DropPolicy` from delete-only.
+    let policy_id = policy.id;
+    let write = policy_step(
+        txn,
+        active,
+        |meta| {
+            if drop {
+                meta.drop_policy(policy_id)
+            } else {
+                meta.update_policy(&policy)
+            }
+        },
+        Vec::new(),
+    )?;
     if finished {
         active.job.finish_db_job(
             JobState::DONE,

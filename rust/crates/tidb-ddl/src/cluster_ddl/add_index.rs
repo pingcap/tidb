@@ -638,10 +638,12 @@ pub(super) fn pick_backfill_type(job: &Job) -> tidb_model::ReorgType {
     meta.reorg_type
 }
 
-/// Go `updateVersionAndTableInfo`: the table write and, when the state moved,
-/// the version bump with its diff.
+/// Go `updateVersionAndTableInfo`: when the state moved, the version bump
+/// with its diff (`updateSchemaVersion`), then the table write
+/// (`updateTable` -> `Mutator.UpdateTable`), both through the step's
+/// transaction.
 pub(super) fn update_version_and_table_info(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     database_id: i64,
     info: &TableInfo,
@@ -649,7 +651,7 @@ pub(super) fn update_version_and_table_info(
     start_ts: u64,
 ) -> Result<DdlWrite, DdlPlanError> {
     table_step_with_diff(
-        catalog,
+        txn,
         active,
         database_id,
         info,
@@ -662,7 +664,7 @@ pub(super) fn update_version_and_table_info(
 /// [`update_version_and_table_info`] whose diff `fill` completes, as Go's `updateSchemaVersion`
 /// does per action (the affected physical tables of a partition job).
 pub(super) fn table_step_with_diff(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     database_id: i64,
     info: &TableInfo,
@@ -670,42 +672,28 @@ pub(super) fn table_step_with_diff(
     start_ts: u64,
     fill: impl FnOnce(&mut SchemaDiff),
 ) -> Result<DdlWrite, DdlPlanError> {
-    let mut info = info.clone_like_go();
-    let mut mutations = Vec::new();
-    info.update_ts = start_ts;
-    mutations.push(BufferMutation::set(
-        key::table_kv_key(database_id, info.id),
-        value::serialize_table_info(&info)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-    )?);
-    // Go `updateVersionAndTableInfo`: one multi-schema step publishes one
-    // version, the sub-jobs after the first skipping theirs.
+    let meta = txn.meta();
+    // Go: one multi-schema step publishes one version, the sub-jobs after the
+    // first skipping theirs.
     let should_update_version = should_update_version && !skips_version(&active.job);
     let (schema_version, diff) = if should_update_version {
-        let schema_version = catalog.schema_meta_version() + 1;
         let mut diff = SchemaDiff {
-            version: schema_version,
             action_type: active.job.type_,
             schema_id: database_id,
             table_id: info.id,
             ..SchemaDiff::default()
         };
         fill(&mut diff);
-        mutations.push(BufferMutation::set(
-            key::schema_version_kv_key(),
-            value::encode_int_value(schema_version),
-        )?);
-        mutations.push(BufferMutation::set(
-            key::schema_diff_kv_key(schema_version),
-            value::serialize_schema_diff(&diff)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?);
-        active.job.last_schema_version = schema_version;
-        (schema_version, diff)
+        update_schema_version(&meta, active, diff)?
     } else {
         (0, SchemaDiff::default())
     };
-    let mut write = job_only_write(active.job.id, mutations);
+    let mut info = info.clone_like_go();
+    info.update_ts = start_ts;
+    meta.update_table(database_id, &mut info)
+        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+    // The step's meta writes are its transaction's.
+    let mut write = job_only_write(active.job.id, Vec::new());
     write.schema_version = schema_version;
     write.diff = diff;
     Ok(write)
@@ -902,8 +890,8 @@ fn move_and_update_hidden_columns_to_public(info: &mut TableInfo, index: &GoShar
 /// Plans one step of a persisted ADD INDEX / ADD PRIMARY KEY job: Go
 /// `onCreateIndex`, and `onDropIndex` once it is rolling back. `outcome` is
 /// the reorganization the owner ran since the last step, if any.
-pub(super) fn plan_persisted_add_index_job_step<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn plan_persisted_add_index_job_step(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -911,7 +899,7 @@ pub(super) fn plan_persisted_add_index_job_step<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     if active.job.is_rollingback() {
-        return plan_rollback_add_index(catalog, active, start_ts);
+        return plan_rollback_add_index(txn, catalog, active, start_ts);
     }
     let is_pk = active.job.type_ == ActionType::ACTION_ADD_PRIMARY_KEY;
     let stored = checked_job_table(catalog, active, true)?;
@@ -965,7 +953,7 @@ pub(super) fn plan_persisted_add_index_job_step<S: MetaSnapshot>(
                 index.state = SchemaState::DELETE_ONLY;
             }
             active.job.schema_state = SchemaState::DELETE_ONLY;
-            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             Ok(action_step(write))
         }
         SchemaState::DELETE_ONLY | SchemaState::WRITE_ONLY => {
@@ -985,11 +973,11 @@ pub(super) fn plan_persisted_add_index_job_step<S: MetaSnapshot>(
                 active.job.snapshot_version = 0;
             }
             active.job.schema_state = next;
-            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             Ok(action_step(write))
         }
         SchemaState::WRITE_REORGANIZATION => plan_write_reorganization(
-            snapshot, catalog, active, info, indexes, outcome, start_ts, is_pk, row_ids,
+            txn, catalog, active, info, indexes, outcome, start_ts, is_pk, row_ids,
         ),
         state => Err(DdlPlanError::from(
             tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
@@ -1020,8 +1008,8 @@ fn check_primary_key_not_null(info: &mut TableInfo, index: &IndexInfo) {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn plan_write_reorganization<S: MetaSnapshot>(
-    snapshot: &mut S,
+fn plan_write_reorganization(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     mut info: TableInfo,
@@ -1041,14 +1029,14 @@ fn plan_write_reorganization<S: MetaSnapshot>(
         });
     if analyze_state == tidb_model::reorg::analyze_state::NONE {
         match do_reorg_work_for_create_index(
-            snapshot, catalog, active, &info, &indexes, outcome, start_ts,
+            txn, catalog, active, &info, &indexes, outcome, start_ts,
         )? {
             CreateIndexReorg::Step(step) => return Ok(step),
             CreateIndexReorg::Failed(error) => {
                 // Go `runReorgJobAndHandleErr` turns a non-retryable failure
                 // into a rollback.
                 let (write, error) =
-                    convert_add_index_to_rollback(active, &mut info, &indexes, error)?;
+                    convert_add_index_to_rollback(txn, active, &mut info, &indexes, error)?;
                 return Ok(PersistedDdlActionStep {
                     write,
                     update_raw_args: true,
@@ -1063,7 +1051,7 @@ fn plan_write_reorganization<S: MetaSnapshot>(
             meta.write().analyze_state = tidb_model::reorg::analyze_state::SKIPPED;
         }
         check_and_mark_non_revertible(&mut active.job);
-        let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+        let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
         return Ok(action_step(write));
     }
     // Analyze done or skipped: public.
@@ -1083,7 +1071,7 @@ fn plan_write_reorganization<S: MetaSnapshot>(
             }
         }
     }
-    let mut write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+    let mut write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
     // Go `asyncNotifyEvent(NewAddIndexEvent(...))`, skipped for the memory
     // and system databases.
     if !tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string().go_to_lower()) {
@@ -1157,8 +1145,8 @@ pub(super) enum CreateIndexReorg {
 /// running -> ready-to-merge -> merging -> inapplicable backfill states,
 /// each persisted by its own step. The owner runs a requested
 /// reorganization and hands its [`ReorgOutcome`] to the next visit.
-pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn do_reorg_work_for_create_index(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &TableInfo,
@@ -1179,12 +1167,12 @@ pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
     if reorg_type.need_merge_process()
         && backfill_state == tidb_model::BackfillState::READY_TO_MERGE
     {
-        // Go: ReadyToMerge -> Merging, with a fresh snapshot for the merge.
+        // Go: ReadyToMerge -> Merging, with a fresh txn for the merge.
         for index in indexes {
             index.write().backfill_state = tidb_model::BackfillState::MERGING;
         }
         active.job.snapshot_version = 0;
-        let write = update_version_and_table_info(catalog, active, database_id, info, true, start_ts)?;
+        let write = update_version_and_table_info(txn, active, database_id, info, true, start_ts)?;
         return Ok(CreateIndexReorg::Step(action_step(write)));
     }
     let request =
@@ -1205,7 +1193,7 @@ pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
             schema_id: active.job.schema_id,
         };
     let finished = match outcome.map(|outcome| &outcome.result) {
-        // Go `getReorgInfo`: the first visit persists the snapshot.
+        // Go `getReorgInfo`: the first visit persists the txn.
         None if active.job.snapshot_version == 0 => {
             let reorg = request(active, ReorgStageRequest::Init);
             return Ok(CreateIndexReorg::Step(reorg_step(&active.job, reorg)));
@@ -1216,7 +1204,7 @@ pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
             return Ok(CreateIndexReorg::Step(action_step(write)));
         }
         None | Some(ReorgResult::Interrupted) => {
-            let handle = get_ddl_reorg_handle(snapshot, catalog, active)?;
+            let handle = get_ddl_reorg_handle(txn, catalog, active)?;
             let reorg = request(active, ReorgStageRequest::Run(handle));
             return Ok(CreateIndexReorg::Step(reorg_step(&active.job, reorg)));
         }
@@ -1254,7 +1242,7 @@ pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
             for index in indexes {
                 index.write().backfill_state = tidb_model::BackfillState::READY_TO_MERGE;
             }
-            let write = update_version_and_table_info(catalog, active, database_id, info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, info, true, start_ts)?;
             return Ok(CreateIndexReorg::Step(action_step(write)));
         }
         // The merge finished: no more double writes.
@@ -1268,6 +1256,7 @@ pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
 /// Go `convertAddIdxJob2RollbackJob`: the indexes back to delete-only, the
 /// job rolling back with `error`.
 fn convert_add_index_to_rollback(
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &mut TableInfo,
     indexes: &[GoShared<IndexInfo>],
@@ -1308,18 +1297,16 @@ fn convert_add_index_to_rollback(
     let database_id = active.job.schema_id;
     let mut info = info.clone_like_go();
     info.update_ts = 0;
-    let mutations = vec![BufferMutation::set(
-        key::table_kv_key(database_id, info.id),
-        value::serialize_table_info(&info)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-    )
-    .map_err(|error| DdlPlanError::Encode(error.to_string()))?];
-    Ok((job_only_write(active.job.id, mutations), error))
+    let meta = txn.meta();
+    meta.update_table(database_id, &mut info)
+        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+    Ok((job_only_write(active.job.id, Vec::new()), error))
 }
 
 /// Go `onDropIndex` for a rolled-back ADD INDEX: delete-only ->
 /// delete-reorganization -> gone, then ROLLBACK DONE.
 fn plan_rollback_add_index(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -1363,7 +1350,7 @@ fn plan_rollback_add_index(
                 index.write().state = next;
             }
             active.job.schema_state = next;
-            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             Ok(action_step(write))
         }
         SchemaState::DELETE_REORGANIZATION => {
@@ -1373,7 +1360,7 @@ fn plan_rollback_add_index(
                 index_ids.push(removed.id);
                 remove_index_and_hidden_columns(&mut info, &removed);
             }
-            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             let finished = GoShared::new(tidb_model::ModifyIndexArgs {
                 partition_ids: args.read().partition_ids.clone(),
                 op_type: tidb_model::IndexOp::ADD_INDEX,
@@ -1507,6 +1494,7 @@ fn drop_index_column_flag(info: &TableInfo, index: &IndexInfo) {
 /// Go `rollingbackAddIndex` for `ADMIN CANCEL DDL JOB`: the job turns into
 /// its rollback, from wherever it stood.
 pub(super) fn rollingback_add_index(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -1538,7 +1526,7 @@ pub(super) fn rollingback_add_index(
         tidb_dbterror::ERR_CANCELLED_DDL_JOB
             .generate(tidb_errno::errname::ErrCancelledDDLJob.raw),
     );
-    let (write, error) = convert_add_index_to_rollback(active, &mut info, &indexes, error)?;
+    let (write, error) = convert_add_index_to_rollback(txn, active, &mut info, &indexes, error)?;
     Ok(PersistedDdlActionStep {
         write,
         update_raw_args: true,

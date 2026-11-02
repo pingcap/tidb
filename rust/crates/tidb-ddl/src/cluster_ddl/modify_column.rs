@@ -1358,8 +1358,8 @@ fn checked_outcome(
 }
 
 /// Go `onModifyColumn`.
-pub(super) fn on_modify_column<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn on_modify_column(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -1369,7 +1369,7 @@ pub(super) fn on_modify_column<S: MetaSnapshot>(
     // The AUTO_RANDOM counters the step bumped commit with it.
     let mut counter_writes = Vec::new();
     let mut step = plan_modify_column_step(
-        snapshot,
+        txn,
         catalog,
         active,
         start_ts,
@@ -1381,8 +1381,8 @@ pub(super) fn on_modify_column<S: MetaSnapshot>(
     Ok(step)
 }
 
-fn plan_modify_column_step<S: MetaSnapshot>(
-    snapshot: &mut S,
+fn plan_modify_column_step(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -1434,17 +1434,17 @@ fn plan_modify_column_step<S: MetaSnapshot>(
     if active.job.is_rollingback() {
         let step = match args.modify_column_type {
             modify_type::PRECHECK | modify_type::NO_REORG | modify_type::NO_REORG_WITH_CHECK => {
-                rollback_modify_column_job(catalog, active, &mut target, &new, start_ts)?
+                rollback_modify_column_job(txn, active, &mut target, &new, start_ts)?
             }
             modify_type::REORG => rollback_modify_column_job_with_reorg(
-                catalog,
+                txn,
                 active,
                 &mut target,
                 &mut args,
                 start_ts,
             )?,
             modify_type::INDEX_REORG => rollback_modify_column_job_with_index_reorg(
-                catalog,
+                txn,
                 active,
                 &mut target,
                 &mut args,
@@ -1463,7 +1463,7 @@ fn plan_modify_column_step<S: MetaSnapshot>(
     // Go `checkAndApplyAutoRandomBits`, for every kind of change.
     let database_id = active.job.schema_id;
     check_and_apply_auto_random_bits(
-        snapshot,
+        txn,
         database_id,
         &mut target.info,
         &old,
@@ -1484,7 +1484,7 @@ fn plan_modify_column_step<S: MetaSnapshot>(
     match args.modify_column_type {
         modify_type::PRECHECK => {
             return precheck_for_varchar_to_char(
-                catalog,
+                txn,
                 active,
                 &mut target,
                 &mut args,
@@ -1495,7 +1495,7 @@ fn plan_modify_column_step<S: MetaSnapshot>(
         }
         modify_type::NO_REORG_WITH_CHECK => {
             return do_modify_column_with_check(
-                snapshot,
+                txn,
                 catalog,
                 active,
                 &mut target,
@@ -1507,7 +1507,7 @@ fn plan_modify_column_step<S: MetaSnapshot>(
         }
         modify_type::NO_REORG => {
             return do_modify_column_no_check(
-                snapshot,
+                txn,
                 catalog,
                 active,
                 &mut target,
@@ -1541,7 +1541,7 @@ fn plan_modify_column_step<S: MetaSnapshot>(
         initialize_changing_indexes(&mut args, &mut target, &new)
             .map_err(|error| cancel_ddl_job(active, error))?;
         return do_modify_column_index_reorg(
-            snapshot,
+            txn,
             catalog,
             active,
             &mut target,
@@ -1553,7 +1553,7 @@ fn plan_modify_column_step<S: MetaSnapshot>(
     let changing = get_changing_col(&mut args, &mut target, &new)
         .map_err(|error| cancel_ddl_job(active, error))?;
     do_modify_column_type_with_data(
-        snapshot,
+        txn,
         catalog,
         active,
         &mut target,
@@ -1610,7 +1610,7 @@ fn clear_modify_flag(column: &GoShared<tidb_model::ColumnInfo>) {
 
 /// Go `rollbackModifyColumnJob`: a change that rewrote nothing.
 fn rollback_modify_column_job(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     new: &tidb_model::ColumnInfo,
@@ -1621,7 +1621,7 @@ fn rollback_modify_column_job(
     let mut write = job_only_write(active.job.id, Vec::new());
     if target.old.read().id == new.id {
         clear_modify_flag(&target.old);
-        write = update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+        write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
         version = write.schema_version;
     }
     active.job.finish_table_job(
@@ -1639,7 +1639,7 @@ fn rollback_modify_column_job(
 
 /// Go `rollbackModifyColumnJobWithReorg`.
 fn rollback_modify_column_job_with_reorg(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &mut tidb_model::ModifyColumnArgs,
@@ -1666,7 +1666,7 @@ fn rollback_modify_column_job_with_reorg(
         remove_changing_col_and_idxs(&mut target.info, changing_id);
     }
     check_table_info_valid(&target.info)?;
-    let write = update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+    let write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
     active.job.finish_table_job(
         JobState::ROLLBACK_DONE,
         SchemaState::NONE,
@@ -1683,7 +1683,7 @@ fn rollback_modify_column_job_with_reorg(
 
 /// Go `rollbackModifyColumnJobWithIndexReorg`.
 fn rollback_modify_column_job_with_index_reorg(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &mut tidb_model::ModifyColumnArgs,
@@ -1708,7 +1708,7 @@ fn rollback_modify_column_job_with_index_reorg(
         .extend(ingest_temp_index_ids(&active.job, &changing));
     remove_old_indexes(&mut target.info, &changing);
     check_table_info_valid(&target.info)?;
-    let write = update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+    let write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
     active.job.finish_table_job(
         JobState::ROLLBACK_DONE,
         SchemaState::NONE,
@@ -1947,6 +1947,7 @@ fn adjust_foreign_key_children(
 
 /// Go `finishModifyColumnWithoutReorg`.
 fn finish_modify_column_without_reorg(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
@@ -1973,17 +1974,15 @@ fn finish_modify_column_without_reorg(
         active.job.state = JobState::ROLLINGBACK;
         return Err(error);
     }
-    let mut write = update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+    let mut write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
     // Go `updateVersionAndTableInfoWithCheck(..., childTableInfos...)`.
+    let meta = txn.meta();
+    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
     let mut affected: Vec<AffectedOption> = Vec::new();
     for (schema_id, child) in &children {
         let mut child = child.clone_like_go();
         child.update_ts = start_ts;
-        write.mutations.push(BufferMutation::set(
-            key::table_kv_key(*schema_id, child.id),
-            value::serialize_table_info(&child)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?);
+        meta.update_table(*schema_id, &mut child).map_err(meta_error)?;
         affected.push(AffectedOption {
             schema_id: *schema_id,
             old_schema_id: *schema_id,
@@ -1993,16 +1992,9 @@ fn finish_modify_column_without_reorg(
         });
     }
     if !affected.is_empty() {
+        // Go's `updateSchemaVersion` lists the child tables in the diff.
         write.diff.affected_options = GoSharedPointerSlice::from(affected);
-        let version = write.schema_version;
-        write
-            .mutations
-            .retain(|mutation| mutation.key() != key::schema_diff_kv_key(version).as_slice());
-        write.mutations.push(BufferMutation::set(
-            key::schema_diff_kv_key(version),
-            value::serialize_schema_diff(&write.diff)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?);
+        meta.set_schema_diff(&write.diff).map_err(meta_error)?;
     }
     active.job.finish_table_job(
         JobState::DONE,
@@ -2030,8 +2022,8 @@ fn column_in_change(old: &tidb_model::ColumnInfo, new_id: i64) -> DdlPlanError {
 }
 
 /// Go `doModifyColumnNoCheck`.
-fn do_modify_column_no_check<S: MetaSnapshot>(
-    _snapshot: &mut S,
+fn do_modify_column_no_check(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
@@ -2044,17 +2036,17 @@ fn do_modify_column_no_check<S: MetaSnapshot>(
         active.job.state = JobState::ROLLINGBACK;
         return Err(column_in_change(&old, new.id));
     }
-    if let Some(step) = revertible_point(catalog, active, target, args, start_ts)? {
+    if let Some(step) = revertible_point(txn, active, target, args, start_ts)? {
         return Ok(step);
     }
-    let step = finish_modify_column_without_reorg(catalog, active, target, args, new, start_ts)?;
+    let step = finish_modify_column_without_reorg(txn, catalog, active, target, args, new, start_ts)?;
     Ok(step)
 }
 
 /// Go: a multi-schema sub-job stores its revertible mark, the table as it
 /// stands, and finishes in the step that publishes every sub-job.
 fn revertible_point(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &ModifyTarget,
     args: &tidb_model::ModifyColumnArgs,
@@ -2066,7 +2058,7 @@ fn revertible_point(
     active.job.mark_non_revertible();
     let database_id = active.job.schema_id;
     check_table_info_valid(&target.info)?;
-    let write = update_version_and_table_info(catalog, active, database_id, &target.info, false, start_ts)?;
+    let write = update_version_and_table_info(txn, active, database_id, &target.info, false, start_ts)?;
     Ok(Some(with_args(active, args, action_step(write))))
 }
 
@@ -2074,7 +2066,7 @@ fn revertible_point(
 /// checks writes against the new type, under a new version, before the rows
 /// are checked.
 fn mark_modifying(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &tidb_model::ModifyColumnArgs,
@@ -2093,14 +2085,14 @@ fn mark_modifying(
         }
     }
     check_table_info_valid(&target.info)?;
-    let write = update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+    let write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
     Ok(with_args(active, args, action_step(write)))
 }
 
 /// Go `doModifyColumnWithCheck`.
 #[allow(clippy::too_many_arguments)]
-fn do_modify_column_with_check<S: MetaSnapshot>(
-    _snapshot: &mut S,
+fn do_modify_column_with_check(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
@@ -2115,7 +2107,7 @@ fn do_modify_column_with_check<S: MetaSnapshot>(
         return Err(column_in_change(&old, new.id));
     }
     if !has_modify_flag(&old) {
-        return mark_modifying(catalog, active, target, args, new, start_ts);
+        return mark_modifying(txn, active, target, args, new, start_ts);
     }
     let indexed = is_column_with_index(old.name.original(), &target.info);
     match checked_outcome(active, outcome) {
@@ -2132,10 +2124,10 @@ fn do_modify_column_with_check<S: MetaSnapshot>(
             Err(checked_refusal(code, message))
         }
         Some(None) => {
-            if let Some(step) = revertible_point(catalog, active, target, args, start_ts)? {
+            if let Some(step) = revertible_point(txn, active, target, args, start_ts)? {
                 return Ok(step);
             }
-            finish_modify_column_without_reorg(catalog, active, target, args, new, start_ts)
+            finish_modify_column_without_reorg(txn, catalog, active, target, args, new, start_ts)
         }
     }
 }
@@ -2144,7 +2136,7 @@ fn do_modify_column_with_check<S: MetaSnapshot>(
 /// a failing one clears the marks and reorganizes.
 #[allow(clippy::too_many_arguments)]
 fn precheck_for_varchar_to_char(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &mut tidb_model::ModifyColumnArgs,
@@ -2158,7 +2150,7 @@ fn precheck_for_varchar_to_char(
         return Err(column_in_change(&old, new.id));
     }
     if !has_modify_flag(&old) {
-        return mark_modifying(catalog, active, target, args, new, start_ts);
+        return mark_modifying(txn, active, target, args, new, start_ts);
     }
     match checked_outcome(active, outcome) {
         None => {
@@ -2184,7 +2176,7 @@ fn precheck_for_varchar_to_char(
             }
             let database_id = active.job.schema_id;
             check_table_info_valid(&target.info)?;
-            let write = update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
             args.modify_column_type = modify_type::REORG;
             Ok(with_args(active, args, action_step(write)))
         }
@@ -2632,8 +2624,8 @@ fn remove_old_objects(
 }
 
 /// Go `doModifyColumnIndexReorg`.
-fn do_modify_column_index_reorg<S: MetaSnapshot>(
-    snapshot: &mut S,
+fn do_modify_column_index_reorg(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
@@ -2663,7 +2655,8 @@ fn do_modify_column_index_reorg<S: MetaSnapshot>(
             let half = all.len() / 2;
             (all[..half].to_vec(), all[half..].to_vec())
         };
-    let finish = |active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    let finish = |txn: &mut JobTxn<'_>,
+                  active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
                   target: &mut ModifyTarget,
                   args: &mut tidb_model::ModifyColumnArgs,
                   changing_indexes: &[GoShared<IndexInfo>]|
@@ -2676,7 +2669,7 @@ fn do_modify_column_index_reorg<S: MetaSnapshot>(
             old.changing_field_type = None;
             old.del_flag(u64::from(FieldTypeFlags::PREVENT_NULL_INSERT));
         }
-        let write = update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+        let write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
         active.job.finish_table_job(
             JobState::DONE,
             SchemaState::PUBLIC,
@@ -2708,7 +2701,7 @@ fn do_modify_column_index_reorg<S: MetaSnapshot>(
                 return Err(error);
             }
             check_table_info_valid(&target.info)?;
-            let write = update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
             active.job.schema_state = SchemaState::DELETE_ONLY;
             args.changing_idxs = changing_indexes
                 .iter()
@@ -2728,14 +2721,14 @@ fn do_modify_column_index_reorg<S: MetaSnapshot>(
             }
             Some(None) => {
                 update_object_state(None, &changing_indexes, SchemaState::WRITE_ONLY);
-                let write = update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+                let write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
                 active.job.schema_state = SchemaState::WRITE_ONLY;
                 Ok(with_args(active, args, action_step(write)))
             }
         },
         SchemaState::WRITE_ONLY => {
             update_object_state(None, &changing_indexes, SchemaState::WRITE_REORGANIZATION);
-            let write = update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
             active.job.snapshot_version = 0;
             active.job.schema_state = SchemaState::WRITE_REORGANIZATION;
             Ok(with_args(active, args, action_step(write)))
@@ -2758,7 +2751,7 @@ fn do_modify_column_index_reorg<S: MetaSnapshot>(
                 }
                 if stage == tidb_model::reorg::ReorgStage::MODIFY_COLUMN_RECREATE_INDEX {
                     match do_reorg_work_for_create_index(
-                        snapshot,
+                        txn,
                         catalog,
                         active,
                         &target.info,
@@ -2777,8 +2770,7 @@ fn do_modify_column_index_reorg<S: MetaSnapshot>(
                                 &active.job,
                                 tidb_model::reorg::ReorgStage::MODIFY_COLUMN_COMPLETED,
                             );
-                            let write = update_version_and_table_info(
-                                catalog,
+                            let write = update_version_and_table_info(txn,
                                 active,
                                 database_id,
                                 &target.info,
@@ -2860,22 +2852,22 @@ fn do_modify_column_index_reorg<S: MetaSnapshot>(
                 }
             }
             active.job.schema_state = SchemaState::PUBLIC;
-            let write = update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
             Ok(with_args(active, args, action_step(write)))
         }
         SchemaState::PUBLIC => {
             if old_indexes.is_empty() {
-                return finish(active, target, args, &changing_indexes);
+                return finish(txn, active, target, args, &changing_indexes);
             }
             let old_state = old_indexes[0].read().state;
             match old_state {
                 SchemaState::WRITE_ONLY => {
                     update_object_state(None, &old_indexes, SchemaState::DELETE_ONLY);
                     let write =
-                        update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+                        update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
                     Ok(with_args(active, args, action_step(write)))
                 }
-                SchemaState::DELETE_ONLY => finish(active, target, args, &changing_indexes),
+                SchemaState::DELETE_ONLY => finish(txn, active, target, args, &changing_indexes),
                 state => Err(DdlPlanError::Encode(format!(
                     "unexpected column state {state} in modify column job"
                 ))),
@@ -2892,8 +2884,8 @@ fn do_modify_column_index_reorg<S: MetaSnapshot>(
 
 /// Go `doModifyColumnTypeWithData`.
 #[allow(clippy::too_many_arguments)]
-fn do_modify_column_type_with_data<S: MetaSnapshot>(
-    snapshot: &mut S,
+fn do_modify_column_type_with_data(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
@@ -2959,7 +2951,7 @@ fn do_modify_column_type_with_data<S: MetaSnapshot>(
                 return Err(error);
             }
             check_table_info_valid(&target.info)?;
-            let write = update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
             active.job.schema_state = SchemaState::DELETE_ONLY;
             args.changing_column = Some(GoShared::new(changing.read().clone_like_go()));
             args.changing_idxs = changing_indexes
@@ -2986,7 +2978,7 @@ fn do_modify_column_type_with_data<S: MetaSnapshot>(
                 }
             }
             update_object_state(Some(&changing), &changing_indexes, SchemaState::WRITE_ONLY);
-            let write = update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
             active.job.schema_state = SchemaState::WRITE_ONLY;
             Ok(with_args(active, args, action_step(write)))
         }
@@ -2996,7 +2988,7 @@ fn do_modify_column_type_with_data<S: MetaSnapshot>(
                 &changing_indexes,
                 SchemaState::WRITE_REORGANIZATION,
             );
-            let write = update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
             active.job.snapshot_version = 0;
             active.job.schema_state = SchemaState::WRITE_REORGANIZATION;
             Ok(with_args(active, args, action_step(write)))
@@ -3006,7 +2998,7 @@ fn do_modify_column_type_with_data<S: MetaSnapshot>(
                 let stage = reorg_stage(&active.job);
                 if stage == tidb_model::reorg::ReorgStage::MODIFY_COLUMN_UPDATE_COLUMN {
                     match do_reorg_work_for_modify_column(
-                        snapshot, catalog, active, target, &changing, outcome,
+                        txn, catalog, active, target, &changing, outcome,
                     )? {
                         ColumnReorgVisit::Step(step) => return Ok(with_args(active, args, step)),
                         ColumnReorgVisit::Failed(error) => {
@@ -3037,7 +3029,7 @@ fn do_modify_column_type_with_data<S: MetaSnapshot>(
                 }
                 if stage == tidb_model::reorg::ReorgStage::MODIFY_COLUMN_RECREATE_INDEX {
                     match do_reorg_work_for_create_index(
-                        snapshot,
+                        txn,
                         catalog,
                         active,
                         &target.info,
@@ -3056,8 +3048,7 @@ fn do_modify_column_type_with_data<S: MetaSnapshot>(
                                 &active.job,
                                 tidb_model::reorg::ReorgStage::MODIFY_COLUMN_COMPLETED,
                             );
-                            let write = update_version_and_table_info(
-                                catalog,
+                            let write = update_version_and_table_info(txn,
                                 active,
                                 database_id,
                                 &target.info,
@@ -3107,7 +3098,7 @@ fn do_modify_column_type_with_data<S: MetaSnapshot>(
             );
             update_modifying_cols(&target.old, &changing);
             active.job.schema_state = SchemaState::PUBLIC;
-            let write = update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
             Ok(with_args(active, args, action_step(write)))
         }
         SchemaState::PUBLIC => {
@@ -3118,7 +3109,7 @@ fn do_modify_column_type_with_data<S: MetaSnapshot>(
                     update_object_state(Some(&target.old), &old_indexes, SchemaState::DELETE_ONLY);
                     move_old_column_to_back(&mut target.info, &target.old);
                     let write =
-                        update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+                        update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
                     return Ok(with_args(active, args, action_step(write)));
                 }
                 SchemaState::DELETE_ONLY => {}
@@ -3130,7 +3121,7 @@ fn do_modify_column_type_with_data<S: MetaSnapshot>(
             }
             let mut removed = remove_old_objects(&mut target.info, &target.old, &old_indexes);
             removed.extend(ingest_temp_index_ids(&active.job, &changing_indexes));
-            let mut write = update_version_and_table_info(catalog, active, database_id, &target.info, true, start_ts)?;
+            let mut write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
             // Go `asyncNotifyEvent(NewModifyColumnEvent(...))`.
             if !tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string().go_to_lower()) {
                 let analyzed = analyze_state(&active.job) == tidb_model::reorg::analyze_state::DONE;

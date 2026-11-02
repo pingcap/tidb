@@ -1242,7 +1242,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         (DdlPlanError::Unsupported("unsupported action".into()), 1105),
         (DdlPlanError::Encode("invalid metadata".into()), -1),
         (
-            DdlPlanError::SessionExtendedInfoSchema(ClusterCatalogError::Snapshot("read failed".into())),
+            DdlPlanError::Meta(ClusterCatalogError::Snapshot("read failed".into())),
             -1,
         ),
         (

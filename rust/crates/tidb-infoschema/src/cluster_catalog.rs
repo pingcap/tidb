@@ -28,8 +28,6 @@
 
 use std::fmt;
 
-use tidb_hack::GoToLower;
-use tidb_meta::{key, value};
 use tidb_model::db::DBInfo;
 use tidb_model::GoShared;
 use tidb_model::table_info::{TableInfo, TABLE_INFO_VERSION2, TABLE_INFO_VERSION3};
@@ -149,54 +147,133 @@ pub fn stored_table_info_json(info: &TableInfo) -> Result<Vec<u8>, String> {
     tidb_meta::value::serialize_table_info(info).map_err(|error| error.to_string())
 }
 
-/// Reads the cluster schema version alone (Go `m.GetSchemaVersion`).
-pub fn get_schema_version<S: MetaSnapshot>(snapshot: &mut S) -> Result<i64, ClusterCatalogError> {
-    match snapshot.get(&key::schema_version_kv_key())? {
-        Some(stored) => value::parse_int_value(&stored)
-            .map_err(|error| ClusterCatalogError::Decode(format!("SchemaVersionKey: {error}"))),
-        // Go's TxStructure.GetInt64 answers 0 for a missing key.
-        None => Ok(0),
+/// Go `meta.NewReader(snapshot)`'s transaction: the snapshot as the raw
+/// transaction `meta.Mutator` decodes through, read-only. A snapshot read
+/// that fails keeps its own error (`failed`), so a storage error with a SQL
+/// identity (`ErrTxnAbortedByGC`, ...) reaches the caller unwrapped, as Go's
+/// meta reader returns it.
+pub struct MetaReadView<'a, S: ?Sized> {
+    snapshot: &'a mut S,
+    failed: Option<ClusterCatalogError>,
+}
+
+impl<S: MetaSnapshot + ?Sized> MetaReadView<'_, S> {
+    fn read<R>(&mut self, result: Result<R, ClusterCatalogError>) -> tidb_meta::Result<R> {
+        result.map_err(|error| {
+            let message = error.to_string();
+            self.failed.get_or_insert(error);
+            tidb_meta::MetaError::Storage(message)
+        })
     }
 }
 
-/// Go `Domain.loadInfoSchema`'s full load: the schema version, the resource
-/// groups and policies, and every database with its tables
-/// ([`fetch_all_schemas_with_tables`]), built into one schema image
-/// (`InitWithDBInfos`) from one snapshot.
-pub fn load_info_schema<S: MetaSnapshot>(
+impl<S: MetaSnapshot + ?Sized> tidb_structure::transaction::RawTransaction for MetaReadView<'_, S> {
+    type Error = tidb_meta::MetaError;
+
+    fn get(&mut self, key: &[u8]) -> tidb_meta::Result<Option<Vec<u8>>> {
+        let result = self.snapshot.get(key);
+        self.read(result)
+    }
+
+    fn set(&mut self, _key: Vec<u8>, _value: Vec<u8>) -> tidb_meta::Result<()> {
+        Err(tidb_meta::MetaError::Storage("a meta reader does not write".to_owned()))
+    }
+
+    fn delete(&mut self, _key: &[u8]) -> tidb_meta::Result<()> {
+        Err(tidb_meta::MetaError::Storage("a meta reader does not write".to_owned()))
+    }
+
+    fn scan_prefix(&mut self, prefix: &[u8]) -> tidb_meta::Result<MetaPairs> {
+        let result = self.snapshot.scan_prefix(prefix);
+        self.read(result)
+    }
+
+    fn iterate_range(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+        visit: &mut tidb_structure::transaction::RawRangeVisitor<'_, tidb_meta::MetaError>,
+    ) -> tidb_meta::Result<()> {
+        let result = self.snapshot.scan_range(start, end);
+        for (key, value) in self.read(result)? {
+            visit(&key, &value)?;
+        }
+        Ok(())
+    }
+}
+
+impl<S: MetaSnapshot + ?Sized> tidb_meta::transaction::MetaTransaction for MetaReadView<'_, S> {
+    /// The load never reads `Mutator.StartTS`; a recorded snapshot has none.
+    fn start_ts(&self) -> u64 {
+        0
+    }
+
+    /// Go `NewReader` applies no transaction configuration.
+    fn configure_meta_mutator(&mut self) {}
+}
+
+/// Go `meta.Reader` over a snapshot.
+pub type MetaReader<'a, S> = tidb_meta::transaction::Mutator<MetaReadView<'a, S>>;
+
+/// Go `meta.NewReader(snapshot)`: a mutator over the snapshot with no
+/// transaction configuration (the view's is a no-op; the request-source tag
+/// is the snapshot's own, set where it is opened).
+fn meta_reader<S: MetaSnapshot + ?Sized>(snapshot: &mut S) -> MetaReader<'_, S> {
+    tidb_meta::transaction::Mutator::new(MetaReadView {
+        snapshot,
+        failed: None,
+    })
+}
+
+/// A meta reader's error: the snapshot's own when a read failed, else the
+/// decode failure the reader reported.
+fn reader_error<S: MetaSnapshot + ?Sized>(
+    reader: &MetaReader<'_, S>,
+    error: tidb_meta::MetaError,
+) -> ClusterCatalogError {
+    reader
+        .inspect(|view| view.failed.clone())
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| ClusterCatalogError::Decode(error.to_string()))
+}
+
+/// Go `meta.NewReader(snapshot)` for one read: `read` runs against the
+/// snapshot's meta reader, and a failed snapshot read answers its own error.
+pub fn with_meta_reader<S: MetaSnapshot + ?Sized, R>(
+    snapshot: &mut S,
+    read: impl FnOnce(&MetaReader<'_, S>) -> tidb_meta::Result<R>,
+) -> Result<R, ClusterCatalogError> {
+    let reader = meta_reader(snapshot);
+    read(&reader).map_err(|error| reader_error(&reader, error))
+}
+
+/// Reads the cluster schema version alone (Go `m.GetSchemaVersion`).
+pub fn get_schema_version<S: MetaSnapshot + ?Sized>(snapshot: &mut S) -> Result<i64, ClusterCatalogError> {
+    let reader = meta_reader(snapshot);
+    reader.schema_version().map_err(|error| reader_error(&reader, error))
+}
+
+/// Go `Domain.loadInfoSchema`'s full load through `meta.NewReader`: the
+/// schema version, `ListPolicies`, `ListResourceGroups` and every database
+/// with its tables ([`fetch_all_schemas_with_tables`]), built into one schema
+/// image (`InitWithDBInfos`) from one snapshot.
+pub fn load_info_schema<S: MetaSnapshot + ?Sized>(
     snapshot: &mut S,
 ) -> Result<crate::SessionExtendedInfoSchema, ClusterCatalogError> {
-    let schema_version = get_schema_version(snapshot)?;
-
-    // Go `Mutator.ListResourceGroups`: the stored groups, with meta's default
-    // group when none is stored under that name.
-    let mut resource_groups = Vec::new();
-    for (_, stored) in snapshot.scan_prefix(&key::resource_groups_kv_prefix())? {
-        let encoded = value::detach_magic_byte(&stored)
-            .map_err(|error| ClusterCatalogError::Decode(format!("ResourceGroupInfo: {error}")))?;
-        resource_groups.push(
-            serde_json::from_slice::<tidb_model::ResourceGroupInfo>(encoded).map_err(|error| {
-                ClusterCatalogError::Decode(format!("ResourceGroupInfo: {error}"))
-            })?,
-        );
-    }
-    if !resource_groups
+    let reader = meta_reader(snapshot);
+    let read = |error| reader_error(&reader, error);
+    let schema_version = reader.schema_version().map_err(read)?;
+    let policies = reader.policies().map_err(read)?;
+    // Go `Mutator.ListResourceGroups` adds meta's default group when none is
+    // stored under that name.
+    let resource_groups = reader
+        .resource_groups()
+        .map_err(read)?
         .iter()
-        .any(|group| group.name.lowercase() == tidb_model::DEFAULT_RESOURCE_GROUP_NAME)
-    {
-        resource_groups.push(tidb_model::ResourceGroupInfo::default_group());
-    }
-
-    // Go `Mutator.ListPolicies`.
-    let mut policies = Vec::new();
-    for (_, stored) in snapshot.scan_prefix(&key::policies_kv_prefix())? {
-        policies.push(
-            value::parse_policy_info(&stored)
-                .map_err(|error| ClusterCatalogError::Decode(format!("PolicyInfo: {error}")))?,
-        );
-    }
-
-    let databases = fetch_all_schemas_with_tables(snapshot)?;
+        .map(|group| (**group).clone())
+        .collect();
+    let databases = fetch_all_schemas_with_tables(&reader).map_err(read)?;
     Ok(crate::SessionExtendedInfoSchema::init_with_db_infos(
         databases,
         policies,
@@ -205,49 +282,38 @@ pub fn load_info_schema<S: MetaSnapshot>(
     ))
 }
 
-/// Go `Loader.fetchAllSchemasWithTables`: every database, its
-/// `Deprecated.Tables` the tables stored under it.
-///
-/// Go `ListDatabases` then `ListTables` per database. Go filters a database's
-/// hash by field prefix because the same hash also holds the per-table ID
-/// allocators; so does this.
-pub fn fetch_all_schemas_with_tables<S: MetaSnapshot>(
-    snapshot: &mut S,
-) -> Result<Vec<GoShared<DBInfo>>, ClusterCatalogError> {
+/// Go `Loader.fetchAllSchemasWithTables`: `ListDatabases`, each database's
+/// `Deprecated.Tables` its `ListTables`.
+fn fetch_all_schemas_with_tables<S: MetaSnapshot + ?Sized>(
+    reader: &MetaReader<'_, S>,
+) -> tidb_meta::Result<Vec<GoShared<DBInfo>>> {
     let mut databases = Vec::new();
-    for (raw_key, stored) in snapshot.scan_prefix(&key::databases_kv_prefix())? {
-        let (_, field) = tidb_tablecodec::table_key::decode_meta_key(&raw_key)
-            .map_err(|error| ClusterCatalogError::Decode(format!("DBs hash key: {error}")))?;
-        if !key::has_prefix(key::DB_PREFIX, &field) {
-            continue;
-        }
-        let mut info = value::parse_db_info(&stored)
-            .map_err(|error| ClusterCatalogError::Decode(format!("DBInfo: {error}")))?;
-        info.deprecated_tables = load_database_tables(snapshot, info.id)?.into();
+    for mut info in reader.databases()? {
+        info.deprecated_tables = database_tables(reader, info.id)?.into();
         databases.push(GoShared::new(info));
     }
     Ok(databases)
 }
 
-/// Every stored `TableInfo` under one database, in stored key order.
-pub fn load_database_tables<S: MetaSnapshot>(
+fn database_tables<S: MetaSnapshot + ?Sized>(
+    reader: &MetaReader<'_, S>,
+    db_id: i64,
+) -> tidb_meta::Result<Vec<TableInfo>> {
+    let mut tables = reader.tables(db_id)?;
+    for table in &mut tables {
+        normalize_full_loaded_table_info(table);
+    }
+    Ok(tables)
+}
+
+/// Go `Mutator.ListTables`: every stored `TableInfo` under one database, in
+/// stored key order, as a full load normalizes them.
+pub fn load_database_tables<S: MetaSnapshot + ?Sized>(
     snapshot: &mut S,
     db_id: i64,
 ) -> Result<Vec<TableInfo>, ClusterCatalogError> {
-    let mut tables = Vec::new();
-    for (raw_key, stored) in snapshot.scan_prefix(&key::database_metas_kv_prefix(db_id))? {
-        let (_, field) = tidb_tablecodec::table_key::decode_meta_key(&raw_key)
-            .map_err(|error| ClusterCatalogError::Decode(format!("DB hash key: {error}")))?;
-        // The same hash also holds TID/IID/TARID/SID allocator fields.
-        if !key::has_prefix(key::TABLE_PREFIX, &field) {
-            continue;
-        }
-        let mut table = value::parse_table_info(&stored, db_id)
-            .map_err(|error| ClusterCatalogError::Decode(format!("TableInfo: {error}")))?;
-        normalize_full_loaded_table_info(&mut table);
-        tables.push(table);
-    }
-    Ok(tables)
+    let reader = meta_reader(snapshot);
+    database_tables(&reader, db_id).map_err(|error| reader_error(&reader, error))
 }
 
 /// Go `ConvertCharsetCollateToLowerCaseIfNeed` (`builder.go:936-946`): a

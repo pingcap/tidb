@@ -292,22 +292,25 @@ impl<'a> EvolvingTables<'a> {
         }
     }
 
-    fn mutations(&self) -> Result<Vec<BufferMutation>, DdlPlanError> {
-        let mut mutations = Vec::new();
+    /// Go's writes of the renamed tables: `DropTableOrView` from the schema
+    /// a table left, `UpdateTable` where it stays, `CreateTableOrView` in the
+    /// schema it entered.
+    fn write(&self, txn: &mut JobTxn<'_>) -> Result<(), DdlPlanError> {
+        let meta = txn.meta();
+        let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
         for (schema_id, table_id) in &self.deleted {
-            mutations.push(BufferMutation::delete(key::table_kv_key(
-                *schema_id, *table_id,
-            ))?);
+            meta.drop_table_or_view(*schema_id, *table_id).map_err(meta_error)?;
         }
         for table_id in &self.written {
             let (schema_id, table) = &self.tables[table_id];
-            mutations.push(BufferMutation::set(
-                key::table_kv_key(*schema_id, *table_id),
-                value::serialize_table_info(table)
-                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-            )?);
+            let mut table = table.clone_like_go();
+            if meta.table_exists(*schema_id, *table_id).map_err(meta_error)? {
+                meta.update_table(*schema_id, &mut table).map_err(meta_error)?;
+            } else {
+                meta.create_table_or_view(*schema_id, &table).map_err(meta_error)?;
+            }
         }
-        Ok(mutations)
+        Ok(())
     }
 }
 
@@ -496,6 +499,7 @@ fn rename_one(
 
 /// Go `onRenameTable` / `onRenameTables` and their finishing steps.
 pub(super) fn on_rename_table(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     _start_ts: u64,
@@ -516,7 +520,13 @@ pub(super) fn on_rename_table(
         let infos = args.read().rename_table_infos.get();
         infos.iter_deref().map(|info| info.read().clone()).collect()
     };
-    let schema_version = catalog.schema_meta_version() + 1;
+    // Go `updateSchemaVersion`'s `GenSchemaVersion`; its `SetSchemaDiff` is
+    // `push_version` once the diff is complete.
+    let schema_version = {
+        let meta = txn.meta();
+        meta.gen_schema_version()
+            .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?
+    };
     let mut diff = SchemaDiff {
         version: schema_version,
         action_type: active.job.type_,
@@ -554,7 +564,7 @@ pub(super) fn on_rename_table(
             finished.push(table.read().clone_like_go());
         }
         set_rename_diff(&mut diff, single, &infos, |info| info.new_schema_id, active);
-        push_version(&mut mutations, &diff)?;
+        push_version(txn, &diff)?;
         active.job.last_schema_version = schema_version;
         if single {
             active.job.finish_table_job(
@@ -634,7 +644,7 @@ pub(super) fn on_rename_table(
             info.new_schema_id,
         )?;
     }
-    mutations.extend(tables.mutations()?);
+    tables.write(txn)?;
     set_rename_diff(&mut diff, single, &infos, |info| info.old_schema_id, active);
     // Go `SetSchemaDiffForMultiInfos` over the foreign-key helper's tables.
     let mut seen: Vec<i64> = std::iter::once(diff.table_id)
@@ -663,7 +673,7 @@ pub(super) fn on_rename_table(
         });
     }
     diff.affected_options = GoSharedPointerSlice::from(affected);
-    push_version(&mut mutations, &diff)?;
+    push_version(txn, &diff)?;
     active.job.last_schema_version = schema_version;
     active.job.schema_state = SchemaState::PUBLIC;
     let mut write = job_only_write(active.job.id, mutations);
@@ -709,18 +719,9 @@ fn set_rename_diff(
     diff.affected_options = GoSharedPointerSlice::from(affected);
 }
 
-fn push_version(
-    mutations: &mut Vec<BufferMutation>,
-    diff: &SchemaDiff,
-) -> Result<(), DdlPlanError> {
-    mutations.push(BufferMutation::set(
-        key::schema_version_kv_key(),
-        value::encode_int_value(diff.version),
-    )?);
-    mutations.push(BufferMutation::set(
-        key::schema_diff_kv_key(diff.version),
-        value::serialize_schema_diff(diff)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-    )?);
-    Ok(())
+/// Go `updateSchemaVersion`'s `SetSchemaDiff`.
+fn push_version(txn: &mut JobTxn<'_>, diff: &SchemaDiff) -> Result<(), DdlPlanError> {
+    let meta = txn.meta();
+    meta.set_schema_diff(diff)
+        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))
 }

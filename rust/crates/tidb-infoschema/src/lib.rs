@@ -722,8 +722,6 @@ impl SessionExtendedInfoSchema {
             .get(&tidb_ast::CiString::new(name).lowercase().to_owned())
     }
 
-    /// Every policy, for `information_schema` and `SHOW` surfaces.
-    #[must_use]
     /// Go `InfoSchema.SchemaMetaVersion`.
     #[must_use]
     pub fn schema_meta_version(&self) -> i64 {
@@ -783,6 +781,7 @@ impl SessionExtendedInfoSchema {
         found.map(|table| (info, table))
     }
 
+    /// Every policy, for `information_schema` and `SHOW` surfaces.
     pub fn policies(&self) -> impl Iterator<Item = &tidb_model::PolicyInfo> {
         self.schema.policies.values()
     }

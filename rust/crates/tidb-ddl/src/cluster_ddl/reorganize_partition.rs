@@ -504,7 +504,7 @@ fn reorg_partition_info(
 /// `SetSchemaDiffForPartitionModify` names the table as its own old table
 /// for PARTITION BY and REMOVE PARTITIONING.
 fn reorg_table_step(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     database_id: i64,
     info: &TableInfo,
@@ -512,7 +512,7 @@ fn reorg_table_step(
 ) -> Result<DdlWrite, DdlPlanError> {
     let modifies = active.job.type_ != ActionType::ACTION_REORGANIZE_PARTITION;
     let job_table_id = active.job.table_id;
-    table_step_with_diff(catalog, active, database_id, info, true, start_ts, |diff| {
+    table_step_with_diff(txn, active, database_id, info, true, start_ts, |diff| {
         if modifies {
             diff.old_table_id = job_table_id;
         }
@@ -520,8 +520,8 @@ fn reorg_table_step(
 }
 
 /// Go `onReorganizePartition`.
-pub(super) fn on_reorganize_partition<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn on_reorganize_partition(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -537,7 +537,7 @@ pub(super) fn on_reorganize_partition<S: MetaSnapshot>(
             )
         })?;
     if active.job.is_rollingback() {
-        return super::partition::rollback_like_drop_partition(snapshot, catalog, active, start_ts);
+        return super::partition::rollback_like_drop_partition(txn, catalog, active, start_ts);
     }
     let (part_names, part_info) = {
         let args = args.read();
@@ -615,7 +615,7 @@ pub(super) fn on_reorganize_partition<S: MetaSnapshot>(
             }
             for definition in &adding {
                 alter_table::check_placement_policy_ref_valid_and_can_non_valid_job(
-                    snapshot,
+                    txn,
                     &definition.placement_policy_ref,
                 )
                 .map_err(|error| cancel_ddl_job(active, error))?;
@@ -652,7 +652,7 @@ pub(super) fn on_reorganize_partition<S: MetaSnapshot>(
             // here (`ConfigureTiFlashPDForPartitions`); this node configures
             // none for any table yet.
             let bundles =
-                super::partition::alter_table_partition_bundles(snapshot, &info, adding.clone())
+                super::partition::alter_table_partition_bundles(txn, &info, adding.clone())
                     .map_err(|error| cancel_ddl_job(active, error))?;
             // `alterTableLabelRule` over the table's ids and the adding ones.
             let mut spanning = info.clone_like_go();
@@ -678,7 +678,7 @@ pub(super) fn on_reorganize_partition<S: MetaSnapshot>(
             active.job.schema_state = SchemaState::DELETE_ONLY;
             partition.write().ddl_state = SchemaState::DELETE_ONLY;
             check_table_info_valid(&info)?;
-            let mut write = reorg_table_step(catalog, active, database_id, &info, start_ts)?;
+            let mut write = reorg_table_step(txn, active, database_id, &info, start_ts)?;
             write.placement_bundles = bundles;
             write.label_rules = label_rules.steps;
             Ok(action_step(write))
@@ -722,7 +722,7 @@ pub(super) fn on_reorganize_partition<S: MetaSnapshot>(
             }
             active.job.schema_state = SchemaState::WRITE_ONLY;
             partition.write().ddl_state = SchemaState::WRITE_ONLY;
-            let write = reorg_table_step(catalog, active, database_id, &info, start_ts)?;
+            let write = reorg_table_step(txn, active, database_id, &info, start_ts)?;
             Ok(action_step(write))
         }
         SchemaState::WRITE_ONLY => {
@@ -735,14 +735,15 @@ pub(super) fn on_reorganize_partition<S: MetaSnapshot>(
             }
             active.job.schema_state = SchemaState::WRITE_REORGANIZATION;
             partition.write().ddl_state = SchemaState::WRITE_REORGANIZATION;
-            let write = reorg_table_step(catalog, active, database_id, &info, start_ts)?;
+            let write = reorg_table_step(txn, active, database_id, &info, start_ts)?;
             Ok(action_step(write))
         }
         SchemaState::WRITE_REORGANIZATION => {
-            match do_partition_reorg_work(snapshot, catalog, active, &info, reorg_outcome)? {
+            match do_partition_reorg_work(txn, catalog, active, &info, reorg_outcome)? {
                 PartitionReorgWork::Step(step) => return Ok(step),
                 PartitionReorgWork::Failed(error) => {
                     return rollback_reorganize_partition_with_err(
+                        txn,
                         catalog, active, &args, start_ts, error,
                     )
                 }
@@ -780,7 +781,7 @@ pub(super) fn on_reorganize_partition<S: MetaSnapshot>(
             // writes.
             active.job.schema_state = SchemaState::DELETE_REORGANIZATION;
             partition.write().ddl_state = SchemaState::DELETE_REORGANIZATION;
-            let write = reorg_table_step(catalog, active, database_id, &info, start_ts)?;
+            let write = reorg_table_step(txn, active, database_id, &info, start_ts)?;
             Ok(action_step(write))
         }
         SchemaState::DELETE_REORGANIZATION => {
@@ -794,7 +795,7 @@ pub(super) fn on_reorganize_partition<S: MetaSnapshot>(
             }
             active.job.schema_state = SchemaState::PUBLIC;
             partition.write().ddl_state = SchemaState::PUBLIC;
-            let write = reorg_table_step(catalog, active, database_id, &info, start_ts)?;
+            let write = reorg_table_step(txn, active, database_id, &info, start_ts)?;
             Ok(action_step(write))
         }
         SchemaState::PUBLIC => {
@@ -841,29 +842,16 @@ pub(super) fn on_reorganize_partition<S: MetaSnapshot>(
                     });
                 }
             }
-            let mut mutations = Vec::new();
             let mut old_table_id = 0;
             if active.job.type_ != ActionType::ACTION_REORGANIZE_PARTITION {
                 // PARTITION BY / REMOVE PARTITIONING: the table is recreated
                 // under its new id, its auto-ID counters carried across.
                 old_table_id = info.id;
-                let new_table_id = part_info.new_table_id;
-                mutations.push(BufferMutation::delete(key::table_kv_key(
-                    database_id,
-                    old_table_id,
-                ))?);
-                for key_for in [
-                    key::auto_table_id_kv_key as fn(i64, i64) -> Vec<u8>,
-                    key::auto_increment_id_kv_key,
-                    key::auto_random_table_id_kv_key,
-                ] {
-                    let counter = read_auto_id(snapshot, &key_for(database_id, old_table_id))?;
-                    mutations.push(BufferMutation::set(
-                        key_for(database_id, new_table_id),
-                        value::encode_int_value(counter),
-                    )?);
-                }
-                info.id = new_table_id;
+                let meta = txn.meta();
+                let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+                let auto_ids = meta.auto_ids(database_id, old_table_id).get().map_err(meta_error)?;
+                meta.drop_table_or_view(database_id, old_table_id).map_err(meta_error)?;
+                info.id = part_info.new_table_id;
                 if physical_table_ids.first() != Some(&old_table_id) {
                     physical_table_ids.push(old_table_id);
                 }
@@ -872,10 +860,12 @@ pub(super) fn on_reorganize_partition<S: MetaSnapshot>(
                 } else if let Some(partition) = &info.partition {
                     partition.write().clear_reorg_intermediate_info();
                 }
+                meta.auto_ids(database_id, info.id).put(auto_ids).map_err(meta_error)?;
+                meta.create_table_or_view(database_id, &info).map_err(meta_error)?;
             }
             // The bundles of the final partitions.
             let bundles =
-                super::partition::alter_table_partition_bundles(snapshot, &info, Vec::new())?;
+                super::partition::alter_table_partition_bundles(txn, &info, Vec::new())?;
             active.job.schema_state = SchemaState::NONE;
             // `SetSchemaDiffForReorganizePartition` /
             // `SetSchemaDiffForPartitionModify`.
@@ -893,8 +883,7 @@ pub(super) fn on_reorganize_partition<S: MetaSnapshot>(
             };
             let modifies = active.job.type_ != ActionType::ACTION_REORGANIZE_PARTITION;
             let job_table_id = active.job.table_id;
-            let mut write = table_step_with_diff(
-                catalog,
+            let mut write = table_step_with_diff(txn,
                 active,
                 database_id,
                 &info,
@@ -907,8 +896,6 @@ pub(super) fn on_reorganize_partition<S: MetaSnapshot>(
                     }
                 },
             )?;
-            mutations.append(&mut write.mutations);
-            write.mutations = mutations;
             if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 let event = match active.job.type_ {
                     ActionType::ACTION_REORGANIZE_PARTITION => {
@@ -1155,6 +1142,7 @@ fn do_partition_reorg_work<S: MetaSnapshot>(
 /// the job turns to roll back, the adding partitions to be dropped by
 /// `rollbackLikeDropPartition`.
 fn rollback_reorganize_partition_with_err(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &GoShared<tidb_model::TablePartitionArgs>,
@@ -1248,7 +1236,7 @@ fn rollback_reorganize_partition_with_err(
     ));
     active.job.fill_args(Some(args.clone()));
     let database_id = active.job.schema_id;
-    let write = reorg_table_step(catalog, active, database_id, &info, start_ts)?;
+    let write = reorg_table_step(txn, active, database_id, &info, start_ts)?;
     active.job.state = JobState::ROLLINGBACK;
     Ok(PersistedDdlActionStep {
         write,
@@ -1261,6 +1249,7 @@ fn rollback_reorganize_partition_with_err(
 /// Go `onRollbackReorganizePartition`: past public the old indexes are being
 /// destroyed, so the job rolls on.
 pub(super) fn on_rollback_reorganize_partition(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -1278,6 +1267,7 @@ pub(super) fn on_rollback_reorganize_partition(
         return Ok(job_control_step(&active.job));
     }
     rollback_reorganize_partition_with_err(
+        txn,
         catalog,
         active,
         &args,

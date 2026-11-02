@@ -213,6 +213,7 @@ fn check_drop_index(
 
 /// Go `onDropIndex` for a DROP INDEX / DROP PRIMARY KEY job.
 pub(super) fn on_drop_index(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -245,7 +246,7 @@ pub(super) fn on_drop_index(
     if !active.job.is_rollingback() && is_revertible_sub_job(&active.job) {
         active.job.mark_non_revertible();
         active.job.schema_state = original_state;
-        let write = update_version_and_table_info(catalog, active, database_id, &info, false, start_ts)?;
+        let write = update_version_and_table_info(txn, active, database_id, &info, false, start_ts)?;
         return Ok(action_step(write));
     }
     let next = match original_state {
@@ -267,7 +268,7 @@ pub(super) fn on_drop_index(
             index.write().state = next;
         }
         active.job.schema_state = next;
-        let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+        let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
         return Ok(action_step(write));
     }
     // Delete-reorganization -> absent.
@@ -278,7 +279,7 @@ pub(super) fn on_drop_index(
         index_ids.push(removed.id);
         remove_index_and_hidden_columns(&mut info, &removed);
     }
-    let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+    let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
     active.job.finish_table_job(
         JobState::DONE,
         SchemaState::NONE,

@@ -1550,7 +1550,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
     if spec.job.type_ == tidb_model::action_type::ActionType::ACTION_ALTER_CACHE_TABLE {
         let table_id = spec.job.table_id;
         add_index_reorg::reorg_transaction(&opener, timeout, |meta, handle, buffer, _| {
-            let catalog = load_info_schema(meta).map_err(DdlPlanError::SessionExtendedInfoSchema)?;
+            let catalog = load_info_schema(meta).map_err(DdlPlanError::Meta)?;
             let table = catalog
                 .stored_schemas()
                 .iter()
@@ -1634,7 +1634,7 @@ pub fn load_active_persisted_ddl_jobs_cached<S: StoreClient>(
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
         );
         if cached_job_table.is_none() {
-            let catalog = load_info_schema(&mut snapshot).map_err(DdlPlanError::SessionExtendedInfoSchema)?;
+            let catalog = load_info_schema(&mut snapshot).map_err(DdlPlanError::Meta)?;
             *cached_job_table = Some(
                 DdlJobTable::locate(&catalog)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -1696,7 +1696,7 @@ pub fn load_min_persisted_ddl_job_id_cached<S: StoreClient>(
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
         );
         if cached_job_table.is_none() {
-            let catalog = load_info_schema(&mut snapshot).map_err(DdlPlanError::SessionExtendedInfoSchema)?;
+            let catalog = load_info_schema(&mut snapshot).map_err(DdlPlanError::Meta)?;
             *cached_job_table = Some(
                 DdlJobTable::locate(&catalog)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -1739,7 +1739,7 @@ pub fn load_history_persisted_ddl_job<S: StoreClient>(
         );
         snapshot
             .get(&tidb_meta::key::ddl_job_history_kv_key(ddl_job_id))
-            .map_err(DdlPlanError::SessionExtendedInfoSchema)?
+            .map_err(DdlPlanError::Meta)?
             .map(|encoded| {
                 let mut job = Job::default();
                 job.decode(&encoded)

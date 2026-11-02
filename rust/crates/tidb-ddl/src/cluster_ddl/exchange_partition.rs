@@ -228,56 +228,39 @@ fn exchange_diff(
 /// Go `updateVersionAndTableInfo` over the standalone table and, when
 /// given, the partitioned one (`multiInfos`).
 fn exchange_step(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &ExchangeArgs,
     standalone: &TableInfo,
     partitioned: Option<&TableInfo>,
     start_ts: u64,
 ) -> Result<DdlWrite, DdlPlanError> {
-    let mut standalone = standalone.clone_like_go();
-    standalone.update_ts = start_ts;
-    let mut mutations = vec![BufferMutation::set(
-        key::table_kv_key(active.job.schema_id, standalone.id),
-        value::serialize_table_info(&standalone)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-    )?];
-    if let Some(partitioned) = partitioned {
-        let mut partitioned = partitioned.clone_like_go();
-        partitioned.update_ts = start_ts;
-        mutations.push(BufferMutation::set(
-            key::table_kv_key(args.pt_schema_id, partitioned.id),
-            value::serialize_table_info(&partitioned)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?);
-    }
-    let schema_version = catalog.schema_meta_version() + 1;
+    let meta = txn.meta();
+    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
     let mut diff = SchemaDiff {
-        version: schema_version,
         action_type: active.job.type_,
         schema_id: active.job.schema_id,
         ..SchemaDiff::default()
     };
     exchange_diff(active, args, partitioned.is_some(), &mut diff);
-    mutations.push(BufferMutation::set(
-        key::schema_version_kv_key(),
-        value::encode_int_value(schema_version),
-    )?);
-    mutations.push(BufferMutation::set(
-        key::schema_diff_kv_key(schema_version),
-        value::serialize_schema_diff(&diff)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-    )?);
-    active.job.last_schema_version = schema_version;
-    let mut write = job_only_write(active.job.id, mutations);
+    let (schema_version, diff) = update_schema_version(&meta, active, diff)?;
+    let mut standalone = standalone.clone_like_go();
+    standalone.update_ts = start_ts;
+    meta.update_table(active.job.schema_id, &mut standalone).map_err(meta_error)?;
+    if let Some(partitioned) = partitioned {
+        let mut partitioned = partitioned.clone_like_go();
+        partitioned.update_ts = start_ts;
+        meta.update_table(args.pt_schema_id, &mut partitioned).map_err(meta_error)?;
+    }
+    let mut write = job_only_write(active.job.id, Vec::new());
     write.schema_version = schema_version;
     write.diff = diff;
     Ok(write)
 }
 
 /// Go `onExchangeTablePartition`.
-pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn on_exchange_table_partition(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -304,7 +287,7 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
     }
     let mut standalone = checked_job_table(catalog, active, true)?.read().clone_like_go();
     if active.job.is_rollingback() {
-        return rollback_exchange_table_partition(catalog, active, &args, standalone, start_ts);
+        return rollback_exchange_table_partition(txn, catalog, active, &args, standalone, start_ts);
     }
     let Some(partitioned) = stored_table_by_ids(catalog, args.pt_schema_id, args.pt_table_id)
     else {
@@ -352,7 +335,7 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
         check_exchange_tables(&partitioned, &standalone)
             .and_then(|()| {
                 check_exchange_partition_placement_policy(
-                    snapshot,
+                    txn,
                     standalone.placement_policy_ref.as_ref(),
                     partitioned.placement_policy_ref.as_ref(),
                     definition.placement_policy_ref.as_ref(),
@@ -394,7 +377,7 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
             check_table_info_valid(&partitioned)?;
         }
         let write = exchange_step(
-            catalog,
+            txn,
             active,
             &args,
             &standalone,
@@ -474,27 +457,16 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
     let database_id = active.job.schema_id;
     let original_standalone_id = standalone.id;
     let original_partition_id = definition.id;
-    // Both tables take the larger of their auto-ID counters.
-    let mut mutations = Vec::new();
-    for key_for in [
-        key::auto_table_id_kv_key as fn(i64, i64) -> Vec<u8>,
-        key::auto_increment_id_kv_key,
-        key::auto_random_table_id_kv_key,
-    ] {
-        let partitioned_key = key_for(args.pt_schema_id, partitioned.id);
-        let maximum = std::cmp::max(
-            read_auto_id(snapshot, &partitioned_key)?,
-            read_auto_id(snapshot, &key_for(database_id, original_standalone_id))?,
-        );
-        mutations.push(BufferMutation::set(
-            partitioned_key,
-            value::encode_int_value(maximum),
-        )?);
-        mutations.push(BufferMutation::set(
-            key_for(database_id, original_partition_id),
-            value::encode_int_value(maximum),
-        )?);
-    }
+    // Go: both tables' auto-ID groups, read before the standalone table is
+    // dropped; each table takes the larger of each counter after.
+    let (partitioned_auto_ids, standalone_auto_ids) = {
+        let meta = txn.meta();
+        let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+        (
+            meta.auto_ids(args.pt_schema_id, partitioned.id).get().map_err(meta_error)?,
+            meta.auto_ids(database_id, original_standalone_id).get().map_err(meta_error)?,
+        )
+    };
     if let Some(replica) = &partitioned.tiflash_replica {
         let mut replica = replica.write();
         let mut ids = replica
@@ -507,11 +479,6 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
         }
         replica.available_partition_ids = ids.into();
     }
-    // `DropTableOrView` of the standalone table under its old id.
-    mutations.push(BufferMutation::delete(key::table_kv_key(
-        database_id,
-        original_standalone_id,
-    ))?);
     let original_standalone = standalone.clone_like_go();
     partitioned.exchange_partition_info = None;
     let exchanged_definition = {
@@ -535,15 +502,30 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
     standalone.id = original_partition_id;
     standalone.exchange_partition_info = None;
     partitioned.update_ts = start_ts;
-    mutations.push(BufferMutation::set(
-        key::table_kv_key(args.pt_schema_id, partitioned.id),
-        value::serialize_table_info(&partitioned)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-    )?);
+    {
+        // Go: `DropTableOrView` of the standalone table under its old id,
+        // `UpdateTable` of the partitioned one, `CreateTableOrView` of the
+        // standalone table under the partition's id, then both tables'
+        // auto-ID groups.
+        let meta = txn.meta();
+        let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+        meta.drop_table_or_view(database_id, original_standalone_id).map_err(meta_error)?;
+        meta.update_table(args.pt_schema_id, &mut partitioned).map_err(meta_error)?;
+        meta.create_table_or_view(database_id, &standalone).map_err(meta_error)?;
+        let auto_ids = tidb_meta::transaction::AutoIdGroup {
+            row_id: partitioned_auto_ids.row_id.max(standalone_auto_ids.row_id),
+            increment_id: partitioned_auto_ids
+                .increment_id
+                .max(standalone_auto_ids.increment_id),
+            random_id: partitioned_auto_ids.random_id.max(standalone_auto_ids.random_id),
+        };
+        meta.auto_ids(args.pt_schema_id, partitioned.id).put(auto_ids).map_err(meta_error)?;
+        meta.auto_ids(database_id, standalone.id).put(auto_ids).map_err(meta_error)?;
+    }
     // `bundlesForExchangeTablePartition`: the table, the exchanged
     // partition and the standalone table under their new ids; the side that
     // lost a policy is cleared.
-    let policies = load_policies(snapshot)?;
+    let policies = load_policies(txn)?;
     let placement = |error: tidb_placement::PlacementError| DdlPlanError::Encode(error.to_string());
     let mut bundles = Vec::new();
     bundles.extend(tidb_placement::new_table_bundle(&policies, &partitioned).map_err(placement)?);
@@ -581,9 +563,7 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
     label_rules.push(label_write, Some(LABEL_RULES_NOTIFY_ERROR))?;
     active.job.schema_state = SchemaState::PUBLIC;
     check_table_info_valid(&standalone)?;
-    let mut write = exchange_step(catalog, active, &args, &standalone, None, start_ts)?;
-    mutations.append(&mut write.mutations);
-    write.mutations = mutations;
+    let mut write = exchange_step(txn, active, &args, &standalone, None, start_ts)?;
     if !tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string()) {
         append_schema_change_mutations(
             catalog,
@@ -614,6 +594,7 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
 /// Go `rollbackExchangeTablePartition`: the standalone table (and the
 /// partitioned one, if it was marked) loses its `ExchangePartitionInfo`.
 fn rollback_exchange_table_partition(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &ExchangeArgs,
@@ -643,7 +624,7 @@ fn rollback_exchange_table_partition(
         Some(partitioned)
     };
     let write = exchange_step(
-        catalog,
+        txn,
         active,
         args,
         &standalone,
@@ -655,6 +636,7 @@ fn rollback_exchange_table_partition(
 
 /// Go `rollingbackExchangeTablePartition`.
 pub(super) fn rollingback_exchange_table_partition(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -664,7 +646,7 @@ pub(super) fn rollingback_exchange_table_partition(
     }
     let (_, args) = exchange_args(active)?;
     let standalone = checked_job_table(catalog, active, true)?.read().clone_like_go();
-    rollback_exchange_table_partition(catalog, active, &args, standalone, start_ts)
+    rollback_exchange_table_partition(txn, catalog, active, &args, standalone, start_ts)
 }
 
 /// Go `partitionMaxValue`.

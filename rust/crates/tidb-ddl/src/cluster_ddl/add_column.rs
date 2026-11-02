@@ -206,13 +206,14 @@ fn check_unsupported_charset_for_tiflash(
 
 /// Go `onAddColumn`.
 pub(super) fn on_add_column(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     if active.job.is_rollingback() {
-        return drop_column::on_drop_column(catalog, active, start_ts);
+        return drop_column::on_drop_column(txn, catalog, active, start_ts);
     }
     let AddColumnTarget {
         mut info,
@@ -291,7 +292,7 @@ pub(super) fn on_add_column(
     if matches!(next, SchemaState::DELETE_ONLY | SchemaState::PUBLIC) {
         check_table_info_valid(&info)?;
     }
-    let mut write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+    let mut write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
     if next != SchemaState::PUBLIC {
         active.job.schema_state = next;
         if next == SchemaState::WRITE_REORGANIZATION {
@@ -326,6 +327,7 @@ pub(super) fn on_add_column(
 /// Go `rollingbackAddColumn`: before the column exists the job is
 /// cancelled; afterwards it turns delete-only and rolls back as a drop.
 pub(super) fn rollingback_add_column(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -350,8 +352,7 @@ pub(super) fn rollingback_add_column(
         },
     );
     let database_id = active.job.schema_id;
-    let write = update_version_and_table_info(
-        catalog,
+    let write = update_version_and_table_info(txn,
         active,
         database_id,
         &info,

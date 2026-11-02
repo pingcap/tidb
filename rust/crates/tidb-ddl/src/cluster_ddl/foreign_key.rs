@@ -265,6 +265,7 @@ fn checked_outcome(
 
 /// Go `onCreateForeignKey`.
 pub(super) fn on_create_foreign_key(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -290,7 +291,7 @@ pub(super) fn on_create_foreign_key(
     };
     if active.job.is_rollingback() {
         let name = fk.read().name.original().to_owned();
-        return drop_foreign_key_step(catalog, active, info, &name, start_ts);
+        return drop_foreign_key_step(txn, active, info, &name, start_ts);
     }
     let schema = active.job.schema_name.to_string();
     let last = |info: &TableInfo| info.foreign_keys.len().checked_sub(1);
@@ -308,7 +309,7 @@ pub(super) fn on_create_foreign_key(
                 fk.id = info.max_foreign_key_id;
             }
             info.foreign_keys.push_go(fk.read().clone_like_go());
-            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             active.job.schema_state = SchemaState::WRITE_ONLY;
             Ok(action_step(write))
         }
@@ -330,7 +331,7 @@ pub(super) fn on_create_foreign_key(
                 info.foreign_keys.get(last).expect("in range").write().state =
                     SchemaState::WRITE_REORGANIZATION;
             }
-            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             active.job.schema_state = SchemaState::WRITE_REORGANIZATION;
             Ok(action_step(write))
         }
@@ -338,7 +339,7 @@ pub(super) fn on_create_foreign_key(
             if let Some(last) = last(&info) {
                 info.foreign_keys.get(last).expect("in range").write().state = SchemaState::PUBLIC;
             }
-            let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+            let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             active.job.schema_state = SchemaState::PUBLIC;
             active.job.finish_table_job(
                 JobState::DONE,
@@ -447,7 +448,7 @@ fn check_request(
 
 /// Go `dropForeignKey` for an ADD FOREIGN KEY rolling back.
 fn drop_foreign_key_step(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     mut info: TableInfo,
     name: &str,
@@ -457,7 +458,7 @@ fn drop_foreign_key_step(
         return Err(cancel_ddl_job(active, error));
     }
     let database_id = active.job.schema_id;
-    let write = update_version_and_table_info(catalog, active, database_id, &info, true, start_ts)?;
+    let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
     let state = if active.job.is_rollingback() {
         JobState::ROLLBACK_DONE
     } else {

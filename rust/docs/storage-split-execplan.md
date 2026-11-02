@@ -452,8 +452,16 @@ CARGO_INCREMENTAL=0`.
     `table_info_by_name` answers a memory table as Go's `TableInfoByName`
     does and `CREATE TABLE ... LIKE` needs no fallback (test
     `a_loaded_image_answers_memory_tables_by_name`).
-    Left: (b) incremental `ApplyDiff` (cost); (c) the second `MetaSnapshot`
-    seam, the loader moving onto `tidb_meta`.
+    Left: (b) incremental `ApplyDiff` (cost).
+    (c) done 2026-11-02: the loader (`load_info_schema`,
+    `fetch_all_schemas_with_tables`, `load_database_tables`,
+    `get_schema_version`) and the reload's reads (`GetSchemaDiff`,
+    `GetSchemaVersionWithNonEmptyDiff`, `GetDatabase`, `GetTable`,
+    `GetPolicy`, `GetResourceGroup`) go through `tidb_meta`'s
+    `meta.Mutator` over the snapshot (`cluster_catalog::with_meta_reader`,
+    Go `meta.NewReader`); a snapshot read keeps its own error (its SQL
+    identity). The `MetaSnapshot` trait stays: it is Go's `kv.Snapshot`
+    role (stats, ANALYZE paging, DDL reads), not a second meta reader.
   - [ ] delete `ClusterCatalog` and the raw `MetaSnapshot` seam (the loader
     reads through `tidb_meta`).
 

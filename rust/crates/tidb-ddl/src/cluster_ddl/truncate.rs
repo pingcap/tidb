@@ -100,8 +100,8 @@ fn truncate_referenced(referred: &tidb_model::table::ReferredFKInfo) -> DdlPlanE
 }
 
 /// Go `onTruncateTable`.
-pub(super) fn on_truncate_table<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn on_truncate_table(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -155,36 +155,28 @@ pub(super) fn on_truncate_table<S: MetaSnapshot>(
     let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
     let mut label_rules = LabelRuleSteps::new();
     let info = apply_truncate_table(
-        snapshot,
+        txn,
         &schema,
         database_id,
         &stored,
         new_table_id,
         &new_partition_ids,
         start_ts,
-        &mut mutations,
         &mut placement_bundles,
         &mut affinity_groups,
         &mut label_rules,
     )?;
-    let schema_version = catalog.schema_meta_version() + 1;
-    let diff = SchemaDiff {
-        version: schema_version,
-        action_type: ActionType::ACTION_TRUNCATE_TABLE,
-        schema_id: database_id,
-        table_id: new_table_id,
-        old_table_id: stored.id,
-        ..SchemaDiff::default()
-    };
-    mutations.push(BufferMutation::set(
-        key::schema_version_kv_key(),
-        value::encode_int_value(schema_version),
-    )?);
-    mutations.push(BufferMutation::set(
-        key::schema_diff_kv_key(schema_version),
-        value::serialize_schema_diff(&diff)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-    )?);
+    let (schema_version, diff) = update_schema_version(
+        &txn.meta(),
+        active,
+        SchemaDiff {
+            action_type: ActionType::ACTION_TRUNCATE_TABLE,
+            schema_id: database_id,
+            table_id: new_table_id,
+            old_table_id: stored.id,
+            ..SchemaDiff::default()
+        },
+    )?;
     if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
         append_schema_change_mutations(
             catalog,
@@ -197,7 +189,6 @@ pub(super) fn on_truncate_table<S: MetaSnapshot>(
             row_ids,
         )?;
     }
-    active.job.last_schema_version = schema_version;
     active.job.finish_table_job(
         JobState::DONE,
         SchemaState::PUBLIC,

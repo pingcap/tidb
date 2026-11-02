@@ -145,8 +145,8 @@ pub(super) fn get_shared_involving_schema_info(
 }
 
 /// Go `onCreateTable`.
-pub(super) fn on_create_table<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn on_create_table(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -188,7 +188,6 @@ pub(super) fn on_create_table<S: MetaSnapshot>(
     let database_id = database.read().id;
     let schema = database.read().name.original().to_owned();
     let has_foreign_keys = !info.foreign_keys.is_empty();
-    let schema_version = catalog.schema_meta_version() + 1;
     let mut mutations = Vec::new();
     let mut placement_bundles = Vec::new();
     let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
@@ -242,43 +241,35 @@ pub(super) fn on_create_table<S: MetaSnapshot>(
                 catalog, &schema, &mut info, fk_check,
             )
             .map_err(|error| cancel_ddl_job(active, DdlPlanError::Admission(error)))?;
-            info.state = SchemaState::PUBLIC;
+            // Go `createTableWithForeignKeys` creates the table delete-only
+            // first, so a cascading action reaches it before any statement
+            // can.
+            info.state = if has_foreign_keys {
+                SchemaState::DELETE_ONLY
+            } else {
+                SchemaState::PUBLIC
+            };
             apply_create_table(
-                snapshot,
+                txn,
                 database_id,
                 &mut info,
                 start_ts,
-                &mut mutations,
                 &mut placement_bundles,
                 &mut affinity_groups,
             )
             .map_err(|error| cancel_ddl_job(active, error))?;
             if has_foreign_keys {
-                // Go `createTableWithForeignKeys`: delete-only first, so a
-                // cascading action reaches it before any statement can.
-                info.state = SchemaState::DELETE_ONLY;
-                let table_key = key::table_kv_key(database_id, info.id);
-                mutations.retain(|mutation| mutation.key() != table_key.as_slice());
-                mutations.push(BufferMutation::set(
-                    key::table_kv_key(database_id, info.id),
-                    value::serialize_table_info(&info)
-                        .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-                )?);
                 active.job.schema_state = SchemaState::DELETE_ONLY;
-                false
-            } else {
-                true
             }
+            !has_foreign_keys
         }
         // `WriteOnly` is the state older versions left mid-job.
         SchemaState::DELETE_ONLY | SchemaState::WRITE_ONLY => {
             info.state = SchemaState::PUBLIC;
             info.update_ts = start_ts;
-            mutations.push(BufferMutation::set(
-                key::table_kv_key(database_id, info.id),
-                value::serialize_table_info(&info)
-                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-            )?);
+            let meta = txn.meta();
+            meta.update_table(database_id, &mut info)
+                .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
             true
         }
         state => {
@@ -290,23 +281,17 @@ pub(super) fn on_create_table<S: MetaSnapshot>(
             ))
         }
     };
-    let diff = SchemaDiff {
-        version: schema_version,
-        action_type: active.job.type_,
-        schema_id: database_id,
-        table_id: info.id,
-        ..SchemaDiff::default()
-    };
-    mutations.push(BufferMutation::set(
-        key::schema_version_kv_key(),
-        value::encode_int_value(schema_version),
-    )?);
-    mutations.push(BufferMutation::set(
-        key::schema_diff_kv_key(schema_version),
-        value::serialize_schema_diff(&diff)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-    )?);
-    active.job.last_schema_version = schema_version;
+    let action_type = active.job.type_;
+    let (schema_version, diff) = update_schema_version(
+        &txn.meta(),
+        active,
+        SchemaDiff {
+            action_type,
+            schema_id: database_id,
+            table_id: info.id,
+            ..SchemaDiff::default()
+        },
+    )?;
     // The args carry the table on to the next step (Go mutates the pointer
     // the job re-encodes).
     *table_handle.write() = info.clone_like_go();

@@ -36,14 +36,15 @@
 
 use std::fmt;
 
-use tidb_meta::{key, value};
 use tidb_model::action_type::ActionType;
 use tidb_model::schema_diff::SchemaDiff;
 use tidb_model::schema_state::SchemaState;
 use tidb_model::{GoShared, GoSharedPointerSlice};
 
 use tidb_infoschema::cluster_catalog::{
-    load_info_schema, load_database_tables, normalize_diff_loaded_table_info, ClusterCatalogError, MetaSnapshot};
+    load_info_schema, load_database_tables, normalize_diff_loaded_table_info, with_meta_reader,
+    ClusterCatalogError, MetaSnapshot,
+};
 use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_infoschema_isvalidator::RelatedSchemaChange;
 
@@ -181,22 +182,15 @@ impl ReloadedCatalog {
 pub(crate) fn get_schema_version_with_non_empty_diff<S: MetaSnapshot>(
     snapshot: &mut S,
 ) -> Result<i64, ClusterCatalogError> {
-    let version = tidb_infoschema::cluster_catalog::get_schema_version(snapshot)?;
-    if version > 0 && read_schema_diff(snapshot, version)?.is_none() {
-        return Ok(version - 1);
-    }
-    Ok(version)
+    with_meta_reader(snapshot, |meta| meta.get_schema_version_with_non_empty_diff())
 }
 
+/// Go `m.GetSchemaDiff(version)`.
 fn read_schema_diff<S: MetaSnapshot>(
     snapshot: &mut S,
     version: i64,
 ) -> Result<Option<SchemaDiff>, ClusterCatalogError> {
-    let Some(stored) = snapshot.get(&key::schema_diff_kv_key(version))? else {
-        return Ok(None);
-    };
-    value::get_schema_diff(&stored)
-        .map_err(|error| ClusterCatalogError::Decode(format!("Diff:{version}: {error}")))
+    with_meta_reader(snapshot, |meta| meta.schema_diff(version))
 }
 
 /// Brings `current` up to the snapshot's schema version.
@@ -390,20 +384,8 @@ fn apply_schema_diff<S: MetaSnapshot>(
         // the group the diff names, read back from meta, replaces the one of
         // that name.
         ActionType::ACTION_CREATE_RESOURCE_GROUP | ActionType::ACTION_ALTER_RESOURCE_GROUP => {
-            let Some(stored) = snapshot.get(&key::resource_group_kv_key(diff.schema_id))? else {
-                return Err(ClusterCatalogError::Decode(format!(
-                    "resource group (Group ID {}) does not exist",
-                    diff.schema_id
-                )));
-            };
-            let encoded = value::detach_magic_byte(&stored).map_err(|error| {
-                ClusterCatalogError::Decode(format!("ResourceGroupInfo: {error}"))
-            })?;
-            let group: tidb_model::ResourceGroupInfo =
-                serde_json::from_slice(encoded).map_err(|error| {
-                    ClusterCatalogError::Decode(format!("ResourceGroupInfo: {error}"))
-                })?;
-            catalog.set_resource_group(group);
+            let group = with_meta_reader(snapshot, |meta| meta.resource_group(diff.schema_id))?;
+            catalog.set_resource_group((*group).clone());
             Ok(Ok(Vec::new()))
         }
         // Go `applyDropResourceGroup` (`:88-95`): the group with the diff's
@@ -416,11 +398,14 @@ fn apply_schema_diff<S: MetaSnapshot>(
         // the policy the diff names, read back from meta, replaces the one
         // with that id.
         ActionType::ACTION_CREATE_PLACEMENT_POLICY | ActionType::ACTION_ALTER_PLACEMENT_POLICY => {
-            let Some(stored) = snapshot.get(&key::policy_kv_key(diff.schema_id))? else {
+            let policy = with_meta_reader(snapshot, |meta| match meta.policy(diff.schema_id) {
+                Ok(policy) => Ok(Some(policy)),
+                Err(tidb_meta::MetaError::PolicyIdNotExists(_)) => Ok(None),
+                Err(error) => Err(error),
+            })?;
+            let Some(policy) = policy else {
                 return Ok(Err(missing(version, format!("policy {}", diff.schema_id))));
             };
-            let policy = value::parse_policy_info(&stored)
-                .map_err(|error| ClusterCatalogError::Decode(format!("PolicyInfo: {error}")))?;
             catalog.delete_policy_by_id(policy.id);
             catalog.set_policy(policy);
             Ok(Ok(Vec::new()))
@@ -576,17 +561,8 @@ fn table_ids<S: MetaSnapshot>(
             // The table stays until its state reaches none, so a foreign
             // key's `ON DELETE/UPDATE CASCADE` can still find it (Go keeps
             // this for every table, not just those with foreign keys).
-            let stored = snapshot.get(&key::table_kv_key(diff.schema_id, old))?;
-            let still_there = match stored {
-                Some(stored) => {
-                    let table =
-                        value::parse_table_info(&stored, diff.schema_id).map_err(|error| {
-                            ClusterCatalogError::Decode(format!("TableInfo {old}: {error}"))
-                        })?;
-                    table.state != SchemaState::NONE
-                }
-                None => false,
-            };
+            let still_there = read_table(snapshot, diff.schema_id, old)?
+                .is_some_and(|table| table.state != SchemaState::NONE);
             (old, if still_there { diff.table_id } else { 0 })
         }
         ActionType::ACTION_TRUNCATE_TABLE
@@ -616,7 +592,7 @@ fn apply_table_update<S: MetaSnapshot>(
     diff: &SchemaDiff,
 ) -> AppliedDiff {
     let version = diff.version;
-    if !catalog.schema_by_id(diff.schema_id).is_some()
+    if catalog.schema_by_id(diff.schema_id).is_none()
     {
         return Ok(Err(missing(
             version,
@@ -867,12 +843,10 @@ fn refresh_meta<S: MetaSnapshot>(
     }
     // A table under a database this catalog does not have: the database is
     // gone, so its tables are too.
-    if !catalog.schema_by_id(schema_id).is_some() {
+    if catalog.schema_by_id(schema_id).is_none() {
         return Ok(Ok(Vec::new()));
     }
-    let stored = snapshot
-        .get(&key::table_kv_key(schema_id, table_id))?
-        .is_some();
+    let stored = read_table(snapshot, schema_id, table_id)?.is_some();
     let synthetic = SchemaDiff {
         version: diff.version,
         action_type: if stored {
@@ -896,16 +870,26 @@ const fn missing(version: i64, detail: String) -> FullReloadReason {
     FullReloadReason::MissingObject { version, detail }
 }
 
+/// Go `m.GetDatabase(dbID)`.
 fn read_database<S: MetaSnapshot>(
     snapshot: &mut S,
     db_id: i64,
 ) -> Result<Option<tidb_model::db::DBInfo>, ClusterCatalogError> {
-    let Some(stored) = snapshot.get(&key::database_kv_key(db_id))? else {
-        return Ok(None);
-    };
-    value::parse_db_info(&stored)
-        .map(Some)
-        .map_err(|error| ClusterCatalogError::Decode(format!("DBInfo {db_id}: {error}")))
+    with_meta_reader(snapshot, |meta| meta.database(db_id))
+}
+
+/// Go `m.GetTable(dbID, tableID)`; a database meta no longer stores holds no
+/// table (Go's `ErrDBNotExists` sends the applier to the full load, as an
+/// absent table does here).
+fn read_table<S: MetaSnapshot>(
+    snapshot: &mut S,
+    db_id: i64,
+    table_id: i64,
+) -> Result<Option<tidb_model::table_info::TableInfo>, ClusterCatalogError> {
+    with_meta_reader(snapshot, |meta| match meta.table(db_id, table_id) {
+        Err(tidb_meta::MetaError::DatabaseNotExists) => Ok(None),
+        read => read,
+    })
 }
 
 /// Go `applyCreateTable`'s catalog effect: the table read from the store
@@ -918,17 +902,15 @@ fn create_table<S: MetaSnapshot>(
     db_id: i64,
     table_id: i64,
 ) -> AppliedDiff {
-    if !catalog.schema_by_id(db_id).is_some() {
+    if catalog.schema_by_id(db_id).is_none() {
         return Ok(Err(missing(version, format!("unknown database {db_id}"))));
     }
-    let Some(stored) = snapshot.get(&key::table_kv_key(db_id, table_id))? else {
+    let Some(mut table) = read_table(snapshot, db_id, table_id)? else {
         return Ok(Err(missing(
             version,
             format!("table {table_id} in database {db_id}, which the snapshot does not store"),
         )));
     };
-    let mut table = value::parse_table_info(&stored, db_id)
-        .map_err(|error| ClusterCatalogError::Decode(format!("TableInfo {table_id}: {error}")))?;
     normalize_diff_loaded_table_info(&mut table);
     let mut ids = Vec::new();
     affected_ids(&table, &mut ids);

@@ -114,38 +114,32 @@ fn stored_group<'a>(
     stored_resource_group(catalog, group_id).map_err(|error| cancel_ddl_job(active, error))
 }
 
-/// One step publishing a group change under a new version.
+/// One step publishing a group change (`write`, through the step's
+/// mutator) under a new version (`updateSchemaVersion`).
 fn group_step(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
-    mutation: BufferMutation,
+    write: impl FnOnce(&JobMeta<'_, '_>) -> tidb_meta::Result<()>,
     update: ResourceGroupUpdate,
     finished_state: SchemaState,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    let schema_version = catalog.schema_meta_version() + 1;
-    let diff = SchemaDiff {
-        version: schema_version,
-        action_type: active.job.type_,
-        schema_id: active.job.schema_id,
-        ..SchemaDiff::default()
-    };
-    let mutations = vec![
-        mutation,
-        BufferMutation::set(
-            key::schema_version_kv_key(),
-            value::encode_int_value(schema_version),
-        )?,
-        BufferMutation::set(
-            key::schema_diff_kv_key(schema_version),
-            value::serialize_schema_diff(&diff)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?,
-    ];
-    active.job.last_schema_version = schema_version;
+    let meta = txn.meta();
+    write(&meta).map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+    let action_type = active.job.type_;
+    let schema_id = active.job.schema_id;
+    let (schema_version, diff) = update_schema_version(
+        &meta,
+        active,
+        SchemaDiff {
+            action_type,
+            schema_id,
+            ..SchemaDiff::default()
+        },
+    )?;
     active
         .job
         .finish_db_job(JobState::DONE, finished_state, schema_version, None);
-    let mut write = job_only_write(active.job.id, mutations);
+    let mut write = job_only_write(active.job.id, Vec::new());
     write.schema_version = schema_version;
     write.diff = diff;
     write.resource_group_update = Some(update);
@@ -154,21 +148,17 @@ fn group_step(
 
 /// Go `onCreateResourceGroup`.
 pub(super) fn on_create_resource_group(
-    catalog: &SessionExtendedInfoSchema,
+    txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let mut group = group_args(active)?;
     let proto = resource_group_proto(&group).map_err(|error| cancel_ddl_job(active, error))?;
     group.state = SchemaState::PUBLIC;
-    let mutation = BufferMutation::set(
-        key::resource_group_kv_key(group.id),
-        serialize_resource_group(&group)?,
-    )?;
     active.job.schema_id = group.id;
     group_step(
-        catalog,
+        txn,
         active,
-        mutation,
+        |meta| meta.add_resource_group(&group),
         ResourceGroupUpdate::Add(Box::new(proto)),
         SchemaState::PUBLIC,
     )
@@ -176,6 +166,7 @@ pub(super) fn on_create_resource_group(
 
 /// Go `onAlterResourceGroup`.
 pub(super) fn on_alter_resource_group(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -183,14 +174,10 @@ pub(super) fn on_alter_resource_group(
     let proto = resource_group_proto(&altered).map_err(|error| cancel_ddl_job(active, error))?;
     let mut group = stored_group(catalog, active, altered.id)?.clone();
     group.settings = altered.settings;
-    let mutation = BufferMutation::set(
-        key::resource_group_kv_key(group.id),
-        serialize_resource_group(&group)?,
-    )?;
     group_step(
-        catalog,
+        txn,
         active,
-        mutation,
+        |meta| meta.update_resource_group(&group),
         ResourceGroupUpdate::Modify(Box::new(proto)),
         SchemaState::PUBLIC,
     )
@@ -198,6 +185,7 @@ pub(super) fn on_alter_resource_group(
 
 /// Go `onDropResourceGroup`: public -> none in one step.
 pub(super) fn on_drop_resource_group(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -215,11 +203,10 @@ pub(super) fn on_drop_resource_group(
             ]),
         ));
     }
-    let mutation = BufferMutation::delete(key::resource_group_kv_key(group.id))?;
     group_step(
-        catalog,
+        txn,
         active,
-        mutation,
+        |meta| meta.drop_resource_group(group.id),
         ResourceGroupUpdate::Delete(group.name.lowercase().to_owned()),
         SchemaState::NONE,
     )

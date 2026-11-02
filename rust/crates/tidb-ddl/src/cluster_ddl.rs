@@ -66,8 +66,8 @@ use tidb_model::{get_job_ver_in_use, AddCheckConstraintArgs, CheckConstraintArgs
 use tidb_goruntime::go_runtime::GoSharedSlice;
 use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_infoschema::cluster_catalog::{
-    load_info_schema, ClusterCatalogError, MetaSnapshot};
+use crate::job_txn::{job_meta_error, JobMeta, JobTxn};
+use tidb_infoschema::cluster_catalog::{load_info_schema, MetaSnapshot};
 use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_context::WarningLevel;
 use tidb_hack::GoToLower;
@@ -5114,9 +5114,40 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
 }
 
 /// Go `runOneJobStep`'s dispatch to the action handler, shared by a job and
-/// by a multi-schema change's sub-jobs (run as proxy jobs).
+/// by a multi-schema change's sub-jobs (run as proxy jobs). The handler runs
+/// in the step's transaction over `snapshot` and writes through its
+/// `meta.Mutator`; those writes lead the step's mutations, and a failed step
+/// leaves none (Go's `transitOneJobStep` discards them).
 fn plan_persisted_action<S: MetaSnapshot>(
     snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    start_ts: u64,
+    reorg_outcomes: &[add_index::ReorgOutcome],
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    run_in_job_txn(snapshot, start_ts, |txn| {
+        dispatch_persisted_action(txn, catalog, active, start_ts, reorg_outcomes, row_ids)
+    })
+}
+
+/// Runs one handler in a step transaction over `snapshot`: its meta writes
+/// lead the step's mutations, and a failed handler leaves none.
+fn run_in_job_txn(
+    snapshot: &mut dyn MetaSnapshot,
+    start_ts: u64,
+    handler: impl FnOnce(&mut JobTxn<'_>) -> Result<PersistedDdlActionStep, DdlPlanError>,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    let mut txn = JobTxn::new(snapshot, start_ts);
+    let mut step = handler(&mut txn)?;
+    let mut mutations = txn.into_mutations()?;
+    mutations.append(&mut step.write.mutations);
+    step.write.mutations = mutations;
+    Ok(step)
+}
+
+fn dispatch_persisted_action(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -5131,66 +5162,68 @@ fn plan_persisted_action<S: MetaSnapshot>(
         ActionType::ACTION_ADD_CHECK_CONSTRAINT
         | ActionType::ACTION_DROP_CHECK_CONSTRAINT
         | ActionType::ACTION_ALTER_CHECK_CONSTRAINT => {
-            plan_persisted_check_constraint_job_step(catalog, active, start_ts)
+            plan_persisted_check_constraint_job_step(txn, catalog, active, start_ts)
         }
-        ActionType::ACTION_CREATE_SCHEMA => plan_persisted_create_schema_job_step(catalog, active),
+        ActionType::ACTION_CREATE_SCHEMA => {
+            plan_persisted_create_schema_job_step(txn, catalog, active)
+        }
         ActionType::ACTION_CREATE_TABLE => create_table::on_create_table(
-            snapshot, catalog, active, start_ts, row_ids,
+            txn, catalog, active, start_ts, row_ids,
         ),
         ActionType::ACTION_CREATE_TABLES => {
-            plan_persisted_create_tables_job_step(catalog, active, start_ts)
+            plan_persisted_create_tables_job_step(txn, catalog, active, start_ts)
         }
         ActionType::ACTION_CREATE_VIEW => {
-            create_object::on_create_view(snapshot, catalog, active, start_ts)
+            create_object::on_create_view(txn, catalog, active, start_ts)
         }
         ActionType::ACTION_CREATE_SEQUENCE => {
-            create_object::on_create_sequence(catalog, active, start_ts)
+            create_object::on_create_sequence(txn, catalog, active, start_ts)
         }
         ActionType::ACTION_ALTER_SEQUENCE => {
-            create_object::on_alter_sequence(catalog, active, start_ts)
+            create_object::on_alter_sequence(txn, catalog, active, start_ts)
         }
         ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE
         | ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT => {
-            alter_schema::on_modify_schema_charset_and_collate(snapshot, catalog, active)
+            alter_schema::on_modify_schema_charset_and_collate(txn, catalog, active)
         }
         ActionType::ACTION_CREATE_PLACEMENT_POLICY => {
             placement_policy::on_create_placement_policy(
-                snapshot, catalog, active,
+                txn, catalog, active,
             )
         }
         ActionType::ACTION_ALTER_PLACEMENT_POLICY => {
             placement_policy::on_alter_placement_policy(
-                snapshot, catalog, active,
+                txn, catalog, active,
             )
         }
         ActionType::ACTION_DROP_PLACEMENT_POLICY => {
             placement_policy::on_drop_placement_policy(
-                snapshot, catalog, active,
+                txn, catalog, active,
             )
         }
         ActionType::ACTION_CREATE_RESOURCE_GROUP => {
-            resource_group::on_create_resource_group(catalog, active)
+            resource_group::on_create_resource_group(txn, active)
         }
         ActionType::ACTION_ALTER_RESOURCE_GROUP => {
-            resource_group::on_alter_resource_group(catalog, active)
+            resource_group::on_alter_resource_group(txn, catalog, active)
         }
         ActionType::ACTION_DROP_RESOURCE_GROUP => {
-            resource_group::on_drop_resource_group(catalog, active)
+            resource_group::on_drop_resource_group(txn, catalog, active)
         }
         ActionType::ACTION_LOCK_TABLE => {
-            table_lock::on_lock_tables(catalog, active, start_ts)
+            table_lock::on_lock_tables(txn, catalog, active, start_ts)
         }
         ActionType::ACTION_UNLOCK_TABLE => {
-            table_lock::on_unlock_tables(catalog, active, start_ts)
+            table_lock::on_unlock_tables(txn, catalog, active, start_ts)
         }
         ActionType::ACTION_ADD_TABLE_PARTITION => {
             partition::on_add_table_partition(
-                snapshot, catalog, active, start_ts, row_ids,
+                txn, catalog, active, start_ts, row_ids,
             )
         }
         ActionType::ACTION_DROP_TABLE_PARTITION => {
             partition::on_drop_table_partition(
-                snapshot,
+                txn,
                 catalog,
                 active,
                 start_ts,
@@ -5202,7 +5235,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
         | ActionType::ACTION_ALTER_TABLE_PARTITIONING
         | ActionType::ACTION_REMOVE_PARTITIONING => {
             reorganize_partition::on_reorganize_partition(
-                snapshot,
+                txn,
                 catalog,
                 active,
                 start_ts,
@@ -5212,7 +5245,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
         }
         ActionType::ACTION_EXCHANGE_TABLE_PARTITION => {
             exchange_partition::on_exchange_table_partition(
-                snapshot,
+                txn,
                 catalog,
                 active,
                 start_ts,
@@ -5222,7 +5255,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
         }
         ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
             partition::on_truncate_table_partition(
-                snapshot,
+                txn,
                 catalog,
                 active,
                 start_ts,
@@ -5231,19 +5264,19 @@ fn plan_persisted_action<S: MetaSnapshot>(
             )
         }
         ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES => {
-            rename_table::on_rename_table(catalog, active, start_ts)
+            rename_table::on_rename_table(txn, catalog, active, start_ts)
         }
         ActionType::ACTION_DROP_SCHEMA => {
-            plan_persisted_drop_schema_job_step(snapshot, catalog, active, row_ids)
+            plan_persisted_drop_schema_job_step(txn, catalog, active, row_ids)
         }
         ActionType::ACTION_DROP_TABLE
         | ActionType::ACTION_DROP_VIEW
         | ActionType::ACTION_DROP_SEQUENCE => {
-            plan_persisted_drop_table_job_step(snapshot, catalog, active, row_ids)
+            plan_persisted_drop_table_job_step(txn, catalog, active, row_ids)
         }
         ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY => {
             add_index::plan_persisted_add_index_job_step(
-                snapshot,
+                txn,
                 catalog,
                 active,
                 start_ts,
@@ -5252,20 +5285,20 @@ fn plan_persisted_action<S: MetaSnapshot>(
             )
         }
         ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY => {
-            drop_index::on_drop_index(catalog, active, start_ts)
+            drop_index::on_drop_index(txn, catalog, active, start_ts)
         }
         ActionType::ACTION_TRUNCATE_TABLE => truncate::on_truncate_table(
-            snapshot, catalog, active, start_ts, row_ids,
+            txn, catalog, active, start_ts, row_ids,
         ),
         ActionType::ACTION_ADD_COLUMN => {
-            add_column::on_add_column(catalog, active, start_ts, row_ids)
+            add_column::on_add_column(txn, catalog, active, start_ts, row_ids)
         }
         ActionType::ACTION_DROP_COLUMN => {
-            drop_column::on_drop_column(catalog, active, start_ts)
+            drop_column::on_drop_column(txn, catalog, active, start_ts)
         }
         ActionType::ACTION_MULTI_SCHEMA_CHANGE => {
             multi_schema::on_multi_schema_change(
-                snapshot,
+                txn,
                 catalog,
                 active,
                 start_ts,
@@ -5274,13 +5307,14 @@ fn plan_persisted_action<S: MetaSnapshot>(
             )
         }
         ActionType::ACTION_ADD_FOREIGN_KEY => foreign_key::on_create_foreign_key(
+            txn,
             catalog,
             active,
             start_ts,
             reorg_outcome,
         ),
         ActionType::ACTION_MODIFY_COLUMN => modify_column::on_modify_column(
-            snapshot,
+            txn,
             catalog,
             active,
             start_ts,
@@ -5288,7 +5322,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
             row_ids,
         ),
         action if alter_table::ALTER_TABLE_ACTIONS.contains(&action) => {
-            alter_table::plan_persisted_alter_table_job_step(snapshot, catalog, active, start_ts)
+            alter_table::plan_persisted_alter_table_job_step(txn, catalog, active, start_ts)
         }
         _ => unreachable!("supported action checked above"),
     }
@@ -5428,7 +5462,9 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     let previous_schema_version = active.job.last_schema_version;
     let outcome = recover_ddl_action(|| {
         if cancelling {
-            plan_cancel_persisted_ddl_job(&catalog, &mut active, start_ts)
+            run_in_job_txn(snapshot, start_ts, |txn| {
+                plan_cancel_persisted_ddl_job(txn, &catalog, &mut active, start_ts)
+            })
         } else {
             if !active.job.is_rollingback() {
                 active.job.state = JobState::RUNNING;
@@ -5560,6 +5596,7 @@ fn finish_persisted_ddl_job<S: MetaSnapshot>(
 /// is accepted. A process may therefore disappear after any committed phase
 /// and a later owner can call this function with the same job ID.
 fn plan_persisted_check_constraint_job_step(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -5905,39 +5942,15 @@ fn plan_persisted_check_constraint_job_step(
         _ => unreachable!("the action was checked above"),
     }
 
-    let schema_version = if schema_changed {
-        catalog.schema_meta_version() + 1
-    } else {
-        0
-    };
-    let mut mutations = Vec::new();
-    let diff = if schema_changed {
+    // Go `updateVersionAndTableInfo`; a step that changed nothing only
+    // checkpoints the job.
+    let (schema_version, diff) = if schema_changed {
         info.update_ts = start_ts;
-        mutations.push(BufferMutation::set(
-            key::table_kv_key(database.read().id, info.id),
-            value::serialize_table_info(&info)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?);
-        let diff = SchemaDiff {
-            version: schema_version,
-            action_type: active.job.type_,
-            schema_id: database.read().id,
-            table_id: info.id,
-            ..SchemaDiff::default()
-        };
-        mutations.push(BufferMutation::set(
-            key::schema_version_kv_key(),
-            value::encode_int_value(schema_version),
-        )?);
-        mutations.push(BufferMutation::set(
-            key::schema_diff_kv_key(schema_version),
-            value::serialize_schema_diff(&diff)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?);
-        active.job.last_schema_version = schema_version;
-        diff
+        let database_id = database.read().id;
+        let write = add_index::update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
+        (write.schema_version, write.diff)
     } else {
-        SchemaDiff::default()
+        (0, SchemaDiff::default())
     };
 
     if terminal {
@@ -5961,7 +5974,8 @@ fn plan_persisted_check_constraint_job_step(
     Ok(PersistedDdlActionStep {
         write: DdlWrite {
             ddl_job_id,
-            mutations,
+            // The step's meta writes are its transaction's.
+            mutations: Vec::new(),
             schema_version,
             diff,
             created_id: None,
@@ -5991,7 +6005,25 @@ fn plan_persisted_check_constraint_job_step(
 /// version with a `CREATE SCHEMA` diff, publishes the database `PUBLIC` in
 /// one meta write, and persists DONE for the shared synchronization lifecycle.
 /// CREATE DATABASE has no reorg states or backfill.
+/// Go `updateSchemaVersion`: the job's next schema version from meta's
+/// counter (`setSchemaVersion` -> `GenSchemaVersion`), stamped on `diff`
+/// and stored (`SetSchemaDiff`).
+pub(super) fn update_schema_version(
+    meta: &JobMeta<'_, '_>,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    mut diff: SchemaDiff,
+) -> Result<(i64, SchemaDiff), DdlPlanError> {
+    let meta_error = |error| DdlPlanError::Meta(job_meta_error(meta, error));
+    let schema_version = meta.gen_schema_version().map_err(meta_error)?;
+    diff.version = schema_version;
+    meta.set_schema_diff(&diff).map_err(meta_error)?;
+    active.job.last_schema_version = schema_version;
+    Ok((schema_version, diff))
+}
+
+/// Go `onCreateSchema`.
 fn plan_persisted_create_schema_job_step(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -6028,33 +6060,21 @@ fn plan_persisted_create_schema_job_step(
         ));
     }
 
-    let schema_version = catalog.schema_meta_version() + 1;
-    let mut mutations = Vec::new();
-    let diff = {
-        db_info.state = SchemaState::PUBLIC;
-        mutations.push(BufferMutation::set(
-            key::database_kv_key(db_info.id),
-            value::serialize_db_info(&db_info)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?);
-        let diff = SchemaDiff {
-            version: schema_version,
-            action_type: active.job.type_,
+    let meta = txn.meta();
+    let action_type = active.job.type_;
+    let (schema_version, diff) = update_schema_version(
+        &meta,
+        active,
+        SchemaDiff {
+            action_type,
             schema_id: db_info.id,
             ..SchemaDiff::default()
-        };
-        mutations.push(BufferMutation::set(
-            key::schema_version_kv_key(),
-            value::encode_int_value(schema_version),
-        )?);
-        mutations.push(BufferMutation::set(
-            key::schema_diff_kv_key(schema_version),
-            value::serialize_schema_diff(&diff)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?);
-        active.job.last_schema_version = schema_version;
-        diff
-    };
+        },
+    )?;
+    // none -> public
+    db_info.state = SchemaState::PUBLIC;
+    meta.create_database(&db_info)
+        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
 
     active.job.finish_db_job(
         JobState::DONE,
@@ -6066,7 +6086,8 @@ fn plan_persisted_create_schema_job_step(
     Ok(PersistedDdlActionStep {
         write: DdlWrite {
             ddl_job_id,
-            mutations,
+            // The step's meta writes are its transaction's.
+            mutations: Vec::new(),
             schema_version,
             diff,
             created_id: Some(db_info.id),
@@ -6096,6 +6117,7 @@ fn plan_persisted_create_schema_job_step(
 /// the schema version once with a `CREATE TABLES` diff, and persists DONE for
 /// the shared synchronization and history lifecycle.
 fn plan_persisted_create_tables_job_step(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -6174,54 +6196,44 @@ fn plan_persisted_create_tables_job_step(
         ));
     }
 
-    let schema_version = catalog.schema_meta_version() + 1;
-    let mut mutations = Vec::new();
+    let database_id = database.read().id;
     let first_id = table_infos.first().map(|info| info.id).unwrap_or(0);
-    let diff = {
-        for info in &mut table_infos {
-            info.state = SchemaState::PUBLIC;
-            info.update_ts = start_ts;
-            mutations.push(BufferMutation::set(
-                key::table_kv_key(database.read().id, info.id),
-                value::serialize_table_info(info)
-                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-            )?);
-        }
-        // Go `SetSchemaDiffForCreateTables` (`pkg/ddl/schema_version.go:36`):
-        // one `AffectedOption` per created table, each naming its schema and
-        // table IDs on both sides -- Go's `applyCreateTables` applies the
-        // batch to every peer's infoschema strictly through these options.
-        let mut diff = SchemaDiff {
-            version: schema_version,
-            action_type: active.job.type_,
-            schema_id: database.read().id,
+    let meta = txn.meta();
+    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+    // Go `createTable` per table (`createTableOrViewWithCheck`).
+    for info in &mut table_infos {
+        info.state = SchemaState::PUBLIC;
+        info.update_ts = start_ts;
+        meta.create_table_or_view(database_id, info).map_err(meta_error)?;
+    }
+    // Go `SetSchemaDiffForCreateTables` (`pkg/ddl/schema_version.go:36`): one
+    // `AffectedOption` per created table, each naming its schema and table
+    // IDs on both sides -- Go's `applyCreateTables` applies the batch to
+    // every peer's infoschema strictly through these options.
+    let action_type = active.job.type_;
+    let (schema_version, diff) = update_schema_version(
+        &meta,
+        active,
+        SchemaDiff {
+            action_type,
+            schema_id: database_id,
             table_id: first_id,
+            affected_options: GoSharedPointerSlice::from(
+                table_infos
+                    .iter()
+                    .map(|info| tidb_model::AffectedOption {
+                        schema_id: database_id,
+                        old_schema_id: database_id,
+                        table_id: info.id,
+                        old_table_id: info.id,
+                        ..tidb_model::AffectedOption::default()
+                    })
+                    .collect::<Vec<_>>(),
+            ),
             ..SchemaDiff::default()
-        };
-        diff.affected_options = GoSharedPointerSlice::from(
-            table_infos
-                .iter()
-                .map(|info| tidb_model::AffectedOption {
-                    schema_id: database.read().id,
-                    old_schema_id: database.read().id,
-                    table_id: info.id,
-                    old_table_id: info.id,
-                    ..tidb_model::AffectedOption::default()
-                })
-                .collect::<Vec<_>>(),
-        );
-        mutations.push(BufferMutation::set(
-            key::schema_version_kv_key(),
-            value::encode_int_value(schema_version),
-        )?);
-        mutations.push(BufferMutation::set(
-            key::schema_diff_kv_key(schema_version),
-            value::serialize_schema_diff(&diff)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?);
-        active.job.last_schema_version = schema_version;
-        diff
-    };
+        },
+    )?;
+    let mutations = Vec::new();
 
     active.job.state = JobState::DONE;
     active.job.schema_state = SchemaState::PUBLIC;
@@ -6277,15 +6289,13 @@ fn plan_persisted_create_tables_job_step(
 /// database meta key (table KVs are left to the delete range) and finishes
 /// with `FinishDBJob`. A missing database cancels the job with the recorded
 /// error (Go `checkSchemaExistAndCancelNotExistJob`).
-fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
-    snapshot: &mut S,
+fn plan_persisted_drop_schema_job_step(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
-
-    let schema_version = catalog.schema_meta_version();
     let mut mutations = Vec::new();
 
     let Some(database) = catalog
@@ -6305,7 +6315,6 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
     let mut db_info = database;
     let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
     let mut label_rules = LabelRuleSteps::new();
-    let schema_version = schema_version + 1;
     if db_info.state == SchemaState::PUBLIC
         && tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::Relaxed)
     {
@@ -6335,33 +6344,31 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
             None,
         )?;
     }
+    let meta = txn.meta();
+    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+    let action_type = active.job.type_;
+    let (schema_version, diff) = update_schema_version(
+        &meta,
+        active,
+        SchemaDiff {
+            action_type,
+            schema_id: db_info.id,
+            ..SchemaDiff::default()
+        },
+    )?;
     match db_info.state {
         SchemaState::PUBLIC => db_info.state = SchemaState::WRITE_ONLY,
         SchemaState::WRITE_ONLY => db_info.state = SchemaState::DELETE_ONLY,
         SchemaState::DELETE_ONLY => db_info.state = SchemaState::NONE,
         _ => {}
     }
-    let diff = SchemaDiff {
-        version: schema_version,
-        action_type: active.job.type_,
-        schema_id: db_info.id,
-        ..SchemaDiff::default()
-    };
-    if db_info.state != SchemaState::NONE {
-        mutations.push(BufferMutation::set(
-            key::database_kv_key(db_info.id),
-            value::serialize_db_info(&db_info)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?);
-    } else {
+    meta.update_database(&db_info).map_err(meta_error)?;
+    if db_info.state == SchemaState::NONE {
         // Go `Mutator.DropDatabase` is `HClear(DB:<id>)` then
         // `HDel(DBs, DB:<id>)`: every field of the database's hash, its
         // tables' metadata and allocators, goes; the tables' rows are left
         // to the delete range.
-        for (raw_key, _) in snapshot.scan_prefix(&key::database_metas_kv_prefix(db_info.id))? {
-            mutations.push(BufferMutation::delete(raw_key)?);
-        }
-        mutations.push(BufferMutation::delete(key::database_kv_key(db_info.id))?);
+        meta.drop_database(db_info.id).map_err(meta_error)?;
         let tables: Vec<TableInfo> = catalog
             .schema_by_id(db_info.id)
             .map(|database| {
@@ -6411,16 +6418,6 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
         );
     }
     active.job.schema_state = db_info.state;
-    mutations.push(BufferMutation::set(
-        key::schema_version_kv_key(),
-        value::encode_int_value(schema_version),
-    )?);
-    mutations.push(BufferMutation::set(
-        key::schema_diff_kv_key(schema_version),
-        value::serialize_schema_diff(&diff)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-    )?);
-    active.job.last_schema_version = schema_version;
 
     Ok(PersistedDdlActionStep {
         write: DdlWrite {
@@ -6453,15 +6450,13 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
 /// with the recorded error (Go `checkTableExistAndCancelNonExistJob`). Each
 /// call advances exactly one state; the runner loops until the job lands in
 /// history.
-fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
-    snapshot: &mut S,
+fn plan_persisted_drop_table_job_step(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
-
-    let schema_version = catalog.schema_meta_version();
     let mut mutations = Vec::new();
 
     let mut table = checked_job_table(catalog, active, false)?.read().clone_like_go();
@@ -6469,7 +6464,6 @@ fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
         .schema_by_id(active.job.schema_id)
         .expect("checked_job_table checked the database");
 
-    let schema_version = schema_version + 1;
     let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
     if table.state == SchemaState::PUBLIC && active.job.type_ == ActionType::ACTION_DROP_TABLE {
         // Go `checkDropTableHasForeignKeyReferredInOwner`.
@@ -6519,41 +6513,31 @@ fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
         SchemaState::DELETE_ONLY => table.state = SchemaState::NONE,
         _ => {}
     }
-    let diff = SchemaDiff {
-        version: schema_version,
-        action_type: active.job.type_,
-        schema_id: database.read().id,
-        table_id: table.id,
-        old_table_id: table.id,
-        ..SchemaDiff::default()
-    };
-    if table.state != SchemaState::NONE {
-        mutations.push(BufferMutation::set(
-            key::table_kv_key(database.read().id, table.id),
-            value::serialize_table_info(&table)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?);
-    } else {
-        let database_id = database.read().id;
-        mutations.push(BufferMutation::delete(key::table_kv_key(
-            database_id,
-            table.id,
-        ))?);
-        // Go `DropTableOrView` plus `GetAutoIDAccessors(...).Del()` remove
-        // the table's allocator fields, and `DropSequence` also its value.
-        // Each is deleted only if this snapshot observed it, as `HDel` does.
-        let mut allocator_keys = vec![
-            key::auto_table_id_kv_key(database_id, table.id),
-            key::auto_increment_id_kv_key(database_id, table.id),
-            key::auto_random_table_id_kv_key(database_id, table.id),
-        ];
+    // Go `updateVersionAndTableInfo` on every state change, then, as the
+    // table reaches none, `DropTableOrView` with `GetAutoIDAccessors(...)
+    // .Del()` (`DropSequence` for a sequence, which also drops its value).
+    let database_id = database.read().id;
+    let action_type = active.job.type_;
+    let meta = txn.meta();
+    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+    let (schema_version, diff) = update_schema_version(
+        &meta,
+        active,
+        SchemaDiff {
+            action_type,
+            schema_id: database_id,
+            table_id: table.id,
+            old_table_id: table.id,
+            ..SchemaDiff::default()
+        },
+    )?;
+    meta.update_table(database_id, &mut table).map_err(meta_error)?;
+    if table.state == SchemaState::NONE {
         if table.is_sequence() {
-            allocator_keys.push(sequence_value_kv_key(database_id, table.id));
-        }
-        for allocator in allocator_keys {
-            if snapshot.get(&allocator)?.is_some() {
-                mutations.push(BufferMutation::delete(allocator)?);
-            }
+            meta.drop_sequence(database_id, table.id).map_err(meta_error)?;
+        } else {
+            meta.drop_table_or_view(database_id, table.id).map_err(meta_error)?;
+            meta.auto_ids(database_id, table.id).delete().map_err(meta_error)?;
         }
         // Go `asyncNotifyEvent(NewDropTableEvent)` for a table.
         if !table.is_sequence()
@@ -6617,16 +6601,6 @@ fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
             })));
     }
     active.job.schema_state = table.state;
-    mutations.push(BufferMutation::set(
-        key::schema_version_kv_key(),
-        value::encode_int_value(schema_version),
-    )?);
-    mutations.push(BufferMutation::set(
-        key::schema_diff_kv_key(schema_version),
-        value::serialize_schema_diff(&diff)
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-    )?);
-    active.job.last_schema_version = schema_version;
 
     Ok(PersistedDdlActionStep {
         write: DdlWrite {
@@ -6665,16 +6639,6 @@ fn resource_group_proto(
             error.to_string(),
         ))
     })
-}
-
-/// Go `Mutator.AddResourceGroup`'s value: the group's JSON behind the magic
-/// byte.
-fn serialize_resource_group(
-    group: &tidb_model::ResourceGroupInfo,
-) -> Result<Vec<u8>, DdlPlanError> {
-    serde_json::to_vec(group)
-        .map(|json| value::attach_magic_byte(&json))
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))
 }
 
 /// Go `checkResourceGroupExist`: the stored group of the job's ID.
@@ -6814,6 +6778,7 @@ fn cancelled_ddl_job(active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob
 // Go convertJob2RollbackJob, restricted to the actions integrated into this
 // worker. Conversion is its own step; an irreversible DROP resumes next time.
 fn plan_cancel_persisted_ddl_job(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -6867,16 +6832,16 @@ fn plan_cancel_persisted_ddl_job(
         ActionType::ACTION_ADD_CHECK_CONSTRAINT
         | ActionType::ACTION_DROP_CHECK_CONSTRAINT
         | ActionType::ACTION_ALTER_CHECK_CONSTRAINT => {
-            return plan_persisted_check_constraint_job_step(catalog, active, start_ts);
+            return plan_persisted_check_constraint_job_step(txn, catalog, active, start_ts);
         }
         ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY => {
-            return add_index::rollingback_add_index(catalog, active, start_ts);
+            return add_index::rollingback_add_index(txn, catalog, active, start_ts);
         }
         ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY => {
             return drop_index::rollingback_drop_index(catalog, active);
         }
         ActionType::ACTION_ADD_COLUMN => {
-            return add_column::rollingback_add_column(catalog, active, start_ts);
+            return add_column::rollingback_add_column(txn, catalog, active, start_ts);
         }
         ActionType::ACTION_DROP_COLUMN => {
             return drop_column::rollingback_drop_column(catalog, active);
@@ -6893,15 +6858,16 @@ fn plan_cancel_persisted_ddl_job(
         ActionType::ACTION_ADD_TABLE_PARTITION
         | ActionType::ACTION_DROP_TABLE_PARTITION
         | ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
-            return partition::rollingback_add_table_partition(catalog, active, start_ts);
+            return partition::rollingback_add_table_partition(txn, catalog, active, start_ts);
         }
         ActionType::ACTION_EXCHANGE_TABLE_PARTITION => {
-            return exchange_partition::rollingback_exchange_table_partition(catalog, active, start_ts);
+            return exchange_partition::rollingback_exchange_table_partition(txn, catalog, active, start_ts);
         }
         ActionType::ACTION_REORGANIZE_PARTITION
         | ActionType::ACTION_ALTER_TABLE_PARTITIONING
         | ActionType::ACTION_REMOVE_PARTITIONING => {
             return reorganize_partition::on_rollback_reorganize_partition(
+                txn,
                 catalog, active, start_ts,
             );
         }
@@ -8129,12 +8095,11 @@ fn build_create_table_info<S: MetaSnapshot>(
 /// bundles (`NewFullTableBundles`, sent before the schema version is
 /// published), the affinity groups, the table key at the job transaction's
 /// start timestamp and `handleAutoIncID`'s counter seeds.
-fn apply_create_table<S: MetaSnapshot>(
-    snapshot: &mut S,
+fn apply_create_table(
+    txn: &mut JobTxn<'_>,
     db_id: i64,
     info: &mut TableInfo,
     start_ts: u64,
-    writes: &mut Vec<BufferMutation>,
     placement_bundles: &mut Vec<tidb_placement::Bundle>,
     affinity_groups: &mut crate::ddl_affinity::AffinityGroupUpdate,
 ) -> Result<(), DdlPlanError> {
@@ -8148,7 +8113,7 @@ fn apply_create_table<S: MetaSnapshot>(
                 .any(|definition| definition.placement_policy_ref.is_some())
         })
     {
-        let policies = load_policies(snapshot)?;
+        let policies = load_policies(txn)?;
         *placement_bundles =
             tidb_placement::new_full_table_bundles(&policies, info).map_err(|error| {
                 DdlPlanError::Admission(DdlAdmissionError::plain(
@@ -8163,12 +8128,11 @@ fn apply_create_table<S: MetaSnapshot>(
         .create_table_affinity_groups_in_pd(info)
         .map_err(|error| pd_step_error(Some(CREATE_TABLE_AFFINITY_ERROR), error))?;
     info.update_ts = start_ts;
-    let encoded = value::serialize_table_info(info)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    writes.push(BufferMutation::set(
-        key::table_kv_key(db_id, info.id),
-        encoded,
-    )?);
+    // Go `createTableOrViewWithCheck`.
+    let meta = txn.meta();
+    meta.create_table_or_view(db_id, info)
+        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+    let mut writes = Vec::new();
     // Go `handleAutoIncID` seeds the allocator when the table option asks for
     // a first id above 1, to `AutoIncID - 1` (the counter holds the id last
     // handed out). Which key it is, is Go's `SepAutoInc` choice.
@@ -8184,6 +8148,7 @@ fn apply_create_table<S: MetaSnapshot>(
             value::encode_int_value(info.auto_rand_id - 1),
         )?);
     }
+    txn.stage(&writes);
     Ok(())
 }
 
@@ -8192,15 +8157,14 @@ fn apply_create_table<S: MetaSnapshot>(
 /// gone, the placement bundles, affinity groups and label rules re-keyed.
 /// Returns the new table.
 #[allow(clippy::too_many_arguments)]
-fn apply_truncate_table<S: MetaSnapshot>(
-    snapshot: &mut S,
+fn apply_truncate_table(
+    txn: &mut JobTxn<'_>,
     schema: &str,
     db_id: i64,
     stored: &TableInfo,
     new_table_id: i64,
     new_partition_ids: &[i64],
     start_ts: u64,
-    writes: &mut Vec<BufferMutation>,
     placement_bundles: &mut Vec<tidb_placement::Bundle>,
     affinity_groups: &mut crate::ddl_affinity::AffinityGroupUpdate,
     label_rules: &mut LabelRuleSteps,
@@ -8234,27 +8198,14 @@ fn apply_truncate_table<S: MetaSnapshot>(
         }
     }
     info.update_ts = start_ts;
-    writes.push(BufferMutation::delete(key::table_kv_key(
-        db_id,
-        old_table_id,
-    ))?);
-    let encoded = value::serialize_table_info(&info)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    writes.push(BufferMutation::set(
-        key::table_kv_key(db_id, new_table_id),
-        encoded,
-    )?);
-    // The allocators travel with the table id; deleting the old
-    // ones is what restarts the counters, Go's `Del()` on truncate.
-    for allocator in [
-        key::auto_table_id_kv_key(db_id, old_table_id),
-        key::auto_increment_id_kv_key(db_id, old_table_id),
-        key::auto_random_table_id_kv_key(db_id, old_table_id),
-    ] {
-        if snapshot.get(&allocator)?.is_some() {
-            writes.push(BufferMutation::delete(allocator)?);
-        }
-    }
+    // Go: `DropTableOrView` and `GetAutoIDAccessors(...).Del()` of the old
+    // id (the allocators travel with the table id; deleting them is what
+    // restarts the counters), then `CreateTableOrView` under the new one.
+    let meta = txn.meta();
+    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+    meta.drop_table_or_view(db_id, old_table_id).map_err(meta_error)?;
+    meta.auto_ids(db_id, old_table_id).delete().map_err(meta_error)?;
+    meta.create_table_or_view(db_id, &info).map_err(meta_error)?;
     // Go `onTruncateTable` rebuilds the bundles once the new id is
     // stamped and sends them (`ddl/table.go:574`). Truncate gives the
     // table a NEW identity, and PD's rules are keyed by id -- so
@@ -8271,7 +8222,7 @@ fn apply_truncate_table<S: MetaSnapshot>(
                 .any(|definition| definition.placement_policy_ref.is_some())
         })
     {
-        let policies = load_policies(snapshot)?;
+        let policies = load_policies(txn)?;
         *placement_bundles =
             tidb_placement::new_full_table_bundles(&policies, &info).map_err(|error| {
                 DdlPlanError::Admission(DdlAdmissionError::plain(

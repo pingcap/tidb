@@ -177,6 +177,7 @@ fn check_drop_column_in_owner(
 /// Go `onDropColumn` for a DROP COLUMN job, and for an ADD COLUMN job
 /// rolling back.
 pub(super) fn on_drop_column(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -210,7 +211,7 @@ pub(super) fn on_drop_column(
         active.job.mark_non_revertible();
         active.job.schema_state = original_state;
         check_table_info_valid(&info)?;
-        let write = update_version_and_table_info(catalog, active, database_id, &info, false, start_ts)?;
+        let write = update_version_and_table_info(txn, active, database_id, &info, false, start_ts)?;
         return Ok(action_step(write));
     }
     let move_to_back = |info: &mut TableInfo| {
@@ -272,8 +273,7 @@ pub(super) fn on_drop_column(
         }
     }
     let new_state = column.read().state;
-    let write = update_version_and_table_info(
-        catalog,
+    let write = update_version_and_table_info(txn,
         active,
         database_id,
         &info,

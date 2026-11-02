@@ -125,8 +125,8 @@ pub fn prepare_alter_schema_job_submission<S: MetaSnapshot>(
 }
 
 /// Go `onModifySchemaCharsetAndCollate` / `onModifySchemaDefaultPlacement`.
-pub(super) fn on_modify_schema_charset_and_collate<S: MetaSnapshot>(
-    snapshot: &mut S,
+pub(super) fn on_modify_schema_charset_and_collate(
+    txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -173,7 +173,7 @@ pub(super) fn on_modify_schema_charset_and_collate<S: MetaSnapshot>(
         // must still exist.
         if let Some(reference) = &reference {
             let name = reference.read().name.original().to_owned();
-            check_and_normalize_placement_policy(snapshot, &name)
+            check_and_normalize_placement_policy(txn, &name)
                 .map_err(|error| cancel_ddl_job(active, error))?;
         }
         let wanted = reference.as_ref().map(|reference| reference.read().clone());
@@ -194,37 +194,27 @@ pub(super) fn on_modify_schema_charset_and_collate<S: MetaSnapshot>(
         );
         return Ok(action_step(job_only_write(active.job.id, Vec::new())));
     }
-    let schema_version = catalog.schema_meta_version() + 1;
-    let diff = SchemaDiff {
-        version: schema_version,
-        action_type: active.job.type_,
-        schema_id: info.id,
-        ..SchemaDiff::default()
-    };
-    let mutations = vec![
-        BufferMutation::set(
-            key::database_kv_key(info.id),
-            value::serialize_db_info(&info)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?,
-        BufferMutation::set(
-            key::schema_version_kv_key(),
-            value::encode_int_value(schema_version),
-        )?,
-        BufferMutation::set(
-            key::schema_diff_kv_key(schema_version),
-            value::serialize_schema_diff(&diff)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        )?,
-    ];
-    active.job.last_schema_version = schema_version;
+    // Go: `UpdateDatabase`, then `updateSchemaVersion`.
+    let meta = txn.meta();
+    meta.update_database(&info)
+        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+    let action_type = active.job.type_;
+    let (schema_version, diff) = update_schema_version(
+        &meta,
+        active,
+        SchemaDiff {
+            action_type,
+            schema_id: info.id,
+            ..SchemaDiff::default()
+        },
+    )?;
     active.job.finish_db_job(
         JobState::DONE,
         SchemaState::PUBLIC,
         schema_version,
         Some(GoShared::new(info)),
     );
-    let mut write = job_only_write(active.job.id, mutations);
+    let mut write = job_only_write(active.job.id, Vec::new());
     write.schema_version = schema_version;
     write.diff = diff;
     Ok(action_step(write))
