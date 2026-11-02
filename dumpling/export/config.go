@@ -14,7 +14,7 @@ import (
 	"text/template/parse"
 	"time"
 
-	"git.pingcap.net/pingkai/semver/coreos/semver"
+	"git.pingcap.cn/pingkai/semver/coreos/semver"
 	"github.com/docker/go-units"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"

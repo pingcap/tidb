@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"git.pingcap.net/pingkai/semver/coreos/semver"
+	"git.pingcap.cn/pingkai/semver/coreos/semver"
 	// import mysql driver
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"

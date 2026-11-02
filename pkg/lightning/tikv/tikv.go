@@ -21,7 +21,7 @@ import (
 	"regexp"
 	"strings"
 
-	"git.pingcap.net/pingkai/semver/coreos/semver"
+	"git.pingcap.cn/pingkai/semver/coreos/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"

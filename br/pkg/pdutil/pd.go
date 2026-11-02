@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"git.pingcap.net/pingkai/semver/coreos/semver"
+	"git.pingcap.cn/pingkai/semver/coreos/semver"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"

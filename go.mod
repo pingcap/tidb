@@ -5,7 +5,7 @@ go 1.25.12
 require (
 	cloud.google.com/go/kms v1.21.0
 	cloud.google.com/go/storage v1.50.0
-	git.pingcap.net/pingkai/semver v0.0.0-20260320082102-7fbb8a3de855
+	git.pingcap.cn/pingkai/semver v0.0.0-20261102040323-6c09c65d8df1
 	gitee.com/Trisia/gotlcp v1.3.18
 	gitee.com/joccau/orc v0.0.0-20231201065950-efbd25e5a1f1
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.12.0
@@ -169,7 +169,7 @@ require (
 	cloud.google.com/go/longrunning v0.6.6 // indirect
 	cloud.google.com/go/monitoring v1.24.1 // indirect
 	filippo.io/edwards25519 v1.1.1 // indirect
-	git.pingcap.net/pingkai/tigateway v0.0.0-20260122130635-3c63f1ad0439 // indirect
+	git.pingcap.cn/pingkai/tigateway v0.0.0-20261102040340-bc3f00e2339a // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.32.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.50.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.50.0 // indirect
@@ -378,10 +378,10 @@ replace (
 )
 
 // PingKai cross-repository dependency overrides.
-replace github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20261026085317-ff3c64c123e3
+replace github.com/pingcap/kvproto => git.pingcap.cn/pingkai/kvproto v0.0.0-20261026085317-ff3c64c123e3
 
-replace github.com/pingcap/tipb => git.pingcap.net/pingkai/tipb v0.0.0-20260725025521-4a06b885d1a1
+replace github.com/pingcap/tipb => git.pingcap.cn/pingkai/tipb v0.0.0-20260725025521-4a06b885d1a1
 
-replace github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260722071941-b41ad2375362
+replace github.com/tikv/client-go/v2 => git.pingcap.cn/pingkai/client-go/v2 v2.0.8-0.20261102054451-054d4646eaf6
 
-replace github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20261030073659-7106bf53cedb
+replace github.com/tikv/pd/client => git.pingcap.cn/pingkai/pd/client v0.0.0-20261030073659-7106bf53cedb
