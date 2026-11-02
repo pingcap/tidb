@@ -426,6 +426,7 @@ mod tests {
             base: node(2, "ExchangeSender", vec![scan]),
             exchange_type: ExchangeType::Hash,
             hash_cols: Vec::new(),
+            compression_mode: Default::default(),
         });
         let receiver = PhysicalPlan::ExchangeReceiver(PhysicalExchangeReceiver {
             base: node(3, "ExchangeReceiver", vec![hash_sender]),
@@ -448,6 +449,7 @@ mod tests {
             base: node(7, "ExchangeSender", vec![projection]),
             exchange_type: ExchangeType::PassThrough,
             hash_cols: Vec::new(),
+            compression_mode: Default::default(),
         });
         PhysicalPlan::TableReader(PhysicalTableReader {
             base: node(8, "TableReader", Vec::new()),

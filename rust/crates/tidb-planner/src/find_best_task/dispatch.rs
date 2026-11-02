@@ -166,6 +166,14 @@ pub struct DispatchContext<'a> {
     pub index_join_skyline_threshold: f64,
     /// Go `SessionVars.IsMPPAllowed()`, which controls MPP candidates.
     pub mpp_allowed: bool,
+    /// Go `SessionVars.IsTiFlashCopBanned()`.
+    pub tiflash_cop_banned: bool,
+    /// Go `SessionVars.TiFlashFastScan`.
+    pub tiflash_fast_scan: bool,
+    /// Go `config.GetGlobalConfig().DisaggregatedTiFlash`.
+    pub disaggregated_tiflash: bool,
+    /// Go `SessionVars.AllowBatchCop`.
+    pub allow_batch_cop: i64,
     /// Go `SessionVars.EnableSkewDistinctAgg`, which disables one-phase MPP
     /// aggregation so skew-aware distinct rewrites can retain their exchange.
     pub enable_skew_distinct_agg: bool,
@@ -258,6 +266,11 @@ impl<'a> DispatchContext<'a> {
             index_join_skyline_threshold: 1_000.0,
             // Go `vardef.DefTiDBAllowMPPExecution` is true.
             mpp_allowed: true,
+            // Go `DefTiDBAllowTiFlashCop` is false.
+            tiflash_cop_banned: true,
+            tiflash_fast_scan: false,
+            disaggregated_tiflash: false,
+            allow_batch_cop: 1,
             enable_skew_distinct_agg: false,
             enable_3_stage_distinct_agg: true,
             enable_3_stage_multi_distinct_agg: false,
@@ -326,6 +339,7 @@ impl<'a> DispatchContext<'a> {
             estimator_options: self.estimator_options.clone(),
             scale_ndv_skew_ratio: self.skew_ratio,
             mv_index_filters: Some(&crate::access_path::mv_index::PlannerMvIndexFilters),
+            allow_batch_cop: self.allow_batch_cop,
         }
     }
 
@@ -511,6 +525,23 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_mpp_allowed(mut self, allowed: bool) -> Self {
         self.mpp_allowed = allowed;
+        self
+    }
+
+    /// Go `IsTiFlashCopBanned()`, `TiFlashFastScan`, `AllowBatchCop` and
+    /// the disaggregated-TiFlash configuration.
+    #[must_use]
+    pub const fn with_tiflash_switches(
+        mut self,
+        cop_banned: bool,
+        fast_scan: bool,
+        allow_batch_cop: i64,
+        disaggregated: bool,
+    ) -> Self {
+        self.tiflash_cop_banned = cop_banned;
+        self.tiflash_fast_scan = fast_scan;
+        self.allow_batch_cop = allow_batch_cop;
+        self.disaggregated_tiflash = disaggregated;
         self
     }
 
@@ -788,6 +819,9 @@ fn exhaust_physical_plans(
             prop,
             ctx.allocator,
             ctx.skew_ratio,
+            ctx.mpp_allowed,
+            &ctx.expr_pushdown_blacklist,
+            ctx.mpp_warning_sink,
         ))),
         LogicalPlan::Aggregation(op) => {
             // `ExhaustPhysicalPlans4LogicalAggregation`
@@ -2658,9 +2692,12 @@ fn find_best_task_4_logical_data_source(
         direct_prop.can_add_enforcer = false;
         let direct = find_best_task_4_logical_data_source_without_enforcer(ds, &direct_prop, ctx)?;
 
+        // Go clears the order and the MPP partition requirement alike; the
+        // enforcer adds both back.
         let mut unordered_prop = prop.clone();
         unordered_prop.can_add_enforcer = false;
         unordered_prop.sort_items.clear();
+        unordered_prop.mpp_partition_tp = tidb_planner_property::MppPartitionType::Any;
         let unordered =
             find_best_task_4_logical_data_source_without_enforcer(ds, &unordered_prop, ctx)?;
         let enforced = enforce_property_in(
@@ -3036,9 +3073,10 @@ fn find_best_task_4_logical_data_source_paths(
     // task still owns both the index and table halves. Aggregation needs the
     // latter so `attach2Task4PhysicalHashAgg` can put its partial stage on
     // the lookup's table half before converting the task to root.
+    // An MPP property is answered by the TiFlash path's MPP task as built.
     let cop_answer = match prop.task_tp {
         TaskType::Root => false,
-        TaskType::CopSingleRead | TaskType::CopMultiRead => true,
+        TaskType::CopSingleRead | TaskType::CopMultiRead | TaskType::Mpp => true,
         _ => return Ok(Task::invalid_task()),
     };
     let cop_multi_read = prop.task_tp == TaskType::CopMultiRead;
@@ -3173,6 +3211,10 @@ fn find_best_task_4_logical_data_source_paths(
     // table scan and the reader above (Go shares the pointer).
     let phys_plan_part_info = tidb_planner_core_operator_physicalop::PhysPlanPartInfo::from_data_source(ds);
     'paths: for (path_position, path) in ordinary_paths.iter().enumerate() {
+        // Go `skylinePruning`: an MPP (flash) property takes TiFlash paths only.
+        if prop.is_flash_prop() && !path.is_tiflash_path() {
+            continue;
+        }
         if (ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH != 0
             && !path.is_tiflash_path())
             || (ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIKV != 0
@@ -3827,7 +3869,49 @@ fn find_best_task_4_logical_data_source_paths(
                     continue 'paths;
                 }
                 let keep_order = ordered;
-                if keep_order && !table_path_matches_order(ds, prop, None).matched() {
+                let matched = table_path_matches_order(ds, prop, None).matched();
+                if keep_order && !matched {
+                    continue 'paths;
+                }
+                // Go `convertToTableScan`'s TiFlash checks. With TiFlash cop
+                // banned (`tidb_allow_tiflash_cop` off, the default) or a
+                // disaggregated TiFlash, a root read is an MPP task converted
+                // to root.
+                let has_tiflash_for_mpp = ds.has_tiflash() && ctx.mpp_allowed;
+                let disaggregated = ctx.disaggregated_tiflash;
+                let can_mpp_convert_to_root = has_tiflash_for_mpp
+                    && prop.task_tp == TaskType::Root
+                    && (disaggregated || ctx.tiflash_cop_banned);
+                if keep_order && (desc || ctx.tiflash_fast_scan) {
+                    // TiFlash fast mode cannot keep order.
+                    continue 'paths;
+                }
+                let use_mpp = prop.task_tp == TaskType::Mpp || can_mpp_convert_to_root;
+                if use_mpp {
+                    if keep_order || prop.mpp_partition_tp != tidb_planner_property::MppPartitionType::Any {
+                        continue 'paths;
+                    }
+                    if let Some(column) = ds
+                        .base
+                        .base
+                        .schema()
+                        .and_then(|schema| schema.columns.iter().find(|column| column.virtual_expr.is_some()))
+                    {
+                        if let Some(sink) = ctx.mpp_warning_sink {
+                            sink.raise_mpp_warning(&format!(
+                                "MPP mode may be blocked because column `{}` is a virtual column which is not supported now.",
+                                column.orig_name
+                            ));
+                        }
+                        if !can_mpp_convert_to_root {
+                            continue 'paths;
+                        }
+                    }
+                } else if disaggregated || ctx.tiflash_cop_banned {
+                    // The property is cop-related, and TiFlash serves no cop.
+                    continue 'paths;
+                } else if matched && !ds.partition_definition_ids().is_empty() {
+                    // A TiFlash scan of a partitioned table cannot keep order.
                     continue 'paths;
                 }
                 let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
@@ -3904,15 +3988,33 @@ fn find_best_task_4_logical_data_source_paths(
                         from_data_source: true,
                     })
                 };
-                Task::Cop(tidb_planner_core_operator_physicalop::task::CopTask {
-                    table_plan: Some(Box::new(table_plan)),
-                    index_plan_finished: true,
-                    keep_order,
-                    expect_cnt: prop.expected_cnt as u64,
-                    stats_context: ctx.task_stats_context(ds, &root_task_conds),
-                    root_task_conds,
-                    ..tidb_planner_core_operator_physicalop::task::CopTask::default()
-                })
+                if use_mpp {
+                    // Go `NewMppTask(ts, AnyType, ...)` and
+                    // `addPushedDownSelectionToMppTask4PhysicalTableScan`: an
+                    // MPP property cannot take filters TiFlash must leave to
+                    // TiDB; a root read converts the task below.
+                    if prop.task_tp == TaskType::Mpp && !root_task_conds.is_empty() {
+                        continue 'paths;
+                    }
+                    let mut mpp = tidb_planner_core_operator_physicalop::task::MppTask::new(
+                        table_plan,
+                        tidb_planner_property::MppPartitionType::Any,
+                        [],
+                    )
+                    .with_stats_context(ctx.task_stats_context(ds, &root_task_conds));
+                    mpp.root_task_conds = root_task_conds;
+                    Task::Mpp(mpp)
+                } else {
+                    Task::Cop(tidb_planner_core_operator_physicalop::task::CopTask {
+                        table_plan: Some(Box::new(table_plan)),
+                        index_plan_finished: true,
+                        keep_order,
+                        expect_cnt: prop.expected_cnt as u64,
+                        stats_context: ctx.task_stats_context(ds, &root_task_conds),
+                        root_task_conds,
+                        ..tidb_planner_core_operator_physicalop::task::CopTask::default()
+                    })
+                }
             }
             Some(source_index) => 'index_path: {
                 // Go `convertToIndexScan`: "MVIndex is special since different
@@ -4908,7 +5010,8 @@ fn find_best_task_4_logical_data_source_paths(
         return Ok(best);
     }
     // All alternative choices were fixed before ordinary physical construction.
-    for candidate in merge_candidates.iter() {
+    // Index merges read TiKV, which an MPP property does not take.
+    for candidate in merge_candidates.iter().filter(|_| !prop.is_flash_prop()) {
         let mut merge_task = match candidate {
             super::candidate_preparation::PreparedMerge::Union(path) =>
                 super::index_merge_union::build_converged_union_index_merge_task(ds, path, ctx)?,
@@ -5437,6 +5540,10 @@ mod tests {
 
         fn hash_exchange_with_new_collation(&self) -> bool {
             true
+        }
+
+        fn mpp_exchange_compression_mode(&self) -> tidb_vardef::modes::ExchangeCompressionMode {
+            tidb_vardef::modes::ExchangeCompressionMode::NONE
         }
     }
 

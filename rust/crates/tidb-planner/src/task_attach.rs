@@ -1395,9 +1395,28 @@ pub(crate) fn attach2_task_in(
             let converted = first.into_root_task_in(allocator, evaluate)?;
             Ok(attach_union_scan(plan, converted))
         }
-        // `attach2Task4PhysicalWindow` (`task.go:2230`): convert the child to
-        // a root task and attach. The TiFlash MPP arm is absent with that
-        // tier.
+        // `attach2Task4PhysicalWindow` (`task.go:2230`): a TiFlash window
+        // joins its MPP child (`attach2TaskForMPP4PhysicalWindow`), whose
+        // schema it re-derives: the child's columns, then the window
+        // functions' own.
+        PhysicalPlan::Window(window)
+            if window.store_tp == tidb_kv::store_type::StoreType::TiFlash && matches!(first, Task::Mpp(_)) =>
+        {
+            let window_func_count = window.window_func_descs.len();
+            let mpp = first.copy();
+            let child_schema = mpp.plan().and_then(PhysicalPlan::schema).cloned();
+            let mut plan = plan;
+            if let Some(schema) = plan.schema().cloned() {
+                let window_columns = schema.columns[schema.columns.len() - window_func_count..].to_vec();
+                let merged = tidb_expr::schema::merge_schema(
+                    child_schema.as_ref(),
+                    Some(&tidb_expr::schema::Schema::new(window_columns)),
+                );
+                plan.base_mut().base.set_schema(merged);
+            }
+            Ok(attach_plan_2_task(plan, mpp))
+        }
+        // Otherwise: convert the child to a root task and attach.
         PhysicalPlan::Window(_) | PhysicalPlan::Shuffle(_) | PhysicalPlan::ShuffleReceiver(_) => {
             let converted = first.copy().convert_to_root_task_in(allocator, evaluate)?;
             Ok(attach_plan_2_task(plan, converted))
@@ -2532,6 +2551,8 @@ mod attach_tests {
         )
         .expect("count descriptor");
         let mut base = op_with_stats("HashAgg", 4.0);
+        // The planner always records the child property (Go `GetChildReqProps(0)`).
+        base.set_children_req_props(vec![Some(tidb_planner_property::PhysicalProperty::default())]);
         base.base.set_schema(Some(Schema::new(vec![
             tidb_expr::column::Column::new(
                 3,
@@ -2571,8 +2592,12 @@ mod attach_tests {
         let Task::Mpp(mpp) = attached else {
             panic!("two-phase MPP HashAgg remains an MPP task");
         };
-        let Some(PhysicalPlan::HashAgg(final_agg)) = mpp.plan() else {
-            panic!("final HashAgg is the MPP task root");
+        // Go `ConvertAvgForMPP` always projects over a final aggregation.
+        let Some(PhysicalPlan::Projection(projection)) = mpp.plan() else {
+            panic!("the final aggregation's projection is the MPP task root");
+        };
+        let Some(PhysicalPlan::HashAgg(final_agg)) = projection.base.children().first() else {
+            panic!("final HashAgg is under the projection");
         };
         let Some(PhysicalPlan::ExchangeReceiver(receiver)) = final_agg.base.children().first()
         else {
@@ -2623,6 +2648,8 @@ mod attach_tests {
         )
         .expect("ordinary count descriptor");
         let mut base = op_with_stats("HashAgg", 4.0);
+        // The planner always records the child property (Go `GetChildReqProps(0)`).
+        base.set_children_req_props(vec![Some(tidb_planner_property::PhysicalProperty::default())]);
         base.base.set_schema(Some(Schema::new(vec![
             tidb_expr::column::Column::new(
                 3,
@@ -2734,6 +2761,8 @@ mod attach_tests {
         )
         .expect("ordinary count descriptor");
         let mut base = op_with_stats("HashAgg", 4.0);
+        // The planner always records the child property (Go `GetChildReqProps(0)`).
+        base.set_children_req_props(vec![Some(tidb_planner_property::PhysicalProperty::default())]);
         base.base.set_schema(Some(Schema::new(vec![
             tidb_expr::column::Column::new(
                 4,

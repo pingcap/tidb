@@ -458,6 +458,12 @@ pub fn physical_optimize<C: OptimizeContext>(
     .with_correlation_options(optimizer_cost_env.session.correlation_options)
     .with_expression_evaluator(&evaluate)
     .with_mpp_allowed(optimizer_cost_env.session.mpp_allowed)
+    .with_tiflash_switches(
+        optimizer_cost_env.session.tiflash_cop_banned,
+        optimizer_cost_env.session.tiflash_fast_scan,
+        optimizer_cost_env.session.allow_batch_cop,
+        optimizer_cost_env.session.disaggregated_tiflash,
+    )
     .with_enable_skew_distinct_agg(ctx.enable_skew_distinct_agg())
     .with_enable_3_stage_distinct_agg(ctx.enable_3_stage_distinct_agg())
     .with_enable_3_stage_multi_distinct_agg(ctx.enable_3_stage_multi_distinct_agg())

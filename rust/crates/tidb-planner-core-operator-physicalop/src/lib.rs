@@ -2162,9 +2162,8 @@ pub enum ExchangeType {
 /// Go `physicalop.PhysicalExchangeSender`
 /// (`pkg/planner/core/operator/physicalop/physical_exchange_sender.go`):
 /// the last operator of an MPP fragment, shipping its child's rows to the
-/// consumer tier. Go's `TargetTasks`/`Tasks` and `CompressionMode` are
-/// dispatch-time state and stay unset in the planned tree, so this slice
-/// carries only what EXPLAIN and the DAG encoder read.
+/// consumer tier. Go's `TargetTasks`/`Tasks` are dispatch-time state and
+/// stay unset in the planned tree.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalExchangeSender {
     /// The shared physical base.
@@ -2174,29 +2173,38 @@ pub struct PhysicalExchangeSender {
     /// Go `HashCols`: the hash-exchange keys; empty unless
     /// [`Self::exchange_type`] is [`ExchangeType::Hash`].
     pub hash_cols: Vec<tidb_planner_property::MppPartitionColumn>,
+    /// Go `CompressionMode`, which `EnforceExchangerImpl` chooses from the
+    /// session (`ChooseMppExchangeCompressionMode`).
+    pub compression_mode: tidb_vardef::modes::ExchangeCompressionMode,
 }
 
 impl PhysicalExchangeSender {
     /// Go `PhysicalExchangeSender.ExplainInfo` (`physical_exchange_sender.go:107`):
-    /// `ExchangeType: PassThrough|Broadcast|HashPartition`, the hash columns
-    /// when the type is hash. Go's compression suffix only renders for a
-    /// non-NONE mode, which the planned tree never carries, and Go's `tasks:`
-    /// suffix only renders once dispatch has populated the target list.
+    /// `ExchangeType: PassThrough|Broadcast|HashPartition`, a non-NONE
+    /// compression mode, the hash columns when the type is hash, and the
+    /// fine-grained shuffle stream count. Go's `tasks:` suffix only renders
+    /// once dispatch has populated the target list.
     #[must_use]
     pub fn explain_info(&self, ignore_suffix: bool) -> String {
         let mut info = String::from("ExchangeType: ");
-        match self.exchange_type {
-            ExchangeType::PassThrough => info.push_str("PassThrough"),
-            ExchangeType::Broadcast => info.push_str("Broadcast"),
-            ExchangeType::Hash => {
-                info.push_str("HashPartition");
-                if !self.hash_cols.is_empty() {
-                    info.push_str(", Hash Cols: ");
-                    info.push_str(&String::from_utf8_lossy(
-                        &tidb_planner_property::explain_column_list(&self.hash_cols),
-                    ));
-                }
-            }
+        info.push_str(match self.exchange_type {
+            ExchangeType::PassThrough => "PassThrough",
+            ExchangeType::Broadcast => "Broadcast",
+            ExchangeType::Hash => "HashPartition",
+        });
+        if self.compression_mode != tidb_vardef::modes::ExchangeCompressionMode::NONE {
+            info.push_str(", Compression: ");
+            info.push_str(self.compression_mode.name());
+        }
+        if self.exchange_type == ExchangeType::Hash {
+            info.push_str(", Hash Cols: ");
+            info.push_str(&String::from_utf8_lossy(
+                &tidb_planner_property::explain_column_list(&self.hash_cols),
+            ));
+        }
+        let stream_count = self.base.tiflash_fine_grained_shuffle_stream_count;
+        if stream_count > 0 {
+            info.push_str(&format!(", stream_count: {stream_count}"));
         }
         let _ = ignore_suffix;
         info
@@ -3847,9 +3855,6 @@ pub fn get_stream_aggs(
 }
 
 /// Go `physicalop.PhysicalWindow` (`physical_window.go:38`).
-///
-/// Narrowings by name: `StoreTp` (only read by the absent TiFlash/MPP
-/// tiers) and the fine-grained-shuffle stream count.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalWindow {
     /// The shared physical base.
@@ -3862,20 +3867,230 @@ pub struct PhysicalWindow {
     pub order_by: Vec<ColumnSortItem>,
     /// Go `Frame`.
     pub frame: Option<tidb_planner_core_operator_logicalop::window::WindowFrame>,
+    /// Go `StoreTp`: TiFlash for the window an MPP task runs.
+    pub store_tp: tidb_kv::store_type::StoreType,
+}
+
+/// Go `WindowFuncDesc.CanPushDownToTiFlash` (`window_func.go:145`).
+fn window_func_can_push_down_to_tiflash(
+    desc: &tidb_expression_aggregation::WindowFuncDesc,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+) -> bool {
+    tidb_expr::infer_pushdown::can_exprs_push_down(
+        &desc.base.args,
+        tidb_kv::store_type::StoreType::TiFlash,
+        blacklist,
+    ) && matches!(
+        desc.base.name.as_str(),
+        "row_number"
+            | "rank"
+            | "dense_rank"
+            | "lead"
+            | "lag"
+            | "first_value"
+            | "last_value"
+            | "sum"
+            | "count"
+            | "avg"
+            | "max"
+            | "min"
+    )
+}
+
+/// Go `tryToGetMppWindows` (`physical_window.go:340`).
+///
+/// Go also converts a RANGE frame's bound functions to protobuf
+/// (`ExpressionsToPBList`); Rust converts expressions only when it lowers a
+/// dispatched plan, so the TiFlash pushdown check stands for that
+/// conversion here.
+fn try_to_get_mpp_windows(
+    window: &tidb_planner_core_operator_logicalop::LogicalWindow,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    warnings: Option<&dyn enforce::MppWarningSink>,
+) -> Vec<PhysicalPlan> {
+    use tidb_planner_property::MppPartitionType;
+    let raise = |message: &str| {
+        if let Some(sink) = warnings {
+            sink.raise_mpp_warning(message);
+        }
+    };
+    if !prop.is_sort_item_all_for_partition() {
+        return Vec::new();
+    }
+    if prop.task_tp != TaskType::Root && prop.task_tp != TaskType::Mpp {
+        return Vec::new();
+    }
+    if prop.mpp_partition_tp == MppPartitionType::Broadcast {
+        return Vec::new();
+    }
+    let mut all_supported = true;
+    for desc in &window.window_func_descs {
+        if !window_func_can_push_down_to_tiflash(desc, blacklist) {
+            raise(&format!(
+                "MPP mode may be blocked because window function `{}` or its arguments are not supported now.",
+                desc.base.name
+            ));
+            all_supported = false;
+        } else if !tidb_expr::infer_pushdown::is_push_down_enabled(
+            blacklist,
+            &desc.base.name,
+            tidb_kv::store_type::StoreType::TiFlash,
+        ) {
+            raise(&format!(
+                "MPP mode may be blocked because window function `{}` is blocked by blacklist, check `table mysql.expr_pushdown_blacklist;` for more information.",
+                desc.base.name
+            ));
+            return Vec::new();
+        }
+    }
+    if !all_supported {
+        return Vec::new();
+    }
+    if let Some(frame) = window
+        .frame
+        .as_ref()
+        .filter(|frame| frame.frame_type == tidb_planner_core_operator_logicalop::window::FrameType::Ranges)
+    {
+        let bounds = [frame.start.as_ref(), frame.end.as_ref()];
+        for bound in bounds.into_iter().flatten() {
+            if !tidb_expr::infer_pushdown::can_exprs_push_down(
+                &bound.calc_funcs,
+                tidb_kv::store_type::StoreType::TiFlash,
+                blacklist,
+            ) {
+                raise("MPP mode may be blocked because window function frame can't be pushed down");
+                return Vec::new();
+            }
+        }
+        if !bounds
+            .into_iter()
+            .flatten()
+            .all(|bound| window.check_comparison_for_tiflash(bound))
+        {
+            raise("MPP mode may be blocked because window function frame can't be pushed down, because Duration vs Datetime is invalid comparison as TiFlash can't handle it so far.");
+            return Vec::new();
+        }
+    }
+
+    let by_items: Vec<tidb_planner_property::SortItem> = window
+        .partition_by
+        .iter()
+        .chain(&window.order_by)
+        .map(|item| tidb_planner_property::SortItem::new(item.col.unique_id, item.desc))
+        .collect();
+    let mut child_prop = PhysicalProperty {
+        expected_cnt: f64::MAX,
+        can_add_enforcer: true,
+        sort_items: by_items.clone(),
+        task_tp: TaskType::Mpp,
+        sort_items_for_partition: by_items,
+        cte_producer_status: prop.cte_producer_status,
+        ..PhysicalProperty::default()
+    };
+    if !prop.is_prefix(&child_prop) {
+        return Vec::new();
+    }
+    if window.partition_by.is_empty() {
+        child_prop.mpp_partition_tp = MppPartitionType::SinglePartition;
+    } else {
+        // Go `LogicalWindow.GetPartitionKeys`.
+        let mut partition_cols: Vec<tidb_planner_property::MppPartitionColumn> = window
+            .partition_by
+            .iter()
+            .map(|item| tidb_planner_property::MppPartitionColumn {
+                col: item.col.clone(),
+                collate_id: item
+                    .col
+                    .get_static_type()
+                    .map_or(-1, |field_type| {
+                        tidb_planner_property::get_collate_id_by_name_for_partition(field_type.collation_name())
+                    }),
+            })
+            .collect();
+        // Match the parent's required partition.
+        if prop.mpp_partition_tp == MppPartitionType::Hash {
+            match prop.is_subset_of(&partition_cols) {
+                Some(matches) if !matches.is_empty() => {
+                    partition_cols = tidb_planner_property::choose_partition_keys(&partition_cols, &matches);
+                }
+                _ => return Vec::new(),
+            }
+        }
+        child_prop.mpp_partition_tp = MppPartitionType::Hash;
+        child_prop.mpp_partition_cols = partition_cols;
+    }
+    if prop.mpp_partition_tp == MppPartitionType::SinglePartition
+        && child_prop.mpp_partition_tp != MppPartitionType::SinglePartition
+    {
+        return Vec::new();
+    }
+    vec![physical_window(
+        window,
+        prop,
+        allocator,
+        skew_ratio,
+        child_prop,
+        tidb_kv::store_type::StoreType::TiFlash,
+    )]
+}
+
+fn physical_window(
+    window: &tidb_planner_core_operator_logicalop::LogicalWindow,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+    child_prop: PhysicalProperty,
+    store_tp: tidb_kv::store_type::StoreType,
+) -> PhysicalPlan {
+    let stats = window
+        .base
+        .base
+        .stats_info()
+        .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
+    let mut base = BasePhysicalPlan::new(
+        allocator,
+        tidb_planner_core_operator_logicalop::LogicalWindow::TYPE,
+        window.base.base.query_block_offset(),
+    );
+    base.base.set_stats(stats);
+    base.base.set_schema(window.base.base.schema().cloned());
+    base.set_children_req_props(vec![Some(child_prop)]);
+    PhysicalPlan::Window(PhysicalWindow {
+        base,
+        window_func_descs: window.window_func_descs.clone(),
+        partition_by: window.partition_by.clone(),
+        order_by: window.order_by.clone(),
+        frame: window.frame.clone(),
+        store_tp,
+    })
 }
 
 /// Go `physicalop.ExhaustPhysicalPlans4LogicalWindow`
-/// (`physical_window.go:448`): the TiDB-side window rides the
-/// `PartitionBy ++ OrderBy` child order and refuses when the required
-/// property is not a prefix of it. The MPP arm is absent with the TiFlash
-/// tier.
+/// (`physical_window.go:448`): the MPP windows when MPP may be used, then
+/// -- unless the parent needs an MPP task -- the TiDB-side window, which
+/// rides the `PartitionBy ++ OrderBy` child order and refuses when the
+/// required property is not a prefix of it.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_window(
     window: &tidb_planner_core_operator_logicalop::LogicalWindow,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
+    mpp_allowed: bool,
+    blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    warnings: Option<&dyn enforce::MppWarningSink>,
 ) -> Vec<PhysicalPlan> {
+    let mut windows = Vec::new();
+    if mpp_allowed && window.base.has_tiflash() {
+        windows.extend(try_to_get_mpp_windows(window, prop, allocator, skew_ratio, blacklist, warnings));
+    }
+    // A parent that needs an MPP task takes no TiDB window.
+    if prop.task_tp == TaskType::Mpp {
+        return windows;
+    }
     let mut by_items = window.partition_by.clone();
     by_items.extend(window.order_by.iter().cloned());
     let child_prop = PhysicalProperty {
@@ -3891,28 +4106,17 @@ pub fn exhaust_physical_plans_4_logical_window(
         ..PhysicalProperty::default()
     };
     if !prop.is_prefix(&child_prop) {
-        return Vec::new();
+        return windows;
     }
-    let stats = window
-        .base
-        .base
-        .stats_info()
-        .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
-    let mut base = BasePhysicalPlan::new(
+    windows.push(physical_window(
+        window,
+        prop,
         allocator,
-        tidb_planner_core_operator_logicalop::LogicalWindow::TYPE,
-        window.base.base.query_block_offset(),
-    );
-    base.base.set_stats(stats);
-    base.base.set_schema(window.base.base.schema().cloned());
-    base.set_children_req_props(vec![Some(child_prop)]);
-    vec![PhysicalPlan::Window(PhysicalWindow {
-        base,
-        window_func_descs: window.window_func_descs.clone(),
-        partition_by: window.partition_by.clone(),
-        order_by: window.order_by.clone(),
-        frame: window.frame.clone(),
-    })]
+        skew_ratio,
+        child_prop,
+        tidb_kv::store_type::StoreType::TiKv,
+    ));
+    windows
 }
 
 /// Which index-join executor a `PhysicalIndexJoin` is (Go's
@@ -4828,6 +5032,7 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
                 exchange_type: op.exchange_type,
                 hash_cols: op.hash_cols.clone(),
+                compression_mode: op.compression_mode,
             }),
             Self::ExchangeReceiver(op) => Self::ExchangeReceiver(PhysicalExchangeReceiver {
                 base: base_of(&op.base),
@@ -4979,6 +5184,7 @@ impl PhysicalPlan {
                 partition_by: op.partition_by.clone(),
                 order_by: op.order_by.clone(),
                 frame: op.frame.clone(),
+                store_tp: op.store_tp,
             }),
             Self::Expand(op) => Self::Expand(expand::PhysicalExpand {
                 base: base_of(&op.base),

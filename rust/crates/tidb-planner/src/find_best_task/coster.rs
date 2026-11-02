@@ -1398,6 +1398,7 @@ mod tests {
             base: sender_base,
             exchange_type: tidb_planner_core_operator_physicalop::ExchangeType::Broadcast,
             hash_cols: Vec::new(),
+            compression_mode: Default::default(),
         });
         let mut receiver_base = BasePhysicalPlan::new(&allocator, "ExchangeReceiver", 0);
         receiver_base.base.set_stats(Some(StatsInfo::new(5.0, [])));

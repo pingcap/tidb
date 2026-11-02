@@ -1246,6 +1246,43 @@ fn physical_operator_info(
     ignore_explain_id_suffix: bool,
     index_join_context: Option<IndexJoinExplainContext<'_>>,
 ) -> String {
+    let mut info = physical_operator_own_info(
+        eval_ctx,
+        statement_context,
+        plan,
+        catalog,
+        ignore_explain_id_suffix,
+        index_join_context,
+    );
+    // Go's ExplainInfo of these operators ends with the fine-grained shuffle
+    // stream count (`handleFineGrainedShuffle`) when one is set; the
+    // exchange sender and receiver render their own.
+    let stream_count = plan.base().tiflash_fine_grained_shuffle_stream_count;
+    if stream_count > 0
+        && matches!(
+            plan,
+            PhysicalPlan::Selection(_)
+                | PhysicalPlan::Projection(_)
+                | PhysicalPlan::Sort(_)
+                | PhysicalPlan::Window(_)
+                | PhysicalPlan::HashAgg(_)
+                | PhysicalPlan::StreamAgg(_)
+                | PhysicalPlan::HashJoin(_)
+        )
+    {
+        info.push_str(&format!(", stream_count: {stream_count}"));
+    }
+    info
+}
+
+fn physical_operator_own_info(
+    eval_ctx: &dyn tidb_exprctx::Columns,
+    statement_context: &crate::StmtContext,
+    plan: &PhysicalPlan,
+    catalog: &SessionExtendedInfoSchema,
+    ignore_explain_id_suffix: bool,
+    index_join_context: Option<IndexJoinExplainContext<'_>>,
+) -> String {
     match plan {
         PhysicalPlan::Selection(selection) => {
             // Go `PhysicalSelection.ExplainInfo` renders through
@@ -1748,36 +1785,19 @@ fn physical_explain_operator(
             .table_plan
             .as_deref()
             .map(|child| {
-                // Go `explainChildOperator` renders the pushed-down tier's
-                // task from the reader's request type and store: an MPP
-                // reader (TiFlash store over an ExchangeSender,
-                // `physical_table_reader.go:299` adjustReadReqType) labels
-                // the fragment `mpp[tiflash]`; everything else so far is a
-                // plain cop request.
-                let task = match reader.read_req_type {
-                    tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType::Mpp => ExplainTask::Cop {
-                        request: "mpp".to_owned(),
-                        store: "tiflash".to_owned(),
-                    },
-                    tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType::BatchCop
-                    | tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType::Cop
-                    | tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType::Unknown(_) => {
-                        ExplainTask::Cop {
-                            request: "cop".to_owned(),
-                            store: match reader.store_type {
-                                tidb_kv::store_type::StoreType::TiFlash => {
-                                    "tiflash".to_owned()
-                                }
-                                tidb_kv::store_type::StoreType::TiDb => {
-                                    "tidb".to_owned()
-                                }
-                                tidb_kv::store_type::StoreType::TiKv
-                                | tidb_kv::store_type::StoreType::Unspecified => {
-                                    "tikv".to_owned()
-                                }
-                            },
+                // Go `explainChildOperator`: `ReadReqType.Name()[StoreType.Name()]`
+                // -- `mpp[tiflash]` for an MPP reader (a TiFlash store over an
+                // ExchangeSender, `adjustReadReqType`), `batchCop[tiflash]`
+                // for a TiFlash batch request, `cop[...]` otherwise.
+                let task = ExplainTask::Cop {
+                    request: reader.read_req_type.name().to_owned(),
+                    store: match reader.store_type {
+                        tidb_kv::store_type::StoreType::TiFlash => "tiflash".to_owned(),
+                        tidb_kv::store_type::StoreType::TiDb => "tidb".to_owned(),
+                        tidb_kv::store_type::StoreType::TiKv | tidb_kv::store_type::StoreType::Unspecified => {
+                            "tikv".to_owned()
                         }
-                    }
+                    },
                 };
                 vec![physical_explain_operator(
                     costs,

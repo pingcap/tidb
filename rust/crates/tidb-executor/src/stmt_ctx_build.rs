@@ -366,6 +366,11 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             && tidb_executor_join_joinversion::is_hash_join_v2_supported();
         env.session.mpp_allowed = enabled("tidb_allow_mpp", true);
         env.session.mpp_enforced = env.session.mpp_allowed && enabled("tidb_enforce_mpp", false);
+        env.session.tiflash_cop_banned = !enabled(tidb_vardef::tidb_vars::TIDB_ALLOW_TIFLASH_COP, false);
+        env.session.tiflash_fast_scan = enabled(tidb_vardef::tidb_vars::TIFLASH_FAST_SCAN, false);
+        env.session.allow_batch_cop = number(tidb_vardef::tidb_vars::TIDB_ALLOW_BATCH_COP, 1.0) as i64;
+        env.session.disaggregated_tiflash =
+            tidb_config::config_tree::config::get_global_config().disaggregated_tiflash;
         env.session.enable_chunk_rpc = enabled("tidb_enable_chunk_rpc", true);
 
         env.cost_factors.index_scan = number("tidb_opt_index_scan_cost_factor", 1.0);
@@ -1722,6 +1727,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
                     .with_rc_check_ts(self.stmt_rc_check_ts())
                     .with_pessimistic_txn_provider(self.pessimistic_txn_provider())
+                    .with_mpp_exchange_compression_mode(self.mpp_exchange_compression_mode())
                     .with_tiflash_fine_grained_shuffle(
                         self.tiflash_fine_grained_shuffle_session(),
                         self.tiflash_cluster_info(),
@@ -1885,6 +1891,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
                     .with_rc_check_ts(self.stmt_rc_check_ts())
                     .with_pessimistic_txn_provider(self.pessimistic_txn_provider())
+                    .with_mpp_exchange_compression_mode(self.mpp_exchange_compression_mode())
                     .with_tiflash_fine_grained_shuffle(
                         self.tiflash_fine_grained_shuffle_session(),
                         self.tiflash_cluster_info(),
@@ -2428,6 +2435,36 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// coprocessor response details, `None` while the instance switch is OFF
     /// (Go's `copIteratorWorker.stats` is only created when it is ON).
     fn statement_cop_response_sink(&self) -> Option<Arc<dyn crate::CopResponseSink>>;
+    /// Go `ChooseMppExchangeCompressionMode()` when `ChooseMppVersion()` is
+    /// at least `MppVersionV1` (an unspecified version is the newest), the
+    /// compression `EnforceExchangerImpl` gives a sender; NONE otherwise.
+    fn mpp_exchange_compression_mode(&self) -> tidb_vardef::modes::ExchangeCompressionMode {
+        use tidb_vardef::modes::{to_exchange_compression_mode, ExchangeCompressionMode};
+        let vars = self.session_vars();
+        let version = vars
+            .get_system(tidb_vardef::tidb_vars::MPP_VERSION)
+            .ok()
+            .and_then(|value| tidb_txnkv::MppVersion::parse(&value))
+            .map_or(tidb_txnkv::MppVersion::NEWEST, |version| {
+                if version == tidb_txnkv::MppVersion::Unspecified {
+                    tidb_txnkv::MppVersion::NEWEST
+                } else {
+                    version
+                }
+            });
+        if version < tidb_txnkv::MppVersion::V1 {
+            return ExchangeCompressionMode::NONE;
+        }
+        match vars
+            .get_system(tidb_vardef::tidb_vars::MPP_EXCHANGE_COMPRESSION_MODE)
+            .ok()
+            .and_then(|value| to_exchange_compression_mode(&value))
+        {
+            None | Some(ExchangeCompressionMode::UNSPECIFIED) => ExchangeCompressionMode::RECOMMENDED,
+            Some(mode) => mode,
+        }
+    }
+
     /// Go `SessionVars`' inputs to `handleFineGrainedShuffle` and the
     /// session half of `CanTiFlashUseHashJoinV2`.
     fn tiflash_fine_grained_shuffle_session(&self) -> tidb_sessionctx::TiFlashFineGrainedShuffleSession {

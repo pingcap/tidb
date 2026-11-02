@@ -45,6 +45,7 @@ fn mpp_reader_over_sender(sender_id: i32) -> PhysicalTableReader {
                 base: sender_base,
                 exchange_type: ExchangeType::PassThrough,
                 hash_cols: Vec::new(),
+                compression_mode: Default::default(),
             },
         ))),
         store_type: StoreType::TiFlash,

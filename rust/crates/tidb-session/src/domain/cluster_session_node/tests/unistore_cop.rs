@@ -25509,3 +25509,96 @@ fn partition_id_map(
             .collect(),
     ))
 }
+
+/// Go's TiFlash MPP planning (`convertToTableScan`'s MPP branch, the MPP
+/// arms above it, `postOptimize`'s `handleFineGrainedShuffle`), captured from
+/// Go with hypothetical TiFlash replicas: with TiFlash cop banned (the
+/// default) a TiFlash read is an MPP task converted to root, and the
+/// selection, projection, two-phase aggregation and window run in the MPP
+/// fragment -- the enforced exchange compressed FAST, the final aggregation
+/// under Go's extra projection, the window's stretch at `stream_count: 8`.
+#[test]
+fn tiflash_reads_plan_as_go_mpp_fragments() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(112))
+        .expect("session opens");
+    for sql in [
+        "CREATE TABLE test.t (a int not null, b bigint, c int not null)",
+        "ALTER TABLE test.t SET HYPO TIFLASH REPLICA 1",
+    ] {
+        session.node_conn().execute_write(sql).expect(sql);
+    }
+    let reader = |rows: &str| {
+        [
+            format!("TableReader|{rows}|root||MppVersion: 3, data:ExchangeSender"),
+            format!("└─ExchangeSender|{rows}|mpp[tiflash]||ExchangeType: PassThrough"),
+        ]
+    };
+    let cases: [(&str, Vec<String>); 4] = [
+        (
+            "SELECT * FROM test.t",
+            reader("10000.00")
+                .into_iter()
+                .chain(["  └─TableFullScan|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo".to_owned()])
+                .collect(),
+        ),
+        (
+            "SELECT a FROM test.t WHERE b > 1",
+            reader("3333.33")
+                .into_iter()
+                .chain(
+                    [
+                        "  └─Projection|3333.33|mpp[tiflash]||test.t.a",
+                        "    └─Selection|3333.33|mpp[tiflash]||gt(test.t.b, 1)",
+                        "      └─TableFullScan|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+                    ]
+                    .map(str::to_owned),
+                )
+                .collect(),
+        ),
+        (
+            "SELECT a, count(*) FROM test.t GROUP BY a",
+            reader("8000.00")
+                .into_iter()
+                .chain(
+                    [
+                        "  └─Projection|8000.00|mpp[tiflash]||test.t.a, Column#6",
+                        "    └─Projection|8000.00|mpp[tiflash]||Column#6, test.t.a",
+                        "      └─HashAgg|8000.00|mpp[tiflash]||group by:test.t.a, funcs:sum(Column#13)->Column#6, funcs:firstrow(test.t.a)->test.t.a",
+                        "        └─ExchangeReceiver|8000.00|mpp[tiflash]||",
+                        "          └─ExchangeSender|8000.00|mpp[tiflash]||ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+                        "            └─HashAgg|8000.00|mpp[tiflash]||group by:test.t.a, funcs:count(1)->Column#13",
+                        "              └─TableFullScan|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+                    ]
+                    .map(str::to_owned),
+                )
+                .collect(),
+        ),
+        (
+            "SELECT a, row_number() OVER (PARTITION BY a ORDER BY b) FROM test.t",
+            reader("10000.00")
+                .into_iter()
+                .chain(
+                    [
+                        "  └─Projection|10000.00|mpp[tiflash]||test.t.a, Column#7->Column#9, stream_count: 8",
+                        "    └─Window|10000.00|mpp[tiflash]||row_number()->Column#7 over(partition by test.t.a order by test.t.b rows between current row and current row), stream_count: 8",
+                        "      └─Sort|10000.00|mpp[tiflash]||test.t.a, test.t.b, stream_count: 8",
+                        "        └─ExchangeReceiver|10000.00|mpp[tiflash]||stream_count: 8",
+                        "          └─ExchangeSender|10000.00|mpp[tiflash]||ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], stream_count: 8",
+                        "            └─TableFullScan|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+                    ]
+                    .map(str::to_owned),
+                )
+                .collect(),
+        ),
+    ];
+    for (query, expected) in cases {
+        let plan: Vec<String> = displayed(rows(&mut session, &format!("EXPLAIN FORMAT='brief' {query}")))
+            .into_iter()
+            .map(|row| row.join("|"))
+            .collect();
+        assert_eq!(plan, expected, "{query}");
+    }
+}

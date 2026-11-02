@@ -84,6 +84,9 @@ pub struct TaskStatsContext {
     pub mv_index_filters: Option<
         &'static (dyn tidb_planner_cardinality::selectivity::MvIndexFilters + Send + Sync),
     >,
+    /// Go `SessionVars.AllowBatchCop`, which a TiFlash reader's
+    /// `adjustReadReqType` reads at root conversion.
+    pub allow_batch_cop: i64,
 }
 
 impl std::fmt::Debug for TaskStatsContext {
@@ -93,6 +96,7 @@ impl std::fmt::Debug for TaskStatsContext {
             .field("estimator_options", &self.estimator_options)
             .field("scale_ndv_skew_ratio", &self.scale_ndv_skew_ratio)
             .field("mv_index_filters", &self.mv_index_filters.is_some())
+            .field("allow_batch_cop", &self.allow_batch_cop)
             .finish()
     }
 }
@@ -104,6 +108,8 @@ impl Default for TaskStatsContext {
             estimator_options: Default::default(),
             scale_ndv_skew_ratio: tidb_planner_cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
             mv_index_filters: None,
+            // Go `DefTiDBAllowBatchCop`.
+            allow_batch_cop: 1,
         }
     }
 }
@@ -414,6 +420,7 @@ impl MppTask {
             base: sender_base,
             exchange_type: crate::ExchangeType::PassThrough,
             hash_cols: Vec::new(),
+            compression_mode: Default::default(),
         });
 
         let mut reader_base = crate::BasePhysicalPlan::new(
@@ -1098,35 +1105,39 @@ impl CopTask {
             .resolved_is_common_handle()
             .unwrap_or(!self.common_handle_cols.is_empty());
         // Go `adjustReadReqType` (`physical_table_reader.go:299`): a TiFlash
-        // store whose table plan is an `PhysicalExchangeSender` is an MPP
-        // reader; Go's root conversion for a TiFlash mpp task wraps the
-        // fragment in the PassThrough sender
-        // (`GenerateRootMPPTasks`, `fragment.go:167`). This port keeps that
-        // shape for the single-fragment table scan; multi-fragment MPP
-        // planning stays a documented gap.
-        let (table_plan, read_req_type) =
-            if store_type == tidb_kv::store_type::StoreType::TiFlash {
-                let mut sender_base = crate::BasePhysicalPlan::new(
-                    allocator,
-                    "ExchangeSender",
-                    table_plan.query_block_offset(),
-                );
-                sender_base.base.set_stats(table_plan.stats_info().cloned());
-                sender_base.base.set_schema(table_plan.schema().cloned());
-                sender_base.set_children(vec![*table_plan]);
-                (
-                    Box::new(PhysicalPlan::ExchangeSender(
-                        crate::PhysicalExchangeSender {
-                            base: sender_base,
-                            exchange_type: crate::ExchangeType::PassThrough,
-                            hash_cols: Vec::new(),
-                        },
-                    )),
-                    crate::physical_table_reader::ReadReqType::Mpp,
-                )
+        // reader over an `ExchangeSender` reads through MPP; one whose table
+        // scans keep no order reads through a batch request when
+        // `tidb_allow_batch_cop` asks for it (1: only for a pushed
+        // aggregation or TopN, 2: always).
+        let read_req_type = if store_type == tidb_kv::store_type::StoreType::TiFlash {
+            let mut plans = Vec::new();
+            let mut node = Some(&*table_plan);
+            while let Some(plan) = node {
+                plans.push(plan);
+                node = plan.children().first();
+            }
+            let any_keep_order = plans
+                .iter()
+                .any(|plan| matches!(plan, PhysicalPlan::TableScan(scan) if scan.keep_order));
+            if matches!(&*table_plan, PhysicalPlan::ExchangeSender(_)) {
+                crate::physical_table_reader::ReadReqType::Mpp
+            } else if any_keep_order {
+                crate::physical_table_reader::ReadReqType::Cop
             } else {
-                (table_plan, crate::physical_table_reader::ReadReqType::Cop)
-            };
+                match stats_context.allow_batch_cop {
+                    1 if plans.iter().any(|plan| {
+                        matches!(plan, PhysicalPlan::HashAgg(_) | PhysicalPlan::StreamAgg(_) | PhysicalPlan::TopN(_))
+                    }) =>
+                    {
+                        crate::physical_table_reader::ReadReqType::BatchCop
+                    }
+                    2 => crate::physical_table_reader::ReadReqType::BatchCop,
+                    _ => crate::physical_table_reader::ReadReqType::Cop,
+                }
+            }
+        } else {
+            crate::physical_table_reader::ReadReqType::Cop
+        };
         let mut base = crate::BasePhysicalPlan::new(
             allocator,
             "TableReader",

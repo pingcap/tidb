@@ -825,10 +825,18 @@ pub fn convert_avg_for_mpp(
     let Some(original_schema) = agg.base.base.schema().cloned() else {
         return Ok(None);
     };
-    if !agg
-        .agg_funcs
-        .iter()
-        .any(|function| function.name() == names::AVG)
+    // Go: no avg leaves the aggregation alone -- except a final (or
+    // complete) aggregation, which always gets the projection, because
+    // TiFlash's aggregation output (aggregates plus group-by columns) is not
+    // TiDB's final schema.
+    let is_final_agg = agg.agg_funcs.first().is_some_and(|function| {
+        matches!(function.mode, AggFunctionMode::Final | AggFunctionMode::Complete)
+    });
+    if !is_final_agg
+        && !agg
+            .agg_funcs
+            .iter()
+            .any(|function| function.name() == names::AVG)
     {
         return Ok(None);
     }

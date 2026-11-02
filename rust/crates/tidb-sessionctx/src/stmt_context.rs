@@ -970,6 +970,9 @@ pub struct StmtContextData {
     pessimistic_txn_provider: Option<PessimisticTxnProvider>,
     /// The session inputs of Go's `handleFineGrainedShuffle`.
     tiflash_fine_grained_shuffle: TiFlashFineGrainedShuffleSession,
+    /// The compression an enforced MPP exchange takes (Go
+    /// `ChooseMppExchangeCompressionMode` under `ChooseMppVersion() >= V1`).
+    mpp_exchange_compression_mode: tidb_vardef::modes::ExchangeCompressionMode,
     /// The TiFlash servers Go's `handleFineGrainedShuffle` sizes streams
     /// from; `None` where the statement has no cluster to ask.
     tiflash_cluster_info: Option<Arc<dyn TiFlashClusterInfo>>,
@@ -2320,6 +2323,13 @@ context_configuration! {
         self
     }
 
+    /// Sets the compression an enforced MPP exchange takes.
+    #[must_use]
+    pub fn with_mpp_exchange_compression_mode(mut self, mode: tidb_vardef::modes::ExchangeCompressionMode) -> Self {
+        self.mpp_exchange_compression_mode = mode;
+        self
+    }
+
     /// Sets the session inputs of Go's `handleFineGrainedShuffle`.
     #[must_use]
     pub fn with_tiflash_fine_grained_shuffle(
@@ -2818,6 +2828,7 @@ impl StmtContext {
             rc_check_ts: false,
             pessimistic_txn_provider: None,
             tiflash_fine_grained_shuffle: TiFlashFineGrainedShuffleSession::default(),
+            mpp_exchange_compression_mode: tidb_vardef::modes::ExchangeCompressionMode::RECOMMENDED,
             tiflash_cluster_info: None,
             weak_consistency: false,
             row_encoding_config: tidb_tblctx::RowEncodingConfig::default(),
@@ -4653,6 +4664,12 @@ impl StmtContext {
     #[must_use]
     pub fn pessimistic_txn_provider(&self) -> Option<PessimisticTxnProvider> {
         self.pessimistic_txn_provider
+    }
+
+    /// The compression an enforced MPP exchange takes.
+    #[must_use]
+    pub fn mpp_exchange_compression_mode(&self) -> tidb_vardef::modes::ExchangeCompressionMode {
+        self.mpp_exchange_compression_mode
     }
 
     /// The session inputs of Go's `handleFineGrainedShuffle`.

@@ -111,6 +111,7 @@ impl MppTask {
             base: sender_base,
             exchange_type,
             hash_cols: required.mpp_partition_cols.clone(),
+            compression_mode: session.map_or(tidb_vardef::modes::ExchangeCompressionMode::NONE, |session| session.mpp_exchange_compression_mode()),
         });
         let mut receiver_base = crate::BasePhysicalPlan::new(
             allocator,
@@ -279,6 +280,10 @@ impl MppWarningSink for tidb_sessionctx::StmtContext {
     fn hash_exchange_with_new_collation(&self) -> bool {
         tidb_sessionctx::StmtContext::hash_exchange_with_new_collation(self)
     }
+
+    fn mpp_exchange_compression_mode(&self) -> tidb_vardef::modes::ExchangeCompressionMode {
+        tidb_sessionctx::StmtContext::mpp_exchange_compression_mode(self)
+    }
 }
 
 #[cfg(test)]
@@ -351,6 +356,9 @@ mod tests {
             }
             fn hash_exchange_with_new_collation(&self) -> bool {
                 self.allowed
+            }
+            fn mpp_exchange_compression_mode(&self) -> tidb_vardef::modes::ExchangeCompressionMode {
+                tidb_vardef::modes::ExchangeCompressionMode::NONE
             }
         }
         let allocator = PlanIdAllocator::new();
@@ -428,4 +436,9 @@ pub trait MppWarningSink {
 
     /// Go `SessionVars.HashExchangeWithNewCollation`.
     fn hash_exchange_with_new_collation(&self) -> bool;
+
+    /// The compression `EnforceExchangerImpl` gives a sender: Go
+    /// `ChooseMppExchangeCompressionMode()` when `ChooseMppVersion()` is at
+    /// least `MppVersionV1`, NONE otherwise.
+    fn mpp_exchange_compression_mode(&self) -> tidb_vardef::modes::ExchangeCompressionMode;
 }

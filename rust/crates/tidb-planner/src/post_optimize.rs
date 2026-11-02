@@ -217,6 +217,27 @@ pub(crate) fn eliminate_projection_preserving_shuffle(
     // (`rule_eliminate_projection.go:60`) and derefs both schemas
     // (`:77`/`:80-81`).
     let child = &projection.base.children()[0];
+    // Go `canProjectionBeEliminatedStrict`: TiFlash's aggregation output
+    // (aggregates plus group-by columns) is not TiDB's final-mode schema, so
+    // the projection over an MPP final aggregation stays.
+    if let PhysicalPlan::HashAgg(aggregation) = child {
+        use tidb_planner_core_operator_physicalop::AggMppRunMode;
+        let is_final_agg = aggregation.agg_funcs.first().is_some_and(|function| {
+            matches!(
+                function.mode,
+                tidb_expression_aggregation::AggFunctionMode::Final
+                    | tidb_expression_aggregation::AggFunctionMode::Complete
+            )
+        });
+        if is_final_agg
+            && matches!(
+                aggregation.mpp_run_mode,
+                AggMppRunMode::Mpp1Phase | AggMppRunMode::Mpp2Phase | AggMppRunMode::MppScalar
+            )
+        {
+            return plan;
+        }
+    }
     let projection_schema = projection
         .base
         .base

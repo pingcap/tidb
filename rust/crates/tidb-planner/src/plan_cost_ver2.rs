@@ -315,6 +315,14 @@ pub struct CostSessionOpts {
     pub mpp_allowed: bool,
     /// Go `SessionVars.IsMPPEnforced()`: both allow and enforce are on.
     pub mpp_enforced: bool,
+    /// Go `SessionVars.IsTiFlashCopBanned()`: `tidb_allow_tiflash_cop` off.
+    pub tiflash_cop_banned: bool,
+    /// Go `SessionVars.TiFlashFastScan` (`tiflash_fastscan`).
+    pub tiflash_fast_scan: bool,
+    /// Go `SessionVars.AllowBatchCop` (`tidb_allow_batch_cop`).
+    pub allow_batch_cop: i64,
+    /// Go `config.GetGlobalConfig().DisaggregatedTiFlash`.
+    pub disaggregated_tiflash: bool,
     /// Go `SessionVars.EnableChunkRPC` (`tidb_enable_chunk_rpc`): readers
     /// size their network rows in chunk format.
     pub enable_chunk_rpc: bool,
@@ -344,6 +352,11 @@ impl Default for CostSessionOpts {
             use_hash_join_v2: true,
             mpp_allowed: true,
             mpp_enforced: false,
+            // Go `DefTiDBAllowTiFlashCop` is false.
+            tiflash_cop_banned: true,
+            tiflash_fast_scan: false,
+            allow_batch_cop: 1,
+            disaggregated_tiflash: false,
             enable_chunk_rpc: true,
         }
     }
