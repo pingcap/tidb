@@ -92,6 +92,10 @@ pub trait PdRegionPolicy: std::fmt::Debug + Send + Sync {
     /// integer is what reaches the client. [`tso_rpc_concurrency`] performs
     /// that mapping so both publication paths send the same number.
     fn set_tso_rpc_concurrency(&self, _concurrency: isize) {}
+    /// Go `domain.setLowResolutionTSOUpdateInterval`
+    /// (`tidb_low_resolution_tso_update_interval`): how often the store's
+    /// oracle refreshes its low-resolution timestamp.
+    fn set_low_resolution_tso_update_interval(&self, _interval: std::time::Duration) {}
 }
 
 /// Go `variable.SetGlobalResourceControl`: registered by the domain

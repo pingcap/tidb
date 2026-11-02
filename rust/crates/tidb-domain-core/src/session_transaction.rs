@@ -73,6 +73,25 @@ pub fn set_options_on_txn_active(vars: &tidb_variable::SessionVars) -> SessionTr
             AssertionLevel::Strict => tidb_proto::KvrpcAssertionLevel::Strict,
         },
     );
+    // Go `txn.SetVars(sessVars.KVVars)`, whose two knobs the variables set
+    // through `tidbOptPositiveInt32` (anything but a positive number is the
+    // client's default).
+    let positive = |name: &str, default: i32| {
+        get(name)
+            .as_ref()
+            .parse::<i32>()
+            .ok()
+            .filter(|value| *value > 0)
+            .unwrap_or(default)
+    };
+    options.backoff_lock_fast = positive(
+        tidb_vardef::tidb_vars::TIDB_BACKOFF_LOCK_FAST,
+        tikv_client::kv::DEF_BACKOFF_LOCK_FAST,
+    );
+    options.backoff_weight = positive(
+        tidb_vardef::tidb_vars::TIDB_BACK_OFF_WEIGHT,
+        tikv_client::kv::DEF_BACKOFF_WEIGHT,
+    );
     // Go `LazyTxn`'s activation: "overwrite entry size limit by sys var".
     options.entry_size_limit = get(tidb_vardef::tidb_vars::TIDB_TXN_ENTRY_SIZE_LIMIT)
         .as_ref()
@@ -99,6 +118,8 @@ pub fn options_from_values(
         entry_size_limit: 0,
         guarantee_linearizability: true,
         low_resolution_tso: false,
+        backoff_lock_fast: tikv_client::kv::DEF_BACKOFF_LOCK_FAST,
+        backoff_weight: tikv_client::kv::DEF_BACKOFF_WEIGHT,
     }
 }
 

@@ -706,6 +706,9 @@ pub struct Session {
     /// Go `StmtCtx.RCCheckTS`, decided at statement start
     /// (`PessimisticRCTxnContextProvider.OnStmtStart`).
     stmt_rc_check_ts: bool,
+    /// Go `StmtCtx.WeakConsistency`, decided at statement start
+    /// (`ResetContextOfStmt`'s `isWeakConsistencyRead`).
+    stmt_weak_consistency: bool,
     /// Go `SessionVars.RowIDShardGenerator`: retains one random shard for
     /// `@@tidb_shard_allocate_step` generated IDs across statement contexts.
     row_id_shards: Arc<std::sync::Mutex<tidb_sessionctx::RowIdShardGenerator>>,
@@ -962,6 +965,7 @@ impl Session {
             retry_auto_ids: Arc::default(),
             retrying: false,
             stmt_rc_check_ts: false,
+            stmt_weak_consistency: false,
             row_id_shards: Arc::default(),
             non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache::default(),
             physical_plan_cache: tidb_executor::SessionPlanCache::default(),

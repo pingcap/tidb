@@ -49,6 +49,10 @@ pub struct SessionTransactionOptions {
     /// Go `newOracleFuture`'s `UseLowResolutionTSO`: the transaction's start
     /// timestamp is the oracle's cached one.
     pub low_resolution_tso: bool,
+    /// Go `SessionVars.KVVars` (`txn.SetVars`): `tidb_backoff_lock_fast`
+    /// and `tidb_backoff_weight`, which scale the client's backoffs.
+    pub backoff_lock_fast: i32,
+    pub backoff_weight: i32,
 }
 
 /// The ids of a session's temporary tables, refreshed by the session as its
@@ -88,6 +92,7 @@ impl SessionTransactionOptions {
             transaction.set_entry_size_limit(self.entry_size_limit);
         }
         transaction.set_causal_consistency(!self.guarantee_linearizability);
+        transaction.set_kv_variables(self.backoff_lock_fast, self.backoff_weight);
         if let Some(context) = self.kv_context {
             transaction.set_statement_kv_context(context);
         }
@@ -199,6 +204,8 @@ impl From<CommitProtocol> for SessionTransactionOptions {
             entry_size_limit: 0,
             guarantee_linearizability: true,
             low_resolution_tso: false,
+            backoff_lock_fast: tikv_client::kv::DEF_BACKOFF_LOCK_FAST,
+            backoff_weight: tikv_client::kv::DEF_BACKOFF_WEIGHT,
         }
     }
 }

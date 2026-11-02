@@ -2307,6 +2307,21 @@ impl Session {
     /// with `RCCheckTS`.
     pub(crate) fn on_stmt_start(&mut self, stmt: &Stmt) {
         self.stmt_rc_check_ts = self.need_set_rc_check_ts_flag(stmt);
+        self.stmt_weak_consistency = self.is_weak_consistency_read(stmt);
+    }
+
+    /// Go `isWeakConsistencyRead`: a user connection's read-only statement
+    /// in an autocommit transaction (`IsAutoCommitTxn`) under
+    /// `tidb_read_consistency = 'weak'`.
+    fn is_weak_consistency_read(&self, stmt: &Stmt) -> bool {
+        self.vars.connection_id.is_some_and(|id| id > 0)
+            && self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_READ_CONSISTENCY)
+                .is_ok_and(|value| value.eq_ignore_ascii_case("weak"))
+            && self.is_autocommit()
+            && !self.in_transaction()
+            && stmt.is_read_only(true)
     }
 
     /// Go `StmtCtx.RCCheckTS` for the running statement.

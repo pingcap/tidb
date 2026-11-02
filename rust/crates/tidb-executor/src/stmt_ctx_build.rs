@@ -1706,6 +1706,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_placement_mode_ignore(self.placement_mode_ignore())
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
                     .with_rc_check_ts(self.stmt_rc_check_ts())
+                    .with_weak_consistency(self.stmt_weak_consistency())
                     .with_hash_exchange_with_new_collation(
                         self.session_vars()
                             .system_value(tidb_vardef::tidb_vars::TIDB_HASH_EXCHANGE_WITH_NEW_COLLATION)
@@ -1863,6 +1864,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_placement_mode_ignore(self.placement_mode_ignore())
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
                     .with_rc_check_ts(self.stmt_rc_check_ts())
+                    .with_weak_consistency(self.stmt_weak_consistency())
                     .with_hash_exchange_with_new_collation(
                         self.session_vars()
                             .system_value(tidb_vardef::tidb_vars::TIDB_HASH_EXCHANGE_WITH_NEW_COLLATION)
@@ -2346,6 +2348,8 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn in_transaction(&self) -> bool;
     /// Go `StmtCtx.RCCheckTS`, decided when the statement started.
     fn stmt_rc_check_ts(&self) -> bool;
+    /// Go `StmtCtx.WeakConsistency`, decided when the statement started.
+    fn stmt_weak_consistency(&self) -> bool;
     /// Go `SessionVars.IsAutocommit()`: whether each statement stands on its
     /// own, or joins a transaction the session keeps open for it.
     ///

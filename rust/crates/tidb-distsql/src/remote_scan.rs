@@ -450,6 +450,9 @@ pub struct PushdownStatementContext {
     /// Go `StmtCtx.RCCheckTS`, which `DistSQLContext.RCCheckTS` carries to
     /// the request's isolation level.
     pub rc_check_ts: bool,
+    /// Go `StmtCtx.WeakConsistency`, which `DistSQLContext.WeakConsistency`
+    /// carries to the request's RC isolation.
+    pub weak_consistency: bool,
     /// Retained settings, independent of later SET statements.
     pub read_policy: CoprocessorReadPolicy,
     /// Go reader GetNetDataSize; supplied by the retained physical plan.
@@ -513,6 +516,7 @@ impl Default for PushdownStatementContext {
             read_replica_scope: "global".into(),
             is_staleness: false,
             rc_check_ts: false,
+            weak_consistency: false,
             read_policy: CoprocessorReadPolicy::default(),
             estimated_net_bytes: 0.0,
             lookup_avg_row_bytes: None,

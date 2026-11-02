@@ -206,7 +206,10 @@ pub fn cluster_session_stack(
     if let Some(options) = authority.tikv_store().store().pd_client().pd_options() {
         users
             .global_vars()
-            .set_pd_region_policy(Arc::new(ProcessPdRegionPolicy(options)));
+            .set_pd_region_policy(Arc::new(ProcessPdRegionPolicy(
+                options,
+                authority.tikv_store().clone(),
+            )));
     }
     // The cluster-session path owns one process-wide sysvar reloader below.
     // Its persisted boot image was installed synchronously above, before this
@@ -734,7 +737,10 @@ pub fn render_skipped(skipped: &[SkippedTable]) -> String {
 }
 
 /// Go `store.GetPDClient().UpdateOption` for the TSO and follower sysvars.
-struct ProcessPdRegionPolicy(Arc<tikv_client::pd_options::Options>);
+struct ProcessPdRegionPolicy(
+    Arc<tikv_client::pd_options::Options>,
+    tidb_txnkv::driver::tikv_store::TikvStore,
+);
 impl std::fmt::Debug for ProcessPdRegionPolicy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProcessPdRegionPolicy")
@@ -755,6 +761,11 @@ impl tidb_variable::vars::PdRegionPolicy for ProcessPdRegionPolicy {
     }
     fn set_tso_rpc_concurrency(&self, concurrency: isize) {
         self.0.set_tso_client_rpc_concurrency(concurrency);
+    }
+    fn set_low_resolution_tso_update_interval(&self, interval: Duration) {
+        self.1
+            .set_low_resolution_timestamp_update_interval(interval)
+            .expect("validated low-resolution TSO update interval");
     }
 }
 

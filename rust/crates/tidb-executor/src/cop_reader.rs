@@ -682,6 +682,7 @@ pub fn build_resp(
         read_replica_scope: request.statement.read_replica_scope.clone(),
         is_staleness: request.statement.is_staleness,
         rc_check_ts: request.statement.rc_check_ts,
+        weak_consistency: request.statement.weak_consistency,
         read_policy: request.statement.read_policy.clone(),
         estimated_net_bytes: request.statement.estimated_net_bytes,
         max_execution_time_ms: request.statement.max_execution_time_ms,
@@ -755,6 +756,7 @@ struct RemoteScanPlan {
     read_replica_scope: String,
     is_staleness: bool,
     rc_check_ts: bool,
+    weak_consistency: bool,
     read_policy: tidb_distsql::remote_scan::CoprocessorReadPolicy,
     estimated_net_bytes: f64,
     max_execution_time_ms: u64,
@@ -859,6 +861,7 @@ fn open_scan(
     context.request.not_fill_cache = plan.not_fill_cache;
     // Go `DistSQLContext.RCCheckTS`: the request's `kv.RCCheckTS` isolation.
     context.request.rc_check_ts = plan.rc_check_ts;
+    context.request.weak_consistency = plan.weak_consistency;
     context.request.query_cop_store_limiter = plan.query_cop_store_limiter;
     // Go `SetFromSessionVars` copies `MaxKeysRead` and the statement-wide
     // `MaxKeysReadCounter`; the counter is passed even without a limit so the

@@ -343,6 +343,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         self.stmt_rc_check_ts
     }
 
+    fn stmt_weak_consistency(&self) -> bool {
+        self.stmt_weak_consistency
+    }
+
 
     fn is_autocommit(&self) -> bool {
         Session::is_autocommit(self)

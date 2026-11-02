@@ -334,6 +334,18 @@ impl<PdC: PdClient> TikvStore<PdC> {
         })
     }
 
+    /// Go `domain.setLowResolutionTSOUpdateInterval`:
+    /// `store.GetOracle().SetLowResolutionTimestampUpdateInterval`.
+    pub fn set_low_resolution_timestamp_update_interval(
+        &self,
+        interval: std::time::Duration,
+    ) -> Result<(), String> {
+        self.store
+            .get_oracle()
+            .set_low_resolution_timestamp_update_interval(interval)
+            .map_err(|error| error.to_string())
+    }
+
     /// Go `oracle.GetLowResolutionTimestampAsync`: the oracle's cached last
     /// timestamp, refreshed every `tidb_low_resolution_tso_update_interval`.
     pub fn get_low_resolution_timestamp_async(&self) -> StoreTimestampFuture {

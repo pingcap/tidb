@@ -916,6 +916,10 @@ pub struct StmtContextData {
     /// READ-COMMITTED transaction reads at the transaction's latest
     /// timestamp and fails with a write conflict on newer data.
     rc_check_ts: bool,
+    /// Go `StmtCtx.WeakConsistency` (`isWeakConsistencyRead`): an autocommit
+    /// read-only statement under `tidb_read_consistency = 'weak'` reads at
+    /// RC isolation.
+    weak_consistency: bool,
     /// Go `MutateContext.GetRowEncodingConfig` over the session's
     /// `IsRowLevelChecksumEnabled` and `RowEncoder`.
     row_encoding_config: tidb_tblctx::RowEncodingConfig,
@@ -2238,6 +2242,13 @@ context_configuration! {
         self
     }
 
+    /// Sets Go `StmtCtx.WeakConsistency` for this statement.
+    #[must_use]
+    pub fn with_weak_consistency(mut self, weak: bool) -> Self {
+        self.weak_consistency = weak;
+        self
+    }
+
     /// Sets Go `StmtCtx.RCCheckTS` for this statement.
     #[must_use]
     pub fn with_rc_check_ts(mut self, rc_check_ts: bool) -> Self {
@@ -2729,6 +2740,7 @@ impl StmtContext {
             hash_exchange_with_new_collation:
                 tidb_vardef::defaults::DEF_TIDB_HASH_EXCHANGE_WITH_NEW_COLLATION,
             rc_check_ts: false,
+            weak_consistency: false,
             row_encoding_config: tidb_tblctx::RowEncodingConfig::default(),
             query_cop_store_limiter: None,
             pessimistic_lazy_dup_check: false,
@@ -4545,6 +4557,12 @@ impl StmtContext {
         self.placement_mode_ignore
     }
 
+    /// Go `StmtCtx.WeakConsistency`.
+    #[must_use]
+    pub fn weak_consistency(&self) -> bool {
+        self.weak_consistency
+    }
+
     /// Go `StmtCtx.RCCheckTS`.
     #[must_use]
     pub fn rc_check_ts(&self) -> bool {
@@ -4893,6 +4911,7 @@ impl StmtContext {
             rpc_interceptor: self.rpc_interceptor(),
             is_staleness: self.is_staleness,
             rc_check_ts: self.rc_check_ts,
+            weak_consistency: self.weak_consistency,
             replica_read: self.replica_read,
             read_replica_scope: self.read_replica_scope(),
             read_timeout_ms: self.coprocessor_read_policy.read_timeout_ms,

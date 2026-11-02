@@ -3038,6 +3038,15 @@ fn ts_validation_global_hook_updates_the_client_switch() {
         .set(tidb_vardef::tidb_vars::TIDB_MAX_DELTA_SCHEMA_COUNT, "200".to_owned())
         .unwrap();
     assert_eq!(tidb_vardef::get_max_delta_schema_count(), 200);
+    // Go `tikvstore.StoreLimit` / `TxnCommitBatchSize`.
+    globals
+        .set(tidb_vardef::tidb_vars::TIDB_STORE_LIMIT, "7".to_owned())
+        .unwrap();
+    assert_eq!(tikv_client::kv::STORE_LIMIT.load(SeqCst), 7);
+    globals
+        .set(tidb_vardef::tidb_vars::TIDB_TXN_COMMIT_BATCH_SIZE, "4096".to_owned())
+        .unwrap();
+    assert_eq!(tikv_client::kv::TXN_COMMIT_BATCH_SIZE.load(SeqCst), 4096);
     let fresh_cluster = tidb_domain::global_sysvars::GlobalSysvars::new();
     fresh_cluster.load_from_cluster([("autocommit".to_owned(), "ON".to_owned())]);
     assert!(ENABLE_TS_VALIDATION.load(SeqCst));
@@ -3045,5 +3054,39 @@ fn ts_validation_global_hook_updates_the_client_switch() {
     assert_eq!(
         tidb_vardef::get_max_delta_schema_count(),
         tidb_vardef::defaults::DEF_TIDB_MAX_DELTA_SCHEMA_COUNT
+    );
+    assert_eq!(tikv_client::kv::STORE_LIMIT.load(SeqCst), 0);
+    assert_eq!(
+        tikv_client::kv::TXN_COMMIT_BATCH_SIZE.load(SeqCst),
+        tikv_client::kv::DEF_TXN_COMMIT_BATCH_SIZE
+    );
+}
+
+/// Go `tidb_low_resolution_tso_update_interval`'s `SetGlobal` calls the
+/// domain's `setLowResolutionTSOUpdateInterval` (the store oracle) with the
+/// millisecond value; installing the store applies the current one.
+#[test]
+fn low_resolution_tso_update_interval_reaches_the_store_oracle() {
+    use std::sync::Mutex;
+    #[derive(Debug, Default)]
+    struct Policy(Mutex<Vec<std::time::Duration>>);
+    impl vars::PdRegionPolicy for Policy {
+        fn set_follower_handle(&self, _value: bool) {}
+        fn set_low_resolution_tso_update_interval(&self, interval: std::time::Duration) {
+            self.0.lock().unwrap().push(interval);
+        }
+    }
+    let (mut session, _peer, globals) = two_sessions_sharing_globals();
+    let policy = std::sync::Arc::new(Policy::default());
+    globals.set_pd_region_policy(policy.clone());
+    session
+        .run("SET GLOBAL tidb_low_resolution_tso_update_interval = 500")
+        .unwrap();
+    assert_eq!(
+        *policy.0.lock().unwrap(),
+        [
+            std::time::Duration::from_millis(2000),
+            std::time::Duration::from_millis(500)
+        ]
     );
 }

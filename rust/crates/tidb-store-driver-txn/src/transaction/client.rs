@@ -304,6 +304,18 @@ impl<S: PdClient> RealTransaction<S> {
             .inner_mut()
             .set_assertion_level(level);
     }
+    /// Go `KVTxn.SetVars(sessVars.KVVars)`: the backoff knobs the client's
+    /// lock-fast and weighted backoffs read.
+    pub fn set_kv_variables(&mut self, backoff_lock_fast: i32, backoff_weight: i32) {
+        self.engine
+            .transaction_mut()
+            .inner_mut()
+            .set_variables(std::sync::Arc::new(tikv_client::kv::Variables {
+                backoff_lock_fast,
+                backoff_weight,
+                ..tikv_client::kv::Variables::default()
+            }));
+    }
     /// Go `KVTxn.SetCausalConsistency`.
     pub fn set_causal_consistency(&mut self, causal: bool) {
         self.engine
@@ -434,6 +446,8 @@ impl<S: PdClient> RealTransaction<S> {
         transaction.set_stale_read(options.is_staleness);
         transaction.set_isolation_level(if options.rc_check_ts {
             tikv_client::proto::kvrpcpb::IsolationLevel::RcCheckTs
+        } else if options.weak_consistency {
+            tikv_client::proto::kvrpcpb::IsolationLevel::Rc
         } else {
             tikv_client::proto::kvrpcpb::IsolationLevel::Si
         });

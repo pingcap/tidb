@@ -232,6 +232,9 @@ pub struct SnapshotReadOptions {
     /// fails with a write conflict when it meets data newer than its
     /// timestamp (`GetSnapshotWithStmtReadTS` under `StmtCtx.RCCheckTS`).
     pub rc_check_ts: bool,
+    /// Go `StmtCtx.WeakConsistency`: the transaction's `kv.IsolationLevel`
+    /// is `kv.RC` (`tidb_read_consistency = 'weak'`).
+    pub weak_consistency: bool,
     /// Go SessionVars.GetReplicaRead, before client-go's mode mapping.
     pub replica_read: ReplicaReadType,
     /// Scope used for snapshot visibility and closest-replica matching.

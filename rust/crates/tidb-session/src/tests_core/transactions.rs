@@ -1020,3 +1020,46 @@ fn guarantee_linearizability_follows_go() {
     assert!(!session.guarantee_linearizability(), "BEGIN with the variable off");
     session.run("COMMIT").unwrap();
 }
+
+/// Go `isWeakConsistencyRead`: under `tidb_read_consistency = 'weak'` a user
+/// connection's read-only autocommit statement reads at RC isolation (the
+/// transaction's `kv.IsolationLevel`, the DistSQL request's); a write, a
+/// statement inside a transaction and the `strict` default do not.
+#[test]
+fn weak_consistency_reads_follow_go() {
+    let mut session = Session::new();
+    let weak = |session: &mut Session, sql: &str| {
+        let stmt = tidb_parser::parse(sql).expect("parse");
+        session.on_stmt_start(&stmt);
+        let ctx = ResetContextOfStmt::statement_context(&*session, false);
+        assert_eq!(
+            ctx.snapshot_read_options(0.0).weak_consistency,
+            ctx.weak_consistency()
+        );
+        ctx.weak_consistency()
+    };
+    session.run("CREATE TABLE t (a INT)").unwrap();
+    assert!(!weak(&mut session, "SELECT * FROM t"), "strict by default");
+    session.run("SET tidb_read_consistency = 'weak'").unwrap();
+    assert!(weak(&mut session, "SELECT * FROM t"));
+    assert!(!weak(&mut session, "UPDATE t SET a = 1"));
+    session.run("BEGIN").unwrap();
+    assert!(!weak(&mut session, "SELECT * FROM t"), "inside a transaction");
+    session.run("ROLLBACK").unwrap();
+}
+
+/// Go `txn.SetVars(sessVars.KVVars)`: the transaction activates with the
+/// session's `tidb_backoff_lock_fast` / `tidb_backoff_weight`
+/// (`tidbOptPositiveInt32`: a non-positive value is the client default).
+#[test]
+fn kv_vars_backoff_knobs_reach_the_transaction_options() {
+    let mut session = Session::new();
+    let options =
+        |session: &Session| tidb_domain_core::session_transaction::set_options_on_txn_active(session.vars());
+    assert_eq!(options(&session).backoff_lock_fast, 10);
+    assert_eq!(options(&session).backoff_weight, 2);
+    session.run("SET tidb_backoff_lock_fast = 50").unwrap();
+    session.run("SET tidb_backoff_weight = 6").unwrap();
+    assert_eq!(options(&session).backoff_lock_fast, 50);
+    assert_eq!(options(&session).backoff_weight, 6);
+}

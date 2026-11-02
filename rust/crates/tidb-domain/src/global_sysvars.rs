@@ -111,6 +111,16 @@ enum InstanceMutation {
 }
 
 
+/// Go `SetGlobal`: `TidbOptInt64(val, DefTiDBLowResolutionTSOUpdateInterval)`
+/// milliseconds.
+fn low_resolution_tso_update_interval(value: &str) -> std::time::Duration {
+    let millis = tidb_variable::varsutil::tidb_opt_int64(
+        value,
+        tidb_vardef::defaults::DEF_TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL,
+    );
+    std::time::Duration::from_millis(u64::try_from(millis).unwrap_or_default())
+}
+
 // Go Domain converts fractional milliseconds to integer nanoseconds.
 fn tso_batch_wait(value: &str) -> std::time::Duration {
     let milliseconds = value.parse::<f64>().expect("validated TSO wait is numeric");
@@ -572,6 +582,9 @@ impl GlobalSysvars {
             policy.set_tso_batch_wait(tso_batch_wait(&value(
                 tidb_vardef::tidb_vars::TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME,
             )));
+            policy.set_low_resolution_tso_update_interval(low_resolution_tso_update_interval(
+                &value(tidb_vardef::tidb_vars::TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL),
+            ));
             policy.set_tso_rpc_concurrency(tso_rpc_concurrency(&value(
                 tidb_vardef::tidb_vars::TIDB_TSO_CLIENT_RPC_MODE,
             )));
@@ -1045,6 +1058,8 @@ impl GlobalSysvars {
                 | TIDB_ENABLE_ROW_LEVEL_CHECKSUM
                 | TIDB_ENABLE_TS_VALIDATION
                 | TIDB_MAX_DELTA_SCHEMA_COUNT
+                | TIDB_STORE_LIMIT
+                | TIDB_TXN_COMMIT_BATCH_SIZE
                 | TIDB_ENABLE_CHECK_CONSTRAINT
                 | TIDB_DDL_ENABLE_FAST_REORG
                 | TIDB_ENABLE_MDL
@@ -1067,6 +1082,7 @@ impl GlobalSysvars {
                 | TIDB_ENABLE_TSO_FOLLOWER_PROXY
                 | TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME
                 | TIDB_TSO_CLIENT_RPC_MODE
+                | TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL
                 | TIDB_CHECK_MB4_VALUE_IN_UTF8
         ) || is_auto_analyze_setting(name)
             || is_resource_control_setting(name)
@@ -1110,6 +1126,23 @@ impl GlobalSysvars {
             TIDB_ENABLE_TS_VALIDATION => {
                 tikv_client::oracle::oracles::ENABLE_TS_VALIDATION.store(on, SeqCst)
             }
+            // Go `SetGlobal`: `tikvstore.StoreLimit.Store(TidbOptInt64(val, Def))`.
+            TIDB_STORE_LIMIT => tikv_client::kv::STORE_LIMIT.store(
+                tidb_variable::varsutil::tidb_opt_int64(
+                    value,
+                    tidb_vardef::defaults::DEF_TIDB_STORE_LIMIT,
+                ),
+                SeqCst,
+            ),
+            // Go `SetGlobal`: `tikvstore.TxnCommitBatchSize.Store(...)`.
+            TIDB_TXN_COMMIT_BATCH_SIZE => tikv_client::kv::TXN_COMMIT_BATCH_SIZE.store(
+                u64::try_from(tidb_variable::varsutil::tidb_opt_int64(
+                    value,
+                    tikv_client::kv::DEF_TXN_COMMIT_BATCH_SIZE as i64,
+                ))
+                .unwrap_or(tikv_client::kv::DEF_TXN_COMMIT_BATCH_SIZE),
+                SeqCst,
+            ),
             // Go `SetGlobal`: `SetMaxDeltaSchemaCount(TidbOptInt64(val, Def))`.
             TIDB_MAX_DELTA_SCHEMA_COUNT => tidb_vardef::set_max_delta_schema_count(
                 tidb_variable::varsutil::tidb_opt_int64(
@@ -1238,7 +1271,8 @@ impl GlobalSysvars {
             PD_ENABLE_FOLLOWER_HANDLE_REGION
             | TIDB_ENABLE_TSO_FOLLOWER_PROXY
             | TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME
-            | TIDB_TSO_CLIENT_RPC_MODE => {
+            | TIDB_TSO_CLIENT_RPC_MODE
+            | TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL => {
                 // Go `setPDClientDynamicOption`: the store's PD client takes
                 // the new option in place.
                 let policy = self
@@ -1253,6 +1287,10 @@ impl GlobalSysvars {
                         TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME => {
                             policy.set_tso_batch_wait(tso_batch_wait(value))
                         }
+                        TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL => policy
+                            .set_low_resolution_tso_update_interval(low_resolution_tso_update_interval(
+                                value,
+                            )),
                         _ => policy.set_tso_rpc_concurrency(tso_rpc_concurrency(value)),
                     }
                 }
