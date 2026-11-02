@@ -2387,7 +2387,7 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 			dropIndices = append(dropIndices, indexInfo)
 		}
 	}
-	var deleteIndices []model.TableIDIndexID
+	deleteIndices := make([]model.TableIDIndexID, 0, len(dropIndices))
 	for _, indexInfo := range dropIndices {
 		// Preserve rollback's per-index cleanup order: each removal is visible to
 		// the next index's column-flag and hidden-column cleanup.
