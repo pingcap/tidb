@@ -342,3 +342,33 @@ fn cached_table_point_gets_read_its_copy_as_go() {
     assert_eq!(int_rows(&mut session, "select * from test.pg where id = 3"), Vec::<Vec<i64>>::new());
     rows(&mut session, "rollback");
 }
+
+/// Go `Builder.ApplyDiff` rebuilds only the tables a diff names: a DDL on
+/// another table of the same schema keeps a cached table's object -- and so
+/// its copy, its lease and its lock-meta session -- in the next image.
+#[test]
+fn an_unrelated_ddl_keeps_a_cached_tables_runtime() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(167))
+        .expect("session opens");
+    rows(&mut session, "create table test.kept (id int primary key)");
+    rows(&mut session, "alter table test.kept cache");
+    let catalog = stack.factory.catalog.get_latest();
+    let id = catalog.table_info_by_name("test", "kept").unwrap().1.read().id;
+    let before = Arc::clone(catalog.physical_kv_table_by_id(id).unwrap().cached_table().unwrap());
+
+    rows(&mut session, "create table test.other (id int primary key)");
+    let catalog = stack.factory.catalog.get_latest();
+    assert!(catalog.table_info_by_name("test", "other").is_some());
+    let after = Arc::clone(catalog.physical_kv_table_by_id(id).unwrap().cached_table().unwrap());
+    assert!(Arc::ptr_eq(&before, &after), "the untouched table keeps its runtime");
+
+    // A DDL on the table itself builds it anew.
+    rows(&mut session, "alter table test.kept nocache");
+    rows(&mut session, "alter table test.kept cache");
+    let catalog = stack.factory.catalog.get_latest();
+    let rebuilt = Arc::clone(catalog.physical_kv_table_by_id(id).unwrap().cached_table().unwrap());
+    assert!(!Arc::ptr_eq(&before, &rebuilt));
+}

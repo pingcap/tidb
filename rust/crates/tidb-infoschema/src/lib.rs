@@ -920,6 +920,49 @@ impl SessionExtendedInfoSchema {
         true
     }
 
+    /// Go `Builder.ApplyDiff` for a table no diff names: the table `previous`
+    /// built from this very `TableInfo` pointer (one of its schema's
+    /// `Deprecated.Tables`) joins this image unchanged. `false` when
+    /// `previous` built nothing from it.
+    pub fn adopt_built_table(
+        &mut self,
+        previous: &SessionExtendedInfoSchema,
+        database: &str,
+        table: &tidb_model::GoShared<tidb_model::TableInfo>,
+    ) -> bool {
+        let database_key = database.go_to_lower();
+        let Some(built) = previous.schema.databases.get(&database_key) else {
+            return false;
+        };
+        let built_from_it = built
+            .info
+            .read()
+            .deprecated_tables
+            .iter_deref()
+            .any(|built_table| built_table.ptr_eq(table));
+        if !built_from_it {
+            return false;
+        }
+        let name = table.read().name.lowercase().to_owned();
+        let Some(entry) = built.tables.get(&name).cloned() else {
+            return false;
+        };
+        let table_is_locked = matches!(&*entry, TableEntry::Kv(table) if table.lock().is_some());
+        let table_has_foreign_keys = matches!(
+            &*entry,
+            TableEntry::Kv(table) if !table.meta().read().foreign_keys.is_empty()
+        );
+        self.bump_metadata_version();
+        let Some(schema) = self.database_mut(&database_key) else {
+            return false;
+        };
+        schema.tables.insert(name, entry);
+        self.schema.foreign_keys_present |= table_has_foreign_keys;
+        self.schema.table_locks_present |= table_is_locked;
+        self.bump_version();
+        true
+    }
+
     /// Go `Builder.createSchemaTablesForDB`: the schema `info` names, holding
     /// that very `DBInfo` pointer. `false` when the schema already existed
     /// (its pointer is replaced).
