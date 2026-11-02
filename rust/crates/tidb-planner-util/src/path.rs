@@ -37,10 +37,11 @@ pub struct AccessPath {
     pub is_int_handle_path: bool,
     /// Go `IsCommonHandlePath`.
     pub is_common_handle_path: bool,
-    /// Go `FullIdxCols` / `FullIdxColLens` at plan construction, before
-    /// ranger appends handles. None until `buildDataSource` declares them;
-    /// unresolved positions remain None instead of shortening the key.
-    pub declared_columns: Option<Vec<Option<(Column, i64)>>>,
+    /// Go `FullIdxCols` / `FullIdxColLens`: declared by `buildDataSource`,
+    /// then replaced by `fillIndexPath` with the handle suffix appended. None
+    /// until declared; unresolved positions remain None instead of
+    /// shortening the key.
+    pub full_idx_cols: Option<Vec<Option<(Column, i64)>>>,
     /// Go `IsUkShardIndexPath`: a unique secondary index of more than one
     /// column led by a `tidb_shard()` generated column.
     pub is_uk_shard_index_path: bool,
@@ -215,8 +216,6 @@ pub enum IndexLookUpPushDownByType {
 pub struct FilledIndexPath {
     /// Usable key layout at logical derivation, including eligible handles.
     pub columns: Vec<(Column, i64)>,
-    /// Full index key layout, retaining unresolved positions and handle suffixes.
-    pub full_columns: Vec<Option<(Column, i64)>>,
     /// Range expressions and access-coverage metadata from the same detach run.
     pub detached: tidb_ranger::detacher::DetachRangeResult,
     /// Filters evaluated before the table lookup.

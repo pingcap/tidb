@@ -3013,7 +3013,7 @@ pub struct IndexEstimationPins {
 struct PinnedIndexPlan {
     index: Option<usize>,
     valid_columns: Vec<Option<usize>>,
-    declared_columns: Vec<Option<usize>>,
+    full_idx_cols: Vec<Option<usize>>,
     row_counts: IndexRowCounts,
     policy: tidb_planner_property::stats_info::IndexRangePolicy,
     unique_columns: Option<usize>,
@@ -3047,7 +3047,7 @@ impl IndexEstimationPins {
                     .map(|column| pin_shared(&mut self.columns, column))
             })
             .collect();
-        let declared_columns = declared
+        let full_idx_cols = declared
             .iter()
             .map(|id| coll.histogram(*id).map(|column| pin_shared(&mut self.columns, column)))
             .collect();
@@ -3061,7 +3061,7 @@ impl IndexEstimationPins {
         self.plans.push(PinnedIndexPlan {
             index,
             valid_columns,
-            declared_columns,
+            full_idx_cols,
             row_counts: coll.index_row_counts(index_id).unwrap_or_else(|| {
                 IndexRowCounts::unscaled(coll.realtime_count, coll.modify_count)
             }),
@@ -3105,13 +3105,13 @@ impl IndexEstimationGuards<'_> {
             .is_some_and(|index| index.stats_version == 1 && index.cmsketch.is_some())
         {
             stats.column_ndvs = plan
-                .declared_columns
+                .full_idx_cols
                 .iter()
                 .map(|position| column(position).map(|column| column.histogram.ndv))
                 .collect();
             // Go `Column.IsHandle`.
             stats.column_is_handle = plan
-                .declared_columns
+                .full_idx_cols
                 .iter()
                 .map(|position| column(position).is_some_and(|column| column.is_handle))
                 .collect();

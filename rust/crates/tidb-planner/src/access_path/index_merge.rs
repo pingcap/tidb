@@ -270,7 +270,7 @@ fn prepare_union_index_merge_path_for_or(
                 }
             }
             let (pushable, rejected) = partition_partial_filters(&usable, ctx);
-            let Ok(mut filled) = super::ordinary::fill_index_path(
+            let Ok((mut filled, full_idx_cols)) = super::ordinary::fill_index_path(
                 ds,
                 source_index,
                 &pushable,
@@ -305,6 +305,7 @@ fn prepare_union_index_merge_path_for_or(
                 Some(rows * super::ordinary::filter_selectivity(ds, &filled.index_filters, ctx));
             branch.push(vec![AccessPath {
                 filled: Some(filled),
+                full_idx_cols: Some(full_idx_cols),
                 row_estimate: Some(tidb_stats::RowEstimate::new(rows, rows, rows)),
                 keep_index_merge_or_source_filter: keep_source_filter,
                 ..AccessPath::index_path(source_index.clone())
@@ -448,6 +449,7 @@ fn collect_unfinished_filters(
             false,
         )
         .ok()?
+        .0
         .detached
     } else {
         super::ordinary::detach_table_path(ds, None, &pushable, ctx, false)

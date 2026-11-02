@@ -174,7 +174,7 @@ pub(crate) fn get_index_candidate(
             .access_conds
             .iter()
             .chain(&filled.index_filters),
-        filled.full_columns.iter().flatten(),
+        path.full_idx_cols.iter().flatten().flatten(),
     );
     let detached = &filled.detached;
     let (eq_or_in_count, equal_dnf) = equality_facts(detached);
@@ -480,10 +480,10 @@ mod skyline_tests {
             row_estimate: Some(tidb_stats::RowEstimate::new(
                 100.0, 20.0, 200.0,
             )),
+            // The unresolved middle key cannot erase a later index filter.
+            full_idx_cols: Some(vec![Some((a.clone(), -1)), None, Some((c.clone(), 4))]),
             filled: Some(FilledIndexPath {
                 columns: vec![(a.clone(), -1)],
-                // The unresolved middle key cannot erase a later index filter.
-                full_columns: vec![Some((a.clone(), -1)), None, Some((c.clone(), 4))],
                 detached: tidb_ranger::detacher::DetachRangeResult {
                     access_conds: vec![eq(&a)],
                     eq_or_in_count: 1,

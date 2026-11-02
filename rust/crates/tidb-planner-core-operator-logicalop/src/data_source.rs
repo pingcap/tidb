@@ -607,7 +607,7 @@ impl DataSource {
                     && index.read().unique;
             self.contain_expr_prefix_uk |= is_uk_shard_index_path;
             let path = &mut self.all_possible_access_paths[position];
-            path.declared_columns = Some(columns);
+            path.full_idx_cols = Some(columns);
             path.is_uk_shard_index_path = is_uk_shard_index_path;
         }
     }

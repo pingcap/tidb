@@ -3553,7 +3553,7 @@ mod statistics_initialization_tests {
         });
         source.all_possible_access_paths.push(
             tidb_planner_util::path::AccessPath {
-                declared_columns: Some(vec![Some((
+                full_idx_cols: Some(vec![Some((
                     Column::new(1, FieldType::new(FieldTypeCode::LongLong)),
                     -1,
                 ))]),
@@ -3586,7 +3586,7 @@ mod statistics_initialization_tests {
         assert_eq!((stale.row_estimate, stale.is_single_scan), (None, None));
         let retained = returned.path_by_index_id(77).unwrap();
         assert_eq!(
-            retained.declared_columns.as_ref().unwrap()[0]
+            retained.full_idx_cols.as_ref().unwrap()[0]
                 .as_ref()
                 .unwrap()
                 .0

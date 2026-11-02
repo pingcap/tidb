@@ -116,7 +116,7 @@ fn score_index_path(
     discounted: &HashSet<i64>,
 ) -> Option<IndexWithScore> {
     let metadata = path.index_info()?;
-    let declared = path.declared_columns.as_ref();
+    let declared = path.full_idx_cols.as_ref();
     let mut score = IndexWithScore {
         path: path.clone(),
         interesting_count: 0,
@@ -379,7 +379,7 @@ pub fn prune_data_source_with_options(
     // The paths' indexes, which `initialize_index_columns` declared.
     for position in 0..source.all_possible_access_paths.len() {
         let path = &source.all_possible_access_paths[position];
-        let Some(index) = path.index.clone().filter(|_| path.declared_columns.is_some()) else {
+        let Some(index) = path.index.clone().filter(|_| path.full_idx_cols.is_some()) else {
             continue;
         };
         let single =
@@ -575,7 +575,7 @@ mod tests {
         source.table_indices()[1].write().columns = columns;
         for path in &mut source.all_possible_access_paths {
             if path.index_info().is_some() {
-                path.declared_columns = Some(vec![Some((column(1), -1)), Some((column(2), -1))]);
+                path.full_idx_cols = Some(vec![Some((column(1), -1)), Some((column(2), -1))]);
             }
         }
         assert_eq!(
@@ -667,7 +667,7 @@ mod tests {
         source
             .path_by_index_id_mut(11)
             .unwrap()
-            .declared_columns
+            .full_idx_cols
             .as_mut()
             .unwrap()[0] = None;
         let missing = score_index_path(

@@ -402,8 +402,8 @@ fn build_partial_path_for_mv_index(
     if detached.access_conds.len() != access_filters.len() || !detached.remained_conds.is_empty() {
         return Ok(None);
     }
+    let full_idx_cols = columns.iter().cloned().map(Some).collect();
     let filled = tidb_planner_util::path::FilledIndexPath {
-        full_columns: columns.iter().cloned().map(Some).collect(),
         columns,
         detached,
         index_filters: Vec::new(),
@@ -415,6 +415,7 @@ fn build_partial_path_for_mv_index(
     let rows = estimate_partial_index_ranges(ds, index, &filled, ctx)?;
     Ok(Some(AccessPath {
         filled: Some(filled),
+        full_idx_cols: Some(full_idx_cols),
         row_estimate: Some(tidb_stats::RowEstimate::new(
             rows, rows, rows,
         )),

@@ -51,7 +51,7 @@ pub(crate) fn fill_index_path(
     context: &AccessPathDerivationContext<'_>,
     prefix_single_scan: bool,
     correlated_access: bool,
-) -> Result<FilledIndexPath, PlanError> {
+) -> Result<(FilledIndexPath, Vec<Option<(Column, i64)>>), PlanError> {
     let mut full_columns = source.index_info_2_full_cols(index);
     let mut columns = full_columns
         .iter()
@@ -100,15 +100,14 @@ pub(crate) fn fill_index_path(
                 prefix_single_scan,
             )
         });
-    Ok(FilledIndexPath {
+    Ok((FilledIndexPath {
         columns,
-        full_columns,
         detached,
         index_filters,
         table_filters,
         count_after_index: None,
         correlated_access_count,
-    })
+    }, full_columns))
 }
 
 /// Go `deriveIndexPathStats` / `deriveCommonHandleTablePathStats`: when every
@@ -182,7 +181,7 @@ pub(crate) fn fill_ordinary_index_paths(
         if index.read().mv_index || index.read().is_columnar_index() {
             continue;
         }
-        let mut filled = fill_index_path(
+        let (mut filled, full_idx_cols) = fill_index_path(
             source, index, &source.pushed_down_conds, context, prefix_single_scan, true,
         )?;
         // Go `detachCondAndBuildRangeForPath`: the path's `CountAfterAccess`
@@ -257,6 +256,8 @@ pub(crate) fn fill_ordinary_index_paths(
         path.row_estimate = estimate;
         filled.count_after_index = count_after_index;
         path.filled = Some(filled);
+        // Go `fillIndexPath` replaces `FullIdxCols`, the handle appended.
+        path.full_idx_cols = Some(full_idx_cols);
     }
     Ok(())
 }
