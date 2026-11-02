@@ -1016,6 +1016,7 @@ impl StatementLifecycle<'_> {
             Arc::clone(self.txn.transactions()),
             read_ts.clone(),
             Arc::<str>::from(resource_group),
+            self.session.use_low_resolution_tso(),
         ))
     }
 

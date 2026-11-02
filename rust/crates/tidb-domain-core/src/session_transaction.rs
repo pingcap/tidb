@@ -98,6 +98,7 @@ pub fn options_from_values(
         temporary_tables: None,
         entry_size_limit: 0,
         guarantee_linearizability: true,
+        low_resolution_tso: false,
     }
 }
 

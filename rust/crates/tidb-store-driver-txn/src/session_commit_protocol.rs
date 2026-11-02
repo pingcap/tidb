@@ -46,6 +46,9 @@ pub struct SessionTransactionOptions {
     /// a timestamp before prewrite; off, the transaction is causally
     /// consistent only (`KVTxn.SetCausalConsistency(true)`).
     pub guarantee_linearizability: bool,
+    /// Go `newOracleFuture`'s `UseLowResolutionTSO`: the transaction's start
+    /// timestamp is the oracle's cached one.
+    pub low_resolution_tso: bool,
 }
 
 /// The ids of a session's temporary tables, refreshed by the session as its
@@ -104,6 +107,13 @@ impl SessionTransactionOptions {
     #[must_use]
     pub fn with_guarantee_linearizability(mut self, guarantee: bool) -> Self {
         self.guarantee_linearizability = guarantee;
+        self
+    }
+
+    /// Go `newOracleFuture`'s `UseLowResolutionTSO`.
+    #[must_use]
+    pub fn with_low_resolution_tso(mut self, low_resolution: bool) -> Self {
+        self.low_resolution_tso = low_resolution;
         self
     }
 
@@ -188,6 +198,7 @@ impl From<CommitProtocol> for SessionTransactionOptions {
             temporary_tables: None,
             entry_size_limit: 0,
             guarantee_linearizability: true,
+            low_resolution_tso: false,
         }
     }
 }

@@ -69,6 +69,7 @@ impl ClusterTransactions for BatchCountingTransactions {
     fn prepare_snapshot(
         &self,
         _resource_group: &str,
+        _low_resolution: bool,
     ) -> Result<Box<dyn PendingClusterSnapshot>, String> {
         panic!("the test opens its snapshot directly")
     }
@@ -241,6 +242,7 @@ fn session_activation_retains_options_after_timestamp_future_failure() {
             temporary_tables: None,
             entry_size_limit: 0,
             guarantee_linearizability: true,
+            low_resolution_tso: false,
         };
         let pending = transactions
             .prepare_autocommit_write("default", pessimistic, false, options)
@@ -276,6 +278,7 @@ fn deferred_snapshot_forwards_batch_get_without_point_read_fallback() {
         transactions,
         StatementReadTs::default(),
         Arc::<str>::from("default"),
+        false,
     );
     let keys = vec![Key::from_bytes(b"k1"), Key::from_bytes(b"k2")];
 

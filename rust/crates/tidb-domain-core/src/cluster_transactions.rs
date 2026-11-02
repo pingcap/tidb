@@ -219,9 +219,12 @@ pub trait ClusterTransactions: Send + Sync {
 
     /// Starts preparing one ordinary autocommit snapshot without waiting for
     /// its timestamp. The first read consumes the returned future.
+    /// `low_resolution` is Go `newOracleFuture`'s `UseLowResolutionTSO`: the
+    /// oracle's cached timestamp instead of a fresh one.
     fn prepare_snapshot(
         &self,
         resource_group: &str,
+        low_resolution: bool,
     ) -> Result<Box<dyn PendingClusterSnapshot>, String>;
 
     /// Synchronously opens one autocommit statement's read snapshot at its own
@@ -728,6 +731,8 @@ struct DeferredSnapshot {
     transactions: Arc<dyn ClusterTransactions>,
     /// The statement-scoped group every lazy/prefetched open must retain.
     resource_group: Arc<str>,
+    /// Go `UseLowResolutionTSO` for the statement's start timestamp.
+    low_resolution_tso: bool,
     /// Where the open publishes the statement's timestamp, so the publication
     /// can find it after this handle is gone.
     read_ts: StatementReadTs,
@@ -791,10 +796,12 @@ impl DeferredSnapshot {
         transactions: Arc<dyn ClusterTransactions>,
         read_ts: StatementReadTs,
         resource_group: Arc<str>,
+        low_resolution_tso: bool,
     ) -> Self {
         Self {
             transactions,
             resource_group,
+            low_resolution_tso,
             read_ts,
             write_handoff: None,
             lock_retry: None,
@@ -827,6 +834,8 @@ impl DeferredSnapshot {
         Self {
             transactions,
             resource_group,
+            // A write refuses a low-resolution timestamp before it runs.
+            low_resolution_tso: false,
             read_ts,
             write_handoff: Some(write_handoff),
             lock_retry: Some(lock_retry),
@@ -849,6 +858,18 @@ impl DeferredSnapshot {
         ))
     }
 
+    /// Opens the statement's snapshot synchronously, from the oracle the
+    /// statement asked for.
+    fn open_now(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+        if self.low_resolution_tso {
+            return self
+                .transactions
+                .prepare_snapshot(&self.resource_group, true)?
+                .wait();
+        }
+        self.transactions.open_snapshot(&self.resource_group)
+    }
+
     fn state(&self) -> std::sync::MutexGuard<'_, DeferredState> {
         self.state
             .lock()
@@ -862,7 +883,7 @@ impl DeferredSnapshot {
         }
         state.prepared = Some(
             self.transactions
-                .prepare_snapshot(&self.resource_group)
+                .prepare_snapshot(&self.resource_group, self.low_resolution_tso)
                 .map_err(StorageError::Backend)?,
         );
         Ok(())
@@ -941,8 +962,7 @@ impl DeferredSnapshot {
                 Ok(snapshot)
             } else if let Some(prepared) = guard.prepared.take() {
                 prepared.wait().or_else(|prepared_error| {
-                    self.transactions
-                        .open_snapshot(&self.resource_group)
+                    self.open_now()
                         .map_err(|fallback_error| {
                         format!(
                             "prepared snapshot failed ({prepared_error}); replacement snapshot failed ({fallback_error})"
@@ -950,7 +970,7 @@ impl DeferredSnapshot {
                     })
                 })
             } else {
-                self.transactions.open_snapshot(&self.resource_group)
+                self.open_now()
             };
             if !waits_prefetched_write {
                 self.read_ts.record_wait_ts(begin_wait.elapsed());
@@ -1186,8 +1206,9 @@ pub fn deferred_snapshot(
     transactions: Arc<dyn ClusterTransactions>,
     read_ts: StatementReadTs,
     resource_group: Arc<str>,
+    low_resolution_tso: bool,
 ) -> Box<dyn ClusterSnapshot> {
-    Box::new(DeferredSnapshot::new(transactions, read_ts, resource_group))
+    Box::new(DeferredSnapshot::new(transactions, read_ts, resource_group, low_resolution_tso))
 }
 
 /// [`deferred_snapshot`] with a writable transaction opened in parallel with
@@ -1535,8 +1556,13 @@ where
     fn prepare_snapshot(
         &self,
         resource_group: &str,
+        low_resolution: bool,
     ) -> Result<Box<dyn PendingClusterSnapshot>, String> {
-        StatementSnapshot::prepare(self.opener_for_resource_group(resource_group), self.timeout)
+        StatementSnapshot::prepare(
+            self.opener_for_resource_group(resource_group),
+            self.timeout,
+            low_resolution,
+        )
             .map(|snapshot| {
                 Box::new(RealPendingSnapshot(snapshot)) as Box<dyn PendingClusterSnapshot>
             })
@@ -1590,7 +1616,7 @@ where
     ) -> Result<Box<dyn PendingClusterTransaction>, String> {
         let opener = self.opener_for_resource_group(resource_group);
         let start_ts = opener
-            .prepare_read_only_start_ts()
+            .prepare_read_only_start_ts(false)
             .map_err(|error| error.to_string())?;
         Ok(Box::new(PendingSessionTransaction {
             opener,

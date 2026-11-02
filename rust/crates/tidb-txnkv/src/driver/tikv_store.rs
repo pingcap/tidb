@@ -334,6 +334,19 @@ impl<PdC: PdClient> TikvStore<PdC> {
         })
     }
 
+    /// Go `oracle.GetLowResolutionTimestampAsync`: the oracle's cached last
+    /// timestamp, refreshed every `tidb_low_resolution_tso_update_interval`.
+    pub fn get_low_resolution_timestamp_async(&self) -> StoreTimestampFuture {
+        let option = tikv_client::oracle::OracleOption {
+            txn_scope: tikv_client::oracle::GLOBAL_TXN_SCOPE.to_owned(),
+        };
+        let _runtime = self.runtime.enter();
+        StoreTimestampFuture {
+            runtime: Arc::clone(&self.runtime),
+            future: self.store.get_oracle().get_low_resolution_timestamp_async(&option),
+        }
+    }
+
     /// Go `store.GetOracle().GetTimestampAsync(ctx, &oracle.Option{TxnScope:
     /// oracle.GlobalTxnScope})`: a timestamp request dispatched now on the
     /// store's oracle, waited for by [`StoreTimestampFuture::wait`].

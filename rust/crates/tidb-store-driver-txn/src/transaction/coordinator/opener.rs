@@ -163,6 +163,24 @@ where
         self.open(false)
     }
 
+    /// [`Self::begin`] at a start timestamp from the oracle Go's
+    /// `newOracleFuture` picks: the cached low-resolution one when
+    /// `low_resolution`.
+    pub fn begin_with_oracle(
+        &self,
+        low_resolution: bool,
+    ) -> Result<RealTransaction<S>, OptimisticCoordinatorError> {
+        if !low_resolution {
+            return self.begin();
+        }
+        let start_ts = self
+            .store
+            .get_low_resolution_timestamp_async()
+            .wait()
+            .map_err(OptimisticCoordinatorError::Timestamp)?;
+        self.open_at(Some(start_ts), false)
+    }
+
     /// Opens a writable transaction at a timestamp that has ALREADY been spent
     /// — the one the statement's own read is at — spending none of its own.
     ///
@@ -212,10 +230,18 @@ where
     /// (`sessiontxn/isolation/base.go`: `GetStore().GetOracle()
     /// .GetTimestampAsync`); a statement that never reaches storage can drop
     /// it without activating a transaction.
+    ///
+    /// `low_resolution` is Go `newOracleFuture`'s `UseLowResolutionTSO`
+    /// branch: `GetLowResolutionTimestampAsync`.
     pub fn prepare_read_only_start_ts(
         &self,
+        low_resolution: bool,
     ) -> Result<tidb_txnkv::driver::tikv_store::StoreTimestampFuture, OptimisticCoordinatorError> {
-        Ok(self.store.get_timestamp_async())
+        Ok(if low_resolution {
+            self.store.get_low_resolution_timestamp_async()
+        } else {
+            self.store.get_timestamp_async()
+        })
     }
 
     /// Opens a read-only transaction at a timestamp already obtained by

@@ -369,6 +369,7 @@ impl ClusterTransactions for MockTransactions {
     fn prepare_snapshot(
         &self,
         resource_group: &str,
+        _low_resolution: bool,
     ) -> Result<Box<dyn PendingClusterSnapshot>, String> {
         self.0.record_resource_group(resource_group);
         self.0.prepared.fetch_add(1, Ordering::AcqRel);

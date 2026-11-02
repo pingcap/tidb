@@ -362,8 +362,9 @@ impl StatementSnapshot {
     pub fn prepare<S: StoreClient>(
         opener: Arc<RealOptimisticTransactionOpener<S>>,
         timeout: Duration,
+        low_resolution: bool,
     ) -> Result<PreparedStatementSnapshot<S>, OptimisticCoordinatorError> {
-        let start_ts = opener.prepare_read_only_start_ts()?;
+        let start_ts = opener.prepare_read_only_start_ts(low_resolution)?;
         Ok(PreparedStatementSnapshot {
             opener,
             timeout,
@@ -377,7 +378,7 @@ impl StatementSnapshot {
         opener: Arc<RealOptimisticTransactionOpener<S>>,
         timeout: Duration,
     ) -> Result<StatementSnapshot<S>, OptimisticCoordinatorError> {
-        StatementSnapshot::prepare(opener, timeout)?.wait()
+        StatementSnapshot::prepare(opener, timeout, false)?.wait()
     }
 }
 
@@ -849,8 +850,9 @@ impl<S: StoreClient> SessionTransaction<S> {
         timeout: Duration,
         options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
     ) -> Result<Self, OptimisticCoordinatorError> {
-        let mut transaction = opener.begin()?;
-        options.into().apply(&mut transaction);
+        let options = options.into();
+        let mut transaction = opener.begin_with_oracle(options.low_resolution_tso)?;
+        options.apply(&mut transaction);
         let start_ts = transaction.start_ts();
         Ok(Self {
             opened_at: std::time::Instant::now(),
@@ -930,8 +932,9 @@ impl<S: StoreClient> SessionTransaction<S> {
         timeout: Duration,
         options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
     ) -> Result<Self, OptimisticCoordinatorError> {
-        let mut transaction = opener.begin()?;
-        options.into().apply(&mut transaction);
+        let options = options.into();
+        let mut transaction = opener.begin_with_oracle(options.low_resolution_tso)?;
+        options.apply(&mut transaction);
         // Go `onTxnActiveFunc`: `txn.SetOption(kv.Pessimistic, true)`.
         transaction.set_pessimistic(true);
         let start_ts = transaction.start_ts();
