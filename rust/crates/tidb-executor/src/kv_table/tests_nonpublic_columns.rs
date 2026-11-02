@@ -35,8 +35,12 @@ fn column(name: &str, id: i64, code: FieldTypeCode, origin: Option<Datum>) -> ti
     }
 }
 
-fn stored(table: &mut TableCommon, handle: &TableHandle) -> BTreeMap<i64, Datum> {
-    let (_, entry) = table.stored_record(&mut *table.store().clone_box(), handle).unwrap().unwrap();
+fn stored(
+    table: &mut TableCommon,
+    store: &mut dyn tidb_kv::storage::TableStorage,
+    handle: &TableHandle,
+) -> BTreeMap<i64, Datum> {
+    let (_, entry) = table.stored_record(store, handle).unwrap().unwrap();
     let types = [1_i64, 2, 3, 4]
         .into_iter()
         .map(|id| (id, FieldType::new(FieldTypeCode::LongLong)))
@@ -58,6 +62,7 @@ fn writes_carry_nonpublic_columns_like_go() {
             column("b", 2, FieldTypeCode::LongLong, None),
         ],
     );
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     table.add_nonpublic_column(NonPublicColumn {
         column: column("c", 3, FieldTypeCode::LongLong, Some(Datum::Int(7))),
         state: tidb_model::SchemaState::WRITE_ONLY,
@@ -70,20 +75,20 @@ fn writes_carry_nonpublic_columns_like_go() {
     });
     let ctx = crate::StmtContext::for_dml(false, false, false);
     let handle = table
-        .with_own_store(|table, store| table.insert_row_with_row_id_checked(store, &[Datum::Int(1), Datum::Int(5)], None, 0, &ctx, false))
+        .insert_row_with_row_id_checked(&mut store, &[Datum::Int(1), Datum::Int(5)], None, 0, &ctx, false)
         .unwrap();
-    let row = stored(&mut table, &handle);
+    let row = stored(&mut table, &mut store, &handle);
     assert_eq!(row.get(&3), Some(&Datum::Int(7)));
     assert_eq!(row.get(&4), Some(&Datum::Int(5)));
 
     table
-        .with_own_store(|table, store| table.update_row_with_old_context(store, &handle,
+        .update_row_with_old_context(&mut store, &handle,
             Some(&[Datum::Int(1), Datum::Int(5)]),
             &[Datum::Int(1), Datum::Int(9)],
             &ctx,
-        ))
+        )
         .unwrap();
-    let row = stored(&mut table, &handle);
+    let row = stored(&mut table, &mut store, &handle);
     assert_eq!(row.get(&2), Some(&Datum::Int(9)));
     assert_eq!(row.get(&3), Some(&Datum::Int(7)));
     assert_eq!(row.get(&4), Some(&Datum::Int(9)));
@@ -92,14 +97,14 @@ fn writes_carry_nonpublic_columns_like_go() {
     let mut later = table.clone_for_test_nonpublic();
     Arc::make_mut(later.nonpublic_columns_arc_mut())[0].state = tidb_model::SchemaState::DELETE_ONLY;
     let handle = later
-        .with_own_store(|table, store| table.insert_row_with_row_id_checked(store, &[Datum::Int(2), Datum::Int(3)],
+        .insert_row_with_row_id_checked(&mut store, &[Datum::Int(2), Datum::Int(3)],
             Some(2),
             0,
             &ctx,
             false,
-        ))
+        )
         .unwrap();
-    let row = stored(&mut later, &handle);
+    let row = stored(&mut later, &mut store, &handle);
     assert_eq!(row.get(&3), None);
     assert_eq!(row.get(&4), Some(&Datum::Int(3)));
 }

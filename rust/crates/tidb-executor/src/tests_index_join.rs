@@ -76,10 +76,11 @@ fn schema_of(width: usize) -> Schema {
 /// `b` is deliberately NOT unique: an outer key that matches several inner
 /// rows is the case a probe that stopped at the first entry, or a lookup map
 /// that kept one row per key, would answer wrongly.
-fn inner_table(rows: &[(i64, i64)]) -> TableCommon {
+fn inner_table(rows: &[(i64, i64)]) -> (TableCommon, tidb_kv::storage::MemTableStorage) {
     let mut table = TableCommon::new(91, vec![column("a", 1), column("b", 2)]);
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     table
-        .with_own_store(|table, store| table.create_index_with_context(store, Index {
+        .create_index_with_context(&mut store, Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("ib"),
@@ -99,22 +100,23 @@ fn inner_table(rows: &[(i64, i64)]) -> TableCommon {
                 clustered_primary: false,
             },
             &crate::StmtContext::for_query(),
-        ))
+        )
         .unwrap();
     for (a, b) in rows {
         table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(*a), Datum::Int(*b)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut store, &[Datum::Int(*a), Datum::Int(*b)], &tidb_exprctx::NoColumns)
             .unwrap();
     }
-    table
+    (table, store)
 }
 
 /// `inner(a, b)` clustered by the composite primary key `(a, b)`.
-fn common_handle_table(rows: &[(i64, i64)]) -> TableCommon {
+fn common_handle_table(rows: &[(i64, i64)]) -> (TableCommon, tidb_kv::storage::MemTableStorage) {
     let mut table = TableCommon::new(94, vec![column("a", 1), column("b", 2)]);
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     table.set_common_handle_offsets(vec![0, 1]);
     table
-        .with_own_store(|table, store| table.create_index_with_context(store, Index {
+        .create_index_with_context(&mut store, Index {
                 info: tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("PRIMARY"),
@@ -136,27 +138,28 @@ fn common_handle_table(rows: &[(i64, i64)]) -> TableCommon {
                 clustered_primary: false,
             },
             &crate::StmtContext::for_query(),
-        ))
+        )
         .unwrap();
     for (a, b) in rows {
         table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(*a), Datum::Int(*b)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut store, &[Datum::Int(*a), Datum::Int(*b)], &tidb_exprctx::NoColumns)
             .unwrap();
     }
-    table
+    (table, store)
 }
 
 /// The DDL representation of a clustered common handle: the PRIMARY is the
 /// table path itself and is therefore absent from the secondary-index list.
-fn ddl_common_handle_table(rows: &[(i64, i64)]) -> TableCommon {
+fn ddl_common_handle_table(rows: &[(i64, i64)]) -> (TableCommon, tidb_kv::storage::MemTableStorage) {
     let mut table = TableCommon::new(95, vec![column("a", 1), column("b", 2)]);
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     table.set_common_handle_offsets(vec![0, 1]);
     for (a, b) in rows {
         table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(*a), Datum::Int(*b)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut store, &[Datum::Int(*a), Datum::Int(*b)], &tidb_exprctx::NoColumns)
             .unwrap();
     }
-    table
+    (table, store)
 }
 
 fn outer_source(rows: &[Vec<Datum>]) -> Box<dyn Executor> {
@@ -172,21 +175,21 @@ fn outer_source(rows: &[Vec<Datum>]) -> Box<dyn Executor> {
 }
 
 /// A whole-table scan of `table`, which is what the hash strategy reads.
-fn scan_of(table: &TableCommon, width: usize) -> Box<dyn Executor> {
+fn scan_of(table: &TableCommon, store: &tidb_kv::storage::MemTableStorage, width: usize) -> Box<dyn Executor> {
     Box::new(crate::kv_table::TableScanExec::new_with_context(
         ExecutorMeta::new(schema_of(width), 0, INIT_CAP, CHUNK),
         table.clone(),
-        table.store().clone_box(),
+        Box::new(store.clone()),
         crate::RowDecodeContext::for_test_query_utc(),
         tidb_distsql::remote_scan::PushdownStatementContext::default(),
     ))
 }
 
-fn lookup_source(table: &TableCommon, object: LookupObject, width: usize) -> IndexJoinLookupExec {
+fn lookup_source(table: &TableCommon, store: &tidb_kv::storage::MemTableStorage, object: LookupObject, width: usize) -> IndexJoinLookupExec {
     IndexJoinLookupExec::new_with_context(
         ExecutorMeta::new(schema_of(width), 0, INIT_CAP, CHUNK),
         table.clone(),
-        table.store().clone_box(),
+        Box::new(store.clone()),
         object,
         crate::RowDecodeContext::for_test_query_utc(),
     )
@@ -235,6 +238,7 @@ fn both_ways(
     kind: JoinKind,
     outer_rows: &[Vec<Datum>],
     table: &TableCommon,
+    store: &tidb_kv::storage::MemTableStorage,
     object: LookupObject,
     outer_key: usize,
     inner_key: usize,
@@ -252,7 +256,7 @@ fn both_ways(
         kind,
         conditions.clone(),
         outer_source(outer_rows),
-        scan_of(table, inner_width),
+        scan_of(table, store, inner_width),
         crate::StmtContext::for_query(),
         memory.clone(),
     );
@@ -272,7 +276,7 @@ fn both_ways(
             lookup_is_left: false,
             probe_keys,
             probe_key_domains: Vec::new(),
-            source: tidb_executor_join::join::IndexLookupSource::Leaf(Box::new(lookup_source(table, object, inner_width))),
+            source: tidb_executor_join::join::IndexLookupSource::Leaf(Box::new(lookup_source(table, store, object, inner_width))),
             outer_not_null: Vec::new(),
             inner_not_null: Vec::new(),
             probe_bounds: Vec::new(),
@@ -303,12 +307,13 @@ fn cycling_outer(n: i64, keys: &[i64]) -> Vec<Vec<Datum>> {
 #[test]
 fn the_index_lookup_and_the_hash_join_agree_row_for_row() {
     // `b` repeats: key 2 carries three inner rows, key 5 carries none.
-    let table = inner_table(&[(10, 1), (11, 2), (12, 2), (13, 2), (14, 3), (15, 4)]);
+    let (table, store) = inner_table(&[(10, 1), (11, 2), (12, 2), (13, 2), (14, 3), (15, 4)]);
     let outer = cycling_outer(40, &[1, 2, 3, 4, 5]);
     let (hash_rows, index_rows) = both_ways(
         JoinKind::Inner,
         &outer,
         &table,
+        &store,
         LookupObject::Index(1),
         1,
         1,
@@ -325,12 +330,13 @@ fn the_index_lookup_and_the_hash_join_agree_row_for_row() {
 /// fifth outer row.
 #[test]
 fn a_left_join_pads_the_outer_rows_the_lookup_found_nothing_for() {
-    let table = inner_table(&[(10, 1), (11, 2), (12, 2), (14, 3), (15, 4)]);
+    let (table, store) = inner_table(&[(10, 1), (11, 2), (12, 2), (14, 3), (15, 4)]);
     let outer = cycling_outer(40, &[1, 2, 3, 4, 5]);
     let (hash_rows, index_rows) = both_ways(
         JoinKind::Left,
         &outer,
         &table,
+        &store,
         LookupObject::Index(1),
         1,
         1,
@@ -351,7 +357,7 @@ fn a_left_join_pads_the_outer_rows_the_lookup_found_nothing_for() {
 /// `constructDatumLookupKey` returning nil.
 #[test]
 fn a_null_outer_key_matches_nothing() {
-    let table = inner_table(&[(10, 1), (11, 2)]);
+    let (table, store) = inner_table(&[(10, 1), (11, 2)]);
     let outer = vec![
         vec![Datum::Int(0), Datum::Int(1)],
         vec![Datum::Int(1), Datum::Null],
@@ -361,6 +367,7 @@ fn a_null_outer_key_matches_nothing() {
         JoinKind::Left,
         &outer,
         &table,
+        &store,
         LookupObject::Index(1),
         1,
         1,
@@ -376,10 +383,11 @@ fn a_null_outer_key_matches_nothing() {
 #[test]
 fn a_handle_probe_reads_the_row_the_key_names() {
     let mut table = TableCommon::new(92, vec![column("a", 1), column("b", 2)]);
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     table.set_pk_handle_offset(0);
     for i in 1..=20i64 {
         table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(i), Datum::Int(i * 10)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut store, &[Datum::Int(i), Datum::Int(i * 10)], &tidb_exprctx::NoColumns)
             .unwrap();
     }
     // Keys 21..25 name no row at all.
@@ -390,6 +398,7 @@ fn a_handle_probe_reads_the_row_the_key_names() {
         JoinKind::Left,
         &outer,
         &table,
+        &store,
         LookupObject::Handle,
         1,
         0,
@@ -402,8 +411,8 @@ fn a_handle_probe_reads_the_row_the_key_names() {
 /// A complete common-handle tuple is a one-row record-key range.
 #[test]
 fn a_complete_common_handle_probe_reads_one_record() {
-    let table = common_handle_table(&[(1, 1), (1, 2), (2, 1)]);
-    let mut source = lookup_source(&table, LookupObject::CommonHandle, 2);
+    let (table, store) = common_handle_table(&[(1, 1), (1, 2), (2, 1)]);
+    let mut source = lookup_source(&table, &store, LookupObject::CommonHandle, 2);
     source.set_probe_parts(vec![
         LookupProbePart::Dynamic(0),
         LookupProbePart::Dynamic(1),
@@ -426,8 +435,8 @@ fn a_complete_common_handle_probe_reads_one_record() {
 /// several rows; it must not be lowered to a secondary `PRIMARY` index lookup.
 #[test]
 fn a_common_handle_prefix_probe_reads_every_matching_record() {
-    let table = common_handle_table(&[(1, 1), (1, 2), (1, 3), (2, 1)]);
-    let mut source = lookup_source(&table, LookupObject::CommonHandle, 2);
+    let (table, store) = common_handle_table(&[(1, 1), (1, 2), (1, 3), (2, 1)]);
+    let mut source = lookup_source(&table, &store, LookupObject::CommonHandle, 2);
     source.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
     source
         .set_probes(tidb_executor_join::index_lookup::IndexJoinProbes {
@@ -450,8 +459,8 @@ fn a_common_handle_prefix_probe_reads_every_matching_record() {
 /// table path still builds common-handle record ranges from leading probes.
 #[test]
 fn a_ddl_common_handle_prefix_probe_reads_every_matching_record() {
-    let table = ddl_common_handle_table(&[(1, 1), (1, 2), (1, 3), (2, 1)]);
-    let mut source = lookup_source(&table, LookupObject::CommonHandle, 2);
+    let (table, store) = ddl_common_handle_table(&[(1, 1), (1, 2), (1, 3), (2, 1)]);
+    let mut source = lookup_source(&table, &store, LookupObject::CommonHandle, 2);
     source.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
     source
         .set_probes(tidb_executor_join::index_lookup::IndexJoinProbes {
@@ -486,13 +495,14 @@ fn a_ddl_common_handle_prefix_probe_reads_every_matching_record() {
 /// rewind is not.
 #[test]
 fn the_batch_boundary_does_not_change_the_result() {
-    let table = inner_table(&[(10, 1), (11, 2), (12, 2), (13, 3), (14, 4), (15, 7)]);
+    let (table, store) = inner_table(&[(10, 1), (11, 2), (12, 2), (13, 3), (14, 4), (15, 7)]);
     for n in [1i64, 2, CHUNK as i64, CHUNK as i64 + 1, 3000] {
         let outer = cycling_outer(n, &[1, 2, 3, 4, 5, 6, 7]);
         let (hash_rows, index_rows) = both_ways(
             JoinKind::Left,
             &outer,
             &table,
+            &store,
             LookupObject::Index(1),
             1,
             1,
@@ -519,14 +529,14 @@ fn the_batch_boundary_does_not_change_the_result() {
 /// the six tests here on the rows themselves.
 #[test]
 fn one_key_repeated_across_a_batch_is_probed_once() {
-    let table = inner_table(&[(10, 1), (11, 1), (12, 2)]);
+    let (table, store) = inner_table(&[(10, 1), (11, 1), (12, 2)]);
     let outer: Vec<Vec<Datum>> = (0..100i64)
         .map(|i| vec![Datum::Int(i), Datum::Int(1)])
         .collect();
     let inner_width = 2;
     let types: Vec<FieldType> = std::iter::repeat_n(long(), 4).collect();
     let memory = crate::StmtContext::for_query().statement_memory();
-    let source = lookup_source(&table, LookupObject::Index(1), inner_width);
+    let source = lookup_source(&table, &store, LookupObject::Index(1), inner_width);
     let produced = source.produced_rows();
     let ctx = crate::StmtContext::for_query();
     let mut exec = JoinExec::build_index_look_up_join(
@@ -566,17 +576,18 @@ fn one_key_repeated_across_a_batch_is_probed_once() {
 #[test]
 fn index_join_static_templates_preserve_tuple_identity() {
     let mut table = TableCommon::new(95, vec![column("a", 1), column("b", 2), column("c", 3)]);
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     table.set_common_handle_offsets(vec![0, 1, 2]);
     for a in [1, 2] {
         for b in [7, 8] {
             table
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(a), Datum::Int(b), Datum::Int(9)],
+                .insert_row(&mut store, &[Datum::Int(a), Datum::Int(b), Datum::Int(9)],
                     &tidb_exprctx::NoColumns,
-                ))
+                )
                 .unwrap();
         }
     }
-    let mut source = lookup_source(&table, LookupObject::CommonHandle, 3);
+    let mut source = lookup_source(&table, &store, LookupObject::CommonHandle, 3);
     source.set_probe_parts(vec![
         LookupProbePart::Alternatives(vec![Datum::Int(1), Datum::Int(2)]),
         LookupProbePart::Alternatives(vec![Datum::Int(7), Datum::Int(8)]),
