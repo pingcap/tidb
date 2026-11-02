@@ -10,6 +10,7 @@ mod node_fixture;
 mod observation_batch;
 
 mod autocommit_transactions;
+mod cached_table;
 mod catalog_load;
 mod compile_path;
 mod global_variables;

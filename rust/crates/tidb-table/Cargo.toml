@@ -8,6 +8,9 @@ repository.workspace = true
 description = "Go pkg/table and pkg/table/tables for the TiDB Rust rewrite."
 
 [dependencies]
+tracing = "0.1"
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-exeerrors = { path = "../tidb-exeerrors" }
 tidb-exprstatic = { path = "../tidb-exprstatic" }
 tidb-exprctx = { path = "../tidb-exprctx" }

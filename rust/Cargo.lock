@@ -7738,6 +7738,8 @@ dependencies = [
  "tidb-parser-format",
  "tidb-plannererrors",
  "tidb-rowcodec",
+ "tidb-sqlescape",
+ "tidb-sqlexec",
  "tidb-tablecodec",
  "tidb-tblctx",
  "tidb-terror",
@@ -7747,6 +7749,7 @@ dependencies = [
  "tidb-util",
  "tidb-variable",
  "tikv-client",
+ "tracing",
 ]
 
 [[package]]
