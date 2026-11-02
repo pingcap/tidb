@@ -323,3 +323,92 @@ pub fn enable_parallel_apply(plan: &mut PhysicalPlan, concurrency: usize) {
         enable_parallel_apply(child, concurrency);
     }
 }
+
+/// Go `countStarRewrite` (`optimizer.go:528`): an aggregation of only
+/// `count(constant)` over a single-column full TiFlash scan reads the
+/// narrowest NOT NULL fixed-width column instead of the handle, and counts it.
+pub(crate) fn count_star_rewrite(plan: &mut PhysicalPlan, column_ids: &tidb_planner_core_base::ColumnIdAllocator) {
+    count_star_rewrite_internal(plan, column_ids);
+    if let PhysicalPlan::TableReader(reader) = plan {
+        if let Some(table_plan) = reader.table_plan.as_deref_mut() {
+            count_star_rewrite(table_plan, column_ids);
+        }
+        return;
+    }
+    for child in plan.base_mut().children_mut() {
+        count_star_rewrite(child, column_ids);
+    }
+}
+
+fn count_star_rewrite_internal(plan: &mut PhysicalPlan, column_ids: &tidb_planner_core_base::ColumnIdAllocator) {
+    use tidb_expr::expression::Expression;
+    use tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind;
+    let (agg_funcs, group_by_items, children) = match plan {
+        PhysicalPlan::HashAgg(agg) => (&mut agg.agg_funcs, &agg.group_by_items, agg.base.children_mut()),
+        PhysicalPlan::StreamAgg(agg) => (&mut agg.agg_funcs, &agg.group_by_items, agg.base.children_mut()),
+        _ => return,
+    };
+    if !group_by_items.is_empty() || children.len() != 1 {
+        return;
+    }
+    let only_count_of_constant = agg_funcs.iter().all(|function| {
+        function.name() == tidb_expression_aggregation::names::COUNT
+            && function.base.args.len() == 1
+            && !function.has_distinct
+            && matches!(function.base.args[0], Expression::Constant(_))
+    });
+    if !only_count_of_constant {
+        return;
+    }
+    let PhysicalPlan::TableScan(scan) = &mut children[0] else {
+        return;
+    };
+    let full_scan = scan
+        .resolved_descriptor
+        .is_some_and(|descriptor| descriptor.scan_kind() == ResolvedTableScanKind::Full);
+    let Some(schema) = scan.base.base.schema() else {
+        return;
+    };
+    if !full_scan || scan.store_type != tidb_kv::store_type::StoreType::TiFlash || schema.columns.len() != 1 {
+        return;
+    }
+    // Go `rewriteTableScanAndAggArgs`: prefer the narrowest NOT NULL column
+    // of the table (`Table.Columns`), else keep the handle or the column the
+    // scan reads.
+    let current = schema.columns[0].clone();
+    let width = |column: &tidb_expr::column::Column| column.get_static_type().map_or(0, tidb_datatype::FieldType::flen);
+    let mut result = current.clone();
+    let mut result_flen = width(&current);
+    let mut changed = false;
+    for column in scan.cost_columns.iter().filter(|column| column.id > 0) {
+        let Some(field_type) = column.get_static_type() else {
+            continue;
+        };
+        if field_type.is_var_length_type() || !field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL) {
+            continue;
+        }
+        if field_type.flen() < result_flen {
+            result_flen = field_type.flen();
+            let mut picked = tidb_expr::column::Column::new(column_ids.alloc(), field_type.clone());
+            picked.id = column.id;
+            picked.orig_name = column.orig_name.clone();
+            result = picked;
+            changed = true;
+        }
+    }
+    if changed {
+        let mut schema = schema.clone();
+        schema.columns[0] = result.clone();
+        scan.base.base.set_schema(Some(schema));
+    }
+    // count(1) -> count(column).
+    for function in agg_funcs.iter_mut() {
+        if let Expression::Constant(constant) = &function.base.args[0] {
+            // count(null) is not rewritten.
+            if constant.value.is_null() {
+                continue;
+            }
+        }
+        function.base.args[0] = Expression::Column(result.clone());
+    }
+}

@@ -569,6 +569,8 @@ pub fn physical_optimize<C: OptimizeContext>(
     }
     // Go postOptimize: handleFineGrainedShuffle.
     crate::fine_grained_shuffle::handle_fine_grained_shuffle(ctx, &mut physical);
+    // Go postOptimize: countStarRewrite.
+    crate::post_optimize::count_star_rewrite(&mut physical, column_ids);
     // Go postOptimize: disableReuseChunkIfNeeded.
     if ctx.is_alloc_valid()
         && crate::chunk_reuse::should_disable_reuse_chunk(

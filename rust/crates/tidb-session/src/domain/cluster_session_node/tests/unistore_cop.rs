@@ -25615,6 +25615,20 @@ fn tiflash_reads_plan_as_go_mpp_fragments() {
     ];
     let mut cases: Vec<(&str, Vec<String>)> = cases.into_iter().collect();
     cases.push((
+        // `countStarRewrite`: count(*) over a TiFlash full scan counts the
+        // narrowest NOT NULL column.
+        "SELECT count(*) FROM test.t",
+        [
+            "HashAgg|1.00|root||funcs:count(Column#8)->Column#6",
+            "└─TableReader|1.00|root||MppVersion: 3, data:ExchangeSender",
+            "  └─ExchangeSender|1.00|mpp[tiflash]||ExchangeType: PassThrough",
+            "    └─HashAgg|1.00|mpp[tiflash]||funcs:count(test.t.a)->Column#8",
+            "      └─TableFullScan|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+        ]
+        .map(str::to_owned)
+        .to_vec(),
+    ));
+    cases.push((
         // An outer join broadcasts its inner side (`fixedBuildSide`).
         "SELECT * FROM test.t LEFT JOIN test.s ON t.a = s.a",
         reader("12500.00")
@@ -25637,6 +25651,26 @@ fn tiflash_reads_plan_as_go_mpp_fragments() {
             .map(|row| row.join("|"))
             .collect();
         assert_eq!(plan, expected, "{query}");
+    }
+    // countStarRewrite's fallbacks: no NOT NULL fixed-width column keeps the
+    // row id the scan reads; a narrower NOT NULL column beats the int handle.
+    for sql in [
+        "CREATE TABLE test.u (x varchar(10), y int)",
+        "CREATE TABLE test.v (id int primary key, z tinyint not null)",
+        "ALTER TABLE test.u SET HYPO TIFLASH REPLICA 1",
+        "ALTER TABLE test.v SET HYPO TIFLASH REPLICA 1",
+    ] {
+        session.node_conn().execute_write(sql).expect(sql);
+    }
+    for (query, expected) in [
+        ("SELECT count(*) FROM test.u", "funcs:count(test.u._tidb_rowid)->Column#7"),
+        ("SELECT count(*) FROM test.v", "funcs:count(test.v.z)->Column#6"),
+    ] {
+        let plan = displayed(rows(&mut session, &format!("EXPLAIN FORMAT='brief' {query}")));
+        assert!(
+            plan.iter().any(|row| row[2] == "mpp[tiflash]" && row[4] == expected),
+            "{query}: {plan:?}"
+        );
     }
     // Neither side fits the broadcast thresholds: both sides hash-exchange
     // by the join keys, collated as the equal condition derives (binary).
