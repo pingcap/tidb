@@ -25672,6 +25672,13 @@ fn tiflash_reads_plan_as_go_mpp_fragments() {
             "{query}: {plan:?}"
         );
     }
+    // The reader names the session's `ChooseMppVersion()`.
+    session.node_conn().execute_write("SET mpp_version = 1").unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "EXPLAIN FORMAT='brief' SELECT * FROM test.t"))[0][4],
+        "MppVersion: 1, data:ExchangeSender"
+    );
+    session.node_conn().execute_write("SET mpp_version = UNSPECIFIED").unwrap();
     // Neither side fits the broadcast thresholds: both sides hash-exchange
     // by the join keys, collated as the equal condition derives (binary).
     session

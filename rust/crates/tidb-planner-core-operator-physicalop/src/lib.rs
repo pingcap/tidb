@@ -2375,21 +2375,16 @@ impl PhysicalTableReader {
     }
 
     /// Go `ExplainInfo` (`physical_table_reader.go:258`): an MPP reader
-    /// prefixes the pushed-down explain id with the chosen mpp version;
-    /// Go reads it through `SessionVars.ChooseMppVersion`, whose default
-    /// answers the newest version (`kv.GetNewestMppVersion`, `mpp.go:47`,
-    /// `MppVersionV3`).
+    /// prefixes the pushed-down explain id with the session's
+    /// `ChooseMppVersion()`, `mpp_version`.
     #[must_use]
-    pub fn explain_info(&self, ignore_suffix: bool) -> String {
+    pub fn explain_info(&self, ignore_suffix: bool, mpp_version: tidb_txnkv::MppVersion) -> String {
         let data = format!(
             "data:{}",
             self.table_plan_explain(ignore_suffix).unwrap_or_default()
         );
         if self.read_req_type == ReadReqType::Mpp {
-            return format!(
-                "MppVersion: {}, {data}",
-                tidb_txnkv::MppVersion::NEWEST.as_i64()
-            );
+            return format!("MppVersion: {}, {data}", mpp_version.as_i64());
         }
         data
     }

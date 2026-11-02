@@ -59,11 +59,11 @@ fn mpp_reader_over_sender(sender_id: i32) -> PhysicalTableReader {
 fn mpp_reader_explain_carries_the_newest_mpp_version_and_the_sender() {
     let reader = mpp_reader_over_sender(9);
     assert_eq!(
-        reader.explain_info(false),
+        reader.explain_info(false, tidb_txnkv::MppVersion::NEWEST),
         "MppVersion: 3, data:ExchangeSender_9"
     );
     assert_eq!(
-        reader.explain_info(true),
+        reader.explain_info(true, tidb_txnkv::MppVersion::NEWEST),
         "MppVersion: 3, data:ExchangeSender"
     );
 }
@@ -82,7 +82,7 @@ fn passthrough_sender_explain_matches_go() {
 fn cop_reader_explain_stays_plain() {
     let mut reader = mpp_reader_over_sender(9);
     reader.read_req_type = ReadReqType::Cop;
-    assert_eq!(reader.explain_info(false), "data:ExchangeSender_9");
+    assert_eq!(reader.explain_info(false, tidb_txnkv::MppVersion::NEWEST), "data:ExchangeSender_9");
 }
 
 #[test]

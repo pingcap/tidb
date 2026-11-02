@@ -1524,7 +1524,7 @@ fn physical_operator_own_info(
                     format!("data:{name}_{}", scan.base().base.id())
                 }
             }
-            _ => reader.explain_info(ignore_explain_id_suffix),
+            _ => reader.explain_info(ignore_explain_id_suffix, statement_context.mpp_version()),
         },
         PhysicalPlan::IndexScan(scan) => {
             let mut parts = Vec::new();

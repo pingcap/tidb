@@ -973,6 +973,9 @@ pub struct StmtContextData {
     /// The compression an enforced MPP exchange takes (Go
     /// `ChooseMppExchangeCompressionMode` under `ChooseMppVersion() >= V1`).
     mpp_exchange_compression_mode: tidb_vardef::modes::ExchangeCompressionMode,
+    /// Go `SessionVars.ChooseMppVersion()`: `mpp_version`, the newest when
+    /// unspecified.
+    mpp_version: tidb_txnkv::MppVersion,
     /// The TiFlash servers Go's `handleFineGrainedShuffle` sizes streams
     /// from; `None` where the statement has no cluster to ask.
     tiflash_cluster_info: Option<Arc<dyn TiFlashClusterInfo>>,
@@ -2323,6 +2326,13 @@ context_configuration! {
         self
     }
 
+    /// Sets Go `ChooseMppVersion()` for this statement.
+    #[must_use]
+    pub fn with_mpp_version(mut self, version: tidb_txnkv::MppVersion) -> Self {
+        self.mpp_version = version;
+        self
+    }
+
     /// Sets the compression an enforced MPP exchange takes.
     #[must_use]
     pub fn with_mpp_exchange_compression_mode(mut self, mode: tidb_vardef::modes::ExchangeCompressionMode) -> Self {
@@ -2829,6 +2839,7 @@ impl StmtContext {
             pessimistic_txn_provider: None,
             tiflash_fine_grained_shuffle: TiFlashFineGrainedShuffleSession::default(),
             mpp_exchange_compression_mode: tidb_vardef::modes::ExchangeCompressionMode::RECOMMENDED,
+            mpp_version: tidb_txnkv::MppVersion::NEWEST,
             tiflash_cluster_info: None,
             weak_consistency: false,
             row_encoding_config: tidb_tblctx::RowEncodingConfig::default(),
@@ -4664,6 +4675,12 @@ impl StmtContext {
     #[must_use]
     pub fn pessimistic_txn_provider(&self) -> Option<PessimisticTxnProvider> {
         self.pessimistic_txn_provider
+    }
+
+    /// Go `SessionVars.ChooseMppVersion()`.
+    #[must_use]
+    pub fn mpp_version(&self) -> tidb_txnkv::MppVersion {
+        self.mpp_version
     }
 
     /// The compression an enforced MPP exchange takes.

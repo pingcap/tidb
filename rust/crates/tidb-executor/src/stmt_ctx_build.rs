@@ -1742,6 +1742,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_rc_check_ts(self.stmt_rc_check_ts())
                     .with_pessimistic_txn_provider(self.pessimistic_txn_provider())
                     .with_mpp_exchange_compression_mode(self.mpp_exchange_compression_mode())
+                    .with_mpp_version(self.choose_mpp_version())
                     .with_tiflash_fine_grained_shuffle(
                         self.tiflash_fine_grained_shuffle_session(),
                         self.tiflash_cluster_info(),
@@ -1906,6 +1907,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_rc_check_ts(self.stmt_rc_check_ts())
                     .with_pessimistic_txn_provider(self.pessimistic_txn_provider())
                     .with_mpp_exchange_compression_mode(self.mpp_exchange_compression_mode())
+                    .with_mpp_version(self.choose_mpp_version())
                     .with_tiflash_fine_grained_shuffle(
                         self.tiflash_fine_grained_shuffle_session(),
                         self.tiflash_cluster_info(),
@@ -2449,24 +2451,24 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// coprocessor response details, `None` while the instance switch is OFF
     /// (Go's `copIteratorWorker.stats` is only created when it is ON).
     fn statement_cop_response_sink(&self) -> Option<Arc<dyn crate::CopResponseSink>>;
+    /// Go `SessionVars.ChooseMppVersion()`: `mpp_version`, the newest when
+    /// unspecified.
+    fn choose_mpp_version(&self) -> tidb_txnkv::MppVersion {
+        self.session_vars()
+            .get_system(tidb_vardef::tidb_vars::MPP_VERSION)
+            .ok()
+            .and_then(|value| tidb_txnkv::MppVersion::parse(&value))
+            .filter(|version| *version != tidb_txnkv::MppVersion::Unspecified)
+            .unwrap_or(tidb_txnkv::MppVersion::NEWEST)
+    }
+
     /// Go `ChooseMppExchangeCompressionMode()` when `ChooseMppVersion()` is
     /// at least `MppVersionV1` (an unspecified version is the newest), the
     /// compression `EnforceExchangerImpl` gives a sender; NONE otherwise.
     fn mpp_exchange_compression_mode(&self) -> tidb_vardef::modes::ExchangeCompressionMode {
         use tidb_vardef::modes::{to_exchange_compression_mode, ExchangeCompressionMode};
         let vars = self.session_vars();
-        let version = vars
-            .get_system(tidb_vardef::tidb_vars::MPP_VERSION)
-            .ok()
-            .and_then(|value| tidb_txnkv::MppVersion::parse(&value))
-            .map_or(tidb_txnkv::MppVersion::NEWEST, |version| {
-                if version == tidb_txnkv::MppVersion::Unspecified {
-                    tidb_txnkv::MppVersion::NEWEST
-                } else {
-                    version
-                }
-            });
-        if version < tidb_txnkv::MppVersion::V1 {
+        if self.choose_mpp_version() < tidb_txnkv::MppVersion::V1 {
             return ExchangeCompressionMode::NONE;
         }
         match vars
