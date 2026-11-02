@@ -107,3 +107,84 @@ pub fn storage(
         buffer,
     )
 }
+
+/// One in-memory store that every clone shares, standing in for Go's mock
+/// store under autocommit: a statement's writes are visible to the next
+/// statement and to the test. (A `MemTableStorage` clone copies its rows, so
+/// a statement context handing out clones would drop the writes.)
+#[derive(Clone, Debug, Default)]
+pub struct SharedMemStorage {
+    inner: Arc<Mutex<tidb_kv::storage::MemTableStorage>>,
+}
+
+impl SharedMemStorage {
+    fn lock(&self) -> std::sync::MutexGuard<'_, tidb_kv::storage::MemTableStorage> {
+        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl tidb_kv::storage::TableStorage for SharedMemStorage {
+    fn staging(&mut self) -> tidb_kv::storage::StagingHandle {
+        self.lock().staging()
+    }
+
+    fn cleanup(&mut self, handle: tidb_kv::storage::StagingHandle) {
+        self.lock().cleanup(handle);
+    }
+
+    fn release(&mut self, handle: tidb_kv::storage::StagingHandle) {
+        self.lock().release(handle);
+    }
+
+    fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
+        self.lock().get(key)
+    }
+
+    fn size_bytes(&self) -> u64 {
+        self.lock().size_bytes()
+    }
+
+    fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), StorageError> {
+        self.lock().set(key, value)
+    }
+
+    fn delete(&mut self, key: Key) -> Result<(), StorageError> {
+        self.lock().delete(key)
+    }
+
+    fn get_local(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
+        self.lock().get_local(key)
+    }
+
+    fn attach_txn_staging(&mut self, staging: Option<tidb_kv::staged_writes::TxnStaging>) {
+        self.lock().attach_txn_staging(staging);
+    }
+
+    fn iter(
+        &mut self,
+        start: Option<&Key>,
+        upper_bound: Option<&Key>,
+    ) -> Result<Box<dyn tidb_kv::storage::StorageIterator>, StorageError> {
+        self.lock().iter(start, upper_bound)
+    }
+
+    fn iter_reverse(
+        &mut self,
+        upper_bound: Option<&Key>,
+        lower_bound: Option<&Key>,
+    ) -> Result<Box<dyn tidb_kv::storage::StorageIterator>, StorageError> {
+        self.lock().iter_reverse(upper_bound, lower_bound)
+    }
+
+    fn key_count(&self) -> usize {
+        self.lock().key_count()
+    }
+
+    fn clear(&mut self) {
+        self.lock().clear();
+    }
+
+    fn clone_box(&self) -> Box<dyn tidb_kv::storage::TableStorage> {
+        Box::new(self.clone())
+    }
+}

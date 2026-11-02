@@ -26,7 +26,12 @@ use super::*;
 /// `'abcdef'` and `'abcxyz'` share the indexed prefix `'abc'` and differ
 /// after it; `'zzz'` is shorter than nothing else and lands in its own
 /// entry.
-fn prefix_table() -> SessionExtendedInfoSchema {
+/// The catalog and the one store its statements run over.
+fn prefix_table() -> (
+    SessionExtendedInfoSchema,
+    tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage,
+) {
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE t (a VARCHAR(20), b INT, KEY idx (a(3)))",
@@ -36,14 +41,19 @@ fn prefix_table() -> SessionExtendedInfoSchema {
     run_insert_on(
         "INSERT INTO t VALUES ('abcdef', 1), ('abcxyz', 2), ('zzz', 3)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
-    catalog
+    (catalog, store)
 }
 
-fn strings(sql: &str, catalog: &SessionExtendedInfoSchema) -> Vec<String> {
-    let mut out: Vec<String> = run_select_on(sql, catalog, &crate::StmtContext::for_query())
+fn strings(
+    sql: &str,
+    catalog: &SessionExtendedInfoSchema,
+    store: &tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage,
+) -> Vec<String> {
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
+    let mut out: Vec<String> = run_select_on(sql, catalog, &ctx)
         .unwrap()
         .iter()
         .map(|row| datum_text_for_test(&row[0]))
@@ -59,9 +69,9 @@ fn strings(sql: &str, catalog: &SessionExtendedInfoSchema) -> Vec<String> {
 /// would be identical either way -- which is why this asserts the value.
 #[test]
 fn selecting_the_indexed_column_returns_the_whole_value_not_the_prefix() {
-    let catalog = prefix_table();
+    let (catalog, store) = prefix_table();
     assert_eq!(
-        strings("SELECT a FROM t WHERE a = 'abcdef'", &catalog),
+        strings("SELECT a FROM t WHERE a = 'abcdef'", &catalog, &store),
         vec!["abcdef".to_owned()]
     );
 }
@@ -71,13 +81,13 @@ fn selecting_the_indexed_column_returns_the_whole_value_not_the_prefix() {
 /// them. Captured: each equality returns exactly its own row.
 #[test]
 fn two_rows_sharing_a_prefix_are_told_apart_by_the_residual_predicate() {
-    let catalog = prefix_table();
+    let (catalog, store) = prefix_table();
     assert_eq!(
-        strings("SELECT a FROM t WHERE a = 'abcdef'", &catalog),
+        strings("SELECT a FROM t WHERE a = 'abcdef'", &catalog, &store),
         vec!["abcdef".to_owned()]
     );
     assert_eq!(
-        strings("SELECT a FROM t WHERE a = 'abcxyz'", &catalog),
+        strings("SELECT a FROM t WHERE a = 'abcxyz'", &catalog, &store),
         vec!["abcxyz".to_owned()]
     );
 }
@@ -90,8 +100,8 @@ fn two_rows_sharing_a_prefix_are_told_apart_by_the_residual_predicate() {
 /// it would answer two rows of `'abc'`.
 #[test]
 fn a_query_for_the_prefix_itself_matches_nothing() {
-    let catalog = prefix_table();
-    assert!(strings("SELECT a FROM t WHERE a = 'abc'", &catalog).is_empty());
+    let (catalog, store) = prefix_table();
+    assert!(strings("SELECT a FROM t WHERE a = 'abc'", &catalog, &store).is_empty());
 }
 
 /// Inequalities: the cut endpoint loses its exclusiveness, so the scan still
@@ -99,18 +109,18 @@ fn a_query_for_the_prefix_itself_matches_nothing() {
 /// Captured, in order: three rows, three rows, nothing, and two rows.
 #[test]
 fn inequalities_over_a_cut_endpoint_still_read_every_qualifying_row() {
-    let catalog = prefix_table();
+    let (catalog, store) = prefix_table();
     assert_eq!(
-        strings("SELECT a FROM t WHERE a > 'abc'", &catalog),
+        strings("SELECT a FROM t WHERE a > 'abc'", &catalog, &store),
         vec!["abcdef".to_owned(), "abcxyz".to_owned(), "zzz".to_owned()]
     );
     assert_eq!(
-        strings("SELECT a FROM t WHERE a >= 'abcdef'", &catalog),
+        strings("SELECT a FROM t WHERE a >= 'abcdef'", &catalog, &store),
         vec!["abcdef".to_owned(), "abcxyz".to_owned(), "zzz".to_owned()]
     );
-    assert!(strings("SELECT a FROM t WHERE a < 'abcdef'", &catalog).is_empty());
+    assert!(strings("SELECT a FROM t WHERE a < 'abcdef'", &catalog, &store).is_empty());
     assert_eq!(
-        strings("SELECT a FROM t WHERE a IN ('abcdef', 'zzz')", &catalog),
+        strings("SELECT a FROM t WHERE a IN ('abcdef', 'zzz')", &catalog, &store),
         vec!["abcdef".to_owned(), "zzz".to_owned()]
     );
 }
@@ -123,13 +133,14 @@ fn inequalities_over_a_cut_endpoint_still_read_every_qualifying_row() {
 /// (`TruncateIndexValues` then `genIndexKeyStrs` in `pkg/table/tables`).
 #[test]
 fn a_unique_prefix_index_rejects_a_row_that_only_shares_the_prefix() {
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE u (a VARCHAR(20), UNIQUE KEY uidx (a(3)))",
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on("INSERT INTO u VALUES ('abcdef')", &mut catalog, &ctx).unwrap();
     let error = run_insert_on("INSERT INTO u VALUES ('abcxyz')", &mut catalog, &ctx)
         .expect_err("a row sharing the indexed prefix must be rejected");
@@ -141,7 +152,7 @@ fn a_unique_prefix_index_rejects_a_row_that_only_shares_the_prefix() {
     // A value that differs inside the prefix is accepted.
     run_insert_on("INSERT INTO u VALUES ('abdefg')", &mut catalog, &ctx).unwrap();
     assert_eq!(
-        strings("SELECT a FROM u", &catalog),
+        strings("SELECT a FROM u", &catalog, &store),
         vec!["abcdef".to_owned(), "abdefg".to_owned()]
     );
 }
@@ -155,6 +166,7 @@ fn a_unique_prefix_index_rejects_a_row_that_only_shares_the_prefix() {
 /// point get would answer `'abcdef'` for a query about `'abcxyz'`.
 #[test]
 fn a_unique_prefix_index_does_not_answer_a_point_get() {
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE u (a VARCHAR(20), b INT, UNIQUE KEY uidx (a(3)))",
@@ -164,18 +176,18 @@ fn a_unique_prefix_index_does_not_answer_a_point_get() {
     run_insert_on(
         "INSERT INTO u VALUES ('abcdef', 1), ('zzz', 2)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
-    assert!(strings("SELECT a FROM u WHERE a = 'abcxyz'", &catalog).is_empty());
+    assert!(strings("SELECT a FROM u WHERE a = 'abcxyz'", &catalog, &store).is_empty());
     assert_eq!(
-        strings("SELECT a FROM u WHERE a = 'abcdef'", &catalog),
+        strings("SELECT a FROM u WHERE a = 'abcdef'", &catalog, &store),
         vec!["abcdef".to_owned()]
     );
     // The `IN` form reaches the batch point get instead, and must decline it
     // for the same reason.
     assert_eq!(
-        strings("SELECT a FROM u WHERE a IN ('abcxyz', 'zzz')", &catalog),
+        strings("SELECT a FROM u WHERE a IN ('abcxyz', 'zzz')", &catalog, &store),
         vec!["zzz".to_owned()]
     );
 }
@@ -189,6 +201,7 @@ fn a_unique_prefix_index_does_not_answer_a_point_get() {
 /// answers whichever rows those were.
 #[test]
 fn an_order_by_is_not_satisfied_by_a_prefix_key_part() {
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE o (a VARCHAR(20), KEY idx (a(3)))",
@@ -201,7 +214,7 @@ fn an_order_by_is_not_satisfied_by_a_prefix_key_part() {
     run_insert_on(
         "INSERT INTO o VALUES ('abczz'), ('abcaa'), ('aaa')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     // The `WHERE` is what makes the index path a candidate at all -- without
@@ -213,7 +226,7 @@ fn an_order_by_is_not_satisfied_by_a_prefix_key_part() {
     let rows = run_select_on(
         "SELECT a FROM o WHERE a > 'a' ORDER BY a LIMIT 2",
         &catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
@@ -229,6 +242,7 @@ fn an_order_by_is_not_satisfied_by_a_prefix_key_part() {
 /// rejecting the property at the first key part with a length.
 #[test]
 fn a_leading_whole_key_part_still_orders_by_itself() {
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE c (a INT, b VARCHAR(20), KEY idx (a, b(3)))",
@@ -238,13 +252,13 @@ fn a_leading_whole_key_part_still_orders_by_itself() {
     run_insert_on(
         "INSERT INTO c VALUES (3, 'zzz'), (1, 'abczz'), (2, 'abcaa')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     let first = run_select_on(
         "SELECT a FROM c WHERE a > 0 ORDER BY a LIMIT 2",
         &catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
@@ -261,7 +275,7 @@ fn a_leading_whole_key_part_still_orders_by_itself() {
     let both = run_select_on(
         "SELECT b FROM c WHERE a > 0 ORDER BY a, b LIMIT 2",
         &catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
@@ -278,15 +292,15 @@ fn a_leading_whole_key_part_still_orders_by_itself() {
 /// three `admin check table` runs pass on real TiDB.
 #[test]
 fn writes_through_a_prefix_index_stay_admin_check_clean() {
-    let mut catalog = prefix_table();
-    let ctx = crate::StmtContext::for_query();
+    let (mut catalog, store) = prefix_table();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     // `check_table` returns the number of INDEXES it checked; the row-level
     // agreement is what it errors on.
     let check = |catalog: &mut SessionExtendedInfoSchema| {
         let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t") else {
             panic!("the table is not storage-backed");
         };
-        let mut store = table.store().clone_box();
+        let mut store = Box::new(store.clone());
         assert_eq!(
             crate::admin_check::check_table(
                 std::sync::Arc::make_mut(table),
@@ -302,14 +316,14 @@ fn writes_through_a_prefix_index_stay_admin_check_clean() {
     run_delete_on("DELETE FROM t WHERE a = 'abcdef'", &mut catalog, &ctx).unwrap();
     check(&mut catalog);
     assert_eq!(
-        strings("SELECT a FROM t", &catalog),
+        strings("SELECT a FROM t", &catalog, &store),
         vec!["abcxyz".to_owned(), "zzz".to_owned()]
     );
 
     run_update_on("UPDATE t SET a = 'abcqqq' WHERE b = 2", &mut catalog, &ctx).unwrap();
     check(&mut catalog);
     assert_eq!(
-        strings("SELECT a FROM t", &catalog),
+        strings("SELECT a FROM t", &catalog, &store),
         vec!["abcqqq".to_owned(), "zzz".to_owned()]
     );
 }
@@ -319,6 +333,7 @@ fn writes_through_a_prefix_index_stay_admin_check_clean() {
 /// the whole value and `admin check table c` passes.
 #[test]
 fn a_multi_byte_column_is_cut_by_characters() {
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE c (a VARCHAR(20), KEY idx (a(3)))",
@@ -328,17 +343,17 @@ fn a_multi_byte_column_is_cut_by_characters() {
     run_insert_on(
         "INSERT INTO c VALUES ('世界你好啊'), ('世界你不好')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     assert_eq!(
-        strings("SELECT a FROM c WHERE a = '世界你好啊'", &catalog),
+        strings("SELECT a FROM c WHERE a = '世界你好啊'", &catalog, &store),
         vec!["世界你好啊".to_owned()]
     );
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in("test", "c") else {
         panic!("the table is not storage-backed");
     };
-    let mut store = table.store().clone_box();
+    let mut store = Box::new(store.clone());
     assert_eq!(
         crate::admin_check::check_table(
             std::sync::Arc::make_mut(table),
@@ -352,11 +367,12 @@ fn a_multi_byte_column_is_cut_by_characters() {
 
 #[test]
 fn partial_order_topn_keeps_competing_rows_with_the_same_prefix() {
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query().with_partial_ordered_index_for_topn(true);
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_partial_ordered_index_for_topn(true);
     crate::run_create_table_on(
         "CREATE TABLE p (a VARCHAR(20), KEY idx(a(3)))",
         &mut catalog,
@@ -385,7 +401,7 @@ fn partial_order_topn_keeps_competing_rows_with_the_same_prefix() {
             ),
             ("", "USE INDEX(idx)", false, false),
         ] {
-            let ctx = crate::StmtContext::for_query().with_partial_ordered_index_for_topn(enabled);
+            let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_partial_ordered_index_for_topn(enabled);
             let sql = format!("SELECT {hint} a FROM p {clause} ORDER BY a {order} LIMIT 1, 2");
             let (rows, ops) =
                 tidb_kv::storage::capture_storage_ops(|| run_select_on(&sql, &catalog, &ctx));
@@ -426,8 +442,9 @@ fn partial_order_topn_keeps_competing_rows_with_the_same_prefix() {
 
 #[test]
 fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters() {
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query().with_partial_ordered_index_for_topn(true);
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_partial_ordered_index_for_topn(true);
     for (table, ddl, insert, sql, expected, gets) in [
         (
             "pn",
@@ -517,7 +534,7 @@ fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters(
             let rows = run_select_on(
                 "SELECT a FROM pi USE INDEX(idx) WHERE id > 1 LIMIT 1",
                 &catalog,
-                &crate::StmtContext::for_query(),
+                &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
             )
             .unwrap();
             assert_eq!(
@@ -528,7 +545,7 @@ fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters(
             let rows = run_select_on(
                 "SELECT a FROM pi USE INDEX(idx) WHERE id > 1 LIMIT 1, 1",
                 &catalog,
-                &crate::StmtContext::for_query(),
+                &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
             )
             .unwrap();
             assert_eq!(rows.len(), 1);
@@ -539,6 +556,7 @@ fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters(
 
 #[test]
 fn prefix_null_conditions_use_a_covering_reader_without_exposing_prefix_values() {
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -550,11 +568,11 @@ fn prefix_null_conditions_use_a_covering_reader_without_exposing_prefix_values()
     run_insert_on(
         "INSERT INTO pn VALUES (NULL, 1), ('abz', 2), ('aba', 3), ('zz', 4)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     for enabled in [true, false] {
-        let ctx = crate::StmtContext::for_query().with_opt_prefix_index_single_scan(enabled);
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_opt_prefix_index_single_scan(enabled);
         for (projection, condition, expected, null_only) in [
             ("b", "a IS NULL", vec!["1"], true),
             ("b", "a IS NOT NULL", vec!["2", "3", "4"], true),
@@ -609,10 +627,11 @@ fn prefix_null_conditions_use_a_covering_reader_without_exposing_prefix_values()
 
 #[test]
 fn index_join_covering_rows_match_master_with_prefix_filters_and_outer_nulls() {
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    let ctx = crate::StmtContext::for_query();
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     for ddl in [
         "CREATE TABLE o (k INT)",
         "CREATE TABLE i (k INT, a VARCHAR(20), b INT, KEY idx(k, a(2), b))",
@@ -649,7 +668,7 @@ fn index_join_covering_rows_match_master_with_prefix_filters_and_outer_nulls() {
             true,
         ),
     ];
-    for (dirty, ctx) in [(false, crate::StmtContext::for_query()), (true, ctx)] {
+    for (dirty, ctx) in [(false, crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()))), (true, ctx)] {
         for (sql, expected, covering) in cases.clone() {
             let (rows, ops) =
                 tidb_kv::storage::capture_storage_ops(|| run_select_on(sql, &catalog, &ctx));

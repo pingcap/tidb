@@ -154,6 +154,7 @@ fn a_non_unique_index_accepts_repeats() {
 /// unique-key lookup a point read (Go's PointGetPlan on a unique key).
 #[test]
 fn a_unique_index_entry_points_at_its_row() {
+    let store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE k (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE)",
@@ -163,7 +164,7 @@ fn a_unique_index_entry_points_at_its_row() {
     run_insert_on(
         "INSERT INTO k VALUES (7, 'abc'), (8, 'def')",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
 
@@ -179,7 +180,7 @@ fn a_unique_index_entry_points_at_its_row() {
         .read().id;
     assert_eq!(
         table
-            .lookup_unique(&mut *table.store().clone_box(), 
+            .lookup_unique(&mut store.clone(), 
                 index_id,
                 &[Datum::Bytes(b"abc".to_vec())],
                 &tidb_datatype::SessionTimeZone::utc()
@@ -190,7 +191,7 @@ fn a_unique_index_entry_points_at_its_row() {
     );
     assert_eq!(
         table
-            .lookup_unique(&mut *table.store().clone_box(), 
+            .lookup_unique(&mut store.clone(), 
                 index_id,
                 &[Datum::Bytes(b"nope".to_vec())],
                 &tidb_datatype::SessionTimeZone::utc()
