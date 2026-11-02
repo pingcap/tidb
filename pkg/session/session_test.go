@@ -37,6 +37,7 @@ import (
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -286,4 +287,22 @@ func TestMemArbitratorSession(t *testing.T) {
 	require.Equal(t, int64(9), approxCompilePlanTokenCnt("select * from `a_1`.`b_2` where c1 = ? and c2 = ?", true))
 	require.Equal(t, int64(0), approxCompilePlanTokenCnt("select @@version @a", true))
 	require.Equal(t, int64(3), approxCompilePlanTokenCnt("select @@version @a", false))
+
+	normalizedSQL := "select * from `t` where `a` = ?"
+	db1DigestID := buildMemArbitratorDigestID(normalizedSQL, "db1")
+	db2DigestID := buildMemArbitratorDigestID(normalizedSQL, "db2")
+	require.NotEqual(t, db1DigestID, db2DigestID)
+
+	explicitDBSQL := "select * from `db3`.`t` where `a` = ?"
+	require.NotEqual(t,
+		buildMemArbitratorDigestID(explicitDBSQL, "db1"),
+		buildMemArbitratorDigestID(explicitDBSQL, "db2"))
+	require.Equal(t,
+		buildMemArbitratorDigestID(explicitDBSQL, "DB1"),
+		buildMemArbitratorDigestID(explicitDBSQL, "db1"))
+
+	require.NotEqual(t,
+		buildMemArbitratorDigestID(normalizedSQL, "db1"),
+		buildMemArbitratorDigestID(normalizedSQL, "db2"))
+	require.Equal(t, memory.InvalidDigestID, buildMemArbitratorDigestID("", "db1"))
 }

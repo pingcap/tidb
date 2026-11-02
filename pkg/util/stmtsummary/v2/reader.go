@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -531,6 +532,26 @@ func parseEndTs(file *os.File) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
+		if end.Format(logFileTimeFormat) != timeStr {
+			return 0, nil
+		}
+		// Rotation names contain local wall time without an offset. A repeated
+		// time can denote a later instant, so it is not a safe pruning bound.
+		_, offset := end.Zone()
+		zoneStart, zoneEnd := end.ZoneBounds()
+		for i, boundary := range []time.Time{zoneStart, zoneEnd} {
+			if boundary.IsZero() {
+				continue
+			}
+			if i == 0 {
+				boundary = boundary.Add(-time.Nanosecond)
+			}
+			_, adjacentOffset := boundary.Zone()
+			if adjacentOffset != offset &&
+				end.Add(time.Duration(offset-adjacentOffset)*time.Second).Format(logFileTimeFormat) == timeStr {
+				return 0, nil
+			}
+		}
 		return end.Unix(), nil
 	}
 	return 0, nil
@@ -567,6 +588,7 @@ func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles,
 			logutil.BgLogger().Warn("failed to open or parse statements file", zap.Error(err), zap.String("path", path))
 			return nil
 		}
+		failpoint.InjectCall("stmtSummaryHistoryOpenFile", file.file)
 		if len(timeRanges) == 0 {
 			files = append(files, file)
 			return nil
@@ -577,6 +599,7 @@ func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles,
 				return nil
 			}
 		}
+		_ = file.close()
 		return nil
 	}
 

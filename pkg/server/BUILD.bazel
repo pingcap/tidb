@@ -24,6 +24,7 @@ go_library(
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
+        "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/domain/infosync",
@@ -150,6 +151,7 @@ go_test(
         "conn_stmt_params_test.go",
         "conn_stmt_test.go",
         "conn_test.go",
+        "diagnostic_http_test.go",
         "driver_tidb_test.go",
         "main_test.go",
         "mock_conn_test.go",
@@ -165,6 +167,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
+        "//pkg/config/diagnosticmode",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/expression",
@@ -234,6 +237,7 @@ go_test(
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
     ],
 )
