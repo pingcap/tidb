@@ -28,9 +28,9 @@ use tidb_datatype::{
 };
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::{Columns, EvalError, ZonedNoColumns};
+use tidb_exprctx::{Columns, EvalError, ZonedNoColumns};
 
-use super::catalog::{SourceColumn, SourceTable, TableSource};
+use tidb_infoschema::table_source::{SourceColumn, SourceTable, TableSource};
 use super::marker::{MarkerKind, PlanMarker};
 use super::{
     constant_is_always_false, snapshot_schema_and_names, PlanBuilder, PlanScopeResolver,
@@ -393,8 +393,8 @@ fn test_table_source_drives_data_source_construction() {
     // `logical_plan_builder.go:5244`. No extra HANDLE column: `a` is the
     // int handle already.
     assert_eq!(data_source.columns.len(), 3);
-    assert_eq!(data_source.columns[2].id, EXTRA_COMMIT_TS_ID);
-    assert_eq!(data_source.columns[2].name, EXTRA_COMMIT_TS_NAME);
+    assert_eq!(data_source.columns[2].read().id, EXTRA_COMMIT_TS_ID);
+    assert_eq!(data_source.columns[2].read().name.original(), EXTRA_COMMIT_TS_NAME);
     assert_eq!(data_source.handle_cols.len(), 1);
     assert!(data_source.handle_is_int);
     assert_eq!(plan.schema().expect("a schema").len(), 3);
@@ -439,7 +439,7 @@ fn test_handle_less_table_gets_the_extra_row_id_handle() {
     // appended BEFORE the commit-ts column, as Go does.
     assert_eq!(data_source.columns.len(), 4);
     assert_eq!(
-        data_source.columns[2].id,
+        data_source.columns[2].read().id,
         tidb_planner_core_operator_logicalop::data_source::EXTRA_HANDLE_ID
     );
     assert!(data_source.handle_is_int);
@@ -669,7 +669,7 @@ fn test_no_from_clause_builds_a_one_row_dual() {
 #[test]
 fn test_generated_column_index_sets_the_gc_substitute_flag() {
     let mut harness = Harness::new();
-    harness.tables_mut()[0].columns[1].is_virtual_generated = true;
+    harness.tables_mut()[0].columns[1].info.write().generated_expr_string = "`a` + 1".to_owned();
     let mut builder = harness.builder();
     builder
         .build_select(&parse_select("SELECT a FROM t"))
@@ -690,9 +690,20 @@ fn indexed_virtual_generated_expression_is_substituted_by_the_ordinary_rule() {
     else {
         panic!("expected generated expression")
     };
+    let columns = &harness.tables_mut()[0].columns;
+    let names: Vec<String> = columns.iter().map(|column| column.read().name.original().to_owned()).collect();
+    let types: Vec<FieldType> = columns.iter().map(|column| column.read().field_type.clone()).collect();
+    let built = tidb_table::generated_column::build_generated_expr(
+        generated_expr,
+        false,
+        &names,
+        &types,
+        &SessionTimeZone::default(),
+    )
+    .expect("the generation expression resolves");
     let generated = &mut harness.tables_mut()[0].columns[1];
-    generated.is_virtual_generated = true;
-    generated.generated_expr = Some(generated_expr.clone());
+    generated.info.write().generated_expr_string = built.expr_text.clone();
+    generated.generated = Some(built);
 
     let mut builder = harness.builder();
     let (plan, flags) = builder
@@ -738,7 +749,7 @@ fn test_dynamic_partition_pruning_retains_global_index_paths() {
     let table = &mut harness.tables_mut()[0];
     table.is_partitioned = true;
     table.partition_definition_names = vec!["p0".to_owned(), "p1".to_owned()];
-    table.indexes[0].global = true;
+    table.indexes[0].write().global = true;
 
     let mut builder = harness.builder();
     builder.set_partition_processor_enabled(false);
@@ -1107,7 +1118,7 @@ fn test_no_index_lookup_pushdown_matches_and_overrides_positive_hint() {
         panic!("expected data source");
     };
     assert!(source.force_no_index_lookup_push_down);
-    assert!(source.index_lookup_push_down_by.is_empty());
+    assert!(source.enumerated_paths.iter().all(|path| path.index_lookup_push_down_by == tidb_planner_util::path::IndexLookUpPushDownByType::None));
     assert!(matches!(
         source.enumerated_paths.as_slice(),
         [path] if path.is_tikv_table_path()
@@ -1136,8 +1147,8 @@ fn test_lookup_pushdown_rejects_go_unsupported_index_metadata() {
         (false, true, "multi-valued index is not supported"),
     ] {
         let mut harness = Harness::new();
-        harness.tables_mut()[0].indexes[0].global = global;
-        harness.tables_mut()[0].indexes[0].is_multi_valued = multi_valued;
+        harness.tables_mut()[0].indexes[0].write().global = global;
+        harness.tables_mut()[0].indexes[0].write().mv_index = multi_valued;
         let warnings = WarningColumns::default();
         let mut builder = PlanBuilder::new(
             &harness.catalog,
@@ -1157,7 +1168,7 @@ fn test_lookup_pushdown_rejects_go_unsupported_index_metadata() {
         let LogicalPlan::DataSource(source) = &projection.base.children()[0] else {
             panic!("expected data source");
         };
-        assert!(source.index_lookup_push_down_by.is_empty());
+        assert!(source.enumerated_paths.iter().all(|path| path.index_lookup_push_down_by == tidb_planner_util::path::IndexLookUpPushDownByType::None));
         assert!(matches!(
             source.enumerated_paths.as_slice(),
             [path] if path.is_tikv_table_path()
@@ -1177,7 +1188,8 @@ fn test_lookup_pushdown_rejects_go_unsupported_index_metadata() {
 
 #[test]
 fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
-    use crate::access_path::{apply_table_index_hints, get_possible_access_paths, IndexLookupPushDownPolicy, IndexLookupPushDownSession};
+    use tidb_sessionctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
+    use crate::access_path::{apply_table_index_hints, get_possible_access_paths};
     use tidb_planner_util::path::{IndexLookUpPushDownByType};
     use tidb_planner_core_operator_logicalop::data_source::DataSourceIndexHint;
 
@@ -1191,7 +1203,7 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
         restored: "INDEX_LOOKUP_PUSHDOWN(t, idx_b)".to_owned(),
     };
     let resolve = |table: &SourceTable, session| {
-        let paths = get_possible_access_paths(table, false, None, None, true, false).unwrap();
+        let paths = get_possible_access_paths(table, false, None, None, true, false, &[], false).unwrap();
         apply_table_index_hints(
             table,
             &paths,
@@ -1215,7 +1227,7 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
             "common handle table with old encoding version is not supported",
         ),
         (
-            |table, _| table.indexes[0].global = true,
+            |table, _| table.indexes[0].write().global = true,
             "the global index in partition table is not supported",
         ),
         (
@@ -1227,7 +1239,7 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
             "cached table is not supported",
         ),
         (
-            |table, _| table.indexes[0].is_multi_valued = true,
+            |table, _| table.indexes[0].write().mv_index = true,
             "multi-valued index is not supported",
         ),
         (
@@ -1256,7 +1268,7 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
         let mut session = IndexLookupPushDownSession::default();
         mutate(&mut table, &mut session);
         let result = resolve(&table, session);
-        assert!(result.index_lookup_push_down_by.is_empty());
+        assert!(result.paths.iter().all(|path| path.index_lookup_push_down_by == tidb_planner_util::path::IndexLookUpPushDownByType::None));
         assert_eq!(
             result.hint_warnings,
             vec![format!(
@@ -1274,12 +1286,12 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
         },
     );
     assert_eq!(
-        forced.index_lookup_push_down_by.get(&1),
-        Some(&IndexLookUpPushDownByType::Hint),
+        forced.paths.iter().find(|path| path.index_info().is_some_and(|index| index.read().id == 1)).map(|path| path.index_lookup_push_down_by),
+        Some(IndexLookUpPushDownByType::Hint),
         "an explicit hint overrides the system-policy origin"
     );
 
-    let paths = get_possible_access_paths(&table, false, None, None, true, false).unwrap();
+    let paths = get_possible_access_paths(&table, false, None, None, true, false, &[], false).unwrap();
     let auto = apply_table_index_hints(
         &table,
         &paths,
@@ -1296,8 +1308,8 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
     )
     .unwrap();
     assert_eq!(
-        auto.index_lookup_push_down_by.get(&1),
-        Some(&IndexLookUpPushDownByType::SysVar)
+        auto.paths.iter().find(|path| path.index_info().is_some_and(|index| index.read().id == 1)).map(|path| path.index_lookup_push_down_by),
+        Some(IndexLookUpPushDownByType::SysVar)
     );
     let affinity_only = apply_table_index_hints(
         &table,
@@ -1314,7 +1326,7 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
         "tikv,tiflash,tidb",
     )
     .unwrap();
-    assert!(affinity_only.index_lookup_push_down_by.is_empty());
+    assert!(affinity_only.paths.iter().all(|path| path.index_lookup_push_down_by == tidb_planner_util::path::IndexLookUpPushDownByType::None));
 }
 
 #[test]
@@ -1377,39 +1389,25 @@ fn test_fast_index_hint_check_keeps_go_smaller_boundary() {
 }
 
 #[test]
-fn test_unknown_database_and_table_are_distinguished() {
+fn test_unknown_database_and_table_both_report_the_table() {
     let harness = Harness::new();
     let mut builder = harness.builder();
     let error = builder
         .build_select(&parse_select("SELECT a FROM nosuchdb.t"))
         .expect_err("an unknown database is an error");
-    assert!(error.message().contains("Unknown database"));
+    // Go `buildDataSource` (`infoschema.ErrTableNotExists`) names the table,
+    // not the database: "Table 'nosuchdb.t' doesn't exist".
+    assert!(
+        error.message().contains("Table 'nosuchdb.t' doesn't exist"),
+        "said: {}",
+        error.message()
+    );
 
     let mut builder = harness.builder();
     let error = builder
         .build_select(&parse_select("SELECT a FROM nosuchtable"))
         .expect_err("an unknown table is an error");
     assert!(error.message().contains("doesn't exist"));
-}
-
-#[test]
-fn test_unported_clauses_name_their_go_symbol() {
-    // 6c landed GROUP BY, HAVING and DISTINCT, 6d landed `WITH`
-    // (`buildWith`) and 6e landed `WINDOW` (`buildWindowFunctions`). What
-    // remains refused inside the window stage is the `windowAggMap` half of
-    // `resolveWindowFunction`; see [`super::window`]'s section 3.
-    let sql = "SELECT ROW_NUMBER() OVER (ORDER BY SUM(a)) FROM t GROUP BY b";
-    let symbol = "resolveWindowFunction";
-    let harness = Harness::new();
-    let mut builder = harness.builder();
-    let error = builder
-        .build_select(&parse_select(sql))
-        .expect_err("an unported clause is an explicit error");
-    assert!(
-        error.message().contains(symbol),
-        "`{sql}` must name {symbol}, said: {}",
-        error.message()
-    );
 }
 
 // ***** the marker scheme, through the resolver *****
@@ -1481,7 +1479,7 @@ fn test_constant_is_always_false_matches_go_s_eval_bool() {
     use tidb_datatype::Datum;
     use tidb_expr::constant::Constant;
 
-    let ctx = tidb_expr::context::NoColumns;
+    let ctx = tidb_exprctx::NoColumns;
     let decide = |value: Datum| {
         constant_is_always_false(
             &Constant::new(value, FieldType::new(FieldTypeCode::LongLong)),
@@ -1679,8 +1677,8 @@ fn a_built_data_source_enumerates_its_access_paths() {
             tidb_planner_util::path::AccessPath::index_path(data_source.indexes[0].clone()),
         ]
     );
-    // The GROWN lists stay empty at build time; the costing seam fills them.
-    assert!(data_source.possible_access_paths.is_empty());
+    // Nothing is derived at build time; statistics derivation fills the paths.
+    assert!(data_source.derived_access_paths.is_none());
 }
 
 #[test]

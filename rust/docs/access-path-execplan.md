@@ -161,10 +161,11 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
   keep their three-way TiKV-table / TiFlash / index split for now; step 4
   moves them onto Go's per-path fields.
 
-- `crates/tidb-planner/src/plan_builder/tests.rs` (1,769 lines) is not a
-  module of the crate: `431d637dec5` dropped its `mod tests;`, so it has not
-  compiled since. Its hint assertions were updated with this plan, but the
-  file needs wiring back in (or deleting) as its own task.
+- `crates/tidb-planner/src/plan_builder/tests.rs` had not been a module
+  since `431d637dec5` dropped its `mod tests;`. It is declared again
+  (2026-11-02): stale API uses updated; the unknown-database test now
+  expects Go's `Table 'nosuchdb.t' doesn't exist` (checked with gorun); the
+  unported-clause test was removed because the clause is ported.
 
 ## Decision Log
 

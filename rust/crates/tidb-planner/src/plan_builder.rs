@@ -190,6 +190,8 @@ mod projection_group_check;
 pub mod set_opr;
 #[cfg(test)]
 mod set_opr_tests;
+#[cfg(test)]
+mod tests;
 pub mod set;
 mod show;
 pub mod stmt_build;
