@@ -403,25 +403,23 @@ fn build_partial_path_for_mv_index(
         return Ok(None);
     }
     let full_idx_cols = columns.iter().cloned().map(Some).collect();
-    let filled = tidb_planner_util::path::FilledIndexPath {
-        detached,
-        index_filters: Vec::new(),
-        table_filters: Vec::new(),
-        // Go never sets CountAfterIndex on an MV partial path.
-        count_after_index: Some(0.0),
-        correlated_access_count: 0,
-    };
-    let rows = estimate_partial_index_ranges(ds, index, &filled, &columns, ctx)?;
-    Ok(Some(AccessPath {
-        filled: Some(filled),
+    let mut path = AccessPath {
         full_idx_cols: Some(full_idx_cols),
         idx_cols: columns,
-        row_estimate: Some(tidb_stats::RowEstimate::new(
-            rows, rows, rows,
-        )),
+        ranges: detached.ranges,
+        access_conds: detached.access_conds,
+        eq_cond_count: detached.eq_cond_count,
+        eq_or_in_cond_count: detached.eq_or_in_count,
+        is_dnf_cond: detached.is_dnf_cond,
+        min_access_conds_for_dnf_cond: detached.min_access_conds_for_dnf_cond,
+        // Go never sets CountAfterIndex on an MV partial path.
+        count_after_index: Some(0.0),
         is_single_scan: Some(false),
         ..AccessPath::index_path(index.clone())
-    }))
+    };
+    let rows = estimate_partial_index_ranges(ds, &path, ctx)?;
+    path.row_estimate = Some(tidb_stats::RowEstimate::new(rows, rows, rows));
+    Ok(Some(path))
 }
 
 /// Go `buildPartialPaths4MVIndex`: one partial path per value the MV
@@ -663,9 +661,7 @@ pub(crate) fn generate_and_index_merge_4_mv_index(
         let (index_filters, table_filters) =
             split_index_filter_conditions(ds, index, remaining, ctx);
         for partial in &mut partials {
-            if let Some(filled) = partial.filled.as_mut() {
-                filled.index_filters.extend(index_filters.iter().cloned());
-            }
+            partial.index_filters.extend(index_filters.iter().cloned());
         }
         paths.push(build_partial_path_up_for_mv_index(
             ds,
@@ -819,9 +815,7 @@ pub(crate) fn generate_and_index_merge_4_composed_index(
         for filter in &index_filters {
             in_index_filter.insert(filter.canonical_hash_code());
         }
-        if let Some(filled) = partial.filled.as_mut() {
-            filled.index_filters.extend(index_filters);
-        }
+        partial.index_filters.extend(index_filters);
     }
     let table_filters = remained
         .into_iter()

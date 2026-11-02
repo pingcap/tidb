@@ -80,7 +80,13 @@ pub(super) fn prepare_ordinary_paths<'a>(
                     pseudo: table_pseudo,
                     matches_property: table_path_matches_order(ds, prop, Some(&table.detached.ranges))
                         .matched(),
-                    eq_or_in_count: super::candidate::equality_facts(&table.detached).0,
+                    eq_or_in_count: super::candidate::equality_facts(
+                        &table.detached.access_conds,
+                        table.detached.eq_or_in_count,
+                        table.detached.is_dnf_cond,
+                        table.detached.min_access_conds_for_dnf_cond,
+                    )
+                    .0,
                     count_after_access: access,
                     count_after_index: 0.0,
                     min_count_after_access: table.min_count_after_access,
@@ -114,7 +120,6 @@ pub(super) fn prepare_ordinary_paths<'a>(
                     continue;
                 }
                 let state = ds.path_by_index_id(index.read().id)?;
-                let filled = state.filled.as_ref()?;
                 let partial = prop
                     .partial_order_info
                     .as_ref()
@@ -136,8 +141,8 @@ pub(super) fn prepare_ordinary_paths<'a>(
                 // Go `derivePathStatsAndTryHeuristics` selects a path whose
                 // ranges came out empty before any skyline pruning: the
                 // statement reads nothing, whatever conditions remain.
-                let empty_ranges = filled.detached.ranges.is_empty();
-                if filled.detached.access_conds.is_empty()
+                let empty_ranges = state.ranges.is_empty();
+                if state.access_conds.is_empty()
                     && !empty_ranges
                     && prop.is_sort_item_empty()
                     && !path.forced
@@ -151,20 +156,20 @@ pub(super) fn prepare_ordinary_paths<'a>(
                     index,
                     state,
                     single_scan,
-                    index_path_matches_order(ds, index, prop, Some(&filled.detached.ranges)).matched(),
+                    index_path_matches_order(ds, index, prop, Some(&state.ranges)).matched(),
                 );
                 let heuristic = if empty_ranges {
                     Some(HeuristicPath::default())
                 } else {
                     metrics.as_ref().map(|metrics| HeuristicPath {
-                        range_count: filled.detached.ranges.len(),
-                        only_points: filled.detached.ranges.iter().all(|range| {
+                        range_count: state.ranges.len(),
+                        only_points: state.ranges.iter().all(|range| {
                             range.is_point_non_nullable()
                                 && range.low_val.len() == index.read().columns.len()
                         }),
                         unique: index.read().unique,
                         single_scan,
-                        table_filter_count: filled.table_filters.len(),
+                        table_filter_count: state.table_filters.len(),
                         access_columns: metrics.access_columns.clone(),
                     })
                 };
@@ -172,7 +177,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
             }
             None => (None, None),
         };
-        let flags = range_scan_flags(ds, path, prop, ctx, metrics.as_ref());
+        let flags = range_scan_flags(ds, path, prop, metrics.as_ref());
         candidates.push((path, metrics, heuristic, flags));
     }
     // Go `derivePathStatsAndTryHeuristics` prunes `PossibleAccessPaths` in
@@ -230,7 +235,6 @@ fn range_scan_flags(
     ds: &DataSource,
     path: &AccessPath,
     prop: &PhysicalProperty,
-    ctx: &DispatchContext<'_>,
     metrics: Option<&CandidateMetrics>,
 ) -> (bool, bool) {
     if ds.possible_access_paths.is_none() {
@@ -254,36 +258,26 @@ fn range_scan_flags(
             )
         }
         Some(index) => {
-            let Some(filled) = ds
-                .path_by_index_id(index.read().id)
-                .and_then(|state| state.filled.as_ref())
-            else {
+            let Some(filled) = ds.path_by_index_id(index.read().id) else {
                 return (false, false);
             };
             let single_scan = metrics.is_some_and(|metrics| metrics.single_scan);
             let matches_property = metrics.is_some_and(|metrics| metrics.matches_property);
-            let remained = &filled.detached.remained_conds;
-            let index_filter_count = remained
-                .iter()
-                .filter(|condition| {
-                    tidb_planner_core_operator_logicalop::data_source::index_covers_condition(
-                        ds,
-                        index,
-                        condition,
-                        ctx.opt_prefix_index_single_scan,
-                    )
-                })
-                .count();
             // Go `c.eqOrInCount`: the candidate's own count, which a DNF
             // condition derives from its minimum access conditions.
-            let (eq_or_in_count, _) = super::candidate::equality_facts(&filled.detached);
+            let (eq_or_in_count, _) = super::candidate::equality_facts(
+                &filled.access_conds,
+                filled.eq_or_in_cond_count,
+                filled.is_dnf_cond,
+                filled.min_access_conds_for_dnf_cond,
+            );
             let index_filters =
-                eq_or_in_count > 0 || remained.len() - index_filter_count < index_filter_count;
+                eq_or_in_count > 0 || filled.table_filters.len() < filled.index_filters.len();
             (
                 (prefer_merge
                     || ((single_scan || index_filters)
                         && (prop.is_sort_item_empty() || matches_property)))
-                    && !tidb_ranger::types::has_full_range(&filled.detached.ranges, false),
+                    && !tidb_ranger::types::has_full_range(&filled.ranges, false),
                 path.forced || index.read().global || index.read().mv_index,
             )
         }

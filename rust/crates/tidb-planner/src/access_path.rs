@@ -142,10 +142,7 @@ pub(crate) fn derive_access_paths(
                     if path.is_table_path() {
                         return table_path.as_ref().and_then(|path| path.count_after_access);
                     }
-                    path.filled
-                        .as_ref()
-                        .and_then(|filled| filled.count_after_index)
-                        .or_else(|| path.count_after_access())
+                    path.count_after_index.or_else(|| path.count_after_access())
                 })
                 .map(|rows| rows / stats.row_count())
                 .reduce(f64::min)
@@ -196,10 +193,7 @@ pub(crate) fn derive_access_paths(
                             None => table_path
                                 .as_ref()
                                 .is_some_and(|path| !path.detached.access_conds.is_empty()),
-                            Some(_) => path
-                                .filled
-                                .as_ref()
-                                .is_some_and(|filled| !filled.detached.access_conds.is_empty()),
+                            Some(_) => !path.access_conds.is_empty(),
                         });
             }
             if need_consider_index_merge

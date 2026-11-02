@@ -121,17 +121,19 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
     replaced by the fill as Go's `fillIndexPath` does.
   - [x] 2c-2 (2026-11-02): an index path's `IdxCols` / `IdxColLens` are a
     path field (`idx_cols`); the merge helpers take the `AccessPath`.
-  - [ ] 2c: the rest of `FilledIndexPath`'s fields (the detached ranges and
-    conditions, the filters, `CountAfterIndex`) and `FilledTablePath`
-    (`common_columns` = the table path's `IdxCols`, the ranges, the counts)
-    flatten. Next design (tried 2026-11-02, 43 sites): `fill_index_path`
-    returns a filled `AccessPath` (Go `fillIndexPath` fills `*AccessPath`)
-    instead of a `FilledIndexPath`, so `IndexFilters`, `TableFilters` (one
-    field with the merges' `TableFilters`) and `CountAfterIndex` live on the
-    path and each caller adopts the returned path rather than copying fields into Go's (`IdxCols`,
-    `Ranges`, `AccessConds`, `IndexFilters`, `TableFilters`,
-    `CountAfterIndex`), and `declared_columns` / `row_estimate` take Go's
-    names.
+  - [x] 2c-3 (2026-11-02): an index path's fill is Go's fields on the path
+    (`ranges`, `access_conds`, `eq_cond_count`, `eq_or_in_cond_count`,
+    `is_dnf_cond`, `min_access_conds_for_dnf_cond`, `index_filters`,
+    `table_filters` -- one field with the merges' -- and `count_after_index`);
+    `fill_index_path` fills the `AccessPath` in place as Go's `fillIndexPath`
+    does, and `FilledIndexPath` is gone. A path derivation filled carries its
+    `CountAfterIndex` (Go leaves 0 on a path it never fills: Rust still skips
+    multi-valued indexes there). A point get's residual is `IndexFilters`
+    then `TableFilters`, as Go appends them.
+  - [ ] 2c-4: `FilledTablePath` flattens the same way (`common_columns` =
+    the table path's `IdxCols`, the ranges and conditions, the counts =
+    `row_estimate`); its handle column and type are read from the
+    `DataSource` where used, as Go's `GetPKIsHandleCol` is.
 - [ ] 3. Index merge produces it.
   - [x] 3a (2026-11-02): a finished merge's partials are `AccessPath`s (Go
     `PartialIndexPaths`); `IndexMergePartial` is gone. Go's per-path

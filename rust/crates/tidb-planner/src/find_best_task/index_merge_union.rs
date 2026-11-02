@@ -63,8 +63,8 @@ fn partial_matches_order(
     // order only outright; a correlated condition elsewhere (a table filter,
     // an index filter on top of constant ranges) leaves the range groups
     // valid, as in Go.
-    let allow_groups = |detached: &tidb_ranger::detacher::DetachRangeResult| {
-        !tidb_expr::expr_util::predicates::contain_correlated_column(&detached.access_conds)
+    let allow_groups = |access_conds: &[tidb_expr::expression::Expression]| {
+        !tidb_expr::expr_util::predicates::contain_correlated_column(access_conds)
     };
     let lead = &partial[0];
     if is_mv_alternative(partial) {
@@ -100,7 +100,7 @@ fn partial_matches_order(
             &filled.common_columns,
             &filled.detached.ranges,
             items,
-            allow_groups(&filled.detached),
+            allow_groups(&filled.detached.access_conds),
         );
     }
     index_partial_matches_order(
@@ -108,7 +108,7 @@ fn partial_matches_order(
         lead.index_info().expect("an index alternative reads its index"),
         lead,
         items,
-        allow_groups(&lead.filled_index_path().detached),
+        allow_groups(&lead.access_conds),
     )
 }
 
@@ -121,13 +121,12 @@ fn index_partial_matches_order(
     items: &[tidb_planner_property::SortItem],
     allow_groups: bool,
 ) -> Option<Vec<usize>> {
-    let filled = path.filled_index_path();
     if ds.path_by_index_id(index.read().id).is_some_and(|path| path.force_no_keep_order) {
         return None;
     }
     // Match the same normalized key layout used by ordinary ranges,
     // including eligible appended handles after fixed declared keys.
-    key_columns_match_order(&path.idx_cols, &filled.detached.ranges, items, allow_groups)
+    key_columns_match_order(&path.idx_cols, &path.ranges, items, allow_groups)
 }
 
 /// Go `isMatchProp` over one partial path's key columns: each sort column
@@ -297,15 +296,14 @@ pub(super) fn converge_union_index_merge_path<'a>(
                     return false;
                 }
                 let index = lead.index_info().expect("an index alternative reads its index");
-                let filled = lead.filled_index_path();
                 tidb_planner_core_operator_logicalop::data_source::index_covers_condition(
                     ds,
                     index,
                     filter,
                     ctx.opt_prefix_index_single_scan,
-                ) && !filled.table_filters.iter().any(|condition| {
+                ) && !lead.table_filters.iter().any(|condition| {
                     condition.canonical_hash_code() == filter.canonical_hash_code()
-                }) && filled.detached.access_conds.iter().any(|condition| {
+                }) && lead.access_conds.iter().any(|condition| {
                     condition.canonical_hash_code() == filter.canonical_hash_code()
                 })
             })
@@ -569,12 +567,11 @@ pub(super) fn build_converged_union_index_merge_task(
             // Go builds one partial scan per path of the MV alternative.
             let index = lead.index_info().expect("an MV alternative reads its index");
             for path in partial {
-                let filled = path.filled_index_path();
                 let scan_rows = partial_rows(
                     path.count_after_access().unwrap_or(0.0),
                     matched.matched(),
                     false,
-                    !filled.index_filters.is_empty(),
+                    !path.index_filters.is_empty(),
                 );
                 partial_remaining.extend(push_index_partial(
                     ds,
@@ -591,10 +588,9 @@ pub(super) fn build_converged_union_index_merge_task(
             }
         } else {
             let index = lead.index_info().expect("an index alternative reads its index");
-            let filled = lead.filled_index_path();
             let rows = &lead.count_after_access().unwrap_or(0.0);
             let scan_rows =
-                partial_rows(*rows, matched.matched(), false, !filled.index_filters.is_empty());
+                partial_rows(*rows, matched.matched(), false, !lead.index_filters.is_empty());
             partial_remaining.extend(push_index_partial(
                 ds,
                 ctx,
@@ -793,13 +789,12 @@ fn keeps_phys_tbl_id(ds: &DataSource) -> bool {
 pub(crate) fn partial_index_range_rebuild(
     path: &AccessPath,
 ) -> Option<tidb_planner_core_operator_physicalop::range_rebuild::IndexRangeRebuild> {
-    let filled = path.filled_index_path();
-    if filled.detached.access_conds.is_empty() {
+    if path.access_conds.is_empty() {
         return None;
     }
     let (columns, lengths) = path.idx_cols.iter().cloned().unzip();
     Some(tidb_planner_core_operator_physicalop::range_rebuild::IndexRangeRebuild::new(
-        filled.detached.access_conds.clone(),
+        path.access_conds.clone(),
         columns,
         lengths,
     ))
@@ -846,8 +841,7 @@ fn push_index_partial(
     group_by_col_idxs: &[usize],
     partial_plans_raw: &mut Vec<PhysicalPlan>,
 ) -> Result<Vec<tidb_expr::expression::Expression>, PlanError> {
-    let filled = path.filled_index_path();
-    let ranges = &filled.detached.ranges;
+    let ranges = &path.ranges;
     let source_index = index;
     let mut schema_columns = partial_index_schema(ds, source_index, ctx)?;
     // Go `ConvertToPartialIndexScan`: an ordered partial of a dynamically
@@ -899,9 +893,9 @@ fn push_index_partial(
     // stay on the partial (`extractFiltersForIndexMerge`); the Selection is
     // built even when none can, and the rest return to the root task.
     let mut remaining = Vec::new();
-    if !filled.index_filters.is_empty() || global_partition_filter.is_some() {
+    if !path.index_filters.is_empty() || global_partition_filter.is_some() {
         let (pushed, rest) = tidb_planner_core_operator_physicalop::pushdown::extract_filters_for_index_merge(
-            filled
+            path
                 .index_filters
                 .iter()
                 .cloned()
@@ -920,7 +914,7 @@ fn push_index_partial(
         );
         base.base.set_schema(scan.schema().cloned());
         let ratio = if rows > 0.0 {
-            filled.count_after_index.unwrap_or(rows) / rows
+            path.count_after_index.unwrap_or(rows) / rows
         } else {
             0.0
         };

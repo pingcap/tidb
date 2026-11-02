@@ -1240,8 +1240,19 @@ impl InitStats<'_> {
         source.base.base.set_stats(None);
         source.possible_access_paths = None;
         for path in &mut source.all_possible_access_paths {
+            // The fill's outputs; derivation fills them again.
             path.row_estimate = None;
-            path.filled = None;
+            path.idx_cols.clear();
+            path.ranges.clear();
+            path.access_conds.clear();
+            path.eq_cond_count = 0;
+            path.eq_or_in_cond_count = 0;
+            path.is_dnf_cond = false;
+            path.min_access_conds_for_dnf_cond = 0;
+            path.index_filters.clear();
+            path.table_filters.clear();
+            path.count_after_index = None;
+            path.correlated_access_count = 0;
             path.filled_table = None;
             path.is_single_scan = None;
         }

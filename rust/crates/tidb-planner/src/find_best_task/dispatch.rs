@@ -2405,9 +2405,7 @@ fn index_join_candidate(
     candidate.matches_property = false;
     // Go `isFullIndexMatch` reads the static EqOrInCondCount with the widened
     // index-condition map.
-    let static_eq_or_in = state
-        .and_then(|state| state.filled.as_ref())
-        .map_or(0, |filled| filled.detached.eq_or_in_count);
+    let static_eq_or_in = state.map_or(0, |state| state.eq_or_in_cond_count);
     candidate.full_index_match =
         static_eq_or_in > 0 && candidate.index_columns.len() >= source_index.read().columns.len();
     candidate
@@ -3880,10 +3878,12 @@ fn find_best_task_4_logical_data_source_paths(
                 // column pruning. A missing later index column does not
                 // invalidate ranges on an earlier prefix; only the first
                 // unresolved position ends that prefix.
-                let filled_owner = prop.index_join_prop.is_none().then(|| {
-                    ds.path_by_index_id(source_index.read().id).filter(|path| path.filled.is_some())
+                // A path derivation filled carries its `CountAfterIndex`.
+                let filled_path = prop.index_join_prop.is_none().then(|| {
+                    ds.path_by_index_id(source_index.read().id)
+                        .filter(|path| path.count_after_index.is_some())
                 }).flatten();
-                let filled_path = filled_owner.and_then(|path| path.filled.as_ref());
+                let filled_owner = filled_path;
                 let resolved_index_prefix = filled_owner.map_or_else(
                     || ds.index_range_columns(source_index), |path| path.idx_cols.clone(),
                 );
@@ -3918,7 +3918,24 @@ fn find_best_task_4_logical_data_source_paths(
                 let detach = if index_join_probe.is_some() {
                     None
                 } else if let Some(path) = filled_path {
-                    Some(path.detached.clone())
+                    // Go reads the path's own fields; the residual is
+                    // `IndexFilters` then `TableFilters`, as Go's point get
+                    // appends them.
+                    Some(tidb_ranger::detacher::DetachRangeResult {
+                        ranges: path.ranges.clone(),
+                        access_conds: path.access_conds.clone(),
+                        remained_conds: path
+                            .index_filters
+                            .iter()
+                            .chain(&path.table_filters)
+                            .cloned()
+                            .collect(),
+                        eq_cond_count: path.eq_cond_count,
+                        eq_or_in_count: path.eq_or_in_cond_count,
+                        is_dnf_cond: path.is_dnf_cond,
+                        min_access_conds_for_dnf_cond: path.min_access_conds_for_dnf_cond,
+                        ..Default::default()
+                    })
                 } else if ds.pushed_down_conds.is_empty() || index_cols.is_empty() {
                     None
                 } else {

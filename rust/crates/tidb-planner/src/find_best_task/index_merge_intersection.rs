@@ -39,13 +39,9 @@ pub(super) fn build_prepared_index_merge_task(
     let output_rows = path.count_after_access().unwrap_or(0.0);
     for partial in partials {
         let source_index = partial.index_info().expect("an index merge partial reads an index");
-        let filled = partial
-            .filled
-            .as_ref()
-            .expect("intersection partials are filled logical paths");
         let rows = partial
             .count_after_access()
-            .unwrap_or(filled.detached.ranges.len() as f64);
+            .unwrap_or(partial.ranges.len() as f64);
         let schema_columns =
             crate::find_best_task::index_merge_union::partial_index_schema(ds, source_index, ctx)?;
         let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
@@ -72,7 +68,7 @@ pub(super) fn build_prepared_index_merge_task(
             index_name: source_index.read().name.original().to_owned(),
             keep_order: false,
             desc: false,
-            ranges: filled.detached.ranges.clone(),
+            ranges: partial.ranges.clone(),
             range_rebuild: crate::find_best_task::index_merge_union::partial_index_range_rebuild(
                 partial,
             ),
@@ -83,11 +79,11 @@ pub(super) fn build_prepared_index_merge_task(
             prop: Some(Box::new(tidb_planner_property::PhysicalProperty::default())),
             pk_is_handle_col: ds.pk_is_handle().then(|| ds.handle_cols.first().cloned()).flatten(),
         });
-        if !filled.index_filters.is_empty() {
+        if !partial.index_filters.is_empty() {
             // Go `ConvertToPartialIndexScan`: only what TiKV can evaluate
             // stays on the partial; the Selection is kept even if empty.
             let (pushed, rest) = tidb_planner_core_operator_physicalop::pushdown::extract_filters_for_index_merge(
-                filled.index_filters.clone(),
+                partial.index_filters.clone(),
                 &ctx.expr_pushdown_blacklist,
             );
             partial_remaining.extend(rest);
@@ -100,7 +96,7 @@ pub(super) fn build_prepared_index_merge_task(
             selection
                 .base
                 .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(
-                    filled
+                    partial
                         .count_after_index
                         .unwrap_or(rows * tidb_planner_core_cost::SELECTION_FACTOR),
                     [],

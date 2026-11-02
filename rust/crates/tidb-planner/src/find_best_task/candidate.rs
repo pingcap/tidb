@@ -97,7 +97,12 @@ pub struct CandidateMetrics {
     pub max_count_after_access: f64,
 }
 
-pub(super) fn equality_facts(detached: &tidb_ranger::detacher::DetachRangeResult) -> (usize, bool) {
+pub(super) fn equality_facts(
+    access_conds: &[tidb_expr::expression::Expression],
+    eq_or_in_count: usize,
+    is_dnf_cond: bool,
+    min_access_conds_for_dnf_cond: i64,
+) -> (usize, bool) {
     use tidb_expr::expression::Expression;
     fn only_equal(expression: &Expression) -> bool {
         let Expression::ScalarFunction(function) = expression else {
@@ -109,10 +114,10 @@ pub(super) fn equality_facts(detached: &tidb_ranger::detacher::DetachRangeResult
             _ => false,
         }
     }
-    let equal_dnf = detached.is_dnf_cond && detached.access_conds.iter().all(only_equal);
-    let minimum_dnf = detached.min_access_conds_for_dnf_cond.max(0) as usize;
-    let eq_or_in_count = if !detached.is_dnf_cond || detached.access_conds.is_empty() {
-        detached.eq_or_in_count
+    let equal_dnf = is_dnf_cond && access_conds.iter().all(only_equal);
+    let minimum_dnf = min_access_conds_for_dnf_cond.max(0) as usize;
+    let eq_or_in_count = if !is_dnf_cond || access_conds.is_empty() {
+        eq_or_in_count
     } else if equal_dnf {
         minimum_dnf
     } else {
@@ -131,9 +136,8 @@ pub(crate) fn get_index_candidate(
     matches_property: bool,
 ) -> Option<CandidateMetrics> {
     use tidb_expr::expression::Expression;
-    let filled = path.filled.as_ref()?;
     let estimate = path.row_estimate?;
-    let count_after_index = filled.count_after_index?;
+    let count_after_index = path.count_after_index?;
     fn extract<'a>(
         conditions: impl Iterator<Item = &'a Expression>,
         columns: impl Iterator<Item = &'a (tidb_expr::column::Column, i64)> + Clone,
@@ -167,22 +171,22 @@ pub(crate) fn get_index_candidate(
         }
         Col2Len::from_pairs(result)
     }
-    let access_columns = extract(filled.detached.access_conds.iter(), path.idx_cols.iter());
+    let access_columns = extract(path.access_conds.iter(), path.idx_cols.iter());
     let index_columns = extract(
-        filled
-            .detached
-            .access_conds
-            .iter()
-            .chain(&filled.index_filters),
+        path.access_conds.iter().chain(&path.index_filters),
         path.full_idx_cols.iter().flatten().flatten(),
     );
-    let detached = &filled.detached;
-    let (eq_or_in_count, equal_dnf) = equality_facts(detached);
-    let minimum_dnf = detached.min_access_conds_for_dnf_cond.max(0) as usize;
+    let (eq_or_in_count, equal_dnf) = equality_facts(
+        &path.access_conds,
+        path.eq_or_in_cond_count,
+        path.is_dnf_cond,
+        path.min_access_conds_for_dnf_cond,
+    );
+    let minimum_dnf = path.min_access_conds_for_dnf_cond.max(0) as usize;
     let full_index_match = if equal_dnf {
         minimum_dnf >= index.read().columns.len()
     } else {
-        detached.eq_or_in_count > 0 && index_columns.len() >= index.read().columns.len()
+        path.eq_or_in_cond_count > 0 && index_columns.len() >= index.read().columns.len()
     };
     Some(CandidateMetrics {
         access_columns,
@@ -445,7 +449,7 @@ mod skyline_tests {
 
     #[test]
     fn index_facts_keep_full_key_filters_and_dnf_equality_counts() {
-        use tidb_planner_util::path::{AccessPath, FilledIndexPath};
+        use tidb_planner_util::path::AccessPath;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::{
             column::Column, constant::Constant, expression::Expression,
@@ -483,17 +487,10 @@ mod skyline_tests {
             // The unresolved middle key cannot erase a later index filter.
             full_idx_cols: Some(vec![Some((a.clone(), -1)), None, Some((c.clone(), 4))]),
             idx_cols: vec![(a.clone(), -1)],
-            filled: Some(FilledIndexPath {
-                detached: tidb_ranger::detacher::DetachRangeResult {
-                    access_conds: vec![eq(&a)],
-                    eq_or_in_count: 1,
-                    ..Default::default()
-                },
-                index_filters: vec![eq(&c)],
-                table_filters: Vec::new(),
-                count_after_index: Some(8.0),
-                correlated_access_count: 0,
-            }),
+            access_conds: vec![eq(&a)],
+            eq_or_in_cond_count: 1,
+            index_filters: vec![eq(&c)],
+            count_after_index: Some(8.0),
             ..Default::default()
         };
         let facts = get_index_candidate(&source, &index, &path, false, false).unwrap();
@@ -521,11 +518,10 @@ mod skyline_tests {
             "non-DNF full match includes index filters, as in Go"
         );
 
-        let detached = &mut path.filled.as_mut().unwrap().detached;
-        detached.is_dnf_cond = true;
-        detached.min_access_conds_for_dnf_cond = 2;
-        detached.eq_or_in_count = 0;
-        detached.access_conds = vec![func(
+        path.is_dnf_cond = true;
+        path.min_access_conds_for_dnf_cond = 2;
+        path.eq_or_in_cond_count = 0;
+        path.access_conds = vec![func(
             "or",
             vec![
                 func("and", vec![eq(&a), eq(&c)]),
@@ -535,16 +531,11 @@ mod skyline_tests {
         let facts = get_index_candidate(&source, &two_keys, &path, false, false).unwrap();
         assert_eq!(facts.eq_or_in_count, 2);
         assert!(facts.full_index_match);
-        path.filled
-            .as_mut()
-            .unwrap()
-            .detached
-            .access_conds
-            .push(func("not", vec![eq(&c)]));
+        path.access_conds.push(func("not", vec![eq(&c)]));
         let facts = get_index_candidate(&source, &two_keys, &path, false, false).unwrap();
         assert_eq!(facts.eq_or_in_count, 1);
         assert!(!facts.full_index_match);
-        path.filled.as_mut().unwrap().count_after_index = None;
+        path.count_after_index = None;
         assert!(
             get_index_candidate(&source, &index, &path, false, false).is_none(),
             "unavailable filter estimates cannot justify eliminating a candidate"

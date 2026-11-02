@@ -270,47 +270,44 @@ fn prepare_union_index_merge_path_for_or(
                 }
             }
             let (pushable, rejected) = partition_partial_filters(&usable, ctx);
-            let Ok((mut filled, full_idx_cols, idx_cols)) = super::ordinary::fill_index_path(
+            let mut path = AccessPath::index_path(source_index.clone());
+            if super::ordinary::fill_index_path(
                 ds,
-                source_index,
+                &mut path,
                 &pushable,
                 ctx,
                 ctx.opt_prefix_index_single_scan,
                 false,
-            ) else {
+            )
+            .is_err()
+            {
                 // Go accessPathsForConds declines a partial when derivation fails.
                 continue;
-            };
-            let result = &filled.detached;
+            }
             // Go keeps a partial whose ranges came out empty: it reads
             // nothing, and only a full range disqualifies a partial.
-            if result.ranges.iter().any(|range| range.is_full_range(false)) {
+            if path.ranges.iter().any(|range| range.is_full_range(false)) {
                 continue;
             }
-            let Ok(rows) = estimate_partial_index_ranges(ds, source_index, &filled, &idx_cols, ctx) else {
+            let Ok(rows) = estimate_partial_index_ranges(ds, &path, ctx) else {
                 continue;
             };
             let mut keep_source_filter =
-                keep_branch_filter || !rejected.is_empty() || !filled.table_filters.is_empty();
-            filled.table_filters.clear();
+                keep_branch_filter || !rejected.is_empty() || !path.table_filters.is_empty();
+            path.table_filters.clear();
             if !tidb_expr::infer_pushdown::can_exprs_push_down(
-                &filled.index_filters,
+                &path.index_filters,
                 tidb_kv::store_type::StoreType::TiKv,
                 ctx.expr_pushdown_blacklist,
             ) {
                 keep_source_filter = true;
-                filled.index_filters.clear();
+                path.index_filters.clear();
             }
-            filled.count_after_index =
-                Some(rows * super::ordinary::filter_selectivity(ds, &filled.index_filters, ctx));
-            branch.push(vec![AccessPath {
-                filled: Some(filled),
-                full_idx_cols: Some(full_idx_cols),
-                idx_cols,
-                row_estimate: Some(tidb_stats::RowEstimate::new(rows, rows, rows)),
-                keep_index_merge_or_source_filter: keep_source_filter,
-                ..AccessPath::index_path(source_index.clone())
-            }]);
+            path.count_after_index =
+                Some(rows * super::ordinary::filter_selectivity(ds, &path.index_filters, ctx));
+            path.row_estimate = Some(tidb_stats::RowEstimate::new(rows, rows, rows));
+            path.keep_index_merge_or_source_filter = keep_source_filter;
+            branch.push(vec![path]);
         }
         if branch.is_empty() {
             return Ok(None);
@@ -384,18 +381,15 @@ pub(crate) fn estimate_union_access(
                     alternative
                         .iter()
                         .filter_map(|path| {
-                            tidb_expr::simple_expr::compose_cnf_condition(
-                                path.filled_index_path().detached.access_conds.clone(),
-                            )
+                            tidb_expr::simple_expr::compose_cnf_condition(path.access_conds.clone())
                         })
                         .collect(),
                 )
             } else if let Some(filled) = &first.filled_table {
                 tidb_expr::simple_expr::compose_cnf_condition(filled.detached.access_conds.clone())
             } else {
-                let filled = first.filled_index_path();
-                let mut conditions = filled.detached.access_conds.clone();
-                conditions.extend(filled.index_filters.iter().cloned());
+                let mut conditions = first.access_conds.clone();
+                conditions.extend(first.index_filters.iter().cloned());
                 tidb_expr::simple_expr::compose_cnf_condition(conditions)
             }
         })
@@ -440,25 +434,25 @@ fn collect_unfinished_filters(
 ) -> Option<(Vec<Expression>, bool)> {
     let conditions = tidb_expr::expr_util::normal_form::split_cnf_items(expression);
     let (pushable, rejected) = partition_partial_filters(&conditions, ctx);
-    let detached = if let Some(index) = index {
+    let ranges = if let Some(index) = index {
+        let mut path = AccessPath::index_path(index.clone());
         super::ordinary::fill_index_path(
             ds,
-            index,
+            &mut path,
             &pushable,
             ctx,
             ctx.opt_prefix_index_single_scan,
             false,
         )
-        .ok()?
-        .0
-        .detached
+        .ok()?;
+        path.ranges
     } else {
         super::ordinary::detach_table_path(ds, None, &pushable, ctx, false)
             .ok()?
             .detached
+            .ranges
     };
-    if !detached
-        .ranges
+    if !ranges
         .iter()
         .any(|range| range.is_full_range(false))
     {
@@ -532,7 +526,7 @@ pub(crate) fn compare_alternatives(
             // and a multi-path alternative compares by its largest count.
             let index = first.index_info().expect("an MV alternative reads its index");
             let point = alternative.iter().all(|path| {
-                let ranges = &path.filled_index_path().detached.ranges;
+                let ranges = &path.ranges;
                 ranges.is_empty()
                     || (index.read().unique
                         && ranges.iter().all(|range| {
@@ -543,19 +537,17 @@ pub(crate) fn compare_alternatives(
             let rows = alternative
                 .iter()
                 .map(|path| {
-                    let filled = path.filled_index_path();
-                    if filled.index_filters.is_empty() {
+                    if path.index_filters.is_empty() {
                         path.count_after_access().unwrap_or(0.0)
                     } else {
-                        filled.count_after_index.unwrap_or(0.0)
+                        path.count_after_index.unwrap_or(0.0)
                     }
                 })
                 .fold(0.0, f64::max);
             (point, rows, index.read().global)
         } else {
             let index = first.index_info().expect("an index alternative reads its index");
-            let filled = first.filled_index_path();
-            let ranges = &filled.detached.ranges;
+            let ranges = &first.ranges;
             let point = ranges.is_empty()
                 || (index.read().unique
                     && ranges.iter().all(|range| {
@@ -563,7 +555,7 @@ pub(crate) fn compare_alternatives(
                             && range.high_val.len() == index.read().columns.len()
                     }));
             let rows = first.count_after_access().unwrap_or(0.0);
-            (point, filled.count_after_index.unwrap_or(rows), index.read().global)
+            (point, first.count_after_index.unwrap_or(rows), index.read().global)
         };
         (point, rows, global)
     };
@@ -587,12 +579,11 @@ pub(crate) fn compare_alternatives(
 /// `GetRowCountByIndexRanges`.
 pub(super) fn estimate_partial_index_ranges(
     ds: &DataSource,
-    source_index: &tidb_model::GoShared<tidb_model::IndexInfo>,
-    filled: &tidb_planner_util::path::FilledIndexPath,
-    idx_cols: &[(tidb_expr::column::Column, i64)],
+    path: &AccessPath,
     ctx: &AccessPathDerivationContext<'_>,
 ) -> Result<f64, PlanError> {
-    estimate_index_ranges(ds, source_index, &filled.detached.ranges, idx_cols, ctx)
+    let index = path.index.as_ref().expect("a partial index path reads its index");
+    estimate_index_ranges(ds, index, &path.ranges, &path.idx_cols, ctx)
         .map(|estimate| estimate.est)
 }
 
@@ -702,18 +693,14 @@ fn generate_and_index_merge_for_normal_index(
         let Some(mut path) = ds.path_by_index_id(index.read().id).cloned() else {
             continue;
         };
-        let Some(filled) = &mut path.filled else {
-            continue;
-        };
-        if tidb_ranger::types::has_full_range(&filled.detached.ranges, false) {
+        if tidb_ranger::types::has_full_range(&path.ranges, false) {
             continue;
         }
         if composed_with_mv_index {
             // For `(1 member of a) and c = 1 and d = 2` over mv(c, a), idx(c)
             // and idx(c, d), idx(c)'s access is already covered by the MV
             // partial; idx(c, d) adds `d = 2`.
-            let access_hashes = filled
-                .detached
+            let access_hashes = path
                 .access_conds
                 .iter()
                 .map(Expression::canonical_hash_code)
@@ -721,15 +708,15 @@ fn generate_and_index_merge_for_normal_index(
             if access_hashes.iter().all(|hash| used_access.contains_key(hash)) {
                 continue;
             }
-            for (hash, access) in access_hashes.into_iter().zip(&filled.detached.access_conds) {
+            for (hash, access) in access_hashes.into_iter().zip(&path.access_conds) {
                 used_access.entry(hash).or_insert_with(|| access.clone());
             }
         }
         // Go clones ordinary paths and retains only pushable index filters.
         // A prefix recheck can occur in access conditions AND table filters;
         // it must never be marked covered merely by the access condition.
-        let mut not_covered = filled.table_filters.clone();
-        filled.index_filters.retain(|condition| {
+        let mut not_covered = path.table_filters.clone();
+        path.index_filters.retain(|condition| {
             let pushable =
                 tidb_expr::infer_pushdown::can_exprs_push_down(
                     std::slice::from_ref(condition),
@@ -741,11 +728,7 @@ fn generate_and_index_merge_for_normal_index(
             }
             pushable
         });
-        let covered_conditions = filled
-            .detached
-            .access_conds
-            .iter()
-            .chain(&filled.index_filters);
+        let covered_conditions = path.access_conds.iter().chain(&path.index_filters);
         let not_covered_hashes = not_covered
             .iter()
             .map(Expression::canonical_hash_code)

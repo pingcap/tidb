@@ -55,9 +55,27 @@ pub struct AccessPath {
     /// Go `CountAfterAccess` with its `MinCountAfterAccess` /
     /// `MaxCountAfterAccess` skyline bounds, adjusted together.
     pub row_estimate: Option<tidb_stats::RowEstimate>,
-    /// An index path's `fillIndexPath` result: ranges, access conditions,
-    /// index/table filters and `CountAfterIndex`.
-    pub filled: Option<FilledIndexPath>,
+    /// Go `Ranges`: an index path's ranges, set by `fillIndexPath`.
+    pub ranges: tidb_ranger::types::Ranges,
+    /// Go `AccessConds`.
+    pub access_conds: Vec<Expression>,
+    /// Go `EqCondCount`.
+    pub eq_cond_count: usize,
+    /// Go `EqOrInCondCount`.
+    pub eq_or_in_cond_count: usize,
+    /// Go `IsDNFCond`.
+    pub is_dnf_cond: bool,
+    /// Go `MinAccessCondsForDNFCond`.
+    pub min_access_conds_for_dnf_cond: i64,
+    /// Go `IndexFilters`: filters evaluated before the table lookup.
+    pub index_filters: Vec<Expression>,
+    /// Go `CountAfterIndex`; None until `fillIndexPath`'s caller estimates it
+    /// (Go leaves 0 on a path it never filled).
+    pub count_after_index: Option<f64>,
+    /// How many trailing `AccessConds` `SplitCorColAccessCondFromFilters`
+    /// moved from the filters: `index_col = correlated_col` equalities, at
+    /// most one closing range, whose ranges are rebuilt per execution.
+    pub correlated_access_count: usize,
     /// The TiKV table path's `deriveTablePathStats` result: ranges, access
     /// conditions, table filters and counts.
     pub filled_table: Option<FilledTablePath>,
@@ -84,7 +102,9 @@ pub struct AccessPath {
     /// Go `IndexMergeORSourceFilter`: the OR condition a union merge was
     /// built from.
     pub index_merge_or_source_filter: Option<Expression>,
-    /// Go `TableFilters` of an index-merge path.
+    /// Go `TableFilters`: an index path's filters that need the table row
+    /// or a full prefix-index value, or an index merge's filters above the
+    /// partial paths.
     pub table_filters: Vec<Expression>,
     /// Go `IndexMergeIsIntersection`.
     pub index_merge_is_intersection: bool,
@@ -123,15 +143,6 @@ impl AccessPath {
     #[must_use]
     pub fn count_after_access(&self) -> Option<f64> {
         self.row_estimate.map(|estimate| estimate.est)
-    }
-
-    /// An index path's filled ranges and filters; index-merge partial paths
-    /// are always filled.
-    #[must_use]
-    pub fn filled_index_path(&self) -> &FilledIndexPath {
-        self.filled
-            .as_ref()
-            .expect("index merge partials are filled logical paths")
     }
 
     /// Go `IsTablePath`: a handle path, or a TiFlash path over an index.
@@ -212,23 +223,6 @@ pub enum IndexLookUpPushDownByType {
     Hint,
     /// Go `IndexLookUpPushDownBySysVar`.
     SysVar,
-}
-
-/// Go's detached ranges and the subsequent index/table filter partition.
-#[derive(Clone, Debug)]
-pub struct FilledIndexPath {
-    /// Range expressions and access-coverage metadata from the same detach run.
-    pub detached: tidb_ranger::detacher::DetachRangeResult,
-    /// Filters evaluated before the table lookup.
-    pub index_filters: Vec<Expression>,
-    /// Filters requiring the table row or a full prefix-index value.
-    pub table_filters: Vec<Expression>,
-    /// Go CountAfterIndex; absent when the access estimate is unavailable.
-    pub count_after_index: Option<f64>,
-    /// How many trailing access conditions `SplitCorColAccessCondFromFilters`
-    /// moved from the filters: `index_col = correlated_col` equalities, at
-    /// most one closing range, whose ranges are rebuilt per execution.
-    pub correlated_access_count: usize,
 }
 
 /// Logical integer/common-handle ranges and residuals shared by table candidates.

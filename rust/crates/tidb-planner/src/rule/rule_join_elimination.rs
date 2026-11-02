@@ -236,10 +236,7 @@ fn join_keys_contain_unique_index(
                 .map(|table| table.common_columns.iter().map(|(column, _)| column).collect())
                 .unwrap_or_default()
         } else {
-            let Some(path) = source
-                .path_by_index_id(index.read().id)
-                .filter(|path| path.filled.is_some())
-            else {
+            let Some(path) = source.path_by_index_id(index.read().id) else {
                 return false;
             };
             path.idx_cols.iter().map(|(column, _)| column).collect()

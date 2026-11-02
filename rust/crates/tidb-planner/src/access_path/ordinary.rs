@@ -12,7 +12,7 @@
 //! Range/filter derivation shared by ordinary and index-merge alternatives.
 
 use tidb_planner_property::stats_info::HistCollExt as _;
-use tidb_planner_util::path::{FilledIndexPath, FilledTablePath, AccessPath};
+use tidb_planner_util::path::{FilledTablePath, AccessPath};
 use super::AccessPathDerivationContext;
 use tidb_planner_core_operator_logicalop::DataSource;
 use tidb_planner_core_base::PlanError;
@@ -44,14 +44,19 @@ pub(crate) fn filter_selectivity(
 
 /// Derive the range, physical key layout and filter partition together.
 /// Ordinary paths and OR branch alternatives must use the same detacher.
+/// Go `fillIndexPath` fills `path` in place: `FullIdxCols`, `IdxCols`, the
+/// ranges and access conditions, and (Go `deriveIndexPathStats`) the
+/// index/table filter partition.
 pub(crate) fn fill_index_path(
     source: &DataSource,
-    index: &tidb_model::GoShared<tidb_model::IndexInfo>,
+    path: &mut AccessPath,
     conditions: &[Expression],
     context: &AccessPathDerivationContext<'_>,
     prefix_single_scan: bool,
     correlated_access: bool,
-) -> Result<(FilledIndexPath, Vec<Option<(Column, i64)>>, Vec<(Column, i64)>), PlanError> {
+) -> Result<(), PlanError> {
+    let index = path.index.clone().expect("an index path reads its index");
+    let index = &index;
     let mut full_columns = source.index_info_2_full_cols(index);
     let mut columns = full_columns
         .iter()
@@ -100,13 +105,19 @@ pub(crate) fn fill_index_path(
                 prefix_single_scan,
             )
         });
-    Ok((FilledIndexPath {
-        detached,
-        index_filters,
-        table_filters,
-        count_after_index: None,
-        correlated_access_count,
-    }, full_columns, columns))
+    path.full_idx_cols = Some(full_columns);
+    path.idx_cols = columns;
+    path.ranges = detached.ranges;
+    path.access_conds = detached.access_conds;
+    path.eq_cond_count = detached.eq_cond_count;
+    path.eq_or_in_cond_count = detached.eq_or_in_count;
+    path.is_dnf_cond = detached.is_dnf_cond;
+    path.min_access_conds_for_dnf_cond = detached.min_access_conds_for_dnf_cond;
+    path.index_filters = index_filters;
+    path.table_filters = table_filters;
+    path.count_after_index = None;
+    path.correlated_access_count = correlated_access_count;
+    Ok(())
 }
 
 /// Go `deriveIndexPathStats` / `deriveCommonHandleTablePathStats`: when every
@@ -180,9 +191,11 @@ pub(crate) fn fill_ordinary_index_paths(
         if index.read().mv_index || index.read().is_columnar_index() {
             continue;
         }
-        let (mut filled, full_idx_cols, idx_cols) = fill_index_path(
-            source, index, &source.pushed_down_conds, context, prefix_single_scan, true,
+        let mut path = source.all_possible_access_paths[position].clone();
+        fill_index_path(
+            source, &mut path, &source.pushed_down_conds, context, prefix_single_scan, true,
         )?;
+        let idx_cols = &path.idx_cols;
         // Go `detachCondAndBuildRangeForPath`: the path's `CountAfterAccess`
         // and its bounds come from the index's statistics over the ranges
         // just built; a path with no usable key column keeps the realtime
@@ -198,17 +211,17 @@ pub(crate) fn fill_ordinary_index_paths(
             super::index_merge::estimate_index_ranges(
                 source,
                 index,
-                &filled.detached.ranges,
-                &idx_cols,
+                &path.ranges,
+                idx_cols,
                 context,
             )?
         };
-        let index_filters = &filled.index_filters;
+        let index_filters = &path.index_filters;
         // Go adjusts access rows before computing CountAfterIndex, preserving
         // the old count as the lower risk bound. Both ordinary and cloned
         // intersection paths must see the same adjusted estimate.
         let correlated_columns = idx_cols
-            [filled.detached.eq_or_in_count..filled.detached.eq_or_in_count + filled.correlated_access_count]
+            [path.eq_or_in_cond_count..path.eq_or_in_cond_count + path.correlated_access_count]
             .iter()
             .map(|(column, _)| column.clone())
             .collect::<Vec<_>>();
@@ -242,7 +255,7 @@ pub(crate) fn fill_ordinary_index_paths(
             if index_filters.is_empty() {
                 estimate.est
             } else {
-                (estimate.est * filter_selectivity(source, &index_filters, context)).max(
+                (estimate.est * filter_selectivity(source, index_filters, context)).max(
                     source
                         .base
                         .base
@@ -251,14 +264,9 @@ pub(crate) fn fill_ordinary_index_paths(
                 )
             }
         });
-        let path = &mut source.all_possible_access_paths[position];
         path.row_estimate = estimate;
-        filled.count_after_index = count_after_index;
-        path.filled = Some(filled);
-        // Go `fillIndexPath` replaces `FullIdxCols`, the handle appended,
-        // and sets `IdxCols`.
-        path.full_idx_cols = Some(full_idx_cols);
-        path.idx_cols = idx_cols;
+        path.count_after_index = count_after_index;
+        source.all_possible_access_paths[position] = path;
     }
     Ok(())
 }
