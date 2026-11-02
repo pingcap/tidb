@@ -22,8 +22,11 @@
 use crate::RowDecodeContextExt;
 use crate::{admin_check, run_create_table_on, run_insert_on, run_select_on, SessionExtendedInfoSchema, StmtContext};
 
-fn ctx() -> StmtContext {
-    StmtContext::for_query()
+/// The test's one store (Go's mock store under autocommit).
+type Store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage;
+
+fn ctx(store: &Store) -> StmtContext {
+    StmtContext::for_query().with_txn_store(Box::new(store.clone()))
 }
 
 fn create(catalog: &mut SessionExtendedInfoSchema, sql: &str) {
@@ -31,8 +34,8 @@ fn create(catalog: &mut SessionExtendedInfoSchema, sql: &str) {
         .unwrap_or_else(|error| panic!("create {sql:?} failed: {error:?}"));
 }
 
-fn insert(catalog: &mut SessionExtendedInfoSchema, sql: &str) {
-    run_insert_on(sql, catalog, &ctx())
+fn insert(catalog: &mut SessionExtendedInfoSchema, store: &Store, sql: &str) {
+    run_insert_on(sql, catalog, &ctx(store))
         .unwrap_or_else(|error| panic!("insert {sql:?} failed: {error:?}"));
 }
 
@@ -62,28 +65,30 @@ fn kv_table_of(catalog: &SessionExtendedInfoSchema, name: &str) -> tidb_table::t
 /// the 8003 count mismatch.
 #[test]
 fn admin_check_index_reports_each_corruption_shape() {
+    let store = Store::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
         "create table t (pk int primary key, c int default 1, c1 int default 1, unique key c(c))",
     );
     insert(
-        &mut catalog,
+        &mut catalog, &store,
         "insert into t (pk, c, c1) values (1, 10, 11), (2, 20, 21)",
     );
 
     let context = crate::RowDecodeContext::for_test_query_utc();
     let mut consistent = kv_table_of(&catalog, "t");
+    let mut consistent_store = store.fork();
     // Go: "admin check index t c" and "admin check index t C" both succeed.
-    let checked = { let mut store = consistent.store().clone_box(); admin_check::check_table(&mut consistent, &mut *store, Some("c"), &context, true) }
+    let checked = admin_check::check_table(&mut consistent, &mut consistent_store, Some("c"), &context, true)
         .expect("consistent table passes the check");
     assert_eq!(checked, 1, "exactly the named index is checked");
-    let checked = { let mut store = consistent.store().clone_box(); admin_check::check_table(&mut consistent, &mut *store, Some("C"), &context, true) }
+    let checked = admin_check::check_table(&mut consistent, &mut consistent_store, Some("C"), &context, true)
         .expect("index names resolve case-insensitively as in Go");
     assert_eq!(checked, 1);
 
     // Go: "admin check index t idx_inexistent" errors with "not exist".
-    let unknown = { let mut store = consistent.store().clone_box(); admin_check::check_table(&mut consistent, &mut *store, Some("idx_inexistent"), &context, true) }
+    let unknown = admin_check::check_table(&mut consistent, &mut consistent_store, Some("idx_inexistent"), &context, true)
         .expect_err("unknown index must be an error");
     assert!(
         matches!(unknown, admin_check::AdminCheckError::UnknownIndex { ref index, .. } if index == "idx_inexistent"),
@@ -97,9 +102,10 @@ fn admin_check_index_reports_each_corruption_shape() {
     // (Go's `CheckIndicesCount` passes first), so the equivalent corruption
     // keeps two rows against two entries while pairing one entry with a
     // missing record: drop the record of handle 3 and the entry of handle 1.
-    insert(&mut catalog, "insert into t (pk, c, c1) values (3, 30, 31)");
+    insert(&mut catalog, &store, "insert into t (pk, c, c1) values (3, 30, 31)");
     let mut record_lost = kv_table_of(&catalog, "t");
-    let entry_of = |table: &mut tidb_table::tables::TableCommon, handle: i64| {
+    let mut record_lost_store = store.fork();
+    let entry_of = |table: &mut tidb_table::tables::TableCommon, store: &mut Store, handle: i64| {
         let index = table
             .index_list_for_check()
             .into_iter()
@@ -107,21 +113,21 @@ fn admin_check_index_reports_each_corruption_shape() {
             .expect("index c");
         let index_id = index.read().id;
         table
-            .with_own_store(|table, store| table.index_entries_for_check(store, index_id))
+            .index_entries_for_check(store, index_id)
             .expect("entries")
             .into_iter()
             .find(|(_, entry_handle)| *entry_handle == tidb_table::tables::TableHandle::Int(handle))
             .map(|(key, _)| key)
             .expect("entry for handle")
     };
-    let drop_key = entry_of(&mut record_lost, 1);
+    let drop_key = entry_of(&mut record_lost, &mut record_lost_store, 1);
     record_lost
-        .with_own_store(|table, store| table.delete_raw_key_for_test(store, &drop_key))
+        .delete_raw_key_for_test(&mut record_lost_store, &drop_key)
         .expect("entry removal");
     record_lost
-        .with_own_store(|table, store| table.delete_record_for_test(store, &tidb_table::tables::TableHandle::Int(3)))
+        .delete_record_for_test(&mut record_lost_store, &tidb_table::tables::TableHandle::Int(3))
         .expect("record removal");
-    let inconsistent = { let mut store = record_lost.store().clone_box(); admin_check::check_table(&mut record_lost, &mut *store, Some("c"), &context, true) }
+    let inconsistent = admin_check::check_table(&mut record_lost, &mut record_lost_store, Some("c"), &context, true)
         .expect_err("orphaned index entry must be an error");
     let admin_check::AdminCheckError::Inconsistent {
         table,
@@ -145,19 +151,20 @@ fn admin_check_index_reports_each_corruption_shape() {
     // Go arm: more rows than entries -> the count check fails before the
     // scan (Go's "table count %d != index(%s) count %d", 8003).
     let mut entry_lost = kv_table_of(&catalog, "t");
+    let mut entry_lost_store = store.fork();
     let index = entry_lost
         .index_list_for_check()
         .into_iter()
         .find(|index| index.read().name.original().eq_ignore_ascii_case("c"))
         .expect("index c");
     let entries = entry_lost
-        .with_own_store(|table, store| table.index_entries_for_check(store, index.read().id))
+        .index_entries_for_check(&mut entry_lost_store, index.read().id)
         .expect("index entries");
     assert_eq!(entries.len(), 3, "one entry per row");
     entry_lost
-        .with_own_store(|table, store| table.delete_raw_key_for_test(store, &entries[1].0))
+        .delete_raw_key_for_test(&mut entry_lost_store, &entries[1].0)
         .expect("raw entry removal");
-    let mismatch = { let mut store = entry_lost.store().clone_box(); admin_check::check_table(&mut entry_lost, &mut *store, Some("c"), &context, true) }
+    let mismatch = admin_check::check_table(&mut entry_lost, &mut entry_lost_store, Some("c"), &context, true)
         .expect_err("missing entry must be an error");
     let admin_check::AdminCheckError::CountMismatch {
         table_count,
@@ -177,6 +184,7 @@ fn admin_check_index_reports_each_corruption_shape() {
 /// The rows must come back — empty — every time, with no panic.
 #[test]
 fn partition_hash_code_reads_are_stable_across_repeated_queries() {
+    let store = Store::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(
         &mut catalog,
@@ -187,7 +195,7 @@ fn partition_hash_code_reads_are_stable_across_repeated_queries() {
     // are Go's delivery mechanism for the race detector.
     for _ in 0..5 {
         for _ in 0..5 {
-            let rows = run_select_on("select * from t", &catalog, &ctx())
+            let rows = run_select_on("select * from t", &catalog, &ctx(&store))
                 .expect("select over the hash-partitioned table");
             assert!(rows.is_empty(), "the Go table is never populated");
         }
@@ -205,10 +213,11 @@ fn partition_hash_code_reads_are_stable_across_repeated_queries() {
 /// by `@@global.tidb_redact_log`) is the session's, and has no surface here.
 #[test]
 fn duplicate_entry_error_names_the_value_and_key() {
+    let store = Store::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t (a int, unique key (a))");
-    insert(&mut catalog, "insert into t values (1),(2)");
-    let error = run_insert_on("insert into t values (1)", &mut catalog, &ctx())
+    insert(&mut catalog, &store, "insert into t values (1),(2)");
+    let error = run_insert_on("insert into t values (1)", &mut catalog, &ctx(&store))
         .expect_err("duplicate key must fail");
     let sql_error = error.clone().to_mysql_error();
     assert_eq!(sql_error.code, 1062, "{error:?}");
@@ -220,9 +229,10 @@ fn duplicate_entry_error_names_the_value_and_key() {
 /// `tblInfo.Meta().Columns[0].GetFlag() == 0` after the query.
 #[test]
 fn any_value_comparison_leaves_the_column_flag_untouched() {
+    let store = Store::default();
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     create(&mut catalog, "create table t(a decimal(16, 2))");
-    let rows = run_select_on("select * from t where a > any_value(a)", &catalog, &ctx())
+    let rows = run_select_on("select * from t where a > any_value(a)", &catalog, &ctx(&store))
         .expect("Go runs this query against the empty table");
     assert!(rows.is_empty());
     let table = kv_table_of(&catalog, "t");

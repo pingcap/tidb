@@ -188,3 +188,14 @@ impl tidb_kv::storage::TableStorage for SharedMemStorage {
         Box::new(self.clone())
     }
 }
+
+impl SharedMemStorage {
+    /// A copy of the rows that no longer shares them, for a test that
+    /// corrupts one copy and keeps the original.
+    #[must_use]
+    pub fn fork(&self) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(self.lock().clone())),
+        }
+    }
+}
