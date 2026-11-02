@@ -400,7 +400,7 @@ func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 	config := immutableRestoreConfig{
 		CmdName:           cmdName,
 		UpstreamClusterID: cfg.UpstreamClusterID,
-		Storage:           ast.RedactURL(cfg.Storage),
+		Storage:           storageURLForRestoreHash(cfg.Storage),
 		Layout:            layout,
 		BackupID:          backupID,
 		FilterStr:         cfg.FilterStr,
@@ -414,6 +414,12 @@ func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	hash := sha256.Sum256(data)
+	// The legacy hash input can contain secrets; log a separately redacted copy.
+	config.Storage = objstore.RedactURL(cfg.Storage)
+	data, err = json.Marshal(config)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	log.Info("hash of restore config", zap.String("hash", hex.EncodeToString(hash[:])), zap.String("config", string(data)))
 	return hash[:], nil
 }

@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"path"
 	"strings"
 	"sync"
@@ -69,6 +70,10 @@ func NewKS3Storage(
 	backend *backuppb.S3,
 	opts *storeapi.Options,
 ) (obj *KS3Storage, errRet error) {
+	if _, err := url.Parse(backend.Endpoint); err != nil {
+		// Discard the URL-bearing parser error before entering the SDK.
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid KS3 endpoint URL")
+	}
 	qs := *backend
 	awsConfig := aws.DefaultConfig
 	awsConfig.S3ForcePathStyle = qs.ForcePathStyle

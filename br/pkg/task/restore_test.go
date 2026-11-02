@@ -4,6 +4,7 @@ package task_test
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"math"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
@@ -36,9 +38,33 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 const pb uint64 = units.PB
+
+func TestStorageCheckpointLog(t *testing.T) {
+	core, logs := observer.New(zap.InfoLevel)
+	t.Cleanup(log.ReplaceGlobals(zap.New(core), &log.ZapProperties{Core: core, Level: zap.NewAtomicLevelAt(zap.InfoLevel)}))
+	cfg := &task.RestoreConfig{CheckpointStorage: "local://FAKE_CHECKPOINT_USER:FAKE_CHECKPOINT_PASS@" + t.TempDir() + "?access-key=FAKE_CHECKPOINT_AK&secret-access-key=FAKE_CHECKPOINT_SK&sig=FAKE_CHECKPOINT_SAS"}
+	originalStorage := cfg.CheckpointStorage
+
+	err := cfg.CreateStorageCheckpointMetaManagersForTest(context.Background(), 1, 2)
+
+	require.NoError(t, err)
+	require.Equal(t, originalStorage, cfg.CheckpointStorage)
+	entries := logs.FilterMessage("creating storage checkpoint meta managers for PiTR").All()
+	require.Len(t, entries, 1)
+	require.Equal(t, zapcore.InfoLevel, entries[0].Level)
+	field, ok := entries[0].ContextMap()["checkpointStorage"].(string)
+	require.True(t, ok)
+	for _, secret := range []string{"FAKE_CHECKPOINT_USER", "FAKE_CHECKPOINT_PASS", "FAKE_CHECKPOINT_AK", "FAKE_CHECKPOINT_SK", "FAKE_CHECKPOINT_SAS"} {
+		t.Run(secret, func(t *testing.T) { require.NotContains(t, field, secret) })
+	}
+	require.Contains(t, field, "local://")
+}
 
 func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 	mockStores := []*metapb.Store{
@@ -910,6 +936,92 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 }
 
 func TestHash(t *testing.T) {
+	t.Run("legacy storage identity", func(t *testing.T) {
+		// Fixed fingerprints from upstream cb395494e6, before log redaction
+		// switched to query allowlists. Do not derive these from a redactor.
+		for _, tc := range []struct{ storage, hash string }{
+			{"s3://bucket/prefix?endpoint=https%3A%2F%2FUSER%3APASS%40host%2F%3Fsig%3DPRIVATE", "fe3c78a5c211c56d07879b55a4fc8898c8c010914f23c57e9b5e414510044258"},
+			{"s3://bucket/prefix?access-key=OLD&secret-access-key=OLD&session-token=OLD&unknown=PRIVATE#fragment", "233a506b0c6104b8e1a9f0b6b9037746b5feb666f660639f6377fdd506ddba00"},
+			{"s3://bucket/prefix?access-key=NEW&secret-access-key=NEW&session-token=NEW&unknown=PRIVATE#fragment", "233a506b0c6104b8e1a9f0b6b9037746b5feb666f660639f6377fdd506ddba00"},
+			{"ks3://bucket/prefix?Access_Key=OLD&region=us&region=eu&unknown=PRIVATE", "7c7fda3ac06086e5005499793032e3bb88b4023314a8388080e00a73f924b465"},
+			{"oss://bucket/prefix?secret_access_key=OLD&unknown=PRIVATE", "4e2d4f12aa5f3f7fa100c1a51835795b10fb05e71b13638d2a51cd30d863848a"},
+			{"azure://bucket/prefix?account-name=a&account-key=OLD&sas-token=OLD&encryption-key=OLD&endpoint=https%3A%2F%2Facct.example%2F%3Fsig%3DOLD&unknown=PRIVATE", "53c7b03446de70c03835d410bd1ef190d19cbf426f4fdc97694119969e540bd8"},
+			{"azure://bucket/prefix?account-name=a&account-key=NEW&sas-token=NEW&encryption-key=NEW&endpoint=https%3A%2F%2Facct.example%2F%3Fsig%3DNEW&unknown=PRIVATE", "53c7b03446de70c03835d410bd1ef190d19cbf426f4fdc97694119969e540bd8"},
+			{"azblob://bucket/prefix?sas-token=OLD&unknown=PRIVATE", "c393c116cfacdd72a17a362d6d77010bec115c1e8ed02c0239c84dcb8565b918"},
+			{"gcs://USER:PASS@bucket/prefix?credentials-file=PRIVATE&endpoint=https://host#fragment", "04035e672cd2a23d49fbe665e32afd841137467cdce1aaec48e53988a49596f8"},
+			{"gs://bucket/prefix?credentials-file=PRIVATE#fragment", "6b3cc728a592e0e19a3ea155bb91215ddc648ae5bf5f6f804986298e62d1a7bb"},
+			{"local:///tmp/backup?token=PRIVATE#fragment", "0718bbd6d889bac22194be91cc6d839b2ee29eadc413e5473df5c1ac417c6186"},
+			{"file:///tmp/backup?token=PRIVATE#fragment", "32c00f90ed7653acf8edb1c74330785dec41ae97a643cce2a6886d33b92eae84"},
+			{"hdfs://USER:PASS@host/backup?token=PRIVATE#fragment", "5dad05b451f17eefcb775d59c6670ad23c3e3e9159f3efa8dd4376873320d467"},
+			{"noop:///?token=PRIVATE#fragment", "3fc302be854edc6c384670a4fa657babeaa1039757f69b5560e7ed86c0a8a55a"},
+			{"https://USER:PASS@host/backup?token=PRIVATE#fragment", "d8ef4d086065cf10124072fdb4b525312fd180d4c538b7ec07c1992333a2fdda"},
+			{"/tmp/my files/100%off#name", "661e02efb345b11d525b1b74546af9304cecbf63d70b524b019dfdcc73825353"},
+			{"s3://bucket/path%zz?access-key=PRIVATE", "8b0ebe72ce02bf2c4ac35186bbcd858128cdc0310f85bd96df344b450a53e4b5"},
+			{"s3://bucket/prefix?sse=aws:kms&sse-kms-context=%7B%7D", "dc9ba73da5fb5694c1465c8d703e1f313363e13ba46ece58c334b2c7f945c386"},
+			{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"a":"x&region=PRIVATE"}`, "d08121c7e023c9f81050ea57d70db8afa8edaa999206b91d369c54b619733dda"},
+			{"s3://bucket/prefix?unknown=PRIVATE%zz", "d08121c7e023c9f81050ea57d70db8afa8edaa999206b91d369c54b619733dda"},
+			{"s3://bucket/prefix?", "0af7d308ff4fdd6ea242b8675c77c83d6610bd4f7aad4072626ee7f1185b7520"},
+			{"gcs://bucket/prefix?", "14561c3b3a958e20ad879ffe3a4ea01c7f9af7b1448fc172b9360fb73de0d59c"},
+		} {
+			t.Run(tc.storage, func(t *testing.T) {
+				core, logs := observer.New(zap.InfoLevel)
+				t.Cleanup(log.ReplaceGlobals(zap.New(core), &log.ZapProperties{Core: core, Level: zap.NewAtomicLevelAt(zap.InfoLevel)}))
+				cfg := &task.RestoreConfig{
+					Config:              task.Config{Storage: tc.storage, FilterStr: []string{"source.*"}},
+					RestoreCommonConfig: task.RestoreCommonConfig{WithSysTable: true},
+					UpstreamClusterID:   42,
+					FastLoadSysTables:   true,
+					LoadStats:           true,
+				}
+
+				hash, err := cfg.Hash(task.FullRestoreCmd)
+
+				require.NoError(t, err)
+				require.Equal(t, tc.hash, hex.EncodeToString(hash))
+				require.Equal(t, tc.storage, cfg.Storage)
+				entries := logs.FilterMessage("hash of restore config").TakeAll()
+				require.Len(t, entries, 1)
+				logged, err := json.Marshal(entries[0].ContextMap())
+				require.NoError(t, err)
+				for _, secret := range []string{"PRIVATE", "USER", "PASS", "OLD", "NEW"} {
+					require.NotContains(t, string(logged), secret)
+				}
+			})
+		}
+	})
+
+	t.Run("legacy storage equivalence", func(t *testing.T) {
+		for _, tc := range []struct {
+			first, second string
+			equal         bool
+		}{
+			{"s3://bucket/prefix?access-key=old", "s3://bucket/prefix?access-key=new", true},
+			{"s3://bucket/prefix?access-key=old", "s3://bucket/prefix", false},
+			{"s3://bucket/prefix?future-token=old", "s3://bucket/prefix?future-token=new", false},
+			{"s3://bucket/prefix?endpoint=https://first", "s3://bucket/prefix?endpoint=https://second", false},
+			{"gcs://bucket/prefix?credentials=old#fragment", "gcs://bucket/prefix?credentials=new#fragment", false},
+			{"gcs://bucket/prefix", "gcs://bucket/prefix?", false},
+			{"azure://bucket/prefix?endpoint=https://first", "azure://bucket/prefix?endpoint=https://second", true},
+			{"s3://bucket/first%zz", "s3://bucket/second%zz", true},
+		} {
+			t.Run(tc.first, func(t *testing.T) {
+				first := &task.RestoreConfig{Config: task.Config{Storage: tc.first}}
+				second := &task.RestoreConfig{Config: task.Config{Storage: tc.second}}
+
+				firstHash, err := first.Hash(task.FullRestoreCmd)
+				require.NoError(t, err)
+				secondHash, err := second.Hash(task.FullRestoreCmd)
+				require.NoError(t, err)
+
+				if tc.equal {
+					require.Equal(t, firstHash, secondHash)
+				} else {
+					require.NotEqual(t, firstHash, secondHash)
+				}
+			})
+		}
+	})
+
 	baseConfig := task.RestoreConfig{
 		UpstreamClusterID: 1,
 		Config: task.Config{
