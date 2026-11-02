@@ -124,6 +124,15 @@ Per step: `cargo test -p tidb-ddl` (lib and `tests/`), then the scratchpad
   (oracle: `ADMIN SHOW DDL` 59 -> 65; test
   `failed_add_unique_index_publishes_go_s_versions`, 5 before the fix).
 
+- (2026-11-02) Tried and reverted: Go `handleAutoIncID` rebased through the
+  node's `TableAutoIds` allocators. Those are the live allocators the
+  table's INSERTs then use (Go's `NewAllocatorsFromTblInfo` are fresh ones),
+  so the rebase changed their step adaptation and the first INSERT reserved
+  2,000,000 ids instead of 30,000 (`auto_random_base_seeds_*`). The job keeps
+  writing the starting counters, which is the stored state Go's
+  separate-transaction rebase leaves; `AutoIncIDExtra` is not seeded (Go
+  rebases the row-ID allocator to it).
+
 ## Decision Log
 
 - (2026-11-02) The job view keeps the step's writes in a sorted map and
