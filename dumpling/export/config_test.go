@@ -9,13 +9,8 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-<<<<<<< HEAD
-=======
 	"math/big"
 	"net"
-	"os"
-	"path/filepath"
->>>>>>> 02dffa3bcf3 (dumpling: retain TLS compatibility with legacy MySQL servers (#72441))
 	"testing"
 	"time"
 
