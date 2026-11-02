@@ -218,7 +218,7 @@ fn join_keys_contain_unique_index(
     let LogicalPlan::DataSource(source) = inner else {
         return false;
     };
-    source.enumerated_paths.iter().any(|path| {
+    source.all_possible_access_paths.iter().any(|path| {
         if path.is_int_handle_path {
             return false;
         }
@@ -230,7 +230,7 @@ fn join_keys_contain_unique_index(
         }
         let idx_cols: Vec<&Column> = if path.is_table_path() {
             source
-                .derived_access_paths
+                .possible_access_paths
                 .as_ref()
                 .and_then(|_| source.filled_table_path())
                 .map(|table| table.common_columns.iter().map(|(column, _)| column).collect())

@@ -249,7 +249,7 @@ impl LogicalPlan {
                 let mut fds = FdSet::new();
                 let all_columns =
                     FastIntSet::new(source.table_columns.iter().map(|column| column.unique_id));
-                if source.pk_is_handle {
+                if source.pk_is_handle() {
                     let primary = source
                         .columns
                         .iter()
@@ -750,7 +750,7 @@ mod tests {
                     info
                 }))
             .collect();
-        source.pk_is_handle = true;
+        source.set_pk_is_handle(true);
         source.base.base.set_schema(Some(schema(ids)));
         LogicalPlan::DataSource(source)
     }
@@ -964,7 +964,7 @@ mod tests {
         let LogicalPlan::DataSource(source) = &mut lookup_failed else {
             unreachable!("helper returns a data source")
         };
-        source.pk_is_handle = true;
+        source.set_pk_is_handle(true);
         source.columns[0].write().add_flag(u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY));
         source.columns[0].write().add_flag(u64::from(tidb_datatype::FieldTypeFlags::NOT_NULL));
         source.fd_latest_index_lookup_failed = true;

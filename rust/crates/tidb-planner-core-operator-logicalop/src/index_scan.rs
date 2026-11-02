@@ -127,7 +127,7 @@ impl LogicalIndexScan {
     #[must_use]
     pub fn get_pk_is_handle_col(&self, schema: &Schema) -> Option<Column> {
         let source = self.source.as_ref()?;
-        if !source.pk_is_handle {
+        if !source.pk_is_handle() {
             return None;
         }
         let handle = source

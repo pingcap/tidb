@@ -52,7 +52,7 @@ pub(crate) fn collect_generate_column(
     let Some(schema) = source.base.base.schema() else {
         return;
     };
-    for path in &source.enumerated_paths {
+    for path in &source.all_possible_access_paths {
         let Some(index) = path.index_info() else {
             continue;
         };

@@ -157,7 +157,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                             tidb_plannererrors::ERR_BAD_GENERATED_COLUMN
                                 .generate_with_stack_by_args(&[
                                     (table.columns[offset].read().name.original().to_owned()).into(),
-                                    (table.table_name.clone()).into(),
+                                    (table.table_name()).into(),
                                 ]),
                         ));
                     }
@@ -276,7 +276,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         by_offset[offset] = Some(row_position);
                         columns.push((row_position, offset));
                     }
-                    let handle = if table.pk_is_handle {
+                    let handle = if table.pk_is_handle() {
                         DeleteHandle::Int(
                             table
                                 .handle_col_offsets
@@ -286,7 +286,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                                     PlanError::internal("an updated handle was pruned")
                                 })?,
                         )
-                    } else if table.is_common_handle {
+                    } else if table.is_common_handle() {
                         DeleteHandle::Common(
                             table
                                 .common_handle_col_offsets
@@ -311,9 +311,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         go_to_lower(visible) == alias.0
                     });
                     tables.push(UpdateTablePos {
-                        table_id: table.table_id,
+                        table_id: table.table_id(),
                         database: table.db_name.clone(),
-                        table: table.table_name.clone(),
+                        table: table.table_name(),
                         visible: frozen_names[run[0]].names.table.original.clone(),
                         stored_width: table.columns.len(),
                         columns,

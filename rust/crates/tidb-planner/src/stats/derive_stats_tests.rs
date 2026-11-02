@@ -756,9 +756,9 @@ fn deriving_a_data_source_fills_each_index_path_row_count_from_its_collection() 
         }].into(),
         ..tidb_model::IndexInfo::default()
     })]);
-    op.enumerated_paths = vec![tidb_planner_util::path::AccessPath::index_path(op.table_indices()[0].clone())];
+    op.all_possible_access_paths = vec![tidb_planner_util::path::AccessPath::index_path(op.table_indices()[0].clone())];
     op.pushed_down_conds = vec![Expression::ScalarFunction(eq_condition_to_constant(1, 7))];
-    op.enumerated_paths[0].row_estimate = Some(tidb_stats::default_row_est(1.0));
+    op.all_possible_access_paths[0].row_estimate = Some(tidb_stats::default_row_est(1.0));
     attach_pseudo_collection(op);
     let context = crate::rule::rule_tests::test_context(&allocator);
     let (plan, result) =
@@ -823,7 +823,7 @@ fn deriving_an_index_path_records_the_index_in_the_used_stats_ledger() {
             }].into(),
             ..tidb_model::IndexInfo::default()
         })]);
-        op.enumerated_paths = vec![tidb_planner_util::path::AccessPath::index_path(op.table_indices()[0].clone())];
+        op.all_possible_access_paths = vec![tidb_planner_util::path::AccessPath::index_path(op.table_indices()[0].clone())];
         op.pushed_down_conds = conditions
             .into_iter()
             .map(Expression::ScalarFunction)

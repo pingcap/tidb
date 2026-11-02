@@ -91,7 +91,7 @@ fn partial_matches_order(
                     .is_some_and(|column| column.unique_id == first.col.unique_id))
             .then(Vec::new);
         }
-        if !ds.is_common_handle
+        if !ds.is_common_handle()
             || ds.tikv_table_path().is_some_and(|path| path.force_no_keep_order)
         {
             return None;
@@ -457,7 +457,7 @@ pub(super) fn build_converged_union_index_merge_task(
                 super::dispatch::add_extra_phys_tbl_id_column(&mut schema_columns, ctx);
             }
             // Go PhysicalTableScan.TP: IsFullScan holds for no ranges too.
-            let unsigned_int_handle = ds.pk_is_handle && filled.handle_type.is_unsigned();
+            let unsigned_int_handle = ds.pk_is_handle() && filled.handle_type.is_unsigned();
             let scan_kind = if ranges
                 .iter()
                 .all(|range| range.is_full_range(unsigned_int_handle))
@@ -500,9 +500,9 @@ pub(super) fn build_converged_union_index_merge_task(
                     table_scan_penalty: ds.table_scan_penalty,
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
-                    table_name: ds.table_name.clone(),
+                    table_name: ds.table_name(),
                     handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
-                    is_temporary: ds.is_temporary,
+                    is_temporary: ds.is_temporary(),
                     prop: None,
                     plan_part_info: None,
                     filter_condition: Vec::new(),
@@ -642,9 +642,9 @@ pub(super) fn build_converged_union_index_merge_task(
                 table_scan_penalty: ds.table_scan_penalty,
                 tikv_pushdown: None,
                 db_name: ds.db_name.clone(),
-                table_name: ds.table_name.clone(),
+                table_name: ds.table_name(),
                 handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
-                is_temporary: ds.is_temporary,
+                is_temporary: ds.is_temporary(),
                 prop: None,
                 plan_part_info: None,
                 filter_condition: Vec::new(),
@@ -745,7 +745,7 @@ fn append_index_merge_scan_columns(
             .iter()
             .any(|existing| existing.unique_id == column.unique_id)
     };
-    if ds.pk_is_handle {
+    if ds.pk_is_handle() {
         if let Some(pk) = ds.handle_cols.first() {
             if !contains(&schema, pk) {
                 schema.columns.push(pk.clone());
@@ -785,7 +785,7 @@ fn append_index_merge_scan_columns(
 
 /// Go `ts.Table.GetPartitionInfo() != nil && UseDynamicPartitionPrune()`.
 fn keeps_phys_tbl_id(ds: &DataSource) -> bool {
-    !ds.partition_definition_ids.is_empty() && ds.dynamic_partition_access.is_some()
+    !ds.partition_definition_ids().is_empty() && ds.dynamic_partition_access.is_some()
 }
 
 /// Go `PhysicalIndexScan.AccessCondition` / `IdxCols` / `IdxColLens` of a
@@ -818,7 +818,7 @@ fn partial_table_range_rebuild(
         tidb_planner_core_operator_physicalop::range_rebuild::TableRangeRebuild::int_handle(
             access_conds.clone(),
             filled.handle_type.clone(),
-            ds.pk_is_handle && filled.handle_type.is_unsigned(),
+            ds.pk_is_handle() && filled.handle_type.is_unsigned(),
         )
     } else {
         let (columns, lengths) = filled.common_columns.iter().cloned().unzip();
@@ -882,11 +882,11 @@ fn push_index_partial(
         covering_ranges: Vec::new(),
         tikv_pushdown: None,
         db_name: ds.db_name.clone(),
-        is_temporary: ds.is_temporary,
+        is_temporary: ds.is_temporary(),
         // Go's partial scan keeps the data source's required property (the
         // default one for an unordered read) and the integer handle column.
         prop: Some(Box::new(tidb_planner_property::PhysicalProperty::default())),
-        pk_is_handle_col: ds.pk_is_handle.then(|| ds.handle_cols.first().cloned()).flatten(),
+        pk_is_handle_col: ds.pk_is_handle().then(|| ds.handle_cols.first().cloned()).flatten(),
     }));
     let global_partition_filter = super::dispatch::add_selection_condition_for_global_index(
         ds,
@@ -993,14 +993,14 @@ pub(super) fn index_scan_schema(
         columns.push(crate::access_path::mv_index::unwrap_array_column(column));
     }
     let schema = ds.base.base.schema();
-    if ds.is_common_handle {
+    if ds.is_common_handle() {
         // A prefix index can contain a truncated copy of a common-handle
         // column. Go still appends the full handle, even with the same ID.
         columns.extend(ds.common_handle_cols.iter().cloned());
     } else if let Some(handle) = schema.and_then(|schema| {
         schema.columns.iter().find(|column| {
             column.id == tidb_model::column::EXTRA_HANDLE_ID
-                || (ds.pk_is_handle
+                || (ds.pk_is_handle()
                     && ds
                         .columns
                         .iter()
@@ -1061,7 +1061,7 @@ fn partial_handle_columns(
     if !ds.common_handle_cols.is_empty() {
         return Ok(ds.common_handle_cols.clone());
     }
-    if ds.pk_is_handle {
+    if ds.pk_is_handle() {
         if let Some(column) = ds.table_columns.iter().find(|column| {
             column
                 .ret_type
@@ -1161,7 +1161,7 @@ mod tests {
             ))
         };
         let ds = DataSource {
-            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { is_common_handle: true, indices: tidb_model::GoSharedPointerSlice::from_handles((vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 7,
                 global: true,
                 columns: vec![
@@ -1195,7 +1195,6 @@ mod tests {
                 })],
             index_merge_hints: vec![Default::default()],
             common_handle_cols: vec![a.clone()],
-            is_common_handle: true,
             pushed_down_conds: vec![Expression::ScalarFunction(ScalarFunction::new(
                 tidb_ast::CiString::new("or"),
                 ty.clone(),
@@ -1206,7 +1205,7 @@ mod tests {
         // Go's `AllConds` contains every pushed condition.
         let ds = DataSource {
             all_conds: ds.pushed_down_conds.clone(),
-            enumerated_paths: vec![tidb_planner_util::path::AccessPath::index_path(ds.table_indices()[0].clone())],
+            all_possible_access_paths: vec![tidb_planner_util::path::AccessPath::index_path(ds.table_indices()[0].clone())],
             ..ds
         };
         let allocator = tidb_planner_core_base::PlanIdAllocator::new();
@@ -1244,7 +1243,7 @@ mod tests {
         }
         { let mut indexes = choices.table_indices(); indexes.push(shorter); choices.set_table_indices(indexes); }
         choices
-            .enumerated_paths
+            .all_possible_access_paths
             .push(tidb_planner_util::path::AccessPath::index_path(choices.table_indices()[1].clone()));
         let alternatives = prepare_union_index_merge_path(&choices, &derivation)
             .unwrap()
@@ -1305,7 +1304,7 @@ mod tests {
                 ..tidb_model::IndexInfo::default()
             })); multiple_or.set_table_indices(indexes); }
             multiple_or
-                .enumerated_paths
+                .all_possible_access_paths
                 .push(tidb_planner_util::path::AccessPath::index_path(multiple_or.table_indices().last().unwrap().clone()));
         }
         multiple_or.pushed_down_conds.push(Expression::ScalarFunction(ScalarFunction::new(
@@ -1342,13 +1341,12 @@ mod tests {
         };
         assert!(
             derived_source
-                .derived_access_paths
+                .possible_access_paths
                 .as_ref()
                 .is_some_and(|paths| paths
-                    .paths
                     .iter()
                     .all(|path| !path.partial_alternative_index_paths.is_empty())
-                    && !paths.paths.is_empty()),
+                    && !paths.is_empty()),
             "logical derivation must retain hinted merge alternatives even with cached row statistics"
         );
         assert_eq!(
@@ -1360,24 +1358,22 @@ mod tests {
             "Go reads unset CountAfterIndex for an unfinished union at this stage");
         let mut cloned_source = derived_source.clone_shallow();
         cloned_source
-            .derived_access_paths
+            .possible_access_paths
             .as_mut()
             .unwrap()
-            .paths
             .clear();
         assert!(
             !derived_source
-                .derived_access_paths
+                .possible_access_paths
                 .as_ref()
                 .unwrap()
-                .paths
                 .is_empty(),
             "each datasource clone owns its candidates"
         );
         let mut rewritten_source = derived_source.clone_shallow();
         rewritten_source.predicate_push_down_local(vec![eq(3)], &Default::default(), None);
         assert!(
-            rewritten_source.derived_access_paths.is_none(),
+            rewritten_source.possible_access_paths.is_none(),
             "a new predicate set invalidates retained candidates"
         );
         let column_ids = tidb_planner_core_base::ColumnIdAllocator::new();
@@ -1405,7 +1401,7 @@ mod tests {
         assert_eq!(prepared.merges.len(), 1);
         assert_eq!(allocator.current(), before_convergence,
             "merge convergence must finish before physical allocation");
-        let retained = &derived_source.derived_access_paths.as_ref().unwrap().paths;
+        let retained = &derived_source.possible_access_paths.as_ref().unwrap();
         let retained_union = &retained[0];
         assert!(!retained_union.partial_alternative_index_paths.is_empty());
         for property in [
@@ -1455,7 +1451,7 @@ mod tests {
         ordinary_source.pushed_down_conds = vec![eq(1)];
         ordinary_source.all_conds = ordinary_source.pushed_down_conds.clone();
         ordinary_source.index_merge_hints.clear();
-        for path in &mut ordinary_source.enumerated_paths {
+        for path in &mut ordinary_source.all_possible_access_paths {
             if path.index_info().is_some() {
                 path.row_estimate = Some(tidb_stats::RowEstimate::new(100.0, 0.0, 0.0));
             }
@@ -1485,10 +1481,9 @@ mod tests {
         };
         let first_index = surviving_source.table_indices()[0].clone();
         surviving_source
-            .derived_access_paths
+            .possible_access_paths
             .as_mut()
             .unwrap()
-            .paths
             .retain(|path| {
                 path.partial_alternative_index_paths.is_empty()
                     && path.partial_index_paths.is_empty()
@@ -1521,7 +1516,7 @@ mod tests {
         table_source.set_table_indices(indexes);
         table_source.table_indices()[0].write().primary = true;
         table_source.table_indices()[0].write().unique = true;
-        table_source.enumerated_paths = vec![tidb_planner_util::path::AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, true, Some(table_source.table_indices()[0].clone()))];
+        table_source.all_possible_access_paths = vec![tidb_planner_util::path::AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, true, Some(table_source.table_indices()[0].clone()))];
         let mut table = tidb_planner_core_operator_logicalop::LogicalPlan::DataSource(table_source);
         table
             .recursive_derive_stats_with_context(&[], &rule_context)
@@ -1560,14 +1555,14 @@ mod tests {
         );
         assert!(cop.idx_merge_part_plans.iter().all(|plan| matches!(plan, PhysicalPlan::IndexScan(scan) if scan.index_id == 7 && scan.keep_order)));
         let mut unavailable_index = ds.clone();
-        unavailable_index.enumerated_paths.clear();
+        unavailable_index.all_possible_access_paths.clear();
         assert!(
             build_union_index_merge_task(&unavailable_index, &mut ctx)
                 .unwrap()
                 .is_none()
         );
         let mut local_temporary = ds.clone();
-        local_temporary.is_local_temporary = true;
+        local_temporary.set_is_local_temporary(true);
         assert!(build_union_index_merge_task(&local_temporary, &mut ctx)
             .unwrap()
             .is_none());
@@ -1580,7 +1575,7 @@ mod tests {
         );
         assert_ne!(columns[1].unique_id, ds.table_columns[1].unique_id);
         let mut ds = ds;
-        ds.is_common_handle = false;
+        ds.set_is_common_handle(false);
         ds.common_handle_cols.clear();
         let detached = tidb_model::GoShared::new(ds.table_indices()[0].read().clone_like_go());
         let mut indexes = ds.table_indices();
@@ -1588,7 +1583,7 @@ mod tests {
         ds.set_table_indices(indexes);
         ds.table_indices()[0].write().global = false;
         for (pk_is_handle, expected) in [(false, vec![1, 2, -1]), (true, vec![1, 2, 1])] {
-            ds.pk_is_handle = pk_is_handle;
+            ds.set_pk_is_handle(pk_is_handle);
             let columns = partial_index_schema(&ds, &ds.table_indices()[0], &ctx).unwrap();
             assert_eq!(
                 columns.iter().map(|column| column.id).collect::<Vec<_>>(),

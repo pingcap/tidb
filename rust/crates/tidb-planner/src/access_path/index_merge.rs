@@ -57,7 +57,7 @@ pub(crate) fn is_specified_in_index_merge_hints(ds: &DataSource, index_name: &st
 pub(crate) fn enumerated_indexes(
     ds: &DataSource,
 ) -> impl Iterator<Item = &tidb_model::GoShared<tidb_model::IndexInfo>> {
-    ds.enumerated_paths.iter().filter_map(tidb_planner_util::path::AccessPath::index_info)
+    ds.all_possible_access_paths.iter().filter_map(tidb_planner_util::path::AccessPath::index_info)
 }
 
 #[cfg(test)]
@@ -93,7 +93,7 @@ fn prepare_union_index_merge_path_for_or(
     or_position: usize,
     use_plan_cache: bool,
 ) -> Result<Option<AccessPath>, PlanError> {
-    if ds.is_local_temporary {
+    if ds.is_local_temporary() {
         return Ok(None);
     }
     let Some(Expression::ScalarFunction(or_func)) = ds.all_conds.get(or_position) else {
@@ -124,13 +124,13 @@ fn prepare_union_index_merge_path_for_or(
         // (`IsIntHandlePath`) or a clustered common handle
         // (`IsCommonHandlePath`, ranged over its PRIMARY index's columns).
         let table_primary = ds
-            .enumerated_paths
+            .all_possible_access_paths
             .iter()
             .filter(|path| path.is_tikv_table_path())
             .find_map(|path| {
                 if path.is_int_handle_path && ds.handle_is_int && !ds.handle_cols.is_empty() {
                     Some(None)
-                } else if path.is_common_handle_path && ds.is_common_handle {
+                } else if path.is_common_handle_path && ds.is_common_handle() {
                     path.index.as_ref().map(Some)
                 } else {
                     None
@@ -170,7 +170,7 @@ fn prepare_union_index_merge_path_for_or(
                     // Go accessPathsForConds drops only a full range; an
                     // empty one (`a between 2 and 1`) stays a partial.
                     let unsigned_int_handle = primary.is_none()
-                        && ds.pk_is_handle
+                        && ds.pk_is_handle()
                         && filled.handle_type.is_unsigned();
                     if !filled
                         .detached
@@ -251,7 +251,7 @@ fn prepare_union_index_merge_path_for_or(
             // Go folds a clustered PRIMARY key into the table path
             // (`getPossibleAccessPaths`), never a secondary index partial; the
             // table partial above builds that disjunct's TableRangeScan.
-            if source_index.read().primary && (ds.handle_is_int || ds.is_common_handle) {
+            if source_index.read().primary && (ds.handle_is_int || ds.is_common_handle()) {
                 continue;
             }
             if !is_in_index_merge_hints(ds, source_index.read().name.original()) {
@@ -674,7 +674,7 @@ fn generate_and_index_merge_for_normal_index(
     used_access: &mut std::collections::HashMap<Vec<u8>, Expression>,
 ) -> Option<AccessPath> {
     use std::collections::HashSet;
-    if ds.is_local_temporary
+    if ds.is_local_temporary()
         || !ds
             .index_merge_hints
             .iter()

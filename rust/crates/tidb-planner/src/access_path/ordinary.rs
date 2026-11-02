@@ -174,8 +174,8 @@ pub(crate) fn fill_ordinary_index_paths(
     context: &AccessPathDerivationContext<'_>,
     prefix_single_scan: bool,
 ) -> Result<(), PlanError> {
-    for position in 0..source.enumerated_paths.len() {
-        let Some(index) = source.enumerated_paths[position].index_info().cloned() else {
+    for position in 0..source.all_possible_access_paths.len() {
+        let Some(index) = source.all_possible_access_paths[position].index_info().cloned() else {
             continue;
         };
         let index = &index;
@@ -253,7 +253,7 @@ pub(crate) fn fill_ordinary_index_paths(
                 )
             }
         });
-        let path = &mut source.enumerated_paths[position];
+        let path = &mut source.all_possible_access_paths[position];
         path.row_estimate = estimate;
         filled.count_after_index = count_after_index;
         path.filled = Some(filled);

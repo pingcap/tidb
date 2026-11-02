@@ -118,7 +118,7 @@ fn window_is_topn(selection: &tidb_planner_core_operator_logicalop::LogicalSelec
     // Go: "Give up if TiFlash is one possible access path of all. Pushing
     // down window aggregation is good enough in this case."
     if data_source
-        .enumerated_paths
+        .all_possible_access_paths
         .iter()
         .any(|path| path.is_tiflash_path())
     {

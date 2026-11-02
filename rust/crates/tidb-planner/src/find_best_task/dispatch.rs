@@ -2058,7 +2058,7 @@ pub(super) fn add_extra_phys_tbl_id_column(
 
 /// Go `hasV0NewCollationStringHandle`.
 fn has_v0_new_collation_string_handle(ds: &tidb_planner_core_operator_logicalop::DataSource) -> bool {
-    if ds.common_handle_version != 0 || !tidb_datatype::new_collation_enabled() {
+    if ds.common_handle_version() != 0 || !tidb_datatype::new_collation_enabled() {
         return false;
     }
     ds.common_handle_cols.iter().any(|column| {
@@ -2097,10 +2097,10 @@ pub(super) fn add_selection_condition_for_global_index(
         .partitions
         .iter()
         .filter_map(|name| {
-            ds.partition_definition_names
+            ds.partition_definition_names()
                 .iter()
                 .position(|candidate| tidb_mysql::lowercase_equal(candidate, name))
-                .and_then(|position| ds.partition_definition_ids.get(position).copied())
+                .and_then(|position| ds.partition_definition_ids().get(position).copied())
         })
         .collect::<Vec<_>>();
     let long_long = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
@@ -2891,6 +2891,7 @@ mod cross_estimate_dispatch_tests {
         base.base
             .set_schema(Some(Schema::new(vec![handle.clone(), filtered.clone()])));
         let source = DataSource {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { pk_is_handle: true, ..tidb_model::TableInfo::default() })),
             base,
             physical_table_id: 7,
             columns: vec![
@@ -2918,9 +2919,8 @@ mod cross_estimate_dispatch_tests {
             table_columns: vec![handle, filtered],
             handle_cols: vec![Column::new(1, FieldType::new(FieldTypeCode::LongLong))],
             handle_is_int: true,
-            pk_is_handle: true,
             pushed_down_conds: vec![filter],
-            enumerated_paths: vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)],
+            all_possible_access_paths: vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)],
             table_stats: Some(stats),
             ..DataSource::default()
         };
@@ -3003,7 +3003,7 @@ fn find_best_task_4_logical_data_source_paths(
             return Ok(Task::invalid_task());
         }
         if !ds
-            .enumerated_paths
+            .all_possible_access_paths
             .iter()
             .any(|path| path.is_tikv_table_path())
         {
@@ -3034,11 +3034,10 @@ fn find_best_task_4_logical_data_source_paths(
     // (`matchProperty:1082`), the basic prefix arm for an index
     // (`matchProperty:1095`) — and the admitted scan carries
     // `KeepOrder`/`Desc` (`convertToTableScan:2834`).
-    let mut ordinary_paths = ds.derived_access_paths.as_ref().map_or_else(
-        || ds.enumerated_paths.iter().collect::<Vec<_>>(),
+    let mut ordinary_paths = ds.possible_access_paths.as_ref().map_or_else(
+        || ds.all_possible_access_paths.iter().collect::<Vec<_>>(),
         |paths| {
             paths
-                .paths
                 .iter()
                 .filter(|path| {
                     path.partial_index_paths.is_empty()
@@ -3053,7 +3052,7 @@ fn find_best_task_4_logical_data_source_paths(
     let merge_candidates = preparation.merges;
     let merge_positions = preparation.merge_positions;
     let preparation = preparation.ordinary;
-    if let (Some(prepared_paths), Some(derived)) = (&preparation, &ds.derived_access_paths) {
+    if let (Some(prepared_paths), Some(derived)) = (&preparation, &ds.possible_access_paths) {
         if prepared_paths.heuristic_selected {
             if let (Some(path), Some(sink)) = (prepared_paths.paths.first(), ctx.mpp_warning_sink)
             {
@@ -3065,7 +3064,7 @@ fn find_best_task_4_logical_data_source_paths(
                     != 0
                     && !path.is_tiflash_path()
                     && ds
-                        .enumerated_paths
+                        .all_possible_access_paths
                         .iter()
                         .any(|path| path.is_tiflash_path());
                 if !tiflash_kept && ctx.heuristic_noted.insert(std::ptr::from_ref(ds).addr()) {
@@ -3164,7 +3163,7 @@ fn find_best_task_4_logical_data_source_paths(
                 let keep_order = ordered;
                 let order_match = if keep_order {
                     let ranges = ds
-                        .derived_access_paths
+                        .possible_access_paths
                         .as_ref()
                         .and_then(|_| ds.filled_table_path())
                         .filter(|_| prop.index_join_prop.is_none())
@@ -3181,13 +3180,13 @@ fn find_best_task_4_logical_data_source_paths(
                 // keep order, the partition table reader can't satisfy it."
                 if keep_order
                     && prop.index_join_prop.is_some()
-                    && !ds.partition_definition_ids.is_empty()
+                    && !ds.partition_definition_ids().is_empty()
                 {
                     continue 'paths;
                 }
                 let fallback_table_path;
                 let table_path = if let Some(path) = ds
-                    .derived_access_paths
+                    .possible_access_paths
                     .as_ref()
                     .and_then(|_| ds.filled_table_path())
                     .filter(|_| prop.index_join_prop.is_none())
@@ -3457,10 +3456,10 @@ fn find_best_task_4_logical_data_source_paths(
                 };
                 let explicit_physical_id = match ds.partition_names.as_slice() {
                     [name] => ds
-                        .partition_definition_names
+                        .partition_definition_names()
                         .iter()
                         .position(|definition| tidb_mysql::lowercase_equal(definition, name))
-                        .and_then(|index| ds.partition_definition_ids.get(index).copied()),
+                        .and_then(|index| ds.partition_definition_ids().get(index).copied()),
                     _ => None,
                 };
                 // Go `canConvertPointGet`: an integer handle, or a complete
@@ -3500,10 +3499,10 @@ fn find_best_task_4_logical_data_source_paths(
                             && range.low_val == range.high_val
                             && range.low_val.iter().all(|value| !value.is_null())
                     })
-                    && (ds.partition_definition_ids.is_empty()
-                        || ds.physical_table_id != ds.table_id
+                    && (ds.partition_definition_ids().is_empty()
+                        || ds.physical_table_id != ds.table_id()
                         || explicit_physical_id.is_some()
-                        || (ranges.len() == 1 && (ds.pk_is_handle || common_handle.is_some())))
+                        || (ranges.len() == 1 && (ds.pk_is_handle() || common_handle.is_some())))
                 {
                     let mut point_base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                         ctx.allocator,
@@ -3538,14 +3537,14 @@ fn find_best_task_4_logical_data_source_paths(
                     let mut point = if ranges.len() == 1 {
                         PhysicalPlan::PointGet(tidb_planner_core_operator_physicalop::PointGetPlan {
                             base: point_base,
-                            table_id: if ds.pk_is_handle || common_handle.is_some() {
+                            table_id: if ds.pk_is_handle() || common_handle.is_some() {
                                 ds.physical_table_id
                             } else {
                                 explicit_physical_id.unwrap_or(ds.physical_table_id)
                             },
-                            partition: (!ds.partition_definition_ids.is_empty()
-                                && ds.physical_table_id == ds.table_id
-                                && (ds.pk_is_handle || common_handle.is_some()))
+                            partition: (!ds.partition_definition_ids().is_empty()
+                                && ds.physical_table_id == ds.table_id()
+                                && (ds.pk_is_handle() || common_handle.is_some()))
                             .then(|| tidb_planner_core_operator_physicalop::PointGetPartition {
                                 names: ds.partition_names.clone(),
                                 physical_table_id: None,
@@ -3627,7 +3626,7 @@ fn find_best_task_4_logical_data_source_paths(
                 // per-partition range full (this table's `part > 199999`
                 // after partition pruning), and Go still renders
                 // `TableFullScan`.
-                let unsigned_int_handle = ds.pk_is_handle && handle_type.is_unsigned();
+                let unsigned_int_handle = ds.pk_is_handle() && handle_type.is_unsigned();
                 let scan_kind = if prop.index_join_prop.is_some()
                     || !ranges
                         .iter()
@@ -3660,7 +3659,7 @@ fn find_best_task_4_logical_data_source_paths(
                     // partitioned table, or one that merge-sorts its range
                     // groups, carries the property's sort items.
                     by_items: if keep_order
-                        && (!ds.partition_definition_ids.is_empty()
+                        && (!ds.partition_definition_ids().is_empty()
                             || order_match.result
                                 == tidb_planner_property::PhysicalPropMatchResult::MatchedNeedMergeSort)
                     {
@@ -3694,9 +3693,9 @@ fn find_best_task_4_logical_data_source_paths(
                     },
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
-                    table_name: ds.table_name.clone(),
+                    table_name: ds.table_name(),
                     handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
-                    is_temporary: ds.is_temporary,
+                    is_temporary: ds.is_temporary(),
                     prop: Some(Box::new(prop.clone())),
                     resolved_descriptor: Some(tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
                         ds.physical_table_id,
@@ -3802,15 +3801,15 @@ fn find_best_task_4_logical_data_source_paths(
                     table_scan_penalty: ds.table_scan_penalty,
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
-                    table_name: ds.table_name.clone(),
+                    table_name: ds.table_name(),
                     handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
-                    is_temporary: ds.is_temporary,
+                    is_temporary: ds.is_temporary(),
                     prop: None,
                     plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
                     filter_condition: Vec::new(),
                     resolved_descriptor: Some(tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
                         ds.physical_table_id,
-                        ds.is_common_handle,
+                        ds.is_common_handle(),
                         tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Full,
                         tidb_planner_core_operator_logicalop::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
                     )),
@@ -3960,7 +3959,7 @@ fn find_best_task_4_logical_data_source_paths(
                 // cannot keep order for an index join.
                 if keep_order
                     && prop.index_join_prop.is_some()
-                    && !ds.partition_definition_ids.is_empty()
+                    && !ds.partition_definition_ids().is_empty()
                 {
                     continue 'paths;
                 }
@@ -4081,7 +4080,7 @@ fn find_best_task_4_logical_data_source_paths(
                 // partitions; a global index already carries it.
                 let keeps_phys_tbl_id = keep_order
                     && !single_scan
-                    && !ds.partition_definition_ids.is_empty()
+                    && !ds.partition_definition_ids().is_empty()
                     && ds.dynamic_partition_access.is_some();
                 if keeps_phys_tbl_id && !source_index.read().global {
                     add_extra_phys_tbl_id_column(&mut index_schema, ctx);
@@ -4100,8 +4099,8 @@ fn find_best_task_4_logical_data_source_paths(
                 // as the ordinary root Selection above it.
                 if prop.index_join_prop.is_none()
                     && ctx.enable_point_get_conversion
-                    && (ds.partition_definition_ids.is_empty()
-                        || ds.physical_table_id != ds.table_id
+                    && (ds.partition_definition_ids().is_empty()
+                        || ds.physical_table_id != ds.table_id()
                         // A GLOBAL index is stored in the logical table's
                         // keyspace and carries each row's partition ID, so a
                         // unique-key point read does not need static pruning
@@ -4159,8 +4158,8 @@ fn find_best_task_4_logical_data_source_paths(
                             // Go `PointGetPlan.PartitionNames`: a global index
                             // applies them to the partition its entry records.
                             partition: (!ds.partition_names.is_empty()
-                                || (!ds.partition_definition_ids.is_empty()
-                                    && ds.physical_table_id == ds.table_id))
+                                || (!ds.partition_definition_ids().is_empty()
+                                    && ds.physical_table_id == ds.table_id()))
                                 .then(|| tidb_planner_core_operator_physicalop::PointGetPartition {
                                     names: ds.partition_names.clone(),
                                     physical_table_id: None,
@@ -4450,7 +4449,7 @@ fn find_best_task_4_logical_data_source_paths(
                     // (only required for a local index)" and "between range
                     // groups" both add the sort items the reader merges by.
                     by_items: if keep_order
-                        && ((!ds.partition_definition_ids.is_empty() && !source_index.read().global)
+                        && ((!ds.partition_definition_ids().is_empty() && !source_index.read().global)
                             || order_match.result
                                 == tidb_planner_property::PhysicalPropMatchResult::MatchedNeedMergeSort)
                     {
@@ -4468,9 +4467,9 @@ fn find_best_task_4_logical_data_source_paths(
                     covering_ranges: Vec::new(),
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
-                    is_temporary: ds.is_temporary,
+                    is_temporary: ds.is_temporary(),
                     prop: Some(Box::new(prop.clone())),
-                    pk_is_handle_col: ds.pk_is_handle.then(|| ds.handle_cols.first().cloned()).flatten(),
+                    pk_is_handle_col: ds.pk_is_handle().then(|| ds.handle_cols.first().cloned()).flatten(),
                 });
                 let (table_filters, mut virtual_table_filters) =
                     tidb_planner_core_operator_physicalop::pushdown::split_virtual_column_filters(table_filters);
@@ -4563,9 +4562,9 @@ fn find_best_task_4_logical_data_source_paths(
                         table_scan_penalty: ds.table_scan_penalty,
                         tikv_pushdown: None,
                         db_name: ds.db_name.clone(),
-                        table_name: ds.table_name.clone(),
+                        table_name: ds.table_name(),
                         handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
-                        is_temporary: ds.is_temporary,
+                        is_temporary: ds.is_temporary(),
                         prop: None,
                         plan_part_info: None,
                         filter_condition: Vec::new(),
@@ -4853,11 +4852,11 @@ fn find_best_task_4_logical_data_source_paths(
 }
 
 /// Go `DataSource` table name in a note: the alias when there is one.
-fn note_table_name(ds: &tidb_planner_core_operator_logicalop::DataSource) -> &str {
+fn note_table_name(ds: &tidb_planner_core_operator_logicalop::DataSource) -> String {
     ds.table_as_name
-        .as_deref()
+        .clone()
         .filter(|name| !name.is_empty())
-        .unwrap_or(&ds.table_name)
+        .unwrap_or_else(|| ds.table_name())
 }
 
 /// The note Go raises when `derivePathStatsAndTryHeuristics` keeps one path
@@ -4893,7 +4892,7 @@ fn heuristic_selection_note(
 /// order of `PossibleAccessPaths`, when pruning removed any.
 fn pruning_info_message(
     ds: &tidb_planner_core_operator_logicalop::DataSource,
-    derived: &tidb_planner_util::path::DerivedAccessPaths,
+    derived: &[tidb_planner_util::path::AccessPath],
     ordinary: &[&tidb_planner_util::path::AccessPath],
     merges: &[super::candidate_preparation::PreparedMerge<'_>],
     merge_positions: &[usize],
@@ -4901,7 +4900,7 @@ fn pruning_info_message(
 ) -> Option<String> {
     use tidb_planner_util::path::AccessPath;
     use super::candidate_preparation::PreparedMerge;
-    if ordinary.len() + merges.len() == derived.paths.len() {
+    if ordinary.len() + merges.len() == derived.len() {
         return None;
     }
     let table = note_table_name(ds);
@@ -4914,7 +4913,7 @@ fn pruning_info_message(
         index.read().name.original().to_owned()
     };
     let mut names = Vec::new();
-    for (position, path) in derived.paths.iter().enumerate() {
+    for (position, path) in derived.iter().enumerate() {
         if path.partial_index_paths.is_empty() && path.partial_alternative_index_paths.is_empty() {
             if ordinary.iter().any(|kept| std::ptr::eq(*kept, path)) {
                 names.push(path_name(path));
@@ -5619,7 +5618,7 @@ mod tests {
             LogicalPlan::DataSource(DataSource {
                 base,
                 physical_table_id: 42,
-                enumerated_paths: vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)],
+                all_possible_access_paths: vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)],
                 ..DataSource::default()
             })
         };
@@ -5834,11 +5833,11 @@ mod tests {
             let mut base = BaseLogicalPlan::new(ctx_alloc, "DataSource", 0);
             base.base.set_stats(Some(StatsInfo::new(50.0, [])));
             LogicalPlan::DataSource(DataSource {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { pk_is_handle: true, ..tidb_model::TableInfo::default() })),
                 base,
-                pk_is_handle: true,
                 handle_is_int: true,
                 handle_cols: vec![Column::new(9, FieldType::new(FieldTypeCode::LongLong))],
-                enumerated_paths: vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)],
+                all_possible_access_paths: vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)],
                 ..DataSource::default()
             })
         };
@@ -5874,7 +5873,7 @@ mod tests {
         let source = LogicalPlan::DataSource(DataSource {
             base,
             physical_table_id: 7,
-            enumerated_paths: vec![
+            all_possible_access_paths: vec![
                 AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
                 AccessPath::table_path(tidb_kv::store_type::StoreType::TiFlash, false, None),
             ],
@@ -5959,7 +5958,7 @@ mod tests {
             schema.columns = vec![pk.clone(), b.clone()];
             base.base.set_schema(Some(schema));
             LogicalPlan::DataSource(DataSource {
-            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { pk_is_handle: true, indices: tidb_model::GoSharedPointerSlice::from_handles((vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 3,
                     name: tidb_ast::CiString::new("ib"),
                     columns: vec![tidb_model::IndexColumn {
@@ -5972,7 +5971,6 @@ mod tests {
                 })]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
                 base,
                 physical_table_id: 7,
-                pk_is_handle: true,
                 columns: vec![
                     tidb_model::GoShared::new({
                             let mut info = tidb_model::ColumnInfo {
@@ -5996,7 +5994,7 @@ mod tests {
                         }),
                 ],
                 pushed_down_conds: conds,
-                enumerated_paths: paths,
+                all_possible_access_paths: paths,
                 ..DataSource::default()
             })
         };
@@ -6128,8 +6126,7 @@ mod tests {
         binary.add_flags(FieldTypeFlags::BINARY);
         let handle = tidb_expr::column::Column::new(2, binary);
         let source = tidb_planner_core_operator_logicalop::DataSource {
-            is_common_handle: true,
-            common_handle_version: 0,
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { common_handle_version: 0, is_common_handle: true, ..tidb_model::TableInfo::default() })),
             common_handle_cols: vec![handle],
             common_handle_lens: vec![3],
             ..Default::default()
@@ -6204,12 +6201,10 @@ mod tests {
                 }].into(),
                 ..tidb_model::IndexInfo::default()
             });
-        let source = LogicalPlan::DataSource(DataSource {
-            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![index_0.clone()]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
+        let source = LogicalPlan::DataSource({ let mut fixture = DataSource {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { is_common_handle: true, indices: tidb_model::GoSharedPointerSlice::from_handles((vec![index_0.clone()]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
             base,
-            table_id: 7,
             physical_table_id: 7,
-            is_common_handle: true,
             handle_is_int: false,
             columns: vec![
                 tidb_model::GoShared::new({
@@ -6243,9 +6238,9 @@ mod tests {
             common_handle_cols: vec![b, c],
             common_handle_lens: vec![UNSPECIFIED_LENGTH; 2],
             pushed_down_conds: vec![cond],
-            enumerated_paths: vec![tidb_planner_util::path::AccessPath::index_path(index_0.clone())],
+            all_possible_access_paths: vec![tidb_planner_util::path::AccessPath::index_path(index_0.clone())],
             ..DataSource::default()
-        });
+        }; fixture.set_table_id(7); fixture });
         let task = find_best_task(&source, &PhysicalProperty::default(), &mut ctx).expect("plans");
 
         // The rest of the tuple filters the index side above the scan.
@@ -6367,7 +6362,7 @@ mod tests {
             "full parent output cannot use a prefix"
         );
 
-        ds.enumerated_paths = vec![tidb_planner_util::path::AccessPath::index_path(index.clone())];
+        ds.all_possible_access_paths = vec![tidb_planner_util::path::AccessPath::index_path(index.clone())];
         ds.set_table_indices(vec![index]);
         ds.table_stats = Some(StatsInfo::new(10.0, []));
         let mut plan = LogicalPlan::DataSource(ds);
@@ -6499,7 +6494,7 @@ mod tests {
                             info
                         }),
                 ],
-                enumerated_paths: vec![
+                all_possible_access_paths: vec![
                     AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
                     tidb_planner_util::path::AccessPath::index_path(index_0.clone()),
                 ],
@@ -6586,7 +6581,7 @@ mod tests {
         let LogicalPlan::DataSource(mut common) = narrow else {
             unreachable!()
         };
-        common.is_common_handle = true;
+        common.set_is_common_handle(true);
         common.common_handle_cols = vec![common.base.base.schema().unwrap().columns[0].clone()];
         common.common_handle_lens = vec![-1];
         assert!(index_path_is_single_scan(&common, &common.table_indices()[0], true));
@@ -6637,7 +6632,7 @@ mod tests {
                     };
                     info
                 })],
-            enumerated_paths: vec![tidb_planner_util::path::AccessPath::index_path(index_0.clone())],
+            all_possible_access_paths: vec![tidb_planner_util::path::AccessPath::index_path(index_0.clone())],
             ..DataSource::default()
         };
         let partial = PhysicalProperty {
@@ -6687,8 +6682,8 @@ mod tests {
         );
 
         for (force_order, force_no_order, valid) in [(true, false, true), (false, true, false)] {
-            source.enumerated_paths[0].force_keep_order = force_order;
-            source.enumerated_paths[0].force_no_keep_order = force_no_order;
+            source.all_possible_access_paths[0].force_keep_order = force_order;
+            source.all_possible_access_paths[0].force_no_keep_order = force_no_order;
             let task =
                 find_best_task_4_logical_data_source_without_enforcer(&source, &partial, &mut ctx)
                     .unwrap();
@@ -6702,15 +6697,15 @@ mod tests {
         // Master marks matching forced paths during the partial-order search,
         // before ordinary TopN candidates are costed. NO_ORDER_INDEX and an
         // unmatched property must preserve ordinary forced-index behavior.
-        source.enumerated_paths[0].force_keep_order = false;
+        source.all_possible_access_paths[0].force_keep_order = false;
         for (forced, no_order, matches) in [
             (true, false, true),
             (false, false, true),
             (true, true, true),
             (true, false, false),
         ] {
-            source.enumerated_paths[0].forced = forced;
-            source.enumerated_paths[0].force_no_keep_order = no_order;
+            source.all_possible_access_paths[0].forced = forced;
+            source.all_possible_access_paths[0].force_no_keep_order = no_order;
             let mut partial = partial.clone();
             if !matches {
                 partial.partial_order_info.as_mut().unwrap().sort_items[0]
@@ -6739,8 +6734,8 @@ mod tests {
 
         // Separate occurrences can share a Go plan ID and an index ID. A
         // mark on one occurrence must not affect an already-existing other.
-        source.enumerated_paths[0].forced = true;
-        source.enumerated_paths[0].force_no_keep_order = false;
+        source.all_possible_access_paths[0].forced = true;
+        source.all_possible_access_paths[0].force_no_keep_order = false;
         let other = source.clone();
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0)
             .with_column_ids(&column_ids)
@@ -6760,8 +6755,8 @@ mod tests {
         // Skyline marks the path even when CopMultiRead conversion is later
         // refused because the common handle makes the index covering.
         let mut covering = source.clone();
-        covering.is_common_handle = true;
-        covering.common_handle_version = 1;
+        covering.set_is_common_handle(true);
+        covering.set_common_handle_version(1);
         covering.common_handle_cols = covering.base.base.schema().unwrap().columns.clone();
         covering.common_handle_lens = vec![-1];
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0)
@@ -6948,7 +6943,7 @@ mod tests {
             LogicalPlan::DataSource(DataSource {
                 base,
                 physical_table_id: 5,
-                enumerated_paths: vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)],
+                all_possible_access_paths: vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)],
                 ..DataSource::default()
             })
         };
@@ -7009,12 +7004,12 @@ mod tests {
             base.base
                 .set_schema(Some(tidb_expr::schema::Schema::default()));
             LogicalPlan::DataSource(DataSource {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { pk_is_handle: true, ..tidb_model::TableInfo::default() })),
                 base,
                 physical_table_id: 5,
-                pk_is_handle: true,
                 handle_is_int: true,
                 handle_cols: vec![Column::new(9, FieldType::new(FieldTypeCode::LongLong))],
-                enumerated_paths: vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)],
+                all_possible_access_paths: vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)],
                 ..DataSource::default()
             })
         };
@@ -7077,7 +7072,7 @@ mod tests {
             LogicalPlan::DataSource(DataSource {
                 base,
                 physical_table_id: 5,
-                enumerated_paths: vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)],
+                all_possible_access_paths: vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)],
                 ..DataSource::default()
             })
         };
@@ -7135,7 +7130,7 @@ mod tests {
             LogicalPlan::DataSource(DataSource {
                 base,
                 physical_table_id: 5,
-                enumerated_paths: vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)],
+                all_possible_access_paths: vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)],
                 ..DataSource::default()
             })
         };
@@ -7211,7 +7206,7 @@ mod tests {
             LogicalPlan::DataSource(DataSource {
                 base,
                 physical_table_id: 5,
-                enumerated_paths: vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)],
+                all_possible_access_paths: vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)],
                 ..DataSource::default()
             })
         };

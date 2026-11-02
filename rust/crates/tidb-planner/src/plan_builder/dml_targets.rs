@@ -180,7 +180,7 @@ impl<S: TableSource, C: tidb_exprctx::Columns> PlanBuilder<'_, S, C> {
             })?;
             let target = DeleteTarget {
                 database: meta.db_name.clone(),
-                table: meta.table_name.clone(),
+                table: meta.table_name(),
                 visible: name,
             };
             if !resolved.iter().any(|existing| {

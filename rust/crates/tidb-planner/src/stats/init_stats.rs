@@ -134,7 +134,7 @@ pub fn init_stats(
     // for the paths in `AllPossibleAccessPaths` whose map entry covers every
     // index column; this collection is consumed after path preparation.
     for index in &source.table_indices() {
-        let has_possible_path = source.enumerated_paths.iter().any(|path| {
+        let has_possible_path = source.all_possible_access_paths.iter().any(|path| {
             path.index_info()
                 .is_some_and(|candidate| candidate.read().id == index.read().id)
         });
@@ -338,7 +338,7 @@ use tidb_charset::Collation;
                 mv_index: multi_valued,
                 ..tidb_model::IndexInfo::default()
             })]);
-            source.enumerated_paths = vec![tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())];
+            source.all_possible_access_paths = vec![tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())];
             // Go `ds.TableInfo`: columns a and j, and the index on j.
             let table_info = tidb_model::TableInfo {
                 columns: vec![

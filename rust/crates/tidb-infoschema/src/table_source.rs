@@ -92,44 +92,17 @@ pub struct SourceTable {
     /// table whose scan reads from the TiDB store, with no extra handle or
     /// commit-ts column.
     pub is_cluster_table: bool,
-    /// Go `TableInfo.ID`.
-    pub table_id: i64,
-    /// Go `TableInfo.Name.O`.
-    pub table_name: String,
     /// Go `DBName.O`.
     pub db_name: String,
     /// Go `PhysicalTableID`: the partition's id, or the table's.
     pub physical_table_id: i64,
     /// Go `PartitionDefIdx`.
     pub partition_def_idx: Option<usize>,
-    /// Whether Go `TableInfo.GetPartitionInfo()` is non-nil.
-    pub is_partitioned: bool,
     /// Go `PartitionExpr.Expr` is a single column reference. Batch point-get
     /// eligibility on partitioned tables uses this same fast-plan condition.
     pub partition_expression_is_column: bool,
-    /// Go `TryFastPlan`'s global-index guard: the partition info has
-    /// `AddingDefinitions`, `NewPartitionIDs` or `DroppingDefinitions`.
-    pub partition_is_reorganizing: bool,
-    /// Go `TableInfo.GetPartitionInfo().Definitions[i].Name.O`.
-    pub partition_definition_names: Vec<String>,
-    /// Go `TableInfo.GetPartitionInfo().Definitions[i].ID`.
-    pub partition_definition_ids: Vec<i64>,
     /// Go `TableInfo.Columns`, in offset order.
     pub columns: Vec<SourceColumn>,
-    /// Go `TableInfo.PKIsHandle`.
-    pub pk_is_handle: bool,
-    /// Go `TableInfo.IsCommonHandle`.
-    pub is_common_handle: bool,
-    /// Go `TableInfo.CommonHandleVersion`.
-    pub common_handle_version: u16,
-    /// Go `TableInfo.TempTableType != model.TempTableNone`.
-    pub is_temporary: bool,
-    /// Go `TableInfo.TempTableType == model.TempTableLocal`.
-    pub is_local_temporary: bool,
-    /// Go `TableInfo.TableCacheStatusType != model.TableCacheStatusDisable`.
-    pub is_cached: bool,
-    /// Whether Go `TableInfo.Affinity` is non-nil.
-    pub has_affinity: bool,
     /// Offsets into [`Self::columns`] of Go `HandleCols`' columns. Empty when
     /// the table has no usable handle, in which case `buildDataSource` appends
     /// the `_tidb_rowid` extra handle.
@@ -139,13 +112,243 @@ pub struct SourceTable {
     /// Go `CommonHandleLens`, index-parallel to
     /// [`Self::common_handle_col_offsets`].
     pub common_handle_lens: Vec<i64>,
-    /// Go `TableInfo.TiFlashReplica`. `READ_FROM_STORAGE` is resolved by the
-    /// planner from it and the active query-block hints; it is not
-    /// pre-resolved by the catalog.
-    pub tiflash_replica: Option<tidb_model::TiFlashReplicaInfo>,
 }
 
 impl SourceTable {
+    /// Go `TableInfo.GetPartitionInfo().Definitions[i].ID`.
+    #[must_use]
+    pub fn partition_definition_ids(&self) -> Vec<i64> {
+        self.partition_definitions(|definition| definition.id)
+    }
+
+    /// Go `TableInfo.GetPartitionInfo().Definitions[i].Name.O`.
+    #[must_use]
+    pub fn partition_definition_names(&self) -> Vec<String> {
+        self.partition_definitions(|definition| definition.name.original().to_owned())
+    }
+
+    /// Go `TableInfo.GetPartitionInfo() != nil`.
+    #[must_use]
+    pub fn is_partitioned(&self) -> bool {
+        self.table_info
+            .as_ref()
+            .is_some_and(|info| info.read().get_partition_info().is_some())
+    }
+
+    fn partition_definitions<U>(&self, map: impl FnMut(&tidb_model::PartitionDefinition) -> U) -> Vec<U> {
+        self.table_info
+            .as_ref()
+            .and_then(|info| info.read().get_partition_info())
+            .map(|partition| partition.read().definitions.map_visible(map))
+            .unwrap_or_default()
+    }
+
+    /// Sets the partition definitions' ids on a copy of `TableInfo` (fixtures).
+    pub fn set_partition_definition_ids(&mut self, ids: Vec<i64>) {
+        self.update_partition_definitions(ids.len(), |definition, position| definition.id = ids[position]);
+    }
+
+    /// Sets the partition definitions' names on a copy of `TableInfo` (fixtures).
+    pub fn set_partition_definition_names(&mut self, names: Vec<String>) {
+        self.update_partition_definitions(names.len(), |definition, position| {
+            definition.name = tidb_ast::CiString::new(names[position].clone());
+        });
+    }
+
+    /// Gives a copy of `TableInfo` a `PartitionInfo`, or removes it (fixtures).
+    pub fn set_is_partitioned(&mut self, value: bool) {
+        self.update_table_info(|info| {
+            if !value {
+                info.partition = None;
+            } else if info.partition.is_none() {
+                info.partition = Some(tidb_model::GoShared::new(tidb_model::PartitionInfo {
+                    enable: true,
+                    ..tidb_model::PartitionInfo::default()
+                }));
+            }
+        });
+    }
+
+    fn update_partition_definitions(
+        &mut self,
+        len: usize,
+        mut update: impl FnMut(&mut tidb_model::PartitionDefinition, usize),
+    ) {
+        self.update_table_info(|info| {
+            let mut partition = info
+                .partition
+                .as_ref()
+                .map(|partition| partition.read().clone())
+                .unwrap_or_default();
+            let mut definitions = partition.definitions.snapshot();
+            definitions.resize_with(len, Default::default);
+            for (position, definition) in definitions.iter_mut().enumerate() {
+                update(definition, position);
+            }
+            partition.definitions = definitions.into();
+            partition.enable = true;
+            info.partition = Some(tidb_model::GoShared::new(partition));
+        });
+    }
+
+    /// Go `TryFastPlan`'s global-index guard: the partition info has
+    /// `AddingDefinitions`, `NewPartitionIDs` or `DroppingDefinitions`.
+    #[must_use]
+    pub fn partition_is_reorganizing(&self) -> bool {
+        self.table_info
+            .as_ref()
+            .and_then(|info| info.read().get_partition_info())
+            .is_some_and(|partition| {
+                let partition = partition.read();
+                !partition.adding_definitions.is_empty()
+                    || !partition.new_partition_ids.is_empty()
+                    || !partition.dropping_definitions.is_empty()
+            })
+    }
+
+    /// Go `TableInfo.ID`.
+    #[must_use]
+    pub fn table_id(&self) -> i64 {
+        self.table_info.as_ref().map_or(0, |info| info.read().id)
+    }
+
+    /// Go `TableInfo.Name.O`.
+    #[must_use]
+    pub fn table_name(&self) -> String {
+        self.table_info
+            .as_ref()
+            .map_or_else(String::new, |info| info.read().name.original().to_owned())
+    }
+
+    /// Sets `TableInfo.ID` on a copy.
+    pub fn set_table_id(&mut self, id: i64) {
+        self.update_table_info(|info| info.id = id);
+    }
+
+    /// Sets `TableInfo.Name` on a copy.
+    pub fn set_table_name(&mut self, name: impl Into<String>) {
+        let name = tidb_ast::CiString::new(name.into());
+        self.update_table_info(|info| info.name = name);
+    }
+
+    /// Go `TableInfo.PKIsHandle`.
+    #[must_use]
+    pub fn pk_is_handle(&self) -> bool {
+        self.table_info.as_ref().is_some_and(|info| info.read().pk_is_handle)
+    }
+
+    /// Go `TableInfo.IsCommonHandle`.
+    #[must_use]
+    pub fn is_common_handle(&self) -> bool {
+        self.table_info.as_ref().is_some_and(|info| info.read().is_common_handle)
+    }
+
+    /// Go `TableInfo.CommonHandleVersion`.
+    #[must_use]
+    pub fn common_handle_version(&self) -> u16 {
+        self.table_info.as_ref().map_or(0, |info| info.read().common_handle_version)
+    }
+
+    /// Go `TableInfo.TempTableType != model.TempTableNone`.
+    #[must_use]
+    pub fn is_temporary(&self) -> bool {
+        self.table_info
+            .as_ref()
+            .is_some_and(|info| info.read().temp_table_type != tidb_model::TempTableType::NONE)
+    }
+
+    /// Go `TableInfo.TempTableType == model.TempTableLocal`.
+    #[must_use]
+    pub fn is_local_temporary(&self) -> bool {
+        self.table_info
+            .as_ref()
+            .is_some_and(|info| info.read().temp_table_type == tidb_model::TempTableType::LOCAL)
+    }
+
+    /// Go `TableInfo.TableCacheStatusType != model.TableCacheStatusDisable`.
+    #[must_use]
+    pub fn is_cached(&self) -> bool {
+        self.table_info.as_ref().is_some_and(|info| {
+            info.read().table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE
+        })
+    }
+
+    /// Whether Go `TableInfo.Affinity` is non-nil.
+    #[must_use]
+    pub fn has_affinity(&self) -> bool {
+        self.table_info.as_ref().is_some_and(|info| info.read().affinity.is_some())
+    }
+
+    /// Marks `TableInfo` temporary (GLOBAL unless already LOCAL), or not, on
+    /// a copy.
+    pub fn set_is_temporary(&mut self, value: bool) {
+        self.update_table_info(|info| {
+            if !value {
+                info.temp_table_type = tidb_model::TempTableType::NONE;
+            } else if info.temp_table_type == tidb_model::TempTableType::NONE {
+                info.temp_table_type = tidb_model::TempTableType::GLOBAL;
+            }
+        });
+    }
+
+    /// Marks `TableInfo` a LOCAL temporary table, or a GLOBAL one when it was
+    /// LOCAL, on a copy.
+    pub fn set_is_local_temporary(&mut self, value: bool) {
+        self.update_table_info(|info| {
+            if value {
+                info.temp_table_type = tidb_model::TempTableType::LOCAL;
+            } else if info.temp_table_type == tidb_model::TempTableType::LOCAL {
+                info.temp_table_type = tidb_model::TempTableType::GLOBAL;
+            }
+        });
+    }
+
+    /// Sets `TableInfo.TableCacheStatusType` enabled or disabled, on a copy.
+    pub fn set_is_cached(&mut self, value: bool) {
+        self.update_table_info(|info| {
+            info.table_cache_status_type = if value {
+                tidb_model::TableCacheStatusType::ENABLE
+            } else {
+                tidb_model::TableCacheStatusType::DISABLE
+            };
+        });
+    }
+
+    /// Gives `TableInfo` an `Affinity`, or clears it, on a copy.
+    pub fn set_has_affinity(&mut self, value: bool) {
+        self.update_table_info(|info| {
+            info.affinity = value.then(|| tidb_model::GoShared::new(tidb_model::TableAffinityInfo::default()));
+        });
+    }
+
+    /// Sets `TableInfo.PKIsHandle` on a copy (see [`Self::update_table_info`]).
+    pub fn set_pk_is_handle(&mut self, value: bool) {
+        self.update_table_info(|info| info.pk_is_handle = value);
+    }
+
+    /// Sets `TableInfo.IsCommonHandle` on a copy.
+    pub fn set_is_common_handle(&mut self, value: bool) {
+        self.update_table_info(|info| info.is_common_handle = value);
+    }
+
+    /// Sets `TableInfo.CommonHandleVersion` on a copy.
+    pub fn set_common_handle_version(&mut self, value: u16) {
+        self.update_table_info(|info| info.common_handle_version = value);
+    }
+
+    /// Points `TableInfo` at an updated copy, for a fixture or a synthesized
+    /// table: the shared `TableInfo` other occurrences hold is never written
+    /// through.
+    pub fn update_table_info(&mut self, update: impl FnOnce(&mut TableInfo)) {
+        let mut info = self
+            .table_info
+            .as_ref()
+            .map(|info| info.read().clone())
+            .unwrap_or_default();
+        update(&mut info);
+        self.table_info = Some(GoShared::new(info));
+    }
+
     /// Go `TableInfo.Indices`, in declaration order.
     #[must_use]
     pub fn table_indices(&self) -> Vec<GoShared<tidb_model::IndexInfo>> {
@@ -171,9 +374,23 @@ impl SourceTable {
     /// `getPossibleAccessPaths` generates a TiFlash path for.
     #[must_use]
     pub fn has_tiflash_replica(&self) -> bool {
-        self.tiflash_replica
-            .as_ref()
+        self.tiflash_replica()
             .is_some_and(|replica| replica.available)
+    }
+
+    /// Go `TableInfo.TiFlashReplica`. `READ_FROM_STORAGE` is resolved by the
+    /// planner from it and the active query-block hints; it is not
+    /// pre-resolved by the catalog.
+    #[must_use]
+    pub fn tiflash_replica(&self) -> Option<tidb_model::TiFlashReplicaInfo> {
+        self.table_info
+            .as_ref()
+            .and_then(|info| info.read().tiflash_replica.as_ref().map(|replica| replica.read().clone()))
+    }
+
+    /// Sets `TableInfo.TiFlashReplica` on a copy.
+    pub fn set_tiflash_replica(&mut self, replica: Option<tidb_model::TiFlashReplicaInfo>) {
+        self.update_table_info(|info| info.tiflash_replica = replica.map(GoShared::new));
     }
 
     /// Attaches the metadata objects that Go's preprocessor records in
@@ -195,30 +412,18 @@ impl SourceTable {
             .iter()
             .map(|column| Some(column.info.clone()))
             .collect();
-        // Indices a caller already set (`set_table_indices`) stay.
-        let indices = self
-            .table_info
-            .as_ref()
-            .map(|info| info.read().indices.clone())
-            .unwrap_or_default();
-        self.table_info = Some(GoShared::new(TableInfo {
-            id: self.table_id,
-            name: tidb_ast::CiString::new(self.table_name.clone()),
-            columns: GoSharedPointerSlice::from_handles(columns),
-            indices,
-            state: SchemaState::PUBLIC,
-            pk_is_handle: self.pk_is_handle,
-            is_common_handle: self.is_common_handle,
-            tiflash_replica: self.tiflash_replica.clone().map(GoShared::new),
-            ..TableInfo::default()
-        }));
+        // Fields a caller already set on it (indices, handle kind) stay.
+        self.update_table_info(|info| {
+            info.columns = GoSharedPointerSlice::from_handles(columns);
+            info.state = SchemaState::PUBLIC;
+        });
     }
 
     /// Go `HandleCols.IsInt()`: an int handle is a single-column,
     /// non-common-handle handle.
     #[must_use]
     pub fn handle_is_int(&self) -> bool {
-        !self.is_common_handle && self.handle_col_offsets.len() == 1
+        !self.is_common_handle() && self.handle_col_offsets.len() == 1
     }
 
     /// The column at `offset`, or `None` when the implementor handed back an
@@ -310,7 +515,7 @@ pub trait TableSource {
         table_name: &str,
     ) -> Option<&SourceTable> {
         self.find_table(db_name, table_name)
-            .filter(|table| !table.is_local_temporary)
+            .filter(|table| !table.is_local_temporary())
     }
 
     /// Go `privilege.GetPrivilegeManager(b.ctx)`, which the planner asks for a
@@ -392,16 +597,14 @@ mod tests {
     }
 
     fn table() -> SourceTable {
-        SourceTable {
-            table_id: 7,
-            table_name: "t".to_owned(),
+        { let mut fixture = SourceTable {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { pk_is_handle: true, ..tidb_model::TableInfo::default() })),
             db_name: "test".to_owned(),
             physical_table_id: 7,
             columns: vec![column(0, "a"), column(1, "b")],
-            pk_is_handle: true,
             handle_col_offsets: vec![0],
             ..SourceTable::default()
-        }
+        }; fixture.set_table_id(7); fixture.set_table_name("t".to_owned()); fixture }
     }
 
     #[test]
@@ -410,11 +613,11 @@ mod tests {
         assert!(tbl.handle_is_int());
 
         // A common handle is never an int handle, however many columns it has.
-        tbl.is_common_handle = true;
+        tbl.set_is_common_handle(true);
         assert!(!tbl.handle_is_int());
 
         // Neither is a multi-column handle, nor a handle-less table.
-        tbl.is_common_handle = false;
+        tbl.set_is_common_handle(false);
         tbl.handle_col_offsets = vec![0, 1];
         assert!(!tbl.handle_is_int());
         tbl.handle_col_offsets.clear();

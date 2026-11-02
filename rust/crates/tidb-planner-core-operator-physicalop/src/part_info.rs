@@ -55,7 +55,7 @@ impl PhysPlanPartInfo {
     #[must_use]
     pub fn from_data_source(ds: &DataSource) -> Arc<Self> {
         let db = IdentifierMetadata::new(ds.db_name.as_str());
-        let table = IdentifierMetadata::new(ds.table_name.as_str());
+        let table = IdentifierMetadata::new(ds.table_name().as_str());
         let column_names = ds
             .table_columns
             .iter()

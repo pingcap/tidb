@@ -138,11 +138,17 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
 - [x] 3d-1 (2026-11-02): derivation writes Go's
   `DataSource.AccessPathMinSelectivity`; `DerivedAccessPaths.min_selectivity`
   (a second copy every reader had to choose between) is gone.
-- [ ] 3d. `DerivedAccessPaths` (paths + max merge count)
-  dissolves into Go's `DataSource.PossibleAccessPaths` /
-  `AllPossibleAccessPaths` / `AccessPathMinSelectivity`; today
-  `enumerated_paths` and `derived_access_paths.paths` are two lists where Go
-  mutates one.
+- [x] 3d-2 (2026-11-02): `apply_table_index_hints` returns Go's `available`
+  paths and appends its warnings through a sink in Go's order (Go
+  `StmtCtx.AppendWarning`); `ResolvedIndexPaths` is gone.
+  `DataSource.enumerated_paths` takes Go's name, `all_possible_access_paths`.
+- [x] 3d (2026-11-02): `DerivedAccessPaths` is gone. `DataSource` holds Go's
+  `PossibleAccessPaths` after derivation (`possible_access_paths`, None until
+  derived) beside `all_possible_access_paths`; derivation returns
+  `generateIndexMergePath`'s `maxRowCount` for the caller to cap the rows.
+  The two lists are still clones where Go shares one set of pointers;
+  readers of grown state go to the live `all_possible_access_paths` entry
+  (`path_by_index_id`).
 - [ ] 4. Consumers moved.
 - [ ] 5. Old types deleted.
 

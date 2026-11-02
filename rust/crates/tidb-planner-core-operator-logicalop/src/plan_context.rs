@@ -192,7 +192,8 @@ pub trait AccessPathResolver {
         session: tidb_sessionctx::IndexLookupPushDownSession,
         tikv_in_isolation_read: bool,
         isolation_read_engines_value: &str,
-    ) -> Result<tidb_planner_util::path::ResolvedIndexPaths, PlanError>;
+        warnings: &mut dyn FnMut(u16, String),
+    ) -> Result<Vec<tidb_planner_util::path::AccessPath>, PlanError>;
 }
 
 /// Go `ruleutil.ApplyPredicateSimplification` and

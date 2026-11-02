@@ -79,9 +79,9 @@ pub(super) fn build_prepared_index_merge_task(
             covering_ranges: Vec::new(),
             tikv_pushdown: None,
             db_name: ds.db_name.clone(),
-            is_temporary: ds.is_temporary,
+            is_temporary: ds.is_temporary(),
             prop: Some(Box::new(tidb_planner_property::PhysicalProperty::default())),
-            pk_is_handle_col: ds.pk_is_handle.then(|| ds.handle_cols.first().cloned()).flatten(),
+            pk_is_handle_col: ds.pk_is_handle().then(|| ds.handle_cols.first().cloned()).flatten(),
         });
         if !filled.index_filters.is_empty() {
             // Go `ConvertToPartialIndexScan`: only what TiKV can evaluate
@@ -141,9 +141,9 @@ pub(super) fn build_prepared_index_merge_task(
         table_scan_penalty: ds.table_scan_penalty,
         tikv_pushdown: None,
         db_name: ds.db_name.clone(),
-        table_name: ds.table_name.clone(),
+        table_name: ds.table_name(),
         handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
-        is_temporary: ds.is_temporary,
+        is_temporary: ds.is_temporary(),
         prop: None,
         plan_part_info: None,
         filter_condition: Vec::new(),

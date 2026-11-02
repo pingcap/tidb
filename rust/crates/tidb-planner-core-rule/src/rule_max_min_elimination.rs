@@ -72,7 +72,7 @@ fn check_column_can_use_index(
         LogicalPlan::DataSource(source) => {
             // Go `AllPossibleAccessPaths`: the hint-filtered enumerated paths.
             use tidb_planner_util::path::AccessPath;
-            for path in &source.enumerated_paths {
+            for path in &source.all_possible_access_paths {
                 if path.is_int_handle_path {
                     if source
                         .handle_cols
@@ -467,7 +467,7 @@ mod tests {
             ..DataSource::default()
         };
         let index = AccessPath::index_path(source.table_indices()[0].clone());
-        source.enumerated_paths = vec![index.clone()];
+        source.all_possible_access_paths = vec![index.clone()];
         let condition =
             Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
                 tidb_ast::CiString::new("eq"),
@@ -510,7 +510,7 @@ mod tests {
         assert!(!tracker.use_cache());
         assert_eq!(tracker.plan_cache_unqualified(), "in-list is too long");
         assert_eq!(warnings.warning_count(), 2);
-        source.enumerated_paths = vec![table.clone(), index.clone()];
+        source.all_possible_access_paths = vec![table.clone(), index.clone()];
         assert!(
             !check_column_can_use_index(
                 &test_context(&allocator),
@@ -520,7 +520,7 @@ mod tests {
             ),
             "Go returns false immediately for residual predicates on the matching integer handle"
         );
-        source.enumerated_paths = vec![index, table];
+        source.all_possible_access_paths = vec![index, table];
         assert!(check_column_can_use_index(
             &test_context(&allocator),
             &LogicalPlan::DataSource(source),

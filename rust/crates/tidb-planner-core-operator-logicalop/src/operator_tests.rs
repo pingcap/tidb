@@ -1065,7 +1065,7 @@ fn data_source_explain_info_prefers_the_alias_and_names_the_partition() {
     assert_eq!(source.explain_info(), "table:t");
     source.table_as_name = Some("alias".to_owned());
     assert_eq!(source.explain_info(), "table:alias");
-    source.partition_definition_names = vec!["p0".to_owned(), "p1".to_owned()];
+    source.set_partition_definition_names(vec!["p0".to_owned(), "p1".to_owned()]);
     source.partition_def_idx = Some(1);
     assert_eq!(source.explain_info(), "table:alias, partition:p1");
     // An empty alias is Go's "no alias".
@@ -1163,7 +1163,7 @@ fn data_source_prune_columns_forgets_a_dropped_int_handle() {
 #[test]
 fn data_source_build_key_info_adds_the_int_primary_key() {
     let mut source = DataSource::new(BaseLogicalPlan::default(), 7, "t");
-    source.pk_is_handle = true;
+    source.set_pk_is_handle(true);
     source.columns = vec![
         tidb_model::GoShared::new({
                 let info = tidb_model::ColumnInfo {
@@ -1214,7 +1214,7 @@ fn data_source_build_key_info_adds_the_int_primary_key() {
     );
 
     // Without PKIsHandle there is no handle column and no derived key.
-    source.pk_is_handle = false;
+    source.set_pk_is_handle(false);
     let mut output = schema(&[1, 2]);
     source.build_key_info(&mut output, Vec::new());
     assert!(output.pk_or_uk.is_empty());
@@ -1224,7 +1224,7 @@ fn data_source_build_key_info_adds_the_int_primary_key() {
         1,
         "an integer HandleCols entry alone does not authorize a PK suffix"
     );
-    source.pk_is_handle = true;
+    source.set_pk_is_handle(true);
     source.base.base.set_schema(Some(schema(&[1])));
     assert_eq!(
         source.index_range_columns(&index).len(),
@@ -3167,10 +3167,9 @@ fn tikv_single_gather_is_transparent_to_order_and_names_its_index() {
     assert!(info.orders.is_empty());
     assert!(!info.has_tiflash);
 
-    op.source = Some(Box::new(DataSource {
-        table_name: "t".to_owned(),
+    op.source = Some(Box::new({ let mut fixture = DataSource {
         ..DataSource::default()
-    }));
+    }; fixture.set_table_name("t".to_owned()); fixture }));
     let table_only = op.explain_info();
     op.is_index_gather = true;
     op.index_name = Some("idx_a".to_owned());
@@ -3244,10 +3243,9 @@ fn table_scan_offers_the_handle_order_and_gates_tiflash_on_mpp() {
 #[test]
 fn table_scan_delegates_keys_and_reports_every_explain_list() {
     let mut ts = LogicalTableScan::new(BaseLogicalPlan::with_id(1, LogicalTableScan::TYPE, 0));
-    ts.source = Some(Box::new(DataSource {
-        table_name: "t".to_owned(),
+    ts.source = Some(Box::new({ let mut fixture = DataSource {
         ..DataSource::default()
-    }));
+    }; fixture.set_table_name("t".to_owned()); fixture }));
     let mut output = schema(&[1, 2]);
     ts.build_key_info(&mut output, vec![vec![column(1)]]);
     assert_eq!(output.pk_or_uk.len(), 1);
@@ -3301,7 +3299,7 @@ fn index_scan_offers_one_order_per_equality_pinned_prefix() {
 fn index_scan_finds_the_handle_in_its_own_schema() {
     let mut is = LogicalIndexScan::new(BaseLogicalPlan::with_id(1, LogicalIndexScan::TYPE, 0));
     is.source = Some(Box::new(DataSource {
-        pk_is_handle: true,
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { pk_is_handle: true, ..tidb_model::TableInfo::default() })),
         handle_cols: vec![column(1)],
         ..DataSource::default()
     }));
@@ -3309,11 +3307,11 @@ fn index_scan_finds_the_handle_in_its_own_schema() {
     // The handle was pruned out of this operator's schema.
     assert!(is.get_pk_is_handle_col(&schema(&[2])).is_none());
     // A clustered/non-PKIsHandle table has none.
-    is.source.as_mut().unwrap().pk_is_handle = false;
+    is.source.as_mut().unwrap().set_pk_is_handle(false);
     assert!(is.get_pk_is_handle_col(&schema(&[1, 2])).is_none());
 
     // BuildKeyInfo appends it above the caller's index keys.
-    is.source.as_mut().unwrap().pk_is_handle = true;
+    is.source.as_mut().unwrap().set_pk_is_handle(true);
     let mut output = schema(&[1, 2]);
     is.build_key_info(&mut output, vec![vec![column(2)]], vec![vec![column(2)]]);
     assert_eq!(output.pk_or_uk.len(), 2);
@@ -3356,10 +3354,9 @@ fn index_prop_matching_rejects_prefix_indexes_and_short_indexes() {
 #[test]
 fn index_scan_explain_names_its_index_columns() {
     let mut is = LogicalIndexScan::new(BaseLogicalPlan::with_id(1, LogicalIndexScan::TYPE, 0));
-    is.source = Some(Box::new(DataSource {
-        table_name: "t".to_owned(),
+    is.source = Some(Box::new({ let mut fixture = DataSource {
         ..DataSource::default()
-    }));
+    }; fixture.set_table_name("t".to_owned()); fixture }));
     let table_only = is.explain_info();
     is.index_column_names = vec!["a".to_owned(), "b".to_owned()];
     is.access_conds = vec![eq(col_expr(1), one())];

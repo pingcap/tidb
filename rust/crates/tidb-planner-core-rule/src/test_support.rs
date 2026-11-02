@@ -50,7 +50,8 @@ impl tidb_planner_core_operator_logicalop::plan_context::AccessPathResolver for 
         _session: tidb_sessionctx::IndexLookupPushDownSession,
         _tikv_in_isolation_read: bool,
         _isolation_read_engines_value: &str,
-    ) -> Result<tidb_planner_util::path::ResolvedIndexPaths, PlanError> {
+        _warnings: &mut dyn FnMut(u16, String),
+    ) -> Result<Vec<tidb_planner_util::path::AccessPath>, PlanError> {
         unreachable!("core's access-path hint resolution: a planner test")
     }
 }

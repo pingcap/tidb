@@ -1517,7 +1517,9 @@ fn partition_processor_puts_union_scan_inside_each_partition_branch() {
     let LogicalPlan::DataSource(source_ref) = &mut source else {
         unreachable!("the helper builds a DataSource");
     };
-    source_ref.partition_definition_ids = vec![101, 102, 103];
+    source_ref.set_partition_definition_ids(vec![101, 102, 103]);
+    // Go always enumerates the table path the per-partition hint rerun keeps.
+    source_ref.public_enumerated_paths = vec![tidb_planner_util::path::AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)];
 
     let conditions = vec![eq_const(2, 7)];
     let handles = vec![column(1)];
@@ -1587,7 +1589,9 @@ fn partition_processor_normalizes_both_condition_lists_and_folds_false() {
     let LogicalPlan::DataSource(source_ref) = &mut source else {
         unreachable!("the helper builds a DataSource");
     };
-    source_ref.partition_definition_ids = vec![101, 102];
+    source_ref.set_partition_definition_ids(vec![101, 102]);
+    // Go always enumerates the table path the per-partition hint rerun keeps.
+    source_ref.public_enumerated_paths = vec![tidb_planner_util::path::AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)];
     source_ref.all_conds = vec![not_ne_const(2, 7)];
     source_ref.pushed_down_conds = vec![not_ne_const(2, 7)];
 
@@ -1613,7 +1617,7 @@ fn partition_processor_normalizes_both_condition_lists_and_folds_false() {
     let LogicalPlan::DataSource(source_ref) = &mut source else {
         unreachable!("the helper builds a DataSource");
     };
-    source_ref.partition_definition_ids = vec![101, 102];
+    source_ref.set_partition_definition_ids(vec![101, 102]);
     source_ref.all_conds = vec![const_false()];
     source_ref.pushed_down_conds = vec![const_false()];
     let (plan, _) = PartitionProcessor
@@ -2129,7 +2133,7 @@ fn build_key_info_portal_runs_bottom_up_over_the_whole_tree() {
     let mut source_schema = schema_of(&[1, 2]);
     source_schema.pk_or_uk = vec![vec![column(1)]];
     let mut source = DataSource::new(base(&allocator, "DataSource", Some(source_schema)), 1, "t");
-    source.pk_is_handle = true;
+    source.set_pk_is_handle(true);
     source.columns = vec![
         tidb_model::GoShared::new({
                 let mut info = tidb_model::ColumnInfo {
@@ -2183,11 +2187,10 @@ fn predicate_push_down_returns_the_predicates_unpushed_at_a_leaf() {
     base.base.set_schema(Some(tidb_expr::schema::Schema::new(vec![
         tidb_expr::column::Column::new(1, tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
     ])));
-    let leaf = LogicalPlan::DataSource(tidb_planner_core_operator_logicalop::data_source::DataSource {
+    let leaf = LogicalPlan::DataSource({ let mut fixture = tidb_planner_core_operator_logicalop::data_source::DataSource {
         base,
-        table_id: 1,
         ..tidb_planner_core_operator_logicalop::data_source::DataSource::default()
-    });
+    }; fixture.set_table_id(1); fixture });
     let (rest, root) = leaf
         .predicate_push_down(&ctx, Vec::new())
         .map_err(|(_, error)| error)
@@ -2227,7 +2230,7 @@ mod partition_index_hints {
             force_no_keep_order: false,
             restored: format!("/*+ USE_INDEX(t, {name}) */"),
         };
-        let mut source = DataSource {
+        let mut source = { let mut fixture = DataSource {
             table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![
                 tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
@@ -2245,7 +2248,6 @@ mod partition_index_hints {
                     ..tidb_model::IndexInfo::default()
                 }),
             ]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
-            table_name: "t".to_owned(),
             index_hints: vec![
                 hinted("idx_all", &[]),
                 hinted("idx_p0", &["p0"]),
@@ -2258,7 +2260,7 @@ mod partition_index_hints {
             isolation_read_engines_value: "tikv".to_owned(),
             tikv_in_isolation_read: true,
             ..DataSource::default()
-        };
+        }; fixture.set_table_name("t".to_owned()); fixture };
         source.public_enumerated_paths = vec![
             AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
             tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone()),
@@ -2272,14 +2274,14 @@ mod partition_index_hints {
         assert_eq!(folded.index_hints.len(), 1);
         tidb_planner_core_rule::rule_partition_processor::resolve_index_hints_for_partition(&crate::rule::rule_tests::test_context(&tidb_planner_core_base::PlanIdAllocator::new()), &mut source, "P1").expect("paths resolve");
         assert_eq!(
-            source.enumerated_paths,
+            source.all_possible_access_paths,
             vec![
                 tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone()),
                 tidb_planner_util::path::AccessPath::index_path(source.table_indices()[2].clone())
             ]
         );
         assert_eq!(
-            source.enumerated_paths.iter().filter(|path| path.forced).filter_map(|path| path.index_info()).map(|index| index.read().id).collect::<Vec<_>>(),
+            source.all_possible_access_paths.iter().filter(|path| path.forced).filter_map(|path| path.index_info()).map(|index| index.read().id).collect::<Vec<_>>(),
             [1, 3]
         );
         assert_eq!(source.index_hints.len(), 2);
@@ -2290,13 +2292,12 @@ mod partition_index_hints {
     /// `t USE INDEX (ia)` keeps the table path out of every partition.
     #[test]
     fn table_syntax_index_hints_survive_per_partition_resolution() {
-        let mut source = DataSource {
+        let mut source = { let mut fixture = DataSource {
             table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 1,
                 name: tidb_ast::CiString::new("ia"),
                 ..tidb_model::IndexInfo::default()
             })]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
-            table_name: "t".to_owned(),
             ast_index_hints: vec![tidb_ast::IndexHint {
                 kind: tidb_ast::IndexHintKind::Use,
                 scope: tidb_ast::IndexHintScope::All,
@@ -2305,7 +2306,7 @@ mod partition_index_hints {
             isolation_read_engines_value: "tikv".to_owned(),
             tikv_in_isolation_read: true,
             ..DataSource::default()
-        };
+        }; fixture.set_table_name("t".to_owned()); fixture };
         source.public_enumerated_paths = vec![
             AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
             tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone()),
@@ -2313,11 +2314,11 @@ mod partition_index_hints {
 
         tidb_planner_core_rule::rule_partition_processor::resolve_index_hints_for_partition(&crate::rule::rule_tests::test_context(&tidb_planner_core_base::PlanIdAllocator::new()), &mut source, "p0").expect("paths resolve");
         assert_eq!(
-            source.enumerated_paths,
+            source.all_possible_access_paths,
             vec![tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())]
         );
         assert_eq!(
-            source.enumerated_paths.iter().filter(|path| path.forced).filter_map(|path| path.index_info()).map(|index| index.read().id).collect::<Vec<_>>(),
+            source.all_possible_access_paths.iter().filter(|path| path.forced).filter_map(|path| path.index_info()).map(|index| index.read().id).collect::<Vec<_>>(),
             [1]
         );
     }

@@ -175,7 +175,7 @@ fn datasource_prunes_partial_paths_and_marks_the_ordinary_cached_plan() {
             ..tidb_model::IndexInfo::default()
         }),
     ]);
-    source.enumerated_paths = vec![
+    source.all_possible_access_paths = vec![
         AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
         tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone()),
         tidb_planner_util::path::AccessPath::index_path(source.table_indices()[1].clone()),
@@ -183,7 +183,7 @@ fn datasource_prunes_partial_paths_and_marks_the_ordinary_cached_plan() {
     source.pushed_down_conds = vec![compare("lt", integer_column(1), integer(0))];
     source.check_partial_indexes(&NoResolver, false, true);
     assert_eq!(
-        source.enumerated_paths,
+        source.all_possible_access_paths,
         vec![
             AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
             tidb_planner_util::path::AccessPath::index_path(source.table_indices()[1].clone()),
@@ -191,13 +191,13 @@ fn datasource_prunes_partial_paths_and_marks_the_ordinary_cached_plan() {
     );
 
     source
-        .enumerated_paths
+        .all_possible_access_paths
         .insert(1, tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone()));
     source.pushed_down_conds = vec![compare("gt", integer_column(1), integer(5))];
     source.path_by_index_id_mut(10).unwrap().forced = true;
     source.check_partial_indexes(&NoResolver, true, true);
     assert_eq!(
-        source.enumerated_paths,
+        source.all_possible_access_paths,
         vec![tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())]
     );
     assert_eq!(

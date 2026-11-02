@@ -2522,7 +2522,8 @@ mod tests {
             _session: tidb_sessionctx::IndexLookupPushDownSession,
             _tikv_in_isolation_read: bool,
             _isolation_read_engines_value: &str,
-        ) -> Result<tidb_planner_util::path::ResolvedIndexPaths, tidb_planner_core_base::PlanError> {
+            _warnings: &mut dyn FnMut(u16, String),
+        ) -> Result<Vec<tidb_planner_util::path::AccessPath>, tidb_planner_core_base::PlanError> {
             unreachable!("join-order tests prune no partitions")
         }
     }
@@ -2949,7 +2950,7 @@ mod tests {
             .unwrap();
         fn leaf_ids(plan: &LogicalPlan, out: &mut Vec<i64>) {
             if let LogicalPlan::DataSource(ds) = plan {
-                out.push(ds.table_id);
+                out.push(ds.table_id());
                 return;
             }
             for child in plan.children() {

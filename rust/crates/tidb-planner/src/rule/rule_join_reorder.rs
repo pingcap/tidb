@@ -1575,7 +1575,7 @@ mod tests {
 
     fn shape(plan: &LogicalPlan) -> String {
         match plan {
-            LogicalPlan::DataSource(source) => source.table_name.clone(),
+            LogicalPlan::DataSource(source) => source.table_name(),
             LogicalPlan::Join(join) => {
                 let [left, right] = join.base.children() else {
                     return "bad-join".to_owned();

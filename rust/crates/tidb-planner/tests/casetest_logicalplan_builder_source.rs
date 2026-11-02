@@ -42,7 +42,7 @@ impl TableSource for TypeRegressionCatalog {
     fn find_table(&self, db_name: &str, table_name: &str) -> Option<&SourceTable> {
         self.tables.iter().find(|table| {
             table.db_name.eq_ignore_ascii_case(db_name)
-                && table.table_name.eq_ignore_ascii_case(table_name)
+                && table.table_name().eq_ignore_ascii_case(table_name)
         })
     }
 
@@ -82,21 +82,21 @@ fn integer_column(code: FieldTypeCode, unsigned: bool) -> SourceColumn {
 /// `CREATE TABLE t3 (c1 bigint unsigned)` (`logical_plan_builder_test.go:64-66`).
 fn type_regression_catalog() -> TypeRegressionCatalog {
     let mut t1 = SourceTable::default();
-    t1.table_id = 101;
+    t1.set_table_id(101);
     t1.db_name = "test".to_owned();
-    t1.table_name = "t1".to_owned();
+    t1.set_table_name("t1".to_owned());
     t1.physical_table_id = 101;
     t1.columns = vec![integer_column(FieldTypeCode::Long, false)];
     let mut t2 = SourceTable::default();
-    t2.table_id = 102;
+    t2.set_table_id(102);
     t2.db_name = "test".to_owned();
-    t2.table_name = "t2".to_owned();
+    t2.set_table_name("t2".to_owned());
     t2.physical_table_id = 102;
     t2.columns = vec![integer_column(FieldTypeCode::Long, true)];
     let mut t3 = SourceTable::default();
-    t3.table_id = 103;
+    t3.set_table_id(103);
     t3.db_name = "test".to_owned();
-    t3.table_name = "t3".to_owned();
+    t3.set_table_name("t3".to_owned());
     t3.physical_table_id = 103;
     t3.columns = vec![integer_column(FieldTypeCode::LongLong, true)];
     TypeRegressionCatalog {

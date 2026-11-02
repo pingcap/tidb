@@ -68,8 +68,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if table.is_memory_table || has_fk {
             return None;
         }
-        if table.is_partitioned
-            || table.is_temporary
+        if table.is_partitioned()
+            || table.is_temporary()
             || table.columns.iter().any(|column| column.read().hidden)
             || table.columns.iter().any(|column| column.read().is_generated())
             || table
@@ -80,7 +80,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             return None;
         }
         let mut keep = vec![false; table.columns.len()];
-        if table.pk_is_handle {
+        if table.pk_is_handle() {
             for offset in &table.handle_col_offsets {
                 keep[*offset] = true;
             }
@@ -97,7 +97,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             return None;
         }
         let kept: Vec<usize> = (0..keep.len()).filter(|offset| keep[*offset]).collect();
-        let extra_handle = !table.pk_is_handle && !table.is_common_handle;
+        let extra_handle = !table.pk_is_handle() && !table.is_common_handle();
         let visible = go_to_lower(table_ref.alias.as_deref().unwrap_or(name));
         let mut pairs: BTreeSet<(String, String)> = kept
             .iter()
@@ -192,8 +192,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // foreign key anywhere in the statement; this port also keeps the
             // whole row for generated or hidden columns and temporary tables.
             let skip = input.has_fk
-                || table.is_partitioned
-                || table.is_temporary
+                || table.is_partitioned()
+                || table.is_temporary()
                 || table.columns.iter().any(|column| column.read().hidden)
                 || table.columns.iter().any(|column| column.read().is_generated())
                 || table
@@ -201,7 +201,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     .iter()
                     .any(|index| !index.read().condition_expr_string.is_empty());
             let mut needed = vec![false; table.columns.len()];
-            if table.pk_is_handle {
+            if table.pk_is_handle() {
                 for offset in &table.handle_col_offsets {
                     needed[*offset] = true;
                 }
@@ -235,9 +235,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 }
                 columns.push((*position, offset));
             }
-            let handle = if table.pk_is_handle {
+            let handle = if table.pk_is_handle() {
                 PendingHandle::Int(by_offset[*table.handle_col_offsets.first()?]?)
-            } else if table.is_common_handle {
+            } else if table.is_common_handle() {
                 PendingHandle::Common(
                     table
                         .common_handle_col_offsets
@@ -249,9 +249,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 PendingHandle::Extra(extra?)
             };
             drafts.push(PendingTable {
-                table_id: table.table_id,
+                table_id: table.table_id(),
                 database: table.db_name.clone(),
-                table: table.table_name.clone(),
+                table: table.table_name(),
                 stored_width: table.columns.len(),
                 columns,
                 handle,

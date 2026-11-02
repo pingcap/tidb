@@ -79,7 +79,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut names: Vec<FieldName> = columns.iter().map(|column| field(column.read().name.original())).collect();
         // Go exposes the heap handle to assignment admission, independently of
         // whether anything else names it.
-        let extra_handle = !table.pk_is_handle && !table.is_common_handle && !table.is_memory_table;
+        let extra_handle = !table.pk_is_handle() && !table.is_common_handle() && !table.is_memory_table;
         if extra_handle {
             names.push(field(tidb_model::column::EXTRA_HANDLE_NAME));
         }

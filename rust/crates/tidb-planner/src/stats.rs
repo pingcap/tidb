@@ -160,7 +160,7 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                     // path's `IsSingleScan` here -- at join reorder for a
                     // join, after the final column pruning otherwise.
                     let missing = op
-                        .enumerated_paths
+                        .all_possible_access_paths
                         .iter()
                         .enumerate()
                         .filter(|(_, path)| path.is_single_scan.is_none())
@@ -177,7 +177,7 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                         })
                         .collect::<Vec<_>>();
                     for (position, single_scan) in missing {
-                        op.enumerated_paths[position].is_single_scan = Some(single_scan);
+                        op.all_possible_access_paths[position].is_single_scan = Some(single_scan);
                     }
                     Ok((stats, op.all_conds.is_empty()))
                 } else {
@@ -248,8 +248,8 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                     // Go derivePathStatsAndTryHeuristics fixes IsSingleScan
                     // with the first stats profile. Join reorder can derive
                     // this before the final column-pruning pass.
-                    for position in 0..op.enumerated_paths.len() {
-                        let path = &op.enumerated_paths[position];
+                    for position in 0..op.all_possible_access_paths.len() {
+                        let path = &op.all_possible_access_paths[position];
                         let is_single_scan = path.index.as_ref().map(|index| {
                             tidb_planner_core_operator_logicalop::data_source::index_path_is_single_scan(
                                 op,
@@ -257,14 +257,14 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                                 env.opt_prefix_index_single_scan,
                             )
                         });
-                        op.enumerated_paths[position].is_single_scan = is_single_scan;
+                        op.all_possible_access_paths[position].is_single_scan = is_single_scan;
                     }
                     op.base.base.set_stats(Some(stats.clone()));
                     Ok((stats, op.all_conds.is_empty()))
                 }
             }
         };
-        if result.is_ok() && (!source_had_stats || op.derived_access_paths.is_none()) {
+        if result.is_ok() && (!source_had_stats || op.possible_access_paths.is_none()) {
             let evaluate = tidb_ranger::points::StatementRangerEvaluator(env.eval_context);
             let derivation = crate::access_path::AccessPathDerivationContext {
                 opt_prefix_index_single_scan: env.opt_prefix_index_single_scan,
@@ -288,7 +288,7 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                 env.opt_prefix_index_single_scan,
                 env.use_plan_cache,
             ) {
-                Ok((paths, warning)) => {
+                Ok((paths, index_merge_max_count, warning)) => {
                     if let Some(warning) = warning {
                         env.eval_context.append_warning(1105, &warning);
                     }
@@ -297,7 +297,7 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                     // derived from PushedDownConds, so the largest
                     // merge row count caps the DataSource's rows.
                     if let (Some(max_rows), Ok((stats, _)), Some(table_stats)) = (
-                        paths.index_merge_max_count,
+                        index_merge_max_count,
                         result.as_mut(),
                         op.table_stats.as_ref(),
                     ) {
@@ -308,7 +308,7 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                             *stats = scaled;
                         }
                     }
-                    op.derived_access_paths = Some(paths);
+                    op.possible_access_paths = Some(paths);
                 }
                 Err(error) => result = Err(error),
             }

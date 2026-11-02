@@ -101,15 +101,8 @@ pub fn resolve_index_hints_for_partition(
                 .any(|partition| partition == partition_name)
     });
     let table = tidb_infoschema::table_source::SourceTable {
-            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((source.table_indices()).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
-        table_name: source.table_name.clone(),
-        pk_is_handle: source.pk_is_handle,
-        is_common_handle: source.is_common_handle,
-        common_handle_version: source.common_handle_version,
-        is_temporary: source.is_temporary,
-        is_local_temporary: source.is_local_temporary,
-        is_cached: source.is_cached,
-        has_affinity: source.has_affinity,
+        // Go re-reads `ds.TableInfo` itself.
+        table_info: source.table_info.clone(),
         ..Default::default()
     };
     // Go `resolveOptimizeHint` re-runs `getPossibleAccessPaths` with the
@@ -118,7 +111,9 @@ pub fn resolve_index_hints_for_partition(
     // scope. The two lists are disjoint (`index_hints` holds only comment
     // hints), exactly as at the top-level resolution. Dropping the AST list
     // put the table path back on every partition of `t USE INDEX (ia)`.
-    let resolution = ctx.access_path_resolver.apply_table_index_hints(
+    // The statement-level resolution already reported this table's hint
+    // warnings; a partition's rerun does not repeat them.
+    let paths = ctx.access_path_resolver.apply_table_index_hints(
         &table,
         &source.public_enumerated_paths,
         &source.ast_index_hints,
@@ -128,9 +123,10 @@ pub fn resolve_index_hints_for_partition(
         source.index_lookup_push_down_session,
         source.tikv_in_isolation_read,
         &source.isolation_read_engines_value,
+        &mut |_, _| {},
     )?;
-    source.derived_access_paths = None;
-    source.enumerated_paths = resolution.paths;
+    source.possible_access_paths = None;
+    source.all_possible_access_paths = paths;
     Ok(())
 }
 
@@ -224,7 +220,7 @@ fn make_children(
     let mut children = Vec::with_capacity(indices.len());
     let mut used_partition_names = std::collections::BTreeSet::new();
     for index in indices {
-        let Some(physical_id) = source.partition_definition_ids.get(index).copied() else {
+        let Some(physical_id) = source.partition_definition_ids().get(index).copied() else {
             continue;
         };
         // Go builds each copy with `NewBaseLogicalPlan`, which draws a plan id,
@@ -236,10 +232,10 @@ fn make_children(
             query_block_offset,
         );
         let mut child = source.clone_shallow();
-        child.derived_access_paths = None;
+        child.possible_access_paths = None;
         child.partition_def_idx = Some(index);
         child.physical_table_id = physical_id;
-        if let Some(partition_name) = source.partition_definition_names.get(index) {
+        if let Some(partition_name) = source.partition_definition_names().get(index) {
             resolve_index_hints_for_partition(ctx, &mut child, partition_name)?;
             resolve_index_merge_hints_for_partition(&mut child, partition_name);
             resolve_storage_hints_for_partition(ctx, &mut child, partition_name);
@@ -281,10 +277,10 @@ fn prune_data_source(
     ctx: &RuleContext<'_>,
     mut source: DataSource,
 ) -> Result<LogicalPlan, PlanError> {
-    if source.partition_definition_ids.is_empty() {
+    if source.partition_definition_ids().is_empty() {
         return Ok(LogicalPlan::DataSource(source));
     }
-    source.derived_access_paths = None;
+    source.possible_access_paths = None;
     source.pushed_down_conds =
         apply_predicate_simplification(ctx, source.pushed_down_conds, false, None);
     source.all_conds = apply_predicate_simplification(ctx, source.all_conds, false, None);
@@ -297,7 +293,7 @@ fn prune_data_source(
         return Ok(dual);
     }
     let indices = ctx.partition_pruning.map_or_else(
-        || Ok((0..source.partition_definition_ids.len()).collect()),
+        || Ok((0..source.partition_definition_ids().len()).collect()),
         |pruning| {
             pruning.spend_partition_expression_plan_id(&source);
             pruning.partition_indices(&source)

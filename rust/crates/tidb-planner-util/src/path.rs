@@ -21,18 +21,6 @@
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 
-/// Go's post-derivation PossibleAccessPaths.
-#[derive(Clone, Debug)]
-pub struct DerivedAccessPaths {
-    /// Ordinary and index-merge paths compete through one retained
-    /// collection (Go `PossibleAccessPaths` after `generateIndexMergePath`).
-    pub paths: Vec<AccessPath>,
-    /// Go `generateIndexMergePath`'s `maxRowCount`: the largest index-merge
-    /// `CountAfterAccess`, present only when merges were built from more
-    /// conditions (`AllConds`) than the DataSource statistics saw
-    /// (`PushedDownConds`). The statistics are rescaled down to it.
-    pub index_merge_max_count: Option<f64>,
-}
 
 /// Go `util.AccessPath`: one candidate way of reading a `DataSource`, born
 /// at enumeration (`getPossibleAccessPaths`) with its store, index and handle
@@ -268,17 +256,3 @@ pub struct FilledTablePath {
 
 
 
-/// Go `getPossibleAccessPaths`' hint-filtering result.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ResolvedIndexPaths {
-    /// Go `available` after ignore and fallback handling.
-    pub paths: Vec<AccessPath>,
-    /// Unknown names from comment-style hints; Go downgrades these to 1176
-    /// warnings while table-syntax hints return the error directly.
-    pub unknown_comment_indexes: Vec<String>,
-    /// Go statement-context hint warnings produced while resolving paths.
-    pub hint_warnings: Vec<String>,
-    /// Ordinary statement warnings produced when a comment-style index hint
-    /// names a TiKV index while TiKV is absent from the isolation engines.
-    pub isolation_read_warnings: Vec<String>,
-}

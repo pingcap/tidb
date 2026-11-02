@@ -58,7 +58,7 @@ impl TableSource for TestCatalog {
     fn find_table(&self, db_name: &str, table_name: &str) -> Option<&SourceTable> {
         self.tables.iter().find(|table| {
             table.db_name.eq_ignore_ascii_case(db_name)
-                && table.table_name.eq_ignore_ascii_case(table_name)
+                && table.table_name().eq_ignore_ascii_case(table_name)
         })
     }
 
@@ -99,8 +99,8 @@ fn catalog() -> TestCatalog {
     let mut catalog = TestCatalog {
         current_database: "test".to_owned(),
         tables: vec![
-            SourceTable {
-            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+            { let mut fixture = SourceTable {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { pk_is_handle: true, indices: tidb_model::GoSharedPointerSlice::from_handles((vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
                     name: tidb_ast::CiString::new("idx_b"),
                     columns: vec![tidb_model::IndexColumn {
@@ -112,25 +112,20 @@ fn catalog() -> TestCatalog {
                     state: tidb_model::SchemaState::PUBLIC,
                     ..tidb_model::IndexInfo::default()
                 })]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
-                table_id: 100,
-                table_name: "t".to_owned(),
                 db_name: "test".to_owned(),
                 physical_table_id: 100,
                 columns: vec![column(0, "a", true), column(1, "b", false)],
-                pk_is_handle: true,
                 handle_col_offsets: vec![0],
                 ..SourceTable::default()
-            },
-            SourceTable {
-                table_id: 200,
-                table_name: "hs".to_owned(),
+            }; fixture.set_table_id(100); fixture.set_table_name("t".to_owned()); fixture },
+            { let mut fixture = SourceTable {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { pk_is_handle: true, ..tidb_model::TableInfo::default() })),
                 db_name: "test".to_owned(),
                 physical_table_id: 200,
                 columns: vec![column(0, "a", true), column(1, "y", false)],
-                pk_is_handle: true,
                 handle_col_offsets: vec![0],
                 ..SourceTable::default()
-            },
+            }; fixture.set_table_id(200); fixture.set_table_name("hs".to_owned()); fixture },
         ],
     };
     // Go hands the planner each table's `TableInfo`, as `planner_view` does.
@@ -294,9 +289,9 @@ fn test_the_seam_builds_a_real_logical_plan() {
     let LogicalPlan::DataSource(data_source) = &selection.base.children()[0] else {
         panic!("expected a DataSource at the leaf");
     };
-    assert_eq!(data_source.table_id, 100);
+    assert_eq!(data_source.table_id(), 100);
     assert_eq!(data_source.db_name, "test");
-    assert!(data_source.pk_is_handle);
+    assert!(data_source.pk_is_handle());
 
     // The plan's SCHEMA and OUTPUT NAMES are the projection's, seen through
     // the Sort and the Limit, which have neither of their own — Go's
@@ -426,7 +421,7 @@ fn test_table_source_drives_data_source_construction() {
 #[test]
 fn test_handle_less_table_gets_the_extra_row_id_handle() {
     let mut harness = Harness::new();
-    harness.tables_mut()[0].pk_is_handle = false;
+    harness.tables_mut()[0].set_pk_is_handle(false);
     harness.tables_mut()[0].handle_col_offsets.clear();
     let mut builder = harness.builder();
     let plan = builder
@@ -742,8 +737,8 @@ fn indexed_virtual_generated_expression_is_substituted_by_the_ordinary_rule() {
 #[test]
 fn test_partitioned_table_sets_the_partition_processor_flag() {
     let mut harness = Harness::new();
-    harness.tables_mut()[0].is_partitioned = true;
-    harness.tables_mut()[0].partition_definition_names = vec!["p0".to_owned(), "p1".to_owned()];
+    harness.tables_mut()[0].set_is_partitioned(true);
+    harness.tables_mut()[0].set_partition_definition_names(vec!["p0".to_owned(), "p1".to_owned()]);
     harness.tables_mut()[0].partition_def_idx = Some(1);
     let mut builder = harness.builder();
     builder
@@ -756,8 +751,8 @@ fn test_partitioned_table_sets_the_partition_processor_flag() {
 fn test_dynamic_partition_pruning_retains_global_index_paths() {
     let mut harness = Harness::new();
     let table = &mut harness.tables_mut()[0];
-    table.is_partitioned = true;
-    table.partition_definition_names = vec!["p0".to_owned(), "p1".to_owned()];
+    table.set_is_partitioned(true);
+    table.set_partition_definition_names(vec!["p0".to_owned(), "p1".to_owned()]);
     table.table_indices()[0].write().global = true;
 
     let mut builder = harness.builder();
@@ -773,7 +768,7 @@ fn test_dynamic_partition_pruning_retains_global_index_paths() {
     };
     assert_eq!(flags & flags::PARTITION_PROCESSOR, 0);
     assert!(source
-        .enumerated_paths
+        .all_possible_access_paths
         .contains(&tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())));
 
     let mut builder = harness.builder();
@@ -788,7 +783,7 @@ fn test_dynamic_partition_pruning_retains_global_index_paths() {
     };
     assert_ne!(flags & flags::PARTITION_PROCESSOR, 0);
     assert!(!source
-        .enumerated_paths
+        .all_possible_access_paths
         .contains(&tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())));
 }
 
@@ -801,8 +796,8 @@ fn test_partition_clause_matches_partition_metadata() {
         .expect_err("a partition clause on a nonpartitioned table is rejected");
     assert!(error.equal(&tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED));
 
-    harness.tables_mut()[0].is_partitioned = true;
-    harness.tables_mut()[0].partition_definition_names = vec!["p0".to_owned()];
+    harness.tables_mut()[0].set_is_partitioned(true);
+    harness.tables_mut()[0].set_partition_definition_names(vec!["p0".to_owned()]);
     let mut builder = harness.builder();
     builder
         .build_select(&parse_select("SELECT a FROM t PARTITION (P0)"))
@@ -830,10 +825,10 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
         panic!("expected data source");
     };
     assert_eq!(
-        source.enumerated_paths,
+        source.all_possible_access_paths,
         vec![tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())]
     );
-    assert!(source.enumerated_paths[0].forced);
+    assert!(source.all_possible_access_paths[0].forced);
 
     let mut builder = harness.builder();
     let (plan, _) = builder
@@ -846,10 +841,10 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
         panic!("expected data source");
     };
     assert_eq!(
-        source.enumerated_paths,
+        source.all_possible_access_paths,
         vec![tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())]
     );
-    assert!(source.enumerated_paths[0].forced);
+    assert!(source.all_possible_access_paths[0].forced);
 
     let mut builder = harness.builder();
     let (plan, _) = builder
@@ -864,10 +859,10 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
         panic!("expected data source");
     };
     assert!(matches!(
-        source.enumerated_paths.as_slice(),
+        source.all_possible_access_paths.as_slice(),
         [path] if path.is_tikv_table_path()
     ));
-    assert!(source.enumerated_paths[0].force_keep_order);
+    assert!(source.all_possible_access_paths[0].force_keep_order);
 
     let mut builder = harness.builder();
     let (plan, _) = builder
@@ -880,7 +875,7 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
         panic!("expected data source");
     };
     assert!(matches!(
-        source.enumerated_paths.as_slice(),
+        source.all_possible_access_paths.as_slice(),
         [path] if path.is_tikv_table_path()
     ));
 
@@ -944,10 +939,10 @@ fn test_read_from_storage_is_resolved_from_plan_hints_like_go() {
     use tidb_planner_core_operator_logicalop::data_source::{PREFER_TIFLASH, PREFER_TIKV};
 
     let mut harness = Harness::new();
-    harness.tables_mut()[0].tiflash_replica = Some(tidb_model::TiFlashReplicaInfo {
+    harness.tables_mut()[0].set_tiflash_replica(Some(tidb_model::TiFlashReplicaInfo {
         available: true,
         ..tidb_model::TiFlashReplicaInfo::default()
-    });
+    }));
     let warnings = WarningColumns::default();
 
     let build = |sql: &str, engines: &str| {
@@ -1033,10 +1028,10 @@ fn test_index_hints_respect_tikv_isolation_like_go() {
     use tidb_planner_util::path::AccessPath;
 
     let mut harness = Harness::new();
-    harness.tables_mut()[0].tiflash_replica = Some(tidb_model::TiFlashReplicaInfo {
+    harness.tables_mut()[0].set_tiflash_replica(Some(tidb_model::TiFlashReplicaInfo {
         available: true,
         ..tidb_model::TiFlashReplicaInfo::default()
-    });
+    }));
     let warnings = WarningColumns::default();
     let build = |sql: &str| {
         warnings
@@ -1066,7 +1061,7 @@ fn test_index_hints_respect_tikv_isolation_like_go() {
     assert_eq!(
         source
             .expect("the SELECT contains a DataSource")
-            .enumerated_paths,
+            .all_possible_access_paths,
         vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiFlash, false, None)]
     );
 
@@ -1088,7 +1083,7 @@ fn test_index_hints_respect_tikv_isolation_like_go() {
     assert_eq!(
         source
             .expect("the SELECT contains a DataSource")
-            .enumerated_paths,
+            .all_possible_access_paths,
         vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiFlash, false, None)]
     );
     assert_eq!(
@@ -1127,9 +1122,9 @@ fn test_no_index_lookup_pushdown_matches_and_overrides_positive_hint() {
         panic!("expected data source");
     };
     assert!(source.force_no_index_lookup_push_down);
-    assert!(source.enumerated_paths.iter().all(|path| path.index_lookup_push_down_by == tidb_planner_util::path::IndexLookUpPushDownByType::None));
+    assert!(source.all_possible_access_paths.iter().all(|path| path.index_lookup_push_down_by == tidb_planner_util::path::IndexLookUpPushDownByType::None));
     assert!(matches!(
-        source.enumerated_paths.as_slice(),
+        source.all_possible_access_paths.as_slice(),
         [path] if path.is_tikv_table_path()
     ));
     assert_eq!(
@@ -1177,9 +1172,9 @@ fn test_lookup_pushdown_rejects_go_unsupported_index_metadata() {
         let LogicalPlan::DataSource(source) = &projection.base.children()[0] else {
             panic!("expected data source");
         };
-        assert!(source.enumerated_paths.iter().all(|path| path.index_lookup_push_down_by == tidb_planner_util::path::IndexLookUpPushDownByType::None));
+        assert!(source.all_possible_access_paths.iter().all(|path| path.index_lookup_push_down_by == tidb_planner_util::path::IndexLookUpPushDownByType::None));
         assert!(matches!(
-            source.enumerated_paths.as_slice(),
+            source.all_possible_access_paths.as_slice(),
             [path] if path.is_tikv_table_path()
         ));
         assert_eq!(
@@ -1213,7 +1208,8 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
     };
     let resolve = |table: &SourceTable, session| {
         let paths = get_possible_access_paths(table, false, None, None, true, false, &[], false).unwrap();
-        apply_table_index_hints(
+        let mut warnings = Vec::new();
+        let paths = apply_table_index_hints(
             table,
             &paths,
             &[],
@@ -1223,15 +1219,17 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
             session,
             true,
             "tikv,tiflash,tidb",
+            &mut |code, message| warnings.push((code, message)),
         )
-        .expect("lookup-pushdown hint resolution")
+        .expect("lookup-pushdown hint resolution");
+        (paths, warnings)
     };
 
     let cases: [(fn(&mut SourceTable, &mut IndexLookupPushDownSession), &str); 10] = [
         (
             |table: &mut SourceTable, _: &mut IndexLookupPushDownSession| {
-                table.is_common_handle = true;
-                table.common_handle_version = 0;
+                table.set_is_common_handle(true);
+                table.set_common_handle_version(0);
             },
             "common handle table with old encoding version is not supported",
         ),
@@ -1240,11 +1238,11 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
             "the global index in partition table is not supported",
         ),
         (
-            |table, _| table.is_temporary = true,
+            |table, _| table.set_is_temporary(true),
             "temporary table is not supported",
         ),
         (
-            |table, _| table.is_cached = true,
+            |table, _| table.set_is_cached(true),
             "cached table is not supported",
         ),
         (
@@ -1276,18 +1274,18 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
         let mut table = catalog().tables.remove(0);
         let mut session = IndexLookupPushDownSession::default();
         mutate(&mut table, &mut session);
-        let result = resolve(&table, session);
-        assert!(result.paths.iter().all(|path| path.index_lookup_push_down_by == tidb_planner_util::path::IndexLookUpPushDownByType::None));
+        let (result, warnings) = resolve(&table, session);
+        assert!(result.iter().all(|path| path.index_lookup_push_down_by == tidb_planner_util::path::IndexLookUpPushDownByType::None));
         assert_eq!(
-            result.hint_warnings,
-            vec![format!(
+            warnings,
+            vec![(1815, format!(
                 "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, {reason}"
-            )]
+            ))]
         );
     }
 
     let table = catalog().tables.remove(0);
-    let forced = resolve(
+    let (forced, _) = resolve(
         &table,
         IndexLookupPushDownSession {
             policy: IndexLookupPushDownPolicy::Force,
@@ -1295,7 +1293,7 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
         },
     );
     assert_eq!(
-        forced.paths.iter().find(|path| path.index_info().is_some_and(|index| index.read().id == 1)).map(|path| path.index_lookup_push_down_by),
+        forced.iter().find(|path| path.index_info().is_some_and(|index| index.read().id == 1)).map(|path| path.index_lookup_push_down_by),
         Some(IndexLookUpPushDownByType::Hint),
         "an explicit hint overrides the system-policy origin"
     );
@@ -1314,10 +1312,11 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
         },
         true,
         "tikv,tiflash,tidb",
+        &mut |_, _| {},
     )
     .unwrap();
     assert_eq!(
-        auto.paths.iter().find(|path| path.index_info().is_some_and(|index| index.read().id == 1)).map(|path| path.index_lookup_push_down_by),
+        auto.iter().find(|path| path.index_info().is_some_and(|index| index.read().id == 1)).map(|path| path.index_lookup_push_down_by),
         Some(IndexLookUpPushDownByType::SysVar)
     );
     let affinity_only = apply_table_index_hints(
@@ -1333,9 +1332,10 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
         },
         true,
         "tikv,tiflash,tidb",
+        &mut |_, _| {},
     )
     .unwrap();
-    assert!(affinity_only.paths.iter().all(|path| path.index_lookup_push_down_by == tidb_planner_util::path::IndexLookUpPushDownByType::None));
+    assert!(affinity_only.iter().all(|path| path.index_lookup_push_down_by == tidb_planner_util::path::IndexLookUpPushDownByType::None));
 }
 
 #[test]
@@ -1680,14 +1680,14 @@ fn a_built_data_source_enumerates_its_access_paths() {
         panic!("expected a DataSource");
     };
     assert_eq!(
-        data_source.enumerated_paths,
+        data_source.all_possible_access_paths,
         vec![
             AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
             tidb_planner_util::path::AccessPath::index_path(data_source.table_indices()[0].clone()),
         ]
     );
     // Nothing is derived at build time; statistics derivation fills the paths.
-    assert!(data_source.derived_access_paths.is_none());
+    assert!(data_source.possible_access_paths.is_none());
 }
 
 #[test]

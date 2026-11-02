@@ -107,7 +107,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             insert.columns.clone()
         };
         let names_a_column = insert.set_syntax || insert.columns_specified;
-        let heap = !table.pk_is_handle && !table.is_common_handle;
+        let heap = !table.pk_is_handle() && !table.is_common_handle();
         let extra_handle_offset = (names_a_column
             && heap
             && !table.is_memory_table
@@ -145,7 +145,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         };
         Ok(InsertTarget {
             database: table.db_name.clone(),
-            table: table.table_name.clone(),
+            table: table.table_name(),
             columns,
             generated,
             offsets,
@@ -181,13 +181,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut names = Vec::with_capacity(table.columns.len());
         for column in &table.columns {
             let mut built = Column::new(self.column_ids.alloc(), column.read().field_type.clone());
-            built.orig_name = format!("{}.{}.{}", table.db_name, table.table_name, column.read().name);
+            built.orig_name = format!("{}.{}.{}", table.db_name, table.table_name(), column.read().name);
             schema.columns.push(built);
             names.push(FieldName::new(FieldNameMetadata {
-                original_table: IdentifierMetadata::new(table.table_name.as_str()),
+                original_table: IdentifierMetadata::new(table.table_name().as_str()),
                 original_column: IdentifierMetadata::new(column.read().name.original()),
                 database: IdentifierMetadata::new(table.db_name.as_str()),
-                table: IdentifierMetadata::new(table.table_name.as_str()),
+                table: IdentifierMetadata::new(table.table_name().as_str()),
                 column: IdentifierMetadata::new(column.read().name.original()),
             }));
         }

@@ -779,7 +779,7 @@ pub(crate) fn generate_and_index_merge_4_composed_index(
     filters: &[Expression],
     use_plan_cache: bool,
 ) -> Result<Option<AccessPath>, PlanError> {
-    if filters.is_empty() || ds.enumerated_paths.len() <= 1 {
+    if filters.is_empty() || ds.all_possible_access_paths.len() <= 1 {
         return Ok(None);
     }
     // At least one hinted MV index path.
@@ -842,7 +842,7 @@ pub(crate) fn clean_access_path_for_mv_index_hint(
     paths: &mut Vec<AccessPath>,
 ) {
     let forced: std::collections::BTreeSet<i64> = ds
-        .enumerated_paths
+        .all_possible_access_paths
         .iter()
         .filter(|path| path.forced)
         .filter_map(tidb_planner_util::path::AccessPath::index_info)

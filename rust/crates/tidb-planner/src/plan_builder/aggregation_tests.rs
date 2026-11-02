@@ -50,7 +50,7 @@ impl TableSource for TestCatalog {
     fn find_table(&self, db_name: &str, table_name: &str) -> Option<&SourceTable> {
         self.tables.iter().find(|table| {
             table.db_name.eq_ignore_ascii_case(db_name)
-                && table.table_name.eq_ignore_ascii_case(table_name)
+                && table.table_name().eq_ignore_ascii_case(table_name)
         })
     }
 
@@ -91,8 +91,8 @@ fn column(offset: usize, name: &str, primary: bool) -> SourceColumn {
 fn catalog() -> TestCatalog {
     let mut catalog = TestCatalog {
         current_database: "test".to_owned(),
-        tables: vec![SourceTable {
-            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { indices: tidb_model::GoSharedPointerSlice::from_handles((vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+        tables: vec![{ let mut fixture = SourceTable {
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { pk_is_handle: true, indices: tidb_model::GoSharedPointerSlice::from_handles((vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 1,
                 name: tidb_ast::CiString::new("idx_b"),
                 columns: vec![tidb_model::IndexColumn {
@@ -104,8 +104,6 @@ fn catalog() -> TestCatalog {
                 state: tidb_model::SchemaState::PUBLIC,
                 ..tidb_model::IndexInfo::default()
             })]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
-            table_id: 100,
-            table_name: "t".to_owned(),
             db_name: "test".to_owned(),
             physical_table_id: 100,
             columns: vec![
@@ -113,10 +111,9 @@ fn catalog() -> TestCatalog {
                 column(1, "b", false),
                 column(2, "c", false),
             ],
-            pk_is_handle: true,
             handle_col_offsets: vec![0],
             ..SourceTable::default()
-        }],
+        }; fixture.set_table_id(100); fixture.set_table_name("t".to_owned()); fixture }],
     };
     // Go hands the planner each table's `TableInfo`, as `planner_view` does.
     for table in &mut catalog.tables {
@@ -1247,7 +1244,7 @@ fn single_table_delete_prunes_the_read_to_the_handle_and_index_columns() {
     );
     // A partitioned table and a partial index decline it too.
     let mut partitioned = Harness::new();
-    partitioned.catalog.tables[0].is_partitioned = true;
+    partitioned.catalog.tables[0].set_is_partitioned(true);
     assert_eq!(
         build_delete(&partitioned, "SELECT * FROM t", false),
         (None, Some(3))
@@ -1261,7 +1258,7 @@ fn single_table_delete_prunes_the_read_to_the_handle_and_index_columns() {
     // A heap table (no integer primary key, no common handle) also reads
     // `_tidb_rowid`.
     let mut heap = Harness::new();
-    heap.catalog.tables[0].pk_is_handle = false;
+    heap.catalog.tables[0].set_pk_is_handle(false);
     heap.catalog.tables[0].handle_col_offsets = Vec::new();
     heap.catalog.tables[0].columns[0]
         .info
@@ -1772,7 +1769,7 @@ fn single_table_update_assignments_resolve_to_table_columns() {
     );
 
     let mut heap = Harness::new();
-    heap.catalog.tables[0].pk_is_handle = false;
+    heap.catalog.tables[0].set_pk_is_handle(false);
     heap.catalog.tables[0].handle_col_offsets = Vec::new();
     let error = resolve(&heap, "UPDATE t SET _tidb_rowid = 1").err().unwrap();
     assert_eq!(

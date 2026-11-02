@@ -813,7 +813,7 @@ fn only_an_enumerated_tiflash_path_refuses_the_derivation() {
             unreachable!()
         };
         ds.has_tiflash_replica = true;
-        ds.enumerated_paths = paths;
+        ds.all_possible_access_paths = paths;
         selection(
             &allocator,
             vec![le_const(2, 5)],

@@ -548,25 +548,19 @@ fn source_table(table: GoShared<TableInfo>) -> SourceTable {
     } else {
         Vec::new()
     };
-    SourceTable {
+    { let mut fixture = SourceTable {
         db_info: Some(GoShared::new(DBInfo {
             name: CiString::new("test"),
             state: SchemaState::PUBLIC,
             ..DBInfo::default()
         })),
         table_info: Some(table.clone()),
-        table_id: info.id,
-        table_name: info.name.original().to_owned(),
         db_name: "test".to_owned(),
         physical_table_id: info.id,
-        is_partitioned: info.partition.is_some(),
-        partition_definition_names,
-        partition_definition_ids,
         columns,
-        pk_is_handle: info.pk_is_handle,
         handle_col_offsets,
         ..SourceTable::default()
-    }
+    }; fixture.set_is_partitioned(info.partition.is_some()); fixture.set_partition_definition_names(partition_definition_names); fixture.set_partition_definition_ids(partition_definition_ids); fixture }
 }
 
 /// Rust infoschema counterpart for the package fixtures.
@@ -659,7 +653,7 @@ impl TableSource for MockInfoSchema {
         db_name.eq_ignore_ascii_case("test").then(|| {
             self.sources
                 .iter()
-                .find(|table| table.table_name.eq_ignore_ascii_case(table_name))
+                .find(|table| table.table_name().eq_ignore_ascii_case(table_name))
         })?
     }
 

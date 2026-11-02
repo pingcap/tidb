@@ -367,16 +367,16 @@ fn attach_dynamic_partition_access(
     pruning: &dyn PartitionPruning,
 ) -> Result<(), PlanError> {
     if let LogicalPlan::DataSource(source) = plan {
-        if !source.partition_definition_ids.is_empty() {
+        if !source.partition_definition_ids().is_empty() {
             let indices = pruning.partition_indices(source)?;
             let all_partitions = source.partition_names.is_empty()
-                && indices.len() == source.partition_definition_ids.len();
+                && indices.len() == source.partition_definition_ids().len();
             let partitions = if all_partitions {
                 Vec::new()
             } else {
                 indices
                     .into_iter()
-                    .filter_map(|index| source.partition_definition_names.get(index).cloned())
+                    .filter_map(|index| source.partition_definition_names().get(index).cloned())
                     .collect()
             };
             source.dynamic_partition_access = Some(tidb_planner_core_access::DynamicPartitionAccessObject {
@@ -384,7 +384,7 @@ fn attach_dynamic_partition_access(
                 table: source
                     .table_as_name
                     .clone()
-                    .unwrap_or_else(|| source.table_name.clone()),
+                    .unwrap_or_else(|| source.table_name()),
                 all_partitions,
                 partitions,
                 error: String::new(),

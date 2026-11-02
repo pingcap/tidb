@@ -2930,9 +2930,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         table: &tidb_infoschema::table_source::SourceTable,
     ) -> (Vec<tidb_model::GoShared<tidb_model::IndexInfo>>, bool) {
         (
-            self.source.hypo_indexes(db_name, &table.table_name),
+            self.source.hypo_indexes(db_name, &table.table_name()),
             self.source
-                .uses_hypo_tiflash_replicas(db_name, &table.table_name),
+                .uses_hypo_tiflash_replicas(db_name, &table.table_name()),
         )
     }
 
@@ -3121,18 +3121,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // the transaction's metadata-lock map. A temporary table is never
         // locked (a LOCAL one is not attached, a GLOBAL one skips the lock),
         // and a virtual table has no schema version to hold.
-        if !table.is_temporary && !table.is_memory_table {
-            self.source.record_related_table_for_mdl(table.table_id);
+        if !table.is_temporary() && !table.is_memory_table {
+            self.source.record_related_table_for_mdl(table.table_id());
         }
         // `:4967` a view definition is shared by every session, while a LOCAL
         // temporary table belongs to one connection and dies with it.
-        if self.is_create_view && table.is_local_temporary {
+        if self.is_create_view && table.is_local_temporary() {
             return Err(PlanError::from(
                 tidb_plannererrors::ERR_VIEW_SELECT_TEMPORARY_TABLE
                     .generate_with_stack_by_args(&[(&table_name).into()]),
             ));
         }
-        self.append_select_visit(&db_name, &table.table_name);
+        self.append_select_visit(&db_name, &table.table_name());
 
         if self.resolve_ctx.read().table_name(table_ref).is_none() {
             self.resolve_ctx
@@ -3164,22 +3164,22 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // Go: under dynamic pruning, a partitioned table without global
         // statistics turns the statement's pruning static (unless missing
         // partition statistics are skipped), and every later table follows.
-        if table.is_partitioned && !self.partition_processor_enabled {
+        if table.is_partitioned() && !self.partition_processor_enabled {
             if let Some(fallback) = self.dynamic_prune_fallback {
-                if fallback(table.table_id, &table.table_name) {
+                if fallback(table.table_id(), &table.table_name()) {
                     self.partition_processor_enabled = true;
                 }
             }
         }
         // `b.optFlag |= rule.FlagPartitionProcessor` is enabled only for
         // static pruning. Dynamic pruning must retain global-index paths.
-        if table.is_partitioned && self.partition_processor_enabled {
+        if table.is_partitioned() && self.partition_processor_enabled {
             self.opt_flag |= flags::PARTITION_PROCESSOR;
         }
-        if table.is_partitioned {
+        if table.is_partitioned() {
             for partition in &table_ref.partitions {
                 if !table
-                    .partition_definition_names
+                    .partition_definition_names()
                     .iter()
                     .any(|name| partition_name_matches(name, partition))
                 {
@@ -3187,7 +3187,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         tidb_table::table_errors::ERR_UNKNOWN_PARTITION
                             .generate_with_stack_by_args(&[
                                 tidb_mysql::to_lowercase(&(partition)).into(),
-                                (&table.table_name).into(),
+                                (&table.table_name()).into(),
                             ]),
                     ));
                 }
@@ -3216,7 +3216,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // hypothetical indexes, as public paths after the real ones.
         let (hypo_indexes, hypo_tiflash_replica) = self.hypo_access_paths(&db_name, table);
         let as_name = table_ref.alias.clone();
-        let visible_table = as_name.clone().unwrap_or_else(|| table.table_name.clone());
+        let visible_table = as_name.clone().unwrap_or_else(|| table.table_name());
         let mut force_no_index_lookup_push_down = false;
         for hint in &mut self.no_index_lookup_push_down_hints {
             let hint_db = hint
@@ -3296,7 +3296,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         for source_column in &table.columns {
             let name = self.table_field_name(
                 &db_name,
-                &table.table_name,
+                &table.table_name(),
                 &visible_table,
                 source_column.read().name.original(),
                 source_column.read().state != tidb_model::SchemaState::PUBLIC,
@@ -3364,7 +3364,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             extra.id = EXTRA_HANDLE_ID;
             let name = self.table_field_name(
                 &db_name,
-                &table.table_name,
+                &table.table_name(),
                 &visible_table,
                 EXTRA_HANDLE_NAME,
                 false,
@@ -3401,7 +3401,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             commit_ts.id = EXTRA_COMMIT_TS_ID;
             let commit_ts_name = self.table_field_name(
                 &db_name,
-                &table.table_name,
+                &table.table_name(),
                 &visible_table,
                 EXTRA_COMMIT_TS_NAME,
                 false,
@@ -3432,7 +3432,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `:5258` the handle map push, keyed by the LOGICAL table id.
         let mut handle_map = HandleColMap::new();
         handle_map.insert(
-            table.table_id,
+            table.table_id(),
             vec![self.plan_handle_cols(&handle_cols, handle_is_int)],
         );
         self.handle_helper.push_map(handle_map);
@@ -3441,17 +3441,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             table_ref.sample.as_ref(),
             &Schema::new(schema_columns.clone()),
             if table_ref.partitions.is_empty() {
-                table.partition_definition_ids.clone()
+                table.partition_definition_ids()
             } else {
                 table_ref
                     .partitions
                     .iter()
                     .filter_map(|name| {
                         table
-                            .partition_definition_names
+                            .partition_definition_names()
                             .iter()
                             .position(|partition| partition_name_matches(partition, name))
-                            .and_then(|index| table.partition_definition_ids.get(index).copied())
+                            .and_then(|index| table.partition_definition_ids().get(index).copied())
                     })
                     .collect()
             },
@@ -3461,26 +3461,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut data_source = DataSource {
             base: self.base(DataSource::TYPE),
             table_info: table.table_info.clone(),
-            table_id: table.table_id,
-            table_name: table.table_name.clone(),
             table_as_name: as_name,
             db_name,
             physical_table_id: table.physical_table_id,
             sample_info,
             partition_def_idx: table.partition_def_idx,
             partition_names: table_ref.partitions.clone(),
-            partition_definition_names: table.partition_definition_names.clone(),
-            partition_definition_ids: table.partition_definition_ids.clone(),
             columns,
             table_columns,
-            pk_is_handle: table.pk_is_handle,
-            is_common_handle: table.is_common_handle,
             is_cluster_table: table.is_cluster_table,
-            common_handle_version: table.common_handle_version,
-            is_temporary: table.is_temporary,
-            is_local_temporary: table.is_local_temporary,
-            is_cached: table.is_cached,
-            has_affinity: table.has_affinity,
             index_lookup_push_down_session: self.index_lookup_push_down_session,
             tikv_in_isolation_read: self.tikv_in_isolation_read,
             isolation_read_engines_value: self.isolation_read_engines_value.clone(),
@@ -3505,15 +3494,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `deriveStatsByFilter` does.
         // Go `getPossibleAccessPaths`: a table without an available TiFlash
         // replica (a hypothetical one is available) blocks enforced MPP.
-        match &table.tiflash_replica {
+        match &table.tiflash_replica() {
             _ if hypo_tiflash_replica => {}
             None => self.raise_mpp_warning(&format!(
                 "MPP mode may be blocked because there aren't tiflash replicas of table `{}`.",
-                table.table_name
+                table.table_name()
             )),
             Some(replica) if !replica.available => self.raise_mpp_warning(&format!(
                 "MPP mode may be blocked because tiflash replicas of table `{}` not ready.",
-                table.table_name
+                table.table_name()
             )),
             Some(_) => {}
         }
@@ -3533,7 +3522,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if check_fd_latest_indexes {
             match tidb_planner_util_domainmisc::get_latest_index_info(
                 self.source.latest_index_schema(),
-                table.table_id,
+                table.table_id(),
                 0,
             ) {
                 Ok((latest_indexes, true)) if self.is_for_update_read => {
@@ -3549,16 +3538,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 Err(_) => data_source.fd_latest_index_lookup_failed = true,
             }
         }
-        let mut resolution = crate::access_path::apply_table_index_hints(
+        let ctx = self.ctx;
+        let mut paths = crate::access_path::apply_table_index_hints(
             table,
             &public_paths,
             &table_ref.hints,
             &data_source.index_hints,
-            table.is_partitioned && self.partition_processor_enabled,
+            table.is_partitioned() && self.partition_processor_enabled,
             data_source.force_no_index_lookup_push_down,
             data_source.index_lookup_push_down_session,
             self.tikv_in_isolation_read,
             &self.isolation_read_engines_value,
+            &mut |code, message| ctx.append_warning(code, &message),
         )?;
         // Go `buildDataSource`: an index merge hint naming an index the
         // hinted paths no longer hold is dropped with a warning.
@@ -3571,7 +3562,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .index_names
                 .iter()
                 .filter(|name| {
-                    !resolution.paths.iter().any(|path| match path.index_info() {
+                    !paths.iter().any(|path| match path.index_info() {
                         None => lower_name_matches(name, "primary"),
                         Some(index) => lower_name_matches(index.read().name.original(), name),
                     })
@@ -3620,8 +3611,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 }
             };
             public_paths.retain(&permitted);
-            resolution.paths.retain(permitted);
-            if resolution.paths.is_empty() {
+            paths.retain(permitted);
+            if paths.is_empty() {
                 let help = if self
                     .isolation_read_engines_value
                     .to_ascii_lowercase()
@@ -3640,7 +3631,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // tiflash replica.` -- the errno template adds the prefix.
                 return Err(PlanError::from(tidb_plannererrors::ERR_INTERNAL.generate_with_stack_by_args(&[(format!(
                     "No access path for table '{}' is found with 'tidb_isolation_read_engines' = '{}', valid values can be '{}'{help}.",
-                    table.table_name,
+                    table.table_name(),
                     self.isolation_read_engines_value,
                     available_engines.join(", ")
                 )).into()])));
@@ -3658,23 +3649,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 }
             }
         }
-        for index in &resolution.unknown_comment_indexes {
-            self.ctx.append_warning(
-                1176,
-                &format!(
-                    "Key '{index}' doesn't exist in table '{}'",
-                    table.table_name
-                ),
-            );
-        }
-        for warning in &resolution.hint_warnings {
-            self.ctx.append_warning(1815, warning);
-        }
-        for warning in &resolution.isolation_read_warnings {
-            self.ctx.append_warning(1105, warning);
-        }
         data_source.public_enumerated_paths = public_paths;
-        data_source.enumerated_paths = resolution.paths;
+        data_source.all_possible_access_paths = paths;
         self.set_preferred_store_type(&mut data_source);
 
         data_source
@@ -3694,10 +3670,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // The logical id is asked too: a store that stages writes under the
         // logical table (this engine's `TxnStaging`) records a partition row
         // there, where Go's membuffer keys carry the partition's own id.
-        let mut table_ids = vec![table.table_id];
-        table_ids.extend(table.partition_definition_ids.iter().copied());
+        let mut table_ids = vec![table.table_id()];
+        table_ids.extend(table.partition_definition_ids().iter().copied());
         let dirty = self.source.table_has_dirty_content(&table_ids);
-        if !(dirty || table.is_local_temporary || table.is_cached) {
+        if !(dirty || table.is_local_temporary() || table.is_cached()) {
             return Ok(LogicalPlan::DataSource(data_source));
         }
         let handle_cols = data_source.handle_cols.clone();
@@ -3706,7 +3682,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // (transaction buffer handling)" -- one TableReader serves every
         // partition, so the rows carry the partition id the buffer is keyed by.
         // The union scan is built after the column, so its schema includes it.
-        if !table.partition_definition_ids.is_empty()
+        if !table.partition_definition_ids().is_empty()
             && self.opt_flag & flags::PARTITION_PROCESSOR == 0
         {
             self.set_extra_phys_tbl_id_cols(&mut child, &mut BTreeMap::new());
@@ -3730,8 +3706,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         };
         let visible_table = data_source
             .table_as_name
-            .as_deref()
-            .unwrap_or(&data_source.table_name);
+            .clone()
+            .unwrap_or_else(|| data_source.table_name());
         let table = tidb_hint::HintedTable {
             database_name: data_source.db_name.clone(),
             table_name: visible_table.to_owned(),
@@ -3742,7 +3718,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut plan_hints = plan_hints.borrow_mut();
 
         if let Some(hinted) = plan_hints.prefer_tikv(Some(&table)) {
-            if data_source.enumerated_paths.iter().any(|path| !path.is_tiflash_path()) {
+            if data_source.all_possible_access_paths.iter().any(|path| !path.is_tiflash_path()) {
                 data_source.prefer_store_type |= PREFER_TIKV;
                 self.raise_mpp_warning(&format!(
                     "MPP mode may be blocked because you have set a hint to read table `{}` from TiKV.",
@@ -3756,7 +3732,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     1815,
                     &format!(
                         "No available path for table {}.{} with the store type tikv of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines({isolation_engines})",
-                        data_source.db_name, data_source.table_name
+                        data_source.db_name, data_source.table_name()
                     ),
                 );
             }
@@ -3776,7 +3752,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 return;
             }
             if data_source
-                .enumerated_paths
+                .all_possible_access_paths
                 .iter()
                 .any(|path| path.is_tiflash_path())
             {
@@ -3789,7 +3765,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     1815,
                     &format!(
                         "No available path for table {}.{} with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines({isolation_engines})",
-                        data_source.db_name, data_source.table_name
+                        data_source.db_name, data_source.table_name()
                     ),
                 );
             }

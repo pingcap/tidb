@@ -145,7 +145,7 @@ fn mark_cluster_table(
     }
     table.is_memory_table = false;
     table.is_cluster_table = true;
-    if !table.table_name.go_lower_eq("CLUSTER_SLOW_QUERY") {
+    if !table.table_name().go_lower_eq("CLUSTER_SLOW_QUERY") {
         return;
     }
     let Some(offset) = table.columns.iter().position(|column| {
@@ -156,14 +156,14 @@ fn mark_cluster_table(
     }) else {
         return;
     };
-    table.is_common_handle = true;
-    table.common_handle_version = 1;
+    table.set_is_common_handle(true);
+    table.set_common_handle_version(1);
     table.handle_col_offsets = vec![offset];
     table.common_handle_col_offsets = vec![offset];
     table.common_handle_lens = vec![tidb_datatype::UNSPECIFIED_LENGTH];
     let primary = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
         name: tidb_ast::CiString::new("primary"),
-        table: tidb_ast::CiString::new(table.table_name.clone()),
+        table: tidb_ast::CiString::new(table.table_name()),
         columns: vec![tidb_model::IndexColumn {
             name: table.columns[offset].read().name.clone(),
             offset: offset as i64,
@@ -421,8 +421,6 @@ impl SessionExtendedInfoSchema {
                         };
                         let mut source_table = SourceTable {
                             is_memory_table: true,
-                            table_id,
-                            table_name,
                             db_name: database.name(),
                             physical_table_id: table_id,
                             columns: table
@@ -435,6 +433,10 @@ impl SessionExtendedInfoSchema {
                                 .collect(),
                             ..SourceTable::default()
                         };
+                        // A memory table has no stored `TableInfo`; the one
+                        // `attach_resolve_metadata` synthesizes carries these.
+                        source_table.set_table_id(table_id);
+                        source_table.set_table_name(table_name);
                         mark_cluster_table(&mut source_table, &database.name(), entry_name);
                         source_table.attach_resolve_metadata(resolve_db_info.clone(), None);
                         tables.insert(key(), source_table);
@@ -600,13 +602,9 @@ fn kv_source_table(
         .into_iter()
         .chain(common_handle_col_offsets.iter().copied())
         .collect();
-    let partition_info = info.get_partition_info();
     let mut source_table = crate::table_source::SourceTable {
-        table_id: table.table_id(),
-        table_name: table.name().clone(),
         db_name: db_name.to_owned(),
         physical_table_id: table.table_id(),
-        is_partitioned: table.partition().is_some(),
         partition_expression_is_column: table.partition().is_some_and(
             |partition| {
                 matches!(
@@ -615,35 +613,7 @@ fn kv_source_table(
                 )
             },
         ),
-        partition_is_reorganizing: partition_info.as_ref().is_some_and(|pi| {
-            let pi = pi.read();
-            !pi.adding_definitions.is_empty()
-                || !pi.new_partition_ids.is_empty()
-                || !pi.dropping_definitions.is_empty()
-        }),
-        partition_definition_names: partition_info
-            .as_ref()
-            .map(|pi| {
-                pi.read()
-                    .definitions
-                    .map_visible(|definition| definition.name.original().to_owned())
-            })
-            .unwrap_or_default(),
-        partition_definition_ids: partition_info
-            .as_ref()
-            .map(|pi| pi.read().definitions.map_visible(|definition| definition.id))
-            .unwrap_or_default(),
         columns,
-        pk_is_handle: info.pk_is_handle,
-        is_common_handle: info.is_common_handle,
-        common_handle_version: info.common_handle_version,
-        is_temporary: table.is_temporary(),
-        is_local_temporary: table.temp_table_type()
-            == tidb_model::TempTableType::LOCAL,
-        is_cached: table.cache_status()
-            != tidb_model::TableCacheStatusType::DISABLE,
-        has_affinity: table.has_affinity(),
-        tiflash_replica: table.tiflash_replica(),
         handle_col_offsets,
         common_handle_col_offsets,
         common_handle_lens,

@@ -18,8 +18,7 @@
 //! before physical index conversion. Both are explicit at this boundary, so a
 //! generic Rust candidate cannot silently become an index scan.
 
-use tidb_planner_util::path::ResolvedIndexPaths;
-use tidb_planner_util::path::{DerivedAccessPaths, IndexLookUpPushDownByType, AccessPath};
+use tidb_planner_util::path::{IndexLookUpPushDownByType, AccessPath};
 use tidb_sessionctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
 
 pub(crate) mod index_merge;
@@ -104,20 +103,20 @@ pub(crate) fn derive_access_paths(
     no_index_merge_hint: bool,
     prefix_single_scan: bool,
     use_plan_cache: bool,
-) -> Result<(DerivedAccessPaths, Option<String>), tidb_planner_core_base::PlanError> {
+) -> Result<(Vec<AccessPath>, Option<f64>, Option<String>), tidb_planner_core_base::PlanError> {
     // Go `deriveTablePathStats` over the TiKV table path.
-    if let Some(position) = source.enumerated_paths.iter().position(|path| path.is_tikv_table_path()) {
+    if let Some(position) = source.all_possible_access_paths.iter().position(|path| path.is_tikv_table_path()) {
         let filled = ordinary::fill_table_path(
             source,
-            source.enumerated_paths[position].index.as_ref(),
+            source.all_possible_access_paths[position].index.as_ref(),
             context,
         )?;
-        source.enumerated_paths[position].filled_table = Some(filled);
+        source.all_possible_access_paths[position].filled_table = Some(filled);
     }
     let table_path = source.filled_table_path().cloned();
     ordinary::fill_ordinary_index_paths(source, context, prefix_single_scan)?;
     let mut paths = source
-        .enumerated_paths
+        .all_possible_access_paths
         .iter()
         .cloned()
         .collect::<Vec<_>>();
@@ -127,7 +126,7 @@ pub(crate) fn derive_access_paths(
         .filter(|stats| stats.row_count() > 0.0)
         .and_then(|stats| {
             source
-                .enumerated_paths
+                .all_possible_access_paths
                 .iter()
                 .filter_map(|path| {
                     if path.is_tiflash_path() {
@@ -136,7 +135,7 @@ pub(crate) fn derive_access_paths(
                         // reaches it.
                         return table_path
                             .as_ref()
-                            .filter(|_| source.is_common_handle && !source.pushed_down_conds.is_empty())
+                            .filter(|_| source.is_common_handle() && !source.pushed_down_conds.is_empty())
                             .and_then(|path| path.count_after_access);
                     }
                     if path.is_table_path() {
@@ -162,13 +161,13 @@ pub(crate) fn derive_access_paths(
         index_merge_warning = Some(
             "IndexMerge is inapplicable or disabled. Got no_index_merge hint or tidb_enable_index_merge is off.",
         );
-    } else if source.is_local_temporary {
+    } else if source.is_local_temporary() {
         index_merge_warning =
             Some("IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table.");
     } else {
         // Go `generateOtherIndexMerge`'s `isPossibleIdxMerge`, over
         // `indexMergeConds` (= `AllConds`).
-        if source.all_conds.is_empty() || source.enumerated_paths.len() <= 1 {
+        if source.all_conds.is_empty() || source.all_possible_access_paths.len() <= 1 {
             index_merge_warning = Some(
                 "IndexMerge is inapplicable or disabled. No available filter or available index.",
             );
@@ -189,7 +188,7 @@ pub(crate) fn derive_access_paths(
             if !source.index_merge_skip_range_scan_check {
                 need_consider_index_merge =
                     !source
-                        .enumerated_paths
+                        .all_possible_access_paths
                         .iter()
                         .skip(1)
                         .any(|path| match path.index_info() {
@@ -305,13 +304,11 @@ pub(crate) fn derive_access_paths(
     // includes merge estimates before ordered-index expected-count
     // adjustment.
     source.access_path_min_selectivity = min_selectivity;
-    Ok((
-        DerivedAccessPaths {
-            paths,
-            index_merge_max_count,
-        },
-        index_merge_warning,
-    ))
+    // Go `generateIndexMergePath`'s `maxRowCount` (the largest index-merge
+    // `CountAfterAccess`, when merges saw more conditions than the
+    // statistics did) goes back with the paths for the caller to cap the
+    // DataSource's rows.
+    Ok((paths, index_merge_max_count, index_merge_warning))
 }
 
 /// Go `getPossibleAccessPaths` (`planbuilder.go:1320-1441`) without hints —
@@ -359,7 +356,7 @@ pub fn get_possible_access_paths(
     // a table with no explicit handle column is still an int-handle path,
     // through the implicit `_tidb_rowid`. `handle_is_int()` would misread
     // that case — the first version of this port did, and the test caught it.
-    let is_common_handle = table.is_common_handle;
+    let is_common_handle = table.is_common_handle();
     let mut paths = Vec::with_capacity(table.table_indices().len() + 1);
     let primary_index = table.table_indices().iter().find(|index| index.read().primary).cloned();
     paths.push(AccessPath::table_path(
@@ -384,7 +381,7 @@ pub fn get_possible_access_paths(
         }
         if check_latest_schema && latest_indexes.is_none() {
             let (indexes, changed) =
-                tidb_planner_util_domainmisc::get_latest_index_info(latest_index_schema, table.table_id, 0)
+                tidb_planner_util_domainmisc::get_latest_index_info(latest_index_schema, table.table_id(), 0)
                     .map_err(|error| tidb_planner_core_base::PlanError::internal(error.to_string()))?;
             latest_indexes = indexes;
             check_latest_schema = changed;
@@ -431,7 +428,8 @@ impl tidb_planner_core_operator_logicalop::plan_context::AccessPathResolver for 
         session: IndexLookupPushDownSession,
         tikv_in_isolation_read: bool,
         isolation_read_engines_value: &str,
-    ) -> Result<ResolvedIndexPaths, tidb_planner_core_base::PlanError> {
+        warnings: &mut dyn FnMut(u16, String),
+    ) -> Result<Vec<AccessPath>, tidb_planner_core_base::PlanError> {
         apply_table_index_hints(
             table,
             public_paths,
@@ -442,6 +440,7 @@ impl tidb_planner_core_operator_logicalop::plan_context::AccessPathResolver for 
             session,
             tikv_in_isolation_read,
             isolation_read_engines_value,
+            warnings,
         )
     }
 }
@@ -475,7 +474,9 @@ fn path_by_index_name(paths: &[AccessPath], name: &str, has_clustered_index: boo
 }
 
 /// Applies Go `getPossibleAccessPaths`' table-syntax and already-matched
-/// comment-style index-hint tail to an enumerated public-path list.
+/// comment-style index-hint tail to an enumerated public-path list, returning
+/// Go's `available` paths. The warnings Go appends to the statement context
+/// go to `warnings` as (code, message), in Go's order.
 pub fn apply_table_index_hints(
     table: &tidb_infoschema::table_source::SourceTable,
     public_paths: &[AccessPath],
@@ -486,7 +487,8 @@ pub fn apply_table_index_hints(
     session: IndexLookupPushDownSession,
     tikv_in_isolation_read: bool,
     isolation_read_engines_value: &str,
-) -> Result<ResolvedIndexPaths, tidb_planner_core_base::PlanError> {
+    warnings: &mut dyn FnMut(u16, String),
+) -> Result<Vec<AccessPath>, tidb_planner_core_base::PlanError> {
     use tidb_ast::{IndexHintKind, IndexHintScope};
 
     // Go hands out pointers into `publicPaths`: a hint's flags land on the
@@ -501,16 +503,15 @@ pub fn apply_table_index_hints(
     let mut has_use_or_force = false;
     let mut available: Vec<usize> = Vec::new();
     let mut ignored = std::collections::BTreeSet::new();
-    let mut result = ResolvedIndexPaths::default();
 
     let unsupported_reason = |metadata: &tidb_model::GoShared<tidb_model::IndexInfo>| {
-        if table.is_common_handle && table.common_handle_version < 1 {
+        if table.is_common_handle() && table.common_handle_version() < 1 {
             Some("common handle table with old encoding version is not supported")
         } else if metadata.read().global {
             Some("the global index in partition table is not supported")
-        } else if table.is_temporary {
+        } else if table.is_temporary() {
             Some("temporary table is not supported")
-        } else if table.is_cached {
+        } else if table.is_cached() {
             Some("cached table is not supported")
         } else if metadata.read().mv_index {
             Some("multi-valued index is not supported")
@@ -533,7 +534,7 @@ pub fn apply_table_index_hints(
             session.policy,
             IndexLookupPushDownPolicy::Force | IndexLookupPushDownPolicy::AffinityForce
         )
-        && (session.policy != IndexLookupPushDownPolicy::AffinityForce || table.has_affinity)
+        && (session.policy != IndexLookupPushDownPolicy::AffinityForce || table.has_affinity())
     {
         for path in &mut public_paths {
             if path.index_info().is_some_and(|metadata| unsupported_reason(metadata).is_none()) {
@@ -586,15 +587,17 @@ pub fn apply_table_index_hints(
         }
         for name in indexes {
             // Go `getPathByIndexName`.
-            let path = path_by_index_name(&public_paths, name, table.pk_is_handle || table.is_common_handle);
+            let path = path_by_index_name(&public_paths, name, table.pk_is_handle() || table.is_common_handle());
             let Some(position) = path else {
                 if comment_style {
-                    result.unknown_comment_indexes.push(name.clone());
+                    // Go appends `ErrKeyDoesNotExist` as a warning for a
+                    // comment-style hint.
+                    warnings(1176, format!("Key '{name}' doesn't exist in table '{}'", table.table_name()));
                     continue;
                 }
                 return Err(tidb_planner_core_base::PlanError::from(
                     tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST
-                        .generate_with_stack_by_args(&[name.into(), (&table.table_name).into()]),
+                        .generate_with_stack_by_args(&[name.into(), (&table.table_name()).into()]),
                 ));
             };
             let path = &mut public_paths[position];
@@ -606,7 +609,7 @@ pub fn apply_table_index_hints(
                 continue;
             }
             // Go `isTiKVIndexByName`.
-            let is_tikv_index = tidb_mysql::lowercase_equal(name, "primary") && table.pk_is_handle
+            let is_tikv_index = tidb_mysql::lowercase_equal(name, "primary") && table.pk_is_handle()
                 || path
                     .index
                     .as_ref()
@@ -616,7 +619,7 @@ pub fn apply_table_index_hints(
                     "TiDB doesn't support index '{name}' in the isolation read engines(value: '{isolation_read_engines_value}')"
                 );
                 if comment_style {
-                    result.isolation_read_warnings.push(message);
+                    warnings(1105, message);
                     continue;
                 }
                 return Err(tidb_planner_core_base::PlanError::internal(message));
@@ -633,15 +636,14 @@ pub fn apply_table_index_hints(
                 let metadata = &metadata;
                 if push_down_lookup {
                     if force_no_index_lookup_push_down {
-                        result.hint_warnings.push(
+                        warnings(
+                            1815,
                             "hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified".to_owned(),
                         );
                         continue;
                     }
                     if let Some(reason) = unsupported_reason(metadata) {
-                        result.hint_warnings.push(format!(
-                            "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, {reason}"
-                        ));
+                        warnings(1815, format!("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, {reason}"));
                         continue;
                     }
                     path.index_lookup_push_down_by = IndexLookUpPushDownByType::Hint;
@@ -673,8 +675,7 @@ pub fn apply_table_index_hints(
     if available.iter().all(|&position| public_paths[position].is_undetermined()) {
         available.push(table_path);
     }
-    result.paths = available.into_iter().map(|position| public_paths[position].clone()).collect();
-    Ok(result)
+    Ok(available.into_iter().map(|position| public_paths[position].clone()).collect())
 }
 
 /// Pinned Go `indexIsAvailableByHints`, the deliberately smaller hint check
@@ -869,7 +870,7 @@ mod enumeration_tests {
                 public
             },
         ]);
-        source.table_id = 42;
+        source.set_table_id(42);
         let latest = LatestIndexSchema {
             schema_meta_version: 8,
             table_indexes: BTreeMap::from([(
@@ -902,7 +903,7 @@ mod enumeration_tests {
     #[test]
     fn hypothetical_indexes_and_replica_join_only_the_paths() {
         let mut source = table(vec![index("real")]);
-        source.table_id = 42;
+        source.set_table_id(42);
         let latest = LatestIndexSchema {
             schema_meta_version: 8,
             table_indexes: BTreeMap::from([(42, vec![source.table_indices()[0].clone()])]),
@@ -943,7 +944,7 @@ mod enumeration_tests {
     #[test]
     fn repeatable_read_for_update_uses_the_latest_schema() {
         let mut source = table(vec![index("removed")]);
-        source.table_id = 42;
+        source.set_table_id(42);
         let latest = LatestIndexSchema {
             schema_meta_version: 8,
             table_indexes: BTreeMap::from([(42, Vec::new())]),

@@ -434,11 +434,11 @@ impl Collector {
         }
         self.result
             .visited_logical_table_ids
-            .insert(source.table_id);
-        if source.table_id != source.physical_table_id {
+            .insert(source.table_id());
+        if source.table_id() != source.physical_table_id {
             self.result
                 .table_partition_ids
-                .entry(source.table_id)
+                .entry(source.table_id())
                 .or_default()
                 .push(source.physical_table_id);
         }
@@ -450,7 +450,7 @@ impl Collector {
                 self.column_map.insert(
                     column.unique_id,
                     HashSet::from([TableItemID {
-                        table_id: source.table_id,
+                        table_id: source.table_id(),
                         id: column.id,
                         is_index: false,
                         is_sync_load_failed: false,
@@ -1022,7 +1022,7 @@ mod tests {
                 ..tidb_model::IndexInfo::default()
             }),
         ]);
-        source.enumerated_paths = vec![
+        source.all_possible_access_paths = vec![
             AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
             tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone()),
             tidb_planner_util::path::AccessPath::index_path(source.table_indices()[1].clone()),
@@ -1042,7 +1042,7 @@ mod tests {
         };
         assert_eq!(returned.interesting_columns.len(), 1);
         assert_eq!(returned.interesting_columns[0].unique_id, 1);
-        assert_eq!(returned.enumerated_paths.len(), 2);
+        assert_eq!(returned.all_possible_access_paths.len(), 2);
         assert_eq!(requester.kept.borrow().get(&7), Some(&HashSet::from([101])));
     }
 
@@ -1147,7 +1147,7 @@ mod tests {
             let LogicalPlan::DataSource(returned) = returned else {
                 panic!("failed plan must be preserved");
             };
-            assert_eq!(returned.table_id, 7);
+            assert_eq!(returned.table_id(), 7);
             assert_eq!(
                 error,
                 PlanError::from(

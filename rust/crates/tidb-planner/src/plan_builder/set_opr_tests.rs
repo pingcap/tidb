@@ -56,7 +56,7 @@ impl TableSource for TestCatalog {
     fn find_table(&self, db_name: &str, table_name: &str) -> Option<&SourceTable> {
         self.tables.iter().find(|table| {
             table.db_name.eq_ignore_ascii_case(db_name)
-                && table.table_name.eq_ignore_ascii_case(table_name)
+                && table.table_name().eq_ignore_ascii_case(table_name)
         })
     }
 
@@ -115,9 +115,7 @@ fn catalog() -> TestCatalog {
     TestCatalog {
         current_database: "test".to_owned(),
         tables: vec![
-            SourceTable {
-                table_id: 100,
-                table_name: "t".to_owned(),
+            { let mut fixture = SourceTable {
                 db_name: "test".to_owned(),
                 physical_table_id: 100,
                 columns: vec![
@@ -126,10 +124,8 @@ fn catalog() -> TestCatalog {
                     column(2, "u", unsigned_bigint(5)),
                 ],
                 ..SourceTable::default()
-            },
-            SourceTable {
-                table_id: 101,
-                table_name: "s".to_owned(),
+            }; fixture.set_table_id(100); fixture.set_table_name("t".to_owned()); fixture },
+            { let mut fixture = SourceTable {
                 db_name: "test".to_owned(),
                 physical_table_id: 101,
                 columns: vec![
@@ -138,7 +134,7 @@ fn catalog() -> TestCatalog {
                     column(2, "u", unsigned_bigint(20)),
                 ],
                 ..SourceTable::default()
-            },
+            }; fixture.set_table_id(101); fixture.set_table_name("s".to_owned()); fixture },
         ],
     }
 }

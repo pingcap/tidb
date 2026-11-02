@@ -63,7 +63,7 @@ fn data_source_orders(source: &super::DataSource, inherited_fixed: &[i64]) -> Ve
         // whose columns are all resolved also orders by the signed integer
         // primary-key handle it carries.
         if !index.read().unique && !index.read().primary && order.len() == index.read().columns.len() {
-            if let Some(handle) = source.handle_cols.first().filter(|_| source.pk_is_handle) {
+            if let Some(handle) = source.handle_cols.first().filter(|_| source.pk_is_handle()) {
                 let unsigned = handle
                     .ret_type
                     .as_ref()
@@ -94,7 +94,7 @@ fn data_source_orders(source: &super::DataSource, inherited_fixed: &[i64]) -> Ve
         }
         index_orders
     };
-    for path in &source.enumerated_paths {
+    for path in &source.all_possible_access_paths {
         if path.is_tiflash_path() {
             continue;
         }

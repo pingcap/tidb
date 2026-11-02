@@ -40,7 +40,7 @@ impl TableSource for PointGetCatalog {
 
     fn find_table(&self, db_name: &str, table_name: &str) -> Option<&SourceTable> {
         if db_name.eq_ignore_ascii_case("test")
-            && table_name.eq_ignore_ascii_case(&self.t.table_name)
+            && table_name.eq_ignore_ascii_case(&self.t.table_name())
         {
             Some(&self.t)
         } else {
@@ -81,9 +81,9 @@ fn point_get_column(offset: usize, name: &str, primary: bool) -> SourceColumn {
 /// `t (c1 int primary key, c2 int)` as declared at `point_get_plan_test.go:273`.
 fn point_get_catalog() -> PointGetCatalog {
     let mut t = SourceTable::default();
-    t.table_id = 201;
+    t.set_table_id(201);
     t.db_name = "test".to_owned();
-    t.table_name = "t".to_owned();
+    t.set_table_name("t".to_owned());
     t.physical_table_id = 201;
     t.columns = vec![
         point_get_column(0, "c1", true),

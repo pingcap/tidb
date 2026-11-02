@@ -113,7 +113,7 @@ fn static_global_index_point_lookup(
     let Some(table) = catalog.find_table(db_name, table_name) else {
         return false;
     };
-    if !table.is_partitioned {
+    if !table.is_partitioned() {
         return false;
     }
     if table.columns.is_empty()
@@ -146,7 +146,7 @@ fn static_global_index_point_lookup(
     {
         return false;
     }
-    if table.partition_is_reorganizing {
+    if table.partition_is_reorganizing() {
         return false;
     }
 
@@ -1238,8 +1238,8 @@ impl InitStats<'_> {
             return Ok(Descend::Children(vec![(); node.children().len()]));
         };
         source.base.base.set_stats(None);
-        source.derived_access_paths = None;
-        for path in &mut source.enumerated_paths {
+        source.possible_access_paths = None;
+        for path in &mut source.all_possible_access_paths {
             path.row_estimate = None;
             path.filled = None;
             path.filled_table = None;
@@ -1305,7 +1305,7 @@ impl InitStats<'_> {
         // `getGeneralAttributesFromPaths`: any forced possible path. The
         // flag is statement-wide, so a hint on ANY occurrence records it here
         // and the pass below stamps every source once the walk completes.
-        if source.enumerated_paths.iter().any(|path| path.forced) {
+        if source.all_possible_access_paths.iter().any(|path| path.forced) {
             self.context.set_index_force();
         }
         tidb_planner_core_rule::rule_collect_plan_stats::refresh_source_group_ndvs_with_scale_ratio(
@@ -3014,7 +3014,7 @@ fn optimize_built_logical(
         ) -> Result<Vec<usize>, tidb_planner_core_base::PlanError> {
             let table = self
                 .catalog
-                .kv_table_by_id(source.table_id)
+                .kv_table_by_id(source.table_id())
                 .ok_or_else(|| {
                     tidb_planner_core_base::PlanError::internal(
                         "partitioned logical table is absent from the catalog",
@@ -3041,7 +3041,7 @@ fn optimize_built_logical(
         fn spend_partition_expression_plan_id(&self, source: &tidb_planner_core_operator_logicalop::DataSource) {
             let spends = self
                 .catalog
-                .kv_table_by_id(source.table_id)
+                .kv_table_by_id(source.table_id())
                 .and_then(|table| table.partition().map(|partition| partition.kind.clone()))
                 .is_some_and(|kind| {
                     matches!(
@@ -3542,7 +3542,7 @@ mod statistics_initialization_tests {
                 ..tidb_model::IndexInfo::default()
             })
         };
-        source.enumerated_paths.push(tidb_planner_util::path::AccessPath {
+        source.all_possible_access_paths.push(tidb_planner_util::path::AccessPath {
             row_estimate: Some(
                 tidb_stats::RowEstimate::new(
                     900.0, 800.0, 1000.0,
@@ -3551,7 +3551,7 @@ mod statistics_initialization_tests {
             is_single_scan: Some(true),
             ..tidb_planner_util::path::AccessPath::index_path(index(99))
         });
-        source.enumerated_paths.push(
+        source.all_possible_access_paths.push(
             tidb_planner_util::path::AccessPath {
                 declared_columns: Some(vec![Some((
                     Column::new(1, FieldType::new(FieldTypeCode::LongLong)),
@@ -3566,10 +3566,7 @@ mod statistics_initialization_tests {
                 ..tidb_planner_util::path::AccessPath::index_path(index(77))
             },
         );
-        source.derived_access_paths = Some(tidb_planner_util::path::DerivedAccessPaths {
-            paths: Vec::new(),
-            index_merge_max_count: None,
-        });
+        source.possible_access_paths = Some(Vec::new());
 
         let mut initializer = InitStats {
             error: None,
@@ -3582,7 +3579,7 @@ mod statistics_initialization_tests {
         let LogicalPlan::DataSource(returned) = plan else {
             panic!("lost datasource");
         };
-        assert!(returned.derived_access_paths.is_none(), "statistics refresh invalidates candidate derivation");
+        assert!(returned.possible_access_paths.is_none(), "statistics refresh invalidates candidate derivation");
         assert!(initializer.error.is_none(), "{:?}", initializer.error);
         // InitStats discards stale estimates without erasing declared keys.
         let stale = returned.path_by_index_id(99).unwrap();
@@ -3900,7 +3897,7 @@ mod statistics_initialization_tests {
             state: tidb_model::SchemaState::PUBLIC,
             ..tidb_model::IndexInfo::default()
         })]);
-        source.enumerated_paths = vec![tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())];
+        source.all_possible_access_paths = vec![tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())];
         let mut parameter = Constant::new(Datum::Int(1), field_type);
         parameter.param_marker = Some(ParamMarker { order: 0 });
         let comparison = Expression::ScalarFunction(ScalarFunction::new(
@@ -3980,7 +3977,7 @@ mod statistics_initialization_tests {
                     let LogicalPlan::DataSource(returned) = plan else {
                         panic!("lost datasource");
                     };
-                    assert_eq!(returned.table_id, 7);
+                    assert_eq!(returned.table_id(), 7);
                     assert!(returned.path_by_index_id(9).and_then(|path| path.count_after_access()).is_some());
                 } else {
                     assert_eq!(optimized.err(), expected_error.clone());

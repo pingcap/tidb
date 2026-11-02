@@ -38,11 +38,10 @@ fn source(id: i32, columns: &[i64]) -> LogicalPlan {
     base.base.set_schema(Some(Schema::new(
         columns.iter().copied().map(column).collect(),
     )));
-    LogicalPlan::DataSource(DataSource {
+    LogicalPlan::DataSource({ let mut fixture = DataSource {
         base,
-        table_id: i64::from(id),
         ..DataSource::default()
-    })
+    }; fixture.set_table_id(i64::from(id)); fixture })
 }
 
 fn selection(id: i32, child: LogicalPlan) -> LogicalPlan {

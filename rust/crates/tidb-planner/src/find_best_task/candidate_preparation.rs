@@ -48,7 +48,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
     if prop.index_join_prop.is_some() {
         return None;
     }
-    ds.derived_access_paths.as_ref()?;
+    ds.possible_access_paths.as_ref()?;
     let mut candidates = Vec::new();
     for &path in paths {
         if (ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH != 0
@@ -233,7 +233,7 @@ fn range_scan_flags(
     ctx: &DispatchContext<'_>,
     metrics: Option<&CandidateMetrics>,
 ) -> (bool, bool) {
-    if ds.derived_access_paths.is_none() {
+    if ds.possible_access_paths.is_none() {
         return (false, false);
     }
     let prefer_merge = !ds.index_merge_hints.is_empty() || ds.prefer_index_merge_by_fix_control;
@@ -322,8 +322,8 @@ pub(super) fn prepare_access_paths<'a>(
             .as_ref()
             .is_some_and(|paths| paths.heuristic_selected)
     {
-        if let Some(paths) = &ds.derived_access_paths {
-            for (position, path) in paths.paths.iter().enumerate() {
+        if let Some(paths) = &ds.possible_access_paths {
+            for (position, path) in paths.iter().enumerate() {
                 if !path.partial_alternative_index_paths.is_empty() {
                     if let Some(path) =
                         super::index_merge_union::converge_union_index_merge_path(

@@ -17,8 +17,8 @@
 //!
 //! SEED of `pkg/planner/core`. The access paths are
 //! `tidb_planner_util::path`'s, enumerated into
-//! [`DataSource::enumerated_paths`] and derived into
-//! [`DataSource::derived_access_paths`].
+//! [`DataSource::all_possible_access_paths`] and derived into
+//! [`DataSource::possible_access_paths`].
 //!
 //! # Narrowings, by name
 //!
@@ -100,10 +100,6 @@ pub struct DataSource {
     pub base: BaseLogicalPlan,
     /// Go `DataSource.TableInfo`: the table's shared `*model.TableInfo`.
     pub table_info: Option<tidb_model::GoShared<tidb_model::TableInfo>>,
-    /// Go `TableInfo.ID`.
-    pub table_id: i64,
-    /// Go `TableInfo.Name.O`.
-    pub table_name: String,
     /// Go `TableAsName`: the `AS` alias, when the query gave one.
     pub table_as_name: Option<String>,
     /// Go `DBName`.
@@ -116,12 +112,6 @@ pub struct DataSource {
     pub partition_def_idx: Option<usize>,
     /// Go `PartitionNames`: an explicit `PARTITION (p, ...)` restriction.
     pub partition_names: Vec<String>,
-    /// The partition definition names, so [`Self::explain_info`] can name the
-    /// one `partition_def_idx` selects. Go reads
-    /// `TableInfo.GetPartitionInfo().Definitions`.
-    pub partition_definition_names: Vec<String>,
-    /// Physical IDs index-parallel to [`Self::partition_definition_names`].
-    pub partition_definition_ids: Vec<i64>,
     /// Go `PhysPlanPartInfo` after dynamic partition pruning, retained so
     /// reader access objects report the partitions selected by the same
     /// predicates used for execution.
@@ -136,12 +126,11 @@ pub struct DataSource {
     pub pushed_down_conds: Vec<Expression>,
     /// Go `AllConds`: every condition on this table, pushed down or not.
     pub all_conds: Vec<Expression>,
-    /// Go `getPossibleAccessPaths`' answer at BUILD time — the newborn form
-    /// (`tidb_planner_util::path::AccessPath`), before ranger and statistics
-    /// grow it. Go mutates one `util.AccessPath` through both stages; this
-    /// port keeps the stages as two typed lists, and the grown lists below
-    /// stay empty until the costing seam fills them.
-    pub enumerated_paths: Vec<tidb_planner_util::path::AccessPath>,
+    /// Go `AllPossibleAccessPaths`: `getPossibleAccessPaths`' answer, grown
+    /// in place by plan building and statistics derivation. Go's
+    /// `PossibleAccessPaths` equals it until derivation adds the index-merge
+    /// paths ([`Self::possible_access_paths`]).
+    pub all_possible_access_paths: Vec<tidb_planner_util::path::AccessPath>,
     /// The unfiltered public paths from which static partition children rerun
     /// Go `getPossibleAccessPaths` after partition-scoped hint selection.
     pub public_enumerated_paths: Vec<tidb_planner_util::path::AccessPath>,
@@ -149,29 +138,14 @@ pub struct DataSource {
     pub ast_index_hints: Vec<tidb_ast::IndexHint>,
     /// Go `IndexHints`: comment-style hints matched to this DataSource.
     pub index_hints: Vec<DataSourceIndexHint>,
-    /// Go `TableInfo.PKIsHandle`.
-    pub pk_is_handle: bool,
     /// Latest-schema public index IDs used by `ExtractFD` for a connected
     /// `FOR UPDATE` read when the domain schema changed.
     pub fd_latest_public_index_ids: Option<std::collections::BTreeSet<i64>>,
     /// Go `DataSource.ExtractFD` returns the PK-only set when its latest-index
     /// lookup fails.
     pub fd_latest_index_lookup_failed: bool,
-    /// Go `TableInfo.IsCommonHandle`.
-    pub is_common_handle: bool,
     /// Go `ds.Table.Type().IsClusterTable()`: the scan reads the TiDB store.
     pub is_cluster_table: bool,
-    /// Go `TableInfo.CommonHandleVersion`.
-    pub common_handle_version: u16,
-    /// Go `TableInfo.TempTableType != model.TempTableNone`.
-    pub is_temporary: bool,
-    /// Go `TableInfo.TempTableType == model.TempTableLocal`, for optimizer
-    /// rules that treat LOCAL and GLOBAL temporary tables differently.
-    pub is_local_temporary: bool,
-    /// Go `TableInfo.TableCacheStatusType != model.TableCacheStatusDisable`.
-    pub is_cached: bool,
-    /// Whether Go `TableInfo.Affinity` is non-nil.
-    pub has_affinity: bool,
     /// Session/transaction inputs to Go's lookup-pushdown support check.
     pub index_lookup_push_down_session: tidb_sessionctx::IndexLookupPushDownSession,
     /// Whether TiKV is present in Go `SessionVars.IsolationReadEngines`.
@@ -218,8 +192,10 @@ pub struct DataSource {
     pub index_merge_skip_range_scan_check: bool,
     /// Go `TableStats`: the table-level profile before any filtering.
     pub table_stats: Option<StatsInfo>,
-    /// Candidates retained by logical derivation; physical search consumes them.
-    pub derived_access_paths: Option<tidb_planner_util::path::DerivedAccessPaths>,
+    /// Go `PossibleAccessPaths` after statistics derivation: the grown paths
+    /// plus the index-merge paths `generateIndexMergePath` adds, which
+    /// physical search consumes. None until derived.
+    pub possible_access_paths: Option<Vec<tidb_planner_util::path::AccessPath>>,
     /// Go ColAndIdxExistenceMap.HasAnalyzed, independent of payload eviction.
     pub analyzed_index_ids: std::collections::BTreeSet<i64>,
     /// The table/session facts that Go retains on `PhysicalTableScan` for
@@ -343,9 +319,206 @@ impl DataSource {
     /// grows in place.
     #[must_use]
     pub fn path_by_index_id(&self, id: i64) -> Option<&tidb_planner_util::path::AccessPath> {
-        self.enumerated_paths
+        self.all_possible_access_paths
             .iter()
             .find(|path| path.index.as_ref().is_some_and(|index| index.read().id == id))
+    }
+
+    /// Go `TableInfo.GetPartitionInfo().Definitions[i].ID`.
+    #[must_use]
+    pub fn partition_definition_ids(&self) -> Vec<i64> {
+        self.partition_definitions(|definition| definition.id)
+    }
+
+    /// Go `TableInfo.GetPartitionInfo().Definitions[i].Name.O`.
+    #[must_use]
+    pub fn partition_definition_names(&self) -> Vec<String> {
+        self.partition_definitions(|definition| definition.name.original().to_owned())
+    }
+
+    fn partition_definitions<U>(&self, map: impl FnMut(&tidb_model::PartitionDefinition) -> U) -> Vec<U> {
+        self.table_info
+            .as_ref()
+            .and_then(|info| info.read().get_partition_info())
+            .map(|partition| partition.read().definitions.map_visible(map))
+            .unwrap_or_default()
+    }
+
+    /// Sets the partition definitions' ids on a copy of `TableInfo` (fixtures).
+    pub fn set_partition_definition_ids(&mut self, ids: Vec<i64>) {
+        self.update_partition_definitions(ids.len(), |definition, position| definition.id = ids[position]);
+    }
+
+    /// Sets the partition definitions' names on a copy of `TableInfo` (fixtures).
+    pub fn set_partition_definition_names(&mut self, names: Vec<String>) {
+        self.update_partition_definitions(names.len(), |definition, position| {
+            definition.name = tidb_ast::CiString::new(names[position].clone());
+        });
+    }
+
+    fn update_partition_definitions(
+        &mut self,
+        len: usize,
+        mut update: impl FnMut(&mut tidb_model::PartitionDefinition, usize),
+    ) {
+        self.update_table_info(|info| {
+            let mut partition = info
+                .partition
+                .as_ref()
+                .map(|partition| partition.read().clone())
+                .unwrap_or_default();
+            let mut definitions = partition.definitions.snapshot();
+            definitions.resize_with(len, Default::default);
+            for (position, definition) in definitions.iter_mut().enumerate() {
+                update(definition, position);
+            }
+            partition.definitions = definitions.into();
+            partition.enable = true;
+            info.partition = Some(tidb_model::GoShared::new(partition));
+        });
+    }
+
+    /// Go `TableInfo.ID`.
+    #[must_use]
+    pub fn table_id(&self) -> i64 {
+        self.table_info.as_ref().map_or(0, |info| info.read().id)
+    }
+
+    /// Go `TableInfo.Name.O`.
+    #[must_use]
+    pub fn table_name(&self) -> String {
+        self.table_info
+            .as_ref()
+            .map_or_else(String::new, |info| info.read().name.original().to_owned())
+    }
+
+    /// Sets `TableInfo.ID` on a copy.
+    pub fn set_table_id(&mut self, id: i64) {
+        self.update_table_info(|info| info.id = id);
+    }
+
+    /// Sets `TableInfo.Name` on a copy.
+    pub fn set_table_name(&mut self, name: impl Into<String>) {
+        let name = tidb_ast::CiString::new(name.into());
+        self.update_table_info(|info| info.name = name);
+    }
+
+    /// Go `TableInfo.PKIsHandle`.
+    #[must_use]
+    pub fn pk_is_handle(&self) -> bool {
+        self.table_info.as_ref().is_some_and(|info| info.read().pk_is_handle)
+    }
+
+    /// Go `TableInfo.IsCommonHandle`.
+    #[must_use]
+    pub fn is_common_handle(&self) -> bool {
+        self.table_info.as_ref().is_some_and(|info| info.read().is_common_handle)
+    }
+
+    /// Go `TableInfo.CommonHandleVersion`.
+    #[must_use]
+    pub fn common_handle_version(&self) -> u16 {
+        self.table_info.as_ref().map_or(0, |info| info.read().common_handle_version)
+    }
+
+    /// Go `TableInfo.TempTableType != model.TempTableNone`.
+    #[must_use]
+    pub fn is_temporary(&self) -> bool {
+        self.table_info
+            .as_ref()
+            .is_some_and(|info| info.read().temp_table_type != tidb_model::TempTableType::NONE)
+    }
+
+    /// Go `TableInfo.TempTableType == model.TempTableLocal`.
+    #[must_use]
+    pub fn is_local_temporary(&self) -> bool {
+        self.table_info
+            .as_ref()
+            .is_some_and(|info| info.read().temp_table_type == tidb_model::TempTableType::LOCAL)
+    }
+
+    /// Go `TableInfo.TableCacheStatusType != model.TableCacheStatusDisable`.
+    #[must_use]
+    pub fn is_cached(&self) -> bool {
+        self.table_info.as_ref().is_some_and(|info| {
+            info.read().table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE
+        })
+    }
+
+    /// Whether Go `TableInfo.Affinity` is non-nil.
+    #[must_use]
+    pub fn has_affinity(&self) -> bool {
+        self.table_info.as_ref().is_some_and(|info| info.read().affinity.is_some())
+    }
+
+    /// Marks `TableInfo` temporary (GLOBAL unless already LOCAL), or not, on
+    /// a copy.
+    pub fn set_is_temporary(&mut self, value: bool) {
+        self.update_table_info(|info| {
+            if !value {
+                info.temp_table_type = tidb_model::TempTableType::NONE;
+            } else if info.temp_table_type == tidb_model::TempTableType::NONE {
+                info.temp_table_type = tidb_model::TempTableType::GLOBAL;
+            }
+        });
+    }
+
+    /// Marks `TableInfo` a LOCAL temporary table, or a GLOBAL one when it was
+    /// LOCAL, on a copy.
+    pub fn set_is_local_temporary(&mut self, value: bool) {
+        self.update_table_info(|info| {
+            if value {
+                info.temp_table_type = tidb_model::TempTableType::LOCAL;
+            } else if info.temp_table_type == tidb_model::TempTableType::LOCAL {
+                info.temp_table_type = tidb_model::TempTableType::GLOBAL;
+            }
+        });
+    }
+
+    /// Sets `TableInfo.TableCacheStatusType` enabled or disabled, on a copy.
+    pub fn set_is_cached(&mut self, value: bool) {
+        self.update_table_info(|info| {
+            info.table_cache_status_type = if value {
+                tidb_model::TableCacheStatusType::ENABLE
+            } else {
+                tidb_model::TableCacheStatusType::DISABLE
+            };
+        });
+    }
+
+    /// Gives `TableInfo` an `Affinity`, or clears it, on a copy.
+    pub fn set_has_affinity(&mut self, value: bool) {
+        self.update_table_info(|info| {
+            info.affinity = value.then(|| tidb_model::GoShared::new(tidb_model::TableAffinityInfo::default()));
+        });
+    }
+
+    /// Sets `TableInfo.PKIsHandle` on a copy (see [`Self::update_table_info`]).
+    pub fn set_pk_is_handle(&mut self, value: bool) {
+        self.update_table_info(|info| info.pk_is_handle = value);
+    }
+
+    /// Sets `TableInfo.IsCommonHandle` on a copy.
+    pub fn set_is_common_handle(&mut self, value: bool) {
+        self.update_table_info(|info| info.is_common_handle = value);
+    }
+
+    /// Sets `TableInfo.CommonHandleVersion` on a copy.
+    pub fn set_common_handle_version(&mut self, value: u16) {
+        self.update_table_info(|info| info.common_handle_version = value);
+    }
+
+    /// Points `TableInfo` at an updated copy, for a fixture or a synthesized
+    /// table: the shared `TableInfo` other occurrences hold is never written
+    /// through.
+    pub fn update_table_info(&mut self, update: impl FnOnce(&mut tidb_model::TableInfo)) {
+        let mut info = self
+            .table_info
+            .as_ref()
+            .map(|info| info.read().clone())
+            .unwrap_or_default();
+        update(&mut info);
+        self.table_info = Some(tidb_model::GoShared::new(info));
     }
 
     /// Go `ds.TableInfo.Indices`.
@@ -374,13 +547,13 @@ impl DataSource {
     /// The TiKV table path (Go `IsTiKVTablePath`).
     #[must_use]
     pub fn tikv_table_path(&self) -> Option<&tidb_planner_util::path::AccessPath> {
-        self.enumerated_paths.iter().find(|path| path.is_tikv_table_path())
+        self.all_possible_access_paths.iter().find(|path| path.is_tikv_table_path())
     }
 
     /// The TiKV table path's `deriveTablePathStats` result.
     #[must_use]
     pub fn filled_table_path(&self) -> Option<&tidb_planner_util::path::FilledTablePath> {
-        self.enumerated_paths
+        self.all_possible_access_paths
             .iter()
             .find(|path| path.is_tikv_table_path())
             .and_then(|path| path.filled_table.as_ref())
@@ -391,7 +564,7 @@ impl DataSource {
         &mut self,
         id: i64,
     ) -> Option<&mut tidb_planner_util::path::AccessPath> {
-        self.enumerated_paths
+        self.all_possible_access_paths
             .iter_mut()
             .find(|path| path.index.as_ref().is_some_and(|index| index.read().id == id))
     }
@@ -399,8 +572,8 @@ impl DataSource {
     /// Go plan building initializes full declared keys before pruning and
     /// statistics loading; ranger resolves the current schema again later.
     pub fn initialize_index_columns(&mut self) {
-        for position in 0..self.enumerated_paths.len() {
-            let path = &self.enumerated_paths[position];
+        for position in 0..self.all_possible_access_paths.len() {
+            let path = &self.all_possible_access_paths[position];
             // Go: every path but an int-handle one (`!path.IsIntHandlePath`).
             let Some(index) = path.index.clone() else {
                 continue;
@@ -418,7 +591,7 @@ impl DataSource {
                     && index.read().columns.len() > 1
                     && index.read().unique;
             self.contain_expr_prefix_uk |= is_uk_shard_index_path;
-            let path = &mut self.enumerated_paths[position];
+            let path = &mut self.all_possible_access_paths[position];
             path.declared_columns = Some(columns);
             path.is_uk_shard_index_path = is_uk_shard_index_path;
         }
@@ -438,7 +611,7 @@ impl DataSource {
             return conds;
         }
         let mut new_conds = conds.clone();
-        for path in &self.enumerated_paths {
+        for path in &self.all_possible_access_paths {
             if !path.is_uk_shard_index_path {
                 continue;
             }
@@ -510,7 +683,7 @@ impl DataSource {
         };
         recorder.record_used_item(
             self.physical_table_id,
-            &self.table_name,
+            &self.table_name(),
             in_pseudo_table,
             item_id,
             is_index,
@@ -528,7 +701,7 @@ impl DataSource {
     pub fn derive_stats_filled_paths(&self) -> tidb_planner_cardinality::selectivity::FilledPaths {
         let hist_coll = self.table_stats.as_ref().and_then(StatsInfo::hist_coll);
         let mut paths = tidb_planner_cardinality::selectivity::FilledPaths::new();
-        for path in &self.enumerated_paths {
+        for path in &self.all_possible_access_paths {
             // Go `Selectivity` keys every path with an `Index` (`selectivity.go:145`).
             let Some(index) = &path.index else {
                 continue;
@@ -613,9 +786,12 @@ impl DataSource {
     pub fn new(base: BaseLogicalPlan, table_id: i64, table_name: impl Into<String>) -> Self {
         Self {
             base,
-            table_id,
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo {
+                id: table_id,
+                name: tidb_ast::CiString::new(table_name.into()),
+                ..tidb_model::TableInfo::default()
+            })),
             physical_table_id: table_id,
-            table_name: table_name.into(),
             ..Self::default()
         }
     }
@@ -627,12 +803,12 @@ impl DataSource {
     #[must_use]
     pub fn explain_info(&self) -> String {
         let table_name = match &self.table_as_name {
-            Some(alias) if !alias.is_empty() => alias.as_str(),
-            _ => self.table_name.as_str(),
+            Some(alias) if !alias.is_empty() => alias.clone(),
+            _ => self.table_name(),
         };
         let mut buffer = format!("table:{table_name}");
         if let Some(idx) = self.partition_def_idx {
-            if let Some(name) = self.partition_definition_names.get(idx) {
+            if let Some(name) = self.partition_definition_names().get(idx) {
                 buffer.push_str(&format!(", partition:{name}"));
             }
         }
@@ -666,7 +842,7 @@ impl DataSource {
     /// data source still carries it. Either way it must have survived pruning.
     #[must_use]
     pub fn get_pk_is_handle_col<'a>(&self, self_schema: &'a Schema) -> Option<&'a Column> {
-        let position = if self.pk_is_handle {
+        let position = if self.pk_is_handle() {
             self.columns
                 .iter()
                 .position(|column| column.read().field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY))?
@@ -701,7 +877,7 @@ impl DataSource {
         blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
         warnings: Option<&dyn tidb_exprctx::Columns>,
     ) -> Vec<Expression> {
-        self.derived_access_paths = None;
+        self.possible_access_paths = None;
         if predicates.is_empty() && !self.pushed_down_conds.is_empty() {
             // The deferred CTE seed re-optimisation re-runs the pushdown over
             // an already-optimised tree; such a re-visit carries no new
@@ -748,7 +924,7 @@ impl DataSource {
             .iter()
             .map(|column| {
                 tidb_datatype::FieldName::new(tidb_datatype::FieldNameMetadata {
-                    table: tidb_datatype::IdentifierMetadata::new(&self.table_name),
+                    table: tidb_datatype::IdentifierMetadata::new(&self.table_name()),
                     column: tidb_datatype::IdentifierMetadata::new(column.read().name.original()),
                     ..tidb_datatype::FieldNameMetadata::default()
                 })
@@ -759,7 +935,7 @@ impl DataSource {
         let mut partial_index_used_hint = false;
         let mut has_partial_index = false;
 
-        for path in &mut self.enumerated_paths {
+        for path in &mut self.all_possible_access_paths {
             let Some(metadata) = path.index_info().cloned() else {
                 continue;
             };
@@ -794,8 +970,8 @@ impl DataSource {
             return;
         }
 
-        self.derived_access_paths = None;
-        self.enumerated_paths.retain(|path| match path.index_info() {
+        self.possible_access_paths = None;
+        self.all_possible_access_paths.retain(|path| match path.index_info() {
             Some(index) => {
                 !removed_ids.contains(&index.read().id) && (!partial_index_used_hint || path.forced)
             }
@@ -861,7 +1037,7 @@ impl DataSource {
                 .handle_cols
                 .first()
                 .or_else(|| {
-                    self.pk_is_handle.then(|| {
+                    self.pk_is_handle().then(|| {
                         self.table_columns.iter().find(|column| {
                             column.ret_type.as_ref().is_some_and(|field_type| {
                                 field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
@@ -961,7 +1137,7 @@ impl DataSource {
     /// keys are the caller's to supply as `index_keys`.
     pub fn build_key_info(&self, self_schema: &mut Schema, index_keys: Vec<Vec<Column>>) {
         self_schema.pk_or_uk = index_keys;
-        if !self.pk_is_handle {
+        if !self.pk_is_handle() {
             return;
         }
         if let Some(position) = self.columns.iter().position(|column| column.read().field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)) {
@@ -1122,35 +1298,24 @@ impl DataSource {
         Self {
             base: self.base.shell(),
             table_info: self.table_info.clone(),
-            table_id: self.table_id,
-            table_name: self.table_name.clone(),
             table_as_name: self.table_as_name.clone(),
             db_name: self.db_name.clone(),
             physical_table_id: self.physical_table_id,
             sample_info: self.sample_info.clone(),
             partition_def_idx: self.partition_def_idx,
             partition_names: self.partition_names.clone(),
-            partition_definition_names: self.partition_definition_names.clone(),
-            partition_definition_ids: self.partition_definition_ids.clone(),
             dynamic_partition_access: self.dynamic_partition_access.clone(),
             columns: self.columns.clone(),
             table_columns: self.table_columns.clone(),
             pushed_down_conds: self.pushed_down_conds.clone(),
             all_conds: self.all_conds.clone(),
-            enumerated_paths: self.enumerated_paths.clone(),
+            all_possible_access_paths: self.all_possible_access_paths.clone(),
             public_enumerated_paths: self.public_enumerated_paths.clone(),
             ast_index_hints: self.ast_index_hints.clone(),
             index_hints: self.index_hints.clone(),
-            pk_is_handle: self.pk_is_handle,
             fd_latest_public_index_ids: self.fd_latest_public_index_ids.clone(),
             fd_latest_index_lookup_failed: self.fd_latest_index_lookup_failed,
-            is_common_handle: self.is_common_handle,
             is_cluster_table: self.is_cluster_table,
-            common_handle_version: self.common_handle_version,
-            is_temporary: self.is_temporary,
-            is_local_temporary: self.is_local_temporary,
-            is_cached: self.is_cached,
-            has_affinity: self.has_affinity,
             index_lookup_push_down_session: self.index_lookup_push_down_session,
             tikv_in_isolation_read: self.tikv_in_isolation_read,
             isolation_read_engines_value: self.isolation_read_engines_value.clone(),
@@ -1171,7 +1336,7 @@ impl DataSource {
             prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
             index_merge_skip_range_scan_check: self.index_merge_skip_range_scan_check,
             table_stats: self.table_stats.clone(),
-            derived_access_paths: self.derived_access_paths.clone(),
+            possible_access_paths: self.possible_access_paths.clone(),
             analyzed_index_ids: self.analyzed_index_ids.clone(),
             table_scan_penalty: self.table_scan_penalty,
             has_tiflash_replica: self.has_tiflash_replica,
@@ -1252,7 +1417,7 @@ fn index_covers_column(
     let Some(column) = ds.columns.get(position) else {
         return false;
     };
-    if (ds.pk_is_handle && column.read().field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY))
+    if (ds.pk_is_handle() && column.read().field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY))
         || column.read().id == tidb_model::column::EXTRA_HANDLE_ID
         || column.read().id == tidb_model::column::EXTRA_PHYS_TBL_ID
     {
@@ -1290,7 +1455,7 @@ fn index_covers_column(
             .any(|(handle, length)| handle.unique_id == column.unique_id && full_length(*length))
     });
     covered_by_handle
-        && !(ds.common_handle_version == 0
+        && !(ds.common_handle_version() == 0
             && tidb_datatype::new_collation_enabled()
             && field_type.is_some_and(|field_type| {
                 field_type.eval_type() == tidb_datatype::EvalType::String

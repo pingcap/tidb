@@ -1372,7 +1372,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         table: &SourceTable,
         alias: Option<&str>,
     ) -> LogicalPlan {
-        let visible_table = alias.unwrap_or(&table.table_name);
+        let table_name = table.table_name();
+        let visible_table = alias.unwrap_or(&table_name);
         let mut schema_columns = Vec::with_capacity(table.columns.len());
         let mut names = Vec::with_capacity(table.columns.len());
         let mut handle_cols: Option<HandleCols> = None;
@@ -1381,7 +1382,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 names: FieldNameMetadata {
                     database: IdentifierMetadata::new(db_name),
                     table: IdentifierMetadata::new(visible_table),
-                    original_table: IdentifierMetadata::new(&table.table_name),
+                    original_table: IdentifierMetadata::new(&table.table_name()),
                     column: IdentifierMetadata::new(source_column.read().name.original()),
                     original_column: IdentifierMetadata::new(source_column.read().name.original()),
                 },
@@ -1389,7 +1390,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             });
             let mut column = Column::new(self.column_ids.alloc(), source_column.read().field_type.clone());
             column.id = source_column.read().id;
-            if table.pk_is_handle && source_column.read().field_type.has_flag(FieldTypeFlags::PRI_KEY) {
+            if table.pk_is_handle() && source_column.read().field_type.has_flag(FieldTypeFlags::PRI_KEY) {
                 handle_cols = Some(self.plan_handle_cols(std::slice::from_ref(&column), true));
             }
             schema_columns.push(column);
@@ -1400,7 +1401,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         match handle_cols {
             Some(handle) => {
                 let mut map = super::handle_col_helper::HandleColMap::new();
-                map.insert(table.table_id, vec![handle]);
+                map.insert(table.table_id(), vec![handle]);
                 self.handle_helper.push_map(map);
             }
             None => self.handle_helper.push_empty(),
@@ -1417,7 +1418,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut mem_table = LogicalMemTable::new(
             self.base(LogicalMemTable::TYPE),
             db_name,
-            table.table_name.clone(),
+            table.table_name(),
         );
         mem_table.table_columns.clone_from(&columns);
         mem_table.columns = columns;
@@ -1425,7 +1426,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         mem_table.extractor =
             crate::memtable_predicate_extractor::MemTableExtractor::for_table(
                 db_name,
-                &table.table_name,
+                &table.table_name(),
             )
             .map(|extractor| {
                 Box::new(extractor) as Box<dyn tidb_planner_core_base::MemTablePredicateExtractor>
@@ -1433,7 +1434,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // Go sets the summary tables' `QueryTimeRange` with their extractors.
         if db_name.eq_ignore_ascii_case("information_schema")
             && matches!(
-                table.table_name.to_ascii_uppercase().as_str(),
+                table.table_name().to_ascii_uppercase().as_str(),
                 "INSPECTION_RESULT"
                     | "INSPECTION_SUMMARY"
                     | "METRICS_SUMMARY"
@@ -1789,7 +1790,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         columns: &mut BTreeMap<i64, Column>,
     ) {
         if let LogicalPlan::DataSource(source) = plan {
-            if source.partition_definition_ids.is_empty() {
+            if source.partition_definition_ids().is_empty() {
                 return;
             }
             if let Some(column) = source
@@ -1798,7 +1799,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .rev()
                 .find(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID)
             {
-                columns.insert(source.table_id, column.clone());
+                columns.insert(source.table_id(), column.clone());
                 return;
             }
             let mut column = Column::new(
@@ -1808,15 +1809,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             column.id = tidb_model::column::EXTRA_PHYS_TBL_ID;
             column.orig_name = format!(
                 "{}.{}.{}",
-                source.db_name, source.table_name, EXTRA_PHYS_TBL_ID_NAME
+                source.db_name, source.table_name(), EXTRA_PHYS_TBL_ID_NAME
             );
             let name = self.table_field_name(
                 &source.db_name,
-                &source.table_name,
+                &source.table_name(),
                 source
                     .table_as_name
                     .as_deref()
-                    .unwrap_or(&source.table_name),
+                    .unwrap_or(&source.table_name()),
                 EXTRA_PHYS_TBL_ID_NAME,
                 false,
                 false,
@@ -1833,7 +1834,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             names.push(name);
             source.base.base.set_output_names(names);
             source.table_columns.push(column.clone());
-            columns.insert(source.table_id, column);
+            columns.insert(source.table_id(), column);
         } else {
             for child in plan.base_mut().children_mut() {
                 self.set_extra_phys_tbl_id_cols(child, columns);
