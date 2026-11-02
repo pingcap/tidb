@@ -5258,6 +5258,10 @@ def go_deps():
         name = "io_etcd_go_etcd_server_v3",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/server/v3",
+        patch_args = ["-p1"],
+        patches = [
+            "//build/patches:io_etcd_go_etcd_server_v3.patch",
+        ],
         sum = "h1:x35jrWnZgsRwMsFsUJIUdT1bvzIz1B+29HjMfRYVN/E=",
         version = "v3.5.15",
     )
