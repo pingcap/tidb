@@ -173,14 +173,12 @@ where
     S: StoreClient,
 {
     reorg_transaction(opener, timeout, |meta, _, _, _| {
-        let catalog = fetch_all_schemas_with_tables(meta).map_err(DdlPlanError::from)?;
+        let catalog = load_info_schema(meta).map_err(DdlPlanError::from)?;
         let reorg = DdlReorgTable::locate(&catalog).map_err(ClusterDdlError::Backfill)?;
         let jobs = DdlJobTable::locate(&catalog)
             .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?;
         let system_db_id = catalog
-            .databases
-            .iter()
-            .find(|database| database.read().name.lowercase() == "mysql")
+            .schema_info_by_name("mysql")
             .map(|database| database.read().id)
             .ok_or_else(|| ClusterDdlError::Backfill("database mysql does not exist".to_owned()))?;
         Ok((

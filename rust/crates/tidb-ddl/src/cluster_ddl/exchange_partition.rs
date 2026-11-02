@@ -44,7 +44,7 @@ pub fn prepare_exchange_partition_job_submission<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let (partitioned_db_id, partitioned) = locate_table(&catalog, schema, table)?;
     let partitioned = partitioned.read();
     let (standalone_db_id, standalone) =
@@ -228,7 +228,7 @@ fn exchange_diff(
 /// Go `updateVersionAndTableInfo` over the standalone table and, when
 /// given, the partitioned one (`multiInfos`).
 fn exchange_step(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &ExchangeArgs,
     standalone: &TableInfo,
@@ -251,7 +251,7 @@ fn exchange_step(
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
         )?);
     }
-    let schema_version = catalog.schema_version + 1;
+    let schema_version = catalog.schema_meta_version() + 1;
     let mut diff = SchemaDiff {
         version: schema_version,
         action_type: active.job.type_,
@@ -278,7 +278,7 @@ fn exchange_step(
 /// Go `onExchangeTablePartition`.
 pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcome: Option<&ReorgOutcome>,
@@ -288,9 +288,7 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
     // `checkSchemaExistAndCancelNotExistJob` and the partitioned table's
     // database.
     if !catalog
-        .databases
-        .iter()
-        .any(|database| database.read().id == args.pt_schema_id)
+        .schema_by_id(args.pt_schema_id).is_some()
     {
         return Err(cancel_ddl_job(
             active,
@@ -421,9 +419,7 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
             None => {
                 let schema_name = |id: i64| {
                     catalog
-                        .databases
-                        .iter()
-                        .find(|database| database.read().id == id)
+                        .schema_by_id(id)
                         .map(|database| database.read().name.lowercase().to_owned())
                         .unwrap_or_default()
                 };
@@ -567,9 +563,7 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
     // partition's to the table.
     let mut label_rules = LabelRuleSteps::new();
     let partitioned_schema = catalog
-        .databases
-        .iter()
-        .find(|database| database.read().id == args.pt_schema_id)
+        .schema_by_id(args.pt_schema_id)
         .map(|database| database.read().name.lowercase().to_owned())
         .unwrap_or_default();
     let swap = ExchangePartitionLabelSwap {
@@ -620,7 +614,7 @@ pub(super) fn on_exchange_table_partition<S: MetaSnapshot>(
 /// Go `rollbackExchangeTablePartition`: the standalone table (and the
 /// partitioned one, if it was marked) loses its `ExchangePartitionInfo`.
 fn rollback_exchange_table_partition(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &ExchangeArgs,
     mut standalone: TableInfo,
@@ -661,7 +655,7 @@ fn rollback_exchange_table_partition(
 
 /// Go `rollingbackExchangeTablePartition`.
 pub(super) fn rollingback_exchange_table_partition(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {

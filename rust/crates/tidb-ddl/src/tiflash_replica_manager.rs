@@ -139,9 +139,9 @@ struct ReplicaTable {
     logical_available: bool,
 }
 
-fn replica_tables(catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog) -> Vec<ReplicaTable> {
+fn replica_tables(catalog: &tidb_infoschema::SessionExtendedInfoSchema) -> Vec<ReplicaTable> {
     let mut tables = Vec::new();
-    for database in &catalog.databases {
+    for database in &catalog.stored_schemas() {
         for stored in database.read().deprecated_tables.iter_deref() {
             let stored = stored.read();
             let Some(replica) = &stored.tiflash_replica else {
@@ -738,12 +738,12 @@ mod tests {
 
     fn manager(ddl: Arc<Ddl>, calls: Arc<AtomicUsize>) -> TiFlashReplicaManager {
         let catalog = Arc::new(tidb_infoschema_issyncer::catalog_watch::InfoCache::new(
-            tidb_infoschema::cluster_catalog::ClusterCatalog {
-                resource_groups: Vec::new(),
-                policies: Vec::new(),
-                schema_version: 1,
-                databases: vec![],
-            },
+            tidb_infoschema::SessionExtendedInfoSchema::init_with_db_infos(
+                vec![],
+                Vec::new(),
+                Vec::new(),
+                1,
+            ),
         ));
         TiFlashReplicaManager::new(
             catalog,
@@ -905,28 +905,28 @@ mod tests {
     fn tiflash_batch_collects_physical_and_adding_partitions() {
         let catalog = replica_catalog(&[(7, false)]);
         let mut image = catalog.get_latest();
-        // The image is a copy: write a fresh pointer rather than through
-        // the shared one.
-        let database = &mut Arc::make_mut(&mut image).databases[0];
-        let mut table = database.read().deprecated_tables.get(0).unwrap().read().clone();
-        table.partition =
-            Some(tidb_model::GoShared::new(tidb_model::PartitionInfo {
-                enable: true,
-                definitions: vec![tidb_model::PartitionDefinition {
-                    id: 71,
+        // The image is a copy: edit a copy of the database into its slot
+        // rather than through the pointer the published image shares.
+        let db_id = image.stored_schemas()[0].read().id;
+        Arc::make_mut(&mut image).edit_schema_by_id(db_id, |database| {
+            let mut table = database.deprecated_tables.get(0).unwrap().read().clone();
+            table.partition =
+                Some(tidb_model::GoShared::new(tidb_model::PartitionInfo {
+                    enable: true,
+                    definitions: vec![tidb_model::PartitionDefinition {
+                        id: 71,
+                        ..Default::default()
+                    }]
+                    .into(),
+                    adding_definitions: vec![tidb_model::PartitionDefinition {
+                        id: 72,
+                        ..Default::default()
+                    }]
+                    .into(),
                     ..Default::default()
-                }]
-                .into(),
-                adding_definitions: vec![tidb_model::PartitionDefinition {
-                    id: 72,
-                    ..Default::default()
-                }]
-                .into(),
-                ..Default::default()
-            }));
-        let mut copy = database.read().clone();
-        copy.deprecated_tables = vec![table].into();
-        *database = tidb_model::GoShared::new(copy);
+                }));
+            database.deprecated_tables = vec![table].into();
+        });
         let tables = replica_tables(&image);
         assert_eq!(
             tables.iter().map(|table| table.id).collect::<Vec<_>>(),
@@ -1184,11 +1184,8 @@ mod tests {
 
     fn replica_catalog(tables: &[(i64, bool)]) -> Arc<tidb_infoschema_issyncer::catalog_watch::InfoCache> {
         Arc::new(tidb_infoschema_issyncer::catalog_watch::InfoCache::new(
-            tidb_infoschema::cluster_catalog::ClusterCatalog {
-                resource_groups: Vec::new(),
-                policies: Vec::new(),
-                schema_version: 1,
-                databases: vec![tidb_model::GoShared::new(tidb_model::db::DBInfo {
+            tidb_infoschema::SessionExtendedInfoSchema::init_with_db_infos(
+                vec![tidb_model::GoShared::new(tidb_model::db::DBInfo {
                     deprecated_tables: tables
                         .iter()
                         .map(|&(id, available)| tidb_model::table_info::TableInfo {
@@ -1206,7 +1203,10 @@ mod tests {
                         .into(),
                     ..Default::default()
                 })],
-            },
+                Vec::new(),
+                Vec::new(),
+                1,
+            ),
         ))
     }
 

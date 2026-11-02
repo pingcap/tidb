@@ -34,7 +34,7 @@ use tidb_meta::key;
 use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_infoschema::cluster_catalog::ClusterCatalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_infoschema::cluster_catalog::MetaSnapshot;
 use crate::mysql_system_tables::{scan_system_table, SystemTableError, SystemTableView, SYSTEM_DB};
 use crate::system_row_write::{decode_stored_row, defaults_row, delete_clustered_row, delete_row, insert_row, is_clustered, row_id_of, store_clustered_row, update_row, RowValues};
@@ -119,7 +119,7 @@ impl SysvarWritePlan {
 /// on the allocator key inside their statements.
 pub fn plan_sysvar_write<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     desired: &BTreeMap<String, String>,
     now: Time,
     reserve_ids: &mut dyn FnMut(i64, &TableInfo, i64, usize) -> Result<i64, String>,
@@ -218,11 +218,9 @@ struct StoredRow {
     values: RowValues,
 }
 
-fn locate(catalog: &ClusterCatalog) -> Result<tidb_model::GoShared<TableInfo>, SysvarWriteError> {
+fn locate(catalog: &SessionExtendedInfoSchema) -> Result<tidb_model::GoShared<TableInfo>, SysvarWriteError> {
     catalog
-        .databases
-        .iter()
-        .find(|database| database.read().name.lowercase() == SYSTEM_DB)
+        .schema_info_by_name(SYSTEM_DB)
         .and_then(|database| {
             database
                 .read().deprecated_tables
@@ -274,11 +272,9 @@ pub fn metadata_lock_mutation(enable: bool) -> Result<BufferMutation, SysvarWrit
     .map_err(|error| SysvarWriteError::Encode(RowEncodeError(error.to_string())))
 }
 
-fn system_db_id(catalog: &ClusterCatalog) -> Result<i64, SysvarWriteError> {
+fn system_db_id(catalog: &SessionExtendedInfoSchema) -> Result<i64, SysvarWriteError> {
     catalog
-        .databases
-        .iter()
-        .find(|database| database.read().name.lowercase() == SYSTEM_DB)
+        .schema_info_by_name(SYSTEM_DB)
         .map(|database| database.read().id)
         .ok_or(SysvarWriteError::MissingTable)
 }

@@ -31,7 +31,7 @@ pub fn prepare_alter_schema_job_submission<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let (name, action, args, policy) = match statement {
         // Go `executor.ModifySchemaCharsetAndCollate`.
         DdlStatement::ModifySchemaCharsetAndCollate {
@@ -127,7 +127,7 @@ pub fn prepare_alter_schema_job_submission<S: MetaSnapshot>(
 /// Go `onModifySchemaCharsetAndCollate` / `onModifySchemaDefaultPlacement`.
 pub(super) fn on_modify_schema_charset_and_collate<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = tidb_model::get_modify_schema_args(&mut active.job)
@@ -140,9 +140,7 @@ pub(super) fn on_modify_schema_charset_and_collate<S: MetaSnapshot>(
         })?;
     // Go `checkSchemaExistAndCancelNotExistJob`.
     let Some(database) = catalog
-        .databases
-        .iter()
-        .find(|database| database.read().id == active.job.schema_id)
+        .schema_by_id(active.job.schema_id)
     else {
         return Err(cancel_ddl_job(
             active,
@@ -196,7 +194,7 @@ pub(super) fn on_modify_schema_charset_and_collate<S: MetaSnapshot>(
         );
         return Ok(action_step(job_only_write(active.job.id, Vec::new())));
     }
-    let schema_version = catalog.schema_version + 1;
+    let schema_version = catalog.schema_meta_version() + 1;
     let diff = SchemaDiff {
         version: schema_version,
         action_type: active.job.type_,
@@ -241,10 +239,10 @@ pub(super) fn on_modify_schema_charset_and_collate<S: MetaSnapshot>(
 ///
 /// Those three refusals.
 pub fn schema_tiflash_replica_tables<'catalog>(
-    catalog: &'catalog ClusterCatalog,
+    catalog: &'catalog SessionExtendedInfoSchema,
     name: &str,
 ) -> Result<(String, Vec<GoShared<TableInfo>>), DdlPlanError> {
-    let Some(database) = catalog.schema_by_name(name) else {
+    let Some(database) = catalog.schema_info_by_name(name) else {
         return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
             &tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                 .generate_with_stack_by_args(&[name.into()]),
@@ -270,9 +268,9 @@ pub fn schema_tiflash_replica_tables<'catalog>(
 /// Go `getPendingTiFlashTableCount`'s count: tables outside the memory and
 /// system schemas whose TiFlash replica is not available yet.
 #[must_use]
-pub fn pending_tiflash_table_count(catalog: &ClusterCatalog) -> u32 {
+pub fn pending_tiflash_table_count(catalog: &SessionExtendedInfoSchema) -> u32 {
     let count = catalog
-        .databases
+        .stored_schemas()
         .iter()
         .filter(|database| !tidb_metadef::is_mem_or_sys_db(database.read().name.lowercase()))
         .flat_map(|database| database.read().deprecated_tables.iter_deref())

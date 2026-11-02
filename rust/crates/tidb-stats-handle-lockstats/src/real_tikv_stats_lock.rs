@@ -25,7 +25,7 @@ use crate::lock_stats::StatsLockTransaction;
 use tidb_txnkv::transaction::BufferMutation;
 use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
-use tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables;
+use tidb_infoschema::cluster_catalog::load_info_schema;
 use crate::cluster_stats_lock::{
     apply_stats_lock_request, plan_cluster_delete_lock, plan_cluster_insert_lock,
     plan_cluster_update_meta_delta, plan_cluster_update_meta_version, query_cluster_lock_delta,
@@ -96,7 +96,7 @@ pub fn commit_cluster_stats_lock<S: StoreClient>(
                 .snapshot()
                 .map_err(|error| ClusterStatsLockCommitError::Other(error.to_string()))?;
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            fetch_all_schemas_with_tables(&mut snapshot)
+            load_info_schema(&mut snapshot)
                 .map_err(|error| ClusterStatsLockCommitError::Other(error.to_string()))?
         };
         let mut policy = PessimisticStatsLockTransaction {
@@ -126,7 +126,7 @@ where
 {
     transaction: &'a SessionTransaction<S>,
     staged: &'a MutationBuffer,
-    catalog: &'a tidb_infoschema::cluster_catalog::ClusterCatalog,
+    catalog: &'a tidb_infoschema::SessionExtendedInfoSchema,
     now: Time,
 }
 

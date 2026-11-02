@@ -36,7 +36,8 @@ use crate::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_datatype::Datum;
 use tidb_txnkv::kv_storage::Storage;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaPairs, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{MetaPairs, MetaSnapshot};
+use tidb_infoschema::SessionExtendedInfoSchema;
 
 /// One running DDL job the owner is waiting on.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -68,7 +69,7 @@ fn str_to_int64s(text: &str) -> Vec<i64> {
 pub fn refresh_mdl_check_table_info(
     opener: &dyn Storage,
     timeout: Duration,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     min_job_id: i64,
 ) -> Result<Vec<MdlJob>, SystemTableError> {
     let view = match SystemTableView::locate(
@@ -118,7 +119,7 @@ pub fn refresh_mdl_check_table_info(
             // read it, never acking a version this node did not see.
             continue;
         };
-        if job_id < min_job_id || version > catalog.schema_version {
+        if job_id < min_job_id || version > catalog.schema_meta_version() {
             continue;
         }
         // Decoded exactly as Go: `Str2Int64Map` on the stored text, where an

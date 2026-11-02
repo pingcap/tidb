@@ -67,8 +67,8 @@ use tidb_goruntime::go_runtime::GoSharedSlice;
 use tidb_txnkv::transaction::BufferMutation;
 
 use tidb_infoschema::cluster_catalog::{
-    fetch_all_schemas_with_tables, ClusterCatalog, ClusterCatalogError, MetaSnapshot,
-};
+    load_info_schema, ClusterCatalogError, MetaSnapshot};
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_context::WarningLevel;
 use tidb_hack::GoToLower;
 use tidb_ddl_build::column_types::resolve_charset_collation;
@@ -1652,7 +1652,7 @@ pub fn lower_ddl_with_context(
 /// names the policy. `ALTER RANGE` is not served here, so no range can name
 /// one, and that arm has nothing to walk.
 fn rebuilt_bundles_for_policy(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     policy: &CiString,
     settings: &tidb_model::PlacementSettings,
 ) -> Result<Vec<tidb_placement::Bundle>, DdlPlanError> {
@@ -1667,7 +1667,7 @@ fn rebuilt_bundles_for_policy(
             .is_some_and(|reference| reference.read().name.lowercase() == policy.lowercase())
     };
     let mut bundles = Vec::new();
-    for database in &catalog.databases {
+    for database in &catalog.stored_schemas() {
         for table in database.read().deprecated_tables.iter_deref() {
             let table = table.read();
             let definitions = table
@@ -1781,8 +1781,8 @@ fn find_policy<S: MetaSnapshot>(
 
 /// Go `CheckPlacementPolicyNotInUseFromInfoSchema`: whether any table or
 /// partition still names this policy.
-fn policy_referenced(catalog: &ClusterCatalog, policy: &CiString) -> bool {
-    catalog.databases.iter().any(|database| {
+fn policy_referenced(catalog: &SessionExtendedInfoSchema, policy: &CiString) -> bool {
+    catalog.stored_schemas().iter().any(|database| {
         database.read().deprecated_tables.iter_deref().any(|table| {
             let table = table.read();
             if table
@@ -3833,7 +3833,7 @@ fn check_index_length_with_new_charset(
 }
 
 fn apply_table_charset_and_collate(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema: &str,
     table: &str,
     info: &mut TableInfo,
@@ -4243,7 +4243,7 @@ fn coded_refusal(proto: &'static TerrorError, message: impl Into<String>) -> Ddl
 /// IF EXISTS over a column that is not there, which Go skips with a 1091
 /// note.
 fn check_is_droppable_column(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema: &str,
     info: &TableInfo,
     column: &str,
@@ -4780,7 +4780,7 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<tidb_ddl_jobsubmit::JobSpec>, DdlPlanError> {
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let (job, args) = match statement {
         DdlStatement::AddCheckConstraint {
             schema,
@@ -4810,9 +4810,7 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
                 .read()
                 .clone();
             if catalog
-                .databases
-                .iter()
-                .find(|database| database.read().id == schema_id)
+                .schema_by_id(schema_id)
                 .is_some_and(|database| {
                     database.read().deprecated_tables.iter_deref().any(|candidate| {
                         let candidate = candidate.read();
@@ -5119,7 +5117,7 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
 /// by a multi-schema change's sub-jobs (run as proxy jobs).
 fn plan_persisted_action<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcomes: &[add_index::ReorgOutcome],
@@ -5307,12 +5305,12 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     supports_action: impl FnOnce(ActionType) -> bool,
     plan_action: impl FnOnce(
         &mut S,
-        &ClusterCatalog,
+        &SessionExtendedInfoSchema,
         &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     ) -> Result<PersistedDdlActionStep, DdlPlanError>,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let job_table = tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&catalog)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     let mut active = job_table
@@ -5361,7 +5359,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
                 });
             }
             if schema_state.synced_version.is_none() && active.job.last_schema_version > 0 {
-                let mut version = catalog.schema_version;
+                let mut version = catalog.schema_meta_version();
                 // Same projection as meta.GetSchemaVersionWithNonEmptyDiff:
                 // a separately reserved newest version may not have a diff yet.
                 if version > 0 {
@@ -5514,7 +5512,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
 // only after the shared MDL barrier. No action handler writes history itself.
 fn finish_persisted_ddl_job<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     job_table: &tidb_ddl_systable::ddl_job_table::DdlJobTable,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
@@ -5562,7 +5560,7 @@ fn finish_persisted_ddl_job<S: MetaSnapshot>(
 /// is accepted. A process may therefore disappear after any committed phase
 /// and a later owner can call this function with the same job ID.
 fn plan_persisted_check_constraint_job_step(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -5571,9 +5569,7 @@ fn plan_persisted_check_constraint_job_step(
     let stored = checked_job_table(catalog, active, true)?;
     let stored = stored.read();
     let database = catalog
-        .databases
-        .iter()
-        .find(|db| db.read().id == active.job.schema_id)
+        .schema_by_id(active.job.schema_id)
         .expect("checked_job_table checked the database");
     let cancelling = active.job.is_cancelling();
     let mut info = stored.clone_like_go();
@@ -5910,7 +5906,7 @@ fn plan_persisted_check_constraint_job_step(
     }
 
     let schema_version = if schema_changed {
-        catalog.schema_version + 1
+        catalog.schema_meta_version() + 1
     } else {
         0
     };
@@ -5996,7 +5992,7 @@ fn plan_persisted_check_constraint_job_step(
 /// one meta write, and persists DONE for the shared synchronization lifecycle.
 /// CREATE DATABASE has no reorg states or backfill.
 fn plan_persisted_create_schema_job_step(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
@@ -6017,9 +6013,7 @@ fn plan_persisted_create_schema_job_step(
 
     let name_taken = find_database(catalog, db_info.name.original()).is_some();
     let id_taken = catalog
-        .databases
-        .iter()
-        .any(|database| database.read().id == db_info.id);
+        .schema_by_id(db_info.id).is_some();
     if name_taken || id_taken {
         return Err(cancel_ddl_job(
             active,
@@ -6034,7 +6028,7 @@ fn plan_persisted_create_schema_job_step(
         ));
     }
 
-    let schema_version = catalog.schema_version + 1;
+    let schema_version = catalog.schema_meta_version() + 1;
     let mut mutations = Vec::new();
     let diff = {
         db_info.state = SchemaState::PUBLIC;
@@ -6102,7 +6096,7 @@ fn plan_persisted_create_schema_job_step(
 /// the schema version once with a `CREATE TABLES` diff, and persists DONE for
 /// the shared synchronization and history lifecycle.
 fn plan_persisted_create_tables_job_step(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -6116,9 +6110,7 @@ fn plan_persisted_create_tables_job_step(
         .ok_or_else(|| DdlPlanError::Encode("CREATE TABLES job has nil args".to_owned()))?;
 
     let database = catalog
-        .databases
-        .iter()
-        .find(|database| database.read().id == active.job.schema_id)
+        .schema_by_id(active.job.schema_id)
         .ok_or_else(|| {
             cancel_ddl_job(
                 active,
@@ -6182,7 +6174,7 @@ fn plan_persisted_create_tables_job_step(
         ));
     }
 
-    let schema_version = catalog.schema_version + 1;
+    let schema_version = catalog.schema_meta_version() + 1;
     let mut mutations = Vec::new();
     let first_id = table_infos.first().map(|info| info.id).unwrap_or(0);
     let diff = {
@@ -6287,19 +6279,17 @@ fn plan_persisted_create_tables_job_step(
 /// error (Go `checkSchemaExistAndCancelNotExistJob`).
 fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
 
-    let schema_version = catalog.schema_version;
+    let schema_version = catalog.schema_meta_version();
     let mut mutations = Vec::new();
 
     let Some(database) = catalog
-        .databases
-        .iter()
-        .find(|database| database.read().id == active.job.schema_id)
+        .schema_by_id(active.job.schema_id)
         .map(|database| database.read().clone())
     else {
         return Err(cancel_ddl_job(
@@ -6331,9 +6321,7 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
         // table's and partition's label rule goes, under the job's schema
         // name.
         let tables = catalog
-            .databases
-            .iter()
-            .find(|database| database.read().id == db_info.id)
+            .schema_by_id(db_info.id)
             .map(|database| {
                 database
                     .read().deprecated_tables
@@ -6375,9 +6363,7 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
         }
         mutations.push(BufferMutation::delete(key::database_kv_key(db_info.id))?);
         let tables: Vec<TableInfo> = catalog
-            .databases
-            .iter()
-            .find(|database| database.read().id == db_info.id)
+            .schema_by_id(db_info.id)
             .map(|database| {
                 database
                     .read().deprecated_tables
@@ -6469,20 +6455,18 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
 /// history.
 fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
 
-    let schema_version = catalog.schema_version;
+    let schema_version = catalog.schema_meta_version();
     let mut mutations = Vec::new();
 
     let mut table = checked_job_table(catalog, active, false)?.read().clone_like_go();
     let database = catalog
-        .databases
-        .iter()
-        .find(|db| db.read().id == active.job.schema_id)
+        .schema_by_id(active.job.schema_id)
         .expect("checked_job_table checked the database");
 
     let schema_version = schema_version + 1;
@@ -6695,12 +6679,11 @@ fn serialize_resource_group(
 
 /// Go `checkResourceGroupExist`: the stored group of the job's ID.
 fn stored_resource_group(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     group_id: i64,
 ) -> Result<&tidb_model::ResourceGroupInfo, DdlPlanError> {
     catalog
-        .resource_groups
-        .iter()
+        .resource_groups()
         .find(|group| group.id == group_id)
         .ok_or_else(|| {
             coded_refusal(
@@ -6728,7 +6711,7 @@ fn pd_step_error(context: Option<&str>, error: String) -> DdlPlanError {
 /// `GenGIDAndInsertJobsWithRetry`'s admission.
 fn submit_built_job<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     built: Option<add_index::AddIndexSubmission>,
     start_ts: u64,
     upgrading: bool,
@@ -6831,7 +6814,7 @@ fn cancelled_ddl_job(active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob
 // Go convertJob2RollbackJob, restricted to the actions integrated into this
 // worker. Conversion is its own step; an irreversible DROP resumes next time.
 fn plan_cancel_persisted_ddl_job(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -6860,9 +6843,7 @@ fn plan_cancel_persisted_ddl_job(
         }
         ActionType::ACTION_DROP_SCHEMA => {
             let database = catalog
-                .databases
-                .iter()
-                .find(|db| db.read().id == active.job.schema_id)
+                .schema_by_id(active.job.schema_id)
                 .ok_or_else(|| {
                     cancel_ddl_job(
                         active,
@@ -6873,7 +6854,8 @@ fn plan_cancel_persisted_ddl_job(
                         ),
                     )
                 })?;
-            database.read().state == SchemaState::PUBLIC
+            let state = database.read().state;
+            state == SchemaState::PUBLIC
         }
         ActionType::ACTION_DROP_TABLE
         | ActionType::ACTION_DROP_VIEW
@@ -6949,14 +6931,12 @@ fn plan_cancel_persisted_ddl_job(
 // Go GetTableInfoAndCancelFaultJob/checkTableExistAndCancelNonExistJob. Keep
 // the same object checks on forward CHECK and cancellation paths.
 fn checked_job_table<'a>(
-    catalog: &'a ClusterCatalog,
+    catalog: &'a SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     require_public: bool,
 ) -> Result<GoShared<TableInfo>, DdlPlanError> {
     let database = catalog
-        .databases
-        .iter()
-        .find(|db| db.read().id == active.job.schema_id)
+        .schema_by_id(active.job.schema_id)
         .ok_or_else(|| {
             cancel_ddl_job(
                 active,
@@ -7135,7 +7115,7 @@ pub fn plan_persisted_ddl_job_failure<S: MetaSnapshot>(
     load_error_count_limit: &dyn Fn() -> i64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let job_table = tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&catalog)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
     let mut active = job_table
@@ -7908,7 +7888,7 @@ pub fn plan_ddl<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
 ) -> Result<DdlPlan, DdlPlanError> {
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     // Go `executor.AlterTable` refuses a view or a sequence before any
     // specification is looked at, whichever specification the statement carries.
     if let Some((schema, table)) = alter_table_target(statement) {
@@ -8000,7 +7980,7 @@ pub fn plan_ddl<S: MetaSnapshot>(
 /// `mysql.tidb_ddl_history` (`addHistoryDDLJob2Table`, whose failure Go only
 /// logs), then the meta `DDLJobHistory` entry every reader iterates.
 fn append_history_ddl_job<S: MetaSnapshot>(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     snapshot: &mut S,
     job: &Job,
     encoded: Vec<u8>,
@@ -8037,7 +8017,7 @@ fn append_history_ddl_job<S: MetaSnapshot>(
 /// and `checkTableInfoValidExtra`. Ids are not assigned yet.
 fn build_create_table_info<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema: &str,
     table: &str,
     if_not_exists: bool,
@@ -8406,14 +8386,12 @@ fn lock_plan_error(error: tidb_terror::MysqlError) -> DdlPlanError {
 }
 
 fn stored_table_by_ids(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema_id: i64,
     table_id: i64,
 ) -> Option<GoShared<TableInfo>> {
     catalog
-        .databases
-        .iter()
-        .find(|database| database.read().id == schema_id)?
+        .schema_by_id(schema_id)?
         .read().deprecated_tables
         .iter_deref()
         .find(|table| table.read().id == table_id)
@@ -8515,7 +8493,7 @@ fn refuse_non_base_table(
 }
 
 fn locate_table<'catalog>(
-    catalog: &'catalog ClusterCatalog,
+    catalog: &'catalog SessionExtendedInfoSchema,
     schema: &str,
     table: &str,
 ) -> Result<(i64, GoShared<TableInfo>), DdlPlanError> {
@@ -8533,7 +8511,8 @@ fn locate_table<'catalog>(
             ]),
         ));
     };
-    Ok((database.read().id, stored))
+    let db_id = database.read().id;
+    Ok((db_id, stored))
 }
 
 /// The name an added index takes: as written, or Go `GetName4AnonymousIndex`
@@ -8575,7 +8554,7 @@ struct CreatedForeignKey {
 /// Go `CreateForeignKey`: `name` is already settled, as `AlterTable` names
 /// an anonymous key `fk_{MaxForeignKeyID+n}` before any spec runs.
 fn create_foreign_key(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema: &str,
     stored: &TableInfo,
     name: &str,
@@ -8777,7 +8756,7 @@ fn find_index(table: &TableInfo, name: &str) -> Option<GoShared<IndexInfo>> {
 }
 
 fn append_schema_change_mutations(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     ddl_job_id: i64,
     events: &[(i64, SchemaChangeEvent)],
     writes: &mut Vec<BufferMutation>,
@@ -8787,7 +8766,7 @@ fn append_schema_change_mutations(
         return Ok(());
     }
     let (system_database, table) = catalog
-        .find_table("mysql", NOTIFIER_TABLE_NAME)
+        .table_info_by_name("mysql", NOTIFIER_TABLE_NAME)
         .ok_or_else(|| {
             DdlPlanError::Encode(format!("mysql.{} does not exist", NOTIFIER_TABLE_NAME))
         })?;
@@ -8854,12 +8833,12 @@ fn append_schema_change_mutations(
 /// Go `AlterTableCache`'s `replace into mysql.table_cache_meta values (%?,
 /// 'NONE', 0, 0)`: the cached table's lock row, unlocked.
 pub(crate) fn write_table_cache_meta_row(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     writes: &mut Vec<BufferMutation>,
 ) -> Result<(), DdlPlanError> {
     let (_, table) = catalog
-        .find_table("mysql", "table_cache_meta")
+        .table_info_by_name("mysql", "table_cache_meta")
         .ok_or_else(|| DdlPlanError::Encode("mysql.table_cache_meta does not exist".to_owned()))?;
     let table = table.read();
     let column = |name: &str| {
@@ -8891,9 +8870,9 @@ pub(crate) fn write_table_cache_meta_row(
     Ok(())
 }
 
-fn mdl_info_update(catalog: &ClusterCatalog, table_id: i64) -> Result<MdlInfoUpdate, DdlPlanError> {
+fn mdl_info_update(catalog: &SessionExtendedInfoSchema, table_id: i64) -> Result<MdlInfoUpdate, DdlPlanError> {
     let (_, table) = catalog
-        .find_table("mysql", "tidb_mdl_info")
+        .table_info_by_name("mysql", "tidb_mdl_info")
         .ok_or_else(|| DdlPlanError::Encode("mysql.tidb_mdl_info does not exist".to_owned()))?;
     let table = table.read();
     Ok(MdlInfoUpdate {
@@ -8910,14 +8889,11 @@ fn event_partition_info(definitions: Vec<PartitionDefinition>) -> PartitionInfo 
     }
 }
 
-fn find_database<'catalog>(
-    catalog: &'catalog ClusterCatalog,
-    name: &str,
-) -> Option<&'catalog GoShared<DBInfo>> {
+fn find_database(catalog: &SessionExtendedInfoSchema, name: &str) -> Option<GoShared<DBInfo>> {
     let name = name.go_to_lower();
     catalog
-        .databases
-        .iter()
+        .stored_schemas()
+        .into_iter()
         .find(|database| database.read().name.lowercase() == name)
 }
 

@@ -32,7 +32,7 @@ pub fn prepare_table_lock_job_submission<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     // Go names each table the job touches; an unlock skips a table dropped
     // since it was locked.
     let involving = |tables: &[tidb_model::TableLockTpInfo]| {
@@ -40,16 +40,15 @@ pub fn prepare_table_lock_job_submission<S: MetaSnapshot>(
             .iter()
             .filter_map(|table| {
                 let database = catalog
-                    .databases
-                    .iter()
-                    .find(|database| database.read().id == table.schema_id)?;
+                    .schema_by_id(table.schema_id)?;
                 let stored = database
                     .read().deprecated_tables
                     .iter_deref()
                     .find(|stored| stored.read().id == table.table_id)?;
                 let stored = stored.read();
+                let database = database.read().name.lowercase().to_owned();
                 Some(tidb_model::InvolvingSchemaInfo {
-                    database: database.read().name.lowercase().to_owned().into(),
+                    database: database.into(),
                     table: stored.name.lowercase().to_owned().into(),
                     ..tidb_model::InvolvingSchemaInfo::default()
                 })
@@ -155,7 +154,7 @@ fn no_table_write(active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob) -> Dd
 /// session's lock (every holder's, for a cleanup), a version only when the
 /// lock changed; a table dropped since it was locked is skipped.
 fn unlock_tables(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &mut tidb_model::LockTablesArgs,
     start_ts: u64,
@@ -196,7 +195,7 @@ fn unlock_tables(
 /// The job's current table (Go `GetTableInfoAndCancelFaultJob` after the
 /// step points the job at it).
 fn job_table<'a>(
-    catalog: &'a ClusterCatalog,
+    catalog: &'a SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &tidb_model::TableLockTpInfo,
 ) -> Result<GoShared<TableInfo>, DdlPlanError> {
@@ -207,7 +206,7 @@ fn job_table<'a>(
 
 /// Go `onLockTables`.
 pub(super) fn on_lock_tables(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -295,7 +294,7 @@ pub(super) fn on_lock_tables(
 
 /// Go `onUnlockTables`.
 pub(super) fn on_unlock_tables(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {

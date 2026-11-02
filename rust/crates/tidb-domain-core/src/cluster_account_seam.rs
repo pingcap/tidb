@@ -48,7 +48,7 @@ use tidb_store_driver_txn::transaction::StoreClient;
 
 use tidb_privilege::cluster_account_write::{plan_account_write, AccountWriteError};
 use tidb_autoid::cluster_auto_id::ClusterAutoIdStore;
-use tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables;
+use tidb_infoschema::cluster_catalog::load_info_schema;
 use tidb_privilege::cluster_privilege_load::{load_cluster_privileges, read_bootstrap_state};
 use tidb_datatype::current_time::utc_now_timestamp;
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
@@ -184,7 +184,7 @@ where
         let mut transaction = self.opener.begin().map_err(|error| error.to_string())?;
         let registry = {
             let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
-            let catalog = fetch_all_schemas_with_tables(&mut snapshot).map_err(|error| error.to_string())?;
+            let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
             let bootstrap =
                 read_bootstrap_state(&mut snapshot, &catalog).map_err(|error| error.to_string())?;
             if !bootstrap.already_bootstrapped() {
@@ -266,7 +266,7 @@ where
     let desired = cluster_image_from_registry(live);
     let plan = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = fetch_all_schemas_with_tables(&mut snapshot)
+        let catalog = load_info_schema(&mut snapshot)
             .map_err(|e| SqlQueryError::unknown(e.to_string()))?;
         Some(
             plan_account_write(

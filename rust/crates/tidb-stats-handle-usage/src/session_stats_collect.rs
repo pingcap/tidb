@@ -25,7 +25,8 @@ use tidb_datatype::{
 use tidb_model::TableItemID;
 use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_syssession::system_row_write::defaults_row;
 use tidb_table::origin_default::RowEncodeError;
 use tidb_stats_handle_storage::cluster_stats_write::*;
@@ -39,7 +40,7 @@ use tidb_syssession::stats_table_rows::*;
 /// immediately.
 pub fn plan_column_stats_usage_dump<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     entries: &[(TableItemID, Time)],
     now: Time,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -153,7 +154,7 @@ pub fn stats_delta_statements(
 /// Plans one pinned Go `storage.UpdateStatsMeta` statement.
 pub fn plan_stats_delta_statement<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     statement: &StatsDeltaStatement,
     version: u64,
     now: Time,

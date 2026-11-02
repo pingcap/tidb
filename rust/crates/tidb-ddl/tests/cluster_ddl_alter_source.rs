@@ -925,7 +925,7 @@ fn rename_owner_batch_self_reference_and_moved_child_share_publication() {
     );
     apply(&mut store, &child);
     let child_id = child.created_id.unwrap();
-    let before = tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables(&mut store).unwrap();
+    let before = tidb_infoschema::cluster_catalog::load_info_schema(&mut store).unwrap();
     let write = plan(
         &mut store,
         "RENAME TABLE u6.parent TO u6.renamed, u6.child TO u6.moved_child",
@@ -944,7 +944,7 @@ fn rename_owner_batch_self_reference_and_moved_child_share_publication() {
     );
     assert_eq!(
         before
-            .find_table("u6", "child")
+            .table_info_by_name("u6", "child")
             .unwrap()
             .1
             .read().foreign_keys
@@ -960,9 +960,9 @@ fn rename_owner_batch_self_reference_and_moved_child_share_publication() {
     let reloaded =
         tidb_infoschema_issyncer::catalog_reload::reload_cluster_catalog(&mut store, &before, None).unwrap();
     let peer = reloaded.catalog().unwrap();
-    assert!(peer.find_table("u6", "parent").is_none());
-    assert!(peer.find_table("u6", "child").is_none());
-    let child = peer.find_table("u6", "moved_child").unwrap().1;
+    assert!(peer.table_info_by_name("u6", "parent").is_none());
+    assert!(peer.table_info_by_name("u6", "child").is_none());
+    let child = peer.table_info_by_name("u6", "moved_child").unwrap().1;
     let child = child.read();
     assert_eq!(child.id, child_id);
     assert_eq!(

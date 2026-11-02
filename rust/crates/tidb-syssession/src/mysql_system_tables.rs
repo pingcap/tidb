@@ -68,7 +68,8 @@ use tidb_model::table_info::TableInfo;
 use tidb_tablecodec::{decode_index_handle, decode_table_row_to_map};
 use tidb_txnkv::Handle;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{ClusterCatalogError, MetaPairs, MetaSnapshot};
+use tidb_infoschema::SessionExtendedInfoSchema;
 
 
 use tidb_kv::key::prefix_scan_end;
@@ -240,7 +241,7 @@ impl SystemTableView {
     /// Only public columns are projected: a column mid-DDL is not one whose
     /// stored values this node may interpret.
     pub fn locate(
-        catalog: &ClusterCatalog,
+        catalog: &SessionExtendedInfoSchema,
         table: &str,
         columns: &[&str],
     ) -> Result<Self, SystemTableError> {
@@ -248,11 +249,7 @@ impl SystemTableView {
         let missing = || SystemTableError::Missing {
             name: qualified.clone(),
         };
-        let database = catalog
-            .databases
-            .iter()
-            .find(|database| database.read().name.lowercase() == SYSTEM_DB)
-            .ok_or_else(missing)?;
+        let database = catalog.schema_info_by_name(SYSTEM_DB).ok_or_else(missing)?;
         let info = database
             .read().deprecated_tables
             .iter_deref()

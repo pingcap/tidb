@@ -212,6 +212,9 @@ pub struct InfoSchema {
     /// `LOCK TABLES` lock, which every statement's `CheckTableLock` asks;
     /// monotonic for the same reason as `foreign_keys_present`.
     table_locks_present: bool,
+    /// The stored tables this tier could not build into this image (Go
+    /// builds every stored table, so Go has no such list).
+    skipped: Arc<[cluster_catalog::SkippedTable]>,
     /// Bumped by every mutation that actually CHANGED something, so a
     /// transaction can detect that the shared catalog moved under it (Go
     /// detects the same at commit through TiKV's optimistic conflict check on
@@ -421,6 +424,7 @@ impl SessionExtendedInfoSchema {
                 temporary_sweep: None,
                 foreign_keys_present: false,
                 table_locks_present: false,
+                skipped: Arc::from(Vec::new()),
             },
             planner_view: std::sync::OnceLock::new(),
             table_id_names: Arc::default(),
@@ -925,6 +929,118 @@ impl SessionExtendedInfoSchema {
         );
         self.bump_version();
         true
+    }
+
+    /// Go `Builder.InitWithDBInfos` without the `table.Table` objects: the
+    /// memory schemas, then the stored schemas holding these very `DBInfo`
+    /// pointers (each `Deprecated.Tables` holding its tables), the policies,
+    /// the resource groups and the schema version the loader read. The
+    /// domain's builder adds the tables (`cluster_session_catalog`).
+    #[must_use]
+    pub fn init_with_db_infos(
+        databases: Vec<tidb_model::GoShared<tidb_model::db::DBInfo>>,
+        policies: Vec<tidb_model::PolicyInfo>,
+        resource_groups: Vec<tidb_model::ResourceGroupInfo>,
+        schema_version: i64,
+    ) -> Self {
+        let mut schema = Self::new();
+        schema.set_schema_meta_version(schema_version);
+        for group in resource_groups {
+            schema.set_resource_group(group);
+        }
+        for policy in policies {
+            schema.set_policy(policy);
+        }
+        for database in databases {
+            schema.register_database_info(database);
+        }
+        schema
+    }
+
+    /// Go `Builder.InitWithOldInfoSchema` without the `table.Table` objects:
+    /// a schema over this one's `DBInfo` pointers, policies, resource groups
+    /// and version, which a reload applies diffs to before the domain's
+    /// builder builds its tables.
+    #[must_use]
+    pub fn metadata_copy(&self) -> Self {
+        Self::init_with_db_infos(
+            self.stored_schemas(),
+            self.policies().cloned().collect(),
+            self.resource_groups().cloned().collect(),
+            self.schema_meta_version(),
+        )
+    }
+
+    /// Go `InfoSchema.SchemaByID`: the schema with `id`, stored or memory.
+    #[must_use]
+    pub fn schema_by_id(&self, id: i64) -> Option<tidb_model::GoShared<tidb_model::db::DBInfo>> {
+        self.schema
+            .databases
+            .values()
+            .find(|database| database.id() == id)
+            .map(|database| database.info.clone())
+    }
+
+    /// Go `applyDropSchema`'s `delete(b.infoSchema.schemaMap, di.Name.L)`:
+    /// the stored schema with `id` leaves the image; its `DBInfo` is answered.
+    pub fn drop_schema_by_id(&mut self, id: i64) -> Option<tidb_model::GoShared<tidb_model::db::DBInfo>> {
+        let key = self
+            .schema
+            .databases
+            .iter()
+            .find(|(_, database)| database.id() == id)
+            .map(|(key, _)| key.clone())?;
+        self.bump_metadata_version();
+        let dropped = Arc::make_mut(&mut self.schema.databases).remove(&key)?;
+        self.bump_version();
+        Some(dropped.info.clone())
+    }
+
+    /// Go `Builder.copySchemaTables` then an edit of the copy: the stored
+    /// schema with `id` holds a copy of its `DBInfo` that `edit` changed,
+    /// never a change through the pointer an older image shares. `false`
+    /// when no schema has that id.
+    pub fn edit_schema_by_id(&mut self, id: i64, edit: impl FnOnce(&mut tidb_model::db::DBInfo)) -> bool {
+        let Some(info) = self
+            .schema
+            .databases
+            .values()
+            .find(|database| database.id() == id)
+            .map(|database| database.info.clone())
+        else {
+            return false;
+        };
+        let mut copy = info.read().clone();
+        edit(&mut copy);
+        // The copy keeps its name (no DDL renames a schema), so it replaces
+        // the original in its slot.
+        self.register_database_info(tidb_model::GoShared::new(copy));
+        true
+    }
+
+    /// Go `applyDropPolicy`'s `deletePolicy`: the policy with `id` leaves the
+    /// map.
+    pub fn delete_policy_by_id(&mut self, id: i64) {
+        self.schema.policies.retain(|_, policy| policy.id != id);
+    }
+
+    /// Go `applyDropResourceGroup`'s `deleteResourceGroup`: the group with
+    /// `id` leaves the map.
+    pub fn delete_resource_group_by_id(&mut self, id: i64) {
+        self.bump_metadata_version();
+        self.schema.resource_groups.retain(|_, group| group.id != id);
+        self.bump_version();
+    }
+
+    /// The stored tables this tier could not build into this image.
+    #[must_use]
+    pub fn skipped_tables(&self) -> &[cluster_catalog::SkippedTable] {
+        &self.schema.skipped
+    }
+
+    /// Records the stored tables the domain's builder could not build.
+    pub fn set_skipped_tables(&mut self, skipped: Vec<cluster_catalog::SkippedTable>) {
+        self.schema.skipped = skipped.into();
     }
 
     /// Resolves a table in `database`.

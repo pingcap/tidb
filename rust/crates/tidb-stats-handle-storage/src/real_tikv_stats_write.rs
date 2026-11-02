@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
-use tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables;
+use tidb_infoschema::cluster_catalog::load_info_schema;
 use crate::cluster_stats_write::{plan_change_global_stats_id, plan_stats_meta_version_refresh, plan_update_stats_version};
 use tidb_store_driver_txn::cluster_table_storage::{
     commit_pessimistic_statement, PessimisticStatementTransactionError,
@@ -43,7 +43,7 @@ pub fn update_stats_meta_version_for_gc<S: StoreClient>(
 ) -> Result<u64, PessimisticStatementTransactionError> {
     let version = commit_pessimistic_statement(opener, timeout, |snapshot, version| {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        let catalog = fetch_all_schemas_with_tables(&mut snapshot).map_err(|error| error.to_string())?;
+        let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
         let plan =
             plan_stats_meta_version_refresh(&mut snapshot, &catalog, physical_id, version, row_ids)
                 .map_err(|error| error.to_string())?;
@@ -63,7 +63,7 @@ pub fn update_stats_version<S: StoreClient>(
 ) -> Result<u64, PessimisticStatementTransactionError> {
     commit_pessimistic_statement(opener, timeout, |snapshot, version| {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        let catalog = fetch_all_schemas_with_tables(&mut snapshot).map_err(|error| error.to_string())?;
+        let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
         let plan = plan_update_stats_version(&mut snapshot, &catalog, version, row_ids)
             .map_err(|error| error.to_string())?;
         Ok((version, plan.mutations))
@@ -79,7 +79,7 @@ pub fn change_global_stats_id<S: StoreClient>(
 ) -> Result<(), PessimisticStatementTransactionError> {
     commit_pessimistic_statement(opener, timeout, |snapshot, _version| {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        let catalog = fetch_all_schemas_with_tables(&mut snapshot).map_err(|error| error.to_string())?;
+        let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
         let plan = plan_change_global_stats_id(&mut snapshot, &catalog, from, to)
             .map_err(|error| error.to_string())?;
         Ok(((), plan.mutations))

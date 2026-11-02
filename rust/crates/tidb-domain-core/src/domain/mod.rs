@@ -29,7 +29,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::{Datelike, Timelike, Utc};
 use tidb_infoschema_issyncer::catalog_watch::InfoCache;
-use tidb_infoschema::cluster_catalog::ClusterCatalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;
 use tidb_infoschema_isvalidator::SchemaValidator;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
@@ -136,7 +136,7 @@ impl ClusterTableStorageStatsProvider {
     /// both-reads-or-nothing copy contract.
     fn size_reads(
         &self,
-        catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog,
+        catalog: &tidb_infoschema::SessionExtendedInfoSchema,
         resource_group: &str,
         ids: &[i64],
         need_column_lengths: bool,
@@ -184,7 +184,7 @@ pub(crate) type SizeReads = (Vec<(i64, u64)>, Vec<(TableHistId, u64)>);
 
 pub(crate) struct ProviderSizeReads<'a> {
     provider: &'a ClusterTableStorageStatsProvider,
-    catalog: &'a tidb_infoschema::cluster_catalog::ClusterCatalog,
+    catalog: &'a tidb_infoschema::SessionExtendedInfoSchema,
     resource_group: &'a str,
     need_column_lengths: bool,
     reads: RefCell<Option<Result<SizeReads, String>>>,
@@ -491,7 +491,7 @@ impl tidb_stats_handle_syncload::sync_load::StatisticsItemLoader for ClusterStat
         for requested in items {
             let item = requested.table_item_id;
             let Some(table) = catalog
-                .databases
+                .stored_schemas()
                 .iter()
                 .flat_map(|database| database.read().deprecated_tables.iter_deref())
                 .find(|table| table.read().id == item.table_id)
@@ -863,11 +863,9 @@ impl Domain {
             let auto_ids = Arc::clone(&auto_ids);
             move |loaded| {
                 let built = cluster_session_catalog_with_templates(loaded, None, auto_ids.as_ref());
-                tidb_infoschema::cluster_catalog::BuiltSchema {
-                    loaded: Arc::clone(loaded),
-                    schema: built.catalog,
-                    skipped: built.skipped,
-                }
+                let mut schema = built.catalog;
+                schema.set_skipped_tables(built.skipped);
+                schema
             }
         }));
         let stats_usage = Arc::new(tidb_stats_handle_usage::StatsUsageHandle::new());
@@ -1670,7 +1668,7 @@ impl Domain {
         let catalog = self.catalog.get_latest();
         self.stats_usage.gc_index_usage(|table_id| {
             catalog
-                .databases
+                .stored_schemas()
                 .iter()
                 .flat_map(|database| database.read().deprecated_tables.iter_deref())
                 .find(|table| table.read().id == table_id)
@@ -1870,14 +1868,14 @@ impl Domain {
     /// The schema version this node has followed the cluster to.
     #[must_use]
     pub fn followed_schema_version(&self) -> i64 {
-        self.catalog.get_latest().schema_version
+        self.catalog.get_latest().schema_meta_version()
     }
 
     /// The catalog this node currently serves, for the status server's
     /// `/schema` routes. Go answers those from `GetLatest()` per request, so
     /// this reads the live pointer rather than a captured snapshot.
     #[must_use]
-    pub fn catalog_snapshot(&self) -> tidb_infoschema::cluster_catalog::ClusterCatalog {
+    pub fn catalog_snapshot(&self) -> tidb_infoschema::SessionExtendedInfoSchema {
         (*self.catalog.get_latest()).clone()
     }
 
@@ -2200,13 +2198,13 @@ pub struct ClusterHistoricalInfoSchema {
 }
 
 pub struct ClusterHistoricalSchemaView {
-    catalog: ClusterCatalog,
+    catalog: SessionExtendedInfoSchema,
 }
 
 impl InfoSchemaView for ClusterHistoricalSchemaView {
     fn table_by_id(&self, table_id: i64) -> Option<TableMeta> {
         self.catalog
-            .databases
+            .stored_schemas()
             .iter()
             .flat_map(|database| database.read().deprecated_tables.iter_deref())
             .find(|table| table.read().id == table_id)
@@ -2221,7 +2219,7 @@ impl InfoSchemaView for ClusterHistoricalSchemaView {
 
     fn find_table_by_partition_id(&self, partition_id: i64) -> Option<TableMeta> {
         self.catalog
-            .databases
+            .stored_schemas()
             .iter()
             .flat_map(|database| database.read().deprecated_tables.iter_deref())
             .find(|table| {
@@ -2245,7 +2243,7 @@ impl InfoSchemaView for ClusterHistoricalSchemaView {
     }
 
     fn schema_by_table(&self, table: &TableMeta) -> Option<String> {
-        self.catalog.databases.iter().find_map(|database| {
+        self.catalog.stored_schemas().iter().find_map(|database| {
             database
                 .read().deprecated_tables
                 .iter_deref()
@@ -2303,7 +2301,7 @@ impl ClusterHistoricalStatsHandle {
 
     fn commit_outdated_history_delete(
         &self,
-        catalog: &ClusterCatalog,
+        catalog: &SessionExtendedInfoSchema,
         table: OutdatedHistoryTable,
         cutoff: tidb_datatype::Time,
         limit: usize,
@@ -2391,11 +2389,11 @@ impl ClusterHistoricalStatsHandle {
     }
 
     fn physical_table<'catalog>(
-        catalog: &'catalog ClusterCatalog,
+        catalog: &'catalog SessionExtendedInfoSchema,
         physical_id: i64,
     ) -> Option<tidb_model::GoShared<tidb_model::table_info::TableInfo>> {
         catalog
-            .databases
+            .stored_schemas()
             .iter()
             .flat_map(|database| database.read().deprecated_tables.iter_deref())
             .find(|table| {
@@ -2412,7 +2410,7 @@ impl ClusterHistoricalStatsHandle {
             })
     }
 
-    fn gc_table_stats(&self, catalog: &ClusterCatalog, physical_id: i64) -> Result<bool, String> {
+    fn gc_table_stats(&self, catalog: &SessionExtendedInfoSchema, physical_id: i64) -> Result<bool, String> {
         let histograms = {
             let snapshot = self.transactions.open_snapshot("default")?;
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
@@ -2484,7 +2482,7 @@ impl ClusterHistoricalStatsHandle {
 
     fn delete_table_history(
         &self,
-        catalog: &ClusterCatalog,
+        catalog: &SessionExtendedInfoSchema,
         physical_id: i64,
     ) -> Result<(), String> {
         self.commit_stats_plan(|snapshot, _| {
@@ -2588,7 +2586,7 @@ impl ClusterHistoricalStatsHandle {
 
     fn table_historical_json(
         &self,
-        catalog: &ClusterCatalog,
+        catalog: &SessionExtendedInfoSchema,
         physical_id: i64,
         snapshot_ts: u64,
     ) -> Result<Option<tidb_stats_util::JsonTable>, String> {
@@ -2605,7 +2603,7 @@ impl ClusterHistoricalStatsHandle {
 
     fn table_json(
         &self,
-        catalog: &ClusterCatalog,
+        catalog: &SessionExtendedInfoSchema,
         database_name: &str,
         table: &tidb_model::table_info::TableInfo,
         physical_id: i64,
@@ -2639,7 +2637,7 @@ impl ClusterHistoricalStatsHandle {
 
     fn historical_json(
         &self,
-        catalog: &ClusterCatalog,
+        catalog: &SessionExtendedInfoSchema,
         database_name: &str,
         table: &tidb_model::table_info::TableInfo,
         physical_id: i64,
@@ -2668,7 +2666,7 @@ impl ClusterHistoricalStatsHandle {
 
     fn historical_or_latest_json(
         &self,
-        catalog: &ClusterCatalog,
+        catalog: &SessionExtendedInfoSchema,
         database_name: &str,
         table: &tidb_model::table_info::TableInfo,
         physical_id: i64,
@@ -2789,7 +2787,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
         let row_ids = self.auto_ids.clone();
         let catalog = self.catalog.get_latest();
         let table_info = catalog
-            .databases
+            .stored_schemas()
             .iter()
             .flat_map(|database| database.read().deprecated_tables.iter_deref())
             .find(|candidate| candidate.read().id == table.id)
@@ -3044,8 +3042,8 @@ pub fn system_time_timestamp(value: SystemTime) -> Result<tidb_datatype::Time, S
     .map_err(|error| error.to_string())
 }
 
-pub(crate) fn stats_delta_table(catalog: &ClusterCatalog, physical_id: i64) -> Option<(String, Option<i64>)> {
-    for database in &catalog.databases {
+pub(crate) fn stats_delta_table(catalog: &SessionExtendedInfoSchema, physical_id: i64) -> Option<(String, Option<i64>)> {
+    for database in &catalog.stored_schemas() {
         for table in database.read().deprecated_tables.iter_deref() {
             let table = table.read();
             if table.id == physical_id {
@@ -3257,7 +3255,7 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueSource
             .parse::<i32>()
             .map_err(|error| error.to_string())?;
         let mut tables = Vec::new();
-        for database in &catalog.databases {
+        for database in &catalog.stored_schemas() {
             for table in database.read().deprecated_tables.iter_deref() {
                 let table = table.read();
                 let global_stats = statistics
@@ -3315,7 +3313,7 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext
             return tidb_stats_handle_autoanalyze_priorityqueue::TableLookup::TableMissing;
         };
         let catalog = factory.catalog.get_latest();
-        for database in &catalog.databases {
+        for database in &catalog.stored_schemas() {
             if let Some(table) = database
                 .read().deprecated_tables
                 .iter_deref()

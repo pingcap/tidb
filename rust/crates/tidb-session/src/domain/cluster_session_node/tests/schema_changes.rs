@@ -163,7 +163,7 @@ fn ddl_reports_preserve_warning_order_levels_and_statement_lifetime() {
         ]]
     );
     assert_eq!(node.ddl.applied.load(Ordering::Acquire), 0);
-    assert_eq!(node.catalog.get_latest().schema_version, 11);
+    assert_eq!(node.catalog.get_latest().schema_meta_version(), 11);
 }
 
 struct UndeterminedDdl(SqlQueryError);
@@ -296,7 +296,7 @@ fn ddl_shapes_reach_the_catalog_writer() {
     // Nothing was published: a refusal happens before the writer commits
     // anything at all.
     assert_eq!(node.ddl.applied.load(Ordering::Acquire), 0);
-    assert_eq!(node.catalog.get_latest().schema_version, 11);
+    assert_eq!(node.catalog.get_latest().schema_meta_version(), 11);
 }
 
 /// A coded DEFAULT refusal keeps its errno, SQLSTATE, and source message when
@@ -330,7 +330,7 @@ fn cluster_create_default_errors_reach_the_client_unchanged() {
     }
 
     assert_eq!(node.ddl.applied.load(Ordering::Acquire), 0);
-    assert_eq!(node.catalog.get_latest().schema_version, 11);
+    assert_eq!(node.catalog.get_latest().schema_meta_version(), 11);
 }
 
 /// The unit this mode gained: a `CREATE TABLE` issued through the wide-SQL
@@ -347,7 +347,7 @@ fn create_table_runs_and_the_same_connection_uses_the_new_table() {
         .expect("a DDL answers with an OK packet");
     assert_eq!(outcome.affected_rows, 0);
     assert_eq!(node.ddl.applied.load(Ordering::Acquire), 1);
-    assert_eq!(node.catalog.get_latest().schema_version, 12);
+    assert_eq!(node.catalog.get_latest().schema_meta_version(), 12);
 
     session
         .node_conn()
@@ -386,7 +386,7 @@ fn ddl_success_is_not_replaced_by_a_statistics_subscriber_error() {
     assert!(
         node.catalog
             .get_latest()
-            .find_table("app", "stats_subscriber_failure")
+            .table_info_by_name("app", "stats_subscriber_failure")
             .is_some(),
         "the catalog change remains published"
     );
@@ -406,7 +406,7 @@ fn drop_table_removes_it_from_the_connections_own_catalog() {
         .node_conn()
         .execute_write("DROP TABLE t")
         .expect("the catalog change runs");
-    assert_eq!(node.catalog.get_latest().schema_version, 12);
+    assert_eq!(node.catalog.get_latest().schema_meta_version(), 12);
 
     let Err(error) = session.node_conn().execute("SELECT id FROM t") else {
         panic!("a dropped table must not answer");
@@ -435,7 +435,7 @@ fn alter_table_rename_rebuilds_the_connection_catalog_without_losing_rows() {
         .execute_write("ALTER TABLE t RENAME TO renamed")
         .expect("the rename runs through the catalog writer");
     assert_eq!(node.ddl.applied.load(Ordering::Acquire), 1);
-    assert_eq!(node.catalog.get_latest().schema_version, 12);
+    assert_eq!(node.catalog.get_latest().schema_meta_version(), 12);
     assert!(session.node_conn().execute("SELECT id FROM t").is_err());
     assert_eq!(
         rows(&mut session, "SELECT id, v FROM renamed"),
@@ -467,7 +467,7 @@ fn rename_table_multiple_pairs_publish_one_catalog_change() {
         .expect("one multi-pair rename DDL job runs");
 
     assert_eq!(node.ddl.applied.load(Ordering::Acquire), 1);
-    assert_eq!(node.catalog.get_latest().schema_version, 12);
+    assert_eq!(node.catalog.get_latest().schema_meta_version(), 12);
     assert!(session.node_conn().execute("SELECT id FROM t").is_err());
     assert!(session.node_conn().execute("SELECT id FROM g").is_err());
     assert_eq!(
@@ -498,7 +498,7 @@ fn rename_table_later_pair_failure_leaves_every_prior_pair_unpublished() {
         .expect_err("the occupied second target rejects the complete DDL job");
     assert!(error.message.contains("already exists"), "{error:?}");
     assert_eq!(node.ddl.applied.load(Ordering::Acquire), 0);
-    assert_eq!(node.catalog.get_latest().schema_version, 11);
+    assert_eq!(node.catalog.get_latest().schema_meta_version(), 11);
     assert_eq!(
         rows(&mut session, "SELECT id, v FROM t"),
         vec![vec![Datum::Int(1), Datum::Int(10)]]
@@ -560,9 +560,7 @@ fn create_and_drop_database_route_to_the_catalog_writer() {
     assert!(rows(&mut session, "SELECT id FROM here").is_empty());
     let catalog = node.catalog.get_latest();
     let database = catalog
-        .databases
-        .iter()
-        .find(|database| database.read().name.lowercase() == "extra")
+        .schema_info_by_name("extra")
         .expect("the created database is published");
     assert_eq!(database.read().charset, "utf8");
     assert_eq!(database.read().collate, "utf8_general_ci");
@@ -590,7 +588,7 @@ fn an_already_satisfied_ddl_publishes_nothing() {
         .expect("it answers with an OK packet");
     assert_eq!(outcome.affected_rows, 0);
     assert_eq!(node.ddl.applied.load(Ordering::Acquire), 0);
-    assert_eq!(node.catalog.get_latest().schema_version, 11);
+    assert_eq!(node.catalog.get_latest().schema_meta_version(), 11);
 }
 
 /// DDL commits an open transaction first, as MySQL and Go both do. The
@@ -820,7 +818,7 @@ fn commit_survives_a_schema_move_under_the_transaction() {
     // this transaction is open. The catalog CONTENT is unchanged -- rung 8's
     // failing workload never touches the DDL'd table.
     let mut moved = (*node.catalog.get_latest()).clone();
-    moved.schema_version += 1;
+    moved.set_schema_meta_version(moved.schema_meta_version() + 1);
     node.catalog.upsert(moved);
 
     let outcome = session.node_conn().control_transaction("COMMIT");
@@ -842,7 +840,7 @@ fn lock_tables_run_as_a_cluster_lock_job() {
     let stored_lock = |node: &MockNode| {
         node.catalog
             .get_latest()
-            .find_table("app", "t")
+            .table_info_by_name("app", "t")
             .and_then(|(_, table)| table.read().lock.as_ref().map(|lock| lock.read().clone()))
     };
     let (mut first, node) = open_session();

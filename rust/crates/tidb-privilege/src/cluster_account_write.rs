@@ -39,7 +39,8 @@ use tidb_datatype::{Datum, SessionTimeZone, Time};
 use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use crate::cluster_privilege_load::{
     ClusterPrivileges, DB_PRIVILEGE_COLUMNS, USER_PRIVILEGE_COLUMNS,
 };
@@ -158,7 +159,7 @@ const COLUMN_SCOPE_ELEMENTS: &[&str] = &["Select", "Insert", "Update", "Referenc
 /// aborted account statement, matching Go's autoid `RunInNewTxn` boundary.
 pub fn plan_account_write<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     desired: &ClusterPrivileges,
     now: Time,
     reserve_ids: &mut dyn FnMut(i64, &TableInfo, i64, usize) -> Result<i64, AccountWriteError>,
@@ -587,13 +588,11 @@ struct StoredRow {
 }
 
 fn locate<'catalog>(
-    catalog: &'catalog ClusterCatalog,
+    catalog: &'catalog SessionExtendedInfoSchema,
     table: &str,
 ) -> Result<tidb_model::GoShared<TableInfo>, AccountWriteError> {
     catalog
-        .databases
-        .iter()
-        .find(|database| database.read().name.lowercase() == SYSTEM_DB)
+        .schema_info_by_name(SYSTEM_DB)
         .and_then(|database| {
             database
                 .read().deprecated_tables
@@ -674,7 +673,7 @@ fn column_id(table: &TableInfo, column: &str) -> Result<i64, AccountWriteError> 
 #[allow(clippy::too_many_arguments)]
 fn reconcile<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     account_table: &AccountTable,
     desired: &LogicalRows,
     policy_values: &AccountPolicyValues,
@@ -939,11 +938,9 @@ fn note_changed(
     changed.insert(format!("'{user}'@'{host}'"));
 }
 
-fn system_db_id(catalog: &ClusterCatalog) -> Result<i64, AccountWriteError> {
+fn system_db_id(catalog: &SessionExtendedInfoSchema) -> Result<i64, AccountWriteError> {
     catalog
-        .databases
-        .iter()
-        .find(|database| database.read().name.lowercase() == SYSTEM_DB)
+        .schema_info_by_name(SYSTEM_DB)
         .map(|database| database.read().id)
         .ok_or_else(|| AccountWriteError::MissingTable(SYSTEM_DB.to_owned()))
 }

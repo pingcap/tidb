@@ -42,10 +42,10 @@ fn check_policy_validation(settings: &tidb_model::PlacementSettings) -> Result<(
 /// Go `CheckPlacementPolicyNotInUseFromInfoSchema`: no database, table or
 /// partition may still name the policy.
 fn check_policy_not_in_use(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     policy: &CiString,
 ) -> Result<(), DdlPlanError> {
-    let named_by_database = catalog.databases.iter().any(|database| {
+    let named_by_database = catalog.stored_schemas().iter().any(|database| {
         database
             .read().placement_policy_ref
             .as_ref()
@@ -69,7 +69,7 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let (action, policy_name, schema_id, args) = match statement {
         // Go `executor.CreatePlacementPolicyWithInfo`.
         DdlStatement::CreatePlacementPolicy {
@@ -245,12 +245,12 @@ fn stored_policy<S: MetaSnapshot>(
 /// One step publishing a policy change under a new version (Go
 /// `updateSchemaVersion` with the job's `SchemaID`).
 fn policy_step(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     mut mutations: Vec<BufferMutation>,
     bundles: Vec<tidb_placement::Bundle>,
 ) -> Result<DdlWrite, DdlPlanError> {
-    let schema_version = catalog.schema_version + 1;
+    let schema_version = catalog.schema_meta_version() + 1;
     let diff = SchemaDiff {
         version: schema_version,
         action_type: active.job.type_,
@@ -277,7 +277,7 @@ fn policy_step(
 /// Go `updateExistPlacementPolicy`: the policy, and the bundles of every
 /// object naming it.
 fn update_exist_placement_policy(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     policy: &tidb_model::PolicyInfo,
 ) -> Result<(BufferMutation, Vec<tidb_placement::Bundle>), DdlPlanError> {
     let settings = policy
@@ -297,7 +297,7 @@ fn update_exist_placement_policy(
 /// Go `onCreatePlacementPolicy`.
 pub(super) fn on_create_placement_policy<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = policy_args(active)?;
@@ -366,7 +366,7 @@ pub(super) fn on_create_placement_policy<S: MetaSnapshot>(
 /// Go `onAlterPlacementPolicy`.
 pub(super) fn on_alter_placement_policy<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = policy_args(active)?;
@@ -399,7 +399,7 @@ pub(super) fn on_alter_placement_policy<S: MetaSnapshot>(
 /// Go `onDropPlacementPolicy`.
 pub(super) fn on_drop_placement_policy<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let policy_id = policy_args(active)?.read().policy_id;

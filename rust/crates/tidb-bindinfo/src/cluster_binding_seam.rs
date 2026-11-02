@@ -373,12 +373,12 @@ mod tests {
         let bindings = StoredBindings {
             opener: Arc::new(opener),
             catalog: Arc::new(InfoCache::new(
-                tidb_infoschema::cluster_catalog::ClusterCatalog {
-                    resource_groups: Vec::new(),
-                    policies: Vec::new(),
-                    schema_version: 0,
-                    databases: Vec::new(),
-                },
+                tidb_infoschema::SessionExtendedInfoSchema::init_with_db_infos(
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    0,
+                ),
             )),
             globals: std::sync::Arc::new(tidb_variable::MockGlobalAccessor::new()),
             cache: SharedBindingCache::default(),

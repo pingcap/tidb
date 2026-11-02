@@ -163,7 +163,7 @@ impl tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock for 
         tidb_store_driver_error::sql_query_error::SqlQueryError,
     > {
         let catalog = self.catalog.get_latest();
-        let (_, table) = catalog.find_table("app", "t").expect("app.t");
+        let (_, table) = catalog.table_info_by_name("app", "t").expect("app.t");
         let table = table.read();
         assert_eq!(
             *request,

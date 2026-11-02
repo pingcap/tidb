@@ -22,7 +22,7 @@ use std::time::Duration;
 use tidb_stats_handle_cache::StatsRefreshSource;
 use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
-use tidb_infoschema::cluster_catalog::{fetch_all_schemas_with_tables, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{load_info_schema, MetaSnapshot};
 use tidb_stats_handle_storage::cluster_stats_load::{ClusterStatsLoader, ClusterTableStats};
 use tidb_syssession::mysql_system_tables::SystemTableError;
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
@@ -59,7 +59,7 @@ pub fn load_stats_snapshot_and_loader<S: StoreClient>(
         .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
     let loaded = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = fetch_all_schemas_with_tables(&mut snapshot)?;
+        let catalog = load_info_schema(&mut snapshot)?;
         let loader = ClusterStatsLoader::locate(&catalog)?;
         let result = init_stats_lite(&mut snapshot, &loader, tables, table_ids, mode)?;
         Ok((result, loader))

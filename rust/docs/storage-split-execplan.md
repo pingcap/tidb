@@ -427,6 +427,31 @@ CARGO_INCREMENTAL=0`.
     (`cluster_session_catalog_with_templates`, domain-core) runs where
     `InfoCache` is filled (the issyncer reload) via a builder the domain
     installs, and `SessionCatalogs` folds into `InfoCache`.
+  - [x] (2026-11-02) The loader flip: `ClusterCatalog` is deleted.
+    `cluster_catalog::load_info_schema` (Go `Domain.loadInfoSchema`'s full
+    load) reads the version, resource groups and policies, takes
+    `fetch_all_schemas_with_tables`' `[]*DBInfo` (now that function alone,
+    as in Go) and builds `SessionExtendedInfoSchema::init_with_db_infos`
+    (Go `Builder.InitWithDBInfos` without table objects). Every reader takes
+    `&SessionExtendedInfoSchema`: `schema_meta_version()`,
+    `stored_schemas()` (id order; Go's map order is unspecified),
+    `schema_by_id` / `schema_info_by_name` / `table_info_by_name`,
+    `policies()`, `resource_groups()`. `InfoCache` holds one
+    `Arc<SessionExtendedInfoSchema>` per version (Go's `InfoCache` of
+    `InfoSchema`); `BuiltSchema` is gone and the tables this tier cannot
+    build ride on the image (`skipped_tables`). The reload applies diffs to
+    `metadata_copy()` (Go `InitWithOldInfoSchema`) through Go's appliers
+    (`drop_schema_by_id`, `edit_schema_by_id` copying the `DBInfo` into its
+    slot, `set_policy` / `delete_policy_by_id`, `set_resource_group` /
+    `delete_resource_group_by_id`), then the domain's builder builds its
+    tables. `tidb-keydecoder`'s second `KeyInfoCatalog` impl (over the
+    loaded `DBInfo`s) is gone; its Go test builds the image with tables, as
+    Go's `MockInfoSchema` does.
+    Left: (a) `CREATE TABLE ... LIKE` a memory table still falls back to
+    `virtual_tables::virtual_table`, because the image's memory schemas hold
+    a `DBInfo` without tables where Go's hold the driver's `DBInfo` (whose
+    `Deprecated.Tables` lists them); (b) incremental `ApplyDiff` (cost);
+    (c) the second `MetaSnapshot` seam, the loader moving onto `tidb_meta`.
   - [ ] delete `ClusterCatalog` and the raw `MetaSnapshot` seam (the loader
     reads through `tidb_meta`).
 

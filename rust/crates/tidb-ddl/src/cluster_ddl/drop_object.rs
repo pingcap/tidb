@@ -34,7 +34,7 @@ fn job_for(
 
 fn submission<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     job: Job,
     args: JobArgsValue,
     start_ts: u64,
@@ -66,7 +66,7 @@ pub fn drop_table_object<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     match statement {
         DdlStatement::DropTable {
             schema,
@@ -116,12 +116,13 @@ pub fn drop_table_object<S: MetaSnapshot>(
             if !check_cluster_drop_object(schema, table, &stored, false)? {
                 return missing();
             }
+            let db_id = database.read().id;
             drop_table_like(
                 snapshot,
                 &catalog,
                 job_context,
                 ActionType::ACTION_DROP_TABLE,
-                database.read().id,
+                db_id,
                 schema,
                 &stored,
                 &identifiers,
@@ -244,7 +245,7 @@ pub fn drop_table_object<S: MetaSnapshot>(
 #[allow(clippy::too_many_arguments)]
 fn drop_table_like<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     job_context: &dyn DdlSessionContext,
     action: ActionType,
     schema_id: i64,
@@ -298,7 +299,7 @@ pub(super) fn foreign_key_cannot_drop_parent(
 /// Go `checkDatabaseHasForeignKeyReferred`: no table of `database` is cited
 /// by a key from outside it. Off when `fk_check` is.
 pub(super) fn check_database_has_foreign_key_referred(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     database: &tidb_model::DBInfo,
     fk_check: bool,
 ) -> Result<(), DdlPlanError> {
@@ -307,9 +308,7 @@ pub(super) fn check_database_has_foreign_key_referred(
     }
     let schema_name = database.name.original().to_owned();
     let tables: Vec<(String, String)> = catalog
-        .databases
-        .iter()
-        .find(|loaded| loaded.read().id == database.id)
+        .schema_by_id(database.id)
         .map(|loaded| {
             loaded
                 .read().deprecated_tables

@@ -24,7 +24,8 @@ use tidb_datatype::Datum;
 use tidb_model::{ActionType, Job, JobState, TableInfo};
 use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_ddl_build::plan_error::DdlPlanError;
 use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
 use tidb_syssession::system_row_write::{delete_row, insert_row, update_row, RowValues};
@@ -471,9 +472,9 @@ fn text(message: impl std::fmt::Display) -> String {
 
 impl DelRangeTable {
     /// Finds `mysql.<name>` in the catalog.
-    pub fn locate(catalog: &ClusterCatalog, name: &str) -> Result<Self, String> {
+    pub fn locate(catalog: &SessionExtendedInfoSchema, name: &str) -> Result<Self, String> {
         let (database, table) = catalog
-            .find_table("mysql", name)
+            .table_info_by_name("mysql", name)
             .ok_or_else(|| format!("mysql.{name} does not exist"))?;
         let table = table.read();
         let db_id = database.read().id;
@@ -602,7 +603,7 @@ impl DelRangeTable {
 /// finished job owes, allocated from the node's row-ID allocators.
 pub fn finish_ddl_job<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     job: &Job,
     ts: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -617,7 +618,7 @@ pub fn finish_ddl_job<S: MetaSnapshot>(
 /// The `gc_delete_range` rows (`INSERT IGNORE`) for `ranges`.
 pub fn del_range_rows_mutations<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     ranges: &[DelRangeTask],
     ts: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,

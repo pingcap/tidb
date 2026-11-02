@@ -183,7 +183,7 @@ use tidb_privilege::PrivilegeRegistry;
 use crate::{GlobalSysvars, Session, StmtKind, StmtOutput};
 use tidb_ast::Stmt;
 use tidb_infoschema_issyncer::catalog_watch::InfoCache;
-use tidb_infoschema::cluster_catalog::ClusterCatalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;
 use tidb_infoschema_isvalidator::SchemaValidator;
 use tidb_ddl::cluster_ddl::DdlStatement;
@@ -1803,7 +1803,7 @@ impl<'s> ClusterServerSession<'s> {
         &self,
         transaction: &dyn OpenClusterTransaction,
         staged: &MutationBuffer,
-        catalog: &ClusterCatalog,
+        catalog: &SessionExtendedInfoSchema,
         physical_id: i64,
         version: u64,
     ) -> Result<(), String> {
@@ -1963,7 +1963,7 @@ impl<'s> ClusterServerSession<'s> {
         let loaded = self.node.domain.catalog.get_latest();
         for id in created {
             let found = loaded
-                .databases
+                .stored_schemas()
                 .iter()
                 .flat_map(|database| database.read().deprecated_tables.iter_deref())
                 .find(|table| table.read().id == *id);
@@ -2142,7 +2142,7 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         })
     }
 
-    fn published_catalog(&self) -> Arc<ClusterCatalog> {
+    fn published_catalog(&self) -> Arc<SessionExtendedInfoSchema> {
         self.node.domain.catalog.get_latest()
     }
 

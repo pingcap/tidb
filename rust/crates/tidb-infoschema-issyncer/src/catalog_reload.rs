@@ -43,9 +43,8 @@ use tidb_model::schema_state::SchemaState;
 use tidb_model::{GoShared, GoSharedPointerSlice};
 
 use tidb_infoschema::cluster_catalog::{
-    fetch_all_schemas_with_tables, load_database_tables, normalize_diff_loaded_table_info, ClusterCatalog,
-    ClusterCatalogError, MetaSnapshot,
-};
+    load_info_schema, load_database_tables, normalize_diff_loaded_table_info, ClusterCatalogError, MetaSnapshot};
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_infoschema_isvalidator::RelatedSchemaChange;
 
 /// Go `issyncer.LoadSchemaDiffVersionGapThreshold`: past this many versions a
@@ -135,7 +134,7 @@ pub enum ReloadedCatalog {
     /// The loaded catalog was advanced by replaying diffs.
     Diffs {
         /// The new catalog.
-        catalog: ClusterCatalog,
+        catalog: SessionExtendedInfoSchema,
         /// How many non-empty diffs were applied.
         applied: usize,
         /// The physical tables the diffs changed and the action that changed
@@ -146,7 +145,7 @@ pub enum ReloadedCatalog {
     /// The whole catalog was re-read at this snapshot.
     Full {
         /// The new catalog.
-        catalog: ClusterCatalog,
+        catalog: SessionExtendedInfoSchema,
         /// Why the diff path was not taken.
         reason: FullReloadReason,
     },
@@ -155,7 +154,7 @@ pub enum ReloadedCatalog {
 impl ReloadedCatalog {
     /// The catalog to publish, `None` when nothing changed.
     #[must_use]
-    pub const fn catalog(&self) -> Option<&ClusterCatalog> {
+    pub const fn catalog(&self) -> Option<&SessionExtendedInfoSchema> {
         match self {
             Self::Unchanged { .. } => None,
             Self::Diffs { catalog, .. } | Self::Full { catalog, .. } => Some(catalog),
@@ -164,10 +163,10 @@ impl ReloadedCatalog {
 
     /// The schema version in force after this pass.
     #[must_use]
-    pub const fn version(&self) -> i64 {
+    pub fn version(&self) -> i64 {
         match self {
             Self::Unchanged { version } => *version,
-            Self::Diffs { catalog, .. } | Self::Full { catalog, .. } => catalog.schema_version,
+            Self::Diffs { catalog, .. } | Self::Full { catalog, .. } => catalog.schema_meta_version(),
         }
     }
 }
@@ -207,11 +206,11 @@ fn read_schema_diff<S: MetaSnapshot>(
 /// is one schema version rather than a mixture.
 pub fn reload_cluster_catalog<S: MetaSnapshot>(
     snapshot: &mut S,
-    current: &ClusterCatalog,
+    current: &SessionExtendedInfoSchema,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<ReloadedCatalog, ClusterCatalogError> {
     let needed = get_schema_version_with_non_empty_diff(snapshot)?;
-    let loaded = current.schema_version;
+    let loaded = current.schema_meta_version();
     if needed == loaded {
         return Ok(ReloadedCatalog::Unchanged { version: needed });
     }
@@ -233,11 +232,11 @@ pub fn reload_cluster_catalog<S: MetaSnapshot>(
         }
     };
 
-    let mut catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let mut catalog = load_info_schema(snapshot)?;
     // The diff whose absence set `needed` back one version is still absent at
     // this snapshot, so the full load's own version reading is stepped back
     // the same way rather than trusting the raw counter.
-    catalog.schema_version = needed;
+    catalog.set_schema_meta_version(needed);
     Ok(ReloadedCatalog::Full { catalog, reason })
 }
 
@@ -248,19 +247,21 @@ pub fn reload_cluster_catalog<S: MetaSnapshot>(
 #[allow(clippy::type_complexity)]
 fn apply_diff_range<S: MetaSnapshot>(
     snapshot: &mut S,
-    current: &ClusterCatalog,
+    current: &SessionExtendedInfoSchema,
     loaded: i64,
     needed: i64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<Result<ReloadedCatalog, FullReloadReason>, ClusterCatalogError> {
-    let mut catalog = current.clone();
+    // Go `InitWithOldInfoSchema`: the diffs apply to a copy over the
+    // current version's `DBInfo` pointers.
+    let mut catalog = current.metadata_copy();
     let mut applied = 0usize;
     let mut changes = RelatedSchemaChange::default();
     for version in (loaded + 1)..=needed {
         let Some(diff) = read_schema_diff(snapshot, version)? else {
             // Go skips an empty diff: the version-bumping transaction committed
             // and the DDL's did not, so the version carries no change at all.
-            catalog.schema_version = version;
+            catalog.set_schema_meta_version(version);
             continue;
         };
         if diff.regenerate_schema_map {
@@ -286,7 +287,7 @@ fn apply_diff_range<S: MetaSnapshot>(
         }
         // Go `Builder.SetSchemaVersion(diff.Version)`; the stored diff's own
         // version field and its key agree, and the key is authoritative.
-        catalog.schema_version = version;
+        catalog.set_schema_meta_version(version);
         applied += 1;
         // Go `canSkipSchemaCheckerDDL` (`loader.go:624-630`): a TiFlash
         // replica change never invalidates a transaction.
@@ -336,7 +337,7 @@ type AppliedDiff = Result<Result<Vec<i64>, FullReloadReason>, ClusterCatalogErro
 /// can be refused at commit.
 fn apply_schema_diff<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &mut ClusterCatalog,
+    catalog: &mut SessionExtendedInfoSchema,
     diff: &SchemaDiff,
 ) -> AppliedDiff {
     let version = diff.version;
@@ -350,24 +351,19 @@ fn apply_schema_diff<S: MetaSnapshot>(
                     format!("database {}", diff.schema_id),
                 )));
             };
-            catalog.databases.retain(|db| db.read().id != info.id);
-            catalog.databases.push(GoShared::new(info));
+            catalog.drop_schema_by_id(info.id);
+            catalog.register_database_info(GoShared::new(info));
             Ok(Ok(Vec::new()))
         }
         // Go `applyDropSchema` (`builder.go:747-771`): absent is a no-op;
         // every table of the database is answered as dropped.
         ActionType::ACTION_DROP_SCHEMA => {
             let mut ids = Vec::new();
-            if let Some(database) = catalog
-                .databases
-                .iter()
-                .find(|db| db.read().id == diff.schema_id)
-            {
+            if let Some(database) = catalog.drop_schema_by_id(diff.schema_id) {
                 for table in database.read().deprecated_tables.iter_deref() {
                     affected_ids(&table.read(), &mut ids);
                 }
             }
-            catalog.databases.retain(|db| db.read().id != diff.schema_id);
             Ok(Ok(ids))
         }
         ActionType::ACTION_RECOVER_SCHEMA => recover_schema(snapshot, catalog, diff),
@@ -407,18 +403,13 @@ fn apply_schema_diff<S: MetaSnapshot>(
                 serde_json::from_slice(encoded).map_err(|error| {
                     ClusterCatalogError::Decode(format!("ResourceGroupInfo: {error}"))
                 })?;
-            catalog
-                .resource_groups
-                .retain(|existing| existing.name.lowercase() != group.name.lowercase());
-            catalog.resource_groups.push(group);
+            catalog.set_resource_group(group);
             Ok(Ok(Vec::new()))
         }
         // Go `applyDropResourceGroup` (`:88-95`): the group with the diff's
         // ID leaves the map.
         ActionType::ACTION_DROP_RESOURCE_GROUP => {
-            catalog
-                .resource_groups
-                .retain(|existing| existing.id != diff.schema_id);
+            catalog.delete_resource_group_by_id(diff.schema_id);
             Ok(Ok(Vec::new()))
         }
         // Go `applyCreatePolicy` / `applyAlterPolicy` (`builder_misc.go:25-60`):
@@ -430,16 +421,14 @@ fn apply_schema_diff<S: MetaSnapshot>(
             };
             let policy = value::parse_policy_info(&stored)
                 .map_err(|error| ClusterCatalogError::Decode(format!("PolicyInfo: {error}")))?;
-            catalog.policies.retain(|existing| existing.id != policy.id);
-            catalog.policies.push(policy);
+            catalog.delete_policy_by_id(policy.id);
+            catalog.set_policy(policy);
             Ok(Ok(Vec::new()))
         }
         // Go `applyDropPolicy` (`:62-72`): the policy with the diff's id
         // leaves the map.
         ActionType::ACTION_DROP_PLACEMENT_POLICY => {
-            catalog
-                .policies
-                .retain(|existing| existing.id != diff.schema_id);
+            catalog.delete_policy_by_id(diff.schema_id);
             Ok(Ok(Vec::new()))
         }
         // Go `applyMaskingPolicyChange` (`builder.go:412-415`) touches only
@@ -531,7 +520,7 @@ fn affected_ids(table: &tidb_model::table_info::TableInfo, into: &mut Vec<i64>) 
 /// metadata and panics rather than being silently skipped.
 fn apply_affected_opts<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &mut ClusterCatalog,
+    catalog: &mut SessionExtendedInfoSchema,
     diff: &SchemaDiff,
     action: ActionType,
     nil_message: &'static str,
@@ -623,14 +612,11 @@ fn table_ids<S: MetaSnapshot>(
 /// except for a truncated partition, `builder.go:836-838`).
 fn apply_table_update<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &mut ClusterCatalog,
+    catalog: &mut SessionExtendedInfoSchema,
     diff: &SchemaDiff,
 ) -> AppliedDiff {
     let version = diff.version;
-    if !catalog
-        .databases
-        .iter()
-        .any(|db| db.read().id == diff.schema_id)
+    if !catalog.schema_by_id(diff.schema_id).is_some()
     {
         return Ok(Err(missing(
             version,
@@ -676,14 +662,11 @@ fn apply_table_update<S: MetaSnapshot>(
 /// created, as Go's `applyCreateTables` over the listing answers.
 fn recover_schema<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &mut ClusterCatalog,
+    catalog: &mut SessionExtendedInfoSchema,
     diff: &SchemaDiff,
 ) -> AppliedDiff {
     let version = diff.version;
-    if catalog
-        .databases
-        .iter()
-        .any(|db| db.read().id == diff.schema_id)
+    if catalog.schema_by_id(diff.schema_id).is_some()
     {
         return Ok(Err(FullReloadReason::ConflictingObject {
             version,
@@ -704,10 +687,10 @@ fn recover_schema<S: MetaSnapshot>(
             affected_ids(table, &mut ids);
         }
         info.deprecated_tables = tables.into();
-        catalog.databases.push(GoShared::new(info));
+        catalog.register_database_info(GoShared::new(info));
         return Ok(Ok(ids));
     }
-    catalog.databases.push(GoShared::new(info));
+    catalog.register_database_info(GoShared::new(info));
     apply_affected_opts(
         snapshot,
         catalog,
@@ -722,7 +705,7 @@ fn recover_schema<S: MetaSnapshot>(
 /// onto the loaded one. No table is answered as changed.
 fn modify_schema<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &mut ClusterCatalog,
+    catalog: &mut SessionExtendedInfoSchema,
     version: i64,
     db_id: i64,
     apply: impl FnOnce(&mut tidb_model::db::DBInfo, tidb_model::db::DBInfo),
@@ -730,7 +713,7 @@ fn modify_schema<S: MetaSnapshot>(
     let Some(fresh) = read_database(snapshot, db_id)? else {
         return Ok(Err(missing(version, format!("database {db_id}"))));
     };
-    if !edit_database(catalog, db_id, |database| apply(database, fresh)) {
+    if !catalog.edit_schema_by_id(db_id, |database| apply(database, fresh)) {
         return Ok(Err(missing(version, format!("unknown database {db_id}"))));
     }
     Ok(Ok(Vec::new()))
@@ -746,7 +729,7 @@ fn modify_schema<S: MetaSnapshot>(
 /// make it either.
 fn exchange_table_partition<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &mut ClusterCatalog,
+    catalog: &mut SessionExtendedInfoSchema,
     diff: &SchemaDiff,
 ) -> AppliedDiff {
     let first_affected = |diff: &SchemaDiff| {
@@ -853,19 +836,19 @@ fn equal_placement_policy(
 /// dropped, created or updated. A database operation answers no table.
 fn refresh_meta<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &mut ClusterCatalog,
+    catalog: &mut SessionExtendedInfoSchema,
     diff: &SchemaDiff,
 ) -> AppliedDiff {
     let (schema_id, table_id) = (diff.schema_id, diff.table_id);
     if table_id == 0 {
         let Some(fresh) = read_database(snapshot, schema_id)? else {
             // Gone from the store: drop it (absent is a no-op, as in Go).
-            catalog.databases.retain(|db| db.read().id != schema_id);
+            catalog.drop_schema_by_id(schema_id);
             return Ok(Ok(Vec::new()));
         };
-        let present = catalog.databases.iter().any(|db| db.read().id == schema_id);
+        let present = catalog.schema_by_id(schema_id).is_some();
         if present {
-            edit_database(catalog, schema_id, |loaded| {
+            catalog.edit_schema_by_id(schema_id, |loaded| {
                 if loaded.charset != fresh.charset || loaded.collate != fresh.collate {
                     loaded.charset = fresh.charset;
                     loaded.collate = fresh.collate;
@@ -878,13 +861,13 @@ fn refresh_meta<S: MetaSnapshot>(
                 }
             });
         } else {
-            catalog.databases.push(GoShared::new(fresh));
+            catalog.register_database_info(GoShared::new(fresh));
         }
         return Ok(Ok(Vec::new()));
     }
     // A table under a database this catalog does not have: the database is
     // gone, so its tables are too.
-    if !catalog.databases.iter().any(|db| db.read().id == schema_id) {
+    if !catalog.schema_by_id(schema_id).is_some() {
         return Ok(Ok(Vec::new()));
     }
     let stored = snapshot
@@ -930,12 +913,12 @@ fn read_database<S: MetaSnapshot>(
 /// created table's affected IDs.
 fn create_table<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &mut ClusterCatalog,
+    catalog: &mut SessionExtendedInfoSchema,
     version: i64,
     db_id: i64,
     table_id: i64,
 ) -> AppliedDiff {
-    if !catalog.databases.iter().any(|db| db.read().id == db_id) {
+    if !catalog.schema_by_id(db_id).is_some() {
         return Ok(Err(missing(version, format!("unknown database {db_id}"))));
     }
     let Some(stored) = snapshot.get(&key::table_kv_key(db_id, table_id))? else {
@@ -949,7 +932,7 @@ fn create_table<S: MetaSnapshot>(
     normalize_diff_loaded_table_info(&mut table);
     let mut ids = Vec::new();
     affected_ids(&table, &mut ids);
-    edit_database(catalog, db_id, |database| {
+    catalog.edit_schema_by_id(db_id, |database| {
         let mut tables = database
             .deprecated_tables
             .iter_handles()
@@ -961,36 +944,17 @@ fn create_table<S: MetaSnapshot>(
     Ok(Ok(ids))
 }
 
-/// Edits the `DBInfo` of `db_id` in place of its slot: a reloaded catalog
-/// shares its `DBInfo` pointers with the version it advanced from, so an
-/// edit copies the database and replaces the slot (Go's builder copies the
-/// `DBInfo` it changes, `copySchemaTables`). `false` when the catalog has no
-/// such database.
-fn edit_database(
-    catalog: &mut ClusterCatalog,
-    db_id: i64,
-    edit: impl FnOnce(&mut tidb_model::db::DBInfo),
-) -> bool {
-    let Some(slot) = catalog.databases.iter_mut().find(|db| db.read().id == db_id) else {
-        return false;
-    };
-    let mut copy = slot.read().clone();
-    edit(&mut copy);
-    *slot = GoShared::new(copy);
-    true
-}
-
 /// Go `applyDropTable`'s catalog effect; an absent table is a no-op that
 /// answers nothing (`builder.go:969-971`), an absent database is Go's
 /// `ErrDatabaseNotExists`.
 fn drop_table(
-    catalog: &mut ClusterCatalog,
+    catalog: &mut SessionExtendedInfoSchema,
     version: i64,
     db_id: i64,
     table_id: i64,
 ) -> AppliedDiff {
     let mut ids = Vec::new();
-    let found = edit_database(catalog, db_id, |database| {
+    let found = catalog.edit_schema_by_id(db_id, |database| {
         let mut tables = database.deprecated_tables.iter_handles().collect::<Vec<_>>();
         if let Some(index) = tables
             .iter()

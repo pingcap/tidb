@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use tidb_ast::{DdlStmt, Stmt};
-use tidb_infoschema::cluster_catalog::ClusterCatalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_ddl::cluster_ddl::DdlStatement;
 use tidb_ddl::real_tikv_ddl::prepare_cluster_ddl_parsed;
@@ -182,7 +182,7 @@ pub trait DdlExec {
         stmt: &Stmt,
     ) -> Result<Option<(String, String, bool, crate::ViewDef)>, SqlQueryError>;
     /// The catalog the node publishes (Go's latest infoschema).
-    fn published_catalog(&self) -> Arc<ClusterCatalog>;
+    fn published_catalog(&self) -> Arc<SessionExtendedInfoSchema>;
     /// `ddlExecutor.DoDDLJob` for one lowered statement: the ids of the
     /// tables it created.
     fn run_ddl_statement(
@@ -608,8 +608,8 @@ pub trait DdlExec {
                 return (true, origin_version, pending_count, false);
             }
             let latest = self.published_catalog();
-            if latest.schema_version != origin_version {
-                origin_version = latest.schema_version;
+            if latest.schema_meta_version() != origin_version {
+                origin_version = latest.schema_meta_version();
                 pending_count =
                     tidb_ddl::cluster_ddl::alter_schema::pending_tiflash_table_count(&latest);
             }
@@ -670,7 +670,7 @@ pub trait TemporaryTableDdlExec:
     /// The session's infoschema (Go `sctx.GetInfoSchema()`).
     fn session_info_schema(
         &self,
-    ) -> Option<std::sync::Arc<tidb_infoschema::cluster_catalog::ClusterCatalog>>;
+    ) -> Option<std::sync::Arc<tidb_infoschema::SessionExtendedInfoSchema>>;
 
     /// An `IF [NOT] EXISTS` refusal, kept as the statement's note.
     fn append_suppressed(&mut self, error: DriverError);
@@ -844,7 +844,7 @@ pub trait TemporaryTableDdlExec:
         let like = like
             .as_ref()
             .map(|(source_schema, source)| (*source_schema, source.read()));
-        let Some(database) = info_schema.schema_by_name(schema) else {
+        let Some(database) = info_schema.schema_info_by_name(schema) else {
             return Err(DriverError::from(
                 tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                     .generate_with_stack_by_args(&[(schema.to_owned()).into()]),

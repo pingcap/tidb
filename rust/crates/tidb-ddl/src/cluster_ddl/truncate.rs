@@ -33,7 +33,7 @@ pub fn prepare_truncate_table_job_submission<S: MetaSnapshot>(
     let DdlStatement::TruncateTable { schema, table } = statement else {
         return Ok(None);
     };
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let (db_id, stored) = locate_table(&catalog, schema, table)?;
     let stored = stored.read();
     // A view or a sequence has no rows to truncate and reads as missing.
@@ -102,7 +102,7 @@ fn truncate_referenced(referred: &tidb_model::table::ReferredFKInfo) -> DdlPlanE
 /// Go `onTruncateTable`.
 pub(super) fn on_truncate_table<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -167,7 +167,7 @@ pub(super) fn on_truncate_table<S: MetaSnapshot>(
         &mut affinity_groups,
         &mut label_rules,
     )?;
-    let schema_version = catalog.schema_version + 1;
+    let schema_version = catalog.schema_meta_version() + 1;
     let diff = SchemaDiff {
         version: schema_version,
         action_type: ActionType::ACTION_TRUNCATE_TABLE,

@@ -36,7 +36,8 @@
 
 use std::fmt;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
 
 /// Maps one `mysql.user` privilege column to the privilege name
@@ -244,7 +245,7 @@ const VAR_TRUE: &str = "True";
 /// Reads `mysql.tidb`'s bootstrap flag from one catalog snapshot.
 pub fn read_bootstrap_state<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
 ) -> Result<ClusterBootstrapState, SystemTableError> {
     let Ok(view) = SystemTableView::locate(catalog, "tidb", &["variable_name", "variable_value"])
     else {
@@ -278,7 +279,7 @@ pub fn read_bootstrap_state<S: MetaSnapshot>(
 /// the local host's zone, because every node in one cluster must agree.
 pub fn read_system_tz<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
 ) -> Result<String, SystemTableError> {
     let view = SystemTableView::locate(catalog, "tidb", &["variable_name", "variable_value"])?;
     for (key, value) in scan_system_table(snapshot, &view)? {
@@ -308,7 +309,7 @@ pub fn read_system_tz<S: MetaSnapshot>(
 /// otherwise misread.
 pub fn load_cluster_privileges<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
 ) -> Result<ClusterPrivileges, SystemTableError> {
     load_privileges(&mut ClusterPrivilegeTables { snapshot, catalog })
 }
@@ -339,7 +340,7 @@ pub type PrivilegeTableRows = (
 
 struct ClusterPrivilegeTables<'a, S> {
     snapshot: &'a mut S,
-    catalog: &'a ClusterCatalog,
+    catalog: &'a SessionExtendedInfoSchema,
 }
 
 impl<S: MetaSnapshot> PrivilegeTables for ClusterPrivilegeTables<'_, S> {
@@ -629,12 +630,12 @@ mod tests {
         // catalog must not read as "bootstrapped with no accounts", which
         // would make a node either re-seed a live cluster or start with a
         // table nobody can log in to.
-        let catalog = ClusterCatalog {
-            resource_groups: Vec::new(),
-            policies: Vec::new(),
-            schema_version: 0,
-            databases: Vec::new(),
-        };
+        let catalog = SessionExtendedInfoSchema::init_with_db_infos(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            0,
+        );
         let state = read_bootstrap_state(&mut EmptySnapshot, &catalog).expect("the read succeeds");
         assert_eq!(state, ClusterBootstrapState::NotBootstrapped);
         assert!(!state.already_bootstrapped());

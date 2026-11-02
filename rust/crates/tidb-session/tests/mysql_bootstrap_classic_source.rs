@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 use tidb_datatype::{Time, TimeType};
 use tidb_infoschema::cluster_catalog::{
-    fetch_all_schemas_with_tables, ClusterCatalogError, MetaPairs, MetaSnapshot,
+    load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
 use tidb_ddl::cluster_ddl::add_index::AddIndexSubmission;
 use tidb_ddl::cluster_ddl::{
@@ -146,12 +146,10 @@ fn int_key(store: &mut MetaStore, raw_key: Vec<u8>) -> i64 {
 #[test]
 fn ids_and_versions_are_the_classic_go_ones() {
     let (mut store, write) = bootstrapped();
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
     let database = |name: &str| {
         catalog
-            .databases
-            .iter()
-            .find(|database| database.read().name.lowercase() == name)
+            .schema_info_by_name(name)
             .unwrap_or_else(|| panic!("the bootstrap created {name}"))
     };
     assert_eq!(database("mysql").read().id, 1);
@@ -185,7 +183,7 @@ fn ids_and_versions_are_the_classic_go_ones() {
     assert_eq!(view("mysql", "tidb_ddl_job"), 281_474_976_710_654);
     assert_eq!(view("mysql", "tidb_ddl_notifier"), 281_474_976_710_648);
 
-    assert_eq!(catalog.schema_version, 58);
+    assert_eq!(catalog.schema_meta_version(), 58);
     assert_eq!(write.schema_version, 58);
     assert_eq!(int_key(&mut store, key::next_global_id_kv_key()), 116);
     // The five materialized-view tables are not Go's, in this layout.
@@ -246,7 +244,7 @@ fn table_infos_are_what_the_classic_go_server_stores() {
 #[test]
 fn history_rows_are_the_classic_go_jobs() {
     let (mut store, _) = bootstrapped();
-    let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+    let catalog = load_info_schema(&mut store).unwrap();
     let history = DdlHistoryTable::locate(&catalog).unwrap();
     let jobs = history.load(&mut store).unwrap();
     let go: BTreeMap<String, Value> = serde_json::from_str(GO_JOBS).unwrap();
@@ -339,7 +337,7 @@ fn the_first_user_table_is_117() {
     let Some(AddIndexSubmission::Job(mut spec, _)) = submission else {
         panic!("CREATE TABLE queues a job");
     };
-    let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+    let catalog = load_info_schema(&mut store).unwrap();
     let mut before_insert = |_: &[JobSpec]| Option::<fn()>::None;
     let (mutations, _) = plan_insert_attempt(
         &mut store,
@@ -368,8 +366,8 @@ fn the_first_user_table_is_117() {
         version = version.max(step.write.schema_version);
     }
     assert_eq!(version, 59);
-    let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
-    let (database, table) = catalog.find_table("test", "t1").expect("t1 was created");
+    let catalog = load_info_schema(&mut store).unwrap();
+    let (database, table) = catalog.table_info_by_name("test", "t1").expect("t1 was created");
     let table = table.read();
     assert_eq!((database.read().id, table.id), (114, 117));
 }
@@ -385,7 +383,7 @@ fn a_keyspace_of_either_layout_is_served_by_name() {
 
     for layout in [BootstrapLayout::Classic, BootstrapLayout::NextGen] {
         let (mut store, _) = bootstrapped_with(layout);
-        let catalog = fetch_all_schemas_with_tables(&mut store).expect("the catalog loads");
+        let catalog = load_info_schema(&mut store).expect("the catalog loads");
         let state = read_bootstrap_state(&mut store, &catalog).expect("the marker reads back");
         assert!(state.already_bootstrapped(), "{layout:?}: {state}");
         assert_eq!(

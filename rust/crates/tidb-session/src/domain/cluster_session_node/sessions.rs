@@ -160,10 +160,9 @@ impl DomainSessions for Domain {
         if let Some(client) = self.kv_client.as_ref() {
             storage = storage.with_client(Arc::clone(client));
         }
-        let loaded = self.catalog.get_latest();
         // Go's one infoschema per schema version: the node builds it once
         // and every session takes a clone.
-        let built = self.catalog.built(&loaded);
+        let loaded = self.catalog.get_latest();
         let statistics_loading = ClusterStatisticsLoading {
             view: Arc::clone(&self.statistics_view),
             loader: Arc::new(ClusterStatisticsItemLoader {
@@ -193,8 +192,8 @@ impl DomainSessions for Domain {
             slot: Arc::clone(&slot),
             follower: catalog_follower::CatalogFollower::new(
                 Arc::clone(&self.catalog),
-                loaded.schema_version,
-                built.skipped.clone(),
+                loaded.schema_meta_version(),
+                loaded.skipped_tables().to_vec(),
             ),
             commit_hooks: Box::new({
                 let bindings = self.bindings.clone();
@@ -215,7 +214,7 @@ impl DomainSessions for Domain {
             parked_local_infile: None,
             store: None,
         });
-        let mut session = Session::over_catalog(crate::SharedCatalog::new(built.schema.clone()), node);
+        let mut session = Session::over_catalog(crate::SharedCatalog::new((*loaded).clone()), node);
         session.set_transaction_store(Box::new(storage.clone()));
         session.set_stats_handle(stats_handle);
         session.set_global_id_generator(Arc::new(ClusterGlobalIds {
@@ -324,7 +323,7 @@ impl DomainSessions for Domain {
         }
         let services = super::node_services(self);
         session.set_plan_cache_invalidation(Arc::clone(&services.plan_cache_invalidation));
-        session.set_plan_cache_schema_version(loaded.schema_version as u64);
+        session.set_plan_cache_schema_version(loaded.schema_meta_version() as u64);
         session.set_info_schema(Arc::clone(&loaded));
         let accounts = Arc::clone(&self.accounts);
         session.set_privilege_change_notifier(Arc::new(move || {
@@ -392,7 +391,7 @@ impl DomainSessions for Domain {
         // read at statement time rather than captured when the session opens.
         let catalog_versions = Arc::clone(&self.catalog);
         session.set_cluster_schema_version_source(Arc::new(move || {
-            catalog_versions.get_latest().schema_version
+            catalog_versions.get_latest().schema_meta_version()
         }));
         // Go `preprocess.go:2270` writes each bound table into the
         // transaction's `GetRelatedTableForMDL` map; here the driver session

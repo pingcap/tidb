@@ -99,7 +99,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let built = match statement {
         DdlStatement::AddPartitions {
             schema,
@@ -499,7 +499,7 @@ fn table_info_with_dropping_partitions(info: &TableInfo) -> TableInfo {
 /// asks for (or records) the next part of it.
 fn clean_global_index_entries_from_dropped_partitions<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     old_info: &TableInfo,
     old_ids: &[i64],
@@ -680,7 +680,7 @@ fn check_add_partition_name_unique(
 /// Go `onAddTablePartition`.
 pub(super) fn on_add_table_partition<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -838,7 +838,7 @@ pub(super) fn on_add_table_partition<S: MetaSnapshot>(
 /// rules, and the placement bundles are rebuilt without them.
 pub(super) fn rollback_like_drop_partition<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -1008,7 +1008,7 @@ fn update_dropping_partition_info(
 /// Go `onDropTablePartition`.
 pub(super) fn on_drop_table_partition<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcome: Option<&ReorgOutcome>,
@@ -1156,7 +1156,7 @@ pub(super) fn on_drop_table_partition<S: MetaSnapshot>(
 /// Go `onTruncateTablePartition`.
 pub(super) fn on_truncate_table_partition<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcome: Option<&ReorgOutcome>,
@@ -1376,7 +1376,7 @@ pub(super) fn on_truncate_table_partition<S: MetaSnapshot>(
 /// Go `rollingbackAddTablePartition`, `rollingbackDropTablePartition` and
 /// `rollingbackTruncateTablePartition` (`convertTruncateTablePartitionJob2RollbackJob`).
 pub(super) fn rollingback_add_table_partition(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {

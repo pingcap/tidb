@@ -47,7 +47,7 @@ impl Drop for StatusServer {
 ///
 /// A closure rather than a snapshot because the node's catalog moves as DDL
 /// lands, and Go answers `/schema` from `GetLatest()` each time.
-pub type SchemaSource = Arc<dyn Fn() -> tidb_infoschema::cluster_catalog::ClusterCatalog + Send + Sync>;
+pub type SchemaSource = Arc<dyn Fn() -> tidb_infoschema::SessionExtendedInfoSchema + Send + Sync>;
 
 /// Binds and serves `GET /status` in a background thread.
 pub fn start_status_listener(
@@ -561,11 +561,11 @@ fn settings_response(
 
 /// Go getTableByIDStr searches all schemas by globally unique table ID.
 fn find_table_by_id(
-    catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
     id: i64,
 ) -> Option<tidb_model::GoShared<tidb_model::TableInfo>> {
     catalog
-        .databases
+        .stored_schemas()
         .iter()
         .find_map(|database| database.read().deprecated_tables.iter_deref().find(|table| table.read().id == id))
 }
@@ -583,7 +583,7 @@ fn find_table_by_id(
 /// `tidb_meta::value`'s serializers.
 fn schema_response(
     path: &str,
-    source: &dyn Fn() -> tidb_infoschema::cluster_catalog::ClusterCatalog,
+    source: &dyn Fn() -> tidb_infoschema::SessionExtendedInfoSchema,
 ) -> Option<Result<String, String>> {
     // Go's mux strips the query string before matching, and the handler then
     // reads its own form values from it.
@@ -658,7 +658,7 @@ fn schema_response(
         // All databases' schemas: Go `WriteData(w, schema.AllSchemas())`.
         [] => {
             let mut out = String::from("[");
-            for (index, database) in catalog.databases.iter().enumerate() {
+            for (index, database) in catalog.stored_schemas().iter().enumerate() {
                 if index > 0 {
                     out.push(',');
                 }
@@ -675,7 +675,7 @@ fn schema_response(
         // One database's tables: Go `WriteDBTablesData`, a JSON array of
         // TableInfo, and an EMPTY array rather than null when it has none.
         [database] => {
-            let Some(found) = catalog.databases.iter().find(|candidate| {
+            let Some(found) = catalog.stored_schemas().into_iter().find(|candidate| {
                 candidate
                     .read().name
                     .original()
@@ -718,7 +718,7 @@ fn schema_response(
         // One table: Go `WriteData(w, data.Meta())`.
         [database, table] => {
             let found = catalog
-                .databases
+                .stored_schemas()
                 .iter()
                 .find(|candidate| {
                     candidate
@@ -750,12 +750,12 @@ mod schema_route_tests {
     use super::*;
 
     fn catalog_with(databases: Vec<tidb_model::db::DBInfo>) -> SchemaSource {
-        let catalog = tidb_infoschema::cluster_catalog::ClusterCatalog {
-            resource_groups: Vec::new(),
-            policies: Vec::new(),
-            schema_version: 7,
-            databases: databases.into_iter().map(tidb_model::GoShared::new).collect(),
-        };
+        let catalog = tidb_infoschema::SessionExtendedInfoSchema::init_with_db_infos(
+            databases.into_iter().map(tidb_model::GoShared::new).collect(),
+            Vec::new(),
+            Vec::new(),
+            7,
+        );
         Arc::new(move || catalog.clone())
     }
 

@@ -96,7 +96,7 @@ pub fn prepare_alter_table_job_submission<S: MetaSnapshot>(
     min_job_id: i64,
     tiflash_stores: &dyn Fn() -> Result<u64, String>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let built = build_alter_table_job(
         snapshot,
         &catalog,
@@ -115,7 +115,7 @@ pub fn prepare_alter_table_job_submission<S: MetaSnapshot>(
 /// sub-job of a multi-specification `ALTER TABLE`.
 pub(super) fn build_alter_table_job<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,
     multi_schema: bool,
@@ -783,7 +783,8 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             table_id,
             available,
         } => {
-            let Some((database, stored)) = catalog.databases.iter().find_map(|database| {
+            let schemas = catalog.stored_schemas();
+            let Some((database, stored)) = schemas.iter().find_map(|database| {
                 database
                     .read().deprecated_tables
                     .iter_deref()
@@ -1182,7 +1183,7 @@ fn revertible_point(
 /// Go: a multi-schema sub-job stops at its revertible point first, storing
 /// the table as it stands without a new version.
 fn revertible_point_with_table(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &TableInfo,
     with_check: bool,
@@ -1228,7 +1229,7 @@ fn nil_args(active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob) -> DdlP
 /// The owner halves.
 pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -1883,7 +1884,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
 
 /// Go `convertJob2RollbackJob` for these actions.
 pub(super) fn convert_job_2_rollback_job(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let cancel = match active.job.type_ {

@@ -37,7 +37,6 @@
 //! [`configure_loaded_table`]: tidb_infoschema::cluster_catalog::configure_loaded_table
 
 use std::sync::Arc;
-use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_stats_handle_syncload::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_infoschema::{SessionExtendedInfoSchema, ViewDef};
 #[cfg(test)]
@@ -75,7 +74,7 @@ pub struct ClusterSessionCatalog {
 /// staged writes.
 #[must_use]
 pub fn cluster_session_catalog(
-    loaded: &ClusterCatalog,
+    loaded: &SessionExtendedInfoSchema,
     stats: &StatsSnapshot,
     auto_ids: &dyn TableAutoIds,
 ) -> ClusterSessionCatalog {
@@ -108,7 +107,7 @@ impl tidb_stats_handle::StatisticsSource for SnapshotStatisticsSource {
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn cluster_session_catalog_with_templates(
-    loaded: &ClusterCatalog,
+    loaded: &SessionExtendedInfoSchema,
     // Go's planner reads the domain's statistics handle
     // (`GetPhysicalTableStats`), never a copy in the schema: the catalog plans
     // through this view of it.
@@ -116,19 +115,19 @@ pub fn cluster_session_catalog_with_templates(
     auto_ids: &dyn TableAutoIds,
 ) -> ClusterSessionCatalog {
     let mut catalog = tidb_infoschema_perfschema::catalog();
-    catalog.set_schema_meta_version(loaded.schema_version);
+    catalog.set_schema_meta_version(loaded.schema_meta_version());
     let mut skipped = Vec::new();
     // Go `infoschema`'s resource groups come from meta, so a group another
     // TiDB created is one this node's `SET RESOURCE GROUP` finds.
-    for group in &loaded.resource_groups {
+    for group in loaded.resource_groups() {
         catalog.set_resource_group(group.clone());
     }
     // Go `infoschema`'s policy map, from meta: a table's, partition's or
     // schema's placement reference resolves against it.
-    for policy in &loaded.policies {
+    for policy in loaded.policies() {
         catalog.set_policy(policy.clone());
     }
-    for database in &loaded.databases {
+    for database in &loaded.stored_schemas() {
         let schema = database.read().name.original().to_owned();
         // Go `Builder.createSchemaTablesForDB`: the schema holds its
         // `DBInfo` -- charset, collation, placement and all.
@@ -549,18 +548,18 @@ use tidb_table::table_from_meta::kv_index;
         }
     }
 
-    fn one_table_catalog(table: TableInfo) -> ClusterCatalog {
-        ClusterCatalog {
-            resource_groups: Vec::new(),
-            policies: Vec::new(),
-            schema_version: 7,
-            databases: vec![tidb_model::GoShared::new(DBInfo {
+    fn one_table_catalog(table: TableInfo) -> SessionExtendedInfoSchema {
+        SessionExtendedInfoSchema::init_with_db_infos(
+            vec![tidb_model::GoShared::new(DBInfo {
                 id: 5,
                 name: CiString::new("app"),
                 deprecated_tables: vec![table].into(),
                 ..DBInfo::default()
             })],
-        }
+            Vec::new(),
+            Vec::new(),
+            7,
+        )
     }
 
     /// The table this loader used to refuse by name. It is served now: the
@@ -613,7 +612,7 @@ use tidb_table::table_from_meta::kv_index;
             ..TableInfo::default()
         };
         let catalog = one_table_catalog(public.clone());
-        catalog.databases[0].write().deprecated_tables = vec![
+        catalog.stored_schemas()[0].write().deprecated_tables = vec![
             public,
             TableInfo {
                 id: 402,

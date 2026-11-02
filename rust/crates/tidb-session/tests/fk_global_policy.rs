@@ -237,12 +237,12 @@ fn foreign_key_global_policy_batch() {
     let mut table = build.template().clone_like_go();
     assert_eq!(table.foreign_keys.get(0).unwrap().read().version, 0);
     assert!(table.indices.is_empty());
-    let catalog = tidb_infoschema::cluster_catalog::ClusterCatalog {
-        resource_groups: Vec::new(),
-        policies: Vec::new(),
-        schema_version: 1,
-        databases: vec![],
-    };
+    let catalog = tidb_infoschema::SessionExtendedInfoSchema::init_with_db_infos(
+        vec![],
+        Vec::new(),
+        Vec::new(),
+        1,
+    );
     check_table_foreign_keys_valid(&catalog, "test", &table, true).unwrap();
     check_table_foreign_key_valid_in_owner(&catalog, "test", &mut table, true).unwrap();
     assert_eq!(

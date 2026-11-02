@@ -982,7 +982,7 @@ mod startup_schema_lease_tests {
         let (startup, lease_grant_ts) =
             tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
                 .expect("startup catalog");
-        let version = startup.schema_version;
+        let version = startup.schema_meta_version();
         assert!(lease_grant_ts > 0, "the load read at a real timestamp");
         // A lease long enough that the reload thread never ticks during the
         // test: only the startup grant can make the check succeed.
@@ -1015,8 +1015,7 @@ mod startup_schema_lease_tests {
             tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at(&opener, IN_PROCESS_TIMEOUT)
                 .expect("startup catalog");
         let default = startup
-            .resource_groups
-            .iter()
+            .resource_groups()
             .find(|group| group.name.lowercase() == tidb_model::DEFAULT_RESOURCE_GROUP_NAME)
             .expect("the default group");
         let job_types = default

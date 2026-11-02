@@ -73,7 +73,7 @@ pub fn prepare_modify_column_job_submission<S: MetaSnapshot>(
     store_count: usize,
     has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let built = build_modify_column_job(
         snapshot,
         &catalog,
@@ -89,7 +89,7 @@ pub fn prepare_modify_column_job_submission<S: MetaSnapshot>(
 /// multi-schema change appends as a sub-job (Go `appendToSubJobs`).
 pub(super) fn build_modify_column_job<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,
     store_count: usize,
@@ -241,7 +241,7 @@ fn driver_refusal(error: impl Into<tidb_terror::MysqlError>) -> DdlPlanError {
 /// answers `checkForNullValue`'s query in the submitting transaction.
 #[allow(clippy::too_many_arguments)]
 fn get_modifiable_column_job(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     bdr_role: &[u8],
     schema: &str,
     table: &str,
@@ -1165,14 +1165,12 @@ struct ModifyTarget {
 /// Go `getModifyColumnInfo`: the database, the table and the column being
 /// changed, found by the id persisted after the first visit.
 fn get_modify_column_info(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &mut tidb_model::ModifyColumnArgs,
 ) -> Result<ModifyTarget, DdlPlanError> {
     let Some(database) = catalog
-        .databases
-        .iter()
-        .find(|database| database.read().id == active.job.schema_id)
+        .schema_by_id(active.job.schema_id)
     else {
         return Err(cancel_ddl_job(
             active,
@@ -1362,7 +1360,7 @@ fn checked_outcome(
 /// Go `onModifyColumn`.
 pub(super) fn on_modify_column<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcome: Option<&ReorgOutcome>,
@@ -1385,7 +1383,7 @@ pub(super) fn on_modify_column<S: MetaSnapshot>(
 
 fn plan_modify_column_step<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcome: Option<&ReorgOutcome>,
@@ -1612,7 +1610,7 @@ fn clear_modify_flag(column: &GoShared<tidb_model::ColumnInfo>) {
 
 /// Go `rollbackModifyColumnJob`: a change that rewrote nothing.
 fn rollback_modify_column_job(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     new: &tidb_model::ColumnInfo,
@@ -1641,7 +1639,7 @@ fn rollback_modify_column_job(
 
 /// Go `rollbackModifyColumnJobWithReorg`.
 fn rollback_modify_column_job_with_reorg(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &mut tidb_model::ModifyColumnArgs,
@@ -1685,7 +1683,7 @@ fn rollback_modify_column_job_with_reorg(
 
 /// Go `rollbackModifyColumnJobWithIndexReorg`.
 fn rollback_modify_column_job_with_index_reorg(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &mut tidb_model::ModifyColumnArgs,
@@ -1884,7 +1882,7 @@ fn update_index_col(part: &mut tidb_model::index::IndexColumn, column: &tidb_mod
 /// column renames the children's referenced column. Returns the children's
 /// writes.
 fn adjust_foreign_key_children(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &mut TableInfo,
     new: &tidb_model::ColumnInfo,
@@ -1928,7 +1926,7 @@ fn adjust_foreign_key_children(
         rename_ref_cols(&mut *fk.write());
     }
     let mut children: Vec<(i64, TableInfo)> = Vec::new();
-    for database in &catalog.databases {
+    for database in &catalog.stored_schemas() {
         for child in database.read().deprecated_tables.iter_deref() {
             let child = child.read();
             if child.id == info.id {
@@ -1949,7 +1947,7 @@ fn adjust_foreign_key_children(
 
 /// Go `finishModifyColumnWithoutReorg`.
 fn finish_modify_column_without_reorg(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &tidb_model::ModifyColumnArgs,
@@ -2034,7 +2032,7 @@ fn column_in_change(old: &tidb_model::ColumnInfo, new_id: i64) -> DdlPlanError {
 /// Go `doModifyColumnNoCheck`.
 fn do_modify_column_no_check<S: MetaSnapshot>(
     _snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &tidb_model::ModifyColumnArgs,
@@ -2056,7 +2054,7 @@ fn do_modify_column_no_check<S: MetaSnapshot>(
 /// Go: a multi-schema sub-job stores its revertible mark, the table as it
 /// stands, and finishes in the step that publishes every sub-job.
 fn revertible_point(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &ModifyTarget,
     args: &tidb_model::ModifyColumnArgs,
@@ -2076,7 +2074,7 @@ fn revertible_point(
 /// checks writes against the new type, under a new version, before the rows
 /// are checked.
 fn mark_modifying(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &tidb_model::ModifyColumnArgs,
@@ -2103,7 +2101,7 @@ fn mark_modifying(
 #[allow(clippy::too_many_arguments)]
 fn do_modify_column_with_check<S: MetaSnapshot>(
     _snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &tidb_model::ModifyColumnArgs,
@@ -2146,7 +2144,7 @@ fn do_modify_column_with_check<S: MetaSnapshot>(
 /// a failing one clears the marks and reorganizes.
 #[allow(clippy::too_many_arguments)]
 fn precheck_for_varchar_to_char(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &mut tidb_model::ModifyColumnArgs,
@@ -2636,7 +2634,7 @@ fn remove_old_objects(
 /// Go `doModifyColumnIndexReorg`.
 fn do_modify_column_index_reorg<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &mut tidb_model::ModifyColumnArgs,
@@ -2896,7 +2894,7 @@ fn do_modify_column_index_reorg<S: MetaSnapshot>(
 #[allow(clippy::too_many_arguments)]
 fn do_modify_column_type_with_data<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &mut tidb_model::ModifyColumnArgs,
@@ -3190,7 +3188,7 @@ enum ColumnReorgVisit {
 /// merged into the job's `ReorgMeta`.
 fn do_reorg_work_for_modify_column<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &ModifyTarget,
     changing: &GoShared<tidb_model::ColumnInfo>,
@@ -3298,7 +3296,7 @@ fn merge_reorg_warnings(job: &Job, warnings: &[(u16, String, i64)]) {
 
 /// Go `rollingbackModifyColumn`.
 pub(super) fn rollingback_modify_column(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     // Go `IsRollbackable`: a modify-column job is not once it is public.

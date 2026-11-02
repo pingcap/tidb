@@ -50,7 +50,7 @@ use std::time::Duration;
 use tidb_store_driver_txn::transaction::StoreClient;
 
 use crate::cluster_analyze::AnalyzeStatement;
-use tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables;
+use tidb_infoschema::cluster_catalog::load_info_schema;
 use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
 use crate::real_tikv_analyze::{
     commit_cluster_analyze, record_global_history_enabled, resolve_cluster_analyze_statement,
@@ -189,10 +189,10 @@ where
             .map_err(|error| error.to_string())?;
         let result = {
             let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
-            let catalog = fetch_all_schemas_with_tables(&mut snapshot).map_err(|error| error.to_string())?;
+            let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
             let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
             let targets = catalog
-                .databases
+                .stored_schemas()
                 .iter()
                 .flat_map(|database| database.read().deprecated_tables.iter_deref())
                 .flat_map(|table| StatsTarget::for_table(&table.read()))

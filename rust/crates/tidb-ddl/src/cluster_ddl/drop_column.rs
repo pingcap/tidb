@@ -31,7 +31,7 @@ pub fn drop_column<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let built = build_drop_column_job(snapshot, &catalog, statement, job_context)?;
     submit_built_job(snapshot, &catalog, built, start_ts, upgrading, min_job_id)
 }
@@ -40,7 +40,7 @@ pub fn drop_column<S: MetaSnapshot>(
 /// multi-schema change appends as a sub-job (Go `appendToSubJobs`).
 pub(super) fn build_drop_column_job<S: MetaSnapshot>(
     _snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
@@ -109,7 +109,7 @@ struct DropColumnTarget {
 /// Go `checkDropColumn`. `Ok(Err((if_exists, error)))` when the column is
 /// not there (the job is cancelled).
 fn check_drop_column_in_owner(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<Result<DropColumnTarget, (bool, DdlPlanError)>, DdlPlanError> {
     let stored = checked_job_table(catalog, active, true)?.read().clone_like_go();
@@ -177,7 +177,7 @@ fn check_drop_column_in_owner(
 /// Go `onDropColumn` for a DROP COLUMN job, and for an ADD COLUMN job
 /// rolling back.
 pub(super) fn on_drop_column(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -306,7 +306,7 @@ pub(super) fn on_drop_column(
 /// Go `rollingbackDropColumn`: cancellable only before the job has run; past
 /// that the drop runs on.
 pub(super) fn rollingback_drop_column(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let target = check_drop_column_in_owner(catalog, active)?.map_err(|(_, error)| error)?;

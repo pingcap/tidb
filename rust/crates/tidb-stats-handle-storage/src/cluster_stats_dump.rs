@@ -24,7 +24,8 @@ use tidb_model::table_info::TableInfo;
 use tidb_stats_util::{JsonPredicateColumn, JsonTable, TIDB_GLOBAL_STATS};
 use tidb_stats::Table;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::load_column_stats_usage_for_table;
 use crate::cluster_stats_load::{column_types_of, ClusterStatsLoader};
 use tidb_syssession::mysql_system_tables::{
@@ -89,7 +90,7 @@ impl<E: fmt::Debug + fmt::Display> std::error::Error for PersistStatsBySnapshotE
 /// and converts it to the shared JSON object model.
 pub fn table_stats_to_json<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     database_name: &str,
     table_info: &TableInfo,
     physical_id: i64,
@@ -111,7 +112,7 @@ pub fn table_stats_to_json<S: MetaSnapshot>(
 /// histogram payload, including FM sketches.
 pub fn load_table_stats_payload<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_info: &TableInfo,
     physical_id: i64,
 ) -> Result<Option<Table>, StatsDumpError> {
@@ -130,7 +131,7 @@ pub fn load_table_stats_payload<S: MetaSnapshot>(
 /// mutable stats-meta counters and predicate-column usage before rendering.
 pub fn table_stats_to_json_from_loaded<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     database_name: &str,
     table_info: &TableInfo,
     physical_id: i64,
@@ -171,7 +172,7 @@ pub fn table_stats_to_json_from_loaded<S: MetaSnapshot>(
 /// the optional logical-table `global` entry is always attempted.
 pub fn dump_stats_to_json<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     database_name: &str,
     table_info: &TableInfo,
     is_dynamic_mode: bool,
@@ -228,7 +229,7 @@ pub(crate) fn persist_stats_by_snapshot_impl<E>(
 /// dump at or before `snapshot`, which this preserves.
 pub fn table_historical_stats_to_json<S: MetaSnapshot>(
     snapshot_store: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     physical_id: i64,
     snapshot: u64,
 ) -> Result<Option<JsonTable>, StatsDumpError> {

@@ -21,7 +21,7 @@ use std::net::SocketAddr;
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_goruntime::GoString;
-use tidb_infoschema::cluster_catalog::ClusterCatalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_model::column::ColumnInfo as ModelColumnInfo;
 use tidb_model::db::DBInfo;
 use tidb_model::index::{IndexColumn, IndexInfo};
@@ -125,7 +125,7 @@ pub(super) fn named_value_column(
 /// session must refuse by name, plus `app.acct` -- `mysql.user`'s own
 /// shape, an `ENUM('N','Y')` privilege column beside a `SET` one, which is
 /// what a `SELECT ... FROM mysql.user` has to serve.
-pub(super) fn loaded_catalog() -> ClusterCatalog {
+pub(super) fn loaded_catalog() -> SessionExtendedInfoSchema {
     let acct = TableInfo {
         id: 104,
         name: CiString::new("acct"),
@@ -208,9 +208,16 @@ pub(super) fn loaded_catalog() -> ClusterCatalog {
         state: SchemaState::NONE,
         ..TableInfo::default()
     };
-    ClusterCatalog {
-        // A group another TiDB created, as meta's ResourceGroups hash holds it.
-        resource_groups: vec![tidb_model::ResourceGroupInfo {
+    // A group another TiDB created, as meta's ResourceGroups hash holds it.
+    SessionExtendedInfoSchema::init_with_db_infos(
+        vec![tidb_model::GoShared::new(DBInfo {
+            id: 5,
+            name: CiString::new("app"),
+            deprecated_tables: vec![t, g, pending, acct, hnd, ai].into(),
+            ..DBInfo::default()
+        })],
+        Vec::new(),
+        vec![tidb_model::ResourceGroupInfo {
             settings: Some(Box::new(tidb_model::ResourceGroupSettings {
                 ru_rate: 100,
                 ..tidb_model::ResourceGroupSettings::new()
@@ -219,15 +226,8 @@ pub(super) fn loaded_catalog() -> ClusterCatalog {
             name: CiString::new("batch"),
             state: tidb_model::SchemaState::PUBLIC,
         }],
-        policies: Vec::new(),
-        schema_version: 11,
-        databases: vec![tidb_model::GoShared::new(DBInfo {
-            id: 5,
-            name: CiString::new("app"),
-            deprecated_tables: vec![t, g, pending, acct, hnd, ai].into(),
-            ..DBInfo::default()
-        })],
-    }
+        11,
+    )
 }
 
 pub(super) fn scramble(password: &[u8], salt: &[u8]) -> [u8; 20] {
@@ -300,7 +300,7 @@ impl MockNode {
 
     /// A node whose published catalog is `loaded`, as the store's meta
     /// holds it.
-    pub(super) fn over(loaded: ClusterCatalog) -> Self {
+    pub(super) fn over(loaded: SessionExtendedInfoSchema) -> Self {
         let catalog = Arc::new(InfoCache::new(loaded));
         Self {
             cluster: Arc::new(MockCluster::default()),

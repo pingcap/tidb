@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 
-use tidb_infoschema::cluster_catalog::{fetch_all_schemas_with_tables, ClusterCatalogError, MetaPairs, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot};
 
 
 use tidb_kv::key::prefix_scan_end;
@@ -139,13 +139,13 @@ fn recorded_cluster() -> RecordedSnapshot {
 #[test]
 fn loads_databases_tables_and_schema_version_from_stored_bytes() {
     let mut snapshot = recorded_cluster();
-    let catalog = fetch_all_schemas_with_tables(&mut snapshot).expect("catalog loads");
+    let catalog = load_info_schema(&mut snapshot).expect("catalog loads");
 
-    assert_eq!(catalog.schema_version, 412);
+    assert_eq!(catalog.schema_meta_version(), 412);
     // Only the stored databases: `METRICS_SCHEMA` is one of Go's virtual
     // schemas (`RegisterVirtualTable`), never stored.
-    assert_eq!(catalog.databases.len(), 1);
-    let database = &catalog.databases[0];
+    assert_eq!(catalog.stored_schemas().len(), 1);
+    let database = &catalog.stored_schemas()[0];
     assert_eq!(database.read().id, 3);
     assert_eq!(database.read().name.original(), "Campaign");
     // Allocator fields in the same hash must not be mistaken for tables.
@@ -164,9 +164,9 @@ fn loads_databases_tables_and_schema_version_from_stored_bytes() {
 fn absent_schema_version_reads_as_go_zero() {
     let mut snapshot = RecordedSnapshot::default();
     snapshot.put(key::database_kv_key(3), GO_DBINFO);
-    let catalog = fetch_all_schemas_with_tables(&mut snapshot).expect("catalog loads");
-    assert_eq!(catalog.schema_version, 0);
-    assert!(catalog.databases[0].read().deprecated_tables.iter_deref().next().is_none());
+    let catalog = load_info_schema(&mut snapshot).expect("catalog loads");
+    assert_eq!(catalog.schema_meta_version(), 0);
+    assert!(catalog.stored_schemas()[0].read().deprecated_tables.iter_deref().next().is_none());
 }
 
 #[test]

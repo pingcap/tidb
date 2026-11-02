@@ -24,7 +24,8 @@ use tidb_datatype::{
 };
 use tidb_model::table_info::TableInfo;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_syssession::mysql_system_tables::{
     scan_system_table, HandleLayout,
     SystemRow, SystemTableError, SystemTableView,
@@ -46,7 +47,7 @@ pub const CORRUPTED_ANALYZE_JOB_FAILURE: &str =
 /// the SQL limit just as they do in Go.
 pub fn load_analyze_status_jobs<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
 ) -> Result<Vec<tidb_stats::AnalyzeStatusJob>, StatsWriteError> {
     const MAX_ANALYZE_JOBS: usize = 30;
     const COLUMNS: &[&str] = &[
@@ -114,7 +115,7 @@ pub fn load_analyze_status_jobs<S: MetaSnapshot>(
 /// auto-increment watermark it consumed.
 pub fn plan_insert_analyze_job<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema: &str,
     table_name: &str,
     partition_name: &str,
@@ -180,7 +181,7 @@ pub fn plan_insert_analyze_job<S: MetaSnapshot>(
 
 fn plan_update_analyze_job<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     job_id: AnalyzeJobId,
     now: Time,
     update: impl FnOnce(&TableInfo, &mut RowValues),
@@ -213,7 +214,7 @@ fn plan_update_analyze_job<S: MetaSnapshot>(
 /// Plans pinned Go `StartAnalyzeJob`.
 pub fn plan_start_analyze_job<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     job_id: AnalyzeJobId,
     now: Time,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -243,7 +244,7 @@ pub fn plan_start_analyze_job<S: MetaSnapshot>(
 /// `AnalyzeProgress`; storage receives only the delta that passed it.
 pub fn plan_update_analyze_job_progress<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     job_id: AnalyzeJobId,
     processed_rows: i64,
     now: Time,
@@ -279,7 +280,7 @@ pub fn plan_update_analyze_job_progress<S: MetaSnapshot>(
 /// Plans pinned Go `FinishAnalyzeJob` for a table-analysis job.
 pub fn plan_finish_analyze_job<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     job_id: AnalyzeJobId,
     processed_rows: i64,
     failure: Option<&str>,
@@ -338,7 +339,7 @@ pub fn plan_finish_analyze_job<S: MetaSnapshot>(
 /// Plans pinned Go `DeleteAnalyzeJobs`' timestamp predicate.
 pub fn plan_delete_analyze_jobs<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     cutoff: &Time,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let table = locate(catalog, "analyze_jobs")?;
@@ -368,7 +369,7 @@ pub fn plan_delete_analyze_jobs<S: MetaSnapshot>(
 /// ignored, matching the otherwise-surprising guard in Go's row loop.
 pub fn plan_cleanup_corrupted_analyze_jobs_on_current_instance<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     instance: &str,
     current_analyze_process_ids: &HashSet<u64>,
     cutoff: &Time,
@@ -394,7 +395,7 @@ pub fn plan_cleanup_corrupted_analyze_jobs_on_current_instance<S: MetaSnapshot>(
 /// Plans pinned Go `CleanupCorruptedAnalyzeJobsOnDeadInstances`.
 pub fn plan_cleanup_corrupted_analyze_jobs_on_dead_instances<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     alive_instances: &HashSet<String>,
     cutoff: &Time,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -417,7 +418,7 @@ pub fn plan_cleanup_corrupted_analyze_jobs_on_dead_instances<S: MetaSnapshot>(
 
 fn plan_cleanup_corrupted_analyze_jobs<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     cutoff: &Time,
     select: impl Fn(&TableInfo, &RowValues) -> Result<bool, StatsWriteError>,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,

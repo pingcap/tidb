@@ -315,7 +315,7 @@ pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let (_, stored) = locate_table(&catalog, schema, table)?;
     let stored = stored.read();
     let mut specs = Vec::new();
@@ -510,7 +510,7 @@ pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
 /// Go `appendToSubJobs` for each built job, then `multiSchemaChange`: the
 /// parent job, `checkMultiSchemaInfo` and `mergeAddIndex`.
 pub(super) fn build_multi_schema_job(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema: &str,
     table: &str,
     specs: Vec<tidb_ddl_jobsubmit::JobSpec>,
@@ -835,7 +835,7 @@ struct SubJobStep {
 /// Go `runOneJobStep` on a sub-job's proxy job.
 fn run_sub_job_step(
     overlay: &mut MetaOverlay<'_>,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     sub: &GoShared<SubJob>,
     seq: usize,
@@ -962,7 +962,7 @@ fn flush_cancelling(sub_jobs: &[GoShared<SubJob>]) {
 /// Go `onMultiSchemaChange`.
 pub(super) fn on_multi_schema_change<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcomes: &[ReorgOutcome],
@@ -1087,7 +1087,7 @@ pub(super) fn on_multi_schema_change<S: MetaSnapshot>(
         let mut merged = job_only_write(active.job.id, Vec::new());
         let mut version = 0;
         let mut action_types = Vec::new();
-        let mut sub_catalog: Option<ClusterCatalog> = None;
+        let mut sub_catalog: Option<SessionExtendedInfoSchema> = None;
         for (seq, sub) in sub_jobs.iter().enumerate() {
             if sub.read().is_finished() {
                 continue;
@@ -1136,7 +1136,7 @@ pub(super) fn on_multi_schema_change<S: MetaSnapshot>(
             merge_write(&mut merged, step.write);
             action_types.push(sub.read().type_);
             // The next sub-job reads the metadata this one left.
-            sub_catalog = Some(fetch_all_schemas_with_tables(&mut overlay)?);
+            sub_catalog = Some(load_info_schema(&mut overlay)?);
         }
         if action_types.len() > 1 {
             // Go `SetSchemaDiff` with every sub-job's action.
@@ -1215,7 +1215,7 @@ fn merge_write(merged: &mut DdlWrite, write: DdlWrite) {
 /// Go `finishMultiSchemaJob`: done under the newest sub-job version,
 /// publishing nothing new.
 fn finish_multi_schema_job(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     sub_jobs: &[GoShared<SubJob>],
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {

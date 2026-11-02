@@ -76,18 +76,17 @@ impl CatalogFollower {
         let loaded = self.catalog.get_latest();
         // Go pins InfoSchema independently of Domain.StatsHandle. Statistics
         // reads already see current publications, including inside a transaction.
-        if loaded.schema_version == self.schema_version {
+        if loaded.schema_meta_version() == self.schema_version {
             return;
         }
-        let built = self.catalog.built(&loaded);
         let shared = session.shared_catalog();
         let mut catalog = shared.lock().unwrap_or_else(|poison| poison.into_inner());
-        *catalog = built.schema.clone();
+        *catalog = (*loaded).clone();
         drop(catalog);
-        self.schema_version = loaded.schema_version;
-        session.set_plan_cache_schema_version(loaded.schema_version as u64);
+        self.schema_version = loaded.schema_meta_version();
+        session.set_plan_cache_schema_version(loaded.schema_meta_version() as u64);
         session.set_info_schema(Arc::clone(&loaded));
-        self.skipped = built.skipped.clone();
+        self.skipped = loaded.skipped_tables().to_vec();
     }
 }
 

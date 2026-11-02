@@ -34,7 +34,8 @@
 //! `tidb_privilege::cluster_privilege_load::read_bootstrap_state` for exactly that
 //! reason.
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use crate::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
 
 /// The `mysql.global_variables` columns this loader reads.
@@ -50,7 +51,7 @@ const GLOBAL_VARIABLES_COLUMNS: &[&str] = &["variable_name", "variable_value"];
 /// for [`tidb_domain::global_sysvars::GlobalSysvars::get`].
 pub fn load_cluster_sysvars<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
 ) -> Result<Vec<(String, String)>, SystemTableError> {
     let Ok(view) = SystemTableView::locate(catalog, "global_variables", GLOBAL_VARIABLES_COLUMNS)
     else {
@@ -89,12 +90,12 @@ mod tests {
 
     #[test]
     fn a_cluster_with_no_global_variables_table_loads_as_no_overrides() {
-        let catalog = ClusterCatalog {
-            resource_groups: Vec::new(),
-            policies: Vec::new(),
-            schema_version: 0,
-            databases: Vec::new(),
-        };
+        let catalog = SessionExtendedInfoSchema::init_with_db_infos(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            0,
+        );
         let loaded = load_cluster_sysvars(&mut EmptySnapshot, &catalog)
             .expect("a missing table reads as empty, not an error");
         assert!(loaded.is_empty());

@@ -48,7 +48,7 @@ use super::{
     BootstrapLayout, BootstrapSplits, BootstrapWrite, BOOTSTRAP_VIEWS, SYSTEM_DB,
     SYSTEM_DB_CHARSET, SYSTEM_DB_COLLATION, SYS_DB,
 };
-use tidb_infoschema::cluster_catalog::{fetch_all_schemas_with_tables, ClusterCatalogError, MetaPairs, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot};
 use tidb_ddl::cluster_ddl::add_index::AddIndexSubmission;
 use tidb_ddl::cluster_ddl::{
     lower_ddl_with_context, plan_persisted_ddl_job_step, DdlJobSchemaState, DdlStatement,
@@ -257,7 +257,7 @@ fn run_ddl_job<S: MetaSnapshot>(
         return Err(job_error("the statement queued no DDL job".to_owned()));
     };
     spec.job.version = JobVersion::V2;
-    let catalog = fetch_all_schemas_with_tables(overlay)?;
+    let catalog = load_info_schema(overlay)?;
     let mut before_insert = |_: &[JobSpec]| Option::<fn()>::None;
     let (mutations, _) = plan_insert_attempt(
         overlay,

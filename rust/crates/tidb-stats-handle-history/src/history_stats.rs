@@ -22,7 +22,8 @@ use tidb_datatype::{
 use tidb_stats_util::JsonTable;
 use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_syssession::system_row_write::defaults_row;
 use tidb_syssession::stats_table_rows::*;
 use std::sync::Arc;
@@ -31,7 +32,7 @@ use std::time::Duration;
 use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
-use tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables;
+use tidb_infoschema::cluster_catalog::load_info_schema;
 use tidb_store_driver_txn::cluster_table_storage::{
     lock_pessimistic_statement, PessimisticStatementTransactionError,
     SessionTransaction,
@@ -43,7 +44,7 @@ use tidb_stats_handle_storage::cluster_stats_write::*;
 /// Plans pinned Go `RecordHistoricalStatsMeta`'s `SELECT ... FOR UPDATE`.
 pub fn plan_historical_stats_meta_lock<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     version: u64,
 ) -> Result<((i64, i64), StatsWritePlan), StatsWriteError> {
@@ -77,7 +78,7 @@ pub fn plan_historical_stats_meta_lock<S: MetaSnapshot>(
 /// Plans pinned Go `RecordHistoricalStatsMeta`'s `REPLACE` statement.
 pub fn plan_historical_stats_meta_replace<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     modify_count: i64,
     count: i64,
@@ -154,7 +155,7 @@ pub fn historical_stats_data_blocks(
 /// `INSERT ... ON DUPLICATE KEY UPDATE` statement.
 pub fn plan_historical_stats_data_block<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     physical_id: i64,
     version: u64,
     sequence: usize,
@@ -205,7 +206,7 @@ pub fn record_historical_stats_meta<S: StoreClient>(
     let (modify_count, count) =
         lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            let catalog = fetch_all_schemas_with_tables(&mut snapshot).map_err(|error| error.to_string())?;
+            let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
             let (counts, plan) =
                 plan_historical_stats_meta_lock(&mut snapshot, &catalog, table_id, version)
                     .map_err(|error| error.to_string())?;
@@ -213,7 +214,7 @@ pub fn record_historical_stats_meta<S: StoreClient>(
         })?;
     lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        let catalog = fetch_all_schemas_with_tables(&mut snapshot).map_err(|error| error.to_string())?;
+        let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
         let plan = plan_historical_stats_meta_replace(
             &mut snapshot,
             &catalog,

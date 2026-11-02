@@ -15,7 +15,7 @@
 //! A bootstrap is only real if this node's OWN readers can read it back.
 //!
 //! Every assertion here goes through the code paths that serve a live cluster —
-//! [`tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables`],
+//! [`tidb_infoschema::cluster_catalog::load_info_schema`],
 //! [`tidb_privilege::cluster_privilege_load::read_bootstrap_state`], and
 //! [`tidb_privilege::cluster_privilege_load::load_cluster_privileges`] — rather than
 //! inspecting the mutation list. Writing bytes only this test understands would
@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 
 use tidb_datatype::{Time, TimeType};
 use tidb_infoschema::cluster_catalog::{
-    fetch_all_schemas_with_tables, ClusterCatalogError, MetaPairs, MetaSnapshot,
+    load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
 use tidb_privilege::cluster_privilege_load::{
     load_cluster_privileges, read_bootstrap_state, read_system_tz, ClusterBootstrapState,
@@ -129,11 +129,9 @@ fn bootstrapped() -> MetaStore {
 #[test]
 fn a_bootstrapped_keyspace_loads_back_as_a_catalog_with_every_mysql_table() {
     let mut store = bootstrapped();
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrapped catalog loads");
+    let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
     let database = catalog
-        .databases
-        .iter()
-        .find(|database| database.read().name.lowercase() == "mysql")
+        .schema_info_by_name("mysql")
         .expect("the bootstrap created the mysql database");
     // The five materialized-view tables are Go master's, not this tree's.
     let all_tables = DDL_TABLE_VERSION_TABLES
@@ -179,13 +177,11 @@ fn bootstrap_creates_all_ddl_tables_and_advances_their_version() {
             .expect("DDL table version reads"),
         4
     );
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the catalog loads");
+    let catalog = load_info_schema(&mut store).expect("the catalog loads");
     let state = read_bootstrap_state(&mut store, &catalog).expect("bootstrap state reads");
     assert!(state.already_bootstrapped());
     let mysql = catalog
-        .databases
-        .iter()
-        .find(|database| database.read().name.lowercase() == "mysql")
+        .schema_info_by_name("mysql")
         .expect("mysql database");
     let notifier = mysql
         .read().deprecated_tables
@@ -201,7 +197,7 @@ fn the_bootstrap_marker_is_the_one_the_detector_reads() {
     // This is the whole point of writing `mysql.tidb`: the detector that
     // decides whether to bootstrap at all must see it as bootstrapped.
     let mut store = bootstrapped();
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the catalog loads");
+    let catalog = load_info_schema(&mut store).expect("the catalog loads");
     let state = read_bootstrap_state(&mut store, &catalog).expect("the marker reads back");
     assert!(state.already_bootstrapped(), "{state}");
     assert!(matches!(
@@ -213,7 +209,7 @@ fn the_bootstrap_marker_is_the_one_the_detector_reads() {
 #[test]
 fn the_seeded_system_timezone_is_the_one_startup_reads() {
     let mut store = bootstrapped();
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the catalog loads");
+    let catalog = load_info_schema(&mut store).expect("the catalog loads");
     assert_eq!(
         read_system_tz(&mut store, &catalog).expect("system_tz reads back"),
         "Asia/Shanghai"
@@ -223,7 +219,7 @@ fn the_seeded_system_timezone_is_the_one_startup_reads() {
 #[test]
 fn the_seeded_root_account_loads_back_as_an_unlocked_superuser() {
     let mut store = bootstrapped();
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the catalog loads");
+    let catalog = load_info_schema(&mut store).expect("the catalog loads");
     let privileges =
         load_cluster_privileges(&mut store, &catalog).expect("the seed row reads back");
     let [root] = privileges.users.as_slice() else {
@@ -303,25 +299,23 @@ fn a_next_gen_bootstrap_spends_one_schema_version_per_ddl_job() {
     }
     // The four jobs are the bootstrap's whole history.
     assert_eq!(BOOTSTRAP_VIEW_COUNT, 2);
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the catalog loads");
+    let catalog = load_info_schema(&mut store).expect("the catalog loads");
     let history = tidb_ddl::ddl_history_table::DdlHistoryTable::locate(&catalog).unwrap();
     assert_eq!(history.load(&mut store).unwrap().len(), 4);
     // Go draws an id per object and per job from 1: the views are 1 and 3,
     // `test` is 5, the jobs are 2, 4, 6 and 7.
-    let (mysql, mdl_view) = catalog.find_table("mysql", "tidb_mdl_view").unwrap();
+    let (mysql, mdl_view) = catalog.table_info_by_name("mysql", "tidb_mdl_view").unwrap();
     let mdl_view = mdl_view.read();
     assert_eq!(mysql.read().id, tidb_metadef::system::SYSTEM_DATABASE_ID);
     assert_eq!(mdl_view.id, 1);
     let (sys, sys_view) = catalog
-        .find_table("sys", "schema_unused_indexes")
+        .table_info_by_name("sys", "schema_unused_indexes")
         .unwrap();
     let sys_view = sys_view.read();
     assert_eq!(sys.read().id, tidb_metadef::system::SYS_DATABASE_ID);
     assert_eq!(sys_view.id, 3);
     let test = catalog
-        .databases
-        .iter()
-        .find(|database| database.read().name.lowercase() == "test")
+        .schema_info_by_name("test")
         .unwrap();
     assert_eq!(test.read().id, 5);
     assert_eq!(store.pairs[&key::next_global_id_kv_key()], b"7");
@@ -379,9 +373,9 @@ fn the_next_gen_layout_is_what_go_creates() {
     const GO: &str = include_str!("data/mysql_bootstrap_nextgen_layout.json");
     let go: serde_json::Value = serde_json::from_str(GO).unwrap();
     let mut store = bootstrapped();
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the catalog loads");
+    let catalog = load_info_schema(&mut store).expect("the catalog loads");
     let mut seen = 0;
-    for database in &catalog.databases {
+    for database in &catalog.stored_schemas() {
         let name = database.read().name.lowercase().to_owned();
         if !["mysql", "sys", "test"].contains(&name.as_str()) {
             continue;
@@ -411,7 +405,7 @@ fn the_next_gen_layout_is_what_go_creates() {
     }
     assert_eq!(seen, go["tables"].as_object().unwrap().len());
     assert_eq!(
-        catalog.schema_version,
+        catalog.schema_meta_version(),
         go["head"]["schema_version"].as_i64().unwrap()
     );
     assert_eq!(

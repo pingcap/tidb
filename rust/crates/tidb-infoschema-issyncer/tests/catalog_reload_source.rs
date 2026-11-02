@@ -27,7 +27,8 @@ use tidb_infoschema_issyncer::catalog_reload::{
     reload_cluster_catalog, FullReloadReason, ReloadedCatalog,
     LOAD_SCHEMA_DIFF_VERSION_GAP_THRESHOLD,
 };
-use tidb_infoschema::cluster_catalog::{fetch_all_schemas_with_tables, ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot};
+use tidb_infoschema::SessionExtendedInfoSchema;
 
 use tidb_kv::key::prefix_scan_end;
 use tidb_meta::{key, value};
@@ -125,13 +126,13 @@ fn diff_json(version: i64, action: ActionType, schema_id: i64, table_id: i64) ->
 
 /// A cluster holding one database with one table, at schema version 100 whose
 /// diff is stored, so the version is fully observable.
-fn started_cluster() -> (RecordedSnapshot, ClusterCatalog) {
+fn started_cluster() -> (RecordedSnapshot, SessionExtendedInfoSchema) {
     let mut snapshot = RecordedSnapshot::default();
     snapshot.put(key::database_kv_key(3), GO_DBINFO);
     snapshot.put(key::table_kv_key(3, 77), go_table(77, "Rows", "rows"));
     snapshot.commit_diff(100, &diff_json(100, ActionType::ACTION_CREATE_TABLE, 3, 77));
-    let catalog = fetch_all_schemas_with_tables(&mut snapshot).expect("startup load");
-    assert_eq!(catalog.schema_version, 100);
+    let catalog = load_info_schema(&mut snapshot).expect("startup load");
+    assert_eq!(catalog.schema_meta_version(), 100);
     (snapshot, catalog)
 }
 
@@ -178,11 +179,11 @@ fn a_create_table_diff_adds_exactly_that_table() {
         panic!("expected a diff reload, got {reloaded:?}");
     };
     assert_eq!(applied, 1);
-    assert_eq!(next.schema_version, 101);
-    assert_eq!(tables(&next.databases[0].read()).len(), 2);
-    assert!(next.find_table("campaign", "notes").is_some());
+    assert_eq!(next.schema_meta_version(), 101);
+    assert_eq!(tables(&next.stored_schemas()[0].read()).len(), 2);
+    assert!(next.table_info_by_name("campaign", "notes").is_some());
     // The catalog the node was already serving is untouched.
-    assert_eq!(tables(&catalog.databases[0].read()).len(), 1);
+    assert_eq!(tables(&catalog.stored_schemas()[0].read()).len(), 1);
 }
 
 #[test]
@@ -195,9 +196,9 @@ fn a_drop_table_diff_removes_exactly_that_table() {
     let Some(next) = reloaded.catalog() else {
         panic!("expected a published catalog, got {reloaded:?}");
     };
-    assert_eq!(next.schema_version, 101);
-    assert!(tables(&next.databases[0].read()).is_empty());
-    assert!(next.find_table("campaign", "rows").is_none());
+    assert_eq!(next.schema_meta_version(), 101);
+    assert!(tables(&next.stored_schemas()[0].read()).is_empty());
+    assert!(next.table_info_by_name("campaign", "rows").is_none());
 }
 
 #[test]
@@ -215,8 +216,8 @@ fn a_truncate_table_diff_swaps_the_old_table_id_for_the_new_one() {
 
     let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let next = reloaded.catalog().expect("published catalog");
-    assert_eq!(tables(&next.databases[0].read()).len(), 1);
-    let (_, table) = next.find_table("campaign", "rows").expect("table survives");
+    assert_eq!(tables(&next.stored_schemas()[0].read()).len(), 1);
+    let (_, table) = next.table_info_by_name("campaign", "rows").expect("table survives");
     let table = table.read();
     assert_eq!(table.id, 90);
 }
@@ -248,10 +249,10 @@ fn a_rename_table_diff_within_the_same_database_renames_in_place() {
         panic!("expected an incremental diff reload, got {reloaded:?}");
     };
     assert_eq!(applied, 1);
-    assert_eq!(tables(&next.databases[0].read()).len(), 1);
-    assert!(next.find_table("campaign", "rows").is_none());
+    assert_eq!(tables(&next.stored_schemas()[0].read()).len(), 1);
+    assert!(next.table_info_by_name("campaign", "rows").is_none());
     let (_, table) = next
-        .find_table("campaign", "entries")
+        .table_info_by_name("campaign", "entries")
         .expect("renamed table");
     let table = table.read();
     assert_eq!(table.id, 77);
@@ -268,7 +269,7 @@ fn a_rename_table_diff_across_databases_moves_the_table() {
     snapshot.put(key::database_kv_key(4), GO_SECOND_DBINFO);
     snapshot.put(key::table_kv_key(3, 77), go_table(77, "Rows", "rows"));
     snapshot.commit_diff(100, &diff_json(100, ActionType::ACTION_CREATE_TABLE, 3, 77));
-    let catalog = fetch_all_schemas_with_tables(&mut snapshot).expect("startup load");
+    let catalog = load_info_schema(&mut snapshot).expect("startup load");
 
     snapshot.remove(&key::table_kv_key(3, 77));
     snapshot.put(key::table_kv_key(4, 77), go_table(77, "Rows", "rows"));
@@ -291,15 +292,13 @@ fn a_rename_table_diff_across_databases_moves_the_table() {
     };
     assert_eq!(applied, 1);
     let campaign = next
-        .databases
-        .iter()
-        .find(|db| db.read().name.lowercase() == "campaign")
+        .schema_info_by_name("campaign")
         .expect("campaign database");
     assert!(
         tables(&campaign.read()).is_empty(),
         "the old database keeps no stale copy"
     );
-    let (db, table) = next.find_table("ledger", "rows").expect("moved table");
+    let (db, table) = next.table_info_by_name("ledger", "rows").expect("moved table");
     let table = table.read();
     assert_eq!(db.read().id, 4);
     assert_eq!(table.id, 77);
@@ -319,7 +318,7 @@ fn a_rename_tables_diff_moves_every_affected_table() {
     snapshot.put(key::table_kv_key(3, 77), go_table(77, "Rows", "rows"));
     snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
     snapshot.commit_diff(100, &diff_json(100, ActionType::ACTION_CREATE_TABLE, 3, 77));
-    let catalog = fetch_all_schemas_with_tables(&mut snapshot).expect("startup load");
+    let catalog = load_info_schema(&mut snapshot).expect("startup load");
     snapshot.put(key::table_kv_key(3, 78), go_table(78, "Notes", "notes"));
 
     // Table 77 stays in database 3 under a new name; table 78 moves from
@@ -347,22 +346,20 @@ fn a_rename_tables_diff_moves_every_affected_table() {
     };
     assert_eq!(applied, 1);
     let campaign = next
-        .databases
-        .iter()
-        .find(|db| db.read().name.lowercase() == "campaign")
+        .schema_info_by_name("campaign")
         .expect("campaign database");
     assert_eq!(
         tables(&campaign.read()).len(),
         1,
         "only the renamed-in-place table stays"
     );
-    assert!(next.find_table("campaign", "rows").is_none());
+    assert!(next.table_info_by_name("campaign", "rows").is_none());
     let (_, entries) = next
-        .find_table("campaign", "entries")
+        .table_info_by_name("campaign", "entries")
         .expect("renamed table");
     let entries = entries.read();
     assert_eq!(entries.id, 77);
-    let (notes_db, notes) = next.find_table("ledger", "notes").expect("moved table");
+    let (notes_db, notes) = next.table_info_by_name("ledger", "notes").expect("moved table");
     let notes = notes.read();
     assert_eq!(notes_db.read().id, 4);
     assert_eq!(notes.id, 78);
@@ -419,9 +416,9 @@ fn a_rename_table_diff_with_a_zero_old_schema_id_takes_the_full_load() {
         }
     );
     // The full load still reaches the correct end state from the snapshot.
-    assert_eq!(next.schema_version, 101);
+    assert_eq!(next.schema_meta_version(), 101);
     let (_, table) = next
-        .find_table("campaign", "entries")
+        .table_info_by_name("campaign", "entries")
         .expect("renamed table");
     let table = table.read();
     assert_eq!(table.id, 77);
@@ -436,9 +433,9 @@ fn create_and_drop_schema_diffs_add_and_remove_a_database() {
     let created = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let created = created.catalog().expect("published catalog").clone();
     // Loading also installs system schemas; check the diff's delta.
-    assert_eq!(created.databases.len(), catalog.databases.len() + 1);
+    assert_eq!(created.stored_schemas().len(), catalog.stored_schemas().len() + 1);
     assert!(created
-        .databases
+        .stored_schemas()
         .iter()
         .any(|db| db.read().name.lowercase() == "ledger"));
 
@@ -446,9 +443,9 @@ fn create_and_drop_schema_diffs_add_and_remove_a_database() {
     snapshot.commit_diff(102, &diff_json(102, ActionType::ACTION_DROP_SCHEMA, 4, 0));
     let dropped = reload_cluster_catalog(&mut snapshot, &created, None).expect("reload runs");
     let dropped = dropped.catalog().expect("published catalog");
-    assert_eq!(dropped.schema_version, 102);
-    assert_eq!(dropped.databases.len(), catalog.databases.len());
-    assert!(dropped.databases.iter().all(|db| db.read().id != 4));
+    assert_eq!(dropped.schema_meta_version(), 102);
+    assert_eq!(dropped.stored_schemas().len(), catalog.stored_schemas().len());
+    assert!(dropped.stored_schemas().iter().all(|db| db.read().id != 4));
 }
 
 #[test]
@@ -466,9 +463,9 @@ fn a_create_tables_diff_adds_every_affected_table() {
 
     let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let next = reloaded.catalog().expect("published catalog");
-    assert_eq!(tables(&next.databases[0].read()).len(), 3);
-    assert!(next.find_table("campaign", "notes").is_some());
-    assert!(next.find_table("campaign", "tags").is_some());
+    assert_eq!(tables(&next.stored_schemas()[0].read()).len(), 3);
+    assert!(next.table_info_by_name("campaign", "notes").is_some());
+    assert!(next.table_info_by_name("campaign", "tags").is_some());
 }
 
 #[test]
@@ -590,7 +587,7 @@ fn old_table_infos_are_normalized_on_load_like_gos_builder() {
         ),
     );
     snapshot.commit_diff(100, &diff_json(100, ActionType::ACTION_CREATE_TABLE, 3, 73));
-    let catalog = fetch_all_schemas_with_tables(&mut snapshot).expect("startup load");
+    let catalog = load_info_schema(&mut snapshot).expect("startup load");
 
     let expect = |charset: &str, collate: &str| {
         (
@@ -599,28 +596,28 @@ fn old_table_infos_are_normalized_on_load_like_gos_builder() {
             vec![(charset.to_owned(), collate.to_owned()); 2],
         )
     };
-    let (_, v1l) = catalog.find_table("campaign", "v1l").expect("v1l");
+    let (_, v1l) = catalog.table_info_by_name("campaign", "v1l").expect("v1l");
     let v1l = v1l.read();
     assert_eq!(
         charsets(&v1l),
         expect("utf8mb4", "utf8mb4_bin"),
         "version 1, lower case: utf8 becomes utf8mb4"
     );
-    let (_, v1) = catalog.find_table("campaign", "v1").expect("v1");
+    let (_, v1) = catalog.table_info_by_name("campaign", "v1").expect("v1");
     let v1 = v1.read();
     assert_eq!(
         charsets(&v1),
         expect("utf8", "utf8_bin"),
         "version 1, upper case, full load: the utf8 conversion runs before the lower-casing and misses UTF8"
     );
-    let (_, v2) = catalog.find_table("campaign", "v2").expect("v2");
+    let (_, v2) = catalog.table_info_by_name("campaign", "v2").expect("v2");
     let v2 = v2.read();
     assert_eq!(
         charsets(&v2),
         expect("utf8", "utf8_bin"),
         "version 2: lower-cased only"
     );
-    let (_, v3) = catalog.find_table("campaign", "v3").expect("v3");
+    let (_, v3) = catalog.table_info_by_name("campaign", "v3").expect("v3");
     let v3 = v3.read();
     assert_eq!(
         charsets(&v3),
@@ -644,7 +641,7 @@ fn old_table_infos_are_normalized_on_load_like_gos_builder() {
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "old table by diff",
     );
-    let (_, v1b) = next.find_table("campaign", "v1b").expect("v1b");
+    let (_, v1b) = next.table_info_by_name("campaign", "v1b").expect("v1b");
     let v1b = v1b.read();
     assert_eq!(
         charsets(&v1b),
@@ -774,7 +771,7 @@ fn drop_schema_and_truncate_diffs_answer_gos_ids() {
     );
 }
 
-fn diffs_reload(reloaded: ReloadedCatalog, what: &str) -> ClusterCatalog {
+fn diffs_reload(reloaded: ReloadedCatalog, what: &str) -> SessionExtendedInfoSchema {
     let ReloadedCatalog::Diffs {
         catalog, applied, ..
     } = reloaded
@@ -805,7 +802,7 @@ fn a_multi_schema_change_diff_reloads_the_table_in_place_like_gos_default() {
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "multi schema change",
     );
-    let (_, table) = next.find_table("campaign", "rows").expect("table survives");
+    let (_, table) = next.table_info_by_name("campaign", "rows").expect("table survives");
     let table = table.read();
     assert_eq!(table.cols().len(), 3);
 }
@@ -825,8 +822,8 @@ fn a_schema_level_diff_in_the_default_tier_touches_no_table() {
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "modify schema read only",
     );
-    assert_eq!(next.schema_version, 101);
-    assert_eq!(tables(&next.databases[0].read()).len(), 1);
+    assert_eq!(next.schema_meta_version(), 101);
+    assert_eq!(tables(&next.stored_schemas()[0].read()).len(), 1);
 }
 
 /// Go `getTableIDs`'s drop case: a table whose stored copy is still in a
@@ -844,7 +841,7 @@ fn a_drop_table_diff_keeps_a_table_the_store_still_holds_in_a_non_none_state() {
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "write-only drop step",
     );
-    let (_, table) = kept.find_table("campaign", "rows").expect("table kept");
+    let (_, table) = kept.table_info_by_name("campaign", "rows").expect("table kept");
     let table = table.read();
     assert_eq!(
         table.state,
@@ -857,7 +854,7 @@ fn a_drop_table_diff_keeps_a_table_the_store_still_holds_in_a_non_none_state() {
         reload_cluster_catalog(&mut snapshot, &kept, None).expect("reload runs"),
         "final drop step",
     );
-    assert!(tables(&gone.databases[0].read()).is_empty());
+    assert!(tables(&gone.stored_schemas()[0].read()).is_empty());
 }
 
 /// `DROP VIEW` and `DROP SEQUENCE` share `getTableIDs`'s drop case.
@@ -874,7 +871,7 @@ fn drop_view_and_drop_sequence_diffs_drop_like_drop_table() {
             reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
             "drop view/sequence",
         );
-        assert!(tables(&next.databases[0].read()).is_empty(), "{action}");
+        assert!(tables(&next.stored_schemas()[0].read()).is_empty(), "{action}");
     }
 }
 
@@ -896,8 +893,8 @@ fn a_create_or_replace_view_diff_drops_the_old_view_id() {
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "create or replace view",
     );
-    assert_eq!(tables(&next.databases[0].read()).len(), 1);
-    assert_eq!(tables(&next.databases[0].read())[0].id, 90);
+    assert_eq!(tables(&next.stored_schemas()[0].read()).len(), 1);
+    assert_eq!(tables(&next.stored_schemas()[0].read())[0].id, 90);
 }
 
 /// `RECOVER TABLE` and `CREATE SEQUENCE` only add (`getTableIDs`'s first case).
@@ -913,7 +910,7 @@ fn recover_table_and_create_sequence_diffs_add_the_table() {
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "recover table",
     );
-    assert_eq!(tables(&next.databases[0].read()).len(), 2);
+    assert_eq!(tables(&next.stored_schemas()[0].read()).len(), 2);
 
     snapshot.put(key::table_kv_key(3, 79), go_table(79, "Seq", "seq"));
     snapshot.commit_diff(
@@ -924,7 +921,7 @@ fn recover_table_and_create_sequence_diffs_add_the_table() {
         reload_cluster_catalog(&mut snapshot, &next, None).expect("reload runs"),
         "create sequence",
     );
-    assert_eq!(tables(&next.databases[0].read()).len(), 3);
+    assert_eq!(tables(&next.stored_schemas()[0].read()).len(), 3);
 }
 
 /// Go `applyRecoverSchema`: the database comes back with the tables the
@@ -948,9 +945,9 @@ fn a_recover_schema_diff_reads_the_databases_tables_from_the_store() {
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "recover schema",
     );
-    assert_eq!(next.databases.len(), catalog.databases.len() + 1);
-    assert!(next.find_table("ledger", "a").is_some());
-    assert!(next.find_table("ledger", "b").is_some());
+    assert_eq!(next.stored_schemas().len(), catalog.stored_schemas().len() + 1);
+    assert!(next.table_info_by_name("ledger", "a").is_some());
+    assert!(next.table_info_by_name("ledger", "b").is_some());
 
     snapshot.commit_diff(102, &recover(102));
     let reloaded = reload_cluster_catalog(&mut snapshot, &next, None).expect("reload runs");
@@ -991,9 +988,9 @@ fn a_modify_schema_charset_diff_copies_the_fresh_fields_onto_the_loaded_database
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "modify schema charset",
     );
-    assert_eq!(next.databases[0].read().charset, "latin1");
-    assert_eq!(next.databases[0].read().collate, "latin1_bin");
-    assert_eq!(tables(&next.databases[0].read()).len(), 1);
+    assert_eq!(next.stored_schemas()[0].read().charset, "latin1");
+    assert_eq!(next.stored_schemas()[0].read().collate, "latin1_bin");
+    assert_eq!(tables(&next.stored_schemas()[0].read()).len(), 1);
 }
 
 /// Placement-policy and masking-policy diffs touch maps this catalog does
@@ -1011,9 +1008,9 @@ fn policy_diffs_change_nothing_and_stay_incremental() {
             reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
             "policy diff",
         );
-        assert_eq!(next.schema_version, 101, "{action}");
-        assert_eq!(next.databases.len(), catalog.databases.len(), "{action}");
-        assert_eq!(tables(&next.databases[0].read()).len(), 1, "{action}");
+        assert_eq!(next.schema_meta_version(), 101, "{action}");
+        assert_eq!(next.stored_schemas().len(), catalog.stored_schemas().len(), "{action}");
+        assert_eq!(tables(&next.stored_schemas()[0].read()).len(), 1, "{action}");
     }
 }
 
@@ -1023,7 +1020,7 @@ fn policy_diffs_change_nothing_and_stay_incremental() {
 #[test]
 fn policy_diffs_keep_the_loaded_policy_set_current() {
     let (mut snapshot, catalog) = started_cluster();
-    assert!(catalog.policies.is_empty());
+    assert!(catalog.policies().next().is_none());
     put_policy(&mut snapshot, 99, "p99");
     snapshot.commit_diff(
         101,
@@ -1033,8 +1030,8 @@ fn policy_diffs_keep_the_loaded_policy_set_current() {
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "create policy",
     );
-    assert_eq!(created.policies.len(), 1);
-    assert_eq!(created.policies[0].id, 99);
+    assert_eq!(created.policies().count(), 1);
+    assert_eq!(created.policies().next().unwrap().id, 99);
     snapshot.commit_diff(
         102,
         &diff_json(102, ActionType::ACTION_DROP_PLACEMENT_POLICY, 99, 0),
@@ -1043,7 +1040,7 @@ fn policy_diffs_keep_the_loaded_policy_set_current() {
         reload_cluster_catalog(&mut snapshot, &created, None).expect("reload runs"),
         "drop policy",
     );
-    assert!(dropped.policies.is_empty());
+    assert!(dropped.policies().next().is_none());
     snapshot.commit_diff(
         103,
         &diff_json(103, ActionType::ACTION_ALTER_PLACEMENT_POLICY, 98, 0),
@@ -1075,7 +1072,7 @@ fn an_exchange_partition_diff_reloads_the_normal_and_the_partitioned_table() {
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "exchange partition",
     );
-    let mut ids: Vec<i64> = next.databases[0].read().deprecated_tables.iter_deref().map(|t| t.read().id).collect();
+    let mut ids: Vec<i64> = next.stored_schemas()[0].read().deprecated_tables.iter_deref().map(|t| t.read().id).collect();
     ids.sort_unstable();
     assert_eq!(ids, vec![90, 95]);
 }
@@ -1102,28 +1099,28 @@ fn refresh_meta_diffs_follow_the_store() {
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "refresh meta drop",
     );
-    assert!(tables(&next.databases[0].read()).is_empty());
+    assert!(tables(&next.stored_schemas()[0].read()).is_empty());
 
     snapshot.commit_diff(102, &refresh(102, 3, 78));
     let next = diffs_reload(
         reload_cluster_catalog(&mut snapshot, &next, None).expect("reload runs"),
         "refresh meta add table",
     );
-    assert!(next.find_table("campaign", "notes").is_some());
+    assert!(next.table_info_by_name("campaign", "notes").is_some());
 
     snapshot.commit_diff(103, &refresh(103, 5, 9));
     let next = diffs_reload(
         reload_cluster_catalog(&mut snapshot, &next, None).expect("reload runs"),
         "refresh meta table under unloaded database",
     );
-    assert_eq!(next.databases.len(), catalog.databases.len());
+    assert_eq!(next.stored_schemas().len(), catalog.stored_schemas().len());
 
     snapshot.commit_diff(104, &refresh(104, 4, 0));
     let next = diffs_reload(
         reload_cluster_catalog(&mut snapshot, &next, None).expect("reload runs"),
         "refresh meta add database",
     );
-    assert_eq!(next.databases.len(), catalog.databases.len() + 1);
+    assert_eq!(next.stored_schemas().len(), catalog.stored_schemas().len() + 1);
 }
 
 /// A flashback diff that does not demand a rebuilt map is a no-op in Go
@@ -1139,7 +1136,7 @@ fn a_flashback_cluster_diff_without_regenerate_changes_nothing() {
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "flashback",
     );
-    assert_eq!(tables(&next.databases[0].read()).len(), 1);
+    assert_eq!(tables(&next.stored_schemas()[0].read()).len(), 1);
 }
 
 #[test]
@@ -1167,7 +1164,7 @@ fn common_alter_table_diffs_reload_only_the_changed_table_incrementally() {
             .catalog()
             .expect("seed catalog published")
             .clone();
-        assert_eq!(tables(&catalog.databases[0].read()).len(), 2);
+        assert_eq!(tables(&catalog.stored_schemas()[0].read()).len(), 2);
 
         // A second, untouched table exists purely to prove the reload did not
         // fall back to walking the whole catalog: an incremental reload never
@@ -1191,9 +1188,9 @@ fn common_alter_table_diffs_reload_only_the_changed_table_incrementally() {
             panic!("expected an incremental diff reload for {action}, got {reloaded:?}");
         };
         assert_eq!(applied, 1, "action {action}");
-        assert_eq!(next.schema_version, 102, "action {action}");
+        assert_eq!(next.schema_meta_version(), 102, "action {action}");
         let (_, table) = next
-            .find_table("campaign", "rows")
+            .table_info_by_name("campaign", "rows")
             .unwrap_or_else(|| panic!("table 'rows' survives {action}"));
         let table = table.read();
         assert_eq!(
@@ -1205,9 +1202,9 @@ fn common_alter_table_diffs_reload_only_the_changed_table_incrementally() {
         // the count -- the diff reloaded table 77 in place, it did not walk
         // the whole catalog; the catalog the node was already serving is
         // untouched too.
-        assert_eq!(tables(&next.databases[0].read()).len(), 2, "action {action}");
+        assert_eq!(tables(&next.stored_schemas()[0].read()).len(), 2, "action {action}");
         let (_, notes) = next
-            .find_table("campaign", "notes")
+            .table_info_by_name("campaign", "notes")
             .expect("table 78 survives untouched");
         let notes = notes.read();
         assert_eq!(
@@ -1215,7 +1212,7 @@ fn common_alter_table_diffs_reload_only_the_changed_table_incrementally() {
             2,
             "action {action} does not touch table 78"
         );
-        assert_eq!(tables(&catalog.databases[0].read()).len(), 2, "action {action}");
+        assert_eq!(tables(&catalog.stored_schemas()[0].read()).len(), 2, "action {action}");
     }
 }
 
@@ -1250,12 +1247,12 @@ fn a_common_alter_table_diff_also_reloads_every_affected_table() {
     };
     assert_eq!(applied, 1);
     let (_, rows) = next
-        .find_table("campaign", "rows")
+        .table_info_by_name("campaign", "rows")
         .expect("primary table reloads");
     let rows = rows.read();
     assert_eq!(rows.cols().len(), 3);
     let (_, notes) = next
-        .find_table("campaign", "notes")
+        .table_info_by_name("campaign", "notes")
         .expect("affected table reloads too");
     let notes = notes.read();
     assert_eq!(notes.cols().len(), 3);
@@ -1300,8 +1297,8 @@ fn a_large_version_gap_takes_the_full_load_instead_of_replaying() {
         reason,
         FullReloadReason::TooManyDiffs { from: 100, to: far }
     );
-    assert_eq!(next.schema_version, far);
-    assert_eq!(tables(&next.databases[0].read()).len(), 2);
+    assert_eq!(next.schema_meta_version(), far);
+    assert_eq!(tables(&next.stored_schemas()[0].read()).len(), 2);
 }
 
 #[test]
@@ -1335,14 +1332,14 @@ fn an_empty_diff_in_the_middle_only_advances_the_version() {
         panic!("expected a diff reload");
     };
     assert_eq!(applied, 1);
-    assert_eq!(next.schema_version, 102);
-    assert_eq!(tables(&next.databases[0].read()).len(), 2);
+    assert_eq!(next.schema_meta_version(), 102);
+    assert_eq!(tables(&next.stored_schemas()[0].read()).len(), 2);
 }
 
 #[test]
 fn a_backwards_version_takes_the_full_load() {
     let (mut snapshot, mut catalog) = started_cluster();
-    catalog.schema_version = 150;
+    catalog.set_schema_meta_version(150);
     let reloaded = reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs");
     let ReloadedCatalog::Full {
         catalog: next,
@@ -1355,7 +1352,7 @@ fn a_backwards_version_takes_the_full_load() {
         reason,
         FullReloadReason::VersionWentBackwards { from: 150, to: 100 }
     );
-    assert_eq!(next.schema_version, 100);
+    assert_eq!(next.schema_meta_version(), 100);
 }
 
 #[test]
@@ -1380,8 +1377,7 @@ fn resource_group_diffs_follow_the_stored_group() {
     let (mut snapshot, catalog) = started_cluster();
     assert_eq!(
         catalog
-            .resource_groups
-            .iter()
+            .resource_groups()
             .map(|group| group.name.original())
             .collect::<Vec<_>>(),
         ["default"]
@@ -1403,10 +1399,9 @@ fn resource_group_diffs_follow_the_stored_group() {
         reload_cluster_catalog(&mut snapshot, &catalog, None).expect("reload runs"),
         "create resource group",
     );
-    let rg1 = |catalog: &ClusterCatalog| {
+    let rg1 = |catalog: &SessionExtendedInfoSchema| {
         catalog
-            .resource_groups
-            .iter()
+            .resource_groups()
             .find(|group| group.name.lowercase() == "rg1")
             .map(|group| group.settings.as_ref().expect("settings").ru_rate)
     };
@@ -1422,7 +1417,7 @@ fn resource_group_diffs_follow_the_stored_group() {
         "alter resource group",
     );
     assert_eq!(rg1(&altered), Some(200));
-    assert_eq!(altered.resource_groups.len(), 2);
+    assert_eq!(altered.resource_groups().count(), 2);
 
     snapshot.remove(&key::resource_group_kv_key(90));
     snapshot.commit_diff(
@@ -1434,5 +1429,5 @@ fn resource_group_diffs_follow_the_stored_group() {
         "drop resource group",
     );
     assert_eq!(rg1(&dropped), None);
-    assert_eq!(dropped.resource_groups.len(), 1);
+    assert_eq!(dropped.resource_groups().count(), 1);
 }

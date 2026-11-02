@@ -44,7 +44,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let mut warnings = Vec::new();
     let built = match statement {
         // Go `executor.CreateView`.
@@ -156,7 +156,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
 
 /// Go `executor.createTableWithInfoJob`.
 pub(super) fn create_table_with_info_job(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema: &str,
     info: TableInfo,
     on_exist: OnExist,
@@ -259,7 +259,7 @@ pub(super) fn create_table_with_info_job(
 /// checks: the source's public definition under the new name, with Go's
 /// reset list applied. `Err` is an IF NOT EXISTS over an existing table.
 fn build_create_table_like_info(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     statement: &DdlStatement,
     context: &dyn DdlSessionContext,
 ) -> Result<Result<TableInfo, AddIndexSubmission>, DdlPlanError> {
@@ -335,14 +335,17 @@ fn build_create_table_like_info(
 /// must exist, a temporary source is refused, and a temporary copy may not
 /// inherit what a temporary table cannot carry.
 pub fn resolve_like_source<'catalog>(
-    catalog: &'catalog ClusterCatalog,
+    catalog: &'catalog SessionExtendedInfoSchema,
     source_schema: &str,
     source_table: &str,
     temporary: tidb_ast::CreateTableTemporary,
 ) -> Result<GoShared<TableInfo>, DdlPlanError> {
-    // Go `is.TableByName`: a missing source database is reported as a
-    // missing table.
-    let Some((_, source)) = catalog.table_by_name(source_schema, source_table) else {
+    // Go `is.TableByName`, whose memory schemas' `DBInfo`s carry their
+    // tables: a missing source database is reported as a missing table.
+    let Some((_, source)) = catalog
+        .table_info_by_name(source_schema, source_table)
+        .or_else(|| tidb_infoschema::virtual_tables::virtual_table(source_schema, source_table))
+    else {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
                 (source_schema.to_owned()).into(),
@@ -421,14 +424,12 @@ fn create_table_args(
 
 /// The job's database, or the job cancelled as Go's
 /// `checkSchemaExistAndCancelNotExistJob` cancels it.
-fn job_database<'a>(
-    catalog: &'a ClusterCatalog,
+fn job_database(
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
-) -> Result<&'a GoShared<DBInfo>, DdlPlanError> {
+) -> Result<GoShared<DBInfo>, DdlPlanError> {
     catalog
-        .databases
-        .iter()
-        .find(|database| database.read().id == active.job.schema_id)
+        .schema_by_id(active.job.schema_id)
         .ok_or_else(|| {
             cancel_ddl_job(
                 active,
@@ -454,13 +455,13 @@ fn table_exists_in_owner(schema: &str, name: &str) -> DdlPlanError {
 
 /// One step publishing a new object under a new version.
 fn object_step(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     mut mutations: Vec<BufferMutation>,
     diff: SchemaDiff,
     info: &TableInfo,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    let schema_version = catalog.schema_version + 1;
+    let schema_version = catalog.schema_meta_version() + 1;
     let diff = SchemaDiff {
         version: schema_version,
         ..diff
@@ -491,7 +492,7 @@ fn object_step(
 /// Go `onCreateView`.
 pub(super) fn on_create_view<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -553,7 +554,7 @@ pub(super) fn on_create_view<S: MetaSnapshot>(
 
 /// Go `onCreateSequence`.
 pub(super) fn on_create_sequence(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -612,7 +613,7 @@ pub(super) fn on_create_sequence(
 
 /// Go `executor.AlterSequence` up to `doDDLJob2`.
 fn build_alter_sequence_job(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
@@ -683,7 +684,7 @@ fn build_alter_sequence_job(
 
 /// Go `onAlterSequence`.
 pub(super) fn on_alter_sequence(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {

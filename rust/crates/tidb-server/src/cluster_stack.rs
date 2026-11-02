@@ -194,7 +194,7 @@ pub fn cluster_session_stack(
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     let (startup, startup_lease_grant_ts) = loaded.expect("the catalog closure ran exactly once");
-    let schema_version = startup.schema_version;
+    let schema_version = startup.schema_meta_version();
 
     // `node_accounts` also hands back the privilege reloader (landed in
     // parallel); it must stay alive for the node's run and drop before the
@@ -297,7 +297,7 @@ pub fn cluster_session_stack(
         let catalog = Arc::clone(&catalog);
         Arc::new(build_mpp_client(
             &authority,
-            move || catalog.get_latest().schema_version,
+            move || catalog.get_latest().schema_meta_version(),
         ))
     };
     // This node's identity in the cluster: `/tidb/server/info/<uuid>` under

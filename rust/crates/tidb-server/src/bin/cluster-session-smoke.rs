@@ -37,7 +37,7 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tidb_infoschema::cluster_catalog::ClusterCatalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_store_driver_txn::cluster_table_storage::{
     commit_staged_buffer, statement_storage, SessionTransaction,
 };
@@ -120,7 +120,7 @@ fn parse_arguments() -> Result<Arguments, String> {
 
 fn run() -> Result<(), String> {
     let arguments = parse_arguments()?;
-    let mut loaded: Option<ClusterCatalog> = None;
+    let mut loaded: Option<SessionExtendedInfoSchema> = None;
     let mut authority = ProductionReadProcessAuthority::connect(
         [arguments.pd.clone()],
         TIMEOUT,
@@ -167,7 +167,7 @@ fn run() -> Result<(), String> {
 fn run_autocommit(
     opener: &Arc<tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener>,
     buffer: &MutationBuffer,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     arguments: &Arguments,
     cop_scans: Option<&CopScans>,
 ) -> Option<String> {
@@ -206,7 +206,7 @@ fn run_autocommit(
 fn run_explicit_transaction(
     opener: &Arc<tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener>,
     buffer: &MutationBuffer,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     arguments: &Arguments,
     cop_scans: Option<&CopScans>,
 ) -> Option<String> {
@@ -259,7 +259,7 @@ fn run_explicit_transaction(
 /// Runs one statement of the explicit transaction over its already-bound
 /// snapshot.
 fn run_in_transaction(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     storage: &ClusterTableStorage,
     schema: &str,
     sql: &str,
@@ -295,7 +295,7 @@ fn run_in_transaction(
 fn run_statement(
     opener: &Arc<tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener>,
     buffer: &MutationBuffer,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema: &str,
     sql: &str,
     cop_scans: Option<&CopScans>,

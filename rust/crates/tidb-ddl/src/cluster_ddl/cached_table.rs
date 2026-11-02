@@ -17,7 +17,7 @@
 
 use tidb_terror::MysqlError;
 
-use tidb_infoschema::cluster_catalog::ClusterCatalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 
 /// Go `executor.AlterTable` (anything but one CACHE / NOCACHE spec),
 /// `createIndex`, `dropIndex`, `TruncateTable`, and `renameTable` /
@@ -26,7 +26,7 @@ use tidb_infoschema::cluster_catalog::ClusterCatalog;
 /// (`check_cluster_drop_object`). A table that does not exist is left to the
 /// statement, which reports it.
 pub fn check_cached_table_ddl(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     stmt: &tidb_ast::Stmt,
 ) -> Result<(), MysqlError> {
@@ -39,7 +39,7 @@ pub fn check_cached_table_ddl(
             [name] => (current_db, name.as_str()),
             _ => return false,
         };
-        catalog.find_table(database, name).is_some_and(|(_, table)| {
+        catalog.table_info_by_name(database, name).is_some_and(|(_, table)| {
             table.read().table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE
         })
     };

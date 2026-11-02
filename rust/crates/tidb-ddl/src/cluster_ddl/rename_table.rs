@@ -26,7 +26,7 @@ use super::*;
 /// moves: the old and new schema ids and the table, or `None` for an
 /// ALTER TABLE ... RENAME to its own name.
 fn extract_tbl_infos(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     pair: &RenameTablePair,
     is_alter: bool,
     tables: &mut BTreeMap<String, Option<i64>>,
@@ -37,14 +37,14 @@ fn extract_tbl_infos(
         .get(&key(schema, table))
     {
         Some(id) => *id,
-        None => catalog.find_table(schema, table).map(|(_, table)| table.read().id),
+        None => catalog.table_info_by_name(schema, table).map(|(_, table)| table.read().id),
     };
     let source_id = table_id(tables, &pair.from_schema, &pair.from_table);
     let target_exists = table_id(tables, &pair.to_schema, &pair.to_table).is_some();
     let old_database = find_database(catalog, &pair.from_schema);
     let new_database = find_database(catalog, &pair.to_schema);
     let source_is_view = catalog
-        .find_table(&pair.from_schema, &pair.from_table)
+        .table_info_by_name(&pair.from_schema, &pair.from_table)
         .is_some_and(|(_, table)| table.read().view.is_some());
     use tidb_ddl_build::table_lifecycle::{check_rename, RenameAdmission};
     let admitted = check_rename(RenameAdmission {
@@ -80,23 +80,19 @@ fn extract_tbl_infos(
     let table_id = source_id.expect("admitted source table");
     tables.insert(key(&pair.from_schema, &pair.from_table), None);
     tables.insert(key(&pair.to_schema, &pair.to_table), Some(table_id));
-    Ok(Some((
-        old_database.read().id,
-        old_database.read().name.clone(),
-        new_database.read().id,
-        new_database.read().name.clone(),
-        table_id,
-    )))
+    let (old_id, old_name) = (old_database.read().id, old_database.read().name.clone());
+    let (new_id, new_name) = (new_database.read().id, new_database.read().name.clone());
+    Ok(Some((old_id, old_name, new_id, new_name, table_id)))
 }
 
 /// Go's checks on the table a rename moves: not cached, normal mode.
 fn check_renamable(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     operation: &str,
 ) -> Result<(), DdlPlanError> {
     let Some(table) = catalog
-        .databases
+        .stored_schemas()
         .iter()
         .flat_map(|database| database.read().deprecated_tables.iter_deref())
         .find(|table| table.read().id == table_id)
@@ -149,7 +145,7 @@ pub fn rename_table<S: MetaSnapshot>(
         DdlStatement::RenameTables { pairs } => (pairs.clone(), false),
         _ => return Ok(None),
     };
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let mut tables = BTreeMap::new();
     let (job, args) = if pairs.len() == 1 {
         // Go `renameTable`.
@@ -246,14 +242,14 @@ pub fn rename_table<S: MetaSnapshot>(
 /// The tables as the job's earlier moves left them, keyed by id, with the
 /// meta keys the job writes and deletes.
 struct EvolvingTables<'a> {
-    catalog: &'a ClusterCatalog,
+    catalog: &'a SessionExtendedInfoSchema,
     tables: BTreeMap<i64, (i64, TableInfo)>,
     written: Vec<i64>,
     deleted: Vec<(i64, i64)>,
 }
 
 impl<'a> EvolvingTables<'a> {
-    fn new(catalog: &'a ClusterCatalog) -> Self {
+    fn new(catalog: &'a SessionExtendedInfoSchema) -> Self {
         Self {
             catalog,
             tables: BTreeMap::new(),
@@ -269,9 +265,7 @@ impl<'a> EvolvingTables<'a> {
         }
         let table = self
             .catalog
-            .databases
-            .iter()
-            .find(|database| database.read().id == schema_id)?
+            .schema_by_id(schema_id)?
             .read().deprecated_tables
             .iter_deref()
             .find(|table| table.read().id == table_id)?
@@ -326,12 +320,12 @@ struct ForeignKeyHelper {
 
 /// Go `GetTableReferredForeignKeys` over the catalog the job started from.
 fn referred_foreign_keys(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema: &str,
     table: &str,
 ) -> Vec<(String, String, String)> {
     let mut referred = Vec::new();
-    for database in &catalog.databases {
+    for database in &catalog.stored_schemas() {
         for child in database.read().deprecated_tables.iter_deref() {
             let child = child.read();
             for fk in child.foreign_keys.iter_deref() {
@@ -356,7 +350,7 @@ fn referred_foreign_keys(
 /// for one entry.
 #[allow(clippy::too_many_arguments)]
 fn rename_one(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     tables: &mut EvolvingTables<'_>,
     helper: &mut ForeignKeyHelper,
     label_rules: &mut LabelRuleSteps,
@@ -417,9 +411,7 @@ fn rename_one(
     }
     table.name = info.new_table_name.clone();
     let Some(new_database) = catalog
-        .databases
-        .iter()
-        .find(|database| database.read().id == new_schema_id)
+        .schema_by_id(new_schema_id)
     else {
         return Err(cancel_ddl_job(
             active,
@@ -471,7 +463,7 @@ fn rename_one(
         let (schema_id, table_id) = match helper.loaded.iter().find(|(key, ..)| *key == child_key) {
             Some((_, schema_id, table_id)) => (*schema_id, *table_id),
             None => {
-                let Some((database, child)) = catalog.find_table(&child_schema, &child_table)
+                let Some((database, child)) = catalog.table_info_by_name(&child_schema, &child_table)
                 else {
                     continue;
                 };
@@ -504,7 +496,7 @@ fn rename_one(
 
 /// Go `onRenameTable` / `onRenameTables` and their finishing steps.
 pub(super) fn on_rename_table(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     _start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -524,7 +516,7 @@ pub(super) fn on_rename_table(
         let infos = args.read().rename_table_infos.get();
         infos.iter_deref().map(|info| info.read().clone()).collect()
     };
-    let schema_version = catalog.schema_version + 1;
+    let schema_version = catalog.schema_meta_version() + 1;
     let mut diff = SchemaDiff {
         version: schema_version,
         action_type: active.job.type_,
@@ -539,9 +531,7 @@ pub(super) fn on_rename_table(
         let mut finished = Vec::with_capacity(infos.len());
         for info in &infos {
             let table = catalog
-                .databases
-                .iter()
-                .find(|database| database.read().id == info.new_schema_id)
+                .schema_by_id(info.new_schema_id)
                 .and_then(|database| {
                     database
                         .read().deprecated_tables
@@ -595,9 +585,7 @@ pub(super) fn on_rename_table(
         // Go `checkTableNotExists(newSchemaID, tableName)`.
         let info = &infos[0];
         let Some(database) = catalog
-            .databases
-            .iter()
-            .find(|database| database.read().id == info.new_schema_id)
+            .schema_by_id(info.new_schema_id)
         else {
             return Err(cancel_ddl_job(
                 active,

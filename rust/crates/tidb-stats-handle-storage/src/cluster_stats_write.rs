@@ -63,7 +63,8 @@ use tidb_stats::{encode_cmsketch_without_topn, encode_fm_sketch};
 use tidb_stats_util::JsonPredicateColumn;
 use tidb_sqlescape::{must_escape_sql, must_escape_sql_text, SqlArg};
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::ColStatsTimeInfo;
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 use tidb_syssession::mysql_system_tables::{
@@ -125,7 +126,7 @@ pub enum AnalyzeStatsWriteScope {
 /// must retract the buckets it no longer has.
 pub fn plan_stats_write<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     now: Time,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -136,7 +137,7 @@ pub fn plan_stats_write<S: MetaSnapshot>(
 /// Plans a full physical-partition ANALYZE write, including FM sketches.
 pub fn plan_partition_stats_write<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     now: Time,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -148,7 +149,7 @@ pub fn plan_partition_stats_write<S: MetaSnapshot>(
 /// `stats`, matching Go's partial-column analyze storage behavior.
 pub fn plan_partial_stats_write<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     now: Time,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -159,7 +160,7 @@ pub fn plan_partial_stats_write<S: MetaSnapshot>(
 /// Plans a partial physical-partition ANALYZE write, including FM sketches.
 pub fn plan_partial_partition_stats_write<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     now: Time,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -174,7 +175,7 @@ pub fn plan_partial_partition_stats_write<S: MetaSnapshot>(
 /// committed after the sampling snapshot.
 pub fn plan_analyze_stats_write<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     meta: AnalyzeStatsMeta,
     scope: AnalyzeStatsWriteScope,
@@ -210,7 +211,7 @@ pub fn plan_analyze_stats_write<S: MetaSnapshot>(
 /// sketches for the global-stats merge; a table-level one does not.
 pub fn plan_independent_index_stats_write<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     now: Time,
     dump_fm: bool,
@@ -230,7 +231,7 @@ pub fn plan_independent_index_stats_write<S: MetaSnapshot>(
 
 fn plan_stats_write_impl<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     now: Time,
     replace_all: bool,
@@ -511,7 +512,7 @@ pub fn loaded_stats_item_statements(
 /// Plans exactly one pinned Go SQL statement for a loaded statistics item.
 pub fn plan_loaded_stats_item_statement<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     count: i64,
     item: &ClusterStatsItem,
@@ -564,7 +565,7 @@ pub fn plan_loaded_stats_item_statement<S: MetaSnapshot>(
 /// preserved by the `ON DUPLICATE KEY UPDATE` branch.
 pub fn plan_loaded_stats_meta_write<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     count: i64,
     modify_count: i64,
@@ -647,7 +648,7 @@ pub fn insert_table_stats_statements(
 /// Plans one pinned Go `InsertTableStats2KV` statement.
 pub fn plan_insert_table_stats_statement<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     statement: &InsertTableStatsStatement,
     version: u64,
     now: Time,
@@ -716,7 +717,7 @@ pub fn plan_insert_table_stats_statement<S: MetaSnapshot>(
 /// datum select Go's two origin-default branches.
 pub fn plan_insert_column_stats<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     physical_id: i64,
     column_id: i64,
     count: i64,
@@ -778,7 +779,7 @@ pub fn plan_insert_column_stats<S: MetaSnapshot>(
 /// histogram insert in pinned Go `InsertColStats2KV`.
 pub fn plan_insert_column_default_bucket<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     physical_id: i64,
     column_id: i64,
     count: i64,
@@ -814,7 +815,7 @@ pub fn plan_insert_column_default_bucket<S: MetaSnapshot>(
 /// its count, modify count, and snapshot untouched.
 pub fn plan_stats_meta_version_refresh<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     version: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -857,7 +858,7 @@ pub const STATS_VERSION_TABLES: [StatsVersionTable; 2] =
 /// statement does not refresh `last_stats_histograms_version`.
 pub fn plan_update_stats_table_version<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     target: StatsVersionTable,
     version: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -887,7 +888,7 @@ pub fn plan_update_stats_table_version<S: MetaSnapshot>(
 /// Plans pinned Go `UpdateStatsVersion` as its two ordered table-wide UPDATEs.
 pub fn plan_update_stats_version<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     version: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
@@ -930,7 +931,7 @@ pub const GLOBAL_STATS_ID_TABLES: [GlobalStatsIdTable; 6] = [
 /// Plans one pinned Go `ChangeGlobalStatsID` table UPDATE.
 pub fn plan_change_global_stats_table_id<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     target: GlobalStatsIdTable,
     from: i64,
     to: i64,
@@ -962,7 +963,7 @@ pub fn plan_change_global_stats_table_id<S: MetaSnapshot>(
 /// transaction.
 pub fn plan_change_global_stats_id<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     from: i64,
     to: i64,
 ) -> Result<StatsWritePlan, StatsWriteError> {
@@ -976,7 +977,7 @@ pub fn plan_change_global_stats_id<S: MetaSnapshot>(
 
 fn change_stats_table_id<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_name: &str,
     identity: &'static [&'static str],
     from: i64,
@@ -1031,7 +1032,7 @@ fn change_stats_table_id<S: MetaSnapshot>(
 /// cluster path uses UTC too, so the stored wall-clock value is identical.
 pub fn plan_loaded_stats_usage_write<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     predicate_columns: &[Option<JsonPredicateColumn>],
     now: Time,
@@ -1061,7 +1062,7 @@ pub fn plan_loaded_stats_usage_write<S: MetaSnapshot>(
 /// iteration order is intentionally unspecified, as it is in Go.
 pub fn plan_column_stats_usage_write<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     usage: &HashMap<TableItemID, ColStatsTimeInfo>,
     now: Time,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -1106,7 +1107,7 @@ pub fn plan_column_stats_usage_write<S: MetaSnapshot>(
 /// partition DDL subscriber.
 pub fn plan_exchange_partition_stats_update<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     count_delta: i64,
     modify_count_delta: i64,
@@ -1162,7 +1163,7 @@ pub fn plan_exchange_partition_stats_update<S: MetaSnapshot>(
 /// Reads Go `GetLockedTables`' stored ID set from the dump transaction snapshot.
 pub fn load_stats_locked_table_ids<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
 ) -> Result<std::collections::HashSet<i64>, StatsWriteError> {
     let table = locate(catalog, "stats_table_locked")?;
     let table = &*table.read();
@@ -1182,7 +1183,7 @@ pub fn load_stats_locked_table_ids<S: MetaSnapshot>(
 /// SQL statement and therefore one independent autocommit transaction.
 fn plan_outdated_historical_stats_delete<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_name: &str,
     cutoff: Time,
     limit: usize,
@@ -1215,7 +1216,7 @@ fn plan_outdated_historical_stats_delete<S: MetaSnapshot>(
 /// Plans one pinned Go 1,000-row `stats_meta_history` expiry statement.
 pub fn plan_outdated_historical_meta_delete<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     cutoff: Time,
     limit: usize,
 ) -> Result<StatsWritePlan, StatsWriteError> {
@@ -1225,7 +1226,7 @@ pub fn plan_outdated_historical_meta_delete<S: MetaSnapshot>(
 /// Plans one pinned Go 50-row `stats_history` expiry statement.
 pub fn plan_outdated_historical_data_delete<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     cutoff: Time,
     limit: usize,
 ) -> Result<StatsWritePlan, StatsWriteError> {
@@ -1236,7 +1237,7 @@ pub fn plan_outdated_historical_data_delete<S: MetaSnapshot>(
 /// `ClearOutdatedHistoryStats`' opening `SELECT count(*)` statement.
 pub fn count_outdated_historical_stats<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     cutoff: Time,
 ) -> Result<usize, StatsWriteError> {
     let table = locate(catalog, "stats_meta_history")?;
@@ -1258,7 +1259,7 @@ pub fn count_outdated_historical_stats<S: MetaSnapshot>(
 
 fn plan_historical_stats_table_delete<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_name: &str,
     identity: &'static [&'static str],
     physical_id: i64,
@@ -1275,7 +1276,7 @@ fn plan_historical_stats_table_delete<S: MetaSnapshot>(
 /// every payload block for one dropped physical table.
 pub fn plan_historical_stats_data_delete_for_table<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     physical_id: i64,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     plan_historical_stats_table_delete(
@@ -1291,7 +1292,7 @@ pub fn plan_historical_stats_data_delete_for_table<S: MetaSnapshot>(
 /// every metadata version for one dropped physical table.
 pub fn plan_historical_stats_meta_delete_for_table<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     physical_id: i64,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     plan_historical_stats_table_delete(
@@ -1306,7 +1307,7 @@ pub fn plan_historical_stats_meta_delete_for_table<S: MetaSnapshot>(
 /// Reads pinned Go `GCStats`' version window from `mysql.stats_meta`.
 pub fn load_stats_gc_candidates<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     last_gc: u64,
     gc_version: u64,
 ) -> Result<Vec<i64>, StatsWriteError> {
@@ -1330,7 +1331,7 @@ pub fn load_stats_gc_candidates<S: MetaSnapshot>(
 /// Reads pinned Go `gcTableStats`' `(is_index, hist_id)` rows for one table.
 pub fn load_stats_gc_histograms<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     physical_id: i64,
 ) -> Result<Vec<(bool, i64)>, StatsWriteError> {
     let view = SystemTableView::locate(
@@ -1356,7 +1357,7 @@ pub fn load_stats_gc_histograms<S: MetaSnapshot>(
 /// the `stats_meta` row after a prior pass removed every histogram row.
 pub fn plan_stats_meta_delete_for_table<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     physical_id: i64,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     plan_historical_stats_table_delete(snapshot, catalog, "stats_meta", &["table_id"], physical_id)
@@ -1367,7 +1368,7 @@ const STATS_GC_LAST_TS: &str = "tidb_stats_gc_last_ts";
 /// Reads pinned Go `getLastGCTimestamp` from `mysql.tidb`.
 pub fn load_stats_gc_timestamp<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
 ) -> Result<u64, StatsWriteError> {
     let view = SystemTableView::locate(catalog, "tidb", &["variable_name", "variable_value"])?;
     for (key, value) in scan_system_table(snapshot, &view)? {
@@ -1388,7 +1389,7 @@ pub fn load_stats_gc_timestamp<S: MetaSnapshot>(
 /// Plans pinned Go `writeGCTimestampToKV`'s one upsert into `mysql.tidb`.
 pub fn plan_stats_gc_timestamp_write<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     gc_version: u64,
     now: Time,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -1434,7 +1435,7 @@ pub fn plan_stats_gc_timestamp_write<S: MetaSnapshot>(
 
 fn retract_stats_item_rows<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_name: &str,
     identity: &'static [&'static str],
     physical_id: i64,
@@ -1452,7 +1453,7 @@ fn retract_stats_item_rows<S: MetaSnapshot>(
 /// every dependent TopN, bucket, FM-sketch, and column-usage row.
 pub fn plan_stats_item_delete<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     physical_id: i64,
     hist_id: i64,
     is_index: bool,
@@ -1508,7 +1509,7 @@ pub fn plan_stats_item_delete<S: MetaSnapshot>(
 
 fn retract_stats_table_rows<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_name: &str,
     identity: &'static [&'static str],
     physical_id: i64,
@@ -1522,7 +1523,7 @@ fn retract_stats_table_rows<S: MetaSnapshot>(
 
 fn reset_table_histograms<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     physical_id: i64,
     version: u64,
     plan: &mut StatsWritePlan,
@@ -1567,7 +1568,7 @@ fn reset_table_histograms<S: MetaSnapshot>(
 /// analyze-option, and statistics-lock rows after advancing metadata versions.
 pub fn plan_delete_table_stats<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     physical_ids: &[i64],
     soft: bool,
     version: u64,
@@ -1678,7 +1679,7 @@ pub fn predicate_time_value(
 
 fn plan_loaded_meta<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     count: i64,
     version: u64,
@@ -1723,7 +1724,7 @@ fn plan_loaded_meta<S: MetaSnapshot>(
 
 fn plan_loaded_histogram<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     item: &ClusterStatsItem,
     version: u64,
@@ -1890,7 +1891,7 @@ fn loaded_bucket_batches(
 
 fn plan_loaded_buckets_delete<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     item: &ClusterStatsItem,
     plan: &mut StatsWritePlan,
@@ -1909,7 +1910,7 @@ fn plan_loaded_buckets_delete<S: MetaSnapshot>(
 
 fn plan_loaded_buckets_insert<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     item: &ClusterStatsItem,
     range: &Range<usize>,
@@ -1973,7 +1974,7 @@ fn plan_loaded_buckets_insert<S: MetaSnapshot>(
 
 fn plan_loaded_topn_delete<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     item: &ClusterStatsItem,
     plan: &mut StatsWritePlan,
@@ -1992,7 +1993,7 @@ fn plan_loaded_topn_delete<S: MetaSnapshot>(
 
 fn plan_loaded_topn_insert<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     item: &ClusterStatsItem,
     range: &Range<usize>,
@@ -2038,7 +2039,7 @@ fn plan_loaded_topn_insert<S: MetaSnapshot>(
 
 fn plan_loaded_fm_insert<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     item: &ClusterStatsItem,
     now: Time,
@@ -2063,7 +2064,7 @@ fn plan_loaded_fm_insert<S: MetaSnapshot>(
 }
 
 fn store_fm_sketch(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     rows: &mut StatsRows<'_>,
     table: &TableInfo,
     table_id: i64,
@@ -2088,7 +2089,7 @@ fn store_fm_sketch(
 
 fn plan_loaded_fm_delete<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     item: &ClusterStatsItem,
     plan: &mut StatsWritePlan,
@@ -2107,7 +2108,7 @@ fn plan_loaded_fm_delete<S: MetaSnapshot>(
 
 fn plan_meta<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     analyze_meta: Option<AnalyzeStatsMeta>,
     now: Time,
@@ -2183,7 +2184,7 @@ fn plan_meta<S: MetaSnapshot>(
 
 fn plan_independent_index_meta<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     now: Time,
     plan: &mut StatsWritePlan,
@@ -2217,7 +2218,7 @@ fn plan_independent_index_meta<S: MetaSnapshot>(
 
 fn plan_histograms<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     now: Time,
     replace_all: bool,
@@ -2286,7 +2287,7 @@ fn plan_histograms<S: MetaSnapshot>(
 
 fn plan_buckets<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     now: Time,
     replace_all: bool,
@@ -2354,7 +2355,7 @@ fn plan_buckets<S: MetaSnapshot>(
 
 fn plan_topn<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     now: Time,
     replace_all: bool,
@@ -2402,7 +2403,7 @@ fn plan_topn<S: MetaSnapshot>(
 
 fn plan_fm_sketches<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     now: Time,
     replace_all: bool,

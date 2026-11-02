@@ -25,7 +25,8 @@ use tidb_txnkv::kv_storage::{SnapshotScanRegion, Storage, Transaction};
 use tidb_txnkv::Key;
 
 use crate::catalog_reload::{reload_cluster_catalog, ReloadedCatalog};
-use tidb_infoschema::cluster_catalog::{fetch_all_schemas_with_tables, ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot};
+use tidb_infoschema::cluster_catalog::{load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot, PagedMetaSnapshot};
+use tidb_infoschema::SessionExtendedInfoSchema;
 
 use tidb_kv::key::prefix_scan_end;
 
@@ -244,7 +245,7 @@ impl PagedMetaSnapshot for SnapshotMetaSnapshot {
 pub fn load_catalog_from_cluster(
     opener: &dyn Storage,
     timeout: Duration,
-) -> Result<ClusterCatalog, ClusterCatalogError> {
+) -> Result<SessionExtendedInfoSchema, ClusterCatalogError> {
     load_catalog_from_cluster_at(opener, timeout).map(|(catalog, _)| catalog)
 }
 
@@ -256,14 +257,14 @@ pub fn load_catalog_from_cluster(
 pub fn load_catalog_from_cluster_at(
     opener: &dyn Storage,
     timeout: Duration,
-) -> Result<(ClusterCatalog, u64), ClusterCatalogError> {
+) -> Result<(SessionExtendedInfoSchema, u64), ClusterCatalogError> {
     let mut transaction = opener
         .begin_read_only()
         .map_err(coordinator_catalog_error)?;
     let lease_grant_ts = transaction.start_ts();
     let catalog = {
         let mut snapshot = TransactionMetaSnapshot::new(transaction.as_mut(), timeout);
-        fetch_all_schemas_with_tables(&mut snapshot)?
+        load_info_schema(&mut snapshot)?
     };
     transaction
         .finish_without_writes()
@@ -280,7 +281,7 @@ pub fn load_catalog_from_cluster_at(
 pub fn reload(
     opener: &dyn Storage,
     timeout: Duration,
-    current: &ClusterCatalog,
+    current: &SessionExtendedInfoSchema,
     row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<ReloadedCatalogAt, ClusterCatalogError> {
     let mut transaction = opener
@@ -343,7 +344,7 @@ pub fn note_reload(
             validator.update(
                 lease_grant_ts,
                 current_version,
-                catalog.schema_version,
+                catalog.schema_meta_version(),
                 Some(&changes),
             );
             crate::catalog_watch::CatalogReloadPass::Diffs(catalog)
@@ -355,13 +356,13 @@ pub fn note_reload(
             // JSON line from stderr.
             eprintln!(
                 "{{\"event\":\"catalog_full_reload\",\"schema_version\":{},\"reason\":\"{reason}\"}}",
-                catalog.schema_version
+                catalog.schema_meta_version()
             );
             validator.reset();
             validator.update(
                 lease_grant_ts,
                 current_version,
-                catalog.schema_version,
+                catalog.schema_meta_version(),
                 None,
             );
             crate::catalog_watch::CatalogReloadPass::Full(catalog)

@@ -241,7 +241,7 @@ pub fn create_index<S: MetaSnapshot>(
     has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
     job_context: &dyn DdlSessionContext,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let mut built = build_add_index_job(snapshot, &catalog, statement, store_count, job_context)?;
     // Go `Job.Query` is the submitting statement's text, which the job
     // context carries (the lowered statement's context predates it).
@@ -261,7 +261,7 @@ pub fn create_index<S: MetaSnapshot>(
 /// NULL is refused with 1138. Go's owner asks during the job; this node asks
 /// in the submitting transaction, as it does for MODIFY COLUMN.
 pub(super) fn check_added_primary_key_holds_no_null(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     statement: &DdlStatement,
     has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
 ) -> Result<(), DdlPlanError> {
@@ -311,7 +311,7 @@ pub(super) fn check_added_primary_key_holds_no_null(
 /// multi-schema change appends as a sub-job (Go `appendToSubJobs`).
 pub(super) fn build_add_index_job<S: MetaSnapshot>(
     _snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     statement: &DdlStatement,
     store_count: usize,
     job_context: &dyn DdlSessionContext,
@@ -641,7 +641,7 @@ pub(super) fn pick_backfill_type(job: &Job) -> tidb_model::ReorgType {
 /// Go `updateVersionAndTableInfo`: the table write and, when the state moved,
 /// the version bump with its diff.
 pub(super) fn update_version_and_table_info(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     database_id: i64,
     info: &TableInfo,
@@ -662,7 +662,7 @@ pub(super) fn update_version_and_table_info(
 /// [`update_version_and_table_info`] whose diff `fill` completes, as Go's `updateSchemaVersion`
 /// does per action (the affected physical tables of a partition job).
 pub(super) fn table_step_with_diff(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     database_id: i64,
     info: &TableInfo,
@@ -682,7 +682,7 @@ pub(super) fn table_step_with_diff(
     // version, the sub-jobs after the first skipping theirs.
     let should_update_version = should_update_version && !skips_version(&active.job);
     let (schema_version, diff) = if should_update_version {
-        let schema_version = catalog.schema_version + 1;
+        let schema_version = catalog.schema_meta_version() + 1;
         let mut diff = SchemaDiff {
             version: schema_version,
             action_type: active.job.type_,
@@ -904,7 +904,7 @@ fn move_and_update_hidden_columns_to_public(info: &mut TableInfo, index: &GoShar
 /// the reorganization the owner ran since the last step, if any.
 pub(super) fn plan_persisted_add_index_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcome: Option<&ReorgOutcome>,
@@ -1022,7 +1022,7 @@ fn check_primary_key_not_null(info: &mut TableInfo, index: &IndexInfo) {
 #[allow(clippy::too_many_arguments)]
 fn plan_write_reorganization<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     mut info: TableInfo,
     indexes: Vec<GoShared<IndexInfo>>,
@@ -1159,7 +1159,7 @@ pub(super) enum CreateIndexReorg {
 /// reorganization and hands its [`ReorgOutcome`] to the next visit.
 pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &TableInfo,
     indexes: &[GoShared<IndexInfo>],
@@ -1320,7 +1320,7 @@ fn convert_add_index_to_rollback(
 /// Go `onDropIndex` for a rolled-back ADD INDEX: delete-only ->
 /// delete-reorganization -> gone, then ROLLBACK DONE.
 fn plan_rollback_add_index(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -1507,7 +1507,7 @@ fn drop_index_column_flag(info: &TableInfo, index: &IndexInfo) {
 /// Go `rollingbackAddIndex` for `ADMIN CANCEL DDL JOB`: the job turns into
 /// its rollback, from wherever it stood.
 pub(super) fn rollingback_add_index(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -1550,7 +1550,7 @@ pub(super) fn rollingback_add_index(
 /// Go `getDDLReorgHandle`: the job's `mysql.tidb_ddl_reorg` row.
 pub(super) fn get_ddl_reorg_handle<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<ReorgHandle, DdlPlanError> {
     let table =

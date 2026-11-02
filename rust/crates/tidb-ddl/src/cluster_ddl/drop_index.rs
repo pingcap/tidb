@@ -32,7 +32,7 @@ pub fn drop_index<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let built = build_drop_index_job(snapshot, &catalog, statement, job_context)?;
     submit_built_job(snapshot, &catalog, built, start_ts, upgrading, min_job_id)
 }
@@ -41,7 +41,7 @@ pub fn drop_index<S: MetaSnapshot>(
 /// multi-schema change appends as a sub-job (Go `appendToSubJobs`).
 pub(super) fn build_drop_index_job<S: MetaSnapshot>(
     _snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
@@ -152,7 +152,7 @@ pub(super) fn build_drop_index_job<S: MetaSnapshot>(
 /// Go `checkDropIndex`: the indexes the job names, each still there and not
 /// needed by a foreign key. `Ok(Err(if_exists))` when one is missing.
 fn check_drop_index(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<
     (
@@ -213,7 +213,7 @@ fn check_drop_index(
 
 /// Go `onDropIndex` for a DROP INDEX / DROP PRIMARY KEY job.
 pub(super) fn on_drop_index(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -317,7 +317,7 @@ pub(super) fn on_drop_index(
 /// Go `rollingbackDropIndex`: only a job whose index is still public can be
 /// cancelled; past that the drop runs on.
 pub(super) fn rollingback_drop_index(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let (_, checked) = check_drop_index(catalog, active)?;

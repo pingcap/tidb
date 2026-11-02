@@ -109,7 +109,7 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
         } => (schema, table, action.as_ref(), &context.0),
         _ => return Ok(None),
     };
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let (database_id, stored) = locate_table(&catalog, schema, table)?;
     let stored = stored.read();
     let kv = tidb_ddl_build::partition_ddl::PartitionedTable::new(&stored)
@@ -474,7 +474,7 @@ fn changed_indexes(partition: &tidb_model::partition::PartitionInfo) -> BTreeMap
 /// Go `getReorgPartitionInfo`: the table, and at the first step the DDL's
 /// target scheme recorded on its partitioning.
 fn reorg_partition_info(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     part_info: &tidb_model::partition::PartitionInfo,
 ) -> Result<TableInfo, DdlPlanError> {
@@ -504,7 +504,7 @@ fn reorg_partition_info(
 /// `SetSchemaDiffForPartitionModify` names the table as its own old table
 /// for PARTITION BY and REMOVE PARTITIONING.
 fn reorg_table_step(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     database_id: i64,
     info: &TableInfo,
@@ -522,7 +522,7 @@ fn reorg_table_step(
 /// Go `onReorganizePartition`.
 pub(super) fn on_reorganize_partition<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcome: Option<&ReorgOutcome>,
@@ -1024,7 +1024,7 @@ fn phase_scope(info: &TableInfo, phase: PartitionReorgPhase) -> (Vec<i64>, Vec<i
 /// between steps.
 fn do_partition_reorg_work<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &TableInfo,
     outcome: Option<&ReorgOutcome>,
@@ -1155,7 +1155,7 @@ fn do_partition_reorg_work<S: MetaSnapshot>(
 /// the job turns to roll back, the adding partitions to be dropped by
 /// `rollbackLikeDropPartition`.
 fn rollback_reorganize_partition_with_err(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     args: &GoShared<tidb_model::TablePartitionArgs>,
     start_ts: u64,
@@ -1261,7 +1261,7 @@ fn rollback_reorganize_partition_with_err(
 /// Go `onRollbackReorganizePartition`: past public the old indexes are being
 /// destroyed, so the job rolls on.
 pub(super) fn on_rollback_reorganize_partition(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {

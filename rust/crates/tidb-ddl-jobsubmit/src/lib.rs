@@ -38,7 +38,8 @@ use tidb_model::TraceInfo;
 use tidb_goruntime::go_runtime::GoSharedSlice;
 use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_ddl_systable::ddl_job_table::DdlJobTable;
 
 /// Go `JobSpec`: the durable envelope plus its source-typed private arguments.
@@ -672,7 +673,7 @@ pub fn job_table_ids(spec: &JobSpec) -> String {
 /// This phase is deliberately outside the ID-allocation retry loop.
 pub fn prepare_submit_batch<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     specs: &mut [JobSpec],
     start_ts: u64,
     upgrading: bool,
@@ -720,7 +721,7 @@ pub fn plan_assign_global_ids<S: MetaSnapshot>(
 /// Plans pinned Go `insertDDLJobs2Table` after IDs and any caller callback
 /// have been applied.
 pub fn plan_insert_job_rows(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     specs: &mut [JobSpec],
     mutations: &mut Vec<BufferMutation>,
 ) -> Result<(), JobSubmitError> {
@@ -768,7 +769,7 @@ pub fn plan_insert_job_rows(
 /// it.
 pub fn plan_insert_attempt<S, F, Cleanup>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     specs: &mut [JobSpec],
     before_insert_with_assigned_ids: &mut F,
 ) -> Result<(Vec<BufferMutation>, Option<Cleanup>), JobSubmitError>

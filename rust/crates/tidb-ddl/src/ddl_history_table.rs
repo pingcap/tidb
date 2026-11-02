@@ -27,7 +27,8 @@ use tidb_datatype::{Datum, Time, TimeType};
 use tidb_model::Job;
 use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
 use tidb_syssession::system_row_write::{store_clustered_row, RowValues};
 use tidb_table::origin_default::RowEncodeError;
@@ -95,9 +96,9 @@ impl From<serde_json::Error> for DdlHistoryTableError {
 
 impl DdlHistoryTable {
     /// Locates `mysql.tidb_ddl_history` in one loaded catalog.
-    pub fn locate(catalog: &ClusterCatalog) -> Result<Self, DdlHistoryTableError> {
+    pub fn locate(catalog: &SessionExtendedInfoSchema) -> Result<Self, DdlHistoryTableError> {
         let (_, table) = catalog
-            .find_table("mysql", "tidb_ddl_history")
+            .table_info_by_name("mysql", "tidb_ddl_history")
             .ok_or_else(|| SystemTableError::Missing {
                 name: "mysql.tidb_ddl_history".to_owned(),
             })?;

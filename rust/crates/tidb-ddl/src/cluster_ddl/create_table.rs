@@ -39,7 +39,7 @@ pub fn prepare_create_table_job_submission<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let mut warnings = Vec::new();
     let info = match build_create_table_info(
         snapshot,
@@ -147,7 +147,7 @@ pub(super) fn get_shared_involving_schema_info(
 /// Go `onCreateTable`.
 pub(super) fn on_create_table<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -171,9 +171,7 @@ pub(super) fn on_create_table<S: MetaSnapshot>(
     };
     let mut info = table_handle.read().clone();
     let database = catalog
-        .databases
-        .iter()
-        .find(|database| database.read().id == active.job.schema_id)
+        .schema_by_id(active.job.schema_id)
         .ok_or_else(|| {
             cancel_ddl_job(
                 active,
@@ -190,7 +188,7 @@ pub(super) fn on_create_table<S: MetaSnapshot>(
     let database_id = database.read().id;
     let schema = database.read().name.original().to_owned();
     let has_foreign_keys = !info.foreign_keys.is_empty();
-    let schema_version = catalog.schema_version + 1;
+    let schema_version = catalog.schema_meta_version() + 1;
     let mut mutations = Vec::new();
     let mut placement_bundles = Vec::new();
     let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();

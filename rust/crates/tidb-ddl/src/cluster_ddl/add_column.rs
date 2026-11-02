@@ -31,7 +31,7 @@ pub fn add_column<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let built = build_add_column_job(snapshot, &catalog, statement, job_context)?;
     submit_built_job(snapshot, &catalog, built, start_ts, upgrading, min_job_id)
 }
@@ -40,7 +40,7 @@ pub fn add_column<S: MetaSnapshot>(
 /// multi-schema change appends as a sub-job (Go `appendToSubJobs`).
 pub(super) fn build_add_column_job<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
@@ -135,7 +135,7 @@ fn column_exists(name: &str) -> DdlPlanError {
 /// Go `checkAddColumn`. `Ok(Err((if_not_exists, error)))` when a public
 /// column of that name already exists (the job is cancelled).
 fn check_add_column(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<Result<AddColumnTarget, (bool, DdlPlanError)>, DdlPlanError> {
     let info = checked_job_table(catalog, active, true)?.read().clone_like_go();
@@ -206,7 +206,7 @@ fn check_unsupported_charset_for_tiflash(
 
 /// Go `onAddColumn`.
 pub(super) fn on_add_column(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -326,7 +326,7 @@ pub(super) fn on_add_column(
 /// Go `rollingbackAddColumn`: before the column exists the job is
 /// cancelled; afterwards it turns delete-only and rolls back as a drop.
 pub(super) fn rollingback_add_column(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {

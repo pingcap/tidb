@@ -40,7 +40,7 @@ use tidb_store_driver_txn::transaction::StoreClient;
 use tidb_txnkv::transaction::OptimisticCoordinatorError;
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 
-use tidb_infoschema::cluster_catalog::{fetch_all_schemas_with_tables, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{load_info_schema, MetaSnapshot};
 use crate::cluster_ddl::{lower_ddl_with_context, plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step, prepare_check_constraint_job_submission, recover_ddl_action, CheckConstraintValidation, DdlPlan, DdlStatement, DdlWrite, ExchangePartitionValidation, MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan};
 use tidb_ddl_build::plan_error::DdlPlanError;
 use tidb_ddl_build::table_info_build::DdlAdmissionError;
@@ -796,7 +796,7 @@ fn refresh_ddl_error_count_limit<S: StoreClient>(
             .map_err(|error| error.to_string())?;
         let result = (|| {
             let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = fetch_all_schemas_with_tables(&mut snapshot).map_err(|error| error.to_string())?;
+            let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
             tidb_syssession::cluster_sysvar_load::load_cluster_sysvars(&mut snapshot, &catalog)
                 .map_err(|error| error.to_string())
         })();
@@ -1087,7 +1087,7 @@ where
                     .snapshot_at_for(for_update_ts, true)
                     .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
             );
-            let catalog = fetch_all_schemas_with_tables(&mut snapshot).map_err(DdlPlanError::from)?;
+            let catalog = load_info_schema(&mut snapshot).map_err(DdlPlanError::from)?;
             plan_insert_attempt(
                 &mut snapshot,
                 &catalog,
@@ -1550,9 +1550,9 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
     if spec.job.type_ == tidb_model::action_type::ActionType::ACTION_ALTER_CACHE_TABLE {
         let table_id = spec.job.table_id;
         add_index_reorg::reorg_transaction(&opener, timeout, |meta, handle, buffer, _| {
-            let catalog = fetch_all_schemas_with_tables(meta).map_err(DdlPlanError::SessionExtendedInfoSchema)?;
+            let catalog = load_info_schema(meta).map_err(DdlPlanError::SessionExtendedInfoSchema)?;
             let table = catalog
-                .databases
+                .stored_schemas()
                 .iter()
                 .flat_map(|database| database.read().deprecated_tables.iter_deref())
                 .find(|table| table.read().id == table_id)
@@ -1610,7 +1610,7 @@ pub fn load_active_persisted_ddl_jobs<S: StoreClient>(
 /// Go's owner polls `mysql.tidb_ddl_job` through a session whose
 /// InfoSchema caches the system table, so a poll costs one indexed read of
 /// the job table and never a catalog walk. Re-deriving the table from a
-/// full [`fetch_all_schemas_with_tables`] on every one-second tick re-parses every
+/// full [`load_info_schema`] on every one-second tick re-parses every
 /// schema's `TableInfo` JSON each time and showed up as a double-digit
 /// percentage of node CPU under load. The bootstrap system table's layout
 /// does not change between ticks, so only its row scan is per-tick work;
@@ -1634,7 +1634,7 @@ pub fn load_active_persisted_ddl_jobs_cached<S: StoreClient>(
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
         );
         if cached_job_table.is_none() {
-            let catalog = fetch_all_schemas_with_tables(&mut snapshot).map_err(DdlPlanError::SessionExtendedInfoSchema)?;
+            let catalog = load_info_schema(&mut snapshot).map_err(DdlPlanError::SessionExtendedInfoSchema)?;
             *cached_job_table = Some(
                 DdlJobTable::locate(&catalog)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
@@ -1696,7 +1696,7 @@ pub fn load_min_persisted_ddl_job_id_cached<S: StoreClient>(
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
         );
         if cached_job_table.is_none() {
-            let catalog = fetch_all_schemas_with_tables(&mut snapshot).map_err(DdlPlanError::SessionExtendedInfoSchema)?;
+            let catalog = load_info_schema(&mut snapshot).map_err(DdlPlanError::SessionExtendedInfoSchema)?;
             *cached_job_table = Some(
                 DdlJobTable::locate(&catalog)
                     .map_err(|error| DdlPlanError::Encode(error.to_string()))?,

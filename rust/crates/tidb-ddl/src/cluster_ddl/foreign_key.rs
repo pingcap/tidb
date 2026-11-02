@@ -47,7 +47,7 @@ pub fn prepare_add_foreign_key_job_submission<S: MetaSnapshot>(
     else {
         return Ok(None);
     };
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let (_, stored) = locate_table(&catalog, schema, table)?;
     let stored = stored.read();
     // Go `AlterTable` names an anonymous key before any spec runs.
@@ -107,7 +107,7 @@ pub(super) fn foreign_key_name(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_add_foreign_key_jobs<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema: &str,
     table: &str,
     name: &str,
@@ -201,7 +201,7 @@ pub(super) fn build_add_foreign_key_jobs<S: MetaSnapshot>(
 
 /// Go `checkAddForeignKeyValidInOwner`.
 fn check_add_foreign_key_valid_in_owner(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema: &str,
     info: &TableInfo,
     fk: &tidb_model::table::FKInfo,
@@ -265,7 +265,7 @@ fn checked_outcome(
 
 /// Go `onCreateForeignKey`.
 pub(super) fn on_create_foreign_key(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcome: Option<&ReorgOutcome>,
@@ -447,7 +447,7 @@ fn check_request(
 
 /// Go `dropForeignKey` for an ADD FOREIGN KEY rolling back.
 fn drop_foreign_key_step(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     mut info: TableInfo,
     name: &str,

@@ -27,8 +27,8 @@ use std::collections::BTreeMap;
 use tidb_datatype::{Time, TimeType};
 use tidb_privilege::cluster_account_write::{AccountWriteError, AccountWritePlan};
 use tidb_infoschema::cluster_catalog::{
-    fetch_all_schemas_with_tables, ClusterCatalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
-};
+    load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot};
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_privilege::cluster_privilege_load::{
     load_cluster_privileges, ClusterPrivileges, LoadedColumnGrant, LoadedDbGrant,
     LoadedDefaultRole, LoadedDynamicGrant, LoadedRoleEdge, LoadedTableGrant, LoadedUser,
@@ -58,7 +58,7 @@ struct MetaStore {
 
 fn plan_account_write(
     store: &mut MetaStore,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     desired: &ClusterPrivileges,
     now: Time,
 ) -> Result<AccountWritePlan, AccountWriteError> {
@@ -136,8 +136,8 @@ impl MetaStore {
         }
     }
 
-    fn catalog(&mut self) -> ClusterCatalog {
-        fetch_all_schemas_with_tables(self).expect("the bootstrapped catalog loads")
+    fn catalog(&mut self) -> SessionExtendedInfoSchema {
+        load_info_schema(self).expect("the bootstrapped catalog loads")
     }
 
     fn accounts(&mut self) -> ClusterPrivileges {

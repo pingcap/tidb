@@ -26,7 +26,8 @@ use tidb_datatype::Datum;
 use tidb_model::{GoShared, Job, JobW};
 use tidb_goruntime::go_runtime::GoSharedSlice;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use crate::ddl_job_table::{DdlJobTable, DdlJobTableError};
 use tidb_syssession::mysql_system_tables::{
     scan_system_table_prefixed, SystemRow, SystemTableError, SystemTableView,
@@ -153,14 +154,14 @@ impl From<serde_json::Error> for SystemTableManagerError {
 /// Pinned Go `systable.Manager` over one loaded system-table catalog.
 #[derive(Clone, Debug)]
 pub struct SystemTableManager {
-    catalog: ClusterCatalog,
+    catalog: SessionExtendedInfoSchema,
 }
 
 impl SystemTableManager {
     /// Go `NewManager`. Table lookup remains method-local just like Go's SQL
     /// execution, so one absent system table cannot break unrelated reads.
     #[must_use]
-    pub fn new(catalog: &ClusterCatalog) -> Self {
+    pub fn new(catalog: &SessionExtendedInfoSchema) -> Self {
         Self {
             catalog: catalog.clone(),
         }

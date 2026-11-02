@@ -20,7 +20,8 @@ use tidb_datatype::Datum;
 use tidb_model::TableInfo;
 use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use crate::cluster_ddl::add_index::ReorgHandle;
 use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
 use tidb_syssession::system_row_write::{delete_row, insert_row, update_row, RowValues};
@@ -47,9 +48,9 @@ fn error(message: impl std::fmt::Display) -> String {
 
 impl DdlReorgTable {
     /// Finds `mysql.tidb_ddl_reorg` in the catalog.
-    pub fn locate(catalog: &ClusterCatalog) -> Result<Self, String> {
+    pub fn locate(catalog: &SessionExtendedInfoSchema) -> Result<Self, String> {
         let (_, table) = catalog
-            .find_table("mysql", "tidb_ddl_reorg")
+            .table_info_by_name("mysql", "tidb_ddl_reorg")
             .ok_or_else(|| "mysql.tidb_ddl_reorg does not exist".to_owned())?;
         let table = table.read();
         let table = table.clone_like_go();

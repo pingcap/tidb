@@ -57,7 +57,7 @@ impl PersistedAnalyzeJobs {
         &self,
         build: impl FnOnce(
             &mut super::SnapshotMetaSnapshot,
-            &tidb_infoschema::cluster_catalog::ClusterCatalog,
+            &tidb_infoschema::SessionExtendedInfoSchema,
         ) -> Result<StatsWritePlan, String>,
     ) -> Result<(), String> {
         let snapshot = self.transactions.open_snapshot("default")?;
@@ -567,7 +567,7 @@ impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementS
     ) -> Result<String, tidb_driver_error::DriverError> {
         // Go `LockExec.Next`: the tables resolve against the domain's latest
         // schema (`do.InfoSchema()`) before the handle's transaction.
-        let request = statement.resolve(&self.catalog.get_latest_built().schema).map_err(|error| {
+        let request = statement.resolve(&self.catalog.get_latest()).map_err(|error| {
             into_driver_error(
                 tidb_stats_handle_lockstats::real_tikv_stats_lock::cluster_stats_lock_error(
                     tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockCommitError::Plan(error),

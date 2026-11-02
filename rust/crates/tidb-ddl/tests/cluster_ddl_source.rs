@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 
 use tidb_datatype::Datum;
 use tidb_ddl_notifier::SchemaChangeEvent;
-use tidb_infoschema::cluster_catalog::{fetch_all_schemas_with_tables, ClusterCatalogError, MetaPairs, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::{load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot};
 
 use tidb_kv::key::prefix_scan_end;
 use tidb_ddl::cluster_ddl::{lower_ddl_with_context, plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step, prepare_check_constraint_job_submission, AlterColumnAction, DdlPlan, DdlStatement, MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan, PersistedDdlJobStep};
@@ -254,7 +254,7 @@ fn plan_check_constraint_job_submission(
     else {
         return Ok(None);
     };
-    let catalog = fetch_all_schemas_with_tables(store)?;
+    let catalog = load_info_schema(store)?;
     let mut before_insert_with_assigned_ids =
         |_: &[tidb_ddl_jobsubmit::JobSpec]| Option::<fn()>::None;
     let (mutations, _) = plan_insert_attempt(
@@ -306,7 +306,7 @@ fn refusal(sql: &str) -> String {
 #[test]
 fn active_ddl_jobs_use_the_go_job_table_lifecycle() {
     let mut store = bootstrapped();
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrap catalog loads");
+    let catalog = load_info_schema(&mut store).expect("the bootstrap catalog loads");
     let table = DdlJobTable::locate(&catalog).expect("the Go active-job table exists");
     assert!(
         table.table().indices.is_empty(),
@@ -371,7 +371,7 @@ fn active_ddl_jobs_use_the_go_job_table_lifecycle() {
 #[test]
 fn flashback_admission_reads_only_the_go_query_columns() {
     let mut store = bootstrapped();
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrap catalog loads");
+    let catalog = load_info_schema(&mut store).expect("the bootstrap catalog loads");
     let table = DdlJobTable::locate(&catalog).expect("the Go active-job table exists");
 
     let mut ordinary = Job::default();
@@ -454,7 +454,7 @@ fn flashback_admission_reads_only_the_go_query_columns() {
 #[test]
 fn ddl_systable_manager_matches_go_queries() {
     let mut store = bootstrapped();
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrap catalog loads");
+    let catalog = load_info_schema(&mut store).expect("the bootstrap catalog loads");
     let manager = SystemTableManager::new(&catalog);
     assert!(matches!(
         manager.get_job_by_id(&mut store, 9_999),
@@ -484,7 +484,7 @@ fn ddl_systable_manager_matches_go_queries() {
         Err(SystemTableManagerError::NotFound)
     ));
     let (_, mdl_table) = catalog
-        .find_table("mysql", "tidb_mdl_info")
+        .table_info_by_name("mysql", "tidb_mdl_info")
         .expect("the MDL table exists");
     let mdl_table = mdl_table.read();
     let mdl = MdlInfoUpdate {
@@ -527,7 +527,7 @@ fn ddl_systable_manager_matches_go_queries() {
 #[test]
 fn ddl_sql_history_uses_go_insert_ignore_semantics() {
     let mut store = bootstrapped();
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the bootstrap catalog loads");
+    let catalog = load_info_schema(&mut store).expect("the bootstrap catalog loads");
     let history = DdlHistoryTable::locate(&catalog).expect("the Go history table exists");
     let mut job = Job::default();
     job.id = 117;
@@ -570,7 +570,7 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
     };
     fn execute(store: &mut MetaStore, job: &mut Job, ids: &str, expected_phases: usize) {
         let row_ids = std::sync::Arc::clone(&store.row_ids);
-        let catalog = fetch_all_schemas_with_tables(store).unwrap();
+        let catalog = load_info_schema(store).unwrap();
         let queue = DdlJobTable::locate(&catalog).unwrap();
         // Go retains earlier retry diagnostics on the job. A later successful
         // action must finish normally, not treat this as a fresh cancellation.
@@ -791,7 +791,7 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
 #[test]
 fn persisted_cancellation_precedes_forward_action() {
     let mut store = bootstrapped();
-    let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+    let catalog = load_info_schema(&mut store).unwrap();
     let queue = DdlJobTable::locate(&catalog).unwrap();
     for (offset, action) in [
         ActionType::ACTION_CREATE_SCHEMA,
@@ -874,7 +874,7 @@ fn persisted_cancellation_distinguishes_errors_with_the_same_number() {
         ),
     ] {
         let mut store = bootstrapped();
-        let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+        let catalog = load_info_schema(&mut store).unwrap();
         let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut job = Job::default();
         job.id = 990;
@@ -906,7 +906,7 @@ fn persisted_cancellation_distinguishes_errors_with_the_same_number() {
 fn persisted_action_panic_preserves_checkpoint_and_discards_unfinished_metadata() {
     for limit in [5, 0] {
         let mut store = bootstrapped();
-        let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+        let catalog = load_info_schema(&mut store).unwrap();
         let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut job = Job::default();
         job.id = 990;
@@ -951,9 +951,9 @@ fn persisted_action_panic_preserves_checkpoint_and_discards_unfinished_metadata(
         assert_eq!(step.write.schema_version, 0);
         assert!(step.write.mdl_info_update.is_none());
         apply(&mut store, &step.write);
-        let after = fetch_all_schemas_with_tables(&mut store).unwrap();
-        assert_eq!(after.schema_version, catalog.schema_version);
-        assert!(!after.databases.iter().any(|db| db.read().id == 991));
+        let after = load_info_schema(&mut store).unwrap();
+        assert_eq!(after.schema_meta_version(), catalog.schema_meta_version());
+        assert!(!after.stored_schemas().iter().any(|db| db.read().id == 991));
         if limit > 0 {
             let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
             assert_eq!(active.job.state, JobState::CANCELLING);
@@ -997,9 +997,9 @@ fn persisted_panic_during_cancellation_or_rollback_keeps_go_budget_and_prior_err
         let create = plan(&mut store, "CREATE TABLE panic_check (a INT)", 1_000);
         let table_id = create.created_id.unwrap();
         apply(&mut store, &create);
-        let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+        let catalog = load_info_schema(&mut store).unwrap();
         let mut table = catalog
-            .find_table("u6", "panic_check")
+            .table_info_by_name("u6", "panic_check")
             .unwrap()
             .1
             .read().clone_like_go();
@@ -1253,7 +1253,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
     ];
     for (error, code) in cases {
         let mut store = bootstrapped();
-        let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+        let catalog = load_info_schema(&mut store).unwrap();
         let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut job = Job::default();
         job.id = 990;
@@ -1368,7 +1368,7 @@ fn persisted_check_failure_uses_source_identity_for_rollback() {
         ),
     ] {
         let mut store = bootstrapped();
-        let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+        let catalog = load_info_schema(&mut store).unwrap();
         let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut job = Job::default();
         job.id = 990;
@@ -1399,7 +1399,7 @@ fn persisted_check_failure_uses_source_identity_for_rollback() {
 #[test]
 fn persisted_action_error_is_checkpointed_before_retry() {
     let mut store = bootstrapped();
-    let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+    let catalog = load_info_schema(&mut store).unwrap();
     let queue = DdlJobTable::locate(&catalog).unwrap();
     let mut job = Job::default();
     job.id = 990;
@@ -1499,8 +1499,8 @@ fn persisted_cancel_uses_physical_drop_state() {
             let create = plan(&mut store, "CREATE TABLE cancel_drop (a INT)", 1_000);
             let id = create.created_id.unwrap();
             apply(&mut store, &create);
-            let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
-            let (db, table) = catalog.find_table("u6", "cancel_drop").unwrap();
+            let catalog = load_info_schema(&mut store).unwrap();
+            let (db, table) = catalog.table_info_by_name("u6", "cancel_drop").unwrap();
             let table = table.read();
             if action == ActionType::ACTION_DROP_SCHEMA {
                 let mut db = db.read().clone();
@@ -1548,9 +1548,9 @@ fn persisted_cancel_uses_physical_drop_state() {
                 assert_eq!(active.job.error_count, 0);
                 assert!(active.job.error.is_none());
             }
-            let after = fetch_all_schemas_with_tables(&mut store).unwrap();
-            assert_eq!(after.schema_version, catalog.schema_version);
-            assert!(after.find_table("u6", "cancel_drop").is_some());
+            let after = load_info_schema(&mut store).unwrap();
+            assert_eq!(after.schema_meta_version(), catalog.schema_meta_version());
+            assert!(after.table_info_by_name("u6", "cancel_drop").is_some());
         }
     }
 }
@@ -1572,9 +1572,9 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
             let create = plan(&mut store, "CREATE TABLE cancel_check (a INT)", 1_000);
             let table_id = create.created_id.unwrap();
             apply(&mut store, &create);
-            let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+            let catalog = load_info_schema(&mut store).unwrap();
             let mut table = catalog
-                .find_table("u6", "cancel_check")
+                .table_info_by_name("u6", "cancel_check")
                 .unwrap()
                 .1
                 .read().clone_like_go();
@@ -1674,12 +1674,12 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
                 }
             } else {
                 assert!(!step.terminal);
-                assert_eq!(step.write.schema_version, catalog.schema_version + 1);
+                assert_eq!(step.write.schema_version, catalog.schema_meta_version() + 1);
                 let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
                 assert_eq!(active.job.state, JobState::CANCELLING);
                 assert_eq!(active.job.raw_args, raw);
-                let after = fetch_all_schemas_with_tables(&mut store).unwrap();
-                let table = after.find_table("u6", "cancel_check").unwrap().1;
+                let after = load_info_schema(&mut store).unwrap();
+                let table = after.table_info_by_name("u6", "cancel_check").unwrap().1;
                 let table = table.read();
                 if action == ActionType::ACTION_ADD_CHECK_CONSTRAINT {
                     assert!(table.constraints.is_empty());
@@ -1758,9 +1758,9 @@ fn persisted_check_source_state_errors() {
         let create = plan(&mut store, "CREATE TABLE checked_table (a INT)", 1_000);
         let table_id = create.created_id.unwrap();
         apply(&mut store, &create);
-        let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+        let catalog = load_info_schema(&mut store).unwrap();
         let mut table = catalog
-            .find_table("u6", "checked_table")
+            .table_info_by_name("u6", "checked_table")
             .unwrap()
             .1
             .read().clone_like_go();
@@ -1879,7 +1879,7 @@ fn persisted_check_source_missing_constraint_keeps_original_name() {
         let create = plan(&mut store, "CREATE TABLE checked_table (a INT)", 1_000);
         let table_id = create.created_id.unwrap();
         apply(&mut store, &create);
-        let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+        let catalog = load_info_schema(&mut store).unwrap();
         let mut job = Job::default();
         job.id = 992;
         job.schema_id = 112;
@@ -1936,10 +1936,10 @@ fn persisted_check_lookup_failures_cancel_before_retry() {
             let create = plan(&mut store, "CREATE TABLE checked_table (a INT)", 1_000);
             let id = create.created_id.unwrap();
             apply(&mut store, &create);
-            let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+            let catalog = load_info_schema(&mut store).unwrap();
             if invalid == "nonpublic" {
                 let mut table = catalog
-                    .find_table("u6", "checked_table")
+                    .table_info_by_name("u6", "checked_table")
                     .unwrap()
                     .1
                     .read().clone_like_go();
@@ -2025,7 +2025,7 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
         ActionType::ACTION_DROP_TABLE,
     ] {
         let mut store = bootstrapped();
-        let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+        let catalog = load_info_schema(&mut store).unwrap();
         let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut job = Job::default();
         job.id = 900;
@@ -2052,7 +2052,7 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
         let mdl = MdlInfoUpdate {
             table: Box::new(
                 catalog
-                    .find_table("mysql", "tidb_mdl_info")
+                    .table_info_by_name("mysql", "tidb_mdl_info")
                     .unwrap()
                     .1
                     .read().clone_like_go(),
@@ -2060,7 +2060,7 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
             table_ids: original.table_ids.clone(),
             omit_owner_id: false,
         };
-        let version = catalog.schema_version;
+        let version = catalog.schema_meta_version();
         let mut registration = Vec::new();
         mdl.append_mutations(job.id, version, "owner", &mut registration)
             .unwrap();
@@ -2188,7 +2188,7 @@ fn persisted_actions_cancel_through_shared_worker_without_schema_changes() {
             1_000,
         );
         apply(&mut store, &create);
-        let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+        let catalog = load_info_schema(&mut store).unwrap();
         let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut job = Job::default();
         job.id = 900;
@@ -2280,10 +2280,10 @@ fn persisted_actions_cancel_through_shared_worker_without_schema_changes() {
             finished.binlog_info.as_ref().unwrap().read().finished_ts,
             10_000
         );
-        let after = fetch_all_schemas_with_tables(&mut store).unwrap();
-        assert_eq!(after.schema_version, catalog.schema_version);
-        assert!(after.find_table("u6", "must_not_publish").is_none());
-        assert!(after.find_table("u6", "existing").is_some());
+        let after = load_info_schema(&mut store).unwrap();
+        assert_eq!(after.schema_meta_version(), catalog.schema_meta_version());
+        assert!(after.table_info_by_name("u6", "must_not_publish").is_none());
+        assert!(after.table_info_by_name("u6", "existing").is_some());
     }
 }
 
@@ -2305,7 +2305,7 @@ fn persisted_action_decode_errors_use_shared_cancellation() {
             1_000,
         );
         apply(&mut store, &create);
-        let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+        let catalog = load_info_schema(&mut store).unwrap();
         let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut job = Job::default();
         job.id = 900;
@@ -2347,8 +2347,8 @@ fn persisted_action_decode_errors_use_shared_cancellation() {
         );
         assert_eq!(finished.raw_args, raw_args);
         assert_eq!(
-            fetch_all_schemas_with_tables(&mut store).unwrap().schema_version,
-            catalog.schema_version
+            load_info_schema(&mut store).unwrap().schema_meta_version(),
+            catalog.schema_meta_version()
         );
     }
 }
@@ -2361,7 +2361,7 @@ fn history_table_failure_is_logged_and_the_job_still_finishes() {
     for action in [ActionType::ACTION_CREATE_SCHEMA] {
         for state in [JobState::DONE, JobState::ROLLBACK_DONE, JobState::CANCELLED] {
             let mut store = bootstrapped();
-            let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+            let catalog = load_info_schema(&mut store).unwrap();
             let queue = DdlJobTable::locate(&catalog).unwrap();
             let mut job = Job::default();
             job.id = 900;
@@ -2372,7 +2372,7 @@ fn history_table_failure_is_logged_and_the_job_still_finishes() {
                 .append_insert(&mut job, false, "0", "0", false, &mut mutations)
                 .unwrap();
             apply_mutations(&mut store, &mutations);
-            let (db, table) = catalog.find_table("mysql", "tidb_ddl_history").unwrap();
+            let (db, table) = catalog.table_info_by_name("mysql", "tidb_ddl_history").unwrap();
             let table = table.read();
             store.pairs.remove(&key::table_kv_key(db.read().id, table.id));
             let step = plan_worker_step(&mut store, 900, 10_000).unwrap();
@@ -2408,7 +2408,7 @@ fn completed_check_schema_stays_active_until_schema_sync() {
         );
         apply(&mut store, &step.write);
     }
-    let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+    let catalog = load_info_schema(&mut store).unwrap();
     let jobs = DdlJobTable::locate(&catalog)
         .unwrap()
         .load(&mut store)
@@ -2508,7 +2508,7 @@ fn check_job_submission_precedes_every_schema_transition() {
         "submission does not publish candidate table metadata"
     );
 
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("catalog reloads after submission");
+    let catalog = load_info_schema(&mut store).expect("catalog reloads after submission");
     let table = DdlJobTable::locate(&catalog).expect("active-job table exists");
     let mut active = table.load(&mut store).expect("owner sees submitted job");
     assert_eq!(active.len(), 1);
@@ -2543,7 +2543,7 @@ fn check_job_submission_precedes_every_schema_transition() {
     let constraint = table_info.constraints.iter_deref().last().unwrap();
     assert_eq!(constraint.read().state, SchemaState::WRITE_ONLY);
     assert_eq!(constraint.read().id, 1);
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("catalog reloads after first step");
+    let catalog = load_info_schema(&mut store).expect("catalog reloads after first step");
     let table = DdlJobTable::locate(&catalog).expect("active-job table exists");
     let mut active = table.load(&mut store).expect("next owner reloads the job");
     assert_eq!(active[0].job.state, JobState::RUNNING);
@@ -2603,7 +2603,7 @@ fn check_job_submission_precedes_every_schema_transition() {
             .state,
         SchemaState::PUBLIC
     );
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("catalog reloads after finish");
+    let catalog = load_info_schema(&mut store).expect("catalog reloads after finish");
     let table = DdlJobTable::locate(&catalog).expect("active-job table exists");
     assert!(
         table.load(&mut store).expect("active jobs scan").is_empty(),
@@ -2654,7 +2654,7 @@ fn failed_job_insert_attempt_cleans_up_assigned_id_registration_before_retry() {
     let mut spec = prepare_check_constraint_job_submission(&mut store, &statement, 2_101, false, 0)
         .expect("Go submission preflight succeeds")
         .expect("ADD CHECK creates a job spec");
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("catalog loads");
+    let catalog = load_info_schema(&mut store).expect("catalog loads");
 
     let assigned_ids = Rc::new(RefCell::new(Vec::new()));
     let cleanup_ids = Rc::new(RefCell::new(Vec::new()));
@@ -2767,7 +2767,7 @@ fn persisted_add_check_rolls_back_after_owner_restart() {
     )
     .expect("countForError persists Running to Rollingback");
     apply(&mut store, &rollingback.write);
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("catalog reloads after error");
+    let catalog = load_info_schema(&mut store).expect("catalog reloads after error");
     let table = DdlJobTable::locate(&catalog).expect("active-job table exists");
     let mut active = table.load(&mut store).expect("new owner sees Rollingback");
     assert_eq!(active.len(), 1);
@@ -2828,7 +2828,7 @@ fn persisted_add_check_rolls_back_after_owner_restart() {
         table_info.max_constraint_id, 1,
         "Go does not reuse the allocated constraint ID after rollback"
     );
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("catalog reloads after rollback");
+    let catalog = load_info_schema(&mut store).expect("catalog reloads after rollback");
     let active_table = DdlJobTable::locate(&catalog).expect("active-job table exists");
     assert!(active_table
         .load(&mut store)
@@ -2991,7 +2991,7 @@ fn persisted_drop_and_alter_check_jobs_resume_and_finish_like_go() {
     assert!(!toggle.read().enforced);
     assert_eq!(toggle.read().state, SchemaState::PUBLIC);
 
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("catalog reloads after jobs finish");
+    let catalog = load_info_schema(&mut store).expect("catalog reloads after jobs finish");
     let active = DdlJobTable::locate(&catalog).expect("active-job table exists");
     assert!(active
         .load(&mut store)
@@ -3090,7 +3090,7 @@ fn persisted_alter_check_validation_rolls_back_to_not_enforced() {
     let constraint = table.constraints.iter_deref().next().unwrap();
     assert!(!constraint.read().enforced);
     assert_eq!(constraint.read().state, SchemaState::PUBLIC);
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("catalog reloads after rollback");
+    let catalog = load_info_schema(&mut store).expect("catalog reloads after rollback");
     let history = DdlHistoryTable::locate(&catalog).expect("history table exists");
     let jobs = history.load(&mut store).expect("history scans");
     let job = jobs
@@ -3112,7 +3112,7 @@ fn persisted_alter_check_validation_rolls_back_to_not_enforced() {
 /// The `mysql.gc_delete_range` rows the applied changes recorded, as
 /// `(element_id, start_key, end_key)`.
 pub(crate) fn delete_ranges(store: &mut MetaStore) -> Vec<(i64, Vec<u8>, Vec<u8>)> {
-    let catalog = fetch_all_schemas_with_tables(store).unwrap();
+    let catalog = load_info_schema(store).unwrap();
     tidb_ddl::ddl_delete_range::DelRangeTable::locate(&catalog, "gc_delete_range")
         .unwrap()
         .load(store, u64::MAX)
@@ -3188,7 +3188,7 @@ fn plan_ddl_with_tiflash_stores(
         // A statement Go answers without a job.
         None => return tidb_ddl::cluster_ddl::plan_ddl(store, statement),
     };
-    let catalog = fetch_all_schemas_with_tables(store)?;
+    let catalog = load_info_schema(store)?;
     let mut before_insert_with_assigned_ids =
         |_: &[tidb_ddl_jobsubmit::JobSpec]| Option::<fn()>::None;
     let (mutations, _) = plan_insert_attempt(
@@ -3539,9 +3539,9 @@ fn create_table_stages_the_go_notifier_row_in_the_catalog_transaction() {
         "CREATE TABLE u6.notified (id BIGINT PRIMARY KEY)",
         7,
     );
-    let catalog = fetch_all_schemas_with_tables(&mut store).expect("the fixture catalog loads");
+    let catalog = load_info_schema(&mut store).expect("the fixture catalog loads");
     let (_, notifier) = catalog
-        .find_table(
+        .table_info_by_name(
             "mysql",
             tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME,
         )
@@ -3599,8 +3599,8 @@ fn create_table_stages_the_go_notifier_row_in_the_catalog_transaction() {
 #[test]
 fn clustered_notifier_events_use_the_composite_primary_key() {
     let mut store = bootstrapped();
-    let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
-    let (_, notifier) = catalog.find_table("mysql", "tidb_ddl_notifier").unwrap();
+    let catalog = load_info_schema(&mut store).unwrap();
+    let (_, notifier) = catalog.table_info_by_name("mysql", "tidb_ddl_notifier").unwrap();
     let notifier = notifier.read();
     let mut notifier = notifier.clone_like_go();
     notifier.is_common_handle = true;
@@ -3656,9 +3656,9 @@ fn notifier_events(
     store: &mut MetaStore,
     write: &tidb_ddl::cluster_ddl::DdlWrite,
 ) -> Vec<(i64, SchemaChangeEvent)> {
-    let catalog = fetch_all_schemas_with_tables(store).expect("the fixture catalog loads");
+    let catalog = load_info_schema(store).expect("the fixture catalog loads");
     let (_, notifier) = catalog
-        .find_table(
+        .table_info_by_name(
             "mysql",
             tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME,
         )
@@ -4800,11 +4800,9 @@ fn tiflash_batch_truncate_table_resets_all_availability() {
     let (mut store, _, _) = tiflash_partition_fixture();
     let write = plan(&mut store, "TRUNCATE TABLE u6.tfparts", 5001);
     apply(&mut store, &write);
-    let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+    let catalog = load_info_schema(&mut store).unwrap();
     let table = catalog
-        .databases
-        .iter()
-        .find(|db| db.read().name.lowercase() == "u6")
+        .schema_info_by_name("u6")
         .unwrap()
         .read().deprecated_tables
         .iter_deref()
@@ -5930,9 +5928,9 @@ fn cluster_truncate_partition_reassigns_only_selected_physical_ids() {
 /// The physical ids of one table's partitions, in definition order.
 fn partition_ids(store: &mut MetaStore, table: &str) -> Vec<i64> {
     let catalog =
-        tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables(store).expect("the catalog loads");
+        tidb_infoschema::cluster_catalog::load_info_schema(store).expect("the catalog loads");
     let (_, info) = catalog
-        .find_table("u6", table)
+        .table_info_by_name("u6", table)
         .unwrap_or_else(|| panic!("table {table} exists"));
     let info = info.read();
     let partition = info.partition.as_ref().expect("a partitioned table");

@@ -24,7 +24,8 @@ use tidb_syssession::stats_table_rows::*;
 use tidb_datatype::{Datum, SessionTimeZone, Time, TimeType, DEFAULT_FSP};
 use tidb_model::TableItemID;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_syssession::mysql_system_tables::{
     scan_system_table, scan_system_table_prefixed, SystemRow, SystemTableError, SystemTableView,
 };
@@ -41,7 +42,7 @@ pub struct ColStatsTimeInfo {
 /// Loads every persisted column-usage row.
 pub fn load_column_stats_usage<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     location: &SessionTimeZone,
 ) -> Result<HashMap<TableItemID, ColStatsTimeInfo>, SystemTableError> {
     load(snapshot, catalog, location, None)
@@ -50,7 +51,7 @@ pub fn load_column_stats_usage<S: MetaSnapshot>(
 /// Loads persisted column usage for one physical or logical table.
 pub fn load_column_stats_usage_for_table<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     location: &SessionTimeZone,
     table_id: i64,
 ) -> Result<HashMap<TableItemID, ColStatsTimeInfo>, SystemTableError> {
@@ -61,7 +62,7 @@ pub fn load_column_stats_usage_for_table<S: MetaSnapshot>(
 /// removed dropped-column rows in the same transaction.
 pub fn predicate_columns<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
 ) -> Result<Vec<i64>, SystemTableError> {
     let view = usage_view(catalog)?;
@@ -84,7 +85,7 @@ pub fn predicate_columns<S: MetaSnapshot>(
 
 fn load<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     location: &SessionTimeZone,
     table_id: Option<i64>,
 ) -> Result<HashMap<TableItemID, ColStatsTimeInfo>, SystemTableError> {
@@ -117,7 +118,7 @@ fn load<S: MetaSnapshot>(
     Ok(usage)
 }
 
-fn usage_view(catalog: &ClusterCatalog) -> Result<SystemTableView, SystemTableError> {
+fn usage_view(catalog: &SessionExtendedInfoSchema) -> Result<SystemTableView, SystemTableError> {
     SystemTableView::locate(
         catalog,
         "column_stats_usage",
@@ -177,7 +178,7 @@ fn usage_time(
 /// the caller to commit with the read transaction.
 pub fn plan_get_predicate_columns<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     current_column_ids: Option<&[i64]>,
 ) -> Result<(Vec<i64>, StatsWritePlan), StatsWriteError> {

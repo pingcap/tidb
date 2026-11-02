@@ -90,13 +90,15 @@ use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use tidb_infoschema::cluster_catalog::{BuiltSchema, ClusterCatalog};
+use tidb_infoschema::SessionExtendedInfoSchema;
 
-/// What builds a loaded version's [`BuiltSchema`] (Go's loader runs
+/// What builds a loaded version's tables (Go's loader runs
 /// `infoschema.NewBuilder(...).InitWithDBInfos` before inserting the result
-/// into `InfoCache`); the domain installs it, as only the domain holds the
-/// auto-id allocators the tables are built over.
-pub type SchemaBuilder = Box<dyn Fn(&Arc<ClusterCatalog>) -> BuiltSchema + Send + Sync>;
+/// into `InfoCache`): from the loaded schema image (its `DBInfo`s, policies,
+/// resource groups and version), the image with every table built. The domain
+/// installs it, as only the domain holds the auto-id allocators the tables
+/// are built over.
+pub type SchemaBuilder = Box<dyn Fn(&SessionExtendedInfoSchema) -> SessionExtendedInfoSchema + Send + Sync>;
 
 /// Go `infoschema.InfoCache`: each schema version's built `InfoSchema`, the
 /// latest published, replaced whole by the reload thread.
@@ -105,28 +107,27 @@ pub type SchemaBuilder = Box<dyn Fn(&Arc<ClusterCatalog>) -> BuiltSchema + Send 
 /// statement in flight keeps the exact schema it started with and a publish
 /// never has to wait for readers.
 pub struct InfoCache {
-    published: RwLock<Arc<BuiltSchema>>,
-    historical: Mutex<std::collections::BTreeMap<i64, Arc<BuiltSchema>>>,
+    published: RwLock<Arc<SessionExtendedInfoSchema>>,
+    historical: Mutex<std::collections::BTreeMap<i64, Arc<SessionExtendedInfoSchema>>>,
     capacity: AtomicUsize,
     /// Go `Syncer`'s `s.m`: one reload at a time, held across the load, the
     /// schema validator's update and the publication, so two reload paths
     /// never interleave their validator updates.
     reload: Mutex<()>,
     /// The installed [`SchemaBuilder`]; until the domain installs one, a
-    /// version is built without table objects
-    /// ([`BuiltSchema::metadata_only`]).
+    /// version is held as loaded, without table objects.
     builder: RwLock<Option<SchemaBuilder>>,
 }
 
 impl InfoCache {
     /// Publishes an initial catalog, normally the node's startup full load.
     #[must_use]
-    pub fn new(catalog: ClusterCatalog) -> Self {
-        let built = Arc::new(BuiltSchema::metadata_only(Arc::new(catalog)));
+    pub fn new(catalog: SessionExtendedInfoSchema) -> Self {
+        let built = Arc::new(catalog);
         Self {
             published: RwLock::new(Arc::clone(&built)),
             historical: Mutex::new(std::collections::BTreeMap::from([(
-                built.loaded.schema_version,
+                built.schema_meta_version(),
                 built,
             )])),
             capacity: AtomicUsize::new(16),
@@ -136,19 +137,19 @@ impl InfoCache {
     }
 
     /// Go's loader building one version's `InfoSchema`.
-    fn build(&self, loaded: Arc<ClusterCatalog>) -> Arc<BuiltSchema> {
+    fn build(&self, loaded: SessionExtendedInfoSchema) -> Arc<SessionExtendedInfoSchema> {
         let builder = self
             .builder
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         Arc::new(match builder.as_ref() {
             Some(build) => build(&loaded),
-            None => BuiltSchema::metadata_only(loaded),
+            None => loaded,
         })
     }
 
-    /// Installs what builds each version's [`BuiltSchema`] and rebuilds the
-    /// versions this cache holds with it.
+    /// Installs what builds each version's tables and rebuilds the versions
+    /// this cache holds with it.
     pub fn install_schema_builder(&self, builder: SchemaBuilder) {
         *self
             .builder
@@ -159,46 +160,17 @@ impl InfoCache {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for built in versions.values_mut() {
-            *built = self.build(Arc::clone(&built.loaded));
+            *built = self.build(built.metadata_copy());
         }
         let mut published = self
             .published
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let version = published.loaded.schema_version;
+        let version = published.schema_meta_version();
         *published = match versions.get(&version) {
             Some(built) => Arc::clone(built),
-            None => self.build(Arc::clone(&published.loaded)),
+            None => self.build(published.metadata_copy()),
         };
-    }
-
-    /// Go `InfoCache.GetLatest`: the built `InfoSchema` in force now.
-    #[must_use]
-    pub fn get_latest_built(&self) -> Arc<BuiltSchema> {
-        match self.published.read() {
-            Ok(guard) => Arc::clone(&guard),
-            Err(poisoned) => Arc::clone(&poisoned.into_inner()),
-        }
-    }
-
-    /// Go `InfoCache.GetByVersion`: the built `InfoSchema` of `loaded`'s
-    /// version, from this cache when it holds that very load, else built.
-    #[must_use]
-    pub fn built(&self, loaded: &Arc<ClusterCatalog>) -> Arc<BuiltSchema> {
-        if let Some(found) = self
-            .historical
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&loaded.schema_version)
-            .filter(|built| Arc::ptr_eq(&built.loaded, loaded))
-        {
-            return Arc::clone(found);
-        }
-        let latest = self.get_latest_built();
-        if Arc::ptr_eq(&latest.loaded, loaded) {
-            return latest;
-        }
-        self.build(Arc::clone(loaded))
     }
 
     /// Serializes one reload (load, validator update, publication), as Go's
@@ -209,11 +181,15 @@ impl InfoCache {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Go `InfoCache.GetLatest`: the catalog in force now. A poisoned lock still yields the value: a
-    /// panicking publisher cannot leave the node unable to answer queries.
+    /// Go `InfoCache.GetLatest`: the `InfoSchema` in force now. A poisoned
+    /// lock still yields the value: a panicking publisher cannot leave the
+    /// node unable to answer queries.
     #[must_use]
-    pub fn get_latest(&self) -> Arc<ClusterCatalog> {
-        Arc::clone(&self.get_latest_built().loaded)
+    pub fn get_latest(&self) -> Arc<SessionExtendedInfoSchema> {
+        match self.published.read() {
+            Ok(guard) => Arc::clone(&guard),
+            Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+        }
     }
 
     /// Go `Loader.LoadWithTS(ts, isSnapshot)`: the schema at the snapshot's
@@ -224,7 +200,7 @@ impl InfoCache {
         &self,
         snapshot: &mut S,
         capacity: usize,
-    ) -> Result<Arc<ClusterCatalog>, tidb_infoschema::cluster_catalog::ClusterCatalogError> {
+    ) -> Result<Arc<SessionExtendedInfoSchema>, tidb_infoschema::cluster_catalog::ClusterCatalogError> {
         let version = crate::catalog_reload::get_schema_version_with_non_empty_diff(snapshot)?;
         let found = {
             let mut versions = self
@@ -232,28 +208,28 @@ impl InfoCache {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             self.capacity.store(capacity, Ordering::Relaxed);
-            let latest = self.get_latest_built();
-            versions.insert(latest.loaded.schema_version, latest);
+            let latest = self.get_latest();
+            versions.insert(latest.schema_meta_version(), latest);
             // Go ReSize retains the newest entries before GetByVersion.
             while versions.len() > capacity {
                 versions.pop_first();
             }
-            versions.get(&version).map(|built| Arc::clone(&built.loaded))
+            versions.get(&version).map(Arc::clone)
         };
         if let Some(found) = found {
             return Ok(found);
         }
         // No shared cache lock spans storage RPCs.
-        let mut loaded = tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables(snapshot)?;
+        let mut loaded = tidb_infoschema::cluster_catalog::load_info_schema(snapshot)?;
         // The reserved counter may be ahead of the committed schema diff.
         // Use the same effective version as the live reload owner.
-        loaded.schema_version = version;
-        let built = self.build(Arc::new(loaded));
+        loaded.set_schema_meta_version(version);
+        let built = self.build(loaded);
         let mut versions = self
             .historical
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let found = Arc::clone(&versions.entry(version).or_insert(built).loaded);
+        let found = Arc::clone(versions.entry(version).or_insert(built));
         // A concurrent request may have resized while storage was loading.
         while versions.len() > self.capacity.load(Ordering::Relaxed) {
             versions.pop_first();
@@ -269,10 +245,10 @@ impl InfoCache {
     /// slow full load racing a DDL's inline reload) can never take the node
     /// back to an older schema. The older catalog still enters the
     /// historical cache, as Go's insert keeps it for snapshot reads.
-    pub fn upsert(&self, catalog: ClusterCatalog) -> bool {
+    pub fn upsert(&self, catalog: SessionExtendedInfoSchema) -> bool {
         // Built before any lock: a build reads every table's metadata.
-        let built = self.build(Arc::new(catalog));
-        let version = built.loaded.schema_version;
+        let built = self.build(catalog);
+        let version = built.schema_meta_version();
         // Publication and retained-version admission share the same lock order
         // as historical lookup, and holding the cache lock across the version
         // comparison serializes concurrent publishers.
@@ -288,7 +264,7 @@ impl InfoCache {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
-        if version < guard.loaded.schema_version {
+        if version < guard.schema_meta_version() {
             return false;
         }
         versions.insert(version, Arc::clone(&built));
@@ -382,7 +358,7 @@ pub type CatalogReloadStatsSource = Arc<dyn Fn() -> CatalogReloadStats + Send + 
 /// Keeping the storage access outside this module is what lets the thread be
 /// tested without PD or TiKV.
 pub type ReloadPass =
-    Box<dyn FnMut(&ClusterCatalog) -> Result<CatalogReloadPass, String> + Send + 'static>;
+    Box<dyn FnMut(&SessionExtendedInfoSchema) -> Result<CatalogReloadPass, String> + Send + 'static>;
 
 /// The outcome one reload pass reports back to the thread.
 #[derive(Clone, Debug)]
@@ -390,9 +366,9 @@ pub enum CatalogReloadPass {
     /// The cluster is still at the published version.
     Unchanged,
     /// Publish this catalog; it was reached by replaying diffs.
-    Diffs(ClusterCatalog),
+    Diffs(SessionExtendedInfoSchema),
     /// Publish this catalog; it was re-read whole.
-    Full(ClusterCatalog),
+    Full(SessionExtendedInfoSchema),
 }
 
 /// Wakes a [`Syncer`] before its next tick.
@@ -564,13 +540,13 @@ fn run_one_pass(
             stats.unchanged.fetch_add(1, Ordering::AcqRel);
         }
         Ok(CatalogReloadPass::Diffs(next)) => {
-            let schema_version = next.schema_version;
+            let schema_version = next.schema_meta_version();
             catalog.upsert(next);
             stats.diff_reloads.fetch_add(1, Ordering::AcqRel);
             emit_reloaded(schema_version, "diffs", trigger);
         }
         Ok(CatalogReloadPass::Full(next)) => {
-            let schema_version = next.schema_version;
+            let schema_version = next.schema_meta_version();
             catalog.upsert(next);
             stats.full_reloads.fetch_add(1, Ordering::AcqRel);
             emit_reloaded(schema_version, "full", trigger);
@@ -633,10 +609,10 @@ mod tests {
             shared
                 .load_with_ts(&mut NoScan, 16)
                 .unwrap()
-                .schema_version,
+                .schema_meta_version(),
             7
         );
-        assert_eq!(shared.get_latest().schema_version, 8);
+        assert_eq!(shared.get_latest().schema_meta_version(), 8);
     }
 
     #[test]
@@ -719,7 +695,7 @@ mod tests {
             diff: Some(b"{}".to_vec()),
         };
         let old = shared.load_with_ts(&mut snapshot, 3).unwrap();
-        assert_eq!(old.schema_version, 7);
+        assert_eq!(old.schema_meta_version(), 7);
         assert!(snapshot.scans > 0);
         snapshot.scans = 0;
         assert!(Arc::ptr_eq(
@@ -741,9 +717,9 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![9, 10]
         );
-        assert_eq!(shared.get_latest().schema_version, 10);
+        assert_eq!(shared.get_latest().schema_meta_version(), 10);
         assert_eq!(
-            old.schema_version, 7,
+            old.schema_meta_version(), 7,
             "eviction does not invalidate an active reader"
         );
         snapshot.version = 7;
@@ -759,7 +735,7 @@ mod tests {
             shared
                 .load_with_ts(&mut snapshot, 2)
                 .unwrap()
-                .schema_version,
+                .schema_meta_version(),
             11
         );
         assert_eq!(shared.historical.lock().unwrap().len(), 2);
@@ -772,7 +748,7 @@ mod tests {
             shared
                 .load_with_ts(&mut snapshot, 2)
                 .unwrap()
-                .schema_version,
+                .schema_meta_version(),
             10
         );
         snapshot.version = 9;
@@ -780,7 +756,7 @@ mod tests {
             shared
                 .load_with_ts(&mut snapshot, 2)
                 .unwrap()
-                .schema_version,
+                .schema_meta_version(),
             8,
             "full historical loads use the effective version too"
         );
@@ -789,7 +765,7 @@ mod tests {
             shared
                 .load_with_ts(&mut snapshot, 2)
                 .unwrap()
-                .schema_version,
+                .schema_meta_version(),
             0
         );
         snapshot.version = 11;
@@ -798,16 +774,16 @@ mod tests {
             shared.load_with_ts(&mut snapshot, 2).is_err(),
             "a cached schema cannot suppress metadata decoding errors"
         );
-        assert_eq!(shared.get_latest().schema_version, 11);
+        assert_eq!(shared.get_latest().schema_meta_version(), 11);
     }
 
-    fn catalog_at(version: i64) -> ClusterCatalog {
-        ClusterCatalog {
-            resource_groups: Vec::new(),
-            policies: Vec::new(),
-            schema_version: version,
-            databases: Vec::new(),
-        }
+    fn catalog_at(version: i64) -> SessionExtendedInfoSchema {
+        SessionExtendedInfoSchema::init_with_db_infos(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            version,
+        )
     }
 
     #[test]
@@ -817,8 +793,8 @@ mod tests {
         shared.upsert(catalog_at(2));
         // The in-flight reader keeps its own version; the next reader sees the
         // new one. That is the whole consistency contract of the swap.
-        assert_eq!(held.schema_version, 1);
-        assert_eq!(shared.get_latest().schema_version, 2);
+        assert_eq!(held.schema_meta_version(), 1);
+        assert_eq!(shared.get_latest().schema_meta_version(), 2);
     }
 
     /// Go `InfoCache.GetLatest` answers the highest version: a reload that
@@ -828,10 +804,10 @@ mod tests {
         let shared = InfoCache::new(catalog_at(5));
         assert!(shared.upsert(catalog_at(8)));
         assert!(!shared.upsert(catalog_at(7)));
-        assert_eq!(shared.get_latest().schema_version, 8);
+        assert_eq!(shared.get_latest().schema_meta_version(), 8);
         assert!(shared.historical.lock().unwrap().contains_key(&7));
         assert!(shared.upsert(catalog_at(8)));
-        assert_eq!(shared.get_latest().schema_version, 8);
+        assert_eq!(shared.get_latest().schema_meta_version(), 8);
     }
 
     #[test]
@@ -854,7 +830,7 @@ mod tests {
             Arc::clone(&shared),
             Duration::from_millis(5),
             Box::new(move |current| {
-                assert_eq!(current.schema_version, version);
+                assert_eq!(current.schema_meta_version(), version);
                 version += 1;
                 sender.send(version).unwrap();
                 Ok(CatalogReloadPass::Diffs(catalog_at(version)))
@@ -870,7 +846,7 @@ mod tests {
         // A condvar-based stop must not wait out a tick; the bound is generous
         // enough for a loaded machine yet far below a long interval.
         assert!(stopping.elapsed() < Duration::from_secs(5));
-        assert!(shared.get_latest().schema_version >= 3);
+        assert!(shared.get_latest().schema_meta_version() >= 3);
         assert!(reloader.stats().diff_reloads >= 2);
         // The thread is gone: no further pass can arrive.
         drop(receiver);
@@ -886,7 +862,7 @@ mod tests {
             Arc::clone(&shared),
             Duration::from_secs(3600),
             Box::new(move |current| {
-                let next = current.schema_version + 1;
+                let next = current.schema_meta_version() + 1;
                 sender.send(next).unwrap();
                 Ok(CatalogReloadPass::Diffs(catalog_at(next)))
             }),
@@ -905,7 +881,7 @@ mod tests {
         let stats = reloader.stats();
         assert_eq!(stats.nudged, 2);
         assert_eq!(stats.passes, 2);
-        assert_eq!(shared.get_latest().schema_version, 3);
+        assert_eq!(shared.get_latest().schema_meta_version(), 3);
     }
 
     #[test]
@@ -951,7 +927,7 @@ mod tests {
         let stats = Arc::new(StatCounters::default());
         let mut pass: ReloadPass = Box::new(|_| Err("snapshot read failed".to_owned()));
         run_one_pass(&shared, &stats, &mut pass, false);
-        assert_eq!(shared.get_latest().schema_version, 7);
+        assert_eq!(shared.get_latest().schema_meta_version(), 7);
         assert_eq!(stats.snapshot().failures, 1);
     }
 

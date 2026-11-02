@@ -73,7 +73,8 @@ use tidb_stats::{
 };
 use tidb_stats_handle_cache::StatsMetaRow;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_syssession::mysql_system_tables::{
     scan_system_table, scan_system_table_index_prefixed, scan_system_table_prefixed, SystemRow,
     SystemTableError, SystemTableView,
@@ -544,7 +545,7 @@ pub struct ClusterStatsLoader {
 
 impl ClusterStatsLoader {
     /// Locates the statistics tables in one loaded catalog.
-    pub fn locate(catalog: &ClusterCatalog) -> Result<Self, SystemTableError> {
+    pub fn locate(catalog: &SessionExtendedInfoSchema) -> Result<Self, SystemTableError> {
         Ok(Self {
             meta: SystemTableView::locate(
                 catalog,

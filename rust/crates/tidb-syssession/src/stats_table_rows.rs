@@ -23,7 +23,8 @@ use tidb_datatype::Datum;
 use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use crate::mysql_system_tables::{
     scan_system_table, scan_system_table_index_prefixed, scan_system_table_prefixed, HandleLayout,
     SystemRow, SystemTableError, SystemTableView, SYSTEM_DB,
@@ -183,7 +184,7 @@ impl<'table> StatsRows<'table> {
 
     pub fn store_row(
         &mut self,
-        catalog: &ClusterCatalog,
+        catalog: &SessionExtendedInfoSchema,
         values: &RowValues,
         plan: &mut StatsWritePlan,
         row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -274,13 +275,11 @@ pub fn identity_of(
 }
 
 pub fn locate<'catalog>(
-    catalog: &'catalog ClusterCatalog,
+    catalog: &'catalog SessionExtendedInfoSchema,
     name: &str,
 ) -> Result<tidb_model::GoShared<TableInfo>, StatsWriteError> {
     catalog
-        .databases
-        .iter()
-        .find(|database| database.read().name.lowercase() == SYSTEM_DB)
+        .schema_info_by_name(SYSTEM_DB)
         .and_then(|database| {
             database
                 .read().deprecated_tables
@@ -290,11 +289,9 @@ pub fn locate<'catalog>(
         .ok_or_else(|| StatsWriteError::MissingTable(format!("{SYSTEM_DB}.{name}")))
 }
 
-pub fn system_db_id(catalog: &ClusterCatalog) -> Result<i64, StatsWriteError> {
+pub fn system_db_id(catalog: &SessionExtendedInfoSchema) -> Result<i64, StatsWriteError> {
     catalog
-        .databases
-        .iter()
-        .find(|database| database.read().name.lowercase() == SYSTEM_DB)
+        .schema_info_by_name(SYSTEM_DB)
         .map(|database| database.read().id)
         .ok_or_else(|| StatsWriteError::MissingTable(SYSTEM_DB.to_owned()))
 }
@@ -427,7 +424,7 @@ pub fn decode_rows_with_keys(
 /// allocator (`_tidb_rowid` for a heap table, AUTO_INCREMENT otherwise),
 /// whose reservation commits in its own transaction.
 pub fn allocate_row_id(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table: &TableInfo,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<i64, StatsWriteError> {

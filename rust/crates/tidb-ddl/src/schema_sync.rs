@@ -442,7 +442,7 @@ fn run_ack_loop<S>(
             }
             continue;
         }
-        let loaded = catalog.get_latest().schema_version;
+        let loaded = catalog.get_latest().schema_meta_version();
         let reload_pass = reload_stats().passes;
         let mdl_enabled = tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen());
 
@@ -517,7 +517,7 @@ fn run_ack_loop<S>(
                                 opener, timeout,
                             ) {
                                 Ok(refreshed)
-                                    if refreshed.schema_version >= current.schema_version =>
+                                    if refreshed.schema_meta_version() >= current.schema_meta_version() =>
                                 {
                                     catalog.upsert(refreshed);
                                 }
@@ -640,7 +640,7 @@ fn recover_schema_syncer(
     if !must_reload(reload_waker, reload_stats, stop) {
         return false;
     }
-    let version = catalog.get_latest().schema_version;
+    let version = catalog.get_latest().schema_meta_version();
     validator.restart(version);
     logger.info("schema syncer restarted", &[]);
     true
@@ -696,7 +696,7 @@ fn sleep_sliced(total: Duration, stop: &AtomicBool) {
 mod tests {
     use super::*;
     use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadPass, Syncer};
-    use tidb_infoschema::cluster_catalog::ClusterCatalog;
+    use tidb_infoschema::SessionExtendedInfoSchema;
     use tidb_schemaver::mem_syncer::MemSyncer;
 
     #[test]
@@ -704,12 +704,12 @@ mod tests {
         let syncer = Arc::new(MemSyncer::new());
         let context = SchemaVersionContext::background();
         syncer.init(&context).unwrap();
-        let catalog = Arc::new(InfoCache::new(ClusterCatalog {
-            resource_groups: Vec::new(),
-            policies: Vec::new(),
-            schema_version: 7,
-            databases: Vec::new(),
-        }));
+        let catalog = Arc::new(InfoCache::new(SessionExtendedInfoSchema::init_with_db_infos(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            7,
+        )));
         let reloader = Syncer::spawn(
             catalog,
             Duration::from_secs(3600),
@@ -749,12 +749,12 @@ mod tests {
         let syncer = Arc::new(MemSyncer::new());
         let context = SchemaVersionContext::background();
         syncer.init(&context).unwrap();
-        let catalog = Arc::new(InfoCache::new(ClusterCatalog {
-            resource_groups: Vec::new(),
-            policies: Vec::new(),
-            schema_version: 7,
-            databases: Vec::new(),
-        }));
+        let catalog = Arc::new(InfoCache::new(SessionExtendedInfoSchema::init_with_db_infos(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            7,
+        )));
         let reloader = Syncer::spawn(
             catalog,
             Duration::from_secs(3600),
@@ -787,12 +787,12 @@ mod tests {
     /// succeeds -- here the pass fails twice before it answers.
     #[test]
     fn must_reload_waits_out_failed_passes_until_one_succeeds() {
-        let catalog = Arc::new(InfoCache::new(ClusterCatalog {
-            resource_groups: Vec::new(),
-            policies: Vec::new(),
-            schema_version: 7,
-            databases: Vec::new(),
-        }));
+        let catalog = Arc::new(InfoCache::new(SessionExtendedInfoSchema::init_with_db_infos(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            7,
+        )));
         let mut failures_left = 2;
         let reloader = Syncer::spawn(
             catalog,
@@ -821,12 +821,12 @@ mod tests {
     /// A node that is stopping gives up instead of waiting forever.
     #[test]
     fn must_reload_gives_up_when_the_node_stops() {
-        let catalog = Arc::new(InfoCache::new(ClusterCatalog {
-            resource_groups: Vec::new(),
-            policies: Vec::new(),
-            schema_version: 7,
-            databases: Vec::new(),
-        }));
+        let catalog = Arc::new(InfoCache::new(SessionExtendedInfoSchema::init_with_db_infos(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            7,
+        )));
         let reloader = Syncer::spawn(
             catalog,
             Duration::from_secs(3600),
@@ -987,7 +987,7 @@ mod tests {
         tidb_vardef::set_enable_mdl(false);
         let mut loaded =
             tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
-        let (_, table) = loaded.find_table("mysql", "tidb_mdl_info").unwrap();
+        let (_, table) = loaded.table_info_by_name("mysql", "tidb_mdl_info").unwrap();
         let table = table.read();
         let info = MdlInfoUpdate {
             table: Box::new(table.clone_like_go()),
@@ -1005,7 +1005,7 @@ mod tests {
                 &tidb_txnkv::UnaryCallContext::with_timeout(timeout),
             )
             .unwrap();
-        loaded.schema_version = 5;
+        loaded.set_schema_meta_version(5);
         let catalog = Arc::new(InfoCache::new(loaded));
         let reloader = Syncer::spawn(
             catalog.clone(),

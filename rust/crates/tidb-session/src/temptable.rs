@@ -260,7 +260,7 @@ impl tidb_executor::ddl_exec::TemporaryTableDdlExec for Session {
 
     fn session_info_schema(
         &self,
-    ) -> Option<std::sync::Arc<tidb_infoschema::cluster_catalog::ClusterCatalog>> {
+    ) -> Option<std::sync::Arc<tidb_infoschema::SessionExtendedInfoSchema>> {
         self.info_schema.clone()
     }
 

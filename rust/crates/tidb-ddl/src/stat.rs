@@ -41,7 +41,7 @@ impl Statistics for DdlStatistics {
             ("server_id".to_owned(), self.id.clone()),
             (
                 "ddl_schema_version".to_owned(),
-                self.catalog.get_latest().schema_version.to_string(),
+                self.catalog.get_latest().schema_meta_version().to_string(),
             ),
         ]))
     }

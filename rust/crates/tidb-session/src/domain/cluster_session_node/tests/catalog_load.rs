@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! A loaded table's stored metadata reaches the SQL a node session runs over
-//! it: each test publishes one `ClusterCatalog` -- metadata as the store's
+//! it: each test publishes one `SessionExtendedInfoSchema` -- metadata as the store's
 //! meta holds it, some of which SQL cannot create (a column mid-DDL, a
 //! stored DEFAULT, a hidden index column) -- and drives a session on that
 //! node.
@@ -37,34 +37,42 @@ use super::mock_seams::DeprecatedTables;
 
 /// A session on a node that publishes `catalog`, the tables its catalog
 /// left out, and the node.
-fn node_session(catalog: ClusterCatalog) -> (Session, Vec<SkippedTable>, MockNode) {
+fn node_session(catalog: SessionExtendedInfoSchema) -> (Session, Vec<SkippedTable>, MockNode) {
     let node = MockNode::over(catalog);
     let session = open_session_on(&node);
     let skipped = session.node().skipped_tables().to_vec();
     (session, skipped, node)
 }
 
-fn one_database(tables: Vec<TableInfo>) -> ClusterCatalog {
-    ClusterCatalog {
-        resource_groups: Vec::new(),
-        policies: Vec::new(),
-        schema_version: 7,
-        databases: vec![tidb_model::GoShared::new(DBInfo {
+fn one_database(tables: Vec<TableInfo>) -> SessionExtendedInfoSchema {
+    SessionExtendedInfoSchema::init_with_db_infos(
+        vec![tidb_model::GoShared::new(DBInfo {
             id: 5,
             name: CiString::new("app"),
             deprecated_tables: tables.into(),
             ..DBInfo::default()
         })],
-    }
+        Vec::new(),
+        Vec::new(),
+        7,
+    )
 }
 
-fn one_table_catalog(table: TableInfo) -> ClusterCatalog {
+/// Edits the tables of the fixture's first stored database, copying its
+/// `DBInfo` into its slot as the reload does (an image's `stored_schemas`
+/// is a list of the pointers it shares, not its slots).
+fn with_first_database_tables(catalog: &mut SessionExtendedInfoSchema, edit: impl FnOnce(&mut Vec<TableInfo>)) {
+    let id = catalog.stored_schemas()[0].read().id;
+    assert!(catalog.edit_schema_by_id(id, |database| database.with_tables(edit)));
+}
+
+fn one_table_catalog(table: TableInfo) -> SessionExtendedInfoSchema {
     one_database(vec![table])
 }
 
 /// One database `app` holding `t(id BIGINT PRIMARY KEY, v BIGINT)`, plus a
 /// table still mid-DDL that the session must refuse by name.
-fn base_catalog() -> ClusterCatalog {
+fn base_catalog() -> SessionExtendedInfoSchema {
     let base = TableInfo {
         id: 101,
         name: CiString::new("t"),
@@ -86,7 +94,7 @@ fn base_catalog() -> ClusterCatalog {
 /// One database `app` holding `d(id BIGINT PRIMARY KEY, v BIGINT DEFAULT
 /// 7)`, as the loader receives it from the cluster: the DEFAULT lives on
 /// the stored `ColumnInfo`, not on anything this node builds by hand.
-fn default_catalog() -> ClusterCatalog {
+fn default_catalog() -> SessionExtendedInfoSchema {
     let mut v = column(2, 1, "v", false);
     v.default_value = ColumnDefaultValue::string_bytes(b"7".to_vec()).into();
     v.origin_default_value = ColumnDefaultValue::string_bytes(b"7".to_vec()).into();
@@ -104,7 +112,7 @@ fn default_catalog() -> ClusterCatalog {
 /// COLLATE utf8mb4_general_ci)`, built the way the cluster loader builds
 /// it: the column's `FieldType` is the one decoded from the stored
 /// descriptor, collation name and all.
-fn ci_catalog() -> ClusterCatalog {
+fn ci_catalog() -> SessionExtendedInfoSchema {
     // Decoded from the stored descriptor rather than built by hand, so this
     // exercises the same `From<JsonFieldType>` the catalog loader uses --
     // including its duty to fill BOTH the collation name and the cached
@@ -510,7 +518,7 @@ fn loaded_hidden_columns_preserve_native_layout_and_index_values() {
     let mut generated = column(4, 3, "g", false);
     generated.generated_expr_string = "`id` + `v`".to_owned();
     let mut catalog = base_catalog();
-    catalog.databases[0].with_tables(|tables| {
+    with_first_database_tables(&mut catalog, |tables| {
         tables.truncate(1);
         let info = &mut tables[0];
         // A visible column may follow a hidden column in stored Go metadata.
@@ -557,8 +565,8 @@ fn loaded_generated_columns_keep_virtual_and_stored_semantics() {
     stored_column.generated_stored = true;
     stored_column.dependences.insert("id");
     let mut catalog = base_catalog();
-    catalog.databases[0].with_tables(|tables| tables.truncate(1));
-    catalog.databases[0].with_tables(|tables| tables[0].columns = vec![column(1, 0, "id", true), virtual_column, stored_column].into());
+    with_first_database_tables(&mut catalog, |tables| tables.truncate(1));
+    with_first_database_tables(&mut catalog, |tables| tables[0].columns = vec![column(1, 0, "id", true), virtual_column, stored_column].into());
     let (mut session, skipped, node) = node_session(catalog);
     assert!(skipped.is_empty());
     // A stored generated value is decoded, not recomputed by the reader.
@@ -668,7 +676,7 @@ fn a_clustered_composite_primary_remains_the_table_path() {
 #[test]
 fn a_cluster_column_whose_default_is_not_a_literal_refuses_the_table() {
     let catalog = default_catalog();
-    let column = catalog.databases[0].tables()[0]
+    let column = catalog.stored_schemas()[0].tables()[0]
         .columns
         .get(1)
         .expect("the fixture has its value column");
@@ -821,7 +829,7 @@ fn non_clustered_tables_share_the_hidden_rowid_allocator() {
 #[test]
 fn a_loaded_prefix_index_preserves_full_value_filtering() {
     let mut catalog = ci_catalog();
-    catalog.databases[0].with_tables(|tables| tables[0].indices = vec![index(1, "idx", "c", 1, 4)].into());
+    with_first_database_tables(&mut catalog, |tables| tables[0].indices = vec![index(1, "idx", "c", 1, 4)].into());
     let (mut session, skipped, _node) = node_session(catalog);
     assert!(skipped.is_empty());
     session
@@ -877,8 +885,8 @@ fn a_stored_database_charset_survives_the_load() {
         ..TableInfo::default()
     };
     let catalog_source = one_table_catalog(table);
-    catalog_source.databases[0].write().charset = "latin1".to_owned();
-    catalog_source.databases[0].write().collate = "latin1_bin".to_owned();
+    catalog_source.stored_schemas()[0].write().charset = "latin1".to_owned();
+    catalog_source.stored_schemas()[0].write().collate = "latin1_bin".to_owned();
     let (session, skipped, _node) = node_session(catalog_source);
     assert!(skipped.is_empty());
     let catalog = session.shared_catalog();

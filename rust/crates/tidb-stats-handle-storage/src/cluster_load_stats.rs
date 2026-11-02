@@ -27,7 +27,7 @@ use tidb_model::table_info::TableInfo;
 use tidb_stats_util::JsonPredicateColumn;
 use tidb_stats::Table;
 
-use tidb_infoschema::cluster_catalog::ClusterCatalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use crate::cluster_stats_load::ClusterStatsItem;
 
 /// One parsed LOAD STATS command retained for the cluster route.
@@ -126,7 +126,7 @@ impl From<LoadStatsError> for ClusterLoadStatsError {
 /// Resolves and converts every physical table named by one dump.
 #[cfg(test)]
 fn lower_cluster_load_stats(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     json: &JsonTable,
 ) -> Result<Vec<LoadedStatsTable>, ClusterLoadStatsError> {
     let resolved = resolve_cluster_load_stats(catalog, json)?;
@@ -138,11 +138,11 @@ fn lower_cluster_load_stats(
 }
 
 pub(crate) fn resolve_cluster_load_stats(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     json: &JsonTable,
 ) -> Result<ResolvedClusterLoadStats, ClusterLoadStatsError> {
     let table = catalog
-        .databases
+        .stored_schemas()
         .iter()
         .find(|database| {
             database.read().name.lowercase() == json.database_name.to_lowercase().as_str()
@@ -334,18 +334,18 @@ mod tests {
         }
     }
 
-    fn catalog() -> ClusterCatalog {
-        ClusterCatalog {
-            resource_groups: Vec::new(),
-            policies: Vec::new(),
-            schema_version: 1,
-            databases: vec![tidb_model::GoShared::new(DBInfo {
+    fn catalog() -> SessionExtendedInfoSchema {
+        SessionExtendedInfoSchema::init_with_db_infos(
+            vec![tidb_model::GoShared::new(DBInfo {
                 id: 1,
                 name: CiString::new("test"),
                 deprecated_tables: vec![table()].into(),
                 ..DBInfo::default()
             })],
-        }
+            Vec::new(),
+            Vec::new(),
+            1,
+        )
     }
 
     fn json(count: i64) -> JsonTable {

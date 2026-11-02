@@ -210,7 +210,7 @@ impl TestKit {
             .expect("a mock-store session")
             .factory()
             .catalog_snapshot()
-            .schema_version;
+            .schema_meta_version();
         u64::try_from(version).unwrap_or(0)
     }
 

@@ -105,9 +105,9 @@ fn json_string(value: &str) -> String {
 /// Every table's `(table_id, column_types)` a loaded catalog holds -- exactly
 /// the argument [`load_stats_snapshot_and_loader`] needs to boot-load
 /// statistics for every table this node serves.
-fn stats_targets(catalog: &ClusterCatalog) -> Vec<tidb_stats_handle_syncload::real_tikv_stats::StatsTarget> {
+fn stats_targets(catalog: &SessionExtendedInfoSchema) -> Vec<tidb_stats_handle_syncload::real_tikv_stats::StatsTarget> {
     catalog
-        .databases
+        .stored_schemas()
         .iter()
         .flat_map(|database| database.read().deprecated_tables.iter_deref())
         .flat_map(|table| {
@@ -332,7 +332,7 @@ where
 /// `startup_lease_grant_ts` is the timestamp `startup` was read at
 /// ([`tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at`]).
 pub fn spawn_catalog_reloader<S>(
-    startup: ClusterCatalog,
+    startup: SessionExtendedInfoSchema,
     startup_lease_grant_ts: u64,
     transaction_opener: RealOptimisticTransactionOpener<S>,
     schema_lease: Duration,
@@ -355,7 +355,7 @@ where
     // commit in that window was `ResultUnknown` until its retries ran out:
     // 8027 on the first COMMIT after boot.
     validator.reset();
-    validator.update(startup_lease_grant_ts, 0, startup.schema_version, None);
+    validator.update(startup_lease_grant_ts, 0, startup.schema_meta_version(), None);
     let catalog = Arc::new(InfoCache::new(startup));
     let pass_validator = Arc::clone(&validator);
     let reloader = Syncer::spawn(
@@ -368,7 +368,7 @@ where
                 current,
                 &row_ids,
             ) {
-                Ok(at) => Ok(note_reload(&pass_validator, current.schema_version, at)),
+                Ok(at) => Ok(note_reload(&pass_validator, current.schema_meta_version(), at)),
                 Err(error) => Err(error.to_string()),
             }
         }),
@@ -383,17 +383,14 @@ mod tests {
     use tidb_model::db::DBInfo;
     use tidb_model::table_info::TableInfo;
 
-    fn catalog(table_id: i64, column_id: i64) -> ClusterCatalog {
+    fn catalog(table_id: i64, column_id: i64) -> SessionExtendedInfoSchema {
         let column = ColumnInfo::new(
             column_id,
             "value",
             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
         );
-        ClusterCatalog {
-            resource_groups: Vec::new(),
-            policies: Vec::new(),
-            schema_version: table_id,
-            databases: vec![tidb_model::GoShared::new(DBInfo {
+        SessionExtendedInfoSchema::init_with_db_infos(
+            vec![tidb_model::GoShared::new(DBInfo {
                 deprecated_tables: vec![TableInfo {
                     id: table_id,
                     columns: vec![column].into(),
@@ -402,7 +399,10 @@ mod tests {
                 .into(),
                 ..DBInfo::default()
             })],
-        }
+            Vec::new(),
+            Vec::new(),
+            table_id,
+        )
     }
 
     #[test]

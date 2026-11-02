@@ -22,7 +22,8 @@ use crate::lock_stats::StatsLockTransaction;
 use tidb_stats_handle_types::StatsLockTable;
 use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
 use tidb_syssession::system_row_write::{defaults_row, delete_clustered_row, store_clustered_row, RowValues};
 use tidb_table::origin_default::RowEncodeError;
@@ -131,7 +132,7 @@ pub(crate) fn apply_stats_lock_request<T: StatsLockTransaction>(
 /// Plans Go's `SELECT table_id FROM mysql.stats_table_locked` statement.
 pub(crate) fn query_cluster_locked_tables<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
 ) -> Result<BTreeSet<i64>, ClusterStatsLockError> {
     Ok(read_rows(snapshot, &system_table(catalog, LOCK_TABLE)?.read())?
         .into_keys()
@@ -141,7 +142,7 @@ pub(crate) fn query_cluster_locked_tables<S: MetaSnapshot>(
 /// Plans Go's one `INSERT ... ON DUPLICATE KEY UPDATE` lock statement.
 pub(crate) fn plan_cluster_insert_lock<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     now: Time,
 ) -> Result<Vec<BufferMutation>, ClusterStatsLockError> {
@@ -161,7 +162,7 @@ pub(crate) fn plan_cluster_insert_lock<S: MetaSnapshot>(
 /// Plans Go's one stats-meta version update statement.
 pub(crate) fn plan_cluster_update_meta_version<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     start_ts: u64,
 ) -> Result<Vec<BufferMutation>, ClusterStatsLockError> {
@@ -179,7 +180,7 @@ pub(crate) fn plan_cluster_update_meta_version<S: MetaSnapshot>(
 /// Executes Go's one lock-delta select against the transaction snapshot.
 pub(crate) fn query_cluster_lock_delta<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
 ) -> Result<(i64, i64), ClusterStatsLockError> {
     let table = system_table(catalog, LOCK_TABLE)?;
@@ -197,7 +198,7 @@ pub(crate) fn query_cluster_lock_delta<S: MetaSnapshot>(
 /// Plans Go's one delta merge into `mysql.stats_meta`.
 pub(crate) fn plan_cluster_update_meta_delta<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
     count_delta: i64,
     modify_count_delta: i64,
@@ -232,7 +233,7 @@ pub(crate) fn plan_cluster_update_meta_delta<S: MetaSnapshot>(
 /// Plans Go's one lock-row delete statement.
 pub(crate) fn plan_cluster_delete_lock<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table_id: i64,
 ) -> Result<Vec<BufferMutation>, ClusterStatsLockError> {
     let table = system_table(catalog, LOCK_TABLE)?;
@@ -258,19 +259,19 @@ fn read_rows<S: MetaSnapshot>(
 }
 
 fn system_table<'a>(
-    catalog: &'a ClusterCatalog,
+    catalog: &'a SessionExtendedInfoSchema,
     name: &str,
 ) -> Result<tidb_model::GoShared<TableInfo>, ClusterStatsLockError> {
     user_table(catalog, "mysql", name)
 }
 
 fn user_table<'a>(
-    catalog: &'a ClusterCatalog,
+    catalog: &'a SessionExtendedInfoSchema,
     schema: &str,
     table: &str,
 ) -> Result<tidb_model::GoShared<TableInfo>, ClusterStatsLockError> {
     catalog
-        .databases
+        .stored_schemas()
         .iter()
         .find(|database| database.read().name.lowercase() == schema.go_to_lower())
         .and_then(|database| {
@@ -350,7 +351,7 @@ fn datum_i64(value: Option<&Datum>, column: &str) -> Result<i64, ClusterStatsLoc
 mod statement_tests {
     use super::*;
     use tidb_infoschema::cluster_catalog::{
-        fetch_all_schemas_with_tables, ClusterCatalogError, MetaPairs, MetaSnapshot,
+        load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot,
     };
     use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
     use tidb_stats_handle_storage::cluster_stats_write::plan_loaded_stats_meta_write;
@@ -422,7 +423,7 @@ mod statement_tests {
     fn lock_insert_and_meta_version_are_separate_go_statements() {
         const TABLE_ID: i64 = 42;
         let mut store = bootstrapped();
-        let catalog = fetch_all_schemas_with_tables(&mut store).unwrap();
+        let catalog = load_info_schema(&mut store).unwrap();
         let meta = plan_loaded_stats_meta_write(
             &mut store,
             &catalog,

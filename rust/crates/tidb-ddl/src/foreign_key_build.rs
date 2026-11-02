@@ -13,7 +13,7 @@
 
 #[allow(unused_imports)]
 use tidb_ddl_build::foreign_key::*;
-use tidb_infoschema::cluster_catalog::ClusterCatalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_ast::CiString;
 use tidb_datatype::FieldTypeFlags;
 use tidb_hack::GoToLower;
@@ -27,7 +27,7 @@ use tidb_model::table_info::TableInfo;
 /// `checkTableForeignKeyValidInOwner` for one key of `table`: the key against
 /// the table it references, which may be `table` itself.
 pub(crate) fn check_table_foreign_key_valid(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema: &str,
     table: &TableInfo,
     fk: &FKInfo,
@@ -83,9 +83,9 @@ pub(crate) fn check_table_foreign_key_valid(
     check_table_foreign_key(refer, table, fk)
 }
 
-fn lookup(catalog: &ClusterCatalog, schema: &str, table: &str) -> Option<tidb_model::GoShared<TableInfo>> {
+fn lookup(catalog: &SessionExtendedInfoSchema, schema: &str, table: &str) -> Option<tidb_model::GoShared<TableInfo>> {
     catalog
-        .find_table(schema, table)
+        .table_info_by_name(schema, table)
         .map(|(_, table)| table)
         .filter(|table| table.read().state == SchemaState::PUBLIC)
 }
@@ -95,7 +95,7 @@ fn lookup(catalog: &ClusterCatalog, schema: &str, table: &str) -> Option<tidb_mo
 /// They differ only in the self-reference same-columns refusal (submitter
 /// only) and the error an unopenable parent reports.
 fn check_valid(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema: &str,
     table: &TableInfo,
     fk_check: bool,
@@ -111,7 +111,7 @@ fn check_valid(
     }
     // Go `is.GetTableReferredForeignKeys`: children created earlier with
     // `foreign_key_checks=0` that reference this (new) table.
-    for database in &catalog.databases {
+    for database in &catalog.stored_schemas() {
         for child in database.read().deprecated_tables.iter_deref() {
             let child = child.read();
             for fk in child.foreign_keys.iter_deref() {
@@ -130,7 +130,7 @@ fn check_valid(
 
 /// Go `checkTableForeignKeysValid`: the submitter-side check.
 pub fn check_table_foreign_keys_valid(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema: &str,
     table: &TableInfo,
     fk_check: bool,
@@ -141,7 +141,7 @@ pub fn check_table_foreign_keys_valid(
 /// Go `checkTableForeignKeyValidInOwner` then `allocateFKIndexID` for every
 /// key (`create_table.go:87-98`).
 pub fn check_table_foreign_key_valid_in_owner(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema: &str,
     table: &mut TableInfo,
     fk_check: bool,
@@ -161,7 +161,7 @@ pub fn check_table_foreign_key_valid_in_owner(
 /// `referredForeignKeyMap` entry -- version-1 keys only, ordered by child
 /// schema, child table and key name.
 pub(crate) fn get_table_referred_foreign_keys(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema: &str,
     table: &str,
 ) -> Vec<ReferredFKInfo> {
@@ -170,7 +170,7 @@ pub(crate) fn get_table_referred_foreign_keys(
         tidb_hack::go_to_lower(table),
     );
     let mut referred = Vec::new();
-    for database in &catalog.databases {
+    for database in &catalog.stored_schemas() {
         for child in database.read().deprecated_tables.iter_deref() {
             let child = child.read();
             for fk in child.foreign_keys.iter_deref() {
@@ -211,7 +211,7 @@ pub(crate) fn get_table_referred_foreign_keys(
 /// still exists and is not among `ignored` (schema, table) pairs, that cites
 /// `schema`.`table`. `None` when `fk_check` is off.
 pub(crate) fn check_table_has_foreign_key_referred(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     schema: &str,
     table: &str,
     ignored: &[(String, String)],
@@ -230,7 +230,7 @@ pub(crate) fn check_table_has_foreign_key_referred(
         })
         .find(|referred| {
             catalog
-                .find_table(
+                .table_info_by_name(
                     referred.child_schema.lowercase(),
                     referred.child_table.lowercase(),
                 )
@@ -242,7 +242,7 @@ pub(crate) fn check_table_has_foreign_key_referred(
 /// of this table, or a key citing it, needs cannot be dropped unless another
 /// index (or the integer primary key) still covers the key's columns.
 pub(crate) fn check_index_needed_in_foreign_key(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     db_name: &str,
     tb_info: &TableInfo,
     idx_info: &IndexInfo,
@@ -294,7 +294,7 @@ pub(crate) fn check_index_needed_in_foreign_key(
 /// Go `checkDropColumnWithForeignKeyConstraint` (`foreign_key.go:503`):
 /// `col_name` is lowercase, as Go passes `colName.L`.
 pub(crate) fn check_drop_column_with_foreign_key_constraint(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     db_name: &str,
     tb_info: &TableInfo,
     col_name: &str,
@@ -341,7 +341,7 @@ pub(crate) fn check_drop_column_with_foreign_key_constraint(
 /// takes part in, as a child (this table's keys) and as a parent (the keys
 /// citing this table).
 pub(crate) fn check_modify_column_with_foreign_key_constraint(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     db_name: &str,
     tb_info: &TableInfo,
     original_col: &tidb_model::ColumnInfo,
@@ -364,7 +364,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
             }
             // Go `is.TableByName`, whose error it returns as is.
             let Some((_, refer_table)) =
-                catalog.find_table(fk.ref_schema.original(), fk.ref_table.original())
+                catalog.table_info_by_name(fk.ref_schema.original(), fk.ref_table.original())
             else {
                 return Err(coded(
                     &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS,
@@ -415,7 +415,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
             if col.lowercase() != original_name {
                 continue;
             }
-            let Some((_, child_tbl_info)) = catalog.find_table(
+            let Some((_, child_tbl_info)) = catalog.table_info_by_name(
                 referred_fk.child_schema.original(),
                 referred_fk.child_table.original(),
             ) else {

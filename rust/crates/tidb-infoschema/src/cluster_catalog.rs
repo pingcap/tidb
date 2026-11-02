@@ -149,63 +149,6 @@ pub fn stored_table_info_json(info: &TableInfo) -> Result<Vec<u8>, String> {
     tidb_meta::value::serialize_table_info(info).map_err(|error| error.to_string())
 }
 
-/// One whole catalog as of one snapshot.
-#[derive(Clone, Debug)]
-pub struct ClusterCatalog {
-    /// Go `mSchemaVersionKey`. Absent means 0, matching Go's `GetInt64`.
-    pub schema_version: i64,
-    /// Every database, in stored key order, its `Deprecated.Tables` the
-    /// tables stored under it (Go `fetchAllSchemasWithTables`).
-    pub databases: Vec<GoShared<DBInfo>>,
-    /// Go `Mutator.ListResourceGroups`: the stored resource groups, with
-    /// meta's default group when none is stored under that name.
-    pub resource_groups: Vec<tidb_model::ResourceGroupInfo>,
-    /// Go `Mutator.ListPolicies`: the stored placement policies, which a
-    /// table, partition or database names by id.
-    pub policies: Vec<tidb_model::PolicyInfo>,
-}
-
-impl ClusterCatalog {
-    /// Go `InfoSchema.SchemaByName` with `SchemaTableInfos`: one database
-    /// by case-insensitive name and its tables, a stored one, else one of
-    /// the virtual schemas every infoschema serves (`initVirtualTables`).
-    #[must_use]
-    pub fn schema_by_name(&self, schema: &str) -> Option<GoShared<DBInfo>> {
-        let lower = schema.go_to_lower();
-        self.databases
-            .iter()
-            .find(|database| database.read().name.lowercase() == lower)
-            .cloned()
-            .or_else(|| crate::virtual_tables::virtual_schema(schema))
-    }
-
-    /// Go `InfoSchema.TableByName`: a stored table, else one of the virtual
-    /// schemas every infoschema serves (`initVirtualTables`).
-    #[must_use]
-    pub fn table_by_name(&self, schema: &str, table: &str) -> Option<(GoShared<DBInfo>, GoShared<TableInfo>)> {
-        self.find_table(schema, table)
-            .or_else(|| crate::virtual_tables::virtual_table(schema, table))
-    }
-
-    /// Finds one table by case-insensitive schema and table name.
-    #[must_use]
-    pub fn find_table(&self, schema: &str, table: &str) -> Option<(GoShared<DBInfo>, GoShared<TableInfo>)> {
-        let schema = schema.go_to_lower();
-        let table = table.go_to_lower();
-        self.databases
-            .iter()
-            .filter(|database| database.read().name.lowercase() == schema)
-            .find_map(|database| {
-                let found = database
-                    .read()
-                    .deprecated_tables
-                    .iter_deref()
-                    .find(|stored| stored.read().name.lowercase() == table)?;
-                Some((database.clone(), found))
-            })
-    }
-}
-
 /// Reads the cluster schema version alone (Go `m.GetSchemaVersion`).
 pub fn get_schema_version<S: MetaSnapshot>(snapshot: &mut S) -> Result<i64, ClusterCatalogError> {
     match snapshot.get(&key::schema_version_kv_key())? {
@@ -216,17 +159,17 @@ pub fn get_schema_version<S: MetaSnapshot>(snapshot: &mut S) -> Result<i64, Clus
     }
 }
 
-/// Go `Loader.fetchAllSchemasWithTables`: the whole catalog (every database
-/// and table) from one snapshot, at its schema version.
-///
-/// Go `ListDatabases` then `ListTables` per database. Go filters a database's
-/// hash by field prefix because the same hash also holds the per-table ID
-/// allocators; so does this.
-pub fn fetch_all_schemas_with_tables<S: MetaSnapshot>(
+/// Go `Domain.loadInfoSchema`'s full load: the schema version, the resource
+/// groups and policies, and every database with its tables
+/// ([`fetch_all_schemas_with_tables`]), built into one schema image
+/// (`InitWithDBInfos`) from one snapshot.
+pub fn load_info_schema<S: MetaSnapshot>(
     snapshot: &mut S,
-) -> Result<ClusterCatalog, ClusterCatalogError> {
+) -> Result<crate::SessionExtendedInfoSchema, ClusterCatalogError> {
     let schema_version = get_schema_version(snapshot)?;
 
+    // Go `Mutator.ListResourceGroups`: the stored groups, with meta's default
+    // group when none is stored under that name.
     let mut resource_groups = Vec::new();
     for (_, stored) in snapshot.scan_prefix(&key::resource_groups_kv_prefix())? {
         let encoded = value::detach_magic_byte(&stored)
@@ -244,6 +187,7 @@ pub fn fetch_all_schemas_with_tables<S: MetaSnapshot>(
         resource_groups.push(tidb_model::ResourceGroupInfo::default_group());
     }
 
+    // Go `Mutator.ListPolicies`.
     let mut policies = Vec::new();
     for (_, stored) in snapshot.scan_prefix(&key::policies_kv_prefix())? {
         policies.push(
@@ -252,6 +196,24 @@ pub fn fetch_all_schemas_with_tables<S: MetaSnapshot>(
         );
     }
 
+    let databases = fetch_all_schemas_with_tables(snapshot)?;
+    Ok(crate::SessionExtendedInfoSchema::init_with_db_infos(
+        databases,
+        policies,
+        resource_groups,
+        schema_version,
+    ))
+}
+
+/// Go `Loader.fetchAllSchemasWithTables`: every database, its
+/// `Deprecated.Tables` the tables stored under it.
+///
+/// Go `ListDatabases` then `ListTables` per database. Go filters a database's
+/// hash by field prefix because the same hash also holds the per-table ID
+/// allocators; so does this.
+pub fn fetch_all_schemas_with_tables<S: MetaSnapshot>(
+    snapshot: &mut S,
+) -> Result<Vec<GoShared<DBInfo>>, ClusterCatalogError> {
     let mut databases = Vec::new();
     for (raw_key, stored) in snapshot.scan_prefix(&key::databases_kv_prefix())? {
         let (_, field) = tidb_tablecodec::table_key::decode_meta_key(&raw_key)
@@ -264,13 +226,7 @@ pub fn fetch_all_schemas_with_tables<S: MetaSnapshot>(
         info.deprecated_tables = load_database_tables(snapshot, info.id)?.into();
         databases.push(GoShared::new(info));
     }
-
-    Ok(ClusterCatalog {
-        resource_groups,
-        policies,
-        schema_version,
-        databases,
-    })
+    Ok(databases)
 }
 
 /// Every stored `TableInfo` under one database, in stored key order.
@@ -366,43 +322,4 @@ pub struct SkippedTable {
     pub name: String,
     /// Exact, self-contained explanation.
     pub reason: String,
-}
-
-/// Go `infoschema.InfoSchema` as `Builder.InitWithDBInfos` builds it from one
-/// loaded schema version: the `DBInfo`s it was built from, the image every
-/// session of that version shares, and the tables this tier cannot serve.
-#[derive(Clone, Debug)]
-pub struct BuiltSchema {
-    /// What the loader read (Go `fetchAllSchemasWithTables`' `DBInfo`s, the
-    /// policies, resource groups and version `InitWithDBInfos` takes).
-    pub loaded: std::sync::Arc<ClusterCatalog>,
-    /// The schema image sessions clone.
-    pub schema: crate::SessionExtendedInfoSchema,
-    /// Tables the cluster has that this tier cannot serve.
-    pub skipped: Vec<SkippedTable>,
-}
-
-impl BuiltSchema {
-    /// Go `InitWithDBInfos` without the `table.Table` objects, for a cache no
-    /// domain has given the auto-id allocators tables are built over: the
-    /// schemas, policies, resource groups and version only.
-    #[must_use]
-    pub fn metadata_only(loaded: std::sync::Arc<ClusterCatalog>) -> Self {
-        let mut schema = crate::SessionExtendedInfoSchema::new();
-        schema.set_schema_meta_version(loaded.schema_version);
-        for group in &loaded.resource_groups {
-            schema.set_resource_group(group.clone());
-        }
-        for policy in &loaded.policies {
-            schema.set_policy(policy.clone());
-        }
-        for database in &loaded.databases {
-            schema.register_database_info(database.clone());
-        }
-        Self {
-            loaded,
-            schema,
-            skipped: Vec::new(),
-        }
-    }
 }

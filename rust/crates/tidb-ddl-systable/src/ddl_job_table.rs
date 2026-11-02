@@ -33,7 +33,8 @@ use tidb_datatype::Datum;
 use tidb_model::Job;
 use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_syssession::mysql_system_tables::{
     scan_system_table_from_int_handle, scan_system_table_prefixed, SystemRow, SystemTableError,
     SystemTableView,
@@ -140,8 +141,8 @@ impl From<serde_json::Error> for DdlJobTableError {
 
 impl DdlJobTable {
     /// Locates the pinned active-job table in one loaded catalog.
-    pub fn locate(catalog: &ClusterCatalog) -> Result<Self, DdlJobTableError> {
-        let (_, table) = catalog.find_table("mysql", "tidb_ddl_job").ok_or_else(|| {
+    pub fn locate(catalog: &SessionExtendedInfoSchema) -> Result<Self, DdlJobTableError> {
+        let (_, table) = catalog.table_info_by_name("mysql", "tidb_ddl_job").ok_or_else(|| {
             SystemTableError::Missing {
                 name: "mysql.tidb_ddl_job".to_owned(),
             }

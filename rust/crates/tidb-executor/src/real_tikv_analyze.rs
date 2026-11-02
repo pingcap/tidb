@@ -56,7 +56,7 @@ use crate::cluster_analyze::{
     analyze_independent_index_with_progress, lower_analyze, resolve_analyze_options,
     AnalyzeColumnChoice, AnalyzeError, AnalyzeStatement,
 };
-use tidb_infoschema::cluster_catalog::fetch_all_schemas_with_tables;
+use tidb_infoschema::cluster_catalog::load_info_schema;
 use tidb_stats_handle_storage::cluster_stats_load::{
     column_types_of, ClusterStatsItem, ClusterStatsLoader, ClusterTableStats,
 };
@@ -74,7 +74,8 @@ use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, Transact
 use tidb_hack::GoToLower;
 use tidb_datatype::{Datum, Time};
 use crate::analyze::{AnalyzeOptionOverrides, SavedAnalyzeOptions};
-use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
+use tidb_infoschema::cluster_catalog::MetaSnapshot;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_model::table_info::TableInfo;
 use tidb_syssession::mysql_system_tables::{scan_system_table_prefixed, SystemRow, SystemTableView};
 use tidb_syssession::system_row_write::defaults_row;
@@ -423,7 +424,7 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let (table, partition_ids, partition_names, saved) = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = fetch_all_schemas_with_tables(&mut snapshot)
+        let catalog = load_info_schema(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, statement)?;
         let table = table.read();
@@ -549,7 +550,7 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let (selected_columns, predicate_columns_empty) = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut selection_transaction, timeout);
-        let catalog = fetch_all_schemas_with_tables(&mut snapshot)
+        let catalog = load_info_schema(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let mut selections = HashMap::new();
         let mut predicate_columns_empty = HashMap::new();
@@ -754,7 +755,7 @@ fn select_index_tasks(
 /// missing fails later in its own way; it keeps the flush.
 #[must_use]
 pub fn analyze_builds_column_task(
-    catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
     statement: &AnalyzeStatement,
 ) -> bool {
     let Ok(table) = find_statement_table(catalog, statement) else {
@@ -869,7 +870,7 @@ pub fn save_cluster_analyze_options<S: StoreClient>(
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let plan = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = fetch_all_schemas_with_tables(&mut snapshot)
+        let catalog = load_info_schema(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, &resolved.statement)?;
         let table = table.read();
@@ -900,11 +901,11 @@ pub fn save_cluster_analyze_options<S: StoreClient>(
 }
 
 fn find_statement_table<'catalog>(
-    catalog: &'catalog tidb_infoschema::cluster_catalog::ClusterCatalog,
+    catalog: &'catalog tidb_infoschema::SessionExtendedInfoSchema,
     statement: &AnalyzeStatement,
 ) -> Result<tidb_model::GoShared<tidb_model::table_info::TableInfo>, ClusterAnalyzeError> {
     catalog
-        .databases
+        .stored_schemas()
         .iter()
         .find(|database| database.read().name.lowercase() == statement.schema.go_to_lower().as_str())
         .and_then(|database| {
@@ -1392,7 +1393,7 @@ fn commit_cluster_global_stats<S: StoreClient>(
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let (logical_id, total_count, modify_count, items) = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = fetch_all_schemas_with_tables(&mut snapshot)
+        let catalog = load_info_schema(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, &resolved.statement)?;
         let table = table.read();
@@ -1622,7 +1623,7 @@ fn record_analyze_history<S: StoreClient>(
             lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                 let catalog =
-                    fetch_all_schemas_with_tables(&mut snapshot).map_err(|error| error.to_string())?;
+                    load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
                 let (counts, plan) =
                     plan_historical_stats_meta_lock(&mut snapshot, &catalog, table_id, version)
                         .map_err(|error| error.to_string())?;
@@ -1631,7 +1632,7 @@ fn record_analyze_history<S: StoreClient>(
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            let catalog = fetch_all_schemas_with_tables(&mut snapshot).map_err(|error| error.to_string())?;
+            let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
             let plan = plan_historical_stats_meta_replace(
                 &mut snapshot,
                 &catalog,
@@ -2207,7 +2208,7 @@ fn commit_global_stats_item<S: StoreClient>(
     let mut version = transaction.start_ts();
     let write = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = fetch_all_schemas_with_tables(&mut snapshot)
+        let catalog = load_info_schema(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let is_index = item.is_index;
         let stats = ClusterTableStats {
@@ -2275,7 +2276,7 @@ fn refresh_stats_meta_version<S: StoreClient>(
 ) -> Result<u64, ClusterAnalyzeError> {
     commit_pessimistic_statement(opener, timeout, |snapshot, version| {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        let catalog = fetch_all_schemas_with_tables(&mut snapshot).map_err(|error| error.to_string())?;
+        let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
         let plan = plan_stats_meta_version_refresh(
             &mut snapshot,
             &catalog,
@@ -2322,7 +2323,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
     let sample_ts = sample_transaction.start_ts();
     let sampled = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut sample_transaction, timeout);
-        let catalog = fetch_all_schemas_with_tables(&mut snapshot)
+        let catalog = load_info_schema(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, statement)?.clone();
         let table = table.read();
@@ -2402,7 +2403,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
     report.stats.last_stats_hist_version = save_version;
     let write = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut save_transaction, timeout);
-        let catalog = fetch_all_schemas_with_tables(&mut snapshot)
+        let catalog = load_info_schema(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let scope = if options.is_partition && selected_columns_for_task.is_some() {
             AnalyzeStatsWriteScope::PartialPartition
@@ -2529,7 +2530,7 @@ fn commit_cluster_independent_index<S: StoreClient>(
     let start_ts = transaction.start_ts();
     let (report, write, inserted_meta) = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = fetch_all_schemas_with_tables(&mut snapshot)
+        let catalog = load_info_schema(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, statement)?.clone();
         let table = table.read();
@@ -2628,7 +2629,7 @@ fn finish_analyze_save<S: StoreClient>(
 
 fn selected_columns<S: tidb_infoschema::cluster_catalog::MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
     table: &tidb_model::table_info::TableInfo,
     statement: &AnalyzeStatement,
 ) -> Result<(Option<HashSet<i64>>, StatsWritePlan, bool), tidb_syssession::stats_table_rows::StatsWriteError>
@@ -2671,7 +2672,7 @@ fn selected_columns<S: tidb_infoschema::cluster_catalog::MetaSnapshot>(
 
 fn selected_columns_for_choice<S: tidb_infoschema::cluster_catalog::MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
     table: &tidb_model::table_info::TableInfo,
     choice: &AnalyzeColumnChoice,
 ) -> Result<(Option<HashSet<i64>>, StatsWritePlan, bool), tidb_syssession::stats_table_rows::StatsWriteError>
@@ -2884,7 +2885,7 @@ pub fn analyze_table_job_info(
 /// Loads and schema-filters one persisted ANALYZE option row.
 pub fn load_analyze_options<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table: &TableInfo,
     physical_id: i64,
 ) -> Result<Option<SavedAnalyzeOptions>, StatsWriteError> {
@@ -2947,7 +2948,7 @@ pub fn load_analyze_options<S: MetaSnapshot>(
 /// Plans pinned Go `saveAnalyzeOptions` for one physical table.
 pub fn plan_analyze_options_write<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     table: &TableInfo,
     physical_id: i64,
     raw: AnalyzeOptionOverrides,

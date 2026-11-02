@@ -56,7 +56,7 @@ pub fn prepare_resource_group_job_submission<S: MetaSnapshot>(
         ),
         _ => return Ok(None),
     };
-    let catalog = fetch_all_schemas_with_tables(snapshot)?;
+    let catalog = load_info_schema(snapshot)?;
     let mut job = session_job(job_context, action);
     job.schema_id = schema_id;
     job.schema_name = group.name.lowercase().to_owned().into();
@@ -107,7 +107,7 @@ fn group_args(
 
 /// Go `checkResourceGroupExist`.
 fn stored_group<'a>(
-    catalog: &'a ClusterCatalog,
+    catalog: &'a SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     group_id: i64,
 ) -> Result<&'a tidb_model::ResourceGroupInfo, DdlPlanError> {
@@ -116,13 +116,13 @@ fn stored_group<'a>(
 
 /// One step publishing a group change under a new version.
 fn group_step(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     mutation: BufferMutation,
     update: ResourceGroupUpdate,
     finished_state: SchemaState,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    let schema_version = catalog.schema_version + 1;
+    let schema_version = catalog.schema_meta_version() + 1;
     let diff = SchemaDiff {
         version: schema_version,
         action_type: active.job.type_,
@@ -154,7 +154,7 @@ fn group_step(
 
 /// Go `onCreateResourceGroup`.
 pub(super) fn on_create_resource_group(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let mut group = group_args(active)?;
@@ -176,7 +176,7 @@ pub(super) fn on_create_resource_group(
 
 /// Go `onAlterResourceGroup`.
 pub(super) fn on_alter_resource_group(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let altered = group_args(active)?;
@@ -198,7 +198,7 @@ pub(super) fn on_alter_resource_group(
 
 /// Go `onDropResourceGroup`: public -> none in one step.
 pub(super) fn on_drop_resource_group(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let group_id = active.job.schema_id;

@@ -20,7 +20,7 @@ use tidb_tablecodec::table_key::{
 };
 use tidb_codec::encode_key;
 use tidb_datatype::Datum;
-use tidb_infoschema::cluster_catalog::ClusterCatalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_keydecoder::{decode_key, HandleType};
 use tidb_model::db::DBInfo;
 use tidb_model::go_runtime::GoShared;
@@ -28,6 +28,7 @@ use tidb_model::index::IndexInfo;
 use tidb_model::partition::{PartitionDefinition, PartitionInfo};
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
+use tidb_table::tables::{Index, TableCommon};
 
 fn index(id: i64, name: &str) -> IndexInfo {
     IndexInfo {
@@ -38,12 +39,10 @@ fn index(id: i64, name: &str) -> IndexInfo {
     }
 }
 
-fn catalog() -> ClusterCatalog {
-    ClusterCatalog {
-        resource_groups: Vec::new(),
-        policies: Vec::new(),
-        schema_version: 1,
-        databases: vec![GoShared::new(DBInfo {
+/// Go `infoschema.MockInfoSchema(tblInfos)`: the schema `test` with each
+/// table built over its `TableInfo` (`tables.MockTableFromMeta`).
+fn catalog() -> SessionExtendedInfoSchema {
+    let database = GoShared::new(DBInfo {
             id: 1,
             name: CiString::new("test"),
             deprecated_tables: vec![
@@ -63,6 +62,7 @@ fn catalog() -> ClusterCatalog {
                     name: CiString::new("table3"),
                     indices: vec![index(4, "index4")].into(),
                     partition: Some(GoShared::new(PartitionInfo {
+                        enable: true,
                         definitions: vec![
                             PartitionDefinition {
                                 id: 5,
@@ -83,8 +83,22 @@ fn catalog() -> ClusterCatalog {
             ]
             .into(),
             ..DBInfo::default()
-        })],
+        });
+    let mut catalog =
+        SessionExtendedInfoSchema::init_with_db_infos(vec![database.clone()], Vec::new(), Vec::new(), 1);
+    for table in database.read().deprecated_tables.iter_deref() {
+        // Go `MockTableFromMeta`: the table over its `TableInfo`, with an
+        // index per `IndexInfo` (these tables have no columns).
+        let table = table.read().clone();
+        let name = table.name.original().to_owned();
+        let indices = table.indices.iter_deref().collect::<Vec<_>>();
+        let mut built = TableCommon::loaded(table, Vec::new());
+        for index in indices {
+            built.add_index(Index::new(index.read().clone(), Vec::new()), false);
+        }
+        catalog.register_kv_in("test", &name, built).unwrap();
     }
+    catalog
 }
 
 fn record_key(table_id: i64, handle: RecordHandle) -> Vec<u8> {

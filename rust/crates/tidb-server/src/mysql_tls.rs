@@ -947,12 +947,12 @@ mod tiflash_cluster_http_tests {
             vec![],
         );
         let catalog = Arc::new(tidb_infoschema_issyncer::catalog_watch::InfoCache::new(
-            tidb_infoschema::cluster_catalog::ClusterCatalog {
-                resource_groups: Vec::new(),
-                policies: Vec::new(),
-                schema_version: 1,
-                databases: vec![],
-            },
+            tidb_infoschema::SessionExtendedInfoSchema::init_with_db_infos(
+                vec![],
+                Vec::new(),
+                Vec::new(),
+                1,
+            ),
         ));
         // The store's PD HTTP client trusts the cluster CA, as
         // `TikvStore::connect` builds it (Go `pdhttp.WithTLSConfig`).

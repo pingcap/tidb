@@ -181,12 +181,12 @@ mod status_tests {
         .unwrap();
         let tracker = Arc::new(crate::sql_node::ConnectionTracker::default());
         let schema: crate::http_status::SchemaSource =
-            Arc::new(|| tidb_infoschema::cluster_catalog::ClusterCatalog {
-                resource_groups: Vec::new(),
-                policies: Vec::new(),
-                databases: Vec::new(),
-                schema_version: 1,
-            });
+            Arc::new(|| tidb_infoschema::SessionExtendedInfoSchema::init_with_db_infos(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                1,
+            ));
         assert!(start_cluster_status(
             &config,
             Arc::clone(&tracker),
@@ -212,12 +212,12 @@ mod status_tests {
         ])
         .unwrap();
         let tracker = Arc::new(crate::sql_node::ConnectionTracker::default());
-        let schema = Arc::new(|| tidb_infoschema::cluster_catalog::ClusterCatalog {
-            resource_groups: Vec::new(),
-            policies: Vec::new(),
-            databases: Vec::new(),
-            schema_version: 1,
-        });
+        let schema = Arc::new(|| tidb_infoschema::SessionExtendedInfoSchema::init_with_db_infos(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            1,
+        ));
         let server = start_cluster_status(&config, tracker, schema, test_settings(), None)
             .unwrap()
             .expect("cluster startup must bind the advertised status service like Go");

@@ -46,7 +46,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use tidb_store_driver_txn::transaction::StoreClient;
 
-use tidb_infoschema::cluster_catalog::{fetch_all_schemas_with_tables, ClusterCatalog};
+use tidb_infoschema::cluster_catalog::load_info_schema;
 use tidb_syssession::cluster_sysvar_load::load_cluster_sysvars;
 use tidb_syssession::cluster_sysvar_write::plan_sysvar_write;
 use tidb_datatype::current_time::utc_now_timestamp;
