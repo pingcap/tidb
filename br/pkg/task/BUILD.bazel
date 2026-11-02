@@ -13,6 +13,7 @@ go_library(
         "restore_data.go",
         "restore_ebs_meta.go",
         "restore_raw.go",
+        "restore_storage_identity.go",
         "restore_txn.go",
         "stream.go",
     ],
@@ -166,5 +167,11 @@ go_test(
         "@com_github_tikv_pd_client//http",
         "@com_github_tikv_pd_client//opt",
         "@org_golang_google_grpc//keepalive",
+<<<<<<< HEAD
+=======
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+        "@org_uber_go_zap//zaptest/observer",
+>>>>>>> 3c21da08aa8 (br: prevent credentials from leaking into logs and errors (#72214))
     ],
 )

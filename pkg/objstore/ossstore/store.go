@@ -1,0 +1,329 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package ossstore
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/alibabacloud-go/tea/tea"
+	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
+	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
+	"github.com/aliyun/credentials-go/credentials/providers"
+	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/util/httputil"
+	"go.uber.org/zap"
+)
+
+const (
+	defaultRegion = "cn-hangzhou"
+	// ECS RAM role credential provider name, see
+	// https://github.com/aliyun/credentials-go/blob/7d2a3e68402630904f518531e80b370b3649c6a1/credentials/providers/ecs_ram_role.go#L238
+	ecsRAMRoleProviderName = "ecs_ram_role"
+	// the URL to get region ID from ECS metadata service, Aliyun SDK doesn't
+	// provide this API, so we have to write our own, see
+	// https://github.com/aliyun/aliyun_assist_client/blob/feb283504ee5a11484067af9762f1008baa664b0/common/metaserver/prop.go#L34-L37
+	// and https://www.alibabacloud.com/blog/alibaba-cloud-ecs-metadata-user-data-and-dynamic-data_594351#:~:text=Retrieve%20Region%20Information
+	regionIDMetaURL = "http://100.100.100.200/latest/meta-data/region-id"
+	// ecsMetadataIP is the Aliyun ECS metadata service address. Failing to reach
+	// it is often transient, unlike a missing local credential configuration.
+	ecsMetadataIP = "100.100.100.200"
+)
+
+// IsTransientNoCredentialsError reports whether err is a transient failure to
+// resolve credentials from the default provider chain because the Aliyun ECS
+// metadata service request timed out or hit its deadline. Permanent causes,
+// e.g. missing credential configuration or the metadata service refusing the
+// request, are not reported as retryable.
+//
+// It is exported so callers that run on top of this store, such as IMPORT INTO,
+// can classify a failed store creation as retryable.
+//
+// The reason it is matched this way is that the Aliyun SDK does its own
+// transient-error detection the same way. The OSS SDK's ConnectionErrorRetryable
+// treats a connection error as retryable when net.Error.Timeout() or
+// Temporary() is true (and falls back to a few message substrings), see
+// oss/retry/retryable_error.go in github.com/aliyun/alibabacloud-oss-go-sdk-v2.
+// But by the time the error reaches us it has already been flattened to a
+// string: the credentials SDK wraps the metadata request error with
+// fmt.Errorf("refresh Ecs sts token err: %s", err.Error()) (see ecs_ram_role.go
+// in github.com/aliyun/credentials-go), and the import code reformats it again
+// via errors.GetErrStackMsg. So the net.Error type is gone and we match the same
+// signals as text: the metadata host and the Go HTTP timeout messages that the
+// SDK's type check would have caught.
+func IsTransientNoCredentialsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, ecsMetadataIP) {
+		return false
+	}
+	return strings.Contains(msg, "context deadline exceeded") || strings.Contains(msg, "i/o timeout")
+}
+
+// OSSStore is the OSS storage implementation.
+type OSSStore struct {
+	*s3like.Storage
+	credRefresher *credentialRefresher
+}
+
+// URI returns oss://<bucket>/<prefix>.
+func (s *OSSStore) URI() string {
+	bucketPrefix := s.GetBucketPrefix()
+	return "oss://" + bucketPrefix.Bucket + "/" + bucketPrefix.PrefixStr()
+}
+
+// Close implements storeapi.Storage.
+func (s *OSSStore) Close() {
+	s.Storage.Close()
+	if s.credRefresher != nil {
+		s.credRefresher.close()
+	}
+}
+
+// NewOSSStorage creates a OSS storage client.
+//
+// permissions required to create the client:
+//   - GetBucketLocation
+//
+// permissions required to r/w data:
+//   - GetBucketLocation (used to get bucket region info)
+//   - GetBucketAcl (used to check AccessBuckets permission)
+//   - ListObjectsV2
+//   - GetObject
+//   - PutObject
+//   - DeleteObject
+func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Options) (obj *OSSStore, errRet error) {
+	if _, err := url.Parse(backend.Endpoint); err != nil {
+		// The parse error includes the full URL, which may contain credentials.
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid OSS endpoint URL")
+	}
+	qs := *backend
+
+	// TODO changing the input backend is a side effect, it shouldn't be part of
+	// 	the NewXXX, but we have to do it here to keep compatibility now.
+
+	logger := log.L().With(
+		zap.String("bucket", qs.GetBucket()),
+		zap.String("prefix", qs.GetPrefix()),
+		zap.String("context", "oss"),
+	)
+	var ossOptFns []func(*oss.Options)
+	if qs.ForcePathStyle {
+		// in doc of ossutil and the SDK code, it states path-style addressing
+		// is allowed, but in "Differences between OSS and S3", it states that
+		// "For security reasons, OSS supports only the virtual-hosted style".
+		// anyway, we don't support it now.
+		logger.Warn("force-path-style is not supported on OSS")
+	}
+
+	ossCfg := oss.NewConfig().
+		WithRetryer(newRetryer()).
+		WithLogLevel(getOSSLogLevel()).
+		WithLogPrinter(newLogPrinter(logger))
+
+	// TODO OSS charges for traffic, consider auto use internal endpoint when
+	// not specified explicitly and the bucket is in the same region with the
+	// client.
+	if len(qs.Endpoint) != 0 {
+		ossCfg = ossCfg.WithEndpoint(qs.Endpoint)
+	}
+	var (
+		ecsRegionID   string
+		credRefresher *credentialRefresher
+		credProvider  credentials.CredentialsProvider
+	)
+	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
+		credProvider = credentials.NewStaticCredentialsProvider(qs.AccessKey, qs.SecretAccessKey, qs.SessionToken)
+		ossCfg = ossCfg.WithCredentialsProvider(credProvider)
+	} else {
+		var provider providers.CredentialsProvider = providers.NewDefaultCredentialsProvider()
+		cred, err := fetchCredentials(ctx, provider, logger)
+		if err != nil {
+			return nil, errors.Annotatef(err, "failed to get credentials from default provider")
+		}
+		// the default provider concatenates the provider names with `/`, see
+		// https://github.com/aliyun/credentials-go/blob/7d2a3e68402630904f518531e80b370b3649c6a1/credentials/providers/default.go#L101
+		if strings.Contains(cred.ProviderName, ecsRAMRoleProviderName) {
+			httpCli := httputil.NewClient(nil)
+			ecsRegionID, err = httputil.GetText(httpCli, regionIDMetaURL)
+			if err != nil {
+				// shouldn't happen normally, we just successfully got ECS RAM
+				// role credentials from the metadata service.
+				return nil, errors.Annotatef(err, "failed to get region ID from ECS metadata service")
+			}
+		}
+		if qs.RoleArn != "" {
+			var err2 error
+			provider, err2 = providers.NewRAMRoleARNCredentialsProviderBuilder().
+				WithCredentialsProvider(provider).
+				WithRoleArn(qs.RoleArn).
+				WithExternalId(qs.ExternalId).
+				WithHttpOptions(&providers.HttpOptions{
+					ReadTimeout:    int(30 * time.Second.Milliseconds()),
+					ConnectTimeout: int(30 * time.Second.Milliseconds()),
+				}).
+				Build()
+			if err2 != nil {
+				return nil, errors.Trace(err2)
+			}
+		}
+		credRefresher = newCredentialRefresher(provider, logger)
+		if err := credRefresher.refreshOnce(); err != nil {
+			return nil, errors.Annotatef(err, "failed to get initial OSS credentials")
+		}
+		credProvider = credRefresher
+		ossCfg = ossCfg.WithCredentialsProvider(credProvider)
+	}
+	if err := setBackendCredentials(ctx, backend, credProvider, opts.SendCredentials); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if opts.AccessRecording != nil {
+		ossOptFns = append(ossOptFns, func(o *oss.Options) {
+			// nolint:bodyclose
+			o.ResponseHandlers = append(o.ResponseHandlers, func(resp *http.Response) error {
+				opts.AccessRecording.RecRequest(resp.Request)
+				return nil
+			})
+		})
+	}
+
+	// get bucket location or check the specified region is correct
+	getLocCfg := &(*ossCfg)
+	if qs.Region == "" {
+		getLocCfg = getLocCfg.WithRegion(defaultRegion)
+	} else {
+		getLocCfg = getLocCfg.WithRegion(qs.Region)
+	}
+	ossCli := oss.NewClient(getLocCfg, ossOptFns...)
+	resp, err := ossCli.GetBucketLocation(ctx, &oss.GetBucketLocationRequest{Bucket: oss.Ptr(qs.Bucket)})
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to get location of bucket %s", qs.Bucket)
+	}
+
+	detectedBucketRegion := trimOSSRegionID(tea.StringValue(resp.LocationConstraint))
+	if qs.Region != "" && detectedBucketRegion != qs.Region {
+		return nil, errors.Trace(fmt.Errorf("bucket and region are not matched, bucket=%s, input region=%s, real region=%s",
+			qs.Bucket, qs.Region, detectedBucketRegion))
+	}
+	useInternalEndpoint := canUseInternalEndpoint(ecsRegionID, detectedBucketRegion)
+	// internal endpoint is only used when there is no custom endpoint specified,
+	// so it's ok to set it even when we have custom endpoint.
+	ossCfg = ossCfg.WithUseInternalEndpoint(useInternalEndpoint)
+
+	logger.Info("succeed to get bucket region", zap.String("bucketRegion", detectedBucketRegion),
+		zap.String("ecsRegion", ecsRegionID), zap.Bool("useInternalEndpoint", useInternalEndpoint))
+
+	qs.Prefix = storeapi.NewPrefix(qs.Prefix).String()
+	bucketPrefix := storeapi.NewBucketPrefix(qs.Bucket, qs.Prefix)
+	ossCfg = ossCfg.WithRegion(detectedBucketRegion)
+
+	cli := &client{
+		svc:          oss.NewClient(ossCfg, ossOptFns...),
+		presignSvc:   newPresignClient(ossCfg, ossOptFns...),
+		BucketPrefix: bucketPrefix,
+		options:      &qs,
+	}
+	if err := s3like.CheckPermissions(ctx, cli, opts.CheckPermissions); err != nil {
+		return nil, errors.Annotatef(berrors.ErrStorageInvalidPermission, "check permission failed due to %v", err)
+	}
+
+	if credRefresher != nil {
+		if err = credRefresher.startRefresh(); err != nil {
+			return nil, errors.Annotatef(err, "failed to start OSS credential refresher")
+		}
+	}
+
+	return &OSSStore{
+		Storage:       s3like.NewStorage(cli, bucketPrefix, &qs, opts.AccessRecording),
+		credRefresher: credRefresher,
+	}, nil
+}
+
+func setBackendCredentials(
+	ctx context.Context,
+	backend *backuppb.S3,
+	provider credentials.CredentialsProvider,
+	sendCredentials bool,
+) error {
+	if !sendCredentials {
+		backend.AccessKey, backend.SecretAccessKey, backend.SessionToken = "", "", ""
+		return nil
+	}
+	cred, err := provider.GetCredentials(ctx)
+	if err != nil {
+		return errors.Annotate(err, "failed to get OSS credentials to send to TiKV")
+	}
+	// Credential persistence and lifetime are managed by the caller. In
+	// particular, the caller must ensure forwarded temporary credentials remain
+	// valid for the duration of downstream TiKV operations.
+	backend.AccessKey = cred.AccessKeyID
+	backend.SecretAccessKey = cred.AccessKeySecret
+	backend.SessionToken = cred.SecurityToken
+	return nil
+}
+
+// newPresignClient uses the public endpoint because presigned URLs may be consumed
+// outside the Alibaba Cloud VPC. Explicit custom endpoints are retained because
+// the SDK gives them precedence over endpoint flags. It also disables SDK logging
+// because the presign request pipeline otherwise logs credentials in the raw query.
+func newPresignClient(config *oss.Config, optFns ...func(*oss.Options)) *oss.Client {
+	presignConfig := config.Copy()
+	presignConfig.WithUseInternalEndpoint(false)
+	presignConfig.WithLogLevel(oss.LogOff)
+	return oss.NewClient(&presignConfig, optFns...)
+}
+
+func newOSSStorageForTest(svc API, options *backuppb.S3, accessRec *recording.AccessStats) *s3like.Storage {
+	bucketPrefix := storeapi.NewBucketPrefix(options.Bucket, options.Prefix)
+	return s3like.NewStorage(
+		&client{
+			svc:          svc,
+			presignSvc:   svc,
+			BucketPrefix: bucketPrefix,
+			options:      options,
+		},
+		bucketPrefix,
+		options,
+		accessRec,
+	)
+}
+
+// OSS has `oss-` prefix in their region ID, but even its own SDK don't use it, 😑.
+func trimOSSRegionID(region string) string {
+	if strings.HasPrefix(region, "oss-") {
+		return strings.TrimPrefix(region, "oss-")
+	}
+	return region
+}
+
+// OSS public endpoint charges for traffic, even in the same region.
+// when we are running in ECS instance, and its region is the same as the bucket,
+// we can use internal endpoint to reduce cost.
+func canUseInternalEndpoint(ecsRegionID, bucketRegionID string) bool {
+	return ecsRegionID != "" && ecsRegionID == bucketRegionID
+}

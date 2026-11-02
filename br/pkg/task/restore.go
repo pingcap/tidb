@@ -344,7 +344,13 @@ func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 	config := immutableRestoreConfig{
 		CmdName:           cmdName,
 		UpstreamClusterID: cfg.UpstreamClusterID,
+<<<<<<< HEAD
 		Storage:           ast.RedactURL(cfg.Storage),
+=======
+		Storage:           storageURLForRestoreHash(cfg.Storage),
+		Layout:            layout,
+		BackupID:          backupID,
+>>>>>>> 3c21da08aa8 (br: prevent credentials from leaking into logs and errors (#72214))
 		FilterStr:         cfg.FilterStr,
 		WithSysTable:      cfg.WithSysTable,
 		FastLoadSysTables: cfg.FastLoadSysTables,
@@ -355,6 +361,12 @@ func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	hash := sha256.Sum256(data)
+	// The legacy hash input can contain secrets; log a separately redacted copy.
+	config.Storage = objstore.RedactURL(cfg.Storage)
+	data, err = json.Marshal(config)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	log.Info("hash of restore config", zap.String("hash", hex.EncodeToString(hash[:])), zap.String("config", string(data)))
 	return hash[:], nil
 }

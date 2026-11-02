@@ -3729,21 +3729,45 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+<<<<<<< HEAD
 // RedactURL redacts the secret tokens in the URL. only S3 url need redaction for now.
 // if the url is not a valid url, return the original string.
+=======
+// RedactedValue replaces a secret in redacted output.
+const RedactedValue = "xxxxxx"
+
+// InvalidURLPlaceholder replaces a value that cannot be parsed as a URL in
+// redacted output, because such a value cannot be reliably masked. The value
+// is not necessarily a storage URL; it may also be an endpoint or a local path.
+const InvalidURLPlaceholder = "(invalid URL)"
+
+// RedactURL removes userinfo, and in supported storage URLs keeps only known query options,
+// redacts sensitive values, and removes fragments.
+// Queries for other schemes are removed entirely.
+// Plain local paths are unchanged; an invalid URL is replaced by InvalidURLPlaceholder.
+>>>>>>> 3c21da08aa8 (br: prevent credentials from leaking into logs and errors (#72214))
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
 	u, err := url.Parse(str)
 	if err != nil {
 		return str
 	}
+<<<<<<< HEAD
+=======
+	u.User = nil
+	u.Fragment = ""
+	u.RawFragment = ""
+>>>>>>> 3c21da08aa8 (br: prevent credentials from leaking into logs and errors (#72214))
 	scheme := u.Scheme
 	failpoint.Inject("forceRedactURL", func() {
 		scheme = "s3"
 	})
 
-	var redactKeys map[string]struct{}
+	// The allowlist maps known options to whether their values must be redacted.
+	// Unknown keys may be new secrets, misspellings, or parts of split secret values.
+	var queryKeys map[string]bool
 	switch strings.ToLower(scheme) {
+<<<<<<< HEAD
 	case "s3", "ks3":
 		redactKeys = map[string]struct{}{
 			"access-key":        {},
@@ -3764,10 +3788,82 @@ func RedactURL(str string) string {
 			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
 			if _, ok := redactKeys[normalizedKey]; ok {
 				values[k] = []string{"xxxxxx"}
+=======
+	case "s3", "ks3", "oss":
+		queryKeys = map[string]bool{
+			// Endpoints can embed userinfo or signed query credentials.
+			"endpoint":                true,
+			"region":                  false,
+			"storage-class":           false,
+			"sse":                     false,
+			"sse-kms-key-id":          false,
+			"acl":                     false,
+			"provider":                false,
+			"force-path-style":        false,
+			"use-accelerate-endpoint": false,
+			"role-arn":                false,
+			"external-id":             false,
+			"profile":                 false,
+			"object-lock-enabled":     false,
+			"access-key":              true,
+			"secret-access-key":       true,
+			"session-token":           true,
+			"sse-kms-context":         true,
+		}
+	case "gs", "gcs":
+		u.ForceQuery = false
+		queryKeys = map[string]bool{
+			"endpoint":         true,
+			"storage-class":    false,
+			"predefined-acl":   false,
+			"credentials-file": true,
+		}
+	case "azure", "azblob":
+		queryKeys = map[string]bool{
+			"account-name":     false,
+			"access-tier":      false,
+			"encryption-scope": false,
+			"account-key":      true,
+			"encryption-key":   true,
+			"sas-token":        true,
+			// Azure endpoints can contain SAS tokens used directly by the storage
+			// client, so masking only the separate sas-token parameter is insufficient.
+			"endpoint": true,
+		}
+	}
+
+	if len(queryKeys) > 0 {
+		// URL.Query skips undecodable pairs, which may hide a split secret.
+		values, err := url.ParseQuery(u.RawQuery)
+		if err != nil {
+			u.RawQuery = ""
+			return u.String()
+		}
+		for k, vs := range values {
+			// see below on why we normalize key
+			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
+			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
+			if redact, ok := queryKeys[normalizedKey]; !ok {
+				values.Del(k)
+			} else if redact {
+				// An unescaped '&' can split the JSON context into an allowlisted
+				// non-secret key (e.g. region), exposing the rest of the context.
+				// Drop the whole query if any context value is invalid JSON.
+				if normalizedKey == "sse-kms-context" && slices.ContainsFunc(vs, func(v string) bool {
+					return !json.Valid([]byte(v))
+				}) {
+					u.RawQuery = ""
+					return u.String()
+				}
+				values[k] = []string{RedactedValue}
+>>>>>>> 3c21da08aa8 (br: prevent credentials from leaking into logs and errors (#72214))
 			}
 		}
 		// In go1.25.5, url.Values.Encode() will sort the keys.
 		u.RawQuery = values.Encode()
+	} else {
+		u.RawQuery = ""
+		u.ForceQuery = false
 	}
 	return u.String()
 }
