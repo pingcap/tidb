@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
+use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
 use tidb_txnkv::Key;
 
 #[test]
@@ -57,7 +57,8 @@ fn fix52592_disables_unique_index_point_conversion() {
 
 #[derive(Clone, Debug, Default)]
 struct BatchGetCountingStorage {
-    inner: MemTableStorage,
+    /// One store all clones share, so statements' writes stay visible.
+    inner: tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage,
     batch_gets: Arc<AtomicUsize>,
     read_options: Arc<std::sync::Mutex<Vec<tidb_txnkv::SnapshotReadOptions>>>,
 }
@@ -1563,15 +1564,16 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     let Some(TableEntry::Kv(table)) = catalog.get_mut_in(DEFAULT_DATABASE, "bd") else {
         panic!("expected a kv table");
     };
-    let _ = std::sync::Arc::make_mut(table).replace_storage(Box::new(BatchGetCountingStorage {
-        inner: MemTableStorage::new(),
+    let _ = table;
+    let store = BatchGetCountingStorage {
+        inner: Default::default(),
         batch_gets: Arc::clone(&batch_gets),
         read_options: Default::default(),
-    }));
+    };
     run_insert_on(
         "INSERT INTO bd VALUES (1, 'a', 10)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     batch_gets.store(0, Ordering::Relaxed);
@@ -1587,7 +1589,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
             select,
             &catalog,
             DEFAULT_DATABASE,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .unwrap()
         .and_then(|plan| match plan {
@@ -1633,7 +1635,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         run_select_on(
             "SELECT v FROM bd WHERE code IN ('a', 'zz')",
             &catalog,
-            &crate::StmtContext::for_query(),
+            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
         )
         .unwrap(),
         vec![vec![Datum::Int(10)]],
@@ -1653,7 +1655,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     run_insert_on(
         "INSERT INTO bd VALUES (2, 'b', 20)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
     let Some(TableEntry::Kv(table)) = catalog.get_in(DEFAULT_DATABASE, "bd") else {
@@ -1663,7 +1665,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     let mut source = crate::access_path::HandleSourceExec::new_mapped_with_context(
         crate::ExecutorMeta::new(schema, 1, 8, 8),
         (**table).clone(),
-        (**table).store().clone_box(),
+        Box::new(store.clone()),
         vec![
             tidb_table::tables::TableHandle::Int(1),
             tidb_table::tables::TableHandle::Int(99),
@@ -1708,7 +1710,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     let mut unique = crate::access_path::UniqueIndexPointSourceExec::new(
         crate::ExecutorMeta::new(schema.clone(), 1, 8, 8),
         (**table).clone(),
-        (**table).store().clone_box(),
+        Box::new(store.clone()),
         index_id,
         vec![
             vec![Datum::new_collation_string(
@@ -1743,13 +1745,13 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
 
     // Go decodes in Next: corruption beyond the requested chunk cannot fail
     // the first chunk or an early Close, but must fail when actually pulled.
-    let mut malformed = (**table).clone();
+    let malformed = (**table).clone();
     let (key, value) = malformed
-        .stored_record(&mut *malformed.store().clone_box(), &tidb_table::tables::TableHandle::Int(1))
+        .stored_record(&mut store.clone(), &tidb_table::tables::TableHandle::Int(1))
         .unwrap()
         .unwrap();
     let mut storage = BatchGetCountingStorage {
-        inner: MemTableStorage::new(),
+        inner: Default::default(),
         batch_gets: Arc::clone(&batch_gets),
         read_options: Default::default(),
     };
@@ -1763,11 +1765,11 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
             vec![0xff],
         )
         .unwrap();
-    malformed.replace_storage(Box::new(storage));
+    
     let mut source = crate::access_path::HandleSourceExec::new_mapped_with_context(
         crate::ExecutorMeta::new(schema, 1, 8, 8),
         malformed.clone(),
-        malformed.store().clone_box(),
+        Box::new(storage.clone()),
         vec![
             tidb_table::tables::TableHandle::Int(1),
             tidb_table::tables::TableHandle::Int(2),
@@ -1805,13 +1807,13 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         let Some(TableEntry::Kv(table)) = catalog.get_mut_in(DEFAULT_DATABASE, "bp") else {
             panic!("expected a kv table");
         };
-        let _ =
-            std::sync::Arc::make_mut(table).replace_storage(Box::new(BatchGetCountingStorage {
-                inner: MemTableStorage::new(),
-                batch_gets: Arc::clone(&batch_gets),
-                read_options: Default::default(),
-            }));
-        let ctx = crate::StmtContext::for_query();
+        let _ = table;
+        let store = BatchGetCountingStorage {
+            inner: Default::default(),
+            batch_gets: Arc::clone(&batch_gets),
+            read_options: Default::default(),
+        };
+        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
         run_insert_on(
             "INSERT INTO bp VALUES (1,10),(2,20),(3,30),(4,40)",
             &mut catalog,
@@ -1876,7 +1878,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         // key/handle index. Projection keeps the requested column order.
         batch_gets.store(0, Ordering::Relaxed);
         let projected = table
-            .get_rows_by_handles_projected_with_context(&mut *table.store().clone_box(), 
+            .get_rows_by_handles_projected_with_context(&mut store.clone(), 
                 &handles,
                 Some(&[1, 0]),
                 &tidb_table::tables::RowDecodeContext::for_test_query_utc(),
@@ -1892,7 +1894,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         assert_eq!(batch_gets.load(Ordering::Relaxed), 1);
         for routes in [Some(routes.as_slice()), None] {
             batch_gets.store(0, Ordering::Relaxed);
-            let values = table.stored_records_batched(&mut *table.store().clone_box(), &handles, routes).unwrap();
+            let values = table.stored_records_batched(&mut store.clone(), &handles, routes).unwrap();
             let decoded = handles
                 .iter()
                 .enumerate()
@@ -1916,7 +1918,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
             );
         }
         batch_gets.store(0, Ordering::Relaxed);
-        assert!(table.stored_records_batched(&mut *table.store().clone_box(), &[], None,).unwrap().is_empty());
+        assert!(table.stored_records_batched(&mut store.clone(), &[], None,).unwrap().is_empty());
         assert_eq!(batch_gets.load(Ordering::Relaxed), 0);
     }
 }
@@ -2771,6 +2773,7 @@ fn out_of_range_point_literal_plans_a_table_dual() {
 fn snapshot_policy_catalog() -> (
     SessionExtendedInfoSchema,
     Arc<std::sync::Mutex<Vec<tidb_txnkv::SnapshotReadOptions>>>,
+    BatchGetCountingStorage,
 ) {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
@@ -2782,21 +2785,26 @@ fn snapshot_policy_catalog() -> (
     let Some(TableEntry::Kv(table)) = catalog.get_mut_in(DEFAULT_DATABASE, "read_policy") else {
         panic!("table")
     };
-    let _ = Arc::make_mut(table).replace_storage(Box::new(BatchGetCountingStorage {
+    let _ = table;
+    let store = BatchGetCountingStorage {
         read_options: options.clone(),
         ..Default::default()
-    }));
+    };
     run_insert_on(
         "INSERT INTO read_policy VALUES (1,10),(2,20)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
     )
     .unwrap();
-    (catalog, options)
+    (catalog, options, store)
 }
 
-fn snapshot_policy_context(mode: crate::ReplicaReadType) -> crate::StmtContext {
+fn snapshot_policy_context(
+    mode: crate::ReplicaReadType,
+    store: &BatchGetCountingStorage,
+) -> crate::StmtContext {
     crate::StmtContext::for_query()
+        .with_txn_store(Box::new(store.clone()))
         .with_resource_group_name("statement-read-group")
         .with_replica_read(mode)
         .with_coprocessor_read_policy(tidb_distsql::remote_scan::CoprocessorReadPolicy {
@@ -2838,7 +2846,7 @@ fn assert_snapshot_policy(
 
 #[test]
 fn snapshot_read_policy_point_follow_go() {
-    let (catalog, options) = snapshot_policy_catalog();
+    let (catalog, options, store) = snapshot_policy_catalog();
     for mode in [
         crate::ReplicaReadType::Follower,
         crate::ReplicaReadType::ClosestAdaptive,
@@ -2848,7 +2856,7 @@ fn snapshot_read_policy_point_follow_go() {
             run_select_on(
                 "SELECT v FROM read_policy WHERE id=1",
                 &catalog,
-                &snapshot_policy_context(mode)
+                &snapshot_policy_context(mode, &store)
             )
             .unwrap(),
             vec![vec![Datum::Int(10)]]
@@ -2859,7 +2867,7 @@ fn snapshot_read_policy_point_follow_go() {
 
 #[test]
 fn snapshot_read_policy_batch_follow_go() {
-    let (catalog, options) = snapshot_policy_catalog();
+    let (catalog, options, store) = snapshot_policy_catalog();
     for mode in [
         crate::ReplicaReadType::Mixed,
         crate::ReplicaReadType::ClosestAdaptive,
@@ -2869,7 +2877,7 @@ fn snapshot_read_policy_batch_follow_go() {
             run_select_on(
                 "SELECT v FROM read_policy WHERE id IN (1,2) ORDER BY id",
                 &catalog,
-                &snapshot_policy_context(mode)
+                &snapshot_policy_context(mode, &store)
             )
             .unwrap(),
             vec![vec![Datum::Int(10)], vec![Datum::Int(20)]]
@@ -2880,7 +2888,7 @@ fn snapshot_read_policy_batch_follow_go() {
 
 #[test]
 fn snapshot_read_policy_prepared_follow_go() {
-    let (mut catalog, options) = snapshot_policy_catalog();
+    let (mut catalog, options, store) = snapshot_policy_catalog();
     let stmt = tidb_parser::parse("SELECT v FROM read_policy WHERE id=?").unwrap();
     let zone = tidb_datatype::SessionTimeZone::default();
     let plan = Arc::new(
@@ -2891,7 +2899,7 @@ fn snapshot_read_policy_prepared_follow_go() {
         crate::ReplicaReadType::ClosestAdaptive,
         crate::ReplicaReadType::Leader,
     ] {
-        let ctx = snapshot_policy_context(mode);
+        let ctx = snapshot_policy_context(mode, &store);
         let execution = plan.bind(&[Datum::Int(1)], &zone).unwrap();
         let decode = tidb_table::tables::PreparedPointGetDecodeContext::for_query(false, zone.clone());
         let result = run_prepared_point_get(&execution, &mut catalog, &decode, &ctx)
@@ -2905,13 +2913,13 @@ fn snapshot_read_policy_prepared_follow_go() {
 
 #[test]
 fn read_consistency_point_and_batch_preserve_transaction_scope() {
-    let (catalog, options) = snapshot_policy_catalog();
+    let (catalog, options, store) = snapshot_policy_catalog();
     for sql in [
         "SELECT v FROM read_policy WHERE id=1",
         "SELECT v FROM read_policy WHERE id IN (1,2)",
     ] {
         for (scope, stale) in [("zone-a", true), ("zone-b", false), ("global", false)] {
-            let context = snapshot_policy_context(crate::ReplicaReadType::Follower)
+            let context = snapshot_policy_context(crate::ReplicaReadType::Follower, &store)
                 .with_read_consistency(scope, stale);
             run_select_on(sql, &catalog, &context).unwrap();
             let retained = options.lock().unwrap();
