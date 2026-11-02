@@ -323,9 +323,41 @@ pub struct CostSessionOpts {
     pub allow_batch_cop: i64,
     /// Go `config.GetGlobalConfig().DisaggregatedTiFlash`.
     pub disaggregated_tiflash: bool,
+    /// Go `SessionVars`' MPP join switches.
+    pub mpp_join: MppJoinSession,
     /// Go `SessionVars.EnableChunkRPC` (`tidb_enable_chunk_rpc`): readers
     /// size their network rows in chunk format.
     pub enable_chunk_rpc: bool,
+}
+
+/// Go `SessionVars`' inputs to `tryToGetMppHashJoin` and `preferMppBCJ`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MppJoinSession {
+    /// `BroadcastJoinThresholdSize` (`tidb_broadcast_join_threshold_size`).
+    pub bcj_threshold_size: i64,
+    /// `BroadcastJoinThresholdCount` (`tidb_broadcast_join_threshold_count`).
+    pub bcj_threshold_count: i64,
+    /// `PreferBCJByExchangeDataSize`.
+    pub prefer_bcj_by_exchange_data_size: bool,
+    /// `AllowCartesianBCJ` (`tidb_opt_broadcast_cartesian_join`).
+    pub allow_cartesian_bcj: i64,
+    /// `MPPOuterJoinFixedBuildSide`.
+    pub outer_join_fixed_build_side: bool,
+    /// `CopTiFlashConcurrencyFactor`, an MPP join's `Concurrency`.
+    pub tiflash_concurrency_factor: f64,
+}
+
+impl Default for MppJoinSession {
+    fn default() -> Self {
+        Self {
+            bcj_threshold_size: 100 * 1024 * 1024,
+            bcj_threshold_count: 10 * 1024,
+            prefer_bcj_by_exchange_data_size: false,
+            allow_cartesian_bcj: 1,
+            outer_join_fixed_build_side: false,
+            tiflash_concurrency_factor: 24.0,
+        }
+    }
 }
 
 impl Default for CostSessionOpts {
@@ -357,6 +389,7 @@ impl Default for CostSessionOpts {
             tiflash_fast_scan: false,
             allow_batch_cop: 1,
             disaggregated_tiflash: false,
+            mpp_join: MppJoinSession::default(),
             enable_chunk_rpc: true,
         }
     }

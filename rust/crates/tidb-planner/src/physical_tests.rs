@@ -72,6 +72,8 @@ fn hash_join(id: i32, left: PhysicalPlan, right: PhysicalPlan) -> PhysicalPlan {
     base.set_children(vec![left, right]);
     PhysicalPlan::HashJoin(PhysicalHashJoin {
         base,
+        store_tp: Default::default(),
+        mpp_shuffle_join: false,
         ..PhysicalHashJoin::default()
     })
 }
@@ -2067,6 +2069,8 @@ fn physical_correlated_rebind_reaches_readers_and_shares_one_outer_cell() {
 fn a_childless_physical_join_panics_when_building_its_schema_like_go() {
     let join = PhysicalPlan::HashJoin(PhysicalHashJoin {
         base: BasePhysicalPlan::with_id(1, "HashJoin", 0),
+        store_tp: Default::default(),
+        mpp_shuffle_join: false,
         ..PhysicalHashJoin::default()
     });
     // Go `BuildPhysicalJoinSchema` indexes `join.Children()[0]`.
@@ -2080,6 +2084,8 @@ fn a_childless_physical_join_panics_when_building_its_schema_like_go() {
 fn a_single_child_physical_join_panics_on_the_missing_right_child_like_go() {
     let join = PhysicalPlan::HashJoin(PhysicalHashJoin {
         base: BasePhysicalPlan::with_id(1, "HashJoin", 0),
+        store_tp: Default::default(),
+        mpp_shuffle_join: false,
         ..PhysicalHashJoin::default()
     });
     let mut join = join;
@@ -2386,6 +2392,8 @@ fn apply_worker_clone_isolates_nested_owner_cells_and_preserves_internal_aliases
     let source = PhysicalPlan::Apply(PhysicalApply {
         hash_join: PhysicalHashJoin {
             base,
+            store_tp: Default::default(),
+            mpp_shuffle_join: false,
             ..Default::default()
         },
         outer_schema: vec![correlation.clone()],

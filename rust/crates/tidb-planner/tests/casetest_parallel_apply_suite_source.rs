@@ -29,6 +29,8 @@ fn apply(outer: PhysicalPlan, inner: PhysicalPlan, ordered: bool) -> PhysicalPla
         hash_join: PhysicalHashJoin {
             base,
             inner_child_idx: 1,
+            store_tp: Default::default(),
+            mpp_shuffle_join: false,
             ..Default::default()
         },
         keep_order: ordered,

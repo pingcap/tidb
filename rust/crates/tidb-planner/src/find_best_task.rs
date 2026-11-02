@@ -893,6 +893,7 @@ pub mod dispatch;
 pub mod index_join_path;
 pub mod index_merge_intersection;
 pub mod index_merge_union;
+mod mpp_join;
 
 #[cfg(test)]
 mod tests {

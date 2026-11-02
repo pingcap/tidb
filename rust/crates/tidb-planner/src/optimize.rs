@@ -68,6 +68,8 @@ pub trait OptimizeContext: tidb_exprctx::Columns + PlanCacheMarker + HintWarning
     fn index_lookup_push_down_session(&self) -> tidb_sessionctx::IndexLookupPushDownSession;
     /// Go `SessionVars.IsolationReadEngines`.
     fn isolation_read_engines(&self) -> &str;
+    /// Go `StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode`.
+    fn tiflash_engine_removed_due_to_strict_sql_mode(&self) -> bool;
     /// Go `SessionVars`' inputs to `handleFineGrainedShuffle`.
     fn tiflash_fine_grained_shuffle(&self) -> tidb_sessionctx::TiFlashFineGrainedShuffleSession;
     /// The TiFlash cluster `handleFineGrainedShuffle` sizes streams from.
@@ -463,6 +465,14 @@ pub fn physical_optimize<C: OptimizeContext>(
         optimizer_cost_env.session.tiflash_fast_scan,
         optimizer_cost_env.session.allow_batch_cop,
         optimizer_cost_env.session.disaggregated_tiflash,
+    )
+    .with_mpp_join_inputs(
+        optimizer_cost_env.session.mpp_join,
+        ctx.isolation_read_engines()
+            .split(',')
+            .any(|engine| engine.trim().eq_ignore_ascii_case("tiflash")),
+        ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
+        optimizer_cost_env.session.enable_chunk_rpc,
     )
     .with_enable_skew_distinct_agg(ctx.enable_skew_distinct_agg())
     .with_enable_3_stage_distinct_agg(ctx.enable_3_stage_distinct_agg())

@@ -2077,10 +2077,17 @@ pub(crate) fn attach2_task_in(
         // `attach2Task4PhysicalHashJoin` (`task.go:211`): convert BOTH
         // children — Go converts the RIGHT one first — wire them in, and
         // concatenate warnings right-before-left, which is the order SHOW
-        // WARNINGS replays them in. `StoreTp == kv.TiFlash` routes to the
-        // TiFlash attach in Go; the enum's hash join carries no store type,
-        // with no TiFlash tier to route to. HashJoin carries its lookup
-        // child's feedback upward; MergeJoin does not.
+        // WARNINGS replays them in. HashJoin carries its lookup child's
+        // feedback upward; MergeJoin does not.
+        // `attach2Task4PhysicalHashJoin`: a TiFlash join attaches to its two
+        // MPP children.
+        PhysicalPlan::HashJoin(join) if join.store_tp == tidb_kv::store_type::StoreType::TiFlash => {
+            let second = tasks
+                .drain(..1)
+                .next()
+                .ok_or_else(|| PlanError::internal("physical join needs two tasks"))?;
+            attach2_task_for_mpp_4_physical_hash_join(plan, first, second, column_ids, allocator, session)
+        }
         PhysicalPlan::HashJoin(_) | PhysicalPlan::MergeJoin(_) => {
             let second = tasks
                 .drain(..1)
@@ -3250,6 +3257,8 @@ mod attach_tests {
                 base: op_with_stats("Apply", 5.0),
                 join_type: tidb_planner_core_base::LogicalJoinType::LeftOuter,
                 inner_child_idx: 1,
+                store_tp: Default::default(),
+                mpp_shuffle_join: false,
                 ..tidb_planner_core_operator_physicalop::PhysicalHashJoin::default()
             },
             ..tidb_planner_core_operator_physicalop::PhysicalApply::default()
@@ -3334,6 +3343,8 @@ mod attach_tests {
         };
         let join = PhysicalPlan::HashJoin(tidb_planner_core_operator_physicalop::PhysicalHashJoin {
             base: op_with_stats("HashJoin", 5.0),
+            store_tp: Default::default(),
+            mpp_shuffle_join: false,
             ..tidb_planner_core_operator_physicalop::PhysicalHashJoin::default()
         });
         let task = attach2_task(
@@ -4894,4 +4905,275 @@ mod task_tests {
         assert!(!converted.invalid());
         assert!((converted.count() - 3.0).abs() < f64::EPSILON);
     }
+}
+
+/// Go `needConvert` (`task.go`): TiFlash joins need partition keys of
+/// exactly one type, where TiDB only needs one type family.
+fn mpp_join_key_needs_convert(tp: &tidb_datatype::FieldType, target: &tidb_datatype::FieldType) -> bool {
+    use tidb_datatype::FieldTypeCode;
+    // Every string type is one type in TiFlash.
+    if tp.code().is_string() && target.code().is_string() {
+        return false;
+    }
+    if tp.code() != target.code() {
+        return true;
+    }
+    if tp.code() != FieldTypeCode::NewDecimal {
+        return false;
+    }
+    if tp.decimal() != target.decimal() {
+        return true;
+    }
+    // TiFlash has four decimal implementations by precision.
+    let (a, b) = (tp.flen(), target.flen());
+    let same_band = |low: i64, high: i64| a >= low && a <= high && b >= low && b <= high;
+    !(same_band(0, 9) || (a > 9 && a <= 18 && b > 9 && b <= 18) || (a > 18 && a <= 38 && b > 18 && b <= 38) || (a > 38 && a <= 65 && b > 38 && b <= 65))
+}
+
+/// Go `negotiateCommonType`.
+fn negotiate_mpp_join_key_type(
+    left: &tidb_datatype::FieldType,
+    right: &tidb_datatype::FieldType,
+) -> (tidb_datatype::FieldType, bool, bool) {
+    use tidb_datatype::FieldTypeCode;
+    let mut common = tidb_datatype::agg_field_type(&[left.clone(), right.clone()]);
+    if common.code() == FieldTypeCode::NewDecimal {
+        let (mut left_extend, mut right_extend) = (0, 0);
+        let mut common_decimal = right.decimal();
+        if left.decimal() < right.decimal() {
+            left_extend = right.decimal() - left.decimal();
+        } else if left.decimal() > right.decimal() {
+            right_extend = left.decimal() - right.decimal();
+            common_decimal = left.decimal();
+        }
+        let common_flen = (left.flen() + left_extend).max(right.flen() + right_extend);
+        common.set_decimal_under_limit(common_decimal);
+        common.set_flen_under_limit(common_flen);
+    } else if (mpp_join_key_needs_convert(left, &common) || mpp_join_key_needs_convert(right, &common))
+        && common.code().is_integer_type()
+    {
+        // TiFlash and MySQL cast to an integer only as Int64.
+        common.set_code(FieldTypeCode::LongLong);
+        common.set_flen(tidb_mysql::consts::MaxIntWidth as i64);
+    }
+    let (left_convert, right_convert) =
+        (mpp_join_key_needs_convert(left, &common), mpp_join_key_needs_convert(right, &common));
+    (common, left_convert, right_convert)
+}
+
+/// Go `getProj`: an identity projection over `plan`.
+fn identity_projection(plan: PhysicalPlan, allocator: &tidb_planner_core_base::PlanIdAllocator) -> tidb_planner_core_operator_physicalop::PhysicalProjection {
+    let schema = plan.schema().cloned().unwrap_or_default();
+    let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(allocator, "Projection", plan.query_block_offset());
+    base.base.set_stats(plan.stats_info().cloned());
+    base.base.set_schema(Some(schema.clone()));
+    base.set_children(vec![plan]);
+    tidb_planner_core_operator_physicalop::PhysicalProjection {
+        base,
+        exprs: schema.columns.into_iter().map(Expression::Column).collect(),
+        ..Default::default()
+    }
+}
+
+/// Go `convertPartitionKeysIfNeed4PhysicalHashJoin`: where a shuffle join's
+/// partition keys differ in type, cast them in a projection below a new
+/// hash exchange on that side.
+fn convert_mpp_join_partition_keys_if_need(
+    left: MppTask,
+    right: MppTask,
+    column_ids: Option<&tidb_planner_core_base::ColumnIdAllocator>,
+    allocator: &tidb_planner_core_base::PlanIdAllocator,
+    session: Option<&dyn tidb_planner_core_operator_physicalop::enforce::MppWarningSink>,
+) -> Result<(MppTask, MppTask), PlanError> {
+    let mut casts: Vec<(Option<tidb_datatype::FieldType>, Option<tidb_datatype::FieldType>)> = Vec::new();
+    for (l, r) in left.hash_cols().iter().zip(right.hash_cols()) {
+        let (Some(l_type), Some(r_type)) = (l.col.get_static_type(), r.col.get_static_type()) else {
+            casts.push((None, None));
+            continue;
+        };
+        let (common, l_convert, r_convert) = negotiate_mpp_join_key_type(l_type, r_type);
+        casts.push((l_convert.then(|| common.clone()), r_convert.then_some(common)));
+    }
+    let left_changed = casts.iter().any(|(l, _)| l.is_some());
+    let right_changed = casts.iter().any(|(_, r)| r.is_some());
+    if !left_changed && !right_changed {
+        return Ok((left, right));
+    }
+    let convert_side = |task: MppTask, side: usize| -> Result<MppTask, PlanError> {
+        let keys = task.hash_cols().to_vec();
+        let mut plan = task
+            .plan()
+            .cloned()
+            .ok_or_else(|| PlanError::internal("MPP join side has no plan"))?;
+        // Below an existing exchange: the new one replaces it.
+        if let PhysicalPlan::ExchangeReceiver(receiver) = &plan {
+            if let Some(below) = receiver.base.children().first().and_then(|sender| sender.children().first()) {
+                plan = below.clone();
+            }
+        }
+        let mut projection = identity_projection(plan, allocator);
+        let mut partition_keys = Vec::with_capacity(keys.len());
+        for (key, cast) in keys.into_iter().zip(&casts) {
+            let target = if side == 0 { &cast.0 } else { &cast.1 };
+            let Some(target) = target else {
+                partition_keys.push(key);
+                continue;
+            };
+            let mut target = target.clone();
+            target.set_flags(key.col.get_static_type().map(tidb_datatype::FieldType::flags).unwrap_or_default());
+            let cast_expr =
+                tidb_expr::simple_expr::build_cast_function(Expression::Column(key.col.clone()), target.clone(), false)
+                    .map_err(|error| PlanError::internal(format!("{error:?}")))?;
+            // Go `appendExpr`.
+            let mut column = tidb_expr::column::Column::new(
+                column_ids.map_or(0, tidb_planner_core_base::ColumnIdAllocator::alloc),
+                cast_expr.static_type().cloned().unwrap_or(target),
+            );
+            column
+                .collation
+                .set_coercibility(tidb_expr::collation_derive::coercibility_of(&cast_expr));
+            projection.exprs.push(cast_expr);
+            let mut schema = projection.base.base.schema().cloned().unwrap_or_default();
+            schema.columns.push(column.clone());
+            projection.base.base.set_schema(Some(schema));
+            partition_keys.push(tidb_planner_property::MppPartitionColumn {
+                col: column,
+                collate_id: key.collate_id,
+            });
+        }
+        let mut converted = task.copy();
+        converted.plan = Some(Box::new(PhysicalPlan::Projection(projection)));
+        converted.enforce_exchanger(
+            &tidb_planner_property::PhysicalProperty {
+                task_tp: tidb_planner_property::TaskType::Mpp,
+                mpp_partition_tp: MppPartitionType::Hash,
+                mpp_partition_cols: partition_keys,
+                ..tidb_planner_property::PhysicalProperty::default()
+            },
+            allocator,
+            session,
+        )
+    };
+    let left = if left_changed { convert_side(left, 0)? } else { left };
+    let right = if right_changed { convert_side(right, 1)? } else { right };
+    Ok((left, right))
+}
+
+/// Go `attach2TaskForMpp4PhysicalHashJoin` (`task.go:432`).
+fn attach2_task_for_mpp_4_physical_hash_join(
+    plan: PhysicalPlan,
+    left: Task,
+    right: Task,
+    column_ids: Option<&tidb_planner_core_base::ColumnIdAllocator>,
+    allocator: &tidb_planner_core_base::PlanIdAllocator,
+    session: Option<&dyn tidb_planner_core_operator_physicalop::enforce::MppWarningSink>,
+) -> Result<Task, PlanError> {
+    let (Task::Mpp(mut left), Task::Mpp(mut right)) = (left, right) else {
+        return Ok(Task::invalid_task());
+    };
+    let PhysicalPlan::HashJoin(join) = &plan else {
+        unreachable!("the caller matched a hash join");
+    };
+    let (join_type, inner_child_idx) = (join.join_type, join.inner_child_idx);
+    if join.mpp_shuffle_join {
+        if left.hash_cols().is_empty() || right.hash_cols().is_empty() {
+            return Ok(Task::invalid_task());
+        }
+        if left.hash_cols().len() != right.hash_cols().len() {
+            // Exchange optimization dropped hash columns on one side; restore
+            // them from the side's required property (Go
+            // `enforceExchangerByBackup4PhysicalHashJoin`).
+            let backup = |task: &MppTask, idx: usize, expected: usize| -> Result<Option<MppTask>, PlanError> {
+                match plan.base().child_req_prop(idx) {
+                    Some(prop) if prop.mpp_partition_cols.len() == expected => {
+                        task.enforce_exchanger_impl(prop, allocator, session).map(Some)
+                    }
+                    _ => Ok(None),
+                }
+            };
+            let restored = if left.hash_cols().len() < right.hash_cols().len() {
+                backup(&left, 0, right.hash_cols().len())?.map(|task| left = task)
+            } else {
+                backup(&right, 1, left.hash_cols().len())?.map(|task| right = task)
+            };
+            if restored.is_none() {
+                return Ok(Task::invalid_task());
+            }
+        }
+        (left, right) = convert_mpp_join_partition_keys_if_need(left, right, column_ids, allocator, session)?;
+    }
+    // The outer task passes its partition to the join: the probe side of an
+    // inner join, the outer side of an outer join, the left of a semi join.
+    let outer_is_right = match join_type {
+        tidb_planner_core_base::LogicalJoinType::Inner => inner_child_idx == 0,
+        tidb_planner_core_base::LogicalJoinType::RightOuter => true,
+        _ => false,
+    };
+    let (partition_type, hash_cols) = if outer_is_right {
+        (right.partition_type(), right.hash_cols().to_vec())
+    } else {
+        (left.partition_type(), left.hash_cols().to_vec())
+    };
+    let (Some(left_plan), Some(right_plan)) = (left.plan().cloned(), right.plan().cloned()) else {
+        return Err(PlanError::internal("MPP join: a child task has no plan"));
+    };
+    let mut plan = plan;
+    plan.base_mut().set_children(vec![left_plan, right_plan]);
+    // TiFlash computes a join's output as the full join schema; a pruned
+    // schema is restored by a projection above (keeping the hash columns).
+    let pruned_schema = plan.schema().cloned().unwrap_or_default();
+    let default_schema = tidb_planner_core_operator_physicalop::build_physical_join_schema(join_type, &plan)
+        .unwrap_or_default();
+    let stats = plan.stats_info().cloned();
+    let query_block_offset = plan.query_block_offset();
+    plan.base_mut().base.set_schema(Some(default_schema.clone()));
+    let mut task = Task::Mpp(MppTask::new_with_hash_cols(
+        plan,
+        partition_type,
+        hash_cols.clone(),
+        [right.warnings.clone(), left.warnings.clone()],
+    ));
+    if pruned_schema.columns.len() < default_schema.columns.len() {
+        let join_column = |unique_id: i64| default_schema.columns.iter().find(|column| column.unique_id == unique_id);
+        let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(allocator, "Projection", query_block_offset);
+        base.base.set_stats(stats);
+        let (exprs, schema) = if !pruned_schema.columns.is_empty() {
+            let mut exprs: Vec<Expression> = pruned_schema.columns.iter().cloned().map(Expression::Column).collect();
+            let mut schema = pruned_schema.clone();
+            for hash_col in &hash_cols {
+                let contained = schema.columns.iter().any(|column| column.unique_id == hash_col.col.unique_id);
+                if let (false, Some(column)) = (contained, join_column(hash_col.col.unique_id)) {
+                    exprs.push(Expression::Column(column.clone()));
+                    schema.columns.push(column.clone());
+                }
+            }
+            (exprs, schema)
+        } else if hash_cols.is_empty() {
+            let one = Expression::Constant(tidb_expr::constant::Constant::new_one());
+            let column = tidb_expr::column::Column::new(
+                column_ids.map_or(0, tidb_planner_core_base::ColumnIdAllocator::alloc),
+                one.static_type()
+                    .cloned()
+                    .unwrap_or_else(|| tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
+            );
+            (vec![one], tidb_expr::schema::Schema::new(vec![column]))
+        } else {
+            let columns: Vec<_> = hash_cols
+                .iter()
+                .filter_map(|hash_col| join_column(hash_col.col.unique_id).cloned())
+                .collect();
+            (
+                columns.iter().cloned().map(Expression::Column).collect(),
+                tidb_expr::schema::Schema::new(columns),
+            )
+        };
+        base.base.set_schema(Some(schema));
+        let projection = PhysicalPlan::Projection(tidb_planner_core_operator_physicalop::PhysicalProjection {
+            base,
+            exprs,
+            ..Default::default()
+        });
+        task = attach_plan_2_task(projection, task);
+    }
+    Ok(task)
 }

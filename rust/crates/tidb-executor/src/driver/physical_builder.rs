@@ -8682,6 +8682,8 @@ use super::*;
                 base,
                 left_join_keys: vec![key.clone()],
                 right_join_keys: vec![right_schema.columns[0].clone()],
+                store_tp: Default::default(),
+                mpp_shuffle_join: false,
                 ..Default::default()
             });
             let other_key = right_schema.columns[0].clone();

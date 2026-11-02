@@ -187,6 +187,9 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn isolation_read_engines(&self) -> &str {
         StmtContext::isolation_read_engines(self)
     }
+    fn tiflash_engine_removed_due_to_strict_sql_mode(&self) -> bool {
+        StmtContext::tiflash_engine_removed_due_to_strict_sql_mode(self)
+    }
     fn tiflash_fine_grained_shuffle(&self) -> tidb_sessionctx::TiFlashFineGrainedShuffleSession {
         StmtContext::tiflash_fine_grained_shuffle(self)
     }

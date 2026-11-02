@@ -25526,7 +25526,9 @@ fn tiflash_reads_plan_as_go_mpp_fragments() {
         .expect("session opens");
     for sql in [
         "CREATE TABLE test.t (a int not null, b bigint, c int not null)",
+        "CREATE TABLE test.s (a int not null, b int)",
         "ALTER TABLE test.t SET HYPO TIFLASH REPLICA 1",
+        "ALTER TABLE test.s SET HYPO TIFLASH REPLICA 1",
     ] {
         session.node_conn().execute_write(sql).expect(sql);
     }
@@ -25536,7 +25538,24 @@ fn tiflash_reads_plan_as_go_mpp_fragments() {
             format!("└─ExchangeSender|{rows}|mpp[tiflash]||ExchangeType: PassThrough"),
         ]
     };
-    let cases: [(&str, Vec<String>); 4] = [
+    let cases: [(&str, Vec<String>); 5] = [
+        (
+            // `preferMppBCJ`: the build side is small enough to broadcast.
+            "SELECT * FROM test.t JOIN test.s ON t.a = s.a",
+            reader("12500.00")
+                .into_iter()
+                .chain(
+                    [
+                        "  └─HashJoin|12500.00|mpp[tiflash]||inner join, equal:[eq(test.t.a, test.s.a)]",
+                        "    ├─ExchangeReceiver(Build)|10000.00|mpp[tiflash]||",
+                        "    │ └─ExchangeSender|10000.00|mpp[tiflash]||ExchangeType: Broadcast, Compression: FAST",
+                        "    │   └─TableFullScan|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+                        "    └─TableFullScan(Probe)|10000.00|mpp[tiflash]|table:s|keep order:false, stats:pseudo",
+                    ]
+                    .map(str::to_owned),
+                )
+                .collect(),
+        ),
         (
             "SELECT * FROM test.t",
             reader("10000.00")
@@ -25594,6 +25613,24 @@ fn tiflash_reads_plan_as_go_mpp_fragments() {
                 .collect(),
         ),
     ];
+    let mut cases: Vec<(&str, Vec<String>)> = cases.into_iter().collect();
+    cases.push((
+        // An outer join broadcasts its inner side (`fixedBuildSide`).
+        "SELECT * FROM test.t LEFT JOIN test.s ON t.a = s.a",
+        reader("12500.00")
+            .into_iter()
+            .chain(
+                [
+                    "  └─HashJoin|12500.00|mpp[tiflash]||left outer join, left side:TableFullScan, equal:[eq(test.t.a, test.s.a)]",
+                    "    ├─ExchangeReceiver(Build)|10000.00|mpp[tiflash]||",
+                    "    │ └─ExchangeSender|10000.00|mpp[tiflash]||ExchangeType: Broadcast, Compression: FAST",
+                    "    │   └─TableFullScan|10000.00|mpp[tiflash]|table:s|keep order:false, stats:pseudo",
+                    "    └─TableFullScan(Probe)|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+                ]
+                .map(str::to_owned),
+            )
+            .collect(),
+    ));
     for (query, expected) in cases {
         let plan: Vec<String> = displayed(rows(&mut session, &format!("EXPLAIN FORMAT='brief' {query}")))
             .into_iter()
@@ -25601,4 +25638,34 @@ fn tiflash_reads_plan_as_go_mpp_fragments() {
             .collect();
         assert_eq!(plan, expected, "{query}");
     }
+    // Neither side fits the broadcast thresholds: both sides hash-exchange
+    // by the join keys, collated as the equal condition derives (binary).
+    session
+        .node_conn()
+        .execute_write("SET tidb_broadcast_join_threshold_size = 0, tidb_broadcast_join_threshold_count = 0")
+        .unwrap();
+    let plan: Vec<String> = displayed(rows(
+        &mut session,
+        "EXPLAIN FORMAT='brief' SELECT * FROM test.t JOIN test.s ON t.a = s.a",
+    ))
+    .into_iter()
+    .map(|row| row.join("|"))
+    .collect();
+    let expected: Vec<String> = reader("12500.00")
+        .into_iter()
+        .chain(
+            [
+                "  └─HashJoin|12500.00|mpp[tiflash]||inner join, equal:[eq(test.t.a, test.s.a)]",
+                "    ├─ExchangeReceiver(Build)|10000.00|mpp[tiflash]||",
+                "    │ └─ExchangeSender|10000.00|mpp[tiflash]||ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
+                "    │   └─TableFullScan|10000.00|mpp[tiflash]|table:t|keep order:false, stats:pseudo",
+                "    └─ExchangeReceiver(Probe)|10000.00|mpp[tiflash]||",
+                "      └─ExchangeSender|10000.00|mpp[tiflash]||ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.s.a, collate: binary]",
+                "        └─TableFullScan|10000.00|mpp[tiflash]|table:s|keep order:false, stats:pseudo",
+            ]
+            .map(str::to_owned),
+        )
+        .collect();
+    assert_eq!(plan, expected);
 }
+

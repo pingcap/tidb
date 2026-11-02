@@ -4387,6 +4387,8 @@ mod tests {
         inner_base.base = BasePlan::with_id(7, "Join", 0);
         let inner = PhysicalPlan::HashJoin(tidb_planner_core_operator_physicalop::PhysicalHashJoin {
             base: inner_base,
+            store_tp: Default::default(),
+            mpp_shuffle_join: false,
             ..Default::default()
         });
 

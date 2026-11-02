@@ -371,6 +371,20 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         env.session.allow_batch_cop = number(tidb_vardef::tidb_vars::TIDB_ALLOW_BATCH_COP, 1.0) as i64;
         env.session.disaggregated_tiflash =
             tidb_config::config_tree::config::get_global_config().disaggregated_tiflash;
+        env.session.mpp_join = tidb_planner::plan_cost_ver2::MppJoinSession {
+            bcj_threshold_size: number(tidb_vardef::tidb_vars::TIDB_BCJ_THRESHOLD_SIZE, 100.0 * 1024.0 * 1024.0) as i64,
+            bcj_threshold_count: number(tidb_vardef::tidb_vars::TIDB_BCJ_THRESHOLD_COUNT, 10.0 * 1024.0) as i64,
+            prefer_bcj_by_exchange_data_size: enabled(
+                tidb_vardef::tidb_vars::TIDB_PREFER_BCJ_BY_EXCHANGE_DATA_SIZE,
+                false,
+            ),
+            allow_cartesian_bcj: number(tidb_vardef::tidb_vars::TIDB_OPT_CARTESIAN_BCJ, 1.0) as i64,
+            outer_join_fixed_build_side: enabled(
+                tidb_vardef::tidb_vars::TIDB_OPT_MPP_OUTER_JOIN_FIXED_BUILD_SIDE,
+                false,
+            ),
+            tiflash_concurrency_factor: number(tidb_vardef::tidb_vars::TIDB_OPT_TIFLASH_CONCURRENCY_FACTOR, 24.0),
+        };
         env.session.enable_chunk_rpc = enabled("tidb_enable_chunk_rpc", true);
 
         env.cost_factors.index_scan = number("tidb_opt_index_scan_cost_factor", 1.0);

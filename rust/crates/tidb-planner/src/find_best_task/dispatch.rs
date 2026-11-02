@@ -174,6 +174,14 @@ pub struct DispatchContext<'a> {
     pub disaggregated_tiflash: bool,
     /// Go `SessionVars.AllowBatchCop`.
     pub allow_batch_cop: i64,
+    /// Go `SessionVars`' MPP join switches.
+    pub mpp_join: crate::plan_cost_ver2::MppJoinSession,
+    /// Go `GetIsolationReadEngines()` holds TiFlash.
+    pub tiflash_in_isolation_read: bool,
+    /// Go `StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode`.
+    pub tiflash_engine_removed_due_to_strict_sql_mode: bool,
+    /// Go `SessionVars.EnableChunkRPC`, which `GetAvgRowSize` reads.
+    pub enable_chunk_rpc: bool,
     /// Go `SessionVars.EnableSkewDistinctAgg`, which disables one-phase MPP
     /// aggregation so skew-aware distinct rewrites can retain their exchange.
     pub enable_skew_distinct_agg: bool,
@@ -271,6 +279,10 @@ impl<'a> DispatchContext<'a> {
             tiflash_fast_scan: false,
             disaggregated_tiflash: false,
             allow_batch_cop: 1,
+            mpp_join: crate::plan_cost_ver2::MppJoinSession::default(),
+            tiflash_in_isolation_read: true,
+            tiflash_engine_removed_due_to_strict_sql_mode: false,
+            enable_chunk_rpc: true,
             enable_skew_distinct_agg: false,
             enable_3_stage_distinct_agg: true,
             enable_3_stage_multi_distinct_agg: false,
@@ -525,6 +537,24 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_mpp_allowed(mut self, allowed: bool) -> Self {
         self.mpp_allowed = allowed;
+        self
+    }
+
+    /// Go's MPP join inputs: the session switches, TiFlash in
+    /// `IsolationReadEngines`, the strict-mode TiFlash removal and
+    /// `EnableChunkRPC`.
+    #[must_use]
+    pub const fn with_mpp_join_inputs(
+        mut self,
+        session: crate::plan_cost_ver2::MppJoinSession,
+        tiflash_in_isolation_read: bool,
+        tiflash_engine_removed_due_to_strict_sql_mode: bool,
+        enable_chunk_rpc: bool,
+    ) -> Self {
+        self.mpp_join = session;
+        self.tiflash_in_isolation_read = tiflash_in_isolation_read;
+        self.tiflash_engine_removed_due_to_strict_sql_mode = tiflash_engine_removed_due_to_strict_sql_mode;
+        self.enable_chunk_rpc = enable_chunk_rpc;
         self
     }
 
@@ -881,6 +911,25 @@ fn exhaust_physical_plans(
             use crate::find_best_task::JoinStrategy;
             use tidb_hint::join_hint_flags;
 
+            // Go's MPP head runs before `getHashJoins`; a hint conflict
+            // clears the join's hints for everything after it.
+            let mut prefer_join_type = op.prefer_join_type;
+            let mpp_joins = match super::mpp_join::mpp_join_head(op, plan, prop, &mut prefer_join_type, ctx) {
+                super::mpp_join::MppJoinHead::Return(joins, hint_can_work) => return Ok((one(joins).0, hint_can_work)),
+                super::mpp_join::MppJoinHead::Continue(joins) => joins,
+            };
+            let unhinted;
+            let (op, plan) = if prefer_join_type == op.prefer_join_type {
+                (op, plan)
+            } else {
+                let mut cleared = op.clone();
+                cleared.prefer_join_type = prefer_join_type;
+                unhinted = LogicalPlan::Join(cleared);
+                let LogicalPlan::Join(cleared) = &unhinted else {
+                    unreachable!("just built a join");
+                };
+                (cleared, &unhinted)
+            };
             let reduced = crate::find_best_task::project_one_join(op, plan)?;
             let (left_columns, right_columns, is_null_eq, _) = op.get_join_keys();
             let column = |columns: &[tidb_expr::column::Column], id: i64| {
@@ -1171,6 +1220,8 @@ fn exhaust_physical_plans(
                             right_conditions: op.right_conditions.clone(),
                             other_conditions: op.other_conditions.clone(),
                             default_values: op.default_values.clone(),
+                            store_tp: Default::default(),
+                            mpp_shuffle_join: false,
                         })
                     }
                     JoinStrategy::Merge {
@@ -1270,15 +1321,21 @@ fn exhaust_physical_plans(
             let (hashes, others): (Vec<_>, Vec<_>) = joins
                 .into_iter()
                 .partition(|candidate| matches!(candidate, PhysicalPlan::HashJoin(_)));
-            let mut joins = others;
+            // Go: the MPP joins first, then merge and index joins, then hash.
+            let mut joins = mpp_joins;
+            joins.extend(others);
             joins.extend(hashes);
             // Go returns a forced HashJoin/MergeJoin family immediately
             // (`if forced && len(hashJoins) > 0`, then PreferMergeJoin).
             // IndexJoin hints remain undecided until the inner task builds.
+            let tidb_hash_join = |candidate: &PhysicalPlan| {
+                matches!(candidate, PhysicalPlan::HashJoin(join)
+                    if join.store_tp != tidb_kv::store_type::StoreType::TiFlash)
+            };
             for hash in [true, false] {
                 if joins.iter().any(|candidate| {
                     if hash {
-                        hash_hints.forced && matches!(candidate, PhysicalPlan::HashJoin(_))
+                        hash_hints.forced && tidb_hash_join(candidate)
                     } else {
                         matches!(candidate, PhysicalPlan::MergeJoin(_))
                             && logical_join_hint_applies(plan, candidate)
@@ -1286,7 +1343,7 @@ fn exhaust_physical_plans(
                 }) {
                     joins.retain(|candidate| {
                         if hash {
-                            matches!(candidate, PhysicalPlan::HashJoin(_))
+                            tidb_hash_join(candidate)
                         } else {
                             matches!(candidate, PhysicalPlan::MergeJoin(_))
                         }
@@ -1410,6 +1467,8 @@ fn exhaust_physical_plans(
                     right_conditions: op.join.right_conditions.clone(),
                     other_conditions: op.join.other_conditions.clone(),
                     default_values: op.join.default_values.clone(),
+                    store_tp: Default::default(),
+                    mpp_shuffle_join: false,
                 },
                 can_use_cache,
                 concurrency: 0,

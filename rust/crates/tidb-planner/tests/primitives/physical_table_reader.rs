@@ -84,6 +84,8 @@ fn multi_scan_reader_reports_the_real_tree_cardinality() {
     ]);
     let table_plan = PhysicalPlan::HashJoin(PhysicalHashJoin {
         base: join_base,
+        store_tp: Default::default(),
+        mpp_shuffle_join: false,
         ..PhysicalHashJoin::default()
     });
     let reader = PhysicalTableReader {

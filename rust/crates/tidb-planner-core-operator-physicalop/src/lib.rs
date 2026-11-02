@@ -480,6 +480,11 @@ pub struct PhysicalHashJoin {
     /// Go `BasePhysicalJoin.DefaultValues`, used to pad the inner side of an
     /// outer join when the planner supplied non-NULL defaults.
     pub default_values: Vec<tidb_datatype::Datum>,
+    /// Go `StoreTp`: TiFlash for a join an MPP task runs.
+    pub store_tp: tidb_kv::store_type::StoreType,
+    /// Go `MppShuffleJoin`: an MPP join whose sides are hash-exchanged
+    /// rather than one side broadcast.
+    pub mpp_shuffle_join: bool,
 }
 
 /// Go `emptyBasePhysicalJoinSize` (`base_physical_join.go:143`):
@@ -894,6 +899,8 @@ impl Default for PhysicalHashJoin {
             right_conditions: Vec::new(),
             other_conditions: Vec::new(),
             default_values: Vec::new(),
+            store_tp: tidb_kv::store_type::StoreType::TiKv,
+            mpp_shuffle_join: false,
         }
     }
 }
@@ -4850,6 +4857,8 @@ impl PhysicalPlan {
                 right_conditions: op.right_conditions.clone(),
                 other_conditions: op.other_conditions.clone(),
                 default_values: op.default_values.clone(),
+                store_tp: op.store_tp,
+                mpp_shuffle_join: op.mpp_shuffle_join,
             }),
             Self::MergeJoin(op) => Self::MergeJoin(PhysicalMergeJoin {
                 base: base_of(&op.base),
@@ -5013,6 +5022,8 @@ impl PhysicalPlan {
                     right_conditions: op.hash_join.right_conditions.clone(),
                     other_conditions: op.hash_join.other_conditions.clone(),
                     default_values: op.hash_join.default_values.clone(),
+                    store_tp: Default::default(),
+                    mpp_shuffle_join: false,
                 },
                 can_use_cache: op.can_use_cache,
                 concurrency: op.concurrency,
