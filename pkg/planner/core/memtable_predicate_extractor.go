@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -615,7 +616,7 @@ func (helper extractHelper) extractTimeRange(
 				// SQL datetime bounds can exceed UnixNano's range or identify more
 				// than one instant. Neither conversion is safe for coarse pruning.
 				if localTime.Before(time.Unix(0, math.MinInt64)) || localTime.After(time.Unix(0, math.MaxInt64)) ||
-					!isUniqueLocalTime(localTime, mysqlTime.CoreTime()) {
+					types.FromGoTime(localTime) != mysqlTime.CoreTime() || !timeutil.IsUniqueLocalTime(localTime) {
 					remained = append(remained, expr)
 					continue
 				}
@@ -663,30 +664,6 @@ func (helper extractHelper) extractTimeRange(
 		}
 	}
 	return
-}
-
-// isUniqueLocalTime rejects nonexistent wall-clock times and repeated times
-// whose SQL comparison can match records on either side of a zone transition.
-func isUniqueLocalTime(localTime time.Time, civil types.CoreTime) bool {
-	if types.FromGoTime(localTime) != civil {
-		return false
-	}
-	_, offset := localTime.Zone()
-	start, end := localTime.ZoneBounds()
-	for i, boundary := range []time.Time{start, end} {
-		if boundary.IsZero() {
-			continue
-		}
-		if i == 0 {
-			boundary = boundary.Add(-time.Nanosecond)
-		}
-		_, adjacentOffset := boundary.Zone()
-		if adjacentOffset != offset &&
-			types.FromGoTime(localTime.Add(time.Duration(offset-adjacentOffset)*time.Second)) == civil {
-			return false
-		}
-	}
-	return true
 }
 
 func (extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 {
