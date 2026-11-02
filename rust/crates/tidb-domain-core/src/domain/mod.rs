@@ -864,6 +864,7 @@ impl Domain {
             move |loaded| {
                 let built = cluster_session_catalog_with_templates(loaded, None, auto_ids.as_ref());
                 tidb_infoschema::cluster_catalog::BuiltSchema {
+                    loaded: Arc::clone(loaded),
                     schema: built.catalog,
                     skipped: built.skipped,
                 }

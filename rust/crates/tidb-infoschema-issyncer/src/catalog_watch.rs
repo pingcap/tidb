@@ -96,96 +96,109 @@ use tidb_infoschema::cluster_catalog::{BuiltSchema, ClusterCatalog};
 /// `infoschema.NewBuilder(...).InitWithDBInfos` before inserting the result
 /// into `InfoCache`); the domain installs it, as only the domain holds the
 /// auto-id allocators the tables are built over.
-pub type SchemaBuilder = Box<dyn Fn(&ClusterCatalog) -> BuiltSchema + Send + Sync>;
+pub type SchemaBuilder = Box<dyn Fn(&Arc<ClusterCatalog>) -> BuiltSchema + Send + Sync>;
 
-/// Go `infoschema.InfoCache`: the catalog every query reads, replaced whole by
-/// the reload thread.
+/// Go `infoschema.InfoCache`: each schema version's built `InfoSchema`, the
+/// latest published, replaced whole by the reload thread.
 ///
 /// A reader's [`get_latest`](InfoCache::get_latest) hands back an owned `Arc`, so a
-/// statement in flight keeps the exact catalog it started with and a publish
+/// statement in flight keeps the exact schema it started with and a publish
 /// never has to wait for readers.
 pub struct InfoCache {
-    published: RwLock<Arc<ClusterCatalog>>,
-    historical: Mutex<std::collections::BTreeMap<i64, Arc<ClusterCatalog>>>,
+    published: RwLock<Arc<BuiltSchema>>,
+    historical: Mutex<std::collections::BTreeMap<i64, Arc<BuiltSchema>>>,
     capacity: AtomicUsize,
     /// Go `Syncer`'s `s.m`: one reload at a time, held across the load, the
     /// schema validator's update and the publication, so two reload paths
     /// never interleave their validator updates.
     reload: Mutex<()>,
-    /// The installed [`SchemaBuilder`].
-    builder: std::sync::OnceLock<SchemaBuilder>,
-    /// Go `InfoCache`'s `InfoSchema` per schema version: each version's
-    /// image, built once and shared by every session of that version.
-    built: Mutex<std::collections::BTreeMap<i64, Arc<BuiltSchema>>>,
+    /// The installed [`SchemaBuilder`]; until the domain installs one, a
+    /// version is built without table objects
+    /// ([`BuiltSchema::metadata_only`]).
+    builder: RwLock<Option<SchemaBuilder>>,
 }
 
 impl InfoCache {
     /// Publishes an initial catalog, normally the node's startup full load.
     #[must_use]
     pub fn new(catalog: ClusterCatalog) -> Self {
-        let catalog = Arc::new(catalog);
+        let built = Arc::new(BuiltSchema::metadata_only(Arc::new(catalog)));
         Self {
-            published: RwLock::new(Arc::clone(&catalog)),
+            published: RwLock::new(Arc::clone(&built)),
             historical: Mutex::new(std::collections::BTreeMap::from([(
-                catalog.schema_version,
-                catalog,
+                built.loaded.schema_version,
+                built,
             )])),
             capacity: AtomicUsize::new(16),
             reload: Mutex::new(()),
-            builder: std::sync::OnceLock::new(),
-            built: Mutex::new(std::collections::BTreeMap::new()),
+            builder: RwLock::new(None),
         }
     }
 
-    /// Installs what builds each version's [`BuiltSchema`]; the first
-    /// installation wins.
-    pub fn install_schema_builder(&self, builder: SchemaBuilder) {
-        let _ = self.builder.set(builder);
+    /// Go's loader building one version's `InfoSchema`.
+    fn build(&self, loaded: Arc<ClusterCatalog>) -> Arc<BuiltSchema> {
+        let builder = self
+            .builder
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Arc::new(match builder.as_ref() {
+            Some(build) => build(&loaded),
+            None => BuiltSchema::metadata_only(loaded),
+        })
     }
 
-    /// Go `InfoCache.GetLatest` answering the built `InfoSchema`.
-    ///
-    /// # Panics
-    ///
-    /// No [`SchemaBuilder`] was installed.
+    /// Installs what builds each version's [`BuiltSchema`] and rebuilds the
+    /// versions this cache holds with it.
+    pub fn install_schema_builder(&self, builder: SchemaBuilder) {
+        *self
+            .builder
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(builder);
+        let mut versions = self
+            .historical
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for built in versions.values_mut() {
+            *built = self.build(Arc::clone(&built.loaded));
+        }
+        let mut published = self
+            .published
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let version = published.loaded.schema_version;
+        *published = match versions.get(&version) {
+            Some(built) => Arc::clone(built),
+            None => self.build(Arc::clone(&published.loaded)),
+        };
+    }
+
+    /// Go `InfoCache.GetLatest`: the built `InfoSchema` in force now.
     #[must_use]
     pub fn get_latest_built(&self) -> Arc<BuiltSchema> {
-        self.built(&self.get_latest())
+        match self.published.read() {
+            Ok(guard) => Arc::clone(&guard),
+            Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+        }
     }
 
-    /// Go `InfoCache.GetByVersion` answering the built `InfoSchema`: the
-    /// image of `loaded`'s schema version, built at most once (the newest
-    /// versions are kept, as the catalogs are).
-    ///
-    /// # Panics
-    ///
-    /// No [`SchemaBuilder`] was installed.
+    /// Go `InfoCache.GetByVersion`: the built `InfoSchema` of `loaded`'s
+    /// version, from this cache when it holds that very load, else built.
     #[must_use]
-    pub fn built(&self, loaded: &ClusterCatalog) -> Arc<BuiltSchema> {
-        let version = loaded.schema_version;
+    pub fn built(&self, loaded: &Arc<ClusterCatalog>) -> Arc<BuiltSchema> {
         if let Some(found) = self
-            .built
+            .historical
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&version)
+            .get(&loaded.schema_version)
+            .filter(|built| Arc::ptr_eq(&built.loaded, loaded))
         {
             return Arc::clone(found);
         }
-        let builder = self
-            .builder
-            .get()
-            .expect("the domain installs the schema builder before sessions open");
-        // Built outside the lock: a build reads every table's metadata.
-        let image = Arc::new(builder(loaded));
-        let mut built = self
-            .built
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let found = Arc::clone(built.entry(version).or_insert(image));
-        while built.len() > self.capacity.load(Ordering::Relaxed).max(1) {
-            built.pop_first();
+        let latest = self.get_latest_built();
+        if Arc::ptr_eq(&latest.loaded, loaded) {
+            return latest;
         }
-        found
+        self.build(Arc::clone(loaded))
     }
 
     /// Serializes one reload (load, validator update, publication), as Go's
@@ -200,10 +213,7 @@ impl InfoCache {
     /// panicking publisher cannot leave the node unable to answer queries.
     #[must_use]
     pub fn get_latest(&self) -> Arc<ClusterCatalog> {
-        match self.published.read() {
-            Ok(guard) => Arc::clone(&guard),
-            Err(poisoned) => Arc::clone(&poisoned.into_inner()),
-        }
+        Arc::clone(&self.get_latest_built().loaded)
     }
 
     /// Go `Loader.LoadWithTS(ts, isSnapshot)`: the schema at the snapshot's
@@ -222,13 +232,13 @@ impl InfoCache {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             self.capacity.store(capacity, Ordering::Relaxed);
-            let latest = self.get_latest();
-            versions.insert(latest.schema_version, latest);
+            let latest = self.get_latest_built();
+            versions.insert(latest.loaded.schema_version, latest);
             // Go ReSize retains the newest entries before GetByVersion.
             while versions.len() > capacity {
                 versions.pop_first();
             }
-            versions.get(&version).cloned()
+            versions.get(&version).map(|built| Arc::clone(&built.loaded))
         };
         if let Some(found) = found {
             return Ok(found);
@@ -238,12 +248,12 @@ impl InfoCache {
         // The reserved counter may be ahead of the committed schema diff.
         // Use the same effective version as the live reload owner.
         loaded.schema_version = version;
-        let loaded = Arc::new(loaded);
+        let built = self.build(Arc::new(loaded));
         let mut versions = self
             .historical
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let found = versions.entry(version).or_insert(loaded).clone();
+        let found = Arc::clone(&versions.entry(version).or_insert(built).loaded);
         // A concurrent request may have resized while storage was loading.
         while versions.len() > self.capacity.load(Ordering::Relaxed) {
             versions.pop_first();
@@ -260,17 +270,17 @@ impl InfoCache {
     /// back to an older schema. The older catalog still enters the
     /// historical cache, as Go's insert keeps it for snapshot reads.
     pub fn upsert(&self, catalog: ClusterCatalog) -> bool {
+        // Built before any lock: a build reads every table's metadata.
+        let built = self.build(Arc::new(catalog));
+        let version = built.loaded.schema_version;
         // Publication and retained-version admission share the same lock order
         // as historical lookup, and holding the cache lock across the version
         // comparison serializes concurrent publishers.
-        let catalog = Arc::new(catalog);
         let mut versions = self
             .historical
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        versions
-            .entry(catalog.schema_version)
-            .or_insert_with(|| Arc::clone(&catalog));
+        versions.entry(version).or_insert_with(|| Arc::clone(&built));
         while versions.len() > self.capacity.load(Ordering::Relaxed) {
             versions.pop_first();
         }
@@ -278,11 +288,11 @@ impl InfoCache {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
-        if catalog.schema_version < guard.schema_version {
+        if version < guard.loaded.schema_version {
             return false;
         }
-        versions.insert(catalog.schema_version, Arc::clone(&catalog));
-        *guard = catalog;
+        versions.insert(version, Arc::clone(&built));
+        *guard = built;
         true
     }
 }

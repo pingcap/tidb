@@ -367,12 +367,40 @@ pub struct SkippedTable {
 }
 
 /// Go `infoschema.InfoSchema` as `Builder.InitWithDBInfos` builds it from one
-/// loaded schema version: the image every session of that version shares,
-/// and the tables this tier cannot serve.
+/// loaded schema version: the `DBInfo`s it was built from, the image every
+/// session of that version shares, and the tables this tier cannot serve.
 #[derive(Clone, Debug)]
 pub struct BuiltSchema {
+    /// What the loader read (Go `fetchAllSchemasWithTables`' `DBInfo`s, the
+    /// policies, resource groups and version `InitWithDBInfos` takes).
+    pub loaded: std::sync::Arc<ClusterCatalog>,
     /// The schema image sessions clone.
     pub schema: crate::SessionExtendedInfoSchema,
     /// Tables the cluster has that this tier cannot serve.
     pub skipped: Vec<SkippedTable>,
+}
+
+impl BuiltSchema {
+    /// Go `InitWithDBInfos` without the `table.Table` objects, for a cache no
+    /// domain has given the auto-id allocators tables are built over: the
+    /// schemas, policies, resource groups and version only.
+    #[must_use]
+    pub fn metadata_only(loaded: std::sync::Arc<ClusterCatalog>) -> Self {
+        let mut schema = crate::SessionExtendedInfoSchema::new();
+        schema.set_schema_meta_version(loaded.schema_version);
+        for group in &loaded.resource_groups {
+            schema.set_resource_group(group.clone());
+        }
+        for policy in &loaded.policies {
+            schema.set_policy(policy.clone());
+        }
+        for database in &loaded.databases {
+            schema.register_database_info(GoShared::new(database.clone()));
+        }
+        Self {
+            loaded,
+            schema,
+            skipped: Vec::new(),
+        }
+    }
 }
