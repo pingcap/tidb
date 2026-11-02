@@ -315,7 +315,27 @@ CARGO_INCREMENTAL=0`.
     exists yet). Landed meanwhile (60bb0e7176b):
     `insert_row` / `insert_row_with_row_id` take the store, fixtures lend
     the table's own.
-  - [ ] (d) delete the field and its accessors.
+    Progress 2026-11-02 (141907444d3..b4af4b56ef8): `StmtContext::with_txn_store`
+    exists; kv_table, predicate pushdown, table scan, access path,
+    physical builder, remote scan (`Fixture.store`), cluster storage,
+    index join, nonpublic columns and the Go-bytes index entries hold and
+    pass their stores. Left (about 150 sites): admin check and executor
+    metadata tests (SQL writes through contexts without a store),
+    `point_get.rs` (its counting store records the snapshot options
+    library code sets), `row_decoder_source`, `taobench_repro_source`,
+    `partial_aggregate_primary_ids_source`, domain-core `cluster_session`
+    and tidb-table `cache.rs` tests. A fixture written through SQL needs the
+    shared cluster store (`cluster_storage_test_util::storage`), because
+    `StmtContext::txn_store()` hands out clones and a `MemTableStorage`
+    clone loses its writes.
+  - [ ] (d) delete the field and its accessors. 2026-11-02 (64cd2bb68df):
+    the own-store `snapshot_reader` / `mem_buffer_snapshot` /
+    `point_rpc_counts` / snapshot-option setters are gone. Left in the
+    library: `replace_storage` / `swap_storage` (the temporary-table overlay,
+    M4a's last item), `clear` (local-temporary TRUNCATE),
+    `has_external_statement_rollback` (infoschema fixture staging),
+    `len` / `is_empty`, `store` / `store_mut` / `with_own_store`, and the
+    `statement_store` fallback.
 - [x] Milestone 5: one `InfoSchema` per schema version, shared by sessions
   (2026-11-02). (a) ce502ab73b6: a session's tables are no longer rebound
   to its store -- production reads only the statement's store. (b)
