@@ -137,6 +137,8 @@ func TestSelectIntoOutfileBitEscaping(t *testing.T) {
 	tk.MustExec("insert into b values (1, b'00001010'), (2, b'01011100'), (3, b'00001001'), (4, b'00000001')")
 	tk.MustExec(fmt.Sprintf("SELECT * FROM b ORDER BY id INTO OUTFILE %q", outfile))
 	cmpAndRm("1\t\\\n\n2\t\\\\\n3\t\\\t\n4\t\x01\n", outfile, t)
+	tk.MustExec(fmt.Sprintf(`SELECT * FROM b ORDER BY id INTO OUTFILE %q FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'`, outfile))
+	cmpAndRm("1,\"\\\n\"\n2,\"\\\\\"\n3,\"\t\"\n4,\"\x01\"\n", outfile, t)
 }
 
 func TestSelectIntoOutfileFromTable(t *testing.T) {

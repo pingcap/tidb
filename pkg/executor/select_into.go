@@ -152,9 +152,11 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 				s.lineBuf = append(s.lineBuf, nullTerm...)
 				continue
 			}
-			et := col.GetType(s.Ctx().GetExprCtx().GetEvalCtx()).EvalType()
+			typeInfo := col.GetType(s.Ctx().GetExprCtx().GetEvalCtx())
+			et := typeInfo.EvalType()
 			if (encloseFlag && !encloseOpt) ||
-				(encloseFlag && encloseOpt && s.considerEncloseOpt(et)) {
+				(encloseFlag && encloseOpt && (s.considerEncloseOpt(et) ||
+					typeInfo.GetType() == mysql.TypeBit)) {
 				s.lineBuf = append(s.lineBuf, encloseByte)
 				s.enclosed = true
 			} else {
@@ -195,18 +197,14 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 				s.fieldBuf = append(s.fieldBuf, row.GetVectorFloat32(j).String()...)
 			}
 
-			switch col.GetType(s.Ctx().GetExprCtx().GetEvalCtx()).EvalType() {
-			case types.ETString, types.ETJson, types.ETVectorFloat32:
+			if et == types.ETString || et == types.ETJson || et == types.ETVectorFloat32 || typeInfo.GetType() == mysql.TypeBit {
 				s.lineBuf = append(s.lineBuf, s.escapeField(s.fieldBuf)...)
-			default:
-				if col.GetType(s.Ctx().GetExprCtx().GetEvalCtx()).GetType() == mysql.TypeBit {
-					s.lineBuf = append(s.lineBuf, s.escapeField(s.fieldBuf)...)
-				} else {
-					s.lineBuf = append(s.lineBuf, s.fieldBuf...)
-				}
+			} else {
+				s.lineBuf = append(s.lineBuf, s.fieldBuf...)
 			}
 			if (encloseFlag && !encloseOpt) ||
-				(encloseFlag && encloseOpt && s.considerEncloseOpt(et)) {
+				(encloseFlag && encloseOpt && (s.considerEncloseOpt(et) ||
+					typeInfo.GetType() == mysql.TypeBit)) {
 				s.lineBuf = append(s.lineBuf, encloseByte)
 			}
 		}
