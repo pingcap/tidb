@@ -21,7 +21,7 @@
 use std::collections::BTreeMap;
 
 use tidb_hack::GoToLower;
-use tidb_infoschema::cluster_catalog::ClusterCatalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_model::table_info::TableInfo;
 use tidb_stats_handle_lockstats::cluster_stats_lock::{ClusterStatsLockError, StatsLockRequest};
 use tidb_stats_handle_types::StatsLockTable;
@@ -109,7 +109,7 @@ impl ClusterStatsLockStatement {
     ///
     /// Go's statement errors (an empty target list, `ErrTableNotExists`, a
     /// non-partitioned table named with partitions, `ErrUnknownPartition`).
-    pub fn resolve(&self, catalog: &ClusterCatalog) -> Result<StatsLockRequest, ClusterStatsLockError> {
+    pub fn resolve(&self, catalog: &SessionExtendedInfoSchema) -> Result<StatsLockRequest, ClusterStatsLockError> {
         if self.targets.is_empty() {
             return Err(ClusterStatsLockError::Invalid(if self.lock {
                 "Lock Stats: table should not empty".to_owned()
@@ -162,7 +162,7 @@ impl ClusterStatsLockStatement {
 
 /// Go `populatePartitionIDAndNames`.
 fn resolve_partitions(
-    catalog: &ClusterCatalog,
+    catalog: &SessionExtendedInfoSchema,
     lock: bool,
     target: &StatsLockTarget,
 ) -> Result<StatsLockRequest, ClusterStatsLockError> {
@@ -206,11 +206,11 @@ fn resolve_partitions(
 
 /// Go `is.TableByName` over the stored tables.
 fn user_table<'a>(
-    catalog: &'a ClusterCatalog,
+    catalog: &'a SessionExtendedInfoSchema,
     schema: &str,
     table: &str,
 ) -> Result<tidb_model::GoShared<TableInfo>, ClusterStatsLockError> {
-    catalog.find_table(schema, table).map(|(_, table)| table).ok_or_else(|| {
+    catalog.table_info_by_name(schema, table).map(|(_, table)| table).ok_or_else(|| {
         ClusterStatsLockError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                 .generate_with_stack_by_args(&[schema.into(), table.into()]),

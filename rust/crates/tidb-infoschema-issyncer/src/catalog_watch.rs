@@ -143,6 +143,16 @@ impl InfoCache {
         let _ = self.builder.set(builder);
     }
 
+    /// Go `InfoCache.GetLatest` answering the built `InfoSchema`.
+    ///
+    /// # Panics
+    ///
+    /// No [`SchemaBuilder`] was installed.
+    #[must_use]
+    pub fn get_latest_built(&self) -> Arc<BuiltSchema> {
+        self.built(&self.get_latest())
+    }
+
     /// Go `InfoCache.GetByVersion` answering the built `InfoSchema`: the
     /// image of `loaded`'s schema version, built at most once (the newest
     /// versions are kept, as the catalogs are).
