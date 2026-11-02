@@ -190,8 +190,9 @@ func pruneRedundantApply(p base.LogicalPlan, groupByColumn map[*expression.Colum
 			child := finalResult.Children()[0]
 			nextApply, ok := child.(*logicalop.LogicalApply)
 			if ok && nextApply.JoinType != base.LeftOuterJoin && nextApply.JoinType != base.LeftOuterSemiJoin {
-				// Every removed Apply must preserve outer rows. A nested semi/anti
-				// join still filters rows even when the top selection is true.
+				// Avoid pruning when the left-child chain contains a filtering Apply.
+				// E.g., for `WHERE a IN (subq1) AND (b IN (subq2) OR TRUE)`, the chain is:
+				// Selection(true) -> Apply(LeftOuterSemiJoin) -> Apply(SemiJoin)
 				return nil, false
 			}
 			if ok && nextApply.IsLateral {
