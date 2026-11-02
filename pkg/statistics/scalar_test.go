@@ -176,6 +176,104 @@ func TestCalcFraction(t *testing.T) {
 	}
 }
 
+func TestTimestampScalar(t *testing.T) {
+	timestamp := func(year, month, day, hour, minute, second, microsecond int) types.Datum {
+		return types.NewTimeDatum(types.NewTime(types.FromDate(year, month, day, hour, minute, second, microsecond), mysql.TypeTimestamp, types.MaxFsp))
+	}
+	nearMax := func(microsecond int) types.Datum { return timestamp(2038, 1, 19, 3, 14, 7, microsecond) }
+	t.Run("exact microseconds and boundaries", func(t *testing.T) {
+		cases := []struct {
+			value types.Datum
+			want  float64
+		}{
+			{timestamp(0, 0, 0, 0, 0, 0, 0), 999999},
+			{timestamp(1969, 12, 31, 23, 59, 59, 999999), 999999},
+			{timestamp(1970, 1, 1, 0, 0, 0, 999999), 999999},
+			{types.NewTimeDatum(types.MinTimestamp), 1000000},
+			{timestamp(2000, 1, 1, 0, 0, 0, 123456), 946684800123456},
+			{types.NewTimeDatum(types.MaxTimestamp), 2147483647999999},
+			{timestamp(2038, 1, 19, 3, 14, 8, 0), 2147483648000000},
+			{timestamp(9999, 12, 31, 23, 59, 59, 999999), 2147483648000000},
+		}
+		var previous float64
+		for _, tc := range cases {
+			got := convertDatumToScalar(&tc.value, 0)
+			require.Equal(t, tc.want, got, tc.value.GetMysqlTime().String())
+			require.GreaterOrEqual(t, got, previous)
+			previous = got
+		}
+		for us := 999980; us <= 999999; us++ {
+			value := nearMax(us)
+			require.Equal(t, float64(2147483647000000+int64(us)), convertDatumToScalar(&value, 0))
+		}
+	})
+	t.Run("invalid calendar order", func(t *testing.T) {
+		for _, tc := range []struct{ before, invalid, after types.Datum }{
+			{timestamp(2016, 12, 31, 23, 59, 59, 999999), timestamp(2017, 0, 15, 12, 0, 0, 0), timestamp(2017, 1, 1, 0, 0, 0, 0)},
+			{timestamp(2017, 2, 28, 23, 59, 59, 999999), timestamp(2017, 2, 30, 0, 0, 0, 0), timestamp(2017, 3, 1, 0, 0, 0, 0)},
+			{timestamp(2017, 2, 28, 23, 59, 59, 999999), timestamp(2017, 3, 0, 12, 0, 0, 0), timestamp(2017, 3, 1, 0, 0, 0, 0)},
+			{timestamp(2016, 2, 29, 23, 59, 59, 999999), timestamp(2016, 2, 30, 12, 0, 0, 0), timestamp(2016, 3, 1, 0, 0, 0, 0)},
+		} {
+			// Ranger keeps the converted datum despite ErrWrongValue so that
+			// impossible DATE/DATETIME bounds remain comparable (#28424).
+			invalidDate := tc.invalid.GetMysqlTime()
+			invalidDate.SetType(mysql.TypeDatetime)
+			require.NoError(t, invalidDate.Check(UTCWithAllowInvalidDateCtx))
+			source := types.NewTimeDatum(invalidDate)
+			converted, err := source.ConvertTo(UTCWithAllowInvalidDateCtx, types.NewFieldType(mysql.TypeTimestamp))
+			require.Error(t, err)
+			require.Equal(t, mysql.TypeTimestamp, converted.GetMysqlTime().Type())
+			tc.invalid = converted
+			before := convertDatumToScalar(&tc.before, 0)
+			invalid := convertDatumToScalar(&tc.invalid, 0)
+			after := convertDatumToScalar(&tc.after, 0)
+			require.Equal(t, before, invalid)
+			require.Equal(t, invalid+1, after)
+			hg := NewHistogram(0, 100, 0, 0, types.NewFieldType(mysql.TypeTimestamp), 1, 0)
+			hg.AppendBucket(&tc.before, &tc.after, 100, 0)
+			hg.PreCalculateScalar()
+			require.Zero(t, hg.calcFraction(0, &tc.invalid))
+			require.False(t, hg.OutOfRangeShape(&tc.before, &tc.invalid, 100).Impossible)
+			require.False(t, hg.OutOfRangeShape(&tc.invalid, &tc.after, 100).Impossible)
+		}
+	})
+	t.Run("interpolation", func(t *testing.T) {
+		lower, upper, value := nearMax(999990), nearMax(999999), nearMax(999991)
+		hg := NewHistogram(0, 90, 0, 0, types.NewFieldType(mysql.TypeTimestamp), 1, 0)
+		hg.AppendBucket(&lower, &upper, 90, 0)
+		hg.PreCalculateScalar()
+		require.Equal(t, 1.0/9, hg.calcFraction(0, &value))
+		require.Equal(t, 1.0/9, calcFraction4Datums(&lower, &upper, &value))
+		require.Equal(t, 10.0, hg.LessRowCount(nil, value))
+	})
+	t.Run("out of range", func(t *testing.T) {
+		lower, upper, value := nearMax(999991), nearMax(999995), nearMax(999997)
+		hg := NewHistogram(0, 100, 0, 0, types.NewFieldType(mysql.TypeTimestamp), 1, 0)
+		hg.AppendBucket(&lower, &upper, 100, 0)
+		hg.PreCalculateScalar()
+		shape := hg.OutOfRangeShape(&upper, &value, 100)
+		require.False(t, shape.Impossible)
+		require.Equal(t, 0.375, shape.TotalPercent)
+		require.Equal(t, 0.75, shape.MaxTotalPercent)
+	})
+	t.Run("zero and above maximum bounds", func(t *testing.T) {
+		for _, bounds := range [][3]types.Datum{
+			{timestamp(0, 0, 0, 0, 0, 0, 0), timestamp(1970, 1, 1, 0, 0, 1, 1), types.NewTimeDatum(types.MinTimestamp)},
+			{nearMax(999998), timestamp(2038, 1, 19, 3, 14, 8, 0), types.NewTimeDatum(types.MaxTimestamp)},
+		} {
+			lower, upper, value := bounds[0], bounds[1], bounds[2]
+			hg := NewHistogram(0, 100, 0, 0, types.NewFieldType(mysql.TypeTimestamp), 1, 0)
+			hg.AppendBucket(&lower, &upper, 100, 0)
+			hg.PreCalculateScalar()
+			require.Equal(t, 0.5, hg.calcFraction(0, &value))
+			require.Equal(t, 50.0, hg.LessRowCount(nil, value))
+			shape := hg.OutOfRangeShape(&lower, &upper, 100)
+			require.False(t, shape.Impossible)
+			require.Zero(t, shape.TotalPercent)
+		}
+	})
+}
+
 func TestEnumRangeValues(t *testing.T) {
 	tests := []struct {
 		low         types.Datum
