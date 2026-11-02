@@ -193,6 +193,9 @@ pub struct DispatchContext<'a> {
     /// `=`/`IN` prefix wins over a full table scan even when its estimated
     /// cost is higher.
     pub prefer_range_scan: bool,
+    /// Go fix control 52869 (default false): `skylinePruning`'s
+    /// `preferMerge`.
+    pub prefer_index_merge_by_fix_control: bool,
     /// Go `BaseLogicalPlan.taskMap`, keyed by the logical plan object and
     /// property. Numeric plan IDs are explain identities and are deliberately
     /// shared by static-partition DataSource copies.
@@ -264,6 +267,7 @@ impl<'a> DispatchContext<'a> {
             fix_44830: false,
             // Go `tidb_opt_prefer_range_scan` defaults ON.
             prefer_range_scan: true,
+            prefer_index_merge_by_fix_control: false,
             task_map: HashMap::new(),
             forced_partial_order_paths: HashSet::new(),
             hint_reset_aggregations: std::cell::RefCell::new(HashSet::new()),
@@ -594,6 +598,13 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_allow_prefer_range_scan(mut self, value: bool) -> Self {
         self.prefer_range_scan = value;
+        self
+    }
+
+    /// Go fix control 52869, read by `skylinePruning`.
+    #[must_use]
+    pub const fn with_prefer_index_merge_by_fix_control(mut self, value: bool) -> Self {
+        self.prefer_index_merge_by_fix_control = value;
         self
     }
 
@@ -3690,7 +3701,7 @@ fn find_best_task_4_logical_data_source_paths(
                     table_scan_penalty: tidb_planner_core_operator_logicalop::data_source::TableScanPenaltyInput {
                         has_range_info: prop.index_join_prop.is_some(),
                         has_partition_scan: !ds.all_conds.is_empty(),
-                        ..ds.table_scan_penalty
+                        ..ds.table_scan_penalty_input()
                     },
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
@@ -3799,7 +3810,7 @@ fn find_best_task_4_logical_data_source_paths(
                     desc,
                     ranges,
                     range_rebuild: None,
-                    table_scan_penalty: ds.table_scan_penalty,
+                    table_scan_penalty: ds.table_scan_penalty_input(),
                     tikv_pushdown: None,
                     db_name: ds.db_name.clone(),
                     table_name: ds.table_name(),
@@ -4580,7 +4591,7 @@ fn find_best_task_4_logical_data_source_paths(
                         // the index rows, not by its own ranges.
                         ranges: tidb_ranger::types::Ranges::new(),
                         range_rebuild: None,
-                        table_scan_penalty: ds.table_scan_penalty,
+                        table_scan_penalty: ds.table_scan_penalty_input(),
                         tikv_pushdown: None,
                         db_name: ds.db_name.clone(),
                         table_name: ds.table_name(),
@@ -5891,7 +5902,7 @@ mod tests {
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
         let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
         base.base.set_stats(Some(StatsInfo::new(50.0, [])));
-        let source = LogicalPlan::DataSource(DataSource {
+        let mut ds = DataSource {
             base,
             physical_table_id: 7,
             all_possible_access_paths: vec![
@@ -5899,9 +5910,14 @@ mod tests {
                 AccessPath::table_path(tidb_kv::store_type::StoreType::TiFlash, false, None),
             ],
             prefer_store_type: PREFER_TIFLASH,
-            has_tiflash_replica: true,
             ..DataSource::default()
-        });
+        };
+        ds.set_tiflash_replica(Some(tidb_model::TiFlashReplicaInfo {
+            count: 1,
+            available: true,
+            ..Default::default()
+        }));
+        let source = LogicalPlan::DataSource(ds);
 
         let task = find_best_task(&source, &PhysicalProperty::default(), &mut ctx).expect("plans");
         let Some(PhysicalPlan::TableReader(reader)) = task.plan() else {

@@ -134,7 +134,7 @@ pub(super) fn build_prepared_index_merge_task(
         desc: false,
         ranges: tidb_ranger::types::Ranges::new(),
         range_rebuild: None,
-        table_scan_penalty: ds.table_scan_penalty,
+        table_scan_penalty: ds.table_scan_penalty_input(),
         tikv_pushdown: None,
         db_name: ds.db_name.clone(),
         table_name: ds.table_name(),

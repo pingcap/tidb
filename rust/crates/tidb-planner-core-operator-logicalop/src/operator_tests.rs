@@ -1300,12 +1300,41 @@ fn data_source_unique_index_keys_keep_nullability_and_pruning_semantics() {
     assert!(strong.is_empty() && nullable.is_empty());
 }
 
+/// Go `DataSource.HasTiFlash` (`logical_datasource.go:271`): an available
+/// replica counts only with `Count > 0`; a session's hypothetical replica
+/// counts without one.
+#[test]
+fn has_tiflash_reads_the_table_replica_and_the_hypothetical_one() {
+    let mut source = DataSource::new(BaseLogicalPlan::default(), 7, "t");
+    assert!(!source.has_tiflash());
+    source.set_tiflash_replica(Some(tidb_model::TiFlashReplicaInfo {
+        count: 0,
+        available: true,
+        ..Default::default()
+    }));
+    assert!(!source.has_tiflash());
+    source.set_tiflash_replica(Some(tidb_model::TiFlashReplicaInfo {
+        count: 1,
+        available: true,
+        ..Default::default()
+    }));
+    assert!(source.has_tiflash());
+    source.set_tiflash_replica(None);
+    source.used_hypo_tiflash_replica = true;
+    assert!(source.has_tiflash());
+    assert!(!source.has_available_tiflash_replica());
+}
+
 /// Go `DataSource.PreparePossibleProperties` (`logical_datasource.go:343`):
 /// a TiKV-only hint suppresses the TiFlash flag.
 #[test]
 fn data_source_possible_properties_respect_the_store_hint() {
     let mut source = DataSource::new(BaseLogicalPlan::default(), 7, "t");
-    source.has_tiflash_replica = true;
+    source.set_tiflash_replica(Some(tidb_model::TiFlashReplicaInfo {
+        count: 1,
+        available: true,
+        ..Default::default()
+    }));
     let orders = vec![vec![column(1)]];
     let props = source.prepare_possible_properties(orders.clone(), true, true);
     assert!(props.has_tiflash);

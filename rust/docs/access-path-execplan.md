@@ -182,6 +182,12 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
   table path. Those sites now follow Go.
 - Go builds a columnar (vector) index path as a TiFlash table path with
   `Index` set; Rust still skips columnar indexes at enumeration.
+- Go's `deriveStats4DataSource` fills every non-table path, multi-valued
+  index paths included (`fillIndexPath`, then `deriveIndexPathStats` in the
+  heuristics loop, whose `len(path.Ranges) == 0` rule can select it, and
+  `getGeneralAttributesFromPaths` reads its `CountAfterIndex`). Rust's
+  ordinary fill skips multi-valued indexes, so such a path has no
+  `CountAfterIndex` and stays out of the minimum selectivity.
 - The physical task builders (`dispatch.rs`, `candidate_preparation.rs`)
   keep their three-way TiKV-table / TiFlash / index split for now; step 4
   moves them onto Go's per-path fields.

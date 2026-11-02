@@ -853,12 +853,6 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub tidb_in_isolation_read: bool,
     /// Canonical session-variable value used by isolation-read diagnostics.
     pub isolation_read_engines_value: String,
-    /// Go fix control 52869, consumed by index pruning through the built
-    /// `DataSource`.
-    pub prefer_index_merge_by_fix_control: bool,
-    /// Go fix control 52869 under `generateOtherIndexMerge`'s default
-    /// (`skipRangeScanCheck`, true when unset).
-    pub index_merge_skip_range_scan_check: bool,
     /// Session/transaction facts used by Go's index-lookup-pushdown gates.
     pub index_lookup_push_down_session: tidb_sessionctx::IndexLookupPushDownSession,
     /// Go `b.ctx.GetSessionVars().EnableSkewDistinctAgg`
@@ -1648,8 +1642,6 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             tiflash_in_isolation_read: true,
             tidb_in_isolation_read: true,
             isolation_read_engines_value: "tikv,tiflash,tidb".to_owned(),
-            prefer_index_merge_by_fix_control: false,
-            index_merge_skip_range_scan_check: true,
             index_lookup_push_down_session: Default::default(),
             enable_skew_distinct_agg: false,
             enable_force_inline_cte: false,
@@ -3470,18 +3462,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             columns,
             table_columns,
             is_cluster_table: table.is_cluster_table,
-            index_lookup_push_down_session: self.index_lookup_push_down_session,
-            tikv_in_isolation_read: self.tikv_in_isolation_read,
-            isolation_read_engines_value: self.isolation_read_engines_value.clone(),
             handle_cols,
             handle_is_int,
             common_handle_cols,
             common_handle_lens: table.common_handle_lens().clone(),
-            // Go `DataSource.HasTiFlash`: a hypothetical replica counts.
-            has_tiflash_replica: table.has_tiflash_replica() || hypo_tiflash_replica,
+            used_hypo_tiflash_replica: hypo_tiflash_replica,
             is_for_update_read: self.is_for_update_read,
-            prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
-            index_merge_skip_range_scan_check: self.index_merge_skip_range_scan_check,
             ast_index_hints: table_ref.hints.clone(),
             index_hints,
             index_merge_hints,
@@ -3546,7 +3532,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             &data_source.index_hints,
             table.is_partitioned() && self.partition_processor_enabled,
             data_source.force_no_index_lookup_push_down,
-            data_source.index_lookup_push_down_session,
+            self.index_lookup_push_down_session,
             self.tikv_in_isolation_read,
             &self.isolation_read_engines_value,
             &mut |code, message| ctx.append_warning(code, &message),

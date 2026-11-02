@@ -177,7 +177,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
             }
             None => (None, None),
         };
-        let flags = range_scan_flags(ds, path, prop, metrics.as_ref());
+        let flags = range_scan_flags(ds, path, prop, ctx, metrics.as_ref());
         candidates.push((path, metrics, heuristic, flags));
     }
     // Go `derivePathStatsAndTryHeuristics` prunes `PossibleAccessPaths` in
@@ -235,12 +235,13 @@ fn range_scan_flags(
     ds: &DataSource,
     path: &AccessPath,
     prop: &PhysicalProperty,
+    ctx: &DispatchContext<'_>,
     metrics: Option<&CandidateMetrics>,
 ) -> (bool, bool) {
     if ds.possible_access_paths.is_none() {
         return (false, false);
     }
-    let prefer_merge = !ds.index_merge_hints.is_empty() || ds.prefer_index_merge_by_fix_control;
+    let prefer_merge = !ds.index_merge_hints.is_empty() || ctx.prefer_index_merge_by_fix_control;
     match path.index_info() {
         None if !path.is_tiflash_path() => {
             let Some(table) = ds.tikv_table_path() else {
@@ -252,7 +253,7 @@ fn range_scan_flags(
                 (prop.is_sort_item_empty() || metrics.is_some_and(|metrics| metrics.matches_property))
                     && !tidb_ranger::types::has_full_range(
                         &table.ranges,
-                        ds.table_scan_penalty.unsigned_int_handle,
+                        ds.table_scan_penalty_input().unsigned_int_handle,
                     ),
                 path.forced,
             )
@@ -346,7 +347,7 @@ pub(super) fn prepare_access_paths<'a>(
     // any of them is converted into a physical plan.
     if let Some(prepared) = ordinary.as_mut() {
         let prefer_merge =
-            !ds.index_merge_hints.is_empty() || ds.prefer_index_merge_by_fix_control;
+            !ds.index_merge_hints.is_empty() || ctx.prefer_index_merge_by_fix_control;
         let prefer_range = ctx.prefer_range_scan
             && prop.index_join_prop.is_none()
             && (prefer_merge

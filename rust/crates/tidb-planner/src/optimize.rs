@@ -64,6 +64,10 @@ pub trait OptimizeContext: tidb_exprctx::Columns + PlanCacheMarker + HintWarning
     fn opt_prefix_index_single_scan(&self) -> bool;
     /// Go `SessionVars.GetAllowPreferRangeScan()`.
     fn allow_prefer_range_scan(&self) -> bool;
+    /// Go `SessionVars`' inputs to the index-lookup-pushdown support check.
+    fn index_lookup_push_down_session(&self) -> tidb_sessionctx::IndexLookupPushDownSession;
+    /// Go `SessionVars.IsolationReadEngines`.
+    fn isolation_read_engines(&self) -> &str;
     /// Go `SessionVars.GetEnableIndexMerge()`.
     fn index_merge(&self) -> bool;
     /// Go `StmtCtx.NoIndexMergeHint`.
@@ -247,6 +251,14 @@ pub fn optimize_logical<C: OptimizeContext>(
         allow_eliminate_apply: ctx
             .optimizer_fix_control()
             .get_bool_with_default(tidb_fixcontrol::FIX_45822, true),
+        prefer_index_merge_by_fix_control: ctx
+            .optimizer_fix_control()
+            .get_bool_with_default(tidb_fixcontrol::FIX_52869, false),
+        index_merge_skip_range_scan_check: ctx
+            .optimizer_fix_control()
+            .get_bool_with_default(tidb_fixcontrol::FIX_52869, true),
+        index_lookup_push_down_session: ctx.index_lookup_push_down_session(),
+        isolation_read_engines: ctx.isolation_read_engines(),
         join_reorder_threshold: ctx.join_reorder_threshold(),
         group_ndv_skew_ratio: optimizer_cost_env.session.group_ndv_skew_ratio,
         scale_ndv_skew_ratio: optimizer_cost_env.session.scale_ndv_skew_ratio,
@@ -437,6 +449,10 @@ pub fn physical_optimize<C: OptimizeContext>(
     .with_partial_ordered_index_for_topn(ctx.partial_ordered_index_for_topn())
     .with_opt_prefix_index_single_scan(ctx.opt_prefix_index_single_scan())
     .with_allow_prefer_range_scan(ctx.allow_prefer_range_scan())
+    .with_prefer_index_merge_by_fix_control(
+        ctx.optimizer_fix_control()
+            .get_bool_with_default(tidb_fixcontrol::FIX_52869, false),
+    )
     .with_mpp_warning_sink(ctx)
     .with_plan_cache(
         tidb_exprctx::Columns::use_plan_cache(ctx),

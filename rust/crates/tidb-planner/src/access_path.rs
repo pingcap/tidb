@@ -104,6 +104,7 @@ pub(crate) fn derive_access_paths(
     no_index_merge_hint: bool,
     prefix_single_scan: bool,
     use_plan_cache: bool,
+    index_merge_skip_range_scan_check: bool,
 ) -> Result<(Vec<PossibleAccessPath>, Option<f64>, Option<String>), tidb_planner_core_base::PlanError> {
     // Go `deriveTablePathStats` over the TiKV table path.
     if let Some(position) = source.all_possible_access_paths.iter().position(|path| path.is_tikv_table_path()) {
@@ -180,7 +181,7 @@ pub(crate) fn derive_access_paths(
         // other path has access conditions.
         if source.index_merge_hints.is_empty() {
             let mut need_consider_index_merge = true;
-            if !source.index_merge_skip_range_scan_check {
+            if !index_merge_skip_range_scan_check {
                 need_consider_index_merge =
                     !source
                         .all_possible_access_paths

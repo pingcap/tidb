@@ -287,6 +287,9 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                     .is_some_and(|context| context.no_index_merge_hint),
                 env.opt_prefix_index_single_scan,
                 env.use_plan_cache,
+                // Go fix control 52869, true when unset.
+                env.rule_context
+                    .is_none_or(|context| context.index_merge_skip_range_scan_check),
             ) {
                 Ok((paths, index_merge_max_count, warning)) => {
                     if let Some(warning) = warning {

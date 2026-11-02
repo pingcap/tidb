@@ -542,7 +542,6 @@ fn a_pushed_equality_charges_gos_pseudo_rate() {
     let LogicalPlan::DataSource(op) = &mut source else {
         unreachable!()
     };
-    op.table_scan_penalty.pseudo_stats = true;
     op.columns = vec![tidb_model::GoShared::new({
             let info = tidb_model::ColumnInfo {
                 id: 1,
@@ -573,7 +572,6 @@ fn two_pseudo_bounds_form_one_column_range() {
     let LogicalPlan::DataSource(op) = &mut source else {
         unreachable!()
     };
-    op.table_scan_penalty.pseudo_stats = true;
     op.columns = vec![tidb_model::GoShared::new({
             let info = tidb_model::ColumnInfo {
                 id: 1,
@@ -635,7 +633,6 @@ fn pseudo_column_range_quota_changes_statistics_cover() {
         let LogicalPlan::DataSource(op) = &mut source else {
             unreachable!()
         };
-        op.table_scan_penalty.pseudo_stats = true;
         op.columns = vec![tidb_model::GoShared::new({
                 let info = tidb_model::ColumnInfo {
                     id: 1,
@@ -666,7 +663,6 @@ fn partial_dnf_index_range_preserves_logical_statistics_cover() {
     let LogicalPlan::DataSource(op) = &mut source else {
         unreachable!()
     };
-    op.table_scan_penalty.pseudo_stats = true;
     op.columns = ["a", "b"]
         .iter()
         .enumerate()
@@ -734,7 +730,6 @@ fn deriving_a_data_source_fills_each_index_path_row_count_from_its_collection() 
     let LogicalPlan::DataSource(op) = &mut source else {
         unreachable!()
     };
-    op.table_scan_penalty.pseudo_stats = true;
     op.columns = vec![tidb_model::GoShared::new({
             let info = tidb_model::ColumnInfo {
                 id: 1,

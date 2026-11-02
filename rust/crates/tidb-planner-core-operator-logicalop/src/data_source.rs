@@ -157,13 +157,6 @@ pub struct DataSource {
     pub fd_latest_index_lookup_failed: bool,
     /// Go `ds.Table.Type().IsClusterTable()`: the scan reads the TiDB store.
     pub is_cluster_table: bool,
-    /// Session/transaction inputs to Go's lookup-pushdown support check.
-    pub index_lookup_push_down_session: tidb_sessionctx::IndexLookupPushDownSession,
-    /// Whether TiKV is present in Go `SessionVars.IsolationReadEngines`.
-    pub tikv_in_isolation_read: bool,
-    /// Raw `tidb_isolation_read_engines`, retained for Go-compatible index
-    /// hint diagnostics during static partition re-resolution.
-    pub isolation_read_engines_value: String,
     /// Go `HandleCols`' columns; empty when the table has no usable handle.
     pub handle_cols: Vec<Column>,
     /// Whether Go's `HandleCols.IsInt()` holds.
@@ -196,11 +189,6 @@ pub struct DataSource {
     /// Go `IndexMergeHints`. An empty `index_names` list is a general
     /// `USE_INDEX_MERGE(table)` hint; `partitions` scopes it per static child.
     pub index_merge_hints: Vec<DataSourceIndexMergeHint>,
-    /// Go fix control 52869 after session-variable resolution.
-    pub prefer_index_merge_by_fix_control: bool,
-    /// Go `generateOtherIndexMerge`'s `skipRangeScanCheck`: fix control
-    /// 52869, true when unset.
-    pub index_merge_skip_range_scan_check: bool,
     /// Go `TableStats`: the table-level profile before any filtering.
     pub table_stats: Option<StatsInfo>,
     /// Go `PossibleAccessPaths` after statistics derivation: the grown paths
@@ -211,13 +199,10 @@ pub struct DataSource {
     /// Go `StatisticTable`: the table's statistics `initStats` attached, if
     /// any (None is Go's pseudo table).
     pub statistic_table: Option<std::sync::Arc<tidb_stats::Table>>,
-    /// The table/session facts that Go retains on `PhysicalTableScan` for
-    /// `getTableScanPenalty`.
-    pub table_scan_penalty: TableScanPenaltyInput,
-    /// Whether the table has an available TiFlash replica; Go computes this
-    /// through `TableInfo.TiFlashReplica` plus the hypothetical-replica
-    /// session state, both of which are outside this crate.
-    pub has_tiflash_replica: bool,
+    /// Go `UsedHypoTiFlashReplicas(SessionVars, DBName, TableInfo)`: the
+    /// session's hypothetical TiFlash replica for this table, resolved where
+    /// the source is built (a `DataSource` holds no session).
+    pub used_hypo_tiflash_replica: bool,
 }
 
 
@@ -584,6 +569,28 @@ impl DataSource {
             })
     }
 
+    /// What `getTableScanPenalty` reads off a scan of this source: Go's
+    /// `TblColHists` (from `StatisticTable`; None is the pseudo table) and the
+    /// `unsignedIntHandle` of `Table.PKIsHandle`. The scan's own `RangeInfo`
+    /// and `PlanPartInfo` facts are filled where the scan is built.
+    #[must_use]
+    pub fn table_scan_penalty_input(&self) -> TableScanPenaltyInput {
+        let hist = self.statistic_table.as_ref().map(|table| &table.hist_coll);
+        TableScanPenaltyInput {
+            has_range_info: false,
+            pseudo_stats: hist.is_none_or(|hist| hist.pseudo),
+            analyze_row_count: hist.map_or(-1, |hist| hist.analyze_row_count() as i64),
+            modify_count: hist.map_or(0, |hist| hist.modify_count),
+            has_partition_scan: false,
+            unsigned_int_handle: self.handle_is_int
+                && self
+                    .handle_cols
+                    .first()
+                    .and_then(|column| column.ret_type.as_ref())
+                    .is_some_and(tidb_datatype::FieldType::is_unsigned),
+        }
+    }
+
     /// The TiKV table path (Go `IsTiKVTablePath`).
     #[must_use]
     pub fn tikv_table_path(&self) -> Option<&tidb_planner_util::path::AccessPath> {
@@ -859,12 +866,25 @@ impl DataSource {
     }
 
     /// Go `DataSource.HasTiFlash()` (`logical_datasource.go:271`).
-    ///
-    /// The replica test lives on `TableInfo`, which is narrowed out; the
-    /// resolved answer is [`Self::has_tiflash_replica`].
     #[must_use]
-    pub const fn has_tiflash(&self) -> bool {
-        self.has_tiflash_replica
+    pub fn has_tiflash(&self) -> bool {
+        self.has_available_tiflash_replica() || self.used_hypo_tiflash_replica
+    }
+
+    /// `TableInfo.TiFlashReplica != nil && Available && Count > 0`.
+    #[must_use]
+    pub fn has_available_tiflash_replica(&self) -> bool {
+        self.table_info.as_ref().is_some_and(|info| {
+            info.read().tiflash_replica.as_ref().is_some_and(|replica| {
+                let replica = replica.read();
+                replica.available && replica.count > 0
+            })
+        })
+    }
+
+    /// Sets `TableInfo.TiFlashReplica` on a copy.
+    pub fn set_tiflash_replica(&mut self, replica: Option<tidb_model::TiFlashReplicaInfo>) {
+        self.update_table_info(|info| info.tiflash_replica = replica.map(tidb_model::GoShared::new));
     }
 
     /// Go `DataSource.GetPKIsHandleCol()` (`logical_datasource.go:599`) via
@@ -1347,9 +1367,6 @@ impl DataSource {
             fd_latest_public_index_ids: self.fd_latest_public_index_ids.clone(),
             fd_latest_index_lookup_failed: self.fd_latest_index_lookup_failed,
             is_cluster_table: self.is_cluster_table,
-            index_lookup_push_down_session: self.index_lookup_push_down_session,
-            tikv_in_isolation_read: self.tikv_in_isolation_read,
-            isolation_read_engines_value: self.isolation_read_engines_value.clone(),
             handle_cols: self.handle_cols.clone(),
             handle_is_int: self.handle_is_int,
             common_handle_cols: self.common_handle_cols.clone(),
@@ -1364,13 +1381,10 @@ impl DataSource {
             interesting_columns: self.interesting_columns.clone(),
             force_no_index_lookup_push_down: self.force_no_index_lookup_push_down,
             index_merge_hints: self.index_merge_hints.clone(),
-            prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
-            index_merge_skip_range_scan_check: self.index_merge_skip_range_scan_check,
             table_stats: self.table_stats.clone(),
             possible_access_paths: self.possible_access_paths.clone(),
             statistic_table: self.statistic_table.clone(),
-            table_scan_penalty: self.table_scan_penalty,
-            has_tiflash_replica: self.has_tiflash_replica,
+            used_hypo_tiflash_replica: self.used_hypo_tiflash_replica,
         }
     }
 }

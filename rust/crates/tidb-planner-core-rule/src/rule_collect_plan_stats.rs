@@ -75,6 +75,7 @@ impl LogicalOptRule for CollectPredicateColumnsPoint {
             plan,
             ctx.opt_index_prune_threshold,
             ctx.opt_prefix_index_single_scan,
+            ctx.prefer_index_merge_by_fix_control,
             ctx.scale_ndv_skew_ratio,
         );
         if let Some(requester) = ctx.statistics_load {
@@ -100,6 +101,7 @@ struct InterestingColumnsDown {
 struct InterestingColumnPruner {
     threshold: i32,
     prefix_single_scan: bool,
+    prefer_index_merge_by_fix_control: bool,
     scale_ndv_skew_ratio: f64,
     kept_index_ids: HashMap<i64, HashSet<i64>>,
 }
@@ -290,7 +292,7 @@ impl InterestingColumnPruner {
     fn prune_source(&mut self, source: &mut DataSource, down: &InterestingColumnsDown) {
         source.interesting_columns = Self::collect_for_source(source, down);
         if let Some(kept) =
-            prune_data_source_with_options(source, self.threshold, self.prefix_single_scan)
+            prune_data_source_with_options(source, self.threshold, self.prefix_single_scan, self.prefer_index_merge_by_fix_control)
         {
             self.kept_index_ids
                 .entry(source.physical_table_id)
@@ -327,7 +329,7 @@ impl OwnedRewrite for InterestingColumnPruner {
                     // Go does not populate InterestingColumns for scan-source
                     // wrappers in `CollectColumnStatsUsage`.
                     if self.threshold >= 0 {
-                        if let Some(kept) = prune_data_source_with_options(source, self.threshold, self.prefix_single_scan) {
+                        if let Some(kept) = prune_data_source_with_options(source, self.threshold, self.prefix_single_scan, self.prefer_index_merge_by_fix_control) {
                             self.kept_index_ids
                                 .entry(source.physical_table_id)
                                 .or_default()
@@ -342,7 +344,7 @@ impl OwnedRewrite for InterestingColumnPruner {
                 if let Some(source) = scan.source.as_deref_mut() {
                     Self::record_asked_groups(source, &down.asked_col_groups, self.scale_ndv_skew_ratio);
                     if self.threshold >= 0 {
-                        if let Some(kept) = prune_data_source_with_options(source, self.threshold, self.prefix_single_scan) {
+                        if let Some(kept) = prune_data_source_with_options(source, self.threshold, self.prefix_single_scan, self.prefer_index_merge_by_fix_control) {
                             self.kept_index_ids
                                 .entry(source.physical_table_id)
                                 .or_default()
@@ -656,18 +658,20 @@ pub fn collect_column_stats_usage(
     plan: LogicalPlan,
     opt_index_prune_threshold: i32,
 ) -> (LogicalPlan, ColumnStatsUsage) {
-    collect_column_stats_usage_with_options(plan, opt_index_prune_threshold, false, tidb_planner_cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO)
+    collect_column_stats_usage_with_options(plan, opt_index_prune_threshold, false, false, tidb_planner_cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO)
 }
 
 fn collect_column_stats_usage_with_options(
     plan: LogicalPlan,
     opt_index_prune_threshold: i32,
     prefix_single_scan: bool,
+    prefer_index_merge_by_fix_control: bool,
     scale_ndv_skew_ratio: f64,
 ) -> (LogicalPlan, ColumnStatsUsage) {
     let mut preparation = InterestingColumnPruner {
         threshold: opt_index_prune_threshold,
         prefix_single_scan,
+        prefer_index_merge_by_fix_control,
         scale_ndv_skew_ratio,
         kept_index_ids: HashMap::new(),
     };

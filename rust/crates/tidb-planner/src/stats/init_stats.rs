@@ -157,20 +157,6 @@ pub fn init_stats(
                 }
             })),
     );
-    source.table_scan_penalty = tidb_planner_core_operator_logicalop::data_source::TableScanPenaltyInput {
-        has_range_info: false,
-        pseudo_stats: statistics.is_none_or(|statistics| statistics.hist_coll.pseudo),
-        analyze_row_count: statistics
-            .map_or(-1, |statistics| statistics.hist_coll.analyze_row_count() as i64),
-        modify_count: statistics.map_or(0, |statistics| statistics.hist_coll.modify_count),
-        has_partition_scan: false,
-        unsigned_int_handle: source.handle_is_int
-            && source
-                .handle_cols
-                .first()
-                .and_then(|column| column.ret_type.as_ref())
-                .is_some_and(tidb_datatype::FieldType::is_unsigned),
-    };
 }
 
 fn read<T>(lock: &std::sync::RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {

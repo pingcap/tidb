@@ -129,6 +129,16 @@ pub struct RuleContext<'a> {
     /// Go fix control 45822 (default true): `LogicalApply.PruneColumns` may
     /// drop a left outer apply whose inner columns nothing uses.
     pub allow_eliminate_apply: bool,
+    /// Go fix control 52869 (default false), which `pruneIndexesByWhereAndOrder`
+    /// and `skylinePruning` read as "prefer an index merge".
+    pub prefer_index_merge_by_fix_control: bool,
+    /// Go fix control 52869 (default true): `generateOtherIndexMerge`'s
+    /// `skipRangeScanCheck`.
+    pub index_merge_skip_range_scan_check: bool,
+    /// Go `SessionVars`' inputs to the index-lookup-pushdown support check.
+    pub index_lookup_push_down_session: tidb_sessionctx::IndexLookupPushDownSession,
+    /// Go `SessionVars.IsolationReadEngines` (`tidb_isolation_read_engines`).
+    pub isolation_read_engines: &'a str,
     /// Go `SessionVars.TiDBOptJoinReorderThreshold`.
     pub join_reorder_threshold: i32,
     /// Go `SessionVars.RiskGroupNDVSkewRatio` for join and aggregation stats.

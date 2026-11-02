@@ -93,7 +93,6 @@ fn logical_range_derivation_uses_current_statement_parameters() {
         pushed_down_conds: vec![bound("ge", 0), bound("le", 1)],
         ..Default::default()
     };
-    source.table_scan_penalty.pseudo_stats = true;
     source.base.base.set_schema(Some(Schema::new(vec![column])));
     // Go pseudoGetRowCountByIntRanges caps a non-point estimate at
     // high-low; Selectivity also retains its one-row floor for empty

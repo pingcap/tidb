@@ -120,9 +120,11 @@ pub fn resolve_index_hints_for_partition(
         &source.index_hints,
         true,
         source.force_no_index_lookup_push_down,
-        source.index_lookup_push_down_session,
-        source.tikv_in_isolation_read,
-        &source.isolation_read_engines_value,
+        ctx.index_lookup_push_down_session,
+        ctx.isolation_read_engines
+            .split(',')
+            .any(|engine| engine.trim().eq_ignore_ascii_case("tikv")),
+        ctx.isolation_read_engines,
         &mut |_, _| {},
     )?;
     source.possible_access_paths = None;

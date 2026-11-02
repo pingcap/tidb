@@ -1250,7 +1250,9 @@ impl InitStats<'_> {
         let row_count = crate::access_cost::realtime_row_count(statistics);
         // Go `buildDataSource`: a table with an available TiFlash replica
         // marks the statement as reading TiFlash whenever MPP is allowed.
-        if source.has_tiflash_replica && self.context.optimizer_cost_env().session.mpp_allowed {
+        if source.has_available_tiflash_replica()
+            && self.context.optimizer_cost_env().session.mpp_allowed
+        {
             self.context.mark_is_tiflash();
         }
         // Go `initStats`: the statement's `UsedStatsInfo` entry for this
@@ -2276,12 +2278,6 @@ impl QueryBuilderParts<'_> {
         builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
         builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
         builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
-        builder.prefer_index_merge_by_fix_control = ctx
-            .optimizer_fix_control()
-            .get_bool_with_default(tidb_fixcontrol::FIX_52869, false);
-        builder.index_merge_skip_range_scan_check = ctx
-            .optimizer_fix_control()
-            .get_bool_with_default(tidb_fixcontrol::FIX_52869, true);
         build(&mut builder)
     }
 }
@@ -2675,12 +2671,6 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
     builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
     builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
-    builder.prefer_index_merge_by_fix_control = ctx
-        .optimizer_fix_control()
-        .get_bool_with_default(tidb_fixcontrol::FIX_52869, false);
-    builder.index_merge_skip_range_scan_check = ctx
-        .optimizer_fix_control()
-        .get_bool_with_default(tidb_fixcontrol::FIX_52869, true);
     builder.add_opt_flag(flags::PRUNE_COLUMNS);
     builder.delete_prune_has_fk = delete_prune_has_fk;
     builder.delete_multi = delete_multi;

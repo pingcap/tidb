@@ -181,6 +181,12 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn allow_prefer_range_scan(&self) -> bool {
         StmtContext::allow_prefer_range_scan(self)
     }
+    fn index_lookup_push_down_session(&self) -> tidb_sessionctx::IndexLookupPushDownSession {
+        StmtContext::index_lookup_push_down_session(self)
+    }
+    fn isolation_read_engines(&self) -> &str {
+        StmtContext::isolation_read_engines(self)
+    }
     fn index_merge(&self) -> bool {
         StmtContext::index_merge(self)
     }

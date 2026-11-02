@@ -270,11 +270,14 @@ fn select_indexes(
 }
 
 /// Go `PruneIndexesByWhereAndOrder`, including its metadata-only fallback.
+/// `prefer_index_merge_by_fix_control` is Go fix control 52869, which it
+/// reads from `ds.SCtx()`.
 #[must_use]
 pub fn prune_indexes_by_where_and_order(
     source: &DataSource,
     paths: &[AccessPath],
     threshold: i32,
+    prefer_index_merge_by_fix_control: bool,
 ) -> Vec<AccessPath> {
     if paths.len() <= 1 || threshold < 0 {
         return paths.to_vec();
@@ -293,7 +296,7 @@ pub fn prune_indexes_by_where_and_order(
     let mut index_merge_paths = Vec::new();
     let mut preferred = Vec::new();
     let prefer_merge =
-        !source.index_merge_hints.is_empty() || source.prefer_index_merge_by_fix_control;
+        !source.index_merge_hints.is_empty() || prefer_index_merge_by_fix_control;
     let has_specified_indexes = source
         .index_merge_hints
         .iter()
@@ -364,7 +367,7 @@ pub fn prune_indexes_by_where_and_order(
 /// Prunes one data source and returns the kept index IDs only when Go records
 /// them: after an actual reduction in path count.
 pub fn prune_data_source(source: &mut DataSource, threshold: i32) -> Option<HashSet<i64>> {
-    prune_data_source_with_options(source, threshold, false)
+    prune_data_source_with_options(source, threshold, false, false)
 }
 
 /// Prune using the statement's prefix-index covering policy.
@@ -372,6 +375,7 @@ pub fn prune_data_source_with_options(
     source: &mut DataSource,
     threshold: i32,
     prefix_single_scan: bool,
+    prefer_index_merge_by_fix_control: bool,
 ) -> Option<HashSet<i64>> {
     if threshold < 0 || source.all_possible_access_paths.len() <= 1 {
         return None;
@@ -392,7 +396,12 @@ pub fn prune_data_source_with_options(
         threshold
     };
     let pruned =
-        prune_indexes_by_where_and_order(source, &source.all_possible_access_paths, effective_threshold);
+        prune_indexes_by_where_and_order(
+            source,
+            &source.all_possible_access_paths,
+            effective_threshold,
+            prefer_index_merge_by_fix_control,
+        );
     if pruned.len() >= source.all_possible_access_paths.len() {
         return None;
     }
@@ -494,7 +503,7 @@ mod tests {
         let mut source = source();
         source.path_by_index_id_mut(12).unwrap().forced = true;
         assert_eq!(
-            prune_indexes_by_where_and_order(&source, &source.all_possible_access_paths, 1),
+            prune_indexes_by_where_and_order(&source, &source.all_possible_access_paths, 1, false),
             source.all_possible_access_paths
         );
     }
@@ -507,7 +516,7 @@ mod tests {
             ..Default::default()
         }];
         assert_eq!(
-            prune_indexes_by_where_and_order(&source, &source.all_possible_access_paths, 1),
+            prune_indexes_by_where_and_order(&source, &source.all_possible_access_paths, 1, false),
             vec![
                 AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
                 tidb_planner_util::path::AccessPath::index_path(source.table_indices()[1].clone()),
@@ -527,7 +536,7 @@ mod tests {
         .into();
         source.interesting_columns = vec![column(1), column(2)];
         assert_eq!(
-            prune_indexes_by_where_and_order(&source, &source.all_possible_access_paths, 0),
+            prune_indexes_by_where_and_order(&source, &source.all_possible_access_paths, 0, false),
             vec![
                 AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
                 tidb_planner_util::path::AccessPath::index_path(source.table_indices()[1].clone()),
@@ -553,7 +562,7 @@ mod tests {
         .chain(source.table_indices().iter().map(|index| tidb_planner_util::path::AccessPath::index_path(index.clone())))
         .collect();
 
-        let pruned = prune_indexes_by_where_and_order(&source, &source.all_possible_access_paths, 1);
+        let pruned = prune_indexes_by_where_and_order(&source, &source.all_possible_access_paths, 1, false);
         assert_eq!(pruned.len(), 11);
         assert_eq!(
             pruned[1..],
@@ -579,7 +588,7 @@ mod tests {
             }
         }
         assert_eq!(
-            prune_indexes_by_where_and_order(&source, &source.all_possible_access_paths, 1),
+            prune_indexes_by_where_and_order(&source, &source.all_possible_access_paths, 1, false),
             vec![
                 source.all_possible_access_paths[0].clone(),
                 tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())
