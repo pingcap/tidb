@@ -1073,6 +1073,108 @@ impl ClusterSnapshot for CommittedOnlySnapshot {
     }
 }
 
+/// Go `cacheTableSnapshot`: a point read of a cached table under its lease
+/// answered by the table's in-memory copy; everything else goes to the
+/// snapshot it wraps.
+#[derive(Debug)]
+struct CacheTableSnapshot {
+    snapshot: CommittedOnlySnapshot,
+    cache: Arc<tidb_kv::mem_buffer::MemBufferSnapshot>,
+}
+
+impl CacheTableSnapshot {
+    fn get_cached(&self, key: &Key) -> Option<Vec<u8>> {
+        self.cache.get(key).filter(|value| !value.is_empty())
+    }
+
+    fn batch_get_cached(&self, keys: &[Key]) -> SnapshotPairs {
+        keys.iter()
+            .filter_map(|key| self.get_cached(key).map(|value| (key.as_bytes().to_vec(), value)))
+            .collect()
+    }
+}
+
+impl ClusterSnapshot for CacheTableSnapshot {
+    fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
+        self.snapshot.set_snapshot_read_options(options);
+    }
+
+    fn advise_keep_for_update_ts(&mut self, check_ts: bool) {
+        self.snapshot.advise_keep_for_update_ts(check_ts);
+    }
+
+    fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
+        self.snapshot.set_statement_kv_context(context);
+    }
+
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        self.snapshot.point_rpc_counts()
+    }
+
+    fn lock_keys_for_read(
+        &mut self,
+        keys: &[Key],
+        wait: tidb_txnkv::transaction::LockWaitTime,
+        only_if_exists: bool,
+    ) -> Result<(), StorageError> {
+        self.snapshot.lock_keys_for_read(keys, wait, only_if_exists)
+    }
+
+    fn do_lock_keys(
+        &mut self,
+        keys: &[Key],
+        wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<(), StorageError> {
+        self.snapshot.do_lock_keys(keys, wait)
+    }
+
+    fn prepare(&mut self) -> Result<(), StorageError> {
+        self.snapshot.prepare()
+    }
+
+    fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+        Ok(self.get_cached(key))
+    }
+
+    fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
+        Ok(self.batch_get_cached(keys))
+    }
+
+    fn scan(
+        &mut self,
+        start: &Key,
+        end: &Key,
+        limit: Option<usize>,
+    ) -> Result<SnapshotPairs, StorageError> {
+        self.snapshot.scan(start, end, limit)
+    }
+
+    fn scan_committed(
+        &mut self,
+        start: &Key,
+        end: &Key,
+        limit: Option<usize>,
+    ) -> Result<SnapshotPairs, StorageError> {
+        self.snapshot.scan_committed(start, end, limit)
+    }
+
+    fn get_committed(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+        Ok(self.get_cached(key))
+    }
+
+    fn batch_get_committed(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
+        Ok(self.batch_get_cached(keys))
+    }
+
+    fn start_ts(&self) -> u64 {
+        self.snapshot.start_ts()
+    }
+
+    fn declare_autocommit_point_get(&mut self) -> bool {
+        self.snapshot.declare_autocommit_point_get()
+    }
+}
+
 /// A table's view of cluster storage: staged writes in front of a snapshot.
 ///
 /// Cloning shares both halves, so every table of one session stages into the
@@ -1124,6 +1226,19 @@ impl ClusterTableStorage {
             snapshot: Arc::new(Mutex::new(CommittedOnlySnapshot(Arc::clone(
                 &self.snapshot,
             )))),
+            ..self.clone()
+        }
+    }
+
+    /// Go `e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}`: this view
+    /// with its point reads answered by a cached table's copy.
+    #[must_use]
+    pub fn with_cache_table_snapshot(&self, cache: Arc<tidb_kv::mem_buffer::MemBufferSnapshot>) -> Self {
+        Self {
+            snapshot: Arc::new(Mutex::new(CacheTableSnapshot {
+                snapshot: CommittedOnlySnapshot(Arc::clone(&self.snapshot)),
+                cache,
+            })),
             ..self.clone()
         }
     }
@@ -1458,6 +1573,13 @@ impl TableStorage for ClusterTableStorage {
 
     fn kv_storage(&self) -> Option<Arc<dyn tidb_kv::storage::KvStorage>> {
         self.kv_storage.clone()
+    }
+
+    fn with_cache_table_snapshot(
+        &self,
+        cache: Arc<tidb_kv::mem_buffer::MemBufferSnapshot>,
+    ) -> Option<Box<dyn TableStorage>> {
+        Some(Box::new(ClusterTableStorage::with_cache_table_snapshot(self, cache)))
     }
 
     /// A truncated handle has no coprocessor: its reads fall to `iter`,

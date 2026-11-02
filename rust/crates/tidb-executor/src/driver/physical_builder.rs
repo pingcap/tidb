@@ -5151,6 +5151,19 @@ fn point_lock(
     })
 }
 
+/// Go `buildPointGet` / `buildBatchPointGet`: a cached table read inside
+/// its lease reads through `cacheTableSnapshot`.
+fn point_store(
+    table: &tidb_table::tables::TableCommon,
+    ctx: &crate::StmtContext,
+) -> Box<dyn tidb_kv::storage::TableStorage> {
+    let store = crate::statement_store(ctx);
+    match cached_table_data(table, ctx, false) {
+        Some(cache) => store.with_cache_table_snapshot(cache).unwrap_or(store),
+        None => store,
+    }
+}
+
 fn build_point_get(
     plan: &PhysicalPlan,
     point: &PointGetPlan,
@@ -5188,7 +5201,7 @@ fn build_point_get(
             UniqueIndexPointSourceExec::new(
                 executor_meta,
                 (*table).clone(),
-                crate::statement_store(ctx),
+                point_store(&table, ctx),
                 index_id,
                 index_values,
                 output_columns,
@@ -5218,7 +5231,7 @@ fn build_point_get(
         HandleSourceExec::new_point_mapped_with_context(
             executor_meta,
             (*table).clone(),
-            crate::statement_store(ctx),
+            point_store(&table, ctx),
             handles.into_iter().next().expect("checked one handle"),
             output_columns,
             RowDecodeContext::for_query(ctx),
@@ -5269,7 +5282,7 @@ fn build_batch_point_get(
             UniqueIndexPointSourceExec::new(
                 executor_meta,
                 (*table).clone(),
-                crate::statement_store(ctx),
+                point_store(&table, ctx),
                 index_id,
                 index_values,
                 output_columns,
@@ -5320,7 +5333,7 @@ fn build_batch_point_get(
         HandleSourceExec::new_mapped_with_context(
             executor_meta,
             (*table).clone(),
-            crate::statement_store(ctx),
+            point_store(&table, ctx),
             handles,
             output_columns,
             RowDecodeContext::for_query(ctx),

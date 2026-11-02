@@ -73,11 +73,16 @@ After this plan:
   - `tidb_table_cache_lease` is `tidb_vardef::TABLE_CACHE_LEASE`, with its
     SetGlobal hook.
   - The planner's UnionScan condition is now Go's == ENABLE.
-- [ ] M4b: point gets.
-  - Go `PointGet` / `BatchPointGet` read `cacheTableSnapshot` under the
-    lease. Rust point gets still read storage. That is correct, since
-    writers hold the write lock, but they neither read the copy nor take
-    the read lock.
+- [x] M4b: point gets.
+  - `point_store` makes the point and batch-point sources read through
+    `TableStorage::with_cache_table_snapshot`. In the cluster store that is
+    `CacheTableSnapshot`, Go `cacheTableSnapshot`: `get` / `batch_get`
+    come from the copy, everything else from the wrapped snapshot. Inside
+    a lease the transaction's buffer is still read first.
+  - An autocommit point get reads at `u64::MAX`, as Go's optimistic
+    `AdviseOptimizeWithPlan` does (`pessimistic-auto-commit` is off by
+    default). No lease covers that ts, so in Go as here it never reads the
+    copy.
 - [x] M5: writes.
   - `TableCommon`'s three add entry points, its update and its two
     removes record the table in `TxnCtx.CachedTables`, through

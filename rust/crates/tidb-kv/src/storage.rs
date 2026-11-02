@@ -410,6 +410,16 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
         None
     }
 
+    /// Go `cacheTableSnapshot{e.snapshot, cacheTable}`: this view with its
+    /// snapshot point reads answered by a cached table's copy. `None` for a
+    /// backend with no separate snapshot, which is the in-process engine.
+    fn with_cache_table_snapshot(
+        &self,
+        _cache: std::sync::Arc<crate::mem_buffer::MemBufferSnapshot>,
+    ) -> Option<Box<dyn TableStorage>> {
+        None
+    }
+
     /// Go `sctx.GetStore()`: the storage new transactions begin on. `None`
     /// for a backend that has none, which is the in-process engine.
     fn kv_storage(&self) -> Option<std::sync::Arc<dyn KvStorage>> {

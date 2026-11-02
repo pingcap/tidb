@@ -291,3 +291,54 @@ fn a_cached_table_write_waits_out_the_read_lease_and_is_read_after() {
     rows(&mut writer, "select * from test.write_tmp1");
     assert!(writer.wait_lock_lease_time().is_zero());
 }
+
+/// Runs `sql` in its own transaction until it reads the cached table's copy.
+fn read_in_txn_until_cached(session: &mut crate::Session, sql: &str, expected: &[Vec<i64>]) {
+    for _ in 0..200 {
+        rows(session, "begin");
+        let answer = int_rows(session, sql);
+        let cached = session.read_from_table_cache();
+        rows(session, "commit");
+        assert_eq!(answer, expected, "{sql}");
+        if cached {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("{sql} never read the cache");
+}
+
+/// Go `buildPointGet` / `buildBatchPointGet` over `getCacheTable`: inside a
+/// transaction a point read of a cached table reads `cacheTableSnapshot`
+/// under the lease -- by handle, by unique index, and in batches -- with the
+/// transaction's own writes read first. An autocommit point get reads at
+/// `MaxUint64` (Go's optimistic `AdviseOptimizeWithPlan`), which no lease
+/// covers, so it never reads the copy.
+#[test]
+fn cached_table_point_gets_read_its_copy_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(166))
+        .expect("session opens");
+    rows(&mut session, "create table test.pg (id int primary key, u int unique, v int)");
+    rows(&mut session, "insert into test.pg values (1, 11, 101), (3, 13, 103), (5, 15, 105)");
+    rows(&mut session, "alter table test.pg cache");
+    read_in_txn_until_cached(&mut session, "select * from test.pg where id = 3", &[vec![3, 13, 103]]);
+    read_in_txn_until_cached(
+        &mut session,
+        "select * from test.pg where id in (1, 5, 7) order by id",
+        &[vec![1, 11, 101], vec![5, 15, 105]],
+    );
+    read_in_txn_until_cached(&mut session, "select * from test.pg where u = 15", &[vec![5, 15, 105]]);
+    read_in_txn_until_cached(&mut session, "select * from test.pg where id = 4", &[]);
+
+    assert_eq!(int_rows(&mut session, "select * from test.pg where id = 3"), [vec![3, 13, 103]]);
+    assert!(!session.read_from_table_cache(), "an autocommit point get reads at MaxUint64");
+
+    // The transaction's own writes are read before the copy.
+    rows(&mut session, "begin");
+    rows(&mut session, "delete from test.pg where id = 3");
+    assert_eq!(int_rows(&mut session, "select * from test.pg where id = 3"), Vec::<Vec<i64>>::new());
+    rows(&mut session, "rollback");
+}
