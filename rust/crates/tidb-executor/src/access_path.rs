@@ -6636,7 +6636,8 @@ use std::collections::HashMap;
     /// the query needs" -- observable without guessing at allocator numbers.
     #[derive(Debug, Clone, Default)]
     struct CountingStorage {
-        inner: MemTableStorage,
+        /// One store all clones share, so statements' writes stay visible.
+        inner: tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage,
         entries: Arc<AtomicUsize>,
         gets: Arc<AtomicUsize>,
         batch_keys: Arc<AtomicUsize>,
@@ -7411,12 +7412,7 @@ use std::collections::HashMap;
             let store = CountingStorage::default();
             let gets = Arc::clone(&store.gets);
             let entries = Arc::clone(&store.entries);
-            let Some(tidb_infoschema::TableEntry::Kv(table)) =
-                catalog.get_mut_in(tidb_infoschema::DEFAULT_DATABASE, "t")
-            else {
-                panic!("test table must be byte-backed");
-            };
-            let _ = Arc::make_mut(table).replace_storage(Box::new(store));
+            let ctx = ctx.clone().with_txn_store(Box::new(store.clone()));
             crate::run_insert_on(insert, &mut catalog, &ctx).unwrap();
             gets.store(0, Ordering::Relaxed);
             entries.store(0, Ordering::Relaxed);

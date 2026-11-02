@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use tidb_txnkv::Key;
 
-use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
+use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
 
 #[test]
 fn insert_set_operation_source_uses_the_common_query_plan() {
@@ -49,7 +49,8 @@ fn insert_set_operation_source_uses_the_common_query_plan() {
 
 #[derive(Clone, Debug, Default)]
 struct BatchReadCountingStorage {
-    inner: MemTableStorage,
+    /// One store all clones share: the statements' writes stay visible.
+    inner: tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage,
     gets: Arc<AtomicUsize>,
     batch_gets: Arc<AtomicUsize>,
 }
@@ -112,16 +113,12 @@ fn batch_point_delete_reads_records_with_one_batch_get() {
     .unwrap();
     let gets = Arc::new(AtomicUsize::new(0));
     let batch_gets = Arc::new(AtomicUsize::new(0));
-    let TableEntry::Kv(table) = catalog.get_mut_in("test", "batch_delete").unwrap() else {
-        panic!("batch_delete is not a byte-backed table")
-    };
-    let _ = std::sync::Arc::make_mut(table).replace_storage(Box::new(BatchReadCountingStorage {
-        inner: MemTableStorage::new(),
+    let store = BatchReadCountingStorage {
         gets: Arc::clone(&gets),
         batch_gets: Arc::clone(&batch_gets),
         ..Default::default()
-    }));
-    let ctx = crate::StmtContext::for_query();
+    };
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO batch_delete VALUES (1, 10), (2, 20), (3, 30)",
         &mut catalog,
@@ -153,14 +150,11 @@ fn ignore_uses_the_original_unique_conflict_without_reading_it_again() {
     )
     .unwrap();
     let gets = Arc::new(AtomicUsize::new(0));
-    let TableEntry::Kv(table) = catalog.get_mut_in("test", "conflict_identity").unwrap() else {
-        panic!("expected KV table")
-    };
-    let _ = Arc::make_mut(table).replace_storage(Box::new(BatchReadCountingStorage {
+    let store = BatchReadCountingStorage {
         gets: gets.clone(),
         ..Default::default()
-    }));
-    let ctx = crate::StmtContext::for_query();
+    };
+    let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
     run_insert_on(
         "INSERT INTO conflict_identity VALUES (1, 10), (2, 20)",
         &mut catalog,

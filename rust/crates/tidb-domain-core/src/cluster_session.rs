@@ -762,7 +762,7 @@ use tidb_table::table_from_meta::kv_index;
             .expect("the writer builds this table");
         for id in 1..=3 {
             writer
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(id), Datum::Int(id)], &tidb_exprctx::NoColumns))
+                .insert_row(&mut storage.clone(), &[Datum::Int(id), Datum::Int(id)], &tidb_exprctx::NoColumns)
                 .expect("the row is staged");
         }
         assert_eq!(buffer.len(), 3, "three rows are staged for the walk");
@@ -775,11 +775,11 @@ use tidb_table::table_from_meta::kv_index;
                 .expect("a full-value index");
 
         walked
-            .with_own_store(|table, store| table.create_index_with_context(store, index, &tidb_sessionctx::StmtContext::default()))
+            .create_index_with_context(&mut storage.clone(), index, &tidb_sessionctx::StmtContext::default())
             .expect("a backfill that allocates nothing needs no allocator");
         assert!(
             walked
-                .with_own_store(|table, store| table.drop_index(store, "vi"))
+                .drop_index(&mut storage.clone(), "vi")
                 .expect("the removal walk also allocates nothing"),
             "the index it just created is the one it removes"
         );
@@ -889,7 +889,7 @@ use tidb_table::table_from_meta::kv_index;
             let mut loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
                 .expect("a reorganizing table loads");
             let handle = loaded
-                .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(3)], &tidb_exprctx::NoColumns))
+                .insert_row(&mut storage.clone(), &[Datum::Int(3)], &tidb_exprctx::NoColumns)
                 .expect("the insert succeeds");
             let key = |id: i64, physical: i64| {
                 tidb_tablecodec::table_key::encode_row_key(
@@ -909,7 +909,7 @@ use tidb_table::table_from_meta::kv_index;
             // the new handle too (Go always removes and adds the copy).
             let ctx = tidb_sessionctx::StmtContext::for_dml(false, false, false);
             loaded
-                .with_own_store(|table, store| table.update_row_with_context(store, &handle, &[Datum::Int(5)], &ctx))
+                .update_row_with_context(&mut storage.clone(), &handle, &[Datum::Int(5)], &ctx)
                 .expect("the update succeeds");
             assert!(
                 loaded.stored_raw_value(&mut storage.clone(), &key(3, copy)).is_none(),
@@ -921,7 +921,7 @@ use tidb_table::table_from_meta::kv_index;
             );
             let moved = tidb_table::tables::TableHandle::Int(5);
             loaded
-                .with_own_store(|table, store| table.delete_row_with_context(store, &moved, &ctx))
+                .delete_row_with_context(&mut storage.clone(), &moved, &ctx)
                 .expect("the delete succeeds");
             assert!(
                 loaded.stored_raw_value(&mut storage.clone(), &key(5, main)).is_none(),
