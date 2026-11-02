@@ -381,6 +381,21 @@ CARGO_INCREMENTAL=0`.
     sessions take `InfoCache::built`. Left: the `ClusterCatalog` readers
     (DDL, stats, syssession) move to the image, and the reload applies
     schema diffs to the image (Go `Builder.ApplyDiff`).
+    2026-11-02 (d0f8ccdafe6): LOCK/UNLOCK STATS reads the image
+    (`InfoCache::get_latest_built`, Go `GetLatest`). Finding: most other
+    readers (`tidb-ddl-jobsubmit` -> `tidb-ddl-systable`, the DDL worker,
+    stats storage) do not take the published catalog but load a fresh
+    `ClusterCatalog` from a meta snapshot (`fetch_all_schemas_with_tables`).
+    So the one-type end state is the loader returning the image itself --
+    Go `Builder.InitWithDBInfos` over the loaded `DBInfo`s (the image
+    already registers `DBInfo` pointers, policies and resource groups:
+    `register_database_info`, `set_policy`, `set_resource_group`) -- with
+    the tables built over it where a domain supplies auto-ids, and every
+    reader taking `&SessionExtendedInfoSchema` (`schema_meta_version`,
+    `stored_schemas`, `schema_info_by_name`, `table_info_by_name`,
+    `policies`, `resource_groups`). Converting reader by reader would build
+    a throwaway image at every load boundary, so flip the loader's return
+    type and let the compiler list the readers.
     Go's shape for this: the domain's loader builds the infoschema and
     inserts it into `InfoCache`; so the image builder
     (`cluster_session_catalog_with_templates`, domain-core) runs where
