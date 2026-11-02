@@ -30,6 +30,7 @@ const (
 	TiFlashUnitHash
 	TiFlashUnitScan
 	TiFlashUnitNetwork
+	TiFlashUnitJoin
 )
 
 // TiFlashExecutionUnits retains raw MPP evidence separately from EXPLAIN's dummy
@@ -37,6 +38,7 @@ const (
 // Streamed summaries may already combine tasks, so Observed never proves coverage.
 type TiFlashExecutionUnits struct {
 	Rows                uint64
+	JoinedRows          uint64
 	HashDistinctEntries uint64
 	HashBuildRows       uint64
 	UserReadBytes       uint64
@@ -52,6 +54,10 @@ func tiFlashExecutionUnits(summary *tipb.ExecutorExecutionSummary) TiFlashExecut
 	if summary.NumProducedRows != nil {
 		units.Rows = summary.GetNumProducedRows()
 		units.Observed |= TiFlashUnitRows
+	}
+	if stats := summary.GetTiflashJoinStats(); stats != nil && stats.JoinedRows != nil {
+		units.JoinedRows = stats.GetJoinedRows()
+		units.Observed |= TiFlashUnitJoin
 	}
 	if stats := summary.GetTiflashHashTableStats(); stats != nil && stats.Size_ != nil {
 		switch stats.GetSizeKind() {
@@ -79,7 +85,7 @@ func tiFlashExecutionUnits(summary *tipb.ExecutorExecutionSummary) TiFlashExecut
 			units.Observed |= TiFlashUnitNetwork
 		}
 	}
-	units.Missing = (TiFlashUnitRows | TiFlashUnitHash | TiFlashUnitScan | TiFlashUnitNetwork) &^ units.Observed
+	units.Missing = (TiFlashUnitRows | TiFlashUnitHash | TiFlashUnitScan | TiFlashUnitNetwork | TiFlashUnitJoin) &^ units.Observed
 	return units
 }
 
@@ -95,6 +101,7 @@ func (u *TiFlashExecutionUnits) merge(other TiFlashExecutionUnits) {
 		*dst += n
 	}
 	add(&u.Rows, other.Rows)
+	add(&u.JoinedRows, other.JoinedRows)
 	add(&u.HashDistinctEntries, other.HashDistinctEntries)
 	add(&u.HashBuildRows, other.HashBuildRows)
 	add(&u.UserReadBytes, other.UserReadBytes)

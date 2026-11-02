@@ -171,12 +171,13 @@ func TestStatementRUMPPPublication(t *testing.T) {
 		rows := []uint64{5, 7, 7, 14, 9, 9}[i]
 		read := []uint64{100, 200, 0, 0, 0, 0}[i]
 		cross := []uint64{0, 0, 10, 10, 0, 20}[i]
-		same, hash := uint64(0), uint64(8)
+		same, hash, joined := uint64(0), uint64(8), uint64(20)
 		id := fmt.Sprintf("%s_%d", plan.TP(), plan.ID())
 		summary := &tipb.ExecutorExecutionSummary{ExecutorId: &id, NumProducedRows: &rows,
 			DetailInfo:            &tipb.ExecutorExecutionSummary_TiflashScanContext{TiflashScanContext: &tipb.TiFlashScanContext{UserReadBytes: &read}},
 			TiflashNetworkSummary: &tipb.TiFlashNetWorkSummary{InnerZoneSendBytes: &same, InterZoneSendBytes: &cross}}
 		if plan == join {
+			summary.TiflashJoinStats = &tipb.TiFlashJoinStats{JoinedRows: &joined}
 			summary.TiflashHashTableStats = &tipb.TiFlashHashTableStats{Size_: &hash, SizeKind: tipb.TiFlashHashTableSizeKind_TIFLASH_HASH_TABLE_SIZE_KIND_BUILD_ROW_COUNT.Enum()}
 		}
 		sc.RuntimeStatsColl.RecordTiFlashExecutionSummaries(ids, []*tipb.ExecutorExecutionSummary{summary})
@@ -184,20 +185,20 @@ func TestStatementRUMPPPublication(t *testing.T) {
 	finalized, operators, ok := calculateStatementRUWithOperators(flat, sc.RuntimeStatsColl, ctx.GetSessionVars().RUV2Metrics, statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
 	require.True(t, ok)
 	require.Equal(t, float64(19), finalized.units.CPUWork)
-	// Without candidate-pair evidence, MPP retains input-based residual work.
+	// Residual work uses candidate pairs before filtering, not input or output rows.
 	join.OtherConditions = make(expression.CNFExprs, 2)
 	withResidual, ok := calculateStatementRU(flat, sc.RuntimeStatsColl, ctx.GetSessionVars().RUV2Metrics, statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
 	require.True(t, ok)
-	require.Equal(t, float64(19*3), withResidual.units.CPUWork)
-	require.Equal(t, float64(9), withResidual.units.JoinOutputRows)
+	require.Equal(t, float64(19+20*2), withResidual.units.CPUWork)
+	require.Equal(t, float64(20), withResidual.units.JoinOutputRows)
 	join.OtherConditions = nil
 	require.Equal(t, float64(300), finalized.units.ScanBytes)
 	require.Equal(t, float64(50), finalized.units.NetBytes)
 	require.Equal(t, float64(30), finalized.units.CrossAZNetBytes)
-	require.Equal(t, float64(9), finalized.units.JoinOutputRows)
+	require.Equal(t, float64(20), finalized.units.JoinOutputRows)
 	require.Equal(t, float64(8), finalized.units.HashStateRows)
 	require.Equal(t, float64(40), finalized.engineRU.TiKV)
-	require.Equal(t, float64(4020), finalized.engineRU.TiFlash) // (19+300+60+9+8+6)*10
+	require.Equal(t, float64(4130), finalized.engineRU.TiFlash) // (19+300+60+20+8+6)*10
 	requireStatementRUReportConservation(t, finalized)
 	require.InDelta(t, finalized.result.TotalRU, operators.TotalRU, 1e-9)
 	require.InDelta(t, finalized.result.TotalRU, operators.Main[0].CumRU, 1e-9)
@@ -225,5 +226,55 @@ func TestStatementRUMPPPublication(t *testing.T) {
 	require.Equal(t, [3]float64{finalized.engineRU.TiKV, finalized.engineRU.TiDB, finalized.engineRU.TiFlash}, reporter.ru)
 	for i, want := range []float64{finalized.engineRU.TiDB, finalized.engineRU.TiKV, finalized.engineRU.TiFlash} {
 		require.InDelta(t, want, testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues(statementRUEngineNames[i]))-before[i], 1e-9)
+	}
+}
+
+func TestStatementRUMPPJoinRows(t *testing.T) {
+	zero, pairs := uint64(0), uint64(20)
+	for _, cross := range []bool{false, true} {
+		for _, tc := range []struct {
+			name    string
+			reports []*uint64
+			want    float64
+		}{
+			{"no summaries", nil, 0},
+			{"legacy or interrupted", []*uint64{nil}, 0},
+			{"zero", []*uint64{&zero}, 0},
+			{"multiple tasks", []*uint64{&pairs, &pairs}, 40},
+			{"partial", []*uint64{nil, &pairs, nil}, 20},
+		} {
+			t.Run(fmt.Sprintf("cross=%v/%s", cross, tc.name), func(t *testing.T) {
+				ctx := mock.NewContext()
+				join := physicalop.PhysicalHashJoin{BasePhysicalJoin: physicalop.BasePhysicalJoin{
+					JoinType: base.InnerJoin, OtherConditions: make(expression.CNFExprs, 2),
+				}}.Init(ctx, &property.StatsInfo{}, 0)
+				var inputWork, hashWork float64
+				if !cross {
+					join.EqualConditions = []*expression.ScalarFunction{{}}
+					inputWork = 19
+					hashWork = float64(len(tc.reports) * 8)
+				}
+				op := &plannercore.FlatOperator{Origin: join, StoreType: kv.TiFlash, ReqType: physicalop.MPP}
+				stats := execdetails.NewRuntimeStatsColl(nil)
+				id, output, hash := fmt.Sprintf("HashJoin_%d", join.ID()), uint64(9), uint64(8)
+				for _, rows := range tc.reports {
+					summary := &tipb.ExecutorExecutionSummary{ExecutorId: &id, NumProducedRows: &output}
+					if rows != nil {
+						summary.TiflashJoinStats = &tipb.TiFlashJoinStats{JoinedRows: rows}
+					}
+					if !cross {
+						summary.TiflashHashTableStats = &tipb.TiFlashHashTableStats{Size_: &hash}
+					}
+					stats.RecordTiFlashExecutionSummaries([]int{join.ID()}, []*tipb.ExecutorExecutionSummary{summary})
+				}
+				children := []statementRUOperatorResult{{outputRows: 5}, {outputRows: 14}}
+				calculator := &statementRUCalculator{}
+				require.Equal(t, statementRUOperatorComplete, collectStatementRUJoinUnits(op, children, stats, calculator))
+				require.Equal(t, ruv2.StmtUnits{CPUWork: inputWork + tc.want*2, JoinOutputRows: tc.want, HashStateRows: hashWork}, calculator.units)
+				calculator = &statementRUCalculator{}
+				require.Equal(t, statementRUOperatorComplete, collectStatementRUJoinUnits(op, children, nil, calculator))
+				require.Equal(t, ruv2.StmtUnits{CPUWork: inputWork}, calculator.units)
+			})
+		}
 	}
 }
