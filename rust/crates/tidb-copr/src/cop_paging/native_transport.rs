@@ -92,6 +92,20 @@ impl From<String> for NativeCopError {
     }
 }
 
+/// The response's `other_error`, which the client hands back as its single
+/// key error (`HasKeyErrors for coprocessor::Response`).
+fn cop_other_error(error: &tikv_client::Error) -> Option<&str> {
+    match error {
+        tikv_client::Error::KvError { message } => Some(message),
+        tikv_client::Error::MultipleKeyErrors(errors) | tikv_client::Error::ExtractedErrors(errors)
+            if errors.len() == 1 =>
+        {
+            cop_other_error(&errors[0])
+        }
+        _ => None,
+    }
+}
+
 impl From<NativeCopError> for QueryResponseError {
     fn from(error: NativeCopError) -> Self {
         match error {
@@ -100,6 +114,17 @@ impl From<NativeCopError> for QueryResponseError {
                 message: "tidb_max_keys_read limit exceeded".to_owned(),
             },
             NativeCopError::Task(error) => Self::Source(format!("cop read task failed: {error}")),
+            // Go `handleCopResponse`: an other error that reports a write
+            // conflict (an `RCCheckTS` read meeting newer data) is
+            // `kv.ErrWriteConflict.FastGen("%s", otherErr)`.
+            NativeCopError::Client(error)
+                if cop_other_error(&error).is_some_and(|other| other.contains("write conflict")) =>
+            {
+                Self::Sql {
+                    code: tidb_errno::errcode::ErrWriteConflict,
+                    message: cop_other_error(&error).unwrap_or_default().to_owned(),
+                }
+            }
             // Go `ToTiDBErr`: an exhausted backoff is its class's storage error.
             NativeCopError::Client(error) => {
                 match tidb_store_driver_error::backoff::client_backoff_kind(&error) {

@@ -1856,6 +1856,93 @@ fn global_bindings_do_not_depend_on_unrelated_staged_writes() {
     }
 }
 
+/// Go `PessimisticRCTxnContextProvider` under `tidb_rc_read_check_ts`: a
+/// read-only statement of a pessimistic READ-COMMITTED transaction reads at
+/// the transaction's latest fetched timestamp with `RCCheckTS`, so a row a
+/// peer committed after it fails the read with a write conflict
+/// (`handleAfterQueryError` then asks the connection to retry, which re-runs
+/// it with `RetryInfo.Retrying` and a fresh timestamp).
+#[test]
+fn rc_read_check_ts_reads_at_the_latest_timestamp_and_conflicts_on_newer_data() {
+    let (stack, _users) = cop_backed_stack();
+    let mut reader = stack
+        .factory
+        .open_session(session_context(127))
+        .expect("reader");
+    let mut writer = stack
+        .factory
+        .open_session(session_context(128))
+        .expect("writer");
+    for sql in [
+        "CREATE TABLE test.rcts (id INT PRIMARY KEY, v INT)",
+        "INSERT INTO test.rcts VALUES (1, 10)",
+        "SET GLOBAL tidb_rc_read_check_ts = ON",
+        "SET transaction_isolation = 'READ-COMMITTED'",
+    ] {
+        reader.node_conn().execute_write(sql).expect("setup");
+    }
+    // A coprocessor read: a point read at an unchanged timestamp answers
+    // from the snapshot's cache, as client-go's `KVSnapshot` does.
+    for read in ["SELECT v FROM test.rcts"] {
+        reader
+            .node_conn()
+            .control_transaction("BEGIN PESSIMISTIC")
+            .expect("begin");
+        assert_eq!(displayed(rows(&mut reader, read)), vec![vec!["10"]], "{read}");
+        writer
+            .node_conn()
+            .execute_write("UPDATE test.rcts SET v = v + 1 WHERE id = 1")
+            .expect("peer commit");
+        // The conflict surfaces at the first fetch, before any row reached
+        // a client: Go's `writeChunks` reports it retryable there.
+        let code = {
+            let mut result = reader.node_conn().execute(read).expect("the read opens");
+            let source = crate::domain::resultset_source::ResultSetSource::next_batch(
+                result.source(),
+                8,
+            )
+            .expect_err("the newer row conflicts with the latest timestamp");
+            source.code
+        };
+        assert_eq!(code, 9007, "{read}");
+        assert!(reader.retry_after_query_error(code), "{read}: StmtActionRetryReady");
+        reader.set_retrying(true);
+        let now = displayed(rows(&mut reader, read));
+        reader.set_retrying(false);
+        assert_ne!(now, vec![vec!["10"]], "{read}: the retry reads fresh");
+        reader
+            .node_conn()
+            .control_transaction("ROLLBACK")
+            .expect("rollback");
+        writer
+            .node_conn()
+            .execute_write("UPDATE test.rcts SET v = 10 WHERE id = 1")
+            .expect("reset");
+    }
+    // Off, every statement of the transaction reads fresh.
+    reader
+        .node_conn()
+        .execute_write("SET GLOBAL tidb_rc_read_check_ts = OFF")
+        .expect("off");
+    reader
+        .node_conn()
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin");
+    rows(&mut reader, "SELECT v FROM test.rcts");
+    writer
+        .node_conn()
+        .execute_write("UPDATE test.rcts SET v = 11 WHERE id = 1")
+        .expect("peer commit");
+    assert_eq!(
+        displayed(rows(&mut reader, "SELECT v FROM test.rcts")),
+        vec![vec!["11"]]
+    );
+    reader
+        .node_conn()
+        .control_transaction("ROLLBACK")
+        .expect("rollback");
+}
+
 /// Go `ExecStmt` under `tidb_low_resolution_tso` (`UseLowResolutionTSO`, a
 /// user connection): a write statement and a SELECT that takes its lock
 /// (`isSelectForUpdate`: inside a transaction) are refused with 1105; an

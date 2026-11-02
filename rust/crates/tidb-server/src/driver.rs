@@ -95,6 +95,16 @@ pub trait QuerySession {
     /// warning buffer.
     fn record_parse_failure(&mut self, _error: &SqlQueryError) {}
 
+    /// Go `OnStmtErrorForNextAction(StmtErrAfterQuery)` answering
+    /// `StmtActionRetryReady` for a statement that failed before any of its
+    /// rows reached the client. Default: never.
+    fn retry_after_query_error(&self, _code: u16) -> bool {
+        false
+    }
+
+    /// Go `RetryInfo.Retrying` around the connection's re-run of a statement.
+    fn set_retrying(&mut self, _retrying: bool) {}
+
     /// Go `clientConn.addQueryMetrics`' transaction-write SLI finalizer,
     /// called after the SQL command has written its response.
     fn finish_execute_stmt(&mut self, _cost: Duration) {}

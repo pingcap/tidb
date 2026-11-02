@@ -2285,6 +2285,49 @@ impl Session {
         }
     }
 
+    /// Go `NeedSetRCCheckTSFlag`, which `PessimisticRCTxnContextProvider`
+    /// asks at statement start: a user connection's read-only statement,
+    /// not a retry, inside a pessimistic READ-COMMITTED transaction, with
+    /// `tidb_rc_read_check_ts` on.
+    fn need_set_rc_check_ts_flag(&self, stmt: &Stmt) -> bool {
+        self.vars.connection_id.is_some_and(|id| id > 0)
+            && self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_RC_READ_CHECK_TS)
+                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value))
+            && self.in_transaction()
+            && self.statement_txn_mode().is_pessimistic()
+            && self.is_read_committed()
+            && !self.retrying
+            && stmt.is_read_only(true)
+    }
+
+    /// Go `TxnContextProvider.OnStmtStart`'s statement-scoped decision,
+    /// made before the statement's snapshot is prepared: whether it reads
+    /// with `RCCheckTS`.
+    pub(crate) fn on_stmt_start(&mut self, stmt: &Stmt) {
+        self.stmt_rc_check_ts = self.need_set_rc_check_ts_flag(stmt);
+    }
+
+    /// Go `StmtCtx.RCCheckTS` for the running statement.
+    pub(crate) fn stmt_rc_check_ts(&self) -> bool {
+        self.stmt_rc_check_ts
+    }
+
+    /// Go `RetryInfo.Retrying`, set around a statement the connection
+    /// re-runs.
+    pub fn set_retrying(&mut self, retrying: bool) {
+        self.retrying = retrying;
+    }
+
+    /// Go `PessimisticRCTxnContextProvider.handleAfterQueryError` (the
+    /// `StmtErrAfterQuery` point): a write conflict met by a statement that
+    /// read with `RCCheckTS` is retried from the beginning.
+    #[must_use]
+    pub fn retry_after_query_error(&self, code: u16) -> bool {
+        self.stmt_rc_check_ts && code == tidb_errno::errcode::ErrWriteConflict
+    }
+
     /// Go `SessionVars.UseLowResolutionTSO`: a user connection's
     /// `tidb_low_resolution_tso`.
     pub(crate) fn use_low_resolution_tso(&self) -> bool {

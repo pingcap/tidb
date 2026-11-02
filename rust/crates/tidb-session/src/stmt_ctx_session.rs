@@ -339,6 +339,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::in_transaction(self)
     }
 
+    fn stmt_rc_check_ts(&self) -> bool {
+        self.stmt_rc_check_ts
+    }
+
 
     fn is_autocommit(&self) -> bool {
         Session::is_autocommit(self)

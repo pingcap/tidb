@@ -1705,6 +1705,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_enable_check_constraint(self.enable_check_constraint())
                     .with_placement_mode_ignore(self.placement_mode_ignore())
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
+                    .with_rc_check_ts(self.stmt_rc_check_ts())
                     .with_hash_exchange_with_new_collation(
                         self.session_vars()
                             .system_value(tidb_vardef::tidb_vars::TIDB_HASH_EXCHANGE_WITH_NEW_COLLATION)
@@ -1861,6 +1862,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_enable_check_constraint(self.enable_check_constraint())
                 .with_placement_mode_ignore(self.placement_mode_ignore())
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
+                    .with_rc_check_ts(self.stmt_rc_check_ts())
                     .with_hash_exchange_with_new_collation(
                         self.session_vars()
                             .system_value(tidb_vardef::tidb_vars::TIDB_HASH_EXCHANGE_WITH_NEW_COLLATION)
@@ -2342,6 +2344,8 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Whether a transaction is open (Go `SessionVars.InTxn`, the wire's
     /// `SERVER_STATUS_IN_TRANS`).
     fn in_transaction(&self) -> bool;
+    /// Go `StmtCtx.RCCheckTS`, decided when the statement started.
+    fn stmt_rc_check_ts(&self) -> bool;
     /// Go `SessionVars.IsAutocommit()`: whether each statement stands on its
     /// own, or joins a transaction the session keeps open for it.
     ///

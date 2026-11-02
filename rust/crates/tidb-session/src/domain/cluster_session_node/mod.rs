@@ -2221,6 +2221,7 @@ impl<'s> ClusterServerSession<'s> {
         // Go's `session.ExecuteStmt` region covers `Compile` and `runStmt`;
         // a query's record set is opened inside it and drained outside.
         let execute_stmt = tidb_tracing::begin_thread_region_scope("session.ExecuteStmt");
+        self.session.on_stmt_start(stmt);
         self.begin_statement();
         let compiled = match self.compile(sql, stmt) {
             Ok(CompiledStatement::Query) => return Ok(Executed::Query(execute_stmt)),
@@ -2516,6 +2517,9 @@ impl<'s> ClusterServerSession<'s> {
         if effective.is_some_and(|stmt| matches!(stmt, Stmt::Query(_))) {
             // Go `executePlanCacheStmt`'s `ContextWithInitializedExecDetails`.
             self.session.context_with_initialized_exec_details(&sql);
+            if let Some(template) = effective {
+                self.session.on_stmt_start(template);
+            }
             let result = self.open_statement_result(shape, &resource_group, |session| {
                 session.set_binary_prepared_execution(true);
                 let opened = (|| {
@@ -2974,6 +2978,7 @@ impl<'s> ClusterServerSession<'s> {
         };
         let resource_group = self.session.statement_resource_group(stmt).into_owned();
         let shape = self.session.statement_read_shape_bound(stmt);
+        self.session.on_stmt_start(stmt);
         let result = self.open_statement_result(shape, &resource_group, |session| {
             session
                 .open_record_set_parsed(stmt.clone(), sql)

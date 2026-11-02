@@ -587,7 +587,7 @@ fn exec_index_scan(
                         ..coprocessor::Response::default()
                     };
                 }
-                return other_error(&format!("scan error: {err:?}"));
+                return other_error(&err.to_string());
             }
             let encoded = match tidb_tablecodec::decode_index_kv(
                 true,
@@ -1135,7 +1135,7 @@ fn exec_table_scan(
                         ..coprocessor::Response::default()
                     };
                 }
-                return other_error(&format!("scan error: {err:?}"));
+                return other_error(&err.to_string());
             }
             // Go `tablecodec.DecodeRowKey`: an int handle answers directly,
             // a common handle carries the clustered primary key's datums.

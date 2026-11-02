@@ -113,3 +113,72 @@ pub enum KvError {
     /// `mvcc.go:857`).
     Message(String),
 }
+
+/// Go's `hex.EncodeToString`.
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Go `mvcc.Lock.String()` over the lock's kvrpcpb shape.
+fn lock_text(lock: &KvrpcLockInfo) -> String {
+    let op = tidb_proto::KvrpcOp::try_from(lock.lock_type)
+        .map_or_else(|_| lock.lock_type.to_string(), |op| op.as_str_name().to_owned());
+    format!(
+        "Lock {{ Type: {op}, StartTS: {},  ForUpdateTS: {}, Primary: {}, UseAsyncCommit: {} }}",
+        lock.lock_version,
+        lock.lock_for_update_ts,
+        hex(&lock.primary_lock),
+        lock.use_async_commit,
+    )
+}
+
+/// Go's `Error()` text of each `kverrors` error, which the server and the
+/// coprocessor answer with (`resp.OtherError = err.Error()`).
+impl std::fmt::Display for KvError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // `ErrRetryable(...)`.
+            Self::AlreadyRollback => formatter.write_str("retryable: already rollback"),
+            Self::LockNotFound => formatter.write_str("retryable: lock not found"),
+            Self::Replaced => formatter.write_str("retryable: replaced by another transaction"),
+            Self::CommitExpire { .. } => formatter.write_str("commit expired"),
+            Self::Conflict { .. } => formatter.write_str("write conflict"),
+            Self::KeyAlreadyExists { .. } => formatter.write_str("key already exists"),
+            Self::AssertionFailed {
+                start_ts,
+                key,
+                assertion,
+                existing_start_ts,
+                existing_commit_ts,
+            } => {
+                let assertion = tidb_proto::kvrpcpb::Assertion::try_from(*assertion)
+                    .map_or_else(|_| assertion.to_string(), |a| a.as_str_name().to_owned());
+                write!(
+                    formatter,
+                    "AssertionFailed {{ StartTS: {start_ts}, Key: {}, Assertion: {assertion}, ExistingStartTS: {existing_start_ts}, ExistingCommitTS: {existing_commit_ts} }}",
+                    hex(key)
+                )
+            }
+            Self::AlreadyCommitted(_) => formatter.write_str("txn already committed"),
+            Self::Locked(lock) => write!(
+                formatter,
+                "key is locked, key: {}, lock: {}",
+                hex(&lock.key),
+                lock_text(lock)
+            ),
+            Self::PrimaryMismatch { key, lock } => write!(
+                formatter,
+                "primary mismatch, key: {}, lock: {}",
+                hex(key),
+                lock_text(lock)
+            ),
+            Self::TxnNotFound { .. } => formatter.write_str("txn not found"),
+            Self::InvalidOp => formatter.write_str("invalid op: CheckNotExists"),
+            Self::PessimisticLockNotFound => formatter.write_str("pessimistic lock not found"),
+            Self::Deadlock { .. } => formatter.write_str("deadlock"),
+            Self::LockTypeNotMatch => formatter.write_str("lock type not match"),
+            Self::Unported(name) => write!(formatter, "{name} is not ported"),
+            Self::Message(message) => formatter.write_str(message),
+        }
+    }
+}

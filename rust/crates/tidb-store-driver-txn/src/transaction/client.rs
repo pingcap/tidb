@@ -432,6 +432,11 @@ impl<S: PdClient> RealTransaction<S> {
         // clearing the previous statement's labels and stale flag first.
         transaction.set_replica_read(mode);
         transaction.set_stale_read(options.is_staleness);
+        transaction.set_isolation_level(if options.rc_check_ts {
+            tikv_client::proto::kvrpcpb::IsolationLevel::RcCheckTs
+        } else {
+            tikv_client::proto::kvrpcpb::IsolationLevel::Si
+        });
         let scope = if options.read_replica_scope.is_empty() {
             "global"
         } else {

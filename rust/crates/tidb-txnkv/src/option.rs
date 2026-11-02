@@ -228,6 +228,10 @@ pub struct SnapshotReadOptions {
     pub rpc_interceptor: RpcInterceptorOption,
     /// Go IsStalenessReadOnly; independent of replica read preference.
     pub is_staleness: bool,
+    /// Go `snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)`: the read
+    /// fails with a write conflict when it meets data newer than its
+    /// timestamp (`GetSnapshotWithStmtReadTS` under `StmtCtx.RCCheckTS`).
+    pub rc_check_ts: bool,
     /// Go SessionVars.GetReplicaRead, before client-go's mode mapping.
     pub replica_read: ReplicaReadType,
     /// Scope used for snapshot visibility and closest-replica matching.

@@ -70,6 +70,14 @@ impl QuerySession for Session {
         Some(self)
     }
 
+    fn retry_after_query_error(&self, code: u16) -> bool {
+        Session::retry_after_query_error(self, code)
+    }
+
+    fn set_retrying(&mut self, retrying: bool) {
+        Session::set_retrying(self, retrying);
+    }
+
     fn record_parse_failure(&mut self, error: &SqlQueryError) {
         self.record_parse_failure_coded(error.code, error.message.clone(), error.identity);
     }

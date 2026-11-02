@@ -447,6 +447,9 @@ pub struct PushdownStatementContext {
     pub read_replica_scope: String,
     /// Go StmtCtx.IsStaleness; not inferred from the request timestamp.
     pub is_staleness: bool,
+    /// Go `StmtCtx.RCCheckTS`, which `DistSQLContext.RCCheckTS` carries to
+    /// the request's isolation level.
+    pub rc_check_ts: bool,
     /// Retained settings, independent of later SET statements.
     pub read_policy: CoprocessorReadPolicy,
     /// Go reader GetNetDataSize; supplied by the retained physical plan.
@@ -509,6 +512,7 @@ impl Default for PushdownStatementContext {
             replica_read: tidb_txnkv::ReplicaReadType::Leader,
             read_replica_scope: "global".into(),
             is_staleness: false,
+            rc_check_ts: false,
             read_policy: CoprocessorReadPolicy::default(),
             estimated_net_bytes: 0.0,
             lookup_avg_row_bytes: None,

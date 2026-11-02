@@ -982,7 +982,14 @@ impl StatementLifecycle<'_> {
                 // statement sees what peers committed after BEGIN; repeatable
                 // read keeps the start timestamp.
                 None if transaction.is_pessimistic() && self.session.is_read_committed() => {
-                    transaction.fresh_statement_snapshot(locking)
+                    // `prepareStmtTS`: under `RCCheckTS` the statement reads
+                    // at the latest timestamp the transaction fetched
+                    // (`latestOracleTS`) and the read checks for newer data.
+                    if self.session.stmt_rc_check_ts() {
+                        transaction.snapshot_at_for(transaction.for_update_ts(), locking)
+                    } else {
+                        transaction.fresh_statement_snapshot(locking)
+                    }
                 }
                 // Go's pessimistic DML and locking reads read at
                 // `GetStmtForUpdateTS`, a fresh timestamp, so they see rows

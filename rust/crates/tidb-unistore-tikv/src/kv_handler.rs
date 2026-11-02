@@ -211,6 +211,19 @@ impl RequestCtx {
     }
 }
 
+/// Go `dbreader.DBReader` as `requestCtx.getDBReader` builds it: the store,
+/// read under one request's context.
+struct RequestDbReader<'a> {
+    store: &'a MvccStore,
+    ctx: ReadContext,
+}
+
+impl tidb_unistore_dbreader::DbReader for RequestDbReader<'_> {
+    fn scan(&self, req: &tidb_unistore_dbreader::ScanReq) -> Vec<tidb_unistore_dbreader::KvPair> {
+        self.store.scan_with(&self.ctx, req)
+    }
+}
+
 /// What `KvPessimisticLock` leaves for the wait: the waiter parked on the
 /// key and the lock it waits for.
 #[derive(Debug)]
@@ -967,8 +980,14 @@ impl KvHandler {
     /// coprocessor handler, then its store-batch tasks run each as its own
     /// request.
     pub fn coprocessor(&mut self, req: &coprocessor::Request) -> coprocessor::Response {
-        let _req_ctx = region_checked!(self, req, coprocessor::Response);
-        let mut resp = tidb_unistore_cophandler::handle_cop_request(&self.store, req);
+        let req_ctx = region_checked!(self, req, coprocessor::Response);
+        // Go `requestCtx.getDBReader`: the reader takes the request's
+        // isolation (`RcCheckTS`), lock sets and region bounds.
+        let reader = RequestDbReader {
+            store: &self.store,
+            ctx: req_ctx.read_context(),
+        };
+        let mut resp = tidb_unistore_cophandler::handle_cop_request(&reader, req);
         resp.batch_responses = self.store_batch_coprocessor(req);
         resp
     }

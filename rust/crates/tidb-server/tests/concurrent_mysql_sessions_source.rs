@@ -978,3 +978,92 @@ fn a_regular_file_at_the_socket_path_is_refused_like_go() {
     assert!(path.exists(), "the file is left alone");
     std::fs::remove_file(&path).unwrap();
 }
+
+/// Records what the connection asked of [`RetrySession`].
+#[derive(Default)]
+struct RetryLog(Mutex<Vec<String>>);
+
+struct RetryFactory(Arc<RetryLog>);
+
+struct RetrySession {
+    log: Arc<RetryLog>,
+    retrying: bool,
+}
+
+impl QuerySessionFactory for RetryFactory {
+    type Session = RetrySession;
+
+    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        Ok(RetrySession {
+            log: Arc::clone(&self.0),
+            retrying: false,
+        })
+    }
+}
+
+impl QuerySession for RetrySession {
+    fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        Ok(tidb_parser::parse(sql).expect("a statement"))
+    }
+
+    /// The first run meets a write conflict its transaction can retry (an
+    /// `RCCheckTS` read); the re-run, under `RetryInfo.Retrying`, succeeds.
+    fn execute_stmt<'a>(
+        &'a mut self,
+        _sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
+        self.log
+            .0
+            .lock()
+            .unwrap()
+            .push(format!("execute retrying={}", self.retrying));
+        if self.retrying {
+            Ok(None)
+        } else {
+            Err(SqlQueryError::new(9007, *b"HY000", "write conflict"))
+        }
+    }
+
+    fn retry_after_query_error(&self, code: u16) -> bool {
+        code == 9007
+    }
+
+    fn set_retrying(&mut self, retrying: bool) {
+        self.retrying = retrying;
+    }
+}
+
+/// Go `clientConn.handleQuery`: a statement that failed before any row
+/// reached the client is re-run once, with `RetryInfo.Retrying` set, when its
+/// transaction answers `StmtActionRetryReady`; the client sees only the
+/// re-run's answer.
+#[test]
+fn a_statement_its_transaction_retries_is_re_run_once_before_the_client_sees_it() {
+    let log = Arc::new(RetryLog::default());
+    let node = ConcurrentSqlNode::bind(
+        &config(),
+        Arc::new(RetryFactory(Arc::clone(&log))),
+        users().into(),
+    )
+    .unwrap();
+    let address = node.local_addr().unwrap();
+    let shutdown = node.shutdown_handle();
+    let server = std::thread::spawn(move || node.serve_connections(1));
+    let (mut client, mut reader) = authenticate(address);
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write_packet(&mut client, 0, &[&[COM_QUERY][..], b"SELECT 1"].concat());
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0, "the re-run's OK");
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    drop(reader);
+    drop(client);
+    shutdown.shutdown();
+    server.join().unwrap().unwrap();
+    assert_eq!(
+        *log.0.lock().unwrap(),
+        ["execute retrying=false", "execute retrying=true"]
+    );
+}

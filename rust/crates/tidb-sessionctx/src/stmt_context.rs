@@ -912,6 +912,10 @@ pub struct StmtContextData {
     /// Go `SessionVars.HashExchangeWithNewCollation`
     /// (`@@tidb_hash_exchange_with_new_collation`).
     hash_exchange_with_new_collation: bool,
+    /// Go `StmtCtx.RCCheckTS`: this read-only statement of a pessimistic
+    /// READ-COMMITTED transaction reads at the transaction's latest
+    /// timestamp and fails with a write conflict on newer data.
+    rc_check_ts: bool,
     /// Go `MutateContext.GetRowEncodingConfig` over the session's
     /// `IsRowLevelChecksumEnabled` and `RowEncoder`.
     row_encoding_config: tidb_tblctx::RowEncodingConfig,
@@ -2234,6 +2238,13 @@ context_configuration! {
         self
     }
 
+    /// Sets Go `StmtCtx.RCCheckTS` for this statement.
+    #[must_use]
+    pub fn with_rc_check_ts(mut self, rc_check_ts: bool) -> Self {
+        self.rc_check_ts = rc_check_ts;
+        self
+    }
+
     /// Sets `@@tidb_hash_exchange_with_new_collation` for this statement.
     #[must_use]
     pub fn with_hash_exchange_with_new_collation(mut self, allowed: bool) -> Self {
@@ -2717,6 +2728,7 @@ impl StmtContext {
             lock_unchanged_keys: tidb_vardef::defaults::DEF_TIDB_LOCK_UNCHANGED_KEYS,
             hash_exchange_with_new_collation:
                 tidb_vardef::defaults::DEF_TIDB_HASH_EXCHANGE_WITH_NEW_COLLATION,
+            rc_check_ts: false,
             row_encoding_config: tidb_tblctx::RowEncodingConfig::default(),
             query_cop_store_limiter: None,
             pessimistic_lazy_dup_check: false,
@@ -4533,6 +4545,12 @@ impl StmtContext {
         self.placement_mode_ignore
     }
 
+    /// Go `StmtCtx.RCCheckTS`.
+    #[must_use]
+    pub fn rc_check_ts(&self) -> bool {
+        self.rc_check_ts
+    }
+
     /// Go `SessionVars.HashExchangeWithNewCollation`.
     #[must_use]
     pub fn hash_exchange_with_new_collation(&self) -> bool {
@@ -4874,6 +4892,7 @@ impl StmtContext {
         tidb_txnkv::SnapshotReadOptions {
             rpc_interceptor: self.rpc_interceptor(),
             is_staleness: self.is_staleness,
+            rc_check_ts: self.rc_check_ts,
             replica_read: self.replica_read,
             read_replica_scope: self.read_replica_scope(),
             read_timeout_ms: self.coprocessor_read_policy.read_timeout_ms,

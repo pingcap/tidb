@@ -2317,7 +2317,7 @@ fn run_connection_commands<S: QuerySession>(
                     // CONTINUE the sequence rather than restarting at 1.
                     let mut sequence: u8 = 1;
                     let mut aborted = false;
-                    for (statement_index, sql) in statements.iter().enumerate() {
+                    'statements: for (statement_index, sql) in statements.iter().enumerate() {
                         let sql = sql.as_str();
                         let more_results = statement_index < last_index;
                         let stamp = |status: WireStatus| {
@@ -2366,6 +2366,13 @@ fn run_connection_commands<S: QuerySession>(
                         // written as rows; no result set is an OK packet, after
                         // the client's file when the statement parked a request
                         // for one (`handleLoadData`, `handleLoadStats`).
+                        // Go `handleQuery`: a statement that failed before any of
+                        // its rows reached the client is re-run once when its
+                        // transaction answers `StmtActionRetryReady`.
+                        let mut retried = false;
+                        let attempt_sequence = sequence;
+                        'attempt: loop {
+                        sequence = attempt_sequence;
                         let mut result = {
                             let executed = engine.execute_stmt(sql, &stmt);
                             match executed {
@@ -2374,6 +2381,12 @@ fn run_connection_commands<S: QuerySession>(
                                 // session below.
                                 other => {
                                     if let Err(error) = other.map(drop) {
+                                        if !retried && engine.retry_after_query_error(error.code) {
+                                            retried = true;
+                                            engine.set_retrying(true);
+                                            continue 'attempt;
+                                        }
+                                        engine.set_retrying(false);
                                         write_query_error_at(
                                             output,
                                             sequence,
@@ -2382,7 +2395,7 @@ fn run_connection_commands<S: QuerySession>(
                                         )?;
                                         record_client_warnings(&*output, &*engine);
                                         aborted = true;
-                                        break;
+                                        break 'statements;
                                     }
                                     if let Some(path) = engine.take_local_infile_request() {
                                         if capabilities & CLIENT_LOCAL_FILES == 0 {
@@ -2400,7 +2413,7 @@ fn run_connection_commands<S: QuerySession>(
                                             )?;
                                             record_client_warnings(&*output, &*engine);
                                             aborted = true;
-                                            break;
+                                            break 'statements;
                                         }
                                         let mut request = Vec::with_capacity(path.len() + 1);
                                         request.push(0xfb);
@@ -2436,7 +2449,7 @@ fn run_connection_commands<S: QuerySession>(
                                             )?;
                                             record_client_warnings(&*output, &*engine);
                                             aborted = true;
-                                            break;
+                                            break 'statements;
                                         }
                                     }
                                     write_affected_rows_ok_with_info(
@@ -2452,7 +2465,7 @@ fn run_connection_commands<S: QuerySession>(
                                     record_client_warnings(&*output, &*engine);
                                     sequence = sequence.wrapping_add(1);
                                     queries += 1;
-                                    continue;
+                                    continue 'statements;
                                 }
                             }
                         };
@@ -2481,6 +2494,16 @@ fn run_connection_commands<S: QuerySession>(
                                 drop(result);
                             }
                             Err(error) if !error.bytes_escaped => {
+                                drop(result);
+                                if error.retryable
+                                    && !retried
+                                    && engine.retry_after_query_error(error.cause.code)
+                                {
+                                    retried = true;
+                                    engine.set_retrying(true);
+                                    continue 'attempt;
+                                }
+                                engine.set_retrying(false);
                                 write_error(
                                     output,
                                     1,
@@ -2489,10 +2512,9 @@ fn run_connection_commands<S: QuerySession>(
                                     error.cause.message,
                                     protocol_41,
                                 )?;
-                                drop(result);
                                 record_client_warnings(&*output, &*engine);
                                 aborted = true;
-                                break;
+                                break 'statements;
                             }
                             Err(error) => {
                                 drop(result);
@@ -2502,6 +2524,9 @@ fn run_connection_commands<S: QuerySession>(
                                 ));
                             }
                         }
+                        break 'attempt;
+                        }
+                        engine.set_retrying(false);
                         record_client_warnings(&*output, &*engine);
                     }
                     if !aborted {

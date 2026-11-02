@@ -47,6 +47,7 @@ pub fn pushdown_statement_context(ctx: &crate::StmtContext) -> PushdownStatement
         replica_read: ctx.replica_read(),
         read_replica_scope: ctx.read_replica_scope(),
         is_staleness: ctx.is_staleness(),
+        rc_check_ts: ctx.rc_check_ts(),
         read_policy: ctx.coprocessor_read_policy().clone(),
         estimated_net_bytes: 0.0,
         lookup_avg_row_bytes: None,

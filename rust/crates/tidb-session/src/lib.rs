@@ -700,6 +700,12 @@ pub struct Session {
     /// builds its own `StmtContext`, and this is the one thing that has to
     /// cross between them. See `tidb_sessionctx::RetryAutoIds`.
     retry_auto_ids: Arc<std::sync::Mutex<tidb_sessionctx::RetryAutoIds>>,
+    /// Go `SessionVars.RetryInfo.Retrying`: the connection is re-running a
+    /// statement its transaction asked to retry (`StmtErrAfterQuery`).
+    retrying: bool,
+    /// Go `StmtCtx.RCCheckTS`, decided at statement start
+    /// (`PessimisticRCTxnContextProvider.OnStmtStart`).
+    stmt_rc_check_ts: bool,
     /// Go `SessionVars.RowIDShardGenerator`: retains one random shard for
     /// `@@tidb_shard_allocate_step` generated IDs across statement contexts.
     row_id_shards: Arc<std::sync::Mutex<tidb_sessionctx::RowIdShardGenerator>>,
@@ -954,6 +960,8 @@ impl Session {
             prepared_plan_cache_environment_cache: std::cell::RefCell::new(None),
             published_last_insert_id: Arc::default(),
             retry_auto_ids: Arc::default(),
+            retrying: false,
+            stmt_rc_check_ts: false,
             row_id_shards: Arc::default(),
             non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache::default(),
             physical_plan_cache: tidb_executor::SessionPlanCache::default(),

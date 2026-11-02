@@ -92,7 +92,7 @@ fn execute(
                             locked: Some(*lock),
                             ..Default::default()
                         },
-                        error => other_error(&format!("scan error: {error:?}")),
+                        error => other_error(&error.to_string()),
                     });
                 }
                 let handle = tidb_tablecodec::table_key::decode_row_key(&pair.key)
@@ -325,7 +325,7 @@ fn execute_index_ndv(
                             locked: Some(*lock),
                             ..Default::default()
                         },
-                        error => other_error(&format!("scan error: {error:?}")),
+                        error => other_error(&error.to_string()),
                     });
                 }
                 let key = if request.tp() == tipb::AnalyzeType::TypeCommonHandle {
