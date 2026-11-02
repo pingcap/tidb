@@ -43,7 +43,11 @@ go_test(
     ],
     embed = [":ossstore"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 16,
+=======
+    shard_count = 19,
+>>>>>>> 62d3fe657f9 (objstore: preserve request identity in multipart uploads (#72564))
     deps = [
         "//dumpling/context",
         "//pkg/objstore/ossstore/mock",

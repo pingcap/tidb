@@ -409,3 +409,140 @@ func TestClientCopyObject(t *testing.T) {
 	require.ErrorContains(t, err, "mock copy error")
 	require.True(t, s.Controller.Satisfied())
 }
+
+// A compatible service can echo its canonical identity instead of the alias
+// configured by the caller. That response must not change subsequent requests.
+func TestMultipartWriterPreservesRequestIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		bucket *string
+		key    *string
+	}{
+		{name: "matching", bucket: aws.String("bucket"), key: aws.String("prefix/object")},
+		{name: "canonical_bucket", bucket: aws.String("canonical-bucket"), key: aws.String("prefix/object")},
+		{name: "canonical_key", bucket: aws.String("bucket"), key: aws.String("canonical/key")},
+		{name: "canonical_bucket_and_key", bucket: aws.String("canonical-bucket"), key: aws.String("canonical/key")},
+		{name: "omitted_identity"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, compatible := range []bool{false, true} {
+				name := "official_s3"
+				if compatible {
+					name = "s3_compatible"
+				}
+				t.Run(name, func(t *testing.T) {
+					s := CreateS3Suite(t)
+					cli := &s3Client{
+						svc:          s.MockS3,
+						BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+						options:      &backuppb.S3{},
+						s3Compatible: compatible,
+					}
+					part := 0
+					gomock.InOrder(
+						s.MockS3.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).
+							DoAndReturn(func(_ context.Context, in *s3.CreateMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error) {
+								require.Equal(t, "bucket", aws.ToString(in.Bucket))
+								require.Equal(t, "prefix/object", aws.ToString(in.Key))
+								return &s3.CreateMultipartUploadOutput{Bucket: tc.bucket, Key: tc.key, UploadId: aws.String("upload-id")}, nil
+							}),
+						s.MockS3.EXPECT().UploadPart(gomock.Any(), gomock.Any(), gomock.Any()).Times(2).
+							DoAndReturn(func(_ context.Context, in *s3.UploadPartInput, opts ...func(*s3.Options)) (*s3.UploadPartOutput, error) {
+								part++
+								require.Equal(t, "bucket", aws.ToString(in.Bucket))
+								require.Equal(t, "prefix/object", aws.ToString(in.Key))
+								require.Equal(t, "upload-id", aws.ToString(in.UploadId))
+								require.EqualValues(t, part, aws.ToInt32(in.PartNumber))
+								body, err := io.ReadAll(in.Body)
+								require.NoError(t, err)
+								require.Equal(t, "payload", string(body))
+								require.EqualValues(t, len(body), aws.ToInt64(in.ContentLength))
+								assertContentMD5Option(t, opts, compatible)
+								return &s3.UploadPartOutput{ETag: aws.String("etag")}, nil
+							}),
+						s.MockS3.EXPECT().CompleteMultipartUpload(gomock.Any(), gomock.Any()).
+							DoAndReturn(func(_ context.Context, in *s3.CompleteMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error) {
+								require.Equal(t, "bucket", aws.ToString(in.Bucket))
+								require.Equal(t, "prefix/object", aws.ToString(in.Key))
+								require.Equal(t, "upload-id", aws.ToString(in.UploadId))
+								require.Len(t, in.MultipartUpload.Parts, 2)
+								for i, p := range in.MultipartUpload.Parts {
+									require.EqualValues(t, i+1, aws.ToInt32(p.PartNumber))
+									require.Equal(t, "etag", aws.ToString(p.ETag))
+								}
+								return &s3.CompleteMultipartUploadOutput{}, nil
+							}),
+					)
+					ctx := context.Background()
+					w, err := cli.MultipartWriter(ctx, "object")
+					require.NoError(t, err)
+					for range 2 {
+						n, err := w.Write(ctx, []byte("payload"))
+						require.NoError(t, err)
+						require.Equal(t, len("payload"), n)
+					}
+					require.NoError(t, w.Close(ctx))
+				})
+			}
+		})
+	}
+}
+
+// Use the real SDK endpoint resolver and serializers without accessing the network.
+func TestMultipartWriterAliasRouting(t *testing.T) {
+	const host = "configured-alias.storage.example.test"
+	parts := make(map[string]string)
+	var initiated, completed bool
+	svc := s3.New(s3.Options{
+		Region:       "us-east-1",
+		BaseEndpoint: aws.String("https://storage.example.test"),
+		Credentials: aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+			return aws.Credentials{AccessKeyID: "test-key", SecretAccessKey: "test-secret"}, nil
+		}),
+		Retryer: aws.NopRetryer{},
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			require.Equal(t, "https", r.URL.Scheme)
+			require.Equal(t, host, r.URL.Host)
+			require.Equal(t, "/prefix/object", r.URL.Path)
+			body := ""
+			q := r.URL.Query()
+			switch {
+			case r.Method == http.MethodPost && q.Has("uploads"):
+				initiated = true
+				body = "<InitiateMultipartUploadResult><Bucket>canonical-bucket</Bucket><Key>prefix/object</Key><UploadId>upload-id</UploadId></InitiateMultipartUploadResult>"
+			case r.Method == http.MethodPut && q.Get("uploadId") == "upload-id":
+				payload, err := io.ReadAll(r.Body)
+				require.NoError(t, err)
+				parts[q.Get("partNumber")] = string(payload)
+			case r.Method == http.MethodPost && q.Get("uploadId") == "upload-id":
+				payload, err := io.ReadAll(r.Body)
+				require.NoError(t, err)
+				require.Contains(t, string(payload), "<PartNumber>1</PartNumber>")
+				require.Contains(t, string(payload), "<PartNumber>2</PartNumber>")
+				completed = true
+				body = "<CompleteMultipartUploadResult><Bucket>canonical-bucket</Bucket><Key>prefix/object</Key><ETag>etag</ETag></CompleteMultipartUploadResult>"
+			default:
+				t.Fatalf("unexpected multipart request: %s %s", r.Method, r.URL)
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Etag": []string{`"etag"`}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+		})},
+	})
+	cli := &s3Client{
+		svc:          svc,
+		BucketPrefix: storeapi.NewBucketPrefix("configured-alias", "prefix/"),
+		options:      &backuppb.S3{},
+		s3Compatible: true,
+	}
+	ctx := context.Background()
+	w, err := cli.MultipartWriter(ctx, "object")
+	require.NoError(t, err)
+	for _, payload := range []string{"first part", "second part"} {
+		n, err := w.Write(ctx, []byte(payload))
+		require.NoError(t, err)
+		require.Equal(t, len(payload), n)
+	}
+	require.NoError(t, w.Close(ctx))
+	require.True(t, initiated)
+	require.True(t, completed)
+	require.Equal(t, map[string]string{"1": "first part", "2": "second part"}, parts)
+}
