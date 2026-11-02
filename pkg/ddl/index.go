@@ -1634,10 +1634,11 @@ func (w *worker) analyzeTableInner(job *model.Job, tblInfo *model.TableInfo, dbN
 				return errors.Errorf("not restricted SQL executor: %T", sessCtx)
 			}
 			// internal sql may not init the analysis related variable correctly.
-			err = statsutil.UpdateSCtxVarsForStats(sessCtx)
+			restoreStatsVars, err := statsutil.UpdateSCtxVarsForStats(sessCtx)
 			if err != nil {
 				return err
 			}
+			defer restoreStatsVars()
 			failpoint.InjectCall("beforeAnalyzeTable")
 			_, _, err = exec.ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionEnableDDLAnalyze}, "ANALYZE TABLE "+dbTable+";", "ddl analyze table")
 			failpoint.InjectCall("afterAnalyzeTable", &err)

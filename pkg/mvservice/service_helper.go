@@ -1689,7 +1689,7 @@ func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.S
 	defer sysSessionPool.Put(se)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMViewMaintenance)
 	sctx := se.(sessionctx.Context)
-	restoreStatsVars, err := statsutil.UpdateSCtxVarsForStatsWithRestore(sctx)
+	restoreStatsVars, err := statsutil.UpdateSCtxVarsForStats(sctx)
 	if err != nil {
 		return err
 	}
