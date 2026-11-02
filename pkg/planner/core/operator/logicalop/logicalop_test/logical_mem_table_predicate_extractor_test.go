@@ -44,6 +44,13 @@ import (
 )
 
 func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) *logicalop.LogicalMemTable {
+	memTable, ok, _ := getLogicalMemTableWithRemained(t, dom, se, parser, sql)
+	require.True(t, ok, sql)
+	return memTable
+}
+
+func getLogicalMemTableWithRemained(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool, []expression.Expression) {
+	se.GetSessionVars().PlanColumnID.Store(0)
 	stmt, err := parser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 
@@ -58,12 +65,20 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 
 	// Obtain the leaf plan
 	leafPlan := logicalPlan
+	var remained []expression.Expression
 	for len(leafPlan.Children()) > 0 {
+		if selection, ok := leafPlan.(*logicalop.LogicalSelection); ok {
+			remained = append(remained, selection.Conditions...)
+		}
 		leafPlan = leafPlan.Children()[0]
 	}
-
-	logicalMemTable := leafPlan.(*logicalop.LogicalMemTable)
-	return logicalMemTable
+	switch lg := leafPlan.(type) {
+	case *logicalop.LogicalMemTable:
+		return lg, true, remained
+	case *logicalop.LogicalTableDual:
+		return nil, false, remained
+	}
+	panic("unreachable")
 }
 
 func TestClusterConfigTableExtractor(t *testing.T) {
@@ -304,7 +319,7 @@ func TestStatementsSummaryExtractorPreparedTimeRange(t *testing.T) {
 	for len(plan.Children()) > 0 {
 		plan = plan.Children()[0]
 	}
-	memTable, ok := plan.(*physicalop.PhysicalMemTable)
+	memTable, ok := plan.(*plannercore.PhysicalMemTable)
 	require.True(t, ok)
 	extractor := memTable.Extractor.(*plannercore.StatementsSummaryExtractor)
 	require.NotNil(t, extractor.CoarseTimeRange)
@@ -341,7 +356,7 @@ func TestStatementsSummaryExtractorPreparedTimeRangeDST(t *testing.T) {
 			for len(physical.Children()) > 0 {
 				physical = physical.Children()[0]
 			}
-			memTable, ok := physical.(*physicalop.PhysicalMemTable)
+			memTable, ok := physical.(*plannercore.PhysicalMemTable)
 			require.True(t, ok, "%T", physical)
 			extractor := memTable.Extractor.(*plannercore.StatementsSummaryExtractor)
 			require.False(t, extractor.SkipRequest)

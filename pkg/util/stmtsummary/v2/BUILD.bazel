@@ -27,11 +27,7 @@ go_library(
         "//pkg/util/ppcpuusage",
         "//pkg/util/set",
         "//pkg/util/stmtsummary",
-<<<<<<< HEAD
-=======
-        "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
->>>>>>> 63cd22c529a (planner: prune statement summary history for prepared time parameters (#71707))
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_atomic//:atomic",

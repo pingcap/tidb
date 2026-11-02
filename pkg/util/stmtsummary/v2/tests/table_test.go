@@ -19,12 +19,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-<<<<<<< HEAD
-=======
-	"strconv"
 	"strings"
 	"sync/atomic"
->>>>>>> 63cd22c529a (planner: prune statement summary history for prepared time parameters (#71707))
 	"testing"
 	"time"
 
