@@ -21,8 +21,82 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMayHaveSQLBinding(t *testing.T) {
+	require.False(t, mayHaveSQLBinding(nil))
+	require.True(t, mayHaveSQLBinding(&ast.ExplainStmt{}))
+
+	tests := []struct {
+		sql  string
+		want bool
+	}{
+		{"insert into t values (1)", false},
+		{"insert into t values (1) on duplicate key update a = values(a)", false},
+		{"insert into t set a = 1", false},
+		{"replace into t values (1)", false},
+		{"explain insert into t values (1)", false},
+		{"insert into t select * from s", true},
+		{"replace into t select * from s", true},
+		{"explain insert into t select * from s", true},
+		{"select * from t", true},
+		{"update t set a = 1", true},
+		{"delete from t where a = 1", true},
+	}
+
+	p := parser.New()
+	for _, tt := range tests {
+		stmt, err := p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err)
+		require.Equal(t, tt.want, mayHaveSQLBinding(stmt), tt.sql)
+	}
+}
+
+func TestMatchSQLBindingSkipsInsertValues(t *testing.T) {
+	tests := []string{
+		"insert into t values (1)",
+		"insert into t values (1) on duplicate key update a = values(a)",
+		"insert into t set a = 1",
+		"replace into t values (1)",
+		"explain insert into t values (1)",
+	}
+
+	originalGetBindingHandle := GetGlobalBindingHandle
+	getBindingHandleCalls := 0
+	GetGlobalBindingHandle = func(sctx sessionctx.Context) GlobalBindingHandle {
+		getBindingHandleCalls++
+		return nil
+	}
+	t.Cleanup(func() {
+		GetGlobalBindingHandle = originalGetBindingHandle
+	})
+
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().UsePlanBaselines = true
+	sctx.SetValue(SessionBindInfoKeyType, NewSessionBindingHandle())
+
+	p := parser.New()
+	for _, sql := range tests {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+
+		binding, matched, scope := MatchSQLBinding(sctx, stmt)
+		require.Empty(t, binding, sql)
+		require.False(t, matched, sql)
+		require.Empty(t, scope, sql)
+
+		info := &BindingMatchInfo{}
+		bindingSQL, ignoreBinding := MatchSQLBindingForPlanCache(sctx, stmt, info)
+		require.Empty(t, bindingSQL, sql)
+		require.False(t, ignoreBinding, sql)
+		require.Empty(t, info.FuzzyDigest, sql)
+		require.Nil(t, info.TableNames, sql)
+	}
+	require.Zero(t, getBindingHandleCalls)
+}
 
 func getTableName(n []*ast.TableName) []string {
 	result := make([]string, 0, len(n))

@@ -82,24 +82,16 @@ go_test(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/server",
-<<<<<<< HEAD
         "//pkg/session/types",
-        "//pkg/sessionctx/variable",
-=======
-        "//pkg/session/sessionapi",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/vardef",
->>>>>>> 75ada2163c3 (bindinfo: skip binding match for insert values (#69937))
+        "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
-<<<<<<< HEAD
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/hack",
-        "//pkg/util/parser",
-=======
         "//pkg/util/mock",
->>>>>>> 75ada2163c3 (bindinfo: skip binding match for insert values (#69937))
+        "//pkg/util/parser",
         "//pkg/util/stmtsummary",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_failpoint//:failpoint",
