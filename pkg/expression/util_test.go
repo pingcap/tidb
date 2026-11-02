@@ -397,6 +397,81 @@ func TestDisableParseJSONFlag4Expr(t *testing.T) {
 }
 
 func TestSQLDigestTextRetriever(t *testing.T) {
+
+	t.Run("empty digests do not trigger lookups", func(t *testing.T) {
+		for _, global := range []bool{false, true} {
+			for _, unresolved := range []bool{false, true} {
+				r := NewSQLDigestTextRetriever()
+				r.SQLDigestsMap = map[string]string{"": "", "known": "known SQL"}
+				if unresolved {
+					r.SQLDigestsMap["digest1"] = ""
+				}
+				calls := 0
+				r.mockQuery = func(queryGlobal, history bool, inValues []any) (map[string]string, error) {
+					calls++
+					require.False(t, queryGlobal)
+					require.False(t, history)
+					require.Equal(t, []any{"digest1"}, inValues)
+					return map[string]string{"digest1": "text1"}, nil
+				}
+				var err error
+				if global {
+					err = r.RetrieveGlobal(context.Background(), nil)
+				} else {
+					err = r.RetrieveLocal(context.Background(), nil)
+				}
+				require.NoError(t, err)
+				require.Empty(t, r.SQLDigestsMap[""])
+				require.Equal(t, "known SQL", r.SQLDigestsMap["known"])
+				if unresolved {
+					require.Equal(t, 1, calls)
+					require.Equal(t, "text1", r.SQLDigestsMap["digest1"])
+				} else {
+					require.Zero(t, calls)
+				}
+			}
+		}
+	})
+
+	t.Run("global lookup error precedence", func(t *testing.T) {
+		for _, tc := range []struct {
+			name            string
+			localHistory    map[string]string
+			localHistoryErr error
+			wantErr         error
+		}{
+			{"local history resolves all", map[string]string{"digest1": "text1"}, nil, nil},
+			{"unresolved returns cluster current error", nil, nil, context.Canceled},
+			{"local history error wins", nil, context.DeadlineExceeded, context.DeadlineExceeded},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				r := NewSQLDigestTextRetriever()
+				r.SQLDigestsMap = map[string]string{"digest1": ""}
+				var calls [][2]bool
+				r.mockQuery = func(global, history bool, _ []any) (map[string]string, error) {
+					calls = append(calls, [2]bool{global, history})
+					switch {
+					case global && !history:
+						return nil, context.Canceled
+					case !global && history:
+						return tc.localHistory, tc.localHistoryErr
+					case global && history:
+						t.Fatal("cluster history must not be queried after a cluster-current error")
+					}
+					return nil, nil
+				}
+				err := r.RetrieveGlobal(context.Background(), nil)
+				if tc.wantErr == nil {
+					require.NoError(t, err)
+					require.Equal(t, "text1", r.SQLDigestsMap["digest1"])
+				} else {
+					require.ErrorIs(t, err, tc.wantErr)
+				}
+				require.Equal(t, [][2]bool{{false, false}, {true, false}, {false, true}}, calls)
+			})
+		}
+	})
+
 	// Create a fake session as the argument to the retriever, though it's actually not used when mock data is set.
 
 	r := NewSQLDigestTextRetriever()
