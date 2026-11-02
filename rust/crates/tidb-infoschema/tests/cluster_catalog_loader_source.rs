@@ -176,3 +176,18 @@ fn prefix_scan_end_increments_the_last_byte_below_ff() {
     assert_eq!(prefix_scan_end(&[0xFF, 0xFF]), None);
     assert_eq!(prefix_scan_end(b""), None);
 }
+
+/// Go `initVirtualTables` adds each memory schema's driver `DBInfo`, whose
+/// `Deprecated.Tables` lists its tables, so a loaded infoschema's
+/// `TableInfoByName` answers a memory table as it answers a stored one.
+#[test]
+fn a_loaded_image_answers_memory_tables_by_name() {
+    let mut snapshot = RecordedSnapshot::default();
+    let image = load_info_schema(&mut snapshot).unwrap();
+    let (schema, table) = image
+        .table_info_by_name("INFORMATION_SCHEMA", "Tables")
+        .expect("a memory table");
+    assert_eq!(schema.read().id, (1 << 62) | 1);
+    assert_eq!(table.read().name.lowercase(), "tables");
+    assert!(image.stored_schemas().is_empty());
+}

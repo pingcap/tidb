@@ -340,12 +340,9 @@ pub fn resolve_like_source<'catalog>(
     source_table: &str,
     temporary: tidb_ast::CreateTableTemporary,
 ) -> Result<GoShared<TableInfo>, DdlPlanError> {
-    // Go `is.TableByName`, whose memory schemas' `DBInfo`s carry their
-    // tables: a missing source database is reported as a missing table.
-    let Some((_, source)) = catalog
-        .table_info_by_name(source_schema, source_table)
-        .or_else(|| tidb_infoschema::virtual_tables::virtual_table(source_schema, source_table))
-    else {
+    // Go `is.TableByName`: a missing source database is reported as a
+    // missing table.
+    let Some((_, source)) = catalog.table_info_by_name(source_schema, source_table) else {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
                 (source_schema.to_owned()).into(),

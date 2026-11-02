@@ -447,11 +447,13 @@ CARGO_INCREMENTAL=0`.
     tables. `tidb-keydecoder`'s second `KeyInfoCatalog` impl (over the
     loaded `DBInfo`s) is gone; its Go test builds the image with tables, as
     Go's `MockInfoSchema` does.
-    Left: (a) `CREATE TABLE ... LIKE` a memory table still falls back to
-    `virtual_tables::virtual_table`, because the image's memory schemas hold
-    a `DBInfo` without tables where Go's hold the driver's `DBInfo` (whose
-    `Deprecated.Tables` lists them); (b) incremental `ApplyDiff` (cost);
-    (c) the second `MetaSnapshot` seam, the loader moving onto `tidb_meta`.
+    The image's memory schemas hold the driver's `DBInfo` (Go
+    `initVirtualTables`), whose `Deprecated.Tables` lists their tables, so
+    `table_info_by_name` answers a memory table as Go's `TableInfoByName`
+    does and `CREATE TABLE ... LIKE` needs no fallback (test
+    `a_loaded_image_answers_memory_tables_by_name`).
+    Left: (b) incremental `ApplyDiff` (cost); (c) the second `MetaSnapshot`
+    seam, the loader moving onto `tidb_meta`.
   - [ ] delete `ClusterCatalog` and the raw `MetaSnapshot` seam (the loader
     reads through `tidb_meta`).
 

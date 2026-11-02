@@ -360,52 +360,37 @@ impl SessionExtendedInfoSchema {
     }
 
     fn virtual_schemas(with_memory_tables: bool) -> Self {
-        let mut databases = HashMap::new();
-        databases.insert(
-            "information_schema".to_owned(),
-            Database {
-                // Go `autoid.InformationSchemaDBID`: a memory schema's id has
-                // the system flag, so it can never be a stored schema's id.
-                info: tidb_model::GoShared::new(db_info(
-                    (1 << 62) | 1,
-                    "INFORMATION_SCHEMA",
-                    TableCharset::default(),
-                )),
-                // Go's `initVirtualTables` builds the memory schemas' tables
-                // into the infoschema itself, so they are ordinary objects to
-                // every name lookup; each schema's tables are built once per
-                // process, as Go's init does.
-                tables: if with_memory_tables {
-                    crate::infoschema_meta::tables()
-                } else {
-                    HashMap::new()
-                },
-            },
-        );
-        // Go's metrics_schema carries 642 storage-backed metric tables whose
-        // queries fail `query metric error: pd unavailable` (the metric
-        // storage is absent) -- mirrored here as empty MemTables of the
+        // Go's `initVirtualTables` builds the memory schemas' tables into the
+        // infoschema itself, so they are ordinary objects to every name
+        // lookup; each schema's tables are built once per process, as Go's
+        // init does. Go's metrics_schema carries 642 storage-backed metric
+        // tables whose queries fail `query metric error: pd unavailable` (the
+        // metric storage is absent) -- mirrored here as empty MemTables of the
         // same shape (oracle g-is).
-        let (metric_tables, performance_tables) = if with_memory_tables {
+        type Tables = HashMap<String, Arc<TableEntry>>;
+        let tables = |build: fn() -> Tables| if with_memory_tables { build() } else { Tables::new() };
+        let schemas = [
+            // Go `autoid.InformationSchemaDBID`, `MetricSchemaDBID` and
+            // `PerformanceSchemaDBID`: a memory schema's id has the system
+            // flag, so it can never be a stored schema's id.
+            ((1 << 62) | 1, "information_schema", "INFORMATION_SCHEMA", tables(crate::infoschema_meta::tables)),
+            ((1 << 62) | 20000, "metrics_schema", "METRICS_SCHEMA", tables(crate::metricsschema::tables)),
             (
-                crate::metricsschema::tables(),
-                PERFORMANCE_SCHEMA_TABLES.get().map(|tables| tables()).unwrap_or_default(),
-            )
-        } else {
-            (HashMap::new(), HashMap::new())
-        };
-        for (id, key, display, tables) in [
-            // Go `autoid.MetricSchemaDBID` and `PerformanceSchemaDBID`.
-            ((1 << 62) | 20000, "metrics_schema", "METRICS_SCHEMA", metric_tables),
-            ((1 << 62) | 10000, "performance_schema", "PERFORMANCE_SCHEMA", performance_tables),
-        ] {
-            databases.insert(
-                key.to_owned(),
-                Database {
-                    info: tidb_model::GoShared::new(db_info(id, display, TableCharset::default())),
-                    tables,
-                },
-            );
+                (1 << 62) | 10000,
+                "performance_schema",
+                "PERFORMANCE_SCHEMA",
+                tables(|| PERFORMANCE_SCHEMA_TABLES.get().map(|tables| tables()).unwrap_or_default()),
+            ),
+        ];
+        let mut databases = HashMap::new();
+        for (id, key, display, tables) in schemas {
+            // Go `initVirtualTables` adds the driver's `DBInfo`, whose
+            // `Deprecated.Tables` lists the schema's tables (registered when
+            // they were built above), so `TableInfoByName` finds them.
+            let info = crate::virtual_tables::virtual_schema(key).unwrap_or_else(|| {
+                tidb_model::GoShared::new(db_info(id, display, TableCharset::default()))
+            });
+            databases.insert(key.to_owned(), Database { info, tables });
         }
         let catalog = SessionExtendedInfoSchema {
             schema: InfoSchema {
