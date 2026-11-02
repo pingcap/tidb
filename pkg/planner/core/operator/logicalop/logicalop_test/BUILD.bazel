@@ -11,7 +11,11 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     shard_count = 21,
+=======
+    shard_count = 50,
+>>>>>>> 63cd22c529a (planner: prune statement summary history for prepared time parameters (#71707))
     deps = [
         "//pkg/domain",
         "//pkg/expression",
