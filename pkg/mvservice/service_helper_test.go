@@ -1121,7 +1121,7 @@ func TestServerHelperPurgeMVHistoryBeforeTSO(t *testing.T) {
 	) []string {
 		sqls := make([]string, 0, refreshExec+purgeExec+len(refreshCountCapLimits)+len(purgeCountCapLimits)+4)
 		sqls = append(sqls, testSQLMarkStaleMVRefreshHistOrphaned)
-		for i := 0; i < refreshExec; i++ {
+		for range refreshExec {
 			sqls = append(sqls, testSQLDeleteMVRefreshHistBeforeTSO)
 		}
 		sqls = append(sqls, testSQLCountMVRefreshHist)
@@ -1129,7 +1129,7 @@ func TestServerHelperPurgeMVHistoryBeforeTSO(t *testing.T) {
 			sqls = append(sqls, testSQLDeleteMVRefreshHistByCount(limit))
 		}
 		sqls = append(sqls, testSQLMarkStaleMVLogPurgeHistOrphaned)
-		for i := 0; i < purgeExec; i++ {
+		for range purgeExec {
 			sqls = append(sqls, testSQLDeleteMVLogPurgeHistBeforeTSO)
 		}
 		sqls = append(sqls, testSQLCountMVLogPurgeHist)
@@ -1270,7 +1270,7 @@ func TestServerHelperPurgeMVHistoryBeforeTSO(t *testing.T) {
 			se.restrictedAffectedRows[testSQLMarkStaleMVLogPurgeHistOrphaned] = []uint64{0}
 			if tc.name == "batch_delete_no_max_batches" {
 				const extraBatches = 25
-				refreshAffected := make([]uint64, extraBatches)
+				refreshAffected := make([]uint64, extraBatches, extraBatches+1)
 				for i := range refreshAffected {
 					refreshAffected[i] = uint64(historyGCDeleteBatchSize)
 				}

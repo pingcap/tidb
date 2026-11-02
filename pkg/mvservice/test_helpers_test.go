@@ -344,6 +344,7 @@ type mockMVServiceHelper struct {
 	lastAccumulationRowCountTaskIDs []int64
 	accumulationRowCountEntered     chan struct{}
 	blockAccumulationRowCount       chan struct{}
+	accumulationRowCountPanic       bool
 
 	metricsMu          sync.Mutex
 	taskDurationCounts map[string]int
@@ -552,6 +553,9 @@ func (m *mockMVServiceHelper) LoadAllTiDBMVLogAccumulationTasks(context.Context,
 
 func (m *mockMVServiceHelper) LoadTiDBMVLogAccumulationRowCounts(_ context.Context, _ basic.SessionPool, tasks map[int64]*mlogAccumulationTask) (map[int64]uint64, error) {
 	m.fetchAccumulationRowCountCalls.Add(1)
+	if m.accumulationRowCountPanic {
+		panic("mock accumulation scan panicked")
+	}
 	if m.fetchAccumulationRowCountsErr != nil {
 		return nil, m.fetchAccumulationRowCountsErr
 	}

@@ -450,7 +450,10 @@ func (t *MVService) maybeScanMVLogAccumulationAlerts(now time.Time) {
 }
 
 func (t *MVService) runMVLogAccumulationAlertScan() {
-	defer t.mvLogAccumulationScanRunning.Store(false)
+	defer func() {
+		t.nextMVLogAccumulationScanMillis.Store(mvsNow().Add(mvLogAccumulationAlertScanInterval).UnixMilli())
+		t.mvLogAccumulationScanRunning.Store(false)
+	}()
 	defer func() {
 		if r := recover(); r != nil {
 			fields := append(t.runtimeLogFields(), zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
@@ -463,7 +466,6 @@ func (t *MVService) runMVLogAccumulationAlertScan() {
 		return
 	}
 	t.metrics.mvLogAccumulationCount.Store(int64(alertedCount))
-	t.nextMVLogAccumulationScanMillis.Store(mvsNow().Add(mvLogAccumulationAlertScanInterval).UnixMilli())
 }
 
 func (t *MVService) collectRefreshAlertStates(now time.Time) ([]refreshAlertTask, int64, int64) {

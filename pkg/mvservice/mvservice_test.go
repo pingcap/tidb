@@ -1181,34 +1181,76 @@ func TestMVServiceMaybeScanMVLogAccumulationAlertsFiltersUnownedTasks(t *testing
 }
 
 func TestMVServiceMaybeScanMVLogAccumulationAlertsPreservesLastValueOnError(t *testing.T) {
-	helper := &mockMVServiceHelper{
-		fetchAccumulationTasks: map[int64]*mlogAccumulationTask{
-			101: {schemaName: "test", mlogName: "mlog_101", alertRows: 1000},
+	testCases := []struct {
+		name          string
+		tasksErr      error
+		rowCountsErr  error
+		rowCountPanic bool
+	}{
+		{
+			name:     "task_fetch_error",
+			tasksErr: errors.New("mock accumulation task fetch failed"),
 		},
-		fetchAccumulationRowCounts: map[int64]uint64{
-			101: 1500,
+		{
+			name:         "row_count_error",
+			rowCountsErr: errors.New("mock accumulation scan failed"),
+		},
+		{
+			name:          "row_count_panic",
+			rowCountPanic: true,
 		},
 	}
-	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
-	defer svc.closeTaskExecutors()
-	setTaskOwnersForTest(svc, map[int64]uint32{
-		101: 10,
-	})
 
-	now := mvsNow()
-	svc.nextMVLogAccumulationScanMillis.Store(0)
-	svc.maybeScanMVLogAccumulationAlerts(now)
-	require.Eventually(t, func() bool {
-		return !svc.mvLogAccumulationScanRunning.Load() && svc.metrics.mvLogAccumulationCount.Load() == 1
-	}, testEventuallyWait, testEventuallyTick)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			clock := installMockTimeForTest(t)
+			helper := &mockMVServiceHelper{
+				fetchAccumulationTasks: map[int64]*mlogAccumulationTask{
+					101: {schemaName: "test", mlogName: "mlog_101", alertRows: 1000},
+				},
+				fetchAccumulationRowCounts: map[int64]uint64{
+					101: 1500,
+				},
+			}
+			svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+			defer svc.closeTaskExecutors()
+			setTaskOwnersForTest(svc, map[int64]uint32{
+				101: 10,
+			})
 
-	helper.fetchAccumulationRowCountsErr = errors.New("mock accumulation scan failed")
-	svc.nextMVLogAccumulationScanMillis.Store(0)
-	svc.maybeScanMVLogAccumulationAlerts(now.Add(mvLogAccumulationAlertScanInterval))
-	require.Eventually(t, func() bool {
-		return !svc.mvLogAccumulationScanRunning.Load() && helper.fetchAccumulationRowCountCalls.Load() == 2
-	}, testEventuallyWait, testEventuallyTick)
-	require.Equal(t, int64(1), svc.metrics.mvLogAccumulationCount.Load())
+			svc.maybeScanMVLogAccumulationAlerts(clock.Now())
+			require.Eventually(t, func() bool {
+				return !svc.mvLogAccumulationScanRunning.Load() && svc.metrics.mvLogAccumulationCount.Load() == 1
+			}, testEventuallyWait, testEventuallyTick)
+
+			helper.fetchAccumulationTasksErr = tc.tasksErr
+			helper.fetchAccumulationRowCountsErr = tc.rowCountsErr
+			helper.accumulationRowCountPanic = tc.rowCountPanic
+			helper.fetchAccumulationRowCounts[101] = 500
+			clock.Advance(mvLogAccumulationAlertScanInterval)
+			svc.maybeScanMVLogAccumulationAlerts(clock.Now())
+			require.Eventually(t, func() bool {
+				return !svc.mvLogAccumulationScanRunning.Load() && helper.fetchAccumulationTaskCalls.Load() == 2
+			}, testEventuallyWait, testEventuallyTick)
+			require.Equal(t, int64(1), svc.metrics.mvLogAccumulationCount.Load())
+			require.Equal(t, clock.Now().Add(mvLogAccumulationAlertScanInterval).UnixMilli(), svc.nextMVLogAccumulationScanMillis.Load())
+
+			clock.Advance(svc.basicInterval)
+			svc.maybeScanMVLogAccumulationAlerts(clock.Now())
+			require.False(t, svc.mvLogAccumulationScanRunning.Load())
+			require.Equal(t, int32(2), helper.fetchAccumulationTaskCalls.Load())
+
+			helper.fetchAccumulationTasksErr = nil
+			helper.fetchAccumulationRowCountsErr = nil
+			helper.accumulationRowCountPanic = false
+			clock.Advance(mvLogAccumulationAlertScanInterval - svc.basicInterval)
+			svc.maybeScanMVLogAccumulationAlerts(clock.Now())
+			require.Eventually(t, func() bool {
+				return !svc.mvLogAccumulationScanRunning.Load() && helper.fetchAccumulationTaskCalls.Load() == 3
+			}, testEventuallyWait, testEventuallyTick)
+			require.Zero(t, svc.metrics.mvLogAccumulationCount.Load())
+		})
+	}
 }
 
 func TestMVServiceMaybeScanMVLogAccumulationAlertsUsesStrictGreaterThan(t *testing.T) {
