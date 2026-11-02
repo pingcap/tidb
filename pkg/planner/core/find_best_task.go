@@ -1024,20 +1024,23 @@ func hasStatsForEstimation(c *candidatePath, statsTbl *statistics.Table) bool {
 	return found == len(c.accessCondsColMap)
 }
 
-// pseudoIndexMaxTableRatio is the largest fraction of a table path's rows that a non-covering index
-// may be estimated to read and still prune that table path via the missing-statistics rules.
+// pseudoIndexMaxTableRatio is the largest fraction of the table that a non-covering index may be
+// estimated to read and still displace full table scans via the missing-statistics rules.
 const pseudoIndexMaxTableRatio = 0.1
 
-// canPseudoWinnerPrune returns false if winner is a non-covering index whose own estimate reads a large
-// part of the table path loser. A table lookup per row can then cost more than scanning the table, so
-// both paths are left for cost comparison. The estimate of an index without statistics is unreliable,
-// but it still scales with the number of ranges. For example, a single column IN list with 900 values
-// is estimated to read 90% of the table. See https://github.com/pingcap/tidb/issues/72561.
+// isBroadIndexLookup returns true if c is a non-covering index whose own estimate reads more than
+// pseudoIndexMaxTableRatio of tableRows. A table lookup per row can then cost more than scanning the
+// table. The estimate of an index without statistics is unreliable, but it still scales with the number
+// of ranges. For example, a single column IN list with 900 values is estimated to read 90% of the table.
+// See https://github.com/pingcap/tidb/issues/72561.
+func isBroadIndexLookup(c *candidatePath, tableRows float64) bool {
+	return !c.path.IsTablePath() && !c.path.IsSingleScan && c.path.CountAfterAccess > tableRows*pseudoIndexMaxTableRatio
+}
+
+// canPseudoWinnerPrune returns false if winner is a broad index lookup relative to the table path loser,
+// so that both paths are left for cost comparison.
 func canPseudoWinnerPrune(winner, loser *candidatePath) bool {
-	if !loser.path.IsTablePath() || winner.path.IsTablePath() || winner.path.IsSingleScan {
-		return true
-	}
-	return winner.path.CountAfterAccess <= loser.path.CountAfterAccess*pseudoIndexMaxTableRatio
+	return !loser.path.IsTablePath() || !isBroadIndexLookup(winner, loser.path.CountAfterAccess)
 }
 
 func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount int) int {
@@ -2090,7 +2093,13 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				continue
 			}
 			result, missingStats := compareCandidates(ds.SCtx(), ds.StatisticTable, prop, candidates[i], currentCandidate)
-			if missingStats {
+			winner := currentCandidate
+			if result == 1 {
+				winner = candidates[i]
+			}
+			// idxMissingStats removes full scan paths below, so a broad index lookup must not set it,
+			// even if it won against another index.
+			if missingStats && !isBroadIndexLookup(winner, ds.TableStats.RowCount) {
 				idxMissingStats = true // Ensure that we track idxMissingStats across all iterations
 			}
 			if result == 1 {

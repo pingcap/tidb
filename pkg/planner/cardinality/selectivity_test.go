@@ -1088,6 +1088,21 @@ func TestIssue72561(t *testing.T) {
 		// A selective missing-statistics index is still chosen.
 		testKit.MustQuery("explain format='brief' select sum(length(payload)) from t where a = 5").CheckContain("idx_a(a)")
 	}
+
+	// Same, but the missing-statistics index idx_ab wins against the analyzed idx_b instead of the table
+	// path. That win must not remove the full table scan after pruning.
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(id bigint primary key, a int, b int, payload varchar(200), index idx_b(b))")
+	testKit.MustExec("insert into t select a, mod(a, 900), 1, repeat('x', 200) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 900) select a from x) as subquery")
+	testKit.MustExec("insert into t select id + 900, a, b, payload from t")
+	testKit.MustExec("analyze table t columns id, b")
+	testKit.MustExec("create index idx_ab on t(a, b)")
+	broad = "explain format='brief' select sum(length(payload)) from t where b = 1 and a in (" + strings.Join(inList, ",") + ")"
+	for _, preferRange := range []string{"0", "1"} {
+		testKit.MustExec("set @@tidb_opt_prefer_range_scan=" + preferRange)
+		testKit.MustQuery(broad).CheckContain("TableFullScan")
+		testKit.MustQuery("explain format='brief' select sum(length(payload)) from t where b = 1 and a = 5").CheckContain("idx_ab(a, b)")
+	}
 }
 
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {
