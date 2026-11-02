@@ -396,6 +396,18 @@ CARGO_INCREMENTAL=0`.
     `policies`, `resource_groups`). Converting reader by reader would build
     a throwaway image at every load boundary, so flip the loader's return
     type and let the compiler list the readers.
+    2026-11-02 (facb93a8fca): `InfoCache` keeps ONE per-version map of
+    `Arc<BuiltSchema>`; each `BuiltSchema` holds the `ClusterCatalog` it was
+    built from (`loaded`, Go's `InfoSchema` holding its `DBInfo`s), so the
+    loader's tuple lives inside the built schema, as Go's
+    `InitWithDBInfos(dbInfos, policies, resourceGroups, version)` input
+    lives in its result. Without a domain builder the cache builds
+    metadata-only images; installing the builder rebuilds them.
+    Tried and reverted 2026-11-02: `ClusterCatalog.databases` as
+    `Vec<GoShared<DBInfo>>` (so the image registers the loader's pointers,
+    not copies) -- `schema_by_name` / `find_table` / `table_by_name` then
+    return pointers instead of `&DBInfo`, which ripples into every caller
+    (~700 sites); it belongs with the loader flip, not before it.
     Go's shape for this: the domain's loader builds the infoschema and
     inserts it into `InfoCache`; so the image builder
     (`cluster_session_catalog_with_templates`, domain-core) runs where
