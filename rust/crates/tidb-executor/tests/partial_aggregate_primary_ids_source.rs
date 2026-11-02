@@ -203,8 +203,12 @@ fn count_over_primary() -> PushdownPartialAggregate {
     }
 }
 
-fn capture(table: &mut TableCommon, captured: Arc<Mutex<Option<Recorded>>>) {
-    let opened = table.pushdown_partial_aggregate_cursor(&mut *table.store().clone_box(), 
+fn capture(
+    table: &mut TableCommon,
+    store: &mut dyn TableStorage,
+    captured: Arc<Mutex<Option<Recorded>>>,
+) {
+    let opened = table.pushdown_partial_aggregate_cursor(store, 
         &[0],
         Vec::<tidb_expr::expression::Expression>::new().as_slice(),
         Option::<&[Range]>::None,
@@ -240,16 +244,17 @@ fn recorded(captured: &Arc<Mutex<Option<Recorded>>>) -> Recorded {
 #[test]
 fn a_clustered_table_without_a_stored_primary_index_sends_its_primary_ids() {
     let captured = Arc::new(Mutex::new(None));
+    let mut store = RecordingStore {
+            captured: Arc::clone(&captured),
+        };
     let mut table = TableCommon::with_storage(
         TABLE_ID,
         vec![binary_pk_column(), plain_column()],
-        Box::new(RecordingStore {
-            captured: Arc::clone(&captured),
-        }),
+        store.clone_box(),
     );
     table.set_common_handle_offsets(vec![0]);
 
-    capture(&mut table, Arc::clone(&captured));
+    capture(&mut table, &mut store, Arc::clone(&captured));
     let request = recorded(&captured);
     assert!(!request.desc);
     assert!(!request.keep_order);
@@ -270,12 +275,13 @@ fn a_clustered_table_without_a_stored_primary_index_sends_its_primary_ids() {
 #[test]
 fn a_stored_primary_index_yields_the_same_ids() {
     let captured = Arc::new(Mutex::new(None));
+    let mut store = RecordingStore {
+            captured: Arc::clone(&captured),
+        };
     let mut table = TableCommon::with_storage(
         TABLE_ID,
         vec![binary_pk_column(), plain_column()],
-        Box::new(RecordingStore {
-            captured: Arc::clone(&captured),
-        }),
+        store.clone_box(),
     );
     table.set_common_handle_offsets(vec![0]);
     table.add_index(Index {
@@ -300,7 +306,7 @@ fn a_stored_primary_index_yields_the_same_ids() {
         clustered_primary: true,
     }, true);
 
-    capture(&mut table, Arc::clone(&captured));
+    capture(&mut table, &mut store, Arc::clone(&captured));
     let request = recorded(&captured);
     assert!(!request.desc);
     assert!(!request.keep_order);

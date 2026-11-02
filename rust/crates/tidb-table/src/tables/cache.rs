@@ -57,7 +57,7 @@ impl TableCommon {
     /// `ErrOptOnCacheTable` for a partitioned table or a
     /// table whose encoded keys and values exceed TiDB's 64 MiB limit, and
     /// [`KvTableError::Storage`] when the backend scan fails.
-    pub fn enable_cache(&mut self) -> Result<(), KvTableError> {
+    pub fn enable_cache(&mut self, store: &mut dyn tidb_kv::storage::TableStorage) -> Result<(), KvTableError> {
         if self.is_cached() {
             return Ok(());
         }
@@ -69,7 +69,7 @@ impl TableCommon {
                 ),
             ));
         }
-        if self.cache_storage_size_exceeds(CACHE_TABLE_SIZE_LIMIT)? {
+        if self.cache_storage_size_exceeds(store, CACHE_TABLE_SIZE_LIMIT)? {
             return Err(KvTableError::Mysql(
                 tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_OPT_ON_CACHE_TABLE
@@ -83,11 +83,16 @@ impl TableCommon {
         Ok(())
     }
 
-    fn cache_storage_size_exceeds(&mut self, limit: usize) -> Result<bool, KvTableError> {
+    /// Go `checkCacheTableSize`: the table's keys and values in `store`
+    /// against `limit`.
+    fn cache_storage_size_exceeds(
+        &self,
+        store: &mut dyn tidb_kv::storage::TableStorage,
+        limit: usize,
+    ) -> Result<bool, KvTableError> {
         let prefix = Key::from_bytes(tidb_tablecodec::table_key::gen_table_prefix(self.table_id));
         let upper_bound = prefix.prefix_next();
-        let mut iterator = self
-            .store
+        let mut iterator = store
             .iter(Some(&prefix), Some(&upper_bound))
             .map_err(KvTableError::from)?;
         let mut size = 0usize;
@@ -130,10 +135,11 @@ mod tests {
             origin_default: None,
         };
         let mut table = TableCommon::new(42, vec![column]);
-        assert!(!table.cache_storage_size_exceeds(0).unwrap());
+        let mut store = tidb_kv::storage::MemTableStorage::new();
+        assert!(!table.cache_storage_size_exceeds(&mut store, 0).unwrap());
         table
-            .with_own_store(|table, store| table.insert_row(store, &[Datum::Int(1)], &tidb_exprctx::NoColumns))
+            .insert_row(&mut store, &[Datum::Int(1)], &tidb_exprctx::NoColumns)
             .unwrap();
-        assert!(table.cache_storage_size_exceeds(0).unwrap());
+        assert!(table.cache_storage_size_exceeds(&mut store, 0).unwrap());
     }
 }

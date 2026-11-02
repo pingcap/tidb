@@ -81,8 +81,10 @@ fn edges_columns() -> Vec<tidb_table::column::Column> {
     ]
 }
 
-fn edge_table() -> TableCommon {
+/// The table and the store its rows are written to.
+fn edge_table() -> (TableCommon, tidb_kv::storage::MemTableStorage) {
     let mut table = TableCommon::new(459, edges_columns());
+    let mut store = tidb_kv::storage::MemTableStorage::new();
     table.add_index(
         Index {
             info: tidb_model::GoShared::new(tidb_model::IndexInfo {
@@ -108,7 +110,7 @@ fn edge_table() -> TableCommon {
         false,
     );
     table
-        .with_own_store(|table, store| table.insert_row(store, &[
+        .insert_row(&mut store, &[
                 Datum::Int(848250056732),
                 Datum::Int(1947761684552),
                 Datum::new_string("3"),
@@ -116,16 +118,17 @@ fn edge_table() -> TableCommon {
                 Datum::new_string("hello"),
             ],
             &tidb_exprctx::NoColumns,
-        ))
+        )
         .unwrap();
-    table
+    (table, store)
 }
 
 #[test]
 fn edge_point_read_with_int_type_literal_returns_the_row() {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    catalog.register_kv("t", edge_table());
-    let ctx = StmtContext::for_query();
+    let (table, store) = edge_table();
+    catalog.register_kv("t", table);
+    let ctx = StmtContext::for_query().with_txn_store(Box::new(store));
     let rows = run_select_on(
         "SELECT ts FROM t WHERE id1 = 848250056732 AND id2 = 1947761684552 AND type = 3",
         &catalog,
@@ -142,8 +145,9 @@ fn edge_point_read_with_int_type_literal_returns_the_row() {
 #[test]
 fn edge_point_read_without_type_filter_returns_the_row() {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    catalog.register_kv("t", edge_table());
-    let ctx = StmtContext::for_query();
+    let (table, store) = edge_table();
+    catalog.register_kv("t", table);
+    let ctx = StmtContext::for_query().with_txn_store(Box::new(store));
     let rows = run_select_on(
         "SELECT ts FROM t WHERE id1 = 848250056732 AND id2 = 1947761684552",
         &catalog,
@@ -164,8 +168,9 @@ fn edge_point_read_without_type_filter_returns_the_row() {
 #[test]
 fn bare_count_star_with_limit_over_covering_primary_answers() {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    catalog.register_kv("t", edge_table());
-    let ctx = StmtContext::for_query();
+    let (table, store) = edge_table();
+    catalog.register_kv("t", table);
+    let ctx = StmtContext::for_query().with_txn_store(Box::new(store));
     let rows = run_select_on(
         "SELECT COUNT(*) FROM t USE INDEX (PRIMARY) LIMIT 1",
         &catalog,
@@ -179,8 +184,9 @@ fn bare_count_star_with_limit_over_covering_primary_answers() {
 #[test]
 fn bare_count_star_matches_the_unlimited_answer() {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    catalog.register_kv("t", edge_table());
-    let ctx = StmtContext::for_query();
+    let (table, store) = edge_table();
+    catalog.register_kv("t", table);
+    let ctx = StmtContext::for_query().with_txn_store(Box::new(store));
     let limited = run_select_on(
         "SELECT COUNT(*) FROM t USE INDEX (PRIMARY) LIMIT 1",
         &catalog,
@@ -198,8 +204,9 @@ fn select_literal_over_table_limit_one_returns_one_row() {
     // "For SQL like `select 1 from t`, tikv's response will be empty if no
     // column is in schema."
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    catalog.register_kv("t", edge_table());
-    let ctx = StmtContext::for_query();
+    let (table, store) = edge_table();
+    catalog.register_kv("t", table);
+    let ctx = StmtContext::for_query().with_txn_store(Box::new(store));
     let rows = run_select_on("SELECT 1 FROM t LIMIT 1", &catalog, &ctx).unwrap();
     assert_eq!(rows.len(), 1);
 }
@@ -363,11 +370,12 @@ impl TableStorage for CapturingStore {
     }
 }
 
-fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<DagRequest>>>) -> TableCommon {
+fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<DagRequest>>>) -> (TableCommon, CapturingStore) {
+    let mut store = CapturingStore::new(captured);
     let mut table = TableCommon::with_storage(
         459,
         edges_columns(),
-        Box::new(CapturingStore::new(captured)),
+        store.clone_box(),
     );
     table.add_index(
         Index {
@@ -394,7 +402,7 @@ fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<DagRequest>>>) -> Tabl
         false,
     );
     table
-        .with_own_store(|table, store| table.insert_row(store, &[
+        .insert_row(&mut store, &[
                 Datum::Int(848250056732),
                 Datum::Int(1947761684552),
                 Datum::new_string("3"),
@@ -402,17 +410,18 @@ fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<DagRequest>>>) -> Tabl
                 Datum::new_string("hello"),
             ],
             &tidb_exprctx::NoColumns,
-        ))
+        )
         .unwrap();
-    table
+    (table, store)
 }
 
 #[test]
 fn bare_count_pushdown_request_carries_only_the_forced_key_column() {
     let captured = Arc::new(Mutex::new(Vec::new()));
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    catalog.register_kv("t", edges_table_on_capturing_store(Arc::clone(&captured)));
-    let ctx = StmtContext::for_query();
+    let (table, store) = edges_table_on_capturing_store(Arc::clone(&captured));
+    catalog.register_kv("t", table);
+    let ctx = StmtContext::for_query().with_txn_store(Box::new(store));
     let rows = run_select_on(
         "SELECT COUNT(*) FROM t USE INDEX (PRIMARY) LIMIT 1",
         &catalog,

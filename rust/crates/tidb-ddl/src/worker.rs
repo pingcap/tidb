@@ -3284,10 +3284,10 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         buffer: &MutationBuffer,
     ) -> Result<(), LockSqlError> {
-        let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
+        let mut storage = ClusterTableStorage::new(buffer.clone(), snapshot);
         let mut probe = cluster_table(table, &storage, &AutoIdSource::Unavailable)
             .map_err(exchange_validation_internal)?;
-        probe.enable_cache().map_err(|error| {
+        probe.enable_cache(&mut storage).map_err(|error| {
             let error = match error {
                 tidb_table::tables::KvTableError::Mysql(error) => error,
                 other => tidb_terror::MysqlError::unknown(format!(
