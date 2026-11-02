@@ -101,6 +101,20 @@ pub static CONNECT_ATTRS_LONGEST_SEEN: AtomicI64 = AtomicI64::new(0);
 /// were truncated.
 pub static CONNECT_ATTRS_LOST: AtomicI64 = AtomicI64::new(0);
 
+/// Go `vardef.MaxDeltaSchemaCount` (`tidb_max_delta_schema_count`): how many
+/// schema deltas the schema validator keeps.
+static MAX_DELTA_SCHEMA_COUNT: AtomicI64 = AtomicI64::new(defaults::DEF_TIDB_MAX_DELTA_SCHEMA_COUNT);
+
+/// Go `vardef.SetMaxDeltaSchemaCount`.
+pub fn set_max_delta_schema_count(count: i64) {
+    MAX_DELTA_SCHEMA_COUNT.store(count, Ordering::SeqCst);
+}
+
+/// Go `vardef.GetMaxDeltaSchemaCount`.
+pub fn get_max_delta_schema_count() -> i64 {
+    MAX_DELTA_SCHEMA_COUNT.load(Ordering::SeqCst)
+}
+
 /// Go `vardef.EnableRowLevelChecksum` (`tidb_enable_row_level_checksum`):
 /// new sessions and column backfills read it.
 pub static ENABLE_ROW_LEVEL_CHECKSUM: AtomicBool =

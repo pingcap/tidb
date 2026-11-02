@@ -3033,8 +3033,17 @@ fn ts_validation_global_hook_updates_the_client_switch() {
         .set(tidb_vardef::tidb_vars::TIDB_ENABLE_ROW_LEVEL_CHECKSUM, "ON".to_owned())
         .unwrap();
     assert!(ENABLE_ROW_LEVEL_CHECKSUM.load(SeqCst));
+    // Go `SetMaxDeltaSchemaCount`.
+    globals
+        .set(tidb_vardef::tidb_vars::TIDB_MAX_DELTA_SCHEMA_COUNT, "200".to_owned())
+        .unwrap();
+    assert_eq!(tidb_vardef::get_max_delta_schema_count(), 200);
     let fresh_cluster = tidb_domain::global_sysvars::GlobalSysvars::new();
     fresh_cluster.load_from_cluster([("autocommit".to_owned(), "ON".to_owned())]);
     assert!(ENABLE_TS_VALIDATION.load(SeqCst));
     assert!(!ENABLE_ROW_LEVEL_CHECKSUM.load(SeqCst));
+    assert_eq!(
+        tidb_vardef::get_max_delta_schema_count(),
+        tidb_vardef::defaults::DEF_TIDB_MAX_DELTA_SCHEMA_COUNT
+    );
 }

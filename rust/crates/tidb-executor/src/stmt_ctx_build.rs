@@ -1705,6 +1705,14 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_enable_check_constraint(self.enable_check_constraint())
                     .with_placement_mode_ignore(self.placement_mode_ignore())
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
+                    .with_hash_exchange_with_new_collation(
+                        self.session_vars()
+                            .system_value(tidb_vardef::tidb_vars::TIDB_HASH_EXCHANGE_WITH_NEW_COLLATION)
+                            .map_or(
+                                tidb_vardef::defaults::DEF_TIDB_HASH_EXCHANGE_WITH_NEW_COLLATION,
+                                |value| tidb_vardef::option_values::tidb_opt_on(&value),
+                            ),
+                    )
                     .with_row_encoding_config(self.row_encoding_config())
                     .with_sysdate_is_now(sysdate_is_now)
                     .with_replica_read(replica_read)
@@ -1853,6 +1861,14 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_enable_check_constraint(self.enable_check_constraint())
                 .with_placement_mode_ignore(self.placement_mode_ignore())
                     .with_lock_unchanged_keys(self.lock_unchanged_keys())
+                    .with_hash_exchange_with_new_collation(
+                        self.session_vars()
+                            .system_value(tidb_vardef::tidb_vars::TIDB_HASH_EXCHANGE_WITH_NEW_COLLATION)
+                            .map_or(
+                                tidb_vardef::defaults::DEF_TIDB_HASH_EXCHANGE_WITH_NEW_COLLATION,
+                                |value| tidb_vardef::option_values::tidb_opt_on(&value),
+                            ),
+                    )
                     .with_row_encoding_config(self.row_encoding_config())
                 .with_constraint_check_in_place(constraint_check_in_place)
                 .with_pessimistic_check_in_prewrite(

@@ -50,6 +50,7 @@ impl TaskAttacher for CoreTaskAttacher {
             tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
             evaluate,
             &Default::default(),
+            None,
         )
     }
 }
@@ -162,6 +163,7 @@ fn attach_hash_agg_to_mpp(
     evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     group_ndv_skew_ratio: f64,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    session: Option<&dyn tidb_planner_core_operator_physicalop::enforce::MppWarningSink>,
 ) -> Result<Task, PlanError> {
     let PhysicalPlan::HashAgg(hash_agg) = &plan else {
         unreachable!("MPP HashAgg attachment received a non-HashAgg plan");
@@ -281,7 +283,7 @@ fn attach_hash_agg_to_mpp(
                 mpp_partition_cols: partition_cols.clone(),
                 ..tidb_planner_property::PhysicalProperty::default()
             };
-            let mpp = mpp.enforce_exchanger_impl(&required, allocator)?;
+            let mpp = mpp.enforce_exchanger_impl(&required, allocator, session)?;
             let task = attach_plan_2_task(final_agg, Task::Mpp(mpp));
             if let Some(projection) = avg_projection.take() {
                 Ok(attach_plan_2_task(
@@ -405,12 +407,12 @@ fn attach_hash_agg_to_mpp(
                         mpp_partition_cols: split.partition_cols,
                         ..tidb_planner_property::PhysicalProperty::default()
                     };
-                    let mpp = mpp.enforce_exchanger(&hash_required, allocator)?;
+                    let mpp = mpp.enforce_exchanger(&hash_required, allocator, session)?;
                     let task = attach_plan_2_task(split.middle, Task::Mpp(mpp));
                     let Task::Mpp(mpp) = task else {
                         unreachable!("multi-distinct middle HashAgg must retain MPP task");
                     };
-                    let mpp = mpp.enforce_exchanger(&required, allocator)?;
+                    let mpp = mpp.enforce_exchanger(&required, allocator, session)?;
                     let task = attach_plan_2_task(split.final_agg, Task::Mpp(mpp));
                     return finish_scalar_aggregate_output(
                         task,
@@ -436,12 +438,12 @@ fn attach_hash_agg_to_mpp(
                     mpp_partition_cols: split.partition_cols,
                     ..tidb_planner_property::PhysicalProperty::default()
                 };
-                let mpp = mpp.enforce_exchanger(&hash_required, allocator)?;
+                let mpp = mpp.enforce_exchanger(&hash_required, allocator, session)?;
                 let task = attach_plan_2_task(split.middle, Task::Mpp(mpp));
                 let Task::Mpp(mpp) = task else {
                     unreachable!("three-stage middle HashAgg must retain MPP task");
                 };
-                let mpp = mpp.enforce_exchanger(&required, allocator)?;
+                let mpp = mpp.enforce_exchanger(&required, allocator, session)?;
                 let task = attach_plan_2_task(split.final_agg, Task::Mpp(mpp));
                 return finish_scalar_aggregate_output(
                     task,
@@ -459,7 +461,7 @@ fn attach_hash_agg_to_mpp(
             } else {
                 mpp
             };
-            let mpp = mpp.enforce_exchanger(&required, allocator)?;
+            let mpp = mpp.enforce_exchanger(&required, allocator, session)?;
             let task = attach_plan_2_task(final_agg, Task::Mpp(mpp));
             finish_scalar_aggregate_output(
                 task,
@@ -1338,6 +1340,7 @@ pub fn attach2_task_with_group_ndv_skew_ratio(
         group_ndv_skew_ratio,
         &tidb_ranger::points::evaluate_static,
         &Default::default(),
+        None,
     )
 }
 
@@ -1350,6 +1353,7 @@ pub(crate) fn attach2_task_in(
     group_ndv_skew_ratio: f64,
     evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
+    session: Option<&dyn tidb_planner_core_operator_physicalop::enforce::MppWarningSink>,
 ) -> Result<Task, PlanError> {
     // The caller hands over owned candidate tasks. Go copies task headers
     // while sharing plan pointers; moving these tasks avoids cloning Rust's
@@ -2047,6 +2051,7 @@ pub(crate) fn attach2_task_in(
                 evaluate,
                 group_ndv_skew_ratio,
                 blacklist,
+                session,
             ),
             root @ Task::Root(_) => Ok(attach_plan_2_task(plan, root.into_root_task_in(allocator, evaluate)?)),
         },
@@ -3708,7 +3713,7 @@ mod task_tests {
                 from_data_source: false,
             });
             let attached =
-                attach2_task_in(parent, vec![task.copy()], None, &allocator, 1.0, &evaluate, &Default::default())
+                attach2_task_in(parent, vec![task.copy()], None, &allocator, 1.0, &evaluate, &Default::default(), None)
                     .unwrap();
             let attached = attached.into_root_task_in(&allocator, &evaluate).unwrap();
             assert_eq!(filter_rows(attached.plan().unwrap()), Some(10.0));

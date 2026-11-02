@@ -5119,6 +5119,7 @@ fn enumerate_physical_plans_4_task(
                 ctx.group_ndv_skew_ratio,
                 ctx.expression_evaluator,
                 &ctx.expr_pushdown_blacklist,
+                ctx.mpp_warning_sink,
             ) {
                 Ok(task) => task,
                 // An unported attach body refuses; Go has no such arm, so a
@@ -5429,6 +5430,14 @@ mod tests {
         }
 
         fn append_planner_note(&self, _message: &str) {}
+
+        fn new_collation_enabled(&self) -> bool {
+            true
+        }
+
+        fn hash_exchange_with_new_collation(&self) -> bool {
+            true
+        }
     }
 
     #[test]

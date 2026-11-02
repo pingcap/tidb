@@ -909,6 +909,9 @@ pub struct StmtContextData {
     /// Go `SessionVars.LockUnchangedKeys` (`@@tidb_lock_unchanged_keys`):
     /// an unchanged row's unique keys are locked too.
     lock_unchanged_keys: bool,
+    /// Go `SessionVars.HashExchangeWithNewCollation`
+    /// (`@@tidb_hash_exchange_with_new_collation`).
+    hash_exchange_with_new_collation: bool,
     /// Go `MutateContext.GetRowEncodingConfig` over the session's
     /// `IsRowLevelChecksumEnabled` and `RowEncoder`.
     row_encoding_config: tidb_tblctx::RowEncodingConfig,
@@ -2231,6 +2234,13 @@ context_configuration! {
         self
     }
 
+    /// Sets `@@tidb_hash_exchange_with_new_collation` for this statement.
+    #[must_use]
+    pub fn with_hash_exchange_with_new_collation(mut self, allowed: bool) -> Self {
+        self.hash_exchange_with_new_collation = allowed;
+        self
+    }
+
     /// Sets `@@tidb_lock_unchanged_keys` for this statement.
     #[must_use]
     pub fn with_lock_unchanged_keys(mut self, lock: bool) -> Self {
@@ -2705,6 +2715,8 @@ impl StmtContext {
             enable_check_constraint: false,
             placement_mode_ignore: false,
             lock_unchanged_keys: tidb_vardef::defaults::DEF_TIDB_LOCK_UNCHANGED_KEYS,
+            hash_exchange_with_new_collation:
+                tidb_vardef::defaults::DEF_TIDB_HASH_EXCHANGE_WITH_NEW_COLLATION,
             row_encoding_config: tidb_tblctx::RowEncodingConfig::default(),
             query_cop_store_limiter: None,
             pessimistic_lazy_dup_check: false,
@@ -4519,6 +4531,12 @@ impl StmtContext {
     #[must_use]
     pub fn placement_mode_ignore(&self) -> bool {
         self.placement_mode_ignore
+    }
+
+    /// Go `SessionVars.HashExchangeWithNewCollation`.
+    #[must_use]
+    pub fn hash_exchange_with_new_collation(&self) -> bool {
+        self.hash_exchange_with_new_collation
     }
 
     /// Go `SessionVars.LockUnchangedKeys`.

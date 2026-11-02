@@ -43,6 +43,7 @@ impl MppTask {
         &self,
         required: &PhysicalProperty,
         allocator: &PlanIdAllocator,
+        session: Option<&dyn MppWarningSink>,
     ) -> Result<MppTask, PlanError> {
         if !tidb_planner_property::need_enforce_exchanger(
             self.partition_type(),
@@ -52,7 +53,7 @@ impl MppTask {
         ) {
             return Ok(self.copy());
         }
-        self.enforce_exchanger_impl(required, allocator)
+        self.enforce_exchanger_impl(required, allocator, session)
     }
 
     /// Go `MppTask.EnforceExchangerImpl` (`enforce.go:74`): always install
@@ -63,7 +64,28 @@ impl MppTask {
         &self,
         required: &PhysicalProperty,
         allocator: &PlanIdAllocator,
+        session: Option<&dyn MppWarningSink>,
     ) -> Result<MppTask, PlanError> {
+        // A hash exchange over a string key is refused while new collations
+        // are on, unless `tidb_hash_exchange_with_new_collation` allows it.
+        if let Some(session) = session {
+            if session.new_collation_enabled()
+                && !session.hash_exchange_with_new_collation()
+                && required.mpp_partition_tp == tidb_planner_property::MppPartitionType::Hash
+                && required.mpp_partition_cols.iter().any(|column| {
+                    column
+                        .col
+                        .ret_type
+                        .as_ref()
+                        .is_some_and(|field_type| field_type.is_string())
+                })
+            {
+                session.raise_mpp_warning(
+                    "MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now.",
+                );
+                return Ok(MppTask::default());
+            }
+        }
         let child = self
             .plan()
             .ok_or_else(|| PlanError::internal("MppTask.EnforceExchanger: empty plan"))?
@@ -177,7 +199,7 @@ pub fn enforce_property_in(
             }
             return Ok(Task::invalid_task());
         }
-        task = Task::Mpp(mpp.enforce_exchanger(prop, allocator)?);
+        task = Task::Mpp(mpp.enforce_exchanger(prop, allocator, mpp_warning_sink)?);
     }
     if prop.is_sort_item_empty() || task.invalid() {
         return Ok(task);
@@ -249,6 +271,14 @@ impl MppWarningSink for tidb_sessionctx::StmtContext {
     fn append_planner_note(&self, message: &str) {
         tidb_sessionctx::StmtContext::append_planner_note(self, message);
     }
+
+    fn new_collation_enabled(&self) -> bool {
+        tidb_sessionctx::StmtContext::new_collation_enabled(self)
+    }
+
+    fn hash_exchange_with_new_collation(&self) -> bool {
+        tidb_sessionctx::StmtContext::hash_exchange_with_new_collation(self)
+    }
 }
 
 #[cfg(test)]
@@ -283,7 +313,7 @@ mod tests {
         required.mpp_partition_cols = vec![MppPartitionColumn::new(1, 0)];
 
         let enforced = task
-            .enforce_exchanger(&required, &allocator)
+            .enforce_exchanger(&required, &allocator, None)
             .expect("hash partitioning inserts an exchange");
         assert!(std::sync::Arc::ptr_eq(
             enforced.stats_context.root_filter_stats.as_ref().unwrap(), &source_stats,
@@ -299,6 +329,57 @@ mod tests {
         };
         assert_eq!(sender.exchange_type, ExchangeType::Hash);
         assert_eq!(sender.hash_cols, required.mpp_partition_cols);
+    }
+
+    /// Go `EnforceExchangerImpl`: with new collations on, a hash exchange over
+    /// a string key is refused (with its MPP warning) unless
+    /// `tidb_hash_exchange_with_new_collation` allows it.
+    #[test]
+    fn mpp_enforcer_refuses_a_string_hash_exchange_under_new_collation() {
+        struct Session {
+            allowed: bool,
+            warnings: std::cell::RefCell<Vec<String>>,
+        }
+        impl MppWarningSink for Session {
+            fn raise_mpp_warning(&self, message: &str) {
+                self.warnings.borrow_mut().push(message.to_owned());
+            }
+            fn set_hint_warning(&self, _message: &str) {}
+            fn append_planner_note(&self, _message: &str) {}
+            fn new_collation_enabled(&self) -> bool {
+                true
+            }
+            fn hash_exchange_with_new_collation(&self) -> bool {
+                self.allowed
+            }
+        }
+        let allocator = PlanIdAllocator::new();
+        let mut column = MppPartitionColumn::new(1, 0);
+        column.col.ret_type = Some(tidb_datatype::FieldType::new(
+            tidb_datatype::FieldTypeCode::VarString,
+        ));
+        let mut required = PhysicalProperty::default();
+        required.task_tp = TaskType::Mpp;
+        required.mpp_partition_tp = MppPartitionType::Hash;
+        required.mpp_partition_cols = vec![column];
+        for allowed in [false, true] {
+            let session = Session {
+                allowed,
+                warnings: std::cell::RefCell::default(),
+            };
+            let enforced = mpp_task(&allocator)
+                .enforce_exchanger(&required, &allocator, Some(&session))
+                .expect("enforce");
+            assert_eq!(enforced.plan().is_none(), !allowed, "allowed = {allowed}");
+            assert_eq!(
+                session.warnings.borrow().clone(),
+                if allowed {
+                    Vec::new()
+                } else {
+                    vec!["MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now.".to_owned()]
+                }
+            );
+        }
     }
 
     #[test]
@@ -319,7 +400,7 @@ mod tests {
         required.mpp_partition_tp = MppPartitionType::Hash;
         required.mpp_partition_cols = hash_cols;
         let enforced = task
-            .enforce_exchanger(&required, &allocator)
+            .enforce_exchanger(&required, &allocator, None)
             .expect("matching hash partitioning needs no exchange");
         assert!(matches!(enforced.plan(), Some(PhysicalPlan::TableDual(_))));
     }
@@ -341,4 +422,10 @@ pub trait MppWarningSink {
     /// A planner note: Go `AppendNote` under `EXPLAIN FORMAT='verbose'`
     /// (`InVerboseExplain`), `AppendExtraNote` otherwise.
     fn append_planner_note(&self, message: &str);
+
+    /// Go `collate.NewCollationEnabled()`.
+    fn new_collation_enabled(&self) -> bool;
+
+    /// Go `SessionVars.HashExchangeWithNewCollation`.
+    fn hash_exchange_with_new_collation(&self) -> bool;
 }

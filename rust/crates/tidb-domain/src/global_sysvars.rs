@@ -1044,6 +1044,7 @@ impl GlobalSysvars {
                 | TIDB_ENABLE_FOREIGN_KEY
                 | TIDB_ENABLE_ROW_LEVEL_CHECKSUM
                 | TIDB_ENABLE_TS_VALIDATION
+                | TIDB_MAX_DELTA_SCHEMA_COUNT
                 | TIDB_ENABLE_CHECK_CONSTRAINT
                 | TIDB_DDL_ENABLE_FAST_REORG
                 | TIDB_ENABLE_MDL
@@ -1109,6 +1110,13 @@ impl GlobalSysvars {
             TIDB_ENABLE_TS_VALIDATION => {
                 tikv_client::oracle::oracles::ENABLE_TS_VALIDATION.store(on, SeqCst)
             }
+            // Go `SetGlobal`: `SetMaxDeltaSchemaCount(TidbOptInt64(val, Def))`.
+            TIDB_MAX_DELTA_SCHEMA_COUNT => tidb_vardef::set_max_delta_schema_count(
+                tidb_variable::varsutil::tidb_opt_int64(
+                    value,
+                    tidb_vardef::defaults::DEF_TIDB_MAX_DELTA_SCHEMA_COUNT,
+                ),
+            ),
             TIDB_ENABLE_ROW_LEVEL_CHECKSUM => {
                 tidb_vardef::ENABLE_ROW_LEVEL_CHECKSUM.store(on, SeqCst)
             }

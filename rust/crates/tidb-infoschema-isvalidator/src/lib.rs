@@ -51,13 +51,10 @@
 //!   change no result. So is every `logutil.BgLogger()` call, and with it
 //!   the `changedSchemaVers` slice `isRelatedTablesChanged` builds only to
 //!   log.
-//! - `// boundary:` Go `pkg/sessionctx/vardef` — `GetMaxDeltaSchemaCount()`
-//!   and `IsMDLEnabled()` are process-global mutable state read mid-method.
-//!   Both become explicit validator state
-//!   ([`SchemaValidator::set_max_delta_schema_count`],
-//!   [`SchemaValidator::set_mdl_enabled`]) seeded from
-//!   `DEF_TIDB_MAX_DELTA_SCHEMA_COUNT` and Go's `enableMDL` zero value, so a
-//!   validator's answers depend only on that validator.
+//! - `GetMaxDeltaSchemaCount()` is read from `tidb_vardef` mid-method, as Go
+//!   reads `vardef`. `// boundary:` Go `vardef.IsMDLEnabled()` becomes
+//!   explicit validator state ([`SchemaValidator::set_mdl_enabled`]), which
+//!   the session's lease checker sets from the process switch per check.
 //! - Ambient time is injected. Go reads `time.Now()` in `IsLeaseExpired`;
 //!   here the caller passes the instant
 //!   ([`SchemaValidator::is_lease_expired`]). Timestamps that Go derives
@@ -178,8 +175,6 @@ struct ValidatorState {
     /// Go `deltaSchemaInfos`: the history of changes, ordered by ascending
     /// schema version.
     delta_schema_infos: Vec<DeltaSchemaInfo>,
-    /// boundary: Go `vardef.GetMaxDeltaSchemaCount()`.
-    max_delta_schema_count: i64,
     /// boundary: Go `vardef.IsMDLEnabled()`.
     mdl_enabled: bool,
 }
@@ -238,7 +233,7 @@ impl ValidatorState {
     /// is deliberately never merged away, so the queue keeps reaching as far
     /// back as it can.
     fn enqueue(&mut self, schema_version: i64, change: Option<&RelatedSchemaChange>) {
-        let max_cnt = self.max_delta_schema_count;
+        let max_cnt = tidb_vardef::get_max_delta_schema_count();
         if max_cnt <= 0 {
             return;
         }
@@ -287,7 +282,6 @@ impl SchemaValidator {
                 delta_schema_infos: Vec::with_capacity(
                     usize::try_from(DEF_TIDB_MAX_DELTA_SCHEMA_COUNT).unwrap_or_default(),
                 ),
-                max_delta_schema_count: DEF_TIDB_MAX_DELTA_SCHEMA_COUNT,
                 mdl_enabled: false,
             }),
         }
@@ -298,13 +292,6 @@ impl SchemaValidator {
     #[must_use]
     pub fn lease(&self) -> Duration {
         self.read().lease
-    }
-
-    /// boundary: Go `vardef.SetMaxDeltaSchemaCount`. Sets how many deltas the
-    /// ring retains; a non-positive count makes [`Validator::update`] retain
-    /// none.
-    pub fn set_max_delta_schema_count(&self, count: i64) {
-        self.write().max_delta_schema_count = count;
     }
 
     /// boundary: Go `vardef.SetEnableMDL`. With metadata locking on, DDL
@@ -477,6 +464,22 @@ impl Validator for SchemaValidator {
 mod tests {
     use super::*;
 
+    /// Go's validator tests run one at a time over the process-wide
+    /// `vardef.MaxDeltaSchemaCount`; the guard holds the lock and puts the
+    /// default back.
+    struct Serialised(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+    impl Drop for Serialised {
+        fn drop(&mut self) {
+            tidb_vardef::set_max_delta_schema_count(DEF_TIDB_MAX_DELTA_SCHEMA_COUNT);
+        }
+    }
+
+    fn serialised() -> Serialised {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        Serialised(LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
     // Go `validator_test.go` reaches into unexported fields and calls
     // unexported methods from inside the package; these tests keep that
     // access by living in the module.
@@ -581,6 +584,7 @@ mod tests {
     // Go `subTestSchemaValidatorGeneral`.
     #[test]
     fn schema_validator_general() {
+        let _serialised = serialised();
         let mut server = LeaseServer::new();
         let validator = SchemaValidator::new(LEASE);
         assert!(validator.is_started());
@@ -669,16 +673,17 @@ mod tests {
     // Go `subTestEnqueue`.
     #[test]
     fn enqueue_merges_and_evicts() {
+        let _serialised = serialised();
         let validator = SchemaValidator::new(LEASE);
         assert!(validator.is_started());
 
         // maxCnt is 0.
-        validator.set_max_delta_schema_count(0);
+        tidb_vardef::set_max_delta_schema_count(0);
         validator.enqueue(1, Some(&change(&[11], &[11])));
         assert_eq!(validator.delta_schema_infos().len(), 0);
 
         // maxCnt is 10.
-        validator.set_max_delta_schema_count(10);
+        tidb_vardef::set_max_delta_schema_count(10);
         let ds = [
             delta(0, &[1], &[1]),
             delta(1, &[1], &[1]),
@@ -732,16 +737,17 @@ mod tests {
     // Go `subTestEnqueueActionType`.
     #[test]
     fn enqueue_distinguishes_action_types() {
+        let _serialised = serialised();
         let validator = SchemaValidator::new(LEASE);
         assert!(validator.is_started());
 
         // maxCnt is 0.
-        validator.set_max_delta_schema_count(0);
+        tidb_vardef::set_max_delta_schema_count(0);
         validator.enqueue(1, Some(&change(&[11], &[11])));
         assert_eq!(validator.delta_schema_infos().len(), 0);
 
         // maxCnt is 10.
-        validator.set_max_delta_schema_count(10);
+        tidb_vardef::set_max_delta_schema_count(10);
         let ds = [
             delta(0, &[1], &[1]),
             delta(1, &[1], &[1]),
@@ -783,6 +789,7 @@ mod tests {
     // expiry is the grant plus the lease less one millisecond.
     #[test]
     fn reset_clears_what_restart_installs() {
+        let _serialised = serialised();
         let validator = SchemaValidator::new(LEASE);
         let grant_ts = (12_345u64 << PHYSICAL_SHIFT_BITS) | 7;
         validator.update(grant_ts, 0, 1, Some(&change(&[1], &[1])));
@@ -812,6 +819,7 @@ mod tests {
     // for it; Go reads the same switch from `vardef.IsMDLEnabled`.
     #[test]
     fn mdl_skips_the_delta_scan() {
+        let _serialised = serialised();
         let validator = SchemaValidator::new(LEASE);
         let grant_ts = (12_345u64 << PHYSICAL_SHIFT_BITS) | 7;
         validator.update(grant_ts, 0, 1, Some(&change(&[1], &[1])));
