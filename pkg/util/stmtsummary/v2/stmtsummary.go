@@ -359,13 +359,14 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 func (s *StmtSummary) Evicted() []types.Datum {
 	s.windowLock.Lock()
 	count := int64(s.window.evicted.count())
+	begin := s.window.begin
 	s.windowLock.Unlock()
 	if count == 0 {
 		return nil
 	}
-	begin := types.NewTime(types.FromGoTime(s.window.begin), mysql.TypeTimestamp, 0)
+	beginTime := types.NewTime(types.FromGoTime(begin), mysql.TypeTimestamp, 0)
 	end := types.NewTime(types.FromGoTime(timeNow()), mysql.TypeTimestamp, 0)
-	return types.MakeDatums(begin, end, count)
+	return types.MakeDatums(beginTime, end, count)
 }
 
 // Clear clears all data in the current window, and the data that
