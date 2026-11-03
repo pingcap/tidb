@@ -122,6 +122,33 @@ fn sql_to_mysql(error: tidb_store_driver_error::sql_query_error::SqlQueryError) 
     MysqlError::from_parts(error.code, error.state, error.message).with_identity_opt(error.identity)
 }
 
+/// A node system session the DDL runs SQL on (Go `sess.NewSession(se)`
+/// over a pooled session).
+pub(crate) struct NodeSqlSession {
+    session: crate::Session,
+}
+
+impl NodeSqlSession {
+    pub(crate) fn new(session: crate::Session) -> Self {
+        Self { session }
+    }
+}
+
+impl tidb_ddl_build::session_pool::StepSqlSession for NodeSqlSession {
+    fn execute(
+        &mut self,
+        sql: &str,
+        args: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, MysqlError> {
+        let escaped = tidb_sqlescape::escape_sql(sql, args)
+            .map_err(|error| MysqlError::unknown(error.to_string()))?;
+        self.session
+            .node_conn()
+            .execute_internal(&String::from_utf8_lossy(&escaped))
+            .map_err(sql_to_mysql)
+    }
+}
+
 /// A node system session serving as one DDL step's `w.sess`.
 struct NodeStepSession {
     session: crate::Session,

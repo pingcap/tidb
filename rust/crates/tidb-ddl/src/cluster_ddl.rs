@@ -5738,7 +5738,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
 }
 
 /// Go `util.WrapKey2String`.
-fn wrap_key_2_string(key: &[u8]) -> String {
+pub(crate) fn wrap_key_2_string(key: &[u8]) -> String {
     if key.is_empty() {
         return "''".to_owned();
     }

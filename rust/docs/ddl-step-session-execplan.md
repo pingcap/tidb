@@ -158,8 +158,10 @@ system-table rows are the SQL statements Go executes, in the same commit.
   - [ ] Job submission insert (`insertDDLJobs2Table`).
   - The raw job-row writes in `worker.rs` are test fixtures
     (`#[cfg(test)]`), not admin paths. Production ADMIN CANCEL / PAUSE /
-    RESUME DDL JOBS is a stub answering not-found; Go's `processJobs` is
-    the next port.
+    RESUME DDL JOBS was a stub answering not-found; it is Go's
+    `processJobs` now (`tidb-ddl` `job_control.rs`, on a system session
+    through `DdlService::command_ddl_jobs`). Test
+    `admin_commands_on_a_live_ddl_job_as_go`.
 
 ## Surprises & Discoveries
 

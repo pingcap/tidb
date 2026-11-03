@@ -26455,3 +26455,84 @@ fn ddl_delete_range_row_is_gos_insert_on_a_pooled_session() {
     let ts = recorded[0][1].parse::<u64>().unwrap();
     assert!(ts > finished_ts, "delete-range ts {ts} is not after FinishedTS {finished_ts}");
 }
+
+/// Go `CommandDDLJobsExec` over `ddl.processJobs`: ADMIN PAUSE / RESUME /
+/// CANCEL DDL JOBS rewrite a live job's row in `mysql.tidb_ddl_job`. An
+/// ALTER waiting on a reader's metadata lock (its first step committed,
+/// its MDL row published) is such a job. PAUSE leaves it `pausing` until
+/// the worker's next step, so RESUME is refused (Go `IsResumable` wants
+/// `paused`); CANCEL takes it, its next step rolls it back and the ALTER
+/// answers `Cancelled DDL job`. An id with no job answers Go's not-found
+/// error.
+#[test]
+fn admin_commands_on_a_live_ddl_job_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut reader = stack.factory.open_session(session_context(191)).unwrap();
+    let mut probe = stack.factory.open_session(session_context(192)).unwrap();
+    rows(&mut reader, "create table test.jc1 (a int)");
+    rows(&mut reader, "begin");
+    rows(&mut reader, "select * from test.jc1");
+    let factory = Arc::clone(&stack.factory);
+    let alter = std::thread::spawn(move || {
+        let mut writer = factory.open_session(session_context(193)).unwrap();
+        let result = writer
+            .node_conn()
+            .execute_write("alter table test.jc1 add column b int")
+            .map(|_| ())
+            .map_err(|error| (error.code, error.message));
+        result
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let job_id = loop {
+        let jobs = displayed(rows(&mut probe, "select job_id from mysql.tidb_mdl_info"));
+        if let [job] = jobs.as_slice() {
+            break job[0].clone();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the ALTER never waited on the reader: {jobs:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let command = |probe: &mut Session, sql: String| displayed(rows(probe, &sql));
+    assert_eq!(
+        command(&mut probe, format!("admin pause ddl jobs {job_id}")),
+        [[job_id.clone(), "successful".to_owned()]]
+    );
+    assert_eq!(
+        command(&mut probe, format!("admin pause ddl jobs {job_id}")),
+        [[
+            job_id.clone(),
+            format!("error: [ddl:8262]Job [{job_id}] has already been paused")
+        ]]
+    );
+    assert_eq!(
+        command(&mut probe, format!("admin resume ddl jobs {job_id}")),
+        [[
+            job_id.clone(),
+            format!(
+                "error: [ddl:8261]Job [{job_id}] can't be resumed: job has not been paused, \
+                 job state:pausing, schema state:delete only"
+            )
+        ]]
+    );
+    assert_eq!(
+        command(&mut probe, format!("admin cancel ddl jobs {job_id}, 99999")),
+        [
+            [job_id.clone(), "successful".to_owned()],
+            [
+                "99999".to_owned(),
+                "error: [ddl:8224]DDL Job:99999 not found".to_owned()
+            ]
+        ]
+    );
+    rows(&mut reader, "commit");
+    assert_eq!(
+        alter.join().unwrap(),
+        Err((8214, "Cancelled DDL job".to_owned()))
+    );
+    assert_eq!(
+        displayed(rows(&mut probe, "select column_name from information_schema.columns where table_schema = 'test' and table_name = 'jc1'")),
+        [["a"]]
+    );
+}

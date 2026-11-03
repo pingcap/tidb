@@ -86,6 +86,7 @@ impl DomainSessions for Domain {
             ddl: Arc::new(ClusterDdlService {
                 ddl: Arc::clone(&self.ddl),
                 catalog: Arc::clone(&self.catalog),
+                domain: self.binding_session_factory.clone(),
             }),
             accounts: Arc::new(ClusterAccountService {
                 accounts: Arc::clone(&self.accounts),

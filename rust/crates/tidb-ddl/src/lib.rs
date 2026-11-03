@@ -41,6 +41,7 @@ mod cluster_bdr;
 pub mod stat;
 pub mod ddl_history;
 pub mod cluster_ddl;
+pub mod job_control;
 pub mod job_txn;
 mod job_submitter;
 pub mod ddl_affinity;

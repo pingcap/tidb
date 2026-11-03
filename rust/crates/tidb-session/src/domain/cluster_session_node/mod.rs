@@ -3118,9 +3118,37 @@ struct ClusterDdlService {
     ddl: Arc<dyn ClusterDdl>,
     /// The node's latest schema (Go the DDL's `infoCache.GetLatest()`).
     catalog: Arc<InfoCache>,
+    /// The domain whose system sessions the job commands run on.
+    domain: Weak<Domain>,
 }
 
 impl crate::ddl_service::DdlService for ClusterDdlService {
+    fn command_ddl_jobs(
+        &self,
+        kind: tidb_ast::AdminDdlJobControlKind,
+        job_ids: &[i64],
+    ) -> Result<Vec<Option<String>>, tidb_driver_error::DriverError> {
+        use tidb_ddl::job_control;
+        let domain = self.domain.upgrade().ok_or_else(|| {
+            tidb_driver_error::DriverError::unsupported("the node's domain is closed")
+        })?;
+        let session = domain.open_system_session().map_err(sql_query_error_to_driver)?;
+        let mut sess = crate::ddl_session_pool::NodeSqlSession::new(session);
+        let process: job_control::JobCommand = match kind {
+            tidb_ast::AdminDdlJobControlKind::Cancel => job_control::cancel_running_job,
+            tidb_ast::AdminDdlJobControlKind::Pause => job_control::pause_running_job,
+            tidb_ast::AdminDdlJobControlKind::Resume => job_control::resume_paused_job,
+        };
+        let errs = job_control::process_jobs(
+            process,
+            &mut sess,
+            job_ids,
+            tidb_model::AdminCommandOperator::BY_END_USER,
+        )
+        .map_err(tidb_driver_error::DriverError::Mysql)?;
+        Ok(errs.into_iter().map(|err| err.map(|err| err.to_string())).collect())
+    }
+
     fn execute(
         &self,
         statement: &DdlStatement,

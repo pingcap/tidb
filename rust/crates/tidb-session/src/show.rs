@@ -319,6 +319,17 @@ impl tidb_executor::index_advisor::RecommendIndexExec for Session {
 
 impl tidb_executor::admin::AdminExec for Session {
 
+    fn command_ddl_jobs(
+        &mut self,
+        kind: tidb_ast::AdminDdlJobControlKind,
+        job_ids: &[i64],
+    ) -> Result<Vec<Option<String>>, DriverError> {
+        match self.domain_services() {
+            Some(services) => services.ddl.command_ddl_jobs(kind, job_ids),
+            None => Ok(tidb_executor::admin::ddl_jobs_not_found(job_ids)),
+        }
+    }
+
     fn all_ddl_jobs(
         &mut self,
     ) -> Result<(Vec<tidb_model::Job>, Vec<tidb_model::Job>), DriverError> {

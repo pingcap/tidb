@@ -59,6 +59,22 @@ pub trait DdlService {
 
     /// Go `infoschema.GetTiFlashStoreCount(ctx.GetStore())`.
     fn tiflash_store_count(&self) -> Result<u64, String>;
+
+    /// Go `ddl.CancelJobs` / `PauseJobs` / `ResumeJobs` on a system session
+    /// (`CommandDDLJobsExec.Open`'s `GetSysSession`): one error per id,
+    /// `None` where the command succeeded.
+    ///
+    /// # Errors
+    ///
+    /// The command's transaction error.
+    fn command_ddl_jobs(
+        &self,
+        kind: tidb_ast::AdminDdlJobControlKind,
+        job_ids: &[i64],
+    ) -> Result<Vec<Option<String>>, DriverError> {
+        let _ = kind;
+        Ok(tidb_executor::admin::ddl_jobs_not_found(job_ids))
+    }
 }
 
 impl Session {

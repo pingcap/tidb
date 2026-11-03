@@ -122,6 +122,16 @@ pub fn show_imports_output() -> StmtOutput {
 /// installed by the repository when it is set up (`SetupRepository`).
 pub type TakeSnapshot = std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
+/// Go `processJobs`' answer when `mysql.tidb_ddl_job` holds none of the
+/// ids: `ErrDDLJobNotFound` for each.
+#[must_use]
+pub fn ddl_jobs_not_found(job_ids: &[i64]) -> Vec<Option<String>> {
+    job_ids
+        .iter()
+        .map(|job_id| Some(format!("[ddl:8224]DDL Job:{job_id} not found")))
+        .collect()
+}
+
 pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
     /// Go `DDLJobRetriever.initial`: the running jobs, then the meta
     /// history newest first, read on a fresh system-session transaction.
@@ -297,27 +307,43 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
         })
     }
 
-    /// go `execCommandOnDDLJobs` (`pkg/executor/admin.go`): one
-    /// `(JOB_ID, RESULT)` row per requested id. Every id this node holds no
-    /// active job for answers the not-found error string go's
-    /// `GetDDLJobById` path produces — `error: [ddl:8224]DDL Job:%d not
-    /// found` — which is the only reachable shape on a node whose DDL runs
-    /// to completion synchronously (no job is ever mid-flight at query
-    /// time).
+    /// Go `CancelJobs` / `PauseJobs` / `ResumeJobs` on a system session
+    /// (`CommandDDLJobsExec.Open`): one error per id, printed as Go's `%v`,
+    /// `None` where the command succeeded. A session without the domain's
+    /// DDL finds no job, as Go's command does in an empty
+    /// `mysql.tidb_ddl_job`.
+    ///
+    /// # Errors
+    ///
+    /// The command's transaction error.
+    fn command_ddl_jobs(
+        &mut self,
+        kind: tidb_ast::AdminDdlJobControlKind,
+        job_ids: &[i64],
+    ) -> Result<Vec<Option<String>>, DriverError> {
+        let _ = kind;
+        Ok(ddl_jobs_not_found(job_ids))
+    }
+
+    /// Go `CommandDDLJobsExec` (`pkg/executor/operate_ddl_jobs.go`): one
+    /// `(JOB_ID, RESULT)` row per requested id, `successful` or the id's
+    /// `error: %v`.
     fn ddl_job_control_stmt(
         &mut self,
         control: &tidb_ast::AdminDdlJobControlStmt,
     ) -> Result<StmtOutput, DriverError> {
         let varchar = || FieldType::new(FieldTypeCode::Varchar);
+        let errs = self.command_ddl_jobs(control.kind, &control.job_ids)?;
         let rows = control
             .job_ids
             .iter()
-            .map(|job_id| {
+            .zip(errs)
+            .map(|(job_id, err)| {
+                let result =
+                    err.map_or_else(|| "successful".to_owned(), |err| format!("error: {err}"));
                 vec![
                     Datum::Bytes(job_id.to_string().into_bytes()),
-                    Datum::Bytes(
-                        format!("error: [ddl:8224]DDL Job:{job_id} not found").into_bytes(),
-                    ),
+                    Datum::Bytes(result.into_bytes()),
                 ]
             })
             .collect();
