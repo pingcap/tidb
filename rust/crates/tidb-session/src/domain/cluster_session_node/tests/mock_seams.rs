@@ -765,6 +765,7 @@ impl ClusterAnalyze for MockAnalyze {
         _: &tidb_sqlkiller::SqlKiller,
         _: &dyn Fn() -> bool,
         _: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
+        _: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
     ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, SqlQueryError> {
         Err(SqlQueryError::unknown(format!(
             "the mock node stores no statistics for `{}`.`{}`",

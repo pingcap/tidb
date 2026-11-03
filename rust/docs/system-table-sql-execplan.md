@@ -110,8 +110,29 @@ checksums).
   (`ClusterTransactions::acquire_advisory_lock`, `AdvisoryLockTable`) is
   gone. `GET_LOCK(x, 0)` now waits Go's one second (the variable's minimum)
   before answering 0.
-- [ ] M1 (the statistics handle's pool for the storage writes), M2, the rest
-  of M3, M4.
+- [x] (2026-11-03) ANALYZE saves (item 10, M1 + the analyze half of M2):
+  `statsReadWriter.SaveAnalyzeResultToStorage` /
+  `SaveColOrIdxStatsToStorage` / `handleSlowStatsSaving` are Go's
+  `storage` statements (`tidb-stats-handle-storage/src/save.rs`,
+  `update.rs`), each Go `statsReadWriter` save one
+  `call_with_sctx(..., FLAG_WRAP_TXN)` over a `StatsSessionPool`
+  (`stats_read_writer.rs`; the session's `SessionStatsPool` is the domain's
+  system-session pool). Table, partition,
+  multi-valued / global-index and global-stats saves all go through it; the
+  index-only analysis now reads in a read-only transaction and saves
+  separately, as Go. `plan_analyze_stats_write`,
+  `plan_independent_index_stats_write`, `plan_partial_stats_write` and their
+  tests are gone. Go keeps histograms an analysis did not produce (a dropped
+  index's rows stay until statistics GC; gorun); the raw full-table plan
+  had retracted them. ANALYZE now stamps
+  `column_stats_usage.last_analyzed_at` (table and global saves), as Go; the
+  raw path never did. Tests
+  `a_reanalyze_keeps_a_dropped_index_histogram_as_go`,
+  `analyze_results_save_stats_meta_as_go`.
+- [ ] Rest of M2: LOAD STATS (`LoadedStatsItemStatement`s), stats deletes,
+  GC, exchange-partition and delta flushes still commit planned rows;
+  `plan_stats_write` / `plan_partition_stats_write` remain only as test
+  seeding fixtures. History (item 8), usage (item 9), M4.
 
 ## Surprises & Discoveries
 

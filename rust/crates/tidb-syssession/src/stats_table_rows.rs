@@ -101,9 +101,6 @@ pub struct StatsWritePlan {
     pub bucket_count: usize,
     /// How many TopN entries, across every histogram.
     pub topn_count: usize,
-    /// A newer Analyze v2 snapshot already won the table. Pinned Go treats
-    /// this as a successful no-op and does not replace any histogram rows.
-    pub skipped_newer_snapshot: bool,
 }
 
 impl StatsWritePlan {

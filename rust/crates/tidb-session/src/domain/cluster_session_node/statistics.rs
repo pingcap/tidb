@@ -473,6 +473,26 @@ pub(super) fn stats_statement_service(
 /// because the session runs the statement while the node is borrowed.
 ///
 /// [`AnalyzeService`]: crate::analyze_service::AnalyzeService
+/// Go `statsHandle.SPool()` for the statistics handle's saves: the
+/// domain's system sessions, a statement's error keeping its MySQL code.
+struct SessionStatsPool<'a> {
+    session_pool: Option<&'a Arc<tidb_domain_core::sys_session::DomainSysSessionPool>>,
+}
+
+impl tidb_stats_handle_storage::stats_read_writer::StatsSessionPool for SessionStatsPool<'_> {
+    fn call_with_sctx(
+        &self,
+        f: &mut dyn FnMut(&dyn tidb_stats_handle_util::StatsSessionContext) -> Result<(), tidb_sqlexec::SqlExecError>,
+        flags: &[i32],
+    ) -> Result<(), SqlQueryError> {
+        let pool = self
+            .session_pool
+            .ok_or_else(|| SqlQueryError::unknown("the node's domain is closed"))?;
+        tidb_stats_handle_util::call_with_sctx(pool.as_ref(), |sctx| f(sctx), flags)
+            .map_err(stats_session_sql_error)
+    }
+}
+
 struct ClusterAnalyzeService {
     statement_memory: tidb_executor::StatementMemory,
     resource_group: String,
@@ -532,6 +552,9 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
                 self.statement_memory.sql_killer(),
                 &|| historical_stats_enabled,
                 &jobs,
+                &SessionStatsPool {
+                    session_pool: self.session_pool.as_ref(),
+                },
             )
         })
         .map_err(|error| SqlQueryError::unknown(error.rendered_message()))

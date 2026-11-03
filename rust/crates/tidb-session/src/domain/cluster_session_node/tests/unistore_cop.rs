@@ -2963,6 +2963,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnaly
         killer: &tidb_sqlkiller::SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
+        stats_pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
     ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
     {
         let process = self
@@ -2993,6 +2994,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnaly
             killer,
             historical_stats_enabled,
             jobs,
+            stats_pool,
         )
     }
 
@@ -3022,6 +3024,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyz
         killer: &tidb_sqlkiller::SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
+        stats_pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
     ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
     {
         let process_id = self
@@ -3046,6 +3049,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyz
             killer,
             historical_stats_enabled,
             jobs,
+            stats_pool,
         )
     }
 
@@ -6863,23 +6867,15 @@ fn stats_gc_matches_go_column_usage_cleanup() {
         "INSERT INTO stats_gc_usage VALUES (1,1,1),(2,2,2),(3,3,3)",
     );
     rows(&mut session, "ANALYZE TABLE stats_gc_usage");
-    let table_id = stack
-        .factory
-        .catalog
-        .get_latest()
-        .table_info_by_name("test", "stats_gc_usage")
-        .expect("table is in the live catalog")
-        .1
-        .read().id;
-    rows(
-        &mut session,
-        &format!(
-            "INSERT INTO mysql.column_stats_usage(table_id,column_id) VALUES \
-             ({table_id},1),({table_id},2),({table_id},3)"
-        ),
-    );
+    // Go `SaveAnalyzeResultToStorage` stamps each analyzed column's
+    // `last_analyzed_at`.
+    let usage_count = |session: &mut Session| {
+        displayed(rows(session, "SELECT count(*) FROM mysql.column_stats_usage"))
+    };
+    assert_eq!(usage_count(&mut session), vec![vec!["3".to_owned()]]);
 
     rows(&mut session, "ALTER TABLE stats_gc_usage DROP COLUMN a");
+    assert_eq!(usage_count(&mut session), vec![vec!["3".to_owned()]]);
     stack
         .factory
         .gc_stats(Duration::ZERO, Duration::ZERO)
@@ -17920,6 +17916,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUp
         killer: &tidb_sqlkiller::SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
+        stats_pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
     ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
     {
         self.inner.execute(
@@ -17929,6 +17926,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUp
             killer,
             historical_stats_enabled,
             jobs,
+            stats_pool,
         )
     }
 
@@ -26750,4 +26748,116 @@ fn advisory_locks_are_internal_sessions_holding_a_row_lock_as_go() {
         displayed(rows(&mut second, "select is_used_lock('cluster-lock')")),
         [["NULL"]]
     );
+}
+
+/// Go `SaveAnalyzeResultToStorage` replaces only the histograms an analysis
+/// produced: a later full ANALYZE keeps the rows of an index dropped in
+/// between (statistics GC removes them).
+#[test]
+fn a_reanalyze_keeps_a_dropped_index_histogram_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut client = stack.factory.open_session(session_context(206)).unwrap();
+    rows(&mut client, "use test");
+    rows(&mut client, "create table rt(a int, b int, index ib(b))");
+    rows(&mut client, "insert into rt values (1,1),(2,2),(3,3)");
+    let histograms = "select is_index, hist_id from mysql.stats_histograms where table_id = (select tidb_table_id from information_schema.tables where table_schema='test' and table_name='rt') order by is_index, hist_id";
+    rows(&mut client, "analyze table rt");
+    assert_eq!(
+        displayed(rows(&mut client, histograms)),
+        [["0", "1"], ["0", "2"], ["1", "1"]]
+    );
+    rows(&mut client, "alter table rt drop index ib");
+    rows(&mut client, "analyze table rt");
+    assert_eq!(
+        displayed(rows(&mut client, histograms)),
+        [["0", "1"], ["0", "2"], ["1", "1"]]
+    );
+}
+
+/// Go `SaveAnalyzeResultToStorage`'s `mysql.stats_meta` write on a
+/// statistics session: rows changed after sampling stay counted, a newer
+/// snapshot wins, and a multi-valued or global index result moves only the
+/// versions of an existing row.
+#[test]
+fn analyze_results_save_stats_meta_as_go() {
+    use tidb_stats_handle_storage::cluster_stats_load::ClusterTableStats;
+    use tidb_stats_handle_storage::save::{save_analyze_result_to_storage, AnalyzeResults, STATS_VERSION_2};
+
+    let (stack, _users) = cop_backed_stack();
+    let mut client = stack.factory.open_session(session_context(207)).unwrap();
+    let pool = stack.factory.advanced_sys_session_pool();
+    let save = |table_id: i64, snapshot: u64, row_count: u64, base_count: i64, mv: bool, analyze_snapshot: bool| {
+        let stats = ClusterTableStats {
+            table_id,
+            version: 0,
+            snapshot,
+            last_analyze_version: 0,
+            last_stats_hist_version: 0,
+            modify_count: 0,
+            row_count,
+            columns: Vec::new(),
+            indexes: Vec::new(),
+        };
+        let mut stats_ver = 0;
+        tidb_stats_handle_util::call_with_sctx(
+            pool.as_ref(),
+            |sctx| {
+                stats_ver = save_analyze_result_to_storage(
+                    sctx,
+                    &AnalyzeResults {
+                        stats: &stats,
+                        is_partition: false,
+                        base_count,
+                        base_modify_count: 0,
+                        stats_ver: STATS_VERSION_2,
+                        for_mv_index_or_global_index: mv,
+                    },
+                    analyze_snapshot,
+                )?;
+                Ok(())
+            },
+            &[tidb_stats_handle_util::FLAG_WRAP_TXN],
+        )
+        .expect("the save commits");
+        stats_ver
+    };
+    let meta = |client: &mut Session, table_id: i64| {
+        displayed(rows(
+            client,
+            &format!("select version, snapshot, modify_count, count, last_stats_histograms_version from mysql.stats_meta where table_id = {table_id}"),
+        ))
+    };
+    let row = |values: [&str; 5]| vec![values.map(str::to_owned).to_vec()];
+
+    for (table_id, analyze_snapshot, count) in [(4242, true, "6"), (4243, false, "3")] {
+        rows(
+            &mut client,
+            &format!("insert into mysql.stats_meta (version, table_id, modify_count, count, snapshot) values (90, {table_id}, 3, 6, 10)"),
+        );
+        let version = save(table_id, 100, 3, 3, false, analyze_snapshot);
+        assert_ne!(version, 0);
+        let version = version.to_string();
+        assert_eq!(
+            meta(&mut client, table_id),
+            row([&version, "100", "3", count, &version])
+        );
+    }
+
+    rows(
+        &mut client,
+        "insert into mysql.stats_meta (version, table_id, modify_count, count, snapshot) values (120, 4244, 4, 8, 110)",
+    );
+    assert_eq!(save(4244, 100, 3, 3, false, true), 0);
+    assert_eq!(meta(&mut client, 4244), row(["120", "110", "4", "8", "NULL"]));
+
+    assert_eq!(save(4244, 200, 9, 0, true, true), 0);
+    let moved = meta(&mut client, 4244);
+    assert_ne!(moved[0][0], "120");
+    assert_eq!(moved[0][1..4], ["110", "4", "8"]);
+    assert_eq!(moved[0][4], moved[0][0]);
+
+    let version = save(4245, 200, 9, 0, true, true);
+    assert_ne!(version, 0);
+    let version = version.to_string();
+    assert_eq!(meta(&mut client, 4245), row([&version, "0", "0", "0", &version]));
 }

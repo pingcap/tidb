@@ -31,6 +31,10 @@ tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-table = { path = "../tidb-table" }
 chrono.workspace = true
+tidb-log = { path = "../tidb-log" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 
 [lints]
 workspace = true

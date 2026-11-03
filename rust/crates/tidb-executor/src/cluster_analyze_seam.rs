@@ -67,6 +67,7 @@ use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_sqlkiller::SqlKiller;
 
 use crate::real_tikv_analyze::cluster_analyze_error;
+use tidb_stats_handle_storage::stats_read_writer::StatsSessionPool;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 /// This node's one route to the cluster's stored statistics.
@@ -84,6 +85,7 @@ pub trait ClusterAnalyze: Send + Sync {
         killer: &SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn AnalyzeJobLifecycle,
+        stats_pool: &dyn StatsSessionPool,
     ) -> Result<ClusterAnalyzeReport, SqlQueryError>;
 
     /// Go `AnalyzeExec.Next`'s closing `statsHandle.Update(ctx, infoSchema,
@@ -218,6 +220,7 @@ where
         killer: &SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn AnalyzeJobLifecycle,
+        stats_pool: &dyn StatsSessionPool,
     ) -> Result<ClusterAnalyzeReport, SqlQueryError> {
         let statement = resolve_cluster_analyze_statement(
             &self.opener,
@@ -249,6 +252,7 @@ where
             &record_history,
             &record_global_history,
             jobs,
+            stats_pool,
             &self.row_ids,
         )
         .map_err(cluster_analyze_error)?;

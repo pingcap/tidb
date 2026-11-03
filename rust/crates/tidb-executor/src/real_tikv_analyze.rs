@@ -60,14 +60,13 @@ use tidb_infoschema::cluster_catalog::load_info_schema;
 use tidb_stats_handle_storage::cluster_stats_load::{
     column_types_of, ClusterStatsItem, ClusterStatsLoader, ClusterTableStats,
 };
-use tidb_stats_handle_storage::cluster_stats_write::{plan_analyze_stats_write, plan_independent_index_stats_write, plan_partial_stats_write, plan_stats_meta_version_refresh, AnalyzeStatsMeta, AnalyzeStatsWriteScope};
+use tidb_stats_handle_storage::save::{AnalyzeResults, STATS_VERSION_2};
+use tidb_stats_handle_storage::stats_read_writer::{self, StatsSessionPool};
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_stats_handle_history::history_stats::{plan_historical_stats_meta_lock, plan_historical_stats_meta_replace};
 use tidb_syssession::stats_table_rows::{locate, set, StatsRows, StatsWriteError, StatsWritePlan};
 use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::plan_get_predicate_columns;
-use tidb_store_driver_txn::cluster_table_storage::{
-    commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
-    SessionTransaction,
-};
+use tidb_store_driver_txn::cluster_table_storage::{lock_pessimistic_statement, SessionTransaction};
 use tidb_datatype::current_time::{local_now_datetime6, utc_now_timestamp};
 use tidb_store_driver_error::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
 use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
@@ -960,6 +959,8 @@ pub enum ClusterAnalyzeError {
     /// global-stats `ErrPartitionStatsMissing` /
     /// `ErrPartitionColumnStatsMissing` that ANALYZE demotes to a warning.
     Mysql(tidb_terror::MysqlError),
+    /// A statistics-session statement's error, as the statement raised it.
+    Sql(SqlQueryError),
 }
 
 impl fmt::Display for ClusterAnalyzeError {
@@ -973,6 +974,7 @@ impl fmt::Display for ClusterAnalyzeError {
             Self::Killed(error) => formatter.write_str(&error.message),
             Self::Other(detail) => formatter.write_str(detail),
             Self::Mysql(error) => formatter.write_str(&error.message),
+            Self::Sql(error) => formatter.write_str(&error.message),
         }
     }
 }
@@ -1023,6 +1025,7 @@ pub fn commit_cluster_analyze<S: StoreClient>(
     record_history: &dyn Fn() -> bool,
     record_global_history: &dyn Fn() -> bool,
     jobs: &dyn AnalyzeJobLifecycle,
+    stats_pool: &dyn StatsSessionPool,
     row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let targets = if !resolved.run_full_sampling {
@@ -1087,6 +1090,7 @@ pub fn commit_cluster_analyze<S: StoreClient>(
         let task_result = catch_unwind(AssertUnwindSafe(|| {
             commit_cluster_analyze_target(
                 opener,
+                stats_pool,
                 &resolved.statement,
                 options,
                 timeout,
@@ -1177,6 +1181,7 @@ pub fn commit_cluster_analyze<S: StoreClient>(
         let task_result = catch_unwind(AssertUnwindSafe(|| {
             commit_cluster_independent_index(
                 opener,
+                stats_pool,
                 &resolved.statement,
                 Some(*physical_id),
                 *index_id,
@@ -1213,6 +1218,7 @@ pub fn commit_cluster_analyze<S: StoreClient>(
         let task_result = catch_unwind(AssertUnwindSafe(|| {
             commit_cluster_independent_index(
                 opener,
+                stats_pool,
                 &resolved.statement,
                 None,
                 *index_id,
@@ -1263,6 +1269,7 @@ pub fn commit_cluster_analyze<S: StoreClient>(
             job.start(jobs);
             let result = commit_cluster_global_stats(
                 opener,
+                stats_pool,
                 resolved,
                 &mut report,
                 &column_ids,
@@ -1285,6 +1292,7 @@ pub fn commit_cluster_analyze<S: StoreClient>(
             job.start(jobs);
             let result = commit_cluster_global_stats(
                 opener,
+                stats_pool,
                 resolved,
                 &mut report,
                 &[],
@@ -1378,6 +1386,7 @@ fn merge_analyze_report(report: &mut ClusterAnalyzeReport, next: ClusterAnalyzeR
 
 fn commit_cluster_global_stats<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
+    stats_pool: &dyn StatsSessionPool,
     resolved: &ResolvedClusterAnalyze,
     report: &mut ClusterAnalyzeReport,
     column_ids: &[i64],
@@ -1579,16 +1588,7 @@ fn commit_cluster_global_stats<S: StoreClient>(
     write_global_stats_items(
         items,
         |item| {
-            commit_global_stats_item(
-                opener,
-                logical_id,
-                total_count,
-                modify_count,
-                item,
-                timeout,
-                stats_lease,
-                row_ids,
-            )
+            commit_global_stats_item(stats_pool, logical_id, total_count, modify_count, item, stats_lease)
         },
         |write| {
             if record_history() {
@@ -2191,61 +2191,46 @@ fn merge_global_items<TZ: TimeZone + Sync>(
     Ok(result)
 }
 
-fn commit_global_stats_item<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
+/// Go `statsReadWriter.SaveColOrIdxStatsToStorage` for one merged global
+/// histogram, with its `handleSlowStatsSaving`.
+fn commit_global_stats_item(
+    stats_pool: &dyn StatsSessionPool,
     table_id: i64,
     row_count: i64,
     modify_count: i64,
     item: ClusterStatsItem,
-    timeout: Duration,
     stats_lease: Duration,
-    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(u64, usize, usize, usize), ClusterAnalyzeError> {
     let started = Instant::now();
-    let mut transaction = opener
-        .begin()
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    let mut version = transaction.start_ts();
-    let write = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = load_info_schema(&mut snapshot)
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        let is_index = item.is_index;
-        let stats = ClusterTableStats {
-            table_id,
-            version,
-            snapshot: version,
-            last_analyze_version: version,
-            last_stats_hist_version: version,
-            modify_count,
-            row_count: u64::try_from(row_count).map_err(|_| {
-                ClusterAnalyzeError::Other("negative global statistics count".to_owned())
-            })?,
-            columns: if is_index {
-                Vec::new()
-            } else {
-                vec![item.clone()]
-            },
-            indexes: if is_index { vec![item] } else { Vec::new() },
-        };
-        plan_partial_stats_write(
-            &mut snapshot,
-            &catalog,
-            &stats,
-            utc_now_timestamp(),
-            Some(row_ids.as_ref()),
-        )
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
-    };
-    let counts = (write.histogram_count, write.bucket_count, write.topn_count);
-    let outcome = transaction
-        .commit(write.mutations, &UnaryCallContext::with_timeout(timeout))
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    classify_commit_outcome(&outcome)?;
-    version = refresh_slow_stats_save_version(version, stats_lease, started.elapsed(), || {
-        refresh_stats_meta_version(opener, table_id, timeout, row_ids)
+    let (histogram_count, bucket_count, topn_count) = saved_item_counts([&item]);
+    let version = stats_read_writer::save_col_or_idx_stats_to_storage(
+        stats_pool,
+        table_id,
+        row_count,
+        modify_count,
+        &item,
+        STATS_VERSION_2,
+        true,
+    )
+    .map_err(ClusterAnalyzeError::Sql)?;
+    let version = refresh_slow_stats_save_version(version, stats_lease, started.elapsed(), || {
+        stats_read_writer::update_stats_meta_ver_and_last_hist_update_ver(stats_pool, table_id)
+            .map_err(ClusterAnalyzeError::Sql)
     })?;
-    Ok((version, counts.0, counts.1, counts.2))
+    Ok((version, histogram_count, bucket_count, topn_count))
+}
+
+/// The histogram, bucket and TopN rows a save of `items` writes.
+fn saved_item_counts<'a>(
+    items: impl IntoIterator<Item = &'a ClusterStatsItem>,
+) -> (usize, usize, usize) {
+    items.into_iter().fold((0, 0, 0), |(histograms, buckets, topn), item| {
+        (
+            histograms + 1,
+            buckets + item.histogram.buckets.len(),
+            topn + item.topn.as_ref().map_or(0, |topn| topn.entries().len()),
+        )
+    })
 }
 
 fn slow_stats_save_needs_version_refresh(stats_lease: Duration, elapsed: Duration) -> bool {
@@ -2268,42 +2253,9 @@ fn refresh_slow_stats_save_version(
     })
 }
 
-fn refresh_stats_meta_version<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
-    table_id: i64,
-    timeout: Duration,
-    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<u64, ClusterAnalyzeError> {
-    commit_pessimistic_statement(opener, timeout, |snapshot, version| {
-        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
-        let plan = plan_stats_meta_version_refresh(
-            &mut snapshot,
-            &catalog,
-            table_id,
-            version,
-            Some(row_ids.as_ref()),
-        )
-        .map_err(|error| error.to_string())?;
-        Ok((version, plan.mutations))
-    })
-    .map_err(|error| match error {
-        PessimisticStatementTransactionError::Build(detail) => ClusterAnalyzeError::Other(detail),
-        PessimisticStatementTransactionError::Transaction(error)
-            if error.is_result_undetermined() =>
-        {
-            ClusterAnalyzeError::Undetermined(
-                "the ANALYZE transaction returned no commit verdict".to_owned(),
-            )
-        }
-        PessimisticStatementTransactionError::Transaction(error) => {
-            ClusterAnalyzeError::Commit(error)
-        }
-    })
-}
-
 fn commit_cluster_analyze_target<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
+    stats_pool: &dyn StatsSessionPool,
     statement: &AnalyzeStatement,
     options: &crate::analyze::PhysicalAnalyzeOptions,
     timeout: Duration,
@@ -2376,7 +2328,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
         .map_err(ClusterAnalyzeError::Analyze)?;
         (report, cleanup, base_count, base_modify_count)
     };
-    let (mut report, cleanup, base_count, base_modify_count) = sampled;
+    let (report, cleanup, base_count, base_modify_count) = sampled;
 
     if cleanup.is_empty() {
         sample_transaction
@@ -2390,86 +2342,39 @@ fn commit_cluster_analyze_target<S: StoreClient>(
     }
 
     // Go samples at `AnalyzeResults.Snapshot`, then saves through the
-    // statistics handle's later restricted transaction. That second
-    // transaction must see deltas committed after sampling and reconcile them
-    // against BaseCount/BaseModifyCnt instead of silently resetting them.
+    // statistics handle's later transaction, which reconciles the deltas
+    // committed after sampling against BaseCount/BaseModifyCnt.
     let save_started = Instant::now();
-    let mut save_transaction = opener
-        .begin()
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    let save_version = save_transaction.start_ts();
-    report.stats.version = save_version;
-    report.stats.last_analyze_version = save_version;
-    report.stats.last_stats_hist_version = save_version;
-    let write = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut save_transaction, timeout);
-        let catalog = load_info_schema(&mut snapshot)
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        let scope = if options.is_partition && selected_columns_for_task.is_some() {
-            AnalyzeStatsWriteScope::PartialPartition
-        } else if options.is_partition {
-            AnalyzeStatsWriteScope::FullPartition
-        } else if selected_columns_for_task.is_some() {
-            AnalyzeStatsWriteScope::PartialTable
-        } else {
-            AnalyzeStatsWriteScope::FullTable
-        };
-        plan_analyze_stats_write(
-            &mut snapshot,
-            &catalog,
-            &report.stats,
-            AnalyzeStatsMeta {
+    let stats_ver = stats_read_writer::save_analyze_result_to_storage(
+        stats_pool,
+        &AnalyzeResults {
+                stats: &report.stats,
+                is_partition: options.is_partition,
                 base_count,
                 base_modify_count,
-                analyze_snapshot: statement.analyze_snapshot,
-            },
-            scope,
-            utc_now_timestamp(),
-            Some(row_ids.as_ref()),
-        )
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
+                stats_ver: STATS_VERSION_2,
+                for_mv_index_or_global_index: false,
+        },
+        statement.analyze_snapshot,
+    )
+    .map_err(ClusterAnalyzeError::Sql)?;
+    // A zero `statsVer`: a newer analysis was saved first, and Go skipped
+    // this one.
+    let saved = stats_ver != 0;
+    let (histogram_count, bucket_count, topn_count) = if saved {
+        saved_item_counts(report.stats.columns.iter().chain(&report.stats.indexes))
+    } else {
+        (0, 0, 0)
     };
-
-    if write.is_empty() {
-        save_transaction
-            .finish_without_writes()
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        if write.skipped_newer_snapshot {
-            return Ok(ClusterAnalyzeReport {
-                table_id: report.stats.table_id,
-                version: save_version,
-                scanned_rows: report.scanned_rows,
-                sampled_rows: report.sampled_rows,
-                sample_rate: report.sample_rate,
-                histogram_count: 0,
-                bucket_count: 0,
-                topn_count: 0,
-                predicate_columns_empty: predicate_columns_empty_for_task,
-                option_save_warning: None,
-                global_stats_warnings: Vec::new(),
-                ignored_partition_overrides: false,
-                collected_all_for_index_target: statement.index_names.is_some(),
-                skipped_columnar_indexes: Vec::new(),
-                analyzed_column_ids: report.stats.columns.iter().map(|item| item.id).collect(),
-                analyzed_index_ids: report.stats.indexes.iter().map(|item| item.id).collect(),
-                historical_stats_table_ids: Vec::new(),
-                cache_update_physical_ids: Vec::new(),
-                build_diagnostics: build_diagnostics.to_vec(),
-            });
-        }
-        return Err(ClusterAnalyzeError::Other(
-            "this ANALYZE produced no statistics to store".to_owned(),
-        ));
-    }
     let mut receipt = ClusterAnalyzeReport {
         table_id: report.stats.table_id,
-        version: save_version,
+        version: stats_ver,
         scanned_rows: report.scanned_rows,
         sampled_rows: report.sampled_rows,
         sample_rate: report.sample_rate,
-        histogram_count: write.histogram_count,
-        bucket_count: write.bucket_count,
-        topn_count: write.topn_count,
+        histogram_count,
+        bucket_count,
+        topn_count,
         predicate_columns_empty: predicate_columns_empty_for_task,
         option_save_warning: None,
         global_stats_warnings: Vec::new(),
@@ -2478,41 +2383,33 @@ fn commit_cluster_analyze_target<S: StoreClient>(
         skipped_columnar_indexes: Vec::new(),
         analyzed_column_ids: report.stats.columns.iter().map(|item| item.id).collect(),
         analyzed_index_ids: report.stats.indexes.iter().map(|item| item.id).collect(),
-        historical_stats_table_ids: vec![report.stats.table_id],
+        historical_stats_table_ids: if saved {
+            vec![report.stats.table_id]
+        } else {
+            Vec::new()
+        },
         cache_update_physical_ids: Vec::new(),
         build_diagnostics: build_diagnostics.to_vec(),
     };
-    // The commit mints its own deadline here rather than inheriting one from
-    // function entry: everything above it -- the catalog read, the previous
-    // statistics read and the row sample -- runs on per-request budgets
-    // (`TransactionMetaSnapshot`), but it lasts as long as the table is
-    // deep. A context stamped before that work shares ONE absolute deadline
-    // with the whole statement, so on a real table the prewrite arrived after
-    // its budget had already been spent by scanning -- `timed out after
-    // 0ms` at commit admission. Go never couples these:
-    // `SaveAnalyzeResultToStorage` commits through the two-phase
-    // committer, whose every action builds its context when it runs
-    // (`twoPhaseCommitter.execute`, pkg/store/tikv/2pc.go), not when
-    // the statement began.
-    let outcome = save_transaction
-        .commit(write.mutations, &UnaryCallContext::with_timeout(timeout))
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    classify_commit_outcome(&outcome)?;
-    receipt.version = finish_analyze_save(
-        opener,
-        receipt.table_id,
-        receipt.version,
-        save_started,
-        timeout,
-        stats_lease,
-        record_history,
-        row_ids,
-    )?;
+    if saved {
+        receipt.version = finish_analyze_save(
+            opener,
+            stats_pool,
+            receipt.table_id,
+            stats_ver,
+            save_started,
+            timeout,
+            stats_lease,
+            record_history,
+            row_ids,
+        )?;
+    }
     Ok(receipt)
 }
 
 fn commit_cluster_independent_index<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
+    stats_pool: &dyn StatsSessionPool,
     statement: &AnalyzeStatement,
     physical_id: Option<i64>,
     index_id: i64,
@@ -2523,12 +2420,11 @@ fn commit_cluster_independent_index<S: StoreClient>(
     progress: &dyn Fn(i64),
     row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
-    let started = Instant::now();
     let mut transaction = opener
-        .begin()
+        .begin_read_only()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let start_ts = transaction.start_ts();
-    let (report, write, inserted_meta) = {
+    let (report, is_partition) = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_info_schema(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
@@ -2557,27 +2453,40 @@ fn commit_cluster_independent_index<S: StoreClient>(
             progress,
         )
         .map_err(ClusterAnalyzeError::Analyze)?;
-        let (write, inserted_meta) = plan_independent_index_stats_write(
-            &mut snapshot,
-            &catalog,
-            &report.stats,
-            utc_now_timestamp(),
-            physical_id.is_some_and(|id| id != table.id),
-            Some(row_ids.as_ref()),
-        )
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        (report, write, inserted_meta)
+        (report, physical_id.is_some_and(|id| id != table.id))
     };
+    transaction
+        .finish_without_writes()
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+    // Go's special multi-valued / global index task: saved as
+    // `ForMVIndexOrGlobalIndex`, which moves only the versions of an
+    // existing `stats_meta` row (and then reports no `statsVer`).
+    let started = Instant::now();
+    let stats_ver = stats_read_writer::save_analyze_result_to_storage(
+        stats_pool,
+        &AnalyzeResults {
+                stats: &report.stats,
+                is_partition,
+                base_count: 0,
+                base_modify_count: 0,
+                stats_ver: STATS_VERSION_2,
+                for_mv_index_or_global_index: true,
+        },
+        statement.analyze_snapshot,
+    )
+    .map_err(ClusterAnalyzeError::Sql)?;
+    let (histogram_count, bucket_count, topn_count) =
+        saved_item_counts(report.stats.columns.iter().chain(&report.stats.indexes));
     let mut receipt = ClusterAnalyzeReport {
         build_diagnostics: Vec::new(),
         table_id: report.stats.table_id,
-        version: start_ts,
+        version: stats_ver,
         scanned_rows: report.scanned_rows,
         sampled_rows: report.sampled_rows,
         sample_rate: report.sample_rate,
-        histogram_count: write.histogram_count,
-        bucket_count: write.bucket_count,
-        topn_count: write.topn_count,
+        histogram_count,
+        bucket_count,
+        topn_count,
         predicate_columns_empty: false,
         option_save_warning: None,
         global_stats_warnings: Vec::new(),
@@ -2589,15 +2498,12 @@ fn commit_cluster_independent_index<S: StoreClient>(
         historical_stats_table_ids: vec![report.stats.table_id],
         cache_update_physical_ids: Vec::new(),
     };
-    let outcome = transaction
-        .commit(write.mutations, &UnaryCallContext::with_timeout(timeout))
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    classify_commit_outcome(&outcome)?;
-    if inserted_meta {
+    if stats_ver != 0 {
         receipt.version = finish_analyze_save(
             opener,
+            stats_pool,
             receipt.table_id,
-            receipt.version,
+            stats_ver,
             started,
             timeout,
             stats_lease,
@@ -2610,6 +2516,7 @@ fn commit_cluster_independent_index<S: StoreClient>(
 
 fn finish_analyze_save<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
+    stats_pool: &dyn StatsSessionPool,
     table_id: i64,
     mut version: u64,
     started: Instant,
@@ -2619,7 +2526,8 @@ fn finish_analyze_save<S: StoreClient>(
     row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<u64, ClusterAnalyzeError> {
     version = refresh_slow_stats_save_version(version, stats_lease, started.elapsed(), || {
-        refresh_stats_meta_version(opener, table_id, timeout, row_ids)
+        stats_read_writer::update_stats_meta_ver_and_last_hist_update_ver(stats_pool, table_id)
+            .map_err(ClusterAnalyzeError::Sql)
     })?;
     if record_history() {
         record_analyze_history(opener, table_id, version, timeout, row_ids);
@@ -3039,6 +2947,7 @@ pub fn cluster_analyze_error(error: ClusterAnalyzeError) -> tidb_store_driver_er
         }
         ClusterAnalyzeError::Other(detail) => tidb_store_driver_error::sql_query_error::SqlQueryError::unknown(detail),
         ClusterAnalyzeError::Mysql(error) => tidb_store_driver_error::sql_query_error::SqlQueryError::from(error),
+        ClusterAnalyzeError::Sql(error) => error,
     }
 }
 

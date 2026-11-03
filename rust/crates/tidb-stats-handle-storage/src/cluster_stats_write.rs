@@ -76,7 +76,6 @@ use tidb_syssession::system_row_write::{
     store_clustered_row,
 };
 use tidb_syssession::stats_table_rows::*;
-use tidb_hack::GoToLower;
 
 /// Go's `mysql` schema name.
 const SYSTEM_DB: &str = "mysql";
@@ -86,31 +85,6 @@ const LOADED_STATS_BATCH_INSERT_SIZE: usize = 10;
 
 /// Go `maxInsertLength` in `pkg/statistics/handle/storage/save.go`.
 const LOADED_STATS_MAX_INSERT_LENGTH: usize = 1024 * 1024;
-
-/// The `AnalyzeResults` metadata Go carries from sampling into its later
-/// statistics-save transaction.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AnalyzeStatsMeta {
-    /// `AnalyzeResults.BaseCount`.
-    pub base_count: i64,
-    /// `AnalyzeResults.BaseModifyCnt`.
-    pub base_modify_count: i64,
-    /// Session `tidb_enable_analyze_snapshot` at execution time.
-    pub analyze_snapshot: bool,
-}
-
-/// Which ordinary Analyze v2 payload replacement Go is saving.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AnalyzeStatsWriteScope {
-    /// A complete non-partitioned table result.
-    FullTable,
-    /// A complete physical-partition result, including FM sketches.
-    FullPartition,
-    /// Selected histogram items for a non-partitioned table.
-    PartialTable,
-    /// Selected histogram items for a physical partition, including FM sketches.
-    PartialPartition,
-}
 
 /// Plans the write of one table's statistics.
 ///
@@ -131,7 +105,7 @@ pub fn plan_stats_write<S: MetaSnapshot>(
     now: Time,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
-    plan_stats_write_impl(snapshot, catalog, stats, now, true, false, None, row_ids)
+    plan_stats_write_impl(snapshot, catalog, stats, now, false, row_ids)
 }
 
 /// Plans a full physical-partition ANALYZE write, including FM sketches.
@@ -142,91 +116,7 @@ pub fn plan_partition_stats_write<S: MetaSnapshot>(
     now: Time,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
-    plan_stats_write_impl(snapshot, catalog, stats, now, true, true, None, row_ids)
-}
-
-/// Plans an ANALYZE write that replaces only the histogram items present in
-/// `stats`, matching Go's partial-column analyze storage behavior.
-pub fn plan_partial_stats_write<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    stats: &ClusterTableStats,
-    now: Time,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<StatsWritePlan, StatsWriteError> {
-    plan_stats_write_impl(snapshot, catalog, stats, now, false, false, None, row_ids)
-}
-
-/// Plans a partial physical-partition ANALYZE write, including FM sketches.
-pub fn plan_partial_partition_stats_write<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    stats: &ClusterTableStats,
-    now: Time,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<StatsWritePlan, StatsWriteError> {
-    plan_stats_write_impl(snapshot, catalog, stats, now, false, true, None, row_ids)
-}
-
-/// Plans pinned Go `SaveAnalyzeResultToStorage` after sampling has completed.
-///
-/// Unlike the raw storage helpers above, this reads the `stats_meta` row as it
-/// exists in the later save transaction and reconciles modifications that
-/// committed after the sampling snapshot.
-pub fn plan_analyze_stats_write<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    stats: &ClusterTableStats,
-    meta: AnalyzeStatsMeta,
-    scope: AnalyzeStatsWriteScope,
-    now: Time,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<StatsWritePlan, StatsWriteError> {
-    let (replace_all, dump_fm) = match scope {
-        AnalyzeStatsWriteScope::FullTable => (true, false),
-        AnalyzeStatsWriteScope::FullPartition => (true, true),
-        AnalyzeStatsWriteScope::PartialTable => (false, false),
-        AnalyzeStatsWriteScope::PartialPartition => (false, true),
-    };
-    plan_stats_write_impl(
-        snapshot,
-        catalog,
-        stats,
-        now,
-        replace_all,
-        dump_fm,
-        Some(meta),
-        row_ids,
-    )
-}
-
-/// Plans pinned Go's `ForMVIndexOrGlobalIndex` ANALYZE write.
-///
-/// A special global-index task replaces only the index item it produced. If
-/// `stats_meta` already exists, Go advances only its version markers; if it
-/// does not, Go creates it with count and snapshot zero. In both cases the
-/// independently scanned index must not overwrite table row-count metadata.
-///
-/// `dump_fm` is Go's `needDumpFMS`: a partition's result keeps its FM
-/// sketches for the global-stats merge; a table-level one does not.
-pub fn plan_independent_index_stats_write<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    stats: &ClusterTableStats,
-    now: Time,
-    dump_fm: bool,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<(StatsWritePlan, bool), StatsWriteError> {
-    let mut plan = StatsWritePlan::default();
-    let inserted_meta =
-        plan_independent_index_meta(snapshot, catalog, stats, now, &mut plan, row_ids)?;
-    plan_histograms(snapshot, catalog, stats, now, false, &mut plan, row_ids)?;
-    plan_buckets(snapshot, catalog, stats, now, false, &mut plan, row_ids)?;
-    plan_topn(snapshot, catalog, stats, now, false, &mut plan, row_ids)?;
-    plan_fm_sketches(
-        snapshot, catalog, stats, now, false, dump_fm, &mut plan, row_ids,
-    )?;
-    Ok((plan, inserted_meta))
+    plan_stats_write_impl(snapshot, catalog, stats, now, true, row_ids)
 }
 
 fn plan_stats_write_impl<S: MetaSnapshot>(
@@ -234,61 +124,15 @@ fn plan_stats_write_impl<S: MetaSnapshot>(
     catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     now: Time,
-    replace_all: bool,
     dump_fm: bool,
-    analyze_meta: Option<AnalyzeStatsMeta>,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
-    if !plan_meta(
-        snapshot,
-        catalog,
-        stats,
-        analyze_meta,
-        now,
-        &mut plan,
-        row_ids,
-    )? {
-        plan.skipped_newer_snapshot = true;
-        return Ok(plan);
-    }
-    plan_histograms(
-        snapshot,
-        catalog,
-        stats,
-        now,
-        replace_all,
-        &mut plan,
-        row_ids,
-    )?;
-    plan_buckets(
-        snapshot,
-        catalog,
-        stats,
-        now,
-        replace_all,
-        &mut plan,
-        row_ids,
-    )?;
-    plan_topn(
-        snapshot,
-        catalog,
-        stats,
-        now,
-        replace_all,
-        &mut plan,
-        row_ids,
-    )?;
-    plan_fm_sketches(
-        snapshot,
-        catalog,
-        stats,
-        now,
-        replace_all,
-        dump_fm,
-        &mut plan,
-        row_ids,
-    )?;
+    plan_meta(snapshot, catalog, stats, now, &mut plan, row_ids)?;
+    plan_histograms(snapshot, catalog, stats, now, &mut plan, row_ids)?;
+    plan_buckets(snapshot, catalog, stats, now, &mut plan, row_ids)?;
+    plan_topn(snapshot, catalog, stats, now, &mut plan, row_ids)?;
+    plan_fm_sketches(snapshot, catalog, stats, now, dump_fm, &mut plan, row_ids)?;
     Ok(plan)
 }
 
@@ -393,7 +237,20 @@ pub fn save_buckets_sql(
     Ok(statements)
 }
 
-/// The statements Go's `SaveAnalyzeResultToStorage` (`analyze = true`) or
+/// How a column's `mysql.column_stats_usage.last_analyzed_at` is stamped
+/// after its histogram is saved.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LastAnalyzedAt {
+    /// Go `SaveAnalyzeResultToStorage`: `values(last_analyzed_at)`.
+    Values,
+    /// Go `SaveColOrIdxStatsToStorage` with `updateAnalyzeTime`:
+    /// `current_timestamp()`.
+    CurrentTimestamp,
+    /// Go `SaveColOrIdxStatsToStorage` without `updateAnalyzeTime`.
+    Unchanged,
+}
+
+/// The statements Go's `SaveAnalyzeResultToStorage` or
 /// `SaveColOrIdxStatsToStorage` runs for one histogram after the
 /// `stats_meta` write, in their order: TopN replaced, the FM sketch
 /// deleted (and, for an analyze result whose table is a partition, stored),
@@ -405,7 +262,7 @@ pub fn save_stats_item_sql(
     version: u64,
     stats_ver: i64,
     dump_fm_sketch: bool,
-    analyze: bool,
+    last_analyzed_at: LastAnalyzedAt,
 ) -> Result<Vec<String>, StatsWriteError> {
     let key = [
         SqlArg::Signed(table_id),
@@ -463,13 +320,18 @@ pub fn save_stats_item_sql(
         &key,
     ));
     statements.extend(save_buckets_sql(table_id, item)?);
-    if !item.is_index {
+    let usage_sql = match last_analyzed_at {
+        LastAnalyzedAt::Values => Some(
+            "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = values(last_analyzed_at)",
+        ),
+        LastAnalyzedAt::CurrentTimestamp => Some(
+            "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = current_timestamp()",
+        ),
+        LastAnalyzedAt::Unchanged => None,
+    };
+    if let (false, Some(usage_sql)) = (item.is_index, usage_sql) {
         statements.push(must_escape_sql_text(
-            if analyze {
-                "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = values(last_analyzed_at)"
-            } else {
-                "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = current_timestamp()"
-            },
+            usage_sql,
             &[SqlArg::Signed(table_id), SqlArg::Signed(item.id)],
         ));
     }
@@ -2110,49 +1972,13 @@ fn plan_meta<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
-    analyze_meta: Option<AnalyzeStatsMeta>,
     now: Time,
     plan: &mut StatsWritePlan,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<bool, StatsWriteError> {
+) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_meta")?;
     let table = &*table.read();
     let mut rows = StatsRows::open(snapshot, table, &["table_id"], stats.table_id)?;
-    let identity = vec![format!("{:?}", Datum::Int(stats.table_id))];
-    if let (Some(meta), Some(existing)) = (analyze_meta, rows.existing_values(&identity)) {
-        let current_snapshot = row_u64(table, existing, "snapshot").unwrap_or_default();
-        if current_snapshot >= stats.snapshot {
-            return Ok(false);
-        }
-        let current_count = row_i64(table, existing, "count").unwrap_or_default();
-        let current_modify_count = row_i64(table, existing, "modify_count").unwrap_or_default();
-        let result_count = i64::try_from(stats.row_count).unwrap_or(i64::MAX);
-        let count = if meta.analyze_snapshot {
-            current_count
-                .wrapping_add(result_count)
-                .wrapping_sub(meta.base_count)
-                .max(0)
-        } else {
-            result_count.max(0)
-        };
-        let modify_count = current_modify_count
-            .wrapping_sub(meta.base_modify_count)
-            .max(0);
-        let mut values = existing.clone();
-        set(table, &mut values, "version", Datum::UInt(stats.version));
-        set(table, &mut values, "modify_count", Datum::Int(modify_count));
-        set(table, &mut values, "count", Datum::Int(count));
-        set(table, &mut values, "snapshot", Datum::UInt(stats.snapshot));
-        set(
-            table,
-            &mut values,
-            "last_stats_histograms_version",
-            Datum::UInt(stats.version),
-        );
-        rows.store_row(catalog, &values, plan, row_ids)?;
-        return Ok(true);
-    }
-
     let mut values = defaults_row(table, now)?;
     set(table, &mut values, "table_id", Datum::Int(stats.table_id));
     set(table, &mut values, "version", Datum::UInt(stats.version));
@@ -2179,41 +2005,7 @@ fn plan_meta<S: MetaSnapshot>(
     // Deliberately no retraction: `mysql.stats_meta` holds one row per table
     // and the identity IS the table, so there is never a leftover. Retracting
     // here would only be a way to delete a row this `ANALYZE` did not write.
-    Ok(true)
-}
-
-fn plan_independent_index_meta<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    stats: &ClusterTableStats,
-    now: Time,
-    plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<bool, StatsWriteError> {
-    let table = locate(catalog, "stats_meta")?;
-    let table = &*table.read();
-    let mut rows = StatsRows::open(snapshot, table, &["table_id"], stats.table_id)?;
-    let identity = vec![format!("{:?}", Datum::Int(stats.table_id))];
-    let inserted = rows.existing_values(&identity).is_none();
-    let mut values = match rows.existing_values(&identity).cloned() {
-        Some(values) => values,
-        None => {
-            let mut values = defaults_row(table, now)?;
-            set(table, &mut values, "table_id", Datum::Int(stats.table_id));
-            set(table, &mut values, "count", Datum::Int(0));
-            set(table, &mut values, "snapshot", Datum::UInt(0));
-            values
-        }
-    };
-    set(table, &mut values, "version", Datum::UInt(stats.version));
-    set(
-        table,
-        &mut values,
-        "last_stats_histograms_version",
-        Datum::UInt(stats.version),
-    );
-    rows.store_row(catalog, &values, plan, row_ids)?;
-    Ok(inserted)
+    Ok(())
 }
 
 fn plan_histograms<S: MetaSnapshot>(
@@ -2221,7 +2013,6 @@ fn plan_histograms<S: MetaSnapshot>(
     catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     now: Time,
-    replace_all: bool,
     plan: &mut StatsWritePlan,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
@@ -2281,7 +2072,7 @@ fn plan_histograms<S: MetaSnapshot>(
     // A histogram this `ANALYZE` no longer produces -- a dropped index, a
     // column that became unanalyzable -- must lose its row, or the loader
     // would keep handing the planner statistics for something that is gone.
-    retract_analyzed_items(&mut rows, stats, replace_all, plan)?;
+    rows.retract_remaining(plan)?;
     Ok(())
 }
 
@@ -2290,7 +2081,6 @@ fn plan_buckets<S: MetaSnapshot>(
     catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     now: Time,
-    replace_all: bool,
     plan: &mut StatsWritePlan,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
@@ -2349,7 +2139,7 @@ fn plan_buckets<S: MetaSnapshot>(
     // A shorter histogram than last time leaves its tail behind, and a stale
     // bucket read back as part of this histogram would be a range the table
     // no longer has.
-    retract_analyzed_items(&mut rows, stats, replace_all, plan)?;
+    rows.retract_remaining(plan)?;
     Ok(())
 }
 
@@ -2358,7 +2148,6 @@ fn plan_topn<S: MetaSnapshot>(
     catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     now: Time,
-    replace_all: bool,
     plan: &mut StatsWritePlan,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
@@ -2397,7 +2186,7 @@ fn plan_topn<S: MetaSnapshot>(
             plan.topn_count += 1;
         }
     }
-    retract_analyzed_items(&mut rows, stats, replace_all, plan)?;
+    rows.retract_remaining(plan)?;
     Ok(())
 }
 
@@ -2406,7 +2195,6 @@ fn plan_fm_sketches<S: MetaSnapshot>(
     catalog: &SessionExtendedInfoSchema,
     stats: &ClusterTableStats,
     now: Time,
-    replace_all: bool,
     dump_fm: bool,
     plan: &mut StatsWritePlan,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -2439,29 +2227,7 @@ fn plan_fm_sketches<S: MetaSnapshot>(
     }
     // Go deletes the previous row for every analyzed item even when this is
     // a logical/global write and `needDumpFMS` is false.
-    retract_analyzed_items(&mut rows, stats, replace_all, plan)?;
-    Ok(())
-}
-
-fn retract_analyzed_items(
-    rows: &mut StatsRows<'_>,
-    stats: &ClusterTableStats,
-    replace_all: bool,
-    plan: &mut StatsWritePlan,
-) -> Result<(), StatsWriteError> {
-    if replace_all {
-        return rows.retract_remaining(plan);
-    }
-    for item in stats.columns.iter().chain(&stats.indexes) {
-        rows.retract_prefix(
-            &[
-                format!("{:?}", Datum::Int(stats.table_id)),
-                format!("{:?}", Datum::Int(i64::from(item.is_index))),
-                format!("{:?}", Datum::Int(item.id)),
-            ],
-            plan,
-        )?;
-    }
+    rows.retract_remaining(plan)?;
     Ok(())
 }
 
