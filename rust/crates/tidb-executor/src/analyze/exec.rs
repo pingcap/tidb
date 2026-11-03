@@ -942,7 +942,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
             let predicate_ids = if needs_predicate {
                 match &usage_provider {
                     Some(provider) => provider
-                        .load_column_stats_usage(&session_time_zone, &resource_group)
+                        .load_column_stats_usage(&session_time_zone)
                         .map_err(DriverError::unsupported)?
                         .keys()
                         .filter(|item| item.table_id != 0 && !item.is_index)

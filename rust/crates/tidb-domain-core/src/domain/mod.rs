@@ -25,6 +25,7 @@ pub mod stats_maintenance;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::{Arc, Condvar, Mutex, Weak};
+use tidb_stats_handle_storage::stats_read_writer::StatsSessionPool as _;
 use std::time::{Duration, SystemTime};
 
 use chrono::{Datelike, Timelike, Utc};
@@ -111,8 +112,8 @@ impl tidb_stats_handle::StatisticsSource for ClusterStatisticsSource {
 }
 
 pub struct ClusterColumnStatsUsageProvider {
-    pub transactions: Arc<dyn ClusterTransactions>,
-    pub catalog: Arc<InfoCache>,
+    /// Go `statsHandle.SPool()`'s owner.
+    pub domain: Weak<Domain>,
 }
 
 pub struct ClusterTableStorageStatsProvider {
@@ -379,22 +380,68 @@ impl tidb_pdhelper::ApproximateTableCountProvider
 }
 
 pub struct ClusterAnalyzeStatusProvider {
-    pub transactions: Arc<dyn ClusterTransactions>,
-    pub catalog: Arc<InfoCache>,
+    /// The domain whose system sessions run Go's restricted query.
+    pub domain: Weak<Domain>,
     pub approximate_counts: Arc<ClusterApproximateTableCountProvider>,
 }
 
 impl tidb_stats_handle_autoanalyze::analyze_jobs::AnalyzeStatusProvider for ClusterAnalyzeStatusProvider {
-    fn load_analyze_status(
-        &self,
-        resource_group: &str,
-    ) -> Result<Vec<tidb_stats::AnalyzeStatusJob>, String> {
-        let snapshot = self.transactions.open_snapshot(resource_group)?;
-        tidb_stats_handle_autoanalyze::analyze_jobs::load_analyze_status_jobs(
-            &mut SnapshotMetaSnapshot::new(snapshot),
-            &self.catalog.get_latest(),
+    fn load_analyze_status(&self) -> Result<Vec<tidb_stats::AnalyzeStatusJob>, String> {
+        // Go `dataForAnalyzeStatusHelper`'s restricted query; privilege
+        // filtering happens later in the session, so invisible rows still
+        // occupy the limit, as in Go.
+        const MAX_ANALYZE_JOBS: i64 = 30;
+        let session_pool = self.domain.upgrade().map(|domain| domain.advanced_sys_session_pool());
+        let mut rows = Vec::new();
+        crate::sys_session::StatsPool {
+            session_pool: session_pool.as_ref(),
+        }
+        .call_with_sctx(
+            &mut |sctx| {
+                rows = tidb_stats_handle_util::exec_rows(
+                    sctx,
+                    "SELECT table_schema, table_name, partition_name, job_info, processed_rows, CONVERT_TZ(start_time, @@TIME_ZONE, '+00:00'), CONVERT_TZ(end_time, @@TIME_ZONE, '+00:00'), state, fail_reason, instance, process_id FROM mysql.analyze_jobs ORDER BY update_time DESC LIMIT %?",
+                    &[tidb_sqlescape::SqlArg::Signed(MAX_ANALYZE_JOBS)],
+                )?
+                .0;
+                Ok(())
+            },
+            &[],
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.message)?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                let null = |index: usize| row.get(index).is_none_or(tidb_datatype::Datum::is_null);
+                let text = |index: usize| {
+                    row.get(index)
+                        .and_then(tidb_datatype::Datum::as_raw_bytes)
+                        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+                        .unwrap_or_default()
+                };
+                let time = |index: usize| match row.get(index) {
+                    Some(tidb_datatype::Datum::Time(value)) => Some(*value),
+                    _ => None,
+                };
+                tidb_stats::AnalyzeStatusJob {
+                    table_schema: text(0),
+                    table_name: text(1),
+                    partition_name: text(2),
+                    job_info: text(3),
+                    processed_rows: row.get(4).map_or(0, tidb_datatype::Datum::get_int64),
+                    start_time: time(5),
+                    end_time: time(6),
+                    state: match row.get(7) {
+                        Some(tidb_datatype::Datum::Enum(value, _)) => value.name().to_utf8_lossy_go(),
+                        _ => String::new(),
+                    },
+                    fail_reason: (!null(8)).then(|| text(8)),
+                    instance: text(9),
+                    process_id: (!null(10))
+                        .then(|| row.get(10).map_or(0, tidb_datatype::Datum::get_int64) as u64),
+                }
+            })
+            .collect())
     }
 
     fn approximate_table_count(
@@ -447,7 +494,6 @@ impl tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::ColumnSt
     fn load_column_stats_usage(
         &self,
         location: &tidb_datatype::SessionTimeZone,
-        resource_group: &str,
     ) -> Result<
         std::collections::HashMap<
             tidb_model::TableItemID,
@@ -455,20 +501,26 @@ impl tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::ColumnSt
         >,
         String,
     > {
-        let snapshot = self.transactions.open_snapshot(resource_group)?;
-        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::load_column_stats_usage(
-            &mut snapshot,
-            &self.catalog.get_latest(),
-            location,
+        // Go `statsUsageImpl.LoadColumnStatsUsage`.
+        let session_pool = self.domain.upgrade().map(|domain| domain.advanced_sys_session_pool());
+        let mut usage = std::collections::HashMap::new();
+        crate::sys_session::StatsPool {
+            session_pool: session_pool.as_ref(),
+        }
+        .call_with_sctx(
+            &mut |sctx| {
+                usage = tidb_stats_handle_usage_predicatecolumn::predicate_column::load_column_stats_usage(
+                    sctx, location,
+                )?;
+                Ok(())
+            },
+            &[],
         )
-        .map(|usage| {
-            usage
-                .into_iter()
-                .map(|(item, times)| (item, (times.last_used_at, times.last_analyzed_at)))
-                .collect()
-        })
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.message)?;
+        Ok(usage
+            .into_iter()
+            .map(|(item, times)| (item, (times.last_used_at, times.last_analyzed_at)))
+            .collect())
     }
 }
 

@@ -38,15 +38,6 @@ pub struct ColStatsTimeInfo {
     pub last_analyzed_at: Option<Time>,
 }
 
-/// Loads every persisted column-usage row.
-pub fn load_column_stats_usage<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    location: &SessionTimeZone,
-) -> Result<HashMap<TableItemID, ColStatsTimeInfo>, SystemTableError> {
-    load(snapshot, catalog, location, None)
-}
-
 /// Loads persisted column usage for one physical or logical table.
 pub fn load_column_stats_usage_for_table<S: MetaSnapshot>(
     snapshot: &mut S,
@@ -141,11 +132,10 @@ fn usage_time(
 
 /// Storage-backed reader used by pinned Go `SHOW COLUMN_STATS_USAGE`.
 pub trait ColumnStatsUsageProvider: Send + Sync {
-    /// Loads the complete shared usage table at a fresh statement snapshot.
+    /// Go `statsUsageImpl.LoadColumnStatsUsage`: the whole usage table.
     fn load_column_stats_usage(
         &self,
         location: &tidb_datatype::SessionTimeZone,
-        resource_group: &str,
     ) -> Result<
         std::collections::HashMap<
             tidb_model::TableItemID,

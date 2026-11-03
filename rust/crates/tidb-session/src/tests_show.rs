@@ -2411,7 +2411,6 @@ fn show_column_stats_usage_reads_global_and_partition_ids() {
         fn load_column_stats_usage(
             &self,
             _location: &tidb_datatype::SessionTimeZone,
-            _resource_group: &str,
         ) -> Result<
             std::collections::HashMap<
                 tidb_model::TableItemID,

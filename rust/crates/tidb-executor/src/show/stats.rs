@@ -34,7 +34,7 @@ pub fn data_for_analyze_status_helper(
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
     let jobs = match provider {
         Some(provider) => provider
-            .load_analyze_status(resource_group)
+            .load_analyze_status()
             .map_err(DriverError::unsupported)?,
         None => Vec::new(),
     };

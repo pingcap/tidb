@@ -424,15 +424,13 @@ impl DomainSessions for Domain {
         session.set_stats_collector(self.stats_usage.new_session_stats_item());
         session.set_data_lock_waits_provider(self.data_lock_waits.clone());
         session.set_column_stats_usage_provider(Arc::new(ClusterColumnStatsUsageProvider {
-            transactions: Arc::clone(&self.transactions),
-            catalog: Arc::clone(&self.catalog),
+            domain: self.binding_session_factory.clone(),
         }));
         session.set_approximate_table_count_provider(
             Arc::clone(&self.approximate_table_counts) as Arc<_>,
         );
         session.set_analyze_status_provider(Arc::new(ClusterAnalyzeStatusProvider {
-            transactions: Arc::clone(&self.transactions),
-            catalog: Arc::clone(&self.catalog),
+            domain: self.binding_session_factory.clone(),
             approximate_counts: Arc::clone(&self.approximate_table_counts),
         }));
         session.set_table_storage_stats_provider(Arc::new(ClusterTableStorageStatsProvider {

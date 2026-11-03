@@ -33,9 +33,7 @@ use tidb_infoschema::cluster_catalog::{
     load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
 use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::ColStatsTimeInfo;
-use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::{
-    load_column_stats_usage, load_column_stats_usage_for_table,
-};
+use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::load_column_stats_usage_for_table;
 use tidb_stats_handle_storage::cluster_stats_dump::{
     load_table_stats_payload, table_historical_stats_to_json, table_stats_to_json_from_loaded,
 };
@@ -1970,7 +1968,8 @@ fn predicate_column_load_matches_the_pinned_storage_contract() {
         offset_secs: 8 * 60 * 60,
     };
     let usage =
-        load_column_stats_usage(&mut store, &catalog, &plus_eight).expect("all usage loads");
+        load_column_stats_usage_for_table(&mut store, &catalog, &plus_eight, table_id)
+            .expect("table usage loads");
     let item = |id| tidb_model::TableItemID {
         table_id,
         id,

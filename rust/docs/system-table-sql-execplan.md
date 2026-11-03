@@ -186,6 +186,12 @@ checksums).
   sampling transaction. `StatsSessionContext::latest_table_meta_by_id` is
   Go `sctx.GetLatestInfoSchema().TableByID`. Test
   `analyze_predicate_columns_forget_a_dropped_column_as_go` (gorun).
+- [x] (2026-11-03) Readers: SHOW ANALYZE STATUS is Go
+  `dataForAnalyzeStatusHelper`'s restricted SELECT and SHOW
+  COLUMN_STATS_USAGE Go `statsUsageImpl.LoadColumnStatsUsage`, both on the
+  domain's system-session pool (the providers took a resource group Go's
+  calls do not have). Test
+  `show_column_stats_usage_follows_the_session_time_zone_as_go` (gorun).
 - [ ] Readers (below).
 - [ ] The bootstrap (item 11).
 
@@ -215,7 +221,22 @@ The startup readers (sysvars, privileges, bindings, initial statistics)
 run before the node has a session: Go builds the domain and its
 `sysSessionPool` first (`BootstrapSession`) and loads each cache through a
 session. Porting the startup order removes those scans with the bootstrap's
-raw rows.
+raw rows. Go's order (`bootstrapSessionImpl`):
+
+1. `initGlobalVarFromSystemDB`: system time zone and new-collation flag from
+   `mysql.tidb`, through a session over a temporary system-DB-only domain
+   (Rust: `load_startup_variables_from_cluster`, raw).
+2. The domain, its session pools, `dom.Start`.
+3. `LoadPrivilegeLoop(ses[3])`, `LoadSysVarCacheLoop(ses[4])`,
+   `InitBindingHandle` (after the sysvar cache), then the statistics loops
+   (`UpdateTableStatsLoop`, `initStats` on `SPool`).
+
+The Rust builders (`tidb-server/src/cluster_stack.rs`,
+`tidb-session/src/domain/unistore_node.rs`) build the privilege, sysvar and
+statistics loaders before `Domain::new`. The binding cache already follows
+Go (`attach_binding_sessions` after the domain); the other loaders take the
+same shape: the domain over the empty live tables, then each loop attached
+to its session before the node serves.
 
 Reads. Go reads every one of these tables with a statement on a session
 (`ExecRestrictedSQL` / `util.Exec`); these scan the table's records
@@ -228,8 +249,7 @@ directly (`mysql_system_tables::scan_system_table*`):
 | `tidb-bindinfo/src/cluster_binding_seam.rs` (only before its session pool is attached; afterwards Go's SELECT) | `bindinfo` `readBindingsFromStorage` |
 | `tidb-stats-handle-storage/src/cluster_stats_load.rs` | `storage/read.go` and `initstats` statements |
 | `tidb-stats-handle-storage/src/cluster_stats_dump.rs` | `storage` `TableHistoricalStatsToJSON` / `getStatsVersion` |
-| `tidb-stats-handle-usage-predicatecolumn/src/cluster_predicate_column.rs` | `predicatecolumn` `LoadColumnStatsUsage*` |
-| `tidb-stats-handle-autoanalyze/src/analyze_jobs.rs` `load_analyze_status_jobs` | executor `dataForAnalyzeStatusHelper` |
+| `tidb-stats-handle-usage-predicatecolumn/src/cluster_predicate_column.rs` `load_column_stats_usage_for_table` (the stats dump) | `predicatecolumn` `LoadColumnStatsUsageForTable` |
 | `tidb-infoschema-issyncer/src/mdl_info_load.rs`, `tidb-ddl-systable/src/lib.rs` | MDL `select ... from mysql.tidb_mdl_info` |
 | `tidb-ddl-systable/src/ddl_job_table.rs` | job scheduler `getJob` / `GetAllDDLJobsInQueue` |
 | `tidb-ddl/src/ddl_history_table.rs` | `GetHistoryJobByID` / `GetLastNHistoryDDLJobs` |

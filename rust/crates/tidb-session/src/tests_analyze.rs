@@ -378,6 +378,34 @@ fn analyze_predicate_columns_forget_a_dropped_column_as_go() {
     assert_eq!(saved(&mut session), [["0", "0.5", "7", "-1", "LIST", "1,3"]]);
 }
 
+/// Go `SHOW COLUMN_STATS_USAGE` reads `LoadColumnStatsUsage`'s UTC times
+/// and shows them in the session's zone (gorun).
+#[test]
+fn show_column_stats_usage_follows_the_session_time_zone_as_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, b INT)").unwrap();
+    session.run("SET time_zone = '+08:00'").unwrap();
+    session
+        .run(
+            "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) \
+             SELECT tidb_table_id, 2, '2026-01-02 03:04:05' FROM information_schema.tables \
+             WHERE table_schema = 'test' AND table_name = 't'",
+        )
+        .unwrap();
+    let shown = |session: &mut Session| {
+        row_text(session.run("SHOW COLUMN_STATS_USAGE WHERE table_name = 't'"))
+    };
+    assert_eq!(
+        shown(&mut session),
+        [["test", "t", "", "b", "2026-01-02 03:04:05", "NULL"]]
+    );
+    session.run("SET time_zone = '+00:00'").unwrap();
+    assert_eq!(
+        shown(&mut session),
+        [["test", "t", "", "b", "2026-01-01 19:04:05", "NULL"]]
+    );
+}
+
 #[test]
 fn static_partition_analyze_inherits_and_updates_only_named_partition_options() {
     let mut session = Session::new();

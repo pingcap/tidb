@@ -804,7 +804,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     fn column_stats_usage_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
         let usage = match self.column_stats_usage_provider() {
             Some(provider) => provider
-                .load_column_stats_usage(&self.session_time_zone(), self.active_resource_group())
+                .load_column_stats_usage(&self.session_time_zone())
                 .map_err(DriverError::unsupported)?,
             None => std::collections::HashMap::new(),
         };
