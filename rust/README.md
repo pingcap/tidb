@@ -10,11 +10,6 @@ through TiDB's serialized protocols and the differential rings.
 
 ## Start here
 
-- [`docs/architecture/workspace.md`](docs/architecture/workspace.md): crate
-  boundaries and target concurrency boundaries.
-- [`docs/operations/validation.md`](docs/operations/validation.md): exact WIP
-  validation commands.
-
 The Go implementation is authoritative. Work starts from one complete Go
 package plus its original tests/support; differential output verifies the port
 but does not replace reading or translating the source.
@@ -44,8 +39,8 @@ but does not replace reading or translating the source.
 The seed executor and evaluator are migration scaffolding, not a parity claim.
 `tidb-txnkv` owns the Rust `pkg/kv` contracts and the existing PD/TiKV region,
 RPC, MVCC, lock, retry, and optimistic-commit runtime; it is migrating onto
-the vendored client-go transcreation in `third_party/tikv-client-rs` (see
-`docs/client-rust-migration-execplan.md`), with `driver/tikv_mem_buffer` and
+the vendored client-go transcreation in `third_party/tikv-client-rs`, with
+`driver/tikv_mem_buffer` and
 `driver/tikv_transaction` already delegating the transaction buffer and
 two-phase commit the way Go's `pkg/store/driver` delegates to client-go. `tidb-codec` provides
 comparable key encoding, and `tidb-tablecodec` combines those foundations

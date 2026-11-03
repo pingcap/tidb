@@ -1309,8 +1309,7 @@ fn test_uuid_keyword_compatibility() {
 }
 
 /// Pins the two-Go-list split behind reserved-keyword identifier
-/// admission — see `tidb_lexer::reserved`'s own doc and
-/// `rust/docs/parser-lexer-divergence.md` finding #4/#5. Go's
+/// admission — see `tidb_lexer::reserved`'s own doc. Go's
 /// `expr_prefix_parser.go` gates a bare expression-position identifier
 /// (including EVERY segment of a qualified `a.b.c` path) on the small
 /// 13-word `isReservedClauseKeyword` ONLY — a fully RESERVED keyword like

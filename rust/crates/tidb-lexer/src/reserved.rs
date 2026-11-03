@@ -309,9 +309,8 @@ mod tests {
     /// `IsReserved` (and therefore this list) must include BOTH spellings,
     /// not just whichever one a naive map-inversion happens to keep. This
     /// is the exact regression that shipped without `DATABASE`/
-    /// `DATABASES`/`DISTINCT` — see `rust/docs/parser-lexer-divergence.md`
-    /// finding #5 (`DEC`/`DECIMAL` is a fourth pair the same finding
-    /// missed, caught by re-running its own machine diff after this fix).
+    /// `DATABASES`/`DISTINCT` (`DEC`/`DECIMAL` is a fourth pair, caught by
+    /// re-running the machine diff after that fix).
     #[test]
     fn reserved_keyword_pairs_are_complete() {
         for (a, b) in [

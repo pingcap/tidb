@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Behavioral tests retained from Go. Removed documentary entries are
-//! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
+//! Behavioral tests retained from Go.
 
 //!
 //! Each test opens its Go owner in `pkg/ddl/tests/fk/foreign_key_test.go`;

@@ -41,7 +41,7 @@ Their inputs live in `rust/third_party/tikv-client-rs/proto`; `extern_path`
 keeps imported fields the same Rust types. The native generator uses Bytes
 for all four fields declared as Go SharedBytes, retaining response-buffer
 ownership without a separate TiDB schema. The complete source and artifact
-[receipt](../../docs/shared-client-contracts-inventory.json) is checked by
+[receipt](../../scripts/shared-client-contracts-inventory.json) is checked by
 `python3 rust/scripts/check-shared-client-proto.py` in `make lint`.
 After publishing and synchronizing native changes, review and refresh it with
 `python3 rust/scripts/check-shared-client-proto.py --write --go-ref origin/master`.
@@ -71,10 +71,9 @@ python3 rust/scripts/sync-tipb.py --etcd-api
 python3 rust/scripts/audit-protocol-projections.py --go-ref origin/master
 ```
 
-The audit now compares actual generated descriptors and writes
-`rust/docs/parity/current-audit/protocol-contracts-after.json`; the historical
-`protocol-projections.json` remains the before-image. It reports no omissions
-or contract differences, and separately lists all 71 intentional opaque fields.
+The audit compares actual generated descriptors and writes its report to
+`rust/target/protocol-contracts-after.json`. It fails on any omission or
+contract difference other than the intentional opaque fields.
 Complete wire schemas do not accept entire external Go packages: handwritten
 BR version constants, etcd redacted logging helpers, gateway/runtime behavior
 and original test translation still require their package-wide integration

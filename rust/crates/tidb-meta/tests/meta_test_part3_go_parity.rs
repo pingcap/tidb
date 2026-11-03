@@ -20,8 +20,7 @@
 //! go-parity gaps because they need the session-bootstrap + InfoSchemaV2
 //! pipeline that does not exist in this workspace.
 //!
-//! Earlier slices of the file are pinned by other modules in this directory
-//! (see `rust/testport/receipts/b039.md` for that mapping).
+//! Earlier slices of the file are pinned by other modules in this directory.
 
 use tidb_ast::CiString;
 use tidb_meta::transaction::{

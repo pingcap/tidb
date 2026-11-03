@@ -15,7 +15,7 @@
 //! Multi-valued indexes (`CAST(... AS ... ARRAY)` key parts): Go's DDL
 //! admission, `castJSONAsArrayFunctionSig`, and the write path's
 //! `index.getIndexedValue` expansion. Every expected answer is a Go oracle
-//! run on this branch, recorded in `rust/docs/multi-valued-index-execplan.md`.
+//! run on this branch.
 
 use crate::tests_support::row_text;
 use crate::Session;

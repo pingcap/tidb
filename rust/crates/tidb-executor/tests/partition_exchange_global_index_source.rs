@@ -13,8 +13,6 @@
 // limitations under the License.
 
 //! Behavioral tests retained from the Go source inventory.
-//! Removed empty entries and their original contracts are indexed in
-//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_model::index::{
     GLOBAL_INDEX_VERSION_LEGACY, GLOBAL_INDEX_VERSION_V1, GLOBAL_INDEX_VERSION_V2,

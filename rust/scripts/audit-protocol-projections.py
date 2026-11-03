@@ -31,7 +31,7 @@ import subprocess
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-OUT = ROOT / 'rust/docs/parity/current-audit/protocol-contracts-after.json'
+OUT = ROOT / 'rust/target/protocol-contracts-after.json'
 
 def run(*args, **kwargs):
     return subprocess.check_output(args, cwd=ROOT, **kwargs)

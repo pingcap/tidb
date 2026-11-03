@@ -9,9 +9,8 @@
 # depends on `github.com/tikv/client-go/v2`, instead of hand-transcreating PD
 # and TiKV client protocol logic. That upstream repository is actively
 # maintained by a separate agent and this workspace must always build against
-# its latest `master`, not a commit frozen at some earlier point -- see
-# `rust/docs/client-rust-migration-execplan.md` for the full plan and the
-# rationale for vendoring this way (scratch clone + rsync, not a nested git
+# its latest `master`, not a commit frozen at some earlier point. It is
+# vendored this way (scratch clone + rsync, not a nested git
 # checkout or submodule, so the tracked copy is plain files like every other
 # crate in this workspace, and `git diff`/`git blame` inside `rust/` work
 # normally on it).

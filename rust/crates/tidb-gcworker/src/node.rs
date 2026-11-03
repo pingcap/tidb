@@ -377,8 +377,7 @@ impl GcRuleClient for NodeGcRules {
 mod playground_tests {
     /// Counts the keys of the table `GC_ACC_TABLE_ID` (its record and index
     /// keys, `t{id}` .. `t{id+1}`) on the cluster at `GC_ACC_PD`, read at a
-    /// fresh timestamp. Run by hand against a playground (see
-    /// `rust/docs/gcworker-execplan.md`): after `DROP TABLE` the rows are
+    /// fresh timestamp. Run by hand against a playground: after `DROP TABLE` the rows are
     /// still there (Go deletes nothing until GC), and after the GC worker
     /// destroyed the table's delete range there is none, at any timestamp.
     #[test]

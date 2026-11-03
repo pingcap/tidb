@@ -15,8 +15,6 @@
 #![allow(missing_docs)]
 
 //! Behavioral tests retained from the Go source inventory.
-//! Removed empty entries and their original contracts are indexed in
-//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_charset::Collation;

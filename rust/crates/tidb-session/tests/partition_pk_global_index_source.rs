@@ -14,8 +14,7 @@
 
 //! CREATE-time cases from `pkg/ddl/tests/partition/db_partition_test.go`
 //! (`TestPrimaryGlobalIndex` and `TestPrimaryNoGlobalIndex`).
-//! Online primary-key/repartition obligations remain recorded in
-//! `docs/parity/current-audit/test-owner-cleanup-validation.json`.
+//! The online primary-key/repartition cases are not ported.
 
 use crate::support::testkit::TestKit;
 use tidb_infoschema::TableEntry;

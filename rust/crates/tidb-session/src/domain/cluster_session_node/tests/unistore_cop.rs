@@ -26315,8 +26315,7 @@ fn flashback_database_brings_a_dropped_schema_back_as_go() {
     assert_eq!(query(&mut session, "select @@global.tidb_gc_enable"), [["1"]]);
 }
 
-/// Go `w.sess.Execute` inside the job step's transaction
-/// (`docs/ddl-step-session-execplan.md` M1): a statement on the step session
+/// Go `w.sess.Execute` inside the job step's transaction: a statement on the step session
 /// reads at the step's start timestamp and stages its rows into the step's
 /// buffer, publishing nothing itself; the rows appear when the step commits
 /// that buffer and vanish when it does not. The INSERT's presume-not-exist

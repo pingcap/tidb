@@ -13,8 +13,6 @@
 // limitations under the License.
 
 //! Behavioral tests retained from the Go source inventory.
-//! Removed empty entries and their original contracts are indexed in
-//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_ast::{
     AdminStmt, Assignment, BinaryOp, ColumnOrUserVar, DmlStmt, Expr, ImportIntoStmt,

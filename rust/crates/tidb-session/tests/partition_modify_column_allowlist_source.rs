@@ -14,9 +14,7 @@
 
 //! CREATE/MODIFY partition-column contracts from
 //! `pkg/ddl/tests/partition/modify_column_test.go`.
-//! Online reorganization, collation and dynamic-pruning obligations remain
-//! recorded in `docs/parity/current-audit/test-owner-cleanup-validation.json`.
-//! These running cases do not establish complete package coverage.
+//! Online reorganization, collation and dynamic-pruning cases are not ported.
 
 use crate::support::testkit::TestKit;
 

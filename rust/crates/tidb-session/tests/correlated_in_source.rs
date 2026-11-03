@@ -1,8 +1,7 @@
 //! Correlated IN: even with duplicate inner matches per outer row the
 //! outer row emits at most once — `a in (select grp from s)` with s holding
 //! (1,10) twice answers 1 and 2, and NOT IN keeps only the outer rows whose
-//! group is absent. (Contrast: correlated EXISTS fans out — see
-//! docs/correlated-exists-fanout-divergence.md.)
+//! group is absent.
 
 use tidb_session::Session;
 

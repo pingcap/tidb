@@ -18,8 +18,8 @@
 //! `builtin_string_vec_test.go`, `builtin_string_vec_generated_test.go`,
 //! `builtin_test.go` and `builtin_time_test.go`).
 //!
-//! Items whose tables are fully carried by pre-existing crate tests are cited
-//! in `rust/testport/receipts/b071.md` rather than duplicated here.
+//! Items whose tables are fully carried by pre-existing crate tests are not
+//! duplicated here.
 
 use super::*;
 use crate::expression::Expression;

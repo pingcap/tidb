@@ -14,9 +14,9 @@
 
 //! Domain services and helpers used by the Rust server and session owners.
 //!
-//! This crate is not complete Go `pkg/domain` parity. Consult the structural
-//! audit under `rust/docs/parity/current-audit` for current integration and
-//! lifecycle obligations; historical file-level claims are not package acceptance.
+//! This crate is not complete Go `pkg/domain` parity; the structural findings
+//! register (`rust/docs/parity/current-audit/structural-findings.md`) lists
+//! its open integration and lifecycle gaps.
 //!
 //! Live configuration hooks belong to the session/server owners. The unused
 //! `DomainSysVarEnv` facade was retired. [`sysvar_cache`] retains shared cache

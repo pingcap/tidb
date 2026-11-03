@@ -19,8 +19,7 @@
 //! TestSequenceKey, TestCreateMySQLDatabase, TestIsTableInfoMustLoad,
 //! TestIsTableInfoMustLoadSubStringsOrder, TestTableNameExtract,
 //! TestNameExtractFromJob, TestPlacementPolicy, TestMaskingPolicy,
-//! TestResourceGroup and the TestMeta body) are already ported; see
-//! `rust/testport/receipts/b039.md` for that mapping table.
+//! TestResourceGroup and the TestMeta body) are already ported.
 //!
 //! The two functions below translate Go's `BenchmarkGenGlobalIDs` /
 //! `BenchmarkGenGlobalIDOneByOne` loop assertions into correctness tests:

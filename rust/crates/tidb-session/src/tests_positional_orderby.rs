@@ -9,8 +9,7 @@
 //! kept the written literal instead, the grouped partial-aggregate plans'
 //! order/group match refused both the TiKV HashAgg split and -- with it --
 //! every pushdown below the aggregate, leaving the whole plan at `root`.
-//! These assertions pin the Go shapes captured in
-//! `rust/TPCH_HBX_GO_PLAN_PARITY_EXECPLAN.md`'s q1-style aggregate query.
+//! These assertions pin the Go shapes of TPC-H's q1-style aggregate query.
 
 use crate::tests_support::*;
 use crate::*;

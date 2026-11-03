@@ -12,14 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Executable TiFlash metadata-copy and truncate row regressions.
-//!
-//! Eight ignored empty shells formerly represented upstream integration
-//! obligations without executing any assertions. Their original source notes
-//! remain in `rust/docs/parity/current-audit/tiflash-unverified-test-obligations.json`.
-//! Live replica metadata and polling exist in tidb-exec and are tested there;
-//! broader durable DDL, mock/multi-node and schema-validation obligations are
-//! still unaccepted. These two tests do not certify the upstream DDL package.
+//! Executable TiFlash metadata-copy and truncate row regressions. The
+//! durable-DDL, mock/multi-node and schema-validation cases of the Go file are
+//! not ported.
 
 use crate::support::testkit::{enable_failpoint, TestKit};
 use tidb_infoschema::TableEntry;

@@ -13,8 +13,7 @@
 // limitations under the License.
 
 //! `pkg/ddl/tests/partition/db_partition_test.go::TestIssue57780`.
-//! The separate truncate schema-version obligation remains recorded in
-//! `docs/parity/current-audit/test-owner-cleanup-validation.json`.
+//! The separate truncate schema-version case is not ported.
 
 use crate::support::testkit::TestKit;
 

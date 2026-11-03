@@ -5740,8 +5740,8 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
 pub(crate) use tidb_ddl_jobsubmit::wrap_key_2_string;
 
 /// Go `updateDDLJob2Table`: `update mysql.tidb_ddl_job set job_meta = ...`
-/// through the step's session; a run without one stages the row itself
-/// (`docs/ddl-step-session-execplan.md`, M4 removes that).
+/// through the step's session; a run without one still stages the row
+/// itself, which Go never does.
 fn update_ddl_job_2_table(
     session: Option<&crate::job_txn::StepSession>,
     start_ts: u64,
@@ -9072,7 +9072,7 @@ fn find_index(table: &TableInfo, name: &str) -> Option<GoShared<IndexInfo>> {
 /// Go `notifier.PubSchemeChangeToStore` for each of `events`: the step's
 /// session runs `tableStore.Insert`'s statement in the step's transaction.
 /// A run without a session (bootstrap, planner tests) still stages the rows
-/// itself (`docs/ddl-step-session-execplan.md`, M4 removes that).
+/// itself, which Go never does.
 fn append_schema_change_mutations(
     txn: &JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,

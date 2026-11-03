@@ -7,8 +7,7 @@
 # Why this exists: client-go is not vendored in the TiDB tree and there is no
 # Go toolchain on every workstation, so it is easy to write "Go does X"
 # from memory. That has been wrong in practice -- two contracts were ported
-# stricter than Go's real behaviour and only a source read caught it (see
-# `docs/go-oracle.md`). TiDB's own `pkg/**` is already in this checkout and
+# stricter than Go's real behaviour and only a source read caught it. TiDB's own `pkg/**` is already in this checkout and
 # needs nothing; this fetches the piece that is missing.
 #
 # The checkout is deliberately OUTSIDE version control (`.oracle/` is

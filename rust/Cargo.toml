@@ -333,7 +333,7 @@ members = [
     "difftests/result-tests",
 ]
 # `third_party/tikv-client-rs` is a vendored, re-synced copy of
-# `ngaut/client-rust` (see rust/docs/client-rust-migration-execplan.md) and
+# `ngaut/client-rust` and
 # declares its own `[workspace]` (its `proto-build`/`unistore` helper crates),
 # so it cannot also be a member of this workspace. It is consumed as an
 # ordinary path dependency (`tikv-client` below) instead.
@@ -375,7 +375,7 @@ tonic-prost = "0.14"
 tonic-prost-build = "0.14"
 # Vendored `ngaut/client-rust` (github.com/ngaut/client-rust, a client-go-parity
 # fork of the official tikv/client-rust), re-synced by
-# scripts/sync-tikv-client-rs.sh. See docs/client-rust-migration-execplan.md.
+# scripts/sync-tikv-client-rs.sh.
 tikv-client = { path = "third_party/tikv-client-rs" }
 # Go TiDB reaches etcd directly (go.mod depends on go.etcd.io/etcd/client/v3,
 # not through client-go) for DDL schema-version/privilege/sysvar notification

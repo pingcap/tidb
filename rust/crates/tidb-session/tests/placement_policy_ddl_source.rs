@@ -13,8 +13,6 @@
 // limitations under the License.
 
 //! Behavioral tests retained from the Go source inventory.
-//! Removed empty entries and their original contracts are indexed in
-//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 //!
 //! Every statement runs through the Go testkit port (`tk.must_exec`) under
 //! the testkit's default strict sql_mode; stored policy settings and table

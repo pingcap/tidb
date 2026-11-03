@@ -17,8 +17,6 @@
 //! (`MaxIndexLength`, `EnableEnumLengthLimit`). Every test holds the serial
 //! lock (directly or through `update_global_config`), because the limits it
 //! observes are process-wide config other serial tests mutate.
-//! Removed empty entries and their original contracts are indexed in
-//! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use crate::support::testkit::{TestKit, serial, update_global_config};
 use tidb_datatype::FieldType;

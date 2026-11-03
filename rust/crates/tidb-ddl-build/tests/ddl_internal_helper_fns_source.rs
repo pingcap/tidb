@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Behavioral tests retained from Go. Removed documentary entries are
-//! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
+//! Behavioral tests retained from Go.
 
 use tidb_ddl_build::cluster::{merge_continuous_key_ranges, KeyRangeMayExclude};
 use tidb_model::{PartitionDefinition, PartitionInfo};

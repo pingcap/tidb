@@ -13,8 +13,6 @@
 // limitations under the License.
 
 //! Behavioral session tests retained from the original Go test inventory.
-//! Empty harness entries moved to session-cleanup-obligations.json in
-//! rust/docs/parity/current-audit; their Go obligations remain unverified.
 
 #![cfg(test)]
 

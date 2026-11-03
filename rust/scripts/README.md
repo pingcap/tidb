@@ -1,7 +1,6 @@
 # `rust/scripts`
 
-Operational tooling for the Rust workspace. Historical retirement details and
-validation receipts are indexed in [the current audit](../docs/parity/current-audit/README.md).
+Operational tooling for the Rust workspace.
 
 ## Build and test commands
 

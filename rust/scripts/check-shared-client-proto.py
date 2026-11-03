@@ -14,7 +14,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 NATIVE = ROOT / "rust/third_party/tikv-client-rs"
-RECEIPT = ROOT / "rust/docs/shared-client-contracts-inventory.json"
+RECEIPT = ROOT / "rust/scripts/shared-client-contracts-inventory.json"
 MODULE = "github.com/pingcap/kvproto"
 PACKAGES = {name: name for name in ("kvrpcpb", "errorpb", "metapb", "encryptionpb", "coprocessor", "mpp", "pdpb", "tikvpb")}
 PACKAGES["brpb"] = "backup"

@@ -16,8 +16,7 @@
 //! `origin/master`. The production port lives in the `tidb-model` crate; these
 //! integration tests exercise its public API from the owning crate named by
 //! the batch manifest (`tidb-metadef`). Go tests already pinned verbatim by
-//! `#[cfg(test)]` modules inside `tidb-model` are listed (with their Rust
-//! counterparts) in `rust/testport/receipts/b007.md`.
+//! `#[cfg(test)]` modules inside `tidb-model` are not repeated here.
 
 use tidb_ast::CiString;
 use tidb_model::{

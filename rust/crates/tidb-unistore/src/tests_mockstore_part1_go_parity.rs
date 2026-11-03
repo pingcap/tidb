@@ -30,8 +30,6 @@
 //!   arm, and `TestMinCommitTs`' second push segment.
 //! * Ported here as executable pins: `cop_handler_test.go`'s
 //!   `TestIsPrefixNext`, `TestPointGet`, `TestClosureExecutor`.
-//! Documentary placeholders were retired; their original Go contracts remain
-//! in docs/parity/current-audit/placeholder-macro-cleanup-validation.json.
 //! The real MVCC and coprocessor tests above remain registered.
 
 use tidb_unistore_cophandler::{handle_cop_request, REQ_TYPE_DAG};

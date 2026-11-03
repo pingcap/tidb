@@ -971,8 +971,7 @@ impl Parser {
                 // real TiDB even though `ROWS`/`DATABASE` are reserved —
                 // gating this arm on `is_reserved` (as a prior revision did)
                 // wrongly rejects ~220 reserved-but-not-clause keywords used
-                // bare, which is why it was reverted (see
-                // `rust/docs/parser-lexer-divergence.md` findings #4/#5).
+                // bare, which is why it was reverted.
                 // This single arm subsumes the old two-arm split (a
                 // `!is_reserved` bare-column arm plus a separate
                 // `peek == "(" && !is_clause_keyword` function-call arm):
