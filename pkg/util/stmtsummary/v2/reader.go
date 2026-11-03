@@ -169,6 +169,7 @@ type HistoryReader struct {
 	timeLocation *time.Location
 
 	columnFactories []columnFactory
+	projection      *stmtRecordProjection
 	checker         *stmtChecker
 	files           *stmtFiles
 
@@ -210,6 +211,7 @@ func NewHistoryReader(
 		instanceAddr:    instanceAddr,
 		timeLocation:    timeLocation,
 		columnFactories: makeColumnFactories(columns),
+		projection:      makeStmtRecordProjection(columns),
 		checker: &stmtChecker{
 			user:           user,
 			hasProcessPriv: hasProcessPriv,
@@ -314,6 +316,7 @@ func (r *HistoryReader) scheduleTasks(
 		timeLocation:    r.timeLocation,
 		checker:         r.checker,
 		columnFactories: r.columnFactories,
+		projection:      r.projection,
 	}
 
 	concurrent := r.concurrent
@@ -968,6 +971,7 @@ type stmtParseWorker struct {
 	timeLocation    *time.Location
 	checker         *stmtChecker
 	columnFactories []columnFactory
+	projection      *stmtRecordProjection
 }
 
 func (w *stmtParseWorker) run(
@@ -1044,7 +1048,10 @@ func (w *stmtParseWorker) putRows(
 	}
 }
 
-func (*stmtParseWorker) parse(raw []byte) (*StmtRecord, bool, error) {
+func (w *stmtParseWorker) parse(raw []byte) (*StmtRecord, bool, error) {
+	if w.projection != nil {
+		return w.projection.parse(raw)
+	}
 	var record stmtPersistedRecord
 	if err := json.Unmarshal(raw, &record); err != nil {
 		return nil, false, err
