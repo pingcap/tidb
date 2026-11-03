@@ -39,23 +39,24 @@ func Sleep(ctx context.Context, d time.Duration) error {
 func IsUniqueLocalTime(t time.Time) bool {
 	_, offset := t.Zone()
 	start, end := t.ZoneBounds()
-	for i, boundary := range []time.Time{start, end} {
-		if boundary.IsZero() {
-			continue
-		}
-		if i == 0 {
-			boundary = boundary.Add(-time.Nanosecond)
-		}
-		_, adjacentOffset := boundary.Zone()
-		if adjacentOffset == offset {
-			continue
-		}
-		// Shifting by the offset difference preserves the wall-clock reading
-		// exactly when the candidate instant uses the adjacent offset.
-		_, candidateOffset := t.Add(time.Duration(offset-adjacentOffset) * time.Second).Zone()
-		if candidateOffset == adjacentOffset {
-			return false
-		}
+	if !start.IsZero() && repeatsInAdjacentOffset(t, offset, start.Add(-time.Nanosecond)) {
+		return false
+	}
+	if !end.IsZero() && repeatsInAdjacentOffset(t, offset, end) {
+		return false
 	}
 	return true
+}
+
+// repeatsInAdjacentOffset reports whether t's wall-clock reading also occurs
+// with the UTC offset in effect at adjacent.
+func repeatsInAdjacentOffset(t time.Time, offset int, adjacent time.Time) bool {
+	_, adjacentOffset := adjacent.Zone()
+	if adjacentOffset == offset {
+		return false
+	}
+	// Shifting by the offset difference preserves the wall-clock reading
+	// exactly when the candidate instant uses the adjacent offset.
+	_, candidateOffset := t.Add(time.Duration(offset-adjacentOffset) * time.Second).Zone()
+	return candidateOffset == adjacentOffset
 }
