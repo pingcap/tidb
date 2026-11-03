@@ -22,6 +22,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl/placement",
         "//pkg/ddl/resourcegroup",
         "//pkg/domain/infosync",
@@ -103,6 +104,7 @@ go_test(
     shard_count = 45,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl/placement",
         "//pkg/domain",
         "//pkg/infoschema/context",

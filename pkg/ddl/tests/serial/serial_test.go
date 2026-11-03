@@ -1535,7 +1535,6 @@ func TestForbiddenDDLInNextGen(t *testing.T) {
 	) partition by range(table_id)(partition p0 values less than MAXVALUE);`)
 
 	for _, sql := range []string{
-		`drop database sys`,
 		`drop database mysql`,
 		`drop table mysql.tidb_global_task`,
 		`truncate table mysql.tidb_global_task`,
@@ -1550,6 +1549,7 @@ func TestForbiddenDDLInNextGen(t *testing.T) {
 	}
 
 	tk.MustExec("drop view sys.schema_unused_indexes")
+	tk.MustExec("drop database sys")
 	tk.MustExec("drop view mysql.tidb_mdl_view")
 
 	// Custom mysql tables are ordinary user objects despite their schema name.

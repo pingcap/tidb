@@ -27,6 +27,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -333,25 +334,21 @@ func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 	return is.schemaByName(name)
 }
 
-// IsSystemSchema checks whether id identifies the persisted mysql or sys schema
-// in this keyspace. Classic-bootstrapped keyspaces can use non-reserved IDs.
-func IsSystemSchema(is InfoSchema, id int64) bool {
-	if is == nil {
+// IsSystemTableInNextGen identifies system tables by reserved ID in native NextGen
+// keyspaces, or by loaded built-in names in Classic-bootstrapped NextGen keyspaces.
+// It does not access storage.
+func IsSystemTableInNextGen(is InfoSchema, isLegacyNextGen bool, id int64) bool {
+	if kerneltype.IsClassic() {
 		return false
 	}
-	db, ok := is.SchemaByID(id)
-	return ok && (metadef.IsSystemDB(db.Name.L) || db.Name.L == mysql.SysDB)
-}
-
-// IsSystemTable checks whether id identifies a built-in mysql table in this keyspace,
-// using the IDs already loaded into InfoSchema without accessing storage.
-func IsSystemTable(is InfoSchema, id int64) bool {
-	if is == nil || id <= 0 {
-		return false
+	if isLegacyNextGen {
+		// for newly created system table during upgrade, the IS might not contain
+		// it, but it's ok now as they mostly are not used in cross keyspace
+		// scenario. for same keyspace usage, the checking is enough now.
+		tbl, ok := is.TableItemByID(id)
+		return ok && metadef.IsBuiltinSystemTable(tbl.DBName.L, tbl.TableName.L)
 	}
-	tbl, ok := is.TableItemByID(id)
-	return ok && metadef.IsSystemDB(tbl.DBName.L) &&
-		(metadef.IsReservedID(id) || metadef.IsBuiltinSystemTable(tbl.DBName.L, tbl.TableName.L))
+	return metadef.IsReservedID(id)
 }
 
 // SchemaByTable get a table's schema name

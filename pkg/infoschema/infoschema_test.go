@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -77,22 +78,22 @@ func TestSystemSchemaIDs(t *testing.T) {
 					raw.EvictTable(mysqlDB.Name, ast.NewCIStr("tidb_mdl_view"))
 					raw.EvictTable(sysDB.Name, ast.NewCIStr("schema_unused_indexes"))
 				}
-				require.True(t, infoschema.IsSystemSchema(is, layout.mysqlID))
-				require.True(t, infoschema.IsSystemSchema(is, layout.sysID))
-				require.False(t, infoschema.IsSystemSchema(is, userDB.ID))
-				require.False(t, infoschema.IsSystemSchema(is, layout.tableID))
-				require.True(t, infoschema.IsSystemTable(is, layout.tableID))
-				require.False(t, infoschema.IsSystemTable(is, 10000))
-				require.False(t, infoschema.IsSystemTable(is, 10001))
-				require.False(t, infoschema.IsSystemTable(is, 10002))
-				for _, id := range []int64{0, -1, layout.mysqlID, layout.sysID, userTableID, metadef.ReservedGlobalIDLowerBound + 2} {
-					require.False(t, infoschema.IsSystemTable(is, id), "id=%d", id)
+				isLegacyNextGen := layout.name == "classic"
+				require.Equal(t, kerneltype.IsNextGen(), infoschema.IsSystemTableInNextGen(is, isLegacyNextGen, layout.tableID))
+				for _, id := range []int64{0, -1, 10000, 10001, 10002} {
+					require.False(t, infoschema.IsSystemTableInNextGen(is, isLegacyNextGen, id), "id=%d", id)
+				}
+				// Fresh NextGen keyspaces classify reserved IDs without needing loaded
+				// metadata, including system tables newly created during an upgrade.
+				for _, id := range []int64{layout.mysqlID, layout.sysID, userTableID, metadef.ReservedGlobalIDLowerBound + 2} {
+					require.Equal(t, kerneltype.IsNextGen() && !isLegacyNextGen,
+						infoschema.IsSystemTableInNextGen(is, isLegacyNextGen, id), "id=%d", id)
 				}
 			})
 		}
 	}
-	require.False(t, infoschema.IsSystemTable(nil, 100))
-	require.False(t, infoschema.IsSystemSchema(nil, 1))
+	require.False(t, infoschema.IsSystemTableInNextGen(nil, false, 100))
+	require.Equal(t, kerneltype.IsNextGen(), infoschema.IsSystemTableInNextGen(nil, false, metadef.GlobalPrivTableID))
 }
 
 func TestBasic(t *testing.T) {

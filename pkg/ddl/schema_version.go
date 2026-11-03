@@ -413,7 +413,7 @@ func waitVersionSynced(
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.DDLWaitSchemaSynced, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
-	checkAssumedSvr := shouldCheckAssumedServer(job, jobCtx.infoCache.GetLatest())
+	checkAssumedSvr := shouldCheckAssumedServer(job, jobCtx.infoCache.GetLatest(), jobCtx.isLegacyNextGen)
 	logger := logutil.DDLLogger().With(zap.Int64("ver", latestSchemaVersion), zap.Bool("checkAssumedSvr", checkAssumedSvr))
 	// WaitVersionSynced returns only when all TiDB schemas are synced(exclude the isolated TiDB).
 	sum, err := jobCtx.schemaVerSyncer.WaitVersionSynced(ctx, job.ID, latestSchemaVersion, checkAssumedSvr)
@@ -432,7 +432,7 @@ func waitVersionSynced(
 // assumedServer is the virtual server that involved in the online schema change
 // of some keyspace, it's run on a real server with different keyspace, it's only
 // used in cross keyspace scenario.
-func shouldCheckAssumedServer(job *model.Job, is infoschema.InfoSchema) bool {
+func shouldCheckAssumedServer(job *model.Job, is infoschema.InfoSchema, isLegacyNextGen bool) bool {
 	if kerneltype.IsClassic() {
 		return false
 	}
@@ -440,7 +440,7 @@ func shouldCheckAssumedServer(job *model.Job, is infoschema.InfoSchema) bool {
 	// check the table ID is enough, as we forbid doing DDL which involve multiple
 	// table IDs on system tables in nextgen, such as RenameTables, TruncateTable,
 	// ExchangePartition, etc.
-	return infoschema.IsSystemTable(is, job.TableID)
+	return infoschema.IsSystemTableInNextGen(is, isLegacyNextGen, job.TableID)
 }
 
 // waitVersionSyncedWithoutMDL handles the following situation:

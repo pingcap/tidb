@@ -16,6 +16,7 @@ package issyncer
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -97,6 +97,10 @@ type Loader struct {
 	// CachedTable need internal session to access some system tables, such as
 	// mysql.table_cache_meta
 	sysExecutorFactory func() (pools.Resource, error)
+	// legacyNextGen records whether the target is a NextGen keyspace retaining
+	// Classic system-table IDs.
+	// A nil pointer means the layout has not been initialized yet.
+	legacyNextGen atomic.Pointer[bool]
 }
 
 func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn, filter Filter) *Loader {
@@ -122,6 +126,11 @@ func NewLoaderForCrossKS(store kv.Storage, infoCache *infoschema.InfoCache) *Loa
 		crossKS:   true,
 		logger:    logutil.BgLogger().With(zap.String("targetKS", store.GetKeyspace()), zap.Stringer("mode", mode)),
 	}
+}
+
+func (l *Loader) isLegacyNextGen() bool {
+	val := l.legacyNextGen.Load()
+	return val != nil && *val
 }
 
 // initFields initializes some fields of the Loader.
@@ -152,6 +161,13 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 	// the meta region leader is slow.
 	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
 	m := meta.NewReader(snapshot)
+	if l.legacyNextGen.Load() == nil {
+		val, err := m.IsLegacyNextGen()
+		if err != nil {
+			return nil, false, 0, nil, errors.Trace(err)
+		}
+		l.legacyNextGen.CompareAndSwap(nil, &val)
+	}
 	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return nil, false, 0, nil, err
@@ -310,48 +326,10 @@ func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff, m meta.Reader) (bool, e
 		return false, nil
 	}
 
-	// Use the target keyspace's loaded IDs, including legacy Classic IDs.
 	is := l.infoCache.GetLatest()
-	// Only built-ins participate in SYSTEM synchronization. For newly created
-	// tables, resolve their names from the snapshot because the old InfoSchema
-	// does not contain their IDs yet.
-	isSystemObject := func(schemaID, tableID int64) (bool, error) {
-		if infoschema.IsSystemTable(is, tableID) {
-			return true, nil
-		}
-		db, ok := is.SchemaByID(schemaID)
-		if tableID <= 0 || !ok || !metadef.IsSystemDB(db.Name.L) {
-			return false, nil
-		}
-		if metadef.IsReservedID(tableID) {
-			return true, nil
-		}
-		if m == nil {
-			return false, nil
-		}
-		tbl, err := m.GetTable(schemaID, tableID)
-		if err != nil {
-			return false, err
-		}
-		return tbl != nil && metadef.IsBuiltinSystemTable(db.Name.L, tbl.Name.L), nil
-	}
-	// for cross keyspace loader, we only load diff related to system tables.
-	// we don't check AffectedOpts, as we forbid doing DDL which involve multiple
-	// table IDs on system tables in nextgen, such as RenameTables, TruncateTable,
-	// ExchangePartition, etc.
-	for _, obj := range []struct{ schemaID, tableID int64 }{
-		{diff.SchemaID, diff.TableID},
-		{diff.OldSchemaID, diff.OldTableID},
-	} {
-		related, err := isSystemObject(obj.schemaID, obj.tableID)
-		if err != nil {
-			return false, err
-		}
-		if related {
-			return false, nil
-		}
-	}
-	return true, nil
+	// Cross-keyspace loaders only apply diffs involving system tables.
+	return !(infoschema.IsSystemTableInNextGen(is, l.isLegacyNextGen(), diff.TableID) ||
+		infoschema.IsSystemTableInNextGen(is, l.isLegacyNextGen(), diff.OldTableID)), nil
 }
 
 // tryLoadSchemaDiffs tries to only load latest schema changes.

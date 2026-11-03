@@ -205,7 +205,7 @@ func (s *Syncer) skipMDLCheck(tableIDs map[int64]struct{}, is infoschema.InfoSch
 	// for cross keyspace syncer, we only care about the system tables, so we can
 	// skip the MDL check for user tables.
 	for id := range tableIDs {
-		if infoschema.IsSystemTable(is, id) {
+		if infoschema.IsSystemTableInNextGen(is, s.loader.isLegacyNextGen(), id) {
 			return false
 		}
 	}

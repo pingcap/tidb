@@ -596,6 +596,7 @@ func (s *jobScheduler) getJobRunCtx(trace *traceevent.Trace, jobID int64, traceI
 		unSyncedJobTracker:            s.unSyncedTracker,
 		schemaVersionManager:          s.schemaVerMgr,
 		infoCache:                     s.infoCache,
+		isLegacyNextGen:               s.isLegacyNextGen,
 		autoidCli:                     s.autoidCli,
 		store:                         s.store,
 		schemaVerSyncer:               s.schemaVerSyncer,

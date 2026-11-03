@@ -345,15 +345,16 @@ type ddlCtx struct {
 	schemaVerSyncer   schemaver.Syncer
 	serverStateSyncer serverstate.Syncer
 
-	ddlEventCh   chan<- *notifier.SchemaChangeEvent
-	lease        time.Duration // lease is schema lease, default 45s, see config.Lease.
-	infoCache    *infoschema.InfoCache
-	statsHandle  *handle.Handle
-	tableLockCkr util.DeadTableLockChecker
-	etcdCli      *clientv3.Client
-	autoidCli    *autoid.ClientDiscover
-	schemaLoader SchemaLoader
-	extWorkload  extworkload.Manager
+	ddlEventCh      chan<- *notifier.SchemaChangeEvent
+	lease           time.Duration // lease is schema lease, default 45s, see config.Lease.
+	infoCache       *infoschema.InfoCache
+	isLegacyNextGen bool
+	statsHandle     *handle.Handle
+	tableLockCkr    util.DeadTableLockChecker
+	etcdCli         *clientv3.Client
+	autoidCli       *autoid.ClientDiscover
+	schemaLoader    SchemaLoader
+	extWorkload     extworkload.Manager
 
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
@@ -872,6 +873,18 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
+	if kerneltype.IsNextGen() {
+		version, err := d.store.CurrentVersion(kv.GlobalTxnScope)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		isLegacyNextGen, err := meta.NewReader(d.store.GetSnapshot(version)).IsLegacyNextGen()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		d.isLegacyNextGen = isLegacyNextGen
+		d.executor.isLegacyNextGen = isLegacyNextGen
+	}
 	if kerneltype.IsClassic() {
 		d.detectAndUpdateJobVersion()
 	}

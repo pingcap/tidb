@@ -944,8 +944,9 @@ func (m *Mutator) GetSystemDBID() (int64, error) {
 		if db != nil && db.Name.L == mysql.SystemDB {
 			return db.ID, nil
 		}
-		// Classic creates mysql early in bootstrap. Upgraded keyspaces retain
-		// its legacy ID, so bound the fallback to the first ten database IDs.
+		// Existing Starter tier cluster are bootstrapped with legacy ID.
+		// Since MySQL database is created early, we bound the check to the first
+		// ten database IDs.
 		for id := int64(1); id <= 10; id++ {
 			db, err := m.GetDatabase(id)
 			if err != nil {
@@ -2104,6 +2105,20 @@ func (m *Mutator) GetStarterBootstrapVersion() (int64, error) {
 func (m *Mutator) FinishStarterBootstrap(version int64) error {
 	err := m.txn.Set(mStarterBootstrapKey, []byte(strconv.FormatInt(version, 10)))
 	return errors.Trace(err)
+}
+
+// IsLegacyNextGen implements Reader.
+func (m *Mutator) IsLegacyNextGen() (bool, error) {
+	if kerneltype.IsClassic() {
+		return false, nil
+	}
+	// Initial system-schema bootstrap precedes schema loading, so checking for
+	// the reserved mysql database distinguishes native and Classic layouts.
+	db, err := m.GetDatabase(metadef.SystemDatabaseID)
+	if err != nil {
+		return false, err
+	}
+	return db == nil, nil
 }
 
 // ElementKeyType is a key type of the element.

@@ -279,155 +279,57 @@ func TestMergeCreateTableJobs(t *testing.T) {
 }
 
 func TestIsUndroppableTable(t *testing.T) {
-	tests := []struct {
-		name        string
-		schema      string
-		table       string
-		tableID     int64
-		want        bool
-		skipClassic bool
-		skipNextGen bool
-	}{
-		// IDs alone do not identify a system table.
-		{
-			name:        "user table with reserved ID upper bound in next gen",
-			schema:      "test",
-			table:       "test_table",
-			tableID:     metadef.ReservedGlobalIDUpperBound,
-			want:        false,
-			skipClassic: true,
-		},
-		{
-			name:        "user table with reserved ID lower bound in next gen",
-			schema:      "test",
-			table:       "test_table",
-			tableID:     metadef.ReservedGlobalIDLowerBound + 1,
-			want:        false,
-			skipClassic: true,
-		},
-		{
-			name:        "non-reserved ID in next gen",
-			schema:      "test",
-			table:       "test_table",
-			tableID:     100,
-			want:        false,
-			skipClassic: true,
-		},
-		{
-			name:        "reserved ID in classic",
-			schema:      "test",
-			table:       "test_table",
-			tableID:     metadef.ReservedGlobalIDUpperBound,
-			want:        false,
-			skipNextGen: true,
-		},
-		// Test WorkloadSchema
-		{
-			name:    "table in workload_schema",
-			schema:  mysql.WorkloadSchema,
-			table:   "any_table",
-			tableID: 100,
-			want:    true,
-		},
-		// Test SystemDB with system tables
-		{
-			name:    "tidb table in mysql schema",
-			schema:  mysql.SystemDB,
-			table:   "tidb",
-			tableID: 100,
-			want:    true,
-		},
-		{
-			name:    "gc_delete_range table in mysql schema",
-			schema:  mysql.SystemDB,
-			table:   "gc_delete_range",
-			tableID: 100,
-			want:    true,
-		},
-		{
-			name:    "gc_delete_range_done table in mysql schema",
-			schema:  mysql.SystemDB,
-			table:   "gc_delete_range_done",
-			tableID: 100,
-			want:    true,
-		},
-		// Built-in tables in mysql are protected in NextGen, including legacy IDs.
-		{
-			name:    "legacy-ID system table in mysql schema",
-			schema:  mysql.SystemDB,
-			table:   "user",
-			tableID: 100,
-			want:    kerneltype.IsNextGen(),
-		},
-		{
-			name:    "custom table in mysql schema",
-			schema:  mysql.SystemDB,
-			table:   "custom_table",
-			tableID: 100,
-			want:    false,
-		},
-		{
-			name:    "custom table with reserved ID in mysql schema",
-			schema:  mysql.SystemDB,
-			table:   "custom_table",
-			tableID: metadef.ReservedGlobalIDUpperBound,
-			want:    kerneltype.IsNextGen(),
-		},
-		// Test non-system schemas
-		{
-			name:    "view in sys schema",
-			schema:  mysql.SysDB,
-			table:   "schema_unused_indexes",
-			tableID: 100,
-			want:    false,
-		},
-		{
-			name:    "view with reserved ID in sys schema",
-			schema:  mysql.SysDB,
-			table:   "schema_unused_indexes",
-			tableID: metadef.ReservedGlobalIDUpperBound,
-			want:    false,
-		},
-		{
-			name:    "table in test schema",
-			schema:  "test",
-			table:   "test_table",
-			tableID: 100,
-			want:    false,
-		},
-		{
-			name:    "table in information_schema",
-			schema:  "information_schema",
-			table:   "tables",
-			tableID: 100,
-			want:    false,
-		},
+	for _, isLegacyNextGen := range []bool{false, true} {
+		for _, tt := range []struct {
+			schema, table                    string
+			tableID                          int64
+			alwaysProtected                  bool
+			nativeProtected, legacyProtected bool
+		}{
+			{mysql.WorkloadSchema, "any_table", 100, true, false, false},
+			{mysql.SystemDB, "tidb", 100, true, false, true},
+			{mysql.SystemDB, "gc_delete_range", 100, true, false, true},
+			{mysql.SystemDB, "gc_delete_range_done", 100, true, false, true},
+			{mysql.SystemDB, "user", 100, false, false, true},
+			{mysql.SystemDB, "custom_table", 100, false, false, false},
+			{mysql.SystemDB, "custom_table", metadef.ReservedGlobalIDUpperBound, false, true, false},
+			{mysql.SysDB, "schema_unused_indexes", 100, false, false, false},
+			{mysql.SysDB, "schema_unused_indexes", metadef.ReservedGlobalIDLowerBound + 1, false, true, false},
+			{"test", "test_table", 100, false, false, false},
+			{"test", "test_table", metadef.ReservedGlobalIDUpperBound, false, true, false},
+		} {
+			t.Run(fmt.Sprintf("isLegacyNextGen=%t/%s.%s/%d", isLegacyNextGen, tt.schema, tt.table, tt.tableID), func(t *testing.T) {
+				tableInfo := &model.TableInfo{ID: tt.tableID, DBID: 1, Name: ast.NewCIStr(tt.table), State: model.StatePublic}
+				db := &model.DBInfo{ID: 1, Name: ast.NewCIStr(tt.schema), State: model.StatePublic}
+				db.Deprecated.Tables = []*model.TableInfo{tableInfo}
+				builder := infoschema.NewBuilder(nil, 0, nil, infoschema.NewData(), false).WithCrossKS(true)
+				require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{db}, nil, nil, nil, 1))
+				cache := infoschema.NewCache(nil, 1)
+				cache.Insert(builder.Build(0), 0)
+				e := &executor{infoCache: cache, isLegacyNextGen: isLegacyNextGen}
+				protectedInNextGen := tt.nativeProtected
+				if isLegacyNextGen {
+					protectedInNextGen = tt.legacyProtected
+				}
+				want := tt.alwaysProtected || kerneltype.IsNextGen() && protectedInNextGen
+				require.Equal(t, want, e.isUndroppableTable(tt.schema, tt.table, tableInfo))
+			})
+		}
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.skipClassic && kerneltype.IsClassic() {
-				t.Skip("This test is only for nextgen kernel.")
-			}
-			if tt.skipNextGen && kerneltype.IsNextGen() {
-				t.Skip("This test is only for classic kernel.")
-			}
-
-			tableInfo := &model.TableInfo{
-				ID:    tt.tableID,
-				DBID:  1,
-				Name:  ast.NewCIStr(tt.table),
-				State: model.StatePublic,
-			}
-			db := &model.DBInfo{ID: 1, Name: ast.NewCIStr(tt.schema), State: model.StatePublic}
-			db.Deprecated.Tables = []*model.TableInfo{tableInfo}
+	t.Run("system schemas", func(t *testing.T) {
+		for _, tt := range []struct {
+			name string
+			id   int64
+		}{
+			{mysql.SystemDB, 1}, {mysql.SysDB, 2},
+			{mysql.SystemDB, metadef.SystemDatabaseID}, {mysql.SysDB, metadef.SysDatabaseID},
+			{"test", 3},
+		} {
 			builder := infoschema.NewBuilder(nil, 0, nil, infoschema.NewData(), false).WithCrossKS(true)
-			require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{db}, nil, nil, nil, 1))
-
-			result := isUndroppableTable(builder.Build(0), tt.schema, tt.table, tableInfo)
-			require.Equal(t, tt.want, result, "schema=%s, table=%s, tableID=%d", tt.schema, tt.table, tt.tableID)
-		})
-	}
+			require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{{ID: tt.id, Name: ast.NewCIStr(tt.name), State: model.StatePublic}}, nil, nil, nil, 1))
+			require.Equal(t, kerneltype.IsNextGen() && tt.name == mysql.SystemDB, isSystemSchemaInNextGen(builder.Build(0), tt.id))
+		}
+	})
 }
 
 func TestMaterializedViewPartitionDependencyConstraints(t *testing.T) {

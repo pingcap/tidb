@@ -19,6 +19,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -160,6 +161,9 @@ func TestLoadFromTS(t *testing.T) {
 }
 
 func TestLoadFromTSForCrossKS(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("cross-keyspace schema loading requires NextGen")
+	}
 	for _, tc := range []struct {
 		name    string
 		dbID    int64
@@ -173,10 +177,6 @@ func TestLoadFromTSForCrossKS(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, store.Close()) })
 			l := NewLoaderForCrossKS(store, infoschema.NewCache(nil, 1))
-			ver, err := store.CurrentVersion(tidbkv.GlobalTxnScope)
-			require.NoError(t, err)
-			_, _, _, _, err = l.LoadWithTS(ver.Ver, false)
-			require.ErrorContains(t, err, "system database not found")
 
 			ctx := tidbkv.WithInternalSourceType(context.Background(), tidbkv.InternalTxnAdmin)
 			systemDBID := tc.dbID
@@ -195,11 +195,13 @@ func TestLoadFromTSForCrossKS(t *testing.T) {
 				}))
 				return nil
 			}))
-			ver, err = store.CurrentVersion(tidbkv.GlobalTxnScope)
+			ver, err := store.CurrentVersion(tidbkv.GlobalTxnScope)
 			require.NoError(t, err)
 			is, hitCache, oldSchemaVersion, changes, err := l.LoadWithTS(ver.Ver, false)
 			require.NoError(t, err)
 			allSchemas := is.AllSchemas()
+			require.NotNil(t, l.legacyNextGen.Load())
+			require.Equal(t, tc.name == "classic", l.isLegacyNextGen())
 			require.EqualValues(t, 1, is.SchemaMetaVersion())
 			require.Len(t, allSchemas, 1)
 			require.Equal(t, mysql.SystemDB, allSchemas[0].Name.L)
@@ -253,10 +255,30 @@ func TestLoadFromTSForCrossKS(t *testing.T) {
 			require.Equal(t, systemDBID, allSchemas[0].ID)
 			require.False(t, hitCache)
 			require.EqualValues(t, 1, oldSchemaVersion)
-			require.Len(t, changes.PhyTblIDS, 1)
+			require.NotNil(t, changes)
+			if tc.name == "classic" {
+				// New legacy-ID built-ins are recognized after a full reload.
+				require.Empty(t, changes.PhyTblIDS)
+			} else {
+				require.Len(t, changes.PhyTblIDS, 1)
+			}
 			tbls, err = is.SchemaTableInfos(ctx, ast.NewCIStr(mysql.SystemDB))
 			require.NoError(t, err)
-			require.Len(t, tbls, 2)
+			if tc.name == "classic" {
+				require.Len(t, tbls, 1)
+				l.mode = LoadModeFull
+				l.infoCache.Reset(1)
+				is, _, _, _, err = l.LoadWithTS(ver.Ver, false)
+				require.NoError(t, err)
+				tbls, err = is.SchemaTableInfos(ctx, ast.NewCIStr(mysql.SystemDB))
+				require.NoError(t, err)
+			}
+			// Full reload also includes the custom mysql table.
+			if tc.name == "classic" {
+				require.Len(t, tbls, 3)
+			} else {
+				require.Len(t, tbls, 2)
+			}
 			require.True(t, slices.ContainsFunc(tbls, func(t *model.TableInfo) bool { return t.Name.L == "user" }))
 			require.True(t, slices.ContainsFunc(tbls, func(t *model.TableInfo) bool { return t.Name.L == "global_priv" }))
 		})
@@ -292,28 +314,40 @@ func TestLoaderSkipLoadingDiff(t *testing.T) {
 	cache := infoschema.NewCache(nil, 1)
 	cache.Insert(infoschema.MockInfoSchema(nil), 0)
 	loaderForCrossKS := NewLoaderForCrossKS(testStoreWithKS{}, cache)
-	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{}))
-	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{TableID: 100}))
-	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{OldTableID: 100}))
-	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{TableID: 100, OldTableID: 100}))
-	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{TableID: metadef.ReservedGlobalIDUpperBound}))
-	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{OldTableID: metadef.ReservedGlobalIDUpperBound}))
-	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{TableID: metadef.ReservedGlobalIDUpperBound,
-		OldTableID: metadef.ReservedGlobalIDUpperBound}))
-	// Use this target keyspace's loaded IDs, including new tables in mysql.
-	require.False(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{TableID: 9999}))
-	require.False(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{OldTableID: 9999}))
-	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{SchemaID: 2, TableID: 100}))
-	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{OldSchemaID: 2, OldTableID: 100}))
-	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{SchemaID: 2}))
-	// AffectedOpts alone must not make a diff relevant to system tables.
-	for _, affected := range []*model.AffectedOption{
-		{SchemaID: 2, TableID: 9999},
-		{OldSchemaID: 2, OldTableID: 9999},
-	} {
-		require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{
-			TableID: 100, OldTableID: 100, AffectedOpts: []*model.AffectedOption{affected},
-		}))
+	for _, isLegacyNextGen := range []bool{false, true} {
+		loaderForCrossKS.legacyNextGen.Store(&isLegacyNextGen)
+		for _, tc := range []struct {
+			id                     int64
+			skipNative, skipLegacy bool
+		}{
+			{0, true, true},
+			{123, true, true},
+			{9999, true, false},
+			{10000, true, true},
+			{metadef.GlobalPrivTableID, false, true},
+		} {
+			id, wantSkip := tc.id, tc.skipNative
+			if isLegacyNextGen {
+				wantSkip = tc.skipLegacy
+			}
+			if kerneltype.IsClassic() {
+				wantSkip = true
+			}
+			for _, diff := range []*model.SchemaDiff{
+				{TableID: id}, {OldTableID: id}, {TableID: id, OldTableID: id},
+			} {
+				require.Equal(t, wantSkip, mustSkipLoadingDiff(t, loaderForCrossKS, diff), "isLegacyNextGen=%t id=%d", isLegacyNextGen, id)
+			}
+		}
+		// AffectedOpts alone must not make a diff relevant to system tables.
+		for _, affected := range []*model.AffectedOption{
+			{SchemaID: 2, TableID: 9999},
+			{OldSchemaID: 2, OldTableID: metadef.GlobalPrivTableID},
+		} {
+			require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{
+				TableID: 100, OldTableID: 100, AffectedOpts: []*model.AffectedOption{affected},
+			}))
+		}
 	}
 }
 

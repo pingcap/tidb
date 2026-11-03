@@ -89,6 +89,7 @@ type jobContext struct {
 	// use stepCtx instead.
 	ctx                           context.Context
 	infoCache                     *infoschema.InfoCache
+	isLegacyNextGen               bool
 	autoidCli                     *autoid.ClientDiscover
 	store                         kv.Storage
 	schemaVerSyncer               schemaver.Syncer

@@ -26,27 +26,30 @@ import (
 )
 
 func TestShouldCheckAssumedServer(t *testing.T) {
-	// This keyspace has mysql.stats_meta at legacy ID 9999; even a reserved
-	// table ID in a user schema must not identify a system table.
-	is := infoschema.MockInfoSchema([]*model.TableInfo{{ID: 100, Name: ast.NewCIStr("user_table")}, {ID: metadef.ReservedGlobalIDUpperBound, Name: ast.NewCIStr("reserved_user_table")}})
-	require.False(t, shouldCheckAssumedServer(&model.Job{TableID: 100}, is))
-	require.False(t, shouldCheckAssumedServer(&model.Job{TableID: metadef.ReservedGlobalIDUpperBound}, is))
-	require.Equal(t, kerneltype.IsNextGen(), shouldCheckAssumedServer(&model.Job{TableID: 9999}, is))
-	// A schema ID alone must not classify an unknown table as a system table.
-	require.False(t, shouldCheckAssumedServer(&model.Job{SchemaID: 2, TableID: 10000}, is))
-	require.False(t, shouldCheckAssumedServer(&model.Job{SchemaID: 2}, is))
-	require.False(t, shouldCheckAssumedServer(&model.Job{TableID: 9999}, nil))
-	// A custom mysql table does not require the assumed SYSTEM server.
-	for _, job := range []*model.Job{
-		{TableID: 10000, SchemaName: "mysql", TableName: "custom_table"},
-		{TableID: 100, InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
-			{Database: "test", Table: "user_table"},
-			{Database: "mysql", Table: "custom_table"},
-		}},
-	} {
-		require.False(t, shouldCheckAssumedServer(job, is))
+	for _, isLegacyNextGen := range []bool{false, true} {
+		mysqlID, tableID := int64(metadef.SystemDatabaseID), int64(metadef.TiDBTableID)
+		if isLegacyNextGen {
+			mysqlID, tableID = 1, 9999
+		}
+		db := &model.DBInfo{ID: mysqlID, Name: ast.NewCIStr("mysql"), State: model.StatePublic}
+		db.Deprecated.Tables = []*model.TableInfo{
+			{ID: tableID, DBID: mysqlID, Name: ast.NewCIStr("tidb"), State: model.StatePublic},
+			{ID: 10000, DBID: mysqlID, Name: ast.NewCIStr("custom_table"), State: model.StatePublic},
+		}
+		builder := infoschema.NewBuilder(nil, 0, nil, infoschema.NewData(), false).WithCrossKS(true)
+		require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{db}, nil, nil, nil, 1))
+		is := builder.Build(0)
+		require.Equal(t, kerneltype.IsNextGen(), shouldCheckAssumedServer(&model.Job{TableID: tableID}, is, isLegacyNextGen))
+		for _, job := range []*model.Job{
+			{TableID: 100},
+			{SchemaID: mysqlID},
+			{TableID: 10000, SchemaName: "mysql", TableName: "custom_table"},
+			{TableID: 100, InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{Database: "mysql", Table: "tidb"}}},
+		} {
+			require.False(t, shouldCheckAssumedServer(job, is, isLegacyNextGen))
+		}
+		// Native NextGen recognizes reserved IDs even before the new table is loaded.
+		require.Equal(t, kerneltype.IsNextGen() && !isLegacyNextGen,
+			shouldCheckAssumedServer(&model.Job{TableID: metadef.ReservedGlobalIDLowerBound + 1}, is, isLegacyNextGen))
 	}
-	require.False(t, shouldCheckAssumedServer(&model.Job{TableID: 100,
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{Database: "test", Table: "user_table"}},
-	}, is))
 }

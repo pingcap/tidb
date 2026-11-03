@@ -871,6 +871,9 @@ func TestGetSystemDBID(t *testing.T) {
 					want = 0
 				}
 			}
+			isLegacyNextGen, err := m.IsLegacyNextGen()
+			require.NoError(t, err)
+			require.Equal(t, kerneltype.IsNextGen() && tc.mysqlID != metadef.SystemDatabaseID, isLegacyNextGen)
 			id, err := m.GetSystemDBID()
 			require.NoError(t, err)
 			require.Equal(t, want, id)

@@ -17,6 +17,7 @@ package issyncer
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -42,15 +43,28 @@ func TestSyncerSkipMDLCheck(t *testing.T) {
 	require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{db}, nil, nil, nil, 1))
 	cache.Insert(builder.Build(0), 0)
 	syncer = NewCrossKSSyncer(testStoreWithKS{}, cache, 0, nil, nil, "ks1")
-	require.True(t, syncer.skipMDLCheck(map[int64]struct{}{}, cache.GetLatest()))
-	require.True(t, syncer.skipMDLCheck(map[int64]struct{}{123: {}}, cache.GetLatest()))
-	require.True(t, syncer.skipMDLCheck(map[int64]struct{}{123: {}, 456: {}}, cache.GetLatest()))
-	require.True(t, syncer.skipMDLCheck(map[int64]struct{}{metadef.ReservedGlobalIDUpperBound: {}}, cache.GetLatest()))
-	require.True(t, syncer.skipMDLCheck(map[int64]struct{}{123: {}, metadef.ReservedGlobalIDUpperBound: {}}, cache.GetLatest()))
-	// mysql.stats_meta uses legacy ID 9999 in mysql schema ID 2.
-	require.False(t, syncer.skipMDLCheck(map[int64]struct{}{9999: {}}, cache.GetLatest()))
-	require.False(t, syncer.skipMDLCheck(map[int64]struct{}{123: {}, 9999: {}}, cache.GetLatest()))
-	require.True(t, syncer.skipMDLCheck(map[int64]struct{}{2: {}}, cache.GetLatest()))
-	require.True(t, syncer.skipMDLCheck(map[int64]struct{}{10000: {}}, cache.GetLatest()))
-	require.False(t, syncer.skipMDLCheck(map[int64]struct{}{9999: {}, 10000: {}}, cache.GetLatest()))
+	for _, isLegacyNextGen := range []bool{false, true} {
+		syncer.loader.legacyNextGen.Store(&isLegacyNextGen)
+		require.True(t, syncer.skipMDLCheck(map[int64]struct{}{}, cache.GetLatest()))
+		for _, tc := range []struct {
+			id                     int64
+			skipNative, skipLegacy bool
+		}{
+			{0, true, true},
+			{123, true, true},
+			{9999, true, false},
+			{10000, true, true},
+			{metadef.GlobalPrivTableID, false, true},
+		} {
+			id, wantSkip := tc.id, tc.skipNative
+			if isLegacyNextGen {
+				wantSkip = tc.skipLegacy
+			}
+			if kerneltype.IsClassic() {
+				wantSkip = true
+			}
+			require.Equal(t, wantSkip, syncer.skipMDLCheck(map[int64]struct{}{id: {}}, cache.GetLatest()), "isLegacyNextGen=%t id=%d", isLegacyNextGen, id)
+			require.Equal(t, wantSkip, syncer.skipMDLCheck(map[int64]struct{}{123: {}, id: {}}, cache.GetLatest()))
+		}
+	}
 }
