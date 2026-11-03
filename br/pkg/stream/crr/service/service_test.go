@@ -62,6 +62,12 @@ func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 		done <- svc.Run(runCtx)
 	}()
 
+	// Finish the initial empty round before flushing, so it cannot consume the
+	// files and have their statistics overwritten by the next checkpoint round.
+	require.Eventually(t, func() bool {
+		return svc.Status().SafeCheckpoint == initialCheckpoint
+	}, 5*time.Second, 20*time.Millisecond)
+
 	upstreamCheckpoint := h.flushRoundsAndGetCheckpoint([]uint64{1}, 1)
 	h.requireCheckpointAdvancedByTick(initialCheckpoint, upstreamCheckpoint)
 	h.requireReplicateAllPending()
