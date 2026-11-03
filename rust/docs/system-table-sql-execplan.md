@@ -307,9 +307,19 @@ checksums).
   `TestBuiltinInEstWithoutStats` with its `HandleNextDDLEventWithTxn`).
   A third `stats_watch` test reused a key whose LFU admission was still
   queued; its helper waits as Go's cache tests do.
-- [ ] S1, statistics left: analyze's base-stats reads
-  (`real_tikv_analyze.rs`), and the sync-load request API's unused
-  `resource_group`; then `cluster_stats_load.rs` goes.
+- [x] (2026-11-04) The sync-load API's unused `resource_group` is gone (Go's
+  tasks carry none). ANALYZE's base counts are Go
+  `statsHandle.StatsMetaCountAndModifyCount` on a statistics session (the
+  raw `load_table` read is gone).
+- [ ] S1, statistics left: the global-stats merge after a partitioned
+  ANALYZE (`real_tikv_analyze.rs`) reads partitions through the raw
+  `ClusterStatsLoader` and merges its `ClusterStatsItem` model. Port Go
+  `pkg/statistics/handle/globalstats` (`blockingMergePartitionStats2GlobalStats`
+  over `LoadTablePartitionStats` = `TableStatsFromStorage(loadAll)`, and
+  `global_stats_async.go`'s IO worker over `CheckSkipPartition`,
+  `CheckSkipColumnPartiion`, `FMSketchFromStorage`, `CMSketchFromStorage`,
+  `LoadHistogram`, `TopNFromStorage`) onto `read.rs`'s `Table` on the
+  statement's statistics pool; then `cluster_stats_load.rs` goes.
 - [ ] Readers (below), in the order the remaining milestones set.
 
 ### Remaining milestones (Y01)

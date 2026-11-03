@@ -2162,6 +2162,27 @@ fn saved_item_counts<'a>(
     })
 }
 
+/// Go `statsReadWriter.StatsMetaCountAndModifyCount`: `(count,
+/// modify_count, no row)` in a wrapped transaction on a statistics session.
+fn stats_meta_count_and_modify_count(
+    stats_pool: &dyn StatsSessionPool,
+    table_id: i64,
+) -> Result<(i64, i64, bool), ClusterAnalyzeError> {
+    let mut counts = (0, 0, true);
+    stats_pool
+        .call_with_sctx(
+            &mut |sctx| {
+                counts = tidb_stats_handle_storage::read::stats_meta_count_and_modify_count(
+                    sctx, table_id, false,
+                )?;
+                Ok(())
+            },
+            &[tidb_stats_handle_util::FLAG_WRAP_TXN],
+        )
+        .map_err(ClusterAnalyzeError::Sql)?;
+    Ok(counts)
+}
+
 fn commit_cluster_analyze_target<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     stats_pool: &dyn StatsSessionPool,
@@ -2187,27 +2208,12 @@ fn commit_cluster_analyze_target<S: StoreClient>(
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = find_statement_table(&catalog, statement)?.clone();
         let table = table.read();
-        // The sample rate Go derives from `RealtimeCount`: what the table's
-        // previous `ANALYZE` (or delta flush) said it holds.
-        let base_stats = ClusterStatsLoader::locate(&catalog)
-            .ok()
-            .and_then(|loader| {
-                loader
-                    .load_table(
-                        &mut snapshot,
-                        options.physical_id,
-                        &tidb_stats_handle_storage::cluster_stats_load::column_types_of(&table),
-                    )
-                    .ok()
-                    .flatten()
-            });
-        let realtime_count = base_stats
-            .as_ref()
-            .map(|stats| realtime_count_of(stats.row_count));
-        let base_count = base_stats.as_ref().map_or(0, |stats| {
-            i64::try_from(stats.row_count).unwrap_or(i64::MAX)
-        });
-        let base_modify_count = base_stats.as_ref().map_or(0, |stats| stats.modify_count);
+        // Go `buildAnalyzeSamplingPushdown`:
+        // `statsHandle.StatsMetaCountAndModifyCount` on the statistics
+        // handle's sessions, the counts the save reconciles against.
+        let (base_count, base_modify_count, no_meta) =
+            stats_meta_count_and_modify_count(stats_pool, options.physical_id)?;
+        let realtime_count = (!no_meta).then_some(base_count);
         let mut target_statement = statement.clone();
         target_statement.columns = options.columns.clone();
         target_statement.raw_options = options.raw;
