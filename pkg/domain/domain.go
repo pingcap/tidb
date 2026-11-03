@@ -718,6 +718,7 @@ func (do *Domain) Init(
 			return do.StatsHandle()
 		},
 		&do.sysProcesses,
+		do.stopAutoAnalyze.Load,
 		func() {
 			select {
 			case do.mvService.ddlNotify <- struct{}{}:

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statsautoanalyzeexec "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
+	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -65,6 +67,7 @@ type serviceHelper struct {
 	runEventCounterCache  runEventCounterCache
 	statsHandleGetter     func() statstypes.StatsHandle
 	sysProcTracker        sysproctrack.Tracker
+	isAutoAnalyzeStopped  func() bool
 
 	reportCache struct {
 		refresh     taskExecutorReportCache
@@ -1612,9 +1615,33 @@ func needAnalyzeMLog(statsTbl *statistics.Table, ratio float64) (bool, string) {
 	return true, fmt.Sprintf("too many mlog modifications(%v/%v>%v)", statsTbl.ModifyCount, tblCnt, ratio)
 }
 
+func (h *serviceHelper) mlogAnalyzeStopped(ctx context.Context) bool {
+	return ctx.Err() != nil || !vardef.RunAutoAnalyze.Load() ||
+		(h.isAutoAnalyzeStopped != nil && h.isAutoAnalyzeStopped())
+}
+
+func (h *serviceHelper) canAnalyzeMLog(ctx context.Context, sctx sessionctx.Context) bool {
+	if h.mlogAnalyzeStopped(ctx) {
+		return false
+	}
+	parameters := statsautoanalyzeexec.GetAutoAnalyzeParameters(sctx)
+	start, end, err := statsautoanalyzeexec.ParseAutoAnalysisWindow(
+		parameters[vardef.TiDBAutoAnalyzeStartTime],
+		parameters[vardef.TiDBAutoAnalyzeEndTime],
+	)
+	if err != nil {
+		logutil.BgLogger().Warn("mv service: failed to parse mlog auto analyze window", zap.Error(err))
+		return false
+	}
+	return timeutil.WithinDayTimePeriod(start, end, mvsNow()) && !h.mlogAnalyzeStopped(ctx)
+}
+
 // LoadAllTiDBMVLogAnalyzeTasks loads MV logs that currently need analyze.
 func (h *serviceHelper) LoadAllTiDBMVLogAnalyzeTasks(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mlogAnalyzeTask, error) {
 	const fetchSQL = `SELECT MLOG_ID FROM mysql.tidb_mlog_purge_info`
+	if h.mlogAnalyzeStopped(ctx) {
+		return nil, nil
+	}
 	statsHandle, err := h.getStatsHandle()
 	if err != nil {
 		return nil, err
@@ -1627,6 +1654,13 @@ func (h *serviceHelper) LoadAllTiDBMVLogAnalyzeTasks(ctx context.Context, sysSes
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMViewMaintenance)
 	sctx := se.(sessionctx.Context)
 
+	if !h.canAnalyzeMLog(ctx, sctx) {
+		return nil, nil
+	}
+	lockedTables, err := lockstats.QueryLockedTables(ctx, sctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := execRCRestrictedSQLWithSession(ctx, sctx, fetchSQL, nil)
 	if err != nil {
 		return nil, err
@@ -1639,6 +1673,9 @@ func (h *serviceHelper) LoadAllTiDBMVLogAnalyzeTasks(ctx context.Context, sysSes
 		}
 		mlogID := row.GetInt64(0)
 		if mlogID <= 0 {
+			continue
+		}
+		if _, locked := lockedTables[mlogID]; locked {
 			continue
 		}
 		schemaName, mlogName, found, err := resolveMVLogIdentityByID(ctx, sctx, mlogID)
@@ -1656,17 +1693,11 @@ func (h *serviceHelper) LoadAllTiDBMVLogAnalyzeTasks(ctx context.Context, sysSes
 		if !needAnalyze {
 			continue
 		}
-		logutil.BgLogger().Info(
-			"mv service: mlog analyze needed",
-			zap.Int64("mvlog_id", mlogID),
-			zap.String("schema", schemaName),
-			zap.String("mlog", mlogName),
-			zap.String("reason", reason),
-			zap.Float64("ratio", ratio),
-		)
 		tasks[mlogID] = &mlogAnalyzeTask{
 			schemaName: schemaName,
 			mlogName:   mlogName,
+			reason:     reason,
+			ratio:      ratio,
 		}
 	}
 	return tasks, nil
@@ -1675,6 +1706,9 @@ func (h *serviceHelper) LoadAllTiDBMVLogAnalyzeTasks(ctx context.Context, sysSes
 // AnalyzeMVLog runs analyze for the specified MV log table once.
 func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mlogID int64) error {
 	const analyzeMLogSQL = `ANALYZE TABLE %n.%n`
+	if h.mlogAnalyzeStopped(ctx) {
+		return nil
+	}
 	statsHandle, err := h.getStatsHandle()
 	if err != nil {
 		return err
@@ -1704,6 +1738,18 @@ func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.S
 	}
 	statsTbl, found := statsHandle.GetNonPseudoPhysicalTableStats(mlogID)
 	if !found {
+		return nil
+	}
+	lockedTables, err := lockstats.QueryLockedTables(ctx, sctx)
+	if err != nil {
+		return err
+	}
+	if _, locked := lockedTables[mlogID]; locked {
+		return nil
+	}
+	// A task may have waited in the executor queue or for a pooled session.
+	// Recheck current controls immediately before starting another ANALYZE.
+	if !h.canAnalyzeMLog(ctx, sctx) {
 		return nil
 	}
 	tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
@@ -1821,12 +1867,14 @@ func execRestrictedSQLWithSession(ctx context.Context, sctx sessionctx.Context, 
 // MV-related create/drop events.
 // onDDLHandled is invoked on the DDL owner when such an event is observed, and
 // callers may use it to fan out the metadata change to other TiDB nodes.
+// isAutoAnalyzeStopped prevents queued analysis from starting during domain shutdown.
 func RegisterMVService(
 	ctx context.Context,
 	registerHandler func(notifier.HandlerID, notifier.SchemaChangeHandler),
 	se basic.SessionPool,
 	statsHandleGetter func() statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
+	isAutoAnalyzeStopped func() bool,
 	onDDLHandled func(),
 ) *MVService {
 	if registerHandler == nil || se == nil || onDDLHandled == nil {
@@ -1839,7 +1887,9 @@ func RegisterMVService(
 		MemThreshold: defaultBackpressureMemThreshold,
 		Delay:        defaultTaskBackpressureDelay,
 	}
-	mvService := NewMVService(ctx, se, newServiceHelper(statsHandleGetter, sysProcTracker), cfg)
+	helper := newServiceHelper(statsHandleGetter, sysProcTracker)
+	helper.isAutoAnalyzeStopped = isAutoAnalyzeStopped
+	mvService := NewMVService(ctx, se, helper, cfg)
 	mvService.NotifyDDLChange() // Trigger one startup refresh so in-memory state catches up with metadata.
 
 	// The notifier callback runs on the DDL owner only.

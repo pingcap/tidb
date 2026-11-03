@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/mvservice"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -177,11 +178,16 @@ func TestMaterializedViewServiceMiscMaintenance(t *testing.T) {
 
 func testMaterializedViewServiceMLogAnalyze(t *testing.T) {
 	originalMinCnt := statistics.AutoAnalyzeMinCnt
+	originalAutoAnalyze := vardef.RunAutoAnalyze.Load()
 	statistics.AutoAnalyzeMinCnt = 0
-	t.Cleanup(func() { statistics.AutoAnalyzeMinCnt = originalMinCnt })
+	t.Cleanup(func() {
+		statistics.AutoAnalyzeMinCnt = originalMinCnt
+		vardef.RunAutoAnalyze.Store(originalAutoAnalyze)
+	})
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_auto_analyze=ON")
 	handle := dom.StatsHandle()
 	tk.MustExec("create table t_mvs_analyze (a int)")
 	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(handle))

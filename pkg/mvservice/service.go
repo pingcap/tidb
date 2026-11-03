@@ -1316,7 +1316,15 @@ func (t *MVService) fetchMLogAnalyzeTasks() ([]int64, error) {
 	}
 	filterUnownedTasks(t.sch, candidates)
 	mlogIDs := make([]int64, 0, len(candidates))
-	for mlogID := range candidates {
+	for mlogID, task := range candidates {
+		logutil.BgLogger().Info(
+			"mv service: mlog analyze needed",
+			zap.Int64("mvlog_id", mlogID),
+			zap.String("schema", task.schemaName),
+			zap.String("mlog", task.mlogName),
+			zap.String("reason", task.reason),
+			zap.Float64("ratio", task.ratio),
+		)
 		mlogIDs = append(mlogIDs, mlogID)
 	}
 	return mlogIDs, nil

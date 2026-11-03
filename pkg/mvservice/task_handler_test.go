@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -850,6 +852,50 @@ func TestMVServiceMaybeGCMVHistoryReportsMetrics(t *testing.T) {
 			return !svc.historyGCRunning.Load()
 		}, testEventuallyWait, testEventuallyTick)
 	})
+}
+
+func TestServerHelperMLogAnalyzeControls(t *testing.T) {
+	oldEnabled := vardef.RunAutoAnalyze.Load()
+	t.Cleanup(func() { vardef.RunAutoAnalyze.Store(oldEnabled) })
+	restoreTime := InstallMockTimeModuleForTest(NewMockTimeModule(time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC)))
+	t.Cleanup(restoreTime)
+	for _, tt := range []struct {
+		name    string
+		enabled bool
+		start   string
+		end     string
+		allowed bool
+	}{
+		{name: "disabled", start: "00:00 +0000", end: "23:59 +0000"},
+		{name: "outside window", enabled: true, start: "13:00 +0000", end: "14:00 +0000"},
+		{name: "inside window", enabled: true, start: "11:00 +0000", end: "13:00 +0000", allowed: true},
+		{name: "overnight inside", enabled: true, start: "11:00 +0000", end: "01:00 +0000", allowed: true},
+		{name: "overnight outside", enabled: true, start: "23:00 +0000", end: "01:00 +0000"},
+		{name: "offset inside", enabled: true, start: "19:00 +0800", end: "21:00 +0800", allowed: true},
+		{name: "invalid window", enabled: true, start: "invalid", end: "13:00 +0000"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			vardef.RunAutoAnalyze.Store(tt.enabled)
+			for _, phase := range []string{"scan", "execute"} {
+				t.Run(phase, func(t *testing.T) {
+					helper, se := newMLogAnalyzeHelperForTest(t)
+					se.restrictedRows[testSQLAutoAnalyzeParameters] = []chunk.Row{
+						chunk.MutRowFromValues(vardef.TiDBAutoAnalyzeStartTime, tt.start).ToRow(),
+						chunk.MutRowFromValues(vardef.TiDBAutoAnalyzeEndTime, tt.end).ToRow(),
+					}
+					pool := recordingSessionPool{se: se}
+					if phase == "scan" {
+						tasks, err := helper.LoadAllTiDBMVLogAnalyzeTasks(context.Background(), pool)
+						require.NoError(t, err)
+						require.Equal(t, tt.allowed, len(tasks) == 1)
+					} else {
+						require.NoError(t, helper.AnalyzeMVLog(context.Background(), pool, 201))
+						require.Equal(t, tt.allowed, containsAnalyzeSQL(se.executedRestrictedSQL))
+					}
+				})
+			}
+		})
+	}
 }
 
 func TestMVServiceMLogAnalyzeScanSubmitsTasks(t *testing.T) {

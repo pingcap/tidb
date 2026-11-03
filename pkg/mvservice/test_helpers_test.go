@@ -83,10 +83,16 @@ func (mockSessionPool) Put(pools.Resource) {}
 func (mockSessionPool) Close() {}
 
 type recordingSessionPool struct {
-	se pools.Resource
+	se    pools.Resource
+	onGet func()
 }
 
-func (p recordingSessionPool) Get() (pools.Resource, error) { return p.se, nil }
+func (p recordingSessionPool) Get() (pools.Resource, error) {
+	if p.onGet != nil {
+		p.onGet()
+	}
+	return p.se, nil
+}
 
 func (recordingSessionPool) Put(pools.Resource) {}
 
