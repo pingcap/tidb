@@ -176,6 +176,16 @@ checksums).
   only in `seed_cluster_accounts`, which writes a unistore node's
   `--auth-file` identity at boot -- the bootstrap's category (Go has no
   such flag).
+- [x] (2026-11-03) ANALYZE options and predicate columns: two statement-time
+  raw writers the first inventory missed (they went through `StatsRows`, not
+  `system_row_write`). Go `AnalyzeExec.saveAnalyzeOptions` is one `REPLACE
+  INTO mysql.analyze_options` on a restricted session after the analysis;
+  `PlanBuilder.getSavedAnalyzeOpts` its SELECT; `statsHandle.GetPredicateColumns`
+  (`cleanupDroppedColumnStatsUsage`'s DELETE, then the SELECT) a wrapped
+  transaction on the pool at plan time. The raw cleanup had ridden in the
+  sampling transaction. `StatsSessionContext::latest_table_meta_by_id` is
+  Go `sctx.GetLatestInfoSchema().TableByID`. Test
+  `analyze_predicate_columns_forget_a_dropped_column_as_go` (gorun).
 - [ ] Readers (below).
 - [ ] The bootstrap (item 11).
 
@@ -191,11 +201,21 @@ Writes. Every statement-time writer now runs Go's SQL. What is left:
   / `doDMLWorks` on a session, and those rows then take the session path.
   Fixing the bootstrap removes every one of these fallbacks.
 - `seed_cluster_accounts` (above).
+- `tidb-executor/src/cluster_analyze.rs` `analyze_table` /
+  `analyze_physical_table`: a second, raw-scan sampler that only tests call
+  (production samples through `cluster_analyze::sampling`, Go's
+  coprocessor analyze requests). It should go with its four tests.
 - Seeding fixtures used only by tests: `plan_stats_write`,
   `plan_partition_stats_write`, `plan_column_stats_usage_write`, the
   insert-table-stats, delta and history-meta planners,
   `plan_historical_stats_data_block`, `plan_sysvar_write`, the analyze-job
   planners.
+
+The startup readers (sysvars, privileges, bindings, initial statistics)
+run before the node has a session: Go builds the domain and its
+`sysSessionPool` first (`BootstrapSession`) and loads each cache through a
+session. Porting the startup order removes those scans with the bootstrap's
+raw rows.
 
 Reads. Go reads every one of these tables with a statement on a session
 (`ExecRestrictedSQL` / `util.Exec`); these scan the table's records
@@ -205,12 +225,11 @@ directly (`mysql_system_tables::scan_system_table*`):
 | --- | --- |
 | `tidb-syssession/src/cluster_sysvar_load.rs` | `Domain.fetchTableValues` (`rebuildSysVarCache`) |
 | `tidb-privilege/src/cluster_privilege_load.rs`, `tidb-session/src/privilege_tables.rs` | `privileges.MySQLPrivilege.LoadAll` (`loadTable`) |
-| `tidb-bindinfo/src/cluster_binding_seam.rs` | `bindinfo` `readBindingsFromStorage` |
+| `tidb-bindinfo/src/cluster_binding_seam.rs` (only before its session pool is attached; afterwards Go's SELECT) | `bindinfo` `readBindingsFromStorage` |
 | `tidb-stats-handle-storage/src/cluster_stats_load.rs` | `storage/read.go` and `initstats` statements |
 | `tidb-stats-handle-storage/src/cluster_stats_dump.rs` | `storage` `TableHistoricalStatsToJSON` / `getStatsVersion` |
 | `tidb-stats-handle-usage-predicatecolumn/src/cluster_predicate_column.rs` | `predicatecolumn` `LoadColumnStatsUsage*` |
-| `tidb-stats-handle-autoanalyze/src/analyze_jobs.rs` (reads) | `autoanalyze` job queries |
-| `tidb-executor/src/real_tikv_analyze.rs`, `cluster_analyze.rs` | `executor/analyze` reads |
+| `tidb-stats-handle-autoanalyze/src/analyze_jobs.rs` `load_analyze_status_jobs` | executor `dataForAnalyzeStatusHelper` |
 | `tidb-infoschema-issyncer/src/mdl_info_load.rs`, `tidb-ddl-systable/src/lib.rs` | MDL `select ... from mysql.tidb_mdl_info` |
 | `tidb-ddl-systable/src/ddl_job_table.rs` | job scheduler `getJob` / `GetAllDDLJobsInQueue` |
 | `tidb-ddl/src/ddl_history_table.rs` | `GetHistoryJobByID` / `GetLastNHistoryDDLJobs` |

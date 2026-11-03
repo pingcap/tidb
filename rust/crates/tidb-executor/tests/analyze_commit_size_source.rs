@@ -43,11 +43,9 @@ use tidb_stats_handle_storage::cluster_stats_load::{
     ClusterStatsItem, ClusterStatsLoader, ClusterTableStats, ColumnLength, TableRowCount,
     TableSizeStats,
 };
-use tidb_executor::real_tikv_analyze::{load_analyze_options, plan_analyze_options_write};
 use tidb_stats_handle_storage::cluster_stats_write::{insert_table_stats_statements, plan_column_stats_usage_write, plan_insert_table_stats_statement, plan_partition_stats_write, plan_stats_write, save_buckets_sql, save_topn_sql, InsertTableStatsStatement};
 use tidb_stats_handle_history::history_stats::{historical_stats_data_blocks, plan_historical_stats_data_block, plan_historical_stats_meta_lock, plan_historical_stats_meta_replace};
 use tidb_syssession::stats_table_rows::{locate, set, StatsRows, StatsWriteError, StatsWritePlan};
-use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::plan_get_predicate_columns;
 use tidb_stats_handle_usage::session_stats_collect::plan_stats_delta_statement;
 use tidb_stats_handle_usage::session_stats_collect::stats_delta_statements;
 use tidb_stats_handle_usage::session_stats_collect::StatsDeltaStatement;
@@ -62,7 +60,6 @@ use tidb_syssession::mysql_system_tables::{
 };
 use tidb_stats_handle_syncload::real_tikv_stats::{StatsTarget};
 use tidb_stats_handle::bootstrap::{init_stats_lite, load_initial_stats_snapshot_with_memory_limits, InitialStatsLoad};
-use tidb_executor::analyze::{AnalyzeColumnChoice, AnalyzeOptionOverrides};
 use tidb_model::column::ColumnInfo;
 use tidb_model::index::IndexInfo;
 use tidb_model::table_info::TableInfo;
@@ -1525,99 +1522,6 @@ fn column_distribution_read_is_atomic_ordered_and_validated() {
     assert_eq!(store.scans, vec![histogram_prefix]);
 }
 
-/// Pinned Go reads raw options, filters stale LIST IDs through current table
-/// metadata, and REPLACEs all seven columns so newly omitted values clear.
-#[test]
-fn persisted_analyze_options_round_trip_and_replace_raw_values() {
-    let mut store = bootstrapped();
-    let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
-    let table = TableInfo {
-        id: 4242,
-        columns: vec![
-            ColumnInfo {
-                id: 1,
-                name: CiString::new("a"),
-                offset: 0,
-                state: SchemaState::PUBLIC,
-                ..ColumnInfo::default()
-            },
-            ColumnInfo {
-                id: 2,
-                name: CiString::new("b"),
-                offset: 1,
-                state: SchemaState::PUBLIC,
-                ..ColumnInfo::default()
-            },
-        ]
-        .into(),
-        ..TableInfo::default()
-    };
-    assert!(load_analyze_options(&mut store, &catalog, &table, table.id)
-        .expect("missing row is readable")
-        .is_none());
-
-    let first = plan_analyze_options_write(
-        &mut store,
-        &catalog,
-        &table,
-        table.id,
-        AnalyzeOptionOverrides {
-            num_buckets: Some(7),
-            num_topn: Some(0),
-            num_samples: None,
-            sample_rate: Some(0.25),
-        },
-        &AnalyzeColumnChoice::Explicit(vec!["a".to_owned(), "gone".to_owned()]),
-        now(),
-        Some(&*row_ids),
-    )
-    .expect("first option row plans");
-    apply_mutations(&mut store, &first.mutations);
-    assert_eq!(
-        load_analyze_options(&mut store, &catalog, &table, table.id)
-            .expect("saved row loads")
-            .expect("saved row exists"),
-        tidb_executor::analyze::SavedAnalyzeOptions {
-            raw: AnalyzeOptionOverrides {
-                num_buckets: Some(7),
-                num_topn: Some(0),
-                num_samples: None,
-                sample_rate: Some(0.25),
-            },
-            columns: AnalyzeColumnChoice::Explicit(vec!["a".to_owned()]),
-        }
-    );
-
-    let second = plan_analyze_options_write(
-        &mut store,
-        &catalog,
-        &table,
-        table.id,
-        AnalyzeOptionOverrides {
-            num_samples: Some(9),
-            ..AnalyzeOptionOverrides::default()
-        },
-        &AnalyzeColumnChoice::Predicate,
-        now(),
-        Some(&*row_ids),
-    )
-    .expect("replacement option row plans");
-    apply_mutations(&mut store, &second.mutations);
-    assert_eq!(
-        load_analyze_options(&mut store, &catalog, &table, table.id)
-            .expect("replacement loads")
-            .expect("replacement exists"),
-        tidb_executor::analyze::SavedAnalyzeOptions {
-            raw: AnalyzeOptionOverrides {
-                num_samples: Some(9),
-                ..AnalyzeOptionOverrides::default()
-            },
-            columns: AnalyzeColumnChoice::Predicate,
-        }
-    );
-}
-
 #[test]
 fn insert_table_stats_uses_go_statement_order_and_histogram_placeholders() {
     let mut store = bootstrapped();
@@ -2021,10 +1925,9 @@ fn usage_item(table_id: i64, column_id: i64) -> tidb_model::TableItemID {
 }
 
 /// Pinned predicatecolumn reads project UTC instants into the requested
-/// location, while `GetPredicateColumns` deletes dropped-column rows and
-/// returns only non-NULL `last_used_at` IDs from that same transaction.
+/// location.
 #[test]
-fn predicate_column_load_and_cleanup_match_the_pinned_storage_contract() {
+fn predicate_column_load_matches_the_pinned_storage_contract() {
     let mut store = bootstrapped();
     let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
@@ -2081,53 +1984,11 @@ fn predicate_column_load_and_cleanup_match_the_pinned_storage_contract() {
                 .expect("fixed timestamp")
         )
     );
-
-    let (columns, cleanup) = plan_get_predicate_columns(&mut store, &catalog, table_id, Some(&[7]))
-        .expect("cleanup and predicate read plan");
-    assert_eq!(columns, vec![7]);
-    assert!(!cleanup.is_empty());
-    apply_mutations(&mut store, &cleanup.mutations);
-    let remaining = load_column_stats_usage_for_table(
-        &mut store,
-        &catalog,
-        &tidb_datatype::SessionTimeZone::utc(),
-        table_id,
-    )
-    .expect("table usage reloads");
-    assert!(remaining.contains_key(&item(7)));
-    assert!(!remaining.contains_key(&item(8)));
-}
-
-/// Pinned `cleanupDroppedColumnStatsUsage` deliberately does nothing when the
-/// latest infoschema no longer contains the table. `GetPredicateColumns`
-/// still runs its SELECT afterward, so retained usage rows remain visible.
-#[test]
-fn predicate_column_missing_table_skips_cleanup_but_still_reads_usage() {
-    let mut store = bootstrapped();
-    let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
-    let table_id = 4243;
-    let item = usage_item(table_id, 9);
-    let usage = HashMap::from([(
-        item,
-        ColStatsTimeInfo {
-            last_used_at: Some(now()),
-            last_analyzed_at: None,
-        },
-    )]);
-    let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now(), Some(&*row_ids))
-        .expect("predicate usage plans");
-    apply_mutations(&mut store, &plan.mutations);
-
-    let (columns, cleanup) = plan_get_predicate_columns(&mut store, &catalog, table_id, None)
-        .expect("missing-table predicate read plans");
-    assert_eq!(columns, vec![9]);
-    assert!(cleanup.is_empty());
 }
 
 /// Both predicatecolumn SELECTs wrap timestamps in `CONVERT_TZ`. Pinned Go's
 /// implementation returns SQL NULL for an incomplete date, so loading keeps
-/// a NULL timestamp and predicate selection skips that row.
+/// a NULL timestamp.
 #[test]
 fn predicate_column_invalid_zero_timestamp_matches_convert_tz_null() {
     let mut store = bootstrapped();
@@ -2186,11 +2047,6 @@ fn predicate_column_invalid_zero_timestamp_matches_convert_tz_null() {
     )
     .expect("usage reloads");
     assert_eq!(loaded[&item], ColStatsTimeInfo::default());
-    let (columns, cleanup) =
-        plan_get_predicate_columns(&mut store, &catalog, table_id, Some(&[item.id]))
-            .expect("predicate read plans");
-    assert!(columns.is_empty());
-    assert!(cleanup.is_empty());
 }
 
 /// Pinned Go history recording selects the current meta row by both table ID

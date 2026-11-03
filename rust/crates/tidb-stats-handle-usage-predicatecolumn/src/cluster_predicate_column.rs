@@ -19,7 +19,6 @@
 //! '+00:00')`, `GoTime(time.UTC)`, and final `gt.In(loc)` sequence.
 
 use std::collections::HashMap;
-use tidb_syssession::stats_table_rows::*;
 
 use tidb_datatype::{Datum, SessionTimeZone, Time, TimeType, DEFAULT_FSP};
 use tidb_model::TableItemID;
@@ -56,31 +55,6 @@ pub fn load_column_stats_usage_for_table<S: MetaSnapshot>(
     table_id: i64,
 ) -> Result<HashMap<TableItemID, ColStatsTimeInfo>, SystemTableError> {
     load(snapshot, catalog, location, Some(table_id))
-}
-
-/// Returns the stored predicate-column IDs for a table after the caller has
-/// removed dropped-column rows in the same transaction.
-pub fn predicate_columns<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    table_id: i64,
-) -> Result<Vec<i64>, SystemTableError> {
-    let view = usage_view(catalog)?;
-    let pairs = scan_system_table_prefixed(snapshot, &view, &[Datum::Int(table_id)])?;
-    let utc = SessionTimeZone::utc();
-    let mut columns = Vec::new();
-    for (key, value) in pairs {
-        let row = SystemRow::parse_in_timezone(&view, &key, &value, Some(&utc))?;
-        if row.i64("table_id")? != Some(table_id)
-            || usage_time(&row, "last_used_at", &utc, &utc)?.is_none()
-        {
-            continue;
-        }
-        if let Some(column_id) = row.i64("column_id")? {
-            columns.push(column_id);
-        }
-    }
-    Ok(columns)
 }
 
 fn load<S: MetaSnapshot>(
@@ -163,55 +137,6 @@ fn usage_time(
             detail: error.to_string(),
         })?;
     Ok(Some(value))
-}
-
-/// Plans pinned Go `GetPredicateColumns`, including its same-transaction
-/// cleanup of usage rows for columns no longer present in the latest schema.
-///
-/// `None` means Go's latest infoschema did not contain the table. In that
-/// case `cleanupDroppedColumnStatsUsage` is a no-op, but the following SELECT
-/// still returns persisted predicate-column IDs.
-///
-/// Go executes DELETE before SELECT. This mutation planner cannot make staged
-/// mutations visible through `MetaSnapshot`, so it filters the selected IDs
-/// against the same current-column set while returning the exact deletes for
-/// the caller to commit with the read transaction.
-pub fn plan_get_predicate_columns<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    table_id: i64,
-    current_column_ids: Option<&[i64]>,
-) -> Result<(Vec<i64>, StatsWritePlan), StatsWriteError> {
-    let columns = predicate_columns(snapshot, catalog, table_id)?;
-    let Some(current_column_ids) = current_column_ids else {
-        return Ok((columns, StatsWritePlan::default()));
-    };
-    let current = current_column_ids
-        .iter()
-        .map(|column_id| format!("{:?}", Datum::Int(*column_id)))
-        .collect::<std::collections::HashSet<_>>();
-    let columns = columns
-        .into_iter()
-        .filter(|column_id| current_column_ids.contains(column_id))
-        .collect();
-    let table = locate(catalog, "column_stats_usage")?;
-    let table = &*table.read();
-    let mut rows = StatsRows::open(snapshot, table, &["table_id", "column_id"], table_id)?;
-    let dropped = rows
-        .existing
-        .keys()
-        .filter(|identity| {
-            identity
-                .get(1)
-                .is_some_and(|column| !current.contains(column))
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let mut plan = StatsWritePlan::default();
-    for identity in dropped {
-        rows.retract_prefix(&identity, &mut plan)?;
-    }
-    Ok((columns, plan))
 }
 
 /// Storage-backed reader used by pinned Go `SHOW COLUMN_STATS_USAGE`.

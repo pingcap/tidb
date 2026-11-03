@@ -50,3 +50,56 @@ pub fn save_column_stats_usage_for_table<C: StatsSessionContext + ?Sized>(
     }
     Ok(())
 }
+
+/// Go `GetPredicateColumns`: the IDs of the table's predicate columns, after
+/// the usage of its dropped columns is deleted.
+pub fn get_predicate_columns<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    table_id: i64,
+) -> Result<Vec<i64>, SqlExecError> {
+    // Each time we retrieve the predicate columns, we also attempt to remove
+    // any column stats usage information whose column is dropped.
+    cleanup_dropped_column_stats_usage(sctx, table_id)?;
+    let (rows, _) = exec_rows(
+        sctx,
+        "SELECT column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage WHERE table_id = %? AND last_used_at IS NOT NULL",
+        &[SqlArg::Signed(table_id)],
+    )?;
+    let mut column_ids = Vec::with_capacity(rows.len());
+    for row in &rows {
+        // Usually, it should not be NULL. This only happens when the
+        // last_used_at is not a valid time.
+        if row.get(1).is_none_or(tidb_datatype::Datum::is_null) {
+            continue;
+        }
+        column_ids.push(row.first().map_or(0, tidb_datatype::Datum::get_int64));
+    }
+    Ok(column_ids)
+}
+
+/// Go `cleanupDroppedColumnStatsUsage`.
+fn cleanup_dropped_column_stats_usage<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    table_id: i64,
+) -> Result<(), SqlExecError> {
+    let Some(table) = sctx.latest_table_meta_by_id(table_id) else {
+        // Usually, it should not happen. But if it happens, we can safely do
+        // nothing.
+        return Ok(());
+    };
+    // Due to SQL limitations, column IDs must be converted to strings for
+    // proper escaping in the query.
+    let column_ids = table
+        .read()
+        .columns
+        .iter_deref()
+        .map(|column| column.read().id.to_string())
+        .collect::<Vec<_>>();
+    let column_ids = column_ids.iter().map(String::as_bytes).collect::<Vec<_>>();
+    exec_rows(
+        sctx,
+        "DELETE FROM mysql.column_stats_usage WHERE table_id = %? AND column_id NOT IN (%?)",
+        &[SqlArg::Signed(table_id), SqlArg::Strings(&column_ids)],
+    )?;
+    Ok(())
+}

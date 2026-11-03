@@ -44,9 +44,7 @@ use tidb_stats_handle_globalstats::GlobalStatsMergeMode;
 use tidb_stats_handle_globalstats::PartitionStatsItem;
 use tidb_stats::StatsLoadedStatus;
 use tidb_stats::TopN;
-use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_store_driver_txn::transaction::StoreClient;
-use tidb_txnkv::transaction::OptimisticCommitOutcome;
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_sqlkiller::SqlKiller;
 
@@ -62,19 +60,14 @@ use tidb_stats_handle_storage::save::{AnalyzeResults, STATS_VERSION_2};
 use tidb_stats_handle_storage::stats_read_writer::{self, StatsSessionPool};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_stats_handle_history::history_stats::record_historical_stats_meta_on;
-use tidb_syssession::stats_table_rows::{locate, set, StatsRows, StatsWriteError, StatsWritePlan};
-use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::plan_get_predicate_columns;
-use tidb_datatype::current_time::utc_now_timestamp;
-use tidb_store_driver_error::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
+use tidb_stats_handle_usage_predicatecolumn::predicate_column::get_predicate_columns;
+use tidb_sqlescape::SqlArg;
+use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_hack::GoToLower;
-use tidb_datatype::{Datum, Time};
+use tidb_datatype::Datum;
 use crate::analyze::{AnalyzeOptionOverrides, SavedAnalyzeOptions};
-use tidb_infoschema::cluster_catalog::MetaSnapshot;
-use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_model::table_info::TableInfo;
-use tidb_syssession::mysql_system_tables::{scan_system_table_prefixed, SystemRow, SystemTableView};
-use tidb_syssession::system_row_write::defaults_row;
 pub use crate::analyze::sample_rate_reason;
 use tidb_pdhelper::ApproximateTableCountProvider;
 
@@ -414,6 +407,7 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
     resource_group: &str,
     approximate_counts: &dyn ApproximateTableCountProvider,
     stats: &tidb_stats_handle_syncload::stats_watch::SharedStats,
+    stats_pool: &dyn StatsSessionPool,
 ) -> Result<ResolvedClusterAnalyze, ClusterAnalyzeError> {
     let mut transaction = opener
         .begin_read_only()
@@ -441,9 +435,8 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
         let mut saved = std::collections::HashMap::new();
         if statement.persist_options {
             for physical_id in std::iter::once(table.id).chain(partition_ids.iter().copied()) {
-                if let Some(options) =
-                    load_analyze_options(&mut snapshot, &catalog, &table, physical_id)
-                        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
+                if let Some(options) = get_saved_analyze_opts(stats_pool, &table, physical_id)
+                    .map_err(ClusterAnalyzeError::Sql)?
                 {
                     saved.insert(physical_id, options);
                 }
@@ -541,44 +534,30 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
             build_diagnostics.push((true, 1105, message));
         }
     }
-    let mut selection_transaction = opener
-        .begin_read_only()
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    let (selected_columns, predicate_columns_empty) = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut selection_transaction, timeout);
-        let catalog = load_info_schema(&mut snapshot)
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        let mut selections = HashMap::new();
-        let mut predicate_columns_empty = HashMap::new();
-        for options in &resolution.physical {
-            let mut target_statement = statement.clone();
-            target_statement.columns = options.columns.clone();
-            let (mut selected, _, empty) =
-                selected_columns(&mut snapshot, &catalog, &table, &target_statement)
-                    .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-            if let Some(selected) = selected.as_mut() {
-                let predicate = match &target_statement.columns {
-                    AnalyzeColumnChoice::Predicate => true,
-                    AnalyzeColumnChoice::Default => {
-                        matches!(
-                            target_statement.default_columns,
-                            AnalyzeColumnChoice::Predicate
-                        )
-                    }
-                    _ => false,
-                };
-                add_mandatory_columns(&table, selected, predicate);
-            }
-            selected =
-                filter_skipped_column_types(&table, selected, &target_statement.skip_column_types);
-            selections.insert(options.physical_id, selected);
-            predicate_columns_empty.insert(options.physical_id, empty);
+    let mut selected_columns_by_id = HashMap::new();
+    let mut predicate_columns_empty = HashMap::new();
+    for options in &resolution.physical {
+        let mut target_statement = statement.clone();
+        target_statement.columns = options.columns.clone();
+        let (mut selected, empty) = selected_columns(stats_pool, &table, &target_statement)?;
+        if let Some(selected) = selected.as_mut() {
+            let predicate = match &target_statement.columns {
+                AnalyzeColumnChoice::Predicate => true,
+                AnalyzeColumnChoice::Default => {
+                    matches!(
+                        target_statement.default_columns,
+                        AnalyzeColumnChoice::Predicate
+                    )
+                }
+                _ => false,
+            };
+            add_mandatory_columns(&table, selected, predicate);
         }
-        (selections, predicate_columns_empty)
-    };
-    selection_transaction
-        .finish_without_writes()
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        selected =
+            filter_skipped_column_types(&table, selected, &target_statement.skip_column_types);
+        selected_columns_by_id.insert(options.physical_id, selected);
+        predicate_columns_empty.insert(options.physical_id, empty);
+    }
     let mut resolved = statement.clone();
     let logical = resolution
         .physical
@@ -594,7 +573,7 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
         table,
         physical_options: resolution.physical,
         partition_names,
-        selected_columns,
+        selected_columns: selected_columns_by_id,
         predicate_columns_empty,
         partitioned,
         ignored_partition_overrides: resolution.ignored_partition_overrides,
@@ -848,52 +827,68 @@ fn final_column_choice(
     Ok((choice, (!missing.is_empty()).then(|| missing.join(","))))
 }
 
-/// Saves the merged raw options in Go's later, independent restricted
-/// transaction. Callers treat failure as a statement warning.
-pub fn save_cluster_analyze_options<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
+/// Go `AnalyzeExec.saveAnalyzeOptions`: one `REPLACE INTO
+/// mysql.analyze_options` on a restricted session. Callers treat failure as a
+/// statement warning.
+pub fn save_analyze_options(
+    stats_pool: &dyn StatsSessionPool,
     resolved: &ResolvedClusterAnalyze,
-    timeout: Duration,
-    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<(), ClusterAnalyzeError> {
-    if !resolved.statement.persist_options {
+) -> Result<(), SqlQueryError> {
+    if !resolved.statement.persist_options || resolved.physical_options.is_empty() {
         return Ok(());
     }
-    let mut transaction = opener
-        // Go emits one REPLACE containing every logical/partition option row
-        // and applies no row-count bound to that restricted transaction.
-        .begin()
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    let plan = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = load_info_schema(&mut snapshot)
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        let table = find_statement_table(&catalog, &resolved.statement)?;
-        let table = table.read();
-        let mut combined = StatsWritePlan::default();
-        for options in &resolved.physical_options {
-            if options.is_partition && resolved.statement.dynamic_partition_prune {
-                continue;
-            }
-            let write = plan_analyze_options_write(
-                &mut snapshot,
-                &catalog,
-                &table,
-                options.physical_id,
-                options.raw,
-                &options.columns,
-                utc_now_timestamp(),
-                Some(row_ids.as_ref()),
-            )
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-            combined.mutations.extend(write.mutations);
+    // Only to save table options if dynamic prune mode.
+    let dynamic_prune = resolved.statement.dynamic_partition_prune;
+    let to_save = resolved
+        .physical_options
+        .iter()
+        .filter(|options| !options.is_partition || !dynamic_prune)
+        .map(|options| {
+            let (col_choice, col_ids) = match &options.columns {
+                AnalyzeColumnChoice::Default => ("DEFAULT", String::new()),
+                AnalyzeColumnChoice::All => ("ALL", String::new()),
+                AnalyzeColumnChoice::Predicate => ("PREDICATE", String::new()),
+                AnalyzeColumnChoice::Explicit(names) => {
+                    let ids = names
+                        .iter()
+                        .filter_map(|name| {
+                            resolved
+                                .table
+                                .cols()
+                                .iter_deref()
+                                .find(|column| column.read().name.lowercase() == name.go_to_lower())
+                                .map(|column| column.read().id.to_string())
+                        })
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    ("LIST", ids)
+                }
+            };
+            (options, col_choice, col_ids)
+        })
+        .collect::<Vec<_>>();
+    let mut sql = String::from(
+        "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ",
+    );
+    let mut args = Vec::with_capacity(to_save.len() * 7);
+    for (index, (options, col_choice, col_ids)) in to_save.iter().enumerate() {
+        sql.push_str("(%?,%?,%?,%?,%?,%?,%?)");
+        if index < to_save.len() - 1 {
+            sql.push(',');
         }
-        combined
-    };
-    let outcome = transaction
-        .commit(plan.mutations, &UnaryCallContext::with_timeout(timeout))
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    classify_commit_outcome(&outcome)
+        let raw = options.raw;
+        args.push(SqlArg::Signed(options.physical_id));
+        args.push(SqlArg::Unsigned(raw.num_samples.map_or(0, |value| value as u64)));
+        args.push(SqlArg::Float64(raw.sample_rate.unwrap_or(0.0)));
+        args.push(SqlArg::Unsigned(raw.num_buckets.map_or(0, |value| value as u64)));
+        args.push(SqlArg::Signed(raw.num_topn.map_or(-1, |value| value as i64)));
+        args.push(SqlArg::from(*col_choice));
+        args.push(SqlArg::from(col_ids.as_str()));
+    }
+    stats_pool.call_with_sctx(
+        &mut |sctx| tidb_stats_handle_util::exec_rows(sctx, &sql, &args).map(|_| ()),
+        &[],
+    )
 }
 
 fn find_statement_table<'catalog>(
@@ -2218,8 +2213,6 @@ fn commit_cluster_analyze_target<S: StoreClient>(
         target_statement.raw_options = options.raw;
         target_statement.options = options.effective;
         target_statement.options.memory_quota = statement.options.memory_quota;
-        let (_, cleanup, _) = selected_columns(&mut snapshot, &catalog, &table, &target_statement)
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let report = crate::cluster_analyze::sampling::analyze_table(
             opener,
             &table,
@@ -2239,20 +2232,13 @@ fn commit_cluster_analyze_target<S: StoreClient>(
             progress,
         )
         .map_err(ClusterAnalyzeError::Analyze)?;
-        (report, cleanup, base_count, base_modify_count)
+        (report, base_count, base_modify_count)
     };
-    let (report, cleanup, base_count, base_modify_count) = sampled;
+    let (report, base_count, base_modify_count) = sampled;
 
-    if cleanup.is_empty() {
-        sample_transaction
-            .finish_without_writes()
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    } else {
-        let outcome = sample_transaction
-            .commit(cleanup.mutations, &UnaryCallContext::with_timeout(timeout))
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        classify_commit_outcome(&outcome)?;
-    }
+    sample_transaction
+        .finish_without_writes()
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
 
     // Go samples at `AnalyzeResults.Snapshot`, then saves through the
     // statistics handle's later transaction, which reconciles the deltas
@@ -2422,28 +2408,31 @@ fn record_analyze_history_if(
 /// Go `util.StatsMetaHistorySourceAnalyze`.
 const ANALYZE_HISTORY_SOURCE: &str = "analyze";
 
-fn selected_columns<S: tidb_infoschema::cluster_catalog::MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+fn selected_columns(
+    stats_pool: &dyn StatsSessionPool,
     table: &tidb_model::table_info::TableInfo,
     statement: &AnalyzeStatement,
-) -> Result<(Option<HashSet<i64>>, StatsWritePlan, bool), tidb_syssession::stats_table_rows::StatsWriteError>
-{
+) -> Result<(Option<HashSet<i64>>, bool), ClusterAnalyzeError> {
     match &statement.columns {
-        AnalyzeColumnChoice::All => Ok((None, StatsWritePlan::default(), false)),
+        AnalyzeColumnChoice::All => Ok((None, false)),
         AnalyzeColumnChoice::Default => {
-            selected_columns_for_choice(snapshot, catalog, table, &statement.default_columns)
+            selected_columns_for_choice(stats_pool, table, &statement.default_columns)
         }
         AnalyzeColumnChoice::Predicate => {
-            let current = table
-                .cols()
-                .iter_deref()
-                .map(|column| column.read().id)
-                .collect::<Vec<_>>();
-            let (columns, cleanup) =
-                plan_get_predicate_columns(snapshot, catalog, table.id, Some(&current))?;
+            // Go `statsHandle.GetPredicateColumns`, in a wrapped transaction
+            // of its own.
+            let mut columns = Vec::new();
+            stats_pool
+                .call_with_sctx(
+                    &mut |sctx| {
+                        columns = get_predicate_columns(sctx, table.id)?;
+                        Ok(())
+                    },
+                    &[tidb_stats_handle_util::FLAG_WRAP_TXN],
+                )
+                .map_err(ClusterAnalyzeError::Sql)?;
             let empty = columns.is_empty();
-            Ok((Some(columns.into_iter().collect()), cleanup, empty))
+            Ok((Some(columns.into_iter().collect()), empty))
         }
         AnalyzeColumnChoice::Explicit(names) => {
             let mut selected = HashSet::new();
@@ -2453,25 +2442,28 @@ fn selected_columns<S: tidb_infoschema::cluster_catalog::MetaSnapshot>(
                     .iter_deref()
                     .find(|column| column.read().name.lowercase() == name.go_to_lower())
                     .ok_or_else(|| {
-                        tidb_syssession::stats_table_rows::StatsWriteError::MissingTable(format!(
-                            "column `{name}` does not exist in `{}`",
-                            table.name.original()
-                        ))
+                        ClusterAnalyzeError::Other(
+                            tidb_syssession::stats_table_rows::StatsWriteError::MissingTable(
+                                format!(
+                                    "column `{name}` does not exist in `{}`",
+                                    table.name.original()
+                                ),
+                            )
+                            .to_string(),
+                        )
                     })?;
                 selected.insert(column.read().id);
             }
-            Ok((Some(selected), StatsWritePlan::default(), false))
+            Ok((Some(selected), false))
         }
     }
 }
 
-fn selected_columns_for_choice<S: tidb_infoschema::cluster_catalog::MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+fn selected_columns_for_choice(
+    stats_pool: &dyn StatsSessionPool,
     table: &tidb_model::table_info::TableInfo,
     choice: &AnalyzeColumnChoice,
-) -> Result<(Option<HashSet<i64>>, StatsWritePlan, bool), tidb_syssession::stats_table_rows::StatsWriteError>
-{
+) -> Result<(Option<HashSet<i64>>, bool), ClusterAnalyzeError> {
     let statement = AnalyzeStatement {
         schema: String::new(),
         table: String::new(),
@@ -2493,7 +2485,7 @@ fn selected_columns_for_choice<S: tidb_infoschema::cluster_catalog::MetaSnapshot
         eval_context: crate::StmtContext::for_query().into(),
         options: Default::default(),
     };
-    selected_columns(snapshot, catalog, table, &statement)
+    selected_columns(stats_pool, table, &statement)
 }
 
 /// Go `getMustAnalyzedColumns` (and, for the PREDICATE choice,
@@ -2610,16 +2602,6 @@ fn filter_skipped_column_types(
     (selected.len() != columns.len()).then_some(selected)
 }
 
-fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), ClusterAnalyzeError> {
-    match commit_outcome_to_sql_error(outcome) {
-        Ok(()) => Ok(()),
-        Err(error) if error.is_result_undetermined() => Err(ClusterAnalyzeError::Undetermined(
-            "the ANALYZE transaction returned no commit verdict".to_owned(),
-        )),
-        Err(error) => Err(ClusterAnalyzeError::Commit(error)),
-    }
-}
-
 /// Go's analyze `JobInfo` for a table task: `[auto ]analyze table`, then
 /// `all indexes` / `index[es] <names>` over the public indexes, then
 /// `all columns` or the selected columns, then the bucket, TopN and sample
@@ -2677,54 +2659,57 @@ pub fn analyze_table_job_info(
     job_info
 }
 
-/// Loads and schema-filters one persisted ANALYZE option row.
-pub fn load_analyze_options<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
+/// Go `PlanBuilder.getSavedAnalyzeOpts`: one physical table's persisted
+/// options, read on a restricted session.
+pub fn get_saved_analyze_opts(
+    stats_pool: &dyn StatsSessionPool,
     table: &TableInfo,
     physical_id: i64,
-) -> Result<Option<SavedAnalyzeOptions>, StatsWriteError> {
-    let view = SystemTableView::locate(
-        catalog,
-        "analyze_options",
-        &[
-            "table_id",
-            "sample_num",
-            "sample_rate",
-            "buckets",
-            "topn",
-            "column_choice",
-            "column_ids",
-        ],
+) -> Result<Option<SavedAnalyzeOptions>, SqlQueryError> {
+    let mut rows = Vec::new();
+    stats_pool.call_with_sctx(
+        &mut |sctx| {
+            rows = tidb_stats_handle_util::exec_rows(
+                sctx,
+                "select sample_num,sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id = %?",
+                &[SqlArg::Signed(physical_id)],
+            )?
+            .0;
+            Ok(())
+        },
+        &[],
     )?;
-    let pairs = scan_system_table_prefixed(snapshot, &view, &[Datum::Int(physical_id)])?;
-    let Some((key, value)) = pairs.into_iter().next() else {
+    let Some(row) = rows.first() else {
         return Ok(None);
     };
-    let row = SystemRow::parse_in_timezone(&view, &key, &value, None)?;
-    if row.i64("table_id")? != Some(physical_id) {
-        return Ok(None);
+    let int64 = |index: usize| row.get(index).map_or(0, Datum::get_int64);
+    let sample_num = Some(int64(0)).filter(|value| *value > 0);
+    let sample_rate = match row.get(1) {
+        Some(Datum::Real(value)) => Some(*value),
+        _ => None,
     }
-    let sample_num = row.i64("sample_num")?.filter(|value| *value > 0);
-    let sample_rate = row.f64("sample_rate")?.filter(|value| *value > 0.0);
-    let buckets = row.i64("buckets")?.filter(|value| *value > 0);
-    let topn = row.i64("topn")?.filter(|value| *value >= 0);
+    .filter(|value| *value > 0.0);
+    let buckets = Some(int64(2)).filter(|value| *value > 0);
+    let topn = Some(int64(3)).filter(|value| *value >= 0);
     let raw = AnalyzeOptionOverrides {
         num_buckets: buckets.and_then(|value| isize::try_from(value).ok()),
         num_topn: topn.and_then(|value| isize::try_from(value).ok()),
         num_samples: sample_num.and_then(|value| usize::try_from(value).ok()),
         sample_rate,
     };
-    let columns = match row.enum_label("column_choice")?.as_deref() {
-        Some("ALL") => AnalyzeColumnChoice::All,
-        Some("PREDICATE") => AnalyzeColumnChoice::Predicate,
-        Some("LIST") => {
-            let ids = row
-                .bytes("column_ids")?
-                .and_then(|bytes| String::from_utf8(bytes).ok())
-                .unwrap_or_default();
+    let col_type: &[u8] = match row.get(4) {
+        Some(Datum::Enum(value, _)) => value.name().as_bytes(),
+        _ => b"",
+    };
+    let columns = match col_type {
+        b"ALL" => AnalyzeColumnChoice::All,
+        b"LIST" => {
+            let col_id_strs = row.get(5).and_then(Datum::as_raw_bytes).unwrap_or_default();
             let mut names = Vec::new();
-            for id in ids.split(',').filter_map(|id| id.parse::<i64>().ok()) {
+            for id in String::from_utf8_lossy(col_id_strs)
+                .split(',')
+                .filter_map(|id| id.parse::<i64>().ok())
+            {
                 if let Some(column) = table
                     .cols()
                     .iter_deref()
@@ -2735,89 +2720,10 @@ pub fn load_analyze_options<S: MetaSnapshot>(
             }
             AnalyzeColumnChoice::Explicit(names)
         }
+        b"PREDICATE" => AnalyzeColumnChoice::Predicate,
         _ => AnalyzeColumnChoice::Default,
     };
     Ok(Some(SavedAnalyzeOptions { raw, columns }))
-}
-
-/// Plans pinned Go `saveAnalyzeOptions` for one physical table.
-pub fn plan_analyze_options_write<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    table: &TableInfo,
-    physical_id: i64,
-    raw: AnalyzeOptionOverrides,
-    columns: &AnalyzeColumnChoice,
-    now: Time,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<StatsWritePlan, StatsWriteError> {
-    let stored = locate(catalog, "analyze_options")?;
-    let stored = stored.read();
-    let mut rows = StatsRows::open(snapshot, &stored, &["table_id"], physical_id)?;
-    let identity = vec![format!("{:?}", Datum::Int(physical_id))];
-    let mut values = rows
-        .existing_values(&identity)
-        .cloned()
-        .unwrap_or(defaults_row(&stored, now)?);
-    set(&stored, &mut values, "table_id", Datum::Int(physical_id));
-    set(
-        &stored,
-        &mut values,
-        "sample_num",
-        Datum::Int(raw.num_samples.map_or(0, |value| value as i64)),
-    );
-    set(
-        &stored,
-        &mut values,
-        "sample_rate",
-        Datum::Real(raw.sample_rate.unwrap_or(0.0)),
-    );
-    set(
-        &stored,
-        &mut values,
-        "buckets",
-        Datum::Int(raw.num_buckets.map_or(0, |value| value as i64)),
-    );
-    set(
-        &stored,
-        &mut values,
-        "topn",
-        Datum::Int(raw.num_topn.map_or(-1, |value| value as i64)),
-    );
-    let (choice, ids) = match columns {
-        AnalyzeColumnChoice::Default => ("DEFAULT", String::new()),
-        AnalyzeColumnChoice::All => ("ALL", String::new()),
-        AnalyzeColumnChoice::Predicate => ("PREDICATE", String::new()),
-        AnalyzeColumnChoice::Explicit(names) => {
-            let ids = names
-                .iter()
-                .filter_map(|name| {
-                    table
-                        .cols()
-                        .iter_deref()
-                        .find(|column| column.read().name.lowercase() == name.go_to_lower())
-                        .map(|column| column.read().id.to_string())
-                })
-                .collect::<Vec<_>>()
-                .join(",");
-            ("LIST", ids)
-        }
-    };
-    set(
-        &stored,
-        &mut values,
-        "column_choice",
-        Datum::Bytes(choice.as_bytes().to_vec()),
-    );
-    set(
-        &stored,
-        &mut values,
-        "column_ids",
-        Datum::Bytes(ids.into_bytes()),
-    );
-    let mut plan = StatsWritePlan::default();
-    rows.store_row(catalog, &values, &mut plan, row_ids)?;
-    Ok(plan)
 }
 
 /// The session-visible error of a cluster ANALYZE.
@@ -2841,7 +2747,7 @@ pub fn cluster_analyze_error(error: ClusterAnalyzeError) -> tidb_store_driver_er
 #[cfg(test)]
 mod tests {
     use super::{
-        analyze_partition_ids, automatic_sample_rate, classify_commit_outcome,
+        analyze_partition_ids, automatic_sample_rate,
         collect_cache_update_physical_ids, fail_analyze_jobs, filter_skipped_column_types,
         final_column_choice, merge_global_items, realtime_count_of, record_global_history_enabled,
         select_index_tasks,
@@ -2997,9 +2903,7 @@ mod tests {
     use tidb_stats_handle_globalstats::GlobalStatsMergeMode;
     use tidb_stats::StatsLoadedStatus;
     use tidb_stats::MAX_SKETCH_SIZE;
-    use tidb_txnkv::retry::RegionBackoffKind;
     use tidb_txnkv::rpc::UnaryCallContext;
-    use tidb_txnkv::transaction::{OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause};
     use tidb_sqlkiller::SqlKiller;
 
     fn global_partition_item(id: i64, count: i64) -> super::ClusterStatsItem {
@@ -3588,22 +3492,6 @@ mod tests {
             (get_adjusted_sample_rate(Some(realtime_count_of(u64::MAX)), None) - 1.0).abs()
                 < f64::EPSILON
         );
-    }
-
-    #[test]
-    fn analyze_backoff_exhaustion_keeps_its_driver_error_identity() {
-        let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
-            receipt: OptimisticTransactionReceipt::new(1, 2, b"k".to_vec(), 1),
-            cause: TransactionCause::BackoffExhausted {
-                kind: RegionBackoffKind::StaleCommand,
-                detail: "staleCommand backoffer exhausted".to_owned(),
-            },
-        });
-        assert!(matches!(
-            classify_commit_outcome(&outcome),
-            Err(ClusterAnalyzeError::Commit(error))
-                if error.code == tidb_errno::errcode::ErrTiKVStaleCommand
-        ));
     }
 
     #[test]

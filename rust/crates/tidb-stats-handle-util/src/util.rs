@@ -98,6 +98,9 @@ pub trait StatsSessionContext: SessionContext {
     fn transaction_start_ts(&self, active: bool) -> Result<u64, SqlExecError>;
     /// Go `StmtCtx.AffectedRows()`: the rows the last statement changed.
     fn affected_rows(&self) -> u64;
+    /// Go `sctx.GetLatestInfoSchema().TableByID(tableID)`'s `Meta()`; `None`
+    /// when the latest schema has no such table.
+    fn latest_table_meta_by_id(&self, table_id: i64) -> Option<tidb_model::GoShared<TableInfo>>;
     /// The value stored under Go `mock.RestrictedSQLExecutorKey`.
     fn mock_restricted_sql_executor(&self) -> Option<Arc<MockRestrictedSqlExecutor>> {
         None
@@ -623,6 +626,13 @@ mod tests {
     impl StatsSessionContext for MockContext {
         fn affected_rows(&self) -> u64 {
             0
+        }
+
+        fn latest_table_meta_by_id(
+            &self,
+            _table_id: i64,
+        ) -> Option<tidb_model::GoShared<TableInfo>> {
+            None
         }
 
         fn global_system_var(&self, name: &str) -> Result<String, SqlExecError> {

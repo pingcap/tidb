@@ -335,6 +335,49 @@ fn analyze_persists_effective_column_list_and_reuses_raw_options() {
         .unwrap();
 }
 
+/// Go `GetPredicateColumns` deletes a dropped column's usage before it reads
+/// the predicate columns, and `saveAnalyzeOptions` stores the raw option
+/// values (gorun).
+#[test]
+fn analyze_predicate_columns_forget_a_dropped_column_as_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, b INT, c INT)").unwrap();
+    session.run("INSERT INTO t VALUES (1,1,1),(2,2,2)").unwrap();
+    for column_id in [2, 3] {
+        session
+            .run(&format!(
+                "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) \
+                 SELECT tidb_table_id, {column_id}, NOW() FROM information_schema.tables \
+                 WHERE table_schema = 'test' AND table_name = 't'"
+            ))
+            .unwrap();
+    }
+    session.run("ALTER TABLE t DROP COLUMN b").unwrap();
+    session.run("ANALYZE TABLE t PREDICATE COLUMNS").unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT u.column_id, u.last_used_at IS NOT NULL, u.last_analyzed_at IS NOT NULL \
+             FROM mysql.column_stats_usage u JOIN information_schema.tables t \
+             ON u.table_id = t.tidb_table_id \
+             WHERE t.table_schema = 'test' AND t.table_name = 't' ORDER BY 1",
+        )),
+        [["3", "1", "1"]]
+    );
+    let saved = |session: &mut Session| {
+        row_text(session.run(
+            "SELECT o.sample_num, o.sample_rate, o.buckets, o.topn, o.column_choice, o.column_ids \
+             FROM mysql.analyze_options o JOIN information_schema.tables t \
+             ON o.table_id = t.tidb_table_id \
+             WHERE t.table_schema = 'test' AND t.table_name = 't'",
+        ))
+    };
+    assert_eq!(saved(&mut session), [["0", "0", "0", "-1", "PREDICATE", ""]]);
+    session
+        .run("ANALYZE TABLE t COLUMNS a, c WITH 7 BUCKETS, 0.5 SAMPLERATE")
+        .unwrap();
+    assert_eq!(saved(&mut session), [["0", "0.5", "7", "-1", "LIST", "1,3"]]);
+}
+
 #[test]
 fn static_partition_analyze_inherits_and_updates_only_named_partition_options() {
     let mut session = Session::new();

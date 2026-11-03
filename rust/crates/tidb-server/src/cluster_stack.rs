@@ -519,7 +519,6 @@ pub fn cluster_session_stack(
             // data-plane deadline.
             COPROCESSOR_QUERY_TIMEOUT,
             config.stats_lease.slow_save_interval(),
-            Arc::clone(&node_auto_ids),
         ),
     );
     let factory = Domain::new(

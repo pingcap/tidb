@@ -904,6 +904,21 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
             .unwrap_or(0)
     }
 
+    fn latest_table_meta_by_id(
+        &self,
+        table_id: i64,
+    ) -> Option<tidb_model::GoShared<tidb_model::TableInfo>> {
+        self.with_session(|session| {
+            let catalog = session.session.shared_catalog();
+            let catalog = catalog
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            Ok(catalog.table_by_id(table_id).map(|(_, table)| table.meta()))
+        })
+        .ok()
+        .flatten()
+    }
+
     fn global_system_var(&self, name: &str) -> Result<String, tidb_sqlexec::SqlExecError> {
         self.state
             .global_vars

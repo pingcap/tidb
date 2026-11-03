@@ -726,7 +726,6 @@ pub fn unistore_cluster_session_stack_from(
             Arc::clone(&stats),
             IN_PROCESS_TIMEOUT,
             config.stats_lease.slow_save_interval(),
-            Arc::clone(&node_auto_ids),
         ),
     );
     let factory = Domain::new(

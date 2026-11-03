@@ -54,7 +54,7 @@ use tidb_infoschema::cluster_catalog::load_info_schema;
 use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
 use crate::real_tikv_analyze::{
     commit_cluster_analyze, record_global_history_enabled, resolve_cluster_analyze_statement,
-    save_cluster_analyze_options, AnalyzeJobLifecycle, ClusterAnalyzeReport,
+    save_analyze_options, AnalyzeJobLifecycle, ClusterAnalyzeReport,
 };
 use tidb_pdhelper::ApproximateTableCountProvider;
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
@@ -133,9 +133,6 @@ where
     stats: Arc<SharedStats>,
     timeout: Duration,
     stats_lease: Duration,
-    /// The node's live row-ID allocators, which the statistics rows this
-    /// analyzer writes allocate from (Go's internal INSERT).
-    row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 }
 
 impl<S> RealClusterAnalyze<S>
@@ -150,14 +147,12 @@ where
         stats: Arc<SharedStats>,
         timeout: Duration,
         stats_lease: Duration,
-        row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
     ) -> Self {
         Self {
             opener,
             stats,
             timeout,
             stats_lease,
-            row_ids,
         }
     }
 
@@ -234,6 +229,7 @@ where
             resource_group,
             approximate_counts,
             &self.stats,
+            stats_pool,
         )
         .map_err(cluster_analyze_error)?;
         let logical_table_id = statement.logical_table_id();
@@ -260,13 +256,8 @@ where
             stats_pool,
         )
         .map_err(cluster_analyze_error)?;
-        if let Err(error) = save_cluster_analyze_options(
-            &self.opener,
-            &statement,
-            self.timeout,
-            &self.row_ids,
-        ) {
-            report.option_save_warning = Some(error.to_string());
+        if let Err(error) = save_analyze_options(stats_pool, &statement) {
+            report.option_save_warning = Some(error.message);
         }
         Ok(report)
     }
