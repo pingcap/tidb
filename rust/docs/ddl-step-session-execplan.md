@@ -97,8 +97,23 @@ system-table rows are the SQL statements Go executes, in the same commit.
   The 17 tests that consume DDL events (stats handler, notifier store)
   pass over it and fail when the statement is skipped. A run without a
   session pool still stages the row itself until M4.
-- [ ] M3: job, history and MDL rows; the step commit.
+- [ ] M3: job, history and MDL rows; the step commit. Found 2026-11-03:
+  `tidb-ddl-session` is a complete port of Go `pkg/ddl/session`
+  (`Session::{begin, execute, commit, txn, run_in_txn}`, `Pool`) that NO
+  crate depends on. M3 should make the step run in that `Session` (a
+  `SessionContext` over a node system session whose transaction is the
+  step's, with `txn()` the meta mutator's transaction), so the step commit
+  is the session's commit as Go's is, instead of widening the M1 seam.
+  Constraint for any partial step: the session reads the step's buffer, but
+  raw rows in `write.mutations` are invisible to it, so every write to one
+  system table within a step must take the same path. The job-row sites in
+  steps: the pause update, the ordinary step update, the failure checkpoint
+  update (`plan_persisted_ddl_job_failure`), and `finish_persisted_ddl_job`
+  (delete-range rows, then Go's `deleteDDLJob`, then `AddHistoryDDLJob`).
 - [ ] M4: reorg handles, delete ranges, table cache meta; raw writers gone.
+  Also the admin paths in `worker.rs` (pause / resume / cancel job-row
+  updates in their own transactions; Go `updateDDLJob2Table` on a pooled
+  session).
 
 ## Surprises & Discoveries
 
