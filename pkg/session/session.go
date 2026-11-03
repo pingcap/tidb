@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"iter"
 	"maps"
-	"math"
 	"math/rand"
 	"runtime/pprof"
 	"strconv"
@@ -3050,18 +3049,18 @@ func authSuccessClearCount(s *session, user string, host string) error {
 	// If the account is locked, it may be caused by the untimely update of the cache,
 	// directly report the account lock.
 	if passwordLocking.AutoAccountLocked {
-		if passwordLocking.PasswordLockTimeDays == -1 {
+		if passwordLocking.PasswordLockSecs == -1 {
 			return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host,
 				"unlimited", "unlimited")
 		}
 
-		lds := strconv.FormatInt(passwordLocking.PasswordLockTimeDays, 10)
+		lds := privileges.FormatPasswordLockTime(passwordLocking.PasswordLockSecs)
 		return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host, lds, lds)
 	}
 	if passwordLocking.FailedLoginCount != 0 {
 		// If the number of account login failures is not zero, it will be updated to 0.
 		passwordLockingJSON := privileges.BuildSuccessPasswordLockingJSON(passwordLocking.FailedLoginAttempts,
-			passwordLocking.PasswordLockTimeDays)
+			passwordLocking.PasswordLockSecs)
 		if passwordLockingJSON != "" {
 			if err := s.passwordLocking(user, host, passwordLockingJSON); err != nil {
 				return err
@@ -3095,20 +3094,20 @@ func verifyAccountAutoLock(s *session, user, host string) (bool, error) {
 	}
 	if pl.AutoAccountLocked {
 		// If it is locked, need to check whether it can be automatically unlocked.
-		lockTimeDay := pl.PasswordLockTimeDays
-		if lockTimeDay == -1 {
+		lockTimeSecs := pl.PasswordLockSecs
+		if lockTimeSecs == -1 {
 			return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, "unlimited", "unlimited")
 		}
 		lastChanged := pl.AutoLockedLastChanged
 		d := time.Now().Unix() - lastChanged
-		if d <= lockTimeDay*24*60*60 {
-			lds := strconv.FormatInt(lockTimeDay, 10)
-			rds := strconv.FormatInt(int64(math.Ceil(float64(lockTimeDay)-float64(d)/(24*60*60))), 10)
+		if d <= lockTimeSecs {
+			lds := privileges.FormatPasswordLockTime(lockTimeSecs)
+			rds := privileges.FormatPasswordLockTime(lockTimeSecs - d)
 			return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, lds, rds)
 		}
 		// Generate unlock json string.
 		plJSON = privileges.BuildPasswordLockingJSON(pl.FailedLoginAttempts,
-			pl.PasswordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
+			pl.PasswordLockSecs, "N", 0, time.Now().Format(time.UnixDate))
 		s.GetExtensions().OnConnectionEvent(extension.ConnConnected, &extension.ConnEventInfo{
 			ConnectionInfo: s.sessionVars.ConnectionInfo,
 			ActiveRoles:    s.sessionVars.ActiveRoles,
@@ -3147,11 +3146,11 @@ func autolockAction(s *session, passwordLocking *privileges.PasswordLocking, use
 	}
 	// The number of failed login attempts reaches FAILED_LOGIN_ATTEMPTS.
 	// An error message is displayed indicating permission denial and account lock.
-	if passwordLocking.PasswordLockTimeDays == -1 {
+	if passwordLocking.PasswordLockSecs == -1 {
 		return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host,
 			"unlimited", "unlimited")
 	}
-	lds := strconv.FormatInt(passwordLocking.PasswordLockTimeDays, 10)
+	lds := privileges.FormatPasswordLockTime(passwordLocking.PasswordLockSecs)
 	return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host, lds, lds)
 }
 
@@ -3228,17 +3227,17 @@ func userAutoAccountLocked(s *session, user string, host string, pl *privileges.
 	failedLoginCount := pl.FailedLoginCount + 1
 	// If the cache is not updated, but it is already locked, it will report that the account is locked.
 	if pl.AutoAccountLocked {
-		if pl.PasswordLockTimeDays == -1 {
+		if pl.PasswordLockSecs == -1 {
 			return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host,
 				"unlimited", "unlimited")
 		}
-		lds := strconv.FormatInt(pl.PasswordLockTimeDays, 10)
+		lds := privileges.FormatPasswordLockTime(pl.PasswordLockSecs)
 		return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, lds, lds)
 	}
 
 	autoAccountLocked := "N"
 	autoLockedLastChanged := ""
-	if pl.FailedLoginAttempts == 0 || pl.PasswordLockTimeDays == 0 {
+	if pl.FailedLoginAttempts == 0 || pl.PasswordLockSecs == 0 {
 		return false, nil
 	}
 
@@ -3249,7 +3248,7 @@ func userAutoAccountLocked(s *session, user string, host string, pl *privileges.
 	}
 
 	newAttributesStr := privileges.BuildPasswordLockingJSON(pl.FailedLoginAttempts,
-		pl.PasswordLockTimeDays, autoAccountLocked, failedLoginCount, autoLockedLastChanged)
+		pl.PasswordLockSecs, autoAccountLocked, failedLoginCount, autoLockedLastChanged)
 	if newAttributesStr != "" {
 		return lockStatusChanged, s.passwordLocking(user, host, newAttributesStr)
 	}

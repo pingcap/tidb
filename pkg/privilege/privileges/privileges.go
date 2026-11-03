@@ -626,7 +626,7 @@ func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, r
 func GenerateAccountAutoLockErr(failedLoginAttempts int64,
 	user, host, lockTime, remainTime string) error {
 	logutil.BgLogger().Error(fmt.Sprintf("Access denied for user '%s'@'%s'."+
-		" Account is blocked for %s day(s) (%s day(s) remaining) due to %d "+
+		" Account is blocked for %s (%s remaining) due to %d "+
 		"consecutive failed logins.", user, host, lockTime,
 		remainTime, failedLoginAttempts))
 	return ErUserAccessDeniedForUserAccountBlockedByPasswordLock.FastGenByArgs(user, host,
@@ -645,17 +645,17 @@ func (p *UserPrivileges) VerifyAccountAutoLockInMemory(user string, host string)
 
 	if record.AutoAccountLocked {
 		// If it is locked, need to check whether it can be automatically unlocked.
-		lockTime := record.PasswordLockTimeDays
+		lockTime := record.PasswordLockSecs
 		if lockTime == -1 {
 			return record.AutoAccountLocked, GenerateAccountAutoLockErr(record.FailedLoginAttempts, user, host, "unlimited", "unlimited")
 		}
 		lastChanged := record.AutoLockedLastChanged
 		d := time.Now().Unix() - lastChanged
-		if d > lockTime*24*60*60 {
+		if d > lockTime {
 			return record.AutoAccountLocked, nil
 		}
-		lds := strconv.FormatInt(lockTime, 10)
-		rds := strconv.FormatInt(int64(math.Ceil(float64(lockTime)-float64(d)/(24*60*60))), 10)
+		lds := FormatPasswordLockTime(lockTime)
+		rds := FormatPasswordLockTime(lockTime - d)
 		return record.AutoAccountLocked, GenerateAccountAutoLockErr(record.FailedLoginAttempts, user, host, lds, rds)
 	}
 	return record.AutoAccountLocked, nil
@@ -678,24 +678,25 @@ func (p *UserPrivileges) IsAccountAutoLockEnabled(user string, host string) bool
 	// For failed-login tracking and temporary locking to occur, an account's FAILED_LOGIN_ATTEMPTS
 	// and PASSWORD_LOCK_TIME options both must be nonzero.
 	// https://dev.mysql.com/doc/refman/8.0/en/create-user.html
-	if record.FailedLoginAttempts == 0 || record.PasswordLockTimeDays == 0 {
+	if record.FailedLoginAttempts == 0 || record.PasswordLockSecs == 0 {
 		return false
 	}
 	return true
 }
 
 // BuildSuccessPasswordLockingJSON builds success PasswordLocking JSON string.
-func BuildSuccessPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays int64) string {
-	return BuildPasswordLockingJSON(failedLoginAttempts, passwordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
+func BuildSuccessPasswordLockingJSON(failedLoginAttempts, passwordLockSecs int64) string {
+	return BuildPasswordLockingJSON(failedLoginAttempts, passwordLockSecs, "N", 0, time.Now().Format(time.UnixDate))
 }
 
 // BuildPasswordLockingJSON builds PasswordLocking JSON string.
 func BuildPasswordLockingJSON(failedLoginAttempts int64,
-	passwordLockTimeDays int64, autoAccountLocked string, failedLoginCount int64, autoLockedLastChanged string) string {
+	passwordLockSecs int64, autoAccountLocked string, failedLoginCount int64, autoLockedLastChanged string) string {
 	var passwordLockingArray []string
 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_count\": %d", failedLoginCount))
 	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"failed_login_attempts\": %d", failedLoginAttempts))
-	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_time_days\": %d", passwordLockTimeDays))
+	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_secs\": %d", passwordLockSecs))
+	passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"password_lock_time_days\": %d", PasswordLockTimeSecondsToDays(passwordLockSecs)))
 	if autoAccountLocked != "" {
 		passwordLockingArray = append(passwordLockingArray, fmt.Sprintf("\"auto_account_locked\": \"%s\"", autoAccountLocked))
 	}
@@ -1221,7 +1222,7 @@ func init() {
 // It records information about failed-login tracking and temporary account locking.
 type PasswordLocking struct {
 	FailedLoginCount      int64
-	PasswordLockTimeDays  int64
+	PasswordLockSecs      int64
 	AutoAccountLocked     bool
 	AutoLockedLastChanged int64
 	FailedLoginAttempts   int64
@@ -1239,13 +1240,22 @@ func (passwordLocking *PasswordLocking) ParseJSON(passwordLockingJSON types.Bina
 	passwordLocking.FailedLoginAttempts = min(passwordLocking.FailedLoginAttempts, math.MaxInt16)
 	passwordLocking.FailedLoginAttempts = max(passwordLocking.FailedLoginAttempts, 0)
 
-	passwordLocking.PasswordLockTimeDays, err =
-		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.password_lock_time_days")
+	var secondsFound bool
+	passwordLocking.PasswordLockSecs, secondsFound, err =
+		extractOptionalInt64FromJSON(passwordLockingJSON, "$.Password_locking.password_lock_secs")
 	if err != nil {
 		return err
 	}
-	passwordLocking.PasswordLockTimeDays = min(passwordLocking.PasswordLockTimeDays, math.MaxInt16)
-	passwordLocking.PasswordLockTimeDays = max(passwordLocking.PasswordLockTimeDays, -1)
+	if !secondsFound {
+		oldDays, found, oldErr := extractOptionalInt64FromJSON(passwordLockingJSON, "$.Password_locking.password_lock_time_days")
+		if oldErr != nil {
+			return oldErr
+		}
+		if found {
+			passwordLocking.PasswordLockSecs = PasswordLockTimeDaysToSeconds(oldDays)
+		}
+	}
+	passwordLocking.PasswordLockSecs = clampPasswordLockSecs(passwordLocking.PasswordLockSecs)
 
 	passwordLocking.FailedLoginCount, err =
 		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.failed_login_count")
@@ -1268,14 +1278,19 @@ func (passwordLocking *PasswordLocking) ParseJSON(passwordLockingJSON types.Bina
 }
 
 func extractInt64FromJSON(json types.BinaryJSON, pathExpr string) (val int64, err error) {
+	val, _, err = extractOptionalInt64FromJSON(json, pathExpr)
+	return val, err
+}
+
+func extractOptionalInt64FromJSON(json types.BinaryJSON, pathExpr string) (val int64, found bool, err error) {
 	jsonPath, err := types.ParseJSONPathExpr(pathExpr)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if BJ, found := json.Extract([]types.JSONPathExpression{jsonPath}); found {
-		return BJ.GetInt64(), nil
+		return BJ.GetInt64(), true, nil
 	}
-	return 0, nil
+	return 0, false, nil
 }
 
 func extractTimeUnixFromJSON(json types.BinaryJSON, pathExpr string) (int64, error) {

@@ -1839,6 +1839,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		`SELECT plugin, Account_locked, user_attributes->>'$.metadata', Token_issuer,
         Password_reuse_history, Password_reuse_time, Password_expired, Password_lifetime,
         user_attributes->>'$.Password_locking.failed_login_attempts',
+        user_attributes->>'$.Password_locking.password_lock_secs',
         user_attributes->>'$.Password_locking.password_lock_time_days', authentication_string,
 		Max_user_connections
 		FROM %n.%n WHERE User=%? AND Host=%?`,
@@ -1907,17 +1908,33 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		failedLoginAttempts = " FAILED_LOGIN_ATTEMPTS " + failedLoginAttempts
 	}
 
-	passwordLockTimeDays := rows[0].GetString(9)
-	if len(passwordLockTimeDays) > 0 {
-		if passwordLockTimeDays == "-1" {
-			passwordLockTimeDays = " PASSWORD_LOCK_TIME UNBOUNDED"
-		} else {
-			passwordLockTimeDays = " PASSWORD_LOCK_TIME " + passwordLockTimeDays
+	passwordLockTime := rows[0].GetString(9)
+	if len(passwordLockTime) == 0 {
+		legacyDays := rows[0].GetString(10)
+		if legacyDays == "-1" {
+			passwordLockTime = "UNBOUNDED"
+		} else if legacyDays != "" {
+			days, parseErr := strconv.ParseInt(legacyDays, 10, 64)
+			if parseErr != nil {
+				return errors.Trace(parseErr)
+			}
+			passwordLockTime = privileges.FormatPasswordLockTime(privileges.PasswordLockTimeDaysToSeconds(days))
 		}
+	} else if passwordLockTime == "-1" {
+		passwordLockTime = "UNBOUNDED"
+	} else {
+		seconds, parseErr := strconv.ParseInt(passwordLockTime, 10, 64)
+		if parseErr != nil {
+			return errors.Trace(parseErr)
+		}
+		passwordLockTime = privileges.FormatPasswordLockTime(seconds)
+	}
+	if len(passwordLockTime) > 0 {
+		passwordLockTime = " PASSWORD_LOCK_TIME " + passwordLockTime
 	}
 
-	authData := rows[0].GetString(10)
-	maxUserConnections := rows[0].GetInt64(11)
+	authData := rows[0].GetString(11)
+	maxUserConnections := rows[0].GetInt64(12)
 	maxUserConnectionsStr := ""
 	if maxUserConnections > 0 {
 		maxUserConnectionsStr = fmt.Sprintf(" WITH MAX_USER_CONNECTIONS %d", maxUserConnections)
@@ -1946,7 +1963,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	// FIXME: the returned string is not escaped safely
 	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, maxUserConnectionsStr, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
+		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, maxUserConnectionsStr, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTime, userAttributes)
 	e.appendRow([]any{showStr})
 	return nil
 }

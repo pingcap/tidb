@@ -903,6 +903,8 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 	}
 
 	userIdentity := &auth.UserIdentity{Username: cc.user, Hostname: host, AuthPlugin: authPlugin}
+	// Authentication can emit account-unlock events before the handshake completes.
+	cc.ctx.GetSessionVars().ConnectionInfo = cc.connectInfo()
 	if err := cc.ctx.Auth(userIdentity, authData, cc.salt, cc); err != nil {
 		return err
 	}

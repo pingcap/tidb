@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -921,7 +922,11 @@ func (info *passwordOrLockOptionsInfo) loadOptions(plOption []*ast.PasswordOrLoc
 			info.failedLoginAttempts = min(option.Count, math.MaxInt16)
 			info.failedLoginAttemptsChange = true
 		case ast.PasswordLockTime:
-			info.passwordLockTime = min(option.Count, math.MaxInt16)
+			passwordLockTime, err := privileges.PasswordLockTimeToSeconds(option.Count, option.Unit)
+			if err != nil {
+				return types.ErrWrongValue2.GenWithStackByArgs("PASSWORD_LOCK_TIME", fmt.Sprintf("%d%s", option.Count, option.Unit))
+			}
+			info.passwordLockTime = passwordLockTime
 			info.passwordLockTimeChange = true
 		case ast.PasswordLockTimeUnbounded:
 			info.passwordLockTime = -1
@@ -946,8 +951,8 @@ func (info *passwordOrLockOptionsInfo) loadOptions(plOption []*ast.PasswordOrLoc
 func createUserFailedLoginJSON(info *passwordOrLockOptionsInfo) string {
 	// Record only when either failedLoginAttempts and passwordLockTime is not 0
 	if (info.failedLoginAttemptsChange && info.failedLoginAttempts != 0) || (info.passwordLockTimeChange && info.passwordLockTime != 0) {
-		return fmt.Sprintf("\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_time_days\": %d}",
-			info.failedLoginAttempts, info.passwordLockTime)
+		return fmt.Sprintf("\"Password_locking\": {\"failed_login_attempts\": %d,\"password_lock_secs\": %d,\"password_lock_time_days\": %d}",
+			info.failedLoginAttempts, info.passwordLockTime, privileges.PasswordLockTimeSecondsToDays(info.passwordLockTime))
 	}
 	return ""
 }
@@ -964,7 +969,8 @@ func alterUserFailedLoginJSON(info *alterUserPasswordLocking, lockAccount string
 		}
 		passwordLockingArray = append(passwordLockingArray,
 			fmt.Sprintf("\"failed_login_attempts\": %d", info.failedLoginAttempts),
-			fmt.Sprintf("\"password_lock_time_days\": %d", info.passwordLockTime))
+			fmt.Sprintf("\"password_lock_secs\": %d", info.passwordLockTime),
+			fmt.Sprintf("\"password_lock_time_days\": %d", privileges.PasswordLockTimeSecondsToDays(info.passwordLockTime)))
 	}
 	if len(passwordLockingArray) > 0 {
 		return fmt.Sprintf("\"Password_locking\": {%s}", strings.Join(passwordLockingArray, ","))
@@ -982,6 +988,7 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 	}
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, `SELECT JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.failed_login_attempts')),
+        JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_secs')),
         JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days')),
 	    JSON_LENGTH(JSON_REMOVE(user_attributes, '$.Password_locking')) FROM %n.%n WHERE User=%? AND Host=%?;`,
 		mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
@@ -994,7 +1001,7 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 			err = closeErr
 		}
 	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 4)
 	if err != nil {
 		return nil, err
 	}
@@ -1016,19 +1023,26 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 
 	if pLO.passwordLockTimeChange {
 		alterUserInfo.passwordLockTime = pLO.passwordLockTime
-	} else if !rows[0].IsNull(1) {
-		str := rows[0].GetString(1)
+	} else if !rows[0].IsNull(1) || !rows[0].IsNull(2) {
+		column := 1
+		legacyDays := false
+		if rows[0].IsNull(column) {
+			column = 2
+			legacyDays = true
+		}
+		str := rows[0].GetString(column)
 		alterUserInfo.passwordLockTime, err = strconv.ParseInt(str, 10, 64)
 		if err != nil {
 			return nil, err
 		}
-		alterUserInfo.passwordLockTime = max(alterUserInfo.passwordLockTime, -1)
-		alterUserInfo.passwordLockTime = min(alterUserInfo.passwordLockTime, math.MaxInt16)
+		if legacyDays {
+			alterUserInfo.passwordLockTime = privileges.PasswordLockTimeDaysToSeconds(alterUserInfo.passwordLockTime)
+		}
 	} else {
 		alterUserInfo.passwordLockTimeChangeNotFound = true
 	}
 
-	alterUserInfo.containsNoOthers = rows[0].IsNull(2) || rows[0].GetInt64(2) == 0
+	alterUserInfo.containsNoOthers = rows[0].IsNull(3) || rows[0].GetInt64(3) == 0
 	return alterUserInfo, nil
 }
 

@@ -1704,6 +1704,7 @@ const (
 type PasswordOrLockOption struct {
 	Type  int
 	Count int64
+	Unit  string
 }
 
 func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
@@ -1727,7 +1728,11 @@ func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlainf(" %d", p.Count)
 	case PasswordLockTime:
 		ctx.WriteKeyWord("PASSWORD_LOCK_TIME")
-		ctx.WritePlainf(" %d", p.Count)
+		if p.Unit == "" {
+			ctx.WritePlainf(" %d", p.Count)
+		} else {
+			ctx.WritePlainf(" %d%s", p.Count, p.Unit)
+		}
 	case PasswordLockTimeUnbounded:
 		ctx.WriteKeyWord("PASSWORD_LOCK_TIME UNBOUNDED")
 	case PasswordHistory:

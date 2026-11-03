@@ -1230,7 +1230,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(userList map[string]struct{}) func(c
 					return err
 				}
 				value.FailedLoginAttempts = passwordLocking.FailedLoginAttempts
-				value.PasswordLockTimeDays = passwordLocking.PasswordLockTimeDays
+				value.PasswordLockSecs = passwordLocking.PasswordLockSecs
 				value.FailedLoginCount = passwordLocking.FailedLoginCount
 				value.AutoLockedLastChanged = passwordLocking.AutoLockedLastChanged
 				value.AutoAccountLocked = passwordLocking.AutoAccountLocked
