@@ -26,8 +26,7 @@ use std::time::Duration;
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_store_driver_txn::transaction::StoreClient;
 
-use tidb_infoschema::cluster_catalog::{load_info_schema, MetaSnapshot};
-use tidb_infoschema::SessionExtendedInfoSchema;
+use tidb_infoschema::cluster_catalog::load_info_schema;
 use tidb_privilege::cluster_privilege_load::{
     load_cluster_privileges, read_bootstrap_state, read_system_tz, ClusterBootstrapState,
     ClusterPrivileges,
@@ -100,47 +99,6 @@ pub fn load_accounts_from_cluster<S: StoreClient>(
     Ok(accounts)
 }
 
-/// Reads the bootstrap marker and, only for a bootstrapped keyspace,
-/// `mysql.global_variables` through one fresh read-only transaction.
-///
-/// Skip-grant-table disables TiDB's privilege-cache load, but Go still
-/// rebuilds its global-sysvar cache synchronously before accepting sessions.
-/// Keeping this separate from [`load_accounts_from_cluster`] lets recovery
-/// mode preserve that ordering without consulting any account or grant row.
-/// An unbootstrapped or partially bootstrapped keyspace returns no overrides.
-pub fn load_sysvars_from_cluster<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
-    timeout: Duration,
-) -> Result<Vec<(String, String)>, SystemTableError> {
-    load_sysvars_from_cluster_with_catalog_cache(opener, timeout, None)
-}
-
-/// The catalog a periodic reader keeps between passes, reused while the
-/// cluster schema version it was loaded at is still current. Go reads
-/// `mysql.global_variables` through the domain's cached infoschema, which
-/// is only replaced when the schema version moves; loading the whole
-/// catalog (every table's JSON) on every reload pass was this port's cost.
-pub type CatalogCache = std::sync::Mutex<Option<std::sync::Arc<SessionExtendedInfoSchema>>>;
-
-/// [`load_sysvars_from_cluster`] with an optional caller-owned catalog cache.
-pub fn load_sysvars_from_cluster_with_catalog_cache<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
-    timeout: Duration,
-    catalog_cache: Option<&CatalogCache>,
-) -> Result<Vec<(String, String)>, SystemTableError> {
-    let mut transaction = opener
-        .begin_read_only()
-        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-    let sysvars = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        load_sysvars_from_snapshot_with_catalog_cache(&mut snapshot, catalog_cache)?
-    };
-    transaction
-        .finish_without_writes()
-        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-    Ok(sysvars)
-}
-
 /// Reads the bootstrap-persisted system time zone and global variables from
 /// one consistent read-only snapshot.
 pub fn load_startup_variables_from_cluster<S: StoreClient>(
@@ -162,84 +120,4 @@ pub fn load_startup_variables_from_cluster<S: StoreClient>(
         .finish_without_writes()
         .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
     Ok(variables)
-}
-
-#[cfg(test)]
-fn load_sysvars_from_snapshot<S: MetaSnapshot>(
-    snapshot: &mut S,
-) -> Result<Vec<(String, String)>, SystemTableError> {
-    load_sysvars_from_snapshot_with_catalog_cache(snapshot, None)
-}
-
-fn load_sysvars_from_snapshot_with_catalog_cache<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog_cache: Option<&CatalogCache>,
-) -> Result<Vec<(String, String)>, SystemTableError> {
-    let catalog = match catalog_cache {
-        Some(cache) => {
-            // Any DDL moves the schema version, so a catalog loaded at the
-            // version this snapshot reads is this snapshot's catalog.
-            let version = tidb_infoschema::cluster_catalog::get_schema_version(snapshot)?;
-            let cached = lock_catalog_cache(cache)
-                .as_ref()
-                .filter(|catalog| version != 0 && catalog.schema_meta_version() == version)
-                .cloned();
-            match cached {
-                Some(catalog) => catalog,
-                None => {
-                    let catalog = std::sync::Arc::new(load_info_schema(snapshot)?);
-                    *lock_catalog_cache(cache) = Some(std::sync::Arc::clone(&catalog));
-                    catalog
-                }
-            }
-        }
-        None => std::sync::Arc::new(load_info_schema(snapshot)?),
-    };
-    let bootstrap = read_bootstrap_state(snapshot, &catalog)?;
-    if !bootstrap.already_bootstrapped() {
-        return Ok(Vec::new());
-    }
-    load_cluster_sysvars(snapshot, &catalog)
-}
-
-fn lock_catalog_cache(
-    cache: &CatalogCache,
-) -> std::sync::MutexGuard<'_, Option<std::sync::Arc<SessionExtendedInfoSchema>>> {
-    cache
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-#[cfg(test)]
-mod sysvar_only_tests {
-    use tidb_infoschema::cluster_catalog::{ClusterCatalogError, MetaPairs};
-
-    use super::*;
-
-    /// An unbootstrapped keyspace has only absent metadata. Any table-record
-    /// prefix would mean the sysvar-only startup path tried to consult a
-    /// `mysql.*` row after already proving bootstrap never completed.
-    struct UnbootstrappedSnapshot;
-
-    impl MetaSnapshot for UnbootstrappedSnapshot {
-        fn get(&mut self, _key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
-            Ok(None)
-        }
-
-        fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
-            assert_ne!(
-                prefix.first(),
-                Some(&b't'),
-                "an unbootstrapped sysvar load must not scan a table record range"
-            );
-            Ok(Vec::new())
-        }
-    }
-
-    #[test]
-    fn an_unbootstrapped_keyspace_returns_no_sysvars_without_reading_table_rows() {
-        let loaded = load_sysvars_from_snapshot(&mut UnbootstrappedSnapshot)
-            .expect("an unbootstrapped keyspace is an empty sysvar source");
-        assert!(loaded.is_empty());
-    }
 }

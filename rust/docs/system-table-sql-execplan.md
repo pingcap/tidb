@@ -209,6 +209,18 @@ checksums).
   session implements it over the session's transaction API; the DDL pool
   trait offers Go's `ddl.sessPool` (`DdlSessionPool::sess_pool`). Test
   `the_ddl_session_pool_is_gos_sess_pool_over_the_node`.
+- [x] (2026-11-04) S1, sysvar half: the reload loop (Go
+  `LoadSysVarCacheLoop`) starts after the domain and reads
+  `mysql.global_variables` through its system sessions (Go
+  `fetchTableValues`); a SET GLOBAL's cache rebuild reads through the
+  commit's own pool; the metadata-lock switch at startup is Go
+  `InitMDLVariable` -- its meta key, stored `true` when missing -- not the
+  sysvar row (the server also re-published it from the row; removed). The
+  raw sysvar reload chain is gone. Left of S1 for sysvars: the first load
+  before the domain exists (`load_startup_variables_from_cluster`, which
+  also reads `mysql.tidb`'s system time zone). Tests
+  `the_sysvar_reload_reads_a_peers_row_through_the_domains_sessions_as_go`,
+  `startup_mdl_state_is_the_metadata_lock_meta_key_as_go`.
 - [ ] Readers (below), in the order the remaining milestones set.
 
 ### Remaining milestones (Y01)
@@ -288,7 +300,7 @@ directly (`mysql_system_tables::scan_system_table*`):
 
 | Rust reader | Go owner |
 | --- | --- |
-| `tidb-syssession/src/cluster_sysvar_load.rs` | `Domain.fetchTableValues` (`rebuildSysVarCache`) |
+| `tidb-syssession/src/cluster_sysvar_load.rs` (the first load only, before the domain) | `Domain.fetchTableValues` (`rebuildSysVarCache`) |
 | `tidb-privilege/src/cluster_privilege_load.rs`, `tidb-session/src/privilege_tables.rs` | `privileges.MySQLPrivilege.LoadAll` (`loadTable`) |
 | `tidb-bindinfo/src/cluster_binding_seam.rs` (only before its session pool is attached; afterwards Go's SELECT) | `bindinfo` `readBindingsFromStorage` |
 | `tidb-stats-handle-storage/src/cluster_stats_load.rs` (cache refresh, sync/async load, init stats, ANALYZE's base counts; `read.rs` has Go's statements for them) | `storage/read.go` and `initstats` statements |

@@ -265,28 +265,6 @@ pub fn cluster_session_stack(
     // trip if the etcd watch fires first. The fallback is capped at Go's
     // 30-second `LoadSysVarCacheLoop` interval even with a longer lease.
     let sysvar_publication_fence = SysvarPublicationFence::default();
-    let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
-        users.global_vars(),
-        authority.transaction_opener(),
-        tidb_session::domain::real_tikv_node::sysvar_reload_interval(config.schema_lease),
-        CONTROL_PLANE_TIMEOUT,
-        sysvar_publication_fence.clone(),
-    )
-    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    let sysvar_watcher =
-        tidb_session::domain::real_tikv_node::spawn_sysvar_watch(etcd.as_deref(), Some(&sysvar_reloader));
-    // Publish the effective startup value immediately before the schema-ack
-    // worker is created.  The sysvar reloader can perform an initial empty
-    // snapshot while bootstrap tables are still converging; leaving the
-    // process flag at false in that window makes this peer use the legacy
-    // per-node schema-version key even though Go's effective default is ON.
-    let mdl_enabled = users
-        .global_vars()
-        .get(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL)
-        .map_or(tidb_vardef::defaults::DEF_TIDB_ENABLE_MDL, |value| {
-            value.eq_ignore_ascii_case("ON") || value == "1"
-        });
-    tidb_vardef::set_enable_mdl(mdl_enabled);
     // The node's coprocessor: base-table scans now carry their predicate,
     // their row cap and their column list to the region, and only the
     // surviving rows come back. The session's own staged writes are merged on
@@ -544,7 +522,7 @@ pub fn cluster_session_stack(
             users.global_vars(),
             CONTROL_PLANE_TIMEOUT,
             etcd.clone(),
-            sysvar_publication_fence,
+            sysvar_publication_fence.clone(),
         )),
         catalog,
         users.accounts(),
@@ -576,6 +554,17 @@ pub fn cluster_session_stack(
     };
     let factory = factory.with_bindings(Arc::clone(&bindings));
     ddl_session_pool.bind(&factory);
+    // Go `LoadSysVarCacheLoop`, started once the domain's sessions exist:
+    // each rebuild reads `mysql.global_variables` through them.
+    let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
+        users.global_vars(),
+        factory.advanced_sys_session_pool(),
+        tidb_session::domain::real_tikv_node::sysvar_reload_interval(config.schema_lease),
+        sysvar_publication_fence.clone(),
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
+    let sysvar_watcher =
+        tidb_session::domain::real_tikv_node::spawn_sysvar_watch(etcd.as_deref(), Some(&sysvar_reloader));
     tidb_session::domain::cluster_session_node::NodeServices::new(analyze)
     .with_cluster_peer_client(Arc::new(tidb_executor::cluster_peer::ClusterPeerClient::new(
         authority.tikv_store().clone(),

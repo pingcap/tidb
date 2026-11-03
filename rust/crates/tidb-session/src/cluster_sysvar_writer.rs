@@ -35,16 +35,15 @@ pub struct RealClusterSysvarWriter<S = tikv_client::PdRpcClient>
 where
     S: StoreClient,
 {
-    opener: Arc<RealOptimisticTransactionOpener<S>>,
     /// The node's LIVE sysvar cache -- the one every session shares a clone
     /// of.
     live: GlobalSysvars,
-    timeout: Duration,
     /// The etcd client this node announces sysvar changes through, so peers'
     /// sysvar watches fire promptly. `None` leaves them to their reload tick;
     /// a failed announcement is a warning, never a failed statement.
     notifier: Option<Arc<EtcdClient>>,
     publication_fence: SysvarPublicationFence,
+    _store: std::marker::PhantomData<fn() -> S>,
 }
 
 impl<S> RealClusterSysvarWriter<S>
@@ -63,7 +62,7 @@ where
         notifier: Option<Arc<EtcdClient>>,
         publication_fence: SysvarPublicationFence,
     ) -> Self {
-        let switch_opener = Arc::clone(&opener);
+        let switch_opener = opener;
         live.register_set_global_hook(
             tidb_vardef::tidb_vars::TIDB_ENABLE_MDL,
             Arc::new(move |value: &str| {
@@ -76,11 +75,10 @@ where
             }),
         );
         Self {
-            opener,
             live,
-            timeout,
             notifier,
             publication_fence,
+            _store: std::marker::PhantomData,
         }
     }
 }
@@ -162,32 +160,22 @@ where
             initial,
             scratch,
             live: self.live.clone(),
-            timeout: self.timeout,
             notifier: self.notifier.clone(),
             publication_fence: self.publication_fence.clone(),
-            reload_opener: Arc::clone(&self.opener),
         }))
     }
 }
 
-struct RealPendingSysvarChange<S>
-where
-    S: StoreClient,
-{
+struct RealPendingSysvarChange {
     /// The cache's overrides the scratch copy started from.
     initial: std::collections::HashMap<String, String>,
     scratch: GlobalSysvars,
     live: GlobalSysvars,
-    timeout: Duration,
     notifier: Option<Arc<EtcdClient>>,
     publication_fence: SysvarPublicationFence,
-    reload_opener: Arc<RealOptimisticTransactionOpener<S>>,
 }
 
-impl<S> PendingSysvarChange for RealPendingSysvarChange<S>
-where
-    S: StoreClient,
-{
+impl PendingSysvarChange for RealPendingSysvarChange {
     fn table(&self) -> GlobalSysvars {
         self.scratch.clone()
     }
@@ -219,15 +207,12 @@ where
             )?;
         }
         let names = changed.into_iter().map(|(variable, _)| variable).collect::<Vec<_>>();
-        self.notify_update_sys_var_cache(&names);
+        self.notify_update_sys_var_cache(&names, pool);
         Ok(())
     }
 }
 
-impl<S> RealPendingSysvarChange<S>
-where
-    S: StoreClient,
-{
+impl RealPendingSysvarChange {
     /// The rows the assignment of `name` writes: the variables its hooks
     /// moved besides `name` (Go's aliases), then `name` itself.
     fn changed_globals(&self, name: &str, stored: &str) -> Vec<(String, String)> {
@@ -258,19 +243,19 @@ where
     /// Go `NotifyUpdateSysVarCache(true)`: the cache is rebuilt from the
     /// stored rows, then peers are told. A failed rebuild is logged; the
     /// rows are durable either way.
-    fn notify_update_sys_var_cache(self: Box<Self>, changed: &[String]) {
+    fn notify_update_sys_var_cache(
+        self: Box<Self>,
+        changed: &[String],
+        pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
+    ) {
+        // Go `rebuildSysVarCache(nil)`: the rows through the domain's system
+        // session pool (`fetchTableValues`).
         let refresh_error = self.publication_fence.publish_local_after_commit_with_read(
             &self.live,
             &self.scratch,
             changed,
             None,
-            || {
-                tidb_domain_core::real_tikv_privileges::load_sysvars_from_cluster(
-                    &self.reload_opener,
-                    self.timeout,
-                )
-                .map_err(|error| error.to_string())
-            },
+            || tidb_domain_core::cluster_sysvar_seam::fetch_table_values(pool),
         );
         if let Some(error) = refresh_error {
             tidb_logutil::bg_logger()

@@ -623,14 +623,6 @@ pub fn unistore_cluster_session_stack_from(
         .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
 
     let sysvar_publication_fence = tidb_domain_core::cluster_sysvar_seam::SysvarPublicationFence::default();
-    let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
-        users.global_vars(),
-        opener.clone(),
-        crate::domain::real_tikv_node::sysvar_reload_interval(config.schema_lease),
-        IN_PROCESS_TIMEOUT,
-        sysvar_publication_fence.clone(),
-    )
-    .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
 
     let peer_store = (*tikv_store).clone();
     let transport_factory = Arc::new(InProcessReadSessionFactory { tikv_store });
@@ -745,7 +737,7 @@ pub fn unistore_cluster_session_stack_from(
             users.global_vars(),
             IN_PROCESS_TIMEOUT,
             None,
-            sysvar_publication_fence,
+            sysvar_publication_fence.clone(),
         )),
         catalog,
         users.accounts(),
@@ -774,6 +766,14 @@ pub fn unistore_cluster_session_stack_from(
     };
     let factory = factory.with_bindings(Arc::clone(&bindings));
     ddl_session_pool.bind(&factory);
+    // Go `LoadSysVarCacheLoop`, started once the domain's sessions exist.
+    let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
+        users.global_vars(),
+        factory.advanced_sys_session_pool(),
+        crate::domain::real_tikv_node::sysvar_reload_interval(config.schema_lease),
+        sysvar_publication_fence.clone(),
+    )
+    .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
     crate::domain::cluster_session_node::NodeServices::new(analyze)
     .with_cluster_peer_client(Arc::new(tidb_executor::cluster_peer::ClusterPeerClient::new(
         peer_store,

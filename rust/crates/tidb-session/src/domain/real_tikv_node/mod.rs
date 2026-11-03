@@ -176,24 +176,52 @@ where
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     initialize_cluster_system_tz_with_read(|| Ok(variables.system_tz))?;
     // Go's InitMDLVariable publishes the persisted metadata-lock setting to
-    // the process before Domain starts its schema-ack loop.  Keep this
-    // explicit at the same startup boundary: the SQL registry may report the
-    // default ON while the syncer would otherwise still observe its atomic
-    // flag's initial false value and use the MDL-off etcd key layout.
-    publish_startup_mdl_state(&variables.sysvars);
+    // the process before Domain starts its schema-ack loop.
+    init_mdl_variable(opener, PRODUCTION_CONTROL_PLANE_TIMEOUT)?;
     let fresh = crate::GlobalSysvars::from_cluster_rows(variables.sysvars);
     users.global_vars().replace_from(&fresh);
     Ok(())
 }
 
-fn publish_startup_mdl_state(sysvars: &[(String, String)]) {
-    let enabled = sysvars
-        .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL))
-        .map_or(tidb_vardef::defaults::DEF_TIDB_ENABLE_MDL, |(_, value)| {
-            value.eq_ignore_ascii_case("ON") || value == "1"
-        });
-    tidb_vardef::set_enable_mdl(enabled);
+/// Go `session.InitMDLVariable`: the metadata-lock switch is its meta key
+/// (`Mutator.GetMetadataLock`), not the `mysql.global_variables` row; a
+/// missing key is turned on and stored. The process flag follows.
+pub fn init_mdl_variable<S>(
+    opener: &RealOptimisticTransactionOpener<S>,
+    timeout: Duration,
+) -> Result<(), RunConfiguredNodeError>
+where
+    S: StoreClient,
+{
+    let mut storage = tidb_store_driver_txn::meta_txn::MetaTxnStorage::new(opener, timeout);
+    let context = tidb_txnkv::RunInNewTxnContext {
+        request_source: Some(tidb_txnkv::RequestSource {
+            internal: true,
+            source_type: tidb_txnkv::INTERNAL_TXN_DDL.to_owned(),
+            explicit_source_type: String::new(),
+        }),
+    };
+    let mut enable = false;
+    let result = tidb_txnkv::run_in_new_txn(&context, &mut storage, true, |transaction| {
+        let mutator = tidb_meta::transaction::Mutator::new(&mut *transaction);
+        match mutator
+            .metadata_lock()
+            .map_err(tidb_store_driver_txn::meta_txn::MetaTxnError::from)?
+        {
+            Some(stored) => enable = stored,
+            None => {
+                // Workaround for version: nightly-2022-11-07 to nightly-2022-11-17.
+                enable = true;
+                tidb_logutil::bg_logger().warn("metadata lock is null", &[]);
+                mutator
+                    .set_metadata_lock(true)
+                    .map_err(tidb_store_driver_txn::meta_txn::MetaTxnError::from)?;
+            }
+        }
+        Ok(())
+    });
+    tidb_vardef::set_enable_mdl(enable);
+    result.map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))
 }
 
 fn initialize_cluster_system_tz_with_read(
@@ -383,26 +411,34 @@ mod tests {
         );
     }
 
+    /// Go `InitMDLVariable` reads the switch from its meta key -- not the
+    /// sysvar row -- and stores `true` when the key is missing.
     #[test]
-    fn startup_mdl_state_matches_the_persisted_global_variable() {
+    fn startup_mdl_state_is_the_metadata_lock_meta_key_as_go() {
         if crate::domain::isolate_process_globals() {
             return;
         }
-
-        publish_startup_mdl_state(&[(
-            tidb_vardef::tidb_vars::TIDB_ENABLE_MDL.to_owned(),
-            "OFF".to_owned(),
-        )]);
+        let (_pd, opener) = tidb_ddl::embedded_store::in_process_write_stack().unwrap();
+        let timeout = Duration::from_secs(5);
+        let set = |value: Option<bool>| {
+            let mut storage = tidb_store_driver_txn::meta_txn::MetaTxnStorage::new(&opener, timeout);
+            let context = tidb_txnkv::RunInNewTxnContext { request_source: None };
+            tidb_txnkv::run_in_new_txn(&context, &mut storage, true, |transaction| {
+                let mutator = tidb_meta::transaction::Mutator::new(&mut *transaction);
+                if let Some(value) = value {
+                    mutator
+                        .set_metadata_lock(value)
+                        .map_err(tidb_store_driver_txn::meta_txn::MetaTxnError::from)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        };
+        set(Some(false));
+        init_mdl_variable(&opener, timeout).unwrap();
         assert!(!tidb_vardef::is_mdl_enabled(false));
-
-        publish_startup_mdl_state(&[(
-            tidb_vardef::tidb_vars::TIDB_ENABLE_MDL.to_owned(),
-            "ON".to_owned(),
-        )]);
-        assert!(tidb_vardef::is_mdl_enabled(false));
-
-        // An absent row has Go's DefTiDBEnableMDL default.
-        publish_startup_mdl_state(&[]);
+        set(Some(true));
+        init_mdl_variable(&opener, timeout).unwrap();
         assert!(tidb_vardef::is_mdl_enabled(false));
     }
 

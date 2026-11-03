@@ -44,11 +44,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
-use tidb_store_driver_txn::transaction::StoreClient;
 
 use tidb_pd_client::EtcdClient;
 use tidb_domain::global_sysvars::GlobalSysvars;
-use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 
 
 /// Go `session.SetGlobalSysVar` over the domain: an assignment is validated
@@ -409,6 +407,38 @@ impl std::fmt::Display for SysvarReloadError {
 
 impl std::error::Error for SysvarReloadError {}
 
+/// Go `Domain.fetchTableValues`: every `mysql.global_variables` row, read
+/// with a statement on a system session.
+///
+/// # Errors
+///
+/// The statement's error.
+pub fn fetch_table_values(
+    pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
+) -> Result<Vec<(String, String)>, String> {
+    let mut table_contents = Vec::new();
+    pool.call_with_sctx(
+        &mut |sctx| {
+            let (rows, _) = tidb_stats_handle_util::exec_rows(
+                sctx,
+                "SELECT variable_name, variable_value FROM mysql.global_variables",
+                &[],
+            )?;
+            let text = |row: &[tidb_datatype::Datum], index: usize| {
+                row.get(index)
+                    .and_then(tidb_datatype::Datum::as_raw_bytes)
+                    .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+                    .unwrap_or_default()
+            };
+            table_contents = rows.iter().map(|row| (text(row, 0), text(row, 1))).collect();
+            Ok(())
+        },
+        &[],
+    )
+    .map_err(|error| error.message)?;
+    Ok(table_contents)
+}
+
 /// One reload pass's read step: the cluster's whole current sysvar image, or
 /// a reason it could not be read. Injectable so the thread machinery can run
 /// against a fake read in tests, without a real PD/TiKV connection.
@@ -418,20 +448,22 @@ pub type SysvarReloadRead =
 impl SysvarReloader {
     /// Starts the reload thread ticking every `interval`, republishing into
     /// `live` (the node's LIVE table every session already holds a clone of).
-    pub fn spawn<S: StoreClient>(
+    pub fn spawn(
         live: GlobalSysvars,
-        opener: RealOptimisticTransactionOpener<S>,
+        session_pool: Arc<crate::sys_session::DomainSysSessionPool>,
         interval: Duration,
-        timeout: Duration,
         publication_fence: SysvarPublicationFence,
     ) -> Result<Self, SysvarReloadError> {
+        // Go `LoadSysVarCacheLoop`: each rebuild reads the table through the
+        // domain's system sessions (`rebuildSysVarCache` -> `fetchTableValues`).
         Self::spawn_with_read(
             live,
             interval,
             publication_fence,
             Box::new(move || {
-                crate::real_tikv_privileges::load_sysvars_from_cluster(&opener, timeout)
-                    .map_err(|error| error.to_string())
+                fetch_table_values(&crate::sys_session::StatsPool {
+                    session_pool: Some(&session_pool),
+                })
             }),
         )
     }

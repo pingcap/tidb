@@ -27194,3 +27194,29 @@ fn the_ddl_session_pool_is_gos_sess_pool_over_the_node() {
     assert_eq!(displayed(read), [["1"]]);
     sess_pool.put(context);
 }
+
+/// Go `LoadSysVarCacheLoop`: a peer's `SET GLOBAL` lands only as its
+/// `mysql.global_variables` row, and this node's reload reads that table
+/// through the domain's system sessions (`rebuildSysVarCache` ->
+/// `fetchTableValues`), then serves the value.
+#[test]
+fn the_sysvar_reload_reads_a_peers_row_through_the_domains_sessions_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(305)).unwrap();
+    // A peer's write: the row, with no SET GLOBAL on this node.
+    rows(
+        &mut session,
+        "REPLACE INTO mysql.global_variables VALUES ('tidb_mem_quota_query', '536870912')",
+    );
+    let reloads = stack._sysvar_reloader.stats().reloads;
+    stack._sysvar_reloader.waker().nudge();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while stack._sysvar_reloader.stats().reloads == reloads {
+        assert!(std::time::Instant::now() < deadline, "the sysvar reload did not run");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT @@global.tidb_mem_quota_query")),
+        [["536870912"]]
+    );
+}
