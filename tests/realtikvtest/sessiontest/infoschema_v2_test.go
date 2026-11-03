@@ -36,6 +36,7 @@ func TestGCOldVersion(t *testing.T) {
 	})
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("set @@global.tidb_schema_cache_size = 512 * 1024 * 1024")
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")

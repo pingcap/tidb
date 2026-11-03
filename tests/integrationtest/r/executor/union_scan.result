@@ -562,3 +562,27 @@ insert into t values (1, 1), (2, 2), (1, 3) on duplicate key update a = a + 1;
 Error 1062 (23000): Duplicate entry '2' for key 't.a'
 commit;
 admin check table t;
+CREATE TABLE repro_union_scan_hint (id BIGINT UNSIGNED NOT NULL, tenant VARCHAR(128) NOT NULL, payload VARCHAR(128) DEFAULT NULL, PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */, KEY idx_tenant (tenant));
+BEGIN;
+INSERT INTO repro_union_scan_hint (id, tenant, payload) VALUES (9, 'csong', 'uncommitted');
+SELECT * FROM repro_union_scan_hint WHERE tenant = 'csong' ORDER BY id;
+id	tenant	payload
+9	csong	uncommitted
+SELECT /*+ USE_INDEX(repro_union_scan_hint) */ * FROM repro_union_scan_hint WHERE tenant = 'csong' ORDER BY id;
+id	tenant	payload
+9	csong	uncommitted
+INSERT INTO repro_union_scan_hint (id, tenant, payload) VALUES (9223372036854775807, 'csong', 'uncommitted'), (9223372036854775808, 'csong', 'uncommitted'), (18446744073709551615, 'csong', 'uncommitted');
+SELECT /*+ USE_INDEX(repro_union_scan_hint) */ * FROM repro_union_scan_hint WHERE tenant = 'csong' ORDER BY id ASC;
+id	tenant	payload
+9	csong	uncommitted
+9223372036854775807	csong	uncommitted
+9223372036854775808	csong	uncommitted
+18446744073709551615	csong	uncommitted
+SELECT /*+ USE_INDEX(repro_union_scan_hint) */ * FROM repro_union_scan_hint WHERE tenant = 'csong' ORDER BY id DESC;
+id	tenant	payload
+18446744073709551615	csong	uncommitted
+9223372036854775808	csong	uncommitted
+9223372036854775807	csong	uncommitted
+9	csong	uncommitted
+ROLLBACK;
+DROP TABLE repro_union_scan_hint;

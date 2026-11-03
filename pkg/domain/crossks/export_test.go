@@ -40,3 +40,14 @@ func (m *SessionManager) ServerStateSyncer() serverstate.Syncer {
 func (m *SessionManager) ServerInfoID() string {
 	return m.svrInfoSyncer.GetLocalServerInfo().ID
 }
+
+// GlobalVarRefreshStarted returns whether the global variable cache started to
+// refresh in tests.
+func (m *SessionManager) GlobalVarRefreshStarted() bool {
+	select {
+	case <-m.globalVarCache.firstLoaded:
+		return true
+	default:
+		return false
+	}
+}

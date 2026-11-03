@@ -16,6 +16,7 @@ go_test(
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/ddl/session",
+        "//pkg/ddl/util",
         "//pkg/domain",
         "//pkg/domain/affinity",
         "//pkg/kv",

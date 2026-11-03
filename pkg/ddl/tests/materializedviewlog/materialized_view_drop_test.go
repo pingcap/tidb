@@ -136,6 +136,60 @@ func TestDropMaterializedViewLogPurgeInfoFailureRollsBackMetadata(t *testing.T) 
 	require.NoError(t, <-dropErrCh)
 }
 
+func TestDropMaterializedViewLogNotifyFailureRollsBackMetadata(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_drop_mlog_notify_atomic (a int)")
+	tk.MustExec("create materialized view log on t_drop_mlog_notify_atomic (a)")
+
+	mlogTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), model.MaterializedViewLogTableName(ast.NewCIStr("t_drop_mlog_notify_atomic")))
+	require.NoError(t, err)
+	mlogID := mlogTable.Meta().ID
+
+	const notifyErrFP = "github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError"
+	require.NoError(t, failpoint.Enable(notifyErrFP, "1*return()"))
+	defer func() { require.NoError(t, failpoint.Disable(notifyErrFP)) }()
+
+	retryStarted := make(chan struct{})
+	allowRetry := make(chan struct{})
+	releaseRetry := func() {
+		select {
+		case <-allowRetry:
+		default:
+			close(allowRetry)
+		}
+	}
+	defer releaseRetry()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionDropMaterializedViewLog || job.TableID != mlogID || job.ErrorCount == 0 {
+			return
+		}
+		select {
+		case <-retryStarted:
+		default:
+			close(retryStarted)
+		}
+		<-allowRetry
+	})
+
+	tkInspect := newMViewTestKit(t, store)
+	tkInspect.MustExec("use test")
+	dropErrCh := make(chan error, 1)
+	go func() { dropErrCh <- tk.ExecToErr("drop materialized view log on t_drop_mlog_notify_atomic") }()
+
+	select {
+	case <-retryStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for DROP MATERIALIZED VIEW LOG retry")
+	}
+	tkInspect.MustQuery("show tables like '$mlog$t_drop_mlog_notify_atomic'").Check(testkit.Rows("$mlog$t_drop_mlog_notify_atomic"))
+	tkInspect.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where mlog_id = %d", mlogID)).Check(testkit.Rows("1"))
+
+	releaseRetry()
+	require.NoError(t, <-dropErrCh)
+}
+
 func TestDropMaterializedViewLogPrivilege(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := newMViewTestKit(t, store)

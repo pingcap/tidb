@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -1248,6 +1249,15 @@ func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 
 // SwitchMDL enables MDL or disable MDL.
 func (d *ddl) SwitchMDL(enable bool) error {
+	if diagnosticmode.Enabled() {
+		// Diagnostic mode must not participate in cluster-wide DDL tasks. However,
+		// metadata lock is a cluster-wide setting, and a normal TiDB node may still
+		// change it to OFF. Therefore, diagnostic mode can only prevent this node
+		// from changing the metadata lock setting; it cannot prevent the cluster
+		// setting from becoming OFF. If the cluster setting is OFF, this node may
+		// still participate in DDL tasks, which cannot be avoided here.
+		return diagnosticmode.ErrDDLNotAllowed
+	}
 	isEnableBefore := vardef.IsMDLEnabled()
 	if isEnableBefore == enable {
 		return nil
@@ -1308,7 +1318,7 @@ func delayForAsyncCommit() {
 		// - schema state -> StateWriteReorganization with version V+1
 		// - T commit finish, with TS
 		// - 'wait schema synced' finish
-		// - schema state -> Done with version V+2, commit-ts of this
+		// - schema state -> StatePublic and job state -> JobStateDone with version V+2; commit-ts of this
 		//   transaction must > TS, so it's safe for T to commit.
 		return
 	}

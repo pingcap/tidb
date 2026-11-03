@@ -38,7 +38,7 @@ import (
 	tidbcfg "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpu"
@@ -312,7 +312,7 @@ func (cfg *Config) Redact() string {
 	defer func() {
 		cfg.Mydumper.SourceDir = originDir
 	}()
-	cfg.Mydumper.SourceDir = ast.RedactURL(cfg.Mydumper.SourceDir)
+	cfg.Mydumper.SourceDir = objstore.RedactURL(cfg.Mydumper.SourceDir)
 	return cfg.String()
 }
 
@@ -931,8 +931,8 @@ func (m *MydumperRuntime) adjust() error {
 		if filepath.IsAbs(rule.Path) {
 			relPath, err := filepath.Rel(m.SourceDir, rule.Path)
 			if err != nil {
-				return common.ErrInvalidConfig.Wrap(err).
-					GenWithStack("cannot find relative path for file route path %s", rule.Path)
+				return common.ErrInvalidConfig.
+					GenWithStack("cannot find relative path for file route path %s in source dir %s", rule.Path, objstore.RedactURL(m.SourceDir))
 			}
 			// ".." means that this path is not in source dir, so we should return an error
 			if strings.HasPrefix(relPath, "..") {
@@ -1000,7 +1000,7 @@ func (m *MydumperRuntime) adjustFilePath() error {
 		var err error
 		u, err = url.Parse(m.SourceDir)
 		if err != nil {
-			return common.ErrInvalidConfig.Wrap(err).GenWithStack("cannot parse `mydumper.data-source-dir` %s", m.SourceDir)
+			return common.ErrInvalidConfig.GenWithStack("cannot parse `mydumper.data-source-dir` %s", objstore.RedactURL(m.SourceDir))
 		}
 	} else {
 		u = &url.URL{}
@@ -1027,7 +1027,7 @@ func (m *MydumperRuntime) adjustFilePath() error {
 	if !found {
 		return common.ErrInvalidConfig.GenWithStack(
 			"unsupported data-source-dir url '%s', supported storage types are %s",
-			m.SourceDir, strings.Join(supportedStorageTypes, ","))
+			objstore.RedactURL(m.SourceDir), strings.Join(supportedStorageTypes, ","))
 	}
 	return nil
 }

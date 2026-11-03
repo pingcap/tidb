@@ -27,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictpath"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort/orphandata"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -102,6 +104,35 @@ func (sm *Manager) getSchedulers() []Scheduler {
 	return slices.Clone(sm.mu.schedulers)
 }
 
+type orphanDataCleaner interface {
+	// Trigger measures orphan data and deletes a bounded batch of scanned
+	// objects. It runs synchronously on the caller's goroutine and can block
+	// while storage operations finish, including after context cancellation.
+	Trigger(context.Context)
+	// Reset clears the published orphan data size, so an instance that no
+	// longer owns the scheduler stops exporting a stale value.
+	Reset()
+}
+
+// noopOrphanDataCleaner is used when orphan data cleanup is not enabled.
+type noopOrphanDataCleaner struct{}
+
+func (noopOrphanDataCleaner) Trigger(context.Context) {}
+
+func (noopOrphanDataCleaner) Reset() {}
+
+type orphanDataActiveProducerChecker struct {
+	taskMgr TaskManager
+}
+
+func (c orphanDataActiveProducerChecker) HasActiveProducers(ctx context.Context) (bool, error) {
+	summary, err := c.taskMgr.GetActiveTaskCountsByKeyspace(ctx)
+	if err != nil {
+		return false, err
+	}
+	return summary.Total > 0, nil
+}
+
 // Manager manage a bunch of schedulers.
 // Scheduler schedule and monitor tasks.
 // The scheduling task number is limited by size of gPool.
@@ -131,6 +162,9 @@ type Manager struct {
 	nodeRes *proto.NodeResource
 	// initialized on demand
 	metricCollector *dxfmetric.Collector
+	// orphanCleaner measures and cleans global-sort orphan data while this
+	// node owns the scheduler. It is a no-op when cleanup is not enabled.
+	orphanCleaner orphanDataCleaner
 }
 
 // NewManager creates a scheduler struct.
@@ -164,8 +198,24 @@ func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serv
 		nodeRes:  nodeRes,
 	}
 	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)
+	schedulerManager.orphanCleaner = newOrphanDataCleaner(schedulerManager)
 
 	return schedulerManager
+}
+
+// newOrphanDataCleaner builds the orphan data cleaner for this manager. Orphan
+// global-sort data only exists in the NextGen kernel, where cloud storage is
+// the shared spill area; elsewhere cleanup is a no-op.
+func newOrphanDataCleaner(sm *Manager) orphanDataCleaner {
+	if !kerneltype.IsNextGen() {
+		return noopOrphanDataCleaner{}
+	}
+	return orphandata.NewCleaner(orphandata.Config{
+		ActiveProducerChecker: orphanDataActiveProducerChecker{taskMgr: sm.taskMgr},
+		GetStorageURI:         func() string { return handle.GetCloudStorageURI(sm.ctx, sm.store) },
+		Logger:                sm.logger,
+		RetainedPrefixes:      []string{conflictpath.StoragePrefix},
+	})
 }
 
 // Start the schedulerManager, start the scheduleTaskLoop to start multiple schedulers.
@@ -210,6 +260,10 @@ func (sm *Manager) Stop() {
 	// clear existing counters on owner change
 	dxfmetric.WorkerCount.Reset()
 	dxfmetric.FinishedTaskCounter.Reset()
+	// The orphan data size is only meaningful while this node owns the
+	// scheduler. Reset it on owner change, otherwise a former owner keeps
+	// exporting the last value it observed.
+	sm.orphanCleaner.Reset()
 }
 
 // Initialized check the manager initialized.
@@ -411,6 +465,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 func (sm *Manager) cleanTaskLoop() {
 	sm.logger.Info("cleanup loop start")
 	sm.drainCleanTaskBatches()
+	sm.orphanCleaner.Trigger(sm.ctx)
 	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
@@ -422,6 +477,7 @@ func (sm *Manager) cleanTaskLoop() {
 			sm.drainCleanTaskBatches()
 		case <-ticker.C:
 			sm.drainCleanTaskBatches()
+			sm.orphanCleaner.Trigger(sm.ctx)
 		}
 	}
 }

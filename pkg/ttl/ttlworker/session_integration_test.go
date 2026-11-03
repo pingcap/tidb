@@ -28,12 +28,14 @@ import (
 	rumetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session/syssession"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
+	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
@@ -536,4 +538,28 @@ func TestTTLJobRUAttribution(t *testing.T) {
 	_, err = se.ExecuteSQL(ctx, "select * from mysql.tidb_ttl_job_history")
 	require.NoError(t, err)
 	require.Equal(t, before, testutil.ToFloat64(rumetrics.RUV2TTLTotal))
+}
+
+func TestWithSessionUnderSEMv2(t *testing.T) {
+	require.NoError(t, semv2.EnableBy(&semv2.Config{
+		Version:     "1.0",
+		TiDBVersion: "v0.0.0",
+		RestrictedVariables: []semv2.VariableRestriction{
+			{Name: vardef.TiDBEnable1PC, Readonly: true},
+			{Name: vardef.TiDBEnableAsyncCommit, Readonly: true},
+		},
+	}))
+	t.Cleanup(semv2.Disable)
+
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+
+	// The TTL worker takes its session from an internal session pool, so the
+	// session has no privilege manager bound. Preparing the session sets some
+	// variables which may be read-only under SEM, and that used to panic with a
+	// nil pointer dereference, which left the TTL job manager unable to run.
+	require.NoError(t, ttlworker.WithSessionForTest(dom.AdvancedSysSessionPool(), func(se session.Session) error {
+		require.NotNil(t, se)
+		return nil
+	}))
 }

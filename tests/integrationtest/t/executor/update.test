@@ -143,6 +143,69 @@ select * from t;
 -- error 1706
 update t m, t n, t q set m.a = m.a+1, n.c = n.c-1, q.c = q.a+q.b where m.b=n.b and n.b=q.b;
 
+## Update rows in different partitions sharing a _tidb_rowid after EXCHANGE PARTITION, issue 71952
+drop table if exists tp, tx;
+create table tp (a int, b int, c int, key (b), key (c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
+create table tx (a int, b int, c int, key (b), key (c));
+insert into tp values (1, 1, 1);
+insert into tx values (11, 11, 11);
+alter table tp exchange partition p1 with table tx;
+--enable_info
+update tp t1, tp t2 set t1.b = 100, t2.c = 200 where t1.a = 1 and t2.a = 11;
+--disable_info
+select *, _tidb_rowid from tp order by a;
+--enable_info
+update tp t1, tp t2 set t1.b = 300, t2.b = 400 where t1.a = 1 and t2.a = 11;
+--disable_info
+select *, _tidb_rowid from tp order by a;
+--enable_info
+update tp t1, tp t2 set t1.c = t2.b, t2.c = t1.b where t1.a = 1 and t2.a = 11;
+--disable_info
+select *, _tidb_rowid from tp order by a;
+--enable_info
+update tp t1, tp t2 set t1.b = 1, t2.c = 2 where t1.a = 1 and t2.a = 1;
+--disable_info
+select *, _tidb_rowid from tp order by a;
+admin check table tp;
+drop table if exists tp, tx;
+create table tp (a int, b int, c int, s int as (b + c) stored, v int as (b * 10 + c) virtual, key (s), key (v)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
+create table tx (a int, b int, c int, s int as (b + c) stored, v int as (b * 10 + c) virtual, key (s), key (v));
+insert into tp (a, b, c) values (1, 1, 1);
+insert into tx (a, b, c) values (11, 11, 11);
+alter table tp exchange partition p1 with table tx;
+--enable_info
+update tp t1, tp t2 set t1.b = 100, t2.c = 200 where t1.a = 1 and t2.a = 11;
+--disable_info
+select *, _tidb_rowid from tp order by a;
+--enable_info
+update tp t1, tp t2 set t1.b = 300, t2.b = 400 where t1.a = 1 and t2.a = 11;
+--disable_info
+select *, _tidb_rowid from tp order by a;
+admin check table tp;
+drop table if exists tp, tx;
+create table tp (a int, b int, c int, primary key (a) clustered) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
+create table tx (a int, b int, c int, primary key (a) clustered);
+insert into tp values (1, 1, 1);
+insert into tx values (11, 11, 11);
+alter table tp exchange partition p1 with table tx;
+--enable_info
+update tp t1, tp t2 set t1.b = 100, t2.c = 200 where t1.a = 1 and t2.a = 11;
+--disable_info
+select * from tp order by a;
+drop table tp, tx;
+## The unmatched outer row is all NULL, and this LIST partitioned table has no partition for NULL
+drop table if exists tl, t3;
+create table tl (a int, b int) partition by list (a) (partition p0 values in (1), partition p1 values in (2));
+create table t3 (a int, x int);
+insert into tl values (1, 1);
+insert into t3 values (1, 0), (5, 0);
+--enable_info
+update t3 left join tl on t3.a = tl.a set t3.x = 1, tl.b = 10;
+--disable_info
+select * from t3 order by a;
+select * from tl;
+drop table tl, t3;
+
 # TestUpdateClusterIndex
 set tidb_enable_clustered_index = on;
 drop table if exists t;
@@ -754,3 +817,104 @@ UPDATE tp SET b = 333;
 
 SELECT *, _tidb_rowid FROM tp ORDER BY a;
 DROP TABLE t, tp;
+
+# Issue 71951, a row of a nonclustered partitioned table that matches several joined rows is updated once
+DROP TABLE IF EXISTS t, t2, t3, tx;
+CREATE TABLE t2 (b INT, x INT);
+INSERT INTO t2 VALUES (1, 100), (1, 200);
+CREATE TABLE t (a INT, b INT, e INT, UNIQUE KEY ue (e, a))
+PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE);
+INSERT INTO t VALUES (1, 1, NULL), (11, 1, NULL);
+--enable_info
+UPDATE t JOIN t2 ON t.b = t2.b SET t.e = t.a + t2.x;
+--disable_info
+SELECT a, e - a IN (100, 200) FROM t ORDER BY a;
+ADMIN CHECK TABLE t;
+TRUNCATE TABLE t;
+INSERT INTO t VALUES (1, 1, NULL), (11, 1, NULL);
+--enable_info
+UPDATE t JOIN t2 ON t.b = t2.b SET t.e = t.a;
+--disable_info
+SELECT a, e FROM t ORDER BY a;
+ADMIN CHECK TABLE t;
+# A join with a derived table matches each row of t more than once too
+TRUNCATE TABLE t;
+INSERT INTO t VALUES (1, 1, NULL), (11, 1, NULL);
+--enable_info
+UPDATE t, (SELECT 1 b, 100 x UNION ALL SELECT 1, 200) d SET t.e = t.a + d.x WHERE t.b = d.b;
+--disable_info
+SELECT a, e - a IN (100, 200) FROM t ORDER BY a;
+ADMIN CHECK TABLE t;
+DROP TABLE t;
+CREATE TABLE t (a INT, b INT, e INT, KEY ke (e, a))
+PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE);
+INSERT INTO t VALUES (1, 1, NULL), (11, 1, NULL);
+--enable_info
+UPDATE t JOIN t2 ON t.b = t2.b SET t.e = t.a + t2.x;
+--disable_info
+SELECT a, e - a IN (100, 200) FROM t ORDER BY a;
+ADMIN CHECK TABLE t;
+DROP TABLE t;
+CREATE TABLE t (a INT, b INT, e INT, UNIQUE KEY ue (e) GLOBAL, KEY ke (e, b) GLOBAL)
+PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE);
+INSERT INTO t VALUES (1, 1, NULL), (11, 1, NULL);
+--enable_info
+UPDATE t JOIN t2 ON t.b = t2.b SET t.e = t.a + t2.x;
+--disable_info
+SELECT a, e - a IN (100, 200) FROM t ORDER BY a;
+SELECT COUNT(*) FROM t USE INDEX (ue) WHERE e IS NOT NULL;
+ADMIN CHECK TABLE t;
+DROP TABLE t;
+# Rows in different partitions share a _tidb_rowid after EXCHANGE PARTITION, each is updated once
+CREATE TABLE t (a INT, b INT, e INT, KEY ke (e))
+PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20));
+INSERT INTO t VALUES (1, 1, NULL);
+CREATE TABLE tx (a INT, b INT, e INT, KEY ke (e));
+INSERT INTO tx VALUES (11, 1, NULL);
+ALTER TABLE t EXCHANGE PARTITION p1 WITH TABLE tx;
+SELECT a, _tidb_rowid FROM t ORDER BY a;
+--enable_info
+UPDATE t JOIN t2 ON t.b = t2.b SET t.e = t.a + t2.x;
+UPDATE t SET b = b + 1;
+--disable_info
+SELECT a, b, e - a IN (100, 200), _tidb_rowid FROM t ORDER BY a;
+ADMIN CHECK TABLE t;
+DROP TABLE t, tx;
+# An unmatched outer join row is all NULL and has no partition
+CREATE TABLE t (a INT, e INT) PARTITION BY LIST (a) (PARTITION p0 VALUES IN (1, 2));
+INSERT INTO t VALUES (1, 0);
+CREATE TABLE t3 (a INT, x INT);
+INSERT INTO t3 VALUES (1, 0), (3, 0);
+--enable_info
+UPDATE t3 LEFT JOIN t ON t3.a = t.a SET t3.x = 1, t.e = 1;
+--disable_info
+SELECT * FROM t;
+SELECT * FROM t3 ORDER BY a;
+DROP TABLE t, t2, t3;
+# UPDATE IGNORE turns a row with no partition for its value into a warning, and the joined table is still updated
+DROP TABLE IF EXISTS tp, tx, ts;
+CREATE TABLE tp (a INT, b INT) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20));
+CREATE TABLE tx (a INT, b INT);
+INSERT INTO tx VALUES (25, 0);
+ALTER TABLE tp EXCHANGE PARTITION p0 WITH TABLE tx WITHOUT VALIDATION;
+CREATE TABLE ts (b INT, x INT);
+INSERT INTO ts VALUES (0, 0);
+--enable_info
+UPDATE IGNORE tp PARTITION (p0) JOIN ts ON tp.b = ts.b SET tp.b = tp.b + 1, ts.x = 1;
+--disable_info
+SHOW WARNINGS;
+SELECT * FROM tp;
+SELECT * FROM ts;
+-- error 1526
+UPDATE tp PARTITION (p0) JOIN ts ON tp.b = ts.b SET tp.b = tp.b + 1, ts.x = 2;
+DROP TABLE tp, tx, ts;
+# Aliases with different PARTITION () sets locate their own rows
+CREATE TABLE t (a INT, b INT) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE);
+INSERT INTO t VALUES (1, 0), (11, 0);
+BEGIN OPTIMISTIC;
+--enable_info
+UPDATE t PARTITION (p0) x, t PARTITION (p1) y SET x.b = x.b, y.b = 1;
+--disable_info
+COMMIT;
+SELECT * FROM t ORDER BY a;
+DROP TABLE t;

@@ -223,7 +223,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		rpcCancel:        tikv.NewRPCanceller(),
 		buildTaskElapsed: *buildOpt.elapsed,
 		runawayChecker:   req.RunawayChecker,
-		ema:              newRUEMA(req.Paging.PagingSizeBytes),
+		ema:              newRUEMA(),
 		maxKeysRead:      req.MaxKeysRead,
 		keysRead:         pickKeysReadCounter(req),
 	}
@@ -901,8 +901,9 @@ func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error
 		if req.TiDBServerID > 0 && req.TiDBServerID != ser.ServerIDGetter() {
 			continue
 		}
-		// skip some nodes, such as BR created when backup/restore
-		if ser.IP == config.UnavailableIP {
+		// Skip processes that register server info but cannot receive TiDB RPC,
+		// such as standalone BR.
+		if ser.IsDisableRPC() {
 			continue
 		}
 
@@ -1748,10 +1749,11 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	}
 }
 
-func (worker *copIteratorWorker) predictedReadBytesForTask(task *copTask) uint64 {
-	// Byte-budget paging is independent from row-count paging, so a request-level
-	// byte budget must still carry the pre-charge hint when task.paging is false.
-	if !task.paging && worker.req.Paging.PagingSizeBytes == 0 {
+func (worker *copIteratorWorker) predictedReadBytes() uint64 {
+	// The byte budget is the only switch for pre-charge. Row-count paging alone
+	// must not send a hint, so tidb_paging_size_bytes = 0 disables pre-charge.
+	// With a byte budget, the hint is sent even when row-count paging is off.
+	if worker.req.Paging.PagingSizeBytes == 0 {
 		return 0
 	}
 	return worker.ema.Predict()
@@ -1824,7 +1826,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		BucketsVersion:  task.bucketsVer,
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
-	req.PredictedReadBytes = worker.predictedReadBytesForTask(task)
+	req.PredictedReadBytes = worker.predictedReadBytes()
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType
 		req.IsRetryRequest = true
@@ -1994,7 +1996,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.GetTotalSleep(), backoffTypes)
 	}
 	if regionErr := getRegionError(bo.GetCtx(), resp); regionErr != nil {
-		logStr += fmt.Sprintf(" region_err:%s", regionErr.String())
+		logStr += fmt.Sprintf(" region_err:%s", redact.RegionError(regionErr))
 	}
 	// resp might be nil, but it is safe to call resp.GetXXX here.
 	detailV2 := resp.GetExecDetailsV2()
@@ -2246,7 +2248,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, lockHints *req
 			return &copTaskResult{resp: resp}, nil
 		}
 		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
-			task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
+			task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, redact.RegionError(regionErr))
 		if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -2544,7 +2546,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, lockHints
 		if regionErr := getRegionError(bo.GetCtx(), batchResp); regionErr != nil {
 			worker.handleBatchBucketVersionNotMatch(bo, task, regionErr)
 			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
-				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
+				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, redact.RegionError(regionErr))
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 				return batchRespList, nil, errors.Trace(err)
 			}
@@ -2594,8 +2596,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, lockHints
 				// TODO: add bucket version in log
 				//zap.Uint64("latestBucketsVer", batchResp.GetLatestBucketsVersion()),
 				zap.Int("rangeNums", task.ranges.Len()),
-				zap.ByteString("firstRangeStartKey", firstRangeStartKey),
-				zap.ByteString("lastRangeEndKey", lastRangeEndKey),
+				keyField("firstRangeStartKey", firstRangeStartKey),
+				keyField("lastRangeEndKey", lastRangeEndKey),
 				zap.String("storeAddr", task.storeAddr),
 				zap.Error(err))
 			if strings.Contains(err.Error(), "write conflict") {
@@ -2629,8 +2631,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, lockHints
 				zap.Uint64("regionConfVer", task.region.GetConfVer()),
 				zap.Uint64("bucketsVer", task.bucketsVer),
 				zap.Int("rangeNums", task.ranges.Len()),
-				zap.ByteString("firstRangeStartKey", firstRangeStartKey),
-				zap.ByteString("lastRangeEndKey", lastRangeEndKey),
+				keyField("firstRangeStartKey", firstRangeStartKey),
+				keyField("lastRangeEndKey", lastRangeEndKey),
 				zap.String("storeAddr", task.storeAddr))
 		}
 		fallbackNum++
@@ -2683,7 +2685,7 @@ func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockHints *request
 		}))
 	} else {
 		logutil.Logger(bo.GetCtx()).Debug("coprocessor encounters lock",
-			zap.Stringer("lock", lockErr))
+			zap.Stringer("lock", redact.LockInfo(lockErr)))
 	}
 	var locks []*txnlock.Lock
 	if sharedLocks := lockErr.GetSharedLockInfos(); len(sharedLocks) > 0 {

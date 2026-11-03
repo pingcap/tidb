@@ -191,10 +191,15 @@ func TestGlobalMemArbitrator(t *testing.T) {
 	expectTaskFail := int64(0)
 	expectCancelWaitAverse := int64(0)
 	expectCancelStandardMode := int64(0)
-	tk.MustExec("set tidb_mem_arbitrator_wait_averse=1")
+	runOutOfQuotaQuery := func(sql, expectedErr string) {
+		queryTK := testkit.NewTestKit(t, store)
+		queryTK.MustExec("use test")
+		queryTK.MustExec("set tidb_mem_arbitrator_wait_averse=1")
+		require.ErrorContains(t, queryTK.QueryToErr(sql), expectedErr)
+	}
 	for i := range 3 {
 		sql := fmt.Sprintf("select /*+ resource_group(rg%d) set_var(tidb_mem_arbitrator_query_reserved=%s) */ * from t", i+1, maxServerLimitStr)
-		require.ErrorContains(t, tk.QueryToErr(sql), "[executor:8180]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & wait-averse)] [conn=")
+		runOutOfQuotaQuery(sql, "[executor:8180]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & wait-averse)] [conn=")
 		expectTaskFail++
 		expectCancelWaitAverse++
 		{
@@ -210,7 +215,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		tk.MustExec("set global tidb_mem_arbitrator_mode = standard")
 		for i := range 3 {
 			sql := fmt.Sprintf("select /*+ resource_group(rg%d) set_var(tidb_mem_arbitrator_query_reserved=%s) */ * from t", i+1, maxServerLimitStr)
-			require.ErrorContains(t, tk.QueryToErr(sql), "[executor:8180]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & standard-mode)] [conn=")
+			runOutOfQuotaQuery(sql, "[executor:8180]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & standard-mode)] [conn=")
 			expectCancelStandardMode++
 			expectTaskFail++
 			{

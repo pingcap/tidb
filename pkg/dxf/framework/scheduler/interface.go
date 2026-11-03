@@ -38,6 +38,9 @@ type TaskManager interface {
 	GetTopNoNeedResourceTasks(ctx context.Context) ([]*proto.TaskBase, error)
 	// GetAllTasks gets all tasks with basic columns.
 	GetAllTasks(ctx context.Context) ([]*proto.TaskBase, error)
+	// GetActiveTaskCountsByKeyspace gets the number of active tasks (i.e. rows
+	// in `mysql.tidb_global_task`) grouped by keyspace.
+	GetActiveTaskCountsByKeyspace(ctx context.Context) (*storage.ActiveTaskSummary, error)
 	// GetAllSubtasks gets all subtasks with basic columns.
 	GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error)
 	// GetCleanupTasks gets finished tasks, limited by the configured cleanup batch size.

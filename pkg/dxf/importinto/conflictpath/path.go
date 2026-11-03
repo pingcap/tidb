@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package conflictrows
+// Package conflictpath defines the object-store path layout of IMPORT INTO
+// conflict rows.
+package conflictpath
 
 import (
 	"fmt"
@@ -21,12 +23,16 @@ import (
 )
 
 const (
-	storageDir    = "conflicted-rows"
-	storagePrefix = storageDir + "/"
+	// storageDir is the top-level directory under the global-sort URI where
+	// IMPORT INTO stores conflict rows.
+	storageDir = "conflicted-rows"
+	// StoragePrefix is storageDir with a trailing slash, matching the object
+	// keys returned by Storage.WalkDir.
+	StoragePrefix = storageDir + "/"
 )
 
 // NewFileNamePrefix returns a new file name prefix used to store the conflict
-// rows for the given task and subtask. All files under storagePrefix must use a
+// rows for the given task and subtask. All files under StoragePrefix must use a
 // prefix returned by this function; CleanConflictRowFiles treats malformed paths
 // in that namespace as invalid files and deletes them.
 func NewFileNamePrefix(taskID, subtaskID int64) string {

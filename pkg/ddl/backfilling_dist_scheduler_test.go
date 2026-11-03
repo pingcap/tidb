@@ -205,6 +205,9 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 }
 
 func TestBackfillingSchedulerTableRangeScanError(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("the test drives add-index backfill with the mock ingest backend, which nextgen does not support")
+	}
 	disttestutil.ReduceCheckInterval(t)
 	store := testkit.CreateMockStore(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()

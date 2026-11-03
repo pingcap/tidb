@@ -155,6 +155,9 @@ type Update struct {
 
 	IgnoreError bool
 
+	// IsMultiTable is set when the statement updates a join, so the same row can be matched more than once.
+	IsMultiTable bool
+
 	VirtualAssignmentsOffset int
 
 	SelectPlan base.PhysicalPlan

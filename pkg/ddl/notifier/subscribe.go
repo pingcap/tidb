@@ -71,6 +71,8 @@ const (
 	StatsMetaHandlerID HandlerID = 1
 	// PriorityQueueHandlerID is used to update the priority queue.
 	PriorityQueueHandlerID HandlerID = 2
+	// MVServiceHandlerID notifies the materialized view service of metadata changes.
+	MVServiceHandlerID HandlerID = 3
 )
 
 // String implements fmt.Stringer interface.
@@ -80,6 +82,8 @@ func (id HandlerID) String() string {
 		return "TestHandler"
 	case StatsMetaHandlerID:
 		return "StatsMetaHandler"
+	case MVServiceHandlerID:
+		return "MVServiceHandler"
 	default:
 		return fmt.Sprintf("HandlerID(%d)", id)
 	}

@@ -114,6 +114,7 @@ var defaultExpectedReceivers = []string{
 	"DropMaterializedViewStmt",
 	"PurgeMaterializedViewLogStmt",
 	"CancelMaterializedViewJobStmt",
+	"CompareMaterializedViewStmt",
 	"RefreshMaterializedViewStmt",
 	"RefreshMaterializedViewImplementStmt",
 	"DropPlacementPolicyStmt",
