@@ -1852,9 +1852,41 @@ func (r *SQLDigestTextRetriever) updateDigestInfo(queryResult map[string]string)
 	}
 }
 
+<<<<<<< HEAD
 // RetrieveLocal tries to retrieve the SQL text of the SQL digests from local information.
 func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, exec expropt.SQLExecutor) error {
 	if len(r.SQLDigestsMap) == 0 {
+=======
+func (r *SQLDigestTextRetriever) unresolvedDigests() []any {
+	keys := make([]string, 0, len(r.SQLDigestsMap))
+	for digest, text := range r.SQLDigestsMap {
+		if len(digest) > 0 && len(text) == 0 {
+			keys = append(keys, digest)
+		}
+	}
+	slices.Sort(keys)
+	digests := make([]any, len(keys))
+	for i, digest := range keys {
+		digests[i] = digest
+	}
+	return digests
+}
+
+// hasUnresolvedDigests reports whether any digest still needs a SQL text, without the
+// slice allocation and sorting of unresolvedDigests.
+func (r *SQLDigestTextRetriever) hasUnresolvedDigests() bool {
+	for digest, text := range r.SQLDigestsMap {
+		if len(digest) > 0 && len(text) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *SQLDigestTextRetriever) retrieveDigests(ctx context.Context, exec expropt.SQLExecutor, queryGlobal, history bool) error {
+	digests := r.unresolvedDigests()
+	if len(digests) == 0 {
+>>>>>>> ec1402693c6 (expression: skip empty digests before statement summary lookups (#72594))
 		return nil
 	}
 
