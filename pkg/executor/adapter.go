@@ -2138,7 +2138,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 	if sessVars.EnableRedactLog != errors.RedactLogDisable && a.isSlowQueryCacheable() {
 		// Capture the original text before it is redacted into the slow log line.
 		// Only this SQL string is retained in memory.
-		unredactedSQL = sessVars.StmtCtx.OriginalSQL
+		// OriginalSQL may be a substring of a much larger multi-statement request;
+		// clone it so the cache does not retain that request's backing buffer.
+		unredactedSQL = strings.Clone(sessVars.StmtCtx.OriginalSQL)
 	}
 
 	SetSlowLogItems(a, txnTS, hasMoreResults, slowItems)

@@ -103,6 +103,7 @@ func TestSlowQueryCacheEvictsOldestAndFreezesRing(t *testing.T) {
 	// The two unused slots are abandoned once the memory budget is reached.
 	require.Len(t, cache.slowQueries, 2)
 	require.Equal(t, 4, cap(cache.slowQueries))
+	require.True(t, cache.frozen)
 	require.Equal(t, []string{"", secondSQL, thirdSQL}, lookupSlowQueryCache(cache, first, second, third))
 
 	// Replacing the next slot would pass the frozen ceiling, so the SQL is discarded.
@@ -111,7 +112,58 @@ func TestSlowQueryCacheEvictsOldestAndFreezesRing(t *testing.T) {
 	cache.handleWrite(slowQueryCacheWriteTask{key: droppedKey, sql: droppedSQL})
 	require.Equal(t, before, cache.memoryUsage)
 	require.Equal(t, pos, cache.writePos)
+	require.True(t, cache.frozen)
 	require.Equal(t, []string{secondSQL}, lookupSlowQueryCache(cache, second))
+
+	// Capacity 4, budget 300, one-byte digests, SQL lengths 100, 100, 1, 1, 1, 1, 1
+	// for A through G. C replaces A and frees enough memory that D would fit as
+	// an append. Growing there leaves writePos on the oldest slot while newer
+	// slots sit behind it, so G would evict D and keep the older C.
+	const shortBudget int64 = 300
+	shortCache := newSlowQueryCacheWithLimits(4, shortBudget, 8)
+	sqls := []string{
+		strings.Repeat("a", 100),
+		strings.Repeat("b", 100),
+		"c", "d", "e", "f", "g",
+	}
+	keys := make([]slowQueryKey, len(sqls))
+	mem := make([]int64, len(sqls))
+	for i := range keys {
+		keys[i] = slowQueryKeyOf(uint64(i+1), 1, string(rune('A'+i)))
+		mem[i] = getSlowQueryValueMemUsage(keys[i], sqls[i])
+		require.Equal(t, 1, len(keys[i].digest))
+	}
+	require.LessOrEqual(t, mem[0]+mem[1], shortBudget)
+	require.Greater(t, mem[0]+mem[1]+mem[2], shortBudget)
+	require.LessOrEqual(t, mem[1]+mem[2]+mem[3], shortBudget)
+
+	writeAt := func(i int) {
+		shortCache.handleWrite(slowQueryCacheWriteTask{key: keys[i], sql: sqls[i]})
+	}
+	writeAt(0)
+	writeAt(1)
+	require.False(t, shortCache.frozen)
+	require.Len(t, shortCache.slowQueries, 2)
+	require.Zero(t, shortCache.writePos)
+	require.Equal(t, []string{sqls[0], sqls[1]}, lookupSlowQueryCache(shortCache, keys[0], keys[1]))
+
+	writeAt(2)
+	require.True(t, shortCache.frozen)
+	require.Len(t, shortCache.slowQueries, 2)
+	require.Equal(t, 4, cap(shortCache.slowQueries))
+	require.Equal(t, 1, shortCache.writePos)
+	require.Equal(t, mem[1]+mem[2], shortCache.memoryUsage)
+	require.Equal(t, []string{"", sqls[1], sqls[2]}, lookupSlowQueryCache(shortCache, keys[0], keys[1], keys[2]))
+
+	for i := 3; i < len(keys); i++ {
+		writeAt(i)
+		require.True(t, shortCache.frozen)
+		require.Len(t, shortCache.slowQueries, 2)
+		require.LessOrEqual(t, shortCache.memoryUsage, shortBudget)
+	}
+	require.Equal(t, 1, shortCache.writePos)
+	require.Equal(t, mem[5]+mem[6], shortCache.memoryUsage)
+	require.Equal(t, []string{"", "", "", "", "", sqls[5], sqls[6]}, lookupSlowQueryCache(shortCache, keys...))
 }
 
 func TestSlowQueryCacheDuplicateKeySurvivesEvictionOfOlderCopy(t *testing.T) {

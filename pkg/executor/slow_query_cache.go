@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"strconv"
 	"time"
 	"unsafe"
 
@@ -30,9 +29,10 @@ const (
 	// grows until this capacity is reached, then writes reuse its oldest slot.
 	slowQueryCacheCapacity = 50000
 	// slowQueryCacheMaxMem is the budget for retained entries. Once appending an
-	// entry would pass it, the unused slots are abandoned and later writes reuse
-	// existing slots. The index map and the preallocated backing array are not
-	// counted.
+	// entry would pass it, the unused slots are abandoned and the ring stays
+	// frozen. Later writes reuse existing slots even when a shorter replacement
+	// frees enough memory to append. The index map and the preallocated backing
+	// array are not counted.
 	slowQueryCacheMaxMem   = 50 * 1024 * 1024
 	slowQueryCacheChanSize = 1000
 )
@@ -82,6 +82,10 @@ type slowQueryCache struct {
 
 	slowQueries []slowQuery
 	writePos    int
+	// frozen stays set after the first insert that cannot be appended. A later
+	// shorter replacement may free memory, but growing again would leave
+	// writePos behind the chronological order of the slots.
+	frozen      bool
 	locations   map[slowQueryKey]int
 	memoryUsage int64
 	maxMemUsage int64
@@ -262,24 +266,25 @@ func (c *slowQueryCache) handleWrite(task slowQueryCacheWriteTask) {
 		return
 	}
 
-	if len(c.slowQueries) < cap(c.slowQueries) && c.memoryUsage+entryMemUsage <= c.maxMemUsage {
+	if !c.frozen && len(c.slowQueries) < cap(c.slowQueries) && c.memoryUsage+entryMemUsage <= c.maxMemUsage {
 		c.appendSlowQuery(task.key, task.sql)
 		return
 	}
 
-	// Nothing has been stored, or this cache has no slots.
+	// Nothing has been stored, or this cache has no slots. An empty ring is not
+	// frozen, so a later smaller SQL can still become the first entry.
 	if len(c.slowQueries) == 0 {
 		return
 	}
+	// Stay frozen from here, including when this replacement is discarded. A
+	// later SQL that fits in the remaining budget reuses writePos instead of
+	// appending.
+	c.frozen = true
 
 	delta := c.getReplacementDelta(c.writePos, task.key, task.sql)
 	if c.memoryUsage+delta > c.maxMemUsage {
 		return
 	}
-
-	// The ring is frozen from the first time an insert does not fit in the
-	// memory budget or after all slots are used. Later inserts reuse the oldest
-	// retained entry.
 	c.overwrite(task.key, task.sql)
 }
 
@@ -339,11 +344,8 @@ func slowQueryKeyOf(txnStartTS uint64, queryTime float64, digest string) slowQue
 
 // slowQueryTimeKey converts a duration to the Query_time value written in the
 // slow log, so a cache lookup parsed back from that field hits the same key.
+// The log formats seconds with strconv.FormatFloat precision -1, which parses
+// back to the same float64, so the write path does not format the value again.
 func slowQueryTimeKey(queryTime time.Duration) float64 {
-	seconds := queryTime.Seconds()
-	parsed, err := strconv.ParseFloat(strconv.FormatFloat(seconds, 'f', -1, 64), 64)
-	if err != nil {
-		return seconds
-	}
-	return parsed
+	return queryTime.Seconds()
 }
