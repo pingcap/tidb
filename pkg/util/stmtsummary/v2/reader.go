@@ -30,6 +30,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -395,6 +397,7 @@ func (r *HistoryReader) scheduleTasks(
 				}
 				select {
 				case filesCh <- file:
+					failpoint.InjectCall("stmtSummaryHistoryScanFile", file.path)
 				case <-ctx.Done():
 					file.closeAndLogError()
 					return
@@ -727,6 +730,11 @@ func parseEndTs(file *os.File) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
+		// Rotation names contain local wall time without an offset. A repeated
+		// time can denote a later instant, so it is not a safe pruning bound.
+		if end.Format(logFileTimeFormat) != timeStr || !timeutil.IsUniqueLocalTime(end) {
+			return 0, nil
+		}
 		return end.Unix(), nil
 	}
 	return 0, nil
@@ -1012,6 +1020,7 @@ func (w *stmtParseWorker) handleLines(
 				continue
 			}
 		}
+		failpoint.InjectCall("stmtSummaryHistoryParseRecord")
 		record, skipped, err := w.parse(line)
 		if err != nil {
 			// ignore invalid lines
