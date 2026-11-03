@@ -968,14 +968,28 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                 // acknowledgement succeeded. Only this owner run may reuse
                 // that success; a replacement recovers any retained MDL row.
                 if let Some(mdl_info) = mdl_info {
-                    if let Err(error) = clean_mdl_info_with_retry(
-                        Arc::clone(&opener),
-                        timeout,
-                        &mdl_info,
-                        ddl_job_id,
-                        version,
-                        schema_sync.owner_id(),
-                    ) {
+                    // Go `cleanMDLInfo`: the statement on a pooled session, in
+                    // its own transaction.
+                    let pool = schema_state
+                        .worker
+                        .as_ref()
+                        .map(|worker| Arc::clone(&worker.sess_pool))
+                        .filter(|pool| pool.has_step_sessions());
+                    let cleaned = match pool {
+                        Some(pool) => pool
+                            .exec_restricted_sql(&mdl_info.clean_sql(ddl_job_id, schema_sync.owner_id()))
+                            .map(drop)
+                            .map_err(|error| ClusterDdlError::NotCommitted(error.to_string())),
+                        None => clean_mdl_info_with_retry(
+                            Arc::clone(&opener),
+                            timeout,
+                            &mdl_info,
+                            ddl_job_id,
+                            version,
+                            schema_sync.owner_id(),
+                        ),
+                    };
+                    if let Err(error) = cleaned {
                         tidb_ddl_logutil::ddl_logger().warn(
                             "unexpected error when clean mdl info",
                             &[
@@ -1958,9 +1972,12 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
     // stage into it, and it commits with the step's meta writes.
     let mut buffer = MutationBuffer::new();
     let mut schema_state = phase.schema_state.clone();
+    // Go `w.sess` for this step, kept until the step commits: the MDL row
+    // below runs on it too.
+    let mut step_sql: crate::job_txn::StepSqlSlot = Default::default();
     if let Some(worker) = schema_state.worker.as_mut() {
         worker.step_buffer = buffer.clone();
-        worker.step_sql = Default::default();
+        worker.step_sql = Arc::clone(&step_sql);
     }
     let sess_pool = schema_state
         .worker
@@ -2058,10 +2075,11 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
             // keep this transaction's snapshot and conflict protection; the
             // checkpoint's own statements stage into the fresh buffer.
             buffer = MutationBuffer::new();
+            step_sql = Default::default();
             let session = sess_pool.clone().map(|pool| crate::job_txn::StepSession {
                 pool,
                 buffer: buffer.clone(),
-                sql: Default::default(),
+                sql: Arc::clone(&step_sql),
             });
             let checkpoint = transaction
                 .snapshot()
@@ -2136,16 +2154,38 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
         }
     }
     if let Some(mdl_info) = &write.mdl_info_update {
-        if let Err(error) = mdl_info.append_mutations(
-            write.ddl_job_id,
-            write.schema_version,
-            owner_id,
-            &mut write.mutations,
-        ) {
+        let registered = match &sess_pool {
+            // Go `registerMDLInfo` on `w.sess`.
+            Some(pool) => mdl_info.register(
+                &crate::job_txn::StepSession {
+                    pool: Arc::clone(pool),
+                    buffer: buffer.clone(),
+                    sql: Arc::clone(&step_sql),
+                },
+                start_ts,
+                write.ddl_job_id,
+                write.schema_version,
+                owner_id,
+            ),
+            None => mdl_info.append_mutations(
+                write.ddl_job_id,
+                write.schema_version,
+                owner_id,
+                &mut write.mutations,
+            ),
+        };
+        if let Err(error) = registered {
             let _ = transaction.rollback();
             return Err(error.into());
         }
     }
+    // The step's session ends; its writes stay in the step's buffer.
+    drop(
+        step_sql
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take(),
+    );
     if let Err(error) = (phase.check_owner)() {
         let _ = transaction.rollback();
         return Err(compensate_external_delivery(

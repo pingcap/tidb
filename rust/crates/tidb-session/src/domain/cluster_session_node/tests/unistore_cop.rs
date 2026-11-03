@@ -26377,3 +26377,46 @@ fn a_step_sessions_statements_all_commit_with_the_step_as_go() {
         [["1"], ["2"], ["3"]]
     );
 }
+
+/// Go `registerMDLInfo`, run on the DDL step's session: while a transaction
+/// holds the table's metadata lock, the ALTER waits on schema sync with its
+/// `mysql.tidb_mdl_info` row (`table_ids` read back from
+/// `mysql.tidb_ddl_job`) published; once the reader commits the DDL finishes
+/// and `cleanMDLInfo` removes the row.
+#[test]
+fn ddl_mdl_info_row_is_gos_replace_on_the_step_session() {
+    let (stack, _users) = cop_backed_stack();
+    let mut reader = stack.factory.open_session(session_context(187)).unwrap();
+    let mut probe = stack.factory.open_session(session_context(188)).unwrap();
+    rows(&mut reader, "create table test.mdl1 (a int)");
+    let table_id = displayed(rows(
+        &mut probe,
+        "select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mdl1'",
+    ))[0][0]
+        .clone();
+    rows(&mut reader, "begin");
+    rows(&mut reader, "select * from test.mdl1");
+    let factory = Arc::clone(&stack.factory);
+    let alter = std::thread::spawn(move || {
+        let mut writer = factory.open_session(session_context(189)).unwrap();
+        rows(&mut writer, "alter table test.mdl1 add column b int");
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let registered = displayed(rows(&mut probe, "select table_ids from mysql.tidb_mdl_info"));
+        if registered == [[table_id.clone()]] {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the waiting ALTER never published its MDL row: {registered:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    rows(&mut reader, "commit");
+    alter.join().unwrap();
+    assert_eq!(
+        displayed(rows(&mut probe, "select count(*) from mysql.tidb_mdl_info")),
+        [["0"]]
+    );
+}

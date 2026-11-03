@@ -7506,6 +7506,66 @@ pub struct MdlInfoUpdate {
 }
 
 impl MdlInfoUpdate {
+    /// Go `registerMDLInfo` on the step's session: the job's `table_ids`
+    /// read back from `mysql.tidb_ddl_job`, then `replace into
+    /// mysql.tidb_mdl_info` (without `owner_id` for a system database).
+    ///
+    /// # Errors
+    ///
+    /// A statement's error, or Go's "can't find ddl job" for a missing row.
+    pub fn register(
+        &self,
+        session: &crate::job_txn::StepSession,
+        start_ts: u64,
+        ddl_job_id: i64,
+        schema_version: i64,
+        owner_id: &str,
+    ) -> Result<(), DdlPlanError> {
+        let rows = session
+            .execute(
+                start_ts,
+                &format!("select table_ids from mysql.tidb_ddl_job where job_id = {ddl_job_id}"),
+                &[],
+            )
+            .map_err(DdlPlanError::from_mysql_error)?;
+        let Some(ids) = rows.first().and_then(|row| row.first()) else {
+            return Err(DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(format!(
+                "can't find ddl job {ddl_job_id}"
+            ))));
+        };
+        let ids = match ids {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
+            _ => String::new(),
+        };
+        let sql = if self.omit_owner_id {
+            format!(
+                "replace into mysql.tidb_mdl_info (job_id, version, table_ids) values ({ddl_job_id}, {schema_version}, '{ids}')"
+            )
+        } else {
+            format!(
+                "replace into mysql.tidb_mdl_info (job_id, version, table_ids, owner_id) values ({ddl_job_id}, {schema_version}, '{ids}', '{owner_id}')"
+            )
+        };
+        session
+            .execute(start_ts, &sql, &[])
+            .map_err(DdlPlanError::from_mysql_error)?;
+        Ok(())
+    }
+
+    /// Go `jobScheduler.cleanMDLInfo`'s statement (without `owner_id` for a
+    /// system database).
+    #[must_use]
+    pub fn clean_sql(&self, ddl_job_id: i64, owner_id: &str) -> String {
+        if self.omit_owner_id {
+            format!("delete from mysql.tidb_mdl_info where job_id = {ddl_job_id}")
+        } else {
+            format!(
+                "delete from mysql.tidb_mdl_info where job_id = {ddl_job_id} and owner_id = '{owner_id}'"
+            )
+        }
+    }
+
     fn row_values(
         &self,
         ddl_job_id: i64,
