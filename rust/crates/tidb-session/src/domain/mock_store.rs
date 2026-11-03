@@ -328,7 +328,7 @@ impl NodeConn {
         self.mock_store()
             .stack
             .factory
-            .dump_col_stats_usage_to_kv("default")
+            .dump_col_stats_usage_to_kv()
     }
 
     /// removes the observer).

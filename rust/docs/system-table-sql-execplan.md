@@ -145,9 +145,13 @@ checksums).
   so SQL deletes missed their keys. Internal statements now reach this
   tier's text parser through `escape_sql_text` (byte arguments as
   `_binary X'...'`); the DDL session pools had replaced non-UTF-8 bytes.
-- [ ] Rest of M2/M3: the delta flush (`DumpStatsDeltaToKV`, item 9, with
-  its "flush stats" history row), the DDL statistics subscriber (insert /
-  version / global-ID / exchange-partition rows and its "schema change"
+- [x] (2026-11-03) Usage (item 9): Go `DumpStatsDeltaToKV` (one wrapped
+  transaction per batch: `QueryLockedTables` on its own session,
+  `storage.UpdateStatsMeta`, then "flush stats" history) and
+  `DumpColStatsUsageEntries` on the pool; `sys_session::StatsPool` is the
+  one statistics-pool seam for the domain and the session.
+- [ ] Rest of M2/M3: the DDL statistics subscriber (insert / version /
+  global-ID / exchange-partition / delta rows and its "schema change"
   history row, in the notifier's transaction) and the historical-stats
   reader still use row planners. `plan_stats_write` /
   `plan_partition_stats_write` / `plan_historical_stats_data_block` remain

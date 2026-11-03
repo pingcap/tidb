@@ -18,6 +18,11 @@
 //! `mysql.column_stats_usage`.
 
 use std::collections::BTreeMap;
+use std::time::SystemTime;
+
+use tidb_sqlescape::{must_escape_sql_text, SqlArg};
+use tidb_sqlexec::SqlExecError;
+use tidb_stats_handle_util::{exec_rows, StatsSessionContext};
 
 use tidb_datatype::{
     Datum, Time,
@@ -31,68 +36,6 @@ use tidb_syssession::system_row_write::defaults_row;
 use tidb_table::origin_default::RowEncodeError;
 use tidb_stats_handle_storage::cluster_stats_write::*;
 use tidb_syssession::stats_table_rows::*;
-
-/// Plans one pinned Go `DumpColStatsUsageEntries` batch.
-///
-/// The caller owns Go's 2,048-row batching and commits each returned plan in
-/// its own restricted transaction. Existing non-NULL timestamps advance only
-/// after the pinned twelve-hour threshold; a missing/NULL value is written
-/// immediately.
-pub fn plan_column_stats_usage_dump<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    entries: &[(TableItemID, Time)],
-    now: Time,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<StatsWritePlan, StatsWriteError> {
-    let mut plan = StatsWritePlan::default();
-    let table = locate(catalog, "column_stats_usage")?;
-    let table = table.read();
-    let mut rows_by_table = BTreeMap::new();
-    for (item, _) in entries {
-        if !rows_by_table.contains_key(&item.table_id) {
-            rows_by_table.insert(
-                item.table_id,
-                StatsRows::open(snapshot, &table, &["table_id", "column_id"], item.table_id)?,
-            );
-        }
-    }
-    let last_used_id = column_id(&table, "last_used_at")?;
-    let threshold_nanoseconds = i64::try_from(
-        crate::COL_STATS_USAGE_LAST_USED_THROTTLE_INTERVAL.as_nanos(),
-    )
-    .expect("twelve hours fits in i64 nanoseconds");
-    for (item, incoming) in entries {
-        let rows = rows_by_table
-            .get_mut(&item.table_id)
-            .expect("the table's rows were opened above");
-        let mut values = defaults_row(&table, now)?;
-        set(&table, &mut values, "table_id", Datum::Int(item.table_id));
-        set(&table, &mut values, "column_id", Datum::Int(item.id));
-        let identity = identity_of(&table, &["table_id", "column_id"], &values)?;
-        if let Some(stored) = rows.existing_values(&identity) {
-            values = stored.clone();
-        }
-        let should_update = match values.get(&last_used_id) {
-            None | Some(Datum::Null) => true,
-            Some(Datum::Time(stored)) => incoming
-                .sub(*stored, &chrono::Utc)
-                .is_ok_and(|elapsed| elapsed.nanoseconds() >= threshold_nanoseconds),
-            Some(_) => true,
-        };
-        if !should_update {
-            continue;
-        }
-        set(
-            &table,
-            &mut values,
-            "last_used_at",
-            predicate_time_value(&table, "last_used_at", Some(*incoming))?,
-        );
-        rows.store_row(catalog, &values, &mut plan, row_ids)?;
-    }
-    Ok(plan)
-}
 
 /// One SQL statement in pinned Go `storage.UpdateStatsMeta`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -233,4 +176,41 @@ pub fn plan_stats_delta_statement<S: MetaSnapshot>(
         rows.store_row(catalog, &values, &mut plan, row_ids)?;
     }
     Ok(plan)
+}
+
+/// One batch of Go `DumpColStatsUsageEntries`: a single upsert that advances
+/// a stored `last_used_at` only once the throttle interval has passed.
+pub fn dump_col_stats_usage_batch<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    batch: &[(TableItemID, SystemTime)],
+) -> Result<(), SqlExecError> {
+    let threshold_minutes =
+        (crate::COL_STATS_USAGE_LAST_USED_THROTTLE_INTERVAL.as_secs() / 60) as i64;
+    let mut sql = String::from(
+        "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES ",
+    );
+    for (position, (item, used_at)) in batch.iter().enumerate() {
+        // UTC, converted into the session's zone by the statement, so the
+        // stored instant is right whatever session runs it.
+        let last_used_at = chrono::DateTime::<chrono::Utc>::from(*used_at)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        sql.push_str(&must_escape_sql_text(
+            "(%?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE))",
+            &[
+                SqlArg::Signed(item.table_id),
+                SqlArg::Signed(item.id),
+                SqlArg::from(last_used_at.as_str()),
+            ],
+        ));
+        if position + 1 < batch.len() {
+            sql.push(',');
+        }
+    }
+    sql.push_str(&must_escape_sql_text(
+        " ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL OR TIMESTAMPDIFF(MINUTE, last_used_at, VALUES(last_used_at)) >= %? THEN VALUES(last_used_at) ELSE last_used_at END",
+        &[SqlArg::Signed(threshold_minutes)],
+    ));
+    exec_rows(sctx, &sql, &[])?;
+    Ok(())
 }

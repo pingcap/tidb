@@ -12,6 +12,9 @@ workspace = true
 
 [dependencies]
 chrono.workspace = true
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }
 tidb-table = { path = "../tidb-table" }
 tidb-txnkv = { path = "../tidb-txnkv" }

@@ -37,16 +37,7 @@ pub const DUMP_DELTA_BATCH_SIZE: usize = 100_000;
 
 use tidb_variable::table_delta::{TableDelta, TableDeltaMap};
 
-/// Go `storage.DeltaUpdate`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DeltaUpdate {
-    /// Physical or logical table ID to update.
-    pub table_id: i64,
-    /// Accumulated row and modification deltas.
-    pub delta: TableDelta,
-    /// Whether the delta is stashed in `mysql.stats_table_locked`.
-    pub is_locked: bool,
-}
+pub use tidb_stats_handle_storage::update::DeltaUpdate;
 
 /// Go `statsUsageImpl.dumpStatsDeltaToKV`'s lock and partition expansion.
 #[must_use]

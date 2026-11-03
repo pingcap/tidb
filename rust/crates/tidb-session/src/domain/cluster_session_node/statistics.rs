@@ -34,12 +34,7 @@ const NO_ROWS: WriteOutcome = WriteOutcome {
 /// A cluster seam's error as the session's.
 /// A statistics session's error as the statement's own: Go returns the
 /// statement's error unchanged.
-fn stats_session_sql_error(error: tidb_sqlexec::SqlExecError) -> SqlQueryError {
-    match error.downcast::<super::sessions::StatsSessionStatementError>() {
-        Ok(error) => error.0,
-        Err(error) => SqlQueryError::unknown(error.to_string()),
-    }
-}
+use tidb_domain_core::sys_session::stats_session_sql_error;
 
 fn into_driver_error(error: SqlQueryError) -> tidb_driver_error::DriverError {
     tidb_driver_error::DriverError::Mysql(
@@ -403,13 +398,11 @@ pub(super) fn analyze_service_over(
     analyze: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze>,
 ) -> crate::domain_services::StatementService<dyn tidb_executor::analyze::exec::AnalyzeService> {
     let stats_usage = Arc::clone(&domain.stats_usage);
-    let transactions = Arc::clone(&domain.transactions);
     let catalog = Arc::clone(&domain.catalog);
     let stats = Arc::clone(&domain.stats);
     let global_vars = domain.global_vars.clone();
     let approximate_table_counts = Arc::clone(&domain.approximate_table_counts);
     let historical_stats_worker = Arc::clone(&domain.historical_stats_worker);
-    let row_ids = Arc::clone(&domain.auto_ids);
     let session_pool = domain
         .binding_session_factory
         .upgrade()
@@ -421,14 +414,12 @@ pub(super) fn analyze_service_over(
             instance: session.analyze_job_instance(),
             connection_id: session.connection_id(),
             stats_usage: Arc::clone(&stats_usage),
-            transactions: Arc::clone(&transactions),
             catalog: Arc::clone(&catalog),
             stats: Arc::clone(&stats),
             global_vars: global_vars.clone(),
             analyze: Arc::clone(&analyze),
             approximate_table_counts: Arc::clone(&approximate_table_counts),
             historical_stats_worker: Arc::clone(&historical_stats_worker),
-            row_ids: Arc::clone(&row_ids),
             session_pool: session_pool.clone(),
         }) as Box<dyn tidb_executor::analyze::exec::AnalyzeService>
     })
@@ -445,7 +436,6 @@ pub(super) fn stats_statement_service(
     dyn tidb_executor::stats_exec::StatsStatementService,
 > {
     let stats_usage = Arc::clone(&domain.stats_usage);
-    let transactions = Arc::clone(&domain.transactions);
     let catalog = Arc::clone(&domain.catalog);
     let stats = Arc::clone(&domain.stats);
     let global_vars = domain.global_vars.clone();
@@ -454,18 +444,14 @@ pub(super) fn stats_statement_service(
         .binding_session_factory
         .upgrade()
         .map(|domain| domain.advanced_sys_session_pool());
-    let row_ids = Arc::clone(&domain.auto_ids);
-    Arc::new(move |session: &crate::Session| {
+    Arc::new(move |_session: &crate::Session| {
         Box::new(ClusterStatsStatementService {
-            resource_group: session.current_resource_group().to_owned(),
             stats_usage: Arc::clone(&stats_usage),
-            transactions: Arc::clone(&transactions),
             catalog: Arc::clone(&catalog),
             stats: Arc::clone(&stats),
             global_vars: global_vars.clone(),
             analyze: Arc::clone(&analyze),
             session_pool: session_pool.clone(),
-            row_ids: Arc::clone(&row_ids),
         }) as Box<dyn tidb_executor::stats_exec::StatsStatementService>
     })
 }
@@ -473,33 +459,12 @@ pub(super) fn stats_statement_service(
 /// because the session runs the statement while the node is borrowed.
 ///
 /// [`AnalyzeService`]: crate::analyze_service::AnalyzeService
-/// Go `statsHandle.SPool()` for the statistics handle's saves: the
-/// domain's system sessions, a statement's error keeping its MySQL code.
-struct SessionStatsPool<'a> {
-    session_pool: Option<&'a Arc<tidb_domain_core::sys_session::DomainSysSessionPool>>,
-}
-
-impl tidb_stats_handle_storage::stats_read_writer::StatsSessionPool for SessionStatsPool<'_> {
-    fn call_with_sctx(
-        &self,
-        f: &mut dyn FnMut(&dyn tidb_stats_handle_util::StatsSessionContext) -> Result<(), tidb_sqlexec::SqlExecError>,
-        flags: &[i32],
-    ) -> Result<(), SqlQueryError> {
-        let pool = self
-            .session_pool
-            .ok_or_else(|| SqlQueryError::unknown("the node's domain is closed"))?;
-        tidb_stats_handle_util::call_with_sctx(pool.as_ref(), |sctx| f(sctx), flags)
-            .map_err(stats_session_sql_error)
-    }
-}
-
 struct ClusterAnalyzeService {
     statement_memory: tidb_executor::StatementMemory,
     resource_group: String,
     instance: String,
     connection_id: u64,
     stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
-    transactions: Arc<dyn super::ClusterTransactions>,
     catalog: Arc<super::InfoCache>,
     stats: Arc<super::SharedStats>,
     global_vars: crate::GlobalSysvars,
@@ -508,7 +473,6 @@ struct ClusterAnalyzeService {
     historical_stats_worker: Arc<
         tidb_domain::historical_stats::HistoricalStatsWorker<super::ClusterHistoricalInfoSchema>,
     >,
-    row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
     /// Go `statsHandle.SPool()`: the analyze jobs' statements run on it.
     session_pool: Option<Arc<tidb_domain_core::sys_session::DomainSysSessionPool>>,
 }
@@ -517,14 +481,14 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
     fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), tidb_driver_error::DriverError> {
         super::Domain::dump_stats_delta_to_kv_parts(
             self.stats_usage.as_ref(),
-            self.transactions.as_ref(),
             self.catalog.as_ref(),
             self.stats.as_ref(),
             &self.global_vars,
+            &tidb_domain_core::sys_session::StatsPool {
+                session_pool: self.session_pool.as_ref(),
+            },
             true,
             target_ids,
-            &self.resource_group,
-            &self.row_ids,
         )
         .map_err(tidb_driver_error::DriverError::unsupported)
     }
@@ -552,7 +516,7 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
                 self.statement_memory.sql_killer(),
                 &|| historical_stats_enabled,
                 &jobs,
-                &SessionStatsPool {
+                &tidb_domain_core::sys_session::StatsPool {
                     session_pool: self.session_pool.as_ref(),
                 },
             )
@@ -607,9 +571,7 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
 ///
 /// [`StatsStatementService`]: crate::stats_statement_service::StatsStatementService
 struct ClusterStatsStatementService {
-    resource_group: String,
     stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
-    transactions: Arc<dyn super::ClusterTransactions>,
     catalog: Arc<super::InfoCache>,
     stats: Arc<super::SharedStats>,
     global_vars: crate::GlobalSysvars,
@@ -617,21 +579,20 @@ struct ClusterStatsStatementService {
     /// Go `statsHandle.SPool()`: the sessions `statsLockImpl` runs its
     /// statements on.
     session_pool: Option<Arc<tidb_domain_core::sys_session::DomainSysSessionPool>>,
-    row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 }
 
 impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementService {
     fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), tidb_driver_error::DriverError> {
         super::Domain::dump_stats_delta_to_kv_parts(
             self.stats_usage.as_ref(),
-            self.transactions.as_ref(),
             self.catalog.as_ref(),
             self.stats.as_ref(),
             &self.global_vars,
+            &tidb_domain_core::sys_session::StatsPool {
+                session_pool: self.session_pool.as_ref(),
+            },
             true,
             target_ids,
-            &self.resource_group,
-            &self.row_ids,
         )
         .map_err(tidb_driver_error::DriverError::unsupported)
     }
@@ -640,7 +601,7 @@ impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementS
         self.analyze
             .drop_stats(
                 physical_ids,
-                &SessionStatsPool {
+                &tidb_domain_core::sys_session::StatsPool {
                     session_pool: self.session_pool.as_ref(),
                 },
             )
@@ -678,7 +639,7 @@ impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementS
             .load_stats(
                 json,
                 historical_stats_enabled,
-                &SessionStatsPool {
+                &tidb_domain_core::sys_session::StatsPool {
                     session_pool: self.session_pool.as_ref(),
                 },
             )

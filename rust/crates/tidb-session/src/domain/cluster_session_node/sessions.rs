@@ -513,19 +513,6 @@ pub(crate) fn historical_catalog_error(
     }
 }
 
-/// A statement error of a statistics session: the statement's own error,
-/// printed as its message (what callers that only read the text see).
-#[derive(Debug)]
-pub(crate) struct StatsSessionStatementError(pub(crate) SqlQueryError);
-
-impl std::fmt::Display for StatsSessionStatementError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0.message)
-    }
-}
-
-impl std::error::Error for StatsSessionStatementError {}
-
 pub(crate) struct ClusterStatsSessionState {
     pub(crate) session: Mutex<Option<Session>>,
     global_vars: GlobalSysvars,
@@ -584,7 +571,7 @@ impl ClusterStatsSessionState {
     > {
         self.with_session(|session| {
             let mut result = session.reborrow().execute(sql).map_err(|error| {
-                Box::new(StatsSessionStatementError(error)) as tidb_sqlexec::SqlExecError
+                Box::new(tidb_domain_core::sys_session::StatsSessionStatementError(error)) as tidb_sqlexec::SqlExecError
             })?;
             let source = result.source();
             let fields = source.fields()?;

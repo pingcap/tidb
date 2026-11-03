@@ -6533,7 +6533,7 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
     rows(&mut session, "INSERT INTO history_gc VALUES (1)");
     stack
         .factory
-        .dump_stats_delta_to_kv(true, &[], "default")
+        .dump_stats_delta_to_kv(true, &[])
         .expect("the delta flush succeeds");
     assert_eq!(
         displayed(rows(
@@ -8184,7 +8184,7 @@ fn build_global_level_stats_matches_go() {
     rows(&mut session, "SELECT * FROM global_level_plain WHERE a = 0");
     stack
         .factory
-        .dump_col_stats_usage_to_kv("default")
+        .dump_col_stats_usage_to_kv()
         .expect("predicate-column usage dump");
 
     let count_rows = |session: &mut _, table: &str| {
@@ -8292,7 +8292,7 @@ fn assert_global_topn_merge_matches_issue_24349(
     );
     stack
         .factory
-        .dump_col_stats_usage_to_kv("default")
+        .dump_col_stats_usage_to_kv()
         .expect("predicate-column usage dump");
     rows(
         &mut session,
@@ -26915,4 +26915,94 @@ fn analyze_results_save_stats_meta_as_go() {
     assert_ne!(version, 0);
     let version = version.to_string();
     assert_eq!(meta(&mut client, 4245), row([&version, "0", "0", "0", &version]));
+}
+
+/// Go `DumpColStatsUsageEntries`: a first use creates the row, a use within
+/// the throttle interval keeps the stored instant, and one after it advances
+/// it (the stored instant is the UTC one the statement converts).
+#[test]
+fn column_usage_dump_throttles_last_used_at_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(208)).unwrap();
+    rows(&mut session, "set time_zone = '+00:00'");
+    let pool = stack.factory.advanced_sys_session_pool();
+    let dump = |used_at: &str| {
+        let used_at: std::time::SystemTime = chrono::DateTime::parse_from_rfc3339(used_at)
+            .expect("the instant parses")
+            .into();
+        let item = tidb_model::TableItemID {
+            table_id: 4243,
+            id: 11,
+            is_index: false,
+            is_sync_load_failed: false,
+        };
+        tidb_stats_handle_util::call_with_sctx(
+            pool.as_ref(),
+            |sctx| {
+                tidb_stats_handle_usage::session_stats_collect::dump_col_stats_usage_batch(
+                    sctx,
+                    &[(item, used_at)],
+                )
+            },
+            &[],
+        )
+        .expect("the usage batch upserts");
+    };
+    let last_used = |session: &mut Session| {
+        displayed(rows(
+            session,
+            "select last_used_at from mysql.column_stats_usage where table_id = 4243 and column_id = 11",
+        ))
+    };
+    dump("2026-07-29T06:00:00Z");
+    assert_eq!(last_used(&mut session), [["2026-07-29 06:00:00"]]);
+    dump("2026-07-29T06:10:00Z");
+    assert_eq!(last_used(&mut session), [["2026-07-29 06:00:00"]]);
+    dump("2026-07-29T18:00:00Z");
+    assert_eq!(last_used(&mut session), [["2026-07-29 18:00:00"]]);
+}
+
+/// Go `storage.UpdateStatsMeta` through `DumpStatsDeltaToKV`: deltas
+/// accumulate into `stats_meta`, a negative one clamps the count at zero,
+/// and a locked table's delta is stashed in `stats_table_locked` instead.
+#[test]
+fn stats_delta_flush_updates_meta_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(209)).unwrap();
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE delta_flush (a INT)");
+    let table_id = displayed(rows(
+        &mut session,
+        "SELECT tidb_table_id FROM information_schema.tables WHERE table_schema = 'test' AND table_name = 'delta_flush'",
+    ))[0][0]
+        .clone();
+    let meta = |session: &mut Session, table: &str| {
+        displayed(rows(
+            session,
+            &format!("SELECT count, modify_count FROM mysql.{table} WHERE table_id = {table_id}"),
+        ))
+    };
+    let flush = || {
+        stack
+            .factory
+            .dump_stats_delta_to_kv(true, &[])
+            .expect("the delta flush succeeds");
+    };
+    rows(&mut session, "INSERT INTO delta_flush VALUES (1),(2),(3)");
+    flush();
+    assert_eq!(meta(&mut session, "stats_meta"), [["3", "3"]]);
+    rows(&mut session, "DELETE FROM delta_flush WHERE a = 1");
+    flush();
+    assert_eq!(meta(&mut session, "stats_meta"), [["2", "4"]]);
+    // A negative delta beyond the stored count leaves zero, not a wrap.
+    rows(&mut session, &format!("UPDATE mysql.stats_meta SET count = 1 WHERE table_id = {table_id}"));
+    rows(&mut session, "DELETE FROM delta_flush");
+    flush();
+    assert_eq!(meta(&mut session, "stats_meta"), [["0", "6"]]);
+
+    rows(&mut session, "LOCK STATS delta_flush");
+    rows(&mut session, "INSERT INTO delta_flush VALUES (4),(5)");
+    flush();
+    assert_eq!(meta(&mut session, "stats_meta"), [["0", "6"]]);
+    assert_eq!(meta(&mut session, "stats_table_locked"), [["2", "2"]]);
 }

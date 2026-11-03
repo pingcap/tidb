@@ -50,6 +50,50 @@ pub trait DomainSysSession:
 /// Go `Domain.AdvancedSysSessionPool()`.
 pub type DomainSysSessionPool = tidb_syssession::AdvancedSessionPool<dyn DomainSysSession>;
 
+/// A statement error of a statistics session: the statement's own error,
+/// printed as its message (what callers that only read the text see).
+#[derive(Debug)]
+pub struct StatsSessionStatementError(pub tidb_store_driver_error::sql_query_error::SqlQueryError);
+
+impl std::fmt::Display for StatsSessionStatementError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0.message)
+    }
+}
+
+impl std::error::Error for StatsSessionStatementError {}
+
+/// A statistics session's failure as its MySQL error: a statement's own, or
+/// an unknown error naming any other failure.
+pub fn stats_session_sql_error(
+    error: tidb_sqlexec::SqlExecError,
+) -> tidb_store_driver_error::sql_query_error::SqlQueryError {
+    match error.downcast::<StatsSessionStatementError>() {
+        Ok(error) => error.0,
+        Err(error) => tidb_store_driver_error::sql_query_error::SqlQueryError::unknown(error.to_string()),
+    }
+}
+
+/// Go `statsHandle.SPool()` for the statistics handle's saves: the domain's
+/// system sessions (`None` once the domain is closed).
+pub struct StatsPool<'a> {
+    pub session_pool: Option<&'a std::sync::Arc<DomainSysSessionPool>>,
+}
+
+impl tidb_stats_handle_storage::stats_read_writer::StatsSessionPool for StatsPool<'_> {
+    fn call_with_sctx(
+        &self,
+        f: &mut dyn FnMut(&dyn tidb_stats_handle_util::StatsSessionContext) -> Result<(), tidb_sqlexec::SqlExecError>,
+        flags: &[i32],
+    ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
+        let pool = self.session_pool.ok_or_else(|| {
+            tidb_store_driver_error::sql_query_error::SqlQueryError::unknown("the node's domain is closed")
+        })?;
+        tidb_stats_handle_util::call_with_sctx(pool.as_ref(), |sctx| f(sctx), flags)
+            .map_err(stats_session_sql_error)
+    }
+}
+
 pub fn stats_session_error(message: impl Into<String>) -> tidb_sqlexec::SqlExecError {
     Box::new(std::io::Error::other(message.into()))
 }

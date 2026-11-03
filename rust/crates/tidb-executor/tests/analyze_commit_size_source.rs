@@ -51,7 +51,6 @@ use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::plan_get_
 use tidb_stats_handle_usage::session_stats_collect::plan_stats_delta_statement;
 use tidb_stats_handle_usage::session_stats_collect::stats_delta_statements;
 use tidb_stats_handle_usage::session_stats_collect::StatsDeltaStatement;
-use tidb_stats_handle_usage::session_stats_collect::plan_column_stats_usage_dump;
 use tidb_stats_handle_autoanalyze::analyze_jobs::plan_delete_analyze_jobs;
 use tidb_stats_handle_autoanalyze::analyze_jobs::plan_finish_analyze_job;
 use tidb_stats_handle_autoanalyze::analyze_jobs::plan_update_analyze_job_progress;
@@ -2421,71 +2420,6 @@ fn usage_item(table_id: i64, column_id: i64) -> tidb_model::TableItemID {
         is_index: false,
         is_sync_load_failed: false,
     }
-}
-
-fn dump_usage(store: &mut MetaStore, item: tidb_model::TableItemID, used_at: Time) {
-    let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_info_schema(&mut *store).expect("the bootstrapped catalog loads");
-    let plan =
-        plan_column_stats_usage_dump(store, &catalog, &[(item, used_at)], now(), Some(&*row_ids))
-            .expect("column usage dump plans");
-    apply_mutations(store, &plan.mutations);
-}
-
-#[test]
-fn predicate_usage_first_touch_creates_row() {
-    let mut store = bootstrapped();
-    let item = usage_item(4243, 11);
-    dump_usage(&mut store, item, now());
-    let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
-    let usage = load_column_stats_usage_for_table(
-        &mut store,
-        &catalog,
-        &tidb_datatype::SessionTimeZone::utc(),
-        item.table_id,
-    )
-    .expect("usage reloads");
-    assert_eq!(usage[&item].last_used_at, Some(now()));
-}
-
-#[test]
-fn predicate_usage_no_bump_within_throttle() {
-    let mut store = bootstrapped();
-    let item = usage_item(4244, 12);
-    let first = Time::from_date_checked(2026, 7, 29, 6, 0, 0, 0, TimeType::Timestamp, 0)
-        .expect("fixed timestamp");
-    let shortly_after = Time::from_date_checked(2026, 7, 29, 6, 10, 0, 0, TimeType::Timestamp, 0)
-        .expect("fixed timestamp");
-    dump_usage(&mut store, item, first);
-    dump_usage(&mut store, item, shortly_after);
-    let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
-    let usage = load_column_stats_usage_for_table(
-        &mut store,
-        &catalog,
-        &tidb_datatype::SessionTimeZone::utc(),
-        item.table_id,
-    )
-    .expect("usage reloads");
-    assert_eq!(usage[&item].last_used_at, Some(first));
-}
-
-#[test]
-fn predicate_usage_bump_after_old_stored_value() {
-    let mut store = bootstrapped();
-    let item = usage_item(4245, 13);
-    let old = Time::from_date_checked(2000, 1, 1, 0, 0, 0, 0, TimeType::Timestamp, 0)
-        .expect("fixed timestamp");
-    dump_usage(&mut store, item, old);
-    dump_usage(&mut store, item, now());
-    let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
-    let usage = load_column_stats_usage_for_table(
-        &mut store,
-        &catalog,
-        &tidb_datatype::SessionTimeZone::utc(),
-        item.table_id,
-    )
-    .expect("usage reloads");
-    assert_eq!(usage[&item].last_used_at, Some(now()));
 }
 
 /// Pinned predicatecolumn reads project UTC instants into the requested

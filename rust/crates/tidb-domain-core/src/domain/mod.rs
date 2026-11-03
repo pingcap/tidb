@@ -44,7 +44,6 @@ use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
 use tidb_stats_handle_syncload::stats_watch::SharedStats;
 use tidb_sessmgr::ProcessRegistry;
 use tidb_stats_handle_cache::table_size_stats::TableStorageStatsProvider;
-use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use tidb_privilege::PrivilegeRegistry;
 use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
 
@@ -56,7 +55,6 @@ use crate::cluster_session::{
 use crate::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::cluster_transactions::ClusterTransactions;
 use crate::ddl_job_history_store;
-use crate::session_transaction::global_lock_wait_timeout;
 use crate::sys_session::{stats_session_error, system_process_trackers};
 use crate::util::{is_analyze_table_sql, sql_string_literal};
 
@@ -1478,77 +1476,52 @@ impl Domain {
             .analyze_highest_priority_tables(&parameters);
     }
 
-    /// Go `statsUsageImpl.DumpColStatsUsageToKV`.
-    pub fn dump_col_stats_usage_to_kv(&self, resource_group: &str) -> Result<(), String> {
-        let row_ids = Arc::clone(&self.auto_ids);
+    /// Go `statsUsageImpl.DumpColStatsUsageToKV`: each batch of Go
+    /// `DumpColStatsUsageEntries` one statement on a statistics session.
+    pub fn dump_col_stats_usage_to_kv(&self) -> Result<(), String> {
+        let pool = self.stats_session_pool()?;
         let mut pending = self
             .stats_usage
             .session_stats_list()
             .begin_column_stats_usage_dump();
-        let entries = pending.entries();
+        let mut entries = pending.entries();
+        // Go sorts the entries to keep one order and fewer deadlocks.
+        entries.sort_by_key(|(item, _)| (item.table_id, item.id));
         persist_column_stats_usage_batches(&mut pending, &entries, |batch| {
-            let snapshot = self.transactions.open_snapshot(resource_group)?;
-            let read_ts = snapshot.start_ts();
-            let converted = batch
-                .iter()
-                .map(|(item, used_at)| {
-                    system_time_timestamp(*used_at).map(|used_at| (*item, used_at))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let plan = {
-                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                tidb_stats_handle_usage::session_stats_collect::plan_column_stats_usage_dump(
-                    &mut snapshot,
-                    &self.catalog.get_latest(),
-                    &converted,
-                    tidb_datatype::current_time::utc_now_timestamp(),
-                    Some(row_ids.as_ref()),
-                )
-                .map_err(|error| error.to_string())?
-            };
-            self.transactions
-                .commit_optimistic_mutations(
-                    plan.mutations,
-                    read_ts,
-                    resource_group,
-                    crate::session_transaction::restricted_transaction_options(&self.global_vars),
-                )
-                .map_err(|error| error.message)?;
-            Ok(())
+            tidb_stats_handle_util::call_with_sctx(
+                pool.as_ref(),
+                |sctx| tidb_stats_handle_usage::session_stats_collect::dump_col_stats_usage_batch(sctx, batch),
+                &[],
+            )
+            .map_err(|error| error.to_string())
         })
     }
 
     /// Go `statsUsageImpl.DumpStatsDeltaToKV`.
-    pub fn dump_stats_delta_to_kv(
-        &self,
-        force_dump: bool,
-        target_table_ids: &[i64],
-        resource_group: &str,
-    ) -> Result<(), String> {
+    pub fn dump_stats_delta_to_kv(&self, force_dump: bool, target_table_ids: &[i64]) -> Result<(), String> {
+        let pool = self.stats_session_pool().ok();
         Self::dump_stats_delta_to_kv_parts(
             self.stats_usage.as_ref(),
-            self.transactions.as_ref(),
             self.catalog.as_ref(),
             self.stats.as_ref(),
             &self.global_vars,
+            &crate::sys_session::StatsPool {
+                session_pool: pool.as_ref(),
+            },
             force_dump,
             target_table_ids,
-            resource_group,
-            &self.auto_ids,
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Go `statsUsageImpl.DumpStatsDeltaToKV` over the handle's parts.
     pub fn dump_stats_delta_to_kv_parts(
         stats_usage: &tidb_stats_handle_usage::StatsUsageHandle,
-        transactions: &dyn ClusterTransactions,
         catalog_store: &InfoCache,
         stats_store: &SharedStats,
         global_vars: &GlobalSysvars,
+        stats_pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
         force_dump: bool,
         target_table_ids: &[i64],
-        resource_group: &str,
-        row_ids: &Arc<dyn TableAutoIds>,
     ) -> Result<(), String> {
         let mut pending = stats_usage.session_stats_list().begin_table_delta_dump();
         let table_ids = pending.collect_pending_stats_delta_table_ids(target_table_ids);
@@ -1601,87 +1574,35 @@ impl Domain {
             if original_updates.is_empty() {
                 continue;
             }
-            // An internal statement: Go's `InRestrictedSQL` sessions never
-            // start fair locking (`isolation/base.go:711-714`).
-            let transaction = transactions.begin(
-                true,
-                false,
-                resource_group,
-                crate::session_transaction::restricted_transaction_options(global_vars),
-            )?;
-            let read_ts = transaction.start_ts();
-            let staged = MutationBuffer::new();
-            transaction.bind_mutation_buffer(&staged);
-            let prepared = (|| {
-                let locked = {
-                    let snapshot = transaction.snapshot_for(false)?;
-                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                    tidb_stats_handle_storage::cluster_stats_write::load_stats_locked_table_ids(
-                        &mut snapshot,
-                        &catalog,
-                    )
-                    .map_err(|error| error.to_string())?
-                };
-                let updates = tidb_stats_handle_usage::prepare_delta_updates(
-                    original_updates.clone(),
-                    |table_id| parents.get(&table_id).copied(),
-                    &locked,
-                );
-                for statement in tidb_stats_handle_usage::session_stats_collect::stats_delta_statements(&updates) {
-                    let ((), mutations) =
-                        tidb_store_driver_txn::cluster_table_storage::lock_pessimistic_statement_with(
-                            transaction.start_ts(),
-                            &staged,
-                            |retry_ts| {
-                                let snapshot = match retry_ts {
-                                    Some(retry_ts) => transaction.snapshot_at_for(retry_ts, true),
-                                    None => transaction.snapshot_for(true),
-                                }?;
-                                Ok(tidb_store_driver_txn::cluster_table_storage::overlay_staged_mutations(
-                                    snapshot, &staged,
-                                ))
-                            },
-                            |keys, presume_not_exists, duplicate_hints| {
-                                transaction.lock_staged_keys_with_assertions(
-                                    keys,
-                                    presume_not_exists,
-                                    duplicate_hints,
-                                    tidb_txnkv::transaction::LockWaitTime::Timeout(
-                                        global_lock_wait_timeout(global_vars),
-                                    ),
-                                )
-                            },
-                            |snapshot, _start_ts| {
-                                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                                let plan =
-                                    tidb_stats_handle_usage::session_stats_collect::plan_stats_delta_statement(
-                                        &mut snapshot,
-                                        &catalog,
-                                        &statement,
-                                        read_ts,
-                                        tidb_datatype::current_time::utc_now_timestamp(),
-                                        Some(row_ids.as_ref()),
-                                    )
-                                    .map_err(|error| error.to_string())?;
-                                Ok(((), plan.mutations))
-                            },
-                        )
-                        .map_err(|error| error.to_string())?;
-                    tidb_store_driver_txn::cluster_table_storage::stage_mutations(&staged, mutations)
-                        .map_err(|error| error.to_string())?;
-                }
-                Ok::<_, String>(updates)
-            })();
-            let updates = match prepared {
-                Ok(updates) => updates,
-                Err(error) => {
-                    let _ = transaction.rollback();
-                    return Err(error);
-                }
-            };
-            if let Err(error) = transaction.commit(&staged) {
-                return Err(error.message);
-            }
+            // Go: the whole batch in one wrapped transaction.
+            let mut stats_version = 0;
+            let mut updates = Vec::new();
+            stats_pool
+                .call_with_sctx(
+                    &mut |sctx| {
+                        stats_version = tidb_stats_handle_util::get_start_ts(sctx)?;
+                        // Go `statsHandle.GetLockedTables`, on a session of its own.
+                        let mut locked = Default::default();
+                        stats_pool
+                            .call_with_sctx(
+                                &mut |sctx| {
+                                    locked = tidb_stats_handle_lockstats::session_stats_lock::query_locked_tables(sctx)?;
+                                    Ok(())
+                                },
+                                &[],
+                            )
+                            .map_err(|error| crate::sys_session::stats_session_error(error.message))?;
+                        let locked: std::collections::HashSet<i64> = std::mem::take(&mut locked).into_iter().collect();
+                        updates = tidb_stats_handle_usage::prepare_delta_updates(
+                            original_updates.clone(),
+                            |table_id| parents.get(&table_id).copied(),
+                            &locked,
+                        );
+                        tidb_stats_handle_storage::update::update_stats_meta(sctx, stats_version, &updates)
+                    },
+                    &[tidb_stats_handle_util::FLAG_WRAP_TXN],
+                )
+                .map_err(|error| error.message)?;
             for update in original_updates {
                 pending.mark_persisted(update.table_id);
             }
@@ -1689,116 +1610,25 @@ impl Domain {
                 .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
                 .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
             if historical_stats_enabled {
-                for update in updates {
-                    if update.is_locked
-                        || !stats
-                            .get(&update.table_id)
-                            .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
-                            .is_some_and(|table| table.is_initialized())
-                    {
-                        continue;
-                    }
-                    let result = (|| {
-                        // Internal statement: no fair locking (Go `InRestrictedSQL`).
-                        let transaction = transactions.begin(
-                            true,
-                            false,
-                            resource_group,
-                            crate::session_transaction::restricted_transaction_options(global_vars),
-                        )?;
-                        let staged = MutationBuffer::new();
-                        transaction.bind_mutation_buffer(&staged);
-                        let ((modify_count, count), lock_mutations) =
-                            tidb_store_driver_txn::cluster_table_storage::lock_pessimistic_statement_with(
-                                transaction.start_ts(),
-                                &staged,
-                                |read_ts| match read_ts {
-                                    Some(read_ts) => transaction.snapshot_at_for(read_ts, true),
-                                    None => transaction.snapshot_for(true),
-                                },
-                                |keys, presume_not_exists, duplicate_hints| {
-                                    transaction.lock_staged_keys_with_assertions(
-                                        keys,
-                                        presume_not_exists,
-                                        duplicate_hints,
-                                        tidb_txnkv::transaction::LockWaitTime::Timeout(global_lock_wait_timeout(global_vars)),
-                                    )
-                                },
-                                |snapshot, _start_ts| {
-                                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                                    let (counts, plan) = tidb_stats_handle_history::history_stats::plan_historical_stats_meta_lock(
-                                        &mut snapshot,
-                                        &catalog,
-                                        update.table_id,
-                                        read_ts,
-                                    )
-                                    .map_err(|error| error.to_string())?;
-                                    Ok((counts, plan.mutations))
-                                },
-                            )
-                            .map_err(|error| error.to_string())?;
-                        tidb_store_driver_txn::cluster_table_storage::stage_mutations(&staged, lock_mutations)
-                            .map_err(|error| error.to_string())?;
-                        let ((), replace_mutations) =
-                            tidb_store_driver_txn::cluster_table_storage::lock_pessimistic_statement_with(
-                                transaction.start_ts(),
-                                &staged,
-                                |retry_ts| match retry_ts {
-                                    Some(retry_ts) => transaction.snapshot_at_for(retry_ts, true),
-                                    None => transaction.snapshot_for(true),
-                                },
-                                |keys, presume_not_exists, duplicate_hints| {
-                                    transaction.lock_staged_keys_with_assertions(
-                                        keys,
-                                        presume_not_exists,
-                                        duplicate_hints,
-                                        tidb_txnkv::transaction::LockWaitTime::Timeout(global_lock_wait_timeout(global_vars)),
-                                    )
-                                },
-                                |snapshot, _start_ts| {
-                                    let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                                    let plan = tidb_stats_handle_history::history_stats::plan_historical_stats_meta_replace(
-                                &mut snapshot,
-                                &catalog,
-                                update.table_id,
-                                modify_count,
-                                count,
-                                read_ts,
-                                "flush stats",
-                                tidb_datatype::current_time::local_now_datetime6(),
-                                Some(row_ids.as_ref()),
-                            )
-                                    .map_err(|error| error.to_string())?;
-                                    Ok(((), plan.mutations))
-                                },
-                            )
-                            .map_err(|error| error.to_string())?;
-                        tidb_store_driver_txn::cluster_table_storage::stage_mutations(
-                            &staged,
-                            replace_mutations,
-                        )
-                        .map_err(|error| error.to_string())?;
-                        transaction.commit(&staged).map_err(|error| error.message)
-                    })();
-                    if let Err(error) = result {
-                        // Go `statsHistoryImpl.RecordHistoricalStatsMeta`.
-                        tidb_stats_handle_logutil::stats_logger().warn(
-                            "record historical stats meta failed",
-                            &[
-                                tidb_log::Field::new("version", tidb_log::Value::U64(read_ts)),
-                                tidb_log::Field::new(
-                                    "source",
-                                    tidb_log::Value::Str("flush stats".to_owned()),
-                                ),
-                                tidb_log::Field::new(
-                                    "tableID",
-                                    tidb_log::Value::I64(update.table_id),
-                                ),
-                                tidb_logutil::zap_error(error),
-                            ],
-                        );
-                    }
-                }
+                // Go `RecordHistoricalStatsMeta(statsVersion, "flush stats",
+                // false, unlockedTableIDs...)`: only initialized tables.
+                let targeted: Vec<i64> = updates
+                    .iter()
+                    .filter(|update| {
+                        !update.is_locked
+                            && stats
+                                .get(&update.table_id)
+                                .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
+                                .is_some_and(|table| table.is_initialized())
+                    })
+                    .map(|update| update.table_id)
+                    .collect();
+                tidb_stats_handle_history::history_stats::record_historical_stats_meta_on(
+                    stats_pool,
+                    stats_version,
+                    "flush stats",
+                    &targeted,
+                );
             }
         }
         Ok(())
@@ -2251,14 +2081,14 @@ impl StatsUsageWorkers {
                 Weak::clone(&weak),
                 Arc::clone(&stop),
                 lease.saturating_mul(100).saturating_add(jitter()),
-                |factory| factory.dump_col_stats_usage_to_kv("default"),
+                |factory| factory.dump_col_stats_usage_to_kv(),
             ));
             threads.push(spawn_usage_worker(
                 "stats-delta-dump",
                 Weak::clone(&weak),
                 Arc::clone(&stop),
                 lease.saturating_mul(20).saturating_add(jitter()),
-                |factory| factory.dump_stats_delta_to_kv(false, &[], "default"),
+                |factory| factory.dump_stats_delta_to_kv(false, &[]),
             ));
         }
         Self {
@@ -2321,7 +2151,7 @@ impl Drop for Domain {
             .take()
             .is_some_and(StatsUsageWorkers::stop_before_shutdown_flush);
         if flush_stats {
-            if let Err(error) = self.dump_stats_delta_to_kv(true, &[], "default") {
+            if let Err(error) = self.dump_stats_delta_to_kv(true, &[]) {
                 // Go `Handle.FlushStats`.
                 tidb_stats_handle_logutil::stats_logger().warn(
                     "dump stats delta fail",

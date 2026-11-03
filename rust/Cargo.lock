@@ -7400,6 +7400,7 @@ dependencies = [
  "tidb-store-driver-txn",
  "tidb-syssession",
  "tidb-table",
+ "tidb-variable",
  "tidb-worker-stack",
 ]
 
@@ -7444,8 +7445,11 @@ dependencies = [
  "tidb-datatype",
  "tidb-infoschema",
  "tidb-model",
+ "tidb-sqlescape",
+ "tidb-sqlexec",
  "tidb-stats-handle-storage",
  "tidb-stats-handle-usage-indexusage",
+ "tidb-stats-handle-util",
  "tidb-syssession",
  "tidb-table",
  "tidb-txnkv",

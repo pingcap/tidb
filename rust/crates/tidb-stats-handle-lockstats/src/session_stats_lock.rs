@@ -56,13 +56,20 @@ fn get_int64(datum: Option<&Datum>) -> i64 {
     }
 }
 
+/// Go `QueryLockedTables`: every table whose statistics are locked.
+pub fn query_locked_tables<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+) -> Result<BTreeSet<i64>, SqlExecError> {
+    let (rows, _) = exec_rows(sctx, SELECT_SQL, &[])?;
+    Ok(rows.iter().map(|row| get_int64(row.first())).collect())
+}
+
 impl<C: StatsSessionContext + ?Sized> StatsLockTransaction for SessionStatsLockTransaction<'_, C> {
     type Error = SqlExecError;
 
     /// Go `QueryLockedTables`.
     fn query_locked_tables(&mut self) -> Result<BTreeSet<i64>, Self::Error> {
-        let (rows, _) = exec_rows(self.sctx, SELECT_SQL, &[])?;
-        Ok(rows.iter().map(|row| get_int64(row.first())).collect())
+        query_locked_tables(self.sctx)
     }
 
     /// Go `insertIntoStatsTableLockedAndUpdateStatsVersion`.
