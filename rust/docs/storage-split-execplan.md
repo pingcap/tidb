@@ -360,7 +360,7 @@ CARGO_INCREMENTAL=0`.
   (stored keys, partition row counts, raw-key corruption, coprocessor
   client) now read through `Session::transaction_store` inside the
   committed-snapshot scope.
-- [ ] Milestone 6: `ClusterCatalog` is gone.
+- [x] Milestone 6: `ClusterCatalog` is gone.
   - [x] (2026-11-02, e659cfd33ad) a schema in the image holds its `DBInfo`
     pointer (Go `schemaTables.dbInfo`), not a reduced copy; the node
     registers the loader's `DBInfo`; the planner shares it.
@@ -373,7 +373,7 @@ CARGO_INCREMENTAL=0`.
     `find_table` / `schema_by_name`, policies, resource groups. Counted
     2026-11-02: `.databases` 184, `.schema_version` 174, `.find_table` 104,
     policies / resource_groups 13 each, in 73 files (28 in `tidb-ddl`).
-  - [ ] `InfoCache` publishes the built image (folding `SessionCatalogs`
+  - [x] `InfoCache` publishes the built image (folding `SessionCatalogs`
     in) instead of `Arc<ClusterCatalog>`; readers switch.
     2026-11-02 (68c5e376923): `InfoCache` holds each version's
     `BuiltSchema` (image + skipped tables), built once through the
@@ -418,10 +418,10 @@ CARGO_INCREMENTAL=0`.
     write through a read guard is a compile error, which is how each was
     found. So `InfoCache` holds Go's shape: per version, one built
     `InfoSchema` over the loader's shared `DBInfo`s.
-    Left (cost, not semantics): Go's `Builder.ApplyDiff` builds a version
+    Done 2026-11-03 (9b4b7d8af29): Go's `Builder.ApplyDiff` builds a version
     from the previous one, copying untouched schemas and rebuilding only the
-    tables a diff changed; here each version's image is built whole from its
-    `DBInfo`s through the domain's builder.
+    tables a diff changed; the image now adopts each built table whose
+    `TableInfo` pointer the previous version's `DBInfo` still holds.
     Go's shape for this: the domain's loader builds the infoschema and
     inserts it into `InfoCache`; so the image builder
     (`cluster_session_catalog_with_templates`, domain-core) runs where
@@ -458,8 +458,8 @@ CARGO_INCREMENTAL=0`.
     edits it), with its built tables and skipped-table records
     (`SessionExtendedInfoSchema::adopt_built_database`, the `previous`
     argument of `SchemaBuilder`); test
-    `a_new_version_keeps_the_tables_of_untouched_schemas`. Granularity is the
-    schema, where Go rebuilds per table.
+    `a_new_version_keeps_the_tables_of_untouched_schemas`. Per-table since
+    9b4b7d8af29, as Go.
     (c) done 2026-11-02: the loader (`load_info_schema`,
     `fetch_all_schemas_with_tables`, `load_database_tables`,
     `get_schema_version`) and the reload's reads (`GetSchemaDiff`,
@@ -469,8 +469,8 @@ CARGO_INCREMENTAL=0`.
     Go `meta.NewReader`); a snapshot read keeps its own error (its SQL
     identity). The `MetaSnapshot` trait stays: it is Go's `kv.Snapshot`
     role (stats, ANALYZE paging, DDL reads), not a second meta reader.
-  - [ ] delete `ClusterCatalog` and the raw `MetaSnapshot` seam (the loader
-    reads through `tidb_meta`).
+  - [x] delete `ClusterCatalog`; the loader reads through `tidb_meta`. The
+    `MetaSnapshot` seam stays as Go's `kv.Snapshot` role (see (c)).
 
 ## Surprises & Discoveries
 
