@@ -434,7 +434,7 @@ func TestOutputFilenameTemplateWithRowsValidation(t *testing.T) {
 			"--rows", "10",
 			"--output-filename-template", "{{.DB}}.{{.Table}}",
 		)
-		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F")
+		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r, --filesize/-F, or --dump-service")
 	})
 
 	t.Run("accept template with index when rows and output template are both specified", func(t *testing.T) {
@@ -450,7 +450,7 @@ func TestOutputFilenameTemplateWithRowsValidation(t *testing.T) {
 			"--rows", "10",
 			"--output-filename-template", "{{if .Index}}{{end}}{{.DB}}.{{.Table}}",
 		)
-		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F")
+		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r, --filesize/-F, or --dump-service")
 	})
 
 	t.Run("reject template when index is only conditionally rendered", func(t *testing.T) {
@@ -458,7 +458,7 @@ func TestOutputFilenameTemplateWithRowsValidation(t *testing.T) {
 			"--rows", "10",
 			"--output-filename-template", "{{if lt .Index 2}}{{.Index}}{{end}}{{.DB}}.{{.Table}}",
 		)
-		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F")
+		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r, --filesize/-F, or --dump-service")
 	})
 
 	t.Run("accept template when standalone index exists outside conditionals", func(t *testing.T) {
@@ -482,7 +482,7 @@ func TestOutputFilenameTemplateWithRowsValidation(t *testing.T) {
 			"--filesize", "1MiB",
 			"--output-filename-template", "{{.DB}}.{{.Table}}",
 		)
-		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F")
+		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r, --filesize/-F, or --dump-service")
 	})
 
 	t.Run("accept template with index when filesize and output template are both specified", func(t *testing.T) {
@@ -506,6 +506,35 @@ func TestDumpServiceFlags(t *testing.T) {
 	require.Equal(t, "unix:///tmp/dumper.sock", conf.DumpService)
 	require.Equal(t, 32, conf.Threads)
 	require.NoError(t, validateDumpService(conf))
+	for _, fileSize := range []string{"", "0", "1MiB"} {
+		for _, testCase := range []struct {
+			name     string
+			template string
+			wantErr  bool
+		}{
+			{name: "default template"},
+			{name: "missing index", template: "{{.DB}}.{{.Table}}", wantErr: true},
+			{name: "conditional guard", template: "{{if .Index}}{{end}}{{.DB}}.{{.Table}}", wantErr: true},
+			{name: "conditional index", template: "{{if .Table}}{{.Index}}{{end}}{{.DB}}.{{.Table}}", wantErr: true},
+			{name: "standalone index", template: "{{.DB}}.{{.Table}}.{{.Index}}"},
+		} {
+			t.Run("output template/filesize="+fileSize+"/"+testCase.name, func(t *testing.T) {
+				args := []string{"--dump-service", "unix:///tmp/dumper.sock"}
+				if fileSize != "" {
+					args = append(args, "--filesize", fileSize)
+				}
+				if testCase.template != "" {
+					args = append(args, "--output-filename-template", testCase.template)
+				}
+				_, err := parseConfigFromArgsForTestWithErr(t, args...)
+				if testCase.wantErr {
+					require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks")
+					return
+				}
+				require.NoError(t, err)
+			})
+		}
+	}
 	for _, option := range []string{flagColumnFilter, flagColumnFilterFile} {
 		t.Run(option, func(t *testing.T) {
 			value := `{ matcher = ["test.*"], columns = ["*", "!secret"] }`
