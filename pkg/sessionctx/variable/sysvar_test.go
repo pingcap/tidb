@@ -1486,13 +1486,13 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// Set to noop
+	// Set to noop. Unknown schemes drop the query on read; the stored value keeps it.
 	noopURI := "noop://blackhole?access-key=hello&secret-access-key=world"
 	err := mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, noopURI)
 	require.NoError(t, err)
 	val, err1 := mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, TiDBCloudStorageURI)
 	require.NoError(t, err1)
-	require.Equal(t, noopURI, val)
+	require.Equal(t, "noop://blackhole", val)
 	require.Equal(t, noopURI, CloudStorageURI.Load())
 
 	// Set to s3, should fail
