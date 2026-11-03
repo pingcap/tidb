@@ -151,10 +151,17 @@ system-table rows are the SQL statements Go executes, in the same commit.
     statement's restricted executor); NOCACHE's `finishDDLJob` delete runs
     on the step's session. Rust never deleted the row before; the CACHE /
     NOCACHE test now checks it is gone.
-  - [ ] Reorg handles: Rust's add-index reorg advances the handle inside
-    each batch transaction; Go's `UpdateReorgMeta` is a separate
-    transaction on a pooled session. That is part of the backfill
-    structure, not a statement swap.
+  - [x] (2026-11-03) Reorg handles: `initDDLReorgHandle` (`RunInTxn`
+    delete + insert), `UpdateReorgMeta` (its own transaction after each
+    batch, a failure only logged) and `cleanDDLReorgHandles` run Go's
+    statements on pooled sessions (`ddl_reorg_table.rs`). The reorg_meta
+    Rust wrote was `{"checkpoint":...}`; Go's `JobReorgMeta` is
+    `{"reorg_checkpoint":{...}}` with every field, and Go's
+    `getImportedKeyFromCheckpoint` read nothing from Rust's row (test
+    `job_reorg_meta_is_gos_json`, bytes printed by Go). Left: Go updates
+    the handle every `workerSize*4` backfill results; Rust's backfill is a
+    single sequential batch loop, so it updates after every batch -- the
+    worker-pool structure of Go's backfill is its own mismatch.
   - [x] (2026-11-03) Job submission insert: Go's `insertDDLJobs2Table`
     (`tidb_ddl_jobsubmit::insert_ddl_jobs_2_table`) runs on a session over
     the submitting transaction's buffer, reading at its for-update

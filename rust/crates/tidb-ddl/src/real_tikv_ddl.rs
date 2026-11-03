@@ -1007,9 +1007,12 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                 // follows in `transitOneJobStepAndWaitSync`.
                 #[cfg(feature = "failpoints")]
                 fail::fail_point!("beforeCleanupDDLReorgHandles");
-                if let Err(error) =
-                    add_index_reorg::clean_ddl_reorg_handles(&opener, timeout, ddl_job_id)
-                {
+                if let Err(error) = add_index_reorg::clean_ddl_reorg_handles(
+                    &opener,
+                    timeout,
+                    backfiller.session_pool().as_deref(),
+                    ddl_job_id,
+                ) {
                     // Go also carries `zap.Stringer("job", job)`; this loop
                     // holds only the job's id.
                     tidb_ddl_logutil::ddl_logger().warn(

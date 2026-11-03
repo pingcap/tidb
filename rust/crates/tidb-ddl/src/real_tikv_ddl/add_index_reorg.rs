@@ -45,13 +45,26 @@ where
     S: StoreClient,
 {
     let tables = locate_tables(opener, timeout)?;
+    // Go `w.sessPool`: the reorg handle's statements run on its sessions; a
+    // pool without sessions yet stages the rows in the reorg transactions.
+    let sess_pool = backfiller
+        .session_pool()
+        .filter(|sess_pool| sess_pool.has_step_sessions());
     let mut warnings = Vec::new();
     let result = match &reorg.stage {
-        ReorgStageRequest::Init => init_reorg(opener, timeout, backfiller, reorg, &tables)?,
+        ReorgStageRequest::Init => init_reorg(
+            opener,
+            timeout,
+            backfiller,
+            sess_pool.as_deref(),
+            reorg,
+            &tables,
+        )?,
         ReorgStageRequest::Run(handle) => run_reorg(
             opener,
             timeout,
             backfiller,
+            sess_pool.as_deref(),
             reorg,
             &tables,
             handle,
@@ -140,11 +153,20 @@ fn reorg_element(reorg: &AddIndexReorg) -> Option<(i64, &'static [u8])> {
 pub(super) fn clean_ddl_reorg_handles<S>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
+    sess_pool: Option<&dyn tidb_ddl_build::session_pool::DdlSessionPool>,
     job_id: i64,
 ) -> Result<(), ClusterDdlError>
 where
     S: StoreClient,
 {
+    if let Some(sess_pool) = sess_pool.filter(|sess_pool| sess_pool.has_step_sessions()) {
+        let mut se = sess_pool
+            .open_sql_session()
+            .map_err(DdlPlanError::from_mysql_error)?;
+        crate::ddl_reorg_table::clean_ddl_reorg_handles(se.as_mut(), job_id)
+            .map_err(DdlPlanError::from_mysql_error)?;
+        return Ok(());
+    }
     let tables = locate_tables(opener, timeout)?;
     reorg_transaction(opener, timeout, |meta, _, _, _| {
         let existing = tables
@@ -322,6 +344,7 @@ fn init_reorg<S>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
     backfiller: &dyn IndexBackfiller,
+    sess_pool: Option<&dyn tidb_ddl_build::session_pool::DdlSessionPool>,
     reorg: &AddIndexReorg,
     tables: &ReorgTables,
 ) -> Result<ReorgResult, ClusterDdlError>
@@ -336,7 +359,8 @@ where
         .first()
         .ok_or_else(|| ClusterDdlError::Backfill("ADD INDEX reorg names no table".to_owned()))?;
     let row_ids = backfiller.system_row_ids();
-    reorg_transaction(opener, timeout, |meta, snapshot, buffer, start_ts| {
+    let mut initialized = None;
+    let result = reorg_transaction(opener, timeout, |meta, snapshot, buffer, start_ts| {
         let handle = if reorg.merging {
             let mut empty = true;
             for physical_id in &reorg.physical_ids {
@@ -394,6 +418,10 @@ where
                 physical_id: first_physical,
             }
         };
+        if sess_pool.is_some() {
+            initialized = Some(handle);
+            return Ok((ReorgResult::Initialized(start_ts), Vec::new()));
+        }
         let existing = tables
             .reorg
             .load(meta, reorg.job_id)
@@ -416,7 +444,15 @@ where
             .init_ddl_reorg_handle(&existing, reorg.job_id, &handle, row_id)
             .map_err(ClusterDdlError::Backfill)?;
         Ok((ReorgResult::Initialized(start_ts), mutations))
-    })
+    })?;
+    if let (Some(sess_pool), Some(handle)) = (sess_pool, initialized) {
+        let mut se = sess_pool
+            .open_sql_session()
+            .map_err(DdlPlanError::from_mysql_error)?;
+        crate::ddl_reorg_table::init_ddl_reorg_handle(se.as_mut(), reorg.job_id, &handle)
+            .map_err(DdlPlanError::from_mysql_error)?;
+    }
+    Ok(result)
 }
 
 /// Go `isReorgRunnable`: the job must still be running (not cancelling,
@@ -459,10 +495,12 @@ enum BatchStep {
 /// Go `runReorgJob` from the persisted handle: every physical table from
 /// the handle's on, each in batches of `batch_size` rows (or temporary
 /// entries, for each index in turn while merging).
+#[allow(clippy::too_many_arguments)]
 fn run_reorg<S>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
     backfiller: &dyn IndexBackfiller,
+    sess_pool: Option<&dyn tidb_ddl_build::session_pool::DdlSessionPool>,
     reorg: &AddIndexReorg,
     tables: &ReorgTables,
     handle: &ReorgHandle,
@@ -533,6 +571,7 @@ where
                     opener,
                     timeout,
                     backfiller,
+                    sess_pool,
                     reorg,
                     tables,
                     &current,
@@ -576,6 +615,7 @@ fn run_batch<S>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
     backfiller: &dyn IndexBackfiller,
+    sess_pool: Option<&dyn tidb_ddl_build::session_pool::DdlSessionPool>,
     reorg: &AddIndexReorg,
     tables: &ReorgTables,
     current: &ReorgHandle,
@@ -585,7 +625,7 @@ fn run_batch<S>(
 where
     S: StoreClient,
 {
-    reorg_transaction(opener, timeout, |meta, snapshot, buffer, _| {
+    let step = reorg_transaction(opener, timeout, |meta, snapshot, buffer, _| {
         if !reorg_runnable(meta, tables, reorg.job_id, check_owner)? {
             return Ok((BatchStep::Interrupted, Vec::new()));
         }
@@ -641,11 +681,15 @@ where
                     .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
             );
         }
-        // Go `UpdateReorgMeta`: the handle advances with the batch.
-        let existing = tables
-            .reorg
-            .load(meta, reorg.job_id)
-            .map_err(ClusterDdlError::Backfill)?;
+        // Go `UpdateReorgMeta`: the handle advances with the batch (staged
+        // here only by a worker whose pool has no sessions yet).
+        let existing = match sess_pool {
+            Some(_) => Vec::new(),
+            None => tables
+                .reorg
+                .load(meta, reorg.job_id)
+                .map_err(ClusterDdlError::Backfill)?,
+        };
         if let Some(row) = existing.first() {
             let next = ReorgHandle {
                 start_key: batch.next_key.clone(),
@@ -669,5 +713,26 @@ where
             },
             mutations,
         ))
-    })
+    })?;
+    // Go `reorgInfo.UpdateReorgMeta(keeper.nextKey, sessPool)`: a
+    // transaction of its own once the batch is in; a failure is only logged.
+    if let (Some(sess_pool), BatchStep::Advanced { next_key, .. }) = (sess_pool, &step) {
+        let next = ReorgHandle {
+            start_key: next_key.clone(),
+            ..current.clone()
+        };
+        let updated = sess_pool.open_sql_session().and_then(|mut se| {
+            crate::ddl_reorg_table::update_reorg_meta(se.as_mut(), reorg.job_id, &next)
+        });
+        if let Err(error) = updated {
+            tidb_ddl_logutil::ddl_logger().warn(
+                "update reorg meta failed",
+                &[
+                    tidb_log::Field::new("job ID", tidb_log::Value::I64(reorg.job_id)),
+                    tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+                ],
+            );
+        }
+    }
+    Ok(step)
 }
