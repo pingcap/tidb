@@ -1952,7 +1952,7 @@ func (r *SQLDigestTextRetriever) updateDigestInfo(queryResult map[string]string)
 func (r *SQLDigestTextRetriever) unresolvedDigests() []any {
 	keys := make([]string, 0, len(r.SQLDigestsMap))
 	for digest, text := range r.SQLDigestsMap {
-		if len(text) == 0 {
+		if len(digest) > 0 && len(text) == 0 {
 			keys = append(keys, digest)
 		}
 	}
@@ -1967,8 +1967,8 @@ func (r *SQLDigestTextRetriever) unresolvedDigests() []any {
 // hasUnresolvedDigests reports whether any digest still needs a SQL text, without the
 // slice allocation and sorting of unresolvedDigests.
 func (r *SQLDigestTextRetriever) hasUnresolvedDigests() bool {
-	for _, text := range r.SQLDigestsMap {
-		if len(text) == 0 {
+	for digest, text := range r.SQLDigestsMap {
+		if len(digest) > 0 && len(text) == 0 {
 			return true
 		}
 	}
