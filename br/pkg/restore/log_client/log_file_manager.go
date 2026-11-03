@@ -518,7 +518,7 @@ func (lm *LogFileManager) ReadFilteredEntriesFromFiles(
 			// the first prewrite key has the value but the second don't.
 			// so we can ignore the empty value key.
 			// see details at https://github.com/pingcap/tiflow/issues/5468.
-			log.Warn("txn entry is null", zap.Uint64("key-ts", ts), zap.ByteString("tnxKey", txnEntry.Key))
+			log.Warn("txn entry is null", zap.Uint64("key-ts", ts), zap.String("tnxKey", redact.Key(txnEntry.Key)))
 			continue
 		}
 

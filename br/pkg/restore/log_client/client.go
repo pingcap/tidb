@@ -1308,7 +1308,7 @@ func (rc *LogClient) restoreAndRewriteMetaKvEntries(
 
 	for _, entry := range entries {
 		log.Debug("before rewriting entry", zap.Uint64("key-ts", entry.Ts), zap.Int("key-len", len(entry.E.Key)),
-			zap.Int("value-len", len(entry.E.Value)), zap.ByteString("key", entry.E.Key))
+			zap.Int("value-len", len(entry.E.Value)), logutil.Key("key", entry.E.Key))
 
 		newEntry, err := sr.RewriteMetaKvEntry(&entry.E, columnFamily)
 		if err != nil {
@@ -1324,7 +1324,7 @@ func (rc *LogClient) restoreAndRewriteMetaKvEntries(
 			return 0, 0, errors.Trace(err)
 		}
 		log.Debug("after rewrite entry", zap.Int("new-key-len", len(newEntry.Key)),
-			zap.Int("new-value-len", len(entry.E.Value)), zap.ByteString("new-key", newEntry.Key))
+			zap.Int("new-value-len", len(entry.E.Value)), logutil.Key("new-key", newEntry.Key))
 
 		failpoint.Inject("failed-to-restore-metakv", func(_ failpoint.Value) {
 			failpoint.Return(0, 0, errors.Errorf("failpoint: failed to restore metakv"))
@@ -2023,6 +2023,7 @@ func (rc *LogClient) InsertGCRows(ctx context.Context) error {
 				}
 				jobIDMap[params.JobID] = newJobID
 			}
+			// These table/index prefixes contain only internal IDs, so keep them visible for diagnostics.
 			log.Info("insert into the delete range",
 				zap.Int64("jobID", newJobID),
 				zap.Int64("elemID", params.ElemID),

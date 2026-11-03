@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	pingcaperrors "github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -30,14 +32,113 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
+
+type lockEventTestClient struct {
+	kv.Client
+	option *kv.ClientSendOption
+}
+
+func (c *lockEventTestClient) Send(ctx context.Context, req *kv.Request, vars any, option *kv.ClientSendOption) kv.Response {
+	c.option = option
+	return c.Client.Send(ctx, req, vars, option)
+}
+
+func TestSelectLockEventSQLRedaction(t *testing.T) {
+	const (
+		originalSQL = "SELECT * FROM t WHERE a = 'lock-event-secret'"
+		redactedSQL = "select * from `t` where `a` = ?"
+		markedSQL   = "select * from `t` where `a` = ‹lock-event-secret›"
+	)
+	originalGlobalMode := pingcaperrors.RedactLogEnabled.Load()
+	t.Cleanup(func() { pingcaperrors.RedactLogEnabled.Store(originalGlobalMode) })
+	newLockInfo := func(redacted bool) *kvrpcpb.LockInfo {
+		key := func(value string) []byte {
+			if redacted {
+				return []byte("?")
+			}
+			return []byte(value)
+		}
+		return &kvrpcpb.LockInfo{
+			PrimaryLock: key("primary-key-secret"),
+			Key:         key("lock-key-secret"),
+			Secondaries: [][]byte{key("secondary-key-secret")},
+			LockVersion: 99,
+			SharedLockInfos: []*kvrpcpb.LockInfo{{
+				PrimaryLock: key("nested-primary-key-secret"),
+				Key:         key("nested-lock-key-secret"),
+				Secondaries: [][]byte{key("nested-secondary-key-secret")},
+				LockVersion: 100,
+			}},
+		}
+	}
+	for _, test := range []struct {
+		name              string
+		initialGlobalMode string
+		globalMode        string
+		stmt              string
+		redactLock        bool
+	}{
+		{name: "default", stmt: originalSQL},
+		{name: "OFF", initialGlobalMode: "OFF", globalMode: "OFF", stmt: originalSQL},
+		{name: "ON", initialGlobalMode: "ON", globalMode: "ON", stmt: redactedSQL, redactLock: true},
+		{name: "MARKER", initialGlobalMode: "MARKER", globalMode: "MARKER", stmt: markedSQL, redactLock: true},
+		{name: "OFF to ON", initialGlobalMode: "OFF", globalMode: "ON", stmt: redactedSQL, redactLock: true},
+		{name: "OFF to MARKER", initialGlobalMode: "OFF", globalMode: "MARKER", stmt: markedSQL, redactLock: true},
+		{name: "ON to OFF", initialGlobalMode: "ON", globalMode: "OFF", stmt: originalSQL},
+		{name: "MARKER to OFF", initialGlobalMode: "MARKER", globalMode: "OFF", stmt: originalSQL},
+		{name: "ON to MARKER", initialGlobalMode: "ON", globalMode: "MARKER", stmt: markedSQL, redactLock: true},
+		{name: "MARKER to ON", initialGlobalMode: "MARKER", globalMode: "ON", stmt: redactedSQL, redactLock: true},
+	} {
+		for _, sessionMode := range []string{"", "OFF", "ON", "MARKER"} {
+			t.Run(test.name+"/session="+sessionMode, func(t *testing.T) {
+				pingcaperrors.RedactLogEnabled.Store(test.initialGlobalMode)
+				sctx := newMockSessionContext()
+				sctx.GetSessionVars().StmtCtx.OriginalSQL = originalSQL
+				sctx.GetSessionVars().EnableRedactLog = sessionMode
+				dctx := sctx.GetDistSQLCtx()
+				client := &lockEventTestClient{Client: sctx.GetClient()}
+				dctx.Client = client
+				core, recorded := observer.New(zap.DebugLevel)
+				ctx := context.WithValue(context.Background(), logutil.CtxLogKey, zap.New(core))
+				response, err := Select(ctx, dctx, &kv.Request{StartTs: 42}, nil)
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, response.Close()) })
+
+				// The callback can outlive the session's current statement context.
+				dctx.OriginalSQL = "SELECT 2"
+				pingcaperrors.RedactLogEnabled.Store(test.globalMode)
+				lockInfo := newLockInfo(false)
+				client.option.EventCb(trxevents.WrapCopMeetLock(&trxevents.CopMeetLock{
+					LockInfo: lockInfo,
+				}))
+				entries := recorded.FilterMessage("coprocessor encounters lock").All()
+				require.Len(t, entries, 1)
+				require.Equal(t, uint64(42), entries[0].ContextMap()["startTS"])
+				require.Equal(t, test.stmt, entries[0].ContextMap()["stmt"])
+				require.Equal(t, newLockInfo(test.redactLock).String(), entries[0].ContextMap()["lock"])
+				require.Equal(t, newLockInfo(false), lockInfo)
+				if test.redactLock {
+					require.NotContains(t, entries[0].ContextMap()["lock"], "key-secret")
+				}
+				if test.globalMode == "ON" {
+					require.NotContains(t, entries[0].ContextMap()["stmt"], "lock-event-secret")
+				}
+			})
+		}
+	}
+}
 
 func TestSelectNormal(t *testing.T) {
 	response, colTypes := createSelectNormal(t, 1, 2, nil, nil)

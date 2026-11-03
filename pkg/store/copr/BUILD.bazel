@@ -37,6 +37,7 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/paging",
+        "//pkg/util/redact",
         "//pkg/util/size",
         "//pkg/util/tiflash",
         "//pkg/util/tiflashcompute",
@@ -89,7 +90,7 @@ go_test(
     embed = [":copr"],
     flaky = True,
     race = "on",
-    shard_count = 34,
+    shard_count = 35,
     deps = [
         "//pkg/kv",
         "//pkg/store/driver/backoff",
@@ -112,5 +113,6 @@ go_test(
         "@com_github_tikv_client_go_v2//util/async",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )
