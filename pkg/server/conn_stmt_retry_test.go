@@ -22,10 +22,13 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/internal/packetio"
+	"github.com/pingcap/tidb/pkg/server/internal/testutil"
+	serverutil "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -33,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
@@ -291,6 +295,141 @@ func TestStmtRetryWarningHandling(t *testing.T) {
 				require.ErrorContains(t, warnings[0].Err, "hint")
 			}
 			require.Contains(t, vars.IsolationReadEngines, kv.TiFlash)
+		})
+	}
+}
+
+func TestTextFallbackReusesWarningBuffer(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	for _, parserWarning := range []bool{false, true} {
+		for _, previousWarnings := range []int{0, 1} {
+			t.Run(fmt.Sprintf("parser=%t/previous=%d", parserWarning, previousWarnings), func(t *testing.T) {
+				tk := testkit.NewTestKit(t, store)
+				// Use a cached statement context with spare warning capacity. The fallback
+				// will reset and reuse this context after the first execution swaps it out.
+				tk.MustExec("do 0")
+				vars := tk.Session().GetSessionVars()
+				vars.StmtCtx.SetWarnings(make([]contextutil.SQLWarn, 0, 8))
+				for range previousWarnings {
+					vars.StmtCtx.AppendWarning(errors.New("previous statement warning"))
+				}
+				vars.AllowFallbackToTiKV = map[kv.StoreType]struct{}{kv.TiFlash: {}}
+				vars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+				executionWarnings := []error{
+					errors.New("fallback warning 1"),
+					errors.New("fallback warning 2"),
+					errors.New("fallback warning 3"),
+				}
+				attempts := 0
+				se := &stmtAttemptSession{Session: tk.Session(), vars: vars}
+				se.executeStmt = func(ctx context.Context, stmt ast.StmtNode) (sqlexec.RecordSet, error) {
+					attempts++
+					rs, err := tk.Session().ExecuteStmt(ctx, stmt)
+					require.NoError(t, err)
+					if attempts == 1 {
+						require.NoError(t, rs.Close())
+						return nil, storeerr.ErrTiFlashServerTimeout
+					}
+					// Warnings produced before ExecuteStmt returns must not overwrite
+					// the saved parser warnings or the timeout warning.
+					for _, warning := range executionWarnings {
+						vars.StmtCtx.AppendWarning(warning)
+					}
+					return rs, nil
+				}
+				cc := &clientConn{
+					alloc:      arena.NewAllocator(1024),
+					chunkAlloc: chunk.NewAllocator(),
+					pkt:        packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+				}
+				cc.SetCtx(&TiDBContext{Session: se, stmts: make(map[int]*TiDBStatement)})
+				sql := "select 1"
+				if parserWarning {
+					sql = "select /*+ unknown_hint() */ 1"
+				}
+				require.NoError(t, cc.handleQuery(context.Background(), sql))
+				require.Equal(t, 2, attempts)
+				warnings := vars.StmtCtx.GetWarnings()
+				wantCount := len(executionWarnings) + 1
+				if parserWarning {
+					wantCount++
+				}
+				require.Len(t, warnings, wantCount)
+				for i, warning := range executionWarnings {
+					require.Same(t, warning, warnings[i].Err)
+					require.Equal(t, contextutil.WarnLevelWarning, warnings[i].Level)
+				}
+				if parserWarning {
+					require.ErrorContains(t, warnings[len(executionWarnings)].Err, "hint")
+				}
+				require.True(t, errors.ErrorEqual(warnings[len(warnings)-1].Err, storeerr.ErrTiFlashServerTimeout))
+				require.Equal(t, contextutil.WarnLevelError, warnings[len(warnings)-1].Level)
+			})
+		}
+	}
+}
+
+func TestLoadDataLocalRetrySafety(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	for _, tt := range []struct {
+		name   string
+		local  bool
+		err    error
+		action sessiontxn.StmtErrorAction
+	}{
+		{name: "transaction retry", local: true, err: errors.New("execution failed"), action: sessiontxn.StmtActionRetryReady},
+		{name: "TiFlash fallback", local: true, err: storeerr.ErrTiFlashServerTimeout, action: sessiontxn.StmtActionNoIdea},
+		{name: "server file", err: errors.New("execution failed"), action: sessiontxn.StmtActionNoIdea},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			vars := tk.Session().GetSessionVars()
+			vars.AllowFallbackToTiKV = map[kv.StoreType]struct{}{kv.TiFlash: {}}
+			vars.TxnManager = &stmtAttemptTxnManager{onError: func(context.Context, sessiontxn.StmtErrorHandlePoint, error) (sessiontxn.StmtErrorAction, error) {
+				return tt.action, nil
+			}}
+			// The client terminates its file response with an empty packet, after
+			// the server sends the sequence-0 local-infile request.
+			input := &testutil.BytesConn{Buffer: *bytes.NewBuffer([]byte{0, 0, 0, 1})}
+			var output bytes.Buffer
+			cc := &clientConn{
+				capability: mysql.ClientLocalFiles,
+				alloc:      arena.NewAllocator(1024),
+				chunkAlloc: chunk.NewAllocator(),
+				pkt:        packetio.New(serverutil.NewBufferedReadConn(input)),
+			}
+			cc.pkt.SetBufWriter(bufio.NewWriter(&output))
+			attempts := 0
+			se := &stmtAttemptSession{Session: tk.Session(), vars: vars}
+			se.executeStmt = func(context.Context, ast.StmtNode) (sqlexec.RecordSet, error) {
+				attempts++
+				if tt.local {
+					builder, ok := se.Value(executor.LoadDataReaderBuilderKey).(executor.LoadDataReaderBuilder)
+					require.True(t, ok)
+					reader, err := builder.Build("file.csv")
+					require.NoError(t, err)
+					require.NoError(t, reader.Close())
+				}
+				return nil, tt.err
+			}
+			cc.SetCtx(&TiDBContext{Session: se})
+			stmt := &ast.LoadDataStmt{FileLocRef: ast.FileLocServerOrRemote}
+			if tt.local {
+				stmt.FileLocRef = ast.FileLocClient
+			}
+			err := cc.runStmtWithRetry(context.Background(), func(error) (stmtRetrySafety, error) {
+				safety, err := cc.handleStmt(context.Background(), stmt, nil, true)
+				require.Equal(t, stmtRetrySafety(!tt.local), safety)
+				return safety, err
+			})
+			require.Same(t, tt.err, err)
+			require.Equal(t, 1, attempts)
+			require.Nil(t, se.Value(executor.LoadDataReaderBuilderKey))
+			if tt.local {
+				require.Equal(t, append([]byte{9, 0, 0, 0, mysql.LocalInFileHeader}, []byte("file.csv")...), output.Bytes())
+			} else {
+				require.Empty(t, output.Bytes())
+			}
 		})
 	}
 }

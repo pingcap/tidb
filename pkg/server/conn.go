@@ -1886,7 +1886,8 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	}
 
 	warns := sc.GetWarnings()
-	parserWarns := warns[len(prevWarns):]
+	// Execution retries can reset and reuse this statement context's warning buffer.
+	parserWarns := append([]contextutil.SQLWarn(nil), warns[len(prevWarns):]...)
 
 	var pointPlans []base.Plan
 	sessVars.InMultiStmts = len(stmts) > 1
@@ -2234,6 +2235,7 @@ func (cc *clientConn) handleStmt(
 	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	cc.audit(context.Background(), plugin.Starting)
+	retrySafety := stmtRetrySafe
 
 	// if stmt is load data stmt, store the channel that reads from the conn
 	// into the ctx for executor to use
@@ -2244,6 +2246,8 @@ func (cc *clientConn) handleStmt(
 			if err != nil {
 				return stmtRetryUnsafe, err
 			}
+			// ExecuteStmt can request a one-shot client file stream, even if it fails.
+			retrySafety = stmtRetryUnsafe
 		}
 	}
 
@@ -2272,7 +2276,7 @@ func (cc *clientConn) handleStmt(
 		if sv := cc.ctx.GetSessionVars(); sv != nil && sv.StmtCtx != nil {
 			sv.StmtCtx.DetachMemDiskTracker()
 		}
-		return stmtRetrySafe, err
+		return retrySafety, err
 	}
 
 	status := cc.ctx.Status()
