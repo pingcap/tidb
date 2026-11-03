@@ -195,6 +195,49 @@ pub fn histogram_from_storage_with_priority<C: StatsSessionContext + ?Sized>(
     Ok(hg)
 }
 
+/// Go `HistMetaFromStorageWithHighPriority`: one item's histogram metadata
+/// (no buckets) and its `stats_ver`, `None` when the item has no row.
+/// `column_type` is the column's type (Go `possibleColInfo.FieldType`); an
+/// index reads as a blob.
+pub fn hist_meta_from_storage_with_high_priority<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    table_id: i64,
+    is_index: bool,
+    hist_id: i64,
+    column_type: Option<&FieldType>,
+) -> Result<Option<(Histogram, i64)>, SqlExecError> {
+    let blob = FieldType::new(FieldTypeCode::Blob);
+    let tp = if is_index { &blob } else { column_type.unwrap_or(&blob) };
+    let sql = format!(
+        "{}distinct_count, version, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?",
+        stats_select_prefix(Priority::High)
+    );
+    let rows = exec_rows_at_snapshot(
+        sctx,
+        0,
+        &sql,
+        &[
+            SqlArg::Signed(table_id),
+            SqlArg::Signed(hist_id),
+            SqlArg::Bool(is_index),
+        ],
+    )?;
+    let Some(row) = rows.first() else {
+        return Ok(None);
+    };
+    let mut hist = Histogram::new(
+        hist_id,
+        datum_i64(row.first()),
+        datum_i64(row.get(2)),
+        datum_u64(row.get(1)),
+        tp,
+        0,
+        datum_i64(row.get(3)),
+    );
+    hist.correlation = datum_f64(row.get(5));
+    Ok(Some((hist, datum_i64(row.get(4)))))
+}
+
 /// Go `CMSketchAndTopNFromStorageWithHighPriority`.
 pub fn cm_sketch_and_topn_from_storage_with_high_priority<C: StatsSessionContext + ?Sized>(
     sctx: &C,

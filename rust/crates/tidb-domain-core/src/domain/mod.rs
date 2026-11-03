@@ -22,7 +22,6 @@ mod ru_stats_writer;
 pub mod schema_lease;
 pub mod stats_maintenance;
 
-use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use tidb_stats_handle_storage::stats_read_writer::StatsSessionPool as _;
@@ -41,7 +40,6 @@ use tidb_domain::historical_stats::{
     HistoricalStatsMetrics, HistoricalStatsWorker, InfoSchemaView, SessionInfoSchema,
     StatsHandle as HistoricalStatsHandle, TableMeta,
 };
-use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
 use tidb_stats_handle_syncload::stats_watch::SharedStats;
 use tidb_sessmgr::ProcessRegistry;
 use tidb_stats_handle_cache::table_size_stats::TableStorageStatsProvider;
@@ -64,7 +62,8 @@ pub struct ClusterDataLockWaits {
 }
 
 pub struct ClusterStatisticsItemLoader {
-    pub transactions: Arc<dyn ClusterTransactions>,
+    /// Go `statsHandle.SPool()`'s owner.
+    pub domain: Weak<Domain>,
     pub catalog: Arc<InfoCache>,
     pub stats: Arc<SharedStats>,
     pub global_vars: GlobalSysvars,
@@ -488,10 +487,14 @@ impl tidb_stats_handle_syncload::sync_load::StatisticsItemLoader for ClusterStat
     fn load_items(
         &self,
         items: &[tidb_model::StatsLoadItem],
-        resource_group: &str,
+        _resource_group: &str,
     ) -> Result<Vec<(i64, Arc<tidb_stats::Table>)>, String> {
         let catalog = self.catalog.get_latest();
-        let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
+        let domain = self.domain.upgrade();
+        let pool = domain.as_ref().map(|domain| domain.advanced_sys_session_pool());
+        let pool = crate::sys_session::StatsPool {
+            session_pool: pool.as_ref(),
+        };
         let skipped_column_types = self
             .global_vars
             .get(tidb_vardef::tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES)
@@ -557,19 +560,25 @@ impl tidb_stats_handle_syncload::sync_load::StatisticsItemLoader for ClusterStat
                     continue;
                 }
             }
-            let snapshot = self.transactions.open_snapshot(resource_group)?;
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
             let started = std::time::Instant::now();
-            let loaded = loader
-                .read_stats_for_one_item(
-                    &mut snapshot,
-                    item.table_id,
-                    item.is_index,
-                    item.id,
-                    column_type.as_ref(),
-                    requested.full_load,
-                )
-                .map_err(|error| error.to_string())?;
+            // Go `handleOneItemTask`: `SPool().WithSession`, the statement
+            // context at high priority.
+            let mut loaded = None;
+            pool.call_with_sctx(
+                &mut |sctx| {
+                    loaded = tidb_stats_handle_syncload::real_tikv_stats::read_stats_for_one_item(
+                        sctx,
+                        item.table_id,
+                        item.is_index,
+                        item.id,
+                        column_type.as_ref(),
+                        requested.full_load,
+                    )?;
+                    Ok(())
+                },
+                &[],
+            )
+            .map_err(|error| error.message)?;
             if let Some(loaded) = loaded {
                 // Go observes only a successful read with histogram metadata,
                 // before cache publication. Skips and failed attempts do not

@@ -27201,6 +27201,70 @@ fn the_ddl_session_pool_is_gos_sess_pool_over_the_node() {
     sess_pool.put(context);
 }
 
+/// Go `statsSyncLoad.handleOneItemTask`: an evicted column's histogram is
+/// read back on the statistics handle's sessions (`readStatsForOneItem`:
+/// `HistMetaFromStorageWithHighPriority`, then the buckets, CM sketch and
+/// TopN) and the cache holds it fully loaded.
+#[test]
+fn a_sync_load_reads_an_evicted_column_on_the_domains_sessions_as_go() {
+    use tidb_stats_handle_syncload::sync_load::StatisticsItemLoader as _;
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(310)).unwrap();
+    rows(&mut session, "CREATE TABLE test.synced (id INT PRIMARY KEY, v INT)");
+    rows(&mut session, "INSERT INTO test.synced VALUES (1, 1), (2, 2), (3, 3)");
+    rows(&mut session, "ANALYZE TABLE test.synced");
+    let table_id = match rows(
+        &mut session,
+        "SELECT TIDB_TABLE_ID FROM information_schema.tables \
+         WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'synced'",
+    )[0][0]
+    {
+        Datum::Int(id) => id,
+        ref other => panic!("table id: {other:?}"),
+    };
+    let stats = &stack.factory.stats;
+    // Go `LFU.dropMemory`: the cache keeps an evicted copy.
+    let evicted = Arc::new(
+        stats
+            .get(table_id)
+            .expect("the analyzed table is cached")
+            .copy_as(tidb_stats::CopyIntent::AllDataWritable),
+    );
+    evicted.hist_coll.drop_evicted();
+    stats.publish_analyzed_table(table_id, evicted);
+    let v_column = 2;
+    assert!(stats.get(table_id).unwrap().column_load_needed(v_column, true).1);
+
+    let loader = tidb_domain_core::domain::ClusterStatisticsItemLoader {
+        domain: Arc::downgrade(&stack.factory),
+        catalog: Arc::clone(&stack.factory.catalog),
+        stats: Arc::clone(stats),
+        global_vars: stack.factory.global_vars.clone(),
+    };
+    loader
+        .load_items(
+            &[tidb_model::StatsLoadItem {
+                table_item_id: tidb_model::TableItemID {
+                    table_id,
+                    id: v_column,
+                    is_index: false,
+                    is_sync_load_failed: false,
+                },
+                full_load: true,
+            }],
+            "default",
+        )
+        .expect("the item loads on the domain's sessions");
+    let table = stats.get(table_id).unwrap();
+    assert!(!table.column_load_needed(v_column, true).1);
+    let column = table.hist_coll.get_column(v_column).unwrap();
+    let column = column.read().unwrap();
+    assert!(column.stats_loaded_status.is_full_load());
+    // ANALYZE v2 keeps the three values in the TopN, no bucket left over.
+    assert_eq!(column.top_n.as_ref().map(|top_n| top_n.num()), Some(3));
+    assert_eq!(column.histogram.ndv, 3);
+}
+
 /// Go `cache.TableRowStatsCache` is one process-wide cache whose
 /// `UpdateByID` reads both `mysql.stats_meta` and `mysql.stats_histograms`
 /// on the domain's sessions and only adds to the cache: a `TABLE_ROWS`-only

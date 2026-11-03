@@ -303,6 +303,73 @@ fn skips_internal_column(item: &tidb_model::TableItemID) -> bool {
     !item.is_index && item.id <= 0
 }
 
+/// Go `statsSyncLoad.readStatsForOneItem` on a statistics session: the
+/// item's histogram metadata, and on a full load its buckets, CM sketch and
+/// TopN, at high priority. `None` is Go's `errGetHistMeta` (no row), which
+/// the caller skips. `column_type` is the column's type for a column item.
+///
+/// # Errors
+///
+/// A read that failed.
+pub fn read_stats_for_one_item<C: tidb_stats_handle_util::StatsSessionContext + ?Sized>(
+    sctx: &C,
+    table_id: i64,
+    is_index: bool,
+    id: i64,
+    column_type: Option<&FieldType>,
+    full_load: bool,
+) -> Result<Option<ClusterStatsItem>, tidb_sqlexec::SqlExecError> {
+    use tidb_stats_handle_storage::read;
+    let Some((mut histogram, stats_ver)) =
+        read::hist_meta_from_storage_with_high_priority(sctx, table_id, is_index, id, column_type)?
+    else {
+        return Ok(None);
+    };
+    let (mut cms, mut topn) = (None, None);
+    if full_load {
+        let blob = FieldType::new(tidb_datatype::FieldTypeCode::Blob);
+        let tp = if is_index { &blob } else { column_type.unwrap_or(&blob) };
+        histogram = read::histogram_from_storage_with_priority(
+            sctx,
+            table_id,
+            id,
+            tp,
+            histogram.ndv,
+            is_index,
+            histogram.last_update_version,
+            histogram.null_count,
+            histogram.tot_col_size,
+            histogram.correlation,
+            read::Priority::High,
+        )?;
+        (cms, topn) =
+            read::cm_sketch_and_topn_from_storage_with_high_priority(sctx, table_id, is_index, id, stats_ver)?;
+    }
+    // Go: an index with a nonzero `stats_ver`, a column whose
+    // `StatsAvailable()`, is loaded (fully or with its payload evicted).
+    let available = if is_index {
+        stats_ver != 0
+    } else {
+        stats_ver != 0 || histogram.ndv > 0 || histogram.null_count > 0
+    };
+    let load_status = match (available, full_load) {
+        (false, _) => tidb_stats::StatsLoadedStatus::default(),
+        (true, true) => tidb_stats::StatsLoadedStatus::full_load(),
+        (true, false) => tidb_stats::StatsLoadedStatus::all_evicted(),
+    };
+    Ok(Some(ClusterStatsItem {
+        id,
+        is_index,
+        stats_ver,
+        flag: 0,
+        load_status,
+        histogram,
+        topn,
+        cms,
+        fm_sketch: None,
+    }))
+}
+
 /// Go `StatsCacheImpl.Update`'s storage reads on the statistics handle's
 /// session pool (`util.CallWithSCtx(s.statsHandle.SPool(), ...)`): the
 /// ordered `mysql.stats_meta` SELECT, and `statsReadWriter.TableStatsFromStorage`

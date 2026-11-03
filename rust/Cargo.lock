@@ -7444,6 +7444,7 @@ dependencies = [
  "tidb-logutil",
  "tidb-model",
  "tidb-sqlescape",
+ "tidb-sqlexec",
  "tidb-stats",
  "tidb-stats-asyncload",
  "tidb-stats-handle-cache",

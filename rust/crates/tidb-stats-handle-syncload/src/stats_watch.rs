@@ -1071,11 +1071,18 @@ mod tests {
                 skip_move_forward: true,
             },
         });
+        // The LFU admits writes asynchronously, and replacing a resident table
+        // exits the old one, which (Go `onExit`) triggers an eviction pass.
+        // Wait for both before asserting: the published statistics are the
+        // table the cache holds once eviction settled, whichever copy it is.
+        shared.cache.wait_for_async_updates();
+        shared.trigger_evict();
+        shared.cache.wait_for_async_updates();
         shared.trigger_evict();
         let published = shared.load();
         assert!(Arc::ptr_eq(
             published.get(&1).and_then(TableStatsState::loaded).unwrap(),
-            &replacement
+            &shared.get(1).expect("the cache holds table 1"),
         ));
     }
 
@@ -1232,6 +1239,9 @@ mod tests {
 
         shared.store(StatsSnapshot::from([(1, TableStatsState::Pseudo)]));
         assert!(matches!(shared.load()[&1], TableStatsState::Pseudo));
+        // A pending admission may land after the delete; Go's cache tests
+        // wait for buffered writes before reading.
+        shared.cache.wait_for_async_updates();
         assert!(shared.cache.get(1).is_none());
     }
 

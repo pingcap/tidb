@@ -281,10 +281,19 @@ checksums).
   (`storage/table_size_stats.go`, not in master, no caller) and is gone with
   the unused resource-group parameter. Test
   `the_table_size_cache_is_gos_process_wide_cache_over_both_reads`.
+- [x] (2026-11-04) Sync load: Go `statsSyncLoad.handleOneItemTask` reads an
+  item on the statistics handle's sessions (`readStatsForOneItem` over
+  `read.rs`'s new `hist_meta_from_storage_with_high_priority`, histogram,
+  CM sketch and TopN), not the raw `ClusterStatsLoader`; an index keeps its
+  stored `tot_col_size`/`correlation` as Go's `histMetaFromStorage` does.
+  Two `stats_watch` tests that read the LFU cache before its asynchronous
+  admission settled now wait as Go's cache tests do. Test
+  `a_sync_load_reads_an_evicted_column_on_the_domains_sessions_as_go`.
 - [ ] S1, statistics left: `bootstrap.go`'s `initStats*` (the first pass,
-  still `load_stats_snapshot_and_loader`) and `syncload`'s histogram loads
-  (`load_needed_histograms`) on the sessions; then `cluster_stats_load.rs`
-  goes.
+  still `load_stats_snapshot_and_loader`), the async `LoadNeededHistograms`
+  (`load_needed_histograms`), analyze's base-stats reads
+  (`real_tikv_analyze.rs`), and the sync-load request API's unused
+  `resource_group`; then `cluster_stats_load.rs` goes.
 - [ ] Readers (below), in the order the remaining milestones set.
 
 ### Remaining milestones (Y01)

@@ -224,7 +224,7 @@ impl DomainSessions for Domain {
         let statistics_loading = ClusterStatisticsLoading {
             view: Arc::clone(&self.statistics_view),
             loader: Arc::new(ClusterStatisticsItemLoader {
-                transactions: Arc::clone(&self.transactions),
+                domain: self.binding_session_factory.clone(),
                 catalog: Arc::clone(&self.catalog),
                 stats: Arc::clone(&self.stats),
                 global_vars: self.global_vars.clone(),

@@ -28,6 +28,7 @@ tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }
 tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-vardef = { path = "../tidb-vardef" }
 
