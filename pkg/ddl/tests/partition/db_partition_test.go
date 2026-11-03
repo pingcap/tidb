@@ -2057,6 +2057,56 @@ func TestExchangePartitionHook(t *testing.T) {
 	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
 }
 
+func TestCancelExchangePartition(t *testing.T) {
+	for _, withConstraint := range []bool{false, true} {
+		for _, state := range []model.SchemaState{model.StateNone, model.StateWriteOnly} {
+			t.Run(fmt.Sprintf("constraint=%t/state=%s", withConstraint, state), func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
+				tk.MustExec("set @@tidb_enable_exchange_partition=1")
+				definition := "(a int primary key, b int, key idx(b)"
+				if withConstraint {
+					original := tk.MustQuery("select @@global.tidb_enable_check_constraint").Rows()[0][0]
+					t.Cleanup(func() {
+						tk.MustExec(fmt.Sprintf("set global tidb_enable_check_constraint=%v", original))
+					})
+					tk.MustExec("set global tidb_enable_check_constraint=1")
+					definition += ", check (a >= 0)"
+				}
+				definition += ")"
+				tk.MustExec("create table pt " + definition + " partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+				tk.MustExec("create table nt " + definition)
+				tk.MustExec("insert into pt values (1, 10), (11, 110)")
+				tk.MustExec("insert into nt values (2, 20)")
+
+				var cancelled atomic.Bool
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+					if job.Type != model.ActionExchangeTablePartition || job.SchemaState != state || !cancelled.CompareAndSwap(false, true) {
+						return
+					}
+					tkCancel := testkit.NewTestKit(t, store)
+					tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID)).Check(testkit.Rows(fmt.Sprintf("%d successful", job.ID)))
+				})
+
+				tk.MustGetErrCode("alter table pt exchange partition p0 with table nt", errno.ErrCancelledDDLJob)
+				require.True(t, cancelled.Load())
+				tk.MustQuery("select * from pt order by a").Check(testkit.Rows("1 10", "11 110"))
+				tk.MustQuery("select * from nt").Check(testkit.Rows("2 20"))
+				require.Nil(t, external.GetTableByName(t, tk, "test", "pt").Meta().ExchangePartitionInfo)
+				require.Nil(t, external.GetTableByName(t, tk, "test", "nt").Meta().ExchangePartitionInfo)
+				// Rollback must remove the temporary partition restriction on nt.
+				tk.MustExec("insert into nt values (12, 120)")
+				tk.MustExec("insert into pt values (3, 30)")
+				tk.MustQuery("select * from pt order by a").Check(testkit.Rows("1 10", "3 30", "11 110"))
+				tk.MustQuery("select * from nt order by a").Check(testkit.Rows("2 20", "12 120"))
+				tk.MustExec("admin check table pt")
+				tk.MustExec("admin check table nt")
+			})
+		}
+	}
+}
+
 func TestExchangePartitionAutoID(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

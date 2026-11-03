@@ -332,7 +332,10 @@ func rollingbackExchangeTablePartition(jobCtx *jobContext, job *model.Job) (ver 
 		return ver, errors.Trace(err)
 	}
 	ver, err = rollbackExchangeTablePartition(jobCtx, job, nt)
-	return ver, errors.Trace(err)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	return ver, dbterror.ErrCancelledDDLJob
 }
 
 func rollingbackTruncateTablePartition(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
