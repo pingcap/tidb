@@ -1736,10 +1736,6 @@ func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.S
 	if !found {
 		return nil
 	}
-	statsTbl, found := statsHandle.GetNonPseudoPhysicalTableStats(mlogID)
-	if !found {
-		return nil
-	}
 	lockedTables, err := lockstats.QueryLockedTables(ctx, sctx)
 	if err != nil {
 		return err
@@ -1748,7 +1744,15 @@ func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.S
 		return nil
 	}
 	// A task may have waited in the executor queue or for a pooled session.
-	// Recheck current controls immediately before starting another ANALYZE.
+	// Recheck current eligibility and controls before starting another ANALYZE.
+	ratio := h.readMLogAutoAnalyzeRatio(ctx, sctx)
+	statsTbl, found := statsHandle.GetNonPseudoPhysicalTableStats(mlogID)
+	if !found {
+		return nil
+	}
+	if needAnalyze, _ := needAnalyzeMLog(statsTbl, ratio); !needAnalyze {
+		return nil
+	}
 	if !h.canAnalyzeMLog(ctx, sctx) {
 		return nil
 	}

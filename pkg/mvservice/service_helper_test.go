@@ -1660,7 +1660,8 @@ func TestServerHelperAnalyzeMVLogTemporarilyUpdatesStatsSessionVars(t *testing.T
 		stats: map[int64]*statistics.Table{
 			201: {
 				HistColl: statistics.HistColl{
-					StatsVer: statistics.Version2,
+					StatsVer:      statistics.Version2,
+					RealtimeCount: statistics.AutoAnalyzeMinCnt + 1,
 				},
 			},
 		},
@@ -1710,6 +1711,58 @@ func containsAnalyzeSQL(sqls []string) bool {
 		}
 	}
 	return false
+}
+
+func TestServerHelperMLogAnalyzeRechecksEligibility(t *testing.T) {
+	oldEnabled := vardef.RunAutoAnalyze.Load()
+	vardef.RunAutoAnalyze.Store(true)
+	t.Cleanup(func() { vardef.RunAutoAnalyze.Store(oldEnabled) })
+	rowCount := statistics.AutoAnalyzeMinCnt + 1
+	analyzedStats := func(modifyCount int64) *statistics.Table {
+		return &statistics.Table{
+			HistColl:           *statistics.NewHistCollWithColsAndIdxs(0, rowCount, modifyCount, nil, nil),
+			LastAnalyzeVersion: oracle.GoTimeToTS(time.Unix(1700000000, 0)),
+		}
+	}
+	for _, tt := range []struct {
+		name        string
+		ratio       string
+		stats       *statistics.Table
+		wantAnalyze bool
+	}{
+		{name: "ratio raised", ratio: "2", stats: analyzedStats(rowCount)},
+		{name: "statistics refreshed", ratio: "0.5", stats: analyzedStats(0)},
+		{name: "still eligible", ratio: "0.5", stats: analyzedStats(rowCount), wantAnalyze: true},
+		{
+			name:        "initial analysis with raised ratio",
+			ratio:       "2",
+			stats:       &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, rowCount, 0, nil, nil)},
+			wantAnalyze: true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			helper, se := newMLogAnalyzeHelperForTest(t)
+			statsHandle, err := helper.getStatsHandle()
+			require.NoError(t, err)
+			handle := statsHandle.(*recordingStatsHandle)
+			if tt.stats.IsAnalyzed() {
+				handle.stats[201] = analyzedStats(rowCount)
+			}
+			ctx := context.Background()
+			accessor := se.GetSessionVars().GlobalVarsAccessor
+			require.NoError(t, accessor.SetGlobalSysVar(ctx, vardef.TiDBMLogAutoAnalyzeRatio, "0.5"))
+			pool := recordingSessionPool{se: se}
+			tasks, err := helper.LoadAllTiDBMVLogAnalyzeTasks(ctx, pool)
+			require.NoError(t, err)
+			require.Contains(t, tasks, int64(201))
+
+			// Change the configuration or cached statistics after the task was selected.
+			require.NoError(t, accessor.SetGlobalSysVar(ctx, vardef.TiDBMLogAutoAnalyzeRatio, tt.ratio))
+			handle.stats[201] = tt.stats
+			require.NoError(t, helper.AnalyzeMVLog(ctx, pool, 201))
+			require.Equal(t, tt.wantAnalyze, containsAnalyzeSQL(se.executedRestrictedSQL))
+		})
+	}
 }
 
 func TestServerHelperMLogAnalyzeLockedStats(t *testing.T) {
