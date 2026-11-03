@@ -2201,10 +2201,10 @@ fn commit_global_stats_item(
     item: ClusterStatsItem,
     stats_lease: Duration,
 ) -> Result<(u64, usize, usize, usize), ClusterAnalyzeError> {
-    let started = Instant::now();
     let (histogram_count, bucket_count, topn_count) = saved_item_counts([&item]);
     let version = stats_read_writer::save_col_or_idx_stats_to_storage(
         stats_pool,
+        stats_lease,
         table_id,
         row_count,
         modify_count,
@@ -2213,10 +2213,6 @@ fn commit_global_stats_item(
         true,
     )
     .map_err(ClusterAnalyzeError::Sql)?;
-    let version = refresh_slow_stats_save_version(version, stats_lease, started.elapsed(), || {
-        stats_read_writer::update_stats_meta_ver_and_last_hist_update_ver(stats_pool, table_id)
-            .map_err(ClusterAnalyzeError::Sql)
-    })?;
     Ok((version, histogram_count, bucket_count, topn_count))
 }
 
@@ -2229,26 +2225,6 @@ fn saved_item_counts<'a>(
             histograms + 1,
             buckets + item.histogram.buckets.len(),
             topn + item.topn.as_ref().map_or(0, |topn| topn.entries().len()),
-        )
-    })
-}
-
-fn slow_stats_save_needs_version_refresh(stats_lease: Duration, elapsed: Duration) -> bool {
-    stats_lease > Duration::ZERO && elapsed >= stats_lease.saturating_mul(5)
-}
-
-fn refresh_slow_stats_save_version(
-    current: u64,
-    stats_lease: Duration,
-    elapsed: Duration,
-    refresh: impl FnOnce() -> Result<u64, ClusterAnalyzeError>,
-) -> Result<u64, ClusterAnalyzeError> {
-    if !slow_stats_save_needs_version_refresh(stats_lease, elapsed) {
-        return Ok(current);
-    }
-    refresh().map_err(|_| {
-        ClusterAnalyzeError::Other(
-            "failed to update stats meta version during analyze result save. The system may be too busy. Please retry the operation later".to_owned(),
         )
     })
 }
@@ -2344,9 +2320,9 @@ fn commit_cluster_analyze_target<S: StoreClient>(
     // Go samples at `AnalyzeResults.Snapshot`, then saves through the
     // statistics handle's later transaction, which reconciles the deltas
     // committed after sampling against BaseCount/BaseModifyCnt.
-    let save_started = Instant::now();
     let stats_ver = stats_read_writer::save_analyze_result_to_storage(
         stats_pool,
+        stats_lease,
         &AnalyzeResults {
                 stats: &report.stats,
                 is_partition: options.is_partition,
@@ -2366,7 +2342,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
     } else {
         (0, 0, 0)
     };
-    let mut receipt = ClusterAnalyzeReport {
+    let receipt = ClusterAnalyzeReport {
         table_id: report.stats.table_id,
         version: stats_ver,
         scanned_rows: report.scanned_rows,
@@ -2392,17 +2368,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
         build_diagnostics: build_diagnostics.to_vec(),
     };
     if saved {
-        receipt.version = finish_analyze_save(
-            opener,
-            stats_pool,
-            receipt.table_id,
-            stats_ver,
-            save_started,
-            timeout,
-            stats_lease,
-            record_history,
-            row_ids,
-        )?;
+        record_analyze_history_if(opener, receipt.table_id, stats_ver, timeout, record_history, row_ids);
     }
     Ok(receipt)
 }
@@ -2461,9 +2427,9 @@ fn commit_cluster_independent_index<S: StoreClient>(
     // Go's special multi-valued / global index task: saved as
     // `ForMVIndexOrGlobalIndex`, which moves only the versions of an
     // existing `stats_meta` row (and then reports no `statsVer`).
-    let started = Instant::now();
     let stats_ver = stats_read_writer::save_analyze_result_to_storage(
         stats_pool,
+        stats_lease,
         &AnalyzeResults {
                 stats: &report.stats,
                 is_partition,
@@ -2477,7 +2443,7 @@ fn commit_cluster_independent_index<S: StoreClient>(
     .map_err(ClusterAnalyzeError::Sql)?;
     let (histogram_count, bucket_count, topn_count) =
         saved_item_counts(report.stats.columns.iter().chain(&report.stats.indexes));
-    let mut receipt = ClusterAnalyzeReport {
+    let receipt = ClusterAnalyzeReport {
         build_diagnostics: Vec::new(),
         table_id: report.stats.table_id,
         version: stats_ver,
@@ -2499,40 +2465,23 @@ fn commit_cluster_independent_index<S: StoreClient>(
         cache_update_physical_ids: Vec::new(),
     };
     if stats_ver != 0 {
-        receipt.version = finish_analyze_save(
-            opener,
-            stats_pool,
-            receipt.table_id,
-            stats_ver,
-            started,
-            timeout,
-            stats_lease,
-            record_history,
-            row_ids,
-        )?;
+        record_analyze_history_if(opener, receipt.table_id, stats_ver, timeout, record_history, row_ids);
     }
     Ok(receipt)
 }
 
-fn finish_analyze_save<S: StoreClient>(
+/// Go's `RecordHistoricalStatsMeta` after a versioned save.
+fn record_analyze_history_if<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
-    stats_pool: &dyn StatsSessionPool,
     table_id: i64,
-    mut version: u64,
-    started: Instant,
+    version: u64,
     timeout: Duration,
-    stats_lease: Duration,
     record_history: &dyn Fn() -> bool,
     row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<u64, ClusterAnalyzeError> {
-    version = refresh_slow_stats_save_version(version, stats_lease, started.elapsed(), || {
-        stats_read_writer::update_stats_meta_ver_and_last_hist_update_ver(stats_pool, table_id)
-            .map_err(ClusterAnalyzeError::Sql)
-    })?;
+) {
     if record_history() {
         record_analyze_history(opener, table_id, version, timeout, row_ids);
     }
-    Ok(version)
 }
 
 fn selected_columns<S: tidb_infoschema::cluster_catalog::MetaSnapshot>(
@@ -2957,7 +2906,7 @@ mod tests {
         analyze_partition_ids, automatic_sample_rate, classify_commit_outcome,
         collect_cache_update_physical_ids, fail_analyze_jobs, filter_skipped_column_types,
         final_column_choice, merge_global_items, realtime_count_of, record_global_history_enabled,
-        refresh_slow_stats_save_version, select_index_tasks, slow_stats_save_needs_version_refresh,
+        select_index_tasks,
         write_global_stats_items, AnalyzeJobHandle, AnalyzeJobKind, AnalyzeJobLifecycle,
         AnalyzeJobProgress, AnalyzeJobSpec, ApproximateTableCountProvider, ClusterAnalyzeError,
         ANALYZE_JOB_MAX_DELTA,
@@ -3683,51 +3632,6 @@ mod tests {
         assert!(
             commit_call.timeout() > Duration::ZERO,
             "the commit mints its own full budget at commit time"
-        );
-    }
-
-    #[test]
-    fn slow_global_stats_save_uses_go_five_lease_boundary() {
-        let lease = Duration::from_secs(3);
-        assert!(!slow_stats_save_needs_version_refresh(
-            Duration::ZERO,
-            Duration::from_secs(60)
-        ));
-        assert!(!slow_stats_save_needs_version_refresh(
-            lease,
-            Duration::from_secs(14)
-        ));
-        assert!(slow_stats_save_needs_version_refresh(
-            lease,
-            Duration::from_secs(15)
-        ));
-    }
-
-    #[test]
-    fn ordinary_and_global_slow_saves_share_go_refresh_and_error_policy() {
-        let lease = Duration::from_secs(3);
-        let skipped = std::cell::Cell::new(false);
-        assert_eq!(
-            refresh_slow_stats_save_version(11, lease, Duration::from_secs(14), || {
-                skipped.set(true);
-                Ok(12)
-            })
-            .unwrap(),
-            11
-        );
-        assert!(!skipped.get());
-
-        assert_eq!(
-            refresh_slow_stats_save_version(11, lease, Duration::from_secs(15), || Ok(12)).unwrap(),
-            12
-        );
-        assert_eq!(
-            refresh_slow_stats_save_version(11, lease, Duration::from_secs(15), || {
-                Err(ClusterAnalyzeError::Other("injected refresh failure".to_owned()))
-            })
-            .expect_err("a slow-save refresh failure is statement-visible")
-            .to_string(),
-            "failed to update stats meta version during analyze result save. The system may be too busy. Please retry the operation later"
         );
     }
 

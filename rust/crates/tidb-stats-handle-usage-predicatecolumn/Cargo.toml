@@ -12,6 +12,9 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-model = { path = "../tidb-model" }
 tidb-syssession = { path = "../tidb-syssession" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 
 [lints]
 workspace = true

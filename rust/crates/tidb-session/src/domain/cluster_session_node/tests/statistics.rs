@@ -528,3 +528,68 @@ fn load_stats_through_the_node_loads_the_client_file() {
     };
     assert_eq!(rows, vec![vec![Datum::UInt(2000)]]);
 }
+
+/// Go `loadStatsFromJSON` saves each histogram with
+/// `SaveColOrIdxStatsToStorage`, which only deletes its FM sketch: LOAD
+/// STATS stores none, even from a dump that carries them.
+#[test]
+fn load_stats_stores_no_fm_sketch_as_go() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../tests/integrationtest/s/explain_complex_stats_rr.json");
+    let mut json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&fixture).expect("the fixture reads"))
+            .expect("the fixture is JSON");
+    for column in json["columns"]
+        .as_object_mut()
+        .expect("the dump has columns")
+        .values_mut()
+    {
+        column["fm_sketch"] = serde_json::json!({"mask": 0, "hashset": [1, 2, 3]});
+    }
+    json["predicate_columns"] = serde_json::json!([
+        {"id": 1, "last_used_at": "2026-08-29 01:02:03", "last_analyzed_at": null}
+    ]);
+    json["database_name"] = serde_json::json!("load_stats_fm");
+    let dump = serde_json::to_vec(&json).expect("the dump serializes");
+    let mut session = crate::Session::new_on_mock_store();
+    session.set_client_local_file_reader(Arc::new(move |_path: &str| {
+        Ok::<_, std::io::Error>(dump.clone())
+    }));
+    for sql in [
+        "create database load_stats_fm",
+        "use load_stats_fm",
+        "create table rr (aid varchar(35) not null, pt varchar(10) not null, \
+         dic varchar(64) not null, gid varchar(42) not null, acd varchar(32) not null, \
+         t int(13) default null, bm tinyint(1) default '0', primary key (aid, dic))",
+        "load stats 'rr.json'",
+    ] {
+        session.run(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    }
+    let count = |session: &mut crate::Session, table: &str| {
+        let crate::StmtResult::Rows(rows) = session
+            .run(&format!("select count(*) from mysql.{table} where table_id = (select tidb_table_id from information_schema.tables where table_schema = 'load_stats_fm' and table_name = 'rr')"))
+            .expect("the count reads")
+        else {
+            panic!("count(*) answers rows");
+        };
+        rows
+    };
+    assert_ne!(count(&mut session, "stats_histograms"), vec![vec![Datum::Int(0)]]);
+    assert_eq!(count(&mut session, "stats_fm_sketch"), vec![vec![Datum::Int(0)]]);
+    // Go `SaveColumnStatsUsageToStorage`: the dump's UTC instants.
+    session.run("set time_zone = '+00:00'").expect("the time zone sets");
+    let crate::StmtResult::Rows(usage) = session
+        .run("select column_id, last_used_at = '2026-08-29 01:02:03', last_analyzed_at is null from mysql.column_stats_usage where table_id = (select tidb_table_id from information_schema.tables where table_schema = 'load_stats_fm' and table_name = 'rr')")
+        .expect("the usage reads")
+    else {
+        panic!("the usage answers rows");
+    };
+    assert_eq!(
+        usage,
+        vec![vec![
+            Datum::Int(1),
+            Datum::Int(1),
+            Datum::Int(1),
+        ]]
+    );
+}

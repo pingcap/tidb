@@ -269,3 +269,57 @@ pub fn save_col_or_idx_stats_to_storage<C: StatsSessionContext + ?Sized>(
     }
     Ok(version)
 }
+
+/// Go `statstypes.MetaUpdate`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MetaUpdate {
+    /// Go `PhysicalID`.
+    pub physical_id: i64,
+    /// Go `Count`.
+    pub count: i64,
+    /// Go `ModifyCount`.
+    pub modify_count: i64,
+}
+
+/// Go `SaveMetaToStorage`: one batch upsert of `stats_meta` at the
+/// transaction's start TS, which it returns.
+pub fn save_meta_to_storage<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    refresh_last_hist_ver: bool,
+    meta_updates: &[MetaUpdate],
+) -> Result<u64, SqlExecError> {
+    let version = get_start_ts(sctx)?;
+    let sql = if refresh_last_hist_ver {
+        let values = meta_updates
+            .iter()
+            .map(|update| {
+                format!(
+                    "({version}, {}, {}, {}, {version})",
+                    update.physical_id, update.count, update.modify_count
+                )
+            })
+            .collect::<Vec<_>>();
+        format!(
+            "insert into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values {} \
+             on duplicate key update version = values(version), modify_count = values(modify_count), count = values(count), last_stats_histograms_version = values(last_stats_histograms_version)",
+            values.join(",")
+        )
+    } else {
+        let values = meta_updates
+            .iter()
+            .map(|update| {
+                format!(
+                    "({version}, {}, {}, {})",
+                    update.physical_id, update.count, update.modify_count
+                )
+            })
+            .collect::<Vec<_>>();
+        format!(
+            "insert into mysql.stats_meta (version, table_id, count, modify_count) values {} \
+             on duplicate key update version = values(version), modify_count = values(modify_count), count = values(count)",
+            values.join(",")
+        )
+    };
+    exec(sctx, &sql, &[])?;
+    Ok(version)
+}

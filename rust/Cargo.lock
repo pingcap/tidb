@@ -7378,6 +7378,7 @@ dependencies = [
  "tidb-infoschema-issyncer",
  "tidb-kv",
  "tidb-log",
+ "tidb-logutil",
  "tidb-model",
  "tidb-parser",
  "tidb-sqlescape",
@@ -7467,6 +7468,9 @@ dependencies = [
  "tidb-datatype",
  "tidb-infoschema",
  "tidb-model",
+ "tidb-sqlescape",
+ "tidb-sqlexec",
+ "tidb-stats-handle-util",
  "tidb-syssession",
 ]
 

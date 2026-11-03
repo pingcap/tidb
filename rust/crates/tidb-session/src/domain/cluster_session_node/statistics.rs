@@ -638,7 +638,12 @@ impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementS
 
     fn drop_stats(&self, physical_ids: &[i64]) -> Result<(), tidb_driver_error::DriverError> {
         self.analyze
-            .drop_stats(physical_ids)
+            .drop_stats(
+                physical_ids,
+                &SessionStatsPool {
+                    session_pool: self.session_pool.as_ref(),
+                },
+            )
             .map_err(into_driver_error)
     }
 
@@ -670,7 +675,13 @@ impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementS
     ) -> Result<(), tidb_driver_error::DriverError> {
         // Go's LOAD STATS path logs nothing on success.
         self.analyze
-            .load_stats(json, historical_stats_enabled)
+            .load_stats(
+                json,
+                historical_stats_enabled,
+                &SessionStatsPool {
+                    session_pool: self.session_pool.as_ref(),
+                },
+            )
             .map_err(into_driver_error)?;
         Ok(())
     }

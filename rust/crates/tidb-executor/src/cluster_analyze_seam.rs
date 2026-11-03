@@ -101,6 +101,7 @@ pub trait ClusterAnalyze: Send + Sync {
         &self,
         _json: &tidb_stats_util::JsonTable,
         _historical_stats_enabled: bool,
+        _stats_pool: &dyn StatsSessionPool,
     ) -> Result<ClusterLoadStatsReport, SqlQueryError> {
         Err(SqlQueryError::unknown(
             "this statistics writer does not support LOAD STATS",
@@ -109,7 +110,11 @@ pub trait ClusterAnalyze: Send + Sync {
 
     /// Go `executeDropStats`: soft-deletes every named physical id's
     /// statistics from storage, then refreshes this node's cache.
-    fn drop_stats(&self, _physical_ids: &[i64]) -> Result<(), SqlQueryError> {
+    fn drop_stats(
+        &self,
+        _physical_ids: &[i64],
+        _stats_pool: &dyn StatsSessionPool,
+    ) -> Result<(), SqlQueryError> {
         Err(SqlQueryError::unknown(
             "this statistics writer does not support DROP STATS",
         ))
@@ -276,6 +281,7 @@ where
         &self,
         json: &tidb_stats_util::JsonTable,
         historical_stats_enabled: bool,
+        stats_pool: &dyn StatsSessionPool,
     ) -> Result<ClusterLoadStatsReport, SqlQueryError> {
         let current = self.stats.load();
         // Go `RecordHistoricalStatsMeta` through the stats handle; failures
@@ -292,8 +298,10 @@ where
         };
         let report = commit_cluster_load_stats(
             &self.opener,
+            stats_pool,
             json,
             self.timeout,
+            self.stats_lease,
             historical_stats_enabled.then_some(&record_history as &(dyn Fn(i64, u64, &str) + Sync)),
             |table_id| {
                 current
@@ -302,7 +310,6 @@ where
                     .is_some()
             },
             0,
-            &self.row_ids,
         )
         .map_err(cluster_load_stats_error)?;
         // As after ANALYZE, pinned Go returns `StatsHandle.Update` failure
@@ -313,14 +320,16 @@ where
         Ok(report)
     }
 
-    fn drop_stats(&self, physical_ids: &[i64]) -> Result<(), SqlQueryError> {
-        tidb_stats_handle_storage::real_tikv_load_stats::commit_cluster_drop_stats(
-            &self.opener,
+    fn drop_stats(
+        &self,
+        physical_ids: &[i64],
+        stats_pool: &dyn StatsSessionPool,
+    ) -> Result<(), SqlQueryError> {
+        tidb_stats_handle_storage::stats_read_writer::delete_table_stats_from_kv(
+            stats_pool,
             physical_ids,
-            self.timeout,
-            Some(self.row_ids.as_ref()),
-        )
-        .map_err(cluster_load_stats_error)?;
+            true,
+        )?;
         // Go `executeDropStats` ends in `StatsHandle.Update`, and returns its
         // failure: the rows are durable either way.
         self.refresh_stats(physical_ids.to_vec())
@@ -330,8 +339,7 @@ where
 
 fn cluster_load_stats_error(error: ClusterLoadStatsCommitError) -> SqlQueryError {
     match error {
-        ClusterLoadStatsCommitError::Undetermined(_) => SqlQueryError::result_undetermined(),
-        ClusterLoadStatsCommitError::Commit(error) => tidb_store_driver_error::sql_query_error::lock_sql_error(&error),
         ClusterLoadStatsCommitError::Other(detail) => SqlQueryError::unknown(detail),
+        ClusterLoadStatsCommitError::Sql(error) => error,
     }
 }

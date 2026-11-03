@@ -44,9 +44,9 @@ use tidb_stats_handle_storage::cluster_stats_load::{
     TableSizeStats,
 };
 use tidb_executor::real_tikv_analyze::{load_analyze_options, plan_analyze_options_write};
-use tidb_stats_handle_storage::cluster_stats_write::{count_outdated_historical_stats, insert_table_stats_statements, load_stats_gc_candidates, load_stats_gc_timestamp, load_stats_locked_table_ids, loaded_stats_item_statements, plan_change_global_stats_id, plan_column_stats_usage_write, plan_delete_table_stats, plan_exchange_partition_stats_update, plan_historical_stats_data_delete_for_table, plan_historical_stats_meta_delete_for_table, plan_insert_column_default_bucket, plan_insert_column_stats, plan_insert_table_stats_statement, plan_loaded_stats_item_statement, plan_loaded_stats_meta_write, plan_loaded_stats_usage_write, plan_outdated_historical_data_delete, plan_outdated_historical_meta_delete, plan_partition_stats_write, plan_stats_gc_timestamp_write, plan_stats_item_delete, plan_stats_meta_version_refresh, plan_stats_write, plan_update_stats_version, InsertTableStatsStatement, LoadedStatsItemStatement};
+use tidb_stats_handle_storage::cluster_stats_write::{count_outdated_historical_stats, insert_table_stats_statements, load_stats_gc_candidates, load_stats_gc_timestamp, load_stats_locked_table_ids, plan_change_global_stats_id, plan_column_stats_usage_write, plan_delete_table_stats, plan_exchange_partition_stats_update, plan_historical_stats_data_delete_for_table, plan_historical_stats_meta_delete_for_table, plan_insert_column_default_bucket, plan_insert_column_stats, plan_insert_table_stats_statement, plan_outdated_historical_data_delete, plan_outdated_historical_meta_delete, plan_partition_stats_write, plan_stats_gc_timestamp_write, plan_stats_item_delete, plan_stats_meta_version_refresh, plan_stats_write, plan_update_stats_version, save_buckets_sql, save_topn_sql, InsertTableStatsStatement};
 use tidb_stats_handle_history::history_stats::{historical_stats_data_blocks, plan_historical_stats_data_block, plan_historical_stats_meta_lock, plan_historical_stats_meta_replace};
-use tidb_syssession::stats_table_rows::{StatsWriteError};
+use tidb_syssession::stats_table_rows::{locate, set, StatsRows, StatsWriteError, StatsWritePlan};
 use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::plan_get_predicate_columns;
 use tidb_stats_handle_usage::session_stats_collect::plan_stats_delta_statement;
 use tidb_stats_handle_usage::session_stats_collect::stats_delta_statements;
@@ -71,7 +71,7 @@ use tidb_model::SchemaState;
 use tidb_stats::cmsketch::{CmsSketch, TopN};
 use tidb_stats::histogram::{Bucket, Histogram};
 use tidb_stats::{FmSketch, MAX_SKETCH_SIZE};
-use tidb_stats_util::{JsonPredicateColumn, JsonTable};
+use tidb_stats_util::JsonTable;
 use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
 use tidb_stats_handle_usage::DeltaUpdate;
 use tidb_variable::table_delta::TableDelta;
@@ -186,32 +186,34 @@ fn apply_stats_delta_statements(
     Ok(())
 }
 
-fn apply_loaded_stats_item(
+/// Seeds `mysql.stats_meta` for the planners under test: the row's
+/// version, counts and histogram version set, its other columns kept.
+fn seed_stats_meta(
     store: &mut MetaStore,
     catalog: &tidb_infoschema::SessionExtendedInfoSchema,
     table_id: i64,
     count: i64,
-    item: &ClusterStatsItem,
+    modify_count: i64,
     version: u64,
-) {
-    let row_ids = std::sync::Arc::clone(&store.row_ids);
-    for statement in
-        loaded_stats_item_statements(table_id, item).expect("LOAD STATS statements build")
-    {
-        let plan = plan_loaded_stats_item_statement(
-            store,
-            catalog,
-            table_id,
-            count,
-            item,
-            version,
-            now(),
-            &statement,
-            Some(&*row_ids),
-        )
-        .expect("LOAD STATS statement plans");
-        apply_mutations(store, &plan.mutations);
-    }
+    now: Time,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
+) -> Result<StatsWritePlan, StatsWriteError> {
+    let mut plan = StatsWritePlan::default();
+    let table = locate(catalog, "stats_meta")?;
+    let table = &*table.read();
+    let mut rows = StatsRows::open(store, table, &["table_id"], table_id)?;
+    let identity = vec![format!("{:?}", Datum::Int(table_id))];
+    let mut values = match rows.existing_values(&identity) {
+        Some(values) => values.clone(),
+        None => tidb_syssession::system_row_write::defaults_row(table, now)?,
+    };
+    set(table, &mut values, "table_id", Datum::Int(table_id));
+    set(table, &mut values, "version", Datum::UInt(version));
+    set(table, &mut values, "count", Datum::Int(count));
+    set(table, &mut values, "modify_count", Datum::Int(modify_count));
+    set(table, &mut values, "last_stats_histograms_version", Datum::UInt(version));
+    rows.store_row(catalog, &values, &mut plan, row_ids)?;
+    Ok(plan)
 }
 
 fn apply(store: &mut MetaStore, write: &BootstrapWrite) {
@@ -399,34 +401,13 @@ fn full_histogram(id: i64, is_index: bool) -> ClusterStatsItem {
     }
 }
 
+/// Go `saveTopNToStorage` / `saveBucketsToStorage` batch their INSERTs at
+/// ten rows or the escaped 1 MiB boundary.
 #[test]
-fn loaded_stats_item_uses_go_statement_batches() {
+fn stats_item_inserts_use_go_statement_batches() {
     let item = full_histogram(1, false);
-    let statements = loaded_stats_item_statements(4242, &item).expect("statements build");
-    let topn = statements
-        .iter()
-        .filter_map(|statement| match statement {
-            LoadedStatsItemStatement::TopNInsert(range) => Some(range.clone()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let buckets = statements
-        .iter()
-        .filter_map(|statement| match statement {
-            LoadedStatsItemStatement::BucketsInsert(range) => Some(range.clone()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        topn,
-        (0..100)
-            .step_by(10)
-            .map(|start| start..start + 10)
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(buckets.first(), Some(&(0..10)));
-    assert_eq!(buckets.last(), Some(&(250..256)));
-    assert_eq!(buckets.len(), 26);
+    assert_eq!(save_topn_sql(4242, &item).len(), 10);
+    assert_eq!(save_buckets_sql(4242, &item).expect("buckets build").len(), 26);
 
     let mut oversized = full_histogram(1, false);
     let mut oversized_topn = TopN::new(2);
@@ -449,28 +430,8 @@ fn loaded_stats_item_uses_go_statement_batches() {
             upper_bound: Datum::Bytes(vec![0; 300_000]),
         },
     ];
-    let statements =
-        loaded_stats_item_statements(4242, &oversized).expect("oversized statements build");
-    assert_eq!(
-        statements
-            .iter()
-            .filter_map(|statement| match statement {
-                LoadedStatsItemStatement::TopNInsert(range) => Some(range.clone()),
-                _ => None,
-            })
-            .collect::<Vec<_>>(),
-        vec![0..1, 1..2]
-    );
-    assert_eq!(
-        statements
-            .iter()
-            .filter_map(|statement| match statement {
-                LoadedStatsItemStatement::BucketsInsert(range) => Some(range.clone()),
-                _ => None,
-            })
-            .collect::<Vec<_>>(),
-        vec![0..1, 1..2]
-    );
+    assert_eq!(save_topn_sql(4242, &oversized).len(), 2);
+    assert_eq!(save_buckets_sql(4242, &oversized).expect("buckets build").len(), 2);
 }
 
 #[test]
@@ -777,85 +738,6 @@ fn table_size_stats_are_statement_local_and_clamp_negative_sizes() {
     assert_eq!(next_statement.estimate_data_length(&table), (0, 0, 0, 0));
 }
 
-/// Go LOAD STATS preserves supplied sketches through durable writes and JSON dumps.
-#[test]
-fn stats_ndv_batch_load_stats_replaces_and_clears_fm_sketches() {
-    let mut store = bootstrapped();
-    let catalog = load_info_schema(&mut store).unwrap();
-    let loader = ClusterStatsLoader::locate(&catalog).unwrap();
-    for is_index in [false, true] {
-        let mut item = full_histogram(1, is_index);
-        for sketch in [
-            Some(FmSketch::from_raw_parts(3, MAX_SKETCH_SIZE, [4, 8, 12])),
-            Some(FmSketch::from_raw_parts(7, MAX_SKETCH_SIZE, [16, 24])),
-            None,
-        ] {
-            item.fm_sketch = sketch.clone();
-            apply_loaded_stats_item(
-                &mut store,
-                &catalog,
-                4242,
-                10,
-                &item,
-                440_000_000_000_000_000,
-            );
-            assert_eq!(
-                loader
-                    .load_fm_sketch(&mut store, 4242, is_index, 1)
-                    .unwrap(),
-                sketch
-            );
-            let table_info = tidb_model::TableInfo {
-                id: 4242,
-                columns: vec![tidb_model::ColumnInfo::new(
-                    1,
-                    "a",
-                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                )]
-                .into(),
-                indices: vec![tidb_model::IndexInfo {
-                    id: 1,
-                    name: tidb_ast::CiString::new("i"),
-                    ..Default::default()
-                }]
-                .into(),
-                ..Default::default()
-            };
-            let stored = loader
-                .load_table_with_fm(
-                    &mut store,
-                    4242,
-                    &tidb_stats_handle_storage::cluster_stats_load::column_types_of(&table_info),
-                )
-                .unwrap()
-                .unwrap();
-            let table = stored.to_statistics_table(&table_info);
-            let dumped =
-                tidb_stats_handle_storage::json::gen_json_table_from_stats("test", "t", &table, None)
-                    .unwrap();
-            let map = if is_index {
-                dumped.indices.unwrap()
-            } else {
-                dumped.columns.unwrap()
-            };
-            let dumped_sketch = map[if is_index { "i" } else { "a" }]
-                .as_ref()
-                .unwrap()
-                .fm_sketch
-                .as_ref();
-            assert_eq!(dumped_sketch.is_some(), sketch.is_some());
-            if let Some(sketch) = &sketch {
-                let proto = tidb_stats::fm_sketch_to_proto(Some(sketch));
-                assert_eq!(dumped_sketch.unwrap().mask, proto.mask);
-                assert_eq!(
-                    dumped_sketch.unwrap().hashset.as_ref().unwrap(),
-                    &proto.hashset
-                );
-            }
-        }
-    }
-}
-
 /// Pinned Go `SaveAnalyzeResultToStorage` keeps FM sketches only for physical
 /// partition results. Ordinary cache loads do not fetch them; the `loadAll`
 /// path used by partition-to-global merge does, and a global write removes
@@ -923,6 +805,9 @@ fn async_global_stats_loads_each_payload_by_item() {
     expected_cms.insert_bytes_by_count(b"x", 5);
     let mut column = full_histogram(1, false);
     column.fm_sketch = Some(expected.clone());
+    let mut cms_item = full_histogram(2, false);
+    cms_item.stats_ver = 1;
+    cms_item.cms = Some(expected_cms);
     let stats = ClusterTableStats {
         table_id: 4242,
         version: 440_000_000_000_000_000,
@@ -931,23 +816,12 @@ fn async_global_stats_loads_each_payload_by_item() {
         last_stats_hist_version: 440_000_000_000_000_000,
         modify_count: 0,
         row_count: 10_240,
-        columns: vec![column],
+        columns: vec![column, cms_item],
         indexes: Vec::new(),
     };
     let plan = plan_partition_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids))
         .expect("partition analyze plans");
     apply_mutations(&mut store, &plan.mutations);
-    let mut cms_item = full_histogram(2, false);
-    cms_item.stats_ver = 1;
-    cms_item.cms = Some(expected_cms);
-    apply_loaded_stats_item(
-        &mut store,
-        &catalog,
-        stats.table_id,
-        stats.row_count as i64,
-        &cms_item,
-        stats.version,
-    );
 
     let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
     store.scans.clear();
@@ -1249,7 +1123,7 @@ fn initial_stats_handles_missing_histograms_and_topn_without_buckets() {
     let empty_id = 4260;
     let topn_only_id = 4261;
     let initial =
-        plan_loaded_stats_meta_write(&mut store, &catalog, empty_id, 6, 6, 100, now(), Some(&*row_ids))
+        seed_stats_meta(&mut store, &catalog, empty_id, 6, 6, 100, now(), Some(&*row_ids))
             .expect("metadata-only table plans");
     apply_mutations(&mut store, &initial.mutations);
 
@@ -1652,79 +1526,6 @@ fn column_distribution_read_is_atomic_ordered_and_validated() {
     assert_eq!(store.scans, vec![histogram_prefix]);
 }
 
-/// Go `SaveColOrIdxStatsToStorage` replaces only the loaded object's payload,
-/// preserves unrelated histograms, stores the CMSketch without embedded
-/// TopN, and clears stale buckets/TopN rows for that object.
-#[test]
-fn loaded_stats_item_write_replaces_only_the_named_histogram() {
-    let mut store = bootstrapped();
-    let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
-    let table_id = 4242;
-    let initial = ClusterTableStats {
-        table_id,
-        version: 440_000_000_000_000_000,
-        snapshot: 439_000_000_000_000_000,
-        last_analyze_version: 440_000_000_000_000_000,
-        last_stats_hist_version: 440_000_000_000_000_000,
-        modify_count: 7,
-        row_count: 10_240,
-        columns: vec![full_histogram(1, false), full_histogram(2, false)],
-        indexes: Vec::new(),
-    };
-    let plan =
-        plan_stats_write(&mut store, &catalog, &initial, now(), Some(&*row_ids)).expect("analyze plans");
-    apply_mutations(&mut store, &plan.mutations);
-
-    let version = initial.version + 10;
-    let mut loaded = full_histogram(1, false);
-    loaded.stats_ver = 1;
-    loaded.histogram.last_update_version = version;
-    loaded.histogram.buckets.truncate(2);
-    loaded.histogram.ndv = 17;
-    let mut topn = TopN::new(1);
-    topn.append(b"replacement", 9);
-    loaded.topn = Some(topn);
-    let mut cms = CmsSketch::new(2, 16);
-    cms.insert_bytes_by_count(b"replacement", 9);
-    loaded.cms = Some(cms);
-    apply_loaded_stats_item(&mut store, &catalog, table_id, 55, &loaded, version);
-
-    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
-    let column_types = BTreeMap::from([
-        (
-            1,
-            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-        ),
-        (
-            2,
-            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-        ),
-    ]);
-    let stored = loader
-        .load_table(&mut store, table_id, &column_types)
-        .expect("statistics reload")
-        .expect("stats_meta exists");
-    assert_eq!(stored.version, version);
-    assert_eq!(stored.snapshot, 0, "REPLACE leaves snapshot at its default");
-    assert_eq!(stored.modify_count, 0);
-    assert_eq!(stored.row_count, 55);
-    let replaced = stored.column(1).expect("loaded column remains");
-    assert_eq!(replaced.histogram.ndv, 17);
-    assert_eq!(replaced.histogram.buckets.len(), 2);
-    assert_eq!(replaced.topn.as_ref().map(TopN::num), Some(1));
-    assert_eq!(
-        replaced
-            .cms
-            .as_ref()
-            .map(|sketch| sketch.query_bytes(b"replacement")),
-        Some(9)
-    );
-    let untouched = stored.column(2).expect("unmentioned column remains");
-    assert_eq!(untouched.histogram.buckets.len(), 256);
-    assert_eq!(untouched.topn.as_ref().map(TopN::num), Some(100));
-}
-
 /// Pinned `deleteHistStatsFromKV` advances the table versions and removes
 /// exactly one column's histogram payload plus its predicate-usage row.
 #[test]
@@ -2003,83 +1804,6 @@ fn persisted_analyze_options_round_trip_and_replace_raw_values() {
             },
             columns: AnalyzeColumnChoice::Predicate,
         }
-    );
-}
-
-/// Pinned Go's negative-count branch uses UPDATE rather than REPLACE: only
-/// the two version markers move, while count/modify/snapshot stay intact.
-#[test]
-fn loaded_stats_negative_count_preserves_existing_meta_values() {
-    let mut store = bootstrapped();
-    let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
-    let table_id = 4242;
-    let initial = ClusterTableStats {
-        table_id,
-        version: 440_000_000_000_000_000,
-        snapshot: 439_000_000_000_000_000,
-        last_analyze_version: 440_000_000_000_000_000,
-        last_stats_hist_version: 440_000_000_000_000_000,
-        modify_count: 7,
-        row_count: 10_240,
-        columns: Vec::new(),
-        indexes: Vec::new(),
-    };
-    let plan =
-        plan_stats_write(&mut store, &catalog, &initial, now(), Some(&*row_ids)).expect("analyze plans");
-    apply_mutations(&mut store, &plan.mutations);
-
-    let version = initial.version + 1;
-    let item = full_histogram(1, false);
-    apply_loaded_stats_item(&mut store, &catalog, table_id, -1, &item, version);
-
-    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
-    assert_eq!(
-        loader.stats_meta_count_and_modify_count(&mut store, table_id).expect("meta loads"),
-        Some((
-            version,
-            initial.snapshot,
-            initial.modify_count,
-            initial.row_count,
-            version,
-        ))
-    );
-}
-
-/// Go's final `SaveMetaToStorage` is an upsert update, not the per-item
-/// `REPLACE`; when a dump contains no matching histogram it updates the
-/// counters/version without resetting the prior analyze snapshot.
-#[test]
-fn loaded_stats_final_meta_update_preserves_unnamed_columns() {
-    let mut store = bootstrapped();
-    let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
-    let table_id = 4242;
-    let initial = ClusterTableStats {
-        table_id,
-        version: 440_000_000_000_000_000,
-        snapshot: 439_000_000_000_000_000,
-        last_analyze_version: 440_000_000_000_000_000,
-        last_stats_hist_version: 440_000_000_000_000_000,
-        modify_count: 7,
-        row_count: 10_240,
-        columns: Vec::new(),
-        indexes: Vec::new(),
-    };
-    let plan =
-        plan_stats_write(&mut store, &catalog, &initial, now(), Some(&*row_ids)).expect("analyze plans");
-    apply_mutations(&mut store, &plan.mutations);
-
-    let version = initial.version + 1;
-    let plan =
-        plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 55, 3, version, now(), Some(&*row_ids))
-            .expect("LOAD STATS final meta plans");
-    apply_mutations(&mut store, &plan.mutations);
-
-    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
-    assert_eq!(
-        loader.stats_meta_count_and_modify_count(&mut store, table_id).expect("meta loads"),
-        Some((version, initial.snapshot, 3, 55, version))
     );
 }
 
@@ -2570,7 +2294,7 @@ fn stats_delta_lock_statements_lock_only_selected_existing_rows() {
     let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
     let existing_id = 4241;
     let initial =
-        plan_loaded_stats_meta_write(&mut store, &catalog, existing_id, 10, 2, 100, now(), Some(&*row_ids))
+        seed_stats_meta(&mut store, &catalog, existing_id, 10, 2, 100, now(), Some(&*row_ids))
             .expect("initial meta plans");
     apply_mutations(&mut store, &initial.mutations);
 
@@ -2594,7 +2318,7 @@ fn exchange_partition_stats_update_matches_go_clamping_and_locked_rows() {
     let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial =
-        plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 8, 5, 100, now(), Some(&*row_ids))
+        seed_stats_meta(&mut store, &catalog, table_id, 8, 5, 100, now(), Some(&*row_ids))
             .expect("initial meta plans");
     apply_mutations(&mut store, &initial.mutations);
     let update = plan_exchange_partition_stats_update(
@@ -2703,7 +2427,7 @@ fn stats_delta_updates_match_go_positive_negative_and_locked_rows() {
     let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
     let initial =
-        plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 10, 2, 100, now(), Some(&*row_ids))
+        seed_stats_meta(&mut store, &catalog, table_id, 10, 2, 100, now(), Some(&*row_ids))
             .expect("initial meta plans");
     apply_mutations(&mut store, &initial.mutations);
 
@@ -2821,7 +2545,7 @@ fn stats_delta_update_keeps_go_row_delta_when_modify_count_is_zero() {
     let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4244;
     let initial =
-        plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 10, 2, 100, now(), Some(&*row_ids))
+        seed_stats_meta(&mut store, &catalog, table_id, 10, 2, 100, now(), Some(&*row_ids))
             .expect("initial meta plans");
     apply_mutations(&mut store, &initial.mutations);
 
@@ -2846,85 +2570,6 @@ fn stats_delta_update_keeps_go_row_delta_when_modify_count_is_zero() {
     assert_eq!(
         loader.stats_meta_count_and_modify_count(&mut store, table_id).expect("meta loads"),
         Some((101, 0, 2, 13, 100))
-    );
-}
-
-/// Pinned Go `SaveColumnStatsUsageForTable` runs one transaction for the
-/// complete slice and REPLACEs all four values, so an explicit nil timestamp
-/// clears an older stored value instead of preserving it.
-#[test]
-fn loaded_stats_usage_replaces_timestamps_in_one_plan() {
-    let mut store = bootstrapped();
-    let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
-    let table_id = 4242;
-    let first = plan_loaded_stats_usage_write(
-        &mut store,
-        &catalog,
-        table_id,
-        &[Some(JsonPredicateColumn {
-            id: 7,
-            last_used_at: Some("2026-08-29 01:02:03.123456".to_owned()),
-            last_analyzed_at: Some("2026-08-28 04:05:06.000007".to_owned()),
-        })],
-        now(),
-        Some(&*row_ids),
-    )
-    .expect("predicate usage plans");
-    apply_mutations(&mut store, &first.mutations);
-
-    let replacement = plan_loaded_stats_usage_write(
-        &mut store,
-        &catalog,
-        table_id,
-        &[
-            None,
-            Some(JsonPredicateColumn {
-                id: 7,
-                last_used_at: None,
-                last_analyzed_at: Some("2026-08-30 08:09:10.000011".to_owned()),
-            }),
-        ],
-        now(),
-        Some(&*row_ids),
-    )
-    .expect("replacement usage plans");
-    apply_mutations(&mut store, &replacement.mutations);
-
-    let table = catalog
-        .schema_info_by_name("mysql")
-        .and_then(|database| {
-            database
-                .read().deprecated_tables
-                .iter_deref()
-                .find(|table| table.read().name.lowercase() == "column_stats_usage")
-        })
-        .expect("column_stats_usage exists");
-    let table = table.read();
-    let view = SystemTableView::project(
-        "mysql.column_stats_usage",
-        &table,
-        &["table_id", "column_id", "last_used_at", "last_analyzed_at"],
-    );
-    let rows = scan_system_table(&mut store, &view).expect("usage rows scan");
-    let row = rows
-        .iter()
-        .map(|(key, value)| {
-            let timezone = tidb_datatype::SessionTimeZone::utc();
-            SystemRow::parse_in_timezone(&view, key, value, Some(&timezone))
-                .expect("usage row decodes")
-        })
-        .find(|row| {
-            row.i64("table_id").unwrap() == Some(table_id)
-                && row.i64("column_id").unwrap() == Some(7)
-        })
-        .expect("replacement row exists");
-    assert!(row.stored_datum("last_used_at").unwrap().unwrap().is_null());
-    let expected = Time::from_date_checked(2026, 8, 30, 8, 9, 10, 0, TimeType::Timestamp, 0)
-        .expect("a fixed calendar timestamp is valid");
-    assert_eq!(
-        row.datum("last_analyzed_at").unwrap(),
-        Some(&Datum::Time(expected))
     );
 }
 
@@ -3040,26 +2685,37 @@ fn predicate_column_load_and_cleanup_match_the_pinned_storage_contract() {
     let row_ids = std::sync::Arc::clone(&store.row_ids);
     let catalog = load_info_schema(&mut store).expect("the bootstrapped catalog loads");
     let table_id = 4242;
-    let plan = plan_loaded_stats_usage_write(
-        &mut store,
-        &catalog,
-        table_id,
-        &[
-            Some(JsonPredicateColumn {
-                id: 7,
-                last_used_at: Some("2026-08-29 01:02:03".to_owned()),
+    let utc = |text: &str| {
+        tidb_datatype::parse_time(
+            text,
+            TimeType::Timestamp,
+            tidb_datatype::MAX_FSP,
+            false,
+            false,
+            false,
+            &chrono::Utc,
+        )
+        .expect("the UTC instant parses")
+        .time
+    };
+    let usage = HashMap::from([
+        (
+            usage_item(table_id, 7),
+            ColStatsTimeInfo {
+                last_used_at: Some(utc("2026-08-29 01:02:03")),
                 last_analyzed_at: None,
-            }),
-            Some(JsonPredicateColumn {
-                id: 8,
-                last_used_at: Some("2026-08-29 02:03:04".to_owned()),
+            },
+        ),
+        (
+            usage_item(table_id, 8),
+            ColStatsTimeInfo {
+                last_used_at: Some(utc("2026-08-29 02:03:04")),
                 last_analyzed_at: None,
-            }),
-        ],
-        now(),
-        Some(&*row_ids),
-    )
-    .expect("usage plans");
+            },
+        ),
+    ]);
+    let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now(), Some(&*row_ids))
+        .expect("usage plans");
     apply_mutations(&mut store, &plan.mutations);
 
     let plus_eight = tidb_datatype::SessionTimeZone::Fixed {
@@ -3203,7 +2859,7 @@ fn loaded_stats_history_requires_the_exact_current_meta_version() {
     let table_id = 4242;
     let version = 440_000_000_000_000_000;
     let meta =
-        plan_loaded_stats_meta_write(&mut store, &catalog, table_id, 55, 3, version, now(), Some(&*row_ids))
+        seed_stats_meta(&mut store, &catalog, table_id, 55, 3, version, now(), Some(&*row_ids))
             .expect("LOAD STATS final meta plans");
     apply_mutations(&mut store, &meta.mutations);
 
@@ -3413,7 +3069,7 @@ fn historical_stats_reader_selects_meta_and_data_versions_independently() {
         version: data_version,
         ..JsonTable::default()
     };
-    let meta = plan_loaded_stats_meta_write(
+    let meta = seed_stats_meta(
         &mut store,
         &catalog,
         table_id,
@@ -3438,7 +3094,7 @@ fn historical_stats_reader_selects_meta_and_data_versions_independently() {
         .expect("initial data history statements plan");
 
     let meta_version = data_version + 10;
-    let meta = plan_loaded_stats_meta_write(
+    let meta = seed_stats_meta(
         &mut store,
         &catalog,
         table_id,
@@ -3487,7 +3143,7 @@ fn outdated_historical_stats_deletes_only_rows_at_or_before_the_cutoff() {
         .expect("a fixed calendar date is a valid timestamp");
 
     for (version, create_time) in [(1, cutoff), (2, newer)] {
-        let meta = plan_loaded_stats_meta_write(
+        let meta = seed_stats_meta(
             &mut store,
             &catalog,
             table_id,
@@ -3597,7 +3253,7 @@ fn live_stats_dump_refreshes_meta_after_loading_payload() {
         .expect("stats exist");
 
     let refreshed_version = initial.version + 1;
-    let plan = plan_loaded_stats_meta_write(
+    let plan = seed_stats_meta(
         &mut store,
         &catalog,
         table_id,

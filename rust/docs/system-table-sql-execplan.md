@@ -129,8 +129,16 @@ checksums).
   raw path never did. Tests
   `a_reanalyze_keeps_a_dropped_index_histogram_as_go`,
   `analyze_results_save_stats_meta_as_go`.
-- [ ] Rest of M2: LOAD STATS (`LoadedStatsItemStatement`s), stats deletes,
-  GC, exchange-partition and delta flushes still commit planned rows;
+- [x] (2026-11-03) LOAD STATS / DROP STATS (M2): Go
+  `loadStatsFromJSON` (`SaveColOrIdxStatsToStorage`,
+  `SaveColumnStatsUsageToStorage`, `SaveMetaToStorage`) and
+  `DeleteTableStatsFromKV(soft)` through the `StatsSessionPool`;
+  `handleSlowStatsSaving` lives in `stats_read_writer.rs` for every save.
+  LOAD STATS no longer stores the dump's FM sketches (Go only deletes them;
+  `load_stats_stores_no_fm_sketch_as_go`). The `LoadedStatsItemStatement`
+  planners are gone.
+- [ ] Rest of M2: statistics GC (`gcTableStats`, hard deletes),
+  exchange-partition and delta flushes still commit planned rows;
   `plan_stats_write` / `plan_partition_stats_write` remain only as test
   seeding fixtures. History (item 8), usage (item 9), M4.
 

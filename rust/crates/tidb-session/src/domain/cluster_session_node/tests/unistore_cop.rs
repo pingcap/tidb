@@ -16450,6 +16450,8 @@ fn drop_stats_soft_deletes_the_stored_statistics() {
 
     assert_eq!(count(&mut session, "stats_buckets"), "0");
     assert_eq!(count(&mut session, "stats_top_n"), "0");
+    assert_eq!(count(&mut session, "column_stats_usage"), "0");
+    assert_ne!(count(&mut session, "stats_histograms"), "0");
     // The histogram rows stay, zeroed; the meta row keeps its counts and is
     // re-versioned.
     assert_eq!(

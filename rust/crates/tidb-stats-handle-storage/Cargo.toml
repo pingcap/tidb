@@ -35,6 +35,7 @@ tidb-log = { path = "../tidb-log" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }
 tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
+tidb-logutil = { path = "../tidb-logutil" }
 
 [lints]
 workspace = true

@@ -22,32 +22,21 @@
 use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
 use tidb_stats_util::JsonTable;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 use tidb_infoschema::cluster_catalog::load_info_schema;
-use tidb_infoschema::SessionExtendedInfoSchema;
 use crate::cluster_load_stats::{
     load_cluster_stats_target, resolve_cluster_load_stats, ClusterLoadStatsTarget,
     LoadedStatsTable, ResolvedClusterLoadStats,
 };
-use crate::cluster_stats_load::ClusterStatsItem;
-use crate::cluster_stats_write::{
-    loaded_stats_item_statements, plan_delete_table_stats, plan_loaded_stats_item_statement,
-    plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
-};
-use tidb_store_driver_txn::cluster_table_storage::{
-    commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
-    SessionTransaction,
-};
-use tidb_datatype::current_time::utc_now_timestamp;
-use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
-use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
-use tidb_store_driver_txn::cluster_storage::MutationBuffer;
+use crate::save::MetaUpdate;
+use crate::stats_read_writer::{self, StatsSessionPool};
+use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 
 /// Go `StatsMetaHistorySourceLoadStats`.
 pub const LOAD_STATS_HISTORY_SOURCE: &str = "load stats";
@@ -73,22 +62,17 @@ impl ClusterLoadStatsReport {
 /// Why LOAD STATS storage did not complete.
 #[derive(Debug)]
 pub enum ClusterLoadStatsCommitError {
-    /// The commit may have landed, so the server must not report failure.
-    Undetermined(String),
-    /// A determinate transaction failure with its SQL error identity.
-    Commit(LockSqlError),
-    /// Resolution, conversion, planning, or transport failed before a verdict.
+    /// Resolution or conversion failed before any save.
     Other(String),
+    /// A statistics-session statement's error, as the statement raised it.
+    Sql(SqlQueryError),
 }
 
 impl fmt::Display for ClusterLoadStatsCommitError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Undetermined(detail) => {
-                write!(formatter, "execution result undetermined: {detail}")
-            }
-            Self::Commit(error) => formatter.write_str(&error.message),
             Self::Other(detail) => formatter.write_str(detail),
+            Self::Sql(error) => formatter.write_str(&error.message),
         }
     }
 }
@@ -105,18 +89,15 @@ impl std::error::Error for ClusterLoadStatsCommitError {}
 /// nonfatal, exactly as the Go handle logs and ignores them.
 pub fn commit_cluster_load_stats<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
+    stats_pool: &dyn StatsSessionPool,
     json: &JsonTable,
     timeout: Duration,
+    stats_lease: Duration,
     record_history: Option<&(dyn Fn(i64, u64, &str) + Sync)>,
     item_history_initialized: impl Fn(i64) -> bool + Sync,
     concurrency_for_partition: usize,
-    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<ClusterLoadStatsReport, ClusterLoadStatsCommitError> {
-    // One catalog for the whole statement, as Go plans every item against the
-    // session's infoschema: the items only locate the `mysql.stats_*` tables,
-    // and reloading every table definition per item made LOAD STATS
-    // quadratic (the `imdbload` topic spent minutes parsing table JSON).
-    let (resolved, catalog) = resolve_tables(opener, json, timeout)?;
+    let resolved = resolve_tables(opener, json, timeout)?;
     let physical_ids = resolved
         .targets
         .iter()
@@ -124,14 +105,12 @@ pub fn commit_cluster_load_stats<S: StoreClient>(
         .collect::<Vec<_>>();
     let load = |target: &ClusterLoadStatsTarget| {
         let table = load_cluster_stats_target(&resolved.schema, target).map_err(other)?;
-        commit_loaded_table(
-            opener,
-            &catalog,
+        load_stats_from_json(
+            stats_pool,
+            stats_lease,
             &table,
-            timeout,
             record_history,
             &item_history_initialized,
-            row_ids,
         )
     };
     let item_count = if resolved.concurrent {
@@ -146,53 +125,56 @@ pub fn commit_cluster_load_stats<S: StoreClient>(
     })
 }
 
-/// Commits the storage half of pinned Go `executeDropStats`:
-/// `DeleteTableStatsFromKV(statsIDs, soft = true)` in one wrapped transaction,
-/// whose start timestamp is the new version of every re-versioned meta and
-/// histogram row.
-pub fn commit_cluster_drop_stats<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
-    physical_ids: &[i64],
-    timeout: Duration,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<(), ClusterLoadStatsCommitError> {
-    commit_pessimistic_statement(opener, timeout, |snapshot, version| {
-        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
-        let plan = plan_delete_table_stats(
-            &mut snapshot,
-            &catalog,
-            physical_ids,
-            true,
-            version,
-            row_ids,
-        )
-        .map_err(|error| error.to_string())?;
-        Ok(((), plan.mutations))
-    })
-    .map_err(pessimistic_error)
-}
-
-fn commit_loaded_table<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
-    catalog: &SessionExtendedInfoSchema,
+/// Go `statsReadWriter.loadStatsFromJSON`'s saves for one physical table:
+/// each histogram (`SaveColOrIdxStatsToStorage`), the predicate-column usage
+/// (`SaveColumnStatsUsageToStorage`), then the table's counts
+/// (`SaveMetaToStorage`), each in its own statistics-session transaction.
+fn load_stats_from_json(
+    stats_pool: &dyn StatsSessionPool,
+    stats_lease: Duration,
     table: &LoadedStatsTable,
-    timeout: Duration,
     record_history: Option<&(dyn Fn(i64, u64, &str) + Sync)>,
     item_history_initialized: &(impl Fn(i64) -> bool + Sync),
-    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<usize, ClusterLoadStatsCommitError> {
     let mut item_count = 0;
     for item in table.columns.iter().chain(&table.indexes) {
-        let version = commit_item(opener, catalog, table, item, timeout, row_ids)?;
+        // The table-level count and modify_count are overridden by the
+        // `SaveMetaToStorage` below.
+        let version = stats_read_writer::save_col_or_idx_stats_to_storage(
+            stats_pool,
+            stats_lease,
+            table.physical_id,
+            table.count,
+            0,
+            item,
+            item.stats_ver,
+            false,
+        )
+        .map_err(ClusterLoadStatsCommitError::Sql)?;
         item_count += 1;
-        if let Some(record_history) = record_history.filter(|_| item_history_initialized(table.physical_id)) {
+        if let Some(record_history) = record_history
+            .filter(|_| version != 0 && item_history_initialized(table.physical_id))
+        {
             record_history(table.physical_id, version, LOAD_STATS_HISTORY_SOURCE);
         }
     }
-    commit_usage(opener, catalog, table, timeout, row_ids)?;
-    let version = commit_final_meta(opener, catalog, table, timeout, row_ids)?;
-    if let Some(record_history) = record_history {
+    stats_read_writer::save_column_stats_usage_to_storage(
+        stats_pool,
+        table.physical_id,
+        &table.predicate_columns,
+    )
+    .map_err(ClusterLoadStatsCommitError::Sql)?;
+    let version = stats_read_writer::save_meta_to_storage(
+        stats_pool,
+        true,
+        &[MetaUpdate {
+            physical_id: table.physical_id,
+            count: table.count,
+            modify_count: table.modify_count,
+        }],
+    )
+    .map_err(ClusterLoadStatsCommitError::Sql)?;
+    if let Some(record_history) = record_history.filter(|_| version != 0) {
         record_history(table.physical_id, version, LOAD_STATS_HISTORY_SOURCE);
     }
     Ok(item_count)
@@ -290,143 +272,15 @@ fn resolve_tables<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     json: &JsonTable,
     timeout: Duration,
-) -> Result<(ResolvedClusterLoadStats, SessionExtendedInfoSchema), ClusterLoadStatsCommitError> {
+) -> Result<ResolvedClusterLoadStats, ClusterLoadStatsCommitError> {
     let mut transaction = opener.begin_read_only().map_err(other)?;
-    let (tables, catalog) = {
+    let tables = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_info_schema(&mut snapshot).map_err(other)?;
-        (
-            resolve_cluster_load_stats(&catalog, json).map_err(other)?,
-            catalog,
-        )
+        resolve_cluster_load_stats(&catalog, json).map_err(other)?
     };
     transaction.finish_without_writes().map_err(other)?;
-    Ok((tables, catalog))
-}
-
-fn commit_item<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
-    catalog: &SessionExtendedInfoSchema,
-    table: &LoadedStatsTable,
-    item: &ClusterStatsItem,
-    timeout: Duration,
-    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<u64, ClusterLoadStatsCommitError> {
-    let transaction = SessionTransaction::begin_pessimistic(
-        Arc::new(opener.clone()),
-        timeout,
-        opener.commit_protocol(),
-    )
-    .map_err(other)?;
-    let version = transaction.start_ts();
-    let staged = MutationBuffer::new();
-    for statement in loaded_stats_item_statements(table.physical_id, item).map_err(other)? {
-        lock_pessimistic_statement(&transaction, &staged, |snapshot, start_ts| {
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            let plan = plan_loaded_stats_item_statement(
-                &mut snapshot,
-                catalog,
-                table.physical_id,
-                table.count,
-                item,
-                start_ts,
-                utc_now_timestamp(),
-                &statement,
-                Some(row_ids.as_ref()),
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(((), plan.mutations))
-        })
-        .map_err(pessimistic_error)?;
-    }
-    transaction
-        .commit(&staged)
-        .map(|_| ())
-        .map_err(commit_error)?;
-    Ok(version)
-}
-
-fn commit_usage<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
-    catalog: &SessionExtendedInfoSchema,
-    table: &LoadedStatsTable,
-    timeout: Duration,
-    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<(), ClusterLoadStatsCommitError> {
-    let transaction = SessionTransaction::begin_pessimistic(
-        Arc::new(opener.clone()),
-        timeout,
-        opener.commit_protocol(),
-    )
-    .map_err(other)?;
-    let staged = MutationBuffer::new();
-    for column in &table.predicate_columns {
-        if column.is_none() {
-            continue;
-        }
-        lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            let plan = plan_loaded_stats_usage_write(
-                &mut snapshot,
-                catalog,
-                table.physical_id,
-                std::slice::from_ref(column),
-                utc_now_timestamp(),
-                Some(row_ids.as_ref()),
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(((), plan.mutations))
-        })
-        .map_err(pessimistic_error)?;
-    }
-    transaction
-        .commit(&staged)
-        .map(|_| ())
-        .map_err(commit_error)
-}
-
-fn commit_final_meta<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
-    catalog: &SessionExtendedInfoSchema,
-    table: &LoadedStatsTable,
-    timeout: Duration,
-    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<u64, ClusterLoadStatsCommitError> {
-    commit_pessimistic_statement(opener, timeout, |snapshot, version| {
-        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        let plan = plan_loaded_stats_meta_write(
-            &mut snapshot,
-            catalog,
-            table.physical_id,
-            table.count,
-            table.modify_count,
-            version,
-            utc_now_timestamp(),
-            Some(row_ids.as_ref()),
-        )
-        .map_err(|error| error.to_string())?;
-        Ok((version, plan.mutations))
-    })
-    .map_err(pessimistic_error)
-}
-
-fn pessimistic_error(error: PessimisticStatementTransactionError) -> ClusterLoadStatsCommitError {
-    match error {
-        PessimisticStatementTransactionError::Build(detail) => {
-            ClusterLoadStatsCommitError::Other(detail)
-        }
-        PessimisticStatementTransactionError::Transaction(error) => commit_error(error),
-    }
-}
-
-fn commit_error(error: LockSqlError) -> ClusterLoadStatsCommitError {
-    if error.is_result_undetermined() {
-        ClusterLoadStatsCommitError::Undetermined(
-            "the LOAD STATS transaction returned no commit verdict".to_owned(),
-        )
-    } else {
-        ClusterLoadStatsCommitError::Commit(error)
-    }
+    Ok(tables)
 }
 
 fn other(error: impl ToString) -> ClusterLoadStatsCommitError {

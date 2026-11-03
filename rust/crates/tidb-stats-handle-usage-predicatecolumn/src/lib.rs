@@ -16,3 +16,4 @@
 //! `mysql.column_stats_usage` (`LoadColumnStatsUsage`, `GetPredicateColumns`).
 
 pub mod cluster_predicate_column;
+pub mod predicate_column;
