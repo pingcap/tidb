@@ -420,6 +420,10 @@ func (helper *extractHelper) extractLikePatternCol(
 		}
 		if canBuildPattern {
 			patterns = append(patterns, pattern)
+			if needLike2Regexp && toLower && fn.FuncName.L == ast.Like {
+				// Case-folded patterns are only prefilters for case-sensitive LIKE.
+				remained = append(remained, expr)
+			}
 		} else {
 			remained = append(remained, expr)
 		}
@@ -484,30 +488,7 @@ func (helper extractHelper) extractLikePattern(
 		if needLike2Regexp {
 			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
 		}
-<<<<<<< HEAD
 		return true, datums[0].GetString()
-=======
-		if !needLike2Regexp {
-			return true, datums[0].GetString(), false
-		}
-		pattern = stringutil.CompileLike2Regexp(datums[0].GetString(), escape)
-		// ILIKE matches case-insensitively while the pattern above is
-		// case-sensitive. Callers that fold case (toLower) lower both the pattern
-		// and the scanned value, so it stays equivalent there. Callers that do
-		// not -- the cluster log path sends the pattern verbatim in
-		// SearchLogRequest.Patterns -- get a case-insensitive group instead, so
-		// an "ERROR" line still matches `message ILIKE '%error%'`. The scoped
-		// (?i:...) form keeps the flag from leaking across a '|' when several
-		// patterns are combined into one disjunction. Case folding there is the
-		// regexp engine's rather than ILIKE's, so it is only a prefilter and the
-		// predicate is rechecked.
-		if fn.FuncName.L == ast.Ilike && !toLower {
-			return true, "(?i:" + pattern + ")", true
-		}
-		// Case-folding extractors only provide a prefilter for LIKE: its
-		// collation may require a case-sensitive match of the original value.
-		return true, pattern, fn.FuncName.L == ast.Like && toLower
->>>>>>> ece360bd7f5 (planner: retain LIKE filters after case-folded metadata extraction (#71255))
 	case ast.Regexp, ast.RegexpLike:
 		return true, datums[0].GetString()
 	default:

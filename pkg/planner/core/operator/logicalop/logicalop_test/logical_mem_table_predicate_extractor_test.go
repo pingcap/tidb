@@ -43,7 +43,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-<<<<<<< HEAD
 func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) *logicalop.LogicalMemTable {
 	memTable, ok, _ := getLogicalMemTableWithRemained(t, dom, se, parser, sql)
 	require.True(t, ok, sql)
@@ -51,14 +50,6 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 }
 
 func getLogicalMemTableWithRemained(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool, []expression.Expression) {
-=======
-func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessionapi.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool) {
-	memTable, ok, _ := getLogicalMemTableWithRemained(t, dom, se, parser, sql)
-	return memTable, ok
-}
-
-func getLogicalMemTableWithRemained(t *testing.T, dom *domain.Domain, se sessionapi.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool, []expression.Expression) {
->>>>>>> ece360bd7f5 (planner: retain LIKE filters after case-folded metadata extraction (#71255))
 	se.GetSessionVars().PlanColumnID.Store(0)
 	stmt, err := parser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
@@ -1880,19 +1871,14 @@ func TestColumns(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-<<<<<<< HEAD
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
-		require.NotNil(t, logicalMemTable.Extractor)
-=======
 		logicalMemTable, ok, remained := getLogicalMemTableWithRemained(t, dom, se, parser, ca.sql)
 		if ca.remained == "" {
 			require.Empty(t, remained, ca.sql)
 		} else {
 			require.Equal(t, ca.remained, expression.StringifyExpressionsWithCtx(se.GetExprCtx().GetEvalCtx(), remained), ca.sql)
 		}
-		if ok {
-			require.NotNil(t, logicalMemTable.Extractor)
->>>>>>> ece360bd7f5 (planner: retain LIKE filters after case-folded metadata extraction (#71255))
+		require.True(t, ok, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
 
 		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaColumnsExtractor)
 		require.Equal(t, ca.skipRequest, columnsTableExtractor.SkipRequest, "SQL: %v", ca.sql)
@@ -2067,17 +2053,13 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
-<<<<<<< HEAD
-		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
-=======
 		inner := plan.(*plannercore.Execute).Plan
 		if ca.filter {
-			selection := inner.(*physicalop.PhysicalSelection)
+			selection := inner.(*plannercore.PhysicalSelection)
 			require.Len(t, selection.Conditions, 1)
 			inner = selection.Children()[0]
 		}
-		extractor := inner.(*physicalop.PhysicalMemTable).Extractor
->>>>>>> ece360bd7f5 (planner: retain LIKE filters after case-folded metadata extraction (#71255))
+		extractor := inner.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 
@@ -2095,17 +2077,13 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		nodeW := resolve.NewNodeW(execStmt)
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
-<<<<<<< HEAD
-		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
-=======
 		inner := plan.(*plannercore.Execute).Plan
 		if ca.filter {
-			selection := inner.(*physicalop.PhysicalSelection)
+			selection := inner.(*plannercore.PhysicalSelection)
 			require.Len(t, selection.Conditions, 1)
 			inner = selection.Children()[0]
 		}
-		extractor := inner.(*physicalop.PhysicalMemTable).Extractor
->>>>>>> ece360bd7f5 (planner: retain LIKE filters after case-folded metadata extraction (#71255))
+		extractor := inner.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 }
@@ -2119,12 +2097,8 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 		sql           string
 		skipRequest   bool
 		colPredicates map[string]set.StringSet
-<<<<<<< HEAD
-=======
-		dual          bool
 		likePatterns  []string
 		remained      string
->>>>>>> ece360bd7f5 (planner: retain LIKE filters after case-folded metadata extraction (#71255))
 	}{
 		{
 			sql:           `select * from information_schema.tables where table_name like 'T%';`,
@@ -2371,8 +2345,13 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-<<<<<<< HEAD
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, ok, remained := getLogicalMemTableWithRemained(t, dom, se, parser, ca.sql)
+		if ca.remained != "" {
+			require.Equal(t, ca.remained, expression.StringifyExpressionsWithCtx(se.GetExprCtx().GetEvalCtx(), remained), ca.sql)
+		} else if ca.likePatterns != nil {
+			require.Empty(t, remained, ca.sql)
+		}
+		require.True(t, ok, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
 		ex, ok := logicalMemTable.Extractor.(interface {
 			GetBase() *plannercore.InfoSchemaBaseExtractor
@@ -2380,26 +2359,6 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, ca.skipRequest, ex.GetBase().SkipRequest, "SQL: %v", ca.sql)
 		require.Equal(t, ca.colPredicates, ex.GetBase().ColPredicates, "SQL: %v", ca.sql)
-=======
-		logicalMemTable, ok, remained := getLogicalMemTableWithRemained(t, dom, se, parser, ca.sql)
-		if ca.remained != "" {
-			require.Equal(t, ca.remained, expression.StringifyExpressionsWithCtx(se.GetExprCtx().GetEvalCtx(), remained), ca.sql)
-		} else if ca.likePatterns != nil {
-			require.Empty(t, remained, ca.sql)
-		}
-		if ca.dual {
-			require.False(t, ok, ca.sql)
-		} else {
-			require.True(t, ok, ca.sql)
-			require.NotNil(t, logicalMemTable.Extractor)
-			ex, ok := logicalMemTable.Extractor.(interface {
-				GetBase() *plannercore.InfoSchemaBaseExtractor
-			})
-			require.True(t, ok)
-			require.Equal(t, ca.skipRequest, ex.GetBase().SkipRequest, "SQL: %v", ca.sql)
-			require.Equal(t, ca.colPredicates, ex.GetBase().ColPredicates, "SQL: %v", ca.sql)
-			require.Equal(t, ca.likePatterns, ex.GetBase().LikePatterns["table_name"], ca.sql)
-		}
->>>>>>> ece360bd7f5 (planner: retain LIKE filters after case-folded metadata extraction (#71255))
+		require.Equal(t, ca.likePatterns, ex.GetBase().LikePatterns["table_name"], ca.sql)
 	}
 }
