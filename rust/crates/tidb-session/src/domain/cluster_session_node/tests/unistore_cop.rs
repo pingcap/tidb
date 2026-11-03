@@ -6464,11 +6464,27 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
         .dump_historical_stats_by_snapshot("test", &table, u64::MAX)
         .expect("historical statistics reload succeeds");
     assert!(fallbacks.is_empty(), "unexpected fallbacks: {fallbacks:?}");
-    assert!(
-        historical
-            .expect("historical statistics exist")
-            .is_historical_stats
+    let historical = historical.expect("historical statistics exist");
+    assert!(historical.is_historical_stats);
+
+    // Go `TableHistoricalStatsToJSON` picks the metadata and the dump
+    // versions on their own: a newer metadata row (a delta flush) lays its
+    // counts over the older dump.
+    rows(
+        &mut session,
+        &format!(
+            "INSERT INTO mysql.stats_meta_history (table_id, modify_count, count, version, source, create_time) \
+             SELECT table_id, 7, 17, version + 10, 'flush stats', NOW(6) FROM mysql.stats_meta_history \
+             WHERE table_id = {table_id} ORDER BY version DESC LIMIT 1"
+        ),
     );
+    let (overlaid, _) = stack
+        .factory
+        .dump_historical_stats_by_snapshot("test", &table, u64::MAX)
+        .expect("historical statistics reload succeeds");
+    let overlaid = overlaid.expect("historical statistics exist");
+    assert_eq!((overlaid.count, overlaid.modify_count), (17, 7));
+    assert_eq!(overlaid.version, historical.version);
 }
 
 /// Pinned `TestGCOutdatedHistoryStats`: the global retention duration drives
@@ -6997,6 +7013,73 @@ fn stats_gc_keeps_meta_for_existing_table_without_histograms() {
         displayed(rows(&mut session, "SELECT count(*) FROM mysql.stats_meta")),
         vec![vec!["1".to_owned()]]
     );
+}
+
+/// Go `statsReadWriter.TableStatsToJSON` reads the analyzed statistics back
+/// through `TableStatsFromStorage`: the column's TopN and buckets together
+/// count every row, and the counters come from `mysql.stats_meta`.
+#[test]
+fn latest_stats_dump_reads_the_analyzed_histograms_as_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(78))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(&mut session, "CREATE TABLE dump_latest (a INT, INDEX idx(a))");
+    rows(&mut session, "INSERT INTO dump_latest VALUES (1),(1),(1),(2),(2),(3),(4)");
+    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = OFF");
+    rows(&mut session, "ANALYZE TABLE dump_latest WITH 2 TOPN");
+    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
+    // A newer meta version than the cached table's: only Go's second read
+    // (`StatsMetaByTableIDFromStorage`) sees it.
+    rows(
+        &mut session,
+        "UPDATE mysql.stats_meta SET version = version + 1 WHERE table_id = \
+         (SELECT tidb_table_id FROM information_schema.tables WHERE table_name = 'dump_latest')",
+    );
+    let catalog = stack.factory.catalog.get_latest();
+    let (_, table) = catalog
+        .table_info_by_name("test", "dump_latest")
+        .expect("analyzed table remains published");
+    let table = table.clone();
+    let table = table.read();
+    drop(catalog);
+    let (latest, fallbacks) = stack
+        .factory
+        .dump_historical_stats_by_snapshot("test", &table, u64::MAX)
+        .expect("latest statistics fallback succeeds");
+    assert_eq!(fallbacks, ["test.dump_latest"]);
+    let latest = latest.expect("latest statistics exist");
+    assert_eq!(latest.count, 7);
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT m.version FROM mysql.stats_meta m JOIN information_schema.tables t \
+             ON m.table_id = t.tidb_table_id WHERE t.table_name = 'dump_latest'",
+        )),
+        [[latest.version.to_string()]]
+    );
+    let total = |item: &tidb_stats_util::JsonColumn| {
+        let topn: u64 = item
+            .cm_sketch
+            .as_ref()
+            .and_then(|sketch| sketch.top_n.as_ref())
+            .map_or(0, |top_n| top_n.iter().flatten().map(|entry| entry.count).sum());
+        let buckets = item
+            .histogram
+            .as_ref()
+            .and_then(|histogram| histogram.buckets.as_ref())
+            .and_then(|buckets| buckets.last().cloned().flatten())
+            .map_or(0, |bucket| bucket.count);
+        topn as i64 + buckets
+    };
+    let columns = latest.columns.as_ref().expect("column statistics exist");
+    assert_eq!(total(columns["a"].as_ref().expect("column a")), 7);
+    let indices = latest.indices.as_ref().expect("index statistics exist");
+    assert_eq!(total(indices["idx"].as_ref().expect("index idx")), 7);
 }
 
 /// Pinned `TestDumpHistoricalStatsFallback`: after ANALYZE ran with history

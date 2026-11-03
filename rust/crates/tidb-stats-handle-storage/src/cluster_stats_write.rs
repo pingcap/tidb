@@ -50,24 +50,18 @@
 //! Go. `mysql.column_stats_usage` remains a separate predicate-column input.
 //! `cm_sketch` is left NULL because analyze v2 stores no CMSketch.
 
-use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
 use tidb_datatype::{ConversionFlags, Datum, FieldType, FieldTypeCode, Time, UNSPECIFIED_LENGTH};
 use tidb_model::table_info::TableInfo;
-use tidb_model::TableItemID;
 use tidb_stats::{encode_cmsketch_without_topn, encode_fm_sketch};
 use tidb_sqlescape::{must_escape_sql, must_escape_sql_text, SqlArg};
 
 use tidb_infoschema::cluster_catalog::MetaSnapshot;
 use tidb_infoschema::SessionExtendedInfoSchema;
-use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::ColStatsTimeInfo;
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 use tidb_syssession::system_row_write::defaults_row;
 use tidb_syssession::stats_table_rows::*;
-
-/// Go's `mysql` schema name.
-const SYSTEM_DB: &str = "mysql";
 
 /// Go `batchInsertSize` in `pkg/statistics/handle/storage/save.go`.
 const LOADED_STATS_BATCH_INSERT_SIZE: usize = 10;
@@ -417,53 +411,6 @@ pub fn plan_insert_table_stats_statement<S: MetaSnapshot>(
     }
     let row_identity = identity_of(table, identity, &values)?;
     if rows.existing_values(&row_identity).is_none() {
-        rows.store_row(catalog, &values, &mut plan, row_ids)?;
-    }
-    Ok(plan)
-}
-
-/// Plans pinned Go `SaveColumnStatsUsageForTable` for an arbitrary usage map.
-///
-/// Every entry is replaced, including explicit NULL timestamps. The map's
-/// iteration order is intentionally unspecified, as it is in Go.
-pub fn plan_column_stats_usage_write<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    usage: &HashMap<TableItemID, ColStatsTimeInfo>,
-    now: Time,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<StatsWritePlan, StatsWriteError> {
-    let mut plan = StatsWritePlan::default();
-    let table = locate(catalog, "column_stats_usage")?;
-    let table = &*table.read();
-    let mut rows_by_table = BTreeMap::new();
-    for item in usage.keys() {
-        if !rows_by_table.contains_key(&item.table_id) {
-            rows_by_table.insert(
-                item.table_id,
-                StatsRows::open(snapshot, table, &["table_id", "column_id"], item.table_id)?,
-            );
-        }
-    }
-    for (item, times) in usage {
-        let rows = rows_by_table
-            .get_mut(&item.table_id)
-            .expect("the table's rows were opened above");
-        let mut values = defaults_row(table, now)?;
-        set(table, &mut values, "table_id", Datum::Int(item.table_id));
-        set(table, &mut values, "column_id", Datum::Int(item.id));
-        set(
-            table,
-            &mut values,
-            "last_used_at",
-            predicate_time_value(table, "last_used_at", times.last_used_at)?,
-        );
-        set(
-            table,
-            &mut values,
-            "last_analyzed_at",
-            predicate_time_value(table, "last_analyzed_at", times.last_analyzed_at)?,
-        );
         rows.store_row(catalog, &values, &mut plan, row_ids)?;
     }
     Ok(plan)

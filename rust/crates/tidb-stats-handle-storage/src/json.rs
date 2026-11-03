@@ -309,6 +309,78 @@ fn stats_item_to_json(
     })
 }
 
+/// Go `TableHistoricalStatsToJSON`: the newest metadata history at or
+/// before `snapshot` over the newest statistics dump at or before it (each
+/// version chosen on its own). `None` when either history is missing.
+pub fn table_historical_stats_to_json<C: tidb_stats_handle_util::StatsSessionContext + ?Sized>(
+    sctx: &C,
+    physical_id: i64,
+    snapshot: u64,
+) -> Result<Option<JsonTable>, tidb_sqlexec::SqlExecError> {
+    use tidb_sqlescape::SqlArg;
+    use tidb_stats_handle_util::exec_rows;
+    let int64 = |row: &[Datum], index: usize| row.get(index).map_or(0, Datum::get_int64);
+    let missing = |what: &str| {
+        tidb_logutil::bg_logger().warn(
+            what,
+            &[
+                tidb_log::Field::new("table-id", tidb_log::Value::I64(physical_id)),
+                tidb_log::Field::new("snapshotTS", tidb_log::Value::U64(snapshot)),
+            ],
+        );
+    };
+    // get meta version
+    let (rows, _) = exec_rows(
+        sctx,
+        "select distinct version from mysql.stats_meta_history where table_id = %? and version <= %? order by version desc limit 1",
+        &[SqlArg::Signed(physical_id), SqlArg::Unsigned(snapshot)],
+    )?;
+    let Some(row) = rows.first() else {
+        missing("failed to get records of stats_meta_history");
+        return Ok(None);
+    };
+    let stats_meta_version = int64(row, 0);
+    // get stats meta
+    let (rows, _) = exec_rows(
+        sctx,
+        "select modify_count, count from mysql.stats_meta_history where table_id = %? and version = %?",
+        &[SqlArg::Signed(physical_id), SqlArg::Signed(stats_meta_version)],
+    )?;
+    let (modify_count, count) = (int64(&rows[0], 0), int64(&rows[0], 1));
+    // get stats version
+    let (rows, _) = exec_rows(
+        sctx,
+        "select distinct version from mysql.stats_history where table_id = %? and version <= %? order by version desc limit 1",
+        &[SqlArg::Signed(physical_id), SqlArg::Unsigned(snapshot)],
+    )?;
+    let Some(row) = rows.first() else {
+        missing("failed to get record of stats_history");
+        return Ok(None);
+    };
+    let stats_version = int64(row, 0);
+    // get stats
+    let (rows, _) = exec_rows(
+        sctx,
+        "select stats_data from mysql.stats_history where table_id = %? and version = %? order by seq_no",
+        &[SqlArg::Signed(physical_id), SqlArg::Signed(stats_version)],
+    )?;
+    let blocks = rows
+        .iter()
+        .map(|row| {
+            row.first()
+                .and_then(Datum::as_raw_bytes)
+                .unwrap_or_default()
+                .to_vec()
+        })
+        .collect::<Vec<_>>();
+    let mut json_tbl =
+        blocks_to_json_table(&blocks).map_err(|error| Box::new(error) as tidb_sqlexec::SqlExecError)?;
+    json_tbl.count = count;
+    json_tbl.modify_count = modify_count;
+    json_tbl.is_historical_stats = true;
+    Ok(Some(json_tbl))
+}
+
 /// Go `storage.GenJSONTableFromStats`: converts one canonical full statistics
 /// table to the shared dump/load JSON object model.
 pub fn gen_json_table_from_stats(

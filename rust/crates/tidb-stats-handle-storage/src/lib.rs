@@ -16,12 +16,11 @@
 //! `mysql.stats_*` (`cluster_stats_load`, `read`), Go's write statements on a
 //! statistics session (`save`, `update`, `gc`, `stats_read_writer`), the
 //! row planners test fixtures still seed from (`cluster_stats_write`), the
-//! JSON dump (`cluster_stats_dump`) and `LoadStatsFromJSON`
-//! (`cluster_load_stats`, `real_tikv_load_stats`).
+//! JSON dump (`json`) and `LoadStatsFromJSON` (`cluster_load_stats`,
+//! `real_tikv_load_stats`).
 
 pub mod cluster_stats_load;
 pub mod cluster_stats_write;
-pub mod cluster_stats_dump;
 pub mod cluster_load_stats;
 pub mod gc;
 pub mod json;

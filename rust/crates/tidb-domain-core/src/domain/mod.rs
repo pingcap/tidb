@@ -2340,76 +2340,132 @@ impl ClusterHistoricalStatsHandle {
             })
     }
 
+    /// Go `statsReadWriter.tableHistoricalStatsToJSON`.
     fn table_historical_json(
         &self,
-        catalog: &SessionExtendedInfoSchema,
         physical_id: i64,
         snapshot_ts: u64,
     ) -> Result<Option<tidb_stats_util::JsonTable>, String> {
-        let snapshot = self.transactions.open_snapshot("default")?;
-        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        tidb_stats_handle_storage::cluster_stats_dump::table_historical_stats_to_json(
-            &mut snapshot,
-            catalog,
-            physical_id,
-            snapshot_ts,
+        let session_pool = self.domain.upgrade().map(|domain| domain.advanced_sys_session_pool());
+        let mut table = None;
+        crate::sys_session::StatsPool {
+            session_pool: session_pool.as_ref(),
+        }
+        .call_with_sctx(
+            &mut |sctx| {
+                table = tidb_stats_handle_storage::json::table_historical_stats_to_json(
+                    sctx,
+                    physical_id,
+                    snapshot_ts,
+                )?;
+                Ok(())
+            },
+            &[tidb_stats_handle_util::FLAG_WRAP_TXN],
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.message)?;
+        Ok(table)
     }
 
+    /// Go `statsReadWriter.TableStatsToJSON` (snapshot 0): the full
+    /// statistics in one wrapped transaction, then the current meta counters
+    /// and predicate-column usage in another.
     fn table_json(
         &self,
-        catalog: &SessionExtendedInfoSchema,
         database_name: &str,
         table: &tidb_model::table_info::TableInfo,
         physical_id: i64,
     ) -> Result<Option<tidb_stats_util::JsonTable>, String> {
-        let table_stats = {
-            let snapshot = self.transactions.open_snapshot("default")?;
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            tidb_stats_handle_storage::cluster_stats_dump::load_table_stats_payload(
-                &mut snapshot,
-                catalog,
-                table,
-                physical_id,
-            )
-            .map_err(|error| error.to_string())?
+        let domain = self.domain.upgrade();
+        let session_pool = domain.as_ref().map(|domain| domain.advanced_sys_session_pool());
+        let pool = crate::sys_session::StatsPool {
+            session_pool: session_pool.as_ref(),
         };
-        let Some(table_stats) = table_stats else {
+        let cached = domain.as_ref().and_then(|domain| domain.stats.get(physical_id));
+        let mut tbl = None;
+        pool.call_with_sctx(
+            &mut |sctx| {
+                // `loadAll` reads every item, so the lease decides nothing.
+                tbl = tidb_stats_handle_storage::read::table_stats_from_storage(
+                    sctx,
+                    0,
+                    table,
+                    physical_id,
+                    true,
+                    Duration::ZERO,
+                    cached.as_deref(),
+                )?;
+                Ok(())
+            },
+            &[tidb_stats_handle_util::FLAG_WRAP_TXN],
+        )
+        .map_err(|error| error.message)?;
+        let Some(mut tbl) = tbl else {
             return Ok(None);
         };
-        let snapshot = self.transactions.open_snapshot("default")?;
-        let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        tidb_stats_handle_storage::cluster_stats_dump::table_stats_to_json_from_loaded(
-            &mut snapshot,
-            catalog,
-            database_name,
-            table,
-            physical_id,
-            table_stats,
+        let mut json = None;
+        pool.call_with_sctx(
+            &mut |sctx| {
+                let (version, modify_count, realtime_count) =
+                    tidb_stats_handle_storage::read::stats_meta_by_table_id_from_storage(
+                        sctx,
+                        physical_id,
+                        0,
+                    )?;
+                tbl.version = version;
+                tbl.hist_coll.modify_count = modify_count;
+                tbl.hist_coll.realtime_count = realtime_count;
+                // Not shown in the session, so always UTC.
+                let col_stats_usage =
+                    tidb_stats_handle_usage_predicatecolumn::predicate_column::load_column_stats_usage_for_table(
+                        sctx,
+                        &tidb_datatype::SessionTimeZone::utc(),
+                        physical_id,
+                    )?;
+                let predicate_columns = col_stats_usage
+                    .into_iter()
+                    .map(|(id, usage)| {
+                        Some(tidb_stats_util::JsonPredicateColumn {
+                            id: id.id,
+                            last_used_at: usage.last_used_at.map(|value| value.to_string()),
+                            last_analyzed_at: usage.last_analyzed_at.map(|value| value.to_string()),
+                        })
+                    })
+                    .collect();
+                json = Some(
+                    tidb_stats_handle_storage::json::gen_json_table_from_stats(
+                        database_name,
+                        table.name.lowercase(),
+                        &tbl,
+                        Some(predicate_columns),
+                    )
+                    .map_err(|error| Box::new(error) as tidb_sqlexec::SqlExecError)?,
+                );
+                Ok(())
+            },
+            &[],
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.message)?;
+        Ok(json)
     }
 
     fn historical_json(
         &self,
-        catalog: &SessionExtendedInfoSchema,
         database_name: &str,
         table: &tidb_model::table_info::TableInfo,
         physical_id: i64,
         is_partition: bool,
     ) -> Result<Option<tidb_stats_util::JsonTable>, String> {
         if is_partition || table.get_partition_info().is_none() {
-            return self.table_json(catalog, database_name, table, physical_id);
+            return self.table_json(database_name, table, physical_id);
         }
         let partition = table.get_partition_info().expect("partition checked above");
         let mut partitions = std::collections::BTreeMap::new();
         for definition in partition.read().definitions.snapshot() {
-            if let Some(json) = self.table_json(catalog, database_name, table, definition.id)? {
+            if let Some(json) = self.table_json(database_name, table, definition.id)? {
                 partitions.insert(definition.name.lowercase().to_owned(), Some(json));
             }
         }
-        if let Some(global) = self.table_json(catalog, database_name, table, table.id)? {
+        if let Some(global) = self.table_json(database_name, table, table.id)? {
             partitions.insert(tidb_stats_util::TIDB_GLOBAL_STATS.to_owned(), Some(global));
         }
         Ok(Some(tidb_stats_util::JsonTable {
@@ -2422,17 +2478,16 @@ impl ClusterHistoricalStatsHandle {
 
     fn historical_or_latest_json(
         &self,
-        catalog: &SessionExtendedInfoSchema,
         database_name: &str,
         table: &tidb_model::table_info::TableInfo,
         physical_id: i64,
         snapshot_ts: u64,
     ) -> Result<(Option<tidb_stats_util::JsonTable>, bool), String> {
-        if let Some(historical) = self.table_historical_json(catalog, physical_id, snapshot_ts)? {
+        if let Some(historical) = self.table_historical_json(physical_id, snapshot_ts)? {
             return Ok((Some(historical), false));
         }
         Ok((
-            self.table_json(catalog, database_name, table, physical_id)?,
+            self.table_json(database_name, table, physical_id)?,
             snapshot_ts != 0,
         ))
     }
@@ -2468,10 +2523,8 @@ impl ClusterHistoricalStatsHandle {
         table: &tidb_model::table_info::TableInfo,
         snapshot_ts: u64,
     ) -> Result<(Option<tidb_stats_util::JsonTable>, Vec<String>), String> {
-        let catalog = self.catalog.get_latest();
         let Some(partition) = table.get_partition_info() else {
             let (json, fallback) = self.historical_or_latest_json(
-                &catalog,
                 database_name,
                 table,
                 table.id,
@@ -2490,7 +2543,6 @@ impl ClusterHistoricalStatsHandle {
         let mut fallbacks = Vec::new();
         for definition in partition.read().definitions.snapshot() {
             let (json, fallback) = self.historical_or_latest_json(
-                &catalog,
                 database_name,
                 table,
                 definition.id,
@@ -2506,7 +2558,7 @@ impl ClusterHistoricalStatsHandle {
             partitions.insert(definition.name.lowercase().to_owned(), json);
         }
         let (global, fallback) =
-            self.historical_or_latest_json(&catalog, database_name, table, table.id, snapshot_ts)?;
+            self.historical_or_latest_json(database_name, table, table.id, snapshot_ts)?;
         if fallback {
             fallbacks.push(format!("{database_name}.{} global", table.name.original()));
         }
@@ -2549,7 +2601,6 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
             .ok_or_else(|| format!("cannot get table by id {}", table.id))?;
         let table_info = table_info.read();
         let Some(json) = self.historical_json(
-            &catalog,
             database_name,
             &table_info,
             physical_id,

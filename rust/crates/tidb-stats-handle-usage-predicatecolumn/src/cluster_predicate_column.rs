@@ -12,22 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Pinned Go `pkg/statistics/handle/usage/predicatecolumn` storage reads.
-//!
-//! The stored `TIMESTAMP`s are decoded as UTC instants and then projected into
-//! the caller's location, matching Go's `CONVERT_TZ(..., @@TIME_ZONE,
-//! '+00:00')`, `GoTime(time.UTC)`, and final `gt.In(loc)` sequence.
+//! Go `statstypes.ColStatsTimeInfo` and the session's reader of
+//! `SHOW COLUMN_STATS_USAGE` (Go `statsUsageImpl.LoadColumnStatsUsage`).
 
-use std::collections::HashMap;
-
-use tidb_datatype::{Datum, SessionTimeZone, Time, TimeType, DEFAULT_FSP};
-use tidb_model::TableItemID;
-
-use tidb_infoschema::cluster_catalog::MetaSnapshot;
-use tidb_infoschema::SessionExtendedInfoSchema;
-use tidb_syssession::mysql_system_tables::{
-    scan_system_table, scan_system_table_prefixed, SystemRow, SystemTableError, SystemTableView,
-};
+use tidb_datatype::Time;
 
 /// Go `statstypes.ColStatsTimeInfo`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -36,98 +24,6 @@ pub struct ColStatsTimeInfo {
     pub last_used_at: Option<Time>,
     /// Most recent analyze, in the requested session location.
     pub last_analyzed_at: Option<Time>,
-}
-
-/// Loads persisted column usage for one physical or logical table.
-pub fn load_column_stats_usage_for_table<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    location: &SessionTimeZone,
-    table_id: i64,
-) -> Result<HashMap<TableItemID, ColStatsTimeInfo>, SystemTableError> {
-    load(snapshot, catalog, location, Some(table_id))
-}
-
-fn load<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    location: &SessionTimeZone,
-    table_id: Option<i64>,
-) -> Result<HashMap<TableItemID, ColStatsTimeInfo>, SystemTableError> {
-    let view = usage_view(catalog)?;
-    let pairs = match table_id {
-        Some(table_id) => scan_system_table_prefixed(snapshot, &view, &[Datum::Int(table_id)])?,
-        None => scan_system_table(snapshot, &view)?,
-    };
-    let utc = SessionTimeZone::utc();
-    let mut usage = HashMap::with_capacity(pairs.len());
-    for (key, value) in pairs {
-        let row = SystemRow::parse_in_timezone(&view, &key, &value, Some(&utc))?;
-        let (Some(table_id), Some(column_id)) = (row.i64("table_id")?, row.i64("column_id")?)
-        else {
-            continue;
-        };
-        usage.insert(
-            TableItemID {
-                table_id,
-                id: column_id,
-                is_index: false,
-                is_sync_load_failed: false,
-            },
-            ColStatsTimeInfo {
-                last_used_at: usage_time(&row, "last_used_at", &utc, location)?,
-                last_analyzed_at: usage_time(&row, "last_analyzed_at", &utc, location)?,
-            },
-        );
-    }
-    Ok(usage)
-}
-
-fn usage_view(catalog: &SessionExtendedInfoSchema) -> Result<SystemTableView, SystemTableError> {
-    SystemTableView::locate(
-        catalog,
-        "column_stats_usage",
-        &["table_id", "column_id", "last_used_at", "last_analyzed_at"],
-    )
-}
-
-fn usage_time(
-    row: &SystemRow<'_>,
-    column: &str,
-    utc: &SessionTimeZone,
-    location: &SessionTimeZone,
-) -> Result<Option<Time>, SystemTableError> {
-    let Some(datum) = row.datum(column)? else {
-        return Ok(None);
-    };
-    let Datum::Time(mut value) = datum.clone() else {
-        return Err(SystemTableError::UnexpectedColumnValue {
-            name: "mysql.column_stats_usage".to_owned(),
-            column: column.to_owned(),
-            wanted: "TIMESTAMP",
-            stored: format!("{datum:?}"),
-        });
-    };
-    // Both pinned SELECTs apply CONVERT_TZ. Go's builtin returns SQL NULL for
-    // every `types.Time::InvalidZero` value (month or day is zero), so these
-    // rows are not conversion errors and cannot make a predicate column.
-    if value.invalid_zero() {
-        return Ok(None);
-    }
-    value
-        .convert_time_zone(utc, location)
-        .map_err(|error| SystemTableError::Decode {
-            name: "mysql.column_stats_usage".to_owned(),
-            detail: error.to_string(),
-        })?;
-    value.set_kind(TimeType::Timestamp);
-    value
-        .set_fsp(DEFAULT_FSP)
-        .map_err(|error| SystemTableError::Decode {
-            name: "mysql.column_stats_usage".to_owned(),
-            detail: error.to_string(),
-        })?;
-    Ok(Some(value))
 }
 
 /// Storage-backed reader used by pinned Go `SHOW COLUMN_STATS_USAGE`.

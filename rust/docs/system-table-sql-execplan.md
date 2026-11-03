@@ -192,6 +192,18 @@ checksums).
   domain's system-session pool (the providers took a resource group Go's
   calls do not have). Test
   `show_column_stats_usage_follows_the_session_time_zone_as_go` (gorun).
+- [x] (2026-11-03) The statistics dump: Go `TableStatsToJSON` (the domain's
+  `table_json`: `TableStatsFromStorage(loadAll)` in a wrapped transaction,
+  then `StatsMetaByTableIDFromStorage` and `LoadColumnStatsUsageForTable`)
+  and `TableHistoricalStatsToJSON` (`json.rs`, four SELECTs) on the pool.
+  `storage/read.rs` now holds Go `read.go`'s `TableStatsFromStorage`,
+  `indexStatsFromStorage`, `columnStatsFromStorage`,
+  `HistogramFromStorageWithPriority`, `CMSketchAndTopNFromStorageWithHighPriority`,
+  `TopNFromStorage`, `FMSketchFromStorage`, `StatsMetaByTableIDFromStorage`
+  and `convertBoundFromBlob` (a BIT bound longer than the column fails the
+  load, as Go's `ErrDataTooLong`; the raw loader saturated it). The raw dump
+  module (`cluster_stats_dump.rs`) is gone. Test
+  `latest_stats_dump_reads_the_analyzed_histograms_as_go`.
 - [ ] Readers (below).
 - [ ] The bootstrap (item 11).
 
@@ -247,13 +259,20 @@ directly (`mysql_system_tables::scan_system_table*`):
 | `tidb-syssession/src/cluster_sysvar_load.rs` | `Domain.fetchTableValues` (`rebuildSysVarCache`) |
 | `tidb-privilege/src/cluster_privilege_load.rs`, `tidb-session/src/privilege_tables.rs` | `privileges.MySQLPrivilege.LoadAll` (`loadTable`) |
 | `tidb-bindinfo/src/cluster_binding_seam.rs` (only before its session pool is attached; afterwards Go's SELECT) | `bindinfo` `readBindingsFromStorage` |
-| `tidb-stats-handle-storage/src/cluster_stats_load.rs` | `storage/read.go` and `initstats` statements |
-| `tidb-stats-handle-storage/src/cluster_stats_dump.rs` | `storage` `TableHistoricalStatsToJSON` / `getStatsVersion` |
-| `tidb-stats-handle-usage-predicatecolumn/src/cluster_predicate_column.rs` `load_column_stats_usage_for_table` (the stats dump) | `predicatecolumn` `LoadColumnStatsUsageForTable` |
+| `tidb-stats-handle-storage/src/cluster_stats_load.rs` (cache refresh, sync/async load, init stats, ANALYZE's base counts; `read.rs` has Go's statements for them) | `storage/read.go` and `initstats` statements |
 | `tidb-infoschema-issyncer/src/mdl_info_load.rs`, `tidb-ddl-systable/src/lib.rs` | MDL `select ... from mysql.tidb_mdl_info` |
 | `tidb-ddl-systable/src/ddl_job_table.rs` | job scheduler `getJob` / `GetAllDDLJobsInQueue` |
 | `tidb-ddl/src/ddl_history_table.rs` | `GetHistoryJobByID` / `GetLastNHistoryDDLJobs` |
 | `tidb-ddl/src/ddl_reorg_table.rs`, `ddl_delete_range.rs`, `cluster_ddl.rs` (MDL clean fallback) | reorg / delete-range / `cleanMDLInfo` statements |
+| `tidb-session/src/cluster_sysvar_writer.rs` `switch_mdl`'s job check | `ddl.SwitchMDL`'s `select 1 from mysql.tidb_ddl_job` on `d.sessPool` |
+
+The DDL readers share one layering mismatch. Go `systable.Manager` (and
+the job scheduler, `SwitchMDL`) run their SELECTs on `pkg/ddl/session.Pool`,
+the lowest DDL package. In Rust that pool is the `DdlSessionPool` trait in
+`tidb-ddl-build`, above `tidb-ddl-systable` and `tidb-ddl-jobsubmit`, so the
+manager cannot reach it and reads a `MetaSnapshot` instead; the port of Go's
+`pkg/ddl/session` (`tidb-ddl-session`) has no dependents. The DDL readers'
+unit starts by making `tidb-ddl-session` the pool those crates hold.
 
 ## Surprises & Discoveries
 
