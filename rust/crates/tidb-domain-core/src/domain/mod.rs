@@ -3761,14 +3761,14 @@ impl TiDBTableValues {
     /// Go `getTiDBTableValue`: `true`/`false` read as ON/OFF; the default
     /// when the row cannot be read.
     fn get_tidb_table_value_or(&self, name: &str, default: &str) -> String {
-        let sql = tidb_sqlescape::escape_sql(
+        let sql = tidb_sqlescape::escape_sql_text(
             "SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME=%?",
             &[tidb_sqlescape::SqlArg::String(name.as_bytes())],
         );
         let value = sql
             .map_err(|error| error.to_string())
             .and_then(|sql| {
-                self.with_session(|session| session.query_internal(&String::from_utf8_lossy(&sql)))
+                self.with_session(|session| session.query_internal(&sql))
             })
             .ok()
             .and_then(|rows| rows.into_iter().next())
@@ -3797,7 +3797,7 @@ impl TiDBTableValues {
         } else {
             value
         };
-        let sql = tidb_sqlescape::escape_sql(
+        let sql = tidb_sqlescape::escape_sql_text(
             "REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)",
             &[
                 tidb_sqlescape::SqlArg::String(name.as_bytes()),
@@ -3806,6 +3806,6 @@ impl TiDBTableValues {
             ],
         )
         .map_err(|error| error.to_string())?;
-        self.with_session(|session| session.execute_internal_write(&String::from_utf8_lossy(&sql)).map(drop))
+        self.with_session(|session| session.execute_internal_write(&sql).map(drop))
     }
 }

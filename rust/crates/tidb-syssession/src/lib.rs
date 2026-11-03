@@ -980,8 +980,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(format!("parse:{sql}:{}", arguments.len()));
-            let escaped = tidb_sqlescape::escape_sql(sql, arguments)?;
-            let sql = String::from_utf8(escaped)?;
+            let sql = tidb_sqlescape::escape_sql_text(sql, arguments)?;
             tidb_parser::parse(&sql).map_err(|error| {
                 Box::new(std::io::Error::other(format!("{error:?}"))) as tidb_sqlexec::SqlExecError
             })

@@ -474,6 +474,14 @@ pub fn must_escape_sql(sql: impl AsRef<[u8]>, arguments: &[SqlArg<'_>]) -> Vec<u
     escape_sql(sql, arguments).unwrap_or_else(|error| panic!("{error}"))
 }
 
+/// [`escape_sql`] for SQL that this tier's parser will read: the statement
+/// text [`must_escape_sql_text`] spells, a byte-slice argument as
+/// `_binary X'...'`.
+pub fn escape_sql_text(sql: impl AsRef<[u8]>, arguments: &[SqlArg<'_>]) -> Result<String, EscapeError> {
+    let buffer = escape_sql_impl(sql, arguments, BytesForm::Hex)?;
+    Ok(String::from_utf8_lossy(&buffer).into_owned())
+}
+
 /// [`must_escape_sql`] for SQL that this tier's parser will read, which takes
 /// UTF-8 text where Go's takes bytes: a byte-slice argument is spelled
 /// `_binary X'...'` instead of raw bytes in `_binary'...'`. Both store the
@@ -514,6 +522,20 @@ pub fn must_format_sql(writer: &mut impl Write, sql: impl AsRef<[u8]>, arguments
 mod tests {
     use super::*;
     use chrono::NaiveDate;
+
+    /// The internal executors take statement text: a byte argument (a
+    /// gzipped statistics block) stays a binary literal, and the text stays
+    /// UTF-8.
+    #[test]
+    fn escape_sql_text_spells_bytes_as_a_binary_hex_literal() {
+        let text = escape_sql_text(
+            "insert into t values (%?, %?)",
+            &[SqlArg::Bytes(Some(&[0x1f, 0x8b, 0xff])), SqlArg::from("a'b")],
+        )
+        .unwrap();
+        assert_eq!(text, "insert into t values (_binary X'1F8BFF', 'a\\'b')");
+        assert!(escape_sql_text("%?", &[]).is_err());
+    }
 
     #[test]
     fn TestReserveBuffer() {

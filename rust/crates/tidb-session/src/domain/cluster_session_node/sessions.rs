@@ -715,8 +715,7 @@ impl tidb_sqlexec::SqlExecutor for ClusterStatsSqlExecutor {
         sql: &str,
         arguments: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
-        let escaped = tidb_sqlescape::escape_sql(sql, arguments)?;
-        let escaped = String::from_utf8(escaped)?;
+        let escaped = tidb_sqlescape::escape_sql_text(sql, arguments)?;
         self.materialized_record_set(&escaped)
     }
 
@@ -737,8 +736,7 @@ impl tidb_sqlexec::RestrictedSqlExecutor for ClusterStatsSqlExecutor {
         sql: &str,
         arguments: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<tidb_ast::Stmt, tidb_sqlexec::SqlExecError> {
-        let escaped = tidb_sqlescape::escape_sql(sql, arguments)?;
-        let escaped = String::from_utf8(escaped)?;
+        let escaped = tidb_sqlescape::escape_sql_text(sql, arguments)?;
         tidb_parser::parse(&escaped).map_err(|error| stats_session_error(format!("{error:?}")))
     }
 
@@ -771,8 +769,7 @@ impl tidb_sqlexec::RestrictedSqlExecutor for ClusterStatsSqlExecutor {
         ),
         tidb_sqlexec::SqlExecError,
     > {
-        let escaped = tidb_sqlescape::escape_sql(sql, arguments)?;
-        let escaped = String::from_utf8(escaped)?;
+        let escaped = tidb_sqlescape::escape_sql_text(sql, arguments)?;
         if is_analyze_table_sql(&escaped) && !options.is_empty() {
             self.state.execute_auto_analyze(&escaped, options)
         } else {

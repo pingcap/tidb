@@ -152,11 +152,9 @@ impl tidb_ddl_build::session_pool::StepSqlSession for NodeSqlSession {
         sql: &str,
         args: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, MysqlError> {
-        let escaped = tidb_sqlescape::escape_sql(sql, args)
+        let escaped = tidb_sqlescape::escape_sql_text(sql, args)
             .map_err(|error| MysqlError::unknown(error.to_string()))?;
-        self.session
-            .node_conn()
-            .execute_internal(&String::from_utf8_lossy(&escaped))
+        self.session.node_conn().execute_internal(&escaped)
             .map_err(sql_to_mysql)
     }
 }
@@ -172,11 +170,9 @@ impl tidb_ddl_build::session_pool::StepSqlSession for NodeStepSession {
         sql: &str,
         args: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, MysqlError> {
-        let escaped = tidb_sqlescape::escape_sql(sql, args)
+        let escaped = tidb_sqlescape::escape_sql_text(sql, args)
             .map_err(|error| MysqlError::unknown(error.to_string()))?;
-        self.session
-            .node_conn()
-            .execute_internal(&String::from_utf8_lossy(&escaped))
+        self.session.node_conn().execute_internal(&escaped)
             .map_err(sql_to_mysql)
     }
 }

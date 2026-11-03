@@ -119,9 +119,9 @@ pub trait DdlSessionPool: Send + Sync {
         sql: &str,
         args: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
-        let escaped = tidb_sqlescape::escape_sql(sql, args)
+        let escaped = tidb_sqlescape::escape_sql_text(sql, args)
             .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
-        self.exec_restricted_sql(&String::from_utf8_lossy(&escaped))
+        self.exec_restricted_sql(&escaped)
     }
 
     /// Go `sctx.GetStore().CurrentVersion(kv.GlobalTxnScope)` on one of the

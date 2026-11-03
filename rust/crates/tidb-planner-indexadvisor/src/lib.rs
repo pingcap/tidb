@@ -91,8 +91,7 @@ fn escape(sql: &str, args: &[&str]) -> Result<String> {
         .iter()
         .map(|arg| tidb_sqlescape::SqlArg::String(arg.as_bytes()))
         .collect();
-    tidb_sqlescape::escape_sql(sql, &args)
-        .map(|sql| String::from_utf8_lossy(&sql).into_owned())
+    tidb_sqlescape::escape_sql_text(sql, &args)
         .map_err(|error| advisor_error(error.to_string()))
 }
 
