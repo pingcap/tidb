@@ -194,25 +194,17 @@ where
     {
         let async_shared = Arc::clone(&shared);
         let async_catalog = Arc::clone(&catalog);
-        let async_opener = opener.clone();
-        let async_item_loader = Arc::clone(&loader);
+        let async_pool = Arc::clone(&session_pool);
         let (loader, init) = AsyncStatsLoader::spawn_waiting_for_init(
             async_interval,
             Box::new(move || {
-                let Some(loader) = async_item_loader
-                    .read()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .clone()
-                else {
-                    return;
-                };
                 let targets = current_stats_targets(&async_catalog);
                 if let Err(error) = tidb_stats_handle_syncload::real_tikv_stats::load_needed_histograms(
-                    &async_opener,
-                    timeout,
+                    &tidb_domain_core::sys_session::StatsPool {
+                        session_pool: Some(&async_pool),
+                    },
                     &targets,
                     &async_shared,
-                    &loader,
                 ) {
                     // Go `Domain.asyncLoadHistogram`.
                     tidb_stats_handle_logutil::stats_err_verbose_sample_logger()

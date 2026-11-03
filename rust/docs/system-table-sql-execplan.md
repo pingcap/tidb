@@ -289,9 +289,13 @@ checksums).
   Two `stats_watch` tests that read the LFU cache before its asynchronous
   admission settled now wait as Go's cache tests do. Test
   `a_sync_load_reads_an_evicted_column_on_the_domains_sessions_as_go`.
+- [x] (2026-11-04) Async load: Go `statsReadWriter.LoadNeededHistograms`
+  drains the demand on one statistics session in one wrapped transaction
+  (`load_needed_histograms` over `read_stats_for_one_item`); the raw
+  per-item transactions and the located-loader gate are gone. Test
+  `the_async_load_drains_the_demand_on_the_domains_sessions_as_go`.
 - [ ] S1, statistics left: `bootstrap.go`'s `initStats*` (the first pass,
-  still `load_stats_snapshot_and_loader`), the async `LoadNeededHistograms`
-  (`load_needed_histograms`), analyze's base-stats reads
+  still `load_stats_snapshot_and_loader`), analyze's base-stats reads
   (`real_tikv_analyze.rs`), and the sync-load request API's unused
   `resource_group`; then `cluster_stats_load.rs` goes.
 - [ ] Readers (below), in the order the remaining milestones set.

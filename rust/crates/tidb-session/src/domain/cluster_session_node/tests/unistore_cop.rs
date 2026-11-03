@@ -27265,6 +27265,70 @@ fn a_sync_load_reads_an_evicted_column_on_the_domains_sessions_as_go() {
     assert_eq!(column.histogram.ndv, 3);
 }
 
+/// Go `statsReadWriter.LoadNeededHistograms`: the asynchronous demand is
+/// drained on one statistics session in one wrapped transaction
+/// (`loadNeededColumnHistograms` over `HistMetaFromStorageWithHighPriority`,
+/// the histogram, CM sketch and TopN), and each item leaves the queue.
+#[test]
+fn the_async_load_drains_the_demand_on_the_domains_sessions_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(311)).unwrap();
+    rows(&mut session, "CREATE TABLE test.drained (id INT PRIMARY KEY, v INT)");
+    rows(&mut session, "INSERT INTO test.drained VALUES (1, 1), (2, 2), (3, 3)");
+    rows(&mut session, "ANALYZE TABLE test.drained");
+    let table_id = match rows(
+        &mut session,
+        "SELECT TIDB_TABLE_ID FROM information_schema.tables \
+         WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'drained'",
+    )[0][0]
+    {
+        Datum::Int(id) => id,
+        ref other => panic!("table id: {other:?}"),
+    };
+    let stats = &stack.factory.stats;
+    let evicted = Arc::new(
+        stats
+            .get(table_id)
+            .expect("the analyzed table is cached")
+            .copy_as(tidb_stats::CopyIntent::AllDataWritable),
+    );
+    evicted.hist_coll.drop_evicted();
+    stats.publish_analyzed_table(table_id, evicted);
+    let v_column = 2;
+    let item = tidb_model::TableItemID {
+        table_id,
+        id: v_column,
+        is_index: false,
+        is_sync_load_failed: false,
+    };
+    let needed = &tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+    needed.insert(item, true);
+
+    let catalog = stack.factory.catalog.get_latest();
+    let table = catalog
+        .stored_schemas()
+        .iter()
+        .flat_map(|database| database.read().deprecated_tables.iter_deref())
+        .find(|table| table.read().id == table_id)
+        .expect("the table is in the catalog");
+    let targets = tidb_stats_handle_syncload::real_tikv_stats::StatsTarget::for_table(&table.read());
+    let pool = stack.factory.advanced_sys_session_pool();
+    tidb_stats_handle_syncload::real_tikv_stats::load_needed_histograms(
+        &tidb_domain_core::sys_session::StatsPool {
+            session_pool: Some(&pool),
+        },
+        &targets,
+        stats,
+    )
+    .expect("the demand drains on the domain's sessions");
+    assert!(needed.all_items().iter().all(|requested| requested.table_item_id != item));
+    let table = stats.get(table_id).unwrap();
+    let column = table.hist_coll.get_column(v_column).unwrap();
+    let column = column.read().unwrap();
+    assert!(column.stats_loaded_status.is_full_load());
+    assert_eq!(column.top_n.as_ref().map(|top_n| top_n.num()), Some(3));
+}
+
 /// Go `cache.TableRowStatsCache` is one process-wide cache whose
 /// `UpdateByID` reads both `mysql.stats_meta` and `mysql.stats_histograms`
 /// on the domain's sessions and only adds to the cache: a `TABLE_ROWS`-only
