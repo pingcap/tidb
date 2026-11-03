@@ -8375,20 +8375,14 @@ func isSystemSchemaInNextGen(schemaName string) bool {
 	failpoint.Inject("skipCheckReservedSchemaObjInNextGen", func() {
 		failpoint.Return(false)
 	})
-	if kerneltype.IsClassic() {
-		return false
-	}
-	return metadef.IsSystemDB(schemaName)
+	return kerneltype.IsNextGen() && metadef.IsSystemDB(schemaName)
 }
 
 func isSystemTableInNextGen(schema, table string) bool {
 	failpoint.Inject("skipCheckReservedSchemaObjInNextGen", func() {
 		failpoint.Return(false)
 	})
-	if kerneltype.IsClassic() {
-		return false
-	}
-	return metadef.IsBuiltinSystemTable(schema, table)
+	return kerneltype.IsNextGen() && metadef.IsBuiltinSystemTable(schema, table)
 }
 
 // AlterTableSetRegionSplitPolicy sets persistent region split policy for table
