@@ -88,66 +88,64 @@ pub fn configured_account_store(
 }
 
 /// Builds this node's live account table from whichever source the
-/// command line named, plus the live-refresh reload thread when
-/// `--load-privileges` is set.
+/// command line named.
 ///
-/// `--load-privileges` reads the cluster's own `mysql.*` through the
-/// already-connected authority, so the accounts this node admits are exactly
-/// the ones a Go TiDB wrote there. It is refused against a keyspace no TiDB
-/// ever bootstrapped: an empty account table would accept nobody, and
-/// reporting that as a successful load would hide the real cause.
-///
-/// The returned [`PrivilegeReloader`], when present, must be kept alive for
-/// the node's whole run: dropping it stops the reload thread, so a caller
-/// that let it go out of scope early would silently fall back to the
-/// one-shot startup snapshot.
+/// Under `--load-privileges` the table starts empty and is filled from the
+/// cluster's own `mysql.*` by [`start_privilege_loop`] once the domain's
+/// system sessions exist (Go creates its privilege handle in
+/// `LoadPrivilegeLoop`, after `dom.Start`).
 pub fn node_accounts(
     config: &NodeConfig,
-    opener: &tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener,
     global_vars: GlobalSysvars,
-) -> Result<(Arc<ConfiguredUserStore>, Option<PrivilegeReloader>), RunConfiguredNodeError> {
+) -> Result<Arc<ConfiguredUserStore>, RunConfiguredNodeError> {
     if config.skip_grant_table || !config.load_privileges {
-        let users = configured_account_store(config, global_vars)?;
-        return Ok((Arc::new(users), None));
+        return Ok(Arc::new(configured_account_store(config, global_vars)?));
     }
-    let accounts = tidb_domain_core::real_tikv_privileges::load_accounts_from_cluster(
-        opener,
-        PRODUCTION_CONTROL_PLANE_TIMEOUT,
+    let users = ConfiguredUserStore::from_accounts(tidb_privilege::PrivilegeRegistry::bootstrapped_from(
+        Vec::new(),
+    ))
+    .with_global_vars(global_vars);
+    Ok(Arc::new(apply_account_policies(config, users)))
+}
+
+/// Go `Domain.LoadPrivilegeLoop`: loads `mysql.*` into `users` through the
+/// domain's system sessions, then keeps it following the cluster.
+///
+/// The returned [`PrivilegeReloader`], when present, must be kept alive for
+/// the node's whole run: dropping it stops the reload thread.
+///
+/// # Errors
+///
+/// The first load failed (a keyspace no TiDB bootstrapped has no
+/// `mysql.user`), or the reload thread could not start.
+pub fn start_privilege_loop(
+    config: &NodeConfig,
+    users: &ConfiguredUserStore,
+    session_pool: Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
+) -> Result<Option<PrivilegeReloader>, RunConfiguredNodeError> {
+    if config.skip_grant_table || !config.load_privileges {
+        return Ok(None);
+    }
+    let engine = |error: String| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error));
+    let privileges = tidb_domain_core::cluster_privileges::update_all(
+        &tidb_domain_core::sys_session::StatsPool {
+            session_pool: Some(&session_pool),
+        },
     )
-    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    if !accounts.bootstrap.already_bootstrapped() {
-        return Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
-            format!(
-                "--load-privileges needs a cluster whose mysql.* a TiDB bootstrapped, but {}",
-                accounts.bootstrap
-            ),
-        )));
-    }
-    // Go's privilege cache logs nothing on a successful load.
-    let loaded = tidb_privilege::load::registry_from_cluster(&accounts.privileges);
-    let users = ConfiguredUserStore::from_accounts(loaded.registry).with_global_vars(global_vars);
-    // Seed the same startup snapshot's global variables now; `run_bound_*`
-    // immediately replaces this with a fresh complete image and starts the
-    // ongoing sysvar reloader before bind. Keeping the first image here makes
-    // this account load internally coherent even if a caller inspects it
-    // before handing it to the listener lifecycle.
-    users.global_vars().load_from_cluster(accounts.sysvars);
-    let users = apply_account_policies(config, users);
-    let users = Arc::new(users);
+    .map_err(engine)?;
+    users
+        .accounts()
+        .replace_from(&tidb_privilege::load::registry_from_cluster(&privileges).registry);
     // Ticks at Go `LoadPrivilegeLoop`'s fallback cadence
     // (pkg/domain/domain.go:1394-1396): ten minutes when the etcd watch is up
-    // (the watch makes a peer's GRANT prompt), five when it is not. This used
-    // to tick every schema_lease/2 — one second at the benchmark lease —
-    // which re-read every account/grant table and rebuilt the whole registry
-    // hundreds of times more often than Go does.
-    let reloader = PrivilegeReloader::spawn(
+    // (the watch makes a peer's GRANT prompt), five when it is not.
+    PrivilegeReloader::spawn(
         users.accounts(),
-        opener.clone(),
+        session_pool,
         privilege_reload_interval(!config.pd_endpoints.is_empty()),
-        PRODUCTION_CONTROL_PLANE_TIMEOUT,
     )
-    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    Ok((users, Some(reloader)))
+    .map(Some)
+    .map_err(|error| engine(error.to_string()))
 }
 
 #[cfg(test)]

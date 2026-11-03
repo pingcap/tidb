@@ -23,13 +23,12 @@
 //! `MySQLPrivilege.LoadAll`, which issues one `SELECT` per table:
 //! `mysql.user`, `mysql.global_priv`, `mysql.db`, `mysql.tables_priv`,
 //! `mysql.columns_priv`, `mysql.default_roles`, `mysql.role_edges`, and
-//! `mysql.global_grants`. The same tables are read here, through the record
-//! range rather than a `SELECT`, because this node's bounded read path cannot
-//! serve a table without a `BIGINT` handle (see
-//! [`tidb_syssession::mysql_system_tables`]).
+//! `mysql.global_grants`. [`load_privileges`] reads the same tables through
+//! any [`PrivilegeTables`]: the domain's system sessions running Go's
+//! `SELECT`s (the node's startup load and `LoadPrivilegeLoop`), or the raw
+//! record range of one catalog snapshot ([`load_cluster_privileges`]).
 //!
-//! The server calls this snapshot reader at startup and during privilege reload.
-//! `password_last_changed` is decoded in UTC so publication preserves the
+//! `password_last_changed` is returned in UTC so publication preserves the
 //! stored instant rather than interpreting it in a session timezone.
 //!
 //! Connection-policy text is loaded independently, including orphan rows.

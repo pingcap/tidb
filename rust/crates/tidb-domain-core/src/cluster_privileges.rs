@@ -38,8 +38,9 @@ use tidb_privilege::cluster_privilege_load::{
     ClusterPrivileges, LoadedColumnGrant, LoadedDbGrant, LoadedDefaultRole, LoadedDynamicGrant,
     LoadedRoleEdge, LoadedTableGrant, LoadedUser,
 };
-use crate::real_tikv_privileges::{load_accounts_from_cluster, ClusterAccounts};
-use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
+use tidb_privilege::cluster_privilege_load::{load_privileges, PrivilegeTableRows, PrivilegeTables};
+use tidb_stats_handle_storage::stats_read_writer::StatsSessionPool;
+use tidb_syssession::mysql_system_tables::{SystemTableError, SystemTableView};
 
 use tidb_privilege::PrivilegeRegistry;
 
@@ -85,11 +86,9 @@ pub fn unwritable_account_rows(loaded: &ClusterPrivileges) -> Vec<String> {
 /// cluster's table whole via [`PrivilegeRegistry::replace_from`], diffed
 /// against nothing, exactly as Go's reload rebuilds its handle.
 ///
-/// One-shot loading (`--load-privileges`'s startup read,
-/// `crate::domain::real_tikv_node::node_accounts`) already reuses
-/// [`load_accounts_from_cluster`] and [`registry_from_cluster`]; this
-/// reloader is the same two calls run again on a timer against the SAME live
-/// registry, rather than a new one the caller has to go re-wire in.
+/// The startup load is the same [`update_all`] and [`registry_from_cluster`]
+/// run once before the loop starts (Go `LoadPrivilegeLoop`'s first
+/// `UpdateAll`), against the SAME live registry.
 pub struct PrivilegeReloader {
     signal: Arc<(Mutex<PrivilegeReloadSignal>, Condvar)>,
     stats: Arc<PrivilegeReloadCounters>,
@@ -175,36 +174,38 @@ impl std::fmt::Display for PrivilegeReloadError {
 
 impl std::error::Error for PrivilegeReloadError {}
 
-/// One reload pass's read step, answering one cluster snapshot or a reason it
-/// could not be read.
+/// One reload pass's read step, answering the cluster's accounts or a reason
+/// they could not be read.
 ///
 /// Kept as an injectable closure -- Go's own reload loop separates "read one
 /// snapshot" from "publish it" the same way -- so the thread's condvar/
 /// shutdown machinery can run against a fake snapshot provider in tests,
 /// without a real PD/TiKV connection.
-pub type PrivilegeReloadRead = Box<dyn FnMut() -> Result<ClusterAccounts, String> + Send + 'static>;
+pub type PrivilegeReloadRead =
+    Box<dyn FnMut() -> Result<ClusterPrivileges, String> + Send + 'static>;
 
 impl PrivilegeReloader {
     /// Starts the reload thread ticking every `interval` against `registry`,
-    /// reading through `opener`.
+    /// reading through the domain's system sessions (Go `LoadPrivilegeLoop`'s
+    /// `do.privHandle.UpdateAll()` over `do.sysSessionPool`).
     ///
     /// `registry` is the node's LIVE table -- the same one every session, the
     /// login path, and `SHOW GRANTS` already hold a clone of. Every tick
-    /// builds a throwaway registry from one fresh cluster snapshot and
-    /// publishes it into `registry` with
-    /// [`PrivilegeRegistry::replace_from`], which every existing clone
-    /// observes immediately.
+    /// builds a throwaway registry from one fresh load and publishes it into
+    /// `registry` with [`PrivilegeRegistry::replace_from`], which every
+    /// existing clone observes immediately.
     pub fn spawn(
         registry: PrivilegeRegistry,
-        opener: RealOptimisticTransactionOpener,
+        session_pool: Arc<crate::sys_session::DomainSysSessionPool>,
         interval: Duration,
-        timeout: Duration,
     ) -> Result<Self, PrivilegeReloadError> {
         Self::spawn_with_read(
             registry,
             interval,
             Box::new(move || {
-                load_accounts_from_cluster(&opener, timeout).map_err(|error| error.to_string())
+                update_all(&crate::sys_session::StatsPool {
+                    session_pool: Some(&session_pool),
+                })
             }),
         )
     }
@@ -308,43 +309,108 @@ impl Drop for PrivilegeReloader {
     }
 }
 
-/// Runs one pass: read one fresh cluster snapshot, build its registry, and
+/// Runs one pass: load the cluster's accounts, build their registry, and
 /// publish it -- or leave the currently published table alone on any
 /// failure, exactly as Go's reload loop logs and retries.
-///
-/// An unbootstrapped cluster is treated the same as a read failure rather
-/// than as "zero accounts": a cluster that was bootstrapped when this node
-/// started and then somehow reports unbootstrapped is a read anomaly, not a
-/// real account wipe, and publishing an empty table would lock out every
-/// account this node currently admits.
 fn run_one_privilege_reload_pass(
     registry: &PrivilegeRegistry,
-    read: &mut dyn FnMut() -> Result<ClusterAccounts, String>,
+    read: &mut dyn FnMut() -> Result<ClusterPrivileges, String>,
     stats: &PrivilegeReloadCounters,
 ) {
     stats.passes.fetch_add(1, Ordering::AcqRel);
     match read() {
-        Ok(accounts) if accounts.bootstrap.already_bootstrapped() => {
-            let built = registry_from_cluster(&accounts.privileges);
+        Ok(privileges) => {
+            let built = registry_from_cluster(&privileges);
             registry.replace_from(&built.registry);
             stats.reloads.fetch_add(1, Ordering::AcqRel);
         }
-        Ok(accounts) => {
-            stats.failures.fetch_add(1, Ordering::AcqRel);
-            // Go `LoadPrivilegeLoop`'s failed reload.
-            tidb_logutil::bg_logger().error(
-                "load privilege failed",
-                &[tidb_logutil::zap_error(format!(
-                    "cluster reports {}",
-                    accounts.bootstrap
-                ))],
-            );
-        }
         Err(error) => {
             stats.failures.fetch_add(1, Ordering::AcqRel);
+            // Go `LoadPrivilegeLoop`'s failed reload.
             tidb_logutil::bg_logger()
                 .error("load privilege failed", &[tidb_logutil::zap_error(error)]);
         }
+    }
+}
+
+/// Go `Handle.UpdateAll`: `MySQLPrivilege.LoadAll` on one of the domain's
+/// system sessions.
+///
+/// # Errors
+///
+/// The session could not be taken, or a table did not load (a missing
+/// `mysql.user` included, Go `errLoadPrivilege`).
+pub fn update_all(pool: &dyn StatsSessionPool) -> Result<ClusterPrivileges, String> {
+    let mut loaded = ClusterPrivileges::default();
+    pool.call_with_sctx(
+        &mut |sctx| {
+            loaded = load_privileges(&mut SysSessionPrivilegeTables { sctx })?;
+            Ok(())
+        },
+        &[],
+    )
+    .map_err(|error| error.message)?;
+    Ok(loaded)
+}
+
+/// `mysql.*` read through a system session, Go `loadTable`: one
+/// `SELECT HIGH_PRIORITY` per table, a missing table skipped (Go
+/// `noSuchTable`).
+struct SysSessionPrivilegeTables<'a> {
+    sctx: &'a dyn tidb_stats_handle_util::StatsSessionContext,
+}
+
+impl PrivilegeTables for SysSessionPrivilegeTables<'_> {
+    fn rows(
+        &mut self,
+        table: &str,
+        columns: &[&str],
+        timezone: Option<&tidb_datatype::SessionTimeZone>,
+    ) -> Result<Option<PrivilegeTableRows>, SystemTableError> {
+        let name = format!("mysql.{table}");
+        let sql = format!("SELECT HIGH_PRIORITY {} FROM {name}", columns.join(","));
+        let (rows, fields) = match tidb_stats_handle_util::exec_rows(self.sctx, &sql, &[]) {
+            Ok(result) => result,
+            Err(error)
+                if error
+                    .downcast_ref::<crate::sys_session::StatsSessionStatementError>()
+                    .is_some_and(|error| error.0.code == tidb_mysql::errors::errcode::ErrNoSuchTable) =>
+            {
+                return Ok(None)
+            }
+            Err(error) => return Err(SystemTableError::Snapshot(error.to_string())),
+        };
+        let view = SystemTableView::from_columns(
+            &name,
+            0,
+            fields.iter().zip(0..).filter_map(|(field, position)| {
+                let field = field.read();
+                let field_type = field.column.as_ref()?.read().field_type.clone();
+                Some((field.column_as_name.lowercase().to_owned(), position, field_type))
+            }),
+            columns,
+        );
+        let mut values = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut map = std::collections::BTreeMap::new();
+            for (position, mut datum) in (0..).zip(row) {
+                if let (Some(timezone), tidb_datatype::Datum::Time(time)) = (timezone, &mut datum) {
+                    // Go `row.GetTime(i).GoTime(time.Local)`: the session
+                    // printed the TIMESTAMP in local time; the instant is
+                    // held in `timezone`.
+                    if time.kind() == tidb_datatype::TimeType::Timestamp {
+                        time.convert_time_zone(&tidb_datatype::SessionTimeZone::Local, timezone)
+                            .map_err(|error| SystemTableError::Decode {
+                                name: name.clone(),
+                                detail: error.to_string(),
+                            })?;
+                    }
+                }
+                map.insert(position, datum);
+            }
+            values.push(map);
+        }
+        Ok(Some((view, values)))
     }
 }
 
@@ -722,22 +788,11 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Instant;
 
-    use tidb_privilege::cluster_privilege_load::ClusterBootstrapState;
-    use crate::real_tikv_privileges::ClusterAccounts;
-
-    fn bootstrapped(privileges: ClusterPrivileges) -> ClusterAccounts {
-        ClusterAccounts {
-            bootstrap: ClusterBootstrapState::Bootstrapped { version: Some(1) },
-            privileges,
-            sysvars: Vec::new(),
-        }
-    }
-
-    fn snapshot_with_users(users: Vec<LoadedUser>) -> ClusterAccounts {
-        bootstrapped(ClusterPrivileges {
+    fn snapshot_with_users(users: Vec<LoadedUser>) -> ClusterPrivileges {
+        ClusterPrivileges {
             users,
             ..ClusterPrivileges::default()
-        })
+        }
     }
 
     #[test]
@@ -824,25 +879,19 @@ mod tests {
     }
 
     #[test]
-    fn an_unbootstrapped_read_is_counted_as_a_failure_and_keeps_the_previous_table() {
+    fn a_failed_load_is_counted_as_a_failure_and_keeps_the_previous_table() {
         let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
         registry.create_user("kept", "%", "");
 
         let mut reloader = PrivilegeReloader::spawn_with_read(
             registry.clone(),
             Duration::from_millis(5),
-            Box::new(|| {
-                Ok(ClusterAccounts {
-                    bootstrap: ClusterBootstrapState::Unflagged,
-                    privileges: ClusterPrivileges::default(),
-                    sysvars: Vec::new(),
-                })
-            }),
+            Box::new(|| Err("Load privilege table fail: mysql.user".to_owned())),
         )
         .unwrap();
 
         // Give the thread a few ticks to run, then confirm it never
-        // published the unbootstrapped snapshot's empty table.
+        // published an empty table.
         std::thread::sleep(Duration::from_millis(60));
         reloader.shutdown().unwrap();
 

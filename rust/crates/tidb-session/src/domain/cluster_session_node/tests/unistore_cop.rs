@@ -27195,6 +27195,58 @@ fn the_ddl_session_pool_is_gos_sess_pool_over_the_node() {
     sess_pool.put(context);
 }
 
+/// Go `LoadPrivilegeLoop` -> `Handle.UpdateAll`: a peer's account rows land
+/// only in `mysql.*`, and this node's load reads them through the domain's
+/// system sessions (`MySQLPrivilege.LoadAll`'s `SELECT HIGH_PRIORITY`s), a
+/// TIMESTAMP read back as its instant (`GoTime(time.Local)`).
+#[test]
+fn the_privilege_load_reads_a_peers_rows_through_the_domains_sessions_as_go() {
+    let (stack, users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(306)).unwrap();
+    // A peer's writes: the rows, with no CREATE USER or GRANT on this node.
+    for sql in [
+        "SET time_zone = '+08:00'",
+        "INSERT INTO mysql.user (Host, User, authentication_string, Select_priv, password_last_changed) \
+         VALUES ('%', 'peer', '', 'Y', '2026-01-02 11:04:05')",
+        "INSERT INTO mysql.db (Host, DB, User, Insert_priv) VALUES ('%', 'app', 'peer', 'Y')",
+        "INSERT INTO mysql.tables_priv (Host, DB, User, Table_name, Table_priv) \
+         VALUES ('%', 'app', 'peer', 't', 'Update,Delete')",
+        "INSERT INTO mysql.global_grants (USER, HOST, PRIV, WITH_GRANT_OPTION) \
+         VALUES ('peer', '%', 'BACKUP_ADMIN', 'N')",
+    ] {
+        rows(&mut session, sql);
+    }
+    assert!(!users.accounts().user_exists("peer", "%"));
+    let loaded = tidb_domain_core::cluster_privileges::update_all(
+        &tidb_domain_core::sys_session::StatsPool {
+            session_pool: Some(&stack.factory.advanced_sys_session_pool()),
+        },
+    )
+    .expect("the load runs on the domain's sessions");
+    let peer = loaded
+        .users
+        .iter()
+        .find(|user| user.user == "peer")
+        .expect("the peer's row loads");
+    assert_eq!(peer.privileges, ["SELECT"]);
+    assert_eq!(
+        peer.password_last_changed.map(|time| time.to_string()).as_deref(),
+        Some("2026-01-02 03:04:05")
+    );
+    users
+        .accounts()
+        .replace_from(&tidb_privilege::load::registry_from_cluster(&loaded).registry);
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW GRANTS FOR 'peer'@'%'")),
+        [
+            ["GRANT SELECT ON *.* TO 'peer'@'%'"],
+            ["GRANT INSERT ON `app`.* TO 'peer'@'%'"],
+            ["GRANT UPDATE,DELETE ON `app`.`t` TO 'peer'@'%'"],
+            ["GRANT BACKUP_ADMIN ON *.* TO 'peer'@'%'"],
+        ]
+    );
+}
+
 /// Go `LoadSysVarCacheLoop`: a peer's `SET GLOBAL` lands only as its
 /// `mysql.global_variables` row, and this node's reload reads that table
 /// through the domain's system sessions (`rebuildSysVarCache` ->

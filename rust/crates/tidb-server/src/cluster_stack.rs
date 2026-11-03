@@ -195,10 +195,7 @@ pub fn cluster_session_stack(
     let (startup, startup_lease_grant_ts) = loaded.expect("the catalog closure ran exactly once");
     let schema_version = startup.schema_meta_version();
 
-    // `node_accounts` also hands back the privilege reloader (landed in
-    // parallel); it must stay alive for the node's run and drop before the
-    // authority's shutdown drain, like the catalog reloader below.
-    let (users, privilege_reloader) = node_accounts(config, &authority.transaction_opener(), global_vars)?;
+    let users = node_accounts(config, global_vars)?;
     tidb_session::domain::real_tikv_node::load_cluster_startup_variables(&users, &authority.transaction_opener())?;
     // Go `domain_sysvars.go`: the TSO and follower sysvars tune the store's
     // PD client (`store.GetPDClient().UpdateOption`).
@@ -255,10 +252,6 @@ pub fn cluster_session_stack(
         COPROCESSOR_QUERY_TIMEOUT,
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    // The account half of the same division: the reloader's tick is what makes
-    // a peer's `GRANT` reach this node at all, and this watch is what makes it
-    // arrive in a round trip instead of an interval.
-    let privilege_watcher = spawn_privilege_watch(etcd.as_deref(), privilege_reloader.as_ref());
     // The sysvar half of the same division: a Go peer's `SET GLOBAL` is
     // durable in `mysql.global_variables` the instant it commits, and this
     // reloader is what makes THIS node notice it -- one tick, or one round
@@ -565,6 +558,17 @@ pub fn cluster_session_stack(
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     let sysvar_watcher =
         tidb_session::domain::real_tikv_node::spawn_sysvar_watch(etcd.as_deref(), Some(&sysvar_reloader));
+    // Go `LoadPrivilegeLoop`, on the domain's sessions too. The reloader must
+    // drop before the authority's shutdown drain, like the catalog reloader.
+    let privilege_reloader = tidb_session::domain::real_tikv_node::start_privilege_loop(
+        config,
+        &users,
+        factory.advanced_sys_session_pool(),
+    )?;
+    // The reloader's tick is what makes a peer's `GRANT` reach this node at
+    // all, and this watch is what makes it arrive in a round trip instead of
+    // an interval.
+    let privilege_watcher = spawn_privilege_watch(etcd.as_deref(), privilege_reloader.as_ref());
     tidb_session::domain::cluster_session_node::NodeServices::new(analyze)
     .with_cluster_peer_client(Arc::new(tidb_executor::cluster_peer::ClusterPeerClient::new(
         authority.tikv_store().clone(),

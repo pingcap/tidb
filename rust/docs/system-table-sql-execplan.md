@@ -221,6 +221,17 @@ checksums).
   also reads `mysql.tidb`'s system time zone). Tests
   `the_sysvar_reload_reads_a_peers_row_through_the_domains_sessions_as_go`,
   `startup_mdl_state_is_the_metadata_lock_meta_key_as_go`.
+- [x] (2026-11-04) S1, privilege half: the node's account table starts empty
+  and is filled after the domain by Go `LoadPrivilegeLoop` -> `UpdateAll` ->
+  `MySQLPrivilege.LoadAll`, a `SELECT HIGH_PRIORITY` per `mysql.*` table on
+  the domain's system sessions (`cluster_privileges::update_all`; a missing
+  table is skipped as Go `noSuchTable`; TIMESTAMPs are Go
+  `GoTime(time.Local)`); the reload thread reads the same way, and its
+  "unbootstrapped snapshot" arm is gone (Go has none: a missing
+  `mysql.user` is the load's error). Go loads lazily per active user
+  (`ensureActiveUser`); this node still loads every account, a registry
+  shape left for its own finding. Test
+  `the_privilege_load_reads_a_peers_rows_through_the_domains_sessions_as_go`.
 - [ ] Readers (below), in the order the remaining milestones set.
 
 ### Remaining milestones (Y01)
