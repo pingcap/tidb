@@ -459,3 +459,48 @@ func TestKillDuringIndexHashJoinProbe(t *testing.T) {
 		require.Equal(t, exeerrors.ErrQueryInterrupted, err, q)
 	}
 }
+
+// TestIndexHashJoinSemiJoinResult checks that index hash semi joins return the
+// same rows as hash joins on hot keys, with NULLs in the other condition on both
+// sides (issue#72481). The join keys are not null, since a nullable key turns
+// IN and NOT IN into a cartesian join that can't use an index join.
+func TestIndexHashJoinSemiJoinResult(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_outer (id int primary key, k int not null, v int)")
+	tk.MustExec("create table t_inner (id int primary key, k int not null, w int, index(k))")
+	// Three hot keys with 100 outer rows each, and some NULL values.
+	tk.MustExec("insert into t_outer with recursive s(n) as (select 1 union all select n + 1 from s where n < 300) select n, mod(n, 3), if(mod(n, 50) = 0, null, n) from s")
+	// Keys 0 and 1 only, so outer rows with key 2 never match.
+	tk.MustExec("insert into t_inner with recursive s(n) as (select 1 union all select n + 1 from s where n < 20) select n, mod(n, 2), n from s")
+	tk.MustExec("analyze table t_outer, t_inner")
+	// Small batches split the outer side into several tasks.
+	tk.MustExec("set @@tidb_index_join_batch_size = 64")
+	tk.MustExec("set @@tidb_max_chunk_size = 32")
+
+	const (
+		exists      = "select /*+ %s(i@sel_2) */ o.id from t_outer o where exists (select 1 from t_inner i where i.k = o.k and i.w > mod(o.v, 25))"
+		notExists   = "select /*+ %s(i@sel_2) */ o.id from t_outer o where not exists (select 1 from t_inner i where i.k = o.k and i.w > mod(o.v, 25))"
+		in          = "select /*+ %s(i@sel_2) */ o.id from t_outer o where o.k in (select i.k from t_inner i where i.w > mod(o.v, 25))"
+		notIn       = "select /*+ %s(i@sel_2) */ o.id from t_outer o where o.k not in (select i.k from t_inner i where i.w > mod(o.v, 25))"
+		inSelect    = "select /*+ %s(i@sel_2) */ o.id, o.k in (select i.k from t_inner i where i.w > mod(o.v, 25)) from t_outer o"
+		notInSelect = "select /*+ %s(i@sel_2) */ o.id, o.k not in (select i.k from t_inner i where i.w > mod(o.v, 25)) from t_outer o"
+	)
+	check := func() {
+		for _, q := range []string{exists, notExists, in, notIn, inSelect, notInSelect} {
+			for _, order := range []string{"", " order by o.id"} {
+				inlSQL := fmt.Sprintf(q, "INL_HASH_JOIN") + order
+				hashSQL := fmt.Sprintf(q, "HASH_JOIN") + order
+				tk.MustHavePlan(inlSQL, "IndexHashJoin")
+				tk.MustNotHavePlan(hashSQL, "IndexHashJoin")
+				expected := tk.MustQuery(hashSQL).Sort().Rows()
+				tk.MustQuery(inlSQL).Sort().Check(expected)
+			}
+		}
+	}
+	check()
+	// A NULL inner value turns IN and NOT IN results for unmatched outer rows with key 1 into NULL.
+	tk.MustExec("insert into t_inner values (21, 1, null)")
+	check()
+}
