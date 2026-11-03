@@ -27,6 +27,12 @@ go_library(
         "//pkg/util/ppcpuusage",
         "//pkg/util/set",
         "//pkg/util/stmtsummary",
+<<<<<<< HEAD
+=======
+        "//pkg/util/timeutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+>>>>>>> 8d826c0273a (stmtsummary: preserve history across ambiguous rotation times (#72596))
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_atomic//:atomic",
@@ -48,7 +54,11 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 25,
+=======
+    shard_count = 33,
+>>>>>>> 8d826c0273a (stmtsummary: preserve history across ambiguous rotation times (#72596))
     deps = [
         "//pkg/config",
         "//pkg/meta/model",

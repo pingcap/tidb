@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -723,6 +724,11 @@ func parseEndTs(file *os.File) (int64, error) {
 		end, err := time.ParseInLocation(logFileTimeFormat, timeStr, time.Local)
 		if err != nil {
 			return 0, err
+		}
+		// Rotation names contain local wall time without an offset. A repeated
+		// time can denote a later instant, so it is not a safe pruning bound.
+		if end.Format(logFileTimeFormat) != timeStr || !timeutil.IsUniqueLocalTime(end) {
+			return 0, nil
 		}
 		return end.Unix(), nil
 	}

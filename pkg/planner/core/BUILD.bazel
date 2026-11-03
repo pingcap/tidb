@@ -200,7 +200,11 @@ go_library(
         "//pkg/util/stringutil",
         "//pkg/util/syncutil",
         "//pkg/util/texttree",
+<<<<<<< HEAD
         "//pkg/util/tiflashcompute",
+=======
+        "//pkg/util/timeutil",
+>>>>>>> 8d826c0273a (stmtsummary: preserve history across ambiguous rotation times (#72596))
         "//pkg/util/tracing",
         "@com_github_bits_and_blooms_bitset//:bitset",
         "@com_github_docker_go_units//:go-units",
