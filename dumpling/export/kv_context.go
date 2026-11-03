@@ -82,6 +82,8 @@ func newKVContext() *kvContext {
 func (c *kvContext) GetSessionVars() *variable.SessionVars { return c.sessionVars }
 func (c *kvContext) GetExprCtx() exprctx.ExprContext       { return c.exprCtx }
 
+func (*kvContext) CheckCanMigrateStates() error { panic("unimplemented") }
+
 func (*kvContext) EncodeStates(context.Context, *sessionstates.SessionStates) error {
 	panic("unimplemented")
 }

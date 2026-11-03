@@ -36,6 +36,11 @@ import (
 )
 
 func TestKVMetadataSnapshotMatchesSQLMetadata(t *testing.T) {
+	t.Run("session migration is unavailable", func(t *testing.T) {
+		ctx := newKVContext()
+		require.Panics(t, func() { _ = ctx.CheckCanMigrateStates() })
+	})
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@sql_mode = default, @@time_zone = '+00:00'")
