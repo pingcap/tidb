@@ -1536,6 +1536,7 @@ func TestForbiddenDDLInNextGen(t *testing.T) {
 
 	for _, sql := range []string{
 		`drop database mysql`,
+		`drop database sys`,
 		`drop table mysql.tidb_global_task`,
 		`truncate table mysql.tidb_global_task`,
 		`rename table mysql.tidb_global_task to test.t1`,
@@ -1549,7 +1550,7 @@ func TestForbiddenDDLInNextGen(t *testing.T) {
 	}
 
 	tk.MustExec("drop view sys.schema_unused_indexes")
-	tk.MustExec("drop database sys")
+	require.ErrorIs(t, tk.ExecToErr("drop database sys"), dbterror.ErrForbiddenDDL)
 	tk.MustExec("drop view mysql.tidb_mdl_view")
 
 	// Custom mysql tables are ordinary user objects despite their schema name.

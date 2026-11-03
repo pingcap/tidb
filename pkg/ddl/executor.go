@@ -8375,7 +8375,7 @@ func isSystemSchemaInNextGen(schemaName string) bool {
 	failpoint.Inject("skipCheckReservedSchemaObjInNextGen", func() {
 		failpoint.Return(false)
 	})
-	return kerneltype.IsNextGen() && metadef.IsSystemDB(schemaName)
+	return kerneltype.IsNextGen() && (metadef.IsSystemDB(schemaName) || schemaName == mysql.SysDB)
 }
 
 func isSystemTableInNextGen(schema, table string) bool {

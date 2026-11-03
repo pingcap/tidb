@@ -298,7 +298,7 @@ func TestIsUndroppableTable(t *testing.T) {
 	}
 	t.Run("system schemas", func(t *testing.T) {
 		for _, name := range []string{mysql.SystemDB, mysql.SysDB, "test"} {
-			require.Equal(t, kerneltype.IsNextGen() && name == mysql.SystemDB, isSystemSchemaInNextGen(name))
+			require.Equal(t, kerneltype.IsNextGen() && (name == mysql.SystemDB || name == mysql.SysDB), isSystemSchemaInNextGen(name))
 		}
 	})
 }
