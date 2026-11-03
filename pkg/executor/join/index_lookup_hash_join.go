@@ -853,12 +853,15 @@ func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task
 			}
 		}
 		ptr := matchedOuterEntry.Ptr
+		if isSemiJoin && task.outerRowStatus[ptr.ChkIdx][ptr.RowIdx] == outerRowMatched {
+			continue
+		}
 		outerRow := task.outerResult.GetRow(ptr)
 		ok, err := codec.EqualChunkRow(iw.ctx.GetSessionVars().StmtCtx.TypeCtx(), innerRow, iw.HashTypes, iw.HashCols, outerRow, iw.outerCtx.HashTypes, iw.outerCtx.HashCols)
 		if err != nil {
 			return nil, nil, err
 		}
-		if !ok || (task.outerRowStatus[ptr.ChkIdx][ptr.RowIdx] == outerRowMatched && isSemiJoin) {
+		if !ok {
 			continue
 		}
 		matchedRows = append(matchedRows, outerRow)
