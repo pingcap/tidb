@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -384,6 +385,7 @@ func (r *HistoryReader) scheduleTasks(
 						}
 					}
 				}
+				failpoint.InjectCall("stmtSummaryHistoryOpenFile", file.file)
 				if !r.checker.isTimeValid(file.begin, file.end) {
 					file.closeAndLogError()
 					continue
@@ -544,15 +546,16 @@ func parseBeginTsAndReseek(file *os.File) (int64, error) {
 }
 
 func parseEndTs(file *os.File) (int64, error) {
-	// tidb-statements.log
-	filename := config.GetGlobalConfig().Instance.StmtSummaryFilename
+	// The rotated filename is compared by basename, so derive its prefix from
+	// the configured basename as well when the configured path is absolute.
+	configured := filepath.Base(config.GetGlobalConfig().Instance.StmtSummaryFilename)
 	// .log
-	ext := filepath.Ext(filename)
+	ext := filepath.Ext(configured)
 	// tidb-statements
-	prefix := filename[:len(filename)-len(ext)]
+	prefix := configured[:len(configured)-len(ext)]
 
 	// tidb-statements-2022-12-27T16-21-20.245.log
-	filename = filepath.Base(file.Name())
+	filename := filepath.Base(file.Name())
 	// .log
 	ext = filepath.Ext(file.Name())
 	// tidb-statements-2022-12-27T16-21-20.245
@@ -564,6 +567,26 @@ func parseEndTs(file *os.File) (int64, error) {
 		end, err := time.ParseInLocation(logFileTimeFormat, timeStr, time.Local)
 		if err != nil {
 			return 0, err
+		}
+		if end.Format(logFileTimeFormat) != timeStr {
+			return 0, nil
+		}
+		// Rotation names contain local wall time without an offset. A repeated
+		// time can denote a later instant, so it is not a safe pruning bound.
+		_, offset := end.Zone()
+		zoneStart, zoneEnd := end.ZoneBounds()
+		for i, boundary := range []time.Time{zoneStart, zoneEnd} {
+			if boundary.IsZero() {
+				continue
+			}
+			if i == 0 {
+				boundary = boundary.Add(-time.Nanosecond)
+			}
+			_, adjacentOffset := boundary.Zone()
+			if adjacentOffset != offset &&
+				end.Add(time.Duration(offset-adjacentOffset)*time.Second).Format(logFileTimeFormat) == timeStr {
+				return 0, nil
+			}
 		}
 		return end.Unix(), nil
 	}
