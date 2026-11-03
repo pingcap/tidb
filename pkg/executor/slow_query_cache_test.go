@@ -209,7 +209,7 @@ func TestSlowQueryCacheDropsOversizedAndUnqueuedSQL(t *testing.T) {
 	require.False(t, cache.tryToCache(slowQueryCacheWriteTask{key: slowQueryKeyOf(4, 1, "queued"), sql: "one"}))
 	require.Equal(t, 1, len(cache.writeCh))
 
-	cache.start()
+	startSlowQueryCacheForTest(t, cache)
 	require.Eventually(t, func() bool {
 		got, err := cache.getUnredactedQueries(context.Background(), []slowQueryKey{
 			slowQueryKeyOf(2, 1, "fits"),
@@ -232,7 +232,7 @@ func TestSlowQueryCacheAccountsMemoryOnWorker(t *testing.T) {
 	require.Equal(t, 2, len(cache.writeCh))
 	require.Zero(t, cache.memoryUsage)
 
-	cache.start()
+	startSlowQueryCacheForTest(t, cache)
 	require.Eventually(t, func() bool {
 		got, err := cache.getUnredactedQueries(context.Background(), []slowQueryKey{first, second})
 		// The second insert freezes the ring and reuses the only slot.
@@ -250,7 +250,7 @@ func TestSlowQueryCacheAccountsMemoryOnWorker(t *testing.T) {
 		sql: droppedSQL,
 	}))
 	require.Zero(t, dropped.memoryUsage)
-	dropped.start()
+	startSlowQueryCacheForTest(t, dropped)
 	require.Eventually(t, func() bool {
 		got, err := dropped.getUnredactedQueries(context.Background(), []slowQueryKey{droppedKey})
 		return err == nil && len(dropped.writeCh) == 0 && len(got) == 1 && got[0] == ""
@@ -262,7 +262,7 @@ func TestSlowQueryCacheDiagnosticModeDoesNotStartOrEnqueue(t *testing.T) {
 		t.Skip("diagnosticmode.SetForTest requires the intest build tag")
 	}
 	normal := newSlowQueryCache()
-	normal.start()
+	startSlowQueryCacheForTest(t, normal)
 	require.True(t, normal.running)
 
 	restore := diagnosticmode.SetForTest(true)
@@ -309,7 +309,7 @@ func TestSlowQueryCacheLookupRespectsContext(t *testing.T) {
 
 func TestSlowQueryCacheAsyncReadWrite(t *testing.T) {
 	cache := newSlowQueryCache()
-	cache.start()
+	startSlowQueryCacheForTest(t, cache)
 	// An empty cache still answers through the worker: one empty string per key.
 	missing := slowQueryKeyOf(1, 1, "missing")
 	got, err := cache.getUnredactedQueries(context.Background(), []slowQueryKey{missing})
@@ -339,12 +339,31 @@ func TestSlowQueryCacheEntrypointsWithoutWorker(t *testing.T) {
 	require.Zero(t, len(cache.readCh))
 }
 
+func TestSlowQueryCacheStopJoinsWorker(t *testing.T) {
+	cache := newSlowQueryCacheWithLimits(2, 1024, 1)
+	startSlowQueryCacheForTest(t, cache)
+	require.True(t, cache.running)
+
+	cache.stop()
+	require.False(t, cache.running)
+	// Cleanup calls stop again after the test body restarts the worker.
+	cache.stop()
+	cache.start()
+	require.True(t, cache.running)
+}
+
 func TestSlowQueryTimeKeyMatchesSlowLogFormat(t *testing.T) {
 	queryTime := 123456789 * time.Nanosecond
 	formatted := strconv.FormatFloat(queryTime.Seconds(), 'f', -1, 64)
 	parsed, err := strconv.ParseFloat(formatted, 64)
 	require.NoError(t, err)
 	require.Equal(t, parsed, slowQueryTimeKey(queryTime))
+}
+
+func startSlowQueryCacheForTest(t *testing.T, cache *slowQueryCache) {
+	t.Helper()
+	cache.start()
+	t.Cleanup(cache.stop)
 }
 
 func lookupSlowQueryCache(cache *slowQueryCache, keys ...slowQueryKey) []string {

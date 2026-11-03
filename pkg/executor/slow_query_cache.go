@@ -79,6 +79,11 @@ type slowQueryCache struct {
 	writeCh chan slowQueryCacheWriteTask
 	readCh  chan *slowQueryCacheReadTask
 	running bool
+	// stopCh is closed by stop after the test has finished sending. exited is
+	// closed by the worker after that loop returns. Production never closes
+	// stopCh. Both stay nil until start.
+	stopCh chan struct{}
+	exited chan struct{}
 
 	slowQueries []slowQuery
 	writePos    int
@@ -126,8 +131,23 @@ func (c *slowQueryCache) start() {
 	if c.checkRunning() {
 		return
 	}
+	c.stopCh = make(chan struct{})
+	c.exited = make(chan struct{})
 	c.running = true
 	go c.run()
+}
+
+// stop closes the worker and waits until it returns. Call it only after this
+// cache's sends have finished, from the same goroutine that started it. Tests
+// do that in Cleanup, so the worker observes a closed channel instead of a
+// shared flag.
+func (c *slowQueryCache) stop() {
+	if !c.running {
+		return
+	}
+	close(c.stopCh)
+	<-c.exited
+	c.running = false
 }
 
 func (c *slowQueryCache) checkRunning() bool {
@@ -138,9 +158,16 @@ func (c *slowQueryCache) run() {
 	// One goroutine owns the ring and the map. Restart it in this same
 	// goroutine after a recovered panic so a reader waiting on a task cannot
 	// block forever. util.Recover re-panics on "assert failed" in tests; catch
-	// that here so this goroutine still comes back.
+	// that here so this goroutine still comes back. A closed stopCh ends the
+	// worker instead of restarting it.
+	defer close(c.exited)
 	for {
 		c.recoverLoop()
+		select {
+		case <-c.stopCh:
+			return
+		default:
+		}
 	}
 }
 
@@ -159,6 +186,8 @@ func (c *slowQueryCache) loop() {
 			continue
 		}
 		select {
+		case <-c.stopCh:
+			return
 		case task := <-c.readCh:
 			c.handleRead(task)
 		case task := <-c.writeCh:

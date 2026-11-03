@@ -103,7 +103,7 @@ func TestSlowQueryUnredactedMemoryAccounting(t *testing.T) {
 	key := slowQueryKeyOf(42, 1.5, "mem-digest")
 	// The production Server.Run path starts the process-wide worker before
 	// accepting connections. Unit tests start it explicitly.
-	globalSlowQueryCache.start()
+	startSlowQueryCacheForTest(t, globalSlowQueryCache)
 	globalSlowQueryCache.putIntoCache(key, sqlText)
 	require.Eventually(t, func() bool {
 		got, err := globalSlowQueryCache.getUnredactedQueries(context.Background(), []slowQueryKey{key})
