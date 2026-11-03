@@ -67,6 +67,9 @@ fn binary_prepared_execution_reuses_select_plan() {
 #[test]
 fn unchanged_session_reuses_the_prepared_plan_cache_environment() {
     let mut session = Session::new();
+    // The session's first statement takes its copy of the global tier (Go
+    // `loadCommonGlobalVariablesIfNeeded`); the environment is stable after.
+    session.run("SELECT 1").unwrap();
     let first = session.prepared_plan_cache_environment().unwrap();
     let second = session.prepared_plan_cache_environment().unwrap();
     assert!(std::sync::Arc::ptr_eq(&first, &second));

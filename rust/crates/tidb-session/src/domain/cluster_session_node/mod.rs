@@ -730,6 +730,12 @@ impl<'s> ClusterServerSession<'s> {
         resource_group: &str,
         read_only: bool,
     ) -> Result<(), SqlQueryError> {
+        // Go `executeStmtImpl`: `PrepareTxnCtx`, then
+        // `loadCommonGlobalVariablesIfNeeded` (a no-op once the statement's
+        // parse took the copy).
+        self.session
+            .load_common_global_variables_if_needed()
+            .map_err(map_error)?;
         self.rebuild_catalog_if_stale();
         if read_only && self.node.txn.explicit.is_none() && !self.session.in_transaction() {
             let vars = self.session.vars();
@@ -1673,6 +1679,10 @@ impl<'s> ClusterServerSession<'s> {
         // for `ROLLBACK` means publishing the buffer this connection is about
         // to discard. It is applied at EXECUTE, through
         // [`Self::control_transaction`].
+        // Go `PrepareStmt`'s `loadCommonGlobalVariablesIfNeeded`.
+        self.session
+            .load_common_global_variables_if_needed()
+            .map_err(map_error)?;
         let parsed = (*self.session).parse_statement(sql).map_err(map_error)?;
         self.session.restore_statement_variables();
         if classify_transaction_control_stmt(&parsed).is_some() {
@@ -2144,6 +2154,10 @@ impl<'s> ClusterServerSession<'s> {
         stmt: &Stmt,
     ) -> Result<Option<bool>, SqlQueryError> {
         let observed = classify_transaction_control_stmt(stmt).is_some();
+        // Go `executeStmtImpl`'s `loadCommonGlobalVariablesIfNeeded`.
+        self.session
+            .load_common_global_variables_if_needed()
+            .map_err(map_error)?;
         // Go runs a transaction statement as any other: `session.ExecuteStmt`
         // compiles its `Simple` plan and `runStmt` drives the `SimpleExec`.
         let _execute_stmt =

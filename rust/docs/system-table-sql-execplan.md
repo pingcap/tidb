@@ -241,13 +241,18 @@ checksums).
   opened earlier sees it. Covered by the binding suites (no behavior a
   test could see changed: the attached sessions already served every load
   after startup); a mutation that skips the store fails six of them.
-- [ ] S1, held: the first sysvar load stays the pre-domain snapshot read
-  until sessions take globals the Go way. A Rust session copies the global
-  image when it OPENS (`Session::seed_globals`); Go copies it at the
-  session's first statement (`loadCommonGlobalVariablesIfNeeded`, from
-  `GetSessionCache`). Loading after the domain first would leave pooled
-  sessions opened in the window on defaults for life. Port the lazy copy,
-  then move the first `rebuildSysVarCache` into `SysvarReloader::spawn`.
+- [x] (2026-11-04) Sessions take globals the Go way: creation installs the
+  accessor (Go `createSession`'s `GlobalVarsAccessor`) and the copy
+  (`loadCommonGlobalVariablesIfNeeded`, from `GetSessionCache`) is taken at
+  the first statement -- the statement-boundary parse (Go `Parse`), the
+  prepare door (`PrepareStmt`) and the statement context
+  (`executeStmtImpl` after `PrepareTxnCtx`) -- keeping any variable the
+  session already set, and applying `CLIENT_INTERACTIVE`'s
+  `wait_timeout = interactive_timeout` there. Three tests that encoded the
+  copy-at-open rule now state Go's. Test
+  `a_session_copies_the_global_tier_at_its_first_statement_as_go`.
+- [ ] S1: move the first `rebuildSysVarCache` into `SysvarReloader::spawn`
+  (after the domain) and drop the pre-domain snapshot read of the sysvars.
 - [ ] S1, held: statistics. The node's cache (`SharedStats` of
   `TableStatsState`, read by `cluster_stats_load.rs`/`real_tikv_stats.rs`
   over raw record ranges) is not Go's `StatsCache` of `statistics.Table`.

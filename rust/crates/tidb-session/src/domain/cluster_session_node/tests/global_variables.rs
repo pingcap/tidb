@@ -108,16 +108,47 @@ fn factory_with_globals(node: &MockNode, globals: GlobalSysvars) -> Domain {
     domain
 }
 
+/// Go `loadCommonGlobalVariablesIfNeeded`: a session copies the global tier
+/// at its first statement, not when it is created, and a variable it set
+/// before then (`vars.GetSystemVar` already answers it) keeps its value.
 #[test]
-fn factory_rejects_invalid_persisted_fix_control_without_process_leak() {
+fn a_session_copies_the_global_tier_at_its_first_statement_as_go() {
+    let node = MockNode::start();
+    let globals = GlobalSysvars::from_cluster_rows([]);
+    let factory = factory_with_globals(&node, globals.clone()).shared();
+    let mut session = factory.open_session(session_context(53)).expect("session");
+    session
+        .set_session_sys_var("max_execution_time", "11".to_owned())
+        .unwrap();
+    globals.load_from_cluster([
+        ("div_precision_increment".to_owned(), "7".to_owned()),
+        ("max_execution_time".to_owned(), "22".to_owned()),
+    ]);
+    assert_eq!(
+        session
+            .node_conn()
+            .execute_internal("SELECT @@div_precision_increment, @@max_execution_time")
+            .unwrap(),
+        [[tidb_datatype::Datum::Int(7), tidb_datatype::Datum::Int(11)]]
+    );
+}
+
+/// Go `loadCommonGlobalVariablesIfNeeded` copies the global tier at the
+/// session's first statement, so an invalid persisted fix-control row fails
+/// that statement, not the session's creation.
+#[test]
+fn an_invalid_persisted_fix_control_fails_the_first_statement_as_go() {
     let node = MockNode::start();
     let invalid_globals = GlobalSysvars::from_cluster_rows([(
         "tidb_opt_fix_control".to_owned(),
         "invalid".to_owned(),
     )]);
     let invalid_factory = factory_with_globals(&node, invalid_globals).shared();
-    let Err(error) = invalid_factory.open_session(session_context(51)) else {
-        panic!("an invalid persisted fix-control row must refuse the cluster session");
+    let mut session = invalid_factory
+        .open_session(session_context(51))
+        .expect("Go creates the session without reading the global tier");
+    let Err(error) = session.node_conn().execute_internal("SELECT 1") else {
+        panic!("the first statement copies the invalid fix-control row");
     };
     assert_eq!(error.code, 1105);
     assert_eq!(error.state, *b"HY000");
@@ -125,10 +156,8 @@ fn factory_rejects_invalid_persisted_fix_control_without_process_leak() {
         error.message,
         "invalid fix control: expected colon not found"
     );
-    assert!(
-        invalid_factory.processes().snapshot().is_empty(),
-        "a rejected cluster session must release its process registration"
-    );
+    drop(session);
+    assert!(invalid_factory.processes().snapshot().is_empty());
 
     let valid_globals = GlobalSysvars::from_cluster_rows([(
         "tidb_opt_fix_control".to_owned(),
@@ -400,8 +429,10 @@ fn mixed_set_reads_its_subqueries_through_the_node() {
 }
 
 /// Go `loadCommonGlobalVariablesIfNeeded`: a client that negotiated
-/// `CLIENT_INTERACTIVE` starts with `wait_timeout = interactive_timeout`;
-/// any other client keeps `wait_timeout`.
+/// `CLIENT_INTERACTIVE` takes `wait_timeout = interactive_timeout` with the
+/// copy its first statement makes (before it, Go's
+/// `getSessionVarsWaitTimeout` reads the session's own default); any other
+/// client keeps `wait_timeout`.
 #[test]
 fn an_interactive_client_waits_for_interactive_timeout() {
     let node = MockNode::start();
@@ -412,9 +443,12 @@ fn an_interactive_client_waits_for_interactive_timeout() {
     let factory = factory_with_globals(&node, globals).shared();
     let mut interactive = session_context(61);
     interactive.client_capability = tidb_mysql::consts::ClientInteractive;
-    let session = factory.open_session(interactive).expect("interactive session");
+    let mut session = factory.open_session(interactive).expect("interactive session");
+    assert_eq!(session.wait_timeout(), std::time::Duration::from_secs(28800));
+    session.node_conn().execute_internal("SELECT 1").unwrap();
     assert_eq!(session.vars().system_value("wait_timeout").unwrap(), "7");
     assert_eq!(session.wait_timeout(), std::time::Duration::from_secs(7));
-    let session = factory.open_session(session_context(62)).expect("batch session");
+    let mut session = factory.open_session(session_context(62)).expect("batch session");
+    session.node_conn().execute_internal("SELECT 1").unwrap();
     assert_eq!(session.vars().system_value("wait_timeout").unwrap(), "28800");
 }

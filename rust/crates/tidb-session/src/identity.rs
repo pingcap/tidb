@@ -1180,12 +1180,21 @@ impl Session {
     /// and snapshots its current overrides into this session's own copy --
     /// see [`vars::SessionVars::seed_from_globals`] for why that snapshot
     /// happens exactly once, here, rather than on every read.
-    pub(crate) fn seed_globals(
+    /// Go `createSession`'s `GlobalVarsAccessor`: the session's variables
+    /// are copied from `globals` at its first statement
+    /// ([`Self::parse_at_statement_boundary`]).
+    pub(crate) fn set_global_vars_accessor(
         &mut self,
         globals: std::sync::Arc<dyn tidb_variable::GlobalVarAccessor>,
-    ) -> Result<(), crate::DriverError> {
+    ) {
+        self.vars.set_global_vars_accessor(globals);
+    }
+
+    /// Go `session.loadCommonGlobalVariablesIfNeeded`: the session's copy of
+    /// the global tier, taken once, as its first statement starts.
+    pub fn load_common_global_variables_if_needed(&mut self) -> Result<(), crate::DriverError> {
         self.vars
-            .seed_from_globals(globals)
+            .load_common_global_variables_if_needed()
             .map_err(crate::variables::var_error)
     }
 

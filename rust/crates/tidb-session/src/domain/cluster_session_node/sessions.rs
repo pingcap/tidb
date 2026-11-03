@@ -158,18 +158,6 @@ impl DomainSessions for Domain {
             format!("{}@{}", identity.username(), context.peer_addr.host()),
         );
         session.set_client_capability(context.client_capability);
-        // Go `loadCommonGlobalVariablesIfNeeded`: a client that set
-        // `CLIENT_INTERACTIVE` starts with `wait_timeout = interactive_timeout`.
-        if context.client_capability & tidb_mysql::consts::ClientInteractive != 0 {
-            let interactive = session
-                .vars()
-                .system_value("interactive_timeout")
-                .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))?
-                .into_owned();
-            session
-                .set_session_sys_var("wait_timeout", interactive)
-                .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))?;
-        }
         session.set_tls_state(context.tls_state);
         session.set_compression_level(context.compression_level);
         session.set_compression_algorithm(context.compression_algorithm);
@@ -492,9 +480,7 @@ impl DomainSessions for Domain {
             session.set_mem_arbitrator(Arc::clone(arbitrator));
         }
 
-        session
-            .seed_globals(Arc::new(self.global_vars.clone()))
-            .map_err(map_error)?;
+        session.set_global_vars_accessor(Arc::new(self.global_vars.clone()));
         Ok(session)
     }
 }

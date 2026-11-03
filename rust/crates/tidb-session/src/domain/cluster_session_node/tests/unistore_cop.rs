@@ -1326,6 +1326,9 @@ fn shared_session_activation_inherits_globals_and_obeys_set() {
         ("tidb_enable_1pc".to_owned(), "ON".to_owned()),
     ]);
     let mut first = factory.open_session(session_context(131)).unwrap();
+    // Go `loadCommonGlobalVariablesIfNeeded`: the session's copy is taken by
+    // its first statement.
+    rows(&mut first, "SELECT 1");
     globals.load_from_cluster([("tidb_enable_1pc".to_owned(), "OFF".to_owned())]);
     let mut second = factory.open_session(session_context(132)).unwrap();
     for (session, id, one_pc) in [(&mut first, 1, true), (&mut second, 2, false)] {

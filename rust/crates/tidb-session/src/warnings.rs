@@ -228,6 +228,9 @@ impl Session {
     /// parse clearing it, which is what Go's failed parse does by never
     /// reaching the copy.
     pub fn parse_at_statement_boundary(&mut self, sql: &str) -> Result<Stmt, DriverError> {
+        // Go `Parse`: "Load the session variables to the context. This is
+        // necessary for the parser to get the current sql_mode."
+        self.load_common_global_variables_if_needed()?;
         // Text SET/control routes can bypass begin_statement_execution.
         // Retire their predecessor before evaluating the new command.
         if let Some(previous) = self.statement_result_authority.get_mut().take() {

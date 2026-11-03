@@ -313,6 +313,9 @@ pub struct SessionVars {
     /// which the session installs when it is created (Go `createSession`
     /// sets it to the session itself). `None` until then, Go's nil.
     pub(crate) globals: Option<Arc<dyn crate::GlobalVarAccessor>>,
+    /// Go `SessionVars.CommonGlobalLoaded`: whether the session has taken its
+    /// copy of the global tier ([`Self::load_common_global_variables_if_needed`]).
+    common_global_loaded: bool,
     /// The GLOBAL values this session read for variables `SkipInit` left
     /// out of its copy; see [`Self::unseeded_global_value`].
     first_read_globals: FirstReadGlobals,
@@ -607,6 +610,7 @@ impl Default for SessionVars {
             optimizer_fix_control: OptimizerFixControl::default(),
             session_resolved: ResolvedGlobals::default(),
             globals: None,
+            common_global_loaded: false,
             first_read_globals: FirstReadGlobals::default(),
             prepared_stmt_entries: 0,
         }
@@ -756,24 +760,55 @@ impl SessionVars {
         SessionVars::default()
     }
 
-    /// Points this session at a shared GLOBAL accessor and snapshots
-    /// its current overrides into the session's own copy -- Go's rule that a
-    /// session's variables are copied from the global tier once, at connect.
-    /// A `SET GLOBAL` another session runs AFTER this call is invisible to
-    /// this session's plain `@@x` (only to `@@global.x`), exactly as MySQL
-    /// documents.
+    /// [`Self::set_global_vars_accessor`] and then
+    /// [`Self::load_common_global_variables_if_needed`] at once.
     pub fn seed_from_globals(
         &mut self,
         globals: Arc<dyn crate::GlobalVarAccessor>,
     ) -> Result<(), VarError> {
+        self.set_global_vars_accessor(globals);
+        self.load_common_global_variables_if_needed()
+    }
+
+    /// Go `createSession`'s `sessionVars.GlobalVarsAccessor = s`: the GLOBAL
+    /// tier this session reads `@@global.x` from and, at its first statement,
+    /// copies its own variables from.
+    pub fn set_global_vars_accessor(&mut self, globals: Arc<dyn crate::GlobalVarAccessor>) {
+        self.globals = Some(globals);
+        self.first_read_globals = FirstReadGlobals::default();
+        self.common_global_loaded = false;
+    }
+
+    /// Go `session.loadCommonGlobalVariablesIfNeeded`, run as a statement
+    /// starts: once per session, the session's own copy of the global tier --
+    /// Go's rule that a session's variables are copied from the global tier
+    /// once. A `SET GLOBAL` another session runs AFTER this copy is invisible
+    /// to this session's plain `@@x` (only to `@@global.x`), exactly as MySQL
+    /// documents. A variable the session already set (the handshake's
+    /// character set, an internal session's settings) keeps its value.
+    pub fn load_common_global_variables_if_needed(&mut self) -> Result<(), VarError> {
+        if self.common_global_loaded {
+            return Ok(());
+        }
+        let Some(globals) = self.globals.clone() else {
+            return Ok(());
+        };
+        self.common_global_loaded = true;
         let mut systems = self.systems.clone();
-        // Go `loadCommonGlobalVariablesIfNeeded`: the deep copy of the sysvar
-        // cache's session view (`Domain.GetSessionCache`), which holds every
-        // variable `SkipInit` does not exclude -- session scope, not noop,
-        // not one of Go's `skipInit` variables -- at its GLOBAL value or,
-        // for a session-only variable, its registry value.
+        // The deep copy of the sysvar cache's session view
+        // (`Domain.GetSessionCache`), which holds every variable `SkipInit`
+        // does not exclude -- session scope, not noop, not one of Go's
+        // `skipInit` variables -- at its GLOBAL value or, for a session-only
+        // variable, its registry value.
         for (name, value) in globals.session_cache() {
-            systems.insert(name, value);
+            systems.entry(name).or_insert(value);
+        }
+        // A client that set `CLIENT_INTERACTIVE` starts with
+        // `wait_timeout = interactive_timeout`.
+        if self.client_capability & tidb_mysql::consts::ClientInteractive != 0 {
+            if let Some(interactive) = systems.get("interactive_timeout").cloned() {
+                systems.insert("wait_timeout".to_owned(), interactive);
+            }
         }
         let raw = systems
             .get(tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL)
@@ -817,8 +852,6 @@ impl SessionVars {
         // row has been accepted. A stale/foreign cluster row can therefore
         // refuse the connection without partially reseeding this session.
         self.systems = systems;
-        self.globals = Some(globals);
-        self.first_read_globals = FirstReadGlobals::default();
         self.optimizer_fix_control = optimizer_fix_control;
         self.autocommit = autocommit;
         self.sql_mode = sql_mode;
