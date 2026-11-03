@@ -2663,6 +2663,72 @@ func TestBinCollationRangeForIndex(t *testing.T) {
 }
 
 func TestInvalidTimestampRange(t *testing.T) {
+	t.Run("correlated", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		for _, zone := range []string{"UTC", "+00:00", "+08:00", "America/Goose_Bay"} {
+			for _, index := range []string{"index idx(ts)", "index idx(k,ts,n)", "primary key(k,ts,n) clustered"} {
+				t.Run(zone+index, func(t *testing.T) {
+					tk := testkit.NewTestKit(t, store)
+					tk.MustExec("use test")
+					tk.MustExec("set sql_mode='ALLOW_INVALID_DATES'")
+					tk.MustExec("set time_zone='" + zone + "'")
+					tk.MustExec("drop table if exists cor_outer, cor_inner, cor_plain")
+					tk.MustExec("create table cor_outer(id int primary key, d datetime)")
+					tk.MustExec("insert into cor_outer values (1,'2017-02-28'),(2,'2017-02-30'),(3,'2017-03-01'),(4,'2017-03-00'),(5,NULL),(6,'0000-00-00')")
+					tk.MustExec("create table cor_inner(k int, ts timestamp(6), n int," + index + ")")
+					tk.MustExec("create table cor_plain(k int, ts timestamp(6), n int)")
+					tk.MustExec("insert into cor_inner values (1,'2017-02-28',1),(1,'2017-03-01',1),(1,'2017-03-01',2),(2,'2017-03-01',1),(1,'0000-00-00',1)")
+					tk.MustExec("insert into cor_plain select * from cor_inner")
+					hint := "idx"
+					if strings.HasPrefix(index, "primary") {
+						hint = "primary"
+					}
+					if index == "index idx(k,ts,n)" {
+						for _, order := range []string{"asc", "desc"} {
+							query := "select o.id,(select /*+ NO_DECORRELATE() */ i.n from cor_inner i force index(idx) where i.k=1 and i.ts=o.d order by i.n " + order + " limit 1) from cor_outer o order by o.id"
+							baseline := strings.ReplaceAll(query, "cor_inner i force index(idx)", "cor_plain i")
+							expected := testkit.Rows("1 1", "2 <nil>", "3 1", "4 <nil>", "5 <nil>", "6 1")
+							if order == "desc" {
+								expected = testkit.Rows("1 1", "2 <nil>", "3 2", "4 <nil>", "5 <nil>", "6 1")
+							}
+							tk.MustQuery(baseline).Check(expected)
+							tk.MustQuery(query).Check(expected)
+							planRows := tk.MustQuery("explain format='brief' " + query).Rows()
+							plan := fmt.Sprint(planRows)
+							require.Contains(t, plan, "IndexRangeScan")
+							require.Contains(t, plan, "table:i, index:idx(k, ts, n)")
+							require.Contains(t, plan, "range: decided by [eq(test.cor_inner.k, 1) eq(test.cor_inner.ts, test.cor_outer.d)]")
+							if order == "asc" {
+								// ConstCols lets the scan provide n's order after the two equality columns.
+								require.NotContains(t, plan, "Sort")
+								require.NotContains(t, plan, "TopN")
+								for _, row := range planRows {
+									if strings.Contains(fmt.Sprint(row[0]), "IndexRangeScan") {
+										require.Contains(t, fmt.Sprint(row), "keep order:true")
+									}
+								}
+							} else {
+								require.Contains(t, plan, "TopN")
+								require.Contains(t, plan, "test.cor_inner.n:desc, offset:0, count:1")
+							}
+						}
+					}
+					for _, op := range []string{"=", "<", "<=", ">", ">=", "!="} {
+						for _, body := range []string{"count(*)", "min(i.ts)", "i.ts"} {
+							limit := ""
+							if body == "i.ts" {
+								limit = " order by i.ts limit 1"
+							}
+							query := "select o.id,(select /*+ NO_DECORRELATE() */ " + body + " from cor_inner i force index(" + hint + ") where i.k=1 and i.ts " + op + " o.d and i.n=1" + limit + ") from cor_outer o order by o.id"
+							baseline := strings.ReplaceAll(query, "cor_inner i force index("+hint+")", "cor_plain i")
+							tk.MustQuery(query).Check(tk.MustQuery(baseline).Rows())
+						}
+					}
+				})
+			}
+		}
+	})
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	for _, zone := range []string{"UTC", "+00:00", "Etc/UTC", "+08:00", "-05:00", "America/New_York"} {
 		t.Run(zone, func(t *testing.T) {
