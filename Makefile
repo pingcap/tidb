@@ -47,7 +47,7 @@ check-setup:tools/bin/revive
 precheck: fmt bazel_prepare
 
 .PHONY: check
-check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license
+check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license bazel_check_abi
 
 .PHONY: fmt
 fmt:
@@ -850,3 +850,8 @@ bazel_sync:
 .PHONY: bazel_mirror_upload
 bazel_mirror_upload:
 	@echo "bazel_mirror_upload is deprecated; Go modules are resolved through GOPROXY. Run 'make bazel_mirror' to regenerate DEPS.bzl."
+
+.PHONY: bazel_check_abi
+bazel_check_abi:
+	@echo "check ABI compatibility"
+	./tools/check/bazel-check-abi.sh
