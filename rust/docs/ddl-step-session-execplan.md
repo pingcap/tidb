@@ -155,7 +155,16 @@ system-table rows are the SQL statements Go executes, in the same commit.
     each batch transaction; Go's `UpdateReorgMeta` is a separate
     transaction on a pooled session. That is part of the backfill
     structure, not a statement swap.
-  - [ ] Job submission insert (`insertDDLJobs2Table`).
+  - [x] (2026-11-03) Job submission insert: Go's `insertDDLJobs2Table`
+    (`tidb_ddl_jobsubmit::insert_ddl_jobs_2_table`) runs on a session over
+    the submitting transaction's buffer, reading at its for-update
+    timestamp (Go `ddlSe` after `lockGlobalIDKey`); the bootstrap's
+    submission, which has no session, keeps the raw rows.
+  - [x] (2026-11-03) The delete-range emulator (Go `delRange.doDelRangeWork`
+    / `doTask`) reads and completes its ranges with Go's
+    `LoadDeleteRanges` / `CompleteDeleteRange` / `UpdateDeleteRange`
+    statements on one pooled session (`DdlSessionPool::open_sql_session`);
+    the raw update/delete writers are gone.
   - The raw job-row writes in `worker.rs` are test fixtures
     (`#[cfg(test)]`), not admin paths. Production ADMIN CANCEL / PAUSE /
     RESUME DDL JOBS was a stub answering not-found; it is Go's

@@ -87,6 +87,18 @@ impl DdlSessionPool for NodeDdlSessionPool {
         domain.transactions.fresh_timestamp().map_err(MysqlError::unknown)
     }
 
+    fn open_sql_session(
+        &self,
+    ) -> Result<Box<dyn tidb_ddl_build::session_pool::StepSqlSession>, MysqlError> {
+        let domain = self
+            .domain
+            .get()
+            .and_then(Weak::upgrade)
+            .ok_or_else(|| MysqlError::unknown("the DDL session pool has no running node"))?;
+        let session = domain.open_system_session().map_err(sql_to_mysql)?;
+        Ok(Box::new(NodeSqlSession::new(session)))
+    }
+
     fn has_step_sessions(&self) -> bool {
         self.domain.get().and_then(Weak::upgrade).is_some()
     }

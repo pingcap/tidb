@@ -636,7 +636,7 @@ where
         let emulator = crate::real_tikv_ddl::delete_range::start_del_range_emulator(
             Arc::clone(&self.opener),
             self.timeout,
-            Arc::clone(&self.scheduler.row_ids),
+            Arc::clone(&self.scheduler.session_pool),
         )?;
         let _ = self.scheduler.del_range.set(emulator);
         Ok(self)
@@ -790,6 +790,7 @@ where
             schema_sync,
             submitter: crate::job_submitter::JobSubmitter::start(
                 Arc::clone(&scheduler.opener),
+                Arc::clone(&scheduler.session_pool),
                 scheduler.timeout,
                 Arc::clone(&scheduler.ddl_job_done_ch_map),
             ),

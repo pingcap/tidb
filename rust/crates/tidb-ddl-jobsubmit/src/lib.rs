@@ -427,6 +427,8 @@ pub enum JobSubmitError {
         /// The ID the allocation would have reached.
         wanted: i64,
     },
+    /// The job insert's statement failed (Go `se.Execute`).
+    Sql(tidb_terror::MysqlError),
 }
 
 impl From<tidb_infoschema::cluster_catalog::ClusterCatalogError> for JobSubmitError {
@@ -468,7 +470,8 @@ impl JobSubmitError {
             | Self::Meta(_)
             | Self::Encode(_)
             | Self::Mutations(_)
-            | Self::GlobalIdExhausted { .. } => None,
+            | Self::GlobalIdExhausted { .. }
+            | Self::Sql(_) => None,
         }
     }
 
@@ -490,6 +493,7 @@ impl fmt::Display for JobSubmitError {
             (None, Self::Meta(error)) => write!(formatter, "{error}"),
             (None, Self::Encode(detail)) => formatter.write_str(detail),
             (None, Self::Mutations(error)) => write!(formatter, "{error}"),
+            (None, Self::Sql(error)) => write!(formatter, "{error}"),
             (None, Self::GlobalIdExhausted { wanted }) => write!(
                 formatter,
                 "global id:{wanted} exceeds the limit:{}",
@@ -718,8 +722,77 @@ pub fn plan_assign_global_ids<S: MetaSnapshot>(
     Ok(mutations)
 }
 
+/// Go `util.WrapKey2String`: a key as a SQL hex literal, `''` when empty.
+#[must_use]
+pub fn wrap_key_2_string(key: &[u8]) -> String {
+    if key.is_empty() {
+        return "''".to_owned();
+    }
+    let mut text = String::with_capacity(2 + key.len() * 2);
+    text.push_str("0x");
+    for byte in key {
+        text.push_str(&format!("{byte:02x}"));
+    }
+    text
+}
+
+/// Go `insertDDLJobs2Table`: one `insert into mysql.tidb_ddl_job` for every
+/// spec, run by `execute` (Go `se.Execute` on the submitting session).
+///
+/// # Errors
+///
+/// A job that does not encode, or the statement's error.
+pub fn insert_ddl_jobs_2_table(
+    execute: &mut dyn FnMut(&str) -> Result<(), tidb_terror::MysqlError>,
+    specs: &mut [JobSpec],
+) -> Result<(), JobSubmitError> {
+    if specs.is_empty() {
+        return Ok(());
+    }
+    let mut sql = String::from(
+        "insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values",
+    );
+    for (i, spec) in specs.iter_mut().enumerate() {
+        fill_args_with_sub_jobs(spec);
+        let b = spec
+            .job
+            .encode(true)
+            .map_err(|error| JobSubmitError::Encode(error.to_string()))?;
+        if i != 0 {
+            sql.push(',');
+        }
+        // Go `strconv.Quote` of an id list (digits and commas).
+        sql.push_str(&format!(
+            "({}, {}, \"{}\", \"{}\", {}, {}, {})",
+            spec.job.id,
+            spec.job.may_need_reorg(),
+            job_schema_ids(spec),
+            job_table_ids(spec),
+            wrap_key_2_string(&b),
+            spec.job.type_.0,
+            spec.job.started()
+        ));
+    }
+    execute(&sql).map_err(JobSubmitError::Sql)
+}
+
+/// Go `fillArgsWithSubJobs`.
+fn fill_args_with_sub_jobs(spec: &mut JobSpec) {
+    if spec.job.type_ != ActionType::ACTION_MULTI_SCHEMA_CHANGE {
+        spec.args.fill_job(&mut spec.job);
+        return;
+    }
+    let version = spec.job.version;
+    if let Some(info) = &spec.job.multi_schema_info {
+        for sub_job in info.read().sub_jobs.iter_deref() {
+            sub_job.write().fill_args(version);
+        }
+    }
+}
+
 /// Plans pinned Go `insertDDLJobs2Table` after IDs and any caller callback
-/// have been applied.
+/// have been applied, as raw rows for a submission without a session (the
+/// bootstrap's).
 pub fn plan_insert_job_rows(
     catalog: &SessionExtendedInfoSchema,
     specs: &mut [JobSpec],
@@ -731,17 +804,7 @@ pub fn plan_insert_job_rows(
     let job_table =
         DdlJobTable::locate(catalog).map_err(|error| JobSubmitError::Encode(error.to_string()))?;
     for spec in specs {
-        if spec.job.type_ == ActionType::ACTION_MULTI_SCHEMA_CHANGE {
-            // Go `fillArgsWithSubJobs`: each sub-job in the parent's version.
-            let version = spec.job.version;
-            if let Some(info) = &spec.job.multi_schema_info {
-                for sub_job in info.read().sub_jobs.iter_deref() {
-                    sub_job.write().fill_args(version);
-                }
-            }
-        } else {
-            spec.args.fill_job(&mut spec.job);
-        }
+        fill_args_with_sub_jobs(spec);
         let reorg = spec.job.may_need_reorg();
         let schema_ids = job_schema_ids(spec);
         let table_ids = job_table_ids(spec);
@@ -778,9 +841,37 @@ where
     F: FnMut(&[JobSpec]) -> Option<Cleanup>,
     Cleanup: FnOnce(),
 {
+    plan_insert_attempt_with(
+        snapshot,
+        catalog,
+        specs,
+        before_insert_with_assigned_ids,
+        None,
+    )
+}
+
+/// [`plan_insert_attempt`] whose job insert is Go's `insertDDLJobs2Table`
+/// run by `execute` (the submitting session's statements) when given; the
+/// jobs are staged as raw rows without it.
+pub fn plan_insert_attempt_with<S, F, Cleanup>(
+    snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
+    specs: &mut [JobSpec],
+    before_insert_with_assigned_ids: &mut F,
+    execute: Option<&mut dyn FnMut(&str) -> Result<(), tidb_terror::MysqlError>>,
+) -> Result<(Vec<BufferMutation>, Option<Cleanup>), JobSubmitError>
+where
+    S: MetaSnapshot,
+    F: FnMut(&[JobSpec]) -> Option<Cleanup>,
+    Cleanup: FnOnce(),
+{
     let mut mutations = plan_assign_global_ids(snapshot, specs)?;
     let cleanup = before_insert_with_assigned_ids(specs);
-    if let Err(error) = plan_insert_job_rows(catalog, specs, &mut mutations) {
+    let inserted = match execute {
+        Some(execute) => insert_ddl_jobs_2_table(execute, specs),
+        None => plan_insert_job_rows(catalog, specs, &mut mutations),
+    };
+    if let Err(error) = inserted {
         if let Some(cleanup) = cleanup {
             cleanup();
         }

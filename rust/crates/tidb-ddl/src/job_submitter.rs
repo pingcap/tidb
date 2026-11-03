@@ -86,6 +86,7 @@ impl JobSubmitter {
     /// Go `JobSubmitter.submitLoop`, started with the DDL.
     pub(crate) fn start<S>(
         opener: Arc<RealOptimisticTransactionOpener<S>>,
+        sess_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
         timeout: Duration,
         ddl_job_done_ch_map: Arc<DdlJobDoneChMap>,
     ) -> Self
@@ -95,7 +96,15 @@ impl JobSubmitter {
         let (limit_job_ch, receiver) = channel();
         std::thread::Builder::new()
             .name("ddl-job-submitter".to_owned())
-            .spawn(move || submit_loop(&receiver, &opener, timeout, &ddl_job_done_ch_map))
+            .spawn(move || {
+                submit_loop(
+                    &receiver,
+                    &opener,
+                    sess_pool.as_ref(),
+                    timeout,
+                    &ddl_job_done_ch_map,
+                )
+            })
             .expect("the DDL job submitter thread starts");
         Self { limit_job_ch }
     }
@@ -119,13 +128,14 @@ impl JobSubmitter {
 fn submit_loop<S: StoreClient>(
     receiver: &Receiver<JobWrapper>,
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     timeout: Duration,
     ddl_job_done_ch_map: &DdlJobDoneChMap,
 ) {
     while let Ok(job_w) = receiver.recv() {
         let mut job_ws = vec![job_w];
         job_ws.extend(receiver.try_iter());
-        add_batch_ddl_jobs(job_ws, opener, timeout, ddl_job_done_ch_map);
+        add_batch_ddl_jobs(job_ws, opener, sess_pool, timeout, ddl_job_done_ch_map);
     }
 }
 
@@ -133,6 +143,7 @@ fn submit_loop<S: StoreClient>(
 fn add_batch_ddl_jobs<S: StoreClient>(
     mut job_ws: Vec<JobWrapper>,
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     timeout: Duration,
     ddl_job_done_ch_map: &DdlJobDoneChMap,
 ) {
@@ -155,6 +166,7 @@ fn add_batch_ddl_jobs<S: StoreClient>(
         .collect();
     let result = crate::real_tikv_ddl::gen_global_ids_and_insert_jobs_with_retry(
         Arc::clone(opener),
+        Some(sess_pool),
         &mut specs,
         timeout,
         |specs| Some(ddl_job_done_ch_map.register_job_done_channels(specs)),

@@ -227,6 +227,7 @@ impl From<tidb_ddl_jobsubmit::JobSubmitError> for DdlPlanError {
             JobSubmitError::Encode(detail) => Self::Encode(detail),
             JobSubmitError::Mutations(error) => Self::Mutations(error),
             JobSubmitError::GlobalIdExhausted { wanted } => Self::GlobalIdExhausted { wanted },
+            JobSubmitError::Sql(error) => Self::from_mysql_error(error),
             refusal => match refusal.to_terror() {
                 Some(go) => Self::Admission(DdlAdmissionError::from_terror(&go)),
                 None => Self::plain_refusal(refusal.to_string()),

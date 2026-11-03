@@ -5737,18 +5737,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     }))
 }
 
-/// Go `util.WrapKey2String`.
-pub(crate) fn wrap_key_2_string(key: &[u8]) -> String {
-    if key.is_empty() {
-        return "''".to_owned();
-    }
-    let mut text = String::with_capacity(2 + key.len() * 2);
-    text.push_str("0x");
-    for byte in key {
-        text.push_str(&format!("{byte:02x}"));
-    }
-    text
-}
+pub(crate) use tidb_ddl_jobsubmit::wrap_key_2_string;
 
 /// Go `updateDDLJob2Table`: `update mysql.tidb_ddl_job set job_meta = ...`
 /// through the step's session; a run without one stages the row itself

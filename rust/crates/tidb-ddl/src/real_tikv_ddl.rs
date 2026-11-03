@@ -46,7 +46,7 @@ use tidb_ddl_build::plan_error::DdlPlanError;
 use tidb_ddl_build::table_info_build::DdlAdmissionError;
 
 use tidb_store_driver_txn::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
-use tidb_ddl_jobsubmit::{finish_insert_attempt, plan_insert_attempt};
+use tidb_ddl_jobsubmit::finish_insert_attempt;
 use tidb_ddl_systable::ddl_job_table::DdlJobTable;
 use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
@@ -1064,6 +1064,7 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
 /// rows, and commit the allocation and inserts atomically.
 pub fn gen_global_ids_and_insert_jobs_with_retry<S, F, Cleanup>(
     opener: Arc<RealOptimisticTransactionOpener<S>>,
+    sess_pool: Option<&dyn tidb_ddl_build::session_pool::DdlSessionPool>,
     specs: &mut [tidb_ddl_jobsubmit::JobSpec],
     timeout: Duration,
     mut before_insert_with_assigned_ids: F,
@@ -1080,6 +1081,7 @@ where
             timeout,
             tidb_store_driver_txn::session_commit_protocol::bootstrap_commit_protocol(),
         )?;
+        let buffer = MutationBuffer::new();
         let lock_outcome =
             match transaction.lock_keys(vec![tidb_meta::key::next_global_id_kv_key()]) {
                 Ok(outcome) => outcome,
@@ -1111,6 +1113,9 @@ where
                 return Err(ClusterDdlError::NotCommitted(error.message));
             }
         };
+        // Go `ddlSe`: the job insert is the submitting session's statement
+        // in this transaction (reading at its for-update timestamp, as Go's
+        // snapshot does).
         let planned = (|| -> Result<_, ClusterDdlError> {
             let mut snapshot = SnapshotMetaSnapshot::new(
                 transaction
@@ -1118,11 +1123,31 @@ where
                     .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
             );
             let catalog = load_info_schema(&mut snapshot).map_err(DdlPlanError::from)?;
-            plan_insert_attempt(
+            let mut ddl_se = match sess_pool.filter(|sess_pool| sess_pool.has_step_sessions()) {
+                Some(sess_pool) => Some(
+                    sess_pool
+                        .open_step_session(for_update_ts, &buffer)
+                        .map_err(DdlPlanError::from_mysql_error)?,
+                ),
+                None => None,
+            };
+            // The session's BEGIN found an empty buffer; bound now, the
+            // statement stages into the transaction that holds the lock (an
+            // empty handle attaches without replacing its locks).
+            transaction.bind_mutation_buffer(&buffer);
+            let mut execute = ddl_se.as_mut().map(|ddl_se| {
+                move |sql: &str| -> Result<(), tidb_terror::MysqlError> {
+                    ddl_se.execute(sql, &[]).map(|_| ())
+                }
+            });
+            tidb_ddl_jobsubmit::plan_insert_attempt_with(
                 &mut snapshot,
                 &catalog,
                 specs,
                 &mut before_insert_with_assigned_ids,
+                execute.as_mut().map(|execute| {
+                    execute as &mut dyn FnMut(&str) -> Result<(), tidb_terror::MysqlError>
+                }),
             )
             .map_err(Into::into)
         })();
@@ -1133,7 +1158,6 @@ where
                 return Err(error);
             }
         };
-        let buffer = MutationBuffer::new();
         match finish_insert_attempt(transaction.commit_with(&buffer, mutations), cleanup) {
             Ok(_) => return Ok(()),
             Err(error) => {
@@ -1205,6 +1229,7 @@ pub fn submit_check_constraint_job_with_retry<S: StoreClient>(
     // Go `BeforeInsertWithAssignedIDs: s.registerJobDoneChannels`.
     gen_global_ids_and_insert_jobs_with_retry(
         opener,
+        None,
         std::slice::from_mut(&mut spec),
         timeout,
         |specs| done_channels.map(|channels| channels.register_job_done_channels(specs)),
@@ -1686,6 +1711,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
     }
     gen_global_ids_and_insert_jobs_with_retry(
         opener,
+        backfiller.session_pool().as_deref(),
         std::slice::from_mut(&mut spec),
         timeout,
         |specs| done_channels.map(|channels| channels.register_job_done_channels(specs)),

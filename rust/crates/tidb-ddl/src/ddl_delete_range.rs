@@ -28,7 +28,7 @@ use tidb_infoschema::cluster_catalog::MetaSnapshot;
 use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_ddl_build::plan_error::DdlPlanError;
 use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
-use tidb_syssession::system_row_write::{delete_row, insert_row, update_row, RowValues};
+use tidb_syssession::system_row_write::{insert_row, RowValues};
 
 /// Go `batchInsertDeleteRangeSize`: drop schema records its tables in
 /// batches of this many.
@@ -554,10 +554,109 @@ impl DelRangeExecWrapper for StagedDelRanges {
     }
 }
 
+/// Go `pkg/ddl/util`'s `loadDeleteRangeSQL`.
+const LOAD_DELETE_RANGE_SQL: &str =
+    "SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%n WHERE ts < %?";
+/// Go `recordDoneDeletedRangeSQL`.
+const RECORD_DONE_DELETED_RANGE_SQL: &str = "INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?";
+/// Go `completeDeleteRangeSQL`.
+const COMPLETE_DELETE_RANGE_SQL: &str =
+    "DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?";
+/// Go `updateDeleteRangeSQL`.
+const UPDATE_DELETE_RANGE_SQL: &str = "UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?";
+
+/// Go `util.LoadDeleteRanges`: the `gc_delete_range` rows below
+/// `safe_point`.
+///
+/// # Errors
+///
+/// The statement's error, or a key that is not hex.
+pub fn load_delete_ranges(
+    sctx: &mut dyn tidb_ddl_build::session_pool::StepSqlSession,
+    safe_point: u64,
+) -> Result<Vec<DelRangeTask>, tidb_terror::MysqlError> {
+    use tidb_sqlescape::SqlArg;
+    let rows = sctx.execute(
+        LOAD_DELETE_RANGE_SQL,
+        &[
+            SqlArg::from("gc_delete_range"),
+            SqlArg::Unsigned(safe_point),
+        ],
+    )?;
+    let int = |datum: &Datum| match datum {
+        Datum::Int(value) => *value,
+        Datum::UInt(value) => *value as i64,
+        _ => 0,
+    };
+    let key = |datum: &Datum| {
+        hex_decode(datum.go_bytes()).ok_or_else(|| {
+            tidb_terror::MysqlError::unknown("encoding/hex: invalid byte in a delete range key")
+        })
+    };
+    rows.iter()
+        .map(|row| {
+            Ok(DelRangeTask {
+                job_id: int(&row[0]),
+                element_id: int(&row[1]),
+                start_key: key(&row[2])?,
+                end_key: key(&row[3])?,
+            })
+        })
+        .collect()
+}
+
+/// Go `util.CompleteDeleteRange`: in one transaction, the range recorded in
+/// `gc_delete_range_done` (when asked) and removed from `gc_delete_range`.
+///
+/// # Errors
+///
+/// A statement's error.
+pub fn complete_delete_range(
+    sctx: &mut dyn tidb_ddl_build::session_pool::StepSqlSession,
+    dr: &DelRangeTask,
+    need_to_record_done: bool,
+) -> Result<(), tidb_terror::MysqlError> {
+    use tidb_sqlescape::SqlArg;
+    let arguments = [SqlArg::Signed(dr.job_id), SqlArg::Signed(dr.element_id)];
+    sctx.execute("BEGIN", &[])?;
+    if need_to_record_done {
+        sctx.execute(RECORD_DONE_DELETED_RANGE_SQL, &arguments)?;
+    }
+    // Go `RemoveFromGCDeleteRange`.
+    sctx.execute(COMPLETE_DELETE_RANGE_SQL, &arguments)?;
+    sctx.execute("COMMIT", &[])?;
+    Ok(())
+}
+
+/// Go `util.UpdateDeleteRange`: the range's start key moves on, if it is
+/// still `old_start_key`.
+///
+/// # Errors
+///
+/// The statement's error.
+pub fn update_delete_range(
+    sctx: &mut dyn tidb_ddl_build::session_pool::StepSqlSession,
+    dr: &DelRangeTask,
+    new_start_key: &[u8],
+    old_start_key: &[u8],
+) -> Result<(), tidb_terror::MysqlError> {
+    use tidb_sqlescape::SqlArg;
+    let new_start_key_hex = hex_encode(new_start_key);
+    let old_start_key_hex = hex_encode(old_start_key);
+    sctx.execute(
+        UPDATE_DELETE_RANGE_SQL,
+        &[
+            SqlArg::from(new_start_key_hex.as_str()),
+            SqlArg::Signed(dr.job_id),
+            SqlArg::Signed(dr.element_id),
+            SqlArg::from(old_start_key_hex.as_str()),
+        ],
+    )?;
+    Ok(())
+}
+
 /// One stored `gc_delete_range` / `gc_delete_range_done` row.
 pub struct StoredDelRange {
-    key: Vec<u8>,
-    values: RowValues,
     /// The range.
     pub task: DelRangeTask,
     /// `ts`.
@@ -670,12 +769,7 @@ impl DelRangeTable {
                 start_key: hex_column("start_key")?,
                 end_key: hex_column("end_key")?,
             };
-            rows.push(StoredDelRange {
-                key: key.to_vec(),
-                values: row.into_values(),
-                task,
-                ts,
-            });
+            rows.push(StoredDelRange { task, ts });
         }
         Ok(rows)
     }
@@ -711,25 +805,6 @@ impl DelRangeTable {
             return Ok(Vec::new());
         }
         insert_row(&self.table, row_id, &self.values(task, ts)?).map_err(text)
-    }
-
-    /// Go `updateDeleteRangeSQL`: the row's start key moves on.
-    pub fn update_start_key_mutations(
-        &self,
-        row: &StoredDelRange,
-        start_key: &[u8],
-    ) -> Result<Vec<BufferMutation>, String> {
-        let mut values = row.values.clone();
-        values.insert(
-            self.column_id("start_key")?,
-            Datum::Bytes(hex_encode(start_key).into_bytes()),
-        );
-        update_row(&self.table, &row.key, &row.values, &values).map_err(text)
-    }
-
-    /// Go `completeDeleteRangeSQL`.
-    pub fn delete_mutations(&self, row: &StoredDelRange) -> Result<Vec<BufferMutation>, String> {
-        delete_row(&self.table, &row.key, &row.values).map_err(text)
     }
 }
 

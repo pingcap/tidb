@@ -136,6 +136,18 @@ pub trait DdlSessionPool: Send + Sync {
         ))
     }
 
+    /// Go `sessPool.Get()`: a system session of the pool whose statements
+    /// run in its own transactions.
+    ///
+    /// # Errors
+    ///
+    /// The session's failure to open.
+    fn open_sql_session(&self) -> Result<Box<dyn StepSqlSession>, tidb_terror::MysqlError> {
+        Err(tidb_terror::MysqlError::unknown(
+            "this DDL session pool has no sessions",
+        ))
+    }
+
     /// Whether [`Self::open_step_session`] can serve a step now: a node's
     /// pool can once its domain is bound (the node builds the pool before
     /// the domain exists); a step without one stages its system-table rows

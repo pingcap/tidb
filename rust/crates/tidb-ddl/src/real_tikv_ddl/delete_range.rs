@@ -26,7 +26,6 @@ use tidb_txnkv::transaction::BufferMutation;
 use super::add_index_reorg::reorg_transaction;
 use super::*;
 use tidb_infoschema::cluster_catalog::PagedMetaSnapshot;
-use crate::ddl_delete_range::{DelRangeTable, StoredDelRange};
 
 /// Go `delBatchSize`.
 const DEL_BATCH_SIZE: usize = 65536;
@@ -53,7 +52,7 @@ impl DelRangeEmulator {
 pub fn start_del_range_emulator<S>(
     opener: Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
-    row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
+    sess_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
 ) -> Result<DelRangeEmulator, String>
 where
     S: StoreClient,
@@ -61,7 +60,7 @@ where
     let (wake, woken) = sync_channel(DEL_BACK_LOG);
     std::thread::Builder::new()
         .name("ddl-del-range-emulator".to_owned())
-        .spawn(move || run_emulator(&opener, timeout, &row_ids, &woken))
+        .spawn(move || run_emulator(&opener, timeout, sess_pool.as_ref(), &woken))
         .map_err(|error| error.to_string())?;
     Ok(DelRangeEmulator { wake })
 }
@@ -69,14 +68,14 @@ where
 fn run_emulator<S>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
-    row_ids: &Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     woken: &Receiver<()>,
 ) where
     S: StoreClient,
 {
     while woken.recv().is_ok() {
         // Go `terror.Log(errors.Trace(err))`.
-        if let Err(error) = do_del_range_work(opener, timeout, row_ids) {
+        if let Err(error) = do_del_range_work(opener, timeout, sess_pool) {
             tidb_log::error(
                 "encountered error",
                 &[
@@ -93,37 +92,40 @@ fn run_emulator<S>(
     }
 }
 
-struct DelRangeTables {
-    ranges: DelRangeTable,
-    done: DelRangeTable,
+fn log_error(message: &str, error: &dyn std::fmt::Display) {
+    tidb_ddl_logutil::ddl_logger().error(
+        message,
+        &[tidb_log::Field::new(
+            "error",
+            tidb_log::Value::Str(error.to_string()),
+        )],
+    );
 }
 
-/// Go `delRange.doDelRangeWork`: every recorded range, worked off in turn.
+/// Go `delRange.doDelRangeWork`: every recorded range, worked off in turn,
+/// on one session of the pool.
 pub fn do_del_range_work<S>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
-    row_ids: &Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
 ) -> Result<(), ClusterDdlError>
 where
     S: StoreClient,
 {
-    let (tables, rows) = reorg_transaction(opener, timeout, |meta, _, _, _| {
-        let catalog = load_info_schema(meta).map_err(DdlPlanError::from)?;
-        let tables = DelRangeTables {
-            ranges: DelRangeTable::locate(&catalog, "gc_delete_range")
-                .map_err(ClusterDdlError::Backfill)?,
-            done: DelRangeTable::locate(&catalog, "gc_delete_range_done")
-                .map_err(ClusterDdlError::Backfill)?,
-        };
-        // Go `LoadDeleteRanges(ctx, sctx, math.MaxInt64)`.
-        let rows = tables
-            .ranges
-            .load(meta, i64::MAX as u64)
-            .map_err(ClusterDdlError::Backfill)?;
-        Ok(((tables, rows), Vec::new()))
+    let mut sctx = sess_pool.open_sql_session().map_err(|error| {
+        log_error("delRange emulator get session failed", &error);
+        DdlPlanError::from_mysql_error(error)
     })?;
-    for row in &rows {
-        do_task(opener, timeout, row_ids, &tables, row)?;
+    let ranges = crate::ddl_delete_range::load_delete_ranges(sctx.as_mut(), i64::MAX as u64)
+        .map_err(|error| {
+            log_error("delRange emulator load tasks failed", &error);
+            DdlPlanError::from_mysql_error(error)
+        })?;
+    for r in &ranges {
+        if let Err(error) = do_task(opener, timeout, sctx.as_mut(), r) {
+            log_error("delRange emulator do task failed", &error);
+            return Err(error);
+        }
     }
     Ok(())
 }
@@ -132,14 +134,12 @@ where
 fn do_task<S>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
-    row_ids: &Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
-    tables: &DelRangeTables,
-    row: &StoredDelRange,
+    sctx: &mut dyn tidb_ddl_build::session_pool::StepSqlSession,
+    task: &crate::ddl_delete_range::DelRangeTask,
 ) -> Result<(), ClusterDdlError>
 where
     S: StoreClient,
 {
-    let task = &row.task;
     let mut old_start_key = task.start_key.clone();
     loop {
         // One transaction deletes up to `delBatchSize` keys.
@@ -162,96 +162,20 @@ where
             Ok((Some(next), mutations))
         })?;
         let Some(next_start_key) = next_start_key else {
-            complete_delete_range(opener, timeout, row_ids, tables, task)?;
+            if let Err(error) = crate::ddl_delete_range::complete_delete_range(sctx, task, true) {
+                log_error("delRange emulator complete task failed", &error);
+                return Err(DdlPlanError::from_mysql_error(error).into());
+            }
             return Ok(());
         };
-        // Go `UpdateDeleteRange`: `UPDATE ... SET start_key = new WHERE
-        // job_id, element_id AND start_key = old`; a failure is only logged.
-        let update = reorg_transaction(opener, timeout, |meta, _, _, _| {
-            let rows = tables
-                .ranges
-                .load(meta, u64::MAX)
-                .map_err(ClusterDdlError::Backfill)?;
-            let mut mutations = Vec::new();
-            if let Some(stored) = rows.iter().find(|stored| {
-                stored.task.job_id == task.job_id
-                    && stored.task.element_id == task.element_id
-                    && stored.task.start_key == old_start_key
-            }) {
-                mutations.extend(
-                    tables
-                        .ranges
-                        .update_start_key_mutations(stored, &next_start_key)
-                        .map_err(ClusterDdlError::Backfill)?,
-                );
-            }
-            Ok(((), mutations))
-        });
-        if let Err(error) = update {
-            tidb_ddl_logutil::ddl_logger().error(
-                "delRange emulator update task failed",
-                &[tidb_log::Field::new(
-                    "error",
-                    tidb_log::Value::Str(error.to_string()),
-                )],
-            );
+        if let Err(error) = crate::ddl_delete_range::update_delete_range(
+            sctx,
+            task,
+            &next_start_key,
+            &old_start_key,
+        ) {
+            log_error("delRange emulator update task failed", &error);
         }
         old_start_key = next_start_key;
     }
-}
-
-/// Go `util.CompleteDeleteRange(sctx, dr, true)`: in one transaction, the
-/// row copied into `gc_delete_range_done` (`INSERT IGNORE ... SELECT`) and
-/// removed from `gc_delete_range`.
-fn complete_delete_range<S>(
-    opener: &Arc<RealOptimisticTransactionOpener<S>>,
-    timeout: Duration,
-    row_ids: &Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
-    tables: &DelRangeTables,
-    task: &crate::ddl_delete_range::DelRangeTask,
-) -> Result<(), ClusterDdlError>
-where
-    S: StoreClient,
-{
-    reorg_transaction(opener, timeout, |meta, _, _, _| {
-        let rows = tables
-            .ranges
-            .load(meta, u64::MAX)
-            .map_err(ClusterDdlError::Backfill)?;
-        let mut mutations = Vec::new();
-        for stored in rows.iter().filter(|stored| {
-            stored.task.job_id == task.job_id && stored.task.element_id == task.element_id
-        }) {
-            let done = tables
-                .done
-                .load(meta, u64::MAX)
-                .map_err(ClusterDdlError::Backfill)?;
-            let id = row_ids
-                .row_allocator_for(tables.done.db_id(), tables.done.table())
-                .alloc_next()
-                .map_err(|error| {
-                    ClusterDdlError::Backfill(format!(
-                        "mysql.gc_delete_range_done's row-ID allocator: {error}"
-                    ))
-                })?;
-            let row_id = i64::try_from(id).map_err(|_| {
-                ClusterDdlError::Backfill(
-                    "mysql.gc_delete_range_done's row-ID allocator overflowed".to_owned(),
-                )
-            })?;
-            mutations.extend(
-                tables
-                    .done
-                    .insert_ignore_mutations(&done, &stored.task, stored.ts, row_id)
-                    .map_err(ClusterDdlError::Backfill)?,
-            );
-            mutations.extend(
-                tables
-                    .ranges
-                    .delete_mutations(stored)
-                    .map_err(ClusterDdlError::Backfill)?,
-            );
-        }
-        Ok(((), mutations))
-    })
 }
