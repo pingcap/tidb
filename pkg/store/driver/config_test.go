@@ -15,8 +15,11 @@
 package driver
 
 import (
+	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/kv"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/config"
@@ -46,4 +49,43 @@ func TestSetDefaultAndOptions(t *testing.T) {
 		apply(pdOpt)
 	}
 	require.Equal(t, metricscommon.GetConstLabels(), pdOpt.MetricsLabels)
+}
+
+func TestOpenKeyspaceRequirement(t *testing.T) {
+	// Fail PD initialization locally so accepted inputs need no running cluster.
+	missingCert := filepath.Join(t.TempDir(), "missing-cert.pem")
+	security := config.Security{ClusterSSLCert: missingCert, ClusterSSLKey: missingCert}
+	t.Cleanup(config.UpdateGlobal(func(cfg *config.Config) { cfg.Security = security }))
+	d := &TiKVDriver{}
+	for _, entry := range []struct {
+		name string
+		open func(string) (kv.Storage, error)
+	}{
+		{name: "Open", open: d.Open},
+		{name: "OpenWithOptions", open: func(path string) (kv.Storage, error) {
+			return d.OpenWithOptions(path, WithSecurity(security))
+		}},
+	} {
+		t.Run(entry.name, func(t *testing.T) {
+			for _, tc := range []struct {
+				name, path  string
+				hasKeyspace bool
+			}{
+				{name: "omitted", path: "tikv://127.0.0.1:1"},
+				{name: "empty", path: "tikv://127.0.0.1:1?keyspaceName="},
+				{name: "named", path: "tikv://127.0.0.1:1?keyspaceName=ks42", hasKeyspace: true},
+				{name: "default", path: "tikv://127.0.0.1:1?keyspaceName=DEFAULT", hasKeyspace: true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					store, err := entry.open(tc.path)
+					require.Nil(t, store)
+					if kerneltype.IsNextGen() && !tc.hasKeyspace {
+						require.EqualError(t, err, "nextgen TiKV storage requires a keyspace name")
+					} else {
+						require.ErrorContains(t, err, missingCert, "accepted inputs must reach PD initialization")
+					}
+				})
+			}
+		})
+	}
 }

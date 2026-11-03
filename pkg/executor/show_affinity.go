@@ -71,10 +71,7 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 
 			switch tblInfo.Affinity.Level {
 			case ast.TableAffinityLevelTable:
-				groupID, err := ddl.GetTableAffinityGroupID(codec, tblInfo.ID)
-				if err != nil {
-					return errors.Trace(err)
-				}
+				groupID := ddl.GetTableAffinityGroupID(codec, tblInfo.ID)
 				infos = append(infos, tablePartitionInfo{
 					dbName:        dbName,
 					tableName:     tblInfo.Name.O,
@@ -85,10 +82,7 @@ func (e *ShowExec) fetchShowAffinity(ctx context.Context) error {
 			case ast.TableAffinityLevelPartition:
 				if tblInfo.Partition != nil {
 					for _, def := range tblInfo.Partition.Definitions {
-						groupID, err := ddl.GetPartitionAffinityGroupID(codec, tblInfo.ID, def.ID)
-						if err != nil {
-							return errors.Trace(err)
-						}
+						groupID := ddl.GetPartitionAffinityGroupID(codec, tblInfo.ID, def.ID)
 						infos = append(infos, tablePartitionInfo{
 							dbName:        dbName,
 							tableName:     tblInfo.Name.O,

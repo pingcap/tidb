@@ -27,6 +27,7 @@ import (
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -133,6 +134,9 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 	pdAddrsInConfigPath, disableGC, keyspaceName, err := config.ParsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if kerneltype.IsNextGen() && keyspaceName == "" {
+		return nil, errors.New("nextgen TiKV storage requires a keyspace name")
 	}
 
 	var (
