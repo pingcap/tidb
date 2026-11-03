@@ -150,10 +150,15 @@ checksums).
   `storage.UpdateStatsMeta`, then "flush stats" history) and
   `DumpColStatsUsageEntries` on the pool; `sys_session::StatsPool` is the
   one statistics-pool seam for the domain and the session.
-- [ ] Rest of M2/M3: the DDL statistics subscriber (insert / version /
-  global-ID / exchange-partition / delta rows and its "schema change"
-  history row, in the notifier's transaction) and the historical-stats
-  reader still use row planners. `plan_stats_write` /
+- [x] (2026-11-03) The DDL statistics subscriber: Go
+  `pkg/statistics/handle/ddl` as `tidb-stats-handle-ddl`, its storage
+  statements (`InsertTableStats2KV`, `InsertColStats2KV`, `UpdateStatsVersion`,
+  `ChangeGlobalStatsID`, `StatsMetaCountAndModifyCount`) on the notifier's
+  session in its transaction; `StatsSessionContext::affected_rows` is Go
+  `StmtCtx.AffectedRows`. The auto-analyze queue reads locked tables with
+  `QueryLockedTables`.
+- [ ] Rest of M2/M3: the historical-stats reader and the statistics
+  loaders still scan rows directly (reads, not writes). `plan_stats_write` /
   `plan_partition_stats_write` / `plan_historical_stats_data_block` remain
   as test seeding fixtures. M4 (global sysvars, accounts).
 

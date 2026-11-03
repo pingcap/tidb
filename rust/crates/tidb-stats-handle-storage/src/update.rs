@@ -141,3 +141,39 @@ pub fn update_stats_meta<C: StatsSessionContext + ?Sized>(
     }
     Ok(())
 }
+
+/// Go `UpdateStatsVersion`: every table's statistics re-versioned (after a
+/// cluster flashback).
+pub fn update_stats_version<C: StatsSessionContext + ?Sized>(sctx: &C) -> Result<(), SqlExecError> {
+    let start_ts = get_start_ts(sctx)?;
+    exec_rows(sctx, "update mysql.stats_meta set version = %?", &[SqlArg::Unsigned(start_ts)])?;
+    exec_rows(sctx, "update mysql.stats_histograms set version = %?", &[SqlArg::Unsigned(start_ts)])?;
+    Ok(())
+}
+
+/// Go `changeGlobalStatsTables`.
+const CHANGE_GLOBAL_STATS_TABLES: [&str; 6] = [
+    "stats_meta",
+    "stats_top_n",
+    "stats_fm_sketch",
+    "stats_buckets",
+    "stats_histograms",
+    "column_stats_usage",
+];
+
+/// Go `ChangeGlobalStatsID`: a table's statistics follow its new ID (the
+/// data did not change).
+pub fn change_global_stats_id<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    from: i64,
+    to: i64,
+) -> Result<(), SqlExecError> {
+    for table in CHANGE_GLOBAL_STATS_TABLES {
+        exec_rows(
+            sctx,
+            &format!("update mysql.{table} set table_id = %? where table_id = %?"),
+            &[SqlArg::Signed(to), SqlArg::Signed(from)],
+        )?;
+    }
+    Ok(())
+}

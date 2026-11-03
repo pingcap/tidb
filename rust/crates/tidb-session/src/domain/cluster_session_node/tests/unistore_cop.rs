@@ -2288,23 +2288,25 @@ fn global_binding_commands_commit_outside_the_user_transaction() {
     }
 }
 
+/// Go `HandleNextDDLEventWithTxn`'s statistics half: the handler on a
+/// pooled system session, in one transaction.
 fn handle_stats_schema_change(session: &mut Session, event: &SchemaChangeEvent) {
-    session
-        .node_conn()
-        .control_transaction("BEGIN PESSIMISTIC")
-        .expect("stats subscriber transaction begins");
-    let staged = session.node_conn().stage_stats_notifier_event(event);
-    if let Err(error) = staged {
-        session
-            .node_conn()
-            .control_transaction("ROLLBACK")
-            .expect("failed stats subscriber transaction rolls back");
-        panic!("stats subscriber handles the source event: {error:?}");
-    }
-    session
-        .node_conn()
-        .control_transaction("COMMIT")
-        .expect("stats subscriber transaction commits");
+    let factory = session
+        .node()
+        .domain
+        .binding_session_factory
+        .upgrade()
+        .expect("the node's domain is live");
+    let pool = factory.advanced_sys_session_pool();
+    tidb_stats_handle_util::call_with_sctx(
+        pool.as_ref(),
+        |sctx| {
+            sctx.handle_stats_ddl_event(event)
+                .map_err(tidb_domain_core::sys_session::stats_session_error)
+        },
+        &[tidb_stats_handle_util::FLAG_WRAP_TXN],
+    )
+    .unwrap_or_else(|error| panic!("stats subscriber handles the source event: {error}"));
 }
 
 // Go statistics DDL tests explicitly HandleNextDDLEventWithTxn before reading

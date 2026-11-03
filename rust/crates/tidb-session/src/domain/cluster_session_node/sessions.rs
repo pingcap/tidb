@@ -895,6 +895,12 @@ impl tidb_syssession::SessionContext for ClusterStatsSessionContext {
 }
 
 impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext {
+    /// Go `StmtCtx.AffectedRows()`: the last statement's OK-packet count.
+    fn affected_rows(&self) -> u64 {
+        self.with_session(|session| Ok(session.node.ok_packet.affected_rows))
+            .unwrap_or(0)
+    }
+
     fn global_system_var(&self, name: &str) -> Result<String, tidb_sqlexec::SqlExecError> {
         self.state
             .global_vars
@@ -1113,15 +1119,38 @@ impl tidb_domain_core::sys_session::DomainSysSession for ClusterStatsSessionCont
             .map_err(|error| error.to_string())
     }
 
+    /// Go `ddlHandlerImpl.HandleDDLEvent`'s subscriber, its statements on
+    /// this (the notifier's) session in its transaction.
     fn handle_stats_ddl_event(
         &self,
         event: &tidb_ddl_notifier::SchemaChangeEvent,
     ) -> Result<(), String> {
-        self.with_session(|session| {
-            session
-                .stage_stats_notifier_event(event)
-                .map_err(|error| stats_session_error(error.message))
-        })
+        let (stats, catalog) = self
+            .with_session(|session| {
+                let domain = &session.node.domain;
+                Ok((Arc::clone(&domain.stats), domain.catalog.get_latest()))
+            })
+            .map_err(|error| error.to_string())?;
+        let stats = stats.load();
+        tidb_stats_handle_ddl::subscriber::Subscriber {
+            stats_initialized: &|id| {
+                stats
+                    .get(&id)
+                    .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
+                    .is_some_and(|table| table.is_initialized())
+            },
+            schema_name_of: &|table| {
+                // Go `infoschema.SchemaByTable`.
+                if table.db_id > 0 {
+                    catalog
+                        .schema_by_id(table.db_id)
+                        .map(|schema| schema.read().name.original().to_owned())
+                } else {
+                    catalog.table_by_id(table.id).map(|(schema, _)| schema.to_owned())
+                }
+            },
+        }
+        .handle(self, event)
         .map_err(|error| error.to_string())
     }
 

@@ -96,6 +96,8 @@ pub trait StatsSessionContext: SessionContext {
     fn set_statement_time_zone(&self, value: &str);
     /// Go `Txn(true).StartTS`.
     fn transaction_start_ts(&self, active: bool) -> Result<u64, SqlExecError>;
+    /// Go `StmtCtx.AffectedRows()`: the rows the last statement changed.
+    fn affected_rows(&self) -> u64;
     /// The value stored under Go `mock.RestrictedSQLExecutorKey`.
     fn mock_restricted_sql_executor(&self) -> Option<Arc<MockRestrictedSqlExecutor>> {
         None
@@ -619,6 +621,10 @@ mod tests {
     }
 
     impl StatsSessionContext for MockContext {
+        fn affected_rows(&self) -> u64 {
+            0
+        }
+
         fn global_system_var(&self, name: &str) -> Result<String, SqlExecError> {
             self.reads.lock().unwrap().push(name.to_owned());
             self.globals

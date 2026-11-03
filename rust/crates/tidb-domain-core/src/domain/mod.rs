@@ -2906,10 +2906,20 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::PriorityQueueSource
         let statistics = factory.stats.load();
         let snapshot = factory.transactions.open_snapshot("default")?;
         let current_ts = snapshot.start_ts();
+        // Go `statsHandle.GetLockedTables` on a statistics session.
         let locked_table_ids = {
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            tidb_stats_handle_storage::cluster_stats_write::load_stats_locked_table_ids(&mut snapshot, &catalog)
-                .map_err(|error| error.to_string())?
+            let pool = factory.stats_session_pool()?;
+            let mut locked = std::collections::BTreeSet::new();
+            tidb_stats_handle_util::call_with_sctx(
+                pool.as_ref(),
+                |sctx| {
+                    locked = tidb_stats_handle_lockstats::session_stats_lock::query_locked_tables(sctx)?;
+                    Ok(())
+                },
+                &[],
+            )
+            .map_err(|error| error.to_string())?;
+            locked.into_iter().collect::<std::collections::HashSet<i64>>()
         };
         let ratio = factory
             .global_vars

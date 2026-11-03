@@ -6837,6 +6837,7 @@ dependencies = [
  "tidb-stats-handle-autoanalyze-exec",
  "tidb-stats-handle-autoanalyze-priorityqueue",
  "tidb-stats-handle-cache",
+ "tidb-stats-handle-ddl",
  "tidb-stats-handle-history",
  "tidb-stats-handle-lockstats",
  "tidb-stats-handle-logutil",
@@ -7272,6 +7273,25 @@ name = "tidb-stats-handle-cache-metrics"
 version = "0.0.0"
 dependencies = [
  "prometheus 0.14.0",
+]
+
+[[package]]
+name = "tidb-stats-handle-ddl"
+version = "0.0.0"
+dependencies = [
+ "tidb-ddl-notifier",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-model",
+ "tidb-sqlescape",
+ "tidb-sqlexec",
+ "tidb-stats-handle-history",
+ "tidb-stats-handle-lockstats",
+ "tidb-stats-handle-logutil",
+ "tidb-stats-handle-storage",
+ "tidb-stats-handle-util",
+ "tidb-vardef",
+ "tidb-variable",
 ]
 
 [[package]]

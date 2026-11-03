@@ -89,6 +89,7 @@ tidb-stats-handle-autoanalyze = { path = "../tidb-stats-handle-autoanalyze" }
 tidb-ddl-resourcegroup = { path = "../tidb-ddl-resourcegroup" }
 tidb-table = { path = "../tidb-table" }
 tidb-stats-handle-lockstats = { path = "../tidb-stats-handle-lockstats" }
+tidb-stats-handle-ddl = { path = "../tidb-stats-handle-ddl" }
 tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }
 tidb-stats-handle-syncload = { path = "../tidb-stats-handle-syncload" }
 tidb-autoid = { path = "../tidb-autoid" }

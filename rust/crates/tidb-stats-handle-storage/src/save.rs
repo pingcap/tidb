@@ -22,7 +22,9 @@ use tidb_sqlexec::SqlExecError;
 use tidb_stats_handle_util::{exec_rows, get_start_ts, StatsSessionContext};
 
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
-use crate::cluster_stats_write::{save_stats_item_sql, LastAnalyzedAt};
+use crate::cluster_stats_write::{bound_blob, save_stats_item_sql, LastAnalyzedAt};
+use tidb_model::ColumnInfo;
+use tidb_model::table_info::TableInfo;
 
 /// Go `statistics.Version2`.
 pub const STATS_VERSION_2: i64 = 2;
@@ -322,4 +324,151 @@ pub fn save_meta_to_storage<C: StatsSessionContext + ?Sized>(
     };
     exec(sctx, &sql, &[])?;
     Ok(version)
+}
+
+/// Go `InsertTableStats2KV`: a new physical table's empty `stats_meta` row
+/// and one empty histogram row per column and index; returns the start TS.
+pub fn insert_table_stats_2_kv<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    info: &TableInfo,
+    physical_id: i64,
+) -> Result<u64, SqlExecError> {
+    let start_ts = get_start_ts(sctx)?;
+    exec(
+        sctx,
+        "insert ignore into mysql.stats_meta (version, table_id, last_stats_histograms_version) values(%?, %?, %?)",
+        &[
+            SqlArg::Unsigned(start_ts),
+            SqlArg::Signed(physical_id),
+            SqlArg::Unsigned(start_ts),
+        ],
+    )?;
+    for column in info.columns.iter_deref() {
+        exec(
+            sctx,
+            "insert ignore into mysql.stats_histograms\n\t\t\t\t(table_id, is_index, hist_id, distinct_count, version)\n\t\t\tvalues (%?, 0, %?, 0, %?)",
+            &[
+                SqlArg::Signed(physical_id),
+                SqlArg::Signed(column.read().id),
+                SqlArg::Unsigned(start_ts),
+            ],
+        )?;
+    }
+    for index in info.indices.iter_deref() {
+        exec(
+            sctx,
+            "insert ignore into mysql.stats_histograms\n\t\t\t\t(table_id, is_index, hist_id, distinct_count, version)\n\t\t\tvalues(%?, 1, %?, 0, %?)",
+            &[
+                SqlArg::Signed(physical_id),
+                SqlArg::Signed(index.read().id),
+                SqlArg::Unsigned(start_ts),
+            ],
+        )?;
+    }
+    Ok(start_ts)
+}
+
+/// Go `InsertColStats2KV`: an added (or modified) column's histogram row
+/// for a table that has statistics -- a NULL default counts every row as
+/// NULL, a non-NULL one is a single default-value bucket -- and the table
+/// re-versioned when any row was new; returns the start TS.
+pub fn insert_col_stats_2_kv<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    table_name: &str,
+    physical_id: i64,
+    col_infos: &[ColumnInfo],
+) -> Result<u64, SqlExecError> {
+    let start_ts = get_start_ts(sctx)?;
+    // The table's count fixes the bucket's count and repeats.
+    let (rows, _) = exec_rows(
+        sctx,
+        "select count from mysql.stats_meta where table_id = %?",
+        &[SqlArg::Signed(physical_id)],
+    )?;
+    // No row: this table has no statistics.
+    let Some(row) = rows.first() else {
+        return Ok(start_ts);
+    };
+    let count = datum_i64(row.first());
+    let mut has_stats_update = false;
+    for col_info in col_infos {
+        if col_info.is_virtual_generated() {
+            // Virtual generated columns have no column stats: the same zero
+            // placeholder as the create-table path.
+            exec(
+                sctx,
+                "insert ignore into mysql.stats_histograms\n\t\t\t\t\t(version, table_id, is_index, hist_id, distinct_count, null_count)\n\t\t\t\tvalues (%?, %?, 0, %?, 0, 0)",
+                &[
+                    SqlArg::Unsigned(start_ts),
+                    SqlArg::Signed(physical_id),
+                    SqlArg::Signed(col_info.id),
+                ],
+            )?;
+            has_stats_update |= sctx.affected_rows() > 0;
+            continue;
+        }
+        let value = tidb_table::origin_default::origin_default(col_info, table_name)
+            .map_err(|error| Box::new(error) as SqlExecError)?;
+        if value.is_null() {
+            // Every existing row holds NULL in the new column.
+            exec(
+                sctx,
+                "insert ignore into mysql.stats_histograms\n\t\t\t\t\t(version, table_id, is_index, hist_id, distinct_count, null_count)\n\t\t\t\tvalues (%?, %?, 0, %?, 0, %?)",
+                &[
+                    SqlArg::Unsigned(start_ts),
+                    SqlArg::Signed(physical_id),
+                    SqlArg::Signed(col_info.id),
+                    SqlArg::Signed(count),
+                ],
+            )?;
+            has_stats_update |= sctx.affected_rows() > 0;
+            continue;
+        }
+        // A new histogram row: its distinct count is always one.
+        let total_size = (value.go_bytes().len() as i64).wrapping_mul(count);
+        exec(
+            sctx,
+            "insert ignore into mysql.stats_histograms\n\t\t\t\t(version, table_id, is_index, hist_id, distinct_count, tot_col_size)\n\t\t\tvalues (%?, %?, 0, %?, 1, GREATEST(%?, 0))",
+            &[
+                SqlArg::Unsigned(start_ts),
+                SqlArg::Signed(physical_id),
+                SqlArg::Signed(col_info.id),
+                SqlArg::Signed(total_size),
+            ],
+        )?;
+        // An ANALYZE may have created the histogram before this event:
+        // then the default-value bucket is not inserted.
+        if sctx.affected_rows() == 0 {
+            continue;
+        }
+        has_stats_update = true;
+        let bound = bound_blob(&value).map_err(|error| Box::new(error) as SqlExecError)?;
+        let bound = bound.go_bytes();
+        // The one bucket of this column: the default value.
+        exec(
+            sctx,
+            "insert ignore into mysql.stats_buckets\n\t\t\t\t(table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound)\n\t\t\tvalues (%?, 0, %?, 0, %?, %?, %?, %?)",
+            &[
+                SqlArg::Signed(physical_id),
+                SqlArg::Signed(col_info.id),
+                SqlArg::Signed(count),
+                SqlArg::Signed(count),
+                SqlArg::Bytes(Some(bound)),
+                SqlArg::Bytes(Some(bound)),
+            ],
+        )?;
+    }
+    if !has_stats_update {
+        return Ok(start_ts);
+    }
+    exec(
+        sctx,
+        "update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %?",
+        &[
+            SqlArg::Unsigned(start_ts),
+            SqlArg::Unsigned(start_ts),
+            SqlArg::Signed(physical_id),
+        ],
+    )?;
+    Ok(start_ts)
 }

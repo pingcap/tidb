@@ -1,0 +1,26 @@
+[package]
+name = "tidb-stats-handle-ddl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB statistics DDL event handling: Go pkg/statistics/handle/ddl (Rust rewrite)."
+
+[dependencies]
+tidb-ddl-notifier = { path = "../tidb-ddl-notifier" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-model = { path = "../tidb-model" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-stats-handle-history = { path = "../tidb-stats-handle-history" }
+tidb-stats-handle-lockstats = { path = "../tidb-stats-handle-lockstats" }
+tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }
+tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
+tidb-vardef = { path = "../tidb-vardef" }
+tidb-variable = { path = "../tidb-variable" }
+
+[lints]
+workspace = true
