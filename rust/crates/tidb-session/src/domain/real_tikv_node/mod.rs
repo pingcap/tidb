@@ -23,7 +23,7 @@ use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadError, Syncer, InfoCa
 use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_infoschema_issyncer::real_tikv_catalog::reload;
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
-use tidb_stats_handle::bootstrap::{load_stats_snapshot_and_loader, InitialStatsLoad};
+use tidb_stats_handle::bootstrap::InitialStatsLoad;
 use tidb_stats_handle_syncload::stats_watch::{
     AsyncStatsLoader, SharedStats, StatsReloadError, StatsReloadReadResult, StatsReloader,
 };

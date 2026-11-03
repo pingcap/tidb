@@ -582,9 +582,7 @@ pub fn cluster_session_stack(
     let (stats_reloader, async_stats_loader) = tidb_session::domain::real_tikv_node::spawn_node_stats(
         Arc::clone(&stats),
         Arc::clone(&factory.catalog),
-        authority.transaction_opener(),
         config.stats_lease,
-        COPROCESSOR_QUERY_TIMEOUT,
         factory.advanced_sys_session_pool(),
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;

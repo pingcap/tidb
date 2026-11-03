@@ -294,8 +294,20 @@ checksums).
   (`load_needed_histograms` over `read_stats_for_one_item`); the raw
   per-item transactions and the located-loader gate are gone. Test
   `the_async_load_drains_the_demand_on_the_domains_sessions_as_go`.
-- [ ] S1, statistics left: `bootstrap.go`'s `initStats*` (the first pass,
-  still `load_stats_snapshot_and_loader`), analyze's base-stats reads
+- [x] (2026-11-04) Init stats: `bootstrap.go` transcreated
+  (`tidb-stats-handle/src/bootstrap.rs`): `InitStats` / `InitStatsLite` on
+  the statistics handle's sessions -- `initStatsMeta`, the histogram, TopN
+  and bucket stages paged by `initstats.RangeWorker` over their own pool
+  sessions, `isFullCache` between stages, `CalcPreScalar` -- into a fresh
+  `StatsCacheImpl`, published as the first pass's snapshot. The raw
+  per-table loader and its four raw-store tests are gone; their claims are
+  domain tests now (`init_stats_matches_go_table_scope_and_payload_shapes`,
+  `init_stats_loads_topn_only_indexes_and_stops_at_the_cache_quota_as_go`,
+  `builtin_in_estimate_survives_statistics_initialization_as_go`, Go
+  `TestBuiltinInEstWithoutStats` with its `HandleNextDDLEventWithTxn`).
+  A third `stats_watch` test reused a key whose LFU admission was still
+  queued; its helper waits as Go's cache tests do.
+- [ ] S1, statistics left: analyze's base-stats reads
   (`real_tikv_analyze.rs`), and the sync-load request API's unused
   `resource_group`; then `cluster_stats_load.rs` goes.
 - [ ] Readers (below), in the order the remaining milestones set.

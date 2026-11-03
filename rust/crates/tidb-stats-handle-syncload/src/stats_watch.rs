@@ -1142,7 +1142,13 @@ mod tests {
 
     fn shared_stats(snapshot: StatsSnapshot) -> SharedStats {
         tidb_vardef::STATS_CACHE_MEM_QUOTA.store(1024 * 1024, std::sync::atomic::Ordering::SeqCst);
-        SharedStats::new(snapshot).expect("statistics cache")
+        let shared = SharedStats::new(snapshot).expect("statistics cache");
+        // The LFU admits the initial tables asynchronously; a later Put of a
+        // key whose admission is still queued is rejected (Go ristretto's
+        // `itemNew` for a tracked key). Go's cache tests wait before reusing
+        // a key (`WaitForAsyncUpdates`).
+        shared.cache.wait_for_async_updates();
+        shared
     }
 
     struct RefreshSource {

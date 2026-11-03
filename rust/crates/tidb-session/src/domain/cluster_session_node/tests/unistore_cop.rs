@@ -27201,6 +27201,183 @@ fn the_ddl_session_pool_is_gos_sess_pool_over_the_node() {
     sess_pool.put(context);
 }
 
+fn table_id_of(session: &mut Session, table: &str) -> i64 {
+    match rows(
+        session,
+        &format!(
+            "SELECT TIDB_TABLE_ID FROM information_schema.tables \
+             WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = '{table}'"
+        ),
+    )[0][0]
+    {
+        Datum::Int(id) => id,
+        ref other => panic!("table id: {other:?}"),
+    }
+}
+
+/// Go `Handle.InitStats` / `InitStatsLite` on the stack's domain sessions.
+fn init_stats_on(
+    stack: &UnistoreClusterStack,
+    table_ids: &[i64],
+    mode: tidb_stats_handle::bootstrap::InitialStatsLoad,
+) -> tidb_stats_handle_syncload::stats_watch::StatsSnapshot {
+    let catalog = stack.factory.catalog.get_latest();
+    let targets: Vec<_> = catalog
+        .stored_schemas()
+        .iter()
+        .flat_map(|database| database.read().deprecated_tables.iter_deref())
+        .flat_map(|table| tidb_stats_handle_syncload::real_tikv_stats::StatsTarget::for_table(&table.read()))
+        .collect();
+    tidb_stats_handle::bootstrap::init_stats(
+        Arc::new(tidb_domain_core::sys_session::OwnedStatsPool(
+            stack.factory.advanced_sys_session_pool(),
+        )),
+        &targets,
+        table_ids,
+        mode,
+    )
+    .expect("init stats runs on the domain's sessions")
+}
+
+/// Go `Handle.InitStatsLite` / `InitStats` (`bootstrap.go`) on the
+/// statistics handle's sessions: `stats_meta` scopes the tables (a listed
+/// subset, or every one), the lite load keeps every item's payload evicted,
+/// and the full load fully loads indexes (histogram, TopN, buckets) while
+/// columns stay metadata-only.
+#[test]
+fn init_stats_matches_go_table_scope_and_payload_shapes() {
+    use tidb_stats_handle::bootstrap::InitialStatsLoad;
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(312)).unwrap();
+    let mut ids = Vec::new();
+    for table in ["boot_a", "boot_b"] {
+        rows(&mut session, &format!("CREATE TABLE test.{table} (a INT, KEY idx_a (a))"));
+        rows(
+            &mut session,
+            &format!(
+                "INSERT INTO test.{table} VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)"
+            ),
+        );
+        rows(&mut session, &format!("ANALYZE TABLE test.{table} WITH 0 TOPN"));
+        ids.push(table_id_of(&mut session, table));
+    }
+    let a_column = 1;
+    let index = 1;
+
+    let one = init_stats_on(&stack, &ids[..1], InitialStatsLoad::Lite);
+    assert_eq!(one.keys().copied().collect::<Vec<_>>(), ids[..1]);
+    let lite = init_stats_on(&stack, &[], InitialStatsLoad::Lite);
+    for id in &ids {
+        let table = lite[id].loaded().expect("an analyzed table loads");
+        assert!(table
+            .hist_coll
+            .get_column(a_column)
+            .is_none_or(|column| !column.read().unwrap().stats_loaded_status.is_full_load()));
+        assert!(table.hist_coll.get_index(index).is_none());
+        let existence = table.existence_map.as_ref().unwrap().read().unwrap();
+        assert!(existence.has_analyzed(a_column, false));
+        assert!(existence.has_analyzed(index, true));
+    }
+
+    let full = init_stats_on(&stack, &[], InitialStatsLoad::IndexFull);
+    for id in &ids {
+        let table = full[id].loaded().expect("an analyzed table loads");
+        let column = table.hist_coll.get_column(a_column).expect("column metadata loads");
+        assert!(column.read().unwrap().stats_loaded_status.is_all_evicted());
+        let index = table.hist_coll.get_index(index).expect("the index loads");
+        let index = index.read().unwrap();
+        assert!(index.stats_loaded_status.is_full_load());
+        assert_eq!(index.histogram.buckets.len(), 10);
+    }
+}
+
+/// Go `initStatsTopN4Chunk`: an index whose values all fit its TopN has no
+/// buckets and is fully loaded at bootstrap; `isFullCache` stops the TopN
+/// and bucket stages, leaving the index metadata-only.
+#[test]
+fn init_stats_loads_topn_only_indexes_and_stops_at_the_cache_quota_as_go() {
+    use tidb_stats_handle::bootstrap::InitialStatsLoad;
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(313)).unwrap();
+    rows(&mut session, "CREATE TABLE test.boot_topn (a INT, KEY idx_a (a))");
+    rows(&mut session, "INSERT INTO test.boot_topn VALUES (1),(1),(1),(2),(2),(2)");
+    rows(&mut session, "ANALYZE TABLE test.boot_topn");
+    let id = table_id_of(&mut session, "boot_topn");
+    let index = 1;
+
+    let full = init_stats_on(&stack, &[], InitialStatsLoad::IndexFull);
+    let table = full[&id].loaded().expect("the analyzed table loads");
+    let loaded = table.hist_coll.get_index(index).expect("the index loads");
+    let loaded = loaded.read().unwrap();
+    assert!(loaded.stats_loaded_status.is_full_load());
+    assert!(loaded.histogram.buckets.is_empty());
+    assert_eq!(loaded.top_n.as_ref().map(tidb_stats::TopN::total_count), Some(6));
+    drop(loaded);
+
+    let quota = tidb_vardef::STATS_CACHE_MEM_QUOTA.swap(1, std::sync::atomic::Ordering::SeqCst);
+    let limited = init_stats_on(&stack, &[], InitialStatsLoad::IndexFull);
+    tidb_vardef::STATS_CACHE_MEM_QUOTA.store(quota, std::sync::atomic::Ordering::SeqCst);
+    let table = limited[&id].loaded().expect("the analyzed table loads");
+    let limited = table.hist_coll.get_index(index).expect("index metadata loads");
+    let limited = limited.read().unwrap();
+    assert!(!limited.stats_loaded_status.is_full_load());
+    assert!(limited.top_n.is_none());
+}
+
+/// Go `TestBuiltinInEstWithoutStats`: a table whose only statistics are its
+/// `stats_meta` count plans pseudo estimates after `InitStatsLite` and
+/// `InitStats`, its existence map holding every column unanalyzed.
+#[test]
+fn builtin_in_estimate_survives_statistics_initialization_as_go() {
+    use tidb_stats_handle::bootstrap::InitialStatsLoad;
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(314)).unwrap();
+    rows(&mut session, "CREATE TABLE test.t (a INT, b INT)");
+    // Go `statstestutil.HandleNextDDLEventWithTxn`.
+    drain_stats_ddl_events(&stack.factory, &mut session);
+    rows(
+        &mut session,
+        "INSERT INTO test.t VALUES (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10)",
+    );
+    stack
+        .factory
+        .dump_stats_delta_to_kv(true, &[])
+        .expect("the delta flush succeeds");
+    let id = table_id_of(&mut session, "t");
+    for mode in [InitialStatsLoad::Lite, InitialStatsLoad::IndexFull] {
+        let snapshot = init_stats_on(&stack, &[], mode);
+        let table = snapshot[&id].loaded().expect("stats_meta makes the table non-pseudo");
+        assert_eq!(table.hist_coll.realtime_count, 10, "{mode:?}");
+        let existence = table.existence_map.as_ref().unwrap().read().unwrap();
+        assert!(!existence.is_empty(), "{mode:?}");
+        for column in [1, 2] {
+            assert!(existence.has(column, false), "{mode:?}");
+            assert!(!existence.has_analyzed(column, false), "{mode:?}");
+        }
+        drop(existence);
+        stack.factory.stats.store(snapshot);
+        for column in ["a", "b"] {
+            assert_eq!(
+                displayed(rows(
+                    &mut session,
+                    &format!(
+                        "EXPLAIN FORMAT='brief' SELECT * FROM test.t WHERE {column} IN (1,2,3,4,5,6,7,8)"
+                    ),
+                ))
+                .into_iter()
+                .map(|row| row[..2].join(" "))
+                .collect::<Vec<_>>(),
+                [
+                    "TableReader 1.00".to_owned(),
+                    "└─Selection 1.00".to_owned(),
+                    "  └─TableFullScan 10.00".to_owned(),
+                ],
+                "{mode:?}: {column}"
+            );
+        }
+    }
+}
+
 /// Go `statsSyncLoad.handleOneItemTask`: an evicted column's histogram is
 /// read back on the statistics handle's sessions (`readStatsForOneItem`:
 /// `HistMetaFromStorageWithHighPriority`, then the buckets, CM sketch and

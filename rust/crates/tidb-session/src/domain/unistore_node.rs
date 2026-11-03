@@ -784,9 +784,7 @@ pub fn unistore_cluster_session_stack_from(
     let (stats_reloader, async_stats_loader) = crate::domain::real_tikv_node::spawn_node_stats(
         Arc::clone(&stats),
         Arc::clone(&factory.catalog),
-        opener.clone(),
         config.stats_lease,
-        IN_PROCESS_TIMEOUT,
         factory.advanced_sys_session_pool(),
     )
     .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;

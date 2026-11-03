@@ -157,17 +157,12 @@ pub fn new_node_stats() -> Result<Arc<SharedStats>, StatsReloadError> {
 /// Go `UpdateTableStatsLoop` and its `asyncLoadHistogram`, started once the
 /// domain's sessions exist: the cache refresh is `StatsCacheImpl.Update` on
 /// them.
-pub fn spawn_node_stats<S>(
+pub fn spawn_node_stats(
     shared: Arc<SharedStats>,
     catalog: Arc<InfoCache>,
-    opener: tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
     stats_lease: tidb_domain_core::node_config::StatsLease,
-    timeout: Duration,
     session_pool: Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
-) -> Result<(StatsReloader, AsyncStatsLoader), StatsReloadError>
-where
-    S: StoreClient,
-{
+) -> Result<(StatsReloader, AsyncStatsLoader), StatsReloadError> {
     let Some(reload_interval) = stats_lease.reload_interval() else {
         return Ok((StatsReloader::disabled(), AsyncStatsLoader::disabled()));
     };
@@ -183,12 +178,6 @@ where
     };
     let mut first_pass = true;
     let skip_initial = performance.skip_init_stats;
-    // Resolving a system-table view is not a startup gate in Go. Keep a view
-    // when the boot catalog has one, and let ordinary leased passes retry the
-    // lookup after bootstrap or a transient catalog failure.
-    let loader = Arc::new(std::sync::RwLock::new(
-        tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader::locate(&catalog.get_latest()).ok(),
-    ));
     let (async_loader, async_init) = if let Some(async_interval) =
         async_stats_load_interval(stats_lease)
     {
@@ -216,9 +205,8 @@ where
     } else {
         (AsyncStatsLoader::disabled(), None)
     };
-    let update_loader = Arc::clone(&loader);
-    let update_opener = opener.clone();
     let update_catalog = Arc::clone(&catalog);
+    let update_pool = Arc::clone(&session_pool);
     let reloader = StatsReloader::spawn_with_initial_pass_notify(
         Arc::clone(&shared),
         reload_interval,
@@ -254,17 +242,17 @@ where
                             ),
                         ]
                     };
-                    match load_stats_snapshot_and_loader(
-                        &update_opener,
-                        timeout,
+                    // Go `Domain.initStats` -> `Handle.InitStats(Lite)` on the
+                    // statistics handle's sessions.
+                    match tidb_stats_handle::bootstrap::init_stats(
+                        Arc::new(tidb_domain_core::sys_session::OwnedStatsPool(Arc::clone(
+                            &update_pool,
+                        ))),
                         &targets,
                         &[],
                         initial_mode,
                     ) {
-                        Ok((snapshot, located)) => {
-                            *update_loader
-                                .write()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(located);
+                        Ok(snapshot) => {
                             stats_logger.info("Init stats succeed", &init_fields(started));
                             Ok(StatsReloadReadResult::Publish(snapshot))
                         }
@@ -278,23 +266,9 @@ where
                 };
                 return result;
             }
-            let located = update_loader
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone()
-                .map(Ok)
-                .unwrap_or_else(|| {
-                    tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader::locate(
-                        &update_catalog.get_latest(),
-                    )
-                    .map_err(|error| error.to_string())
-                })?;
-            *update_loader
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(located.clone());
             match tidb_stats_handle_syncload::real_tikv_stats::update_stats_cache(
                 &tidb_domain_core::sys_session::StatsPool {
-                    session_pool: Some(&session_pool),
+                    session_pool: Some(&update_pool),
                 },
                 &targets,
                 shared,

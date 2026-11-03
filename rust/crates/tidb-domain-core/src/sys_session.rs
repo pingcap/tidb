@@ -82,6 +82,23 @@ pub fn stats_session_sql_error(
     }
 }
 
+/// [`StatsPool`] owning its pool, for work that outlives a borrow of the
+/// domain (the init-stats range workers' threads).
+pub struct OwnedStatsPool(pub std::sync::Arc<DomainSysSessionPool>);
+
+impl tidb_stats_handle_storage::stats_read_writer::StatsSessionPool for OwnedStatsPool {
+    fn call_with_sctx(
+        &self,
+        f: &mut dyn FnMut(&dyn tidb_stats_handle_util::StatsSessionContext) -> Result<(), tidb_sqlexec::SqlExecError>,
+        flags: &[i32],
+    ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
+        StatsPool {
+            session_pool: Some(&self.0),
+        }
+        .call_with_sctx(f, flags)
+    }
+}
+
 /// Go `statsHandle.SPool()` for the statistics handle's saves: the domain's
 /// system sessions (`None` once the domain is closed).
 pub struct StatsPool<'a> {
