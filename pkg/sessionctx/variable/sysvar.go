@@ -4437,6 +4437,11 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 		if intest.InTest {
 			varVal = vardef.Off
 		}
+	case vardef.TiDBRedactLog:
+		if intest.InTest {
+			// Tests assert SQL and values in errors; redaction tests enable it explicitly.
+			varVal = vardef.Off
+		}
 	// For the following sysvars, we change the default
 	// FOR NEW INSTALLS ONLY. In most cases you don't want to do this.
 	// It is better to change the value in the Sysvar struct, so that

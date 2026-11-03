@@ -1,3 +1,13 @@
+# TestRedactLogDefault
+SELECT @@global.tidb_redact_log;
+SELECT variable_value FROM mysql.global_variables WHERE variable_name = 'tidb_redact_log';
+SET GLOBAL tidb_redact_log = OFF;
+SELECT @@global.tidb_redact_log;
+SET GLOBAL tidb_redact_log = DEFAULT;
+SELECT @@global.tidb_redact_log;
+# Keep value-validation warnings below unredacted.
+SET GLOBAL tidb_redact_log = OFF;
+
 # TestMaxDeltaSchemaCount
 set @@global.tidb_max_delta_schema_count= -1;
 show warnings;
@@ -289,4 +299,6 @@ set @@global.tidb_enable_tiflash_pipeline_model = 1;
 show warnings;
 
 set @@global.tidb_enable_tiflash_pipeline_model = default;
+
+SET GLOBAL tidb_redact_log = DEFAULT;
 

@@ -836,6 +836,39 @@ func TestDuplicateResolutionAlgorithm(t *testing.T) {
 }
 
 func TestLoadConfig(t *testing.T) {
+	t.Run("redact info log", func(t *testing.T) {
+		require.True(t, NewGlobalConfig().Security.RedactInfoLog)
+		task := NewConfig()
+		require.NoError(t, task.LoadFromTOML(nil))
+		require.True(t, task.Security.RedactInfoLog)
+		require.NoError(t, task.LoadFromTOML([]byte("[security]\nredact-info-log = false\n")))
+		require.False(t, task.Security.RedactInfoLog)
+		for _, tc := range []struct {
+			name    string
+			config  string
+			args    []string
+			enabled bool
+		}{
+			{name: "default", enabled: true},
+			{name: "CLI disable", args: []string{"--redact-info-log=false"}},
+			{name: "config disable", config: "[security]\nredact-info-log = false\n"},
+			{name: "CLI enable overrides config", config: "[security]\nredact-info-log = false\n", args: []string{"--redact-info-log=true"}, enabled: true},
+			{name: "CLI disable overrides config", config: "[security]\nredact-info-log = true\n", args: []string{"--redact-info-log=false"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				configPath := filepath.Join(t.TempDir(), "lightning.toml")
+				require.NoError(t, os.WriteFile(configPath, []byte(tc.config), 0o600))
+				args := append([]string{"--config", configPath}, tc.args...)
+				global, err := LoadGlobalConfig(args, nil)
+				require.NoError(t, err)
+				require.Equal(t, tc.enabled, global.Security.RedactInfoLog)
+				task := NewConfig()
+				require.NoError(t, task.LoadFromGlobal(global))
+				require.Equal(t, tc.enabled, task.Security.RedactInfoLog)
+			})
+		}
+	})
+
 	cfg, err := LoadGlobalConfig([]string{"-tidb-port", "sss"}, nil)
 	require.EqualError(t, err, `[Lightning:Common:ErrInvalidArgument]invalid argument: invalid value "sss" for flag -tidb-port: parse error`)
 	require.Nil(t, cfg)
