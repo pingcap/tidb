@@ -5769,14 +5769,20 @@ fn corrupted_analyze_job_cleanup_matches_go() {
             ["7", "pending", "0", "1"],
         ]
     );
-    assert_eq!(
-        displayed(rows(
-            &mut session,
-            "SELECT id, update_time FROM mysql.analyze_jobs ORDER BY id",
-        )),
-        update_times_before,
-        "BatchUpdateAnalyzeJobSQL does not refresh update_time",
-    );
+    // `update_time` is `ON UPDATE CURRENT_TIMESTAMP`: the rows the batch
+    // UPDATE changed (jobs 1 and 4) move on, the others keep theirs (gorun:
+    // a running job's `2000-01-01 00:00:00` becomes the update's time).
+    let update_times_after = displayed(rows(
+        &mut session,
+        "SELECT id, update_time FROM mysql.analyze_jobs ORDER BY id",
+    ));
+    for (before, after) in update_times_before.iter().zip(&update_times_after) {
+        if before[0] == "1" || before[0] == "4" {
+            assert!(after[1] > before[1], "job {} kept {}", before[0], before[1]);
+        } else {
+            assert_eq!(after, before);
+        }
+    }
 
     stack
         .factory

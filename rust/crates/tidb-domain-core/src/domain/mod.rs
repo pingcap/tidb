@@ -747,6 +747,70 @@ pub struct Domain {
         std::sync::OnceLock<Arc<Mutex<tidb_stats_handle_autoanalyze_refresher::Refresher>>>,
 }
 
+/// Go `SelectAnalyzeJobsOnCurrentInstanceSQL`.
+const SELECT_ANALYZE_JOBS_ON_CURRENT_INSTANCE_SQL: &str = "SELECT id, process_id
+		FROM mysql.analyze_jobs
+		WHERE instance = %?
+		AND state IN ('pending', 'running')
+		AND update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)";
+/// Go `SelectAnalyzeJobsSQL`.
+const SELECT_ANALYZE_JOBS_SQL: &str = "SELECT id, instance
+		FROM mysql.analyze_jobs
+		WHERE state IN ('pending', 'running')
+		AND update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)";
+/// Go `BatchUpdateAnalyzeJobSQL`.
+const BATCH_UPDATE_ANALYZE_JOB_SQL: &str = "UPDATE mysql.analyze_jobs
+            SET state = 'failed',
+            fail_reason = 'The TiDB Server has either shut down or the analyze query was terminated during the analyze job execution',
+            process_id = NULL
+            WHERE id IN (%?)";
+
+/// Go `t.UTC().Format(types.TimeFormat)` of a UTC time.
+fn go_time_format(time: tidb_datatype::Time) -> Result<String, String> {
+    time.date_format("%Y-%m-%d %H:%i:%s")
+        .map_err(|error| error.to_string())
+}
+
+/// Go `row.GetUint64(i)`.
+fn datum_u64(datum: &tidb_datatype::Datum) -> Option<u64> {
+    match datum {
+        tidb_datatype::Datum::UInt(value) => Some(*value),
+        tidb_datatype::Datum::Int(value) => Some(*value as u64),
+        _ => None,
+    }
+}
+
+/// Go `row.GetString(i)`.
+fn datum_text(datum: &tidb_datatype::Datum) -> String {
+    String::from_utf8_lossy(datum.go_bytes()).into_owned()
+}
+
+/// `BatchUpdateAnalyzeJobSQL` over `job_ids` (quoted, as Go's `[]string`
+/// argument is), logged as Go logs it.
+fn batch_fail_analyze_jobs(
+    sctx: &dyn crate::sys_session::DomainSysSession,
+    job_ids: &[String],
+    message: &str,
+) -> Result<(), tidb_sqlexec::SqlExecError> {
+    if job_ids.is_empty() {
+        return Ok(());
+    }
+    let ids: Vec<&[u8]> = job_ids.iter().map(|id| id.as_bytes()).collect();
+    tidb_stats_handle_util::exec_rows(
+        sctx,
+        BATCH_UPDATE_ANALYZE_JOB_SQL,
+        &[tidb_sqlescape::SqlArg::Strings(&ids)],
+    )?;
+    tidb_stats_handle_logutil::stats_logger().info(
+        message,
+        &[tidb_log::Field::new(
+            "jobIDs",
+            tidb_log::Value::Str(format!("{job_ids:?}")),
+        )],
+    );
+    Ok(())
+}
+
 impl Domain {
     /// Binds the session layer's services to this node, once.
     pub fn set_session_services(
@@ -1079,27 +1143,37 @@ impl Domain {
         .clear_outdated_history_stats()
     }
 
-    /// Pinned Go `StatsHandle.DeleteAnalyzeJobs` over one restricted
-    /// autocommit transaction.
-    pub fn delete_analyze_jobs_before(&self, cutoff: tidb_datatype::Time) -> Result<(), String> {
-        ClusterHistoricalStatsHandle {
-            transactions: Arc::clone(&self.transactions),
-            catalog: Arc::clone(&self.catalog),
-            global_vars: self.global_vars.clone(),
-            auto_ids: Arc::clone(&self.auto_ids),
-        }
-        .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_autoanalyze::analyze_jobs::plan_delete_analyze_jobs(
-                snapshot,
-                &self.catalog.get_latest(),
-                &cutoff,
-            )
-            .map_err(|error| error.to_string())
-        })
+    /// Go `statsHandle.SPool()`: the domain's system sessions.
+    fn stats_session_pool(&self) -> Result<Arc<crate::sys_session::DomainSysSessionPool>, String> {
+        self.binding_session_factory
+            .upgrade()
+            .map(|domain| domain.advanced_sys_session_pool())
+            .ok_or_else(|| "cluster session factory is stopped".to_owned())
     }
 
-    /// Pinned Go `CleanupCorruptedAnalyzeJobsOnCurrentInstance` over one
-    /// restricted transaction.
+    /// Go `statsAnalyze.DeleteAnalyzeJobs`.
+    pub fn delete_analyze_jobs_before(&self, cutoff: tidb_datatype::Time) -> Result<(), String> {
+        let pool = self.stats_session_pool()?;
+        let update_time = go_time_format(cutoff)?;
+        tidb_stats_handle_util::call_with_sctx(
+            pool.as_ref(),
+            |sctx| {
+                tidb_stats_handle_util::exec_rows(
+                    sctx,
+                    "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)",
+                    &[tidb_sqlescape::SqlArg::from(update_time.as_str())],
+                )?;
+                Ok(())
+            },
+            &[],
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    /// Go `statsAnalyze.CleanupCorruptedAnalyzeJobsOnCurrentInstance` /
+    /// `CleanupCorruptedAnalyzeJobsOnCurrentInstance`: this instance's
+    /// pending or running jobs whose process no longer runs ANALYZE are
+    /// failed, in one transaction.
     pub fn cleanup_corrupted_analyze_jobs_on_current_instance(
         &self,
         cutoff: tidb_datatype::Time,
@@ -1113,7 +1187,7 @@ impl Domain {
             &local.static_info.ip,
             local.static_info.port,
         );
-        let analyze_process_ids = self
+        let current_running_process_ids = self
             .processes
             .snapshot()
             .into_iter()
@@ -1125,27 +1199,36 @@ impl Domain {
                     .then_some(process.id)
             })
             .collect::<HashSet<_>>();
-        ClusterHistoricalStatsHandle {
-            transactions: Arc::clone(&self.transactions),
-            catalog: Arc::clone(&self.catalog),
-            global_vars: self.global_vars.clone(),
-            auto_ids: Arc::clone(&self.auto_ids),
-        }
-        .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_autoanalyze::analyze_jobs::plan_cleanup_corrupted_analyze_jobs_on_current_instance(
-                snapshot,
-                &self.catalog.get_latest(),
-                &instance,
-                &analyze_process_ids,
-                &cutoff,
-                Some(self.auto_ids.as_ref()),
-            )
-            .map_err(|error| error.to_string())
-        })
+        let pool = self.stats_session_pool()?;
+        let ten_minutes_ago = go_time_format(cutoff)?;
+        tidb_stats_handle_util::call_with_sctx(
+            pool.as_ref(),
+            |sctx| {
+                use tidb_sqlescape::SqlArg;
+                let (rows, _) = tidb_stats_handle_util::exec_rows(
+                    sctx,
+                    SELECT_ANALYZE_JOBS_ON_CURRENT_INSTANCE_SQL,
+                    &[SqlArg::from(instance.as_str()), SqlArg::from(ten_minutes_ago.as_str())],
+                )?;
+                let job_ids: Vec<String> = rows
+                    .iter()
+                    .filter(|row| {
+                        row.get(1).and_then(datum_u64).is_some_and(|process_id| {
+                            !current_running_process_ids.contains(&process_id)
+                        })
+                    })
+                    .map(|row| row.first().and_then(datum_u64).unwrap_or(0).to_string())
+                    .collect();
+                batch_fail_analyze_jobs(sctx, &job_ids, "clean up the potentially corrupted analyze jobs from current instance")
+            },
+            &[tidb_stats_handle_util::FLAG_WRAP_TXN],
+        )
+        .map_err(|error| error.to_string())
     }
 
-    /// Pinned Go `CleanupCorruptedAnalyzeJobsOnDeadInstances` over one
-    /// restricted transaction.
+    /// Go `statsAnalyze.CleanupCorruptedAnalyzeJobsOnDeadInstances`: the
+    /// pending or running jobs of instances no longer registered are failed,
+    /// in one transaction.
     pub fn cleanup_corrupted_analyze_jobs_on_dead_instances(
         &self,
         cutoff: tidb_datatype::Time,
@@ -1154,32 +1237,44 @@ impl Domain {
             .server_info
             .as_ref()
             .ok_or_else(|| "server info is not initialized".to_owned())?;
-        let alive_instances = syncer
-            .all_server_info()?
-            .into_values()
-            .map(|info| {
-                tidb_domain_serverinfo::serverinfo_syncer::join_host_port(
-                    &info.static_info.ip,
-                    info.static_info.port,
-                )
-            })
-            .collect::<HashSet<_>>();
-        ClusterHistoricalStatsHandle {
-            transactions: Arc::clone(&self.transactions),
-            catalog: Arc::clone(&self.catalog),
-            global_vars: self.global_vars.clone(),
-            auto_ids: Arc::clone(&self.auto_ids),
-        }
-        .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_autoanalyze::analyze_jobs::plan_cleanup_corrupted_analyze_jobs_on_dead_instances(
-                snapshot,
-                &self.catalog.get_latest(),
-                &alive_instances,
-                &cutoff,
-                Some(self.auto_ids.as_ref()),
-            )
-            .map_err(|error| error.to_string())
-        })
+        let pool = self.stats_session_pool()?;
+        let ten_minutes_ago = go_time_format(cutoff)?;
+        tidb_stats_handle_util::call_with_sctx(
+            pool.as_ref(),
+            |sctx| {
+                use tidb_sqlescape::SqlArg;
+                let (rows, _) = tidb_stats_handle_util::exec_rows(
+                    sctx,
+                    SELECT_ANALYZE_JOBS_SQL,
+                    &[SqlArg::from(ten_minutes_ago.as_str())],
+                )?;
+                if rows.is_empty() {
+                    return Ok(());
+                }
+                let instances = syncer
+                    .all_server_info()
+                    .map_err(crate::sys_session::stats_session_error)?
+                    .into_values()
+                    .map(|info| {
+                        tidb_domain_serverinfo::serverinfo_syncer::join_host_port(
+                            &info.static_info.ip,
+                            info.static_info.port,
+                        )
+                    })
+                    .collect::<HashSet<_>>();
+                let job_ids: Vec<String> = rows
+                    .iter()
+                    .filter(|row| {
+                        let instance = row.get(1).map(datum_text).unwrap_or_default();
+                        !instances.contains(&instance)
+                    })
+                    .map(|row| row.first().and_then(datum_u64).unwrap_or(0).to_string())
+                    .collect();
+                batch_fail_analyze_jobs(sctx, &job_ids, "clean up the potentially corrupted analyze jobs from dead instances")
+            },
+            &[tidb_stats_handle_util::FLAG_WRAP_TXN],
+        )
+        .map_err(|error| error.to_string())
     }
 
     /// Pinned Go `StatsGC.GCStats` over the current shared schema and

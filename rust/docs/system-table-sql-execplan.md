@@ -96,6 +96,12 @@ checksums).
   (`StatsSessionStatementError`). Tests
   `lock_stats_runs_in_its_own_session_transaction_as_go`,
   `lock_stats_checks_privileges_before_its_transaction_as_go`.
+- [x] (2026-11-03) Analyze jobs (item 7): the session's job lifecycle and
+  the domain's delete / corrupted-job cleanup run Go's statements on the
+  domain's system-session pool. The raw cleanup had kept `update_time`;
+  Go's UPDATE refreshes it (`ON UPDATE CURRENT_TIMESTAMP`, gorun). The row
+  planners remain only as seeding fixtures of three session tests and the
+  executor's planner tests.
 - [ ] M1 (the statistics handle's pool for the storage writes), M2, the rest
   of M3, M4, M5.
 
