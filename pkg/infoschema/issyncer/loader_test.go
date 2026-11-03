@@ -295,9 +295,7 @@ func (testStoreWithKS) GetKeyspace() string {
 
 func mustSkipLoadingDiff(t *testing.T, loader *Loader, diff *model.SchemaDiff) bool {
 	t.Helper()
-	skip, err := loader.skipLoadingDiff(diff, nil)
-	require.NoError(t, err)
-	return skip
+	return loader.skipLoadingDiff(diff)
 }
 
 func TestLoaderSkipLoadingDiff(t *testing.T) {

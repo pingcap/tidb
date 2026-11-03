@@ -388,9 +388,10 @@ func checkBootstrapSchemaDeployment(m meta.Reader) (classicBootstrapped bool, er
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	// Classic creates mysql early in bootstrap, so a partially bootstrapped
-	// cluster may already contain the Classic mysql database. Bound the lookup
-	// to the first ten IDs instead of loading all databases in the keyspace.
+	// Classic creates the mysql database first, so its ID is among the first
+	// allocated IDs. Checking the first ten IDs is enough to find it, including
+	// when bootstrap is only partial, instead of loading all databases in the
+	// keyspace.
 	var classicMySQLDBID int64
 	for id := int64(1); id <= 10; id++ {
 		db, err := m.GetDatabase(id)

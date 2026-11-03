@@ -884,7 +884,6 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 			return errors.Trace(err)
 		}
 		d.isLegacyNextGen = isLegacyNextGen
-		d.executor.isLegacyNextGen = isLegacyNextGen
 	}
 	if kerneltype.IsClassic() {
 		d.detectAndUpdateJobVersion()

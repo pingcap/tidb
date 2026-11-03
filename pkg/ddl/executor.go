@@ -237,8 +237,6 @@ type executor struct {
 	// ddlJobDoneChMap is used to notify the session that the DDL job is finished.
 	// jobID -> chan struct{}
 	ddlJobDoneChMap *generic.SyncMap[int64, chan struct{}]
-	// isLegacyNextGen indicates that this NextGen keyspace retains Classic system-table IDs.
-	isLegacyNextGen bool
 }
 
 var _ Executor = (*executor)(nil)
@@ -827,7 +825,7 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 		}
 		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
 	}
-	if isSystemSchemaInNextGen(e.infoCache.GetLatest(), old.ID) {
+	if isSystemSchemaInNextGen(old.Name.L) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop '%s' database", old.Name.L))
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
@@ -2899,7 +2897,7 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	meta := t.Meta().Clone()
-	if e.isSystemTableInNextGen(meta.ID) {
+	if isSystemTableInNextGen(schema.Name.L, meta.Name.L) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Change system table '%s.%s' to partitioned table", schema.Name.L, meta.Name.L))
 	}
 	if t.Meta().Affinity != nil {
@@ -3641,7 +3639,7 @@ func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	ntMeta := nt.Meta()
-	if e.isSystemTableInNextGen(ntMeta.ID) {
+	if isSystemTableInNextGen(ntSchema.Name.L, ntMeta.Name.L) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Exchange partition on system table '%s.%s'", ntSchema.Name.L, ntMeta.Name.L))
 	}
 	err = checkExchangePartition(ptMeta, ntMeta)
@@ -4775,8 +4773,8 @@ var systemTables = map[string]struct{}{
 	"gc_delete_range_done": {},
 }
 
-func (e *executor) isUndroppableTable(schema, table string, tableInfo *model.TableInfo) bool {
-	if e.isSystemTableInNextGen(tableInfo.ID) {
+func isUndroppableTable(schema, table string) bool {
+	if isSystemTableInNextGen(schema, table) {
 		return true
 	}
 	if schema == mysql.WorkloadSchema {
@@ -4877,7 +4875,7 @@ func (e *executor) dropTableObject(
 
 		// Protect important system table from been dropped by a mistake.
 		// I can hardly find a case that a user really need to do this.
-		if e.isUndroppableTable(tn.Schema.L, tn.Name.L, tableInfo.Meta()) {
+		if isUndroppableTable(tn.Schema.L, tn.Name.L) {
 			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop tidb system table '%s.%s'", tn.Schema.L, tn.Name.L))
 		}
 		switch tableObjectType {
@@ -5119,7 +5117,7 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}
-	if e.isSystemTableInNextGen(tblInfo.ID) {
+	if isSystemTableInNextGen(schema.Name.L, tblInfo.Name.L) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Truncate system table '%s.%s'", schema.Name.L, tblInfo.Name.L))
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
@@ -5204,7 +5202,7 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		if err = dbutil.CheckTableModeIsNormal(tbl.Meta().Name, tbl.Meta().Mode); err != nil {
 			return err
 		}
-		if e.isSystemTableInNextGen(tbl.Meta().ID) {
+		if isSystemTableInNextGen(schemas[0].Name.L, tbl.Meta().Name.L) {
 			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Rename system table '%s.%s'", schemas[0].Name.L, oldIdent.Name.L))
 		}
 	}
@@ -5260,7 +5258,7 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 			if err = dbutil.CheckTableModeIsNormal(t.Meta().Name, t.Meta().Mode); err != nil {
 				return err
 			}
-			if e.isSystemTableInNextGen(t.Meta().ID) {
+			if isSystemTableInNextGen(schemas[0].Name.L, t.Meta().Name.L) {
 				return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Rename system table '%s.%s'", schemas[0].Name.L, oldIdents[i].Name.L))
 			}
 		}
@@ -8373,27 +8371,24 @@ func checkColumnReferencedByPartialCondition(t *model.TableInfo, colName ast.CIS
 	return nil
 }
 
-func isSystemSchemaInNextGen(is infoschema.InfoSchema, schemaID int64) bool {
+func isSystemSchemaInNextGen(schemaName string) bool {
 	failpoint.Inject("skipCheckReservedSchemaObjInNextGen", func() {
 		failpoint.Return(false)
 	})
 	if kerneltype.IsClassic() {
 		return false
 	}
-	if schemaID == metadef.SystemDatabaseID {
-		// fast path for normal bootstrapped NextGen cluster.
-		return true
-	}
-	db, ok := is.SchemaByID(schemaID)
-	return ok && metadef.IsSystemDB(db.Name.L)
+	return metadef.IsSystemDB(schemaName)
 }
 
-func (e *executor) isSystemTableInNextGen(id int64) bool {
+func isSystemTableInNextGen(schema, table string) bool {
 	failpoint.Inject("skipCheckReservedSchemaObjInNextGen", func() {
 		failpoint.Return(false)
 	})
-	is := e.infoCache.GetLatest()
-	return infoschema.IsSystemTableInNextGen(is, e.isLegacyNextGen, id)
+	if kerneltype.IsClassic() {
+		return false
+	}
+	return metadef.IsBuiltinSystemTable(schema, table)
 }
 
 // AlterTableSetRegionSplitPolicy sets persistent region split policy for table

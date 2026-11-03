@@ -311,25 +311,30 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 	return is, false, currentSchemaVersion, nil, nil
 }
 
-func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff, m meta.Reader) (bool, error) {
+func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
 	if l.filter != nil {
 		var latestIS infoschema.InfoSchema
 		if l.infoCache != nil {
 			latestIS = l.infoCache.GetLatest()
 		}
 		if l.filter.SkipLoadDiff(diff, latestIS) {
-			return true, nil
+			return true
 		}
 	}
 
 	if !l.crossKS {
-		return false, nil
+		return false
 	}
 
+	// for cross keyspace loader, we only load diff related to system tables.
+	// we don't check AffectedOpts, as we forbid doing DDL which involve multiple
+	// table IDs on system tables in nextgen, such as RenameTables, TruncateTable,
+	// ExchangePartition, etc.
 	is := l.infoCache.GetLatest()
-	// Cross-keyspace loaders only apply diffs involving system tables.
-	return !(infoschema.IsSystemTableInNextGen(is, l.isLegacyNextGen(), diff.TableID) ||
-		infoschema.IsSystemTableInNextGen(is, l.isLegacyNextGen(), diff.OldTableID)), nil
+	isLegacyNextGen := l.isLegacyNextGen()
+	isRelatedToSystemTables := infoschema.IsSystemTableInNextGen(is, isLegacyNextGen, diff.TableID) ||
+		infoschema.IsSystemTableInNextGen(is, isLegacyNextGen, diff.OldTableID)
+	return !isRelatedToSystemTables
 }
 
 // tryLoadSchemaDiffs tries to only load latest schema changes.
@@ -383,11 +388,7 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 	actions := make([]uint64, 0, len(diffs))
 	diffTypes := make([]string, 0, len(diffs))
 	for _, diff := range diffs {
-		skip, err := l.skipLoadingDiff(diff, m)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		if skip {
+		if l.skipLoadingDiff(diff) {
 			// we still need to set the schema version even if we skip loading
 			// the diff to reflect where the I_S has been synced to.
 			builder.SetSchemaVersion(diff.Version)

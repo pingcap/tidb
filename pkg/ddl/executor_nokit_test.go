@@ -22,8 +22,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -279,55 +277,28 @@ func TestMergeCreateTableJobs(t *testing.T) {
 }
 
 func TestIsUndroppableTable(t *testing.T) {
-	for _, isLegacyNextGen := range []bool{false, true} {
-		for _, tt := range []struct {
-			schema, table                    string
-			tableID                          int64
-			alwaysProtected                  bool
-			nativeProtected, legacyProtected bool
-		}{
-			{mysql.WorkloadSchema, "any_table", 100, true, false, false},
-			{mysql.SystemDB, "tidb", 100, true, false, true},
-			{mysql.SystemDB, "gc_delete_range", 100, true, false, true},
-			{mysql.SystemDB, "gc_delete_range_done", 100, true, false, true},
-			{mysql.SystemDB, "user", 100, false, false, true},
-			{mysql.SystemDB, "custom_table", 100, false, false, false},
-			{mysql.SystemDB, "custom_table", metadef.ReservedGlobalIDUpperBound, false, true, false},
-			{mysql.SysDB, "schema_unused_indexes", 100, false, false, false},
-			{mysql.SysDB, "schema_unused_indexes", metadef.ReservedGlobalIDLowerBound + 1, false, true, false},
-			{"test", "test_table", 100, false, false, false},
-			{"test", "test_table", metadef.ReservedGlobalIDUpperBound, false, true, false},
-		} {
-			t.Run(fmt.Sprintf("isLegacyNextGen=%t/%s.%s/%d", isLegacyNextGen, tt.schema, tt.table, tt.tableID), func(t *testing.T) {
-				tableInfo := &model.TableInfo{ID: tt.tableID, DBID: 1, Name: ast.NewCIStr(tt.table), State: model.StatePublic}
-				db := &model.DBInfo{ID: 1, Name: ast.NewCIStr(tt.schema), State: model.StatePublic}
-				db.Deprecated.Tables = []*model.TableInfo{tableInfo}
-				builder := infoschema.NewBuilder(nil, 0, nil, infoschema.NewData(), false).WithCrossKS(true)
-				require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{db}, nil, nil, nil, 1))
-				cache := infoschema.NewCache(nil, 1)
-				cache.Insert(builder.Build(0), 0)
-				e := &executor{infoCache: cache, isLegacyNextGen: isLegacyNextGen}
-				protectedInNextGen := tt.nativeProtected
-				if isLegacyNextGen {
-					protectedInNextGen = tt.legacyProtected
-				}
-				want := tt.alwaysProtected || kerneltype.IsNextGen() && protectedInNextGen
-				require.Equal(t, want, e.isUndroppableTable(tt.schema, tt.table, tableInfo))
-			})
-		}
+	for _, tt := range []struct {
+		schema, table                   string
+		alwaysProtected                 bool
+		protectedInNextGenByBuiltinName bool
+	}{
+		{mysql.WorkloadSchema, "any_table", true, false},
+		{mysql.SystemDB, "tidb", true, true},
+		{mysql.SystemDB, "gc_delete_range", true, true},
+		{mysql.SystemDB, "gc_delete_range_done", true, true},
+		{mysql.SystemDB, "user", false, true},
+		{mysql.SystemDB, "custom_table", false, false},
+		{mysql.SysDB, "schema_unused_indexes", false, false},
+		{"test", "test_table", false, false},
+	} {
+		t.Run(tt.schema+"."+tt.table, func(t *testing.T) {
+			want := tt.alwaysProtected || kerneltype.IsNextGen() && tt.protectedInNextGenByBuiltinName
+			require.Equal(t, want, isUndroppableTable(tt.schema, tt.table))
+		})
 	}
 	t.Run("system schemas", func(t *testing.T) {
-		for _, tt := range []struct {
-			name string
-			id   int64
-		}{
-			{mysql.SystemDB, 1}, {mysql.SysDB, 2},
-			{mysql.SystemDB, metadef.SystemDatabaseID}, {mysql.SysDB, metadef.SysDatabaseID},
-			{"test", 3},
-		} {
-			builder := infoschema.NewBuilder(nil, 0, nil, infoschema.NewData(), false).WithCrossKS(true)
-			require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{{ID: tt.id, Name: ast.NewCIStr(tt.name), State: model.StatePublic}}, nil, nil, nil, 1))
-			require.Equal(t, kerneltype.IsNextGen() && tt.name == mysql.SystemDB, isSystemSchemaInNextGen(builder.Build(0), tt.id))
+		for _, name := range []string{mysql.SystemDB, mysql.SysDB, "test"} {
+			require.Equal(t, kerneltype.IsNextGen() && name == mysql.SystemDB, isSystemSchemaInNextGen(name))
 		}
 	})
 }
