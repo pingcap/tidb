@@ -74,6 +74,39 @@ func TestNormalizeUserAndHost(t *testing.T) {
 	}
 }
 
+func TestNormalizeUserAndHostList(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"all_users", "%@%", []string{"%@%"}},
+		{"normalize_and_deduplicate", " 'alice'@'%', bob@localhost, alice@% ", []string{"alice@%", "bob@localhost"}},
+		{"implicit_hosts", "alice,bob", []string{"alice", "bob"}},
+		{"quoted_comma", "'alice,bob'@'%'", []string{"alice,bob@%"}},
+		{"quoted_comma_with_implicit_host", "'alice,bob',carol", []string{"alice,bob", "carol"}},
+		{"mixed_quoted_users", " 'alice,bob'@'%', carol@localhost, 'alice,bob'@'%' ", []string{"alice,bob@%", "carol@localhost"}},
+		{"quoted_comma_in_host", "'alice'@'host,example',bob@%", []string{"alice@host,example", "bob@%"}},
+		{"apostrophe_in_unquoted_user", "o'brien@%,bob@%", []string{"o'brien@%", "bob@%"}},
+		{"doubled_quote_in_quoted_user", "'alice''bob,carol'@'%',dave@%", []string{"alice''bob,carol@%", "dave@%"}},
+		{"empty", "", nil},
+		{"invalid_host", "alice@%,bad@@", nil},
+		{"empty_item", "alice@%,", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := normalizeUserAndHostList(c.input)
+			if c.want == nil {
+				require.Error(t, err)
+				require.Nil(t, got)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, c.want, got)
+		})
+	}
+}
+
 func TestEntryPool(t *testing.T) {
 	poolCap := 8
 	pool := createLogFieldsPool(poolCap)

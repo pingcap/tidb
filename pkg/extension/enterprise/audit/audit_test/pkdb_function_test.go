@@ -574,3 +574,144 @@ func TestFilterCURD(t *testing.T) {
 	tk.MustQuery("select USER, FILTER_NAME, ENABLED from mysql.audit_log_filter_rules order by USER, FILTER_NAME").
 		Check(testkit.Rows("%@% f1 1", "%@% f4 1", "root@% f1 1", "user1@localhost f3 1"))
 }
+
+func TestAuditLogConvenientRule(t *testing.T) {
+	audit.Register4Test(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// create a filter and distinct user rules
+	tk.MustQuery("select audit_log_convenient_rule('basic_security', ?, ' connection,query_dcl, QUERY_DDL ')",
+		" %@%, alice@%, 'alice,bob'@'%', bob@localhost, alice@%, 'alice,bob'@'%' ").
+		Check(testkit.Rows("OK"))
+	tk.MustQuery("select FILTER_NAME, CONTENT from mysql.audit_log_filters").
+		Check(testkit.Rows(
+			`basic_security {"filter":[{"class":["CONNECTION","QUERY_DCL","QUERY_DDL"]}]}`,
+		))
+	tk.MustQuery("select USER, FILTER_NAME, ENABLED from mysql.audit_log_filter_rules order by USER").
+		Check(testkit.Rows("%@% basic_security 1", "alice,bob@% basic_security 1", "alice@% basic_security 1", "bob@localhost basic_security 1"))
+
+	bundle := audit.GlobalLogManagerForTest().GetFilter()
+	require.True(t, filterMatched(bundle, &audit.LogEntry{
+		User:    "alice",
+		Host:    "127.0.0.1",
+		Classes: []audit.EventClass{audit.ClassQuery, audit.ClassDCL},
+	}))
+	require.False(t, filterMatched(bundle, &audit.LogEntry{
+		User:    "alice",
+		Host:    "127.0.0.1",
+		Classes: []audit.EventClass{audit.ClassQuery, audit.ClassSelect},
+	}))
+	require.False(t, filterMatched(bundle, &audit.LogEntry{
+		User:    "alice",
+		Host:    "127.0.0.1",
+		Classes: []audit.EventClass{audit.ClassQuery, audit.ClassDML, audit.ClassInsert},
+	}))
+
+	// all events
+	tk.MustQuery("select audit_log_convenient_rule('all_events', '%@%', ' All ')").
+		Check(testkit.Rows("OK"))
+	tk.MustQuery("select CONTENT from mysql.audit_log_filters where FILTER_NAME = 'all_events'").
+		Check(testkit.Rows(`{}`))
+
+	// required event types
+	eventTypes := []string{
+		"CONNECTION", "QUERY_DDL", "QUERY_DCL", "QUERY_DML", "EXECUTE", "TRANSACTION", "SELECT",
+	}
+	for _, eventType := range eventTypes {
+		tk.MustQuery("select audit_log_convenient_rule(?, '%@%', ?)", "event_"+eventType, eventType).
+			Check(testkit.Rows("OK"))
+	}
+	require.Len(t, tk.MustQuery("select FILTER_NAME from mysql.audit_log_filters").Rows(), len(eventTypes)+2)
+}
+
+func TestAuditLogConvenientRuleDefaults(t *testing.T) {
+	audit.Register4Test(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// omitted arguments use the default users and event classes
+	tk.MustQuery("select audit_log_convenient_rule()").Check(testkit.Rows("OK"))
+	tk.MustQuery("select FILTER_NAME, CONTENT from mysql.audit_log_filters").Check(testkit.Rows(
+		`convenient_rule_01 {"filter":[{"class":["CONNECTION","QUERY_DDL","QUERY_DCL"]}]}`,
+	))
+	tk.MustQuery("select USER, FILTER_NAME, ENABLED from mysql.audit_log_filter_rules").
+		Check(testkit.Rows("%@% convenient_rule_01 1"))
+
+	// one and two arguments use defaults for the omitted trailing arguments
+	tk.MustQuery("select audit_log_convenient_rule('one_arg')").Check(testkit.Rows("OK"))
+	tk.MustQuery("select audit_log_convenient_rule('two_args', 'alice@%')").Check(testkit.Rows("OK"))
+	tk.MustQuery("select audit_log_convenient_rule('', '', '')").Check(testkit.Rows("OK"))
+	tk.MustQuery("select FILTER_NAME, CONTENT from mysql.audit_log_filters order by FILTER_NAME").
+		Check(testkit.Rows(
+			`convenient_rule_01 {"filter":[{"class":["CONNECTION","QUERY_DDL","QUERY_DCL"]}]}`,
+			`convenient_rule_02 {"filter":[{"class":["CONNECTION","QUERY_DDL","QUERY_DCL"]}]}`,
+			`one_arg {"filter":[{"class":["CONNECTION","QUERY_DDL","QUERY_DCL"]}]}`,
+			`two_args {"filter":[{"class":["CONNECTION","QUERY_DDL","QUERY_DCL"]}]}`,
+		))
+	tk.MustQuery("select USER, FILTER_NAME, ENABLED from mysql.audit_log_filter_rules order by USER, FILTER_NAME").
+		Check(testkit.Rows(
+			"%@% convenient_rule_01 1",
+			"%@% convenient_rule_02 1",
+			"%@% one_arg 1",
+			"alice@% two_args 1",
+		))
+}
+
+func TestAuditLogConvenientRuleAutoNames(t *testing.T) {
+	audit.Register4Test(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// skip occupied names, including names with trailing spaces
+	tk.MustQuery("select audit_log_create_filter('convenient_rule_01 ', '{}')").
+		Check(testkit.Rows("OK"))
+	tk.MustQuery("select audit_log_convenient_rule('', 'alice@%', 'QUERY_DDL')").
+		Check(testkit.Rows("OK"))
+	tk.MustQuery("select FILTER_NAME from mysql.audit_log_filters order by FILTER_NAME").
+		Check(testkit.Rows("convenient_rule_01 ", "convenient_rule_02"))
+}
+
+func TestAuditLogConvenientRuleValidate(t *testing.T) {
+	audit.Register4Test(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// invalid events and users should not leave partial configuration
+	for _, eventType := range []string{" ", ",", "QUERY_DCL,", "INVALID_EVENT", "all,", "all,QUERY_DCL", "QUERY_DCL,all", "all,all"} {
+		err := tk.QueryToErr("select audit_log_convenient_rule('invalid_event', '%@%', ?)", eventType)
+		require.Error(t, err, "event type: %q", eventType)
+	}
+	err := tk.QueryToErr("select audit_log_convenient_rule('invalid_user', 'good@%,bad@@', 'QUERY_DCL')")
+	require.Error(t, err)
+
+	tk.MustQuery("select * from mysql.audit_log_filters").Check(testkit.Rows())
+	tk.MustQuery("select * from mysql.audit_log_filter_rules").Check(testkit.Rows())
+
+	// a duplicate name should preserve modified content and the disabled rule
+	tk.MustQuery("select audit_log_convenient_rule('basic_security', '%@%', 'QUERY_DCL')").
+		Check(testkit.Rows("OK"))
+	tk.MustQuery("select audit_log_disable_rule('%@%', 'basic_security')").Check(testkit.Rows("OK"))
+	tk.MustQuery("select audit_log_create_filter('basic_security', ?, true)",
+		`{"filter":[{"class":["SELECT"]}]}`).Check(testkit.Rows("OK"))
+	err = tk.QueryToErr("select audit_log_convenient_rule('basic_security', '%@%', 'QUERY_DDL')")
+	require.Error(t, err)
+	tk.MustQuery("select FILTER_NAME, CONTENT from mysql.audit_log_filters").
+		Check(testkit.Rows(`basic_security {"filter":[{"class":["SELECT"]}]}`))
+	tk.MustQuery("select USER, FILTER_NAME, ENABLED from mysql.audit_log_filter_rules").
+		Check(testkit.Rows("%@% basic_security 0"))
+}
+
+func TestAuditLogConvenientRuleRollback(t *testing.T) {
+	audit.Register4Test(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// An orphan rule forces the second user insert to fail after the first succeeds.
+	tk.MustExec("insert into mysql.audit_log_filter_rules values ('bob@%', 'basic_security', 0)")
+	err := tk.QueryToErr("select audit_log_convenient_rule('basic_security', 'alice@%,bob@%', 'QUERY_DDL')")
+	require.ErrorContains(t, err, "Duplicate entry")
+	tk.MustQuery("select FILTER_NAME from mysql.audit_log_filters").Check(testkit.Rows())
+	tk.MustQuery("select USER, FILTER_NAME, ENABLED from mysql.audit_log_filter_rules").
+		Check(testkit.Rows("bob@% basic_security 0"))
+}

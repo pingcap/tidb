@@ -602,6 +602,7 @@ ascii
 asin
 atan
 atan2
+audit_log_convenient_rule
 audit_log_create_filter
 audit_log_create_rule
 audit_log_disable_rule

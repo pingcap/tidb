@@ -147,6 +147,56 @@ func normalizeUserAndHost(userAndHost string) (normalized string, user string, h
 	return
 }
 
+// normalizeUserAndHostList normalizes comma-separated user and host patterns,
+// removing duplicates while preserving their order.
+func normalizeUserAndHostList(userAndHostList string) ([]string, error) {
+	patterns := make([]string, 0, strings.Count(userAndHostList, ",")+1)
+	start := 0
+	quoted := false
+	atPartStart := true
+	// Commas inside a single-quoted user or host belong to the pattern.
+	for i := 0; i < len(userAndHostList); i++ {
+		ch := userAndHostList[i]
+		switch {
+		case quoted:
+			if ch == '\'' {
+				if i+1 < len(userAndHostList) && userAndHostList[i+1] == '\'' {
+					i++
+				} else {
+					quoted = false
+				}
+			}
+		case ch == '\'' && atPartStart:
+			quoted = true
+			atPartStart = false
+		case ch == ',':
+			patterns = append(patterns, userAndHostList[start:i])
+			start = i + 1
+			atPartStart = true
+		case ch == '@':
+			atPartStart = true
+		case ch != ' ':
+			atPartStart = false
+		}
+	}
+	patterns = append(patterns, userAndHostList[start:])
+
+	users := make([]string, 0, len(patterns))
+	seen := make(map[string]struct{})
+	for _, user := range patterns {
+		normalized, _, _, err := normalizeUserAndHost(user)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		users = append(users, normalized)
+	}
+	return users, nil
+}
+
 func toStringArgs(args []types.Datum) []string {
 	if len(args) == 0 {
 		return nil

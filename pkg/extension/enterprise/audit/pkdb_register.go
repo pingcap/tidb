@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"flag"
 	"strconv"
+	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -41,6 +43,13 @@ const (
 	TiDBAuditLogMaxReservedDays = "tidb_audit_log_reserved_days"
 	// TiDBAuditRedactLog is a system variable that used to switch on/off of redact log
 	TiDBAuditRedactLog = "tidb_audit_log_redacted"
+
+	auditRuleWarning = "audit is enabled, but no effective business audit rule is configured; you can configure rules using SELECT audit_log_convenient_rule('filter_name', 'user_name', 'event_type')"
+)
+
+const (
+	convenientRuleDefaultUsers      = "%@%"
+	convenientRuleDefaultEventTypes = "CONNECTION,QUERY_DDL,QUERY_DCL"
 )
 
 const (
@@ -121,7 +130,16 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 			Value: variable.BoolToOnOff(manager.Enabled()),
 			SetGlobal: setGlobalFunc(TiDBAuditEnabled, func(_ context.Context, sessVars *variable.SessionVars, s string) (err error) {
 				enable := variable.TiDBOptOn(s)
-				return manager.SetEnabled(enable)
+				wasEnabled := manager.Enabled()
+				if err := manager.SetEnabled(enable); err != nil {
+					return err
+				}
+				// Warn only when audit switches from disabled to enabled without an enabled
+				// rule for events other than audit management events.
+				if enable && !wasEnabled && !manager.hasEnabledRuleExceptAuditMgmt() && sessVars != nil && sessVars.StmtCtx != nil {
+					sessVars.StmtCtx.AppendWarning(errors.NewNoStackError(auditRuleWarning))
+				}
+				return nil
 			}),
 			RequireDynamicPrivileges: sysVarPrivileges,
 		},
@@ -260,6 +278,37 @@ func extensionOptionsFactory() ([]extension.Option, error) {
 
 				filter.Name = filterName
 				return manager.CreateLogFilter(&filter, replace)
+			}),
+			RequireDynamicPrivileges: requirePrivileges,
+		},
+		{
+			Name:            FuncAuditLogConvenientRule,
+			EvalTp:          types.ETString,
+			ArgTps:          []types.EvalType{types.ETString, types.ETString, types.ETString},
+			OptionalArgsLen: 3,
+			EvalStringFunc: statusFunc(FuncAuditLogConvenientRule, func(ctx extension.FunctionContext, args []types.Datum) error {
+				filterName := ""
+				users := convenientRuleDefaultUsers
+				eventTypes := convenientRuleDefaultEventTypes
+				if len(args) > 0 {
+					filterName = args[0].GetString()
+				}
+				if len(args) > 1 && args[1].GetString() != "" {
+					users = args[1].GetString()
+				}
+				if len(args) > 2 && args[2].GetString() != "" {
+					eventTypes = args[2].GetString()
+				}
+
+				filter := &LogFilter{Name: filterName}
+				if !strings.EqualFold(strings.TrimSpace(eventTypes), "all") {
+					classes := strings.Split(eventTypes, ",")
+					for i := range classes {
+						classes[i] = strings.TrimSpace(classes[i])
+					}
+					filter.Filter = []FilterSpec{{Classes: classes}}
+				}
+				return manager.CreateConvenientRule(filter, users)
 			}),
 			RequireDynamicPrivileges: requirePrivileges,
 		},

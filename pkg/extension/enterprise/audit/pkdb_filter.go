@@ -61,6 +61,9 @@ var (
 	// SelectFilterListSQL queries all filters
 	SelectFilterListSQL = fmt.Sprintf(
 		"SELECT FILTER_NAME, CONTENT FROM %s", TableNameAuditLogFilters)
+	// SelectFilterNameListSQL queries all filter names
+	SelectFilterNameListSQL = fmt.Sprintf(
+		"SELECT FILTER_NAME FROM %s", TableNameAuditLogFilters)
 
 	// CreateFilterRuleTableSQL creates audit log filter rule table
 	CreateFilterRuleTableSQL = fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
@@ -94,12 +97,13 @@ var (
 
 // filter function names
 const (
-	FuncAuditLogCreateFilter = "audit_log_create_filter"
-	FuncAuditLogRemoveFilter = "audit_log_remove_filter"
-	FuncAuditLogCreateRule   = "audit_log_create_rule"
-	FuncAuditLogRemoveRule   = "audit_log_remove_rule"
-	FuncAuditLogEnableRule   = "audit_log_enable_rule"
-	FuncAuditLogDisableRule  = "audit_log_disable_rule"
+	FuncAuditLogCreateFilter   = "audit_log_create_filter"
+	FuncAuditLogRemoveFilter   = "audit_log_remove_filter"
+	FuncAuditLogCreateRule     = "audit_log_create_rule"
+	FuncAuditLogRemoveRule     = "audit_log_remove_rule"
+	FuncAuditLogEnableRule     = "audit_log_enable_rule"
+	FuncAuditLogDisableRule    = "audit_log_disable_rule"
+	FuncAuditLogConvenientRule = "audit_log_convenient_rule"
 )
 
 type filterFunc func(entry *LogEntry) bool

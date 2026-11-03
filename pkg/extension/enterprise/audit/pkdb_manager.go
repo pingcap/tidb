@@ -30,6 +30,8 @@ const (
 	GlobalNotifyTimeout = time.Minute
 	// MinEtcdReWatchInterval is the min interval for retry watch
 	MinEtcdReWatchInterval = 5 * time.Second
+
+	convenientRuleNamePrefix = "convenient_rule_"
 )
 
 // EtcdCli is an interface for etcd client
@@ -401,6 +403,41 @@ func (m *LogManager) GetFilter() *LogFilterRuleBundle {
 	return m.GetConfig().Filter
 }
 
+// hasEnabledRuleExceptAuditMgmt reports whether an enabled rule's filter includes
+// event classes other than AUDIT and its subclasses. Exclusions are not evaluated.
+func (m *LogManager) hasEnabledRuleExceptAuditMgmt() bool {
+	bundle := m.GetFilter()
+	if bundle == nil {
+		return false
+	}
+	for _, rule := range bundle.rules {
+		if !rule.Enabled || rule.Filter == nil {
+			continue
+		}
+		if len(rule.Filter.Filter) == 0 {
+			return true
+		}
+		for _, spec := range rule.Filter.Filter {
+			if len(spec.Classes) == 0 {
+				return true
+			}
+			for _, className := range spec.Classes {
+				class, ok := getEventClass(className)
+				if !ok {
+					continue
+				}
+				switch class {
+				case ClassAudit, ClassAuditSetSysVar, ClassAuditFuncCall, ClassAuditEnable, ClassAuditDisable:
+					continue
+				default:
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // SetFilter sets the filter
 func (m *LogManager) SetFilter(f *LogFilterRuleBundle) error {
 	return m.editConfig(func(cfg *LoggerConfig) error {
@@ -520,6 +557,70 @@ func (m *LogManager) CreateLogFilter(filter *LogFilter, replace bool) error {
 		return nil
 	})
 
+	if err != nil {
+		return err
+	}
+
+	return m.notifyFilterConfigUpdated()
+}
+
+// CreateConvenientRule creates one audit filter and one rule for each user pattern.
+// users is a comma-separated list. An empty filter name is generated automatically.
+// It does not change the audit enabled system variable.
+func (m *LogManager) CreateConvenientRule(filter *LogFilter, users string) error {
+	normalizedUsers, err := normalizeUserAndHostList(users)
+	if err != nil {
+		return err
+	}
+
+	if filter.Name == "" {
+		err = m.runSQLInExecutor(func(exec sqlexec.SQLExecutor) error {
+			rows, err := executeSQL(m.ctx, exec, SelectFilterNameListSQL)
+			if err != nil {
+				return err
+			}
+			occupied := make(map[string]struct{}, len(rows))
+			for _, row := range rows {
+				// Match the database comparison, which ignores trailing spaces.
+				occupied[strings.TrimRight(row.GetString(0), " ")] = struct{}{}
+			}
+			// Choose the first unused numbered name; insertion checks for conflicts.
+			for index := 1; ; index++ {
+				name := fmt.Sprintf("%s%02d", convenientRuleNamePrefix, index)
+				if _, ok := occupied[name]; !ok {
+					filter.Name = name
+					return nil
+				}
+			}
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := filter.Validate(); err != nil {
+		return err
+	}
+	normalizedFilter, err := filter.Normalize()
+	if err != nil {
+		return err
+	}
+	content, err := normalizedFilter.ToJSON()
+	if err != nil {
+		return err
+	}
+
+	err = m.runInTxn(m.ctx, func(exec sqlexec.SQLExecutor) error {
+		if _, err := executeSQL(m.ctx, exec, InsertFilterSQL, filter.Name, content); err != nil {
+			return err
+		}
+		for _, user := range normalizedUsers {
+			if _, err := executeSQL(m.ctx, exec, InsertFilterRuleSQL, user, filter.Name); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}

@@ -119,6 +119,22 @@ func TestAuditEnabled(t *testing.T) {
 	require.True(t, len(files) > 0, files)
 }
 
+func TestAuditEnabledRuleWarning(t *testing.T) {
+	audit.Register4Test(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("SET GLOBAL tidb_audit_enabled = 1")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows(
+		"Warning 1105 audit is enabled, but no effective business audit rule is configured; you can configure rules using SELECT audit_log_convenient_rule('filter_name', 'user_name', 'event_type')",
+	))
+
+	tk.MustQuery("SELECT audit_log_convenient_rule('basic_security', '%@%', 'CONNECTION')").Check(testkit.Rows("OK"))
+	tk.MustExec("SET GLOBAL tidb_audit_enabled = 0")
+	tk.MustExec("SET GLOBAL tidb_audit_enabled = 1")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+}
+
 func TestAuditLogDefault(t *testing.T) {
 	audit.Register4Test(t)
 	tempDir := t.TempDir()
