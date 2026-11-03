@@ -30,7 +30,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.38.0
 	github.com/aws/smithy-go v1.24.2
 	github.com/bazelbuild/buildtools v0.0.0-20230926111657-7d855c59baeb
-	github.com/bazelbuild/rules_go v0.42.1-0.20231101215950-df20c987afcb
+	github.com/bazelbuild/rules_go v0.49.0
 	github.com/bits-and-blooms/bitset v1.14.3
 	github.com/blacktear23/go-proxyprotocol v1.0.8
 	github.com/butuzov/mirror v1.3.3
@@ -365,6 +365,9 @@ replace (
 	cloud.google.com/go/storage => cloud.google.com/go/storage v1.39.1
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
+	// etcd 3.5 uses the interceptors removed in otelgrpc v0.60.0.
+	// Remove this compatibility pin when etcd is upgraded to v3.6.1 or later.
+	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc => go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.59.0
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
