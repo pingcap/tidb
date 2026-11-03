@@ -301,9 +301,34 @@ func testMissingStatsIndexVsFullScan(t *testing.T) {
 	require.False(t, missingStats)
 	result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, tbl, broad)
 	require.Equal(t, 0, result)
+	// The threshold is the default selectivity (0.8) of the table.
+	broad.path.CountAfterAccess = 800
+	result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, broad, tbl)
+	require.Equal(t, 0, result)
+	broad.path.CountAfterAccess = 799
+	result, missingStats = compareCandidates(ctx.GetPlanCtx(), stats, prop, broad, tbl)
+	require.Equal(t, 1, result)
+	require.True(t, missingStats)
 	// A covering index has no table lookups, so it may still prune the full table scan.
+	broad.path.CountAfterAccess = 900
 	broad.path.IsSingleScan = true
 	result, missingStats = compareCandidates(ctx.GetPlanCtx(), stats, prop, broad, tbl)
 	require.Equal(t, 1, result)
 	require.True(t, missingStats)
+
+	// A non-covering index with more ranges than tidb_opt_range_max_count is a broad lookup, even
+	// if its estimate is small. Zero disables the range count check.
+	broad.path.IsSingleScan = false
+	broad.path.CountAfterAccess = 10
+	require.False(t, isBroadIndexLookup(broad, 1000, 1000))
+	require.True(t, isBroadIndexLookup(broad, 1000, 899))
+	require.False(t, isBroadIndexLookup(broad, 1000, 0))
+	require.True(t, canPseudoWinnerPrune(broad, tbl, 1000))
+	require.False(t, canPseudoWinnerPrune(broad, tbl, 899))
+	// Against another index, the winner may always prune.
+	require.True(t, canPseudoWinnerPrune(broad, idx, 899))
+	ctx.GetSessionVars().RangeMaxCount = 899
+	result, missingStats = compareCandidates(ctx.GetPlanCtx(), stats, prop, broad, tbl)
+	require.Equal(t, 0, result)
+	require.False(t, missingStats)
 }

@@ -1088,6 +1088,14 @@ func TestIssue72561(t *testing.T) {
 		// A selective missing-statistics index is still chosen.
 		testKit.MustQuery("explain format='brief' select sum(length(payload)) from t where a = 5").CheckContain("idx_a(a)")
 	}
+	// idx_a is estimated to read 30% of the table for this IN list, which is below the default
+	// selectivity, so it is chosen. With more ranges than tidb_opt_range_max_count it is a broad lookup.
+	narrower := "explain format='brief' select sum(length(payload)) from t where a in (" + strings.Join(inList[:300], ",") + ")"
+	testKit.MustExec("set @@tidb_opt_prefer_range_scan=1")
+	testKit.MustQuery(narrower).CheckContain("idx_a(a)")
+	testKit.MustExec("set @@tidb_opt_range_max_count=100")
+	testKit.MustQuery(narrower).CheckContain("TableFullScan")
+	testKit.MustExec("set @@tidb_opt_range_max_count=default")
 
 	// Same, but the missing-statistics index idx_ab wins against the analyzed idx_b instead of the table
 	// path. That win must not remove the full table scan after pruning.
