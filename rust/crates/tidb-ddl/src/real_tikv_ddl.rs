@@ -1631,6 +1631,11 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
     // mysql.table_cache_meta values (%?, 'NONE', 0, 0)`, each before the job.
     if spec.job.type_ == tidb_model::action_type::ActionType::ACTION_ALTER_CACHE_TABLE {
         let table_id = spec.job.table_id;
+        // A node's pool runs Go's statement; a pool without sessions yet has
+        // the check's transaction stage the row.
+        let sess_pool = backfiller
+            .session_pool()
+            .filter(|sess_pool| sess_pool.has_step_sessions());
         add_index_reorg::reorg_transaction(&opener, timeout, |meta, handle, buffer, _| {
             let catalog = load_info_schema(meta).map_err(DdlPlanError::Meta)?;
             let table = catalog
@@ -1645,9 +1650,19 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
                 .map_err(ClusterDdlError::IndexBackfill)?;
             buffer.reset();
             let mut writes = Vec::new();
-            crate::cluster_ddl::write_table_cache_meta_row(&catalog, table_id, &mut writes)?;
+            if sess_pool.is_none() {
+                crate::cluster_ddl::write_table_cache_meta_row(&catalog, table_id, &mut writes)?;
+            }
             Ok(((), writes))
         })?;
+        if let Some(sess_pool) = sess_pool {
+            sess_pool
+                .exec_restricted_sql_with(
+                    "replace into mysql.table_cache_meta values (%?, 'NONE', 0, 0)",
+                    &[tidb_sqlescape::SqlArg::Signed(table_id)],
+                )
+                .map_err(DdlPlanError::from_mysql_error)?;
+        }
     }
     // Go `genPlacementPolicyID`: the executor draws the policy's id from the
     // policies' own sequence, in a transaction of its own, before the job.

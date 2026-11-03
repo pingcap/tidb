@@ -555,6 +555,11 @@ fn a_cached_table_refuses_ddl_until_nocache_as_go_does() {
         .unwrap();
     let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.c1"));
     assert!(!created[0][1].contains("CACHED ON"), "{}", created[0][1]);
+    // Go `finishDDLJob`: NOCACHE deletes the lock row on `w.sess`.
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM mysql.table_cache_meta")),
+        [["0"]]
+    );
     session
         .node_conn()
         .execute_write("ALTER TABLE test.c1 ADD COLUMN c INT")
@@ -26419,4 +26424,34 @@ fn ddl_mdl_info_row_is_gos_replace_on_the_step_session() {
         displayed(rows(&mut probe, "select count(*) from mysql.tidb_mdl_info")),
         [["0"]]
     );
+}
+
+/// Go `finishDDLJob` -> `delRange.addDelRangeJob`: a finished DROP TABLE's
+/// `mysql.gc_delete_range` row is Go's `INSERT IGNORE` on a pooled session
+/// in its own transaction, stamped with a fresh timestamp (`getNowTSO`), so
+/// its `ts` is later than the finishing step's start (the history job's
+/// `FinishedTS`); gorun answers `FinishedTS + 1`. The emulator may already
+/// have moved the row to `mysql.gc_delete_range_done`.
+#[test]
+fn ddl_delete_range_row_is_gos_insert_on_a_pooled_session() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(190)).unwrap();
+    rows(&mut session, "create table test.dr1 (a int)");
+    rows(&mut session, "drop table test.dr1");
+    let finished = displayed(rows(
+        &mut session,
+        "select job_id, json_extract(cast(job_meta as char), '$.binlog.FinishedTS') from mysql.tidb_ddl_history order by job_id desc limit 1",
+    ));
+    let (job_id, finished_ts) = (&finished[0][0], finished[0][1].parse::<u64>().unwrap());
+    let recorded = displayed(rows(
+        &mut session,
+        &format!(
+            "select element_id, ts from mysql.gc_delete_range where job_id = {job_id} \
+             union all select element_id, ts from mysql.gc_delete_range_done where job_id = {job_id}"
+        ),
+    ));
+    assert_eq!(recorded.len(), 1, "{recorded:?}");
+    assert_eq!(recorded[0][0], "1");
+    let ts = recorded[0][1].parse::<u64>().unwrap();
+    assert!(ts > finished_ts, "delete-range ts {ts} is not after FinishedTS {finished_ts}");
 }

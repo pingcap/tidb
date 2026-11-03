@@ -78,6 +78,15 @@ impl DdlSessionPool for NodeDdlSessionPool {
         rows
     }
 
+    fn current_version(&self) -> Result<u64, MysqlError> {
+        let domain = self
+            .domain
+            .get()
+            .and_then(Weak::upgrade)
+            .ok_or_else(|| MysqlError::unknown("the DDL session pool has no running node"))?;
+        domain.transactions.fresh_timestamp().map_err(MysqlError::unknown)
+    }
+
     fn has_step_sessions(&self) -> bool {
         self.domain.get().and_then(Weak::upgrade).is_some()
     }

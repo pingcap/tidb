@@ -136,9 +136,30 @@ system-table rows are the SQL statements Go executes, in the same commit.
   update (`plan_persisted_ddl_job_failure`), and `finish_persisted_ddl_job`
   (delete-range rows, then Go's `deleteDDLJob`, then `AddHistoryDDLJob`).
 - [ ] M4: reorg handles, delete ranges, table cache meta; raw writers gone.
-  Also the admin paths in `worker.rs` (pause / resume / cancel job-row
-  updates in their own transactions; Go `updateDDLJob2Table` on a pooled
-  session).
+  - [x] (2026-11-03) Delete ranges. Go's `addDelRangeJob` does NOT run on
+    `w.sess`: it takes a pooled session (`dr.sessPool.Get()`) and runs one
+    `INSERT IGNORE INTO mysql.gc_delete_range` per batch in that session's
+    own transaction, stamped with a fresh TSO (`getNowTSO`). Ported as Go's
+    `DelRangeExecWrapper` / `sessionDelRangeExecWrapper`
+    (`add_del_range_job`, `DdlSessionPool::current_version`); a pool
+    without sessions stages the rows through `StagedDelRanges`. Test
+    `ddl_delete_range_row_is_gos_insert_on_a_pooled_session` (the row's
+    `ts` follows the history job's `FinishedTS`; gorun answers
+    `FinishedTS + 1`).
+  - [x] (2026-11-03) `table_cache_meta`: CACHE's `replace into` runs on a
+    pooled session before the job (Go `AlterTableCache` uses the
+    statement's restricted executor); NOCACHE's `finishDDLJob` delete runs
+    on the step's session. Rust never deleted the row before; the CACHE /
+    NOCACHE test now checks it is gone.
+  - [ ] Reorg handles: Rust's add-index reorg advances the handle inside
+    each batch transaction; Go's `UpdateReorgMeta` is a separate
+    transaction on a pooled session. That is part of the backfill
+    structure, not a statement swap.
+  - [ ] Job submission insert (`insertDDLJobs2Table`).
+  - The raw job-row writes in `worker.rs` are test fixtures
+    (`#[cfg(test)]`), not admin paths. Production ADMIN CANCEL / PAUSE /
+    RESUME DDL JOBS is a stub answering not-found; Go's `processJobs` is
+    the next port.
 
 ## Surprises & Discoveries
 

@@ -5807,16 +5807,28 @@ fn finish_persisted_ddl_job<S: MetaSnapshot>(
         .job
         .encode(false)
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    // Go `finishDDLJob` -> `addDelRangeJob`: the keys the job left behind,
-    // recorded before it moves to history.
-    let mut mutations = crate::ddl_delete_range::finish_ddl_job(
-        snapshot,
-        catalog,
-        &active.job,
-        start_ts,
-        row_ids,
-    )?;
+    let mut mutations = Vec::new();
     if let Some(session) = session {
+        // Go `finishDDLJob` -> `addDelRangeJob`: the keys the job left
+        // behind, recorded before it moves to history, on a pooled session
+        // in their own transactions.
+        if crate::ddl_delete_range::job_need_gc(&active.job) {
+            crate::ddl_delete_range::add_del_range_job(session.pool.as_ref(), &active.job)?;
+        }
+        if active.job.type_ == ActionType::ACTION_ALTER_NO_CACHE_TABLE
+            && !active.job.is_cancelled()
+        {
+            session
+                .execute(
+                    start_ts,
+                    &format!(
+                        "delete from mysql.table_cache_meta where tid = {}",
+                        active.job.table_id
+                    ),
+                    &[],
+                )
+                .map_err(DdlPlanError::from_mysql_error)?;
+        }
         // Go `deleteDDLJob`, then `AddHistoryDDLJob`, on `w.sess`.
         session
             .execute(
@@ -5827,6 +5839,13 @@ fn finish_persisted_ddl_job<S: MetaSnapshot>(
             .map_err(DdlPlanError::from_mysql_error)?;
         add_history_ddl_job(session, start_ts, &active.job, encoded, &mut mutations)?;
     } else {
+        mutations = crate::ddl_delete_range::finish_ddl_job(
+            snapshot,
+            catalog,
+            &active.job,
+            start_ts,
+            row_ids,
+        )?;
         append_history_ddl_job(catalog, snapshot, &active.job, encoded, &mut mutations)?;
         job_table
             .append_delete(active, &mut mutations)

@@ -124,6 +124,18 @@ pub trait DdlSessionPool: Send + Sync {
         self.exec_restricted_sql(&String::from_utf8_lossy(&escaped))
     }
 
+    /// Go `sctx.GetStore().CurrentVersion(kv.GlobalTxnScope)` on one of the
+    /// pool's sessions (`getNowTSO`): a fresh timestamp from the store.
+    ///
+    /// # Errors
+    ///
+    /// The store's failure to hand out a timestamp.
+    fn current_version(&self) -> Result<u64, tidb_terror::MysqlError> {
+        Err(tidb_terror::MysqlError::unknown(
+            "this DDL session pool has no store",
+        ))
+    }
+
     /// Whether [`Self::open_step_session`] can serve a step now: a node's
     /// pool can once its domain is bound (the node builds the pool before
     /// the domain exists); a step without one stages its system-table rows

@@ -34,6 +34,11 @@ use tidb_syssession::system_row_write::{delete_row, insert_row, update_row, RowV
 /// batches of this many.
 const BATCH_INSERT_DELETE_RANGE_SIZE: usize = 256;
 
+/// Go `insertDeleteRangeSQLPrefix`.
+const INSERT_DELETE_RANGE_SQL_PREFIX: &str = "INSERT IGNORE INTO mysql.gc_delete_range VALUES ";
+/// Go `insertDeleteRangeSQLValue`.
+const INSERT_DELETE_RANGE_SQL_VALUE: &str = "(%?, %?, %?, %?, %?)";
+
 /// Go `tablecodec.TempIndexPrefix`.
 const TEMP_INDEX_PREFIX: i64 = 0x7fff_0000_0000_0000;
 
@@ -138,21 +143,23 @@ pub fn job_need_gc(job: &Job) -> bool {
 }
 
 /// Go `AddDelRangeJobInternal`: the ranges a finished job left behind, each
-/// with its element id.
-pub fn add_del_range_job_internal(job: &Job) -> Result<Vec<DelRangeTask>, DdlPlanError> {
+/// with its element id, handed to `wrapper`.
+pub fn add_del_range_job_internal(
+    wrapper: &mut dyn DelRangeExecWrapper,
+    job: &Job,
+) -> Result<(), DdlPlanError> {
     let mut alloc = ElementIdAlloc::default();
-    let mut ranges = Vec::new();
     if let Some(info) = &job.multi_schema_info {
         for (sequence, sub) in info.read().sub_jobs.iter_deref().enumerate() {
             let proxy = sub.read().to_proxy_job(job, sequence as i64);
             if job_need_gc(&proxy) {
-                insert_job_into_delete_range_table(&proxy, &mut alloc, &mut ranges)?;
+                insert_job_into_delete_range_table(wrapper, &proxy, &mut alloc)?;
             }
         }
     } else {
-        insert_job_into_delete_range_table(job, &mut alloc, &mut ranges)?;
+        insert_job_into_delete_range_table(wrapper, job, &mut alloc)?;
     }
-    Ok(ranges)
+    Ok(())
 }
 
 fn args_error(error: serde_json::Error) -> DdlPlanError {
@@ -165,10 +172,11 @@ fn missing_args(job: &Job) -> DdlPlanError {
 
 /// Go `insertJobIntoDeleteRangeTable`.
 fn insert_job_into_delete_range_table(
+    wrapper: &mut dyn DelRangeExecWrapper,
     job: &Job,
     alloc: &mut ElementIdAlloc,
-    ranges: &mut Vec<DelRangeTask>,
 ) -> Result<(), DdlPlanError> {
+    wrapper.update_tso_for_job()?;
     let mut job = job.clone();
     let job_id = job.id;
     match job.type_ {
@@ -178,7 +186,7 @@ fn insert_job_into_delete_range_table(
                 .ok_or_else(|| missing_args(&job))?;
             let table_ids = args.read().all_dropped_table_ids.get().snapshot();
             for batch in table_ids.chunks(BATCH_INSERT_DELETE_RANGE_SIZE) {
-                batch_delete_tables_range(job_id, batch, alloc, ranges);
+                batch_delete_tables_range(wrapper, job_id, batch, alloc)?;
             }
         }
         ActionType::ACTION_DROP_TABLE => {
@@ -187,10 +195,10 @@ fn insert_job_into_delete_range_table(
                 .ok_or_else(|| missing_args(&job))?;
             let partition_ids = args.read().old_partition_ids.clone();
             if !partition_ids.is_empty() {
-                batch_delete_tables_range(job_id, &partition_ids, alloc, ranges);
+                batch_delete_tables_range(wrapper, job_id, &partition_ids, alloc)?;
             }
             // The logical table may hold global index regions.
-            batch_delete_tables_range(job_id, &[job.table_id], alloc, ranges);
+            batch_delete_tables_range(wrapper, job_id, &[job.table_id], alloc)?;
         }
         ActionType::ACTION_TRUNCATE_TABLE => {
             let args = tidb_model::get_finished_truncate_table_args(&mut job)
@@ -198,16 +206,16 @@ fn insert_job_into_delete_range_table(
                 .ok_or_else(|| missing_args(&job))?;
             let partition_ids = args.read().old_partition_ids.get().snapshot();
             if !partition_ids.is_empty() {
-                batch_delete_tables_range(job_id, &partition_ids, alloc, ranges);
+                batch_delete_tables_range(wrapper, job_id, &partition_ids, alloc)?;
             }
-            batch_delete_tables_range(job_id, &[job.table_id], alloc, ranges);
+            batch_delete_tables_range(wrapper, job_id, &[job.table_id], alloc)?;
         }
         ActionType::ACTION_DROP_TABLE_PARTITION => {
             let args = tidb_model::get_finished_table_partition_args(&mut job)
                 .map_err(args_error)?
                 .ok_or_else(|| missing_args(&job))?;
             let ids = args.read().old_physical_table_ids.get().snapshot();
-            batch_delete_tables_range(job_id, &ids, alloc, ranges);
+            batch_delete_tables_range(wrapper, job_id, &ids, alloc)?;
         }
         ActionType::ACTION_REORGANIZE_PARTITION
         | ActionType::ACTION_REMOVE_PARTITIONING
@@ -218,22 +226,22 @@ fn insert_job_into_delete_range_table(
             let args = args.read();
             for index in args.old_global_indexes.get().snapshot() {
                 batch_delete_indices_range(
+                    wrapper,
                     job_id,
                     index.table_id,
                     &[index.index_id],
                     alloc,
-                    ranges,
-                );
+                )?;
             }
             let ids = args.old_physical_table_ids.get().snapshot();
-            batch_delete_tables_range(job_id, &ids, alloc, ranges);
+            batch_delete_tables_range(wrapper, job_id, &ids, alloc)?;
         }
         ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
             let args = tidb_model::get_truncate_table_args(&mut job)
                 .map_err(args_error)?
                 .ok_or_else(|| missing_args(&job))?;
             let ids = args.read().old_partition_ids.get().snapshot();
-            batch_delete_tables_range(job_id, &ids, alloc, ranges);
+            batch_delete_tables_range(wrapper, job_id, &ids, alloc)?;
         }
         // Add index records its ranges because a cancelled one rolls back.
         ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY => {
@@ -256,10 +264,16 @@ fn insert_job_into_delete_range_table(
                     vec![temp_index_id]
                 };
                 if index.is_global {
-                    batch_delete_indices_range(job_id, job.table_id, &index_ids, alloc, ranges);
+                    batch_delete_indices_range(wrapper, job_id, job.table_id, &index_ids, alloc)?;
                 } else {
                     for physical_id in &physical_ids {
-                        batch_delete_indices_range(job_id, *physical_id, &index_ids, alloc, ranges);
+                        batch_delete_indices_range(
+                            wrapper,
+                            job_id,
+                            *physical_id,
+                            &index_ids,
+                            alloc,
+                        )?;
                     }
                 }
             }
@@ -278,10 +292,10 @@ fn insert_job_into_delete_range_table(
             let partition_ids = args.partition_ids.snapshot();
             // No partition ids: a global index, even on a partitioned table.
             if partition_ids.is_empty() {
-                batch_delete_indices_range(job_id, job.table_id, &[index_id], alloc, ranges);
+                batch_delete_indices_range(wrapper, job_id, job.table_id, &[index_id], alloc)?;
             } else {
                 for physical_id in partition_ids {
-                    batch_delete_indices_range(job_id, physical_id, &[index_id], alloc, ranges);
+                    batch_delete_indices_range(wrapper, job_id, physical_id, &[index_id], alloc)?;
                 }
             }
         }
@@ -293,21 +307,21 @@ fn insert_job_into_delete_range_table(
             if !args.index_ids.is_empty() {
                 if args.partition_ids.is_empty() {
                     batch_delete_indices_range(
+                        wrapper,
                         job_id,
                         job.table_id,
                         &args.index_ids,
                         alloc,
-                        ranges,
-                    );
+                    )?;
                 } else {
                     for physical_id in &args.partition_ids {
                         batch_delete_indices_range(
+                            wrapper,
                             job_id,
                             *physical_id,
                             &args.index_ids,
                             alloc,
-                            ranges,
-                        );
+                        )?;
                     }
                 }
             }
@@ -321,16 +335,16 @@ fn insert_job_into_delete_range_table(
                 return Ok(());
             }
             if args.partition_ids.is_empty() {
-                batch_delete_indices_range(job_id, job.table_id, &args.index_ids, alloc, ranges);
+                batch_delete_indices_range(wrapper, job_id, job.table_id, &args.index_ids, alloc)?;
             } else {
                 for physical_id in &args.partition_ids {
                     batch_delete_indices_range(
+                        wrapper,
                         job_id,
                         *physical_id,
                         &args.index_ids,
                         alloc,
-                        ranges,
-                    );
+                    )?;
                 }
             }
         }
@@ -339,84 +353,204 @@ fn insert_job_into_delete_range_table(
     Ok(())
 }
 
-/// Go `doBatchDeleteIndiceRange`.
+/// Go `doBatchDeleteIndiceRange`: one statement for the indexes' ranges.
 fn batch_delete_indices_range(
+    wrapper: &mut dyn DelRangeExecWrapper,
     job_id: i64,
     table_id: i64,
     index_ids: &[i64],
     alloc: &mut ElementIdAlloc,
-    ranges: &mut Vec<DelRangeTask>,
-) {
-    for index_id in index_ids {
-        let element_id = alloc.alloc_for_index_id(table_id, *index_id);
-        ranges.push(DelRangeTask {
+) -> Result<(), DdlPlanError> {
+    let mut sql = String::from(INSERT_DELETE_RANGE_SQL_PREFIX);
+    wrapper.prepare_params_list(index_ids.len() * 5);
+    let Some(table_id) = wrapper.rewrite_table_id(table_id) else {
+        return Ok(());
+    };
+    for (i, index_id) in index_ids.iter().enumerate() {
+        let start_key = tidb_tablecodec::table_key::encode_table_index_prefix(table_id, *index_id);
+        let end_key = tidb_tablecodec::table_key::encode_table_index_prefix(table_id, index_id + 1);
+        sql.push_str(INSERT_DELETE_RANGE_SQL_VALUE);
+        if i != index_ids.len() - 1 {
+            sql.push(',');
+        }
+        let elem_id = alloc.alloc_for_index_id(table_id, *index_id);
+        wrapper.append_params_list(
             job_id,
-            element_id,
-            start_key: tidb_tablecodec::table_key::encode_table_index_prefix(table_id, *index_id),
-            end_key: tidb_tablecodec::table_key::encode_table_index_prefix(table_id, index_id + 1),
-        });
+            elem_id,
+            hex_encode(&start_key),
+            hex_encode(&end_key),
+        );
     }
+    wrapper.consume_delete_range(&sql)
 }
 
-/// Go `doBatchDeleteTablesRange`.
+/// Go `doBatchDeleteTablesRange`: one statement for the tables' ranges.
 fn batch_delete_tables_range(
+    wrapper: &mut dyn DelRangeExecWrapper,
     job_id: i64,
     table_ids: &[i64],
     alloc: &mut ElementIdAlloc,
-    ranges: &mut Vec<DelRangeTask>,
-) {
-    for table_id in table_ids {
-        let element_id = alloc.alloc_for_physical_id(*table_id);
-        ranges.push(DelRangeTask {
+) -> Result<(), DdlPlanError> {
+    let mut sql = String::from(INSERT_DELETE_RANGE_SQL_PREFIX);
+    wrapper.prepare_params_list(table_ids.len() * 5);
+    for (i, table_id) in table_ids.iter().enumerate() {
+        let Some(table_id) = wrapper.rewrite_table_id(*table_id) else {
+            continue;
+        };
+        let start_key = tidb_tablecodec::table_key::encode_table_prefix(table_id);
+        let end_key = tidb_tablecodec::table_key::encode_table_prefix(table_id + 1);
+        sql.push_str(INSERT_DELETE_RANGE_SQL_VALUE);
+        if i != table_ids.len() - 1 {
+            sql.push(',');
+        }
+        let elem_id = alloc.alloc_for_physical_id(table_id);
+        wrapper.append_params_list(
             job_id,
-            element_id,
-            start_key: tidb_tablecodec::table_key::encode_table_prefix(*table_id),
-            end_key: tidb_tablecodec::table_key::encode_table_prefix(table_id + 1),
-        });
+            elem_id,
+            hex_encode(&start_key),
+            hex_encode(&end_key),
+        );
+    }
+    wrapper.consume_delete_range(&sql)
+}
+
+/// Go `DelRangeExecWrapper`: consumes the delete ranges with the provided
+/// table ID(s) and index ID(s).
+pub trait DelRangeExecWrapper {
+    /// Go `UpdateTSOForJob`: a new timestamp for the next job.
+    ///
+    /// # Errors
+    ///
+    /// The store's failure to hand out a timestamp.
+    fn update_tso_for_job(&mut self) -> Result<(), DdlPlanError>;
+
+    /// Go `PrepareParamsList`.
+    fn prepare_params_list(&mut self, size: usize);
+
+    /// Go `RewriteTableID`: `None` skips the table.
+    fn rewrite_table_id(&self, table_id: i64) -> Option<i64>;
+
+    /// Go `AppendParamsList`: one row's values, its keys hex-encoded.
+    fn append_params_list(&mut self, job_id: i64, elem_id: i64, start_key: String, end_key: String);
+
+    /// Go `ConsumeDeleteRange`: the batch's statement over the listed
+    /// values.
+    ///
+    /// # Errors
+    ///
+    /// The statement's error.
+    fn consume_delete_range(&mut self, sql: &str) -> Result<(), DdlPlanError>;
+}
+
+/// Go `sessionDelRangeExecWrapper`: the statements run on a session of the
+/// worker's pool, each in its own transaction, stamped with the store's
+/// current timestamp.
+pub struct SessionDelRangeExecWrapper<'a> {
+    sctx: &'a dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    ts: u64,
+    params_list: Vec<(i64, i64, String, String, u64)>,
+}
+
+impl<'a> SessionDelRangeExecWrapper<'a> {
+    /// Go `newDelRangeExecWrapper`.
+    #[must_use]
+    pub fn new(sctx: &'a dyn tidb_ddl_build::session_pool::DdlSessionPool) -> Self {
+        Self {
+            sctx,
+            ts: 0,
+            params_list: Vec::new(),
+        }
     }
 }
 
-/// Builds one job's ranges in Go's element order, for a change that did not
-/// run as a persisted job and so carries no finished arguments.
+impl DelRangeExecWrapper for SessionDelRangeExecWrapper<'_> {
+    fn update_tso_for_job(&mut self) -> Result<(), DdlPlanError> {
+        // Go `getNowTSO`.
+        self.ts = self
+            .sctx
+            .current_version()
+            .map_err(DdlPlanError::from_mysql_error)?;
+        Ok(())
+    }
+
+    fn prepare_params_list(&mut self, size: usize) {
+        self.params_list = Vec::with_capacity(size / 5);
+    }
+
+    fn rewrite_table_id(&self, table_id: i64) -> Option<i64> {
+        Some(table_id)
+    }
+
+    fn append_params_list(
+        &mut self,
+        job_id: i64,
+        elem_id: i64,
+        start_key: String,
+        end_key: String,
+    ) {
+        self.params_list
+            .push((job_id, elem_id, start_key, end_key, self.ts));
+    }
+
+    fn consume_delete_range(&mut self, sql: &str) -> Result<(), DdlPlanError> {
+        use tidb_sqlescape::SqlArg;
+        let params_list = std::mem::take(&mut self.params_list);
+        let args: Vec<SqlArg<'_>> = params_list
+            .iter()
+            .flat_map(|(job_id, elem_id, start_key, end_key, ts)| {
+                [
+                    SqlArg::Signed(*job_id),
+                    SqlArg::Signed(*elem_id),
+                    SqlArg::from(start_key.as_str()),
+                    SqlArg::from(end_key.as_str()),
+                    SqlArg::Unsigned(*ts),
+                ]
+            })
+            .collect();
+        self.sctx
+            .exec_restricted_sql_with(sql, &args)
+            .map_err(DdlPlanError::from_mysql_error)?;
+        Ok(())
+    }
+}
+
+/// The ranges a job's statements would insert, for a worker whose pool has
+/// no sessions yet: the step stages their rows itself
+/// ([`del_range_rows_mutations`]).
 #[derive(Default)]
-pub struct DelRangeBuilder {
-    job_id: i64,
-    alloc: ElementIdAlloc,
+struct StagedDelRanges {
     ranges: Vec<DelRangeTask>,
 }
 
-impl DelRangeBuilder {
-    /// A builder for job `job_id`.
-    #[must_use]
-    pub fn new(job_id: i64) -> Self {
-        Self {
+impl DelRangeExecWrapper for StagedDelRanges {
+    fn update_tso_for_job(&mut self) -> Result<(), DdlPlanError> {
+        Ok(())
+    }
+
+    fn prepare_params_list(&mut self, _size: usize) {}
+
+    fn rewrite_table_id(&self, table_id: i64) -> Option<i64> {
+        Some(table_id)
+    }
+
+    fn append_params_list(
+        &mut self,
+        job_id: i64,
+        elem_id: i64,
+        start_key: String,
+        end_key: String,
+    ) {
+        let decode = |key: String| hex_decode(key.as_bytes()).expect("hex_encode's output");
+        self.ranges.push(DelRangeTask {
             job_id,
-            ..Self::default()
-        }
+            element_id: elem_id,
+            start_key: decode(start_key),
+            end_key: decode(end_key),
+        });
     }
 
-    /// Go `doBatchDeleteTablesRange`.
-    pub fn tables(&mut self, table_ids: &[i64]) {
-        for batch in table_ids.chunks(BATCH_INSERT_DELETE_RANGE_SIZE) {
-            batch_delete_tables_range(self.job_id, batch, &mut self.alloc, &mut self.ranges);
-        }
-    }
-
-    /// Go `doBatchDeleteIndiceRange`.
-    pub fn indices(&mut self, table_id: i64, index_ids: &[i64]) {
-        batch_delete_indices_range(
-            self.job_id,
-            table_id,
-            index_ids,
-            &mut self.alloc,
-            &mut self.ranges,
-        );
-    }
-
-    /// The ranges, in order.
-    #[must_use]
-    pub fn finish(self) -> Vec<DelRangeTask> {
-        self.ranges
+    fn consume_delete_range(&mut self, _sql: &str) -> Result<(), DdlPlanError> {
+        Ok(())
     }
 }
 
@@ -599,8 +733,25 @@ impl DelRangeTable {
     }
 }
 
-/// Go `finishDDLJob` -> `addDelRangeJob`: the `gc_delete_range` rows a
-/// finished job owes, allocated from the node's row-ID allocators.
+/// Go `delRange.addDelRangeJob`: the job's ranges inserted by Go's
+/// statements on a session of the worker's pool, each statement in its own
+/// transaction -- not the finishing step's.
+///
+/// # Errors
+///
+/// The store's failure to hand out a timestamp, or a statement's error.
+pub fn add_del_range_job(
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    job: &Job,
+) -> Result<(), DdlPlanError> {
+    let mut wrapper = SessionDelRangeExecWrapper::new(sess_pool);
+    add_del_range_job_internal(&mut wrapper, job)
+}
+
+/// The `gc_delete_range` rows a finished job owes, staged by a step whose
+/// worker has no pooled sessions yet ([`add_del_range_job`] otherwise),
+/// allocated from the node's row-ID allocators and stamped with the step's
+/// start timestamp.
 pub fn finish_ddl_job<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &SessionExtendedInfoSchema,
@@ -611,8 +762,9 @@ pub fn finish_ddl_job<S: MetaSnapshot>(
     if !job_need_gc(job) {
         return Ok(Vec::new());
     }
-    let ranges = add_del_range_job_internal(job)?;
-    del_range_rows_mutations(snapshot, catalog, &ranges, ts, row_ids)
+    let mut staged = StagedDelRanges::default();
+    add_del_range_job_internal(&mut staged, job)?;
+    del_range_rows_mutations(snapshot, catalog, &staged.ranges, ts, row_ids)
 }
 
 /// The `gc_delete_range` rows (`INSERT IGNORE`) for `ranges`.
