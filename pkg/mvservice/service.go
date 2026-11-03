@@ -859,12 +859,11 @@ func (t *MVService) executeMLogAnalyzeTask(mlogID int64) (err error) {
 				zap.ByteString("stack", debug.Stack()),
 			)
 			err = fmt.Errorf("analyze MV log task panicked: %v", r)
-		}
-		t.observeTaskDuration(mvTaskDurationTypeMLogAnalyze, taskStart, err)
-		if err != nil {
+		} else if err != nil {
 			fields := append(t.runtimeLogFields(), zap.Int64("mvlog_id", mlogID), zap.Error(err))
 			logutil.BgLogger().Warn("analyze MV log task failed", fields...)
 		}
+		t.observeTaskDuration(mvTaskDurationTypeMLogAnalyze, taskStart, err)
 	}()
 
 	err = t.mh.AnalyzeMVLog(t.ctx, t.sysSessionPool, mlogID)
