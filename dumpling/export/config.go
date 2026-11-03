@@ -248,7 +248,7 @@ func DefaultConfig() *Config {
 // redacted returns a shallow copy of conf with storage credentials masked.
 func (conf *Config) redacted() *Config {
 	c := *conf
-	c.OutputDirPath = objstore.RedactURL(c.OutputDirPath)
+	c.OutputDirPath = storage.RedactURL(c.OutputDirPath)
 	c.BackendOptions = c.BackendOptions.Redacted()
 	return &c
 }

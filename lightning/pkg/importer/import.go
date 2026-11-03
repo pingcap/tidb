@@ -56,12 +56,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/metaservice"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
->>>>>>> 03148cd4adf (objstore, dumpling, lightning: redact storage URLs in logs and errors (#71844))
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/driver"
@@ -706,7 +700,7 @@ func verifyCheckpoint(cfg *config.Config, taskCp *checkpoints.TaskCheckpoint) er
 
 		errorFmt := "config '%s' value '%s' different from checkpoint value '%s'. You may set 'check-requirements = false' to skip this check or " + retryUsage
 		if cfg.Mydumper.SourceDir != taskCp.SourceDir {
-			cfgDir, cpDir := objstore.RedactURL(cfg.Mydumper.SourceDir), objstore.RedactURL(taskCp.SourceDir)
+			cfgDir, cpDir := storage.RedactURL(cfg.Mydumper.SourceDir), storage.RedactURL(taskCp.SourceDir)
 			if cfgDir == cpDir {
 				cpDir += " (only the redacted parameters differ)"
 			}

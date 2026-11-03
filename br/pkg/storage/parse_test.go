@@ -10,11 +10,7 @@ import (
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-<<<<<<< HEAD:br/pkg/storage/parse_test.go
-=======
-	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/parser/ast"
->>>>>>> 03148cd4adf (objstore, dumpling, lightning: redact storage URLs in logs and errors (#71844)):pkg/objstore/parse_test.go
 	"github.com/stretchr/testify/require"
 )
 
@@ -421,20 +417,6 @@ func TestParseBackend(t *testing.T) {
 		}, *retBackend3.AzureBlobStorage)
 	}
 }
-<<<<<<< HEAD:br/pkg/storage/parse_test.go
-=======
-
-func TestS3DefaultForceStylePath(t *testing.T) {
-	s, err := ParseBackend(`s3://bucket3/prefix/path?endpoint=http://xxx.amazonaws.com`, nil)
-	require.NoError(t, err)
-	require.False(t, s.GetS3().ForcePathStyle)
-	s, err = ParseBackend(`s3://bucket3/prefix/path?force-path-style=false`, nil)
-	require.NoError(t, err)
-	require.False(t, s.GetS3().ForcePathStyle)
-	s, err = ParseBackend(`s3://bucket3/prefix/path?force-path-style=true`, nil)
-	require.NoError(t, err)
-	require.True(t, s.GetS3().ForcePathStyle)
-}
 
 func TestBackendOptionsRedacted(t *testing.T) {
 	opts := BackendOptions{}
@@ -516,4 +498,3 @@ func TestParseBackendMissingBucketDoesNotLeakUserinfo(t *testing.T) {
 		require.NotContains(t, err.Error(), "SKEY")
 	}
 }
->>>>>>> 03148cd4adf (objstore, dumpling, lightning: redact storage URLs in logs and errors (#71844)):pkg/objstore/parse_test.go

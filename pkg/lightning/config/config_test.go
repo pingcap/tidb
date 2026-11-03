@@ -31,11 +31,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/objstore"
->>>>>>> 03148cd4adf (objstore, dumpling, lightning: redact storage URLs in logs and errors (#71844))
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1444,7 +1440,7 @@ func TestRedactConfig(t *testing.T) {
 	}{
 		{"", ""},
 		{":", ":"},
-		{"s3://bucket:port/file?access-key=AKID", objstore.InvalidURLPlaceholder},
+		{"s3://bucket:port/file?access-key=AKID", storage.InvalidURLPlaceholder},
 		{"~/file", "~/file"},
 		{"gs://bucket/file", "gs://bucket/file"},
 		{"gs://bucket/file?access-key=123", "gs://bucket/file?access-key=123"},
