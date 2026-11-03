@@ -96,11 +96,12 @@ go_test(
         "main_test.go",
         "metrics_schema_test.go",
         "sieve_test.go",
+        "table_name_batch_test.go",
         "tables_test.go",
     ],
     embed = [":infoschema"],
     flaky = True,
-    shard_count = 44,
+    shard_count = 46,
     deps = [
         "//pkg/config",
         "//pkg/ddl/placement",

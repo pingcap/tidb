@@ -359,6 +359,19 @@ func TestMeta(t *testing.T) {
 	err = m.CreateTableOrView(1, tbInfo2)
 	require.NoError(t, err)
 
+	batchTables, err := m.GetTables(context.Background(), dbInfo.ID, []int64{2, 999, 1, 2})
+	require.NoError(t, err)
+	require.Equal(t, []*model.TableInfo{tbInfo2, nil, tbInfo, tbInfo2}, batchTables)
+	batchTables, err = m.GetTables(context.Background(), dbInfo.ID, nil)
+	require.NoError(t, err)
+	require.Empty(t, batchTables)
+	_, err = m.GetTables(context.Background(), 999, []int64{1})
+	require.True(t, meta.ErrDBNotExists.Equal(err))
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = m.GetTables(canceled, dbInfo.ID, []int64{1})
+	require.ErrorIs(t, err, context.Canceled)
+
 	tblName := &model.TableNameInfo{ID: tbInfo.ID, Name: tbInfo.Name}
 	tblName2 := &model.TableNameInfo{ID: tbInfo2.ID, Name: tbInfo2.Name}
 	tableNames, err := m.ListSimpleTables(1)

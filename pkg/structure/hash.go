@@ -50,6 +50,37 @@ func (t *TxStructure) HGet(key []byte, field []byte) ([]byte, error) {
 	return value, errors.Trace(err)
 }
 
+// HGetBatch gets hash fields in input order, returning nil for missing fields.
+func (t *TxStructure) HGetBatch(ctx context.Context, key []byte, fields [][]byte) ([][]byte, error) {
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	keys := make([]kv.Key, len(fields))
+	for i, field := range fields {
+		keys[i] = t.encodeHashDataKey(key, field)
+	}
+	values := make([][]byte, len(keys))
+	if getter, ok := t.reader.(kv.BatchGetter); ok {
+		entries, err := getter.BatchGet(ctx, keys)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for i, key := range keys {
+			values[i] = entries[string(key)].Value
+		}
+		return values, nil
+	}
+	// Some in-memory retrievers only implement point reads.
+	for i, key := range keys {
+		value, err := kv.GetValue(ctx, t.reader, key)
+		if err != nil && !kv.ErrNotExist.Equal(err) {
+			return nil, errors.Trace(err)
+		}
+		values[i] = value
+	}
+	return values, nil
+}
+
 func (*TxStructure) hashFieldIntegerVal(val int64) []byte {
 	return []byte(strconv.FormatInt(val, 10))
 }
