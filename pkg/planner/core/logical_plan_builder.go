@@ -4549,6 +4549,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			if tNameW == nil {
 				continue
 			}
+			if err := CheckMViewUpdatable(b.ctx.GetSessionVars(), tNameW.TableInfo, tName.Name.O, "SELECT"); err != nil {
+				return nil, err
+			}
 			if isExplicitSetTablesNames {
 				// If `LockTableIDs` map is empty, it will lock all records from all tables.
 				// Besides, it will only lock the metioned in `of` part.
