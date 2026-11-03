@@ -27158,3 +27158,39 @@ fn a_kept_for_update_ts_is_the_transactions_not_its_start_as_go() {
     rows(&mut s1, "COMMIT");
     assert_eq!(displayed(rows(&mut s2, "SELECT * FROM test.kept")), [["1", "11"]]);
 }
+
+/// Go `pkg/ddl/session` over the node: `sess.Pool.Get` hands out a system
+/// session, `Session.RunInTxn` commits its statements together, `Rollback`
+/// discards them, and `Txn` names the open transaction -- through the
+/// session's transaction API, which runs no BEGIN/COMMIT statement.
+#[test]
+fn the_ddl_session_pool_is_gos_sess_pool_over_the_node() {
+    use tidb_ddl_build::session_pool::DdlSessionPool;
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(304)).unwrap();
+    rows(&mut session, "CREATE TABLE test.ddlsess (a INT PRIMARY KEY)");
+    let pool = crate::ddl_session_pool::NodeDdlSessionPool::default();
+    pool.bind(&stack.factory);
+    let sess_pool = pool.sess_pool().expect("a bound pool has Go's session pool");
+    let context = sess_pool.get().expect("a pooled session");
+    let sess = tidb_ddl_session::Session::new(Arc::clone(&context));
+    let background = tidb_sqlexec::BackgroundContext;
+    sess.run_in_txn(|sess| {
+        assert!(sess.txn().unwrap().is_some_and(|txn| txn.start_ts() > 0));
+        sess.execute(&background, "INSERT INTO test.ddlsess VALUES (1)", "test", &[])
+            .map(|_| ())
+            .map_err(|error| tidb_ddl_session::Error::new(error.to_string()))
+    })
+    .expect("the transaction commits");
+    sess.begin(&background).unwrap();
+    sess.execute(&background, "INSERT INTO test.ddlsess VALUES (2)", "test", &[])
+        .unwrap();
+    sess.rollback();
+    assert!(sess.txn().unwrap().is_none());
+    let read = sess
+        .execute(&background, "SELECT a FROM test.ddlsess", "test", &[])
+        .unwrap()
+        .unwrap();
+    assert_eq!(displayed(read), [["1"]]);
+    sess_pool.put(context);
+}

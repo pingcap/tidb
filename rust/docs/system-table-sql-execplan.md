@@ -204,7 +204,39 @@ checksums).
   load, as Go's `ErrDataTooLong`; the raw loader saturated it). The raw dump
   module (`cluster_stats_dump.rs`) is gone. Test
   `latest_stats_dump_reads_the_analyzed_histograms_as_go`.
-- [ ] Readers (below).
+- [x] (2026-11-04) Groundwork for the DDL readers: `tidb-ddl-session` (Go
+  `pkg/ddl/session`) takes `dyn SessionContext`; the node's pooled system
+  session implements it over the session's transaction API; the DDL pool
+  trait offers Go's `ddl.sessPool` (`DdlSessionPool::sess_pool`). Test
+  `the_ddl_session_pool_is_gos_sess_pool_over_the_node`.
+- [ ] Readers (below), in the order the remaining milestones set.
+
+### Remaining milestones (Y01)
+
+Every open item is downstream of one fact: parts of the node run without a
+session where Go always has one. Done in this order, each removes a class
+of raw paths instead of adding a second path next to them.
+
+- S1, startup order (Go `bootstrapSessionImpl`): build the domain and its
+  session pools over the empty live tables first; then the sysvar cache
+  (`LoadSysVarCacheLoop` / `rebuildSysVarCache`), privileges
+  (`LoadPrivilegeLoop`), bindings (`InitBindingHandle`, already attached
+  after the domain) and statistics (`initStats`, `UpdateTableStatsLoop` over
+  `storage/read.rs`) load through those sessions before the node serves; the
+  system time zone and collation flag come from a session over a temporary
+  system-DB-only domain (`initGlobalVarFromSystemDB`). Builders:
+  `tidb-server/src/cluster_stack.rs`, `tidb-session/src/domain/unistore_node.rs`.
+- S2, the bootstrap on a session (Go `runInBootstrapSession`, `doDDLWorks`,
+  `doDMLWorks`): the bootstrap's objects are DDL jobs the owner runs with
+  step sessions and its rows are SQL, one commit per job as Go; the store
+  image the tests start from is taken after it, as Go's `tryMakeImage`.
+  `seed_cluster_accounts` becomes the `--auth-file` identity's SQL.
+- S3, with every DDL step on a session: delete the no-session fallbacks
+  (`has_step_sessions`, `StagedDelRanges`, the raw job/history/MDL/notifier/
+  submission rows), port `systable.Manager`, the scheduler's `getJob`, the
+  history and MDL reads and `SwitchMDL`'s job check to SQL on
+  `DdlSessionPool::sess_pool`, and move the `tidb-ddl` unit tests that drive
+  an unbound pool onto a node.
 - [ ] The bootstrap (item 11).
 
 ## Remaining inventory (2026-11-03)

@@ -1112,6 +1112,138 @@ impl crate::binding_arm::GlobalBindingWriter for InternalBindingWriter {
 }
 
 /// Go `createSessionFunc`'s session as the domain's workers use it.
+/// Go `pkg/ddl/session`'s `sessionctx.Context`: the node's pooled system
+/// session as the DDL packages' sessions see it.
+impl tidb_ddl_session::SessionContext for ClusterStatsSessionContext {
+    fn new_txn(&self, _context: &dyn tidb_sqlexec::ExecutionContext) -> tidb_ddl_session::Result<()> {
+        self.with_session(|session| {
+            session
+                .new_txn(tidb_ast::TransactionMode::Optimistic)
+                .map_err(|error| stats_session_error(error.message))
+        })
+        .map_err(|error| tidb_ddl_session::Error::new(error.to_string()))
+    }
+
+    fn enter_new_pessimistic_txn(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+    ) -> tidb_ddl_session::Result<()> {
+        self.with_session(|session| {
+            session
+                .new_txn(tidb_ast::TransactionMode::Pessimistic)
+                .map_err(|error| stats_session_error(error.message))
+        })
+        .map_err(|error| tidb_ddl_session::Error::new(error.to_string()))
+    }
+
+    /// Go `SessionVars.SetInTxn`: this session's `InTxn` is its open
+    /// transaction context, which `new_txn` opened and the commit or
+    /// rollback closes, so there is no separate flag to set.
+    fn set_in_txn(&self, _in_txn: bool) {}
+
+    /// Go `StmtCommit`: each statement here already merged its writes into
+    /// the transaction's buffer when it finished.
+    fn stmt_commit(&self, _context: &dyn tidb_sqlexec::ExecutionContext) {}
+
+    fn commit_txn(&self, _context: &dyn tidb_sqlexec::ExecutionContext) -> tidb_ddl_session::Result<()> {
+        self.with_session(|session| {
+            session
+                .commit_txn()
+                .map_err(|error| stats_session_error(error.message))
+        })
+        .map_err(|error| tidb_ddl_session::Error::new(error.to_string()))
+    }
+
+    fn txn(
+        &self,
+        _active: bool,
+    ) -> tidb_ddl_session::Result<Option<Arc<dyn tidb_ddl_session::Transaction>>> {
+        self.with_session(|session| {
+            Ok(session.node.txn.explicit.as_ref().map(|transaction| {
+                Arc::new(NodeDdlTransaction {
+                    start_ts: transaction.start_ts(),
+                }) as Arc<dyn tidb_ddl_session::Transaction>
+            }))
+        })
+        .map_err(|error| tidb_ddl_session::Error::new(error.to_string()))
+    }
+
+    /// Go `StmtRollback`: a failed statement here already dropped its own
+    /// writes from the transaction's buffer.
+    fn stmt_rollback(&self, _context: &dyn tidb_sqlexec::ExecutionContext, _is_pessimistic_retry: bool) {}
+
+    fn rollback_txn(&self, context: &dyn tidb_sqlexec::ExecutionContext) {
+        <Self as tidb_syssession::SessionContext>::rollback_txn(self, context);
+    }
+
+    fn request_source(&self, _context: &dyn tidb_sqlexec::ExecutionContext) -> Option<String> {
+        None
+    }
+
+    fn execute_internal(
+        &self,
+        _context: &dyn tidb_sqlexec::ExecutionContext,
+        _request_source: &str,
+        query: &str,
+        arguments: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
+        let escaped = tidb_sqlescape::escape_sql_text(query, arguments)?;
+        let (rows, fields) = self.state.materialize(&escaped)?;
+        Ok((!fields.is_empty()).then(|| {
+            Box::new(tidb_sqlexec::SimpleRecordSet::new(fields, rows, 1024))
+                as Box<dyn tidb_sqlexec::RecordSet>
+        }))
+    }
+
+    fn set_autocommit(&self, enabled: bool) {
+        self.set_var("autocommit", if enabled { "ON" } else { "OFF" });
+    }
+
+    fn set_restricted_sql(&self, enabled: bool) {
+        let _ = self.with_session(|session| {
+            session.session.set_restricted_sql(enabled);
+            Ok(())
+        });
+    }
+
+    /// Go copies `SessionVars.Location()` into the statement context; this
+    /// session's statements read the session's zone directly.
+    fn set_statement_timezone_to_session_location(&self) {}
+
+    /// Go `DiskFullOpt_AllowedOnAlmostFull`: this node sends no disk-full
+    /// option with its requests.
+    fn allow_on_almost_full(&self) {}
+
+    fn clear_disk_full_option(&self) {}
+
+    fn register_internal_session(&self) {
+        <Self as tidb_syssession::SessionContext>::register_internal_session(self);
+    }
+
+    fn unregister_internal_session(&self) {
+        <Self as tidb_syssession::SessionContext>::unregister_internal_session(self);
+    }
+
+    fn close(&self) {
+        <Self as tidb_syssession::SessionContext>::close(self);
+    }
+}
+
+/// Go `kv.Transaction` as `pkg/ddl/session` reads it.
+struct NodeDdlTransaction {
+    start_ts: u64,
+}
+
+impl tidb_ddl_session::Transaction for NodeDdlTransaction {
+    fn valid(&self) -> bool {
+        true
+    }
+
+    fn start_ts(&self) -> u64 {
+        self.start_ts
+    }
+}
+
 impl tidb_domain_core::sys_session::DomainSysSession for ClusterStatsSessionContext {
     fn scalar(&self, sql: &str) -> Result<Option<tidb_datatype::Datum>, String> {
         ClusterStatsSessionContext::scalar(self, sql)

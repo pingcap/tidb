@@ -147,11 +147,11 @@ pub trait SessionContext: Send + Sync + 'static {
 }
 
 /// Go `Session`.
-pub struct Session<C: SessionContext> {
+pub struct Session<C: SessionContext + ?Sized> {
     context: Arc<C>,
 }
 
-impl<C: SessionContext> Clone for Session<C> {
+impl<C: SessionContext + ?Sized> Clone for Session<C> {
     fn clone(&self) -> Self {
         Self {
             context: Arc::clone(&self.context),
@@ -159,7 +159,7 @@ impl<C: SessionContext> Clone for Session<C> {
     }
 }
 
-impl<C: SessionContext> Session<C> {
+impl<C: SessionContext + ?Sized> Session<C> {
     /// Go `NewSession`.
     pub fn new(context: Arc<C>) -> Self {
         Self { context }
@@ -358,7 +358,7 @@ pub enum DestroyMode {
 }
 
 /// Exact `util.SessionPool` operations used by this package.
-pub trait ResourcePool<C: SessionContext>: Send + Sync + 'static {
+pub trait ResourcePool<C: SessionContext + ?Sized>: Send + Sync + 'static {
     /// Go `Get`.
     fn get(&self) -> Result<Arc<C>>;
     /// Go `Put`; `None` is the concrete resource pool's `Put(nil)`.
@@ -378,18 +378,48 @@ pub trait ResourcePool<C: SessionContext>: Send + Sync + 'static {
     }
 }
 
+impl<C: SessionContext + ?Sized, T: ResourcePool<C> + ?Sized> ResourcePool<C> for Box<T> {
+    fn get(&self) -> Result<Arc<C>> {
+        (**self).get()
+    }
+
+    fn put(&self, resource: Option<Arc<C>>) {
+        (**self).put(resource);
+    }
+
+    fn close(&self) {
+        (**self).close();
+    }
+
+    fn destroy_mode(&self) -> DestroyMode {
+        (**self).destroy_mode()
+    }
+
+    fn pool_type(&self) -> &'static str {
+        (**self).pool_type()
+    }
+
+    fn destroy(&self, resource: Arc<C>) {
+        (**self).destroy(resource);
+    }
+}
+
+/// The pool the DDL packages hold (Go `*session.Pool`), over the node's
+/// sessions behind `dyn SessionContext`.
+pub type DynPool = Pool<dyn SessionContext, Box<dyn ResourcePool<dyn SessionContext>>>;
+
 struct PoolState {
     closed: bool,
 }
 
 /// Go `Pool`.
-pub struct Pool<C: SessionContext, P: ResourcePool<C>> {
+pub struct Pool<C: SessionContext + ?Sized, P: ResourcePool<C>> {
     state: Mutex<PoolState>,
     resource_pool: P,
-    _context: std::marker::PhantomData<fn() -> C>,
+    _context: std::marker::PhantomData<fn(&C)>,
 }
 
-impl<C: SessionContext, P: ResourcePool<C>> Pool<C, P> {
+impl<C: SessionContext + ?Sized, P: ResourcePool<C>> Pool<C, P> {
     /// Go `NewSessionPool`.
     pub fn new(resource_pool: P) -> Self {
         Self {

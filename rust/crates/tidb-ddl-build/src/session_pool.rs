@@ -90,6 +90,13 @@ pub struct ForeignKeyCheck {
 /// `checkExchangePartitionRecordValidation`, whose queries the DDL package
 /// builds. The node's SQL layer implements it; the DDL code only holds it.
 pub trait DdlSessionPool: Send + Sync {
+    /// Go `ddl.sessPool` (`sess.NewSessionPool` over the domain's system
+    /// sessions): what `systable.Manager` and the job scheduler take their
+    /// sessions from. `None` until a node binds the pool.
+    fn sess_pool(&self) -> Option<std::sync::Arc<tidb_ddl_session::DynPool>> {
+        None
+    }
+
     /// A system session's DDL context, for a job no user session submits
     /// (Go's domain takes one from its system session pool).
     fn system_session(&self) -> Box<dyn crate::session_context::DdlSessionContext>;

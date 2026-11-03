@@ -9,6 +9,7 @@ description = "The metadata-building half of Go pkg/ddl for the TiDB Rust rewrit
 
 [dependencies]
 tidb-ddl-jobsubmit = { path = "../tidb-ddl-jobsubmit" }
+tidb-ddl-session = { path = "../tidb-ddl-session" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-exeerrors = { path = "../tidb-exeerrors" }

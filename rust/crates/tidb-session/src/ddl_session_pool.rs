@@ -37,9 +37,19 @@ use tidb_terror::MysqlError;
 use tidb_sessionctx::StmtContext;
 
 /// The node's DDL session pool: system sessions of the node's domain.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct NodeDdlSessionPool {
     domain: OnceLock<Weak<Domain>>,
+    sess_pool: OnceLock<Arc<tidb_ddl_session::DynPool>>,
+}
+
+impl std::fmt::Debug for NodeDdlSessionPool {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NodeDdlSessionPool")
+            .field("bound", &self.domain.get().is_some())
+            .finish()
+    }
 }
 
 impl NodeDdlSessionPool {
@@ -48,10 +58,52 @@ impl NodeDdlSessionPool {
         if self.domain.set(Arc::downgrade(domain)).is_err() {
             panic!("a node's DDL session pool is bound once");
         }
+        let _ = self.sess_pool.set(Arc::new(tidb_ddl_session::Pool::new(Box::new(
+            NodeDdlResourcePool {
+                domain: Arc::downgrade(domain),
+            },
+        ))));
+    }
+}
+
+/// Go `ddl.WithResourcePool(sysCtxPool)`: the domain's system sessions as
+/// the resource pool `sess.NewSessionPool` wraps.
+struct NodeDdlResourcePool {
+    domain: Weak<Domain>,
+}
+
+impl tidb_ddl_session::ResourcePool<dyn tidb_ddl_session::SessionContext> for NodeDdlResourcePool {
+    fn get(&self) -> tidb_ddl_session::Result<Arc<dyn tidb_ddl_session::SessionContext>> {
+        let domain = self
+            .domain
+            .upgrade()
+            .ok_or_else(|| tidb_ddl_session::Error::new("the DDL session pool has no running node"))?;
+        let session = domain
+            .open_system_session()
+            .map_err(|error| tidb_ddl_session::Error::new(error.message))?;
+        Ok(Arc::new(
+            crate::domain::cluster_session_node::ClusterStatsSessionContext::new(
+                session,
+                domain.global_vars.clone(),
+            ),
+        ))
+    }
+
+    /// The session ends with its handle; the node opens one per `Get`.
+    fn put(&self, _resource: Option<Arc<dyn tidb_ddl_session::SessionContext>>) {}
+
+    fn close(&self) {}
+
+    fn destroy_mode(&self) -> tidb_ddl_session::DestroyMode {
+        tidb_ddl_session::DestroyMode::ResourcePool
     }
 }
 
 impl DdlSessionPool for NodeDdlSessionPool {
+    fn sess_pool(&self) -> Option<Arc<tidb_ddl_session::DynPool>> {
+        self.sess_pool.get().cloned()
+    }
+
     /// A fresh statement of a default session.
     fn system_session(&self) -> Box<dyn tidb_ddl_build::session_context::DdlSessionContext> {
         Box::new(StmtContext::for_query())
