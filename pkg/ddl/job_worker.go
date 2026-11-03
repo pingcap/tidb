@@ -89,13 +89,14 @@ type jobContext struct {
 	// use stepCtx instead.
 	ctx                           context.Context
 	infoCache                     *infoschema.InfoCache
-	isLegacyNextGen               bool
 	autoidCli                     *autoid.ClientDiscover
 	store                         kv.Storage
 	schemaVerSyncer               schemaver.Syncer
 	eventPublishStore             notifier.Store
 	sysTblMgr                     systable.Manager
 	storageClassTransitionManager *storageClassTransitionManager
+	// isLegacyNextGen indicates that this NextGen keyspace retains Classic system-table IDs.
+	isLegacyNextGen bool
 
 	// per job fields, they are not changed in the life cycle of this context.
 

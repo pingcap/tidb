@@ -227,17 +227,18 @@ type executor struct {
 	// If so, the executor should handle auto ID rebase.
 	startMode StartMode
 
-	ctx             context.Context
-	uuid            string
-	store           kv.Storage
-	autoidCli       *autoid.ClientDiscover
-	infoCache       *infoschema.InfoCache
-	isLegacyNextGen bool
-	limitJobCh      chan *JobWrapper
-	lease           time.Duration // lease is schema lease, default 45s, see config.Lease.
+	ctx        context.Context
+	uuid       string
+	store      kv.Storage
+	autoidCli  *autoid.ClientDiscover
+	infoCache  *infoschema.InfoCache
+	limitJobCh chan *JobWrapper
+	lease      time.Duration // lease is schema lease, default 45s, see config.Lease.
 	// ddlJobDoneChMap is used to notify the session that the DDL job is finished.
 	// jobID -> chan struct{}
 	ddlJobDoneChMap *generic.SyncMap[int64, chan struct{}]
+	// isLegacyNextGen indicates that this NextGen keyspace retains Classic system-table IDs.
+	isLegacyNextGen bool
 }
 
 var _ Executor = (*executor)(nil)

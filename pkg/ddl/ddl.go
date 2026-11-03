@@ -345,16 +345,17 @@ type ddlCtx struct {
 	schemaVerSyncer   schemaver.Syncer
 	serverStateSyncer serverstate.Syncer
 
-	ddlEventCh      chan<- *notifier.SchemaChangeEvent
-	lease           time.Duration // lease is schema lease, default 45s, see config.Lease.
-	infoCache       *infoschema.InfoCache
+	ddlEventCh   chan<- *notifier.SchemaChangeEvent
+	lease        time.Duration // lease is schema lease, default 45s, see config.Lease.
+	infoCache    *infoschema.InfoCache
+	statsHandle  *handle.Handle
+	tableLockCkr util.DeadTableLockChecker
+	etcdCli      *clientv3.Client
+	autoidCli    *autoid.ClientDiscover
+	schemaLoader SchemaLoader
+	extWorkload  extworkload.Manager
+	// isLegacyNextGen indicates that this NextGen keyspace retains Classic system-table IDs.
 	isLegacyNextGen bool
-	statsHandle     *handle.Handle
-	tableLockCkr    util.DeadTableLockChecker
-	etcdCli         *clientv3.Client
-	autoidCli       *autoid.ClientDiscover
-	schemaLoader    SchemaLoader
-	extWorkload     extworkload.Manager
 
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts

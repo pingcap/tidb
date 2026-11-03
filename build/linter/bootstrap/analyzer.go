@@ -77,10 +77,6 @@ func isSliceVarDefNode(spec ast.Spec) (varName, eleTpName string, lit *ast.Compo
 }
 
 func bootstrapTableName(pass *analysis.Pass, expr ast.Expr) (string, bool) {
-	if literal, ok := expr.(*ast.BasicLit); ok && literal.Kind == token.STRING {
-		name, err := strconv.Unquote(literal.Value)
-		return name, err == nil
-	}
 	selector, ok := expr.(*ast.SelectorExpr)
 	if !ok || pass.TypesInfo == nil {
 		return "", false
@@ -106,7 +102,7 @@ func checkSystemTablesDefinitionNode(pass *analysis.Pass, varName string, compLi
 		nameExpr := elt.(*ast.CompositeLit).Elts[1].(*ast.KeyValueExpr).Value
 		tableName, ok := bootstrapTableName(pass, nameExpr)
 		if !ok {
-			pass.Reportf(nameExpr.Pos(), "the name of the table in %s must be a string literal or a string constant defined in metadef", varName)
+			pass.Reportf(nameExpr.Pos(), "the name of the table in %s must be a string constant defined in metadef", varName)
 			continue
 		}
 		sqlPkgName := elt.(*ast.CompositeLit).Elts[2].(*ast.KeyValueExpr).Value.(*ast.SelectorExpr).X.(*ast.Ident).Name
