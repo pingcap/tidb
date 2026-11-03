@@ -583,17 +583,19 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 	}
 }
 
+func getDataSourceHintTable(ds *logicalop.DataSource) *h.HintedTable {
+	if ds.TableAsName != nil && len(ds.TableAsName.L) != 0 {
+		return &h.HintedTable{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.QueryBlockOffset()}
+	}
+	return &h.HintedTable{DBName: ds.DBName, TblName: ds.TableInfo.Name, SelectOffset: ds.QueryBlockOffset()}
+}
+
 func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 	if hintInfo == nil {
 		return
 	}
 
-	var alias *h.HintedTable
-	if len(ds.TableAsName.L) != 0 {
-		alias = &h.HintedTable{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.QueryBlockOffset()}
-	} else {
-		alias = &h.HintedTable{DBName: ds.DBName, TblName: ds.TableInfo.Name, SelectOffset: ds.QueryBlockOffset()}
-	}
+	alias := getDataSourceHintTable(ds)
 	if hintTbl := hintInfo.IfPreferTiKV(alias); hintTbl != nil {
 		for _, path := range ds.AllPossibleAccessPaths {
 			if path.StoreType == kv.TiKV {
@@ -734,6 +736,58 @@ func isImmediateLateralTableSource(node ast.ResultSetNode) bool {
 	default:
 		return false
 	}
+}
+
+func setTiFlashLMFilterColumns(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
+	if hintInfo == nil {
+		return
+	}
+
+	alias := getDataSourceHintTable(ds)
+	columnIDsByName := make(map[string]int64, len(ds.Columns))
+	for i, col := range ds.Columns {
+		columnIDsByName[col.Name.L] = ds.TblCols[i].UniqueID
+	}
+	columnIDSet := make(map[int64]struct{}, len(ds.TiFlashLMFilterColumnIDs))
+	for _, colID := range ds.TiFlashLMFilterColumnIDs {
+		columnIDSet[colID] = struct{}{}
+	}
+
+	for i, columnHint := range hintInfo.TiFlashLMFilters {
+		if !columnHint.Match(alias) {
+			continue
+		}
+		hintInfo.TiFlashLMFilters[i].Matched = true
+		columnIDs := make([]int64, 0, len(columnHint.Columns))
+		invalidColumnNames := make([]string, 0)
+		for _, columnName := range columnHint.Columns {
+			columnID, ok := columnIDsByName[columnName.L]
+			if !ok {
+				invalidColumnNames = append(invalidColumnNames, columnName.O)
+				continue
+			}
+			columnIDs = append(columnIDs, columnID)
+		}
+		if len(invalidColumnNames) > 0 {
+			errMsg := fmt.Sprintf("%s(%s) is inapplicable, check whether the columns (%s) exist in table %s.%s",
+				h.HintTiFlashLMFilter,
+				columnHint.ColumnString(),
+				strings.Join(invalidColumnNames, ", "),
+				alias.DBName.O,
+				alias.TblName.O,
+			)
+			ds.SCtx().GetSessionVars().StmtCtx.SetHintWarning(errMsg)
+			continue
+		}
+		for _, columnID := range columnIDs {
+			if _, ok := columnIDSet[columnID]; ok {
+				continue
+			}
+			columnIDSet[columnID] = struct{}{}
+			ds.TiFlashLMFilterColumnIDs = append(ds.TiFlashLMFilterColumnIDs, columnID)
+		}
+	}
+	slices.Sort(ds.TiFlashLMFilterColumnIDs)
 }
 
 func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.LogicalPlan, error) {
@@ -1647,6 +1701,11 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPl
 		b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol[string(expr.HashCode())] = int(newCol.UniqueID)
 	}
 	newCol.SetCoercibility(expr.Coercibility())
+	// Only string results refine the column's type-derived repertoire.
+	// In particular, JSON columns must retain their Unicode repertoire.
+	if newCol.RetType.EvalType() == types.ETString {
+		newCol.SetRepertoire(expr.Repertoire())
+	}
 	return newCol, name, nil
 }
 
@@ -5317,6 +5376,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	b.handleHelper.pushMap(handleMap)
 	ds.SetSchema(schema)
 	ds.SetOutputNames(names)
+	setTiFlashLMFilterColumns(ds, b.TableHints())
 	// setPreferredStoreType will mark user preferred path, which should be shared by all ds alternative. Here
 	// we only mark it for the AllPossibleAccessPaths(since the element inside is shared by PossibleAccessPaths),
 	// and the following ds alternative will clone/inherit this mark from DS copying.
@@ -5525,6 +5585,12 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName ast.CIStr, tableIn
 			p.Extractor = NewInfoSchemaReferConstExtractor()
 		case infoschema.TableTiDBIndexes:
 			p.Extractor = NewInfoSchemaIndexesExtractor()
+		case infoschema.TableTiDBMViews:
+			p.Extractor = NewInfoSchemaTiDBMViewsExtractor()
+		case infoschema.TableTiDBMLogs:
+			p.Extractor = NewInfoSchemaTiDBMLogsExtractor()
+		case infoschema.TableTiDBTableMViewDependencies:
+			p.Extractor = NewInfoSchemaTiDBTableMViewDependenciesExtractor()
 		case infoschema.TableViews:
 			p.Extractor = NewInfoSchemaViewsExtractor()
 		case infoschema.TableKeyColumn:

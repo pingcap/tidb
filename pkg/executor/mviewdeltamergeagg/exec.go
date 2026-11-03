@@ -183,6 +183,9 @@ type ResultWriter interface {
 type Exec struct {
 	exec.BaseExecutor
 
+	// MLogEmpty is set only when planning proved that the mlog input is empty.
+	MLogEmpty bool
+
 	AggMappings      []Mapping
 	DeltaAggColCount int
 	// MinMaxRecompute stores MIN/MAX recompute metadata.
@@ -379,6 +382,11 @@ func (e *Exec) Open(ctx context.Context) error {
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	if e.MLogEmpty {
+		e.prepared = true
+		e.executed = false
+		return nil
+	}
 	if e.WorkerCnt <= 0 {
 		e.WorkerCnt = e.Ctx().GetSessionVars().ExecutorConcurrency
 		if e.WorkerCnt <= 0 {
@@ -423,9 +431,13 @@ func (e *Exec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.runtimeStats)
 	}
-	pipelineStats, err := e.runMergePipeline(ctx)
-	if err != nil {
-		return err
+	pipelineStats := &mergeRuntimeStats{}
+	if !e.MLogEmpty {
+		var err error
+		pipelineStats, err = e.runMergePipeline(ctx)
+		if err != nil {
+			return err
+		}
 	}
 	stmtCtx := e.Ctx().GetSessionVars().StmtCtx
 	if stmtCtx != nil {

@@ -21,7 +21,9 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner"
@@ -64,7 +66,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 			panic(r)
 		}
 		err = recoveredErr
-		logutil.Logger(ctx).Error("compile SQL panic", zap.String("SQL", stmtNode.Text()), zap.Stack("stack"), zap.Any("recover", r))
+		logutil.Logger(ctx).Error("compile SQL panic", zap.String("SQL", parser.Normalize(stmtNode.Text(), c.Ctx.GetSessionVars().EnableRedactLog)), zap.Stack("stack"), zap.Any("recover", r))
 	}()
 
 	c.Ctx.GetSessionVars().StmtCtx.IsReadOnly = plannercore.IsReadOnly(stmtNode, c.Ctx.GetSessionVars())
@@ -174,7 +176,10 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	if err = sessiontxn.AdviseOptimizeWithPlanAndThenWarmUp(c.Ctx, stmt.Plan); err != nil {
 		return nil, err
 	}
-	installStatementRUOwner(stmt)
+	// Statement RU collection is only supported by the NextGen kernel.
+	if kerneltype.IsNextGen() {
+		installStatementRUOwner(stmt)
+	}
 	failpoint.InjectCall("observeStatementRUOwnerInstallForTest", stmt)
 
 	return stmt, nil

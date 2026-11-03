@@ -239,6 +239,58 @@ func TestPointGetIntHandleNotFirst(t *testing.T) {
 	})
 }
 
+func TestPointGetWithDirtyPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+	for _, partition := range []string{
+		"hash(a) partitions 4",
+		"range(a) (partition p0 values less than (10), partition p1 values less than (100))",
+	} {
+		for _, key := range []string{"primary key(a) clustered", "primary key(a, c) clustered", "unique key(a)", "unique key(a) global"} {
+			tk.MustExec("drop table if exists t")
+			tk.MustExec("create table t(a int, b int, c int default 0, " + key + ") partition by " + partition)
+			tk.MustExec("insert into t(a, b) values (1, 10), (2, 20)")
+			for _, mode := range []string{"optimistic", "pessimistic"} {
+				t.Run(fmt.Sprintf("%s/%s/%s", partition, key, mode), func(t *testing.T) {
+					tk := testkit.NewTestKit(t, store)
+					tk.MustExec("use test")
+					tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+					tk.MustExec("begin " + mode)
+					defer tk.MustExec("rollback")
+					tk.MustExec("update t set b = 11 where a = 1")
+					tk.MustExec("insert into t(a, b) values (3, 30)")
+					tk.MustExec("delete from t where a = 2")
+					check := func(predicate string, rows ...string) {
+						if key == "primary key(a, c) clustered" {
+							predicate += " and c = 0"
+						}
+						// ORDER BY bypasses the AST fast path, even for a single key.
+						sql := "select a, b from t where " + predicate + " order by b"
+						plan := fmt.Sprint(tk.MustQuery("explain format = 'brief' " + sql).Rows())
+						require.Contains(t, plan, "Point_Get")
+						require.NotContains(t, plan, "UnionScan")
+						tk.MustQuery(sql).Check(testkit.Rows(rows...))
+						tk.MustQuery(sql + " for update").Check(testkit.Rows(rows...))
+					}
+					check("a = 1", "1 11")
+					check("a = 1 and b = 10")
+					check("a = 3", "3 30")
+					check("a = 2")
+					// BETWEEN also bypasses the fast path for writes. Moving the key
+					// checks both the old partition's deletion and the new partition's row.
+					tk.MustExec("update t set a = 12 where a between 1 and 1")
+					check("a = 1")
+					check("a = 12", "12 11")
+					tk.MustExec("delete from t where a between 12 and 12")
+					check("a = 12")
+				})
+			}
+		}
+	}
+}
+
 type ExtractTestCase struct {
 	TimeUnit    string
 	ColumnTypes []string

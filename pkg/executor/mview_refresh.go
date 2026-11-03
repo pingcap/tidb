@@ -103,6 +103,29 @@ WHERE REFRESH_JOB_ID = %?
 	return true, rows[0].GetString(1), nil
 }
 
+func requestRefreshHistCancel(
+	kctx context.Context,
+	sctx sessionctx.Context,
+	refreshJobID uint64,
+	requester any,
+) (bool, error) {
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(
+		kctx,
+		`UPDATE mysql.tidb_mview_refresh_hist
+SET CANCEL_REQUEST_TIME = NOW(6),
+	CANCEL_REQUESTED_BY = %?
+WHERE REFRESH_JOB_ID = %?
+  AND REFRESH_STATUS = 'running'
+  AND CANCEL_REQUEST_TIME IS NULL`,
+		requester,
+		refreshJobID,
+	)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return sctx.GetSessionVars().StmtCtx.AffectedRows() > 0, nil
+}
+
 func updateRefreshHistHeartbeat(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
@@ -166,6 +189,42 @@ func checkRefreshMaterializedViewBaseTableSelect(
 		}
 	}
 	return nil
+}
+
+func resolveCancelRefreshJobPrivilegeTarget(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	is infoschema.InfoSchema,
+	refreshJobID uint64,
+) (dbName string, tableName string, found bool, err error) {
+	rows, err := sqlexec.ExecSQL(
+		kctx,
+		sqlExec,
+		`SELECT MVIEW_ID
+FROM mysql.tidb_mview_refresh_hist
+WHERE REFRESH_JOB_ID = %?
+  AND REFRESH_STATUS = 'running'`,
+		refreshJobID,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return "", "", false, errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh_hist does not exist")
+		}
+		return "", "", false, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return "", "", false, nil
+	}
+	mviewID := rows[0].GetInt64(0)
+	mviewTable, ok := is.TableByID(context.Background(), mviewID)
+	if !ok {
+		return "", "", false, errors.Errorf("refresh materialized view: cannot resolve target materialized view %d for cancel job %d", mviewID, refreshJobID)
+	}
+	dbInfo, ok := infoschema.SchemaByTable(is, mviewTable.Meta())
+	if !ok {
+		return "", "", false, errors.Errorf("refresh materialized view: cannot resolve schema for materialized view %d", mviewID)
+	}
+	return dbInfo.Name.L, mviewTable.Meta().Name.L, true, nil
 }
 
 type mvRefreshStmtResult struct {

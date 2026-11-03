@@ -101,6 +101,9 @@ type DBReader struct {
 	revIter               *badger.Iterator
 	RcCheckTS             bool
 	ExtraDbReaderProvider ExtraDbReaderProvider
+	// ScanDetail, when non-nil, counts visible key-value pairs visited by Scan.
+	// Hidden MVCC versions skipped by Badger are not represented.
+	ScanDetail *kvrpcpb.ScanDetailV2
 }
 
 // GetMvccInfoByKey fills MvccInfo reading committed keys from db
@@ -277,6 +280,13 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 			if err != nil {
 				return errors.Trace(err)
 			}
+		}
+		if detail := r.ScanDetail; detail != nil {
+			detail.TotalVersions++
+			detail.ProcessedVersions++
+			size := uint64(len(key) + item.ValueSize())
+			detail.TotalVersionsSize += size
+			detail.ProcessedVersionsSize += size
 		}
 		err = proc.Process(key, val, item.Version())
 		if err != nil {

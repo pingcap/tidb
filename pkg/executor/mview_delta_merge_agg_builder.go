@@ -135,6 +135,7 @@ func (b *executorBuilder) buildMViewDeltaMerge(v *plannercore.MViewDeltaMerge) e
 
 	return &MViewDeltaMergeAggExec{
 		BaseExecutor:     exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID(), sourceExec),
+		MLogEmpty:        v.MLogEmpty,
 		AggMappings:      aggMappings,
 		DeltaAggColCount: deltaAggColCount,
 		TargetTable:      mviewTable,
@@ -367,7 +368,7 @@ func (b *executorBuilder) buildMViewDeltaMergeMinMaxRecompute(
 	v *plannercore.MViewDeltaMerge,
 	aggMappings []MViewDeltaMergeAggMapping,
 ) (*MinMaxRecomputeExec, error) {
-	if v == nil || len(aggMappings) == 0 {
+	if v == nil || v.MLogEmpty || len(aggMappings) == 0 {
 		return nil, nil
 	}
 

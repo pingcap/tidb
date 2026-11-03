@@ -189,6 +189,12 @@ func pruneRedundantApply(p base.LogicalPlan, groupByColumn map[*expression.Colum
 		for {
 			child := finalResult.Children()[0]
 			nextApply, ok := child.(*logicalop.LogicalApply)
+			if ok && nextApply.JoinType != base.LeftOuterJoin && nextApply.JoinType != base.LeftOuterSemiJoin {
+				// Avoid pruning when the left-child chain contains a filtering Apply.
+				// E.g., for `WHERE a IN (subq1) AND (b IN (subq2) OR TRUE)`, the chain is:
+				// Selection(true) -> Apply(LeftOuterSemiJoin) -> Apply(SemiJoin)
+				return nil, false
+			}
 			if ok && nextApply.IsLateral {
 				// The IsLateral guard above only covers the topmost Apply, but this loop drops
 				// every Apply it walks through. A LATERAL Apply nested below a prunable one may

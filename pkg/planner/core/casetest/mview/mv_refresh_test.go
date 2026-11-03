@@ -299,6 +299,7 @@ func TestBuildRefreshMVFastPlanWithMinMaxHasFullUpdate(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, mergePlan.Source)
 	require.NotNil(t, mergePlan.FullUpdateInnerSource)
+	require.False(t, mergePlan.MLogEmpty)
 	minMaxCount := 0
 	for _, ai := range mergePlan.AggInfos {
 		if ai.Kind == mview.AggMin || ai.Kind == mview.AggMax {
@@ -339,6 +340,35 @@ func TestBuildRefreshMVFastPlanWithMinMaxHasFullUpdate(t *testing.T) {
 	require.NoError(t, explain.RenderResult())
 	require.NotEmpty(t, explain.Rows)
 	require.Contains(t, explain.Rows[0][4], "full_update:index_lookup")
+
+	for _, tc := range []struct {
+		predicate string
+		empty     bool
+	}{
+		{"false", true},
+		{"a = 1 and a = 2", true},
+		// Contradictory predicates not replaced by Dual keep the existing lookup path.
+		{"a > 1 and a < 0", false},
+		{"a is null and a is not null", false},
+	} {
+		t.Run(tc.predicate, func(t *testing.T) {
+			mvTbl.MaterializedView.SQLContent = "select a, count(1), max(b), min(b), sum(b) from t where " + tc.predicate + " group by a"
+			builder, _ := plannercore.NewPlanBuilder().Init(sctx.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+			p, err := builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+			require.NoError(t, err)
+			mergePlan, ok := p.(*plannercore.MViewDeltaMerge)
+			require.True(t, ok)
+			require.NotNil(t, mergePlan.Source)
+			require.Equal(t, tc.empty, mergePlan.MLogEmpty)
+			if tc.empty {
+				require.Nil(t, mergePlan.FullUpdateInnerSource)
+				require.Nil(t, mergePlan.FullUpdateIndexRanges)
+			} else {
+				require.NotNil(t, mergePlan.FullUpdateInnerSource)
+				require.NotNil(t, mergePlan.FullUpdateIndexRanges)
+			}
+		})
+	}
 }
 
 func TestBuildRefreshMVFastAsOfTimestampPlanWithMinMaxCarriesFullUpdateSnapshot(t *testing.T) {

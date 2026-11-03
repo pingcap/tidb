@@ -81,6 +81,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/pd/client/errs"
@@ -192,6 +193,10 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCreateSequence()
 	case ast.ShowCreateUser:
 		return e.fetchShowCreateUser(ctx)
+	case ast.ShowCreateMaterializedView:
+		return e.fetchShowCreateMaterializedView()
+	case ast.ShowCreateMaterializedViewLog:
+		return e.fetchShowCreateMaterializedViewLog()
 	case ast.ShowCreateView:
 		return e.fetchShowCreateView()
 	case ast.ShowCreateDatabase:
@@ -212,6 +217,14 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowProcedureStatus()
 	case ast.ShowStatus:
 		return e.fetchShowStatus()
+	case ast.ShowMaterializedViews:
+		return e.fetchShowMaterializedViews(ctx)
+	case ast.ShowMaterializedViewLogs:
+		return e.fetchShowMaterializedViewLogs(ctx)
+	case ast.ShowMaterializedViewRemainLogs:
+		return e.fetchShowMaterializedViewRemainLogs(ctx)
+	case ast.ShowMaterializedViewLogWaitPurge:
+		return e.fetchShowMaterializedViewLogWaitPurge(ctx)
 	case ast.ShowTables:
 		return e.fetchShowTables(ctx)
 	case ast.ShowOpenTables:
@@ -2515,6 +2528,9 @@ func (e *ShowExec) fetchShowBuiltins() error {
 
 func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	sessionStates := &sessionstates.SessionStates{}
+	if err := e.Ctx().CheckCanMigrateStates(); err != nil {
+		return err
+	}
 	err := e.Ctx().EncodeStates(ctx, sessionStates)
 	if err != nil {
 		return err
@@ -2930,11 +2946,11 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 // tryFillViewColumnType fill the columns type info of a view.
 // Because view's underlying table's column could change or recreate, so view's column type may change over time.
 // To avoid this situation we need to generate a logical plan and extract current column types from Schema.
-func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName ast.CIStr, tbl *model.TableInfo) error {
+func tryFillViewColumnType(_ context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName ast.CIStr, tbl *model.TableInfo) error {
 	if !tbl.IsView() {
 		return nil
 	}
-	ctx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	// We need to run the build plan process in another session because there may be
 	// multiple goroutines running at the same time while session is not goroutine-safe.
 	// Take joining system table as an example, `fetchBuildSideRows` and `fetchProbeSideChunks` can be run concurrently.
@@ -2990,4 +3006,554 @@ func formatSplitValue(parser *parser.Parser, buf *bytes.Buffer, val string) erro
 		expr.Format(buf)
 	}
 	return err
+}
+
+func (e *ShowExec) fetchShowMaterializedViews(ctx context.Context) error {
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	if !e.is.SchemaExists(e.DBName) {
+		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
+	}
+
+	tables, err := e.is.SchemaTableInfos(ctx, e.DBName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+	var (
+		fieldFilter       string
+		fieldPatternsLike collate.WildcardPattern
+	)
+	if e.Extractor != nil {
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
+	}
+	type mvRow struct {
+		id   int64
+		name string
+	}
+	rows := make([]mvRow, 0)
+	for _, tbl := range tables {
+		if tbl.MaterializedView == nil {
+			continue
+		}
+		if checker != nil && !hasAnyMaterializedViewVisiblePriv(checker, activeRoles, e.DBName.O, tbl.Name.O) {
+			continue
+		}
+		if fieldFilter != "" && tbl.Name.L != fieldFilter {
+			continue
+		}
+		if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(tbl.Name.L) {
+			continue
+		}
+		rows = append(rows, mvRow{id: tbl.ID, name: tbl.Name.O})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].name == rows[j].name {
+			return rows[i].id < rows[j].id
+		}
+		return rows[i].name < rows[j].name
+	})
+	for _, row := range rows {
+		e.appendRow([]any{row.id, row.name})
+	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowMaterializedViewLogs(ctx context.Context) error {
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	if !e.is.SchemaExists(e.DBName) {
+		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
+	}
+
+	tables, err := e.is.SchemaTableInfos(ctx, e.DBName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+	var (
+		fieldFilter       string
+		fieldPatternsLike collate.WildcardPattern
+	)
+	if e.Extractor != nil {
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
+	}
+	type mlogRow struct {
+		id       int64
+		name     string
+		baseID   int64
+		baseName string
+	}
+	rows := make([]mlogRow, 0)
+	for _, tbl := range tables {
+		if tbl.MaterializedViewLog == nil {
+			continue
+		}
+		baseID := tbl.MaterializedViewLog.BaseTableID
+		baseName := ""
+		if baseID != 0 {
+			if baseTbl, ok := e.is.TableByID(ctx, baseID); ok {
+				baseName = baseTbl.Meta().Name.O
+			}
+		}
+		if baseName == "" {
+			continue
+		}
+		lowerMLogName := strings.ToLower(tbl.Name.O)
+		if fieldFilter != "" && lowerMLogName != fieldFilter {
+			continue
+		}
+		if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(lowerMLogName) {
+			continue
+		}
+		if checker != nil && !hasAnyMaterializedViewVisiblePriv(checker, activeRoles, e.DBName.O, tbl.Name.O) {
+			continue
+		}
+		rows = append(rows, mlogRow{
+			id:       tbl.ID,
+			name:     tbl.Name.O,
+			baseID:   baseID,
+			baseName: baseName,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].name == rows[j].name {
+			return rows[i].id < rows[j].id
+		}
+		return rows[i].name < rows[j].name
+	})
+	for _, row := range rows {
+		e.appendRow([]any{row.id, row.name, row.baseID, row.baseName})
+	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowMaterializedViewRemainLogs(ctx context.Context) error {
+	db, ok := e.is.SchemaByName(e.DBName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+
+	mviewTable, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	mviewMeta := mviewTable.Meta()
+	if mviewMeta.MaterializedView == nil {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(db.Name.O, mviewMeta.Name.O, "MATERIALIZED VIEW")
+	}
+	if len(mviewMeta.MaterializedView.BaseTableIDs) == 0 {
+		return errors.Errorf("base table does not exist for materialized view %s.%s", db.Name.O, mviewMeta.Name.O)
+	}
+
+	type mlogShowTarget struct {
+		schema ast.CIStr
+		meta   *model.TableInfo
+	}
+
+	seenMLogIDs := make(map[int64]struct{}, len(mviewMeta.MaterializedView.BaseTableIDs))
+	mlogs := make([]mlogShowTarget, 0, len(mviewMeta.MaterializedView.BaseTableIDs))
+	for _, baseTableID := range mviewMeta.MaterializedView.BaseTableIDs {
+		baseTable, ok := e.is.TableByID(ctx, baseTableID)
+		if !ok {
+			return errors.Errorf("base table does not exist for materialized view %s.%s", db.Name.O, mviewMeta.Name.O)
+		}
+		baseMeta := baseTable.Meta()
+		if baseMeta.MaterializedViewBase == nil || baseMeta.MaterializedViewBase.MLogID == 0 {
+			return errors.Errorf("materialized view log does not exist for base table %s", baseMeta.Name.O)
+		}
+		if _, ok = seenMLogIDs[baseMeta.MaterializedViewBase.MLogID]; ok {
+			continue
+		}
+		seenMLogIDs[baseMeta.MaterializedViewBase.MLogID] = struct{}{}
+
+		mlogTable, ok := e.is.TableByID(ctx, baseMeta.MaterializedViewBase.MLogID)
+		if !ok {
+			return errors.Errorf("materialized view log does not exist for base table %s", baseMeta.Name.O)
+		}
+		mlogMeta := mlogTable.Meta()
+		mlogSchema, ok := infoschema.SchemaByTable(e.is, mlogMeta)
+		if !ok {
+			return errors.Errorf("schema does not exist for materialized view log %s", mlogMeta.Name.O)
+		}
+		mlogs = append(mlogs, mlogShowTarget{
+			schema: mlogSchema.Name,
+			meta:   mlogMeta,
+		})
+	}
+
+	execCtx, sqlExec, _, cleanup, err := e.beginMViewLogShowInternalTxn(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer cleanup()
+
+	rows, err := sqlexec.ExecSQL(execCtx, sqlExec,
+		"SELECT LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
+		mviewMeta.ID,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return errors.New("show materialized view remain logs: required system table mysql.tidb_mview_refresh_info does not exist")
+		}
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("show materialized view remain logs: refresh info row missing for materialized view %s.%s", db.Name.O, mviewMeta.Name.O)
+	}
+	if rows[0].IsNull(0) {
+		return errors.Errorf("show materialized view remain logs: last success read tso is null for materialized view %s.%s", db.Name.O, mviewMeta.Name.O)
+	}
+	lastSuccessReadTSO := rows[0].GetUint64(0)
+
+	for _, mlog := range mlogs {
+		countSQL := sqlescape.MustEscapeSQL(
+			"SELECT COUNT(*) FROM %n.%n WHERE _tidb_commit_ts > %?",
+			mlog.schema.O,
+			mlog.meta.Name.O,
+			lastSuccessReadTSO,
+		)
+		countRows, err := sqlexec.ExecSQL(execCtx, sqlExec, countSQL)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		remainLogs := int64(0)
+		if len(countRows) > 0 && !countRows[0].IsNull(0) {
+			remainLogs = countRows[0].GetInt64(0)
+		}
+		e.appendRow([]any{mviewMeta.ID, mviewMeta.Name.O, mlog.meta.ID, mlog.meta.Name.O, remainLogs})
+	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowMaterializedViewLogWaitPurge(ctx context.Context) error {
+	if _, ok := e.is.SchemaByName(e.DBName); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+
+	baseTable, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	baseMeta := baseTable.Meta()
+	if baseMeta.IsView() || baseMeta.IsSequence() || baseMeta.TempTableType != model.TempTableNone {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(e.DBName.O, baseMeta.Name.O, "BASE TABLE")
+	}
+	if baseMeta.MaterializedViewBase == nil || baseMeta.MaterializedViewBase.MLogID == 0 {
+		return errors.Errorf("materialized view log does not exist for base table %s.%s", e.DBName.O, baseMeta.Name.O)
+	}
+
+	mlogTable, ok := e.is.TableByID(ctx, baseMeta.MaterializedViewBase.MLogID)
+	if !ok {
+		return errors.Errorf("materialized view log does not exist for base table %s.%s", e.DBName.O, baseMeta.Name.O)
+	}
+	mlogMeta := mlogTable.Meta()
+	if mlogMeta.MaterializedViewLog == nil || mlogMeta.MaterializedViewLog.BaseTableID != baseMeta.ID {
+		return errors.Errorf(
+			"table %s.%s is not a materialized view log for base table %s.%s",
+			e.DBName.O,
+			mlogMeta.Name.O,
+			e.DBName.O,
+			baseMeta.Name.O,
+		)
+	}
+	mlogSchema, ok := infoschema.SchemaByTable(e.is, mlogMeta)
+	if !ok {
+		return errors.Errorf("schema does not exist for materialized view log %s", mlogMeta.Name.O)
+	}
+
+	execCtx, sqlExec, showStartTS, cleanup, err := e.beginMViewLogShowInternalTxn(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer cleanup()
+
+	rows, err := sqlexec.ExecSQL(execCtx, sqlExec,
+		"SELECT LAST_PURGED_TSO FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %?",
+		mlogMeta.ID,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return errors.New("show materialized view log wait purge: required system table mysql.tidb_mlog_purge_info does not exist")
+		}
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("show materialized view log wait purge: purge info row missing for materialized view log on %s.%s", e.DBName.O, baseMeta.Name.O)
+	}
+	var lastPurgedTSO uint64
+	hasLastPurgedTSO := !rows[0].IsNull(0)
+	if hasLastPurgedTSO {
+		lastPurgedTSO = rows[0].GetUint64(0)
+	}
+
+	publicMVIDs, buildingMVIDs, err := collectDependentMViewIDsForMLogPurge(execCtx, sqlExec, baseMeta, mlogMeta.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	safePurgeTSO, err := calcMaterializedViewLogSafePurgeTSO(
+		execCtx,
+		sqlExec,
+		e.DBName.O,
+		baseMeta.Name.O,
+		showStartTS,
+		publicMVIDs,
+		buildingMVIDs,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	waitPurge := int64(0)
+	if safePurgeTSO > 0 && (!hasLastPurgedTSO || lastPurgedTSO < safePurgeTSO) {
+		var countSQL string
+		if hasLastPurgedTSO {
+			countSQL = sqlescape.MustEscapeSQL(
+				"SELECT COUNT(*) FROM %n.%n WHERE _tidb_commit_ts > %? AND _tidb_commit_ts <= %?",
+				mlogSchema.Name.O,
+				mlogMeta.Name.O,
+				lastPurgedTSO,
+				safePurgeTSO,
+			)
+		} else {
+			countSQL = sqlescape.MustEscapeSQL(
+				"SELECT COUNT(*) FROM %n.%n WHERE _tidb_commit_ts <= %?",
+				mlogSchema.Name.O,
+				mlogMeta.Name.O,
+				safePurgeTSO,
+			)
+		}
+		countRows, err := sqlexec.ExecSQL(execCtx, sqlExec, countSQL)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(countRows) > 0 && !countRows[0].IsNull(0) {
+			waitPurge = countRows[0].GetInt64(0)
+		}
+	}
+
+	e.appendRow([]any{mlogMeta.ID, mlogMeta.Name.O, baseMeta.ID, baseMeta.Name.O, waitPurge})
+	return nil
+}
+
+func (e *ShowExec) beginMViewLogShowInternalTxn(ctx context.Context) (
+	context.Context,
+	sqlexec.SQLExecutor,
+	uint64,
+	func(),
+	error,
+) {
+	execCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnMViewMaintenance)
+	releaseCtx := context.WithoutCancel(execCtx)
+
+	internalSctx, err := e.GetSysSession()
+	if err != nil {
+		return nil, nil, 0, nil, errors.Trace(err)
+	}
+	sessVars := internalSctx.GetSessionVars()
+	origMaintenance := sessVars.InMViewMaintenance
+	origEnableMView := sessVars.EnableMView
+	sessVars.EnableMView = true
+	sessVars.InMViewMaintenance = true
+	sqlExec := internalSctx.GetSQLExecutor()
+	if _, err = sqlExec.ExecuteInternal(execCtx, "BEGIN"); err != nil {
+		sessVars.InMViewMaintenance = origMaintenance
+		sessVars.EnableMView = origEnableMView
+		e.ReleaseSysSession(releaseCtx, internalSctx)
+		return nil, nil, 0, nil, errors.Trace(err)
+	}
+	cleanup := func() {
+		_, _ = sqlExec.ExecuteInternal(releaseCtx, "ROLLBACK")
+		sessVars.InMViewMaintenance = origMaintenance
+		sessVars.EnableMView = origEnableMView
+		e.ReleaseSysSession(releaseCtx, internalSctx)
+	}
+	txn, err := internalSctx.Txn(true)
+	if err != nil {
+		cleanup()
+		return nil, nil, 0, nil, errors.Trace(err)
+	}
+	return execCtx, sqlExec, txn.StartTS(), cleanup, nil
+}
+
+func hasAnyMaterializedViewVisiblePriv(
+	checker privilege.Manager,
+	activeRoles []*auth.RoleIdentity,
+	dbName string,
+	tableName string,
+) bool {
+	for _, priv := range materializedViewTablePrivs {
+		if checker.RequestVerification(activeRoles, dbName, tableName, "", priv) {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *ShowExec) fetchShowCreateMaterializedView() error {
+	db, ok := e.is.SchemaByName(e.DBName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+
+	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if tb.Meta().MaterializedView == nil {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(db.Name.O, tb.Meta().Name.O, "MATERIALIZED VIEW")
+	}
+
+	var buf bytes.Buffer
+	fetchShowCreateTable4MaterializedView(e.Ctx(), tb.Meta(), &buf)
+	e.appendRow([]any{tb.Meta().Name.O, buf.String(), tb.Meta().Charset, tb.Meta().Collate})
+	return nil
+}
+
+func (e *ShowExec) fetchShowCreateMaterializedViewLog() error {
+	if _, ok := e.is.SchemaByName(e.DBName); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+
+	baseTable, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	baseMeta := baseTable.Meta()
+	if baseMeta.IsView() || baseMeta.IsSequence() || baseMeta.TempTableType != model.TempTableNone {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(e.DBName.O, baseMeta.Name.O, "BASE TABLE")
+	}
+
+	if baseMeta.MaterializedViewBase == nil || baseMeta.MaterializedViewBase.MLogID == 0 {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(e.DBName.O, baseMeta.Name.O, "BASE TABLE WITH MATERIALIZED VIEW LOG")
+	}
+	mlogID := baseMeta.MaterializedViewBase.MLogID
+	mlogTable, ok := e.is.TableByID(context.Background(), mlogID)
+	if !ok {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(e.DBName.O, baseMeta.Name.O, "BASE TABLE WITH MATERIALIZED VIEW LOG")
+	}
+	mlogName := mlogTable.Meta().Name
+
+	mlogInfo := mlogTable.Meta().MaterializedViewLog
+	if mlogInfo == nil || mlogInfo.BaseTableID != baseMeta.ID {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(
+			e.DBName.O,
+			mlogName.O,
+			fmt.Sprintf("MATERIALIZED VIEW LOG FOR BASE TABLE %s.%s", e.DBName.O, baseMeta.Name.O),
+		)
+	}
+
+	var buf bytes.Buffer
+	fetchShowCreateTable4MaterializedViewLog(e.Ctx(), baseMeta, mlogTable.Meta(), &buf)
+	e.appendRow([]any{baseMeta.Name.O, buf.String()})
+	return nil
+}
+
+func fetchShowCreateTable4MaterializedView(ctx sessionctx.Context, tb *model.TableInfo, buf *bytes.Buffer) {
+	sqlMode := ctx.GetSessionVars().SQLMode
+	mviewInfo := tb.MaterializedView
+	if mviewInfo == nil {
+		return
+	}
+
+	fmt.Fprintf(buf, "CREATE MATERIALIZED VIEW %s (", stringutil.Escape(tb.Name.O, sqlMode))
+	needComma := false
+	for _, col := range tb.Cols() {
+		if col == nil || col.Hidden {
+			continue
+		}
+		if needComma {
+			buf.WriteString(", ")
+		}
+		buf.WriteString(stringutil.Escape(col.Name.O, sqlMode))
+		needComma = true
+	}
+	buf.WriteString(")")
+	if len(tb.Comment) > 0 {
+		fmt.Fprintf(buf, " COMMENT = '%s'", format.OutputFormat(tb.Comment))
+	}
+
+	if tb.ShardRowIDBits > 0 {
+		fmt.Fprintf(buf, " SHARD_ROW_ID_BITS = %d", tb.ShardRowIDBits)
+	}
+	if tb.PreSplitRegions > 0 {
+		fmt.Fprintf(buf, " PRE_SPLIT_REGIONS = %d", tb.PreSplitRegions)
+	}
+
+	refreshMethod := mviewInfo.RefreshMethod
+	if refreshMethod == "" {
+		refreshMethod = "FAST"
+	}
+	fmt.Fprintf(buf, " REFRESH %s", refreshMethod)
+	if strings.EqualFold(refreshMethod, "FAST") {
+		if mviewInfo.RefreshStartWith != "" {
+			fmt.Fprintf(buf, " START WITH %s", mviewInfo.RefreshStartWith)
+		}
+		if mviewInfo.RefreshNext != "" {
+			fmt.Fprintf(buf, " NEXT %s", mviewInfo.RefreshNext)
+		}
+	}
+	attrPairs := make([]string, 0, 3)
+	if mviewInfo.AlertWarningSec > 0 {
+		attrPairs = append(attrPairs, fmt.Sprintf("mview_alert_warning=%d", mviewInfo.AlertWarningSec))
+	}
+	if mviewInfo.AlertOverdueSec > 0 {
+		attrPairs = append(attrPairs, fmt.Sprintf("mview_alert_overdue=%d", mviewInfo.AlertOverdueSec))
+	}
+	if mviewInfo.AlertRefreshFailed {
+		attrPairs = append(attrPairs, "mview_alert_refresh_failed=yes")
+	}
+	if len(attrPairs) > 0 {
+		fmt.Fprintf(buf, " ATTRIBUTES='%s'", strings.Join(attrPairs, ","))
+	}
+	fmt.Fprintf(buf, " AS %s", mviewInfo.SQLContent)
+}
+
+func fetchShowCreateTable4MaterializedViewLog(
+	ctx sessionctx.Context,
+	baseTable *model.TableInfo,
+	mlogTable *model.TableInfo,
+	buf *bytes.Buffer,
+) {
+	if baseTable == nil || mlogTable == nil || mlogTable.MaterializedViewLog == nil {
+		return
+	}
+
+	sqlMode := ctx.GetSessionVars().SQLMode
+	mlogInfo := mlogTable.MaterializedViewLog
+	fmt.Fprintf(buf, "CREATE MATERIALIZED VIEW LOG ON %s (", stringutil.Escape(baseTable.Name.O, sqlMode))
+	for i, col := range mlogInfo.Columns {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString(stringutil.Escape(col.O, sqlMode))
+	}
+	buf.WriteString(")")
+
+	if mlogTable.ShardRowIDBits > 0 {
+		fmt.Fprintf(buf, " SHARD_ROW_ID_BITS = %d", mlogTable.ShardRowIDBits)
+	}
+	if mlogTable.PreSplitRegions > 0 {
+		fmt.Fprintf(buf, " PRE_SPLIT_REGIONS = %d", mlogTable.PreSplitRegions)
+	}
+
+	if mlogInfo.PurgeMethod != "" || mlogInfo.PurgeStartWith != "" || mlogInfo.PurgeNext != "" {
+		buf.WriteString(" PURGE")
+		if strings.EqualFold(mlogInfo.PurgeMethod, "IMMEDIATE") {
+			buf.WriteString(" IMMEDIATE")
+		} else {
+			if mlogInfo.PurgeStartWith != "" {
+				fmt.Fprintf(buf, " START WITH %s", mlogInfo.PurgeStartWith)
+			}
+			if mlogInfo.PurgeNext != "" {
+				fmt.Fprintf(buf, " NEXT %s", mlogInfo.PurgeNext)
+			}
+		}
+	}
+	if mlogInfo.LogAccumulationAlertRows != nil {
+		fmt.Fprintf(buf, " ALERT ROWS %d", *mlogInfo.LogAccumulationAlertRows)
+	}
 }

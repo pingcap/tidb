@@ -707,6 +707,11 @@ func aggFuncResultMatchesArgForNonEmptyGroup(aggFunc *aggregation.AggFuncDesc) b
 	default:
 		return false
 	}
+	// MIN/MAX return string values for binary literals. Substituting the raw
+	// literal changes numeric coercion in predicates above the aggregation.
+	if expression.IsBinaryLiteral(aggFunc.Args[0]) {
+		return false
+	}
 	return aggFunc.Args[0].ConstLevel() >= expression.ConstOnlyInContext
 }
 
@@ -731,7 +736,7 @@ func (la *LogicalAggregation) getAggFuncsColsForFirstRow() (aggFuncsCols []*expr
 }
 
 // pushDownPredicates split a condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
-func (*LogicalAggregation) pushDownPredicates(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, pushDownFunc pushDownPredicatesFunc) (condsToPush, ret []expression.Expression) {
+func (la *LogicalAggregation) pushDownPredicates(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, pushDownFunc pushDownPredicatesFunc) (condsToPush, ret []expression.Expression) {
 	switch c := cond.(type) {
 	case *expression.Constant:
 		condsToPush = append(condsToPush, cond)
@@ -740,6 +745,9 @@ func (*LogicalAggregation) pushDownPredicates(cond expression.Expression, groupB
 		// with value 0 rather than an empty query result.
 		ret = append(ret, cond)
 	case *expression.ScalarFunction:
+		if len(la.GroupByItems) == 0 {
+			return nil, []expression.Expression{cond}
+		}
 		return pushDownFunc(c, groupByColumns, exprsOriginal)
 	default:
 		ret = append(ret, cond)
@@ -751,11 +759,6 @@ type pushDownPredicatesFunc func(cond *expression.ScalarFunction, cols *expressi
 
 func (la *LogicalAggregation) pushDownPredicatesByGroupby(cond *expression.ScalarFunction, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) (condsToPush, ret []expression.Expression) {
 	extractedCols := expression.ExtractColumns(cond)
-	if len(extractedCols) == 0 {
-		ret = append(ret, cond)
-		return
-	}
-
 	ok := true
 	for _, col := range extractedCols {
 		if !groupByColumns.Contains(col) {

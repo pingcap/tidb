@@ -480,6 +480,15 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tbl2.Meta().ID, job.GetTableID())
 
+	// Rebuild must also skip the locked table.
+	require.NoError(t, pq.Rebuild())
+	l, err = pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 1, l)
+	job, err = pq.PeekForTest()
+	require.NoError(t, err)
+	require.Equal(t, tbl2.Meta().ID, job.GetTableID())
+
 	// Unlock t1.
 	tk.MustExec("unlock stats t1")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
@@ -539,6 +548,12 @@ func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) 
 
 	// No jobs should be in the queue.
 	l, err := pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 0, l)
+
+	// Rebuild must also skip the locked table.
+	require.NoError(t, pq.Rebuild())
+	l, err = pq.Len()
 	require.NoError(t, err)
 	require.Equal(t, 0, l)
 
@@ -602,6 +617,12 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 
 	// No jobs should be in the queue.
 	l, err := pq.Len()
+	require.NoError(t, err)
+	require.Equal(t, 0, l)
+
+	// Rebuild must also skip the locked partition.
+	require.NoError(t, pq.Rebuild())
+	l, err = pq.Len()
 	require.NoError(t, err)
 	require.Equal(t, 0, l)
 

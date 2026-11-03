@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -226,6 +227,11 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (_ *property.
 		case *expression.ScalarFunction:
 			col, desc := expr.GetSingleColumn(item.Desc)
 			if col == nil {
+				return nil, false, false
+			}
+			// Reversing value order does not reverse NULL order: -NULL is still
+			// NULL. An opposite index scan cannot satisfy this sort for nullable columns.
+			if desc != item.Desc && !mysql.HasNotNullFlag(col.RetType.GetFlag()) {
 				return nil, false, false
 			}
 			propItems = append(propItems, property.SortItem{Col: col, Desc: desc})

@@ -17,6 +17,7 @@ package config
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"math"
@@ -1464,10 +1465,10 @@ func TestRedactConfig(t *testing.T) {
 		{"s3://bucket:port/file?access-key=AKID", objstore.InvalidURLPlaceholder},
 		{"~/file", "~/file"},
 		{"gs://bucket/file", "gs://bucket/file"},
-		{"gs://bucket/file?access-key=123", "gs://bucket/file?access-key=123"},
-		{"gs://bucket/file?secret-access-key=123", "gs://bucket/file?secret-access-key=123"},
+		{"gs://bucket/file?access-key=123", "gs://bucket/file"},
+		{"gs://bucket/file?secret-access-key=123", "gs://bucket/file"},
 		{"s3://bucket/file", "s3://bucket/file"},
-		{"s3://bucket/file?other-key=123", "s3://bucket/file?other-key=123"},
+		{"s3://bucket/file?other-key=123", "s3://bucket/file"},
 		{"s3://bucket/file?access-key=123", "s3://bucket/file?access-key=xxxxxx"},
 		{"s3://bucket/file?secret-access-key=123", "s3://bucket/file?secret-access-key=xxxxxx"},
 		{"s3://bucket/file?access_key=123", "s3://bucket/file?access_key=xxxxxx"},
@@ -1477,8 +1478,10 @@ func TestRedactConfig(t *testing.T) {
 		cfg := NewConfig()
 		cfg.Mydumper.SourceDir = tt.origin
 
-		require.Contains(t, cfg.Redact(), tt.redact)
-		require.Contains(t, cfg.String(), tt.origin)
+		var redacted Config
+		require.NoError(t, json.Unmarshal([]byte(cfg.Redact()), &redacted))
+		require.Equal(t, tt.redact, redacted.Mydumper.SourceDir)
+		require.Equal(t, tt.origin, cfg.Mydumper.SourceDir)
 	}
 }
 
