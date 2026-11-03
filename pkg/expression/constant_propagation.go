@@ -250,6 +250,9 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
 		return false, true, cond
 	}
+	if _, ok := sf.Function.(*udfFuncSig); ok {
+		return false, true, cond
+	}
 	if _, ok := inequalFunctions[sf.FuncName.L]; ok {
 		return false, true, cond
 	}

@@ -2435,9 +2435,8 @@ func TestE2EMultipleDeclarations(t *testing.T) {
 // Comprehensive DML/DDL Embedded Tests
 // =============================================================================
 
-// TestE2EDDLStatementRestrictions tests that DDL statements are rejected at parse time.
-// In MySQL, DDL statements are not valid inside stored procedure/function bodies.
-// The parser itself rejects them, which is correct MySQL behavior.
+// TestE2EDDLStatementRestrictions checks that shared routine grammar accepts DDL,
+// while execution rejects it in functions and permits it in procedures.
 func TestE2EDDLStatementRestrictions(t *testing.T) {
 	p := parser.New()
 

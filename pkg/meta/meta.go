@@ -195,6 +195,8 @@ const (
 	StorageClassTransitionNextGenBootTableVersion NextGenBootTableVersion = 3
 	// MaterializedViewNextGenBootTableVersion adds materialized view maintenance metadata tables.
 	MaterializedViewNextGenBootTableVersion NextGenBootTableVersion = 4
+	// SQLRoutineNextGenBootTableVersion adds SQL function and procedure metadata tables.
+	SQLRoutineNextGenBootTableVersion NextGenBootTableVersion = 5
 )
 
 // DDLTableVersion is to display ddl related table versions
