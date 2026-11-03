@@ -586,7 +586,8 @@ impl ClusterDdl for MockDdl {
             | DdlStatement::DropResourceGroup { .. }
             | DdlStatement::UpdateTiFlashReplicaStatus { .. }
             | DdlStatement::TruncateTable { .. }
-            | DdlStatement::RecoverTable { .. } => {
+            | DdlStatement::RecoverTable { .. }
+            | DdlStatement::FlashbackDatabase { .. } => {
                 return Err(SqlQueryError::unknown(
                     "the mock catalog writer does not model column or truncate changes; \
                      the plan tests in cluster_ddl_source own those"

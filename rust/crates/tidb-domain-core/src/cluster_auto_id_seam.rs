@@ -171,7 +171,8 @@ where
     fn rebuild_allocators(&self, table_id: i64, action: tidb_model::ActionType) {
         let kinds: &[AutoIdKind] = match action {
             tidb_model::ActionType::ACTION_REBASE_AUTO_RANDOM_BASE => &[AutoIdKind::AutoRandom],
-            tidb_model::ActionType::ACTION_RECOVER_TABLE => {
+            tidb_model::ActionType::ACTION_RECOVER_TABLE
+            | tidb_model::ActionType::ACTION_RECOVER_SCHEMA => {
                 &[AutoIdKind::AutoIncrement, AutoIdKind::RowId, AutoIdKind::AutoRandom]
             }
             _ => &[AutoIdKind::AutoIncrement, AutoIdKind::RowId],

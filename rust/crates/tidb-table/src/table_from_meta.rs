@@ -74,7 +74,8 @@ pub trait TableAutoIds: std::fmt::Debug + Send + Sync {
     /// the recorded base where it was (`FORCE AUTO_INCREMENT` to the same
     /// value twice). An `ActionRecoverTable` diff has no old table id, so
     /// `dropTableForUpdate` keeps nothing and every allocator of the
-    /// recovered id starts again from its recovered base. The default is the
+    /// recovered id starts again from its recovered base; an
+    /// `ActionRecoverSchema` diff does the same for each of its tables. The default is the
     /// tier with no reserved ranges.
     fn rebuild_allocators(&self, _table_id: i64, _action: tidb_model::ActionType) {}
 }

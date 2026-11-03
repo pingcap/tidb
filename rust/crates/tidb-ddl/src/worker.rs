@@ -2679,6 +2679,7 @@ where
                     | DdlStatement::DropDatabase { .. }
                     | DdlStatement::TruncateTable { .. }
                     | DdlStatement::RecoverTable { .. }
+                    | DdlStatement::FlashbackDatabase { .. }
                     | DdlStatement::CreateTable { .. }
                     | DdlStatement::AddColumn { .. }
                     | DdlStatement::DropColumn { .. }

@@ -26093,3 +26093,69 @@ fn flashback_and_recover_table_bring_a_dropped_table_back_as_go() {
     );
     assert_eq!(query(&mut session, "select @@global.tidb_gc_enable"), [["1"]]);
 }
+
+/// Go `executeFlashbackDatabase` / `onRecoverSchema`, pinned to gorun: the
+/// dropped schema comes back with every table it had at its drop's
+/// snapshot (listed by the job on execute), each with fresh allocators over
+/// its recovered base; an existing name and an already recovered schema are
+/// refused, `TO` renames, and GC is on again afterwards.
+#[test]
+fn flashback_database_brings_a_dropped_schema_back_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(183))
+        .expect("session opens");
+    fn query(session: &mut Session, sql: &str) -> Vec<Vec<String>> {
+        displayed(rows(session, sql))
+    }
+    for sql in [
+        "replace into mysql.tidb values ('tikv_gc_safe_point', '20000101-00:00:00 +0000', '')",
+        "create database d1",
+        "create table d1.t (id int primary key auto_increment, v int)",
+        "create table d1.u (a int)",
+        "insert into d1.t (v) values (10), (20)",
+        "drop database d1",
+        "flashback database d1",
+    ] {
+        query(&mut session, sql);
+    }
+    assert_eq!(query(&mut session, "show tables in d1"), [["t"], ["u"]]);
+    assert_eq!(
+        query(
+            &mut session,
+            "select auto_increment from information_schema.tables \
+             where table_schema = 'd1' and table_name = 't'"
+        ),
+        [["0"]]
+    );
+    query(&mut session, "insert into d1.t (v) values (30)");
+    assert_eq!(query(&mut session, "select id, v from d1.t"), [["30001", "30"]]);
+    assert_eq!(
+        query_error(&mut session, "flashback database d1"),
+        (1007, "Can't create database 'd1'; database exists".to_owned())
+    );
+
+    query(&mut session, "drop database d1");
+    query(&mut session, "flashback database d1 to d2");
+    assert_eq!(
+        query(
+            &mut session,
+            "select schema_name from information_schema.schemata where schema_name like 'd%'"
+        ),
+        [["d2"]]
+    );
+    assert_eq!(query(&mut session, "show tables in d2"), [["t"], ["u"]]);
+    assert_eq!(
+        query_error(&mut session, "flashback database d1 to d3"),
+        (
+            1007,
+            "Schema 'd1' already been recover to 'd2', can't be recover repeatedly".to_owned()
+        )
+    );
+    assert_eq!(
+        query_error(&mut session, "flashback database nosuch"),
+        (1105, "Can't find dropped database: nosuch in DDL history jobs".to_owned())
+    );
+    assert_eq!(query(&mut session, "select @@global.tidb_gc_enable"), [["1"]]);
+}

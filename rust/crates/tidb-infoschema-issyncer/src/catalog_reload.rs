@@ -281,6 +281,13 @@ fn apply_diff_range<S: MetaSnapshot>(
                     row_ids.rebuild_allocators(diff.table_id, action);
                 }
             }
+            // Go `applyRecoverSchema` creates every recovered table without
+            // allocators to keep.
+            if diff.action_type == ActionType::ACTION_RECOVER_SCHEMA {
+                for id in &ids {
+                    row_ids.rebuild_allocators(*id, diff.action_type);
+                }
+            }
         }
         // Go `Builder.SetSchemaVersion(diff.Version)`; the stored diff's own
         // version field and its key agree, and the key is authoritative.

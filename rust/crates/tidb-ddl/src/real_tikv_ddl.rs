@@ -907,7 +907,13 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
     let mut schema_state = crate::cluster_ddl::DdlJobSchemaState::new(tidb_vardef::is_mdl_enabled(
         tidb_config_kerneltype::is_next_gen(),
     ));
-    schema_state.session_pool = backfiller.session_pool().map(crate::cluster_ddl::DdlStepSessions);
+    schema_state.worker = backfiller.session_pool().map(|sess_pool| crate::cluster_ddl::DdlStepWorker {
+        sess_pool,
+        store: Some(Arc::new(StoreSnapshotMeta {
+            opener: Arc::clone(&opener),
+            timeout,
+        })),
+    });
     loop {
         schema_state.mdl_enabled =
             tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen());
@@ -1521,32 +1527,45 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
                 })
         };
         let tiflash_stores = || opener.store().get_tiflash_store_count();
-        if let DdlStatement::RecoverTable { .. } = statement {
-            // Go `DDLExec.executeRecoverTable` / `executeFlashbackTable`: the
-            // GC safe point on a pooled session, the dropped table read at its
-            // drop's snapshot.
+        if matches!(
+            statement,
+            DdlStatement::RecoverTable { .. } | DdlStatement::FlashbackDatabase { .. }
+        ) {
+            // Go `DDLExec.executeRecoverTable` / `executeFlashbackTable` /
+            // `executeFlashbackDatabase`: the GC safe point on a pooled
+            // session, the dropped object read at its drop's snapshot.
             (|| {
-                let sessions = backfiller
-                    .session_pool()
-                    .map(crate::cluster_ddl::DdlStepSessions)
-                    .ok_or_else(|| {
-                        DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(
-                            "no session pool to read the GC safe point through",
-                        ))
-                    })?;
-                let gc_safe_point = crate::cluster_ddl::recover_gc_safe_point(&sessions)?;
+                let sess_pool = backfiller.session_pool().ok_or_else(|| {
+                    DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(
+                        "no session pool to read the GC safe point through",
+                    ))
+                })?;
+                let worker = crate::cluster_ddl::DdlStepWorker { sess_pool, store: None };
+                let gc_safe_point = crate::cluster_ddl::recover_gc_safe_point(&worker)?;
                 let catalog = load_info_schema(&mut snapshot).map_err(DdlPlanError::Meta)?;
-                let spec = crate::cluster_ddl::build_recover_table_job(
-                    &mut snapshot,
-                    &catalog,
-                    statement,
-                    job_context,
-                    gc_safe_point,
-                    &mut RecoverSnapshotsAt {
-                        opener: &opener,
-                        timeout,
-                    },
-                )?;
+                let at = StoreSnapshotMeta {
+                    opener: Arc::clone(&opener),
+                    timeout,
+                };
+                let spec = if let DdlStatement::RecoverTable { .. } = statement {
+                    crate::cluster_ddl::build_recover_table_job(
+                        &mut snapshot,
+                        &catalog,
+                        statement,
+                        job_context,
+                        gc_safe_point,
+                        &at,
+                    )?
+                } else {
+                    crate::cluster_ddl::build_recover_schema_job(
+                        &mut snapshot,
+                        &catalog,
+                        statement,
+                        job_context,
+                        gc_safe_point,
+                        &at,
+                    )?
+                };
                 Ok(Some(crate::cluster_ddl::add_index::AddIndexSubmission::Job(
                     Box::new(spec),
                     Vec::new(),
@@ -1644,15 +1663,15 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
 
 /// Go `dom.GetSnapshotMeta(ts)`: a meta reader over the store's snapshot at
 /// `ts` (`store.GetSnapshot(kv.NewVersion(ts))`), outside any transaction.
-struct RecoverSnapshotsAt<'a, S: StoreClient> {
-    opener: &'a Arc<RealOptimisticTransactionOpener<S>>,
+struct StoreSnapshotMeta<S: StoreClient> {
+    opener: Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
 }
 
-impl<S: StoreClient> RecoverSnapshotsAt<'_, S> {
+impl<S: StoreClient> StoreSnapshotMeta<S> {
     fn meta_at(&self, ts: u64) -> Result<SnapshotMetaSnapshot, DdlPlanError> {
         let snapshot = tidb_store_driver_txn::cluster_table_storage::StatementSnapshot::open_at(
-            Arc::clone(self.opener),
+            Arc::clone(&self.opener),
             ts,
             self.timeout,
         )
@@ -1663,9 +1682,9 @@ impl<S: StoreClient> RecoverSnapshotsAt<'_, S> {
     }
 }
 
-impl<S: StoreClient> crate::cluster_ddl::SnapshotMetaAt for RecoverSnapshotsAt<'_, S> {
+impl<S: StoreClient> crate::cluster_ddl::SnapshotMetaAt for StoreSnapshotMeta<S> {
     fn table_at(
-        &mut self,
+        &self,
         ts: u64,
         schema_id: i64,
         table_id: i64,
@@ -1681,7 +1700,7 @@ impl<S: StoreClient> crate::cluster_ddl::SnapshotMetaAt for RecoverSnapshotsAt<'
     }
 
     fn auto_ids_at(
-        &mut self,
+        &self,
         ts: u64,
         schema_id: i64,
         table_id: i64,
@@ -1689,6 +1708,26 @@ impl<S: StoreClient> crate::cluster_ddl::SnapshotMetaAt for RecoverSnapshotsAt<'
         let mut meta = self.meta_at(ts)?;
         tidb_infoschema::cluster_catalog::with_meta_reader(&mut meta, |reader| {
             reader.auto_ids(schema_id, table_id).get()
+        })
+        .map_err(DdlPlanError::Meta)
+    }
+
+    fn database_at(
+        &self,
+        ts: u64,
+        schema_id: i64,
+    ) -> Result<Option<tidb_model::db::DBInfo>, DdlPlanError> {
+        let mut meta = self.meta_at(ts)?;
+        tidb_infoschema::cluster_catalog::with_meta_reader(&mut meta, |reader| {
+            reader.database(schema_id)
+        })
+        .map_err(DdlPlanError::Meta)
+    }
+
+    fn tables_at(&self, ts: u64, schema_id: i64) -> Result<Vec<tidb_model::TableInfo>, DdlPlanError> {
+        let mut meta = self.meta_at(ts)?;
+        tidb_infoschema::cluster_catalog::with_meta_reader(&mut meta, |reader| {
+            reader.tables(schema_id)
         })
         .map_err(DdlPlanError::Meta)
     }

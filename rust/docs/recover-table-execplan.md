@@ -111,7 +111,16 @@ Oracle: `./gorun` refuses FLASHBACK because its store has no
   the dropped `TableInfo` and allocators at the drop's snapshot. Test
   `flashback_and_recover_table_bring_a_dropped_table_back_as_go`, every
   answer replayed through gorun.
-- [ ] M4: `onRecoverSchema` / FLASHBACK DATABASE.
+- [x] M4: `onRecoverSchema` / FLASHBACK DATABASE. `DdlStatement::
+  FlashbackDatabase`; `build_recover_schema_job` (Go
+  `executeFlashbackDatabase` + `getRecoverDBByName` + `executor.
+  RecoverSchema`); `on_recover_schema` lists the tables on execute through
+  the step's `DdlStepWorker.store` (Go `w.store` snapshot meta), the one
+  seam the submission's history walk uses too. The reload rebuilds every
+  recovered table's allocators (Go `applyRecoverSchema` keeps none). Test
+  `flashback_database_brings_a_dropped_schema_back_as_go`; gorun's
+  `SHOW DATABASES` lists only INFORMATION_SCHEMA (its session has no
+  user), so the test reads `information_schema.schemata`.
 - FLASHBACK CLUSTER (`ActionFlashbackCluster`) is out of scope. It needs
   TiKV's flashback RPCs.
 
@@ -139,7 +148,9 @@ Oracle: `./gorun` refuses FLASHBACK because its store has no
 
 ## Decision Log
 
-(None yet.)
+- A step reaches Go's `*worker` through `DdlStepWorker { sess_pool, store }`
+  rather than one seam per need: Go's `onRecoverSchema` reads both
+  `w.sessPool` (GC) and `w.store` (the dropped schema's tables).
 
 ## Outcomes & Retrospective
 
