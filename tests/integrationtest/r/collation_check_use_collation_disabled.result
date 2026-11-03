@@ -1,3 +1,4 @@
+SET GLOBAL tidb_redact_log = OFF;
 CREATE TABLE `t` (
 `a` char(10) DEFAULT NULL
 );
@@ -173,3 +174,4 @@ Projection	root		is_ipv4(cast(collation_check_use_collation.t0.c1, var_string(20
   │   └─TableFullScan	cop[tikv]	table:t0	keep order:false, stats:pseudo
   └─TableReader(Probe)	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+SET GLOBAL tidb_redact_log = DEFAULT;

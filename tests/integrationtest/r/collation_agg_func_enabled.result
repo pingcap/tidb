@@ -1,3 +1,4 @@
+SET GLOBAL tidb_redact_log = OFF;
 create table t(id int, value varchar(20) charset utf8mb4 collate utf8mb4_general_ci, value1 varchar(20) charset utf8mb4 collate utf8mb4_bin);
 insert into t values (1, 'abc', 'abc '),(4, 'Abc', 'abc'),(3,'def', 'def '), (5, 'abc', 'ABC');
 explain format='plan_tree' select group_concat(value order by 1) from t;
@@ -294,3 +295,4 @@ StreamAgg	root		funcs:max(Column)->Column
 select max(d collate utf8mb4_bin) from tt;
 max(d collate utf8mb4_bin)
 {"c": "c"}
+SET GLOBAL tidb_redact_log = DEFAULT;

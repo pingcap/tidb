@@ -1,5 +1,7 @@
 # These tests check that the used collation is correct.
 
+SET GLOBAL tidb_redact_log = OFF;
+
 # Check subquery.
 CREATE TABLE `t` (
   `a` char(10) DEFAULT NULL
@@ -118,3 +120,4 @@ SELECT (v0.c0)NOT LIKE(BINARY v0.c0) FROM v0;
 SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);
 explain format='plan_tree' SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);
 
+SET GLOBAL tidb_redact_log = DEFAULT;
