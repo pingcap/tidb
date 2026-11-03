@@ -1779,8 +1779,9 @@ func TestMaterializedViewRefreshCompleteUsesDefinitionSessionSemantics(t *testin
 	tk.MustExec("set @@session.time_zone = '+00:00'")
 	tk.MustExec("set @@session.div_precision_increment = 9")
 	tk.MustExec("create table t (a int not null, b int not null, ts timestamp not null)")
-	tk.MustExec("insert into t values (1, 10, '2020-01-01 00:30:00'), (2, 20, '2019-12-31 23:30:00')")
+	tk.MustExec("insert into t values (1, 10, '2019-12-31 23:59:45'), (2, 20, '2019-12-31 23:59:15')")
 	tk.MustExec("create materialized view log on t (a, b, ts) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("set @@session.time_zone = '+00:00:30'")
 	tk.MustExec(`create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
 select a, sum(b), count(1) from t
 where ts >= '2020-01-01 00:00:00'
@@ -1814,7 +1815,7 @@ group by a`)
 		}
 		require.NoError(t, worker.Session().DecodeStates(context.Background(), states))
 		worker.MustQuery("select @@div_precision_increment, 1 / 7, cast(0 as unsigned) - 1").Check(testkit.Rows("9 0.142857142 -1"))
-		worker.MustQuery("select unix_timestamp('2020-01-01 00:00:00')").Check(testkit.Rows("1577836800"))
+		worker.MustQuery("select unix_timestamp('2020-01-01 00:00:00')").Check(testkit.Rows("1577836770"))
 	})
 
 	// Keep creator/session semantics and refresh caller semantics different.
