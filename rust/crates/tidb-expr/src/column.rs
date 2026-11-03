@@ -326,6 +326,13 @@ pub(crate) fn expression_hash64(expression: &Expression) -> u64 {
             }
             hasher.finish()
         }
+        // Go `ScalarSubQueryExpr.Hash64`: the flag and the output column id.
+        Expression::ScalarSubQuery(subquery) => {
+            let mut hasher = Fnv64::default();
+            crate::expression::SCALAR_SUB_Q_FLAG.hash(&mut hasher);
+            subquery.scalar_subquery_col_id.hash(&mut hasher);
+            hasher.finish()
+        }
     }
 }
 

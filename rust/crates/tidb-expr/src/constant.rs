@@ -543,6 +543,10 @@ fn hash_expression(expression: &Expression, hasher: &mut Fnv64) {
                 hash_expression(argument, hasher);
             }
         }
+        Expression::ScalarSubQuery(subquery) => {
+            crate::expression::SCALAR_SUB_Q_FLAG.hash(hasher);
+            subquery.scalar_subquery_col_id.hash(hasher);
+        }
     }
 }
 

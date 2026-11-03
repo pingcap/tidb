@@ -128,7 +128,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .static_type()
             .cloned()
             .ok_or_else(|| PlanError::internal("a SET value has no type"))?;
-        let evaluated = evaluator(&possible_plan, SubqueryKind::Scalar, self.get_opt_flag())?;
+        let evaluated = evaluator(&possible_plan, SubqueryKind::Scalar, self.get_opt_flag(), true)?;
         let datum = evaluated.row.into_iter().next().unwrap_or_default();
         Ok(Expression::Constant(Constant::new(datum, ret_type)))
     }

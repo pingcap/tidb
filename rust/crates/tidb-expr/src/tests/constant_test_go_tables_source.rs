@@ -449,6 +449,7 @@ fn test_constant_propagation() {
                     .join(",")
             ),
             Expression::CorrelatedColumn(column) => format!("cor{}", column.column.unique_id),
+            Expression::ScalarSubQuery(subquery) => subquery.explain_info(),
         }
     }
     fn solve(builder: &dyn FunctionBuilder, conditions: Vec<Expression>) -> Vec<String> {

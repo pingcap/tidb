@@ -78,6 +78,7 @@ fn resolve_expression(origin: &Expression, replace: &ColumnReplacements) -> (Exp
             (Expression::ScalarFunction(function), changed)
         }
         Expression::Constant(constant) => (Expression::Constant(constant.clone()), false),
+        Expression::ScalarSubQuery(subquery) => (Expression::ScalarSubQuery(subquery.clone()), false),
     }
 }
 
@@ -266,6 +267,7 @@ fn expression_type_mut(expression: &mut Expression) -> Option<&mut tidb_datatype
         Expression::Constant(constant) => constant.ret_type.as_mut(),
         Expression::CorrelatedColumn(correlated) => correlated.column.ret_type.as_mut(),
         Expression::ScalarFunction(function) => function.ret_type.as_mut(),
+        Expression::ScalarSubQuery(subquery) => subquery.constant.ret_type.as_mut(),
     }
 }
 

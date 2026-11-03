@@ -32,6 +32,7 @@
 pub use crate::column::{Column, CorrelatedColumn};
 pub use crate::constant::{Constant, ParamMarker};
 pub use crate::scalar_function::ScalarFunction;
+pub use crate::scalar_subquery::{ScalarSubQueryExpr, ScalarSubqueryEval};
 pub use crate::schema::{KeyInfo, Schema};
 use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode, MAX_DECIMAL_WIDTH};
 
@@ -41,6 +42,7 @@ pub(crate) const CONSTANT_FLAG: u8 = 0;
 pub(crate) const COLUMN_FLAG: u8 = 1;
 pub(crate) const SCALAR_FUNCTION_FLAG: u8 = 3;
 pub(crate) const PARAMETER_FLAG: u8 = 4;
+pub(crate) const SCALAR_SUB_Q_FLAG: u8 = 5;
 
 /// Go `mysql.NotFixedDec` (`pkg/parser/mysql/type.go`).
 const NOT_FIXED_DEC: i64 = 31;
@@ -66,7 +68,8 @@ impl ConstLevel {
 /// A closed enum over the concrete node types: [`Column`](Expression::Column),
 /// [`Constant`](Expression::Constant),
 /// [`CorrelatedColumn`](Expression::CorrelatedColumn), and
-/// [`ScalarFunction`](Expression::ScalarFunction) -- the full Go variant set.
+/// [`ScalarFunction`](Expression::ScalarFunction) and the planner's
+/// [`ScalarSubQuery`](Expression::ScalarSubQuery) -- the full Go variant set.
 #[derive(Clone, Debug)]
 pub enum Expression {
     /// A column reference (Go `*Column`).
@@ -77,6 +80,9 @@ pub enum Expression {
     CorrelatedColumn(CorrelatedColumn),
     /// A built-in function applied to arguments (Go `*ScalarFunction`).
     ScalarFunction(ScalarFunction),
+    /// Plain EXPLAIN's unevaluated subquery output (Go
+    /// `*core.ScalarSubQueryExpr`).
+    ScalarSubQuery(ScalarSubQueryExpr),
 }
 
 /// Go `ExpressionsSemanticEqual`: compare expression trees using their
@@ -329,7 +335,9 @@ fn prove_null_rejected(
         Expression::ScalarFunction(function) => {
             prove_null_rejected_function(inner_column_ids, function, allow_nullified_fold)
         }
-        Expression::Column(_) | Expression::CorrelatedColumn(_) => NullRejectProof::default(),
+        Expression::Column(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {
+            NullRejectProof::default()
+        }
     }
 }
 
@@ -443,7 +451,10 @@ fn try_fold_nullified_constant(
         Expression::ScalarFunction(function) => {
             try_fold_nullified_function(inner_column_ids, function)
         }
-        Expression::Column(_) | Expression::Constant(_) | Expression::CorrelatedColumn(_) => None,
+        Expression::Column(_)
+        | Expression::Constant(_)
+        | Expression::CorrelatedColumn(_)
+        | Expression::ScalarSubQuery(_) => None,
     }
 }
 
@@ -530,6 +541,7 @@ fn ret_type_mut(expr: &mut Expression) -> Option<&mut FieldType> {
         Expression::Constant(constant) => constant.ret_type.as_mut(),
         Expression::CorrelatedColumn(column) => column.column.ret_type.as_mut(),
         Expression::ScalarFunction(function) => function.ret_type.as_mut(),
+        Expression::ScalarSubQuery(subquery) => subquery.constant.ret_type.as_mut(),
     }
 }
 
@@ -595,6 +607,7 @@ impl Expression {
             Expression::Constant(c) => c.hash_code(),
             Expression::CorrelatedColumn(c) => c.hash_code(),
             Expression::ScalarFunction(c) => c.hash_code(),
+            Expression::ScalarSubQuery(c) => c.hash_code(),
         }
     }
 
@@ -614,6 +627,11 @@ impl Expression {
                 column.hash_code().to_vec()
             }
             Expression::ScalarFunction(function) => function.canonical_hash_code(),
+            // Go `ScalarSubQueryExpr.CanonicalHashCode` is its `HashCode`.
+            Expression::ScalarSubQuery(subquery) => {
+                let mut subquery = subquery.clone();
+                subquery.hash_code().to_vec()
+            }
         }
     }
 
@@ -625,6 +643,7 @@ impl Expression {
             Expression::Constant(c) => c.is_correlated(),
             Expression::CorrelatedColumn(c) => c.is_correlated(),
             Expression::ScalarFunction(c) => c.is_correlated(),
+            Expression::ScalarSubQuery(_) => false,
         }
     }
 
@@ -636,6 +655,7 @@ impl Expression {
             Expression::Constant(c) => c.const_level(),
             Expression::CorrelatedColumn(c) => c.const_level(),
             Expression::ScalarFunction(c) => c.const_level(),
+            Expression::ScalarSubQuery(_) => ConstLevel::NONE,
         }
     }
 
@@ -660,6 +680,7 @@ impl Expression {
             Expression::ScalarFunction(function) => {
                 Expression::ScalarFunction(function.decorrelate(schema))
             }
+            Expression::ScalarSubQuery(subquery) => Expression::ScalarSubQuery(subquery.clone()),
         }
     }
 
@@ -709,6 +730,10 @@ impl Expression {
                         .zip(&fun.args)
                         .all(|(left, right)| left.equal(right))
             }
+            // Go `ScalarSubQueryExpr.Equal`: the same output column id.
+            Expression::ScalarSubQuery(subquery) => {
+                matches!(other, Expression::ScalarSubQuery(other) if subquery.equal(other))
+            }
         }
     }
 
@@ -728,6 +753,7 @@ impl Expression {
                 .map_err(|(_, error)| error),
             Expression::CorrelatedColumn(c) => Ok(c.eval()),
             Expression::ScalarFunction(c) => c.eval(ctx, row),
+            Expression::ScalarSubQuery(c) => c.eval(),
         }?;
         Ok(self.apply_enum_set_as_int(value))
     }
@@ -782,6 +808,7 @@ impl Expression {
             Expression::Constant(c) => c.get_static_type(),
             Expression::CorrelatedColumn(c) => c.get_static_type(),
             Expression::ScalarFunction(c) => c.get_static_type(),
+            Expression::ScalarSubQuery(c) => c.ret_type(),
         }
     }
 

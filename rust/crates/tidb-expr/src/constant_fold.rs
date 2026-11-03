@@ -477,7 +477,9 @@ fn has_runtime_warning_in(expr: &Expression) -> bool {
 fn fold_value(expr: &mut Expression) -> Option<Datum> {
     let func = match expr {
         Expression::Constant(constant) => return constant.literal_value().cloned(),
-        Expression::Column(_) | Expression::CorrelatedColumn(_) => return None,
+        Expression::Column(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {
+            return None
+        }
         Expression::ScalarFunction(func) => func,
     };
     if is_unfoldable_call(func.func_name.lowercase(), func.args.len()) {
@@ -547,7 +549,9 @@ fn fold_value(expr: &mut Expression) -> Option<Datum> {
 pub(crate) fn folds_to_constant(expr: &Expression) -> bool {
     match expr {
         Expression::Constant(_) => true,
-        Expression::Column(_) | Expression::CorrelatedColumn(_) => false,
+        Expression::Column(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {
+            false
+        }
         Expression::ScalarFunction(func) => {
             !is_unfoldable_call(func.func_name.lowercase(), func.args.len())
                 && func.args.iter().all(folds_to_constant)

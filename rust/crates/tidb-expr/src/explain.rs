@@ -45,15 +45,6 @@ pub fn physical_expression_text_with_columns(
     style: ExpressionTextStyle,
 ) -> Option<String> {
     match expression {
-        Expression::Column(column) if column.unique_id < 0 => {
-            // Go's `-col.UniqueID` wraps at runtime rather than panicking; a
-            // placeholder column with `i64::MIN` reached this arm and aborted
-            // EXPLAIN. `wrapping_neg` keeps Go's two's-complement result.
-            Some(format!(
-                "ScalarQueryCol#{}",
-                column.unique_id.wrapping_neg()
-            ))
-        }
         Expression::Column(column) => {
             // Go `Column.string`: a hidden virtual column (an expression
             // index's) prints its expression, without parameter values.
@@ -118,6 +109,15 @@ pub fn physical_expression_text_with_columns(
             // like its outer column, keeping the whole condition text visible.
             Some(column_text(ctx, &correlated.column))
         }
+        // Go `ScalarSubQueryExpr.ExplainInfo` is `ScalarQueryCol#N`; it has no
+        // `StringWithCtx` of its own, so a Projection prints the embedded
+        // `Constant` -- NULL until the subquery is evaluated.
+        Expression::ScalarSubQuery(subquery) => match style {
+            ExpressionTextStyle::Explain => Some(subquery.explain_info()),
+            ExpressionTextStyle::StringWithCtx => {
+                string_with_ctx_constant(&subquery.embedded_constant(), ctx, column_names)
+            }
+        },
     }
 }
 
@@ -231,31 +231,5 @@ fn explain_constant(
         ))
     } else {
         Some(value)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{physical_expression_text_with_columns, ExpressionTextStyle};
-    use tidb_datatype::{FieldType, FieldTypeCode};
-    use crate::column::Column;
-    use crate::expression::Expression;
-
-    /// Go's `-col.UniqueID` wraps at run time rather than panicking. A
-    /// placeholder column whose `unique_id` is `i64::MIN` used to abort
-    /// EXPLAIN with an arithmetic-overflow panic.
-    #[test]
-    fn a_min_unique_id_column_renders_without_overflow() {
-        let column = Column::new(i64::MIN, FieldType::new(FieldTypeCode::LongLong));
-        let rendered = physical_expression_text_with_columns(
-            &crate::NoColumns,
-            &Expression::Column(column),
-            &[],
-            ExpressionTextStyle::Explain,
-        );
-        assert_eq!(
-            rendered.as_deref(),
-            Some("ScalarQueryCol#-9223372036854775808")
-        );
     }
 }

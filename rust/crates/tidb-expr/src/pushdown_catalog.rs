@@ -3623,7 +3623,7 @@ pub fn bind_deferred_leaves(
                 bind_deferred_leaves(argument, context)?;
             }
         }
-        Expression::Column(_) | Expression::Constant(_) => {}
+        Expression::Column(_) | Expression::Constant(_) | Expression::ScalarSubQuery(_) => {}
     }
     Ok(())
 }
@@ -3754,7 +3754,8 @@ fn from_expression_with_context(
             }
             Ok(described)
         }
-        Expression::CorrelatedColumn(_) => Ok(None),
+        // Go `PbConverter.ExprToPB` has no arm for `ScalarSubQueryExpr`.
+        Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => Ok(None),
     }
 }
 

@@ -64,6 +64,7 @@ pub fn explain_normalized_info(expr: &Expression) -> String {
         Expression::CorrelatedColumn(cor) => column_explain_info_normalized(&cor.column),
         Expression::Constant(_) => "?".to_owned(),
         Expression::ScalarFunction(function) => scalar_func_explain_normalized_info(function),
+        Expression::ScalarSubQuery(subquery) => subquery.explain_info(),
     }
 }
 
@@ -133,7 +134,9 @@ pub fn explain_normalized_info_4_in_list(expr: &Expression) -> String {
     match expr {
         Expression::Column(column) => column_explain_info_normalized(column),
         Expression::CorrelatedColumn(cor) => column_explain_info_normalized(&cor.column),
-        Expression::Constant(_) => "?".to_owned(),
+        // Go `ScalarSubQueryExpr` does not override this one: the embedded
+        // `Constant`'s `?` answers.
+        Expression::Constant(_) | Expression::ScalarSubQuery(_) => "?".to_owned(),
         Expression::ScalarFunction(function) => {
             scalar_func_explain_normalized_info_4_in_list(function)
         }

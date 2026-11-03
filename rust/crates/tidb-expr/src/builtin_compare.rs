@@ -92,6 +92,7 @@ pub(crate) fn prepare_json_comparison_args(args: &mut [Expression]) {
                 }
                 function.ret_type.as_mut()
             }
+            Expression::ScalarSubQuery(subquery) => subquery.constant.ret_type.as_mut(),
         };
         if let Some(ret_type) = ret_type {
             ret_type.and_flags(!FieldTypeFlags::PARSE_TO_JSON);

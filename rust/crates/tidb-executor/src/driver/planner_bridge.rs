@@ -405,7 +405,9 @@ fn locate_list_columns_condition(
                 }))
             }
         },
-        Expression::Column(_) | Expression::CorrelatedColumn(_) => Ok(ListColumnsLocated::Full),
+        Expression::Column(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {
+            Ok(ListColumnsLocated::Full)
+        }
     }
 }
 
@@ -852,6 +854,8 @@ pub(super) fn logical_from_plan(
     );
     builder.advanced_join_hint = ctx.advanced_join_hint();
     builder.in_explain_stmt = ctx.in_explain_stmt();
+    builder.in_explain_analyze_stmt = ctx.in_explain_analyze_stmt();
+    builder.explain_non_evaled_sub_query = ctx.explain_non_evaled_sub_query();
     builder.parser_config = ctx.parser_config();
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.set_dynamic_prune_fallback(&prune_fallback);
@@ -913,13 +917,16 @@ fn dml_visit_info_inner(
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let evaluator = |inner: &LogicalPlan,
-                     _kind: tidb_planner::plan_builder::SubqueryKind,
-                     _opt_flag: u64| {
-        let width = inner.schema().map_or(0, |schema| schema.len());
+                     kind: tidb_planner::plan_builder::SubqueryKind,
+                     _opt_flag: u64,
+                     evaluate: bool| {
+        let width =
+            subquery_output_width(inner.schema().map_or(0, |schema| schema.len()), kind, evaluate);
         Ok(tidb_planner::plan_builder::EvaluatedSubquery {
             column_ids: (0..width).map(|_| column_ids.alloc()).collect(),
             row: vec![tidb_datatype::Datum::Null; width],
             has_row: false,
+            eval_ctx: std::sync::Arc::new(DiscardedSubquery),
         })
     };
     let defaults = default_evaluator(catalog, ctx);
@@ -932,6 +939,8 @@ fn dml_visit_info_inner(
     builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.in_explain_stmt = ctx.in_explain_stmt();
+    builder.in_explain_analyze_stmt = ctx.in_explain_analyze_stmt();
+    builder.explain_non_evaled_sub_query = ctx.explain_non_evaled_sub_query();
     builder.parser_config = ctx.parser_config();
     builder.add_opt_flag(flags::PRUNE_COLUMNS);
     match statement {
@@ -1032,7 +1041,7 @@ pub(crate) fn logical_from_scope(
 /// tree keeps its markers and is rebuilt before this executor copy is made.
 pub(super) fn materialize_physical_expression(expression: &mut Expression) {
     match expression {
-        Expression::Column(_) | Expression::CorrelatedColumn(_) => {}
+        Expression::Column(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {}
         Expression::Constant(constant) => {
             constant.param_marker = None;
             constant.deferred_expr = None;
@@ -1407,7 +1416,7 @@ fn planner_physical_query_with_registry(
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
 ) -> Result<
-    (LogicalPlan, PhysicalPlan, Vec<RegisteredScalarSubquery>),
+    (LogicalPlan, PhysicalPlan, Vec<std::sync::Arc<RegisteredScalarSubquery>>),
     tidb_planner_core_base::PlanError,
 > {
     let registry = ScalarSubqueryRegistry::default();
@@ -1653,7 +1662,7 @@ pub(crate) fn physical_query_plan_with_scalar_subqueries(
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
-) -> Result<(PhysicalPlan, Vec<RegisteredScalarSubquery>), tidb_planner_core_base::PlanError> {
+) -> Result<(PhysicalPlan, Vec<std::sync::Arc<RegisteredScalarSubquery>>), tidb_planner_core_base::PlanError> {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     planner_physical_query_with_registry(
@@ -1700,6 +1709,10 @@ pub(crate) fn physical_query_plan_with_allocators(
 /// keeps the OPTIMIZED child plan and the output column ids its placeholder
 /// expressions carry; `FlatPhysicalPlan.flatten` appends the plan as an extra
 /// EXPLAIN root whose `ExplainInfo` names those ids.
+///
+/// The non-eval `ScalarSubQueryExpr` placeholders hold the same object and
+/// evaluate through it (Go `selfEval`), so it keeps the statement's catalog
+/// and context the way Go's keeps `is` and `ctx`.
 pub(crate) struct RegisteredScalarSubquery {
     /// Go `ScalarSubqueryEvalCtx.outputColIDs`.
     pub output_col_ids: Vec<i64>,
@@ -1708,11 +1721,102 @@ pub(crate) struct RegisteredScalarSubquery {
     /// Go `ScalarSubqueryEvalCtx.ID()`: `Init` allocates it from the plan id
     /// counter once the child has been optimized, and EXPLAIN prints it.
     pub plan_id: i32,
+    /// Go `ScalarSubqueryEvalCtx.is`.
+    catalog: SessionExtendedInfoSchema,
+    /// Go `ScalarSubqueryEvalCtx.SCtx()`.
+    ctx: crate::StmtContext,
+    /// Go `evaled` / `evalErr` / `colsData`.
+    evaluated: std::sync::OnceLock<Result<Vec<tidb_datatype::Datum>, tidb_exprctx::EvalError>>,
+}
+
+impl std::fmt::Debug for RegisteredScalarSubquery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RegisteredScalarSubquery")
+            .field("output_col_ids", &self.output_col_ids)
+            .field("plan_id", &self.plan_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl tidb_expr::expression::ScalarSubqueryEval for RegisteredScalarSubquery {
+    /// Go `ScalarSubqueryEvalCtx.getColVal`, running `selfEval` once.
+    fn get_col_val(&self, col_id: i64) -> Result<tidb_datatype::Datum, tidb_exprctx::EvalError> {
+        let row = self
+            .evaluated
+            .get_or_init(|| {
+                let mut physical = self.physical.clone();
+                crate::driver::physical_builder::execute_first_row(
+                    &mut physical,
+                    &self.catalog,
+                    &self.ctx,
+                )
+                .map(|(row, _)| row)
+                .map_err(driver_error_to_eval)
+            })
+            .as_ref()
+            .map_err(Clone::clone)?;
+        self.output_col_ids
+            .iter()
+            .position(|id| *id == col_id)
+            .and_then(|index| row.get(index).cloned())
+            .ok_or_else(|| {
+                tidb_exprctx::EvalError::Conversion(tidb_terror::TerrorError::compatible(
+                    tidb_terror::TerrorCode::new(1105),
+                    format!(
+                        "Could not found the ScalarSubQueryExpr#{col_id} in the ScalarSubquery_{}",
+                        self.plan_id
+                    ),
+                ))
+            })
+    }
 }
 
 /// The per-statement list of [`RegisteredScalarSubquery`]s, Go's
 /// `SessionVars.MapScalarSubQ` narrowed to one statement.
-pub(crate) type ScalarSubqueryRegistry = Rc<RefCell<Vec<RegisteredScalarSubquery>>>;
+pub(crate) type ScalarSubqueryRegistry =
+    Rc<RefCell<Vec<std::sync::Arc<RegisteredScalarSubquery>>>>;
+
+/// The subquery hook of a build whose plan is discarded (the privilege
+/// passes): nothing is run, and a placeholder reads NULL.
+#[derive(Debug)]
+struct DiscardedSubquery;
+
+impl tidb_expr::expression::ScalarSubqueryEval for DiscardedSubquery {
+    fn get_col_val(&self, _col_id: i64) -> Result<tidb_datatype::Datum, tidb_exprctx::EvalError> {
+        Ok(tidb_datatype::Datum::Null)
+    }
+}
+
+/// Go's output-id count for one subquery: a single id for a non-eval
+/// `EXISTS` (`handleExistSubquery` reads only its first column), one per
+/// output column otherwise.
+fn subquery_output_width(
+    inner_width: usize,
+    kind: tidb_planner::plan_builder::SubqueryKind,
+    evaluate: bool,
+) -> usize {
+    if !evaluate && kind == tidb_planner::plan_builder::SubqueryKind::Exists {
+        1
+    } else {
+        inner_width
+    }
+}
+
+/// [`driver_error_to_plan`]'s counterpart for a placeholder evaluated as an
+/// expression: Go's `getColVal` hands `EvalSubqueryFirstRow`'s error back as
+/// it is.
+fn driver_error_to_eval(error: crate::DriverError) -> tidb_exprctx::EvalError {
+    match error {
+        crate::DriverError::Exec(crate::ExecError::Eval(eval)) => eval,
+        other => {
+            let error = other.to_mysql_error();
+            tidb_exprctx::EvalError::Conversion(tidb_terror::TerrorError::compatible(
+                tidb_terror::TerrorCode::new(error.code as isize),
+                error.message,
+            ))
+        }
+    }
+}
 
 /// Carries an executor failure back across the planner boundary.
 ///
@@ -1821,16 +1925,12 @@ fn subquery_evaluator<'a>(
     &LogicalPlan,
     tidb_planner::plan_builder::SubqueryKind,
     u64,
+    bool,
 )
     -> Result<tidb_planner::plan_builder::EvaluatedSubquery, tidb_planner_core_base::PlanError>
 + 'a {
     let registry = Rc::clone(registry);
-    move |inner, _kind, opt_flag| {
-        // Go executor.EvalSubqueryFirstRow prevents evaluated constants from
-        // surviving into a later EXECUTE with a different snapshot.
-        if use_plan_cache {
-            ctx.set_skip_plan_cache("query has uncorrelated sub-queries is un-cacheable");
-        }
+    move |inner, kind, opt_flag, evaluate| {
         // Go `DoOptimize(ctx, planCtx.builder.ctx, planCtx.builder.optFlag, np)`.
         let logical = optimize_built_logical(
             inner.clone(),
@@ -1845,10 +1945,39 @@ fn subquery_evaluator<'a>(
         let mut physical = physical_plan_for_logical(&logical, plan_ids, column_ids, ctx)?;
         // Go allocates `outputColIDs` from `np.Schema()` before it runs the
         // child, so the ids precede any execution-time allocation.
-        let output_col_ids = (0..logical.schema().map_or(0, |schema| schema.len()))
-            .map(|_| column_ids.alloc())
-            .collect::<Vec<_>>();
+        let width = subquery_output_width(
+            logical.schema().map_or(0, |schema| schema.len()),
+            kind,
+            evaluate,
+        );
+        let output_col_ids = (0..width).map(|_| column_ids.alloc()).collect::<Vec<_>>();
         let plan_id = plan_ids.alloc();
+        let register = |physical: PhysicalPlan| {
+            let registered = std::sync::Arc::new(RegisteredScalarSubquery {
+                output_col_ids: output_col_ids.clone(),
+                physical,
+                plan_id,
+                catalog: catalog.clone(),
+                ctx: ctx.clone(),
+                evaluated: std::sync::OnceLock::new(),
+            });
+            registry.borrow_mut().push(std::sync::Arc::clone(&registered));
+            registered
+        };
+        if !evaluate {
+            // Go's non-eval branch registers the child and stops there.
+            return Ok(tidb_planner::plan_builder::EvaluatedSubquery {
+                column_ids: output_col_ids.clone(),
+                row: Vec::new(),
+                has_row: false,
+                eval_ctx: register(physical),
+            });
+        }
+        // Go executor.EvalSubqueryFirstRow prevents evaluated constants from
+        // surviving into a later EXECUTE with a different snapshot.
+        if use_plan_cache {
+            ctx.set_skip_plan_cache("query has uncorrelated sub-queries is un-cacheable");
+        }
         // Go `EvalSubqueryFirstRow`'s deferred `PreprocessSubQueries++` and
         // `DurationPreprocessSubQuery += time.Since(begin)`, error or not.
         let begin_evaluation = std::time::Instant::now();
@@ -1861,15 +1990,12 @@ fn subquery_evaluator<'a>(
         ctx.phase_durations()
             .add_preprocess_sub_query(begin_evaluation.elapsed());
         let (row, has_row) = evaluated.map_err(driver_error_to_plan)?;
-        registry.borrow_mut().push(RegisteredScalarSubquery {
-            output_col_ids: output_col_ids.clone(),
-            physical,
-            plan_id,
-        });
+        let eval_ctx = register(physical);
         Ok(tidb_planner::plan_builder::EvaluatedSubquery {
             column_ids: output_col_ids,
             row,
             has_row,
+            eval_ctx,
         })
     }
 }
@@ -2258,6 +2384,8 @@ impl QueryBuilderParts<'_> {
         );
         builder.advanced_join_hint = ctx.advanced_join_hint();
         builder.in_explain_stmt = ctx.in_explain_stmt();
+        builder.in_explain_analyze_stmt = ctx.in_explain_analyze_stmt();
+        builder.explain_non_evaled_sub_query = ctx.explain_non_evaled_sub_query();
         builder.parser_config = ctx.parser_config();
         builder.set_partition_processor_enabled(
             ctx.static_partition_prune()
@@ -2392,13 +2520,16 @@ fn query_visit_info_inner(
     // already visited its tables by the time it asks for a value, and a row of
     // NULLs lets the outer plan finish building.
     let evaluator = |inner: &LogicalPlan,
-                     _kind: tidb_planner::plan_builder::SubqueryKind,
-                     _opt_flag: u64| {
-        let width = inner.schema().map_or(0, |schema| schema.len());
+                     kind: tidb_planner::plan_builder::SubqueryKind,
+                     _opt_flag: u64,
+                     evaluate: bool| {
+        let width =
+            subquery_output_width(inner.schema().map_or(0, |schema| schema.len()), kind, evaluate);
         Ok(tidb_planner::plan_builder::EvaluatedSubquery {
             column_ids: (0..width).map(|_| column_ids.alloc()).collect(),
             row: vec![tidb_datatype::Datum::Null; width],
             has_row: false,
+            eval_ctx: std::sync::Arc::new(DiscardedSubquery),
         })
     };
     let defaults = default_evaluator(catalog, ctx);
@@ -2411,6 +2542,8 @@ fn query_visit_info_inner(
     builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.in_explain_stmt = ctx.in_explain_stmt();
+    builder.in_explain_analyze_stmt = ctx.in_explain_analyze_stmt();
+    builder.explain_non_evaled_sub_query = ctx.explain_non_evaled_sub_query();
     builder.parser_config = ctx.parser_config();
     let node = tidb_resolve::NodeW::new(query.clone());
     builder
@@ -2664,6 +2797,8 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     );
     builder.advanced_join_hint = ctx.advanced_join_hint();
     builder.in_explain_stmt = ctx.in_explain_stmt();
+    builder.in_explain_analyze_stmt = ctx.in_explain_analyze_stmt();
+    builder.explain_non_evaled_sub_query = ctx.explain_non_evaled_sub_query();
     builder.parser_config = ctx.parser_config();
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.set_dynamic_prune_fallback(&prune_fallback);
@@ -3372,6 +3507,8 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     );
     builder.advanced_join_hint = ctx.advanced_join_hint();
     builder.in_explain_stmt = ctx.in_explain_stmt();
+    builder.in_explain_analyze_stmt = ctx.in_explain_analyze_stmt();
+    builder.explain_non_evaled_sub_query = ctx.explain_non_evaled_sub_query();
     builder.parser_config = ctx.parser_config();
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.set_dynamic_prune_fallback(&prune_fallback);

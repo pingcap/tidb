@@ -6462,7 +6462,9 @@ pub(crate) fn expression_column_offsets(expressions: &[Expression]) -> Vec<usize
                     collect(argument, offsets);
                 }
             }
-            Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
+            Expression::Constant(_)
+            | Expression::CorrelatedColumn(_)
+            | Expression::ScalarSubQuery(_) => {}
         }
     }
 

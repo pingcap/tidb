@@ -24,20 +24,6 @@ use tidb_infoschema::{split_table_path, TableEntry};
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
-/// An internal qualifier that parsed SQL can never produce. Plain EXPLAIN
-/// uses it for Go's `ScalarSubQueryExpr`: a typed, non-constant planner value
-/// that is visible to expression rewriting but is not part of an executor row.
-pub const SCALAR_QUERY_SCOPE: &str = "\0scalar_subquery";
-
-#[derive(Clone)]
-pub struct PlanColumn {
-    pub name: String,
-    pub field_type: FieldType,
-    pub unique_id: i64,
-    /// The default plain-EXPLAIN branch evaluates scalar subqueries once.
-    pub value: Option<Datum>,
-}
-
 /// The joined `FROM` scope: every table's columns concatenated left to right,
 /// which is the row layout [`JoinExec`] produces.
 ///
@@ -47,11 +33,6 @@ pub struct PlanColumn {
 #[derive(Clone)]
 pub struct FromScope {
     pub tables: Vec<FromTable>,
-    /// Planner-only values registered by plain EXPLAIN. Their synthetic row
-    /// offsets follow the physical source width, but they deliberately do not
-    /// contribute to [`FromScope::width`] or wildcard expansion because no
-    /// executor ever produces them.
-    pub plan_columns: Vec<PlanColumn>,
     pub constant_context: Option<tidb_sessionctx::StmtContext>,
     /// The statement's session `time_zone`, which [`ScopeResolver`] publishes
     /// to the expression rewriter as [`ColumnResolver::time_zone`] -- Go's
@@ -85,7 +66,6 @@ impl Default for FromScope {
     fn default() -> Self {
         Self {
             tables: Vec::new(),
-            plan_columns: Vec::new(),
             constant_context: None,
             coalesced: Vec::new(),
             star: Vec::new(),
@@ -284,24 +264,6 @@ impl ColumnResolver for ScopeResolver<'_> {
     }
 
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
-        if let [scope, name] = path {
-            if scope == SCALAR_QUERY_SCOPE {
-                let physical_width = self.scope.width();
-                return self
-                    .scope
-                    .plan_columns
-                    .iter()
-                    .enumerate()
-                    .find(|(_, column)| column.name == *name)
-                    .map(|(offset, column)| {
-                        (
-                            physical_width + offset,
-                            column.field_type.clone(),
-                            column.unique_id,
-                        )
-                    });
-            }
-        }
         let (schema, qualifier, name) = match path {
             [name] => (None, None, name),
             [table, name] => (None, Some(table), name),
@@ -346,30 +308,6 @@ impl ColumnResolver for ScopeResolver<'_> {
         Self::orig_name(self, path)
     }
 
-    fn resolve_constant(&self, path: &[String]) -> Option<Expression> {
-        let [scope, name] = path else {
-            return None;
-        };
-        if scope != SCALAR_QUERY_SCOPE {
-            return None;
-        }
-        let column = self
-            .scope
-            .plan_columns
-            .iter()
-            .find(|column| column.name == *name)?;
-        let mut constant =
-            tidb_expr::constant::Constant::new(column.value.clone()?, column.field_type.clone());
-        constant.subquery_ref_id = -column.unique_id;
-        Some(Expression::Constant(constant))
-    }
-
-    fn has_resolved_constants(&self) -> bool {
-        self.scope
-            .plan_columns
-            .iter()
-            .any(|column| column.value.is_some())
-    }
 }
 
 /// The table a single-table `UPDATE`/`DELETE` targets.

@@ -680,6 +680,8 @@ pub struct StmtContextData {
     /// Go `StmtCtx.InExplainStmt`, which decides whether an enforced-MPP
     /// refusal is an ordinary warning or an extra warning.
     in_explain_stmt: bool,
+    /// Go `StmtCtx.InExplainAnalyzeStmt`.
+    in_explain_analyze_stmt: bool,
     /// Go `StmtCtx.ExplainFormat`: `plan_tree` renders columns without their
     /// unique ids ([`Columns::remove_column_numbers`]).
     explain_format: Option<crate::explain_format::ExplainFormat>,
@@ -1329,6 +1331,9 @@ pub struct StmtContextData {
     skip_cte_consumer_counts: bool,
     /// Go `SessionVars.EnableSemiJoinRewrite`.
     enable_semi_join_rewrite: bool,
+    /// Go `SessionVars.ExplainNonEvaledSubQuery`
+    /// (`tidb_opt_enable_non_eval_scalar_subquery`).
+    explain_non_evaled_sub_query: bool,
     /// Go `SessionVars.GetAllowInSubqToJoinAndAgg()`.
     allow_in_subq_to_join_and_agg: bool,
     /// Go `SessionVars.EnableNoDecorrelateInSelect`.
@@ -1685,6 +1690,13 @@ context_configuration! {
     #[must_use]
     pub fn with_enable_semi_join_rewrite(mut self, enable: bool) -> Self {
         self.enable_semi_join_rewrite = enable;
+        self
+    }
+
+    /// Sets `@@tidb_opt_enable_non_eval_scalar_subquery` for this statement.
+    #[must_use]
+    pub fn with_explain_non_evaled_sub_query(mut self, enable: bool) -> Self {
+        self.explain_non_evaled_sub_query = enable;
         self
     }
 
@@ -2748,6 +2760,7 @@ impl StmtContext {
             extra_warnings: Arc::default(),
             message: Arc::default(),
             in_explain_stmt: false,
+            in_explain_analyze_stmt: false,
             explain_format: None,
             explain_table_hints: Vec::new(),
             block_as_names: Arc::default(),
@@ -2973,6 +2986,7 @@ impl StmtContext {
             enable_force_inline_cte: false,
             skip_cte_consumer_counts: false,
             enable_semi_join_rewrite: tidb_vardef::defaults::DEF_OPT_ENABLE_SEMI_JOIN_REWRITE,
+            explain_non_evaled_sub_query: tidb_vardef::defaults::DEF_TIDB_OPT_EXPLAIN_EVALED_SUBQUERY,
             allow_in_subq_to_join_and_agg: true,
             enable_no_decorrelate_in_select:
                 tidb_vardef::defaults::DEF_OPT_ENABLE_NO_DECORRELATE_IN_SELECT,
@@ -3029,6 +3043,20 @@ impl StmtContext {
     #[must_use]
     pub fn in_explain_stmt(&self) -> bool {
         self.in_explain_stmt
+    }
+
+    /// Records whether this statement runs under `EXPLAIN ANALYZE` (Go
+    /// `StmtCtx.InExplainAnalyzeStmt`).
+    #[must_use]
+    pub fn with_in_explain_analyze_stmt(mut self, enabled: bool) -> Self {
+        self.in_explain_analyze_stmt = enabled;
+        self
+    }
+
+    /// Go `StmtCtx.InExplainAnalyzeStmt`.
+    #[must_use]
+    pub fn in_explain_analyze_stmt(&self) -> bool {
+        self.in_explain_analyze_stmt
     }
 
     /// Records the EXPLAIN statement's format (Go `StmtCtx.ExplainFormat`).
@@ -3619,6 +3647,11 @@ impl StmtContext {
     /// Returns `@@tidb_opt_enable_semi_join_rewrite`.
     pub fn enable_semi_join_rewrite(&self) -> bool {
         self.enable_semi_join_rewrite
+    }
+
+    /// Returns Go `SessionVars.ExplainNonEvaledSubQuery`.
+    pub fn explain_non_evaled_sub_query(&self) -> bool {
+        self.explain_non_evaled_sub_query
     }
 
     /// Returns Go `SessionVars.GetAllowInSubqToJoinAndAgg()`.

@@ -96,6 +96,7 @@ pub struct StatementVarSnapshot {
     enable_force_inline_cte: bool,
     advanced_join_hint: bool,
     enable_semi_join_rewrite: bool,
+    explain_non_evaled_sub_query: bool,
     allow_in_subq_to_join_and_agg: bool,
     enable_no_decorrelate_in_select: bool,
     enable_skew_distinct_agg: bool,
@@ -1138,6 +1139,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             enable_force_inline_cte: on(tidb_vardef::tidb_vars::TIDB_OPT_FORCE_INLINE_CTE),
             advanced_join_hint: on(tidb_vardef::tidb_vars::TIDB_OPT_ADVANCED_JOIN_HINT),
             enable_semi_join_rewrite: on(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_SEMI_JOIN_REWRITE),
+            explain_non_evaled_sub_query: on(tidb_vardef::tidb_vars::TIDB_OPT_EXPLAIN_NO_EVALED_SUB_QUERY),
             allow_in_subq_to_join_and_agg: on(
                 tidb_vardef::tidb_vars::TIDB_OPT_IN_SUBQ_TO_JOIN_AND_AGG,
             ),
@@ -1423,6 +1425,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let enable_force_inline_cte = snapshot.enable_force_inline_cte;
         let advanced_join_hint = snapshot.advanced_join_hint;
         let enable_semi_join_rewrite = snapshot.enable_semi_join_rewrite;
+        let explain_non_evaled_sub_query = snapshot.explain_non_evaled_sub_query;
         let allow_in_subq_to_join_and_agg =
             if self.stmt_hints_ref().has_allow_in_subq_to_join_and_agg_hint {
                 self.stmt_hints_ref().allow_in_subq_to_join_and_agg
@@ -1743,6 +1746,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_enable_force_inline_cte(enable_force_inline_cte)
                     .with_advanced_join_hint(advanced_join_hint)
                     .with_enable_semi_join_rewrite(enable_semi_join_rewrite)
+                .with_explain_non_evaled_sub_query(explain_non_evaled_sub_query)
                     .with_allow_in_subq_to_join_and_agg(allow_in_subq_to_join_and_agg)
                     .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
                     .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
@@ -1906,6 +1910,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_enable_force_inline_cte(enable_force_inline_cte)
                 .with_advanced_join_hint(advanced_join_hint)
                 .with_enable_semi_join_rewrite(enable_semi_join_rewrite)
+                .with_explain_non_evaled_sub_query(explain_non_evaled_sub_query)
                 .with_allow_in_subq_to_join_and_agg(allow_in_subq_to_join_and_agg)
                 .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
                 .with_enable_skew_distinct_agg(enable_skew_distinct_agg)

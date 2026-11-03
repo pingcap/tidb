@@ -138,5 +138,7 @@ pub fn admits(expr: &Expression, blacklist: &ExprPushDownBlacklist, store: Store
                 .iter()
                 .all(|arg| admits(arg, blacklist, store))
         }
+        // Go `canExprPushDown`'s type switch has no arm for it.
+        Expression::ScalarSubQuery(_) => false,
     }
 }

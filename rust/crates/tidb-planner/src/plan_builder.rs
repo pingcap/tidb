@@ -581,8 +581,12 @@ pub enum SubqueryKind {
 /// registered EXPLAIN root can name the placeholders. `row` is
 /// `EvalSubqueryFirstRow`'s datum row, and `has_row` distinguishes Go's nil
 /// row (no child row, which the scalar path never sees because
-/// `MaxOneRowExec` appends NULLs) from a zero-column row.
-#[derive(Clone, Debug, Default)]
+/// `MaxOneRowExec` appends NULLs) from a zero-column row. Unevaluated, both
+/// are empty.
+///
+/// Go's non-eval EXISTS allocates a single output id whatever the child's
+/// width; every other case allocates one per output column.
+#[derive(Clone, Debug)]
 pub struct EvaluatedSubquery {
     /// `AllocPlanColumnID()` per output column, in schema order.
     pub column_ids: Vec<i64>,
@@ -590,6 +594,9 @@ pub struct EvaluatedSubquery {
     pub row: Vec<tidb_datatype::Datum>,
     /// Whether the child produced a row at all.
     pub has_row: bool,
+    /// Go's registered `ScalarSubqueryEvalCtx`, which the non-eval
+    /// `ScalarSubQueryExpr` placeholders evaluate through.
+    pub eval_ctx: std::sync::Arc<dyn tidb_expr::expression::ScalarSubqueryEval>,
 }
 
 /// Go's `planner/core.EvalSubqueryFirstRow` function variable plus the
@@ -597,9 +604,10 @@ pub struct EvaluatedSubquery {
 /// optimizer-and-execute hook, the planner calls it from
 /// `handleScalarSubquery` / `handleExistSubquery`. The `u64` is
 /// `planCtx.builder.optFlag` at the moment of the call, which is the flag set
-/// Go hands `DoOptimize`.
+/// Go hands `DoOptimize`; the `bool` is whether to run the child (false is
+/// Go's non-eval EXPLAIN branch, which only optimizes and registers it).
 pub type SubqueryEvaluator<'a> =
-    &'a dyn Fn(&LogicalPlan, SubqueryKind, u64) -> Result<EvaluatedSubquery, PlanError>;
+    &'a dyn Fn(&LogicalPlan, SubqueryKind, u64, bool) -> Result<EvaluatedSubquery, PlanError>;
 
 /// Go `evalFieldDefaultValue` (`expression_rewriter.go:3303`) over the
 /// executor's catalog and statement context: the constant `DEFAULT(column)`
@@ -836,6 +844,11 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// statement, so each expanded view needs SHOW VIEW
     /// (`BuildDataSourceFromView`).
     pub in_explain_stmt: bool,
+    /// Go `SessionVars.StmtCtx.InExplainAnalyzeStmt`.
+    pub in_explain_analyze_stmt: bool,
+    /// Go `SessionVars.ExplainNonEvaledSubQuery`
+    /// (`tidb_opt_enable_non_eval_scalar_subquery`).
+    pub explain_non_evaled_sub_query: bool,
     /// Go `SessionVars.StmtCtx.ViewDepth`: how many views this statement has
     /// expanded so far, nested or not; never decremented.
     pub view_depth: usize,
@@ -1632,6 +1645,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             expanded_selects: BTreeMap::new(),
             expanded_correlated_aggs: BTreeMap::new(),
             in_explain_stmt: false,
+            in_explain_analyze_stmt: false,
+            explain_non_evaled_sub_query: false,
             view_depth: 0,
             parser_config: tidb_parser::ParserConfig::default(),
             tikv_in_isolation_read: true,
@@ -2209,6 +2224,11 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
     /// carrying its `ScalarQueryCol` id; a multi-column one is wrapped in Go's
     /// `ast.RowFunc`. `EXISTS` becomes the plain 1/0 Go computes from whether
     /// the row exists, with no `SubqueryRefID`.
+    ///
+    /// Under plain `EXPLAIN` with `tidb_opt_enable_non_eval_scalar_subquery`
+    /// (`expression_rewriter.go:1204` / `:1567`) the child is registered but
+    /// not run, and [`ScalarSubQueryExpr`](tidb_expr::expression::ScalarSubQueryExpr)
+    /// placeholders take the constants' place.
     fn evaluate_subquery(
         &self,
         inner: &LogicalPlan,
@@ -2230,7 +2250,13 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 return Err(PlanError::internal("uncorrelated subquery has no schema"));
             }
         };
-        let evaluated = evaluator(inner, kind, self.get_opt_flag())?;
+        let non_evaled = self.in_explain_stmt
+            && !self.in_explain_analyze_stmt
+            && self.explain_non_evaled_sub_query;
+        let evaluated = evaluator(inner, kind, self.get_opt_flag(), !non_evaled)?;
+        if non_evaled {
+            return self.non_evaled_subquery(&schema, kind, negated, evaluated);
+        }
         if evaluated.column_ids.len() != schema.len() {
             return Err(PlanError::internal(
                 "uncorrelated subquery allocated the wrong number of output columns",
@@ -2287,6 +2313,82 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 let rewriter = self.expression_rewriter();
                 rewriter
                     .new_function("row", ret_type, constants)
+                    .map_err(Into::into)
+            }
+        }
+    }
+
+    /// Go's non-eval tails of `handleExistSubquery` / `handleScalarSubquery`:
+    /// a `ScalarSubQueryExpr` per output column, typed and collated like the
+    /// child's column. `EXISTS` reads the child's FIRST column's type, `NOT
+    /// EXISTS` wraps it in `UnaryNot`; several scalar columns become a
+    /// `RowFunc`.
+    fn non_evaled_subquery(
+        &self,
+        schema: &Schema,
+        kind: SubqueryKind,
+        negated: bool,
+        evaluated: EvaluatedSubquery,
+    ) -> Result<Expression, PlanError> {
+        let placeholder = |id: i64, column: &tidb_expr::column::Column| {
+            let mut subquery = tidb_expr::expression::ScalarSubQueryExpr::new(
+                id,
+                std::sync::Arc::clone(&evaluated.eval_ctx),
+                column.ret_type.clone().unwrap_or_else(|| {
+                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                }),
+            );
+            subquery.constant.collation.set_coercibility(
+                tidb_expr::collation_derive::coercibility_of(&Expression::Column(column.clone())),
+            );
+            Expression::ScalarSubQuery(subquery)
+        };
+        match kind {
+            SubqueryKind::Exists => {
+                // Go reads `np.Schema().Columns[0]`, which panics on the
+                // schema-less dual `popExistsSubPlan` leaves.
+                let (Some(column), [id]) = (schema.columns.first(), evaluated.column_ids.as_slice())
+                else {
+                    return Err(PlanError::internal(format!(
+                        "runtime error: index out of range [0] with length {}",
+                        schema.len()
+                    )));
+                };
+                let subquery = placeholder(*id, column);
+                if !negated {
+                    return Ok(subquery);
+                }
+                self.expression_rewriter()
+                    .new_function(
+                        "not",
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Tiny),
+                        vec![subquery],
+                    )
+                    .map_err(Into::into)
+            }
+            SubqueryKind::Scalar => {
+                if evaluated.column_ids.len() != schema.len() {
+                    return Err(PlanError::internal(
+                        "uncorrelated subquery allocated the wrong number of output columns",
+                    ));
+                }
+                let mut placeholders = evaluated
+                    .column_ids
+                    .iter()
+                    .zip(schema.columns.iter())
+                    .map(|(id, column)| placeholder(*id, column))
+                    .collect::<Vec<_>>();
+                if placeholders.len() == 1 {
+                    return Ok(placeholders.pop().expect("one placeholder"));
+                }
+                let ret_type = placeholders
+                    .first()
+                    .and_then(|placeholder| placeholder.static_type().cloned())
+                    .unwrap_or_else(|| {
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Tiny)
+                    });
+                self.expression_rewriter()
+                    .new_function("row", ret_type, placeholders)
                     .map_err(Into::into)
             }
         }
@@ -2821,27 +2923,12 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 match rewriter.handle_exist_subquery(outer, inner, *not, hint_flags)? {
                     ScalarSubqueryOutcome::Applied(plan) => Ok((plan, true)),
                     ScalarSubqueryOutcome::EvaluateSeparately { outer, inner } => {
-                        // Go `buildSelection`'s constant fold
-                        // (`logical_plan_builder.go:1386`): the evaluated
-                        // EXISTS is one conjunct whose value is already known,
-                        // so a true one disappears and a false one becomes the
-                        // zero-row dual.
-                        let value = self.evaluate_subquery(&inner, SubqueryKind::Exists, *not)?;
-                        let Expression::Constant(constant) = &value else {
-                            return Err(PlanError::internal(
-                                "evaluated EXISTS did not fold to a constant",
-                            ));
-                        };
-                        match constant_is_always_false(constant, self.ctx, false)? {
-                            Some(true) => {
-                                let dual = self.always_false_dual(&outer);
-                                Ok((LogicalPlan::TableDual(dual), true))
-                            }
-                            Some(false) => Ok((outer, true)),
-                            None => Err(PlanError::internal(
-                                "evaluated EXISTS did not fold to a boolean constant",
-                            )),
-                        }
+                        // Go pushes the evaluated 1/0 (or, under non-eval
+                        // EXPLAIN, the `ScalarSubQueryExpr`) onto `ctxStack`;
+                        // `buildSelection` folds a constant only after every
+                        // conjunct is rewritten (`logical_plan_builder.go:1386`).
+                        conditions.push(self.evaluate_subquery(&inner, SubqueryKind::Exists, *not)?);
+                        Ok((outer, true))
                     }
                 }
             }

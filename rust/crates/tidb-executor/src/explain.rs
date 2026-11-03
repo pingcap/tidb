@@ -2321,7 +2321,7 @@ fn physical_explain_roots(
     catalog: &SessionExtendedInfoSchema,
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
     ignore_explain_id_suffix: bool,
-    scalar_subqueries: &[crate::driver::planner_bridge::RegisteredScalarSubquery],
+    scalar_subqueries: &[std::sync::Arc<crate::driver::planner_bridge::RegisteredScalarSubquery>],
 ) -> Vec<ExplainOperator> {
     let mut roots = vec![physical_explain_operator(
         costs,
@@ -3480,7 +3480,7 @@ fn render_physical_plan(
     format: ExplainFormat,
     analyze: bool,
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
-    scalar_subqueries: &[crate::driver::planner_bridge::RegisteredScalarSubquery],
+    scalar_subqueries: &[std::sync::Arc<crate::driver::planner_bridge::RegisteredScalarSubquery>],
 ) -> Result<SelectMeta, DriverError> {
     if matches!(format, ExplainFormat::Dot) {
         return Ok(explain_dot_rows(physical));

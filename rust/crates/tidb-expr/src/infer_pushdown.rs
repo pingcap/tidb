@@ -727,6 +727,10 @@ fn can_expr_push_down_reported(
 ) -> bool {
     use crate::infer_pushdown::{is_push_down_enabled, StoreType};
 
+    // Go `canExprPushDown`'s type switch has no `ScalarSubQueryExpr` arm.
+    if matches!(expr, Expression::ScalarSubQuery(_)) {
+        return false;
+    }
     let Expression::ScalarFunction(function) = expr else {
         // Go PbConverter.columnToPBExpr checks column types independently of
         // the requested engine, including correlated columns.

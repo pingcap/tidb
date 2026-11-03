@@ -214,6 +214,11 @@ fn filter_physical_rows<C: Columns>(
                 Expression::ScalarFunction(function) => {
                     function.vec_eval_bool(input, &sel, &mut is_zero)?
                 }
+                // Go `ScalarSubQueryExpr.Vectorized()` is true and every
+                // `VecEval*` refuses.
+                Expression::ScalarSubQuery(_) => {
+                    return Err(crate::scalar_subquery::vec_eval_error());
+                }
                 Expression::Column(_) | Expression::Constant(_) => false,
             }
         };

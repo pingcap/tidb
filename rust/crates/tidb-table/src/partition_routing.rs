@@ -329,7 +329,10 @@ fn update_expression_dependency_type(
                 update_expression_dependency_type(argument, index, field_type);
             }
         }
-        Expression::Column(_) | Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
+        Expression::Column(_)
+        | Expression::Constant(_)
+        | Expression::CorrelatedColumn(_)
+        | Expression::ScalarSubQuery(_) => {}
     }
 }
 

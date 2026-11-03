@@ -1449,7 +1449,7 @@ pub fn index_covers_condition(
                 index_covers_condition(ds, index, argument, opt_prefix_index_single_scan)
             })
         }
-        Expression::Constant(_) | Expression::CorrelatedColumn(_) => true,
+        Expression::Constant(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => true,
     }
 }
 

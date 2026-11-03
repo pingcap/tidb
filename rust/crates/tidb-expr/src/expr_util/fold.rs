@@ -510,6 +510,7 @@ fn repertoire_of(expr: &Expression) -> crate::expr_collation::Repertoire {
         Expression::Constant(c) => c.collation.repertoire(),
         Expression::CorrelatedColumn(c) => c.column.collation.repertoire(),
         Expression::ScalarFunction(c) => c.collation.repertoire(),
+        Expression::ScalarSubQuery(c) => c.constant.collation.repertoire(),
     }
 }
 
@@ -521,6 +522,7 @@ fn collation_info_of_mut(
         Expression::Constant(c) => Some(&mut c.collation),
         Expression::CorrelatedColumn(c) => Some(&mut c.column.collation),
         Expression::ScalarFunction(c) => Some(&mut c.collation),
+        Expression::ScalarSubQuery(c) => Some(&mut c.constant.collation),
     }
 }
 
@@ -530,5 +532,6 @@ fn static_type_mut(expr: &mut Expression) -> Option<&mut tidb_datatype::FieldTyp
         Expression::Constant(c) => c.ret_type.as_mut(),
         Expression::CorrelatedColumn(c) => c.column.ret_type.as_mut(),
         Expression::ScalarFunction(c) => c.ret_type.as_mut(),
+        Expression::ScalarSubQuery(c) => c.constant.ret_type.as_mut(),
     }
 }

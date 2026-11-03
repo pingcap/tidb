@@ -118,6 +118,8 @@ fn bind_virtual(expr: &mut Expression, schema: &Schema) -> bool {
             .iter_mut()
             .all(|arg| bind_virtual(arg, schema)),
         Expression::Constant(_) | Expression::CorrelatedColumn(_) => true,
+        // Go `ScalarSubQueryExpr.ResolveIndicesByVirtualExpr` answers false.
+        Expression::ScalarSubQuery(_) => false,
     }
 }
 

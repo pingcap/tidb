@@ -376,6 +376,7 @@ mod regexp;
 pub mod rewriter;
 mod row;
 pub mod scalar_function;
+pub mod scalar_subquery;
 pub mod schema;
 pub mod simple_expr;
 mod string_fn;

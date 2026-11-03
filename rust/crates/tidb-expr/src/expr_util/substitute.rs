@@ -756,6 +756,7 @@ fn collation_info_of_mut(
         Expression::Constant(c) => Some(&mut c.collation),
         Expression::CorrelatedColumn(c) => Some(&mut c.column.collation),
         Expression::ScalarFunction(c) => Some(&mut c.collation),
+        Expression::ScalarSubQuery(c) => Some(&mut c.constant.collation),
     }
 }
 
@@ -766,6 +767,7 @@ fn static_type_mut(expr: &mut Expression) -> Option<&mut FieldType> {
         Expression::Constant(c) => c.ret_type.as_mut(),
         Expression::CorrelatedColumn(c) => c.column.ret_type.as_mut(),
         Expression::ScalarFunction(c) => c.ret_type.as_mut(),
+        Expression::ScalarSubQuery(c) => c.constant.ret_type.as_mut(),
     }
 }
 

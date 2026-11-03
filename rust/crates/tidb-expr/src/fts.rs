@@ -877,7 +877,9 @@ mod tests {
                     patterns_in(arg, found);
                 }
             }
-            Expression::Column(_) | Expression::CorrelatedColumn(_) => {}
+            Expression::Column(_)
+            | Expression::CorrelatedColumn(_)
+            | Expression::ScalarSubQuery(_) => {}
         }
     }
 

@@ -433,6 +433,12 @@ fn numeric_expression_text(
         } else {
             column.column.orig_name.clone()
         }),
+        // Go's promoted `Constant.StringWithCtx`.
+        Expression::ScalarSubQuery(subquery) => numeric_expression_text(
+            &Expression::Constant(subquery.embedded_constant()),
+            go_float_format,
+            ctx,
+        ),
         Expression::ScalarFunction(function) => {
             if function.func_name.lowercase() == "cast_json" {
                 let [argument] = function.args.as_slice() else {
@@ -4386,6 +4392,8 @@ fn numeric_batch_supported(expression: &Expression, target: EvalType) -> bool {
             .as_deref()
             .is_none_or(|child| numeric_batch_supported(child, target)),
         Expression::CorrelatedColumn(_) => true,
+        // Go `ScalarSubQueryExpr.VecEval*` refuses; the row path answers.
+        Expression::ScalarSubQuery(_) => false,
         Expression::Column(column) => column.get_static_type().is_some_and(|field| {
             if field.is_hybrid() {
                 target == EvalType::Int
@@ -4560,6 +4568,7 @@ fn eval_integer_batch(
             }
             Ok(left)
         }
+        Expression::ScalarSubQuery(_) => Err(crate::scalar_subquery::vec_eval_error()),
     }
 }
 
@@ -4662,6 +4671,7 @@ fn eval_numeric_batch_values(
                 .collect()
         }
         Expression::ScalarFunction(function) => eval_arithmetic_batch(function, ctx, input),
+        Expression::ScalarSubQuery(_) => Err(crate::scalar_subquery::vec_eval_error()),
     }
 }
 
@@ -4840,7 +4850,7 @@ fn vec_eval_decimal(
             }
             vec_eval_decimal_function(function, input, physical)
         }
-        Expression::CorrelatedColumn(_) => None,
+        Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => None,
     }
 }
 

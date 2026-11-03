@@ -18923,6 +18923,109 @@ fn empty_input_aggregation_and_scalar_subquery_ids_match_go() {
     );
 }
 
+/// Go `ScalarSubQueryExpr` (`tidb_opt_enable_non_eval_scalar_subquery`):
+/// plain EXPLAIN registers an uncorrelated scalar / EXISTS subquery without
+/// running it and plans the outer query over `ScalarQueryCol#N`
+/// placeholders. `s` holds two rows, so running `(SELECT a FROM s)` fails;
+/// EXPLAIN ANALYZE still runs it. A Projection prints the placeholder's
+/// embedded NULL constant. Expected rows: gorun on this branch.
+#[test]
+fn non_eval_scalar_subquery_explains_placeholders_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(2009)).unwrap();
+    for sql in [
+        "USE test",
+        "CREATE TABLE t (a INT, b INT, KEY(a))",
+        "CREATE TABLE s (a INT, b VARCHAR(10))",
+        "INSERT INTO s VALUES (1, 'x'), (2, 'y')",
+    ] {
+        session.node_conn().execute_write(sql).unwrap();
+    }
+    let plan = |session: &mut Session, sql: &str| -> Vec<String> {
+        displayed(rows(session, &format!("EXPLAIN {sql}")))
+            .into_iter()
+            .map(|row| row.join("|"))
+            .collect()
+    };
+    let scalar = "SELECT * FROM t WHERE a > (SELECT a FROM s)";
+    assert_eq!(query_error(&mut session, &format!("EXPLAIN {scalar}")).0, 1242);
+
+    session
+        .node_conn()
+        .execute_write("SET tidb_opt_enable_non_eval_scalar_subquery = ON")
+        .unwrap();
+    for (sql, expected) in [
+        (
+            scalar,
+            vec![
+                "Selection_13|8000.00|root||gt(test.t.a, ScalarQueryCol#9)",
+                "└─TableReader_15|10000.00|root||data:TableFullScan_14",
+                "  └─TableFullScan_14|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+                "ScalarSubQuery_10|N/A|root||Output: ScalarQueryCol#9",
+                "└─MaxOneRow_6|1.00|root||",
+                "  └─TableReader_9|2.00|root||data:TableFullScan_8",
+                "    └─TableFullScan_8|2.00|cop[tikv]|table:s|keep order:false, stats:pseudo",
+            ],
+        ),
+        (
+            "SELECT * FROM t WHERE NOT EXISTS (SELECT a FROM s)",
+            vec![
+                "Selection_10|8000.00|root||not(istrue_with_null(ScalarQueryCol#9))",
+                "└─TableReader_12|10000.00|root||data:TableFullScan_11",
+                "  └─TableFullScan_11|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+                "ScalarSubQuery_7|N/A|root||Output: ScalarQueryCol#9",
+                "└─TableReader_6|10000.00|root||data:TableFullScan_5",
+                "  └─TableFullScan_5|10000.00|cop[tikv]|table:s|keep order:false, stats:pseudo",
+            ],
+        ),
+        (
+            "SELECT (SELECT a, b FROM s) = (1, 'x') FROM t",
+            vec![
+                "Projection_12|10000.00|root||and(eq(<nil>, 1), eq(<nil>, x))->Column#15",
+                "└─IndexReader_16|10000.00|root||index:IndexFullScan_15",
+                "  └─IndexFullScan_15|10000.00|cop[tikv]|table:t, index:a(a)|keep order:false, stats:pseudo",
+                "ScalarSubQuery_11|N/A|root||Output: ScalarQueryCol#13, ScalarQueryCol#14",
+                "└─MaxOneRow_7|1.00|root||",
+                "  └─TableReader_10|2.00|root||data:TableFullScan_9",
+                "    └─TableFullScan_9|2.00|cop[tikv]|table:s|keep order:false, stats:pseudo",
+            ],
+        ),
+        (
+            "SELECT (SELECT b FROM s) FROM t",
+            vec![
+                "Projection_12|10000.00|root||<nil>->Column#14",
+                "└─IndexReader_16|10000.00|root||index:IndexFullScan_15",
+                "  └─IndexFullScan_15|10000.00|cop[tikv]|table:t, index:a(a)|keep order:false, stats:pseudo",
+                "ScalarSubQuery_11|N/A|root||Output: ScalarQueryCol#13",
+                "└─MaxOneRow_7|1.00|root||",
+                "  └─TableReader_10|2.00|root||data:TableFullScan_9",
+                "    └─TableFullScan_9|2.00|cop[tikv]|table:s|keep order:false, stats:pseudo",
+            ],
+        ),
+    ] {
+        assert_eq!(plan(&mut session, sql), expected, "{sql}");
+    }
+    assert_eq!(
+        query_error(&mut session, &format!("EXPLAIN ANALYZE {scalar}")).0,
+        1242
+    );
+    // A row comparison keeps each side where it was written, and a width
+    // mismatch reports the LEFT side's width.
+    for (sql, expected) in [
+        ("SELECT (SELECT a, b FROM s WHERE a = 1) < (2, 'a')", "1"),
+        ("SELECT (2, 'a') < (SELECT a, b FROM s WHERE a = 1)", "0"),
+    ] {
+        assert_eq!(displayed(rows(&mut session, sql)), [[expected]], "{sql}");
+    }
+    for (sql, width) in [("SELECT 3 = (1, 2)", 1), ("SELECT (1, 2) = 3", 2)] {
+        assert_eq!(
+            query_error(&mut session, sql),
+            (1241, format!("Operand should contain {width} column(s)")),
+            "{sql}"
+        );
+    }
+}
+
 /// Plan ids and a dirty partitioned table's shape follow Go: the skyline's
 /// preferRange filter runs before any candidate draws a plan id, `Delete`
 /// takes its id before the pruning projection, `INSERT ... SELECT` draws the

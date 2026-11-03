@@ -399,7 +399,9 @@ fn bind_expression(
     context: &CachedPlanRebuildContext<'_>,
 ) -> Result<(), PlanCacheRebuildError> {
     match expression {
-        Expression::Column(_) | Expression::CorrelatedColumn(_) => Ok(()),
+        Expression::Column(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {
+            Ok(())
+        }
         Expression::Constant(constant) => {
             if let Some(marker) = constant.param_marker {
                 let value = usize::try_from(marker.order)
@@ -466,7 +468,7 @@ fn bind_description(
             }
             function.invalidate_cached_arguments();
         }
-        Expression::Column(_) | Expression::CorrelatedColumn(_) => {}
+        Expression::Column(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {}
     }
     Ok(())
 }

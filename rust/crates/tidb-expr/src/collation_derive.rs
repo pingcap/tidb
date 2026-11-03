@@ -82,6 +82,8 @@ fn collation_info_of(expr: &Expression) -> &CollationInfo {
         Expression::Constant(c) => &c.collation,
         Expression::CorrelatedColumn(c) => &c.column.collation,
         Expression::ScalarFunction(f) => &f.collation,
+        // Go's promoted `Constant.collationInfo`.
+        Expression::ScalarSubQuery(s) => &s.constant.collation,
     }
 }
 
@@ -92,6 +94,7 @@ fn collation_info_mut(expr: &mut Expression) -> &mut CollationInfo {
         Expression::Constant(c) => &mut c.collation,
         Expression::CorrelatedColumn(c) => &mut c.column.collation,
         Expression::ScalarFunction(f) => &mut f.collation,
+        Expression::ScalarSubQuery(s) => &mut s.constant.collation,
     }
 }
 
@@ -102,6 +105,7 @@ fn ret_type_mut(expr: &mut Expression) -> Option<&mut FieldType> {
         Expression::Constant(c) => c.ret_type.as_mut(),
         Expression::CorrelatedColumn(c) => c.column.ret_type.as_mut(),
         Expression::ScalarFunction(f) => f.ret_type.as_mut(),
+        Expression::ScalarSubQuery(s) => s.constant.ret_type.as_mut(),
     }
 }
 

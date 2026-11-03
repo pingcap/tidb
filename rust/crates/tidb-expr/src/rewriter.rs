@@ -1394,29 +1394,32 @@ fn rewrite_comparison(
         // folded multi-column scalar subquery's `row` function
         // (`(a,b) = (SELECT a,b ...)` with an uncorrelated subquery) is a
         // row comparison over the built sides (oracle g-subq: empty result).
-        (Expr::Row(left), other) | (other, Expr::Row(left)) => {
-            let built = rewrite_expr_resolved(other, resolver)?;
-            let (row_on_left, right_args) = match &built {
-                Expression::ScalarFunction(function)
-                    if function.func_name.lowercase() == "row"
-                        && function.get_args().len() == left.len() =>
-                {
-                    (true, function.get_args().to_vec())
+        (Expr::Row(_), _) | (_, Expr::Row(_)) => {
+            // Each side is built in source order and keeps the side it was
+            // written on; Go then compares `GetRowLen` of both and reports
+            // the LEFT side's width.
+            let build = |side: &Expr| -> Result<Vec<Expression>, EvalError> {
+                if let Expr::Row(items) = side {
+                    return items
+                        .iter()
+                        .map(|item| rewrite_expr_resolved(item, resolver))
+                        .collect();
                 }
-                _ => return Err(EvalError::OperandColumns(left.len())),
+                Ok(match rewrite_expr_resolved(side, resolver)? {
+                    Expression::ScalarFunction(function)
+                        if function.func_name.lowercase() == "row" =>
+                    {
+                        function.get_args().to_vec()
+                    }
+                    built => vec![built],
+                })
             };
-            let mut left_args = Vec::with_capacity(left.len());
-            for element in left {
-                left_args.push(rewrite_expr_resolved(element, resolver)?);
+            let lhs = build(left)?;
+            let rhs = build(right)?;
+            if lhs.len() != rhs.len() {
+                return Err(EvalError::OperandColumns(lhs.len()));
             }
-            // Keep the operator's orientation: the row's element stays on the
-            // side it was written on.
-            let (lhs, rhs): (&Vec<Expression>, &Vec<Expression>) = if row_on_left {
-                (&left_args, &right_args)
-            } else {
-                (&right_args, &left_args)
-            };
-            row_comparison_of_built(op, lhs, rhs, resolver)
+            row_comparison_of_built(op, &lhs, &rhs, resolver)
         }
         _ => binary_expression(
             op,
@@ -2991,6 +2994,7 @@ fn set_expression_ret_type(expression: &mut Expression, ret_type: FieldType) {
         Expression::CorrelatedColumn(column) => column.column.ret_type = Some(ret_type),
         Expression::Constant(constant) => constant.ret_type = Some(ret_type),
         Expression::ScalarFunction(function) => function.ret_type = Some(ret_type),
+        Expression::ScalarSubQuery(subquery) => subquery.constant.ret_type = Some(ret_type),
     }
 }
 

@@ -104,8 +104,11 @@
 //!
 //! # Narrowings, by name
 //!
-//! * `ScalarSubQueryExpr` and `ScalarSubqueryEvalCtx` (`common_plans.go`)
-//!   belong to the separately-evaluated path above and are not modelled.
+//! * `ScalarSubQueryExpr` and `ScalarSubqueryEvalCtx`
+//!   (`scalar_subq_expression.go`) belong to the separately-evaluated path
+//!   above: the SELECT builder's `evaluate_subquery` builds the placeholder
+//!   (`tidb_expr::expression::ScalarSubQueryExpr`) and the executor's hook
+//!   registers the context.
 //! * `er.disableFoldCounter`, `er.preprocess`, `er.astNodeStack`,
 //!   `er.sourceTable`, `er.windowMap`, `er.insertPlan`, `er.rollExpand` are
 //!   `Enter`/`Leave` state for the AST half and have no reader here.

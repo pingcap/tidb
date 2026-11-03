@@ -171,7 +171,7 @@ pub fn is_runtime_const_expr(expr: &Expression) -> bool {
             }
             function.get_args().iter().all(is_runtime_const_expr)
         }
-        Expression::Column(_) => false,
+        Expression::Column(_) | Expression::ScalarSubQuery(_) => false,
         Expression::Constant(_) | Expression::CorrelatedColumn(_) => true,
     }
 }

@@ -500,7 +500,8 @@ fn replace_grouping_expr(expr: Expression, block: &BlockExpand) -> Expression {
             substitute_grouping_col(&hash, block).unwrap_or(Expression::CorrelatedColumn(column))
         }
         // "constant just keep it real: select 1 from t group by a, b with rollup."
-        Expression::Constant(_) => expr,
+        // Go's `default: res = expr` keeps any other node.
+        Expression::Constant(_) | Expression::ScalarSubQuery(_) => expr,
         // "scalar function just try to resolve itself first, then if not
         // changed, trying resolve its children."
         Expression::ScalarFunction(mut function) => {

@@ -179,7 +179,7 @@ pub fn is_eq_cond_from_in(expr: &Expression) -> bool {
         match expr {
             Expression::Column(column) => column.in_operand,
             Expression::ScalarFunction(sf) => sf.get_args().iter().any(any_in_operand),
-            Expression::Constant(_) | Expression::CorrelatedColumn(_) => false,
+            Expression::Constant(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => false,
         }
     }
     sf.get_args().iter().any(any_in_operand)

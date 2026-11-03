@@ -78,6 +78,7 @@ impl Expression {
             Self::Constant(constant) => constant.memory_usage(),
             Self::CorrelatedColumn(column) => column.memory_usage(),
             Self::ScalarFunction(function) => function.memory_usage(),
+            Self::ScalarSubQuery(subquery) => subquery.memory_usage(),
         }
     }
 }

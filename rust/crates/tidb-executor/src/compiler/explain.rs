@@ -151,6 +151,7 @@ pub trait ExplainCompile: super::CompilerSession {
                 ignore_err,
             )
             .with_in_explain_stmt(true)
+            .with_in_explain_analyze_stmt(explain.analyze)
             .with_explain_format(format)
             .with_explain_table_hints({
                 // Go's query-block handler rewrites each SELECT's `TableHints`

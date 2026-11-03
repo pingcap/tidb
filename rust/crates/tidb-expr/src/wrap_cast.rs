@@ -119,6 +119,7 @@ fn ret_type_mut(expr: &mut Expression) -> Option<&mut FieldType> {
         Expression::Constant(c) => c.ret_type.as_mut(),
         Expression::CorrelatedColumn(c) => c.column.ret_type.as_mut(),
         Expression::ScalarFunction(f) => f.ret_type.as_mut(),
+        Expression::ScalarSubQuery(s) => s.constant.ret_type.as_mut(),
     }
 }
 

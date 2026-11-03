@@ -786,7 +786,7 @@ pub fn remap_index_expression(
                 remap_index_expression(argument, keep, null_only)?;
             }
         }
-        Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
+        Expression::Constant(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {}
     }
     Some(())
 }
@@ -806,7 +806,7 @@ pub fn remap_expression(expression: &mut Expression, keep: &[usize]) -> Option<(
         }
         // A correlated column reads the outer row, not a scan column, so
         // pruning the scan's columns leaves it as it is.
-        Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
+        Expression::Constant(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {}
     }
     Some(())
 }

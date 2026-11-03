@@ -574,7 +574,7 @@ impl<'a> PointBuilder<'a> {
                 self.build_from_scalar_func(scalar, new_tp, prefix_len, convert_to_sort_key)
             }
             Expression::Constant(_) => self.build_from_constant(expr),
-            Expression::CorrelatedColumn(_) => get_full_range(),
+            Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => get_full_range(),
         }
     }
 

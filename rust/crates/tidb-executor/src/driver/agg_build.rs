@@ -146,7 +146,9 @@ fn argument_type(expression: Option<&Expression>) -> FieldType {
 fn fold_constant(expression: &Expression) -> Option<Datum> {
     match expression {
         Expression::Constant(constant) => Some(constant.value.clone()),
-        Expression::Column(_) | Expression::CorrelatedColumn(_) => None,
+        Expression::Column(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {
+            None
+        }
         Expression::ScalarFunction(function) => {
             if !function
                 .args

@@ -558,7 +558,7 @@ pub fn has_cross_side_equality(conditions: &[Expression], left_width: usize) -> 
                     sides(arg, left_width, has);
                 }
             }
-            Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
+            Expression::Constant(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {}
         }
     }
     conditions.iter().flat_map(split_conjuncts).any(|conjunct| {

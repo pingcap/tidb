@@ -346,7 +346,7 @@ pub(crate) fn optimize_query_stmt_with_scalar_subqueries(
 ) -> Result<
     (
         tidb_planner_core_operator_physicalop::PhysicalPlan,
-        Vec<planner_bridge::RegisteredScalarSubquery>,
+        Vec<std::sync::Arc<planner_bridge::RegisteredScalarSubquery>>,
     ),
     DriverError,
 > {
@@ -655,7 +655,7 @@ pub fn plan_query_meta_stmt_with_subqueries(
         .map(|(physical, registered)| {
             let subqueries = registered
                 .into_iter()
-                .map(|subquery| subquery.physical)
+                .map(|subquery| subquery.physical.clone())
                 .collect();
             (physical, subqueries)
         })

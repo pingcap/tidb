@@ -173,6 +173,7 @@ pub fn expr_from_schema(expr: &Expression, schema: &Schema) -> bool {
             .iter()
             .all(|arg| expr_from_schema(arg, schema)),
         Expression::CorrelatedColumn(_) | Expression::Constant(_) => true,
+        Expression::ScalarSubQuery(_) => false,
     }
 }
 

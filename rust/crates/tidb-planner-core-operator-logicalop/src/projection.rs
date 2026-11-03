@@ -138,7 +138,7 @@ impl LogicalProjection {
                     ));
                 }
                 Expression::ScalarFunction(_) => return None,
-                Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
+                Expression::Constant(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {}
             }
         }
         Some(new_items)
@@ -169,7 +169,7 @@ impl LogicalProjection {
                         tidb_planner_property::SortItem::from_column(column.clone(), item.desc),
                     ),
                     Expression::ScalarFunction(_) => return None,
-                    Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
+                    Expression::Constant(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {}
                 }
             }
             new_prop.partial_order_info =

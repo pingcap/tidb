@@ -784,6 +784,7 @@ mod tests {
                 function.func_name.lowercase(),
                 function.args.iter().map(render).collect::<Vec<_>>().join(", ")
             ),
+            Expression::ScalarSubQuery(subquery) => subquery.explain_info(),
         }
     }
 

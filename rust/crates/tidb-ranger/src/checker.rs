@@ -72,7 +72,7 @@ impl ConditionChecker<'_> {
                 self.check_column_expr(condition)
             }
             Expression::Constant(_) => (true, false),
-            Expression::CorrelatedColumn(_) => (false, true),
+            Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => (false, true),
         }
     }
 
