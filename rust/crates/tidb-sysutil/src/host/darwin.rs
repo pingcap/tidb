@@ -181,10 +181,13 @@ pub(super) fn virtual_memory() -> Result<VirtualMemory, String> {
     // SAFETY: a read of an immutable libSystem global.
     let page_size = unsafe { vm_kernel_page_size } as u64;
     let total = sysctl_uint64("hw.memsize")?;
+    let total_count = (total / page_size) as libc::natural_t;
     let available_count = vmstat.inactive_count.wrapping_add(vmstat.free_count);
+    let used_count = total_count.wrapping_sub(available_count);
     Ok(VirtualMemory {
         total,
         available: page_size.wrapping_mul(u64::from(available_count)),
+        used: page_size.wrapping_mul(u64::from(used_count)),
     })
 }
 

@@ -29,8 +29,9 @@ fn configured_sem_v2_policy_reaches_statement_hint_and_privilege_gates() {
         .output()
         .expect("run isolated SEM v2 policy test");
     assert!(
-        output.status.success(),
-        "isolated SEM v2 policy test failed:\nstdout:\n{}\nstderr:\n{}",
+        output.status.success()
+            && String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"),
+        "isolated SEM v2 policy test failed or was not selected:\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );

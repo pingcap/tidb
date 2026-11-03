@@ -22,8 +22,9 @@ fn isolated_process_admin_case(name: &str) -> bool {
         .output()
         .unwrap();
     assert!(
-        result.status.success(),
-        "{}{}",
+        result.status.success()
+            && String::from_utf8_lossy(&result.stdout).contains("1 passed; 0 failed"),
+        "the child failed or was not selected: {}{}",
         String::from_utf8_lossy(&result.stdout),
         String::from_utf8_lossy(&result.stderr)
     );

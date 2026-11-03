@@ -1,13 +1,12 @@
-use std::io::{self, ErrorKind};
+use std::io;
+#[cfg(not(target_os = "macos"))]
+use std::io::ErrorKind;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering, Ordering::SeqCst};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
 use std::fs;
-#[cfg(target_os = "macos")]
-use std::process::Command;
-
 use super::{parse_soft_limit_text, parse_work_mode_text, MemArbitrator, MemStats};
 
 /// Process-wide `tidb_server_memory_limit` value.
@@ -37,46 +36,6 @@ enum MemorySource {
 
 static MEMORY_SOURCE: AtomicU8 = AtomicU8::new(0);
 
-/// Go `MemTotal`: the host's total physical memory in bytes.
-#[cfg(target_os = "linux")]
-pub fn host_memory_total() -> io::Result<u64> {
-    let content = fs::read_to_string("/proc/meminfo")?;
-    let kib = content
-        .lines()
-        .find_map(|line| line.strip_prefix("MemTotal:"))
-        .and_then(|value| value.split_whitespace().next())
-        .and_then(|value| value.parse::<u64>().ok())
-        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "missing MemTotal"))?;
-    kib.checked_mul(1024)
-        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "MemTotal overflows bytes"))
-}
-
-#[cfg(target_os = "linux")]
-fn host_memory_used() -> io::Result<u64> {
-    let content = fs::read_to_string("/proc/meminfo")?;
-    let value = |name: &str| -> io::Result<u64> {
-        content
-            .lines()
-            .find_map(|line| line.strip_prefix(name))
-            .and_then(|value| value.split_whitespace().next())
-            .and_then(|value| value.parse::<u64>().ok())
-            .and_then(|kib| kib.checked_mul(1024))
-            .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, format!("missing {name}")))
-    };
-    let total = value("MemTotal:")?;
-    let free = value("MemFree:")?;
-    let buffers = value("Buffers:")?;
-    let cached = value("Cached:")?;
-    let reclaimable = value("SReclaimable:").unwrap_or_default();
-    let shmem = value("Shmem:").unwrap_or_default();
-    Ok(total.saturating_sub(
-        free.saturating_add(buffers)
-            .saturating_add(cached)
-            .saturating_add(reclaimable)
-            .saturating_sub(shmem),
-    ))
-}
-
 #[cfg(target_os = "linux")]
 fn current_process_memory_usage() -> io::Result<u64> {
     fs::read_to_string("/proc/self/status")?
@@ -88,48 +47,21 @@ fn current_process_memory_usage() -> io::Result<u64> {
         .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "missing VmRSS"))
 }
 
-/// Go `MemTotal`: the host's total physical memory in bytes.
-#[cfg(target_os = "macos")]
+/// Go `MemTotalNormal`: the host's total physical memory in bytes, gopsutil
+/// `mem.VirtualMemory().Total`.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn host_memory_total() -> io::Result<u64> {
-    let output = Command::new("sysctl").args(["-n", "hw.memsize"]).output()?;
-    if !output.status.success() {
-        return Err(io::Error::other("sysctl hw.memsize failed"));
-    }
-    std::str::from_utf8(&output.stdout)
-        .ok()
-        .map(str::trim)
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "invalid hw.memsize"))
+    tidb_sysutil::virtual_memory()
+        .map(|memory| memory.total)
+        .map_err(io::Error::other)
 }
 
-#[cfg(target_os = "macos")]
+/// Go `MemUsedNormal`: gopsutil `mem.VirtualMemory().Used`.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn host_memory_used() -> io::Result<u64> {
-    let total = host_memory_total()?;
-    let output = Command::new("vm_stat").output()?;
-    if !output.status.success() {
-        return Err(io::Error::other("vm_stat failed"));
-    }
-    let text = std::str::from_utf8(&output.stdout)
-        .map_err(|_| io::Error::new(ErrorKind::InvalidData, "invalid vm_stat output"))?;
-    let page_size = text
-        .lines()
-        .next()
-        .and_then(|line| line.split("page size of ").nth(1))
-        .and_then(|tail| tail.split_whitespace().next())
-        .and_then(|value| value.parse::<u64>().ok())
-        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "missing vm_stat page size"))?;
-    let pages = |name: &str| -> u64 {
-        text.lines()
-            .find_map(|line| line.strip_prefix(name))
-            .and_then(|tail| tail.trim().trim_end_matches('.').parse::<u64>().ok())
-            .unwrap_or_default()
-    };
-    let available = pages("Pages free:")
-        .saturating_add(pages("Pages inactive:"))
-        .saturating_add(pages("Pages speculative:"))
-        .saturating_mul(page_size);
-    Ok(total.saturating_sub(available))
+    tidb_sysutil::virtual_memory()
+        .map(|memory| memory.used)
+        .map_err(io::Error::other)
 }
 
 #[cfg(target_os = "macos")]
@@ -505,14 +437,21 @@ pub fn handle_global_mem_arbitrator_runtime() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    use std::process::Command;
 
-    /// The 100-ms runtime sampler must not spawn a command to read its RSS.
-    /// Isolate PATH in a child rather than mutating the test process environment.
+    /// The 100-ms runtime sampler must not spawn a command to read its RSS,
+    /// nor the host's memory (gopsutil's cgo Darwin reads are in-process:
+    /// `sysctl hw.memsize`, `host_statistics`). Isolate PATH in a child rather
+    /// than mutating the test process environment.
     #[cfg(target_os = "macos")]
     #[test]
     fn process_rss_sampling_needs_no_external_command() {
         const CHILD: &str = "TIDB_RSS_NATIVE_TEST_CHILD";
         if std::env::var_os(CHILD).is_some() {
+            let total = host_memory_total().expect("native hw.memsize without PATH");
+            let used = host_memory_used().expect("native host_statistics without PATH");
+            assert!(used > 0 && used <= total, "{used} of {total}");
             let before = current_process_memory_usage().expect("native RSS without PATH");
             assert!(before > 0);
             let resident = vec![0xa5_u8; 16 * 1024 * 1024];
@@ -524,22 +463,21 @@ mod tests {
             );
             return;
         }
+        let name = std::thread::current().name().expect("named test thread").to_owned();
         let output = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "memory::process::tests::process_rss_sampling_needs_no_external_command",
-                "--nocapture",
-            ])
+            .args(["--exact", &name, "--nocapture"])
             .env(CHILD, "1")
             .env("PATH", "/nonexistent-tidb-rss-test-path")
             .output()
             .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             output.status.success(),
-            "child failed: {}{}",
-            String::from_utf8_lossy(&output.stdout),
+            "child failed: {stdout}{}",
             String::from_utf8_lossy(&output.stderr)
         );
+        // A name that selects nothing also exits successfully.
+        assert!(stdout.contains("1 passed; 0 failed"), "the child ran no test: {stdout}");
     }
 
     #[test]

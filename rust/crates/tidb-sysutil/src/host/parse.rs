@@ -283,6 +283,7 @@ pub(crate) fn linux_virtual_memory(
     pagesize: u64,
 ) -> Result<VirtualMemory, String> {
     let (mut total, mut free, mut available, mut cached, mut sreclaimable) = (0, 0, 0, 0, 0);
+    let mut buffers = 0u64;
     let (mut active_file_value, mut inactive_file_value) = (0u64, 0u64);
     let (mut memavail, mut active_file, mut inactive_file, mut s_reclaimable) =
         (false, false, false, false);
@@ -301,6 +302,7 @@ pub(crate) fn linux_virtual_memory(
         match key {
             "MemTotal" => total = bytes,
             "MemFree" => free = bytes,
+            "Buffers" => buffers = bytes,
             "MemAvailable" => {
                 memavail = true;
                 available = bytes;
@@ -337,7 +339,11 @@ pub(crate) fn linux_virtual_memory(
             cached.wrapping_add(free)
         };
     }
-    Ok(VirtualMemory { total, available })
+    Ok(VirtualMemory {
+        total,
+        available,
+        used: total.wrapping_sub(free).wrapping_sub(buffers).wrapping_sub(cached),
+    })
 }
 
 /// gopsutil Linux `calculateAvailVmem`.

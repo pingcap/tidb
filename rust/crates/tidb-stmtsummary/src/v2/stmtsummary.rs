@@ -2190,6 +2190,10 @@ mod tests {
                 .unwrap();
             assert!(output.status.success());
             assert!(
+                String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"),
+                "the child ran no test"
+            );
+            assert!(
                 output.stderr.is_empty(),
                 "rotating writer leaked stderr:\n{}",
                 String::from_utf8_lossy(&output.stderr)

@@ -39,6 +39,7 @@ mod search_log_test;
 mod service_test;
 
 pub use hardware_info::{get_memory_capacity, register_get_memory_capacity};
+pub use host::{virtual_memory, VirtualMemory};
 pub use search_log::{parse_log_level, TIME_STAMP_LAYOUT};
 
 use std::pin::Pin;

@@ -1369,17 +1369,15 @@ use tidb_exprctx::ErrorLevel;
         // test process so concurrent executor tests cannot observe it.
         const CHILD: &str = "TIDB_GROUP_CHECKER_COLLATION_CHILD";
         if std::env::var_os(CHILD).is_none() {
+            let name = std::thread::current().name().expect("named test thread").to_owned();
             let output = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "vec_group_checker::tests::runtime_collation_mode_and_exact_names_match_go",
-                    "--nocapture",
-                ])
+                .args(["--exact", &name, "--nocapture"])
                 .env(CHILD, "1")
                 .output()
                 .unwrap();
             assert!(
-                output.status.success(),
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"),
                 "{}\n{}",
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)

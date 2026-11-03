@@ -113,11 +113,15 @@ impl CpuTimes {
     }
 }
 
-/// gopsutil `mem.VirtualMemoryStat`, the fields sysutil reads.
+/// gopsutil `mem.VirtualMemoryStat`, the fields TiDB reads.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct VirtualMemory {
-    pub(crate) total: u64,
-    pub(crate) available: u64,
+pub struct VirtualMemory {
+    /// `Total`.
+    pub total: u64,
+    /// `Available`.
+    pub available: u64,
+    /// `Used` (Go `memory.MemUsedNormal`).
+    pub used: u64,
 }
 
 /// gopsutil `mem.SwapMemoryStat`, the fields sysutil reads.
@@ -207,7 +211,7 @@ pub(crate) fn cpu_times() -> Result<Vec<CpuTimes>, String> {
 }
 
 /// gopsutil `mem.VirtualMemory`.
-pub(crate) fn virtual_memory() -> Result<VirtualMemory, String> {
+pub fn virtual_memory() -> Result<VirtualMemory, String> {
     platform::virtual_memory()
 }
 
