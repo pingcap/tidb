@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -34,6 +35,49 @@ func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) 
 	return &backuppb.BackupMeta{
 		Files:   mockFiles,
 		Schemas: mockSchemas,
+	}
+}
+
+func TestReadSchemasFilesCancelDuringOutput(t *testing.T) {
+	store, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	db, err := json.Marshal(model.DBInfo{ID: 1, Name: ast.NewCIStr("test")})
+	require.NoError(t, err)
+	schemas := make([]*backuppb.Schema, 0, 2)
+	for id := int64(1); id <= 2; id++ {
+		table, err := json.Marshal(model.TableInfo{ID: id, Name: ast.NewCIStr(fmt.Sprintf("t%d", id))})
+		require.NoError(t, err)
+		schemas = append(schemas, &backuppb.Schema{Db: db, Table: table})
+	}
+	reader := NewMetaReader(mockBackupMeta(schemas, nil), store,
+		&backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT})
+	ctx, cancel := context.WithCancel(context.Background())
+	output := make(chan *Table)
+	done := make(chan error, 1)
+	go func() {
+		done <- reader.ReadSchemasFiles(ctx, output)
+		close(output)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		// Unblock the old implementation if cancellation fails to stop output.
+		for range output {
+		}
+	})
+
+	select {
+	case table := <-output:
+		require.NotNil(t, table)
+	case <-time.After(5 * time.Second):
+		t.Fatal("reader did not deliver the first table")
+	}
+	// Stop receiving while the other table still needs to be delivered.
+	cancel()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("reader blocked delivering a table after cancellation")
 	}
 }
 
