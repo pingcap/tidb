@@ -1,0 +1,18 @@
+--- a/validate/BUILD
++++ b/validate/BUILD
+@@ -44,7 +44,14 @@
+ 
+ go_library(
+     name = "validate_go",
+-    embed = [":validate_go_proto"],
++    srcs = ["validate.pb.go"],
++    deps = [
++        "@org_golang_google_protobuf//reflect/protoreflect",
++        "@org_golang_google_protobuf//runtime/protoimpl",
++        "@org_golang_google_protobuf//types/descriptorpb",
++        "@org_golang_google_protobuf//types/known/durationpb",
++        "@org_golang_google_protobuf//types/known/timestamppb",
++    ],
+     importpath = "github.com/envoyproxy/protoc-gen-validate/validate",
+ )
+ 

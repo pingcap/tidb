@@ -564,6 +564,13 @@ func TestGetAndResetRecentInfoSchemaTS(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
+	// Recent schema timestamps are tracked by InfoSchema v2 only.
+	originalCacheSize := variable.SchemaCacheSize.Load()
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_schema_cache_size = ?", originalCacheSize)
+	})
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1073741824")
+
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	timeSafe := time.Now().Add(-48 * 60 * 60 * time.Second).Format("20060102-15:04:05 -0700 MST")
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
@@ -577,6 +584,8 @@ func TestGetAndResetRecentInfoSchemaTS(t *testing.T) {
 
 	// After some DDL changes
 	tk.MustExec("create table dummytbl (id int)")
+	isV2, _ := infoschema.IsV2(dom.InfoSchema())
+	require.True(t, isV2)
 	schemaTS2 := infoCache.GetAndResetRecentInfoSchemaTS(math.MaxUint64)
 	require.LessOrEqual(t, schemaTS1, schemaTS2)
 
