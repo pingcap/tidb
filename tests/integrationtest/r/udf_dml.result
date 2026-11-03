@@ -83,11 +83,11 @@ new_value
 15
 SELECT * FROM counters;
 name	value
-page_views	5
+page_views	15
 SELECT id, action, old_value, new_value FROM audit_log ORDER BY id;
 id	action	old_value	new_value
 1	INCREMENT:page_views	0	5
-2	INCREMENT:page_views	0	5
+2	INCREMENT:page_views	5	15
 DROP FUNCTION IF EXISTS adjust_counter;
 CREATE FUNCTION adjust_counter(counter_name VARCHAR(50), target_value INT)
 RETURNS VARCHAR(50)

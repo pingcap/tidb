@@ -1608,6 +1608,15 @@ func TestE2ETransactionRestriction(t *testing.T) {
 			END`,
 		},
 		{
+			name: "nested_commit_not_allowed",
+			sourceCode: `BEGIN
+				BEGIN
+					COMMIT;
+				END;
+				RETURN 1;
+			END`,
+		},
+		{
 			name: "rollback_not_allowed",
 			sourceCode: `BEGIN
 				ROLLBACK;
@@ -2503,9 +2512,13 @@ func TestE2EDDLStatementRestrictions(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// DDL statements are rejected at parse time (MySQL-compatible behavior)
-			_, err := parseSQLFunctionBody(p, tc.sourceCode)
-			require.Error(t, err, "DDL statements should be rejected at parse time")
+			body, err := parseSQLFunctionBody(p, tc.sourceCode)
+			if err != nil {
+				// The shared routine grammar does not accept every DDL statement.
+				return
+			}
+			_, _, err = executeSQLFunctionBody(nil, body, map[string]types.Datum{})
+			require.EqualError(t, err, "DDL statements are not allowed in stored functions")
 		})
 	}
 }

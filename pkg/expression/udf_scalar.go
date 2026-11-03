@@ -1093,6 +1093,15 @@ func executeStatementList(ctx EvalContext, stmts []ast.StmtNode, vars map[string
 
 // executeStatement executes a single procedure statement.
 func executeStatement(ctx EvalContext, stmt ast.StmtNode, vars map[string]types.Datum) (executionResult, error) {
+	// The shared routine grammar accepts transaction control for procedures,
+	// but functions must not change the caller's transaction state.
+	switch stmt.(type) {
+	case *ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt:
+		if !isInProcedureMode(vars) {
+			return executionResult{}, errors.Errorf("unsupported statement type in SQL function: %T", stmt)
+		}
+	}
+
 	switch s := stmt.(type) {
 	case *ast.ReturnStmt:
 		datum, isNull, err := evaluateReturnStmtValue(ctx, s, vars)
