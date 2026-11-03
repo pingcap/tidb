@@ -20,11 +20,9 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use tidb_infoschema_issyncer::catalog_watch::InfoCache;
-use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
-use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
+use tidb_syssession::mysql_system_tables::SystemTableView;
 use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use crate::binding_cache::SharedBindingCache;
-use tidb_txnkv::kv_storage::Storage;
 
 /// Go pkg/bindinfo.Lease, independent of the schema lease.
 const BINDING_LEASE: Duration = crate::binding_operator::LEASE;
@@ -42,8 +40,8 @@ const COLUMNS: &[&str] = &[
     "plan_digest",
 ];
 
-/// Internal-session capability installed once the process factory is ready.
-/// Each operation owns its transaction; no user transaction supplies storage.
+/// Go `NewBindingHandle`'s `sPool`: the domain's internal sessions. Each
+/// operation owns its transaction; no user transaction supplies storage.
 pub trait BindingSessionPool: Send + Sync {
     /// Incremental SELECT with Go's clock-skew boundary, or initial full load.
     fn load(&self, boundary: Option<&str>) -> Result<Vec<Vec<tidb_datatype::Datum>>, String>;
@@ -61,8 +59,6 @@ pub trait ClusterBindings: Send + Sync {
     fn reload(&self) -> Result<(), String>;
     /// Whether a pending commit modifies a binding record.
     fn has_changes(&self, buffer: &MutationBuffer) -> bool;
-    /// Connect the maintained internal-session owner after factory creation.
-    fn attach_session_pool(&self, pool: Arc<dyn BindingSessionPool>);
     /// Run owner-gated tombstone collection.
     fn gc(&self) -> Result<(), String>;
     /// Run this node's usage flush when the live process switch allows it.
@@ -72,13 +68,11 @@ pub trait ClusterBindings: Send + Sync {
 }
 
 struct StoredBindings {
-    opener: Arc<dyn Storage>,
     catalog: Arc<InfoCache>,
     globals: std::sync::Arc<dyn tidb_variable::GlobalVarAccessor + Send + Sync>,
     cache: SharedBindingCache,
-    timeout: Duration,
     owner: Arc<dyn tidb_owner::Manager>,
-    sessions: RwLock<Option<Arc<dyn BindingSessionPool>>>,
+    sessions: Arc<dyn BindingSessionPool>,
     // Serialize the entire read/publication, preventing an older reload from
     // overwriting the image reloaded after a successful local commit.
     refresh: Mutex<()>,
@@ -98,53 +92,14 @@ impl ClusterBindings for StoredBindings {
         let catalog = self.catalog.get_latest();
         let view = SystemTableView::locate(&catalog, "bind_info", COLUMNS)
             .map_err(|error| error.to_string())?;
-        // Go readBindingsFromStorage runs SELECT through an internal session.
-        // bind_info's create_time/update_time are TIMESTAMP(6), so decoding
-        // needs that session's timezone rather than the no-TIMESTAMP shortcut.
-        let timezone = crate::session_time_zone::RealTiKvSessionTimeZone::parse(
-            &self
-                .globals
-                .get("time_zone")
-                .map_err(|error| format!("binding session time_zone: {error:?}"))?,
-        )
-        .map_err(|error| error.to_string())?
-        .zone();
         let start = view.record_prefix(&[]).map_err(|error| error.to_string())?;
         let mut end = start.clone();
         // Record prefixes end in '_r'; its successor bounds precisely this table.
         *end.last_mut().expect("record prefix") += 1;
-        let pool = self.sessions.read().unwrap().clone();
-        let rows = if let Some(pool) = pool {
-            pool.load(self.cache.load().update_time_boundary().as_deref())?
-        } else {
-            let mut transaction = self.opener.begin().map_err(|error| error.to_string())?;
-            let rows = {
-                let mut snapshot = TransactionMetaSnapshot::new(transaction.as_mut(), self.timeout);
-                scan_system_table(&mut snapshot, &view)
-                    .map_err(|error| error.to_string())?
-                    .into_iter()
-                    .map(|(key, value)| {
-                        let row =
-                            SystemRow::parse_in_timezone(&view, &key, &value, Some(&timezone))
-                                .map_err(|error| error.to_string())?;
-                        COLUMNS
-                            .iter()
-                            .map(|name| {
-                                row.datum(name)
-                                    .map(|value| {
-                                        value.cloned().unwrap_or(tidb_datatype::Datum::Null)
-                                    })
-                                    .map_err(|error| error.to_string())
-                            })
-                            .collect::<Result<Vec<_>, String>>()
-                    })
-                    .collect::<Result<Vec<_>, String>>()?
-            };
-            transaction
-                .finish_without_writes()
-                .map_err(|error| error.to_string())?;
-            rows
-        };
+        // Go `readBindingsFromStorage`: a SELECT through an internal session.
+        let rows = self
+            .sessions
+            .load(self.cache.load().update_time_boundary().as_deref())?;
         let quota = self
             .globals
             .get("tidb_mem_quota_binding_cache")
@@ -159,18 +114,11 @@ impl ClusterBindings for StoredBindings {
         Ok(())
     }
 
-    fn attach_session_pool(&self, pool: Arc<dyn BindingSessionPool>) {
-        *self.sessions.write().unwrap() = Some(pool);
-    }
     fn gc(&self) -> Result<(), String> {
         if !self.owner.is_owner() {
             return Ok(());
         }
-        let pool = self.sessions.read().unwrap().clone();
-        if let Some(pool) = pool {
-            pool.gc()?;
-        }
-        Ok(())
+        self.sessions.gc()
     }
     fn write_usage(&self) -> Result<(), String> {
         if !self
@@ -181,11 +129,7 @@ impl ClusterBindings for StoredBindings {
         {
             return Ok(());
         }
-        let pool = self.sessions.read().unwrap().clone();
-        if let Some(pool) = pool {
-            pool.write_usage(&self.cache.load().get_all_bindings())?;
-        }
-        Ok(())
+        self.sessions.write_usage(&self.cache.load().get_all_bindings())
     }
     fn close(&self) {
         self.cache.load().close();
@@ -218,21 +162,20 @@ impl Drop for BindingReloader {
     }
 }
 
-/// Load the initial image before accepting connections, then follow peer changes.
+/// Go `InitBindingHandle` after `NewBindingHandle(sPool)`: load the initial
+/// image through `sessions` before accepting connections, then follow peer
+/// changes.
 pub fn start_binding_cache(
-    opener: Arc<dyn Storage>,
+    sessions: Arc<dyn BindingSessionPool>,
     catalog: Arc<InfoCache>,
     globals: std::sync::Arc<dyn tidb_variable::GlobalVarAccessor + Send + Sync>,
-    timeout: Duration,
     owner: Arc<dyn tidb_owner::Manager>,
 ) -> Result<(Arc<dyn ClusterBindings>, BindingReloader), String> {
     let bindings: Arc<dyn ClusterBindings> = Arc::new(StoredBindings {
-        opener,
         catalog,
         globals,
-        timeout,
         owner: Arc::clone(&owner),
-        sessions: RwLock::new(None),
+        sessions,
         cache: SharedBindingCache::default(),
         refresh: Mutex::new(()),
         record_range: RwLock::new(None),
@@ -362,16 +305,14 @@ mod tests {
                 unreachable!()
             }
         }
-        let (_pd, opener) = tidb_ddl::embedded_store::in_process_write_stack().unwrap();
         let owner = Arc::new(tidb_owner::MockManager::new(
             tidb_owner::Context::background(),
             "binding-test".to_owned(),
-            Some(&format!("binding-test-{}", opener.authority_id())),
+            Some("binding-test-store"),
             "/tidb/bindinfo/owner",
         ));
         let pool = Arc::new(Pool(AtomicUsize::new(0)));
         let bindings = StoredBindings {
-            opener: Arc::new(opener),
             catalog: Arc::new(InfoCache::new(
                 tidb_infoschema::SessionExtendedInfoSchema::init_with_db_infos(
                     Vec::new(),
@@ -382,9 +323,8 @@ mod tests {
             )),
             globals: std::sync::Arc::new(tidb_variable::MockGlobalAccessor::new()),
             cache: SharedBindingCache::default(),
-            timeout: Duration::from_secs(1),
             owner: owner.clone(),
-            sessions: RwLock::new(Some(pool.clone())),
+            sessions: pool.clone(),
             refresh: Mutex::new(()),
             record_range: RwLock::new(None),
         };
@@ -432,7 +372,6 @@ mod tests {
         fn has_changes(&self, _: &MutationBuffer) -> bool {
             false
         }
-        fn attach_session_pool(&self, _: Arc<dyn BindingSessionPool>) {}
         fn close(&self) {
             self.closed.store(true, Ordering::SeqCst);
             self.cache.load().close();

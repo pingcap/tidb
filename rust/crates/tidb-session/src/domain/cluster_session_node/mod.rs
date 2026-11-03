@@ -226,7 +226,7 @@ pub const STATS_OWNER_PROMPT: &str = "stats";
 mod advisory_locks;
 mod binding_maintenance;
 mod catalog_follower;
-pub use binding_maintenance::attach_binding_sessions;
+pub use binding_maintenance::init_binding_handle;
 use tidb_ddl::worker as ddl;
 #[cfg(test)]
 use crate::statement_lifecycle::{back_off_upper_ms, jitter_below, RETRY_BACK_OFF_CAP_MS};
@@ -537,7 +537,8 @@ impl crate::txn_manager::SchemaPins for NodeSchemaPins {
 /// What a commit reads off this node: the schema lease checker, the binding
 /// cache and the catalog a write-conflict message is rewritten against.
 struct NodeCommitHooks {
-    bindings: Option<Arc<dyn tidb_bindinfo::cluster_binding_seam::ClusterBindings>>,
+    /// Go `domain.BindingHandle()`, read at commit.
+    bindings: tidb_domain_core::domain::BindingHandleSlot,
     schema_validator: Option<Arc<SchemaValidator>>,
     schema_version: i64,
     catalog: crate::SharedCatalog,
@@ -560,13 +561,13 @@ impl CommitHooks for NodeCommitHooks {
 
     fn binding_records_changed(&self, buffer: &MutationBuffer) -> bool {
         self.bindings
-            .as_ref()
+            .get()
             .is_some_and(|bindings| bindings.has_changes(buffer))
     }
 
     fn refresh_committed_bindings(&self, changed: bool) {
         if changed {
-            if let Some(bindings) = &self.bindings {
+            if let Some(bindings) = self.bindings.get() {
                 if let Err(error) = bindings.reload() {
                     // The commit succeeded. Retain the last image and let the
                     // lease worker retry; never replay a committed statement.

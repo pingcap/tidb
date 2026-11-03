@@ -649,18 +649,25 @@ impl tidb_kv::lock_waits::DataLockWaitsProvider for ClusterDataLockWaits {
 pub type SysSessionOpener =
     fn(&Arc<Domain>, u64) -> Result<Arc<dyn crate::sys_session::DomainSysSession>, String>;
 
+/// Go `Domain.bindHandle` (an `atomic.Pointer`), shared with the sessions
+/// that read it later.
+pub type BindingHandleSlot =
+    Arc<std::sync::OnceLock<Arc<dyn tidb_bindinfo::cluster_binding_seam::ClusterBindings>>>;
+
 pub struct Domain {
     /// The session package's opener of this domain's internal sessions.
     pub(crate) sys_session_opener: SysSessionOpener,
     pub global_config_syncer: Option<Arc<tidb_domain_globalconfigsync::GlobalConfigSyncer>>,
-    pub bindings: Option<Arc<dyn tidb_bindinfo::cluster_binding_seam::ClusterBindings>>,
+    /// Go `Domain.bindHandle`: stored once by [`Self::init_binding_handle`];
+    /// a session reads it when it needs it, so one opened earlier sees it.
+    bindings: BindingHandleSlot,
     pub binding_session_factory: Weak<Domain>,
     /// The domain as the schema builder reaches it once [`Self::shared`] has
     /// made it: Go `Builder.factory` takes the domain's internal sessions.
     schema_builder_domain: Arc<std::sync::OnceLock<Weak<Domain>>>,
     /// The `SHOW STATUS` providers this domain registered as it started its
     /// DDL and binding handle, unregistered when it closes.
-    statistics: Vec<Arc<dyn tidb_variable::statusvar::Statistics>>,
+    statistics: std::sync::Mutex<Vec<Arc<dyn tidb_variable::statusvar::Statistics>>>,
     /// The write/read capability every connection's statements open their
     /// snapshots and publish their commits through.
     pub transactions: Arc<dyn ClusterTransactions>,
@@ -940,17 +947,35 @@ impl Domain {
         cached_table_session_factory(Arc::clone(&self.schema_builder_domain))
     }
 
-    /// Install the node-owned global-binding authority before opening sessions.
-    pub fn with_bindings(
-        mut self,
+    /// Go `Domain.InitBindingHandle`'s `do.bindHandle.Store`: the node-owned
+    /// global-binding authority, stored once.
+    ///
+    /// # Panics
+    ///
+    /// A second store (Go stores it once, in `bootstrapSessionImpl`).
+    pub fn init_binding_handle(
+        &self,
         bindings: Arc<dyn tidb_bindinfo::cluster_binding_seam::ClusterBindings>,
-    ) -> Arc<Self> {
-        self.bindings = Some(Arc::clone(&bindings));
+    ) {
         // Go `NewBindingHandle`: `variable.RegisterStatistics(h)`.
         self.register_statistics(Arc::new(tidb_bindinfo::binding_stat::BindingStatistics(bindings.cache())));
-        // The session package attaches the binding sessions (Go
-        // `NewBindingHandle`'s `sPool`), `attach_binding_sessions`.
-        self.shared()
+        assert!(
+            self.bindings.set(bindings).is_ok(),
+            "the binding handle is stored once"
+        );
+    }
+
+    /// Go `Domain.BindingHandle`.
+    #[must_use]
+    pub fn binding_handle(&self) -> Option<&Arc<dyn tidb_bindinfo::cluster_binding_seam::ClusterBindings>> {
+        self.bindings.get()
+    }
+
+    /// The slot [`Self::init_binding_handle`] fills, for a reader that
+    /// outlives a borrow of the domain (a session's commit hooks).
+    #[must_use]
+    pub fn binding_handle_slot(&self) -> BindingHandleSlot {
+        Arc::clone(&self.bindings)
     }
 
     /// Binds the factory to an authority that has already read the cluster's
@@ -1013,8 +1038,8 @@ impl Domain {
         Self {
             sys_session_opener,
             transactions,
-            bindings: None,
-            statistics: Vec::new(),
+            bindings: BindingHandleSlot::default(),
+            statistics: std::sync::Mutex::default(),
             global_config_syncer: None,
             binding_session_factory: Weak::new(),
             schema_builder_domain,
@@ -1837,9 +1862,12 @@ impl Domain {
     }
 
     /// Go `variable.RegisterStatistics`, kept for the domain's close.
-    fn register_statistics(&mut self, statistics: Arc<dyn tidb_variable::statusvar::Statistics>) {
+    fn register_statistics(&self, statistics: Arc<dyn tidb_variable::statusvar::Statistics>) {
         tidb_variable::statusvar::register_statistics(Arc::clone(&statistics));
-        self.statistics.push(statistics);
+        self.statistics
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(statistics);
     }
 
     /// Shares topology with every session.
@@ -2182,7 +2210,12 @@ impl Drop for Domain {
                 .take(),
         );
         // Go `ddl.close` and `Domain.Close`: `variable.UnregisterStatistics`.
-        for statistics in &self.statistics {
+        for statistics in self
+            .statistics
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+        {
             tidb_variable::statusvar::unregister_statistics(statistics);
         }
         // Positive-lease maintenance has already joined. For zero/negative

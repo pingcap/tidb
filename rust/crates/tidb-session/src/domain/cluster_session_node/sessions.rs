@@ -99,7 +99,7 @@ impl DomainSessions for Domain {
             analyze: super::statistics::analyze_service(self),
             stats: super::statistics::stats_statement_service(self),
         });
-        if let Some(bindings) = &self.bindings {
+        if let Some(bindings) = self.binding_handle() {
             session.set_global_binding_cache(bindings.cache());
             session.set_global_binding_writer(Arc::new(InternalBindingWriter {
                 factory: self.binding_session_factory.clone(),
@@ -266,7 +266,7 @@ impl DomainSessions for Domain {
                 loaded.skipped_tables().to_vec(),
             ),
             commit_hooks: Box::new({
-                let bindings = self.bindings.clone();
+                let bindings = self.binding_handle_slot();
                 let schema_validator = self.schema_validator.clone();
                 move |session, schema_version| {
                     Box::new(NodeCommitHooks {

@@ -12754,7 +12754,7 @@ fn binding_maintenance_preserves_usage_and_collects_tombstones_without_writes() 
         &mut session,
         "SELECT * FROM test.binding_maintenance WHERE v=10",
     );
-    let bindings = stack.factory.bindings.as_ref().unwrap();
+    let bindings = stack.factory.binding_handle().unwrap();
     let owner = bindings.cache().load();
     let binding = owner
         .get_all_bindings()
@@ -21037,7 +21037,7 @@ fn binding_gc_commits_on_the_maintenance_thread() {
         &mut holder,
         "SELECT * FROM mysql.bind_info WHERE status = 'deleted' FOR UPDATE",
     );
-    let bindings = Arc::clone(stack.factory.bindings.as_ref().expect("binding cache"));
+    let bindings = Arc::clone(stack.factory.binding_handle().expect("binding cache"));
     let long = Duration::from_secs(3600);
     let worker = tidb_bindinfo::cluster_binding_seam::BindingReloader::spawn(
         bindings,

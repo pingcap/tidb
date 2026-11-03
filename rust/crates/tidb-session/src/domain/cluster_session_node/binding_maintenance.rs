@@ -67,8 +67,7 @@ impl tidb_bindinfo::cluster_binding_seam::BindingSessionPool for BindingSessions
             .upgrade()
             .ok_or("binding session factory is stopped")?;
         let bindings = factory
-            .bindings
-            .as_ref()
+            .binding_handle()
             .ok_or("binding cache is not installed")?;
         let writer = InternalBindingWriter {
             factory: self.factory.clone(),
@@ -133,11 +132,24 @@ impl InternalSqlRunner for BindingRunner {
     }
 }
 
-/// Go `NewBindingHandle`'s `sPool`: the binding authority runs its
-/// maintenance on sessions the session package opens over `domain`.
-pub fn attach_binding_sessions(
+/// Go `Domain.InitBindingHandle`: `NewBindingHandle(do.sysSessionPool)`
+/// -- the binding authority loads and maintains `mysql.bind_info` on
+/// sessions the session package opens over `domain` -- stored as the
+/// domain's handle, its first load, the owner campaign and the worker loop.
+///
+/// # Errors
+///
+/// The first load or the owner campaign failed, or the worker did not start.
+pub fn init_binding_handle(
     domain: &Arc<Domain>,
-    bindings: &dyn tidb_bindinfo::cluster_binding_seam::ClusterBindings,
-) {
-    bindings.attach_session_pool(Arc::new(BindingSessions::new(domain)));
+    owner: Arc<dyn tidb_owner::Manager>,
+) -> Result<tidb_bindinfo::cluster_binding_seam::BindingReloader, String> {
+    let (bindings, reloader) = tidb_bindinfo::cluster_binding_seam::start_binding_cache(
+        Arc::new(BindingSessions::new(domain)),
+        Arc::clone(&domain.catalog),
+        Arc::new(domain.global_vars.clone()),
+        owner,
+    )?;
+    domain.init_binding_handle(bindings);
+    Ok(reloader)
 }

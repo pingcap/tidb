@@ -377,31 +377,6 @@ pub fn cluster_session_stack(
             tidb_session::domain::cluster_session_node::STATS_OWNER_KEY,
         )),
     };
-    let (bindings, binding_reloader) = tidb_bindinfo::cluster_binding_seam::start_binding_cache(
-        Arc::new(authority.transaction_opener()),
-        Arc::clone(&catalog),
-        Arc::new(users.global_vars()),
-        CONTROL_PLANE_TIMEOUT,
-        match etcd.clone() {
-            Some(client) => Arc::new(tidb_owner::OwnerManager::new(
-                tidb_owner::Context::background(),
-                client as Arc<dyn tidb_owner::OwnerStore>,
-                "bindinfo",
-                server_info.get_local_server_info().static_info.id.clone(),
-                "/tidb/bindinfo/owner",
-            )),
-            None => Arc::new(tidb_owner::MockManager::new(
-                tidb_owner::Context::background(),
-                server_info.get_local_server_info().static_info.id.clone(),
-                Some(&format!(
-                    "embedded-authority-{}",
-                    authority.transaction_opener().authority_id()
-                )),
-                "/tidb/bindinfo/owner",
-            )),
-        },
-    )
-    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     // Go `NewDomain` / `mdlCheckLoop`: the schema-version syncer -- etcd's
     // when the node has etcd, else Go's `NewMemSyncer` -- and the MDL check
     // that acknowledges a job once no transaction here holds its tables at
@@ -545,7 +520,7 @@ pub fn cluster_session_stack(
         Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
         None => factory,
     };
-    let factory = factory.with_bindings(Arc::clone(&bindings));
+    let factory = factory.shared();
     ddl_session_pool.bind(&factory);
     // Go `LoadSysVarCacheLoop`, started once the domain's sessions exist:
     // each rebuild reads `mysql.global_variables` through them.
@@ -558,17 +533,6 @@ pub fn cluster_session_stack(
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     let sysvar_watcher =
         tidb_session::domain::real_tikv_node::spawn_sysvar_watch(etcd.as_deref(), Some(&sysvar_reloader));
-    // Go `LoadPrivilegeLoop`, on the domain's sessions too. The reloader must
-    // drop before the authority's shutdown drain, like the catalog reloader.
-    let privilege_reloader = tidb_session::domain::real_tikv_node::start_privilege_loop(
-        config,
-        &users,
-        factory.advanced_sys_session_pool(),
-    )?;
-    // The reloader's tick is what makes a peer's `GRANT` reach this node at
-    // all, and this watch is what makes it arrive in a round trip instead of
-    // an interval.
-    let privilege_watcher = spawn_privilege_watch(etcd.as_deref(), privilege_reloader.as_ref());
     tidb_session::domain::cluster_session_node::NodeServices::new(analyze)
     .with_cluster_peer_client(Arc::new(tidb_executor::cluster_peer::ClusterPeerClient::new(
         authority.tikv_store().clone(),
@@ -582,7 +546,41 @@ pub fn cluster_session_stack(
             .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?,
     ))
     .bind(&factory);
-    tidb_session::domain::cluster_session_node::attach_binding_sessions(&factory, bindings.as_ref());
+    // Go `LoadPrivilegeLoop`, on the domain's sessions too. The reloader must
+    // drop before the authority's shutdown drain, like the catalog reloader.
+    let privilege_reloader = tidb_session::domain::real_tikv_node::start_privilege_loop(
+        config,
+        &users,
+        factory.advanced_sys_session_pool(),
+    )?;
+    // The reloader's tick is what makes a peer's `GRANT` reach this node at
+    // all, and this watch is what makes it arrive in a round trip instead of
+    // an interval.
+    let privilege_watcher = spawn_privilege_watch(etcd.as_deref(), privilege_reloader.as_ref());
+    // Go `InitBindingHandle`, after the sysvar cache (it sizes the binding
+    // cache from `tidb_mem_quota_binding_cache`).
+    let binding_reloader = tidb_session::domain::cluster_session_node::init_binding_handle(
+        &factory,
+        match etcd.clone() {
+            Some(client) => Arc::new(tidb_owner::OwnerManager::new(
+                tidb_owner::Context::background(),
+                client as Arc<dyn tidb_owner::OwnerStore>,
+                "bindinfo",
+                server_info.get_local_server_info().static_info.id.clone(),
+                "/tidb/bindinfo/owner",
+            )),
+            None => Arc::new(tidb_owner::MockManager::new(
+                tidb_owner::Context::background(),
+                server_info.get_local_server_info().static_info.id.clone(),
+                Some(&format!(
+                    "embedded-authority-{}",
+                    authority.transaction_opener().authority_id()
+                )),
+                "/tidb/bindinfo/owner",
+            )),
+        },
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     factory.attach_login_storage(&users);
     if let Some(runner) = &mut server_info_runner {
         let processes = factory.processes();

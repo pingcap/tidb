@@ -232,6 +232,28 @@ checksums).
   (`ensureActiveUser`); this node still loads every account, a registry
   shape left for its own finding. Test
   `the_privilege_load_reads_a_peers_rows_through_the_domains_sessions_as_go`.
+- [x] (2026-11-04) S1, binding half: Go `InitBindingHandle` after the
+  domain and its sysvar loop -- `NewBindingHandle(sysSessionPool)` loads
+  `mysql.bind_info` on the domain's sessions from the first load on (the
+  raw record-range fallback for a handle without sessions is gone), the
+  domain stores the handle once (`Domain::init_binding_handle`, Go
+  `bindHandle.Store`) and commit hooks read it at commit, so a session
+  opened earlier sees it. Covered by the binding suites (no behavior a
+  test could see changed: the attached sessions already served every load
+  after startup); a mutation that skips the store fails six of them.
+- [ ] S1, held: the first sysvar load stays the pre-domain snapshot read
+  until sessions take globals the Go way. A Rust session copies the global
+  image when it OPENS (`Session::seed_globals`); Go copies it at the
+  session's first statement (`loadCommonGlobalVariablesIfNeeded`, from
+  `GetSessionCache`). Loading after the domain first would leave pooled
+  sessions opened in the window on defaults for life. Port the lazy copy,
+  then move the first `rebuildSysVarCache` into `SysvarReloader::spawn`.
+- [ ] S1, held: statistics. The node's cache (`SharedStats` of
+  `TableStatsState`, read by `cluster_stats_load.rs`/`real_tikv_stats.rs`
+  over raw record ranges) is not Go's `StatsCache` of `statistics.Table`.
+  Port `cache/statscache.go` over `storage/read.rs`'s `Table`, then
+  `bootstrap.go`'s `initStats*` SQL and `StatsCache.Update`'s
+  `mysql.stats_meta` SELECT on the domain's sessions, then `syncload`.
 - [ ] Readers (below), in the order the remaining milestones set.
 
 ### Remaining milestones (Y01)

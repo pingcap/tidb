@@ -649,19 +649,7 @@ pub fn unistore_cluster_session_stack_from(
     let kv_client: Arc<dyn tidb_txnkv::Client> = Arc::new(
         tidb_copr::cop_client::CopClient::new(transport_factory),
     );
-    let (bindings, binding_reloader) = tidb_bindinfo::cluster_binding_seam::start_binding_cache(
-        Arc::new(opener.clone()),
-        Arc::clone(&catalog),
-        Arc::new(users.global_vars()),
-        IN_PROCESS_TIMEOUT,
-        Arc::new(tidb_owner::MockManager::new(
-            tidb_owner::Context::background(),
-            server_info.get_local_server_info().static_info.id.clone(),
-            Some(&format!("embedded-authority-{}", opener.authority_id())),
-            "/tidb/bindinfo/owner",
-        )),
-    )
-    .map_err(|error| engine(SqlQueryError::unknown(error)))?;
+    let binding_owner_id = server_info.get_local_server_info().static_info.id.clone();
     // Go `NewDomain` without etcd: `NewMemSyncer`, and `mdlCheckLoop`
     // acknowledging a job once no transaction holds its tables at an older
     // version -- the owner's `WaitVersionSynced` waits on it.
@@ -764,7 +752,7 @@ pub fn unistore_cluster_session_stack_from(
         Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
         None => factory,
     };
-    let factory = factory.with_bindings(Arc::clone(&bindings));
+    let factory = factory.shared();
     ddl_session_pool.bind(&factory);
     // Go `LoadSysVarCacheLoop`, started once the domain's sessions exist.
     let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
@@ -787,7 +775,17 @@ pub fn unistore_cluster_session_stack_from(
             .map_err(|error| engine(SqlQueryError::unknown(error)))?,
     ))
     .bind(&factory);
-    crate::domain::cluster_session_node::attach_binding_sessions(&factory, bindings.as_ref());
+    // Go `InitBindingHandle`, after the sysvar cache.
+    let binding_reloader = crate::domain::cluster_session_node::init_binding_handle(
+        &factory,
+        Arc::new(tidb_owner::MockManager::new(
+            tidb_owner::Context::background(),
+            binding_owner_id,
+            Some(&format!("embedded-authority-{}", opener.authority_id())),
+            "/tidb/bindinfo/owner",
+        )),
+    )
+    .map_err(|error| engine(SqlQueryError::unknown(error)))?;
     factory.attach_login_storage(&users);
     factory.install_bdr_role_store(Arc::new(opener), IN_PROCESS_TIMEOUT);
     factory.load_signing_cert_loop(
