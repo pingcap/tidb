@@ -166,11 +166,9 @@ func main() {
 	}
 	for _, tc := range []struct {
 		name      string
-		nextGen   bool
 		workspace bool
 	}{
 		{name: "classic"},
-		{name: "nextgen", nextGen: true},
 		{name: "existing workspace", workspace: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -196,14 +194,10 @@ func main() {
 				})
 			}
 			outputFile := filepath.Join(root, "audit.so")
-			if err := buildPlugin(context.Background(), pluginDir, outputFile, "", tc.nextGen); err != nil {
+			if err := buildPlugin(context.Background(), pluginDir, outputFile); err != nil {
 				t.Fatal(err)
 			}
-			tags := "codes"
-			if tc.nextGen {
-				tags += ",nextgen"
-			}
-			cmd := exec.Command("go", "run", "-tags="+tags, "./loader", outputFile)
+			cmd := exec.Command("go", "run", "-tags=codes", "./loader", outputFile)
 			cmd.Dir = filepath.Join(root, "tidb")
 			if output, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("load plugin: %v\n%s", err, output)

@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"text/template"
 	"time"
 
@@ -140,12 +141,7 @@ func main() {
 	}
 
 	outputFile := filepath.Join(outDir, pluginName+"-"+version+".so")
-<<<<<<< HEAD
-	ctx := context.Background()
-	buildCmd := exec.CommandContext(ctx, "go", "build",
-		"-tags=codes",
-=======
-	err = buildPlugin(context.Background(), pkgDir, outputFile, pgoFile, nextGen)
+	err = buildPlugin(context.Background(), pkgDir, outputFile)
 	if err != nil {
 		log.Printf("compile plugin source code failure, %+v\n", err)
 		os.Exit(1)
@@ -159,7 +155,7 @@ func main() {
 	}
 }
 
-func buildPlugin(ctx context.Context, pkgDir, outputFile, pgoFile string, nextGen bool) error {
+func buildPlugin(ctx context.Context, pkgDir, outputFile string) error {
 	workDir, err := os.MkdirTemp("", "tidb-plugin-work-")
 	if err != nil {
 		return err
@@ -174,20 +170,8 @@ func buildPlugin(ctx context.Context, pkgDir, outputFile, pgoFile string, nextGe
 		return err
 	}
 
-	flags := make([]string, 0, 4)
-	flags = append(flags, "build")
-	if pgoFile != "" {
-		flags = append(flags, "-pgo="+pgoFile)
-	}
-
-	buildTags := []string{"codes"}
-	if nextGen {
-		buildTags = append(buildTags, "nextgen")
-	}
-
-	flags = append(flags,
-		"-tags="+strings.Join(buildTags, ","),
->>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
+	buildCmd := exec.CommandContext(ctx, "go", "build",
+		"-tags=codes",
 		"-buildmode=plugin",
 		"-o", outputFile, pkgDir)
 	buildCmd.Dir = pkgDir
