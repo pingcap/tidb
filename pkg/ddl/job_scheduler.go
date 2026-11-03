@@ -157,6 +157,8 @@ type jobScheduler struct {
 	// bgJobWorkerPool is only used in the next-gen kernel. NOTE: Need to check it is not nil before use.
 	bgJobWorkerPool *workerPool
 	seqAllocator    atomic.Uint64
+	// Written only by the elapsed-time loop; tracks labels to remove on refresh.
+	jobElapsedTimeMetrics map[string]float64
 
 	// those fields are shared with 'ddl' instance
 	// TODO ddlCtx is too large for here, we should remove dependency on it.
@@ -191,6 +193,7 @@ func (s *jobScheduler) start() {
 		s.bgJobWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(backgroundWorker), 20, 20, 0), jobTypeReorg)
 	}
 	s.wg.RunWithLog(s.scheduleLoop)
+	s.wg.RunWithLog(s.jobElapsedTimeLoop)
 	s.wg.RunWithLog(func() {
 		s.schemaVerSyncer.SyncJobSchemaVerLoop(s.schCtx)
 	})

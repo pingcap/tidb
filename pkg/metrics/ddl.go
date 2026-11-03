@@ -125,11 +125,12 @@ var (
 	DDLOwner          = "owner"
 	DDLCounter        *prometheus.CounterVec
 
-	BackfillTotalCounter  *prometheus.CounterVec
-	BackfillProgressGauge *prometheus.GaugeVec
-	DDLJobTableDuration   *prometheus.HistogramVec
-	DDLRunningJobCount    *prometheus.GaugeVec
-	AddIndexScanRate      *prometheus.HistogramVec
+	BackfillTotalCounter       *prometheus.CounterVec
+	BackfillProgressGauge      *prometheus.GaugeVec
+	DDLJobTableDuration        *prometheus.HistogramVec
+	DDLRunningJobCount         *prometheus.GaugeVec
+	DDLUnfinishedJobMaxElapsed *prometheus.GaugeVec
+	AddIndexScanRate           *prometheus.HistogramVec
 )
 
 // InitDDLMetrics initializes defines DDL metrics.
@@ -235,6 +236,13 @@ func InitDDLMetrics() {
 			Name:      "running_job_count",
 			Help:      "Running DDL jobs count",
 		}, []string{LblType})
+
+	DDLUnfinishedJobMaxElapsed = metricscommon.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "ddl",
+		Name:      "unfinished_job_max_elapsed_seconds",
+		Help:      "Maximum elapsed seconds of unfinished non-paused DDL jobs, including queueing and excluding paused intervals.",
+	}, []string{LblType})
 
 	AddIndexScanRate = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",

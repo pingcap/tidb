@@ -80,6 +80,9 @@ type StaticInfo struct {
 	// RPC target, such as standalone BR. Missing/false means the node can serve
 	// TiDB-type RPC requests, which keeps compatibility with older server info.
 	DisableRPC bool `json:"disable_rpc,omitempty"`
+	// DDLJobElapsedTime indicates that this node preserves DDL pause accounting.
+	// Missing/false prevents new jobs opting in during a mixed-version upgrade.
+	DDLJobElapsedTime bool `json:"ddl_job_elapsed_time,omitempty"`
 }
 
 // IsAssumed checks if the StaticInfo is assumed to be in a keyspace other than its own.

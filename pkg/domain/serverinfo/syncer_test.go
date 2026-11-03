@@ -88,6 +88,7 @@ func TestTopology(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "bar", v)
 	selfInfo := info.GetLocalServerInfo()
+	require.True(t, selfInfo.DDLJobElapsedTime)
 	require.Equal(t, selfInfo.ToTopologyInfo(), *topology)
 
 	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, selfInfo.IP, selfInfo.Port)

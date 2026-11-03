@@ -69,6 +69,7 @@ go_test(
         "//pkg/parser/types",
         "//pkg/types/parser_driver",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_pd_client//http",
     ],
 )

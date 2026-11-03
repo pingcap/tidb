@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 //go:embed job.go
@@ -43,6 +44,53 @@ func TestJobStartTime(t *testing.T) {
 	}
 	require.Equal(t, TSConvert2Time(job.StartTS), time.Unix(0, 0))
 	require.Equal(t, fmt.Sprintf("ID:123, Type:none, State:none, SchemaState:none, SchemaID:0, TableID:0, RowCount:0, ArgLen:0, start time: %s, Err:<nil>, ErrCount:0, SnapshotVersion:0, Version: v1", time.Unix(0, 0)), job.String())
+}
+
+func TestJobElapsedTime(t *testing.T) {
+	start := time.Unix(100, 0)
+	ts := func(minutes int) uint64 {
+		return oracle.GoTimeToTS(start.Add(time.Duration(minutes) * time.Minute))
+	}
+	for _, version := range []JobVersion{JobVersion1, JobVersion2} {
+		t.Run(version.String(), func(t *testing.T) {
+			job := &Job{Version: version, StartTS: ts(0), State: JobStatePaused, ElapsedTime: &JobElapsedTime{}}
+			job.UpdatePauseTime(JobStatePausing, ts(4))
+			job.UpdatePauseTime(JobStatePaused, ts(5))
+			require.Equal(t, ts(4), job.ElapsedTime.PauseStartTS)
+
+			// A new owner resumes the durable job after an hour-long pause.
+			encoded, err := job.Encode(false)
+			require.NoError(t, err)
+			job = &Job{}
+			require.NoError(t, job.Decode(encoded))
+			job.State = JobStateQueueing
+			job.UpdatePauseTime(JobStatePaused, ts(64))
+			require.Zero(t, job.ElapsedTime.PauseStartTS)
+			require.Equal(t, time.Hour.Milliseconds(), job.ElapsedTime.PausedDurationMS)
+			require.Equal(t, 10*time.Minute,
+				TSConvert2Time(ts(70)).Sub(TSConvert2Time(job.StartTS))-time.Duration(job.ElapsedTime.PausedDurationMS)*time.Millisecond)
+
+			job.State = JobStatePaused
+			job.UpdatePauseTime(JobStatePausing, ts(70))
+			job = job.Clone()
+			require.NotNil(t, job)
+			job.State = JobStateCancelling
+			job.UpdatePauseTime(JobStatePaused, ts(80))
+			require.Equal(t, (70 * time.Minute).Milliseconds(), job.ElapsedTime.PausedDurationMS)
+			require.Zero(t, job.ElapsedTime.PauseStartTS)
+			job.UpdatePauseTime(JobStateCancelling, ts(90))
+			require.Equal(t, (70 * time.Minute).Milliseconds(), job.ElapsedTime.PausedDurationMS)
+		})
+	}
+
+	legacy := &Job{}
+	require.NoError(t, legacy.Decode([]byte(`{"start_ts":1,"state":9}`)))
+	legacy.State = JobStateQueueing
+	legacy.UpdatePauseTime(JobStatePaused, ts(64))
+	require.Nil(t, legacy.ElapsedTime)
+	encoded, err := legacy.Encode(false)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "elapsed_time")
 }
 
 func TestState(t *testing.T) {
@@ -221,7 +269,7 @@ func TestJobSize(t *testing.T) {
 - SubJob.FromProxyJob()
 - SubJob.ToProxyJob()
 `
-	require.Equal(t, 424, int(unsafe.Sizeof(Job{})), msg)
+	require.Equal(t, 432, int(unsafe.Sizeof(Job{})), msg)
 	require.Equal(t, 168, int(unsafe.Sizeof(SubJob{})), msg)
 }
 

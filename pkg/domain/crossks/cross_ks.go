@@ -318,6 +318,7 @@ func (*Manager) createSessionManager(
 		SysTblMgr:         sysTblMgr,
 		MinJobIDRefresher: minJobIDRefresher,
 		ServerStateSyncer: serverStateSyncer,
+		GetAllServerInfo:  svrInfoSyncer.GetAllServerInfo,
 	})
 
 	mgr := &SessionManager{

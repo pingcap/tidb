@@ -15,9 +15,12 @@
 package jobsubmit
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 )
@@ -37,6 +40,9 @@ type SubmitOptions struct {
 	SysTblMgr         systable.Manager
 	MinJobIDRefresher *systable.MinJobIDRefresher
 	ServerStateSyncer serverstate.Syncer
+	// GetAllServerInfo must read the target keyspace, including for direct
+	// cross-keyspace submissions. Nil disables unfinished-job timing.
+	GetAllServerInfo func(context.Context) (map[string]*serverinfo.ServerInfo, error)
 
 	// BeforeInsertWithAssignedIDs runs after job IDs are assigned and before the
 	// insert attempt. The returned cleanup runs if that transaction attempt fails.
