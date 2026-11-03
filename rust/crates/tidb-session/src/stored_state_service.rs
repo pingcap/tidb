@@ -44,16 +44,18 @@ pub trait AccountService {
 /// Persists `SET GLOBAL` (Go's `SetGlobalSysVar` writing
 /// `mysql.global_variables` through an internal session).
 pub trait SysvarService {
-    /// Opens one change: the stored overrides as of its own snapshot.
+    /// Opens one change: a copy of the node's sysvar cache.
     fn begin(&self) -> Result<Box<dyn PendingSysvarChange>, DriverError>;
 }
 
 /// One GLOBAL assignment in flight. Dropping it abandons the change.
 pub trait PendingSysvarChange {
-    /// The scratch global table the assignment runs against.
+    /// The copy of the cache the assignment runs against.
     fn table(&self) -> crate::GlobalSysvars;
-    /// Persists and publishes the change; answers the variables it touched.
-    fn commit(self: Box<Self>) -> Result<Vec<String>, DriverError>;
+    /// Go `replaceGlobalVariablesTableValue` for `name` (stored as
+    /// `stored`) and the aliases its hooks moved, then
+    /// `NotifyUpdateSysVarCache`.
+    fn commit(self: Box<Self>, name: &str, stored: &str) -> Result<(), DriverError>;
 }
 
 impl Session {

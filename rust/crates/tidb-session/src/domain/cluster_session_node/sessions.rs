@@ -92,7 +92,10 @@ impl DomainSessions for Domain {
                 accounts: Arc::clone(&self.accounts),
                 factory: self.binding_session_factory.clone(),
             }),
-            sysvars: Arc::new(ClusterSysvarService(Arc::clone(&self.sysvars))),
+            sysvars: Arc::new(ClusterSysvarService {
+                writer: Arc::clone(&self.sysvars),
+                domain: self.binding_session_factory.clone(),
+            }),
             analyze: super::statistics::analyze_service(self),
             stats: super::statistics::stats_statement_service(self),
         });

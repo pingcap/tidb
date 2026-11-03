@@ -433,7 +433,7 @@ impl Session {
         // `SetGlobal` stores Go's type-normalized value, which the hooks
         // below consume (see `set_node_wide_sys_var`).
         let stored = result.map_err(var_error)?;
-        pending.commit()?;
+        pending.commit(name, &stored)?;
         tidb_logutil::bg_logger().info(
             "set global var",
             &[

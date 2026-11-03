@@ -12,40 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `session.SetGlobalSysVar` over the cluster: the writer that commits a
-//! `SET GLOBAL` into `mysql.global_variables` and hands it to the domain's
-//! publication fence. The domain holds it as its `ClusterSysvarWriter`.
+//! Go `session.SetGlobalSysVar`'s cache side: the copy of the node's sysvar
+//! cache an assignment is validated against and runs its `SetGlobal` hooks
+//! on, and Go `Domain.NotifyUpdateSysVarCache` once the session has written
+//! `mysql.global_variables`. The domain holds it as its `ClusterSysvarWriter`.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
-use std::thread::JoinHandle;
+use std::sync::Arc;
 use std::time::Duration;
-use tidb_store_driver_txn::transaction::StoreClient;
 
-use tidb_infoschema::cluster_catalog::load_info_schema;
-use tidb_infoschema::SessionExtendedInfoSchema;
-use tidb_syssession::cluster_sysvar_load::load_cluster_sysvars;
-use tidb_syssession::cluster_sysvar_write::plan_sysvar_write;
-use tidb_datatype::current_time::utc_now_timestamp;
-use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
-use tidb_pd_client::EtcdClient;
 use tidb_domain::global_sysvars::GlobalSysvars;
-use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, RealTransaction};
-
-use tidb_store_driver_error::pessimistic_lock_error::cluster_commit_error;
-use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_domain_core::cluster_sysvar_seam::*;
+use tidb_infoschema::cluster_catalog::load_info_schema;
+use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
+use tidb_meta::transaction::Mutator;
+use tidb_pd_client::EtcdClient;
+use tidb_store_driver_txn::meta_txn::{MetaTxnError, MetaTxnStorage};
+use tidb_sqlescape::SqlArg;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
+use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
-/// The production sysvar writer: one real transaction per statement, the
-/// optimistic 2PC, then the live table and the etcd announcement.
 pub struct RealClusterSysvarWriter<S = tikv_client::PdRpcClient>
 where
     S: StoreClient,
 {
     opener: Arc<RealOptimisticTransactionOpener<S>>,
-    /// The node's LIVE sysvar table -- the one every session shares a clone
-    /// of. Published into only after a commit.
+    /// The node's LIVE sysvar cache -- the one every session shares a clone
+    /// of.
     live: GlobalSysvars,
     timeout: Duration,
     /// The etcd client this node announces sysvar changes through, so peers'
@@ -60,7 +52,9 @@ where
     S: StoreClient,
 {
     /// Binds the writer to an already-connected authority and the live
-    /// sysvar table a successful change publishes into.
+    /// sysvar cache a change publishes into; registers Go's
+    /// `variable.SwitchMDL` (`d.SwitchMDL`) as `tidb_enable_metadata_lock`'s
+    /// `SetGlobal` hook.
     #[must_use]
     pub fn new(
         opener: Arc<RealOptimisticTransactionOpener<S>>,
@@ -69,6 +63,18 @@ where
         notifier: Option<Arc<EtcdClient>>,
         publication_fence: SysvarPublicationFence,
     ) -> Self {
+        let switch_opener = Arc::clone(&opener);
+        live.register_set_global_hook(
+            tidb_vardef::tidb_vars::TIDB_ENABLE_MDL,
+            Arc::new(move |value: &str| {
+                // Go `TiDBEnableMDL`'s `SetGlobal`.
+                let enable = tidb_vardef::option_values::tidb_opt_on(value);
+                if tidb_vardef::is_mdl_enabled(false) != enable {
+                    switch_mdl(&switch_opener, timeout, enable)?;
+                }
+                Ok(())
+            }),
+        );
         Self {
             opener,
             live,
@@ -79,26 +85,81 @@ where
     }
 }
 
+/// Go `ddl.SwitchMDL`: refused while a DDL job is queued; otherwise the
+/// process flag flips and the meta key follows.
+fn switch_mdl<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
+    timeout: Duration,
+    enable: bool,
+) -> Result<(), String> {
+    if tidb_vardef::is_mdl_enabled(false) == enable {
+        return Ok(());
+    }
+    // Check if there is any DDL running (Go `select 1 from
+    // mysql.tidb_ddl_job`).
+    let running = {
+        let mut transaction = opener.begin_read_only().map_err(|error| error.to_string())?;
+        let running = {
+            let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+            let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
+            tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&catalog)
+                .and_then(|table| table.has_jobs(&mut snapshot))
+                .map_err(|error| error.to_string())?
+        };
+        transaction
+            .finish_without_writes()
+            .map_err(|error| error.to_string())?;
+        running
+    };
+    if running {
+        return Err("please wait for all jobs done".to_owned());
+    }
+    tidb_vardef::set_enable_mdl(enable);
+    let mut storage = MetaTxnStorage::new(opener, timeout);
+    let context = tidb_txnkv::RunInNewTxnContext {
+        request_source: Some(tidb_txnkv::RequestSource {
+            internal: true,
+            source_type: tidb_txnkv::INTERNAL_TXN_DDL.to_owned(),
+            explicit_source_type: String::new(),
+        }),
+    };
+    let written = tidb_txnkv::run_in_new_txn(&context, &mut storage, true, |transaction| {
+        let mutator = Mutator::new(&mut *transaction);
+        let old_enable = mutator.metadata_lock().map_err(MetaTxnError::from)?.unwrap_or(false);
+        if old_enable != enable {
+            mutator.set_metadata_lock(enable).map_err(MetaTxnError::from)?;
+        }
+        Ok(())
+    });
+    if let Err(error) = written {
+        tidb_logutil::bg_logger().warn(
+            "switch metadata lock feature",
+            &[
+                tidb_log::Field::new("enable", tidb_log::Value::Bool(enable)),
+                tidb_logutil::zap_error(&error),
+            ],
+        );
+        return Err(error.to_string());
+    }
+    tidb_logutil::bg_logger().info(
+        "switch metadata lock feature",
+        &[tidb_log::Field::new("enable", tidb_log::Value::Bool(enable))],
+    );
+    Ok(())
+}
+
 impl<S> ClusterSysvarWriter for RealClusterSysvarWriter<S>
 where
     S: StoreClient,
 {
     fn begin(&self) -> Result<Box<dyn PendingSysvarChange>, String> {
-        let mut transaction = self.opener.begin().map_err(|error| error.to_string())?;
-        let (catalog, scratch) = {
-            let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
-            let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
-            let loaded =
-                load_cluster_sysvars(&mut snapshot, &catalog).map_err(|error| error.to_string())?;
-            // The statement's assignments run the node's registered
-            // `SetGlobal` hooks, as Go's registry is process-wide.
-            let scratch =
-                GlobalSysvars::from_cluster_rows(loaded).sharing_set_global_hooks(&self.live);
-            (catalog, scratch)
-        };
+        let initial = self.live.overrides();
+        // The assignment runs the node's registered `SetGlobal` hooks, as
+        // Go's registry is process-wide, against a copy of the cache.
+        let scratch =
+            GlobalSysvars::from_cluster_rows(initial.clone()).sharing_set_global_hooks(&self.live);
         Ok(Box::new(RealPendingSysvarChange {
-            transaction: Some(transaction),
-            catalog,
+            initial,
             scratch,
             live: self.live.clone(),
             timeout: self.timeout,
@@ -113,9 +174,8 @@ struct RealPendingSysvarChange<S>
 where
     S: StoreClient,
 {
-    /// `None` only after [`PendingSysvarChange::commit`] has taken it.
-    transaction: Option<RealTransaction<S>>,
-    catalog: SessionExtendedInfoSchema,
+    /// The cache's overrides the scratch copy started from.
+    initial: std::collections::HashMap<String, String>,
     scratch: GlobalSysvars,
     live: GlobalSysvars,
     timeout: Duration,
@@ -132,105 +192,78 @@ where
         self.scratch.clone()
     }
 
-    fn commit(mut self: Box<Self>) -> Result<Vec<String>, SqlQueryError> {
-        let mut transaction = self
-            .transaction
-            .take()
-            .ok_or_else(|| SqlQueryError::unknown("the sysvar change was already committed"))?;
-        // The scratch table's current overrides ARE the desired image: it was
-        // seeded from this same snapshot's own stored rows and then the
-        // statement ran against it, so a name the statement reset to DEFAULT
-        // is simply absent here, and `plan_sysvar_write`'s whole-image diff
-        // turns that absence into a delete of its stored row.
-        let desired: std::collections::BTreeMap<String, String> =
-            self.scratch.overrides().into_iter().collect();
-        let mut plan = {
-            let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
-            plan_sysvar_write(
-                &mut snapshot,
-                &self.catalog,
-                &desired,
-                utc_now_timestamp(),
-                &mut |db, table, minimum, count| {
-                    tidb_domain_core::cluster_account_seam::reserve_system_row_ids(
-                        &self.reload_opener,
-                        self.timeout,
-                        db,
-                        table,
-                        minimum,
-                        count,
+    fn commit(
+        self: Box<Self>,
+        name: &str,
+        stored: &str,
+        pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
+    ) -> Result<(), SqlQueryError> {
+        let changed = self.changed_globals(name, stored);
+        for (variable, value) in &changed {
+            // Go `replaceGlobalVariablesTableValue`.
+            pool.call_with_sctx(
+                &mut |sctx| {
+                    tidb_stats_handle_util::exec_rows(
+                        sctx,
+                        "REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)",
+                        &[
+                            SqlArg::from("mysql"),
+                            SqlArg::from("global_variables"),
+                            SqlArg::from(variable.as_str()),
+                            SqlArg::from(value.as_str()),
+                        ],
                     )
+                    .map(|_| ())
                 },
-            )
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?
-        };
-        // Go `TiDBEnableMDL`'s `SetGlobal` hook runs `SwitchMDL`
-        // (`pkg/ddl/ddl.go:1245`): it REFUSES while any DDL job is running and,
-        // when it proceeds, persists the switch to the `metadataLock` meta key
-        // in the same transaction. `SET GLOBAL tidb_enable_metadata_lock` must
-        // do both here; without the meta write a restarting peer would
-        // re-initialise the flag from the stale meta value, and without the
-        // guard a node could split the cluster's DDL-ack keys mid-job.
-        if plan
-            .changed
-            .iter()
-            .any(|name| name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL))
-        {
-            let enable = desired
-                .get(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL)
-                .map_or(tidb_vardef::defaults::DEF_TIDB_ENABLE_MDL, |value| {
-                    value.eq_ignore_ascii_case("ON") || value == "1"
-                });
-            // `SwitchMDL`'s first line: a value the process already runs
-            // with is not a switch, so neither the job probe nor the meta
-            // write happens.
-            if enable != tidb_vardef::is_mdl_enabled(false) {
-                let running = {
-                    let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
-                    tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&self.catalog)
-                        .and_then(|table| table.has_jobs(&mut snapshot))
-                        .map_err(|error| SqlQueryError::unknown(error.to_string()))?
-                };
-                if running {
-                    // Go's exact refusal (`ddl.go:1267`).
-                    return Err(SqlQueryError::unknown(
-                        "please wait for all jobs done".to_owned(),
-                    ));
-                }
-                plan.mutations.push(
-                    tidb_syssession::cluster_sysvar_write::metadata_lock_mutation(enable)
-                        .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
-                );
-            }
+                &[],
+            )?;
         }
-        let plan_is_empty = plan.is_empty();
-        let changed = plan.changed;
-        let commit_ts = if plan_is_empty {
-            transaction
-                .finish_without_writes()
-                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-            None
-        } else {
-            let call = UnaryCallContext::with_timeout(self.timeout);
-            let outcome = transaction
-                .commit(plan.mutations, &call)
-                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-            if let Some(error) = cluster_commit_error(&outcome, "sysvar change") {
-                return Err(error);
-            }
-            Some(outcome.receipt().commit_ts)
-        };
-        // Rebuild from durable cluster truth inside the same publication
-        // boundary the periodic reloader uses. Two local commits may finish
-        // in one order and reach this point in another; the fresh image makes
-        // either arrival publish the latest cluster state. This reread is a
-        // cache refresh after a confirmed commit, so its failure is warned
-        // and never changes the client's successful SQL outcome.
+        let names = changed.into_iter().map(|(variable, _)| variable).collect::<Vec<_>>();
+        self.notify_update_sys_var_cache(&names);
+        Ok(())
+    }
+}
+
+impl<S> RealPendingSysvarChange<S>
+where
+    S: StoreClient,
+{
+    /// The rows the assignment of `name` writes: the variables its hooks
+    /// moved besides `name` (Go's aliases), then `name` itself.
+    fn changed_globals(&self, name: &str, stored: &str) -> Vec<(String, String)> {
+        let current = self.scratch.overrides();
+        let mut names: Vec<&String> = current
+            .keys()
+            .chain(self.initial.keys())
+            .filter(|other| !other.eq_ignore_ascii_case(name))
+            .filter(|other| current.get(*other) != self.initial.get(*other))
+            .collect();
+        names.sort();
+        names.dedup();
+        let mut changed: Vec<(String, String)> = names
+            .into_iter()
+            .filter_map(|other| {
+                self.scratch
+                    .get(other)
+                    .ok()
+                    .map(|value| (other.clone(), value))
+            })
+            .collect();
+        let canonical = tidb_variable::sysvar::get_sys_var(name)
+            .map_or_else(|| name.to_ascii_lowercase(), |def| def.name.to_owned());
+        changed.push((canonical, stored.to_owned()));
+        changed
+    }
+
+    /// Go `NotifyUpdateSysVarCache(true)`: the cache is rebuilt from the
+    /// stored rows, then peers are told. A failed rebuild is logged; the
+    /// rows are durable either way.
+    fn notify_update_sys_var_cache(self: Box<Self>, changed: &[String]) {
         let refresh_error = self.publication_fence.publish_local_after_commit_with_read(
             &self.live,
             &self.scratch,
-            &changed,
-            commit_ts,
+            changed,
+            None,
             || {
                 tidb_domain_core::real_tikv_privileges::load_sysvars_from_cluster(
                     &self.reload_opener,
@@ -240,11 +273,9 @@ where
             },
         );
         if let Some(error) = refresh_error {
-            // Go `NotifyUpdateSysVarCache`'s local rebuild failure.
             tidb_logutil::bg_logger()
                 .error("rebuilding sysvar cache failed", &[tidb_logutil::zap_error(error)]);
         }
-        notify_sysvar_update(self.notifier.as_deref(), &changed);
-        Ok(changed)
+        notify_sysvar_update(self.notifier.as_deref(), changed);
     }
 }

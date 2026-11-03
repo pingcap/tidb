@@ -724,28 +724,20 @@ impl tidb_domain_core::cluster_sysvar_seam::PendingSysvarChange for MockPendingS
         self.scratch.clone()
     }
 
-    fn commit(self: Box<Self>) -> Result<Vec<String>, SqlQueryError> {
+    fn commit(
+        self: Box<Self>,
+        _name: &str,
+        _stored: &str,
+        _pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
+    ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
         if !self.persists.load(Ordering::Acquire) {
             return Err(SqlQueryError::unknown("the persist was rejected"));
         }
-        let before = self.stored.overrides();
-        let after = self.scratch.overrides();
-        let changed: Vec<String> = after
-            .iter()
-            .filter(|(name, value)| before.get(*name) != Some(*value))
-            .map(|(name, _)| name.clone())
-            .chain(
-                before
-                    .keys()
-                    .filter(|name| !after.contains_key(*name))
-                    .cloned(),
-            )
-            .collect();
         self.stored
-            .replace_from(&GlobalSysvars::from_cluster_rows(after));
+            .replace_from(&GlobalSysvars::from_cluster_rows(self.scratch.overrides()));
         self.live
             .replace_from(&GlobalSysvars::from_cluster_rows(self.stored.overrides()));
-        Ok(changed)
+        Ok(())
     }
 }
 

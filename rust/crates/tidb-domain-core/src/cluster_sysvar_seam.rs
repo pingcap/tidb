@@ -46,49 +46,35 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use tidb_store_driver_txn::transaction::StoreClient;
 
-use tidb_infoschema::cluster_catalog::load_info_schema;
-use tidb_syssession::cluster_sysvar_load::load_cluster_sysvars;
-use tidb_syssession::cluster_sysvar_write::plan_sysvar_write;
-use tidb_datatype::current_time::utc_now_timestamp;
-use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_pd_client::EtcdClient;
 use tidb_domain::global_sysvars::GlobalSysvars;
-use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, RealTransaction};
+use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 
-use tidb_store_driver_error::pessimistic_lock_error::cluster_commit_error;
-use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
-/// This node's one route to the cluster's stored `SET GLOBAL` overrides.
-///
-/// The seam exists so the routing decision -- what a session does with a
-/// `SET GLOBAL`, and what happens when the persist fails -- is exercised
-/// without a cluster. The production implementation is
-/// [`RealClusterSysvarWriter`].
+/// Go `session.SetGlobalSysVar` over the domain: an assignment is validated
+/// against [`PendingSysvarChange::table`], then committed.
 pub trait ClusterSysvarWriter: Send + Sync {
-    /// Reads the cluster's sysvar overrides and hands back the scratch table
-    /// one statement is to be applied to.
+    /// A copy of the node's sysvar cache, sharing its `SetGlobal` hooks, for
+    /// one assignment.
     fn begin(&self) -> Result<Box<dyn PendingSysvarChange>, String>;
 }
 
-/// One `SET GLOBAL` in flight: the cluster read that opened it, waiting for
-/// the statement's effect to be persisted.
-///
-/// Dropping one without committing abandons the change, which is exactly
-/// what a statement that failed to validate needs.
 pub trait PendingSysvarChange {
-    /// The scratch sysvar table the statement is to run against. It holds
-    /// the cluster's overrides as of this change's own snapshot.
+    /// The copy of the cache the assignment runs against (Go `Validate` and
+    /// `SetGlobalFromHook`).
     fn table(&self) -> GlobalSysvars;
 
-    /// Persists whatever the statement did to [`Self::table`], publishes it
-    /// into the node's live table, and announces it.
-    ///
-    /// The variable names this change touched are answered for the log; an
-    /// empty answer means the statement stored the value the cluster already
-    /// had (or reset a variable with no stored row), and nothing was written
-    /// or announced.
-    fn commit(self: Box<Self>) -> Result<Vec<String>, SqlQueryError>;
+    /// Go `replaceGlobalVariablesTableValue` for `name` (stored as `stored`)
+    /// and the aliases its hooks moved (`SetGlobalSysVarOnly`), each on an
+    /// internal session of `pool` (Go `ExecRestrictedSQL`), then
+    /// `Domain.NotifyUpdateSysVarCache(true)`: the cache is rebuilt from
+    /// `mysql.global_variables` and peers are told.
+    fn commit(
+        self: Box<Self>,
+        name: &str,
+        stored: &str,
+        pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
+    ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError>;
 }
 
 /// Orders publications into one node's live sysvar table.

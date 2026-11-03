@@ -1760,7 +1760,13 @@ impl GlobalSysvars {
             .into_iter()
             .filter_map(|(name, value)| {
                 let key = name.to_ascii_lowercase();
-                get_sys_var(&key).is_some().then_some((key, value))
+                // Go `rebuildSysVarCache` reads a row into the global cache
+                // for a variable with GLOBAL scope and into the session cache
+                // unless it `SkipInit`s; any other row (an INSTANCE variable's,
+                // which `SET GLOBAL` also writes) reaches neither.
+                get_sys_var(&key)
+                    .is_some_and(|def| def.has_global_scope() || !def.skip_init())
+                    .then_some((key, value))
             })
             .collect();
         *self.table.lock().expect("global sysvar lock poisoned") = rows;

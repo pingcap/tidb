@@ -1806,9 +1806,9 @@ fn a_session_only_variable_still_refuses_set_global() {
     assert_eq!(error.to_mysql_error().code, 1228);
 }
 
-/// An instance-scoped value is NOT cluster state: it must stay out of the
-/// map that feeds `mysql.GLOBAL_VARIABLES` persistence and the connect-time
-/// session seed. Go writes it to a `vardef` atomic, never a row.
+/// An instance-scoped value is NOT cluster state: `SET GLOBAL` stores its
+/// row too, but Go `rebuildSysVarCache` keeps it out of the global cache and
+/// the connect-time session seed; the process holds it in a `vardef` atomic.
 #[test]
 fn an_instance_value_is_not_offered_as_cluster_state() {
     let (mut session, _peer, globals) = two_sessions_sharing_globals();

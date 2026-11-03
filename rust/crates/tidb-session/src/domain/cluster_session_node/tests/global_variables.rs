@@ -41,7 +41,12 @@ impl PendingSysvarChange for UndeterminedSysvarChange {
         self.0.clone()
     }
 
-    fn commit(self: Box<Self>) -> Result<Vec<String>, tidb_store_driver_error::sql_query_error::SqlQueryError> {
+    fn commit(
+        self: Box<Self>,
+        _name: &str,
+        _stored: &str,
+        _pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
+    ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
         Err(undetermined_cluster_commit_error("sysvar change"))
     }
 }
@@ -63,7 +68,12 @@ impl PendingSysvarChange for BackoffSysvarChange {
         self.0.clone()
     }
 
-    fn commit(self: Box<Self>) -> Result<Vec<String>, tidb_store_driver_error::sql_query_error::SqlQueryError> {
+    fn commit(
+        self: Box<Self>,
+        _name: &str,
+        _stored: &str,
+        _pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
+    ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
         let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
             receipt: OptimisticTransactionReceipt::new(1, 2, b"key".to_vec(), 1),
             cause: TransactionCause::BackoffExhausted {

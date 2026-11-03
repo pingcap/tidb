@@ -12,25 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Writing a cluster's `SET GLOBAL` overrides back into
-//! `mysql.global_variables`.
-//!
-//! This is the write half of the bridge [`crate::cluster_sysvar_load`] reads,
-//! and it follows [`tidb_privilege::cluster_account_write`]'s whole-image pattern
-//! exactly, for the same reason: the caller hands over the overrides table as
-//! it should now be (every variable a `SET GLOBAL` has ever set on this
-//! cluster, at its current value), built from a
-//! `tidb_variable::vars::GlobalSysvars` scratch copy seeded from *this same
-//! snapshot* -- so the diff against the stored rows is precisely one
-//! statement's own effect and can never revert a change another node made
-//! concurrently, and a `SET GLOBAL x = DEFAULT` (which removes `x` from the
-//! scratch table's overrides) is naturally a delete of its stored row rather
-//! than a case this module has to special-case.
+//! A whole-image planner of `mysql.global_variables` rows, kept only as a
+//! seeding fixture for tests that have no session to run statements on. A
+//! runtime `SET GLOBAL` is Go's `REPLACE INTO mysql.global_variables` on an
+//! internal session (`tidb_session::cluster_sysvar_writer`).
 
 use std::collections::BTreeMap;
 
 use tidb_datatype::{Datum, Time};
-use tidb_meta::key;
 use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::BufferMutation;
 
@@ -257,19 +246,6 @@ fn column_id(table: &TableInfo, column: &str) -> Result<i64, SysvarWriteError> {
         .find_public_column_by_name(column)
         .map(|stored| stored.read().id)
         .ok_or(SysvarWriteError::MissingTable)
-}
-
-/// The meta-key mutation Go's `SwitchMDL` writes for
-/// `SET GLOBAL tidb_enable_metadata_lock` (`pkg/ddl/ddl.go:1270-1280`,
-/// `Mutator.SetMetadataLock`): `"1"` or `"0"` at the `metadataLock` key, so a
-/// restarting peer re-initialises the flag from the value the cluster last
-/// set rather than a stale one.
-pub fn metadata_lock_mutation(enable: bool) -> Result<BufferMutation, SysvarWriteError> {
-    BufferMutation::set(
-        key::metadata_lock_kv_key(),
-        if enable { b"1".to_vec() } else { b"0".to_vec() },
-    )
-    .map_err(|error| SysvarWriteError::Encode(RowEncodeError(error.to_string())))
 }
 
 fn system_db_id(catalog: &SessionExtendedInfoSchema) -> Result<i64, SysvarWriteError> {

@@ -157,10 +157,64 @@ checksums).
   session in its transaction; `StatsSessionContext::affected_rows` is Go
   `StmtCtx.AffectedRows`. The auto-analyze queue reads locked tables with
   `QueryLockedTables`.
-- [ ] Rest of M2/M3: the historical-stats reader and the statistics
-  loaders still scan rows directly (reads, not writes). `plan_stats_write` /
-  `plan_partition_stats_write` / `plan_historical_stats_data_block` remain
-  as test seeding fixtures. M4 (global sysvars, accounts).
+- [x] (2026-11-03) Global sysvars (item 4, M4): Go `SetGlobalSysVar` --
+  the assignment validates and runs its `SetGlobal` hooks on a copy of the
+  cache, then `replaceGlobalVariablesTableValue` (`REPLACE INTO
+  mysql.global_variables`) for the name and every alias a hook moved (Go
+  `SetGlobalSysVarOnly`: `transaction_isolation` also writes
+  `tx_isolation`), on the domain's system-session pool, then
+  `NotifyUpdateSysVarCache(true)`. `tidb_enable_metadata_lock`'s hook is
+  Go `ddl.SwitchMDL` (refused while a DDL job is queued; the process flag
+  and the meta key follow); the image diff wrote the meta key from the
+  stored value instead. Go writes a row for an instance-scoped variable
+  too and keeps it out of its caches (`rebuildSysVarCache`); the loader now
+  filters the same way. Test `set_global_replaces_the_variables_row_as_go`.
+  `plan_sysvar_write` remains as a seeding fixture of two tests.
+- [x] (2026-11-03) Accounts (item 5, M4) were already Go's: every account
+  statement runs `tidb_executor::user_table`'s statements on a system
+  session and then `NotifyUpdatePrivilege`. `plan_account_write` is left
+  only in `seed_cluster_accounts`, which writes a unistore node's
+  `--auth-file` identity at boot -- the bootstrap's category (Go has no
+  such flag).
+- [ ] Readers (below).
+- [ ] The bootstrap (item 11).
+
+## Remaining inventory (2026-11-03)
+
+Writes. Every statement-time writer now runs Go's SQL. What is left:
+
+- The bootstrap (`mysql_bootstrap*.rs`) stages the system tables' rows and
+  submits its DDL without a session, so the DDL owner keeps a raw path for
+  a run without step sessions (`DdlSessionPool::has_step_sessions`): the
+  job, history, MDL, notifier, delete-range (`StagedDelRanges`) and job
+  submission rows (`tidb-ddl-jobsubmit`). Go's bootstrap runs `doDDLWorks`
+  / `doDMLWorks` on a session, and those rows then take the session path.
+  Fixing the bootstrap removes every one of these fallbacks.
+- `seed_cluster_accounts` (above).
+- Seeding fixtures used only by tests: `plan_stats_write`,
+  `plan_partition_stats_write`, `plan_column_stats_usage_write`, the
+  insert-table-stats, delta and history-meta planners,
+  `plan_historical_stats_data_block`, `plan_sysvar_write`, the analyze-job
+  planners.
+
+Reads. Go reads every one of these tables with a statement on a session
+(`ExecRestrictedSQL` / `util.Exec`); these scan the table's records
+directly (`mysql_system_tables::scan_system_table*`):
+
+| Rust reader | Go owner |
+| --- | --- |
+| `tidb-syssession/src/cluster_sysvar_load.rs` | `Domain.fetchTableValues` (`rebuildSysVarCache`) |
+| `tidb-privilege/src/cluster_privilege_load.rs`, `tidb-session/src/privilege_tables.rs` | `privileges.MySQLPrivilege.LoadAll` (`loadTable`) |
+| `tidb-bindinfo/src/cluster_binding_seam.rs` | `bindinfo` `readBindingsFromStorage` |
+| `tidb-stats-handle-storage/src/cluster_stats_load.rs` | `storage/read.go` and `initstats` statements |
+| `tidb-stats-handle-storage/src/cluster_stats_dump.rs` | `storage` `TableHistoricalStatsToJSON` / `getStatsVersion` |
+| `tidb-stats-handle-usage-predicatecolumn/src/cluster_predicate_column.rs` | `predicatecolumn` `LoadColumnStatsUsage*` |
+| `tidb-stats-handle-autoanalyze/src/analyze_jobs.rs` (reads) | `autoanalyze` job queries |
+| `tidb-executor/src/real_tikv_analyze.rs`, `cluster_analyze.rs` | `executor/analyze` reads |
+| `tidb-infoschema-issyncer/src/mdl_info_load.rs`, `tidb-ddl-systable/src/lib.rs` | MDL `select ... from mysql.tidb_mdl_info` |
+| `tidb-ddl-systable/src/ddl_job_table.rs` | job scheduler `getJob` / `GetAllDDLJobsInQueue` |
+| `tidb-ddl/src/ddl_history_table.rs` | `GetHistoryJobByID` / `GetLastNHistoryDDLJobs` |
+| `tidb-ddl/src/ddl_reorg_table.rs`, `ddl_delete_range.rs`, `cluster_ddl.rs` (MDL clean fallback) | reorg / delete-range / `cleanMDLInfo` statements |
 
 ## Surprises & Discoveries
 

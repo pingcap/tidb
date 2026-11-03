@@ -2422,12 +2422,19 @@ impl crate::user_table::AccountSqlSession for AccountSystemSession {
     }
 }
 
-/// The cluster sysvar writer as the session's [`SysvarService`].
+/// The cluster sysvar writer as the session's [`SysvarService`], the
+/// writes on the domain's internal sessions (Go `ExecRestrictedSQL`).
 ///
 /// [`SysvarService`]: crate::stored_state_service::SysvarService
-struct ClusterSysvarService(Arc<dyn ClusterSysvarWriter>);
+pub(crate) struct ClusterSysvarService {
+    pub(crate) writer: Arc<dyn ClusterSysvarWriter>,
+    pub(crate) domain: Weak<Domain>,
+}
 
-struct ClusterPendingSysvarChange(Box<dyn tidb_domain_core::cluster_sysvar_seam::PendingSysvarChange>);
+struct ClusterPendingSysvarChange {
+    pending: Box<dyn tidb_domain_core::cluster_sysvar_seam::PendingSysvarChange>,
+    domain: Weak<Domain>,
+}
 
 impl crate::stored_state_service::SysvarService for ClusterSysvarService {
     fn begin(
@@ -2435,20 +2442,35 @@ impl crate::stored_state_service::SysvarService for ClusterSysvarService {
     ) -> Result<Box<dyn crate::stored_state_service::PendingSysvarChange>, tidb_driver_error::DriverError>
     {
         let pending = self
-            .0
+            .writer
             .begin()
             .map_err(tidb_driver_error::DriverError::unsupported)?;
-        Ok(Box::new(ClusterPendingSysvarChange(pending)))
+        Ok(Box::new(ClusterPendingSysvarChange {
+            pending,
+            domain: self.domain.clone(),
+        }))
     }
 }
 
 impl crate::stored_state_service::PendingSysvarChange for ClusterPendingSysvarChange {
     fn table(&self) -> GlobalSysvars {
-        self.0.table()
+        self.pending.table()
     }
 
-    fn commit(self: Box<Self>) -> Result<Vec<String>, tidb_driver_error::DriverError> {
-        self.0.commit().map_err(sql_query_error_to_driver)
+    fn commit(self: Box<Self>, name: &str, stored: &str) -> Result<(), tidb_driver_error::DriverError> {
+        let pool = self
+            .domain
+            .upgrade()
+            .map(|domain| domain.advanced_sys_session_pool());
+        self.pending
+            .commit(
+                name,
+                stored,
+                &tidb_domain_core::sys_session::StatsPool {
+                    session_pool: pool.as_ref(),
+                },
+            )
+            .map_err(sql_query_error_to_driver)
     }
 }
 

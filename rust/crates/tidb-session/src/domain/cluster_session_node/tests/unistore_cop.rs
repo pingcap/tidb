@@ -27008,3 +27008,39 @@ fn stats_delta_flush_updates_meta_as_go() {
     assert_eq!(meta(&mut session, "stats_meta"), [["0", "6"]]);
     assert_eq!(meta(&mut session, "stats_table_locked"), [["2", "2"]]);
 }
+
+/// Go `SetGlobalSysVar` ends in `REPLACE INTO mysql.global_variables` for
+/// the assigned variable, whatever its scope and even at its default
+/// (gorun): an INSTANCE variable's row is stored, and `= DEFAULT` stores the
+/// default's text.
+#[test]
+fn set_global_replaces_the_variables_row_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(210)).unwrap();
+    let row = |session: &mut Session, name: &str| {
+        displayed(rows(
+            session,
+            &format!("SELECT variable_value FROM mysql.global_variables WHERE variable_name = '{name}'"),
+        ))
+    };
+    assert_eq!(row(&mut session, "tidb_general_log"), Vec::<Vec<String>>::new());
+    rows(&mut session, "SET GLOBAL tidb_general_log = 1");
+    assert_eq!(row(&mut session, "tidb_general_log"), [["ON"]]);
+    rows(&mut session, "SET GLOBAL tidb_general_log = 0");
+    assert_eq!(row(&mut session, "tidb_general_log"), [["OFF"]]);
+
+    rows(&mut session, "SET GLOBAL tidb_mem_quota_query = 2147483648");
+    assert_eq!(row(&mut session, "tidb_mem_quota_query"), [["2147483648"]]);
+    rows(&mut session, "SET GLOBAL tidb_mem_quota_query = DEFAULT");
+    assert_eq!(row(&mut session, "tidb_mem_quota_query"), [["1073741824"]]);
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT @@global.tidb_mem_quota_query")),
+        [["1073741824"]]
+    );
+
+    // An alias's hook stores its row too (Go `SetGlobalSysVarOnly`).
+    rows(&mut session, "SET GLOBAL transaction_isolation = 'READ-COMMITTED'");
+    assert_eq!(row(&mut session, "transaction_isolation"), [["READ-COMMITTED"]]);
+    assert_eq!(row(&mut session, "tx_isolation"), [["READ-COMMITTED"]]);
+    rows(&mut session, "SET GLOBAL transaction_isolation = 'REPEATABLE-READ'");
+}

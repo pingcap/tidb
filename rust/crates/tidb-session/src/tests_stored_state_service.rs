@@ -40,9 +40,9 @@ impl PendingSysvarChange for FakePendingSysvars {
         self.scratch.clone()
     }
 
-    fn commit(self: Box<Self>) -> Result<Vec<String>, DriverError> {
+    fn commit(self: Box<Self>, _name: &str, _stored: &str) -> Result<(), DriverError> {
         self.committed.fetch_add(1, Ordering::SeqCst);
-        Ok(Vec::new())
+        Ok(())
     }
 }
 
