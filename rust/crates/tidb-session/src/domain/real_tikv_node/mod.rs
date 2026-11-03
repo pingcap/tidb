@@ -23,7 +23,6 @@ use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadError, Syncer, InfoCa
 use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_infoschema_issyncer::real_tikv_catalog::reload;
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
-use tidb_stats_handle_syncload::real_tikv_stats::{update_stats_cache_from_cluster};
 use tidb_stats_handle::bootstrap::{load_stats_snapshot_and_loader, InitialStatsLoad};
 use tidb_stats_handle_syncload::stats_watch::{
     AsyncStatsLoader, SharedStats, StatsReloadError, StatsReloadReadResult, StatsReloader,
@@ -39,8 +38,8 @@ use tidb_store_driver_error::sql_query_error::SqlQueryError;
 mod schema_following;
 
 pub use schema_following::{
-    connect_etcd_client, spawn_catalog_reloader, spawn_node_stats, spawn_privilege_watch,
-    spawn_sysvar_watch,
+    connect_etcd_client, new_node_stats, spawn_catalog_reloader, spawn_node_stats,
+    spawn_privilege_watch, spawn_sysvar_watch,
 };
 
 const PRODUCTION_CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);

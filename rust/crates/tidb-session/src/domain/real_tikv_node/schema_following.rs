@@ -148,30 +148,29 @@ fn async_stats_load_interval(stats_lease: tidb_domain_core::node_config::StatsLe
 /// and a positive value is the exact tick for both ordinary and asynchronous
 /// loading. Stats have no schema-watch nudge; Go's own refresh is tick-only
 /// too.
+pub fn new_node_stats() -> Result<Arc<SharedStats>, StatsReloadError> {
+    SharedStats::new(Default::default())
+        .map(Arc::new)
+        .map_err(|error| StatsReloadError::Spawn(std::io::Error::other(error)))
+}
+
+/// Go `UpdateTableStatsLoop` and its `asyncLoadHistogram`, started once the
+/// domain's sessions exist: the cache refresh is `StatsCacheImpl.Update` on
+/// them.
 pub fn spawn_node_stats<S>(
+    shared: Arc<SharedStats>,
     catalog: Arc<InfoCache>,
     opener: tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
     stats_lease: tidb_domain_core::node_config::StatsLease,
     timeout: Duration,
-) -> Result<(Arc<SharedStats>, StatsReloader, AsyncStatsLoader), StatsReloadError>
+    session_pool: Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
+) -> Result<(StatsReloader, AsyncStatsLoader), StatsReloadError>
 where
     S: StoreClient,
 {
     let Some(reload_interval) = stats_lease.reload_interval() else {
-        let shared = Arc::new(
-            SharedStats::new(Default::default())
-                .map_err(|error| StatsReloadError::Spawn(std::io::Error::other(error)))?,
-        );
-        return Ok((
-            shared,
-            StatsReloader::disabled(),
-            AsyncStatsLoader::disabled(),
-        ));
+        return Ok((StatsReloader::disabled(), AsyncStatsLoader::disabled()));
     };
-    let shared = Arc::new(
-        SharedStats::new(Default::default())
-            .map_err(|error| StatsReloadError::Spawn(std::io::Error::other(error)))?,
-    );
     // The read closure needs its own handle to compare against what is
     // published; the caller keeps the original for queries.
     let published = Arc::clone(&shared);
@@ -301,12 +300,12 @@ where
             *update_loader
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(located.clone());
-            match update_stats_cache_from_cluster(
-                &update_opener,
-                timeout,
+            match tidb_stats_handle_syncload::real_tikv_stats::update_stats_cache(
+                &tidb_domain_core::sys_session::StatsPool {
+                    session_pool: Some(&session_pool),
+                },
                 &targets,
                 shared,
-                &located,
                 stats_lease.slow_save_interval(),
                 Vec::new(),
             ) {
@@ -317,7 +316,7 @@ where
         }),
         async_init,
     )?;
-    Ok((shared, reloader, async_loader))
+    Ok((reloader, async_loader))
 }
 
 /// Publishes the startup catalog and starts following the cluster's schema.

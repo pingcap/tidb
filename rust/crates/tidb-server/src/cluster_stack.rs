@@ -244,13 +244,8 @@ pub fn cluster_session_stack(
     // Statistics always resolve targets from this published catalog, so the
     // reload loop follows DDL-added tables and changed column types instead of
     // freezing the boot image.
-    let (stats, stats_reloader, async_stats_loader) = tidb_session::domain::real_tikv_node::spawn_node_stats(
-        Arc::clone(&catalog),
-        authority.transaction_opener(),
-        config.stats_lease,
-        COPROCESSOR_QUERY_TIMEOUT,
-    )
-    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
+    let stats = tidb_session::domain::real_tikv_node::new_node_stats()
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     // The sysvar half of the same division: a Go peer's `SET GLOBAL` is
     // durable in `mysql.global_variables` the instant it commits, and this
     // reloader is what makes THIS node notice it -- one tick, or one round
@@ -582,6 +577,17 @@ pub fn cluster_session_stack(
         },
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    // Go `UpdateTableStatsLoop`, after the binding handle: the cache refresh
+    // runs on the domain's sessions.
+    let (stats_reloader, async_stats_loader) = tidb_session::domain::real_tikv_node::spawn_node_stats(
+        Arc::clone(&stats),
+        Arc::clone(&factory.catalog),
+        authority.transaction_opener(),
+        config.stats_lease,
+        COPROCESSOR_QUERY_TIMEOUT,
+        factory.advanced_sys_session_pool(),
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     factory.attach_login_storage(&users);
     if let Some(runner) = &mut server_info_runner {
         let processes = factory.processes();

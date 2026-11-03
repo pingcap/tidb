@@ -51,7 +51,6 @@ use tidb_store_driver_txn::transaction::StoreClient;
 
 use crate::cluster_analyze::AnalyzeStatement;
 use tidb_infoschema::cluster_catalog::load_info_schema;
-use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
 use crate::real_tikv_analyze::{
     commit_cluster_analyze, record_global_history_enabled, resolve_cluster_analyze_statement,
     save_analyze_options, AnalyzeJobLifecycle, ClusterAnalyzeReport,
@@ -61,7 +60,7 @@ use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_stats_handle_storage::real_tikv_load_stats::{
     commit_cluster_load_stats, ClusterLoadStatsCommitError, ClusterLoadStatsReport,
 };
-use tidb_stats_handle_syncload::real_tikv_stats::{update_stats_cache_from_cluster, StatsTarget};
+use tidb_stats_handle_syncload::real_tikv_stats::{update_stats_cache, StatsTarget};
 use tidb_stats_handle_syncload::stats_watch::SharedStats;
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_sqlkiller::SqlKiller;
@@ -92,7 +91,11 @@ pub trait ClusterAnalyze: Send + Sync {
     /// tableAndPartitionIDs...)`: once per statement, after every table's
     /// results are saved, over the physical ids of all of them. Its failure
     /// is the statement's error.
-    fn update_stats_cache(&self, _physical_ids: Vec<i64>) -> Result<(), SqlQueryError> {
+    fn update_stats_cache(
+        &self,
+        _physical_ids: Vec<i64>,
+        _stats_pool: &dyn StatsSessionPool,
+    ) -> Result<(), SqlQueryError> {
         Ok(())
     }
 
@@ -156,15 +159,18 @@ where
         }
     }
 
-    /// Runs Go's targeted cache update after ANALYZE or LOAD STATS.
-    fn refresh_stats(&self, physical_ids: Vec<i64>) -> Result<(), String> {
-        let (targets, loader) = self.stats_targets()?;
-        match update_stats_cache_from_cluster(
-            &self.opener,
-            self.timeout,
+    /// Runs Go's targeted cache update after ANALYZE or LOAD STATS, on the
+    /// statistics handle's sessions.
+    fn refresh_stats(
+        &self,
+        physical_ids: Vec<i64>,
+        stats_pool: &dyn StatsSessionPool,
+    ) -> Result<(), String> {
+        let targets = self.stats_targets()?;
+        match update_stats_cache(
+            stats_pool,
             &targets,
             &self.stats,
-            &loader,
             self.stats_lease,
             physical_ids,
         ) {
@@ -184,7 +190,7 @@ where
 
     /// Every non-system table in the cluster, with the column types its
     /// stored bounds decode against.
-    fn stats_targets(&self) -> Result<(Vec<StatsTarget>, ClusterStatsLoader), String> {
+    fn stats_targets(&self) -> Result<Vec<StatsTarget>, String> {
         let mut transaction = self
             .opener
             .begin_read_only()
@@ -192,14 +198,12 @@ where
         let result = {
             let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
             let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
-            let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
-            let targets = catalog
+            catalog
                 .stored_schemas()
                 .iter()
                 .flat_map(|database| database.read().deprecated_tables.iter_deref())
                 .flat_map(|table| StatsTarget::for_table(&table.read()))
-                .collect();
-            (targets, loader)
+                .collect()
         };
         transaction
             .finish_without_writes()
@@ -262,8 +266,12 @@ where
         Ok(report)
     }
 
-    fn update_stats_cache(&self, physical_ids: Vec<i64>) -> Result<(), SqlQueryError> {
-        self.refresh_stats(physical_ids)
+    fn update_stats_cache(
+        &self,
+        physical_ids: Vec<i64>,
+        stats_pool: &dyn StatsSessionPool,
+    ) -> Result<(), SqlQueryError> {
+        self.refresh_stats(physical_ids, stats_pool)
             .map_err(SqlQueryError::unknown)
     }
 
@@ -303,7 +311,7 @@ where
         // As after ANALYZE, pinned Go returns `StatsHandle.Update` failure
         // from `LoadStatsFromJSON`; durable writes do not turn this into a
         // warning.
-        self.refresh_stats(report.physical_ids().to_vec())
+        self.refresh_stats(report.physical_ids().to_vec(), stats_pool)
             .map_err(SqlQueryError::unknown)?;
         Ok(report)
     }
@@ -320,7 +328,7 @@ where
         )?;
         // Go `executeDropStats` ends in `StatsHandle.Update`, and returns its
         // failure: the rows are durable either way.
-        self.refresh_stats(physical_ids.to_vec())
+        self.refresh_stats(physical_ids.to_vec(), stats_pool)
             .map_err(SqlQueryError::unknown)
     }
 }

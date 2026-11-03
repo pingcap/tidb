@@ -3006,8 +3006,9 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnaly
     fn update_stats_cache(
         &self,
         physical_ids: Vec<i64>,
+        stats_pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
     ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
-        self.inner.update_stats_cache(physical_ids)
+        self.inner.update_stats_cache(physical_ids, stats_pool)
     }
 }
 
@@ -3061,8 +3062,9 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyz
     fn update_stats_cache(
         &self,
         physical_ids: Vec<i64>,
+        stats_pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
     ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
-        self.inner.update_stats_cache(physical_ids)
+        self.inner.update_stats_cache(physical_ids, stats_pool)
     }
 }
 
@@ -18076,6 +18078,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUp
     fn update_stats_cache(
         &self,
         physical_ids: Vec<i64>,
+        _stats_pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
     ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
         self.updated.lock().unwrap().extend(physical_ids);
         Err(tidb_store_driver_error::sql_query_error::SqlQueryError::unknown(

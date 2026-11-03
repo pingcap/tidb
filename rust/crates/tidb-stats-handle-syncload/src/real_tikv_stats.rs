@@ -31,7 +31,6 @@ use tidb_model::table_info::TableInfo;
 use tidb_stats_handle_cache::{StatsMetaRow, StatsRefreshSource, UpdateError};
 use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
-use tidb_infoschema::cluster_catalog::MetaSnapshot;
 use tidb_stats_handle_storage::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader};
 use tidb_syssession::mysql_system_tables::SystemTableError;
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
@@ -304,19 +303,18 @@ fn skips_internal_column(item: &tidb_model::TableItemID) -> bool {
     !item.is_index && item.id <= 0
 }
 
-struct ClusterStatsRefreshSource<'a, S: StoreClient> {
-    opener: &'a RealOptimisticTransactionOpener<S>,
-    timeout: Duration,
-    loader: &'a ClusterStatsLoader,
+/// Go `StatsCacheImpl.Update`'s storage reads on the statistics handle's
+/// session pool (`util.CallWithSCtx(s.statsHandle.SPool(), ...)`): the
+/// ordered `mysql.stats_meta` SELECT, and `statsReadWriter.TableStatsFromStorage`
+/// over `storage/read.rs`.
+struct SessionStatsRefreshSource<'a> {
+    pool: &'a dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
     targets: BTreeMap<i64, &'a StatsTarget>,
     shared: &'a SharedStats,
     lease: Duration,
 }
 
-impl<S> StatsRefreshSource for ClusterStatsRefreshSource<'_, S>
-where
-    S: StoreClient,
-{
+impl StatsRefreshSource for SessionStatsRefreshSource<'_> {
     type Error = SystemTableError;
 
     fn lease(&self) -> Duration {
@@ -328,23 +326,44 @@ where
         after_version: u64,
         physical_ids: &[i64],
     ) -> Result<Vec<StatsMetaRow>, Self::Error> {
-        let mut transaction = self
-            .opener
-            .begin_read_only()
-            .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-        let rows = {
-            let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
-            let mut rows = self.loader.load_stats_meta_rows(&mut snapshot)?;
-            rows.retain(|row| {
-                row.version > after_version
-                    && (physical_ids.is_empty() || physical_ids.contains(&row.physical_id))
-            });
-            rows
+        let mut query = "SELECT version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta where version > %? ".to_owned();
+        // Go converts the table IDs to strings: the SQL executor only accepts
+        // string arrays for IN clauses.
+        let ids: Vec<String> = physical_ids.iter().map(i64::to_string).collect();
+        let id_bytes: Vec<&[u8]> = ids.iter().map(|id| id.as_bytes()).collect();
+        let mut args = vec![tidb_sqlescape::SqlArg::Unsigned(after_version)];
+        if !physical_ids.is_empty() {
+            query.push_str("and table_id in (%?) ");
+            args.push(tidb_sqlescape::SqlArg::Strings(&id_bytes));
+        }
+        query.push_str("order by version");
+        let mut rows = Vec::new();
+        self.pool
+            .call_with_sctx(
+                &mut |sctx| {
+                    (rows, _) = tidb_stats_handle_util::exec_rows(sctx, &query, &args)?;
+                    Ok(())
+                },
+                &[],
+            )
+            .map_err(|error| SystemTableError::Snapshot(error.message))?;
+        // Go `row.GetInt64`/`row.GetUint64`: one eight-byte slot either way.
+        let int = |row: &[tidb_datatype::Datum], index: usize| match row.get(index) {
+            Some(tidb_datatype::Datum::Int(value)) => *value,
+            Some(tidb_datatype::Datum::UInt(value)) => *value as i64,
+            _ => 0,
         };
-        transaction
-            .finish_without_writes()
-            .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-        Ok(rows)
+        Ok(rows
+            .iter()
+            .map(|row| StatsMetaRow {
+                version: int(row, 0) as u64,
+                physical_id: int(row, 1),
+                modify_count: int(row, 2),
+                count: int(row, 3),
+                snapshot: int(row, 4) as u64,
+                latest_histogram_version: int(row, 5) as u64,
+            })
+            .collect())
     }
 
     fn table_info_update_ts(&self, physical_id: i64) -> Option<u64> {
@@ -360,42 +379,40 @@ where
         let Some(target) = self.targets.get(&physical_id) else {
             return Ok(None);
         };
-        let mut transaction = self
-            .opener
-            .begin_read_only()
-            .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-        let loaded = {
-            let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
-            // Go's `statsReadWriter.TableStatsFromStorage` reads the cached
-            // table (`statsHandler.Get`), a cached `PseudoTable` included,
-            // when it loads, under the handle's lease.
-            self.loader.load_statistics_table_for_update(
-                &mut snapshot,
-                physical_id,
-                &target.table,
-                &target.column_types,
-                self.shared.get(physical_id).as_deref(),
-                self.lease,
-            )?
-        };
-        transaction
-            .finish_without_writes()
-            .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-        Ok(loaded)
+        // Go `statsReadWriter.TableStatsFromStorage`: the cached table
+        // (`statsHandler.Get`), a cached `PseudoTable` included, under the
+        // handle's lease, in one wrapped transaction.
+        let cached = self.shared.get(physical_id);
+        let mut loaded = None;
+        self.pool
+            .call_with_sctx(
+                &mut |sctx| {
+                    loaded = tidb_stats_handle_storage::read::table_stats_from_storage(
+                        sctx,
+                        0,
+                        &target.table,
+                        physical_id,
+                        false,
+                        self.lease,
+                        cached.as_deref(),
+                    )?;
+                    Ok(())
+                },
+                &[tidb_stats_handle_util::FLAG_WRAP_TXN],
+            )
+            .map_err(|error| SystemTableError::Snapshot(error.message))?;
+        Ok(loaded.map(Arc::new))
     }
 }
 
-/// Pinned Go `StatsCacheImpl.Update` over the real cluster storage boundary.
-/// The cache's five-lease watermark, ordered rows, per-table version/schema
-/// skip, metadata-only reuse, and monotonic maximum all come from the shared
-/// `tidb-stats-handle-cache` implementation rather than a second snapshot
-/// refresh policy.
-pub fn update_stats_cache_from_cluster<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
-    timeout: Duration,
+/// Go `StatsCacheImpl.Update` on the statistics handle's session pool. The
+/// cache's five-lease watermark, ordered rows, per-table version/schema skip,
+/// metadata-only reuse, and monotonic maximum all come from the shared
+/// `tidb-stats-handle-cache` implementation.
+pub fn update_stats_cache(
+    pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
     tables: &[StatsTarget],
     shared: &SharedStats,
-    loader: &ClusterStatsLoader,
     lease: Duration,
     physical_ids: Vec<i64>,
 ) -> Result<bool, SystemTableError> {
@@ -407,10 +424,8 @@ pub fn update_stats_cache_from_cluster<S: StoreClient>(
         .iter()
         .map(|target| target.physical_id)
         .collect::<Vec<_>>();
-    let source = ClusterStatsRefreshSource {
-        opener,
-        timeout,
-        loader,
+    let source = SessionStatsRefreshSource {
+        pool,
         targets,
         shared,
         lease,

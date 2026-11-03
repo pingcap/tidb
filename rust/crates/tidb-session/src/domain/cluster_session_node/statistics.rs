@@ -551,7 +551,12 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
 
     fn update_stats_cache(&self, physical_ids: &[i64]) -> Result<(), tidb_driver_error::DriverError> {
         self.analyze
-            .update_stats_cache(physical_ids.to_vec())
+            .update_stats_cache(
+                physical_ids.to_vec(),
+                &tidb_domain_core::sys_session::StatsPool {
+                    session_pool: self.session_pool.as_ref(),
+                },
+            )
             .map_err(into_driver_error)
     }
 

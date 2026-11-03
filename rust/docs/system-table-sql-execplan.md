@@ -262,13 +262,20 @@ checksums).
   its pooled sessions never copy the global tier before the cache is
   built; here the full load follows the cache for the same reason). Test
   `the_sysvar_loop_builds_the_cache_before_it_starts_as_go`.
-- [ ] S1, statistics: the node's cache (`SharedStats`) already wraps Go's
-  `StatsCacheImpl` of `Table`; its readers (`cluster_stats_load.rs`,
-  `real_tikv_stats.rs`) fill it from raw record ranges. Port
-  `StatsCacheImpl.Update` (the `mysql.stats_meta` SELECT, then
-  `TableStatsFromStorage` from `storage/read.rs`) onto the domain's
-  sessions, then `bootstrap.go`'s `initStats*`, then `syncload`, starting
-  the stats loops after the domain.
+- [x] (2026-11-04) S1, statistics refresh: Go `StatsCacheImpl.Update` runs
+  on the statistics handle's sessions -- the ordered `mysql.stats_meta`
+  SELECT and `statsReadWriter.TableStatsFromStorage` (`storage/read.rs`,
+  wrapped transaction) behind the cache's existing `StatsRefreshSource`
+  (`real_tikv_stats::update_stats_cache`); the raw refresh source is gone.
+  The lease loop starts after the binding handle (Go `UpdateTableStatsLoop`),
+  and ANALYZE / LOAD STATS / DROP STATS refresh through the statement's
+  pool (`ClusterAnalyze::update_stats_cache` takes it). Covered by the
+  statistics suites (same data, read by SQL); a mutation that drops the
+  `stats_meta` rows fails 85 of them.
+- [ ] S1, statistics left: `bootstrap.go`'s `initStats*` (the first pass,
+  still `load_stats_snapshot_and_loader`) and `syncload`'s histogram loads
+  (`load_needed_histograms`) on the sessions; then `cluster_stats_load.rs`
+  goes.
 - [ ] Readers (below), in the order the remaining milestones set.
 
 ### Remaining milestones (Y01)

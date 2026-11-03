@@ -242,9 +242,15 @@ impl super::NodeConn {
     /// Go testkit's `dom.StatsHandle().Update(ctx, is)`: the stats cache
     /// reloads every table whose `mysql.stats_meta` moved since it last read.
     pub(crate) fn update_stats_cache(&self) -> Result<(), tidb_driver_error::DriverError> {
+        let pool = self.domain.advanced_sys_session_pool();
         super::node_services(&self.domain)
             .analyze()
-            .update_stats_cache(Vec::new())
+            .update_stats_cache(
+                Vec::new(),
+                &tidb_domain_core::sys_session::StatsPool {
+                    session_pool: Some(&pool),
+                },
+            )
             .map_err(driver_error)
     }
 

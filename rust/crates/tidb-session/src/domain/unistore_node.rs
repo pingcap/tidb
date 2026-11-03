@@ -613,13 +613,7 @@ pub fn unistore_cluster_session_stack_from(
             Arc::clone(&node_auto_ids),
         )
         .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
-    let (stats, stats_reloader, async_stats_loader) =
-        crate::domain::real_tikv_node::spawn_node_stats(
-            Arc::clone(&catalog),
-            opener.clone(),
-            config.stats_lease,
-            IN_PROCESS_TIMEOUT,
-        )
+    let stats = crate::domain::real_tikv_node::new_node_stats()
         .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
 
     let sysvar_publication_fence = tidb_domain_core::cluster_sysvar_seam::SysvarPublicationFence::default();
@@ -786,6 +780,16 @@ pub fn unistore_cluster_session_stack_from(
         )),
     )
     .map_err(|error| engine(SqlQueryError::unknown(error)))?;
+    // Go `UpdateTableStatsLoop`, after the binding handle.
+    let (stats_reloader, async_stats_loader) = crate::domain::real_tikv_node::spawn_node_stats(
+        Arc::clone(&stats),
+        Arc::clone(&factory.catalog),
+        opener.clone(),
+        config.stats_lease,
+        IN_PROCESS_TIMEOUT,
+        factory.advanced_sys_session_pool(),
+    )
+    .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
     factory.attach_login_storage(&users);
     factory.install_bdr_role_store(Arc::new(opener), IN_PROCESS_TIMEOUT);
     factory.load_signing_cert_loop(
