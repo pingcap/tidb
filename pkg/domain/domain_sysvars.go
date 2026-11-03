@@ -90,16 +90,8 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
 		}
 		vardef.EnablePDFollowerHandleRegion.Store(val)
 	case vardef.TiDBTSOClientRPCMode:
-		var concurrency int
-
-		switch sVal {
-		case vardef.TSOClientRPCModeDefault:
-			concurrency = 1
-		case vardef.TSOClientRPCModeParallel:
-			concurrency = 2
-		case vardef.TSOClientRPCModeParallelFast:
-			concurrency = 4
-		default:
+		concurrency, ok := vardef.TSOClientRPCModeToConcurrency(sVal)
+		if !ok {
 			return variable.ErrWrongValueForVar.GenWithStackByArgs(name, sVal)
 		}
 
