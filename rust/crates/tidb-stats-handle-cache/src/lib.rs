@@ -17,7 +17,7 @@
 pub mod table_size_stats;
 mod stats_table_row_cache;
 
-pub use stats_table_row_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
+pub use stats_table_row_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId, TABLE_ROW_STATS_CACHE};
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};

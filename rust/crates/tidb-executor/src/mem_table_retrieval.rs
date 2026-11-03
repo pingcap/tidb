@@ -78,20 +78,6 @@ impl MemTableRead {
             })
     }
 
-    /// Go `buildTableSizeStats`'s `needColLength` decision after logical
-    /// column pruning. `TABLE_ROWS` needs only `mysql.stats_meta`; the
-    /// variable-width size columns additionally require the more expensive
-    /// histogram read.
-    #[must_use]
-    pub fn needs_table_storage_column_lengths(&self) -> bool {
-        self.is_table_with_storage_sizes()
-            && self.columns.iter().any(|column| {
-                matches!(
-                    column.to_ascii_uppercase().as_str(),
-                    "AVG_ROW_LENGTH" | "DATA_LENGTH" | "INDEX_LENGTH"
-                )
-            })
-    }
 }
 
 /// Go's `memTableRetriever` for the tables whose rows depend on the

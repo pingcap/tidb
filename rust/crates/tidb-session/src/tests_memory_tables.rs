@@ -214,7 +214,6 @@ fn a_scan_has_at_most_one_retriever() {
             tidb_executor::memtable_retrievers::InformationSchemaRetriever::new(
                 session.schema_visibility(),
                 None,
-                "default".to_owned(),
             ),
         ),
         Box::new(tidb_executor::memtable_reader::InstanceStateRetriever::new(

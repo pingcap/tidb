@@ -67,10 +67,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     fn require_show_stats_privilege(&self, table: &str) -> Result<(), DriverError>;
     /// Go `infoschema`'s `TableSizeStats` image: the statement's catalog
     /// with the table-size cache folded in.
-    fn table_storage_statistics_catalog(
-        &mut self,
-        needs_column_lengths: bool,
-    ) -> Result<crate::SessionExtendedInfoSchema, DriverError>;
+    fn table_storage_statistics_catalog(&mut self) -> Result<crate::SessionExtendedInfoSchema, DriverError>;
     /// Go `statstypes.ColumnStatsUsage` storage reader.
     fn column_stats_usage_provider(&self) -> Option<std::sync::Arc<dyn ColumnStatsUsageProvider>>;
     /// Go's `mysql.analyze_jobs` reader.
@@ -676,7 +673,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                 self.require_visible_database(&database)?;
                 let ctx = self.statement_context(false);
                 let visibility = self.schema_visibility();
-                let catalog = self.table_storage_statistics_catalog(true)?;
+                let catalog = self.table_storage_statistics_catalog()?;
                 if catalog.table_names(&database).is_none() {
                     return Err(DriverError::from(
                         tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS

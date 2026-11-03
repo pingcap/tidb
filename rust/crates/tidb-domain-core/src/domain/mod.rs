@@ -46,7 +46,7 @@ use tidb_stats_handle_syncload::stats_watch::SharedStats;
 use tidb_sessmgr::ProcessRegistry;
 use tidb_stats_handle_cache::table_size_stats::TableStorageStatsProvider;
 use tidb_privilege::PrivilegeRegistry;
-use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
+use tidb_stats_handle_cache::{StatsTableRowSizeSource, TableHistId};
 
 use crate::bdr_role_store;
 use crate::cluster_account_seam::ClusterAccountWriter;
@@ -117,148 +117,108 @@ pub struct ClusterColumnStatsUsageProvider {
 }
 
 pub struct ClusterTableStorageStatsProvider {
-    pub transactions: Arc<dyn ClusterTransactions>,
-    pub catalog: Arc<InfoCache>,
-    /// Go `cache.TableRowStatsCache`
-    /// (`pkg/statistics/handle/cache/stats_table_row_cache.go`): the size
-    /// cache the information-schema `TABLES`/`PARTITIONS` readers refresh in
-    /// batch and then serve from. Go keeps one process-wide instance; this
-    /// node owns one per provider.
-    pub row_stats_cache: StatsTableRowCache,
+    /// Go `ExecWithOpts`' restricted session: the domain's system sessions.
+    pub domain: Weak<Domain>,
 }
 
-impl ClusterTableStorageStatsProvider {
-    /// The two restricted reads Go's `UpdateByID` performs inside
-    /// `getRowCountTables`/`getColLengthTables`. Kept behind
-    /// [`StatsTableRowSizeSource`] so the cache can enforce its
-    /// both-reads-or-nothing copy contract.
-    fn size_reads(
-        &self,
-        catalog: &tidb_infoschema::SessionExtendedInfoSchema,
-        resource_group: &str,
-        ids: &[i64],
-        need_column_lengths: bool,
-    ) -> Result<SizeReads, String> {
-        let loader = ClusterStatsLoader::locate(catalog).map_err(|error| error.to_string())?;
-        let row_snapshot = self.transactions.open_snapshot(resource_group)?;
-        let rows = loader
-            .load_table_row_counts(&mut SnapshotMetaSnapshot::new(row_snapshot), ids)
-            .map_err(|error| error.to_string())?;
-        let lengths = if need_column_lengths {
-            let length_snapshot = self.transactions.open_snapshot(resource_group)?;
-            loader
-                .load_column_lengths(&mut SnapshotMetaSnapshot::new(length_snapshot), ids)
-                .map_err(|error| error.to_string())?
-        } else {
-            // Statement-local `TableSizeStats` skips the histogram read when
-            // no retained projection consumes column lengths; the cached map
-            // is then left unchanged, which those projections never observe.
-            Vec::new()
-        };
-        Ok((
-            rows.into_iter()
-                .map(|row| (row.table_id, row.count))
-                .collect(),
-            lengths
-                .into_iter()
-                .map(|row| {
-                    (
-                        (row.table_id, row.histogram_id),
-                        u64::try_from(row.total_size.max(0)).expect("nonnegative i64 fits in u64"),
-                    )
-                })
-                .collect(),
-        ))
+/// Go `TableRowStatsCache.UpdateByID`'s two restricted reads, each its own
+/// statement on one of the domain's system sessions.
+struct SessionSizeReads<'a> {
+    pool: &'a dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
+}
+
+impl SessionSizeReads<'_> {
+    fn rows(&self, sql: &str) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
+        let mut rows = Vec::new();
+        self.pool
+            .call_with_sctx(
+                &mut |sctx| {
+                    (rows, _) = tidb_stats_handle_util::exec_rows(sctx, sql, &[])?;
+                    Ok(())
+                },
+                &[],
+            )
+            .map_err(|error| error.message)?;
+        Ok(rows)
     }
 }
 
-/// The size source one refresh closes over: Go's `UpdateByID` runs both
-/// reads against one session context; this adapter runs them against one
-/// provider, catalog image, and per-read statement snapshots. Both reads are
-/// performed once, on the first call, exactly like Go's sequential pair.
-/// One refreshed pair of restricted reads: the row counts and the column
-/// lengths Go's `UpdateByID` copies into the cache together.
-pub(crate) type SizeReads = (Vec<(i64, u64)>, Vec<(TableHistId, u64)>);
-
-pub(crate) struct ProviderSizeReads<'a> {
-    provider: &'a ClusterTableStorageStatsProvider,
-    catalog: &'a tidb_infoschema::SessionExtendedInfoSchema,
-    resource_group: &'a str,
-    need_column_lengths: bool,
-    reads: RefCell<Option<Result<SizeReads, String>>>,
+/// Go `buildInTableIDsString`.
+fn in_table_ids(ids: &[i64]) -> String {
+    let ids: Vec<String> = ids.iter().map(i64::to_string).collect();
+    format!("table_id in ({})", ids.join(","))
 }
 
-impl ProviderSizeReads<'_> {
-    /// Performs both restricted reads once, on the first call, exactly like
-    /// Go's sequential `getRowCountTables`/`getColLengthTables` pair.
-    fn load(&self, ids: &[i64]) -> Result<SizeReads, String> {
-        {
-            let mut reads = self.reads.borrow_mut();
-            if reads.is_none() {
-                *reads = Some(self.provider.size_reads(
-                    self.catalog,
-                    self.resource_group,
-                    ids,
-                    self.need_column_lengths,
-                ));
-            }
-        }
-        self.reads
-            .borrow()
-            .as_ref()
-            .expect("reads are computed above")
-            .clone()
+/// Go `row.GetInt64(i)`.
+fn row_i64(row: &[tidb_datatype::Datum], index: usize) -> i64 {
+    match row.get(index) {
+        Some(tidb_datatype::Datum::Int(value)) => *value,
+        Some(tidb_datatype::Datum::UInt(value)) => *value as i64,
+        _ => 0,
     }
 }
 
-impl StatsTableRowSizeSource for ProviderSizeReads<'_> {
+impl StatsTableRowSizeSource for SessionSizeReads<'_> {
     type Error = String;
 
+    /// Go `getRowCountTables`.
     fn read_row_counts(&self, ids: &[i64]) -> Result<Vec<(i64, u64)>, Self::Error> {
-        self.load(ids).map(|(rows, _)| rows)
+        let sql = if ids.is_empty() {
+            "select table_id, count from mysql.stats_meta".to_owned()
+        } else {
+            format!("select table_id, count from mysql.stats_meta where {}", in_table_ids(ids))
+        };
+        Ok(self
+            .rows(&sql)?
+            .iter()
+            .map(|row| (row_i64(row, 0), row_i64(row, 1) as u64))
+            .collect())
     }
 
+    /// Go `getColLengthTables`.
     fn read_column_lengths(&self, ids: &[i64]) -> Result<Vec<(TableHistId, u64)>, Self::Error> {
-        self.load(ids).map(|(_, lengths)| lengths)
+        let sql = if ids.is_empty() {
+            "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0"
+                .to_owned()
+        } else {
+            format!(
+                "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0 and {}",
+                in_table_ids(ids)
+            )
+        };
+        Ok(self
+            .rows(&sql)?
+            .iter()
+            .map(|row| ((row_i64(row, 0), row_i64(row, 1)), row_i64(row, 2).max(0) as u64))
+            .collect())
     }
 }
 
 impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
     fn load_table_row_stats(
         &self,
-        resource_group: &str,
-        need_column_lengths: bool,
         physical_ids: &[i64],
     ) -> Result<tidb_stats_handle_cache::table_size_stats::TableRowStatsSnapshot, String> {
-        // The latest catalog only locates `mysql.stats_meta` and
-        // `mysql.stats_histograms`, as Go's restricted SQL resolves them; the
-        // tables sized are the statement's own (`physical_ids`).
-        let catalog = self.catalog.get_latest();
-
+        let cache = &*tidb_stats_handle_cache::TABLE_ROW_STATS_CACHE;
         // Go `updateStatsCacheIfNeed` + `TableRowStatsCache.UpdateByID`
-        // (`executor/infoschema_reader.go:671`): refresh the node's size cache
-        // for every physical ID the statement's schema holds first. A failed
-        // restricted read only warns — the reader then serves the cache's
-        // previous values, not zeros.
-        let source = ProviderSizeReads {
-            provider: self,
-            catalog: &catalog,
-            resource_group,
-            need_column_lengths,
-            reads: RefCell::new(None),
+        // (`executor/infoschema_reader.go:671`): refresh the cache for every
+        // physical ID the statement's schema holds first. A failed read only
+        // warns -- the reader then serves the cache's previous values.
+        let domain = self.domain.upgrade();
+        let pool = domain.as_ref().map(|domain| domain.advanced_sys_session_pool());
+        let source = SessionSizeReads {
+            pool: &crate::sys_session::StatsPool {
+                session_pool: pool.as_ref(),
+            },
         };
-        if let Err(error) = self.row_stats_cache.update_by_id(&source, physical_ids) {
+        if let Err(error) = cache.update_by_id(&source, physical_ids) {
             // Go `updateStatsCacheIfNeed`.
             tidb_logutil::bg_logger().warn(
                 "cannot update stats cache for tables",
                 &[tidb_logutil::zap_error(error)],
             );
         }
-
-        // Go's readers answer from `cache.TableRowStatsCache` after the
-        // refresh attempt, so the returned values are the cache's, whatever
-        // the fresh reads did.
-        let (rows, lengths) = self.row_stats_cache.snapshot();
+        let (rows, lengths) = cache.snapshot();
         Ok(tidb_stats_handle_cache::table_size_stats::TableRowStatsSnapshot {
             table_rows: rows.into_iter().collect(),
             column_lengths: lengths.into_iter().collect(),

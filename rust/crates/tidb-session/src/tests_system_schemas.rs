@@ -2139,8 +2139,6 @@ fn table_sizes_are_estimated_over_the_statements_pinned_schema() {
     impl TableStorageStatsProvider for RecordingProvider {
         fn load_table_row_stats(
             &self,
-            _resource_group: &str,
-            _need_column_lengths: bool,
             physical_ids: &[i64],
         ) -> Result<tidb_stats_handle_cache::table_size_stats::TableRowStatsSnapshot, String> {
             self.requested.lock().unwrap().push(physical_ids.to_vec());

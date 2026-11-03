@@ -218,11 +218,8 @@ impl tidb_executor::show::exec::ShowExec for Session {
         Session::require_show_stats_privilege(self, table)
     }
 
-    fn table_storage_statistics_catalog(
-        &mut self,
-        needs_column_lengths: bool,
-    ) -> Result<SessionExtendedInfoSchema, DriverError> {
-        Session::table_storage_statistics_catalog(self, needs_column_lengths)
+    fn table_storage_statistics_catalog(&mut self) -> Result<SessionExtendedInfoSchema, DriverError> {
+        Session::table_storage_statistics_catalog(self)
     }
 
     fn column_stats_usage_provider(&self) -> Option<std::sync::Arc<dyn ColumnStatsUsageProvider>> {

@@ -56,6 +56,11 @@ impl Default for StatsTableRowCache {
     }
 }
 
+/// Go `cache.TableRowStatsCache`: the process-wide instance the
+/// information-schema readers refresh and serve from.
+pub static TABLE_ROW_STATS_CACHE: std::sync::LazyLock<StatsTableRowCache> =
+    std::sync::LazyLock::new(StatsTableRowCache::new);
+
 /// One consistent view of both maps: `(row counts, column lengths)`, feeding
 /// the shared `TableSizeStats` estimators on the consumer side.
 pub type SizeSnapshot = (Vec<(i64, u64)>, Vec<(TableHistId, u64)>);

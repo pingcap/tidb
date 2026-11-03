@@ -229,7 +229,6 @@ fn cluster_views_are_registered_from_go_table_info() {
 fn loaded_column_ndv_reaches_grouped_cluster_plans() {
     struct FixedStorageStatistics {
         calls: Arc<std::sync::atomic::AtomicUsize>,
-        column_length_requests: Arc<std::sync::Mutex<Vec<bool>>>,
         fail: Arc<std::sync::atomic::AtomicBool>,
         values: tidb_stats_handle_cache::table_size_stats::TableRowStatsSnapshot,
     }
@@ -237,15 +236,9 @@ fn loaded_column_ndv_reaches_grouped_cluster_plans() {
     impl crate::TableStorageStatsProvider for FixedStorageStatistics {
         fn load_table_row_stats(
             &self,
-            _resource_group: &str,
-            need_column_lengths: bool,
             _physical_ids: &[i64],
         ) -> Result<tidb_stats_handle_cache::table_size_stats::TableRowStatsSnapshot, String> {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-            self.column_length_requests
-                .lock()
-                .unwrap()
-                .push(need_column_lengths);
             if self.fail.load(std::sync::atomic::Ordering::Acquire) {
                 return Err("stats read failed".to_owned());
             }
@@ -314,11 +307,9 @@ fn loaded_column_ndv_reaches_grouped_cluster_plans() {
     // table, which every catalog over the node plans from.
     session.update_stats_cache_with(vec![loaded_stats]);
     let storage_stats_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let column_length_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let fail_storage_stats = Arc::new(std::sync::atomic::AtomicBool::new(false));
     session.set_table_storage_stats_provider(Arc::new(FixedStorageStatistics {
         calls: Arc::clone(&storage_stats_reads),
-        column_length_requests: Arc::clone(&column_length_requests),
         fail: Arc::clone(&fail_storage_stats),
         // Three fixed-width BIGINT columns: 3,000,065 rows of 24 bytes
         // estimate a DATA_LENGTH of 72,001,560.
@@ -351,7 +342,6 @@ fn loaded_column_ndv_reaches_grouped_cluster_plans() {
         0,
         "Go skips the two restricted reads when no size column is requested"
     );
-    assert!(column_length_requests.lock().unwrap().is_empty());
     let rows = result_rows(session.run(
         "SELECT TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH \
          FROM information_schema.tables \
@@ -370,7 +360,6 @@ fn loaded_column_ndv_reaches_grouped_cluster_plans() {
         storage_stats_reads.load(std::sync::atomic::Ordering::Acquire),
         1
     );
-    assert_eq!(*column_length_requests.lock().unwrap(), vec![true]);
     {
         let catalog = session.shared_catalog();
         let catalog = catalog.lock().unwrap();
@@ -390,11 +379,6 @@ fn loaded_column_ndv_reaches_grouped_cluster_plans() {
         storage_stats_reads.load(std::sync::atomic::Ordering::Acquire),
         2,
         "the resolved memory-table scan inside a CTE must refresh"
-    );
-    assert_eq!(
-        *column_length_requests.lock().unwrap(),
-        vec![true, false],
-        "TABLE_ROWS alone reads stats_meta without scanning stats_histograms"
     );
     session
         .run(

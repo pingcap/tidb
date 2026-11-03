@@ -235,13 +235,7 @@ impl SizeStats<'_> {
 pub trait TableStorageStatsProvider: Send + Sync {
     /// Go `updateStatsCacheIfNeed` + the cache read after it: refreshes the
     /// size cache for `physical_ids` -- the statement's own tables and
-    /// partitions -- and answers what the cache then holds. The
-    /// histogram-size read is skipped when only `TABLE_ROWS` is requested. A
-    /// read failure is warning-only at the caller.
-    fn load_table_row_stats(
-        &self,
-        resource_group: &str,
-        need_column_lengths: bool,
-        physical_ids: &[i64],
-    ) -> Result<TableRowStatsSnapshot, String>;
+    /// partitions -- and answers what the cache then holds. A read failure is
+    /// warning-only at the caller.
+    fn load_table_row_stats(&self, physical_ids: &[i64]) -> Result<TableRowStatsSnapshot, String>;
 }

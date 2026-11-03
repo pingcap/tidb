@@ -1240,17 +1240,11 @@ pub fn table_storage_statistics_catalog_of(
     mut scratch: crate::SessionExtendedInfoSchema,
     stats_handle: &tidb_stats_handle::StatsHandle,
     table_storage_stats: Option<&dyn tidb_stats_handle_cache::table_size_stats::TableStorageStatsProvider>,
-    resource_group: &str,
-    needs_column_lengths: bool,
 ) -> Result<crate::SessionExtendedInfoSchema, DriverError> {
     let estimates = match table_storage_stats {
         Some(provider) => {
             let physical_ids = tidb_stats_handle_cache::table_size_stats::physical_table_ids(&scratch);
-            match provider.load_table_row_stats(
-                resource_group,
-                needs_column_lengths,
-                &physical_ids,
-            ) {
+            match provider.load_table_row_stats(&physical_ids) {
                 Ok(row_stats) => {
                     tidb_stats_handle_cache::table_size_stats::table_storage_estimates_from_row_stats(
                         &scratch, &row_stats,
@@ -1291,19 +1285,16 @@ pub fn table_storage_statistics_catalog_of(
 pub struct InformationSchemaRetriever {
     visibility: SchemaVisibility,
     table_storage_stats: Option<std::sync::Arc<dyn tidb_stats_handle_cache::table_size_stats::TableStorageStatsProvider>>,
-    resource_group: String,
 }
 
 impl InformationSchemaRetriever {
     pub fn new(
         visibility: SchemaVisibility,
         table_storage_stats: Option<std::sync::Arc<dyn tidb_stats_handle_cache::table_size_stats::TableStorageStatsProvider>>,
-        resource_group: String,
     ) -> Self {
         Self {
             visibility,
             table_storage_stats,
-            resource_group,
         }
     }
 }
@@ -1329,8 +1320,6 @@ impl crate::mem_table_retrieval::MemTableRetriever for InformationSchemaRetrieve
                 catalog.clone(),
                 ctx.stats_handle(),
                 self.table_storage_stats.as_deref(),
-                &self.resource_group,
-                read.needs_table_storage_column_lengths(),
             )?;
             &sized
         } else {

@@ -27201,6 +27201,45 @@ fn the_ddl_session_pool_is_gos_sess_pool_over_the_node() {
     sess_pool.put(context);
 }
 
+/// Go `cache.TableRowStatsCache` is one process-wide cache whose
+/// `UpdateByID` reads both `mysql.stats_meta` and `mysql.stats_histograms`
+/// on the domain's sessions and only adds to the cache: a `TABLE_ROWS`-only
+/// query in one session caches the column lengths a later `DATA_LENGTH`
+/// query in another session serves after the histogram rows are gone.
+#[test]
+fn the_table_size_cache_is_gos_process_wide_cache_over_both_reads() {
+    let (stack, _users) = cop_backed_stack();
+    let mut first = stack.factory.open_session(session_context(308)).unwrap();
+    rows(&mut first, "CREATE TABLE test.sized (id INT PRIMARY KEY, v VARCHAR(64))");
+    rows(
+        &mut first,
+        "INSERT INTO test.sized VALUES (1, 'aaaaaaaaaaaaaaaa'), (2, 'bbbbbbbbbbbbbbbb')",
+    );
+    rows(&mut first, "ANALYZE TABLE test.sized");
+    let length = |session: &mut Session| {
+        displayed(rows(
+            session,
+            "SELECT DATA_LENGTH FROM information_schema.tables \
+             WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'sized'",
+        ))
+    };
+    let expected = length(&mut first);
+    assert_ne!(expected, [["0"]], "the analyzed column has a size");
+    rows(
+        &mut first,
+        "SELECT TABLE_ROWS FROM information_schema.tables \
+         WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'sized'",
+    );
+    rows(
+        &mut first,
+        "DELETE FROM mysql.stats_histograms WHERE table_id = \
+         (SELECT TIDB_TABLE_ID FROM information_schema.tables \
+          WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'sized')",
+    );
+    let mut second = stack.factory.open_session(session_context(309)).unwrap();
+    assert_eq!(length(&mut second), expected);
+}
+
 /// Go `LoadPrivilegeLoop` -> `Handle.UpdateAll`: a peer's account rows land
 /// only in `mysql.*`, and this node's load reads them through the domain's
 /// system sessions (`MySQLPrivilege.LoadAll`'s `SELECT HIGH_PRIORITY`s), a

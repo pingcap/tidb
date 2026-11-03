@@ -272,6 +272,15 @@ checksums).
   pool (`ClusterAnalyze::update_stats_cache` takes it). Covered by the
   statistics suites (same data, read by SQL); a mutation that drops the
   `stats_meta` rows fails 85 of them.
+- [x] (2026-11-04) `information_schema` size columns: Go
+  `cache.TableRowStatsCache` is one process-wide cache
+  (`TABLE_ROW_STATS_CACHE`, was one per session) whose `UpdateByID` runs
+  `getRowCountTables` and `getColLengthTables` as two SELECTs on the
+  domain's sessions (was the raw record ranges), always both: the
+  `needs_column_lengths` skip came from a branch-local Go file
+  (`storage/table_size_stats.go`, not in master, no caller) and is gone with
+  the unused resource-group parameter. Test
+  `the_table_size_cache_is_gos_process_wide_cache_over_both_reads`.
 - [ ] S1, statistics left: `bootstrap.go`'s `initStats*` (the first pass,
   still `load_stats_snapshot_and_loader`) and `syncload`'s histogram loads
   (`load_needed_histograms`) on the sessions; then `cluster_stats_load.rs`

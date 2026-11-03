@@ -457,7 +457,6 @@ impl Session {
         let retriever = tidb_executor::memtable_retrievers::InformationSchemaRetriever::new(
             self.schema_visibility(),
             self.table_storage_stats.clone(),
-            self.active_resource_group.clone(),
         );
         if tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read) {
             return Some(std::sync::Arc::new(retriever));
@@ -569,8 +568,8 @@ impl Session {
 
     /// The catalog `information_schema.TABLES` / `PARTITIONS` read their size
     /// columns from: the statement's own schema image, with each table's
-    /// sizes estimated from Go `TableRowStatsCache` (and its column lengths
-    /// with `needs_column_lengths`) through the node's provider, which serves
+    /// sizes estimated from Go `TableRowStatsCache` through the node's
+    /// provider, which serves
     /// its cache when a refresh fails; the in-process store answers from its
     /// own table statistics.
     ///
@@ -580,15 +579,12 @@ impl Session {
     /// statement's snapshot holds is sized even when a later DDL dropped it.
     pub(crate) fn table_storage_statistics_catalog(
         &mut self,
-        needs_column_lengths: bool,
     ) -> Result<tidb_infoschema::SessionExtendedInfoSchema, DriverError> {
         let scratch = self.with_catalog_mut(|catalog| Ok(catalog.clone()))?;
         tidb_executor::memtable_retrievers::table_storage_statistics_catalog_of(
             scratch,
             &self.stats_handle,
             self.table_storage_stats.as_deref(),
-            &self.active_resource_group,
-            needs_column_lengths,
         )
     }
 

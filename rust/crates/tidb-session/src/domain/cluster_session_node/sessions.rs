@@ -422,9 +422,7 @@ impl DomainSessions for Domain {
             approximate_counts: Arc::clone(&self.approximate_table_counts),
         }));
         session.set_table_storage_stats_provider(Arc::new(ClusterTableStorageStatsProvider {
-            transactions: Arc::clone(&self.transactions),
-            catalog: Arc::clone(&self.catalog),
-            row_stats_cache: StatsTableRowCache::new(),
+            domain: self.binding_session_factory.clone(),
         }));
         if let Some(store) = self.bdr_role_store.get() {
             session.set_bdr_role_store(Arc::clone(store));
