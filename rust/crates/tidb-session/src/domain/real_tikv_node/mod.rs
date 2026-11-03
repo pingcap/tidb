@@ -160,25 +160,24 @@ fn load_cluster_sysvars_with_read(
     Ok(())
 }
 
-pub fn load_cluster_startup_variables<S>(
-    users: &ConfiguredUserStore,
+/// Go `BootstrapSession`'s steps before the domain starts: `InitMDLVariable`
+/// publishes the persisted metadata-lock setting to the process, then
+/// `initGlobalVarFromSystemDB` the bootstrap-persisted system time zone. The
+/// sysvar cache itself is the domain's (`LoadSysVarCacheLoop`, started by
+/// [`tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn`]).
+pub fn init_startup_variables_from_cluster<S>(
     opener: &RealOptimisticTransactionOpener<S>,
 ) -> Result<(), RunConfiguredNodeError>
 where
     S: StoreClient,
 {
-    let variables = tidb_domain_core::real_tikv_privileges::load_startup_variables_from_cluster(
+    init_mdl_variable(opener, PRODUCTION_CONTROL_PLANE_TIMEOUT)?;
+    let system_tz = tidb_domain_core::real_tikv_privileges::load_system_tz_from_cluster(
         opener,
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    initialize_cluster_system_tz_with_read(|| Ok(variables.system_tz))?;
-    // Go's InitMDLVariable publishes the persisted metadata-lock setting to
-    // the process before Domain starts its schema-ack loop.
-    init_mdl_variable(opener, PRODUCTION_CONTROL_PLANE_TIMEOUT)?;
-    let fresh = crate::GlobalSysvars::from_cluster_rows(variables.sysvars);
-    users.global_vars().replace_from(&fresh);
-    Ok(())
+    initialize_cluster_system_tz_with_read(|| Ok(system_tz))
 }
 
 /// Go `session.InitMDLVariable`: the metadata-lock switch is its meta key

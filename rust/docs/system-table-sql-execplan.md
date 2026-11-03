@@ -251,14 +251,24 @@ checksums).
   `wait_timeout = interactive_timeout` there. Three tests that encoded the
   copy-at-open rule now state Go's. Test
   `a_session_copies_the_global_tier_at_its_first_statement_as_go`.
-- [ ] S1: move the first `rebuildSysVarCache` into `SysvarReloader::spawn`
-  (after the domain) and drop the pre-domain snapshot read of the sysvars.
-- [ ] S1, held: statistics. The node's cache (`SharedStats` of
-  `TableStatsState`, read by `cluster_stats_load.rs`/`real_tikv_stats.rs`
-  over raw record ranges) is not Go's `StatsCache` of `statistics.Table`.
-  Port `cache/statscache.go` over `storage/read.rs`'s `Table`, then
-  `bootstrap.go`'s `initStats*` SQL and `StatsCache.Update`'s
-  `mysql.stats_meta` SELECT on the domain's sessions, then `syncload`.
+- [x] (2026-11-04) S1, sysvar first load: `SysvarReloader::spawn` runs Go
+  `LoadSysVarCacheLoop`'s first `rebuildSysVarCache` on the domain's
+  sessions before the loop starts (its failure fails startup). Before the
+  domain only Go's own pre-domain reads remain (`real_tikv_privileges.rs`):
+  `InitMDLVariable`, `initGlobalVarFromSystemDB`'s system time zone, and the
+  bootstrap flag; the raw account and sysvar snapshot loads are gone. The
+  builders run, after the domain and its services: the sysvar cache, the
+  privilege load, the binding handle (Go loads accounts at first use, so
+  its pooled sessions never copy the global tier before the cache is
+  built; here the full load follows the cache for the same reason). Test
+  `the_sysvar_loop_builds_the_cache_before_it_starts_as_go`.
+- [ ] S1, statistics: the node's cache (`SharedStats`) already wraps Go's
+  `StatsCacheImpl` of `Table`; its readers (`cluster_stats_load.rs`,
+  `real_tikv_stats.rs`) fill it from raw record ranges. Port
+  `StatsCacheImpl.Update` (the `mysql.stats_meta` SELECT, then
+  `TableStatsFromStorage` from `storage/read.rs`) onto the domain's
+  sessions, then `bootstrap.go`'s `initStats*`, then `syncload`, starting
+  the stats loops after the domain.
 - [ ] Readers (below), in the order the remaining milestones set.
 
 ### Remaining milestones (Y01)

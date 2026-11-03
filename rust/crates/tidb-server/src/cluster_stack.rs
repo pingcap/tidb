@@ -155,12 +155,12 @@ pub fn cluster_session_stack(
             // catalog from then on, so bootstrap it right here and let the
             // catalog load below read the schema just published. A cluster a
             // TiDB already bootstrapped skips the publish entirely.
-            let accounts = tidb_domain_core::real_tikv_privileges::load_accounts_from_cluster(
+            let bootstrap = tidb_domain_core::real_tikv_privileges::read_bootstrap_state_from_cluster(
                 opener,
                 COPROCESSOR_QUERY_TIMEOUT,
             )
             .map_err(|error| error.to_string())?;
-            if !accounts.bootstrap.already_bootstrapped() {
+            if !bootstrap.already_bootstrapped() {
                 let started = std::time::Instant::now();
                 let (outcome, schema_version, bootstrap_splits) =
                     tidb_session::bootstrap_publish::publish_bootstrap_with_splits(
@@ -196,7 +196,7 @@ pub fn cluster_session_stack(
     let schema_version = startup.schema_meta_version();
 
     let users = node_accounts(config, global_vars)?;
-    tidb_session::domain::real_tikv_node::load_cluster_startup_variables(&users, &authority.transaction_opener())?;
+    tidb_session::domain::real_tikv_node::init_startup_variables_from_cluster(&authority.transaction_opener())?;
     // Go `domain_sysvars.go`: the TSO and follower sysvars tune the store's
     // PD client (`store.GetPDClient().UpdateOption`).
     if let Some(options) = authority.tikv_store().store().pd_client().pd_options() {
@@ -207,10 +207,9 @@ pub fn cluster_session_stack(
                 authority.tikv_store().clone(),
             )));
     }
-    // The cluster-session path owns one process-wide sysvar reloader below.
-    // Its persisted boot image was installed synchronously above, before this
-    // reloader and, crucially, before bind. This is independent of
-    // privilege-cache policy.
+    // The cluster-session path owns one process-wide sysvar reloader below,
+    // started once the domain's sessions exist; its first rebuild runs before
+    // it returns, so the persisted image is in force before bind.
     let auto_id_etcd = etcd.clone().ok_or_else(|| {
         RunConfiguredNodeError::Engine(SqlQueryError::unknown(
             "cluster AutoID discovery requires its configured etcd client",
@@ -522,17 +521,6 @@ pub fn cluster_session_stack(
     };
     let factory = factory.shared();
     ddl_session_pool.bind(&factory);
-    // Go `LoadSysVarCacheLoop`, started once the domain's sessions exist:
-    // each rebuild reads `mysql.global_variables` through them.
-    let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
-        users.global_vars(),
-        factory.advanced_sys_session_pool(),
-        tidb_session::domain::real_tikv_node::sysvar_reload_interval(config.schema_lease),
-        sysvar_publication_fence.clone(),
-    )
-    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    let sysvar_watcher =
-        tidb_session::domain::real_tikv_node::spawn_sysvar_watch(etcd.as_deref(), Some(&sysvar_reloader));
     tidb_session::domain::cluster_session_node::NodeServices::new(analyze)
     .with_cluster_peer_client(Arc::new(tidb_executor::cluster_peer::ClusterPeerClient::new(
         authority.tikv_store().clone(),
@@ -546,8 +534,21 @@ pub fn cluster_session_stack(
             .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?,
     ))
     .bind(&factory);
-    // Go `LoadPrivilegeLoop`, on the domain's sessions too. The reloader must
-    // drop before the authority's shutdown drain, like the catalog reloader.
+    // Go `LoadSysVarCacheLoop`, started once the domain's sessions exist:
+    // each rebuild reads `mysql.global_variables` through them.
+    let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
+        users.global_vars(),
+        factory.advanced_sys_session_pool(),
+        tidb_session::domain::real_tikv_node::sysvar_reload_interval(config.schema_lease),
+        sysvar_publication_fence.clone(),
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
+    let sysvar_watcher =
+        tidb_session::domain::real_tikv_node::spawn_sysvar_watch(etcd.as_deref(), Some(&sysvar_reloader));
+    // Go `LoadPrivilegeLoop`, on the domain's sessions too, after the sysvar
+    // cache: Go loads accounts at first use, so its pooled sessions never
+    // copy the global tier before the cache is built. The reloader must drop
+    // before the authority's shutdown drain, like the catalog reloader.
     let privilege_reloader = tidb_session::domain::real_tikv_node::start_privilege_loop(
         config,
         &users,

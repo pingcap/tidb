@@ -12,14 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The production `mysql.*` load: one real transaction, one PD timestamp, one
-//! consistent view of the cluster's accounts.
-//!
-//! The catalog, the bootstrap flag, and every privilege row are read at the
-//! same `start_ts`, so a node can never adopt a set of grants that never
-//! coexisted — including the case that matters most: a `CREATE USER` a Go node
-//! commits while this load is running is either wholly visible or wholly
-//! absent.
+//! The `mysql.tidb` reads a node makes before its domain exists, each
+//! through one fresh read-only transaction at one PD timestamp: whether Go's
+//! bootstrap already ran, and the bootstrap-persisted system time zone (Go
+//! `initGlobalVarFromSystemDB`). Every other `mysql.*` table is read by the
+//! domain's own sessions once they exist.
 
 use std::time::Duration;
 
@@ -27,97 +24,49 @@ use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_store_driver_txn::transaction::StoreClient;
 
 use tidb_infoschema::cluster_catalog::load_info_schema;
-use tidb_privilege::cluster_privilege_load::{
-    load_cluster_privileges, read_bootstrap_state, read_system_tz, ClusterBootstrapState,
-    ClusterPrivileges,
-};
-use tidb_syssession::cluster_sysvar_load::load_cluster_sysvars;
+use tidb_privilege::cluster_privilege_load::{read_bootstrap_state, read_system_tz, ClusterBootstrapState};
 use tidb_syssession::mysql_system_tables::SystemTableError;
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 
-/// One snapshot's whole answer about who may connect to this cluster.
-#[derive(Clone, Debug)]
-pub struct ClusterAccounts {
-    /// Whether Go's bootstrap already ran against this keyspace.
-    pub bootstrap: ClusterBootstrapState,
-    /// Every account and grant `mysql.*` held at that snapshot.
-    pub privileges: ClusterPrivileges,
-    /// Every `SET GLOBAL` override `mysql.global_variables` held at that same
-    /// snapshot, as `(name, value)` pairs ready for
-    /// `tidb_domain::global_sysvars::GlobalSysvars::load_from_cluster`.
-    pub sysvars: Vec<(String, String)>,
-}
-
-/// The process-global values that must be installed from one startup
-/// snapshot before the first session is admitted.
-#[derive(Clone, Debug)]
-pub struct ClusterStartupVariables {
-    /// Go `mysql.tidb.system_tz`.
-    pub system_tz: String,
-    /// Persisted `SET GLOBAL` overrides.
-    pub sysvars: Vec<(String, String)>,
-}
-
-/// Reads the bootstrap flag and every `mysql.*` account through one fresh
-/// read-only transaction.
+/// Reads `mysql.tidb`'s bootstrap flag through one fresh read-only
+/// transaction.
 ///
-/// The transaction is finished without writes, so the load leaves no locks
-/// behind and consumes exactly one PD timestamp — the same contract
+/// The transaction is finished without writes, so the read leaves no locks
+/// behind and consumes exactly one PD timestamp -- the same contract
 /// [`tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster`] keeps.
-pub fn load_accounts_from_cluster<S: StoreClient>(
+pub fn read_bootstrap_state_from_cluster<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
-) -> Result<ClusterAccounts, SystemTableError> {
-    let mut transaction = opener
-        .begin_read_only()
-        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-    let accounts = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = load_info_schema(&mut snapshot)?;
-        let bootstrap = read_bootstrap_state(&mut snapshot, &catalog)?;
-        // A keyspace no TiDB ever bootstrapped has no `mysql.user` to read,
-        // and reading one anyway would report a missing table as if it were a
-        // corrupt one. The empty account set is the honest answer, and its
-        // caller already has `bootstrap` to tell the two apart.
-        let (privileges, sysvars) = if matches!(bootstrap, ClusterBootstrapState::NotBootstrapped) {
-            (ClusterPrivileges::default(), Vec::new())
-        } else {
-            (
-                load_cluster_privileges(&mut snapshot, &catalog)?,
-                load_cluster_sysvars(&mut snapshot, &catalog)?,
-            )
-        };
-        ClusterAccounts {
-            bootstrap,
-            privileges,
-            sysvars,
-        }
-    };
-    transaction
-        .finish_without_writes()
-        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-    Ok(accounts)
+) -> Result<ClusterBootstrapState, SystemTableError> {
+    read_mysql_tidb(opener, timeout, |snapshot, catalog| read_bootstrap_state(snapshot, catalog))
 }
 
-/// Reads the bootstrap-persisted system time zone and global variables from
-/// one consistent read-only snapshot.
-pub fn load_startup_variables_from_cluster<S: StoreClient>(
+/// Go `initGlobalVarFromSystemDB`'s `mysql.tidb.system_tz`.
+pub fn load_system_tz_from_cluster<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
-) -> Result<ClusterStartupVariables, SystemTableError> {
+) -> Result<String, SystemTableError> {
+    read_mysql_tidb(opener, timeout, |snapshot, catalog| read_system_tz(snapshot, catalog))
+}
+
+fn read_mysql_tidb<S: StoreClient, T>(
+    opener: &RealOptimisticTransactionOpener<S>,
+    timeout: Duration,
+    read: impl FnOnce(
+        &mut TransactionMetaSnapshot<'_>,
+        &tidb_infoschema::SessionExtendedInfoSchema,
+    ) -> Result<T, SystemTableError>,
+) -> Result<T, SystemTableError> {
     let mut transaction = opener
         .begin_read_only()
         .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-    let variables = {
+    let value = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_info_schema(&mut snapshot)?;
-        ClusterStartupVariables {
-            system_tz: read_system_tz(&mut snapshot, &catalog)?,
-            sysvars: load_cluster_sysvars(&mut snapshot, &catalog)?,
-        }
+        read(&mut snapshot, &catalog)?
     };
     transaction
         .finish_without_writes()
         .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-    Ok(variables)
+    Ok(value)
 }

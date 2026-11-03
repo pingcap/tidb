@@ -27250,6 +27250,28 @@ fn the_privilege_load_reads_a_peers_rows_through_the_domains_sessions_as_go() {
     );
 }
 
+/// Go `LoadSysVarCacheLoop`: the first `rebuildSysVarCache` runs on the
+/// domain's sessions before the loop starts, so the cache is the cluster's
+/// when the loop's start returns -- no tick, no nudge.
+#[test]
+fn the_sysvar_loop_builds_the_cache_before_it_starts_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(307)).unwrap();
+    rows(
+        &mut session,
+        "REPLACE INTO mysql.global_variables VALUES ('tidb_mem_quota_query', '536870913')",
+    );
+    let live = crate::GlobalSysvars::from_cluster_rows([]);
+    let _reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
+        live.clone(),
+        stack.factory.advanced_sys_session_pool(),
+        Duration::from_secs(3600),
+        tidb_domain_core::cluster_sysvar_seam::SysvarPublicationFence::default(),
+    )
+    .expect("the first rebuild runs on the domain's sessions");
+    assert_eq!(live.get("tidb_mem_quota_query").unwrap(), "536870913");
+}
+
 /// Go `LoadSysVarCacheLoop`: a peer's `SET GLOBAL` lands only as its
 /// `mysql.global_variables` row, and this node's reload reads that table
 /// through the domain's system sessions (`rebuildSysVarCache` ->

@@ -393,6 +393,8 @@ pub enum SysvarReloadError {
     Spawn(std::io::Error),
     /// The reload thread panicked.
     WorkerPanicked,
+    /// The first rebuild, before the loop starts, failed.
+    Load(String),
 }
 
 impl std::fmt::Display for SysvarReloadError {
@@ -401,6 +403,7 @@ impl std::fmt::Display for SysvarReloadError {
             Self::ZeroInterval => formatter.write_str("sysvar reload interval must be nonzero"),
             Self::Spawn(error) => write!(formatter, "failed to spawn sysvar reloader: {error}"),
             Self::WorkerPanicked => formatter.write_str("sysvar reloader panicked"),
+            Self::Load(error) => write!(formatter, "load sysvar cache failed: {error}"),
         }
     }
 }
@@ -455,7 +458,13 @@ impl SysvarReloader {
         publication_fence: SysvarPublicationFence,
     ) -> Result<Self, SysvarReloadError> {
         // Go `LoadSysVarCacheLoop`: each rebuild reads the table through the
-        // domain's system sessions (`rebuildSysVarCache` -> `fetchTableValues`).
+        // domain's system sessions (`rebuildSysVarCache` -> `fetchTableValues`),
+        // the first one before the loop starts, its failure the caller's.
+        let rows = fetch_table_values(&crate::sys_session::StatsPool {
+            session_pool: Some(&session_pool),
+        })
+        .map_err(SysvarReloadError::Load)?;
+        live.replace_from(&GlobalSysvars::from_cluster_rows(rows));
         Self::spawn_with_read(
             live,
             interval,

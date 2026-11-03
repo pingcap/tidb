@@ -597,7 +597,7 @@ pub fn unistore_cluster_session_stack_from(
     // The bootstrap persisted the system time zone and the global-variable
     // rows this instant; reading them back through the same seam is the
     // production boot's own order.
-    crate::domain::real_tikv_node::load_cluster_startup_variables(&users, &opener)?;
+    crate::domain::real_tikv_node::init_startup_variables_from_cluster(&opener)?;
 
     // One registry for the whole node: sessions' INSERTs, the DDL owner's and
     // the statistics writers' `mysql.*` rows, and the reload's rebases.
@@ -754,14 +754,6 @@ pub fn unistore_cluster_session_stack_from(
     };
     let factory = factory.shared();
     ddl_session_pool.bind(&factory);
-    // Go `LoadSysVarCacheLoop`, started once the domain's sessions exist.
-    let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
-        users.global_vars(),
-        factory.advanced_sys_session_pool(),
-        crate::domain::real_tikv_node::sysvar_reload_interval(config.schema_lease),
-        sysvar_publication_fence.clone(),
-    )
-    .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
     crate::domain::cluster_session_node::NodeServices::new(analyze)
     .with_cluster_peer_client(Arc::new(tidb_executor::cluster_peer::ClusterPeerClient::new(
         peer_store,
@@ -775,6 +767,14 @@ pub fn unistore_cluster_session_stack_from(
             .map_err(|error| engine(SqlQueryError::unknown(error)))?,
     ))
     .bind(&factory);
+    // Go `LoadSysVarCacheLoop`, started once the domain's sessions exist.
+    let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
+        users.global_vars(),
+        factory.advanced_sys_session_pool(),
+        crate::domain::real_tikv_node::sysvar_reload_interval(config.schema_lease),
+        sysvar_publication_fence.clone(),
+    )
+    .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
     // Go `InitBindingHandle`, after the sysvar cache.
     let binding_reloader = crate::domain::cluster_session_node::init_binding_handle(
         &factory,
