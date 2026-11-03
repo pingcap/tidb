@@ -49,7 +49,7 @@ func TestInitCreateMaterializedViewBuildSessionAppliesDefinitionDivPrecisionIncr
 		MaterializedView: &model.MaterializedViewInfo{
 			DefinitionDivPrecisionIncrement: 9,
 			DefinitionSQLMode:               job.ReorgMeta.SQLMode,
-			DefinitionTimeZone:              *job.ReorgMeta.Location,
+			DefinitionTimeZone:              job.ReorgMeta.Location.Clone(),
 		},
 	}
 	// The submitter has loaded the global variables that track and spill the
