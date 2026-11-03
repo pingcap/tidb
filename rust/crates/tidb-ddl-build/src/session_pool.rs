@@ -205,4 +205,29 @@ pub trait StepSqlSession: Send {
         sql: &str,
         args: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError>;
+
+    /// Go `Session.Begin`: `sessiontxn.NewTxn`, an optimistic transaction
+    /// entered through the session's API, not a statement.
+    ///
+    /// # Errors
+    ///
+    /// The transaction's failure to start.
+    fn begin(&mut self) -> Result<(), tidb_terror::MysqlError>;
+
+    /// Go `Session.BeginPessimistic`.
+    ///
+    /// # Errors
+    ///
+    /// The transaction's failure to start.
+    fn begin_pessimistic(&mut self) -> Result<(), tidb_terror::MysqlError>;
+
+    /// Go `Session.Commit`: `StmtCommit` + `CommitTxn`.
+    ///
+    /// # Errors
+    ///
+    /// The commit's error.
+    fn commit(&mut self) -> Result<(), tidb_terror::MysqlError>;
+
+    /// Go `Session.Rollback`: `RollbackTxn`, which returns nothing.
+    fn rollback(&mut self);
 }

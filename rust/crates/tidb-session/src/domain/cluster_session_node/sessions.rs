@@ -845,9 +845,8 @@ impl tidb_syssession::SessionContext for ClusterStatsSessionContext {
     fn rollback_txn(&self, _context: &dyn tidb_sqlexec::ExecutionContext) {
         let _ = self.with_session(|session| {
             session
-                .execute_internal("ROLLBACK")
-                .map_err(|error| stats_session_error(error.message))?;
-            Ok(())
+                .rollback_txn()
+                .map_err(|error| stats_session_error(error.message))
         });
     }
 
@@ -1133,6 +1132,29 @@ impl tidb_domain_core::sys_session::DomainSysSession for ClusterStatsSessionCont
             .materialize(sql)
             .map(|(rows, _)| rows)
             .map_err(|error| error.to_string())
+    }
+
+    fn new_txn(&self, pessimistic: bool) -> Result<(), String> {
+        let mode = if pessimistic {
+            tidb_ast::TransactionMode::Pessimistic
+        } else {
+            tidb_ast::TransactionMode::Optimistic
+        };
+        self.with_session(|session| {
+            session
+                .new_txn(mode)
+                .map_err(|error| stats_session_error(error.message))
+        })
+        .map_err(|error| error.to_string())
+    }
+
+    fn commit_txn(&self) -> Result<(), String> {
+        self.with_session(|session| {
+            session
+                .commit_txn()
+                .map_err(|error| stats_session_error(error.message))
+        })
+        .map_err(|error| error.to_string())
     }
 
     /// Go `ddlHandlerImpl.HandleDDLEvent`'s subscriber, its statements on

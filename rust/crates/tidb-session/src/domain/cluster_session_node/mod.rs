@@ -646,6 +646,54 @@ impl<'s> ClusterServerSession<'s> {
             .map_err(sql_query_error)
     }
 
+    /// Go `sessiontxn.NewTxn` (`pkg/ddl/session.Session.Begin`, `mode`
+    /// optimistic) and `EnterNewTxn` pessimistic (`BeginPessimistic`): the
+    /// transaction a `BEGIN` of `mode` opens, entered through the session's
+    /// API rather than a statement, so nothing reaches the statement
+    /// observers (slow log, statement summary), as nothing does in Go.
+    pub fn new_txn(&mut self, mode: tidb_ast::TransactionMode) -> Result<(), SqlQueryError> {
+        let begin = Stmt::Session(tidb_ast::NodeBox::new(tidb_ast::SessionStmt::Begin(Box::new(
+            tidb_ast::BeginStmt {
+                mode,
+                ..tidb_ast::BeginStmt::default()
+            },
+        ))));
+        self.end_or_enter_txn(&begin)
+    }
+
+    /// Go `StmtCommit` + `CommitTxn` (`pkg/ddl/session.Session.Commit`).
+    pub fn commit_txn(&mut self) -> Result<(), SqlQueryError> {
+        let commit = Stmt::Session(tidb_ast::NodeBox::new(tidb_ast::SessionStmt::Commit(
+            tidb_ast::CompletionType::Default,
+        )));
+        self.session.reset_transaction_scope();
+        self.end_or_enter_txn(&commit)?;
+        self.commit_explicit()
+    }
+
+    /// Go `RollbackTxn` (`pkg/ddl/session.Session.Rollback`).
+    pub fn rollback_txn(&mut self) -> Result<(), SqlQueryError> {
+        let rollback = Stmt::Session(tidb_ast::NodeBox::new(tidb_ast::SessionStmt::Rollback {
+            savepoint: None,
+            completion: tidb_ast::CompletionType::Default,
+        }));
+        self.session.reset_transaction_scope();
+        self.end_or_enter_txn(&rollback)
+    }
+
+    /// The transaction half of a `BEGIN`/`COMMIT`/`ROLLBACK`; a failure that
+    /// ended the session's transaction leaves no store transaction behind.
+    fn end_or_enter_txn(&mut self, stmt: &Stmt) -> Result<(), SqlQueryError> {
+        if let Err(error) = self.control_transaction_stmt(stmt) {
+            if self.node.txn.explicit.is_some() && !self.session.in_transaction() {
+                self.discard_explicit()?;
+            }
+            return Err(error);
+        }
+        self.session.refresh_process_status();
+        Ok(())
+    }
+
     /// Go `sessiontxn.NewTxnInStmt` for the executor of the running
     /// statement: [`Session::new_txn_in_stmt`] over this session's
     /// transaction manager, when a transaction is open.

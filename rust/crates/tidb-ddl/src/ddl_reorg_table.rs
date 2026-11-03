@@ -222,13 +222,12 @@ fn run_in_txn(
     ) -> Result<(), tidb_terror::MysqlError>,
 ) -> Result<(), tidb_terror::MysqlError> {
     // Go `Begin`: `sessiontxn.NewTxn` enters an optimistic transaction.
-    s.execute("BEGIN OPTIMISTIC", &[])?;
+    s.begin()?;
     if let Err(error) = f(s) {
-        let _ = s.execute("ROLLBACK", &[]);
+        s.rollback();
         return Err(error);
     }
-    s.execute("COMMIT", &[])?;
-    Ok(())
+    s.commit()
 }
 
 /// Go `initDDLReorgHandle`: in one transaction, the job's rows replaced by
@@ -284,7 +283,7 @@ pub fn update_reorg_meta(
     if handle.start_key.is_empty() && handle.end_key.is_empty() {
         return Ok(());
     }
-    se.execute("BEGIN OPTIMISTIC", &[])?;
+    se.begin()?;
     // Go `updateDDLReorgHandle`.
     let sql = format!(
         "update mysql.tidb_ddl_reorg set ele_id = {}, ele_type = {}, start_key = {}, end_key = {}, physical_id = {} where job_id = {}",
@@ -296,7 +295,7 @@ pub fn update_reorg_meta(
         job_id,
     );
     let updated = se.execute(&sql, &[]).map(|_| ());
-    let committed = se.execute("COMMIT", &[]).map(|_| ());
+    let committed = se.commit();
     updated.and(committed)
 }
 

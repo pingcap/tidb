@@ -35,6 +35,14 @@ pub trait DomainSysSession:
     /// Go `ExecuteInternal` of a query, its rows drained.
     fn query_internal(&self, sql: &str) -> Result<Vec<Vec<Datum>>, String>;
 
+    /// Go `sessiontxn.NewTxn` (`pessimistic`: `EnterNewTxn` pessimistic), as
+    /// `pkg/ddl/session.Session.Begin` / `BeginPessimistic` call it: the
+    /// session's API, not a statement.
+    fn new_txn(&self, pessimistic: bool) -> Result<(), String>;
+
+    /// Go `StmtCommit` + `CommitTxn` (`pkg/ddl/session.Session.Commit`).
+    fn commit_txn(&self) -> Result<(), String>;
+
     /// Go `ddlHandlerImpl.HandleDDLEvent`'s statistics writes for one schema
     /// change, in this session's transaction.
     fn handle_stats_ddl_event(

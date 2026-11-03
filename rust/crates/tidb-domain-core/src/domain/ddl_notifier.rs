@@ -64,9 +64,6 @@ impl ClusterNotifierSession {
         self.with_context(|context| context.query_internal(sql))
     }
 
-    fn control_transaction(&self, sql: &str) -> Result<(), NotifierError> {
-        self.with_context(|context| context.execute_internal_write(sql).map(|_| ()))
-    }
 }
 
 impl NotifierSession for ClusterNotifierSession {
@@ -75,15 +72,19 @@ impl NotifierSession for ClusterNotifierSession {
     }
 
     fn begin_pessimistic(&mut self) -> Result<(), NotifierError> {
-        self.control_transaction("BEGIN PESSIMISTIC")
+        self.with_context(|context| context.new_txn(true))
     }
 
     fn commit(&mut self) -> Result<(), NotifierError> {
-        self.control_transaction("COMMIT")
+        self.with_context(|context| context.commit_txn())
     }
 
     fn rollback(&mut self) {
-        let _ = self.control_transaction("ROLLBACK");
+        // Go `RollbackTxn` returns nothing.
+        let _ = self.with_context(|context| {
+            context.rollback_txn(&tidb_sqlexec::BackgroundContext);
+            Ok(())
+        });
     }
 }
 

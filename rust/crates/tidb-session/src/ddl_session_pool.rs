@@ -124,7 +124,7 @@ impl DdlSessionPool for NodeDdlSessionPool {
         // transaction.
         session
             .node_conn()
-            .execute_internal("BEGIN OPTIMISTIC")
+            .new_txn(tidb_ast::TransactionMode::Optimistic)
             .map_err(sql_to_mysql)?;
         Ok(Box::new(NodeStepSession { session }))
     }
@@ -157,6 +157,28 @@ impl tidb_ddl_build::session_pool::StepSqlSession for NodeSqlSession {
         self.session.node_conn().execute_internal(&escaped)
             .map_err(sql_to_mysql)
     }
+    fn begin(&mut self) -> Result<(), MysqlError> {
+        self.session
+            .node_conn()
+            .new_txn(tidb_ast::TransactionMode::Optimistic)
+            .map_err(sql_to_mysql)
+    }
+
+    fn begin_pessimistic(&mut self) -> Result<(), MysqlError> {
+        self.session
+            .node_conn()
+            .new_txn(tidb_ast::TransactionMode::Pessimistic)
+            .map_err(sql_to_mysql)
+    }
+
+    fn commit(&mut self) -> Result<(), MysqlError> {
+        self.session.node_conn().commit_txn().map_err(sql_to_mysql)
+    }
+
+    fn rollback(&mut self) {
+        // Go `RollbackTxn` returns nothing.
+        let _ = self.session.node_conn().rollback_txn();
+    }
 }
 
 /// A node system session serving as one DDL step's `w.sess`.
@@ -175,6 +197,28 @@ impl tidb_ddl_build::session_pool::StepSqlSession for NodeStepSession {
         self.session.node_conn().execute_internal(&escaped)
             .map_err(sql_to_mysql)
     }
+    fn begin(&mut self) -> Result<(), MysqlError> {
+        self.session
+            .node_conn()
+            .new_txn(tidb_ast::TransactionMode::Optimistic)
+            .map_err(sql_to_mysql)
+    }
+
+    fn begin_pessimistic(&mut self) -> Result<(), MysqlError> {
+        self.session
+            .node_conn()
+            .new_txn(tidb_ast::TransactionMode::Pessimistic)
+            .map_err(sql_to_mysql)
+    }
+
+    fn commit(&mut self) -> Result<(), MysqlError> {
+        self.session.node_conn().commit_txn().map_err(sql_to_mysql)
+    }
+
+    fn rollback(&mut self) {
+        // Go `RollbackTxn` returns nothing.
+        let _ = self.session.node_conn().rollback_txn();
+    }
 }
 
 impl Drop for NodeStepSession {
@@ -183,7 +227,7 @@ impl Drop for NodeStepSession {
     /// would otherwise reset the buffer.
     fn drop(&mut self) {
         let mut conn = self.session.node_conn();
-        let _ = conn.execute_internal("COMMIT");
+        let _ = conn.commit_txn();
         conn.release_step_buffer();
     }
 }

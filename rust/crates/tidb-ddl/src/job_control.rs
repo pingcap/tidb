@@ -163,14 +163,14 @@ pub fn process_jobs(
 
         // Go `ns.Begin`: `sessiontxn.NewTxn` enters an optimistic
         // transaction.
-        sess.execute("BEGIN OPTIMISTIC", &[])?;
+        sess.begin()?;
         let jobs = match get_jobs_by_sql(
             sess,
             &format!("job_id in ({}) order by job_id", ids_str.join(", ")),
         ) {
             Ok(jobs) => jobs,
             Err(error) => {
-                let _ = sess.execute("ROLLBACK", &[]);
+                sess.rollback();
                 return Err(error);
             }
         };
@@ -191,8 +191,8 @@ pub fn process_jobs(
             }
         }
         // A conflicting update retries the whole command.
-        if let Err(error) = sess.execute("COMMIT", &[]) {
-            let _ = sess.execute("ROLLBACK", &[]);
+        if let Err(error) = sess.commit() {
+            sess.rollback();
             last_error = Some(error);
             continue;
         }
