@@ -26432,7 +26432,9 @@ fn a_step_session_statement_commits_with_its_step_as_go() {
 /// row names the job's schema and table, its ids as strings, and
 /// `create_time` is `TSConvert2Time(StartTS).String()` cast to the
 /// `datetime` column, i.e. the job's start rounded to the second, as
-/// `ddl_jobs.START_TIME` cast the same way. Expected relation: gorun.
+/// `ddl_jobs.CREATE_TIME` (the same `StartTS`) cast the same way. Expected
+/// relation: gorun. (`START_TIME` is the job's `RealStartTS`, which can round
+/// to the next second.)
 #[test]
 fn ddl_history_row_is_gos_insert_on_the_step_session() {
     let (stack, _users) = cop_backed_stack();
@@ -26458,7 +26460,7 @@ fn ddl_history_row_is_gos_insert_on_the_step_session() {
         displayed(rows(
             &mut session,
             "select h.db_name, h.table_name, h.schema_ids, h.table_ids, \
-             h.create_time = cast(j.start_time as datetime) \
+             h.create_time = cast(j.create_time as datetime) \
              from mysql.tidb_ddl_history h join information_schema.ddl_jobs j on h.job_id = j.job_id \
              where h.table_name = 'h1'"
         )),
@@ -27126,4 +27128,33 @@ fn set_global_replaces_the_variables_row_as_go() {
     assert_eq!(row(&mut session, "transaction_isolation"), [["READ-COMMITTED"]]);
     assert_eq!(row(&mut session, "tx_isolation"), [["READ-COMMITTED"]]);
     rows(&mut session, "SET GLOBAL transaction_isolation = 'REPEATABLE-READ'");
+}
+
+/// Go `PessimisticRRTxnContextProvider.getForUpdateTs`: a statement the plan
+/// lets keep its timestamp (`optimizeForNotFetchingLatestTS`) reads at the
+/// transaction's current for-update timestamp, which a `SELECT ... FOR
+/// UPDATE` advanced past a peer's commit. The `INSERT ... ON DUPLICATE KEY
+/// UPDATE` after it therefore sees the row the lock returned and updates it;
+/// read at the start timestamp, it inserted and failed its commit's NotExist
+/// assertion (what `FLUSH STATS_DELTA`'s `UpdateStatsMeta` hit against the
+/// DDL statistics subscriber's row).
+#[test]
+fn a_kept_for_update_ts_is_the_transactions_not_its_start_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut s1 = stack.factory.open_session(session_context(301)).unwrap();
+    let mut s2 = stack.factory.open_session(session_context(302)).unwrap();
+    rows(&mut s1, "CREATE TABLE test.kept (id BIGINT PRIMARY KEY CLUSTERED, v INT)");
+    rows(&mut s1, "BEGIN PESSIMISTIC");
+    rows(&mut s1, "SELECT 1");
+    rows(&mut s2, "INSERT INTO test.kept VALUES (1, 10)");
+    assert_eq!(
+        displayed(rows(&mut s1, "SELECT * FROM test.kept WHERE id IN (1) FOR UPDATE")),
+        [["1", "10"]]
+    );
+    rows(
+        &mut s1,
+        "INSERT INTO test.kept VALUES (1, 20) ON DUPLICATE KEY UPDATE v = v + 1",
+    );
+    rows(&mut s1, "COMMIT");
+    assert_eq!(displayed(rows(&mut s2, "SELECT * FROM test.kept")), [["1", "11"]]);
 }

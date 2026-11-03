@@ -1840,9 +1840,25 @@ impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
 
     fn advise_keep_for_update_ts(&mut self, check_ts: bool) {
         use std::sync::atomic::Ordering;
+        // Go `getForUpdateTs` under `optimizeForNotFetchingLatestTS`: the
+        // statement keeps the transaction's current for-update timestamp
+        // (`TxnCtx.GetForUpdateTS`) instead of fetching a fresh one -- which,
+        // once an earlier statement advanced it, is not the start timestamp.
         // Only a handle whose timestamp is still unresolved has one to keep.
-        if self.deferred_read_ts.load(Ordering::Acquire) == 0 {
-            self.advance_on_first_read.store(false, Ordering::Release);
+        if self.deferred_read_ts.load(Ordering::Acquire) == 0
+            && self.advance_on_first_read.swap(false, Ordering::AcqRel)
+        {
+            let kept = match &*self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+            {
+                SessionTransactionState::Pessimistic { transaction, .. } => {
+                    transaction.for_update_ts()
+                }
+                _ => 0,
+            };
+            self.deferred_read_ts.store(kept, Ordering::Release);
         }
         self.check_ts_in_write_stmt = check_ts;
         self.read_options.rc_check_ts |= check_ts;
