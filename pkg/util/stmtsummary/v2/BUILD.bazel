@@ -50,11 +50,7 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 25,
-=======
-    shard_count = 28,
->>>>>>> 44538075bdf (stmtsummary: prefilter history digests before full record decoding (#71601))
+    shard_count = 26,
     deps = [
         "//pkg/config",
         "//pkg/meta/model",
