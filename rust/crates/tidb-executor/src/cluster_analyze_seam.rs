@@ -258,7 +258,6 @@ where
             &record_global_history,
             jobs,
             stats_pool,
-            &self.row_ids,
         )
         .map_err(cluster_analyze_error)?;
         if let Err(error) = save_cluster_analyze_options(
@@ -287,13 +286,11 @@ where
         // Go `RecordHistoricalStatsMeta` through the stats handle; failures
         // are logged and ignored there, and ignored here.
         let record_history = |table_id: i64, version: u64, source: &str| {
-            let _ = tidb_stats_handle_history::history_stats::record_historical_stats_meta(
-                &self.opener,
-                table_id,
+            tidb_stats_handle_history::history_stats::record_historical_stats_meta_on(
+                stats_pool,
                 version,
                 source,
-                self.timeout,
-                Some(self.row_ids.as_ref()),
+                &[table_id],
             );
         };
         let report = commit_cluster_load_stats(

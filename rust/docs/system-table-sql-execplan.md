@@ -137,10 +137,21 @@ checksums).
   LOAD STATS no longer stores the dump's FM sketches (Go only deletes them;
   `load_stats_stores_no_fm_sketch_as_go`). The `LoadedStatsItemStatement`
   planners are gone.
-- [ ] Rest of M2: statistics GC (`gcTableStats`, hard deletes),
-  exchange-partition and delta flushes still commit planned rows;
-  `plan_stats_write` / `plan_partition_stats_write` remain only as test
-  seeding fixtures. History (item 8), usage (item 9), M4.
+- [x] (2026-11-03) Statistics GC (M2) and historical stats (item 8):
+  Go `storage.GCStats` / `ClearOutdatedHistoryStats` (`gc.rs`) and
+  `history.RecordHistoricalStatsMeta` / `RecordHistoricalStatsToStorage`
+  (`history_stats.rs`) on the domain's system-session pool. The raw history
+  planners had written `version` unsigned into Go's signed BIGINT columns,
+  so SQL deletes missed their keys. Internal statements now reach this
+  tier's text parser through `escape_sql_text` (byte arguments as
+  `_binary X'...'`); the DDL session pools had replaced non-UTF-8 bytes.
+- [ ] Rest of M2/M3: the delta flush (`DumpStatsDeltaToKV`, item 9, with
+  its "flush stats" history row), the DDL statistics subscriber (insert /
+  version / global-ID / exchange-partition rows and its "schema change"
+  history row, in the notifier's transaction) and the historical-stats
+  reader still use row planners. `plan_stats_write` /
+  `plan_partition_stats_write` / `plan_historical_stats_data_block` remain
+  as test seeding fixtures. M4 (global sysvars, accounts).
 
 ## Surprises & Discoveries
 

@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB historical statistics: Go pkg/statistics/handle/history (Rust rewrite)."
 
 [dependencies]
+chrono.workspace = true
 tidb-stats-util = { path = "../tidb-stats-util" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-datatype = { path = "../tidb-datatype" }
@@ -19,6 +20,12 @@ tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-table = { path = "../tidb-table" }
 tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 
 [lints]
 workspace = true

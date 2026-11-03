@@ -7292,12 +7292,19 @@ dependencies = [
 name = "tidb-stats-handle-history"
 version = "0.0.0"
 dependencies = [
+ "chrono",
  "tidb-datatype",
  "tidb-infoschema",
  "tidb-infoschema-issyncer",
  "tidb-kv",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-sqlescape",
+ "tidb-sqlexec",
  "tidb-stats",
+ "tidb-stats-handle-logutil",
  "tidb-stats-handle-storage",
+ "tidb-stats-handle-util",
  "tidb-stats-util",
  "tidb-store-driver-txn",
  "tidb-syssession",

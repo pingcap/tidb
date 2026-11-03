@@ -24,14 +24,12 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc::sync_channel;
-use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use chrono::TimeZone;
 use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone, UNSPECIFIED_LENGTH};
 use tidb_mysql::errors::SqlError;
-use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use tidb_stats::histogram::Histogram;
 use tidb_stats::row_sample_collector::get_adjusted_sample_rate;
 use tidb_stats::fm_sketch_ndv;
@@ -63,13 +61,12 @@ use tidb_stats_handle_storage::cluster_stats_load::{
 use tidb_stats_handle_storage::save::{AnalyzeResults, STATS_VERSION_2};
 use tidb_stats_handle_storage::stats_read_writer::{self, StatsSessionPool};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
-use tidb_stats_handle_history::history_stats::{plan_historical_stats_meta_lock, plan_historical_stats_meta_replace};
+use tidb_stats_handle_history::history_stats::record_historical_stats_meta_on;
 use tidb_syssession::stats_table_rows::{locate, set, StatsRows, StatsWriteError, StatsWritePlan};
 use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::plan_get_predicate_columns;
-use tidb_store_driver_txn::cluster_table_storage::{lock_pessimistic_statement, SessionTransaction};
-use tidb_datatype::current_time::{local_now_datetime6, utc_now_timestamp};
+use tidb_datatype::current_time::utc_now_timestamp;
 use tidb_store_driver_error::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
-use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
+use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_hack::GoToLower;
 use tidb_datatype::{Datum, Time};
 use crate::analyze::{AnalyzeOptionOverrides, SavedAnalyzeOptions};
@@ -1026,7 +1023,6 @@ pub fn commit_cluster_analyze<S: StoreClient>(
     record_global_history: &dyn Fn() -> bool,
     jobs: &dyn AnalyzeJobLifecycle,
     stats_pool: &dyn StatsSessionPool,
-    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let targets = if !resolved.run_full_sampling {
         Vec::new()
@@ -1102,7 +1098,6 @@ pub fn commit_cluster_analyze<S: StoreClient>(
                 killer,
                 resource_group,
                 &resolved.build_diagnostics,
-                row_ids,
             )
         }));
         let task_result = match task_result {
@@ -1190,7 +1185,6 @@ pub fn commit_cluster_analyze<S: StoreClient>(
                 stats_lease,
                 record_history,
                 &|count| job.update(jobs, count),
-                row_ids,
             )
         }));
         let task_result = match task_result {
@@ -1227,7 +1221,6 @@ pub fn commit_cluster_analyze<S: StoreClient>(
                 stats_lease,
                 record_history,
                 &|count| job.update(jobs, count),
-                row_ids,
             )
         }));
         let task_result = match task_result {
@@ -1278,7 +1271,6 @@ pub fn commit_cluster_analyze<S: StoreClient>(
                 stats_lease,
                 killer,
                 record_global_history,
-                row_ids,
             );
             job.finish(
                 jobs,
@@ -1301,7 +1293,6 @@ pub fn commit_cluster_analyze<S: StoreClient>(
                 stats_lease,
                 killer,
                 record_global_history,
-                row_ids,
             );
             job.finish(
                 jobs,
@@ -1395,7 +1386,6 @@ fn commit_cluster_global_stats<S: StoreClient>(
     stats_lease: Duration,
     killer: &SqlKiller,
     record_history: &dyn Fn() -> bool,
-    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), ClusterAnalyzeError> {
     let mut transaction = opener
         .begin_read_only()
@@ -1592,7 +1582,7 @@ fn commit_cluster_global_stats<S: StoreClient>(
         },
         |write| {
             if record_history() {
-                record_analyze_history(opener, logical_id, write.0, timeout, row_ids);
+                record_historical_stats_meta_on(stats_pool, write.0, ANALYZE_HISTORY_SOURCE, &[logical_id]);
             }
             report.version = report.version.max(write.0);
             report.histogram_count += write.1;
@@ -1602,58 +1592,6 @@ fn commit_cluster_global_stats<S: StoreClient>(
     )?;
     report.table_id = logical_id;
     Ok(())
-}
-
-fn record_analyze_history<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
-    table_id: i64,
-    version: u64,
-    timeout: Duration,
-    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
-) {
-    let result = (|| -> Result<(), ClusterAnalyzeError> {
-        let transaction = SessionTransaction::begin_pessimistic(
-            Arc::new(opener.clone()),
-            timeout,
-            opener.commit_protocol(),
-        )
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        let staged = MutationBuffer::new();
-        let (modify_count, count) =
-            lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
-                let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                let catalog =
-                    load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
-                let (counts, plan) =
-                    plan_historical_stats_meta_lock(&mut snapshot, &catalog, table_id, version)
-                        .map_err(|error| error.to_string())?;
-                Ok((counts, plan.mutations))
-            })
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        lock_pessimistic_statement(&transaction, &staged, |snapshot, _start_ts| {
-            let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-            let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
-            let plan = plan_historical_stats_meta_replace(
-                &mut snapshot,
-                &catalog,
-                table_id,
-                modify_count,
-                count,
-                version,
-                "analyze",
-                local_now_datetime6(),
-                Some(row_ids.as_ref()),
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(((), plan.mutations))
-        })
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        transaction
-            .commit(&staged)
-            .map(|_| ())
-            .map_err(ClusterAnalyzeError::Commit)
-    })();
-    let _: Result<(), ClusterAnalyzeError> = result;
 }
 
 fn write_global_stats_items<T, E>(
@@ -2243,7 +2181,6 @@ fn commit_cluster_analyze_target<S: StoreClient>(
     killer: &SqlKiller,
     resource_group: &str,
     build_diagnostics: &[(bool, u16, String)],
-    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let mut sample_transaction = opener
         .begin()
@@ -2368,7 +2305,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
         build_diagnostics: build_diagnostics.to_vec(),
     };
     if saved {
-        record_analyze_history_if(opener, receipt.table_id, stats_ver, timeout, record_history, row_ids);
+        record_analyze_history_if(stats_pool, receipt.table_id, stats_ver, record_history);
     }
     Ok(receipt)
 }
@@ -2384,7 +2321,6 @@ fn commit_cluster_independent_index<S: StoreClient>(
     stats_lease: Duration,
     record_history: &dyn Fn() -> bool,
     progress: &dyn Fn(i64),
-    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let mut transaction = opener
         .begin_read_only()
@@ -2465,24 +2401,26 @@ fn commit_cluster_independent_index<S: StoreClient>(
         cache_update_physical_ids: Vec::new(),
     };
     if stats_ver != 0 {
-        record_analyze_history_if(opener, receipt.table_id, stats_ver, timeout, record_history, row_ids);
+        record_analyze_history_if(stats_pool, receipt.table_id, stats_ver, record_history);
     }
     Ok(receipt)
 }
 
-/// Go's `RecordHistoricalStatsMeta` after a versioned save.
-fn record_analyze_history_if<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
+/// Go's `RecordHistoricalStatsMeta(statsVer, "analyze", ...)` after a
+/// versioned save.
+fn record_analyze_history_if(
+    stats_pool: &dyn StatsSessionPool,
     table_id: i64,
     version: u64,
-    timeout: Duration,
     record_history: &dyn Fn() -> bool,
-    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) {
     if record_history() {
-        record_analyze_history(opener, table_id, version, timeout, row_ids);
+        record_historical_stats_meta_on(stats_pool, version, ANALYZE_HISTORY_SOURCE, &[table_id]);
     }
 }
+
+/// Go `util.StatsMetaHistorySourceAnalyze`.
+const ANALYZE_HISTORY_SOURCE: &str = "analyze";
 
 fn selected_columns<S: tidb_infoschema::cluster_catalog::MetaSnapshot>(
     snapshot: &mut S,

@@ -5444,6 +5444,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
         catalog: Arc::clone(&stack.factory.catalog),
         global_vars: stack.factory.global_vars.clone(),
         auto_ids: Arc::clone(&stack.factory.auto_ids),
+        domain: Arc::downgrade(&stack.factory),
     };
     let mut job_id = 0;
     handle
@@ -5540,6 +5541,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
         catalog: Arc::clone(&factory.catalog),
         global_vars: factory.global_vars.clone(),
         auto_ids: Arc::clone(&factory.auto_ids),
+        domain: Arc::downgrade(&factory),
     };
     let mut job_id = 0;
     handle
@@ -5644,6 +5646,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
         catalog: Arc::clone(&stack.factory.catalog),
         global_vars: stack.factory.global_vars.clone(),
         auto_ids: Arc::clone(&stack.factory.auto_ids),
+        domain: Arc::downgrade(&stack.factory),
     };
     for (process_id, instance, created_at) in [
         (1, local_instance, old),
@@ -6418,6 +6421,7 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
         catalog: Arc::clone(&stack.factory.catalog),
         global_vars: stack.factory.global_vars.clone(),
         auto_ids: Arc::clone(&stack.factory.auto_ids),
+        domain: Arc::downgrade(&stack.factory),
     };
     session
         .node()
@@ -6436,6 +6440,16 @@ fn analyze_records_historical_stats_through_the_domain_worker() {
         )),
         [["1"]]
     );
+    // Go `RecordHistoricalStatsToStorage` stores the dump's version: the
+    // table's statistics version, which its ANALYZE history row also names.
+    let version_of = |session: &mut Session, table: &str| {
+        displayed(rows(
+            session,
+            &format!("SELECT max(version) FROM mysql.{table} WHERE table_id = {table_id}"),
+        ))
+    };
+    assert_eq!(version_of(&mut session, "stats_history"), version_of(&mut session, "stats_meta"));
+    assert_eq!(version_of(&mut session, "stats_history"), version_of(&mut session, "stats_meta_history"));
     let catalog = stack.factory.catalog.get_latest();
     let (_, table) = catalog
         .table_info_by_name("test", "history_analyze")
@@ -6501,6 +6515,7 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
         catalog: Arc::clone(&stack.factory.catalog),
         global_vars: stack.factory.global_vars.clone(),
         auto_ids: Arc::clone(&stack.factory.auto_ids),
+        domain: Arc::downgrade(&stack.factory),
     };
     session
         .node()
@@ -6512,13 +6527,28 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
             &tidb_domain::historical_stats::NoopHistoricalStatsMetrics,
         )
         .expect("historical statistics dump succeeds");
-    for table in ["stats_meta_history", "stats_history"] {
+    // A delta flush records its own metadata history row (Go
+    // `RecordHistoricalStatsMeta(..., "flush stats", ...)`), which the
+    // expiry below must delete through Go's statements like the others.
+    rows(&mut session, "INSERT INTO history_gc VALUES (1)");
+    stack
+        .factory
+        .dump_stats_delta_to_kv(true, &[], "default")
+        .expect("the delta flush succeeds");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!("SELECT count(*) FROM mysql.stats_meta_history WHERE table_id = {table_id} AND source = 'flush stats'"),
+        )),
+        [["1"]]
+    );
+    for (table, count) in [("stats_meta_history", "2"), ("stats_history", "1")] {
         assert_eq!(
             displayed(rows(
                 &mut session,
                 &format!("SELECT count(*) FROM mysql.{table} WHERE table_id = {table_id}"),
             )),
-            [["1"]]
+            [[count]]
         );
     }
 
@@ -6530,13 +6560,13 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
         .factory
         .clear_outdated_history_stats()
         .expect("fresh history survives GC");
-    for table in ["stats_meta_history", "stats_history"] {
+    for (table, count) in [("stats_meta_history", "2"), ("stats_history", "1")] {
         assert_eq!(
             displayed(rows(
                 &mut session,
                 &format!("SELECT count(*) FROM mysql.{table} WHERE table_id = {table_id}")
             )),
-            [["1"]]
+            [[count]]
         );
     }
     rows(
@@ -6704,6 +6734,27 @@ fn stats_gc_matches_go_item_and_dropped_table_phases() {
         vec![vec!["1".to_owned()]]
     );
 
+    // Go `gcHistoryStatsFromKV`: the dropped table's history goes with it.
+    let table_id = displayed(rows(
+        &mut session,
+        "SELECT tidb_table_id FROM information_schema.tables WHERE table_schema = 'test' AND table_name = 'stats_gc_t'",
+    ))[0][0]
+        .clone();
+    rows(
+        &mut session,
+        &format!("INSERT INTO mysql.stats_meta_history (table_id, modify_count, count, version, source, create_time) VALUES ({table_id}, 0, 3, 1, 'analyze', NOW(6))"),
+    );
+    rows(
+        &mut session,
+        &format!("INSERT INTO mysql.stats_history (table_id, stats_data, seq_no, version, create_time) VALUES ({table_id}, 'x', 0, 1, NOW(6))"),
+    );
+    let history_count = |session: &mut Session| {
+        displayed(rows(
+            session,
+            &format!("SELECT (SELECT count(*) FROM mysql.stats_meta_history WHERE table_id = {table_id}) + (SELECT count(*) FROM mysql.stats_history WHERE table_id = {table_id})"),
+        ))
+    };
+    assert_eq!(history_count(&mut session), [["2"]]);
     rows(&mut session, "DROP TABLE stats_gc_t");
     // Embedded DDL and GC can share one physical millisecond. Go's TSO has a
     // positive logical component while GC's wall-clock TSO has zero, so wait
@@ -6720,6 +6771,7 @@ fn stats_gc_matches_go_item_and_dropped_table_phases() {
         )),
         vec![vec!["0".to_owned()]]
     );
+    assert_eq!(history_count(&mut session), [["0"]]);
     assert_eq!(
         displayed(rows(&mut session, "SELECT count(*) FROM mysql.stats_meta")),
         vec![vec!["1".to_owned()]]
@@ -7100,6 +7152,7 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
         catalog: Arc::clone(&stack.factory.catalog),
         global_vars: stack.factory.global_vars.clone(),
         auto_ids: Arc::clone(&stack.factory.auto_ids),
+        domain: Arc::downgrade(&stack.factory),
     };
     for table_id in queued {
         session
