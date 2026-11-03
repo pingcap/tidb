@@ -124,24 +124,61 @@ pub trait DdlSessionPool: Send + Sync {
         self.exec_restricted_sql(&String::from_utf8_lossy(&escaped))
     }
 
-    /// Go `w.sess.Execute(ctx, sql, label)` inside the job step's
-    /// transaction (`w.sess.Begin` -> step -> `w.sess.Commit`): the statement
-    /// runs on an internal session in an optimistic transaction that reads at
-    /// the step's `start_ts` and stages its writes, key flags included, into
-    /// the step's `buffer`; the step commits them with its meta writes.
+    /// Whether [`Self::open_step_session`] can serve a step now: a node's
+    /// pool can once its domain is bound (the node builds the pool before
+    /// the domain exists); a step without one stages its system-table rows
+    /// itself.
+    fn has_step_sessions(&self) -> bool {
+        false
+    }
+
+    /// Go `w.sess` for one job step (`w.sess.Begin`): an internal session in
+    /// an optimistic transaction that reads at the step's `start_ts` and
+    /// stages its writes, key flags included, into the step's `buffer`; the
+    /// step commits them with its meta writes. Every statement of the step
+    /// runs on the one session, as Go's do.
     ///
     /// # Errors
     ///
-    /// The escaping's error, or the statement's.
-    fn exec_in_step_txn(
+    /// The session's failure to open or begin.
+    fn open_step_session(
         &self,
         _start_ts: u64,
         _buffer: &tidb_store_driver_txn::cluster_storage::MutationBuffer,
-        _sql: &str,
-        _args: &[tidb_sqlescape::SqlArg<'_>],
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
+    ) -> Result<Box<dyn StepSqlSession>, tidb_terror::MysqlError> {
         Err(tidb_terror::MysqlError::unknown(
             "this DDL session pool has no step session",
         ))
     }
+
+    /// One statement on a step session of its own
+    /// ([`Self::open_step_session`]).
+    ///
+    /// # Errors
+    ///
+    /// The session's, the escaping's or the statement's error.
+    fn exec_in_step_txn(
+        &self,
+        start_ts: u64,
+        buffer: &tidb_store_driver_txn::cluster_storage::MutationBuffer,
+        sql: &str,
+        args: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
+        self.open_step_session(start_ts, buffer)?.execute(sql, args)
+    }
+}
+
+/// Go `w.sess` during one step (see [`DdlSessionPool::open_step_session`]).
+/// Dropping it ends the session and leaves its writes in the step's buffer.
+pub trait StepSqlSession: Send {
+    /// Go `w.sess.Execute(ctx, sql, label)`.
+    ///
+    /// # Errors
+    ///
+    /// The escaping's or the statement's error.
+    fn execute(
+        &mut self,
+        sql: &str,
+        args: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError>;
 }

@@ -911,6 +911,7 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
         sess_pool,
         // Each step's own, set where the step begins.
         step_buffer: MutationBuffer::new(),
+        step_sql: Default::default(),
         store: Some(Arc::new(StoreSnapshotMeta {
             opener: Arc::clone(&opener),
             timeout,
@@ -1545,6 +1546,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
                 let worker = crate::cluster_ddl::DdlStepWorker {
                     sess_pool,
                     step_buffer: MutationBuffer::new(),
+                    step_sql: Default::default(),
                     store: None,
                 };
                 let gc_safe_point = crate::cluster_ddl::recover_gc_safe_point(&worker)?;
@@ -1958,7 +1960,13 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
     let mut schema_state = phase.schema_state.clone();
     if let Some(worker) = schema_state.worker.as_mut() {
         worker.step_buffer = buffer.clone();
+        worker.step_sql = Default::default();
     }
+    let sess_pool = schema_state
+        .worker
+        .as_ref()
+        .map(|worker| Arc::clone(&worker.sess_pool))
+        .filter(|pool| pool.has_step_sessions());
     let plan = {
         let mut snapshot = SnapshotMetaSnapshot::new(
             transaction
@@ -2045,6 +2053,16 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
         };
         if let Some(failure) = failure {
             let ddl_job_id = phase.ddl_job_id;
+            // Rust's planned metadata and staged rows are not applied until
+            // commit. Discard both, as Go resets failed action mutations, but
+            // keep this transaction's snapshot and conflict protection; the
+            // checkpoint's own statements stage into the fresh buffer.
+            buffer = MutationBuffer::new();
+            let session = sess_pool.clone().map(|pool| crate::job_txn::StepSession {
+                pool,
+                buffer: buffer.clone(),
+                sql: Default::default(),
+            });
             let checkpoint = transaction
                 .snapshot()
                 .map_err(|error| DdlPlanError::Encode(error.to_string()))
@@ -2056,6 +2074,7 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
                         failure,
                         &|| refresh_ddl_error_count_limit(&opener, timeout, ddl_job_id),
                         Some(row_ids.as_ref()),
+                        session.as_ref(),
                     )
                 });
             let checkpoint = match checkpoint {
@@ -2065,10 +2084,6 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
                     return Err(error.into());
                 }
             };
-            // Rust's planned metadata and staged rows are not applied until
-            // commit. Discard both, as Go resets failed action mutations, but
-            // keep this transaction's snapshot and conflict protection.
-            buffer = MutationBuffer::new();
             write = checkpoint.write;
             persisted_job_terminal = checkpoint.terminal;
             run_error = checkpoint

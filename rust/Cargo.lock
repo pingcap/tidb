@@ -3867,6 +3867,7 @@ dependencies = [
  "tidb-exprctx",
  "tidb-filter",
  "tidb-gcutil",
+ "tidb-go-time-layout",
  "tidb-goruntime",
  "tidb-hack",
  "tidb-infoschema",

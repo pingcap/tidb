@@ -64,6 +64,7 @@ tidb-meta = { path = "../tidb-meta" }
 tidb-structure = { path = "../tidb-structure" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
+tidb-go-time-layout = { path = "../tidb-go-time-layout" }
 tidb-owner = { path = "../tidb-owner" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-schemaver = { path = "../tidb-schemaver" }

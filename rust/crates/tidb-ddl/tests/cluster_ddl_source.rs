@@ -1287,7 +1287,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
             10_000,
             PersistedDdlJobFailure::Error(error),
             &|| 5,
-            None,
+            None, None,
         )
         .unwrap();
         apply(&mut store, &step.write);
@@ -1385,7 +1385,7 @@ fn persisted_check_failure_uses_source_identity_for_rollback() {
             10_000,
             PersistedDdlJobFailure::Error(error),
             &|| 512,
-            None,
+            None, None,
         )
         .unwrap();
         apply(&mut store, &step.write);
@@ -2763,7 +2763,7 @@ fn persisted_add_check_rolls_back_after_owner_restart() {
             tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate(validation_message),
         )),
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
-        None,
+        None, None,
     )
     .expect("countForError persists Running to Rollingback");
     apply(&mut store, &rollingback.write);
@@ -3076,7 +3076,7 @@ fn persisted_alter_check_validation_rolls_back_to_not_enforced() {
             tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate(validation_message),
         )),
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
-        None,
+        None, None,
     )
     .expect("countForError persists ALTER Rollingback");
     apply(&mut store, &rollingback.write);

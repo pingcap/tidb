@@ -81,11 +81,7 @@ impl<'a> JobTxn<'a> {
         args: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Option<Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError>> {
         let session = self.session.as_ref()?;
-        Some(
-            session
-                .pool
-                .exec_in_step_txn(self.start_ts, &session.buffer, sql, args),
-        )
+        Some(session.execute(self.start_ts, sql, args))
     }
 
     /// Go `meta.NewMutator(txn)`.
@@ -157,6 +153,37 @@ pub struct StepSession {
     pub pool: std::sync::Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
     /// Go `w.sess`'s membuffer.
     pub buffer: tidb_store_driver_txn::cluster_storage::MutationBuffer,
+    /// Go `w.sess` itself: the step's one session, opened at its first
+    /// statement and shared by every statement of the step.
+    pub sql: StepSqlSlot,
+}
+
+/// The slot of a step's one session (see [`StepSession::sql`]).
+pub type StepSqlSlot = std::sync::Arc<
+    std::sync::Mutex<Option<Box<dyn tidb_ddl_build::session_pool::StepSqlSession>>>,
+>;
+
+impl StepSession {
+    /// Go `w.sess.Execute(ctx, sql, label)` in the step's transaction.
+    ///
+    /// # Errors
+    ///
+    /// The session's failure to open, or the statement's error.
+    pub fn execute(
+        &self,
+        start_ts: u64,
+        sql: &str,
+        args: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
+        let mut slot = self
+            .sql
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if slot.is_none() {
+            *slot = Some(self.pool.open_step_session(start_ts, &self.buffer)?);
+        }
+        slot.as_mut().expect("just opened").execute(sql, args)
+    }
 }
 
 /// A meta error of a step: the snapshot's own when a read failed.

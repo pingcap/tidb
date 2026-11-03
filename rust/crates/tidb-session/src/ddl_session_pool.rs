@@ -78,46 +78,69 @@ impl DdlSessionPool for NodeDdlSessionPool {
         rows
     }
 
-    fn exec_in_step_txn(
+    fn has_step_sessions(&self) -> bool {
+        self.domain.get().and_then(Weak::upgrade).is_some()
+    }
+
+    fn open_step_session(
         &self,
         start_ts: u64,
         buffer: &tidb_store_driver_txn::cluster_storage::MutationBuffer,
-        sql: &str,
-        args: &[tidb_sqlescape::SqlArg<'_>],
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, MysqlError> {
-        let escaped = tidb_sqlescape::escape_sql(sql, args)
-            .map_err(|error| MysqlError::unknown(error.to_string()))?;
+    ) -> Result<Box<dyn tidb_ddl_build::session_pool::StepSqlSession>, MysqlError> {
         let domain = self
             .domain
             .get()
             .and_then(Weak::upgrade)
             .ok_or_else(|| MysqlError::unknown("the DDL session pool has no running node"))?;
-        let to_mysql = |error: tidb_store_driver_error::sql_query_error::SqlQueryError| {
-            MysqlError::from_parts(error.code, error.state, error.message)
-                .with_identity_opt(error.identity)
-        };
         let transactions: Arc<dyn ClusterTransactions> = Arc::new(StepTransactions {
             inner: Arc::clone(&domain.transactions),
             start_ts,
         });
         let mut session = domain
             .open_system_session_over(transactions, buffer.clone())
-            .map_err(to_mysql)?;
-        let mut conn = session.node_conn();
+            .map_err(sql_to_mysql)?;
         // Go `sess.Begin`: `sessiontxn.NewTxn` enters an optimistic
         // transaction.
-        conn.execute_internal("BEGIN OPTIMISTIC").map_err(to_mysql)?;
-        let rows = conn.execute_internal(&String::from_utf8_lossy(&escaped));
-        let ended = match &rows {
-            // The step's own commit publishes the buffer.
-            Ok(_) => conn.execute_internal("COMMIT"),
-            Err(_) => conn.execute_internal("ROLLBACK"),
-        };
-        // The session closes; the buffer it staged into is the step's.
+        session
+            .node_conn()
+            .execute_internal("BEGIN OPTIMISTIC")
+            .map_err(sql_to_mysql)?;
+        Ok(Box::new(NodeStepSession { session }))
+    }
+}
+
+fn sql_to_mysql(error: tidb_store_driver_error::sql_query_error::SqlQueryError) -> MysqlError {
+    MysqlError::from_parts(error.code, error.state, error.message).with_identity_opt(error.identity)
+}
+
+/// A node system session serving as one DDL step's `w.sess`.
+struct NodeStepSession {
+    session: crate::Session,
+}
+
+impl tidb_ddl_build::session_pool::StepSqlSession for NodeStepSession {
+    fn execute(
+        &mut self,
+        sql: &str,
+        args: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, MysqlError> {
+        let escaped = tidb_sqlescape::escape_sql(sql, args)
+            .map_err(|error| MysqlError::unknown(error.to_string()))?;
+        self.session
+            .node_conn()
+            .execute_internal(&String::from_utf8_lossy(&escaped))
+            .map_err(sql_to_mysql)
+    }
+}
+
+impl Drop for NodeStepSession {
+    /// The session ends; its writes stay in the step's buffer, which the step
+    /// commits (the transaction's own commit publishes nothing) -- closing
+    /// would otherwise reset the buffer.
+    fn drop(&mut self) {
+        let mut conn = self.session.node_conn();
+        let _ = conn.execute_internal("COMMIT");
         conn.release_step_buffer();
-        let rows = rows.map_err(to_mysql)?;
-        ended.map_err(to_mysql)?;
-        Ok(rows)
     }
 }
 

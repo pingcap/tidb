@@ -97,7 +97,27 @@ system-table rows are the SQL statements Go executes, in the same commit.
   The 17 tests that consume DDL events (stats handler, notifier store)
   pass over it and fail when the statement is skipped. A run without a
   session pool still stages the row itself until M4.
-- [ ] M3: job, history and MDL rows; the step commit. Found 2026-11-03:
+- [ ] M3: job, history and MDL rows; the step commit.
+  - [x] (2026-11-03) The job row (Go `updateDDLJob2Table`: the pause, step
+    and failure-checkpoint updates), `deleteDDLJob` and
+    `addHistoryDDLJob2Table` run on the step's session
+    (`update_ddl_job_2_table`, `finish_persisted_ddl_job`,
+    `add_history_ddl_job`); test
+    `ddl_history_row_is_gos_insert_on_the_step_session` (create_time is
+    the start rounded to the second, as Go). A step's statements share ONE
+    session (`StepSession::sql`, Go `w.sess`): a second session's `BEGIN`
+    first commits the non-empty buffer as leftover autocommit work, which
+    the step transactions refuse, and the refusal resets the buffer --
+    every statement before it was lost (M2 shipped with that: a step
+    publishing several events kept only the last). A failed step's
+    discard (`run_error`) now resets the step buffer too, as Go rolls
+    `w.sess` back. Test `a_step_sessions_statements_all_commit_with_the_step_as_go`.
+    A pool that cannot open step sessions yet (a node's pool before its
+    domain is bound, as the `tidb-ddl` worker tests run it) leaves the step
+    without a session (`DdlSessionPool::has_step_sessions`).
+  - [ ] MDL info (`registerMDLInfo`) is still the raw
+    `mdl_info_update.append_mutations` in the commit function.
+  Found 2026-11-03:
   `tidb-ddl-session` is a complete port of Go `pkg/ddl/session`
   (`Session::{begin, execute, commit, txn, run_in_txn}`, `Pool`) that NO
   crate depends on. M3 should make the step run in that `Session` (a

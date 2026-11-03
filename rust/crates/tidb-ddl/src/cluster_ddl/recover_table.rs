@@ -35,6 +35,8 @@ pub struct DdlStepWorker {
     /// The step's staged writes (Go `w.sess`'s membuffer): the step's
     /// session statements stage into it, and the step commits it.
     pub step_buffer: tidb_store_driver_txn::cluster_storage::MutationBuffer,
+    /// The step's one session over `step_buffer` (Go `w.sess`).
+    pub step_sql: crate::job_txn::StepSqlSlot,
     /// Go `meta.NewReader(w.store.GetSnapshot(kv.NewVersion(ts)))`.
     pub store: Option<Arc<dyn SnapshotMetaAt>>,
 }

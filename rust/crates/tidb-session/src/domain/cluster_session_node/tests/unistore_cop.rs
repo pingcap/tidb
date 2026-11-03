@@ -26220,6 +26220,38 @@ fn a_step_session_statement_commits_with_its_step_as_go() {
         [["1", "one"], ["2", "two"]]
     );
 
+    // A delete staged by the step session commits with the step.
+    let start_ts = domain.transactions.fresh_timestamp().unwrap();
+    let buffer = MutationBuffer::new();
+    pool.exec_in_step_txn(start_ts, &buffer, "DELETE FROM test.st WHERE a = 2", &[])
+        .unwrap();
+    assert!(!buffer.is_empty());
+    domain
+        .transactions
+        .commit(&buffer, Some(start_ts), "", options())
+        .unwrap();
+    assert_eq!(displayed(rows(&mut session, select)), [["1", "one"]]);
+    pool.exec_in_step_txn(
+        domain.transactions.fresh_timestamp().unwrap(),
+        &MutationBuffer::new(),
+        "SELECT 1",
+        &[],
+    )
+    .unwrap();
+    let start_ts = domain.transactions.fresh_timestamp().unwrap();
+    let buffer = MutationBuffer::new();
+    pool.exec_in_step_txn(
+        start_ts,
+        &buffer,
+        insert,
+        &[tidb_sqlescape::SqlArg::Signed(2), tidb_sqlescape::SqlArg::String(b"two")],
+    )
+    .unwrap();
+    domain
+        .transactions
+        .commit(&buffer, Some(start_ts), "", options())
+        .unwrap();
+
     // A duplicate staged by the optimistic statement is refused when the
     // step commits it.
     let start_ts = domain.transactions.fresh_timestamp().unwrap();
@@ -26244,5 +26276,104 @@ fn a_step_session_statement_commits_with_its_step_as_go() {
     assert_eq!(
         displayed(rows(&mut session, select)),
         [["1", "one"], ["2", "two"]]
+    );
+}
+
+/// Go `addHistoryDDLJob2Table`, run on the DDL step's session: the history
+/// row names the job's schema and table, its ids as strings, and
+/// `create_time` is `TSConvert2Time(StartTS).String()` cast to the
+/// `datetime` column, i.e. the job's start rounded to the second, as
+/// `ddl_jobs.START_TIME` cast the same way. Expected relation: gorun.
+#[test]
+fn ddl_history_row_is_gos_insert_on_the_step_session() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(185)).unwrap();
+    session
+        .node_conn()
+        .execute_write("create table test.h1 (a int)")
+        .unwrap();
+    let ids = displayed(rows(
+        &mut session,
+        "select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'h1'",
+    ));
+    let schema_id = stack
+        .factory
+        .catalog
+        .get_latest()
+        .schema_info_by_name("test")
+        .unwrap()
+        .read()
+        .id
+        .to_string();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select h.db_name, h.table_name, h.schema_ids, h.table_ids, \
+             h.create_time = cast(j.start_time as datetime) \
+             from mysql.tidb_ddl_history h join information_schema.ddl_jobs j on h.job_id = j.job_id \
+             where h.table_name = 'h1'"
+        )),
+        [[
+            "test".to_owned(),
+            "h1".to_owned(),
+            schema_id,
+            ids[0][0].clone(),
+            "1".to_owned()
+        ]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "select count(*) from mysql.tidb_ddl_job"
+        )),
+        [["0"]]
+    );
+}
+
+/// Go `w.sess` is ONE session for the whole step: every statement the step
+/// runs (`tidb_ddl::job_txn::StepSession::execute`) stages into the step's
+/// buffer, and none of them loses an earlier one's rows -- a second session
+/// would `BEGIN` by committing the leftover buffer, which the step refuses.
+#[test]
+fn a_step_sessions_statements_all_commit_with_the_step_as_go() {
+    use tidb_store_driver_txn::cluster_storage::MutationBuffer;
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(186)).unwrap();
+    session
+        .node_conn()
+        .execute_write("create table test.st2 (a int primary key)")
+        .unwrap();
+    let pool = Arc::new(crate::ddl_session_pool::NodeDdlSessionPool::default());
+    pool.bind(&stack.factory);
+    let domain = &stack.factory;
+    let start_ts = domain.transactions.fresh_timestamp().unwrap();
+    let buffer = MutationBuffer::new();
+    {
+        let step = tidb_ddl::job_txn::StepSession {
+            pool: pool.clone(),
+            buffer: buffer.clone(),
+            sql: Default::default(),
+        };
+        for a in [1, 2, 3] {
+            step.execute(
+                start_ts,
+                "INSERT INTO test.st2 VALUES (%?)",
+                &[tidb_sqlescape::SqlArg::Signed(a)],
+            )
+            .unwrap();
+        }
+    }
+    domain
+        .transactions
+        .commit(
+            &buffer,
+            Some(start_ts),
+            "",
+            tidb_domain_core::session_transaction::restricted_transaction_options(&domain.global_vars),
+        )
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "select a from test.st2 order by a")),
+        [["1"], ["2"], ["3"]]
     );
 }
