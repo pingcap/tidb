@@ -3862,9 +3862,11 @@ dependencies = [
  "tidb-domain-serverinfo",
  "tidb-errno",
  "tidb-executor",
+ "tidb-exeerrors",
  "tidb-expr",
  "tidb-exprctx",
  "tidb-filter",
+ "tidb-gcutil",
  "tidb-goruntime",
  "tidb-hack",
  "tidb-infoschema",
@@ -5057,6 +5059,7 @@ dependencies = [
  "chrono",
  "tidb-go-time-layout",
  "tidb-vardef",
+ "tikv-client",
 ]
 
 [[package]]

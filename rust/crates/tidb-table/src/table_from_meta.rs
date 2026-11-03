@@ -72,8 +72,11 @@ pub trait TableAutoIds: std::fmt::Debug + Send + Sync {
     /// `ActionRebaseAutoRandomBase` (AutoRandom) diff, so no range reserved
     /// before the rebase keeps handing out ids -- even when the rebase left
     /// the recorded base where it was (`FORCE AUTO_INCREMENT` to the same
-    /// value twice). The default is the tier with no reserved ranges.
-    fn rebuild_rebased_allocators(&self, _table_id: i64, _action: tidb_model::ActionType) {}
+    /// value twice). An `ActionRecoverTable` diff has no old table id, so
+    /// `dropTableForUpdate` keeps nothing and every allocator of the
+    /// recovered id starts again from its recovered base. The default is the
+    /// tier with no reserved ranges.
+    fn rebuild_allocators(&self, _table_id: i64, _action: tidb_model::ActionType) {}
 }
 
 /// Counters that live in this process and start at zero, one per table id.

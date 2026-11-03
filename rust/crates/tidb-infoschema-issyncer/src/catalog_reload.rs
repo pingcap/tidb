@@ -266,16 +266,19 @@ fn apply_diff_range<S: MetaSnapshot>(
             Err(reason) => return Ok(Err(reason)),
         };
         // Go `applyCreateTable` recreates the table's allocators for a
-        // rebase, a multi-schema change's sub-action included.
+        // rebase, a multi-schema change's sub-action included, and for a
+        // recovered table, whose diff names no old table to keep them from.
         if let Some(row_ids) = row_ids {
             for action in
                 std::iter::once(diff.action_type).chain(diff.sub_action_types.iter().copied())
             {
                 if matches!(
                     action,
-                    ActionType::ACTION_REBASE_AUTO_ID | ActionType::ACTION_REBASE_AUTO_RANDOM_BASE
+                    ActionType::ACTION_REBASE_AUTO_ID
+                        | ActionType::ACTION_REBASE_AUTO_RANDOM_BASE
+                        | ActionType::ACTION_RECOVER_TABLE
                 ) {
-                    row_ids.rebuild_rebased_allocators(diff.table_id, action);
+                    row_ids.rebuild_allocators(diff.table_id, action);
                 }
             }
         }

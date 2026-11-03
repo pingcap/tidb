@@ -453,7 +453,7 @@ fn table_bundle<S: MetaSnapshot>(
 }
 
 /// Go `buildPlacementAffects`.
-fn build_placement_affects(old_ids: &[i64], new_ids: &[i64]) -> Vec<tidb_model::AffectedOption> {
+pub(super) fn build_placement_affects(old_ids: &[i64], new_ids: &[i64]) -> Vec<tidb_model::AffectedOption> {
     old_ids
         .iter()
         .zip(new_ids)

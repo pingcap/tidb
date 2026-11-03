@@ -132,26 +132,14 @@ pub fn get_gc_safe_point<C: Context>(ctx: &mut C) -> Result<u64, Error<C::Error>
         return Err(Error::MissingSafePoint);
     }
     let value = rows[0].first().cloned().unwrap_or_default();
-    compatible_parse_gc_time(&value)
+    // client-go `util.CompatibleParseGCTime`.
+    tikv_client::util::compatible_parse_gc_time(&value)
         .map(go_time_to_ts)
-        .map_err(|()| Error::InvalidGcTime { value })
+        .map_err(|_| Error::InvalidGcTime { value })
 }
 
 fn tidb_opt_on(value: &str) -> bool {
     value == "1" || value.eq_ignore_ascii_case("ON")
-}
-
-/// client-go `CompatibleParseGCTime` over `GCTimeFormat`
-/// (`20060102-15:04:05.000 -0700`: the milliseconds are part of the layout),
-/// retrying without the last space-separated field (an older zone name).
-fn compatible_parse_gc_time(value: &str) -> Result<chrono::DateTime<chrono::FixedOffset>, ()> {
-    const GC_TIME_FORMAT: &str = "%Y%m%d-%H:%M:%S.%3f %z";
-    if let Ok(parsed) = chrono::DateTime::parse_from_str(value, GC_TIME_FORMAT) {
-        return Ok(parsed);
-    }
-    let mut fields = value.split(' ').collect::<Vec<_>>();
-    fields.pop();
-    chrono::DateTime::parse_from_str(&fields.join(" "), GC_TIME_FORMAT).map_err(|_| ())
 }
 
 fn go_time_to_ts(value: chrono::DateTime<chrono::FixedOffset>) -> u64 {
@@ -231,6 +219,17 @@ mod snapshot_validation_tests {
 
         // A snapshot after the safe point passes.
         validate_snapshot(&mut ctx, 1_704_067_200_000_000_000).unwrap();
+        // client-go parses with the old layout, whose milliseconds Go's
+        // `time.Parse` takes as optional: the same safe point without them.
+        ctx.tidb_table.insert(
+            "tikv_gc_safe_point".to_owned(),
+            "20240101-00:00:00 +0000".to_owned(),
+        );
+        validate_snapshot(&mut ctx, 1_704_067_200_000_000_000).unwrap();
+        ctx.tidb_table.insert(
+            "tikv_gc_safe_point".to_owned(),
+            "20240101-00:00:00.000 +0000".to_owned(),
+        );
         // A snapshot before it refuses with the rendered safe point time.
         match validate_snapshot(&mut ctx, 1) {
             Err(Error::SnapshotTooOld { safe_point_time }) => {
@@ -278,11 +277,8 @@ mod snapshot_validation_tests {
             validate_snapshot(&mut ctx, 1_792_498_637_102_u64 << 18),
             Err(Error::SnapshotTooOld { .. })
         ));
-        // Without the milliseconds the layout does not match, as in Go.
-        ctx.tidb_table.insert(
-            "tikv_gc_safe_point".to_owned(),
-            "20240101-00:00:00 +0000".to_owned(),
-        );
+        // A value matching neither layout, with or without its last field.
+        ctx.tidb_table.insert("tikv_gc_safe_point".to_owned(), "not a time".to_owned());
         assert!(matches!(
             crate::get_gc_safe_point(&mut ctx),
             Err(Error::InvalidGcTime { .. })

@@ -26005,3 +26005,91 @@ fn gc_variables_live_in_mysql_tidb_as_go() {
     );
     assert_eq!(query("select @@global.tidb_gc_life_time"), [["20m0s"]]);
 }
+
+/// Go `executeFlashbackTable` / `executeRecoverTable` and `onRecoverTable`,
+/// pinned to gorun: a dropped table comes back under its id with fresh
+/// allocators over its recovered base (Go's mock store has already run the
+/// drop's delete range, so the rows are gone and the next AUTO_INCREMENT id
+/// is the persisted batch end's next), a second FLASHBACK is refused, `TO`
+/// renames, RECOVER finds the drop by name or BY JOB, and GC is on again.
+#[test]
+fn flashback_and_recover_table_bring_a_dropped_table_back_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(182))
+        .expect("session opens");
+    fn query(session: &mut Session, sql: &str) -> Vec<Vec<String>> {
+        displayed(rows(session, sql))
+    }
+    let auto_increment = "select auto_increment from information_schema.tables where table_name = 'rt'";
+    for sql in [
+        "replace into mysql.tidb values ('tikv_gc_safe_point', '20000101-00:00:00 +0000', '')",
+        "create table test.rt (id int primary key auto_increment, v int)",
+        "insert into test.rt (v) values (10), (20)",
+    ] {
+        query(&mut session, sql);
+    }
+    let table_id = "select tidb_table_id from information_schema.tables where table_name = 'rt'";
+    let id = query(&mut session, table_id);
+    assert_eq!(query(&mut session, auto_increment), [["3"]]);
+    query(&mut session, "drop table test.rt");
+    query(&mut session, "flashback table test.rt");
+    assert_eq!(query(&mut session, table_id), id);
+    assert_eq!(query(&mut session, auto_increment), [["0"]]);
+    query(&mut session, "insert into test.rt (v) values (30)");
+    assert_eq!(query(&mut session, "select id, v from test.rt"), [["30001", "30"]]);
+    assert_eq!(
+        query_error(&mut session, "flashback table test.rt"),
+        (
+            1050,
+            "Table 'rt' already been flashback to 'rt', can't be flashback repeatedly".to_owned()
+        )
+    );
+
+    query(&mut session, "drop table test.rt");
+    query(&mut session, "flashback table test.rt to rt2");
+    assert_eq!(query(&mut session, "show tables in test"), [["rt2"]]);
+    assert_eq!(query(&mut session, "select id, v from test.rt2"), Vec::<Vec<String>>::new());
+    assert_eq!(
+        query_error(&mut session, "flashback table test.rt to rt2"),
+        (
+            1050,
+            "Table 'rt' already been flashback to 'rt2', can't be flashback repeatedly".to_owned()
+        )
+    );
+
+    query(&mut session, "drop table test.rt2");
+    query(&mut session, "recover table test.rt2");
+    assert_eq!(query(&mut session, "show tables in test"), [["rt2"]]);
+
+    query(&mut session, "drop table test.rt2");
+    let job = query(
+        &mut session,
+        "select job_id from information_schema.ddl_jobs \
+         where table_name = 'rt2' and job_type = 'drop table' order by job_id desc limit 1",
+    );
+    let job = &job[0][0];
+    query(&mut session, &format!("recover table by job {job}"));
+    assert_eq!(query(&mut session, "show tables in test"), [["rt2"]]);
+    assert_eq!(
+        query_error(&mut session, &format!("recover table by job {job}")),
+        (
+            1050,
+            "Table 'rt2' already been recover to 'rt2', can't be recover repeatedly".to_owned()
+        )
+    );
+    assert_eq!(
+        query_error(&mut session, "recover table by job 99999"),
+        (8224, "DDL Job:99999 not found".to_owned())
+    );
+    assert_eq!(
+        query_error(&mut session, "recover table test.nosuch"),
+        (
+            1105,
+            "Can't find localTemporary/dropped/truncated table: nosuch in DDL history jobs"
+                .to_owned()
+        )
+    );
+    assert_eq!(query(&mut session, "select @@global.tidb_gc_enable"), [["1"]]);
+}

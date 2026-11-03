@@ -2678,6 +2678,7 @@ where
                     | DdlStatement::DropSequence { .. }
                     | DdlStatement::DropDatabase { .. }
                     | DdlStatement::TruncateTable { .. }
+                    | DdlStatement::RecoverTable { .. }
                     | DdlStatement::CreateTable { .. }
                     | DdlStatement::AddColumn { .. }
                     | DdlStatement::DropColumn { .. }
@@ -3010,6 +3011,10 @@ impl KvTableIndexBackfiller {
 }
 
 impl IndexBackfiller for KvTableIndexBackfiller {
+    fn session_pool(&self) -> Option<Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>> {
+        Some(Arc::clone(&self.session_pool))
+    }
+
     fn system_row_ids(&self) -> Arc<dyn tidb_table::table_from_meta::TableAutoIds> {
         Arc::clone(&self.row_ids)
     }

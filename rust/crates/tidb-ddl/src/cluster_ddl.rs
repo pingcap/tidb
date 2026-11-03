@@ -895,6 +895,18 @@ pub enum DdlStatement {
         /// The table name as written.
         table: String,
     },
+    /// `RECOVER TABLE [schema.]name`, `RECOVER TABLE BY JOB n` and
+    /// `FLASHBACK TABLE [schema.]name [TO new_name]`.
+    RecoverTable {
+        /// By name: the resolved database and the table; `None` is BY JOB.
+        table: Option<(String, String)>,
+        /// BY JOB's DDL job id.
+        job_id: i64,
+        /// FLASHBACK ... TO's name; empty keeps the table's.
+        new_name: String,
+        /// FLASHBACK TABLE rather than RECOVER TABLE (its messages differ).
+        flashback: bool,
+    },
     /// `CREATE [OR REPLACE] VIEW [schema.]name AS ...`, carrying the
     /// fully built `TableInfo` — columns resolved and view metadata
     /// captured at the ROUTE, against the resolving node's own catalog,
@@ -1605,6 +1617,26 @@ pub fn lower_ddl_with_context(
             let (schema, table) = split_name(name, default_schema, "table")?;
             Ok(Some(DdlStatement::TruncateTable { schema, table }))
         }
+        DdlStmt::RecoverTable(recover) => Ok(Some(DdlStatement::RecoverTable {
+            table: recover
+                .table
+                .as_ref()
+                .map(|name| split_name(name, default_schema, "table"))
+                .transpose()?,
+            job_id: recover.job_id,
+            new_name: String::new(),
+            flashback: false,
+        })),
+        DdlStmt::FlashbackTable(flashback) => Ok(Some(DdlStatement::RecoverTable {
+            table: flashback
+                .table
+                .as_ref()
+                .map(|name| split_name(name, default_schema, "table"))
+                .transpose()?,
+            job_id: 0,
+            new_name: flashback.new_name.clone(),
+            flashback: true,
+        })),
         DdlStmt::CreateSequence(create) => {
             let (schema, name) = split_name(&create.name, default_schema, "sequence")?;
             let (info, comment) = tidb_ddl_build::sequence::build_create_sequence(create, &schema, &name)
@@ -5068,6 +5100,9 @@ pub struct DdlJobSchemaState {
     /// checks Go runs inside the step: a multi-schema step that publishes
     /// every sub-job needs each one's); a new owner reruns them.
     pub reorg: Vec<add_index::ReorgOutcome>,
+    /// The worker's session pool (Go `w.sessPool`), which RECOVER reaches GC
+    /// through. `None` for a run without one (bootstrap, tests).
+    pub session_pool: Option<DdlStepSessions>,
 }
 
 impl DdlJobSchemaState {
@@ -5078,6 +5113,7 @@ impl DdlJobSchemaState {
             synced_version: None,
             pending_version: None,
             reorg: Vec::new(),
+            session_pool: None,
         }
     }
 }
@@ -5126,6 +5162,11 @@ pub mod reorganize_partition;
 pub mod resource_group;
 pub mod table_lock;
 pub mod truncate;
+mod recover_table;
+pub use recover_table::DdlStepSessions;
+pub(crate) use recover_table::{
+    build_recover_table_job, gc_safe_point as recover_gc_safe_point, SnapshotMetaAt,
+};
 
 /// Actions currently integrated into the persisted owner worker. Seed planners
 /// outside this set are not made live by the common lifecycle.
@@ -5138,6 +5179,7 @@ pub fn supports_persisted_ddl_job(action: ActionType) -> bool {
             | ActionType::ACTION_CREATE_SCHEMA
             | ActionType::ACTION_CREATE_TABLE
             | ActionType::ACTION_CREATE_TABLES
+            | ActionType::ACTION_RECOVER_TABLE
             | ActionType::ACTION_RENAME_TABLE
             | ActionType::ACTION_RENAME_TABLES
             | ActionType::ACTION_DROP_SCHEMA
@@ -5189,6 +5231,7 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
     let reorg_outcomes = schema_state.reorg.clone();
+    let sessions = schema_state.session_pool.clone();
     plan_persisted_ddl_job_with(
         snapshot,
         ddl_job_id,
@@ -5204,6 +5247,7 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
                 start_ts,
                 &reorg_outcomes,
                 row_ids,
+                sessions.as_ref(),
             )
         },
         row_ids,
@@ -5222,9 +5266,10 @@ fn plan_persisted_action<S: MetaSnapshot>(
     start_ts: u64,
     reorg_outcomes: &[add_index::ReorgOutcome],
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
+    sessions: Option<&DdlStepSessions>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     run_in_job_txn(snapshot, start_ts, |txn| {
-        dispatch_persisted_action(txn, catalog, active, start_ts, reorg_outcomes, row_ids)
+        dispatch_persisted_action(txn, catalog, active, start_ts, reorg_outcomes, row_ids, sessions)
     })
 }
 
@@ -5250,6 +5295,7 @@ fn dispatch_persisted_action(
     start_ts: u64,
     reorg_outcomes: &[add_index::ReorgOutcome],
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
+    sessions: Option<&DdlStepSessions>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     // A job of its own reads the latest outcome; a multi-schema change hands
     // each sub-job its own.
@@ -5269,6 +5315,9 @@ fn dispatch_persisted_action(
         ),
         ActionType::ACTION_CREATE_TABLES => {
             plan_persisted_create_tables_job_step(txn, catalog, active, start_ts, row_ids)
+        }
+        ActionType::ACTION_RECOVER_TABLE => {
+            recover_table::on_recover_table(txn, catalog, active, start_ts, sessions)
         }
         ActionType::ACTION_CREATE_VIEW => {
             create_object::on_create_view(txn, catalog, active, start_ts)
@@ -5519,6 +5568,8 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         active.job.state,
         JobState::DONE | JobState::ROLLBACK_DONE | JobState::CANCELLED
     ) {
+        // Go `finishDDLJob`'s `finishRecoverTable` / `finishRecoverSchema`.
+        recover_table::finish_recover(&mut active.job, schema_state.session_pool.as_ref())?;
         return finish_persisted_ddl_job(
             snapshot,
             &catalog,
@@ -5607,6 +5658,8 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     // Go resets the action's transaction before handleJobDone on cancellation.
     // This also covers rollback handlers that cancel without a fresh error.
     if active.job.state == JobState::CANCELLED {
+        // Go `finishDDLJob`'s `finishRecoverTable` / `finishRecoverSchema`.
+        recover_table::finish_recover(&mut active.job, schema_state.session_pool.as_ref())?;
         return finish_persisted_ddl_job(
             snapshot,
             &catalog,

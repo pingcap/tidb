@@ -99,13 +99,18 @@ Oracle: `./gorun` refuses FLASHBACK because its store has no
     session). The SET statement's scratch copy shares only the SetGlobal
     hooks: its own reads must see the value being assigned. Test
     `gc_variables_live_in_mysql_tidb_as_go`, pinned to the gorun answers.
-- [ ] M2: job handlers. `onRecoverTable` and `recoverTable` in a new
-  `cluster_ddl/recover_table.rs`, dispatched from `cluster_ddl.rs` (next to
-  the CREATE TABLE arms), plus the finish hook that re-enables GC.
-- [ ] M3: executor. Lower the three statements to `DdlStatement` variants
-  that build Go's job (the history walk, the snapshot `TableInfo`, the
-  snapshot auto-ids), and submit through
-  `submit_persisted_job_with_retry`.
+- [x] M2: job handlers. `onRecoverTable` and `recoverTable` in
+  `cluster_ddl/recover_table.rs`, dispatched from `cluster_ddl.rs`. The
+  step reaches GC through the worker's `DdlSessionPool`
+  (`DdlJobSchemaState.session_pool`, `WorkerGcContext` implements
+  `tidb_gcutil::Context` over restricted SQL), and `finish_recover`
+  re-enables GC before the job is finished.
+- [x] M3: executor. `DdlStmt::RecoverTable` / `FlashbackTable` lower to
+  `DdlStatement::RecoverTable`; `build_recover_table_job` walks the history
+  (by name, newest first, batches of 10) or reads the job BY JOB, and reads
+  the dropped `TableInfo` and allocators at the drop's snapshot. Test
+  `flashback_and_recover_table_bring_a_dropped_table_back_as_go`, every
+  answer replayed through gorun.
 - [ ] M4: `onRecoverSchema` / FLASHBACK DATABASE.
 - FLASHBACK CLUSTER (`ActionFlashbackCluster`) is out of scope. It needs
   TiKV's flashback RPCs.
@@ -115,6 +120,22 @@ Oracle: `./gorun` refuses FLASHBACK because its store has no
 - `serde_json::Value` sorts object keys and cannot hand over raw JSON
   members. The embedded `*DBInfo` is therefore written as text and read
   back from text.
+- `tidb-gcutil` had its own copy of client-go's `CompatibleParseGCTime`
+  that demanded milliseconds. client-go parses with the old layout, whose
+  fraction Go's `time.Parse` takes as optional, so `20000101-00:00:00
+  +0000` is a valid safe point. gcutil now calls the client's port, and the
+  unit test that asserted the opposite was wrong.
+- Go's `dom.GetSnapshotMeta(ts)` is a store snapshot outside any
+  transaction (`StatementSnapshot::open_at`); the session transaction's
+  `snapshot_at_for` serves only a pessimistic statement timestamp.
+- The node's allocator registry (`ClusterTableAutoIds`) is keyed by table
+  id on the premise that ids are never reused, and RECOVER reuses one. Go's
+  `dropTableForUpdate` keeps nothing for an `ActionRecoverTable` diff (no
+  old table id), so the reload now rebuilds the recovered id's allocators
+  (`rebuild_allocators`): the next AUTO_INCREMENT id is the recovered
+  base's next batch (30001), not the dropped table's cached 3.
+- The submission's catalog image is metadata only (tables are built by the
+  domain later), so Go's `is.TableByID` check reads the `DBInfo` tables.
 
 ## Decision Log
 

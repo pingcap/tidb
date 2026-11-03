@@ -825,6 +825,8 @@ fn run_sub_job_step(
         start_ts,
         outcome.map(std::slice::from_ref).unwrap_or_default(),
         row_ids,
+        // Recover is never a sub-job.
+        None,
     ) {
         Ok(mut step) => {
             // Go `countForError` on the proxy.
