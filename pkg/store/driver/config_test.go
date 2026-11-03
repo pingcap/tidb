@@ -56,9 +56,7 @@ func TestSetDefaultAndOptions(t *testing.T) {
 		metricscommon.SetConstLabels()
 	})
 	pdOpt := opt.NewOption()
-	options, err := d.pdClientOptions()
-	require.NoError(t, err)
-	for _, apply := range options {
+	for _, apply := range d.pdClientOptions() {
 		apply(pdOpt)
 	}
 	require.Equal(t, metricscommon.GetConstLabels(), pdOpt.MetricsLabels)

@@ -165,10 +165,7 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 		apiCtx = pd.NewAPIContextV2(keyspaceName)
 	}
 
-	pdClientOptions, err := d.pdClientOptions()
-	if err != nil {
-		return nil, err
-	}
+	pdClientOptions := d.pdClientOptions()
 	if diagnosticmode.Enabled() {
 		pdClientOptions = append(pdClientOptions, diagclient.PDClientOption())
 	}
@@ -297,28 +294,41 @@ func newSafePointKV(
 	}, nil
 }
 
-func (d *TiKVDriver) pdClientOptions() ([]opt.ClientOption, error) {
+func (d *TiKVDriver) pdClientOptions() []opt.ClientOption {
 	interval := time.Duration(float64(time.Millisecond) * vardef.DefTiDBTSOClientBatchMaxWaitTime)
-	if err := opt.NewOption().SetMaxTSOBatchWaitInterval(interval); err != nil {
-		return nil, fmt.Errorf("invalid default %s: %w", vardef.TiDBTSOClientBatchMaxWaitTime, err)
-	}
+	maxWaitErr := opt.NewOption().SetMaxTSOBatchWaitInterval(interval)
 	concurrency, ok := vardef.TSOClientRPCModeToConcurrency(vardef.DefTiDBTSOClientRPCMode)
 	if !ok {
-		return nil, fmt.Errorf("invalid default %s: %s", vardef.TiDBTSOClientRPCMode, vardef.DefTiDBTSOClientRPCMode)
+		logutil.BgLogger().Warn("invalid TiDB default for PD client TSO RPC mode; using PD client default",
+			zap.String("variable", vardef.TiDBTSOClientRPCMode),
+			zap.String("value", vardef.DefTiDBTSOClientRPCMode))
 	}
-	opts := []opt.ClientOption{
-		opt.ClientOption(func(o *opt.Option) {
+	if maxWaitErr != nil {
+		logutil.BgLogger().Warn("invalid TiDB default for PD client TSO batch wait interval; using PD client default",
+			zap.String("variable", vardef.TiDBTSOClientBatchMaxWaitTime),
+			zap.Float64("value_ms", vardef.DefTiDBTSOClientBatchMaxWaitTime),
+			zap.Error(maxWaitErr))
+	}
+	opts := make([]opt.ClientOption, 0, 9)
+	if maxWaitErr == nil {
+		opts = append(opts, opt.ClientOption(func(o *opt.Option) {
 			if err := o.SetMaxTSOBatchWaitInterval(interval); err != nil {
-				logutil.BgLogger().Error("failed to set PD client TSO batch wait interval", zap.Error(err))
+				logutil.BgLogger().Warn("failed to set PD client TSO batch wait interval; using PD client default", zap.Error(err))
 			}
-		}),
+		}))
+	}
+	opts = append(opts,
 		opt.ClientOption(func(o *opt.Option) {
 			o.SetEnableTSOFollowerProxy(vardef.DefTiDBEnableTSOFollowerProxy)
 		}),
 		opt.WithEnableFollowerHandle(vardef.DefPDEnableFollowerHandleRegion),
-		opt.ClientOption(func(o *opt.Option) {
+	)
+	if ok {
+		opts = append(opts, opt.ClientOption(func(o *opt.Option) {
 			o.SetTSOClientRPCConcurrency(concurrency)
-		}),
+		}))
+	}
+	opts = append(opts,
 		opt.WithEnableRouterClient(vardef.DefTiDBEnableBatchQueryRegion),
 		opt.WithGRPCDialOptions(
 			// keep the same with etcd, see
@@ -329,13 +339,13 @@ func (d *TiKVDriver) pdClientOptions() ([]opt.ClientOption, error) {
 				Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
 			}),
 		),
-		opt.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout) * time.Second),
+		opt.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
 		opt.WithForwardingOption(config.GetGlobalConfig().EnableForwarding),
-	}
+	)
 	if labels := metricscommon.GetConstLabels(); len(labels) > 0 {
 		opts = append(opts, opt.WithMetricsLabels(labels))
 	}
-	return opts, nil
+	return opts
 }
 
 type tikvStore struct {
