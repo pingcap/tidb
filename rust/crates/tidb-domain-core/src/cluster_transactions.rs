@@ -70,17 +70,12 @@ use tidb_store_driver_txn::cluster_table_storage::{
 use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions;
-use tidb_sessionctx::advisory_lock_state::{
-    AdvisoryLockError, AdvisoryLockLease, AdvisoryLockService,
-};
 use tidb_kv::cluster_storage::{ClusterSnapshot, DuplicateKeyHint, SnapshotPairs};
 use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use tidb_kv::storage::StorageError;
 use tidb_txnkv::driver::transaction_error::{RedactArg, Redaction};
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::SchemaLeaseChecker;
-use tidb_txnkv::transaction::{LockWaitTime, PessimisticLockFailure};
-use tidb_store_driver_txn::transaction::RealTransaction;
 use tidb_txnkv::Key;
 
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
@@ -342,43 +337,6 @@ pub trait ClusterTransactions: Send + Sync {
         resource_group: &str,
         options: SessionTransactionOptions,
     ) -> Result<Box<dyn OpenClusterTransaction>, String>;
-
-    /// Acquires the TiKV pessimistic key backing one advisory lock.
-    fn acquire_advisory_lock(
-        &self,
-        name: &str,
-        timeout: Duration,
-    ) -> Result<Box<dyn AdvisoryLockLease>, AdvisoryLockError>;
-
-    /// Checks the same physical key without retaining it.
-    fn is_advisory_lock_used(&self, name: &str) -> bool;
-}
-
-/// Adapts the cluster transaction authority to the expression/session lock
-/// service without creating a second lock namespace.
-pub struct ClusterAdvisoryLockService {
-    transactions: Arc<dyn ClusterTransactions>,
-}
-
-impl ClusterAdvisoryLockService {
-    #[must_use]
-    pub fn new(transactions: Arc<dyn ClusterTransactions>) -> Self {
-        Self { transactions }
-    }
-}
-
-impl AdvisoryLockService for ClusterAdvisoryLockService {
-    fn acquire(
-        &self,
-        name: &str,
-        timeout: Duration,
-    ) -> Result<Box<dyn AdvisoryLockLease>, AdvisoryLockError> {
-        self.transactions.acquire_advisory_lock(name, timeout)
-    }
-
-    fn is_used(&self, name: &str) -> bool {
-        self.transactions.is_advisory_lock_used(name)
-    }
 }
 
 /// One ordinary autocommit snapshot whose timestamp request is in flight.
@@ -1253,10 +1211,6 @@ where
     /// session's group rarely changes, so the stamped clone is kept and
     /// shared. Bounded by the number of distinct groups this node serves.
     group_openers: Arc<Mutex<Vec<GroupOpener<S>>>>,
-    /// `mysql.advisory_locks`, located by name the first time a lock is
-    /// taken (the table is never recreated, so its key shape is fixed for
-    /// the life of the cluster).
-    advisory_lock_table: Arc<Mutex<Option<tidb_syssession::advisory_locks::AdvisoryLockTable>>>,
 }
 
 /// One resource group's stamped opener; see `RealClusterTransactions::group_openers`.
@@ -1289,7 +1243,6 @@ where
             opener: Arc::new(opener),
             timeout,
             group_openers: Arc::new(Mutex::new(Vec::new())),
-            advisory_lock_table: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -1316,129 +1269,6 @@ where
         );
         cached.push((name, Arc::clone(&opener)));
         opener
-    }
-
-    /// Go resolves `mysql.advisory_locks` through the info schema on every
-    /// `GET_LOCK`; this tier keeps the one located table, found by name in
-    /// the stored schema whichever layout the bootstrap gave it.
-    fn advisory_lock_table(
-        &self,
-    ) -> Result<tidb_syssession::advisory_locks::AdvisoryLockTable, AdvisoryLockError> {
-        let mut cached = self
-            .advisory_lock_table
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(table) = cached.as_ref() {
-            return Ok(table.clone());
-        }
-        let mut transaction = self
-            .opener
-            .begin()
-            .map_err(|error| AdvisoryLockError::Internal(error.to_string()))?;
-        let located = {
-            let mut snapshot = tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot::new(
-                &mut transaction,
-                self.timeout,
-            );
-            tidb_syssession::advisory_locks::AdvisoryLockTable::locate(&mut snapshot)
-        };
-        let _ = transaction.rollback(&UnaryCallContext::with_timeout(self.timeout));
-        let table = located.map_err(|error| AdvisoryLockError::Internal(error.to_string()))?;
-        *cached = Some(table.clone());
-        Ok(table)
-    }
-
-    fn acquire_advisory_lock_lease(
-        &self,
-        name: &str,
-        timeout: Duration,
-    ) -> Result<RealAdvisoryLockLease<S>, AdvisoryLockError> {
-        let key = self
-            .advisory_lock_table()?
-            .key(name)
-            .map_err(|error| AdvisoryLockError::Internal(error.to_string()))?;
-        // Go's advisory lock session: a pessimistic transaction that locks and
-        // never publishes, holding its lock until rollback.
-        let mut transaction = self
-            .opener
-            .begin()
-            .map_err(|error| AdvisoryLockError::Internal(error.to_string()))?;
-        transaction.set_pessimistic(true);
-        let wait = if timeout.is_zero() {
-            LockWaitTime::NoWait
-        } else {
-            LockWaitTime::Timeout(timeout)
-        };
-        let call = UnaryCallContext::with_timeout(timeout.saturating_add(self.timeout));
-        let presume_not_exists = BTreeSet::from([key.clone()]);
-        match transaction.acquire_locks(
-            std::slice::from_ref(&key),
-            &presume_not_exists,
-            wait,
-            &call,
-        ) {
-            Ok(acquired) => acquired,
-            Err(failure) => {
-                finish_advisory_transaction(transaction, self.timeout);
-                return Err(map_advisory_lock_failure(failure));
-            }
-        };
-        Ok(RealAdvisoryLockLease {
-            transaction: Some(transaction),
-            end_timeout: self.timeout,
-        })
-    }
-}
-
-struct RealAdvisoryLockLease<S>
-where
-    S: StoreClient,
-{
-    transaction: Option<RealTransaction<S>>,
-    end_timeout: Duration,
-}
-
-impl<S> RealAdvisoryLockLease<S>
-where
-    S: StoreClient,
-{
-    fn finish(&mut self) {
-        let Some(transaction) = self.transaction.take() else {
-            return;
-        };
-        finish_advisory_transaction(transaction, self.end_timeout);
-    }
-}
-
-fn finish_advisory_transaction<S: StoreClient>(transaction: RealTransaction<S>, timeout: Duration) {
-    let call = UnaryCallContext::with_timeout(timeout);
-    let _ = transaction.rollback(&call);
-}
-
-impl<S> Drop for RealAdvisoryLockLease<S>
-where
-    S: StoreClient,
-{
-    fn drop(&mut self) {
-        self.finish();
-    }
-}
-
-impl<S> AdvisoryLockLease for RealAdvisoryLockLease<S>
-where
-    S: StoreClient,
-{
-    fn release(mut self: Box<Self>) {
-        self.finish();
-    }
-}
-
-fn map_advisory_lock_failure(failure: PessimisticLockFailure) -> AdvisoryLockError {
-    match failure {
-        PessimisticLockFailure::LockAcquireFailAndNoWaitSet { .. }
-        | PessimisticLockFailure::LockWaitTimeout { .. } => AdvisoryLockError::Timeout,
-        PessimisticLockFailure::Deadlock(_) => AdvisoryLockError::Deadlock,
-        other => AdvisoryLockError::Internal(other.to_string()),
     }
 }
 
@@ -1720,25 +1550,6 @@ where
         transaction
             .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
             .map_err(|error| error.to_string())
-    }
-
-    fn acquire_advisory_lock(
-        &self,
-        name: &str,
-        timeout: Duration,
-    ) -> Result<Box<dyn AdvisoryLockLease>, AdvisoryLockError> {
-        self.acquire_advisory_lock_lease(name, timeout)
-            .map(|lease| Box::new(lease) as Box<dyn AdvisoryLockLease>)
-    }
-
-    fn is_advisory_lock_used(&self, name: &str) -> bool {
-        match self.acquire_advisory_lock_lease(name, Duration::from_secs(1)) {
-            Ok(mut lease) => {
-                lease.finish();
-                false
-            }
-            Err(_) => true,
-        }
     }
 }
 

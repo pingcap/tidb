@@ -118,17 +118,6 @@ impl ClusterTransactions for BatchCountingTransactions {
         panic!("unused in batch-get forwarding test")
     }
 
-    fn acquire_advisory_lock(
-        &self,
-        _name: &str,
-        _timeout: Duration,
-    ) -> Result<Box<dyn AdvisoryLockLease>, AdvisoryLockError> {
-        panic!("unused in batch-get forwarding test")
-    }
-
-    fn is_advisory_lock_used(&self, _name: &str) -> bool {
-        panic!("unused in batch-get forwarding test")
-    }
 }
 
 #[test]

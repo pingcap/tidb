@@ -102,8 +102,16 @@ checksums).
   Go's UPDATE refreshes it (`ON UPDATE CURRENT_TIMESTAMP`, gorun). The row
   planners remain only as seeding fixtures of three session tests and the
   executor's planner tests.
+- [x] (2026-11-03) Advisory locks (item 6, M5): `GET_LOCK` /
+  `IS_USED_LOCK` are Go's `advisoryLock` -- a domain internal session per
+  lock running `SET innodb_lock_wait_timeout`, `BEGIN PESSIMISTIC` and
+  `INSERT INTO mysql.advisory_locks`, released by `ROLLBACK`
+  (`cluster_session_node/advisory_locks.rs`). The raw pessimistic key lock
+  (`ClusterTransactions::acquire_advisory_lock`, `AdvisoryLockTable`) is
+  gone. `GET_LOCK(x, 0)` now waits Go's one second (the variable's minimum)
+  before answering 0.
 - [ ] M1 (the statistics handle's pool for the storage writes), M2, the rest
-  of M3, M4, M5.
+  of M3, M4.
 
 ## Surprises & Discoveries
 

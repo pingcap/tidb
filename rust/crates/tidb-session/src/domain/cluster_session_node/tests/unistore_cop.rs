@@ -26707,3 +26707,47 @@ fn lock_stats_checks_privileges_before_its_transaction_as_go() {
         [["0"]]
     );
 }
+
+/// Go `session.GetAdvisoryLock`: each lock is an internal session holding
+/// `INSERT INTO mysql.advisory_locks` in a pessimistic transaction, so the
+/// lock is visible to every node's sessions; a second session sees it used
+/// and cannot take it, and the lock goes with its holder's session.
+#[test]
+fn advisory_locks_are_internal_sessions_holding_a_row_lock_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut first = stack.factory.open_session(session_context(204)).unwrap();
+    let mut second = stack.factory.open_session(session_context(205)).unwrap();
+    assert_eq!(
+        displayed(rows(&mut first, "select get_lock('cluster-lock', 0)")),
+        [["1"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut second,
+            "select is_used_lock('CLUSTER-LOCK'), get_lock('cluster-lock', 0)"
+        )),
+        [["1", "0"]]
+    );
+    // The lock is the row lock of `mysql.advisory_locks`' key.
+    rows(&mut second, "begin pessimistic");
+    let error = second
+        .node_conn()
+        .execute("select * from mysql.advisory_locks where lock_name = 'cluster-lock' for update nowait")
+        .map(|_| ())
+        .unwrap_err();
+    assert_eq!(error.code, 3572, "{}", error.message);
+    rows(&mut second, "rollback");
+    drop(first);
+    assert_eq!(
+        displayed(rows(&mut second, "select get_lock('cluster-lock', 0)")),
+        [["1"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut second, "select release_lock('cluster-lock')")),
+        [["1"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut second, "select is_used_lock('cluster-lock')")),
+        [["NULL"]]
+    );
+}

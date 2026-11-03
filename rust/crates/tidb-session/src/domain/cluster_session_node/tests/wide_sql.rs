@@ -127,30 +127,6 @@ fn prepared_execution_uses_the_ast_parsed_at_prepare_time() {
     );
 }
 
-#[test]
-fn cluster_sessions_share_the_transaction_tier_advisory_lock_authority() {
-    let node = MockNode::start();
-    let mut first = open_session_on(&node);
-    let mut second = open_session_on(&node);
-
-    assert_eq!(
-        first.run("SELECT GET_LOCK('cluster-lock', 0)").unwrap(),
-        crate::StmtResult::Rows(vec![vec![Datum::Int(1)]])
-    );
-    assert_eq!(
-        second
-            .run("SELECT IS_USED_LOCK('CLUSTER-LOCK'), GET_LOCK('cluster-lock', 0)")
-            .unwrap(),
-        crate::StmtResult::Rows(vec![vec![Datum::Int(1), Datum::Int(0)]])
-    );
-
-    drop(first);
-    assert_eq!(
-        second.run("SELECT GET_LOCK('cluster-lock', 0)").unwrap(),
-        crate::StmtResult::Rows(vec![vec![Datum::Int(1)]])
-    );
-}
-
 /// A `SELECT` over a stored `ENUM`/`SET` column answers with the element
 /// NAME, the way MySQL prints it.
 ///

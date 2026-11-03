@@ -224,6 +224,7 @@ pub const STATS_OWNER_KEY: &str = "/tidb/stats/owner";
 /// Pinned Go `statistics/handle.StatsPrompt`.
 pub const STATS_OWNER_PROMPT: &str = "stats";
 
+mod advisory_locks;
 mod binding_maintenance;
 mod catalog_follower;
 pub use binding_maintenance::attach_binding_sessions;

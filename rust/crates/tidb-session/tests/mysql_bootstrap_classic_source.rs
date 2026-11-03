@@ -399,8 +399,6 @@ fn a_keyspace_of_either_layout_is_served_by_name() {
         tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&catalog).expect("mysql.tidb_ddl_job");
         DdlHistoryTable::locate(&catalog).expect("mysql.tidb_ddl_history");
 
-        let advisory = tidb_syssession::advisory_locks::AdvisoryLockTable::locate(&mut store)
-            .expect("mysql.advisory_locks locates by name");
         let table = tidb_syssession::advisory_locks::find_system_table(&mut store, "advisory_locks")
             .unwrap()
             .expect("mysql.advisory_locks");
@@ -409,22 +407,6 @@ fn a_keyspace_of_either_layout_is_served_by_name() {
         } else {
             assert_eq!(table.id, tidb_metadef::system::ADVISORY_LOCKS_TABLE_ID);
         }
-        let primary = table
-            .indices
-            .iter_deref()
-            .find_map(|index| {
-                let index = index.read();
-                index.primary.then_some(index.id)
-            })
-            .expect("the primary index");
-        // A clustered primary key owns no index entry: the lock is the
-        // record's key.
-        let prefix = if table.is_common_handle {
-            tidb_tablecodec::table_key::gen_table_record_prefix(table.id)
-        } else {
-            tidb_tablecodec::table_key::encode_index_seek_key(table.id, primary, &[])
-        };
-        assert!(advisory.key("rootlock").unwrap().starts_with(&prefix));
     }
 }
 

@@ -12,21 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `mysql.advisory_locks` as Go's `GET_LOCK` reaches it: the system session
-//! inserts the lock's row (Go `pkg/session/advisory_locks.go`), so the key it
-//! pessimistically locks is that table's, found by name in the stored schema.
+//! Finding a stored `mysql` system table by name in a snapshot's schema
+//! (Go's `GET_LOCK` itself is the session's internal INSERT into
+//! `mysql.advisory_locks`, `pkg/session/advisory_locks.go`).
 
 use std::fmt;
 
-use tidb_codec::Encoder;
-use tidb_datatype::{new_collation_enabled, Datum};
 use tidb_infoschema::cluster_catalog::{ClusterCatalogError, MetaSnapshot};
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
-use tidb_tablecodec::{generate_index_key, TableInfo as CodecTableInfo};
 
 use crate::mysql_system_tables::SYSTEM_DB;
-use crate::system_row_write::codec_table_info;
 
 /// Why a stored system table could not be read.
 #[derive(Clone, Debug)]
@@ -83,74 +79,3 @@ pub fn find_system_table<S: MetaSnapshot>(
     Ok(None)
 }
 
-/// What encoding the key Go's `GET_LOCK` locks takes, located by name in the
-/// schema (Go inserts through the info schema's `mysql.advisory_locks`,
-/// whatever ids the bootstrap gave it and whether its primary key is a
-/// clustered common handle, whose key is the record's, or not, whose key is
-/// the unique primary index entry's).
-#[derive(Clone, Debug)]
-pub struct AdvisoryLockTable {
-    info: TableInfo,
-    codec_info: CodecTableInfo,
-    primary_position: usize,
-    table_id: i64,
-}
-
-impl AdvisoryLockTable {
-    /// Locates `mysql.advisory_locks` at one snapshot.
-    pub fn locate<S: MetaSnapshot>(snapshot: &mut S) -> Result<Self, SystemTableLookupError> {
-        let info = find_system_table(snapshot, "advisory_locks")?.ok_or_else(|| {
-            SystemTableLookupError::Encode("mysql.advisory_locks does not exist".to_owned())
-        })?;
-        let primary_position = info
-            .indices
-            .iter_deref()
-            .position(|index| index.read().primary)
-            .ok_or_else(|| {
-                SystemTableLookupError::Encode("advisory_locks primary index is absent".to_owned())
-            })?;
-        Ok(Self {
-            codec_info: codec_table_info(&info),
-            primary_position,
-            table_id: info.id,
-            info,
-        })
-    }
-
-    /// Encodes the unique-primary-index key Go's INSERT into
-    /// `mysql.advisory_locks` pessimistically locks.
-    pub fn key(&self, lock_name: &str) -> Result<Vec<u8>, SystemTableLookupError> {
-        if self.info.is_common_handle {
-            // A clustered primary key owns no index entry: the insert locks
-            // the record key.
-            let column = self
-                .info
-                .find_public_column_by_name("lock_name")
-                .ok_or_else(|| {
-                    SystemTableLookupError::Encode("advisory_locks has no lock_name column".to_owned())
-                })?;
-            let mut values = crate::system_row_write::RowValues::new();
-            values.insert(column.read().id, Datum::new_string(lock_name));
-            return crate::system_row_write::clustered_record_key(&self.info, &values)
-                .map_err(|error| SystemTableLookupError::Encode(error.to_string()));
-        }
-        let primary = &self.codec_info.indices[self.primary_position];
-        let mut values = vec![Datum::new_string(lock_name)];
-        let (key, distinct) = generate_index_key(
-            Encoder::new(new_collation_enabled()),
-            None,
-            &self.codec_info,
-            primary,
-            self.table_id,
-            &mut values,
-            None,
-        )
-        .map_err(|error| SystemTableLookupError::Encode(error.to_string()))?;
-        if !distinct {
-            return Err(SystemTableLookupError::Encode(
-                "advisory_locks primary key encoded as non-distinct".to_owned(),
-            ));
-        }
-        Ok(key)
-    }
-}

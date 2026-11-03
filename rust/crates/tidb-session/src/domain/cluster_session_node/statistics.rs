@@ -13,8 +13,6 @@
 use std::sync::Arc;
 use tidb_executor::cluster_analyze::AnalyzeStatement;
 use tidb_executor_lockstats::ClusterStatsLockStatement;
-use tidb_syssession::stats_table_rows::StatsWritePlan;
-use tidb_datatype::current_time::utc_now_timestamp;
 use tidb_executor::real_tikv_analyze::{AnalyzeJobKind, AnalyzeJobLifecycle, AnalyzeJobSpec};
 use tidb_executor::analyze::exec::AnalyzeExec as _;
 use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
@@ -24,7 +22,7 @@ use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_executor::ddl_exec::WriteOutcome;
 
-use super::{ClusterServerSession, ClusterTransactions, InfoCache};
+use super::ClusterServerSession;
 use tidb_executor::stats_exec::FlushStatsDeltaTargets;
 
 /// Go answers the statistics statements with an OK packet carrying no rows.

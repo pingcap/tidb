@@ -283,20 +283,6 @@ impl ClusterTransactions for StepTransactions {
         }))
     }
 
-    fn acquire_advisory_lock(
-        &self,
-        name: &str,
-        timeout: std::time::Duration,
-    ) -> Result<
-        Box<dyn tidb_sessionctx::advisory_lock_state::AdvisoryLockLease>,
-        tidb_sessionctx::advisory_lock_state::AdvisoryLockError,
-    > {
-        self.inner.acquire_advisory_lock(name, timeout)
-    }
-
-    fn is_advisory_lock_used(&self, name: &str) -> bool {
-        self.inner.is_advisory_lock_used(name)
-    }
 }
 
 /// The step's transaction as one session statement sees it.

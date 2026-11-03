@@ -423,28 +423,6 @@ impl ClusterTransactions for MockTransactions {
         }))
     }
 
-    fn acquire_advisory_lock(
-        &self,
-        name: &str,
-        timeout: Duration,
-    ) -> Result<
-        Box<dyn tidb_sessionctx::advisory_lock_state::AdvisoryLockLease>,
-        tidb_sessionctx::advisory_lock_state::AdvisoryLockError,
-    > {
-        tidb_sessionctx::advisory_lock_state::AdvisoryLockService::acquire(
-            &self.0.advisory_locks,
-            name,
-            timeout,
-        )
-    }
-
-    fn is_advisory_lock_used(&self, name: &str) -> bool {
-        tidb_sessionctx::advisory_lock_state::AdvisoryLockService::is_used(
-            &self.0.advisory_locks,
-            name,
-        )
-    }
-
     fn open_max_ts_snapshot(
         &self,
         resource_group: &str,

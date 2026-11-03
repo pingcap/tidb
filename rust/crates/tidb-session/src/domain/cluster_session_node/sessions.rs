@@ -443,9 +443,13 @@ impl DomainSessions for Domain {
         if let Some(store) = self.ddl_job_history_store.get() {
             session.set_ddl_job_history_store(Arc::clone(store));
         }
-        session.set_advisory_lock_service(Arc::new(transactions::ClusterAdvisoryLockService::new(
-            Arc::clone(&self.transactions),
-        )));
+        // Go `session.GetAdvisoryLock`: each lock is an internal session of
+        // the domain.
+        session.set_advisory_lock_service(Arc::new(
+            super::advisory_locks::SessionAdvisoryLockService {
+                domain: self.binding_session_factory.clone(),
+            },
+        ));
         if let Some(syncer) = self.server_info.as_ref() {
             session.set_server_info_syncer(Arc::clone(syncer));
         }
