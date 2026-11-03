@@ -145,13 +145,24 @@ pub(crate) fn wrap_datetime_args(
     arg_types: &[Option<FieldType>],
     ctx: &dyn Columns,
 ) -> Result<Vec<Datum>, EvalError> {
-    wrap(
-        datetime_arg_mask(name),
-        vals,
-        arg_types,
-        ctx,
-        crate::cast::cast_arg_as_datetime,
-    )
+    let cast = if name == "CONVERT_TZ" {
+        convert_tz_arg_as_datetime
+    } else {
+        crate::cast::cast_arg_as_datetime
+    };
+    wrap(datetime_arg_mask(name), vals, arg_types, ctx, cast)
+}
+
+/// Go `builtinConvertTzSig.evalTime`: an argument that does not evaluate as a
+/// time (`isNull || err != nil`) makes the result NULL, the error dropped --
+/// so a strict INSERT stores NULL where every other temporal builtin fails
+/// (`handleInvalidTimeError`). A read still has the cast's own warning.
+fn convert_tz_arg_as_datetime(
+    value: &Datum,
+    arg_type: Option<&FieldType>,
+    ctx: &dyn Columns,
+) -> Result<Datum, EvalError> {
+    Ok(crate::cast::cast_arg_as_datetime(value, arg_type, ctx).unwrap_or(Datum::Null))
 }
 
 /// The argument positions at which Go declares `types.ETInt`, for the builtins
@@ -499,6 +510,32 @@ fn wrap(
 mod tests {
     use super::*;
     use crate::NoColumns;
+
+    /// A strict write's context: a truncation is an error.
+    struct StrictColumns;
+
+    impl Columns for StrictColumns {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn truncate_level(&self) -> crate::ErrorLevel {
+            crate::ErrorLevel::Error
+        }
+    }
+
+    /// Go `builtinConvertTzSig.evalTime` drops its argument's time error;
+    /// every other temporal builtin raises it (`handleInvalidTimeError`).
+    #[test]
+    fn only_convert_tz_drops_its_datetime_argument_error() {
+        let unreadable = || Datum::new_string("NULL");
+        assert!(wrap_datetime_args("MONTH", vec![unreadable()], &[], &StrictColumns).is_err());
+        let vals = vec![unreadable(), Datum::new_string("+00:00"), Datum::new_string("+08:00")];
+        assert_eq!(
+            wrap_datetime_args("CONVERT_TZ", vals, &[], &StrictColumns).unwrap()[0],
+            Datum::Null
+        );
+    }
     use tidb_datatype::{FieldTypeBuilder, FieldTypeCode};
 
     fn year_type() -> Option<FieldType> {

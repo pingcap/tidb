@@ -368,3 +368,29 @@ fn a_real_composite_interval_amount_takes_its_types_scale() {
         );
     }
 }
+
+/// Go `builtinConvertTzSig.evalTime` drops its datetime argument's error:
+/// a SELECT keeps the cast's warning, and a strict INSERT stores NULL with
+/// no error or warning (gorun), unlike every other temporal builtin.
+#[test]
+fn convert_tz_turns_an_unreadable_datetime_into_null_even_in_a_strict_write() {
+    let mut session = Session::new();
+    assert_eq!(
+        cell(&mut session, "select convert_tz('NULL', '+00:00', '+08:00')"),
+        "NULL"
+    );
+    assert_eq!(
+        warnings_of(&session),
+        vec![(1292, "Incorrect datetime value: 'NULL'".to_owned())]
+    );
+    session.run("create table ctz (a timestamp null)").unwrap();
+    session
+        .run("insert into ctz values (convert_tz('NULL', '+00:00', '+08:00'))")
+        .unwrap();
+    assert_eq!(warnings_of(&session), Vec::new());
+    session
+        .run("insert into ctz values (convert_tz('2026-13-01', '+00:00', '+08:00'))")
+        .unwrap();
+    assert_eq!(warnings_of(&session), Vec::new());
+    assert_eq!(cell(&mut session, "select count(*) from ctz where a is null"), "2");
+}

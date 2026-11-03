@@ -3159,11 +3159,24 @@ impl ScalarFunction {
         // control forms (IF/CASE), session-state functions, and the
         // AST-typed LENGTH family are not in that entry and stay unsupported
         // here until their chunk-row builtins are ported.
-        let vals: Vec<Datum> = self
-            .args
-            .iter()
-            .map(|a| a.eval(ctx, row))
-            .collect::<Result<_, _>>()?;
+        let vals: Vec<Datum> = if name.eq_ignore_ascii_case("CONVERT_TZ") {
+            // Go `builtinConvertTzSig.evalTime` reads its arguments in turn
+            // and answers NULL at the first that is NULL or fails, the error
+            // dropped: a strict write stores NULL where other builtins fail.
+            let mut vals = Vec::with_capacity(self.args.len());
+            for arg in &self.args {
+                match arg.eval(ctx, row) {
+                    Ok(Datum::Null) | Err(_) => return Ok(Datum::Null),
+                    Ok(value) => vals.push(value),
+                }
+            }
+            vals
+        } else {
+            self.args
+                .iter()
+                .map(|a| a.eval(ctx, row))
+                .collect::<Result<_, _>>()?
+        };
         let upper = name.to_ascii_uppercase();
         if matches!(upper.as_str(), "UPPER" | "UCASE" | "LOWER" | "LCASE") && vals.len() == 1 {
             let source = self.args[0].static_type();
