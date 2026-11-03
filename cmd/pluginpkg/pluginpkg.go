@@ -171,7 +171,11 @@ func buildPlugin(ctx context.Context, pkgDir, outputFile, pgoFile string, nextGe
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(workDir)
+	defer func() {
+		if err := os.RemoveAll(workDir); err != nil {
+			log.Printf("remove temporary plugin workspace failure: %v", err)
+		}
+	}()
 	buildEnv, err := pluginBuildEnv(ctx, pkgDir, filepath.Join(workDir, "go.work"))
 	if err != nil {
 		return err
