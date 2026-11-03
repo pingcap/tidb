@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -535,6 +536,7 @@ func parseEndTs(file *os.File) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
+<<<<<<< HEAD
 		if end.Format(logFileTimeFormat) != timeStr {
 			return 0, nil
 		}
@@ -554,6 +556,12 @@ func parseEndTs(file *os.File) (int64, error) {
 				end.Add(time.Duration(offset-adjacentOffset)*time.Second).Format(logFileTimeFormat) == timeStr {
 				return 0, nil
 			}
+=======
+		// Rotation names contain local wall time without an offset. A repeated
+		// time can denote a later instant, so it is not a safe pruning bound.
+		if end.Format(logFileTimeFormat) != timeStr || !timeutil.IsUniqueLocalTime(end) {
+			return 0, nil
+>>>>>>> 8d826c0273a (stmtsummary: preserve history across ambiguous rotation times (#72596))
 		}
 		return end.Unix(), nil
 	}

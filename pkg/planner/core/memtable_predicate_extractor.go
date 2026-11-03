@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -575,7 +576,29 @@ func (helper extractHelper) extractTimeRange(
 				mysqlTime.Second(),
 				mysqlTime.Microsecond()*1000,
 				timezone,
+<<<<<<< HEAD
 			).UnixNano()
+=======
+			)
+			if helper.conservativeTimeRange {
+				// SQL datetime bounds can exceed UnixNano's range or identify more
+				// than one instant. Neither conversion is safe for coarse pruning.
+				if localTime.Before(time.Unix(0, math.MinInt64)) || localTime.After(time.Unix(0, math.MaxInt64)) ||
+					types.FromGoTime(localTime) != mysqlTime.CoreTime() || !timeutil.IsUniqueLocalTime(localTime) {
+					remained = append(remained, expr)
+					continue
+				}
+				// Retained SQL predicates enforce strictness. Inclusive coarse
+				// bounds avoid millisecond adjustments that can invert or overflow.
+				switch fnName {
+				case ast.GT:
+					fnName = ast.GE
+				case ast.LT:
+					fnName = ast.LE
+				}
+			}
+			timestamp := localTime.UnixNano()
+>>>>>>> 8d826c0273a (stmtsummary: preserve history across ambiguous rotation times (#72596))
 
 			switch fnName {
 			case ast.EQ:
