@@ -541,8 +541,8 @@ def go_deps():
         name = "com_github_bazelbuild_rules_go",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/bazelbuild/rules_go",
-        sum = "h1:CPn7VHaV3czTgk4LdEO+Od5DyYb6HXLL5CUIPignRLE=",
-        version = "v0.42.1-0.20231101215950-df20c987afcb",
+        sum = "h1:5vCbuvy8Q11g41lseGJDc5vxhDjJtfxr6nM/IC4VmqM=",
+        version = "v0.49.0",
     )
     go_repository(
         name = "com_github_bboreham_go_loser",
@@ -1474,8 +1474,8 @@ def go_deps():
         name = "com_github_go_logr_logr",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/go-logr/logr",
-        sum = "h1:CjnDlHq8ikf6E492q6eKboGOC0T8CDaOvkHCIg8idEI=",
-        version = "v1.4.3",
+        sum = "h1:tG4xh9yMsRCAiodLVTxyrkzSZ9+o0L1Kg/+cPVcbP/8=",
+        version = "v1.4.4",
     )
     go_repository(
         name = "com_github_go_logr_stdr",
@@ -1887,8 +1887,8 @@ def go_deps():
         name = "com_github_golang_mock",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/golang/mock",
-        sum = "h1:ErTB+efbowRARo13NNdxyJji2egdxLGQhRaY+DUumQc=",
-        version = "v1.6.0",
+        sum = "h1:YojYx61/OLFsiv6Rw1Z96LpldJIy31o+UHmwAUMJ6/U=",
+        version = "v1.7.0-rc.1",
     )
     go_repository(
         name = "com_github_golang_protobuf",
@@ -2090,22 +2090,46 @@ def go_deps():
         name = "com_github_googleapis_enterprise_certificate_proxy",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/googleapis/enterprise-certificate-proxy",
+<<<<<<< HEAD
         sum = "h1:yh8ncqsbUY4shRD5dA6RlzjJaT4hi3kII+zYw8wmLb8=",
         version = "v0.3.14",
+=======
+        sum = "h1:vAe81Msw+8tKUxi2Dqh/NZMz7475yUvmRIkXr4oN2ao=",
+        version = "v0.3.11",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_github_googleapis_gax_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/googleapis/gax-go/v2",
+<<<<<<< HEAD
         sum = "h1:jxP5Uuo3bxm3M6gGtV94P4lliVetoCB4Wk2x8QA86LI=",
         version = "v2.18.0",
+=======
+        sum = "h1:RksgfBpxqff0EZkDWYuz9q/uWsTVz+kf43LsZ1J6SMc=",
+        version = "v2.17.0",
+    )
+    go_repository(
+        name = "com_github_googleapis_go_type_adapters",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/googleapis/go-type-adapters",
+        sum = "h1:9XdMn+d/G57qq1s8dNc5IesGCXHf6V2HZ2JwRxfA2tA=",
+        version = "v1.0.0",
+    )
+    go_repository(
+        name = "com_github_googleapis_google_cloud_go_testing",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/googleapis/google-cloud-go-testing",
+        sum = "h1:tlyzajkF3030q6M8SvmJSemC9DTHL/xaMa18b65+JM4=",
+        version = "v0.0.0-20200911160855-bcd43fbb19e8",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_github_googlecloudplatform_opentelemetry_operations_go_detectors_gcp",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp",
-        sum = "h1:rIkQfkCOVKc1OiRCNcSDD8ml5RJlZbH/Xsq7lbpynwc=",
-        version = "v1.32.0",
+        sum = "h1:l7+6kwRMJNwdCvYdDl7Eax+wzEYHSnNY7zrrfbhDdTA=",
+        version = "v1.33.0",
     )
     go_repository(
         name = "com_github_googlecloudplatform_opentelemetry_operations_go_exporter_metric",
@@ -2113,6 +2137,7 @@ def go_deps():
         importpath = "github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric",
         sum = "h1:owcC2UnmsZycprQ5RfRgjydWhuoxg71LUfyiQdijZuM=",
         version = "v0.53.0",
+<<<<<<< HEAD
     )
     go_repository(
         name = "com_github_googlecloudplatform_opentelemetry_operations_go_internal_cloudmock",
@@ -2120,6 +2145,8 @@ def go_deps():
         importpath = "github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/cloudmock",
         sum = "h1:4LP6hvB4I5ouTbGgWtixJhgED6xdf67twf9PoY96Tbg=",
         version = "v0.53.0",
+=======
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_github_googlecloudplatform_opentelemetry_operations_go_internal_resourcemapping",
@@ -2250,8 +2277,13 @@ def go_deps():
         build_file_proto_mode = "disable_global",
         build_file_generation = "clean",
         importpath = "github.com/grpc-ecosystem/grpc-gateway/v2",
+<<<<<<< HEAD
         sum = "h1:HWRh5R2+9EifMyIHV7ZV+MIZqgz+PMpZ14Jynv3O2Zs=",
         version = "v2.28.0",
+=======
+        sum = "h1:5VipnvEpbqr2gA2VbM+nYVbkIF28c5ZQfqCBQ5g2xfk=",
+        version = "v2.29.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_github_guptarohit_asciigraph",
@@ -2954,8 +2986,13 @@ def go_deps():
         name = "com_github_lyft_protoc_gen_star_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/lyft/protoc-gen-star/v2",
+<<<<<<< HEAD
         sum = "h1:JDlNKttNIRd68AAIychs0AqEpO8/I/WYi01OQ7Raw6Q=",
         version = "v2.0.4",
+=======
+        sum = "h1:sIXJOMrYnQZJu7OB7ANSF4MYri2fTEGIsRLz6LwI4xE=",
+        version = "v2.0.4-0.20230330145011-496ad1ac90a4",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_github_macabu_inamedparam",
@@ -4116,8 +4153,8 @@ def go_deps():
         name = "com_github_spiffe_go_spiffe_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/spiffe/go-spiffe/v2",
-        sum = "h1:l+DolpxNWYgruGQVV0xsfeya3CsC7m8iBzDnMpsbLuo=",
-        version = "v2.6.0",
+        sum = "h1:uXe1MflJoHw58wAUvxVlcM7WpKtijWG7I1UidcGh6g4=",
+        version = "v2.7.0",
     )
     go_repository(
         name = "com_github_spkg_bom",
@@ -4622,8 +4659,13 @@ def go_deps():
         name = "com_google_cloud_go_aiplatform",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/aiplatform",
+<<<<<<< HEAD
         sum = "h1:Qc8tv4DD6IbQfDKDd1Hu2qeGeYxTKTeZ7GH0vQrLAm8=",
         version = "v1.116.0",
+=======
+        sum = "h1:TCrSLci+NFEAx0PZMv8btGe5j68RivArmDJbBLIc/3o=",
+        version = "v1.114.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_analytics",
@@ -4652,6 +4694,16 @@ def go_deps():
         importpath = "cloud.google.com/go/apigeeregistry",
         sum = "h1:QziFVsuPU2lhy40Ht9uWEyciV23SH9GETWiwcu3qzdg=",
         version = "v0.10.0",
+<<<<<<< HEAD
+=======
+    )
+    go_repository(
+        name = "com_google_cloud_go_apikeys",
+        build_file_proto_mode = "disable_global",
+        importpath = "cloud.google.com/go/apikeys",
+        sum = "h1:B9CdHFZTFjVti89tmyXXrO+7vSNo2jvZuHG8zD5trdQ=",
+        version = "v0.6.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_appengine",
@@ -4671,8 +4723,13 @@ def go_deps():
         name = "com_google_cloud_go_artifactregistry",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/artifactregistry",
+<<<<<<< HEAD
         sum = "h1:j/XQiQfaeTyQeNj3HNk4iDFREVnY/fxkHIjsxpaDs8A=",
         version = "v1.20.0",
+=======
+        sum = "h1:DaOHWeURq93K27/6Sa2fy3rJoftrVXKeT3tonM4fxtI=",
+        version = "v1.19.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_asset",
@@ -4734,15 +4791,25 @@ def go_deps():
         name = "com_google_cloud_go_bigquery",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/bigquery",
+<<<<<<< HEAD
         sum = "h1:v//GZwdhtmCbZ87rOnxz7pectOGFS1GNRvrGTvLzka4=",
         version = "v1.73.1",
+=======
+        sum = "h1:D/yLju+3Ens2IXx7ou1DJ62juBm+/coBInn4VVOg5Cw=",
+        version = "v1.72.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_bigtable",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/bigtable",
+<<<<<<< HEAD
         sum = "h1:SREvT4jLhJQZXUjsLmFs/1SMQJ+rKEj1cJuPE9liQs8=",
         version = "v1.42.0",
+=======
+        sum = "h1:99KOWShm/MUyuIbXBeVscdWJFV7GdgiYwFUrB5Iu4BI=",
+        version = "v1.41.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_billing",
@@ -4818,8 +4885,13 @@ def go_deps():
         name = "com_google_cloud_go_container",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/container",
+<<<<<<< HEAD
         sum = "h1:xX94Lo3xrS5OkdMWKvpEVAbBwjN9uleVv6vOi02fL4s=",
         version = "v1.46.0",
+=======
+        sum = "h1:i1No5obpPxlIFLGHdUF6h2YjRR1qN9t/ZkA8KA5B//o=",
+        version = "v1.45.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_containeranalysis",
@@ -4869,6 +4941,16 @@ def go_deps():
         importpath = "cloud.google.com/go/dataplex",
         sum = "h1:rROI3iqMVI9nXT701ULoFRETQVAOAPC3mPSWFDxXFl0=",
         version = "v1.28.0",
+<<<<<<< HEAD
+=======
+    )
+    go_repository(
+        name = "com_google_cloud_go_dataproc",
+        build_file_proto_mode = "disable_global",
+        importpath = "cloud.google.com/go/dataproc",
+        sum = "h1:W47qHL3W4BPkAIbk4SWmIERwsWBaNnWm0P2sdx3YgGU=",
+        version = "v1.12.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_dataproc_v2",
@@ -4888,8 +4970,13 @@ def go_deps():
         name = "com_google_cloud_go_datastore",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/datastore",
+<<<<<<< HEAD
         sum = "h1:FOyx2Ag6ibD2wFkz9S8EiNrmBugia8pQOfpyJxi2yqA=",
         version = "v1.22.0",
+=======
+        sum = "h1:dUrYq47ysCA4nM7u8kRT0WnbfXc6TzX49cP3TCwIiA0=",
+        version = "v1.21.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_datastream",
@@ -4909,8 +4996,13 @@ def go_deps():
         name = "com_google_cloud_go_dialogflow",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/dialogflow",
+<<<<<<< HEAD
         sum = "h1:4TFe375Ti6HjUgJd4JWFEqyCAMhRZFLJUIeMF16TqTo=",
         version = "v1.75.0",
+=======
+        sum = "h1:YtSrYLd6CpRS1NZ67r4Drvm1gafUEGDm/8vVBRYEv+I=",
+        version = "v1.74.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_dlp",
@@ -4923,8 +5015,13 @@ def go_deps():
         name = "com_google_cloud_go_documentai",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/documentai",
+<<<<<<< HEAD
         sum = "h1:cAhuqgmk0KkhQmlpWp+/Vo/V9sTaFarKof663urdGps=",
         version = "v1.41.0",
+=======
+        sum = "h1:ngPNmVUb3xxj6/j7ruK4vmOMm+XTJO0Vi7Jkm0R3AdU=",
+        version = "v1.39.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_domains",
@@ -4981,6 +5078,16 @@ def go_deps():
         importpath = "cloud.google.com/go/functions",
         sum = "h1:7LcOD18euIVGRUPaeCmgO6vfWSLNIsi6STWRQcdANG8=",
         version = "v1.19.7",
+<<<<<<< HEAD
+=======
+    )
+    go_repository(
+        name = "com_google_cloud_go_gaming",
+        build_file_proto_mode = "disable_global",
+        importpath = "cloud.google.com/go/gaming",
+        sum = "h1:5qZmZEWzMf8GEFgm9NeC3bjFRpt7x4S6U7oLbxaf7N8=",
+        version = "v1.10.1",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_gkebackup",
@@ -5009,6 +5116,16 @@ def go_deps():
         importpath = "cloud.google.com/go/gkemulticloud",
         sum = "h1:m0FX9o7t7xVmSZhqzm/m8nEZn8LnC5Kh60Wg4Yx1lyQ=",
         version = "v1.6.0",
+<<<<<<< HEAD
+=======
+    )
+    go_repository(
+        name = "com_google_cloud_go_grafeas",
+        build_file_proto_mode = "disable_global",
+        importpath = "cloud.google.com/go/grafeas",
+        sum = "h1:D4x32R/cHX3MTofKwirz015uEdVk4uAxvZkZCZkOrF4=",
+        version = "v0.3.4",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_gsuiteaddons",
@@ -5070,8 +5187,13 @@ def go_deps():
         name = "com_google_cloud_go_logging",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/logging",
+<<<<<<< HEAD
         sum = "h1:qqlHCBvieJT9Cdq4QqYx1KPadCQ2noD4FK02eNqHAjA=",
         version = "v1.13.2",
+=======
+        sum = "h1:O7LvmO0kGLaHY/gq8cV7T0dyp6zJhYAOtZPX4TF3QtY=",
+        version = "v1.13.1",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_longrunning",
@@ -5091,8 +5213,13 @@ def go_deps():
         name = "com_google_cloud_go_maps",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/maps",
+<<<<<<< HEAD
         sum = "h1:ttCD1VzSg8BhnkgPkYygYVUHGyK/yHwEz5qJVps+0pM=",
         version = "v1.27.0",
+=======
+        sum = "h1:tcdo9oB3Ap4N9JJJFOhxRFldKUok4Mesd3ta7Rm79r0=",
+        version = "v1.26.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_mediatranslation",
@@ -5133,8 +5260,13 @@ def go_deps():
         name = "com_google_cloud_go_networkmanagement",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/networkmanagement",
+<<<<<<< HEAD
         sum = "h1:ibvtNUXQj07zlSbfwmS11YWan4+W8tQ/2L7zXOZ4V7U=",
         version = "v1.22.0",
+=======
+        sum = "h1:041d0RqmwP/H7AWkF/AoAwFvuCkz8shUMA4EoQt0lOA=",
+        version = "v1.21.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_networksecurity",
@@ -5175,8 +5307,13 @@ def go_deps():
         name = "com_google_cloud_go_osconfig",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/osconfig",
+<<<<<<< HEAD
         sum = "h1:0L635e0OSdWylzE/v40Riko6p142PVmWL8Rt+9fbPO4=",
         version = "v1.16.0",
+=======
+        sum = "h1:QQzK5njfsfO2rdOWYVDyLQktqSq9gKf2ohRYeKUuA10=",
+        version = "v1.15.1",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_oslogin",
@@ -5273,8 +5410,13 @@ def go_deps():
         name = "com_google_cloud_go_retail",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/retail",
+<<<<<<< HEAD
         sum = "h1:yOoyJs/IlLmohXzgDgF9N8xQYbJKIKtCw4oGAoYZpNY=",
         version = "v1.26.0",
+=======
+        sum = "h1:S9Rl1sB6Dmdak5y9I2Pwn9hcWA5ubk33Vnevxw+CSrI=",
+        version = "v1.25.1",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_run",
@@ -5310,6 +5452,16 @@ def go_deps():
         importpath = "cloud.google.com/go/securitycenter",
         sum = "h1:D9zpeguY4frQU35GBw8+M6Gw79CiuTF9iVs4sFm3FDY=",
         version = "v1.38.1",
+<<<<<<< HEAD
+=======
+    )
+    go_repository(
+        name = "com_google_cloud_go_servicecontrol",
+        build_file_proto_mode = "disable_global",
+        importpath = "cloud.google.com/go/servicecontrol",
+        sum = "h1:d0uV7Qegtfaa7Z2ClDzr9HJmnbJW7jn0WhZ7wOX6hLE=",
+        version = "v1.11.1",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_servicedirectory",
@@ -5317,6 +5469,23 @@ def go_deps():
         importpath = "cloud.google.com/go/servicedirectory",
         sum = "h1:je2yZlVcVFI/TshPXjjF9ZAlWedj0s5EbO2kozJrzBo=",
         version = "v1.12.7",
+<<<<<<< HEAD
+=======
+    )
+    go_repository(
+        name = "com_google_cloud_go_servicemanagement",
+        build_file_proto_mode = "disable_global",
+        importpath = "cloud.google.com/go/servicemanagement",
+        sum = "h1:fopAQI/IAzlxnVeiKn/8WiV6zKndjFkvi+gzu+NjywY=",
+        version = "v1.8.0",
+    )
+    go_repository(
+        name = "com_google_cloud_go_serviceusage",
+        build_file_proto_mode = "disable_global",
+        importpath = "cloud.google.com/go/serviceusage",
+        sum = "h1:rXyq+0+RSIm3HFypctp7WoXxIA563rn206CfMWdqXX4=",
+        version = "v1.6.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_shell",
@@ -5329,8 +5498,13 @@ def go_deps():
         name = "com_google_cloud_go_spanner",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/spanner",
+<<<<<<< HEAD
         sum = "h1:HS+5TuEYZOVOXj9K+0EtrbTw7bKBLrMe3vgGsbnehmU=",
         version = "v1.88.0",
+=======
+        sum = "h1:M9RGcj/4gJk6yY1lRLOz1Ze+5ufoWhbIiurzXLOOfcw=",
+        version = "v1.87.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_speech",
@@ -5401,6 +5575,16 @@ def go_deps():
         importpath = "cloud.google.com/go/videointelligence",
         sum = "h1:FisUrSZ+y3oLuGdlFQQgZoNTDm7FAfb2hwSTsSqX+9g=",
         version = "v1.12.7",
+<<<<<<< HEAD
+=======
+    )
+    go_repository(
+        name = "com_google_cloud_go_vision",
+        build_file_proto_mode = "disable_global",
+        importpath = "cloud.google.com/go/vision",
+        sum = "h1:/CsSTkbmO9HC8iQpxbK8ATms3OQaX3YQUeTMGCxlaK4=",
+        version = "v1.2.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_google_cloud_go_vision_v2",
@@ -5450,6 +5634,16 @@ def go_deps():
         importpath = "cloud.google.com/go/workflows",
         sum = "h1:FGF6QEl3rtOSIHPOMZofWRVy3KNx26jDdgoYzJZ6ZhY=",
         version = "v1.14.3",
+<<<<<<< HEAD
+=======
+    )
+    go_repository(
+        name = "com_lukechampine_uint128",
+        build_file_proto_mode = "disable_global",
+        importpath = "lukechampine.com/uint128",
+        sum = "h1:cDdUVfRwDUDovz610ABgFD17nXD4/uDgVHl2sC3+sbo=",
+        version = "v1.3.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "com_shuralyov_dmitri_gpu_mtl",
@@ -5486,8 +5680,8 @@ def go_deps():
         build_file_proto_mode = "disable_global",
         build_file_generation = "clean",
         importpath = "cel.dev/expr",
-        sum = "h1:1KrZg61W6TWSxuNZ37Xy49ps13NUovb66QLprthtwi4=",
-        version = "v0.25.1",
+        sum = "h1:K6j46C81hXtZQfuX60cVWQFBJahKSE2gfRbNuvr5bFs=",
+        version = "v0.25.2",
     )
     go_repository(
         name = "in_gopkg_check_v1",
@@ -5847,13 +6041,14 @@ def go_deps():
         name = "io_opentelemetry_go_contrib_detectors_gcp",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/contrib/detectors/gcp",
-        sum = "h1:62yY3dT7/ShwOxzA0RsKRgshBmfElKI4d/Myu2OxDFU=",
-        version = "v1.43.0",
+        sum = "h1:NmLfL734pJhM0JKaYd2Y28+nY9dPRWYAAbxhRCrKXPw=",
+        version = "v1.44.0",
     )
     go_repository(
         name = "io_opentelemetry_go_contrib_instrumentation_google_golang_org_grpc_otelgrpc",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc",
+<<<<<<< HEAD
         sum = "h1:q4XOmH/0opmeuJtPsbFNivyl7bCt7yRBbeEm2sC/XtQ=",
         version = "v0.61.0",
     )
@@ -5863,34 +6058,54 @@ def go_deps():
         importpath = "go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace",
         sum = "h1:c9r/G1CSw4dPI1jaNNG9RnQP+q4SvZnHciDQJVIvchU=",
         version = "v0.67.0",
+=======
+        replace = "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc",
+        sum = "h1:rgMkmiGfix9vFJDcDi1PK8WEQP4FLQwLDfhp5ZLpFeE=",
+        version = "v0.59.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "io_opentelemetry_go_contrib_instrumentation_net_http_otelhttp",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp",
+<<<<<<< HEAD
         sum = "h1:OyrsyzuttWTSur2qN/Lm0m2a8yqyIjUVBZcxFPuXq2o=",
         version = "v0.67.0",
+=======
+        sum = "h1:F7Jx+6hwnZ41NSFTO5q4LYDtJRXBf2PD0rNBkeB/lus=",
+        version = "v0.61.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "io_opentelemetry_go_otel",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel",
-        sum = "h1:mYIM03dnh5zfN7HautFE4ieIig9amkNANT+xcVxAj9I=",
-        version = "v1.43.0",
+        sum = "h1:pdrWmLHofpubmArBv1LgFSv1Z0Ie/ppdZzu+kUN5EeU=",
+        version = "v1.45.0",
     )
     go_repository(
         name = "io_opentelemetry_go_otel_exporters_otlp_otlptrace",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel/exporters/otlp/otlptrace",
+<<<<<<< HEAD
         sum = "h1:THuZiwpQZuHPul65w4WcwEnkX2QIuMT+UFoOrygtoJw=",
         version = "v1.42.0",
+=======
+        sum = "h1:QRefszxJmfPdjXUUm3j6iDzY03mTPXMjqErFqQ67vUg=",
+        version = "v1.45.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "io_opentelemetry_go_otel_exporters_otlp_otlptrace_otlptracegrpc",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc",
+<<<<<<< HEAD
         sum = "h1:zWWrB1U6nqhS/k6zYB74CjRpuiitRtLLi68VcgmOEto=",
         version = "v1.42.0",
+=======
+        sum = "h1:fG5MCxGz8+2VtrN/WgqSpJFctVz24gpxj8CxkKmc8Ww=",
+        version = "v1.45.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "io_opentelemetry_go_otel_exporters_otlp_otlptrace_otlptracehttp",
@@ -5910,36 +6125,36 @@ def go_deps():
         name = "io_opentelemetry_go_otel_metric",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel/metric",
-        sum = "h1:d7638QeInOnuwOONPp4JAOGfbCEpYb+K6DVWvdxGzgM=",
-        version = "v1.43.0",
+        sum = "h1:7Eg1uH7CJ5cXv9is6tnBe1FI6rj1nwUdbFypRm3br/M=",
+        version = "v1.45.0",
     )
     go_repository(
         name = "io_opentelemetry_go_otel_sdk",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel/sdk",
-        sum = "h1:pi5mE86i5rTeLXqoF/hhiBtUNcrAGHLKQdhg4h4V9Dg=",
-        version = "v1.43.0",
+        sum = "h1:4VVSMgQ83dUgW2aoX5f6JgLvHwIvzcuLnF9lUdCSpCw=",
+        version = "v1.45.0",
     )
     go_repository(
         name = "io_opentelemetry_go_otel_sdk_metric",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel/sdk/metric",
-        sum = "h1:S88dyqXjJkuBNLeMcVPRFXpRw2fuwdvfCGLEo89fDkw=",
-        version = "v1.43.0",
+        sum = "h1:oVFszMfyj1Am6s24Vtc7wBb8BKLcwepJjNEYILuiE3o=",
+        version = "v1.45.0",
     )
     go_repository(
         name = "io_opentelemetry_go_otel_trace",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel/trace",
-        sum = "h1:BkNrHpup+4k4w+ZZ86CZoHHEkohws8AY+WTX09nk+3A=",
-        version = "v1.43.0",
+        sum = "h1:l/mP6Uv7oNO7/TblbhpbgMidxhq1uO/rPsikOyVhxag=",
+        version = "v1.45.0",
     )
     go_repository(
         name = "io_opentelemetry_go_proto_otlp",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/proto/otlp",
-        sum = "h1:l706jCMITVouPOqEnii2fIAuO3IVGBRPV5ICjceRb/A=",
-        version = "v1.9.0",
+        sum = "h1:5rrYs0Ykyj50sdU/JU0x8etU+LubXWb+gED6TbEdMIk=",
+        version = "v1.11.0",
     )
     go_repository(
         name = "io_rsc_binaryregexp",
@@ -5987,8 +6202,13 @@ def go_deps():
         name = "org_golang_google_api",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/api",
+<<<<<<< HEAD
         sum = "h1:eLUQZGnAS3OHn31URRf9sAmRk3w2JjMx37d2k8AjJmA=",
         version = "v0.272.0",
+=======
+        sum = "h1:+Fo3DQXBK8gLdf8rFZ3uLu39JpOnhvzJrLMQSoSYZJM=",
+        version = "v0.264.0",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "org_golang_google_appengine",
@@ -6001,38 +6221,58 @@ def go_deps():
         name = "org_golang_google_genproto",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/genproto",
+<<<<<<< HEAD
         sum = "h1:vsOm753cOAMkt76efriTCDKjpCbK18XGHMJHo0JUKhc=",
         version = "v0.0.0-20260217215200-42d3e9bedb6d",
+=======
+        sum = "h1:VQZ/yAbAtjkHgH80teYd2em3xtIkkHd7ZhqfH2N9CsM=",
+        version = "v0.0.0-20260128011058-8636f8732409",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "org_golang_google_genproto_googleapis_api",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/genproto/googleapis/api",
-        sum = "h1:yQugLulqltosq0B/f8l4w9VryjV+N/5gcW0jQ3N8Qec=",
-        version = "v0.0.0-20260414002931-afd174a4e478",
+        sum = "h1:FarXi840EJWSHYTN3ERkADbPWjl307+FGrA22KAVjjc=",
+        version = "v0.0.0-20260803160001-6ac0973c030d",
     )
     go_repository(
         name = "org_golang_google_genproto_googleapis_bytestream",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/genproto/googleapis/bytestream",
+<<<<<<< HEAD
         sum = "h1:+1ZxApUanSjTO3aa1JTnk8zG+lZsZyRCZYhLj2lY8l0=",
         version = "v0.0.0-20260311181403-84a4fc48630c",
+=======
+        sum = "h1:Q9v92SXbvCsk89QPHVik5fAtq93/x/R8/KNWeS3numk=",
+        version = "v0.0.0-20260122232226-8e98ce8d340d",
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
     )
     go_repository(
         name = "org_golang_google_genproto_googleapis_rpc",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/genproto/googleapis/rpc",
-        sum = "h1:RmoJA1ujG+/lRGNfUnOMfhCy5EipVMyvUE+KNbPbTlw=",
-        version = "v0.0.0-20260414002931-afd174a4e478",
+        sum = "h1:IL4hdHzcUv2l/gcg98/Rj3FbtE6axwqslOW8SW0C+S0=",
+        version = "v0.0.0-20260803160001-6ac0973c030d",
     )
     go_repository(
         name = "org_golang_google_grpc",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/grpc",
-        sum = "h1:NnAxzGRA0677vCa4BUkOAnO5+FfQqVl9iUXeD0IqcGE=",
-        version = "v1.82.1",
+        sum = "h1:EManeRomTObA0BU7I8vXgg/78uE5MJ9M8B39EX2WscU=",
+        version = "v1.83.2",
     )
     go_repository(
+<<<<<<< HEAD
+=======
+        name = "org_golang_google_grpc_cmd_protoc_gen_go_grpc",
+        build_file_proto_mode = "disable_global",
+        importpath = "google.golang.org/grpc/cmd/protoc-gen-go-grpc",
+        sum = "h1:rNBFJjBCOgVr9pWD7rs/knKL4FRTKgpZmsRfV214zcA=",
+        version = "v1.3.0",
+    )
+    go_repository(
+>>>>>>> bf165b6aae8 (Merge pull request #72534 from pingcap/copilot/resolve-dependabot-vulnerability)
         name = "org_golang_google_grpc_examples",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/grpc/examples",
