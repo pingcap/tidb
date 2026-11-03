@@ -322,6 +322,7 @@ pub(super) fn on_create_table(
     if finished {
         if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
             append_schema_change_mutations(
+                txn,
                 catalog,
                 active.job.id,
                 &[(-1, SchemaChangeEvent::create_table(info.clone_like_go()))],

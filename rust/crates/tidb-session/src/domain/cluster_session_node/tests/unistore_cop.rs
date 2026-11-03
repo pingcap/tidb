@@ -26159,3 +26159,90 @@ fn flashback_database_brings_a_dropped_schema_back_as_go() {
     );
     assert_eq!(query(&mut session, "select @@global.tidb_gc_enable"), [["1"]]);
 }
+
+/// Go `w.sess.Execute` inside the job step's transaction
+/// (`docs/ddl-step-session-execplan.md` M1): a statement on the step session
+/// reads at the step's start timestamp and stages its rows into the step's
+/// buffer, publishing nothing itself; the rows appear when the step commits
+/// that buffer and vanish when it does not. The INSERT's presume-not-exist
+/// flag travels with the buffer, so a duplicate the optimistic statement did
+/// not check in place is refused at the step's commit.
+#[test]
+fn a_step_session_statement_commits_with_its_step_as_go() {
+    use tidb_ddl_build::session_pool::DdlSessionPool;
+    use tidb_store_driver_txn::cluster_storage::MutationBuffer;
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(184)).unwrap();
+    for sql in [
+        "create table test.st (a int primary key, b varchar(10))",
+        "insert into test.st values (1, 'one')",
+    ] {
+        session.node_conn().execute_write(sql).unwrap();
+    }
+    let pool = crate::ddl_session_pool::NodeDdlSessionPool::default();
+    pool.bind(&stack.factory);
+    let domain = &stack.factory;
+    let options = || tidb_domain_core::session_transaction::restricted_transaction_options(&domain.global_vars);
+    let insert = "INSERT INTO test.st VALUES (%?, %?)";
+    let select = "select a, b from test.st order by a";
+
+    // Staged, then dropped: nothing is published.
+    let start_ts = domain.transactions.fresh_timestamp().unwrap();
+    let buffer = MutationBuffer::new();
+    pool.exec_in_step_txn(
+        start_ts,
+        &buffer,
+        insert,
+        &[tidb_sqlescape::SqlArg::Signed(2), tidb_sqlescape::SqlArg::String(b"two")],
+    )
+    .unwrap();
+    assert!(!buffer.is_empty());
+    assert_eq!(displayed(rows(&mut session, select)), [["1", "one"]]);
+    drop(buffer);
+    assert_eq!(displayed(rows(&mut session, select)), [["1", "one"]]);
+
+    // Staged, then committed with the step.
+    let start_ts = domain.transactions.fresh_timestamp().unwrap();
+    let buffer = MutationBuffer::new();
+    pool.exec_in_step_txn(
+        start_ts,
+        &buffer,
+        insert,
+        &[tidb_sqlescape::SqlArg::Signed(2), tidb_sqlescape::SqlArg::String(b"two")],
+    )
+    .unwrap();
+    domain
+        .transactions
+        .commit(&buffer, Some(start_ts), "", options())
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, select)),
+        [["1", "one"], ["2", "two"]]
+    );
+
+    // A duplicate staged by the optimistic statement is refused when the
+    // step commits it.
+    let start_ts = domain.transactions.fresh_timestamp().unwrap();
+    let buffer = MutationBuffer::new();
+    let staged = pool.exec_in_step_txn(
+        start_ts,
+        &buffer,
+        insert,
+        &[tidb_sqlescape::SqlArg::Signed(1), tidb_sqlescape::SqlArg::String(b"dup")],
+    );
+    let committed = staged.map(|_| {
+        domain
+            .transactions
+            .commit(&buffer, Some(start_ts), "", options())
+    });
+    let refused = match committed {
+        Err(error) => error.code,
+        Ok(Err(error)) => error.code,
+        Ok(Ok(_)) => panic!("the duplicate committed"),
+    };
+    assert_eq!(refused, 1062);
+    assert_eq!(
+        displayed(rows(&mut session, select)),
+        [["1", "one"], ["2", "two"]]
+    );
+}

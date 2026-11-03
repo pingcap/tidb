@@ -302,6 +302,7 @@ pub(super) fn on_add_column(
     }
     if !tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string().go_to_lower()) {
         append_schema_change_mutations(
+            txn,
             catalog,
             active.job.id,
             &[(

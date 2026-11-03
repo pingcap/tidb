@@ -177,6 +177,7 @@ pub(super) fn on_truncate_table(
     )?;
     if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
         append_schema_change_mutations(
+            txn,
             catalog,
             active.job.id,
             &[(

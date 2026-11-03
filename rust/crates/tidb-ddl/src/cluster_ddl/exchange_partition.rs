@@ -562,6 +562,7 @@ pub(super) fn on_exchange_table_partition(
     let mut write = exchange_step(txn, active, &args, &standalone, None)?;
     if !tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string()) {
         append_schema_change_mutations(
+            txn,
             catalog,
             active.job.id,
             &[(

@@ -943,6 +943,7 @@ pub(super) fn on_reorganize_partition(
                     ),
                 };
                 append_schema_change_mutations(
+                    txn,
                     catalog,
                     active.job.id,
                     &[(-1, event)],

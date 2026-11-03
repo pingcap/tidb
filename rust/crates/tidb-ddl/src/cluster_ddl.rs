@@ -5281,8 +5281,17 @@ fn plan_persisted_action<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
     sessions: Option<&DdlStepWorker>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    run_in_job_txn(snapshot, start_ts, |txn| {
+    run_in_job_txn(snapshot, start_ts, step_session(sessions), |txn| {
         dispatch_persisted_action(txn, catalog, active, start_ts, reorg_outcomes, row_ids, sessions)
+    })
+}
+
+/// The step's session (Go `w.sess`) from the worker's pool and the step's
+/// buffer.
+fn step_session(worker: Option<&DdlStepWorker>) -> Option<crate::job_txn::StepSession> {
+    worker.map(|worker| crate::job_txn::StepSession {
+        pool: std::sync::Arc::clone(&worker.sess_pool),
+        buffer: worker.step_buffer.clone(),
     })
 }
 
@@ -5291,9 +5300,10 @@ fn plan_persisted_action<S: MetaSnapshot>(
 fn run_in_job_txn(
     snapshot: &mut dyn MetaSnapshot,
     start_ts: u64,
+    session: Option<crate::job_txn::StepSession>,
     handler: impl FnOnce(&mut JobTxn<'_>) -> Result<PersistedDdlActionStep, DdlPlanError>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    let mut txn = JobTxn::new(snapshot, start_ts);
+    let mut txn = JobTxn::new(snapshot, start_ts).with_session(session);
     let mut step = handler(&mut txn)?;
     let mut mutations = txn.into_mutations()?;
     mutations.append(&mut step.write.mutations);
@@ -5625,7 +5635,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     let previous_schema_version = active.job.last_schema_version;
     let outcome = recover_ddl_action(|| {
         if cancelling {
-            run_in_job_txn(snapshot, start_ts, |txn| {
+            run_in_job_txn(snapshot, start_ts, step_session(schema_state.worker.as_ref()), |txn| {
                 plan_cancel_persisted_ddl_job(txn, &catalog, &mut active, start_ts)
             })
         } else {
@@ -6407,7 +6417,7 @@ fn plan_persisted_create_tables_job_step(
                 (position as i64, SchemaChangeEvent::create_table(info.clone_like_go()))
             })
             .collect();
-        append_schema_change_mutations(catalog, ddl_job_id, &events, &mut mutations, row_ids)?;
+        append_schema_change_mutations(txn, catalog, ddl_job_id, &events, &mut mutations, row_ids)?;
     }
 
     active.job.state = JobState::DONE;
@@ -6559,7 +6569,7 @@ fn plan_persisted_drop_schema_job_step(
                     )
                 })
                 .collect();
-            append_schema_change_mutations(catalog, ddl_job_id, &events, &mut mutations, row_ids)?;
+            append_schema_change_mutations(txn, catalog, ddl_job_id, &events, &mut mutations, row_ids)?;
         }
         // Go `getIDs(tables)`: each table's id, then its partitions'.
         let dropped_ids: Vec<i64> = tables
@@ -6707,6 +6717,7 @@ fn plan_persisted_drop_table_job_step(
             && !tidb_metadef::is_mem_or_sys_db(&database.read().name.lowercase().go_to_lower())
         {
             append_schema_change_mutations(
+                txn,
                 catalog,
                 ddl_job_id,
                 &[(-1, SchemaChangeEvent::drop_table(table.clone_like_go()))],
@@ -8875,7 +8886,12 @@ fn find_index(table: &TableInfo, name: &str) -> Option<GoShared<IndexInfo>> {
         .find(|index| index.read().name.original().go_lower_eq(name))
 }
 
+/// Go `notifier.PubSchemeChangeToStore` for each of `events`: the step's
+/// session runs `tableStore.Insert`'s statement in the step's transaction.
+/// A run without a session (bootstrap, planner tests) still stages the rows
+/// itself (`docs/ddl-step-session-execplan.md`, M4 removes that).
 fn append_schema_change_mutations(
+    txn: &JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     ddl_job_id: i64,
     events: &[(i64, SchemaChangeEvent)],
@@ -8883,6 +8899,27 @@ fn append_schema_change_mutations(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), DdlPlanError> {
     if events.is_empty() {
+        return Ok(());
+    }
+    if txn.session().is_some() {
+        let sql = format!(
+            "INSERT INTO mysql.{NOTIFIER_TABLE_NAME} (ddl_job_id, sub_job_id, schema_change, processed_by_flag) \
+             VALUES (%?, %?, %?, 0)"
+        );
+        for (sub_job_id, event) in events {
+            let event =
+                serde_json::to_vec(event).map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            txn.execute(
+                &sql,
+                &[
+                    tidb_sqlescape::SqlArg::Signed(ddl_job_id),
+                    tidb_sqlescape::SqlArg::Signed(*sub_job_id),
+                    tidb_sqlescape::SqlArg::Bytes(Some(&event)),
+                ],
+            )
+            .expect("the step has a session")
+            .map_err(DdlPlanError::from_mysql_error)?;
+        }
         return Ok(());
     }
     let (system_database, table) = catalog

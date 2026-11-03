@@ -32,6 +32,9 @@ const RECOVER_CHECK_FLAG_DISABLE_GC: i64 = 2;
 pub struct DdlStepWorker {
     /// Go `w.sessPool`.
     pub sess_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
+    /// The step's staged writes (Go `w.sess`'s membuffer): the step's
+    /// session statements stage into it, and the step commits it.
+    pub step_buffer: tidb_store_driver_txn::cluster_storage::MutationBuffer,
     /// Go `meta.NewReader(w.store.GetSnapshot(kv.NewVersion(ts)))`.
     pub store: Option<Arc<dyn SnapshotMetaAt>>,
 }

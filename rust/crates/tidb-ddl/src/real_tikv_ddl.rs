@@ -909,6 +909,8 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
     ));
     schema_state.worker = backfiller.session_pool().map(|sess_pool| crate::cluster_ddl::DdlStepWorker {
         sess_pool,
+        // Each step's own, set where the step begins.
+        step_buffer: MutationBuffer::new(),
         store: Some(Arc::new(StoreSnapshotMeta {
             opener: Arc::clone(&opener),
             timeout,
@@ -1540,7 +1542,11 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
                         "no session pool to read the GC safe point through",
                     ))
                 })?;
-                let worker = crate::cluster_ddl::DdlStepWorker { sess_pool, store: None };
+                let worker = crate::cluster_ddl::DdlStepWorker {
+                    sess_pool,
+                    step_buffer: MutationBuffer::new(),
+                    store: None,
+                };
                 let gc_safe_point = crate::cluster_ddl::recover_gc_safe_point(&worker)?;
                 let catalog = load_info_schema(&mut snapshot).map_err(DdlPlanError::Meta)?;
                 let at = StoreSnapshotMeta {
@@ -1946,6 +1952,13 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
     )?;
     let start_ts = transaction.start_ts();
     let row_ids = backfiller.system_row_ids();
+    // Go `w.sess`'s membuffer for this step: the step's session statements
+    // stage into it, and it commits with the step's meta writes.
+    let mut buffer = MutationBuffer::new();
+    let mut schema_state = phase.schema_state.clone();
+    if let Some(worker) = schema_state.worker.as_mut() {
+        worker.step_buffer = buffer.clone();
+    }
     let plan = {
         let mut snapshot = SnapshotMetaSnapshot::new(
             transaction
@@ -1956,7 +1969,7 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
             &mut snapshot,
             phase.ddl_job_id,
             start_ts,
-            phase.schema_state.clone(),
+            schema_state,
             &|| refresh_ddl_error_count_limit(&opener, timeout, phase.ddl_job_id),
             Some(row_ids.as_ref()),
         ) {
@@ -2000,7 +2013,6 @@ fn commit_cluster_ddl_with_backfill_once<S: StoreClient>(
     let mut persisted_job_terminal = step.terminal;
     let mut run_error = step.run_error.map(|error| (error, step.error_count));
     let mut write = step.write;
-    let mut buffer = MutationBuffer::new();
     if write.check_constraint_validation.is_some() {
         let stage_action = || {
             transaction

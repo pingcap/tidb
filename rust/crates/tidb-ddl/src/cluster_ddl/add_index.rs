@@ -1096,6 +1096,7 @@ fn plan_write_reorganization(
             .map(|index| index.read().clone_like_go())
             .collect();
         append_schema_change_mutations(
+            txn,
             catalog,
             active.job.id,
             &[(

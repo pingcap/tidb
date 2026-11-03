@@ -123,4 +123,25 @@ pub trait DdlSessionPool: Send + Sync {
             .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
         self.exec_restricted_sql(&String::from_utf8_lossy(&escaped))
     }
+
+    /// Go `w.sess.Execute(ctx, sql, label)` inside the job step's
+    /// transaction (`w.sess.Begin` -> step -> `w.sess.Commit`): the statement
+    /// runs on an internal session in an optimistic transaction that reads at
+    /// the step's `start_ts` and stages its writes, key flags included, into
+    /// the step's `buffer`; the step commits them with its meta writes.
+    ///
+    /// # Errors
+    ///
+    /// The escaping's error, or the statement's.
+    fn exec_in_step_txn(
+        &self,
+        _start_ts: u64,
+        _buffer: &tidb_store_driver_txn::cluster_storage::MutationBuffer,
+        _sql: &str,
+        _args: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
+        Err(tidb_terror::MysqlError::unknown(
+            "this DDL session pool has no step session",
+        ))
+    }
 }

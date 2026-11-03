@@ -29,6 +29,10 @@ use tidb_txnkv::transaction::{BufferMutation, BufferMutationOp};
 pub struct JobTxn<'a> {
     inner: &'a mut dyn MetaSnapshot,
     start_ts: u64,
+    /// Go `w.sess`: the session whose transaction the step is, through which
+    /// the step's system-table statements run. `None` for a run without a
+    /// session pool (bootstrap, planner tests).
+    session: Option<StepSession>,
     /// Each written key's value; `None` deletes it.
     writes: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
     /// The snapshot's own error for a read the meta reader made that failed,
@@ -46,9 +50,42 @@ impl<'a> JobTxn<'a> {
         Self {
             inner,
             start_ts,
+            session: None,
             writes: BTreeMap::new(),
             failed: None,
         }
+    }
+
+    /// The step's session (see [`StepSession`]).
+    #[must_use]
+    pub fn with_session(mut self, session: Option<StepSession>) -> Self {
+        self.session = session;
+        self
+    }
+
+    /// The step's session, for a transaction nested in this one.
+    #[must_use]
+    pub fn session(&self) -> Option<StepSession> {
+        self.session.clone()
+    }
+
+    /// Go `w.sess.Execute(ctx, sql, label)` in the step's transaction;
+    /// `None` when the step runs without a session.
+    ///
+    /// # Errors
+    ///
+    /// The statement's own error.
+    pub fn execute(
+        &self,
+        sql: &str,
+        args: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Option<Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError>> {
+        let session = self.session.as_ref()?;
+        Some(
+            session
+                .pool
+                .exec_in_step_txn(self.start_ts, &session.buffer, sql, args),
+        )
     }
 
     /// Go `meta.NewMutator(txn)`.
@@ -109,6 +146,17 @@ impl<'a> JobTxn<'a> {
         }
         merged.into_iter().collect()
     }
+}
+
+/// Go `w.sess` for one step: the worker's session pool and the step's
+/// staged writes, which every statement of the step stages into and the
+/// step commits with its meta writes.
+#[derive(Clone)]
+pub struct StepSession {
+    /// Go `w.sessPool`.
+    pub pool: std::sync::Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
+    /// Go `w.sess`'s membuffer.
+    pub buffer: tidb_store_driver_txn::cluster_storage::MutationBuffer,
 }
 
 /// A meta error of a step: the snapshot's own when a read failed.

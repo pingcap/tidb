@@ -68,15 +68,14 @@ system-table rows are the SQL statements Go executes, in the same commit.
 
 ## Plan of work
 
-- M1: a session-transaction seam. A pooled internal session can begin a
-  transaction, expose it as the `MetaTransaction` a meta `Mutator` writes
-  through (Go `sess.Txn()`), run internal SQL in it, and commit or roll
-  back. Prove it with one test: a meta write and an `INSERT` in one session
-  transaction commit together and roll back together.
+- M1: a session-transaction seam (see the Decision Log for its shape):
+  `DdlSessionPool::exec_in_step_txn(start_ts, buffer, sql, args)` runs one
+  statement on a system session over the step's buffer and a step
+  `ClusterTransactions`. Test: the row stages without publishing, commits
+  with the step's buffer, and a duplicate is refused at the step's commit.
 - M2: the notifier event through the seam (Go `PubSchemeChangeToStore`):
-  `append_schema_change_mutations` becomes the INSERT. Test: the event row
-  and the step's meta write share one commit; `mysql.stats_meta` counts the
-  notifier table's row as Go's does.
+  `append_schema_change_mutations` runs Go's `tableStore.Insert` statement
+  through the step's session (`JobTxn::execute`).
 - M3: the job row, history row and MDL info (Go `updateDDLJob`,
   `addHistoryDDLJob`, `registerMDLInfo`) through the seam; the step commit
   becomes the session's commit.
@@ -85,16 +84,47 @@ system-table rows are the SQL statements Go executes, in the same commit.
 
 ## Progress
 
-- [ ] M1: session-transaction seam.
-- [ ] M2: notifier event.
+- [x] M1 (2026-11-03): session-transaction seam.
+  `DomainSessions::open_system_session_over(transactions, buffer)`;
+  `ddl_session_pool::StepTransactions` / `StepTransaction` (reads at the
+  step's start timestamp; autocommit and direct commits refused; the
+  transaction's commit publishes nothing). Test
+  `a_step_session_statement_commits_with_its_step_as_go`.
+- [x] M2 (2026-11-03): notifier event. The step's buffer is created before
+  planning (`commit_cluster_ddl_with_backfill_once`) and reaches the
+  handlers as `DdlStepWorker.step_buffer` -> `JobTxn`'s `StepSession`
+  (Go `jobCtx` with `w.sess`); a sub-job's nested `JobTxn` inherits it.
+  The 17 tests that consume DDL events (stats handler, notifier store)
+  pass over it and fail when the statement is skipped. A run without a
+  session pool still stages the row itself until M4.
 - [ ] M3: job, history and MDL rows; the step commit.
 - [ ] M4: reorg handles, delete ranges, table cache meta; raw writers gone.
 
 ## Surprises & Discoveries
 
-(None yet.)
+- A session resets its staged buffer when it closes (`TxnManager::rollback`
+  resets unconditionally), and a step session's buffer is the step's: the
+  session hands it back before closing (`release_step_buffer`). Go's
+  `w.sess` is never closed between steps, so the question does not arise
+  there.
 
 ## Decision Log
+
+- 2026-11-03, M1's seam: Go has ONE membuffer for the step (`w.sess`'s
+  transaction). The Rust worker already commits a `MutationBuffer` plus the
+  step's meta mutations in one `SessionTransaction::commit_with`. So a
+  system session is opened over the step's buffer (sessions take their
+  buffer at construction, `open_storage_session`) and over a
+  `ClusterTransactions` whose `begin` returns a transaction that reads at the
+  step's start timestamp (`open_snapshot_at`) and whose commit publishes
+  nothing: the statement's rows, with their key flags (presume-not-exist,
+  assertions), land in the step's buffer and commit with it. Extracting
+  rows from a session buffer instead would drop those flags.
+- The session publishes its table delta when its (no-op) commit returns,
+  i.e. before the worker's commit; Go dumps `w.sess`'s delta only after the
+  step committed. A failed step therefore still counts the system table's
+  delta here. Recorded rather than plumbed: the delta is advisory
+  (`stats_meta.modify_count`) and the step retries.
 
 - Port by milestone over the existing commit path rather than rewriting
   the owner loop at once: each system table moves when the seam can carry

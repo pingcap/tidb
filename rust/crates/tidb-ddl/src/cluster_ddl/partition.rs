@@ -814,6 +814,7 @@ pub(super) fn on_add_table_partition(
             let mut write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 append_schema_change_mutations(
+                    txn,
                     catalog,
                     active.job.id,
                     &[(
@@ -1127,6 +1128,7 @@ pub(super) fn on_drop_table_partition(
             )?;
             if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 append_schema_change_mutations(
+                    txn,
                     catalog,
                     active.job.id,
                     &[(
@@ -1342,6 +1344,7 @@ pub(super) fn on_truncate_table_partition(
             )?;
             if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 append_schema_change_mutations(
+                    txn,
                     catalog,
                     active.job.id,
                     &[(

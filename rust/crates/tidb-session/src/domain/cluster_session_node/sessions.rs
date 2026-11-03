@@ -38,11 +38,37 @@ pub trait DomainSessions {
     /// account executor runs in its own transaction.
     fn open_system_session(&self) -> Result<Session, SqlQueryError>;
 
+    /// [`Self::open_system_session`] whose transactions come from
+    /// `transactions` and whose writes stage into `buffer`: Go's DDL worker
+    /// session, whose transaction is the job step's own (`w.sess`).
+    fn open_system_session_over(
+        &self,
+        transactions: Arc<dyn ClusterTransactions>,
+        buffer: MutationBuffer,
+    ) -> Result<Session, SqlQueryError>;
+
     fn open_session(&self, context: SessionContext) -> Result<Session, SqlQueryError>;
+
+    /// [`Self::open_session`] over the given transactions and buffer.
+    fn open_session_over(
+        &self,
+        context: SessionContext,
+        transactions: Arc<dyn ClusterTransactions>,
+        buffer: MutationBuffer,
+    ) -> Result<Session, SqlQueryError>;
 
     /// A session over this node's storage for internal work: no
     /// authentication identity, process-list entry or user transaction.
     fn open_storage_session(&self, connection_id: u64) -> Result<Session, SqlQueryError>;
+
+    /// [`Self::open_storage_session`] over the given transactions and
+    /// buffer (Go: a session whose `kv.Transaction` is someone else's).
+    fn open_storage_session_over(
+        &self,
+        connection_id: u64,
+        transactions: Arc<dyn ClusterTransactions>,
+        buffer: MutationBuffer,
+    ) -> Result<Session, SqlQueryError>;
 }
 
 impl DomainSessions for Domain {
@@ -80,11 +106,19 @@ impl DomainSessions for Domain {
     }
 
     fn open_system_session(&self) -> Result<Session, SqlQueryError> {
+        self.open_system_session_over(Arc::clone(&self.transactions), MutationBuffer::new())
+    }
+
+    fn open_system_session_over(
+        &self,
+        transactions: Arc<dyn ClusterTransactions>,
+        buffer: MutationBuffer,
+    ) -> Result<Session, SqlQueryError> {
         use std::sync::atomic::{AtomicU64, Ordering};
         // Apart from client connections and the advanced pool's range.
         static NEXT_SYSTEM_CONNECTION_ID: AtomicU64 = AtomicU64::new(1_u64 << 62);
         let connection_id = NEXT_SYSTEM_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
-        let mut session = self.open_session(SessionContext {
+        let mut session = self.open_session_over(SessionContext {
             connection_id,
             peer_addr: crate::domain::peer_address::PeerAddress::Tcp(
                 "127.0.0.1:0".parse().expect("loopback socket address"),
@@ -96,13 +130,22 @@ impl DomainSessions for Domain {
             compression_level: 0,
             cancellation: crate::domain::session_api::ConnectionCancellation::default(),
             close: crate::domain::session_api::ConnectionClose::default(),
-        })?;
+        }, transactions, buffer)?;
         session.set_restricted_sql(true);
         Ok(session)
     }
 
     fn open_session(&self, context: SessionContext) -> Result<Session, SqlQueryError> {
-        let mut opened = self.open_storage_session(context.connection_id)?;
+        self.open_session_over(context, Arc::clone(&self.transactions), MutationBuffer::new())
+    }
+
+    fn open_session_over(
+        &self,
+        context: SessionContext,
+        transactions: Arc<dyn ClusterTransactions>,
+        buffer: MutationBuffer,
+    ) -> Result<Session, SqlQueryError> {
+        let mut opened = self.open_storage_session_over(context.connection_id, transactions, buffer)?;
         let session = &mut opened;
         let identity = &context.identity;
         session.set_restricted_sql(identity.is_internal());
@@ -160,10 +203,18 @@ impl DomainSessions for Domain {
     // copied into internal storage work. Its MDL holds nest in the caller's
     // connection scope, while its storage and transaction are independent.
     fn open_storage_session(&self, connection_id: u64) -> Result<Session, SqlQueryError> {
+        self.open_storage_session_over(connection_id, Arc::clone(&self.transactions), MutationBuffer::new())
+    }
+
+    fn open_storage_session_over(
+        &self,
+        connection_id: u64,
+        transactions: Arc<dyn ClusterTransactions>,
+        buffer: MutationBuffer,
+    ) -> Result<Session, SqlQueryError> {
         // The connection's own snapshot slot and staged writes: one session,
         // one transaction, exactly as Go's session owns one `kv.Transaction`.
         let slot = Arc::new(Mutex::new(SwappableSnapshot::new()));
-        let buffer = MutationBuffer::new();
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&slot) as _;
         let mut storage = ClusterTableStorage::new(buffer.clone(), handle);
         if let Some(mpp) = self.mpp_client.as_ref() {
@@ -199,7 +250,7 @@ impl DomainSessions for Domain {
                 .upgrade()
                 .expect("a domain opens sessions from behind its shared Arc"),
             txn: TxnManager::new(
-                Arc::clone(&self.transactions),
+                transactions,
                 Arc::new(NodeSchemaPins(Arc::clone(&self.schema_pins))),
                 connection_id,
                 buffer.clone(),

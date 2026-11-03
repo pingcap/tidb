@@ -789,7 +789,8 @@ fn run_sub_job_step(
         // Go `convertJob2RollbackJob`: the error goes on the proxy, and a
         // sub-job now rolling back or cancelled returns none.
         let ddl_job_id = proxy.job.id;
-        let cancelled = run_in_job_txn(txn, start_ts, |txn| {
+        let session = txn.session();
+        let cancelled = run_in_job_txn(txn, start_ts, session, |txn| {
             plan_cancel_persisted_ddl_job(txn, catalog, &mut proxy, start_ts)
         });
         let (mut step, error) = match cancelled {
@@ -1019,7 +1020,8 @@ pub(super) fn on_multi_schema_change(
         let mut sub_catalog: Option<SessionExtendedInfoSchema> = None;
         // The sub-jobs' writes, which reach the step only when every one of
         // them stepped (a failed one restores the table alone).
-        let mut subs = JobTxn::new(txn, start_ts);
+        let session = txn.session();
+        let mut subs = JobTxn::new(txn, start_ts).with_session(session);
         for (seq, sub) in sub_jobs.iter().enumerate() {
             if sub.read().is_finished() {
                 continue;

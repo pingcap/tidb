@@ -608,6 +608,14 @@ impl<'s> ClusterServerSession<'s> {
     }
 
     /// The borrowed context one statement runs in.
+    /// Hands the staged buffer back to the DDL step that lent it (see
+    /// [`TxnManager::release_buffer`]); the session closes over a fresh one.
+    pub(crate) fn release_step_buffer(&mut self) {
+        let node = &mut *self.node;
+        node.txn.release_buffer();
+        node.buffer = MutationBuffer::new();
+    }
+
     pub fn lifecycle(&mut self) -> StatementLifecycle<'_> {
         let hooks = self.commit_hooks();
         let node = &mut *self.node;

@@ -146,6 +146,13 @@ impl TxnManager {
         &self.buffer
     }
 
+    /// Gives up the staged buffer to the owner it was lent by, keeping a
+    /// fresh one: a DDL step session's buffer is the step's (Go `w.sess`'s
+    /// transaction), which the step, not the session, commits or drops.
+    pub(crate) fn release_buffer(&mut self) {
+        self.buffer = MutationBuffer::new();
+    }
+
     /// The store the session's transactions open on.
     #[must_use]
     pub fn transactions(&self) -> &Arc<dyn ClusterTransactions> {
