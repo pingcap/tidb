@@ -246,6 +246,42 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	require.Equal(t, defaultValue, v)
 }
 
+func TestTTLJobEnableExternalWorkloadUpdateOnlyOnSetGlobal(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	originalEnable := vardef.EnableTTLJob.Load()
+	originalHook := variable.UpdateExternalWorkloadTTLJobEnable
+	t.Cleanup(func() {
+		vardef.EnableTTLJob.Store(originalEnable)
+		variable.UpdateExternalWorkloadTTLJobEnable = originalHook
+	})
+
+	updateCount := 0
+	variable.UpdateExternalWorkloadTTLJobEnable = func(context.Context, bool) error {
+		updateCount++
+		return nil
+	}
+
+	tk.MustExec("SET GLOBAL tidb_ttl_job_enable = OFF")
+	require.Equal(t, 1, updateCount)
+	require.False(t, vardef.EnableTTLJob.Load())
+
+	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache(true)
+	require.Equal(t, 1, updateCount)
+	require.False(t, vardef.EnableTTLJob.Load())
+
+	boom := fmt.Errorf("boom")
+	variable.UpdateExternalWorkloadTTLJobEnable = func(context.Context, bool) error {
+		updateCount++
+		return boom
+	}
+	_, err := tk.Exec("SET GLOBAL tidb_ttl_job_enable = ON")
+	require.ErrorContains(t, err, "boom")
+	require.Equal(t, 2, updateCount)
+	require.False(t, vardef.EnableTTLJob.Load())
+}
+
 func TestTimeZone(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -377,11 +413,16 @@ func TestGlobalVarAccessor(t *testing.T) {
 	})
 
 	// For issue 10955, make sure the new session load `max_execution_time` into sessionVars.
+	// Global timeout changes affect new sessions without changing existing sessions.
 	tk1.MustExec("set @@global.max_execution_time = 100")
+	tk1.MustExec("set @@global.tidb_dml_max_execution_time = 200")
+	require.Equal(t, uint64(0), tk1.Session().GetSessionVars().DMLMaxExecutionTime)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	require.Equal(t, uint64(100), tk2.Session().GetSessionVars().MaxExecutionTime)
+	require.Equal(t, uint64(200), tk2.Session().GetSessionVars().DMLMaxExecutionTime)
 	tk1.MustExec("set @@global.max_execution_time = 0")
+	tk1.MustExec("set @@global.tidb_dml_max_execution_time = 0")
 
 	result := tk.MustQuery("show global variables  where variable_name='sql_select_limit';")
 	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))

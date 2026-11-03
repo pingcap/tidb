@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/stats"
+	"github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -155,9 +156,6 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	if err := cleanAccessPathForFTS(ds); err != nil {
 		return nil, false, err
 	}
-	if vars := ds.SCtx().GetSessionVars(); vars != nil && vars.RUV2Metrics != nil {
-		vars.RUV2Metrics.AddPlanDeriveStatsPaths(int64(len(ds.PossibleAccessPaths)))
-	}
 
 	indexForce := false
 	ds.AccessPathMinSelectivity, indexForce = getGeneralAttributesFromPaths(ds.PossibleAccessPaths, float64(ds.TblColHists.RealtimeCount))
@@ -175,28 +173,21 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 	path.MaxCountAfterAccess = 0
 	path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
 		util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
-	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
-		handleCol := ds.GetPKIsHandleCol()
-		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
-			alreadyHandle := false
-			for _, col := range path.IdxCols {
-				if col.ID == model.ExtraHandleID || col.EqualColumn(handleCol) {
-					alreadyHandle = true
-				}
-			}
-			// Don't add one column twice to the index. May cause unexpected errors.
-			if !alreadyHandle {
-				path.FullIdxCols = append(path.FullIdxCols, handleCol)
-				path.FullIdxColLens = append(path.FullIdxColLens, types.UnspecifiedLength)
-				path.IdxCols = append(path.IdxCols, handleCol)
-				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
-				// Also updates the map that maps the index id to its prefix column ids.
-				if len(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID]) == len(path.Index.Columns) {
-					ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID] = append(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID], handleCol.UniqueID)
-				}
+	// Append the clustered-handle columns TiKV stores in a non-unique secondary index's
+	// key so ranger can turn predicates on them into scan ranges. The same layout is used
+	// by index pruning via ds.HandleColsToAppend (see rule_prune_indexes.go).
+	if appendCols, appendLens := ds.HandleColsToAppend(path, path.IdxCols); len(appendCols) > 0 {
+		path.FullIdxCols = append(path.FullIdxCols, appendCols...)
+		path.FullIdxColLens = append(path.FullIdxColLens, appendLens...)
+		path.IdxCols = append(path.IdxCols, appendCols...)
+		path.IdxColLens = append(path.IdxColLens, appendLens...)
+		// Also updates the map that maps the index id to its prefix column ids.
+		if len(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID]) == len(path.Index.Columns) {
+			for _, col := range appendCols {
+				ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID] =
+					append(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID], col.UniqueID)
 			}
 		}
-		tryAppendCommonHandleColsToIndexPath(ds, path)
 	}
 	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl)
 	return err
@@ -214,55 +205,6 @@ func pathRangesIncludeAppendedHandle(path *util.AccessPath) bool {
 		}
 	}
 	return false
-}
-
-// tryAppendCommonHandleColsToIndexPath is the common-handle counterpart of the int-handle
-// append in fillIndexPath. The key of a non-unique secondary index on a clustered table
-// physically ends with the full common handle, so appending the primary key columns to the
-// path lets ranger turn predicates on them into tighter scan ranges instead of filters.
-// The caller must have checked that the index is non-unique, non-primary, and that all
-// declared index columns are resolved (len(path.Index.Columns) == len(path.IdxCols)).
-func tryAppendCommonHandleColsToIndexPath(ds *logicalop.DataSource, path *util.AccessPath) {
-	if !ds.TableInfo.IsCommonHandle || len(ds.CommonHandleCols) == 0 ||
-		len(ds.CommonHandleLens) != len(ds.CommonHandleCols) {
-		return
-	}
-	// Global indexes (V1+) encode the partition ID between the index columns and the handle,
-	// and MV/columnar indexes build their ranges specially, so appended columns would not
-	// align with the physical key layout.
-	if path.Index.Global || path.Index.MVIndex || path.Index.IsColumnarIndex() {
-		return
-	}
-	// In CommonHandleVersion 0 with new collation, string handle columns are stored as
-	// collation sortKey bytes without restored data. Skip them to stay consistent with the
-	// coverage check (indexCoveringColumn) and the ordering check (matchProperty).
-	if hasV0NewCollationStringHandle(ds) {
-		return
-	}
-	for _, handleCol := range ds.CommonHandleCols {
-		if handleCol == nil {
-			return
-		}
-		// If a primary key column is already among the declared index columns, the physical
-		// key contains it twice: once in the index columns and once in the handle suffix.
-		// Appending only the missing columns would misalign the ranges with the key layout,
-		// and repeating a column breaks range building, so skip the append entirely.
-		for _, col := range path.IdxCols {
-			if col.EqualColumn(handleCol) {
-				return
-			}
-		}
-	}
-	path.FullIdxCols = append(path.FullIdxCols, ds.CommonHandleCols...)
-	path.FullIdxColLens = append(path.FullIdxColLens, ds.CommonHandleLens...)
-	path.IdxCols = append(path.IdxCols, ds.CommonHandleCols...)
-	path.IdxColLens = append(path.IdxColLens, ds.CommonHandleLens...)
-	// Also updates the map that maps the index id to its prefix column ids.
-	if len(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID]) == len(path.Index.Columns) {
-		for _, handleCol := range ds.CommonHandleCols {
-			ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID] = append(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID], handleCol.UniqueID)
-		}
-	}
 }
 
 // adjustCountAfterAccess adjusts the CountAfterAccess when it's less than the estimated table row count.
@@ -300,6 +242,28 @@ func adjustCountAfterAccess(ds *logicalop.DataSource, path *util.AccessPath) {
 	}
 }
 
+// scaleCorColCountAfterAccess scales the min/max row estimates by the same factor that
+// the correlated equalities applied to CountAfterAccess. Those equalities cannot be
+// turned into ranges at plan time, so CountAfterAccess is re-derived by dividing by the
+// NDV of each correlated column instead of being estimated from ranges, while the min/max
+// still describe the pre-split ranges. Leaving them means a path that started from a full
+// range keeps a table-sized max next to a one-row estimate, and the risk comparison in
+// skyline pruning drops it for phantom risk before cost is considered.
+//
+// Scaling rather than collapsing onto CountAfterAccess keeps whatever spread the
+// remaining (non-correlated) predicates contributed, so a path whose other predicates
+// carry genuine estimation risk is still reported as risky.
+func scaleCorColCountAfterAccess(path *util.AccessPath, countBeforeSplit float64) {
+	if countBeforeSplit <= 0 {
+		path.MinCountAfterAccess = path.CountAfterAccess
+		path.MaxCountAfterAccess = path.CountAfterAccess
+		return
+	}
+	scale := path.CountAfterAccess / countBeforeSplit
+	path.MinCountAfterAccess *= scale
+	path.MaxCountAfterAccess *= scale
+}
+
 // deriveIndexPathStats will fulfill the information that the AccessPath need.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
 func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []expression.Expression, isIm bool) {
@@ -307,6 +271,7 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
+		countBeforeSplit := path.CountAfterAccess
 		if len(accesses) > 0 && ds.StatisticTable.Pseudo {
 			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.StatisticTable)
 		} else {
@@ -320,6 +285,9 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 				}
 				path.CountAfterAccess = path.CountAfterAccess / ndv
 			}
+		}
+		if len(accesses) > 0 {
+			scaleCorColCountAfterAccess(path, countBeforeSplit)
 		}
 	}
 	var indexFilters []expression.Expression
@@ -452,6 +420,7 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
+		countBeforeSplit := path.CountAfterAccess
 		if len(accesses) > 0 && ds.StatisticTable.Pseudo {
 			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.StatisticTable)
 		} else {
@@ -465,6 +434,9 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 				}
 				path.CountAfterAccess = path.CountAfterAccess / ndv
 			}
+		}
+		if len(accesses) > 0 {
+			scaleCorColCountAfterAccess(path, countBeforeSplit)
 		}
 	}
 	if !isIm {
@@ -671,10 +643,15 @@ func initStats(ds *logicalop.DataSource) {
 }
 
 func deriveStatsByFilter(ds *logicalop.DataSource, conds expression.CNFExprs, filledPaths []*util.AccessPath) *property.StatsInfo {
-	selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, conds, filledPaths)
+	selectivityConds, mlogCommitTSSelectivity, hasMLogCommitTSSelectivity :=
+		mview.SplitMLogCommitTSFilterSelectivity(ds.SCtx(), ds.TableInfo, ds.Schema(), conds)
+	selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, selectivityConds, filledPaths)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		selectivity = cost.SelectionFactor
+	}
+	if hasMLogCommitTSSelectivity {
+		selectivity *= mlogCommitTSSelectivity
 	}
 	// TODO: remove NewHistCollBySelectivity later on.
 	// if ds.SCtx().GetSessionVars().OptimizerSelectivityLevel >= 1 {

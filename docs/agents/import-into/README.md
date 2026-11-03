@@ -51,9 +51,9 @@ when only reading one package at a time.
 
 - "Why is checksum verification skipped in post-process?"
   - In collect-conflicts, `TooManyConflictsFromIndex` is set when the bounded
-    in-memory handle set exceeds its limit.
-  - Limit source: collect-conflicts uses about half of step memory for handle
-    tracking (`sizeLimitOfHandlesFromIndex = resource mem / 2`).
+    in-memory row-key set exceeds its limit.
+  - Limit source: collect-conflicts uses about half of step memory for row-key
+    tracking (`sizeLimitOfRowKeysFromIndex = resource mem / 2`).
   - Post-process checks this flag and skips final checksum verification.
 
 - "Where are conflicted rows persisted?"
@@ -69,7 +69,7 @@ when only reading one package at a time.
 
 ## Cleanup Troubleshooting
 
-- Cleanup entrypoint is `ImportCleanUp.CleanUp` in `clean_up.go`.
+- Cleanup entrypoint is `ImportCleaner.Clean` in `clean_up.go`.
 - Classic kernel behavior:
   - Attempts to switch table mode back to normal.
   - Ignores `infoschema.ErrTableNotExists` during cleanup.
@@ -98,7 +98,7 @@ when only reading one package at a time.
 - Find conflict executor paths:
   `rg --line-number --glob '*.go' 'CollectConflictsStepMeta|ConflictResolutionStepMeta|TooManyConflictsFromIndex|conflicted-rows' pkg/dxf/importinto`
 - Find cleanup behavior:
-  `rg --line-number --glob '*.go' 'ImportCleanUp|CleanUpFiles|sendMeterOnCleanUp|redactSensitiveInfo' pkg/dxf/importinto pkg/dxf/framework/scheduler`
+  `rg --line-number --glob '*.go' 'ImportCleaner|CleanUpFiles|sendMeterOnClean|redactSensitiveInfo' pkg/dxf/importinto pkg/dxf/framework/scheduler`
 
 ## Test Surfaces
 

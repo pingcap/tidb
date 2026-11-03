@@ -225,7 +225,7 @@ func (cfg *TestStorageConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 // RunTestStorage tests all operations of an external storage.
 func RunTestStorage(ctx context.Context, cfg TestStorageConfig) error {
 	logger := logutil.Logger(ctx)
-	logger.Info("Starting external storage test", zap.String("storage", cfg.StorageURI), zap.Any("options", cfg.BackendOptions))
+	logger.Info("Starting external storage test", zap.String("storage", objstore.RedactURL(cfg.StorageURI)), zap.Any("options", cfg.BackendOptions.Redacted()))
 
 	// Initialize test report
 	report := &TestReport{

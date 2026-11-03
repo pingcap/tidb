@@ -15,31 +15,33 @@ package ast_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
 
 type visitor struct{}
 
-func (v visitor) Enter(in ast.Node) (ast.Node, bool) {
-	return in, false
+func (visitor) Enter(ast.Node) bool {
+	return false
 }
 
-func (v visitor) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
+func (visitor) Leave(ast.Node) bool {
+	return true
 }
 
 type visitor1 struct {
 	visitor
 }
 
-func (visitor1) Enter(in ast.Node) (ast.Node, bool) {
-	return in, true
+func (visitor1) Enter(ast.Node) bool {
+	return true
 }
 
 func TestMiscVisitorCover(t *testing.T) {
@@ -80,13 +82,33 @@ func TestMiscVisitorCover(t *testing.T) {
 				{},
 			},
 		},
+		&ast.PurgeMaterializedViewLogStmt{Table: &ast.TableName{}},
+		&ast.CancelMaterializedViewJobStmt{Tp: ast.CancelMaterializedViewJobTypeLogPurge},
+		&ast.CompareMaterializedViewStmt{ViewName: &ast.TableName{}, AsOf: &ast.AsOfClause{TsExpr: valueExpr}, OutputTable: &ast.TableName{}},
+		&ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}, AsOf: &ast.AsOfClause{TsExpr: valueExpr}},
+		&ast.RefreshMaterializedViewImplementStmt{RefreshStmt: &ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}}},
 		&ast.ShutdownStmt{},
 	}
 
 	for _, v := range stmts {
-		v.Accept(visitor{})
-		v.Accept(visitor1{})
+		ast.Walk(v, visitor{})
+		ast.Walk(v, visitor1{})
 	}
+}
+
+func TestPurgeMaterializedViewLogStmtIsStmtNode(t *testing.T) {
+	_, ok := any(&ast.PurgeMaterializedViewLogStmt{}).(ast.StmtNode)
+	require.True(t, ok)
+}
+
+func TestCancelMaterializedViewJobStmtIsStmtNode(t *testing.T) {
+	_, ok := any(&ast.CancelMaterializedViewJobStmt{}).(ast.StmtNode)
+	require.True(t, ok)
+}
+
+func TestRefreshMaterializedViewStmtIsStmtNode(t *testing.T) {
+	_, ok := any(&ast.RefreshMaterializedViewStmt{}).(ast.StmtNode)
+	require.True(t, ok)
 }
 
 func TestDDLVisitorCoverMisc(t *testing.T) {
@@ -109,8 +131,8 @@ constraint foreign key (jobabbr) references ffxi_jobtype (jobabbr) on delete cas
 	stmts, _, err := parse.Parse(sql, "", "")
 	require.NoError(t, err)
 	for _, stmt := range stmts {
-		stmt.Accept(visitor{})
-		stmt.Accept(visitor1{})
+		ast.Walk(stmt, visitor{})
+		ast.Walk(stmt, visitor1{})
 	}
 }
 
@@ -129,8 +151,8 @@ import into t from '/file.csv'`
 	stmts, _, err := p.Parse(sql, "", "")
 	require.NoError(t, err)
 	for _, stmt := range stmts {
-		stmt.Accept(visitor{})
-		stmt.Accept(visitor1{})
+		ast.Walk(stmt, visitor{})
+		ast.Walk(stmt, visitor1{})
 	}
 }
 
@@ -201,6 +223,8 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"INDEX_LOOKUP_PUSHDOWN(t1@sel_1 c1)", "INDEX_LOOKUP_PUSHDOWN(`t1`@`sel_1` `c1`)"},
 		{"INDEX_LOOKUP_PUSHDOWN(test.t1@sel_1 c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1`@`sel_1` `c1`)"},
 		{"INDEX_LOOKUP_PUSHDOWN(test.t1@sel_1 partition(p0) c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1`@`sel_1` PARTITION(`p0`) `c1`)"},
+		{"TIFLASH_LM_FILTER(t1, c1, c2)", "TIFLASH_LM_FILTER(`t1`, `c1`, `c2`)"},
+		{"TIFLASH_LM_FILTER(@sel_1 t1, c1)", "TIFLASH_LM_FILTER(@`sel_1` `t1`, `c1`)"},
 		{"TIDB_SMJ(`t1`)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1,t2)", "TIDB_SMJ(`t1`, `t2`)"},
@@ -297,6 +321,26 @@ func TestBRIESecureText(t *testing.T) {
 			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix?region=us-west-2'\E$`,
 		},
 		{
+			input:   `backup database * to 's3://bucket/prefix?sse-kms-context={"tenant":"#context-value"}'`,
+			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix'\E$`,
+		},
+		{
+			input:   `backup database * to 's3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a&private-context-value"}'`,
+			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix'\E$`,
+		},
+		{
+			input:   `backup database * to 's3://bucket/prefix?sse-kms-context={"tenant":"a&region=private-context-value"}'`,
+			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix'\E$`,
+		},
+		{
+			input:   `backup database * to 's3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a;x&private-context-value"}'`,
+			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix'\E$`,
+		},
+		{
+			input:   "backup database * to 's3://bucket/%zz?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D'",
+			secured: `^\QBACKUP DATABASE * TO '(invalid URL)'\E$`,
+		},
+		{
 			// we need to use regexp to match to avoid the random ordering since a map was used.
 			// unfortunately Go's regexp doesn't support lookahead assertion, so the test case below
 			// has false positives.
@@ -305,7 +349,19 @@ func TestBRIESecureText(t *testing.T) {
 		},
 		{
 			input:   "backup database * to 'gcs://bucket/prefix?access-key=irrelevant&credentials-file=/home/user/secrets.txt'",
-			secured: `^\QBACKUP DATABASE * TO 'gcs://bucket/prefix?\E((access-key=irrelevant|credentials-file=/home/user/secrets\.txt)(&|'$)){2}`,
+			secured: `^\QBACKUP DATABASE * TO 'gcs://bucket/prefix?credentials-file=xxxxxx'\E$`,
+		},
+		{
+			input:   "backup database * to 'azure://container/prefix?account-name=acct&endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsig%3Dsecret&sas-token=token'",
+			secured: `^\QBACKUP DATABASE * TO 'azure://container/prefix?account-name=acct&endpoint=xxxxxx&sas-token=xxxxxx'\E$`,
+		},
+		{
+			input:   "backup database * to 's3://user:pass@bucket/prefix?region=us-west-2'",
+			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix?region=us-west-2'\E$`,
+		},
+		{
+			input:   "backup database * to 'azure://c/p?account-name=a&sas-token=sv=2020-08-04&ss=b&sig=SECRETSIG'",
+			secured: `^\QBACKUP DATABASE * TO 'azure://c/p?account-name=a&sas-token=xxxxxx'\E$`,
 		},
 	}
 
@@ -356,6 +412,22 @@ func TestPlanReplayerStmtRestore(t *testing.T) {
 }
 
 func TestRedactURL(t *testing.T) {
+	for _, rawURL := range []string{
+		"s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?Access_Key=FAKE_AST_AK&secret_access_key=FAKE_AST_SK&other-key=benign",
+		"azure://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?SAS_Token=FAKE_AST_SAS&account-name=benign",
+		"s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path%zz?access-key=FAKE_AST_AK&secret-access-key=FAKE_AST_SK",
+		"azure://bucket/path?account-name=benign&sas-token=sv=2020-08-04&sig=FAKE_AST_SAS&FAKE_AST_SK",
+		"s3://bucket/path?region=us-east-1&new-secret=FAKE_AST_SK&FAKE_AST_AK=unknown",
+		"s3://bucket/path?endpoint=https%3A%2F%2FFAKE_AST_USER%3AFAKE_AST_PASS%40host%2F%3Fsig%3DFAKE_AST_SK",
+		`s3://bucket/path?sse-kms-context={"a":"x&region=FAKE_AST_SK"}`,
+	} {
+		t.Run(rawURL, func(t *testing.T) {
+			output := ast.RedactURL(rawURL)
+			for _, secret := range []string{"FAKE_AST_USER", "FAKE_AST_PASS", "FAKE_AST_AK", "FAKE_AST_SK", "FAKE_AST_SAS"} {
+				t.Run(secret, func(t *testing.T) { require.NotContains(t, output, secret) })
+			}
+		})
+	}
 	type args struct {
 		str string
 	}
@@ -365,15 +437,59 @@ func TestRedactURL(t *testing.T) {
 	}{
 		{args{""}, ""},
 		{args{":"}, ":"},
+		{args{"s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path%zz?access-key=FAKE_AST_AK"}, ast.InvalidURLPlaceholder},
+		{args{"s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?Access_Key=FAKE_AST_AK&other-key=benign"}, "s3://bucket/path?Access_Key=xxxxxx"},
+		{args{"azure://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?SAS_Token=FAKE_AST_SAS&account-name=benign"}, "azure://bucket/path?SAS_Token=xxxxxx&account-name=benign"},
 		{args{"~/file"}, "~/file"},
+		{args{"/data/my files/100%off#name"}, "/data/my files/100%off#name"},
+		{args{"s3://bucket/%zz?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D"}, "(invalid URL)"},
 		{args{"gs://bucket/file"}, "gs://bucket/file"},
-		// gs don't have access-key/secret-access-key, so it will NOT be redacted
-		{args{"gs://bucket/file?access-key=123"}, "gs://bucket/file?access-key=123"},
-		{args{"gs://bucket/file?secret-access-key=123"}, "gs://bucket/file?secret-access-key=123"},
+		{args{"gs://bucket/file?storage-class=NEARLINE&predefined-acl=private&unknown=secret"}, "gs://bucket/file?predefined-acl=private&storage-class=NEARLINE"},
+		{args{"gcs://bucket/file?storage-class=COLDLINE&predefined-acl=private&credentials-file=secret"}, "gcs://bucket/file?credentials-file=xxxxxx&predefined-acl=private&storage-class=COLDLINE"},
+		{args{"GS://user:pass@bucket/file?Credentials_File=first-secret&Credentials_File=second-secret&EndPoint=https%3A%2F%2Fuser%3Apass%40host%2F%3Fsig%3Dsecret#fragment"}, "gs://bucket/file?Credentials_File=xxxxxx&EndPoint=xxxxxx"},
+		{args{"gcs://bucket/file?endpoint=first-secret&endpoint=second-secret&storage-class=STANDARD"}, "gcs://bucket/file?endpoint=xxxxxx&storage-class=STANDARD"},
+		// Unknown options must not expose arbitrary values.
+		{args{"gs://bucket/file?access-key=123"}, "gs://bucket/file"},
+		{args{"gs://bucket/file?secret-access-key=123"}, "gs://bucket/file"},
+		{args{"gcs://user:pass@bucket/file?credentials-file=secret#fragment"}, "gcs://bucket/file?credentials-file=xxxxxx"},
+		{args{"file:///tmp/backup?token=secret#fragment"}, "file:///tmp/backup"},
+		{args{"local:///tmp/backup?token=secret#fragment"}, "local:///tmp/backup"},
+		{args{"hdfs://user:pass@host/backup?token=secret#fragment"}, "hdfs://host/backup"},
+		{args{"noop:///?token=secret#fragment"}, "noop:///"},
+		{args{"https://user:pass@host/backup?token=secret#fragment"}, "https://host/backup"},
+		{args{"/tmp/backup?token=secret#fragment"}, "/tmp/backup"},
+		{args{"gcs://bucket/file?token=secret%zz"}, "gcs://bucket/file"},
+		{args{"GCS://bucket/file#fragment"}, "gcs://bucket/file"},
+		{args{"gcs://bucket/file?"}, "gcs://bucket/file"},
+		{args{"local:///tmp/backup?"}, "local:///tmp/backup"},
 		{args{"s3://bucket/file"}, "s3://bucket/file"},
-		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file?other-key=123"},
+		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file"},
+		{args{"s3://bucket/file?acl=private&force-path-style=true&provider=aws&region=us-east-1&sse=AES256&storage-class=STANDARD"}, "s3://bucket/file?acl=private&force-path-style=true&provider=aws&region=us-east-1&sse=AES256&storage-class=STANDARD"},
+		{args{"ks3://bucket/file?region=us-east-1&unknown-key=secret"}, "ks3://bucket/file?region=us-east-1"},
+		{args{"oss://bucket/file?provider=alibaba&access-key-typo=secret"}, "oss://bucket/file?provider=alibaba"},
+		{args{"azure://container/file?account-name=a&unknown-key=secret"}, "azure://container/file?account-name=a"},
+		{args{"azblob://container/file?access-tier=Hot&secret-name&%73ig=secret"}, "azblob://container/file?access-tier=Hot"},
+		{args{"S3://bucket/file?Region=us-east-1&Force_Path_Style=true&Region=us-west-2&unknown=secret"}, "s3://bucket/file?Force_Path_Style=true&Region=us-east-1&Region=us-west-2"},
+		{args{"s3://bucket/file?region=us-east-1&session-token=secret&session-token=another#fragment-secret"}, "s3://bucket/file?region=us-east-1&session-token=xxxxxx"},
+		{args{"s3://bucket/file?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D"}, "s3://bucket/file?sse-kms-context=xxxxxx"},
+		// Split JSON contexts drop the whole query, even if the tail matches an allowed key.
+		{args{`s3://bucket/file?sse-kms-context={"tenant":"#context-value"}`}, "s3://bucket/file"},
+		{args{`s3://bucket/file?sse=aws:kms&sse-kms-context={"tenant":"a&private-context-value"}`}, "s3://bucket/file"},
+		{args{`s3://bucket/file?sse=aws:kms&sse-kms-context={"tenant":"x&y"}`}, "s3://bucket/file"},
+		{args{`s3://bucket/file?sse-kms-context={"a":"x&region=private-context-value"}`}, "s3://bucket/file"},
+		{args{`ks3://bucket/file?sse-kms-context={"a":"x&region=private-context-value"}`}, "ks3://bucket/file"},
+		{args{`oss://bucket/file?SSE_KMS_CONTEXT={"a":"x&provider=private-context-value"}`}, "oss://bucket/file"},
+		// Malformed query encoding still drops the whole query.
+		{args{`s3://bucket/file?sse=aws:kms&sse-kms-context={"tenant":"a;x&private-context-value"}`}, "s3://bucket/file"},
+		{args{`s3://bucket/file?sse=aws:kms&sse-kms-context={"tenant":"a%zz&private-context-value"}`}, "s3://bucket/file"},
+		{args{"s3://bucket/file?SSE_KMS_CONTEXT=%7B%7D&SSE_KMS_CONTEXT=%7B%22a%22%3A%22b%22%7D"}, "s3://bucket/file?SSE_KMS_CONTEXT=xxxxxx"},
+		{args{`s3://bucket/file?sse-kms-context=%7B%7D&sse-kms-context={"a":"x&region=private-context-value"}`}, "s3://bucket/file"},
+		{args{`s3://bucket/file?sse-kms-context={"a":"x&region=private-context-value"}&sse-kms-context=%7B%7D`}, "s3://bucket/file"},
+		{args{`s3://bucket/file?sse-kms-context=%7B%7D&SSE_KMS_CONTEXT={"a":"x&region=private-context-value"}`}, "s3://bucket/file"},
+		{args{"s3://bucket/file?sse-kms-context=%7B%22a%22%3A%22x%26region%3Dprivate-context-value%22%7D&region=us-east-1"}, "s3://bucket/file?region=us-east-1&sse-kms-context=xxxxxx"},
 		{args{"s3://bucket/file?access-key=123"}, "s3://bucket/file?access-key=xxxxxx"},
 		{args{"s3://bucket/file?secret-access-key=123"}, "s3://bucket/file?secret-access-key=xxxxxx"},
+		{args{"s3://bucket/file?external-id=tenant-123&role-arn=role&profile=default"}, "s3://bucket/file?external-id=tenant-123&profile=default&role-arn=role"},
 		{args{"ks3://bucket/file?access-key=123"}, "ks3://bucket/file?access-key=xxxxxx"},
 		{args{"ks3://bucket/file?secret-access-key=123"}, "ks3://bucket/file?secret-access-key=xxxxxx"},
 		{args{"oss://bucket/file?access-key=123"}, "oss://bucket/file?access-key=xxxxxx"},
@@ -382,11 +498,24 @@ func TestRedactURL(t *testing.T) {
 		{args{"s3://bucket/file?access_key=123"}, "s3://bucket/file?access_key=xxxxxx"},
 		{args{"s3://bucket/file?secret_access_key=123"}, "s3://bucket/file?secret_access_key=xxxxxx"},
 		{args{"azure://bucket/file?sas-token=123"}, "azure://bucket/file?sas-token=xxxxxx"},
+		{args{"azure://c/p?account-name=a&sas-token=sv=2020-08-04&ss=b&sig=SECRETSIG"}, "azure://c/p?account-name=a&sas-token=xxxxxx"},
+		{args{"azblob://c/p?account-name=a&sas-token=sv=2020-08-04&ss=b&sig=SECRETSIG"}, "azblob://c/p?account-name=a&sas-token=xxxxxx"},
 		{args{"azblob://container/file?sas-token=123"}, "azblob://container/file?sas-token=xxxxxx"},
 		{args{"azure://container/file?account-name=test&sas_token=123"}, "azure://container/file?account-name=test&sas_token=xxxxxx"},
 		{args{"azure://container/file?account-name=test&account-key=123"}, "azure://container/file?account-key=xxxxxx&account-name=test"},
+		{args{"azure://container/file?access-tier=Hot&account-name=test&encryption-scope=scope"}, "azure://container/file?access-tier=Hot&account-name=test&encryption-scope=scope"},
 		{args{"azblob://container/file?encryption-key=123"}, "azblob://container/file?encryption-key=xxxxxx"},
 		{args{"azure://container/file?account_key=123&encryption_key=456"}, "azure://container/file?account_key=xxxxxx&encryption_key=xxxxxx"},
+		{args{"azure://container/file?account-name=acct&endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsv%3D2023-11-03%26sig%3Dsecret&sas-token=token"}, "azure://container/file?account-name=acct&endpoint=xxxxxx&sas-token=xxxxxx"},
+		{args{"azblob://container/file?EndPoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsig%3Dsecret&access-tier=Hot"}, "azblob://container/file?EndPoint=xxxxxx&access-tier=Hot"},
+		{args{"azure://container/file?endpoint=https%3A%2F%2Facct.blob.core.windows.net"}, "azure://container/file?endpoint=xxxxxx"},
+		{args{"azure://container/file?endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%25zz%3Fsig%3Dsecret"}, "azure://container/file?endpoint=xxxxxx"},
+		{args{"azblob://container/file?endpoint=first-secret&endpoint=second-secret"}, "azblob://container/file?endpoint=xxxxxx"},
+		{args{"s3://bucket/file?endpoint=https%3A%2F%2Fs3.example.com"}, "s3://bucket/file?endpoint=xxxxxx"},
+		{args{"ks3://bucket/file?endpoint=https%3A%2F%2Fuser%3Apass%40host%2F%3Fsig%3Dsecret"}, "ks3://bucket/file?endpoint=xxxxxx"},
+		{args{"oss://bucket/file?EndPoint=first-secret&EndPoint=second-secret"}, "oss://bucket/file?EndPoint=xxxxxx"},
+		{args{"s3://user:pass@b/p?region=r"}, "s3://b/p?region=r"},
+		{args{"gs://user:pass@bucket/file"}, "gs://bucket/file"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.args.str, func(t *testing.T) {
@@ -448,6 +577,40 @@ func TestRedactTrafficStmt(t *testing.T) {
 	}
 }
 
+func TestSetStmtSecureTextRedactsEmbeddingAPIKeys(t *testing.T) {
+	p := parser.New()
+	for _, name := range []string{
+		"tidb_exp_embed_jina_ai_api_key",
+		"tidb_exp_embed_openai_api_key",
+		"tidb_exp_embed_cohere_api_key",
+		"tidb_exp_embed_huggingface_api_key",
+		"tidb_exp_embed_nvidia_nim_api_key",
+		"tidb_exp_embed_gemini_api_key",
+	} {
+		input := fmt.Sprintf("SET @@GLOBAL.%s = 'secret-api-key'", name)
+		node, err := p.ParseOneStmt(input, "", "")
+		require.NoError(t, err, input)
+		stmt, ok := node.(*ast.SetStmt)
+		require.True(t, ok, input)
+		require.Equal(t, fmt.Sprintf("SET @@GLOBAL.`%s`='******'", name), stmt.SecureText(), input)
+	}
+
+	// A similarly named user variable is not a system API-key configuration.
+	node, err := p.ParseOneStmt("SET @tidb_exp_embed_openai_api_key = 'ordinary-user-value'", "", "")
+	require.NoError(t, err)
+	stmt := node.(*ast.SetStmt)
+	require.Contains(t, stmt.SecureText(), "ordinary-user-value")
+	require.NotContains(t, stmt.SecureText(), "******")
+
+	// A system variable that merely shares the old prefix/suffix pattern must
+	// not be redacted unless it is one of the explicitly supported API-key variables.
+	node, err = p.ParseOneStmt("SET @@GLOBAL.tidb_exp_embed_future_api_key = 'ordinary-system-value'", "", "")
+	require.NoError(t, err)
+	stmt = node.(*ast.SetStmt)
+	require.Contains(t, stmt.SecureText(), "ordinary-system-value")
+	require.NotContains(t, stmt.SecureText(), "******")
+}
+
 func TestSetPwdStmtSecureText(t *testing.T) {
 	// Direct construction: SetPwdStmt.User can be nil (current-user form),
 	// matching what Restore handles. SecureText must not leak "<nil>".
@@ -489,4 +652,30 @@ func TestSetPwdStmtSecureText(t *testing.T) {
 			require.Equal(t, c.want, c.stmt.SecureText())
 		})
 	}
+}
+
+func TestCompareMaterializedViewStmtIsStmtNode(t *testing.T) {
+	_, ok := any(&ast.CompareMaterializedViewStmt{}).(ast.StmtNode)
+	require.True(t, ok)
+}
+
+func TestCompareMaterializedViewStmtRestore(t *testing.T) {
+	stmt := &ast.CompareMaterializedViewStmt{
+		ViewName: &ast.TableName{
+			Schema: ast.NewCIStr("test"),
+			Name:   ast.NewCIStr("mv"),
+		},
+		AsOf: &ast.AsOfClause{
+			TsExpr: ast.NewValueExpr("2026-05-21 10:00:00", mysql.DefaultCharset, mysql.DefaultCollationName),
+		},
+		OutputTable: &ast.TableName{
+			Schema: ast.NewCIStr("test"),
+			Name:   ast.NewCIStr("mv_diff"),
+		},
+	}
+
+	var sb strings.Builder
+	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	require.NoError(t, stmt.Restore(rctx))
+	require.Equal(t, "COMPARE MATERIALIZED VIEW `test`.`mv` AS OF TIMESTAMP _UTF8MB4'2026-05-21 10:00:00' OUTPUT INTO TABLE `test`.`mv_diff`", sb.String())
 }

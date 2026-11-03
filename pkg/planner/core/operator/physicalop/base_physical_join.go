@@ -117,6 +117,8 @@ func (p *BasePhysicalJoin) CloneWithSelf(newCtx base.PlanContext, newSelf base.P
 	cloned.InnerJoinKeys = util.CloneCols(p.InnerJoinKeys)
 	cloned.LeftJoinKeys = util.CloneCols(p.LeftJoinKeys)
 	cloned.RightJoinKeys = util.CloneCols(p.RightJoinKeys)
+	cloned.IsNullEQ = make([]bool, len(p.IsNullEQ))
+	copy(cloned.IsNullEQ, p.IsNullEQ)
 	cloned.LeftNAJoinKeys = util.CloneCols(p.LeftNAJoinKeys)
 	cloned.RightNAJoinKeys = util.CloneCols(p.RightNAJoinKeys)
 	for _, d := range p.DefaultValues {
@@ -202,6 +204,8 @@ func BuildPhysicalJoinSchema(joinType base.JoinType, join base.PhysicalPlan) *ex
 		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
 	} else if joinType == base.RightOuterJoin {
 		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
+	} else if joinType == base.FullOuterJoin {
+		util.ResetNotNullFlag(newSchema, 0, newSchema.Len())
 	}
 	return newSchema
 }

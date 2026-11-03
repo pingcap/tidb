@@ -114,12 +114,8 @@ func TestNormalError(t *testing.T) {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
-	waitPendingEvents(t, sub)
+	s := collectCheckpointSpans(t, sub, cp)
 	sub.Drop()
-	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
-	for k := range sub.Events() {
-		s.Merge(k)
-	}
 	req.Equal(cp, s.MinValue(), "%d vs %d", cp, s.MinValue())
 }
 
@@ -346,8 +342,16 @@ func TestSubscriptionIdleTimeoutWhileSendingEvents(t *testing.T) {
 	c.advanceCheckpoints()
 	c.flushAll()
 
-	req.Eventually(func() bool {
-		err := sub.PendingErrors()
-		return err != nil && strings.Contains(err.Error(), "has no activity")
-	}, 3*time.Second, 10*time.Millisecond)
+	deadline := time.Now().Add(3 * time.Second)
+	var lastErr error
+	for {
+		lastErr = sub.PendingErrors()
+		if lastErr != nil && strings.Contains(lastErr.Error(), "has no activity") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pending errors did not contain %q within %s; last error: %v", "has no activity", 3*time.Second, lastErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }

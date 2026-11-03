@@ -265,6 +265,26 @@ func (mr *MockAPIMockRecorder) ListParts(arg0, arg1 any, arg2 ...any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListParts", reflect.TypeOf((*MockAPI)(nil).ListParts), varargs...)
 }
 
+// Presign mocks base method.
+func (m *MockAPI) Presign(arg0 context.Context, arg1 any, arg2 ...func(*oss.PresignOptions)) (*oss.PresignResult, error) {
+	m.ctrl.T.Helper()
+	varargs := []any{arg0, arg1}
+	for _, a := range arg2 {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "Presign", varargs...)
+	ret0, _ := ret[0].(*oss.PresignResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Presign indicates an expected call of Presign.
+func (mr *MockAPIMockRecorder) Presign(arg0, arg1 any, arg2 ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{arg0, arg1}, arg2...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Presign", reflect.TypeOf((*MockAPI)(nil).Presign), varargs...)
+}
+
 // PutObject mocks base method.
 func (m *MockAPI) PutObject(arg0 context.Context, arg1 *oss.PutObjectRequest, arg2 ...func(*oss.Options)) (*oss.PutObjectResult, error) {
 	m.ctrl.T.Helper()

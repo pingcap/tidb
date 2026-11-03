@@ -448,6 +448,64 @@ func (b *builtinRoundWithFracRealSig) evalReal(ctx EvalContext, row chunk.Row) (
 	return types.Round(val, int(frac)), false, nil
 }
 
+// uint64Pow10 holds 10^i for every power of ten representable as a uint64.
+var uint64Pow10 = [...]uint64{
+	1, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9,
+	1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19,
+}
+
+// roundIntOverflowErr reports that rounding val moved it out of its integer type.
+func roundIntOverflowErr(val, frac int64, unsigned bool) error {
+	if unsigned {
+		return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("round(%d, %d)", uint64(val), frac))
+	}
+	return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("round(%d, %d)", val, frac))
+}
+
+// roundIntWithFrac rounds val at the frac-th digit, where a negative frac counts
+// digits to the left of the decimal point and a non-negative one leaves val
+// alone. unsigned reports whether val's own type is unsigned, which decides
+// whether its high bit carries a sign or magnitude; a frac of an unsigned type
+// is handled by the callers, the way Item_func_round::int_op does.
+//
+// Integers are exact-value numbers, so MySQL rounds them half away from zero
+// rather than half to even:
+// https://dev.mysql.com/doc/refman/8.0/en/precision-math-rounding.html
+//
+// The digits are shifted with integer arithmetic rather than through float64 so
+// that magnitudes above 2^53 survive, and a result that leaves the type returns
+// types.ErrOverflow instead of wrapping, again following int_op.
+func roundIntWithFrac(val, frac int64, unsigned bool) (int64, error) {
+	if frac >= 0 {
+		return val, nil
+	}
+	if maxFrac := int64(len(uint64Pow10)) - 1; frac < -maxFrac {
+		// Every digit of val lies right of the rounding position.
+		return 0, nil
+	}
+	unit := uint64Pow10[-frac]
+	negative := !unsigned && val < 0
+	abs := uint64(val)
+	if negative {
+		abs = -abs
+	}
+	rem := abs % unit
+	abs -= rem
+	if rem >= unit/2 {
+		if abs > math.MaxUint64-unit {
+			return 0, roundIntOverflowErr(val, frac, unsigned)
+		}
+		abs += unit
+	}
+	if !unsigned && abs > math.MaxInt64 {
+		return 0, roundIntOverflowErr(val, frac, unsigned)
+	}
+	if negative {
+		return -int64(abs), nil
+	}
+	return int64(abs), nil
+}
+
 type builtinRoundWithFracIntSig struct {
 	baseBuiltinFunc
 	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
@@ -472,7 +530,15 @@ func (b *builtinRoundWithFracIntSig) evalInt(ctx EvalContext, row chunk.Row) (in
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	return int64(types.Round(float64(val), int(frac))), false, nil
+	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
+		// An unsigned frac never selects a digit left of the decimal point.
+		return val, false, nil
+	}
+	res, err := roundIntWithFrac(val, frac, mysql.HasUnsignedFlag(b.tp.GetFlag()))
+	if err != nil {
+		return 0, false, err
+	}
+	return res, false, nil
 }
 
 type builtinRoundWithFracDecSig struct {

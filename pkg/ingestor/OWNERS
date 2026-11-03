@@ -1,5 +1,10 @@
 # See the OWNERS docs at https://go.k8s.io/owners
 options:
   no_parent_owners: true
-approvers:
-  - sig-approvers-ddl
+filters:
+  "(^|/)BUILD\\.bazel$":
+    approvers:
+      - sig-community-approvers
+  ".*":
+    approvers:
+      - sig-approvers-ddl

@@ -9,6 +9,7 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/pkg/dumpformat/csvfile",
     visibility = ["//visibility:public"],
+    deps = ["//pkg/dumpformat"],
 )
 
 go_test(
@@ -18,5 +19,8 @@ go_test(
     embed = [":csvfile"],
     flaky = True,
     shard_count = 11,
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = [
+        "//pkg/dumpformat",
+        "@com_github_stretchr_testify//require",
+    ],
 )

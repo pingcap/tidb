@@ -411,7 +411,7 @@ func addUnchangedKeysForLockByRow(
 				}
 			}
 			unchangedUniqueKey, _, err := tablecodec.GenIndexKey(
-				codec.NewEncoder(collate.NewCollationEnabled()),
+				codec.NewEncoder(t.UseNewCollate()),
 				stmtCtx.TimeZone(),
 				idx.TableMeta(),
 				meta,

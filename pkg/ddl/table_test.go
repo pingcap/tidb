@@ -210,6 +210,51 @@ func testGetTableWithError(r autoid.Requirement, schemaID, tableID int64) (table
 	return tbl, nil
 }
 
+func TestMaterializedViewWorkerRechecksDropAndTruncate(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+	tk.MustExec("create table mv_worker_recheck_base (a int not null, b int)")
+	tk.MustExec("create materialized view log on mv_worker_recheck_base (a, b)")
+
+	dbInfo, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), dbInfo.Name, ast.NewCIStr("mv_worker_recheck_base"))
+	require.NoError(t, err)
+
+	de := dom.DDLExecutor().(ddl.ExecutorForTest)
+	ctx := tk.Session()
+	for _, tc := range []struct {
+		name string
+		tp   model.ActionType
+	}{
+		{name: "drop", tp: model.ActionDropTable},
+		{name: "truncate", tp: model.ActionTruncateTable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var args model.JobArgs = &model.DropTableArgs{}
+			if tc.tp == model.ActionTruncateTable {
+				newIDs, err := genGlobalIDs(store, 1)
+				require.NoError(t, err)
+				args = &model.TruncateTableArgs{NewTableID: newIDs[0]}
+			}
+			job := &model.Job{
+				Version:    model.GetJobVerInUse(),
+				SchemaID:   dbInfo.ID,
+				SchemaName: dbInfo.Name.L,
+				TableID:    tbl.Meta().ID,
+				TableName:  tbl.Meta().Name.L,
+				Type:       tc.tp,
+				BinlogInfo: &model.HistoryInfo{},
+			}
+			ctx.SetValue(sessionctx.QueryString, "skip")
+			err := de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
+			require.ErrorContains(t, err, "base table with materialized view log")
+		})
+	}
+}
+
 func TestTable(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 

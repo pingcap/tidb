@@ -20,7 +20,7 @@
       },
       {
         "SQL": "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where a > 1 order by f",
-        "Result": "[{\"Level\":\"Note\",\"Message\":\"[t,t(tiflash)] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}\",\"IsExtra\":true}]"
+        "Result": "[{\"Level\":\"Note\",\"Message\":\"[t,t(tiflash)] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}\",\"IsExtra\":true},{\"Level\":\"Note\",\"Message\":\"[t,t(tiflash),f,f_g] remain after pruning paths for t given Prop{SortItems: [{test.t.f asc}], TaskTp: rootTask}\",\"IsExtra\":true}]"
       },
       {
         "SQL": "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where f > 1",

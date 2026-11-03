@@ -140,10 +140,10 @@ func hasWithClause(n ast.Node) bool {
 	}
 }
 
-func (c *viewDependencyCollector) Enter(n ast.Node) (ast.Node, bool) {
+func (c *viewDependencyCollector) Enter(n ast.Node) bool {
 	if hasWithClause(n) {
 		c.pushCTEScope()
-		return n, false
+		return false
 	}
 
 	switch node := n.(type) {
@@ -153,10 +153,10 @@ func (c *viewDependencyCollector) Enter(n ast.Node) (ast.Node, bool) {
 			// traversing Query.
 			c.recordCTEName(node.Name.L)
 		}
-		return n, false
+		return false
 	case *ast.TableName:
 		if node.Schema.O == "" && c.isCTEName(node.Name.L) {
-			return n, true
+			return true
 		}
 
 		schema := node.Schema.L
@@ -165,13 +165,13 @@ func (c *viewDependencyCollector) Enter(n ast.Node) (ast.Node, bool) {
 			schema = strings.ToLower(c.currentSchema)
 		}
 		c.deps.add(tableKey(schema, node.Name.L))
-		return n, true
+		return true
 	default:
-		return n, false
+		return false
 	}
 }
 
-func (c *viewDependencyCollector) Leave(n ast.Node) (ast.Node, bool) {
+func (c *viewDependencyCollector) Leave(n ast.Node) bool {
 	if node, ok := n.(*ast.CommonTableExpression); ok && !node.IsRecursive {
 		// Non-recursive CTE becomes visible only after its definition has
 		// been fully traversed.
@@ -180,7 +180,7 @@ func (c *viewDependencyCollector) Leave(n ast.Node) (ast.Node, bool) {
 	if hasWithClause(n) {
 		c.popCTEScope()
 	}
-	return n, true
+	return true
 }
 
 // NewSchemaImportPlan builds a schema import plan, including ordered view imports when needed.
@@ -276,7 +276,7 @@ func parseViewSchemaSQL(p *parser.Parser, currentView filter.Table, sql string) 
 		currentSchema: currentView.Schema,
 		deps:          make(tableNameSet),
 	}
-	createStmt.Select.Accept(collector)
+	ast.Walk(createStmt.Select, collector)
 
 	deps := slices.Collect(maps.Keys(collector.deps))
 

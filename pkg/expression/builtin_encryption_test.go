@@ -15,10 +15,14 @@
 package expression
 
 import (
+	"bytes"
+	"compress/zlib"
 	"context"
 	"crypto/md5"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -32,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -557,6 +562,25 @@ func decodeHex(str string) []byte {
 	return ret
 }
 
+func makeCompressedPayload(t *testing.T, declaredLength uint32, data []byte) []byte {
+	var compressed bytes.Buffer
+	writer := zlib.NewWriter(&compressed)
+	_, err := writer.Write(data)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	payload := make([]byte, 4+compressed.Len())
+	binary.LittleEndian.PutUint32(payload, declaredLength)
+	copy(payload[4:], compressed.Bytes())
+	return payload
+}
+
+func requireLastZlibWarning(t *testing.T, ctx *mock.Context, expected error) {
+	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+	require.NotEmpty(t, warnings)
+	require.Truef(t, terror.ErrorEqual(expected, warnings[len(warnings)-1].Err), "warning %v", warnings[len(warnings)-1].Err)
+}
+
 func TestCompress(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.Compress]
@@ -565,13 +589,13 @@ func TestCompress(t *testing.T) {
 		in     any
 		expect any
 	}{
-		{"", "hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
+		{"", "hello world", string(decodeHex("0B000000789C000B00F4FF68656C6C6F20776F726C6403001A0B045D"))},
 		{"", "", ""},
 		{"", nil, nil},
-		{"utf8mb4", "hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
-		{"gbk", "hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
-		{"utf8mb4", "你好", string(decodeHex("06000000789C7AB277C1D3A57B01010000FFFF10450489"))},
-		{"gbk", "你好", string(decodeHex("04000000789C3AF278D76140000000FFFF07F40325"))},
+		{"utf8mb4", "hello world", string(decodeHex("0B000000789C000B00F4FF68656C6C6F20776F726C6403001A0B045D"))},
+		{"gbk", "hello world", string(decodeHex("0B000000789C000B00F4FF68656C6C6F20776F726C6403001A0B045D"))},
+		{"utf8mb4", "你好", string(decodeHex("06000000789C000600F9FFE4BDA0E5A5BD030010450489"))},
+		{"gbk", "你好", string(decodeHex("04000000789C000400FBFFC4E3BAC3030007F40325"))},
 	}
 	for _, test := range tests {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, test.chs)
@@ -595,9 +619,10 @@ func TestUncompress(t *testing.T) {
 		in     any
 		expect any
 	}{
-		{decodeHex("0B000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), "hello world"},         // zlib result from MySQL
-		{decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"), "hello world"}, // zlib result from TiDB
-		{decodeHex("02000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), nil},                   // wrong length in the first four bytes
+		{decodeHex("0B000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), "hello world"},           // zlib result from MySQL
+		{decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"), "hello world"},   // zlib result from TiDB
+		{decodeHex("0B000000789C000B00F4FF68656C6C6F20776F726C6403001A0B045D"), "hello world"}, // zlib result from Go 1.27
+		{decodeHex("02000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), nil},                     // wrong length in the first four bytes
 		{decodeHex(""), ""},
 		{"1", nil},
 		{"1234", nil},
@@ -758,4 +783,93 @@ func TestPassword(t *testing.T) {
 
 	_, err := funcs[ast.PasswordFunc].getFunction(ctx, []Expression{NewZero()})
 	require.NoError(t, err)
+}
+
+func TestUncompressRejectsInflatedDataLargerThanDeclaredLength(t *testing.T) {
+	ctx := createContext(t)
+	declaredLength := uint32(32)
+	payload := makeCompressedPayload(t, declaredLength, bytes.Repeat([]byte{0}, 1<<20))
+	tracker := ctx.GetSessionVars().StmtCtx.MemTracker
+
+	fc := funcs[ast.Uncompress]
+	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewBytesDatum(payload)}))
+	require.NoError(t, err)
+	out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.True(t, out.IsNull())
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	require.LessOrEqual(t, tracker.MaxConsumed(), int64(declaredLength))
+	requireLastZlibWarning(t, ctx, errZlibZBuf)
+}
+
+func TestUncompressRejectsHandcraftedPayloadLargerThanDeclaredLength(t *testing.T) {
+	ctx := createContext(t)
+	payload := decodeHex("20000000789c73741c05a360148c540000a4780410")
+	tracker := ctx.GetSessionVars().StmtCtx.MemTracker
+
+	require.Equal(t, uint32(32), binary.LittleEndian.Uint32(payload[:4]))
+	reader, err := zlib.NewReader(bytes.NewReader(payload[4:]))
+	require.NoError(t, err)
+	raw, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.NoError(t, reader.Close())
+	require.Equal(t, bytes.Repeat([]byte("A"), 1024), raw)
+
+	fc := funcs[ast.Uncompress]
+	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewBytesDatum(payload)}))
+	require.NoError(t, err)
+	out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.True(t, out.IsNull())
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	require.LessOrEqual(t, tracker.MaxConsumed(), int64(32))
+	requireLastZlibWarning(t, ctx, errZlibZBuf)
+}
+
+func TestUncompressTracksInflateMemory(t *testing.T) {
+	ctx := createContext(t)
+	data := bytes.Repeat([]byte{1}, 4096)
+	payload := makeCompressedPayload(t, uint32(len(data)), data)
+	tracker := ctx.GetSessionVars().StmtCtx.MemTracker
+	action := &memory.LogOnExceed{}
+	exceedCount := 0
+	action.SetLogHook(func(uint64) {
+		exceedCount++
+	})
+	tracker.SetBytesLimit(32)
+	tracker.SetActionOnExceed(action)
+
+	fc := funcs[ast.Uncompress]
+	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewBytesDatum(payload)}))
+	require.NoError(t, err)
+	out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, types.NewCollationStringDatum(string(data), charset.CollationBin), out)
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	require.GreaterOrEqual(t, tracker.MaxConsumed(), int64(len(data)))
+	require.Equal(t, 1, exceedCount)
+}
+
+func TestUncompressRejectsInflatedDataLargerThanDeclaredLengthVectorized(t *testing.T) {
+	ctx := createContext(t)
+	declaredLength := uint32(32)
+	payload := makeCompressedPayload(t, declaredLength, bytes.Repeat([]byte{0}, 1<<20))
+	argTp := types.NewFieldType(mysql.TypeBlob)
+	arg := &Column{Index: 0, RetType: argTp}
+	tracker := ctx.GetSessionVars().StmtCtx.MemTracker
+
+	fc := funcs[ast.Uncompress]
+	f, err := fc.getFunction(ctx, []Expression{arg})
+	require.NoError(t, err)
+	require.True(t, f.isChildrenVectorized())
+	input := chunk.New([]*types.FieldType{argTp}, 1, 1)
+	input.AppendBytes(0, payload)
+	result := chunk.NewColumn(f.getRetTp(), 1)
+
+	err = f.vecEvalString(ctx, input, result)
+	require.NoError(t, err)
+	require.True(t, result.IsNull(0))
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	require.LessOrEqual(t, tracker.MaxConsumed(), int64(declaredLength))
+	requireLastZlibWarning(t, ctx, errZlibZBuf)
 }

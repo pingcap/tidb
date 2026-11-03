@@ -18,6 +18,8 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+
+	"github.com/pingcap/tidb/pkg/dumpformat"
 )
 
 // Writer is a single-stream CSV encoder that writes framed/escaped rows to an
@@ -25,13 +27,13 @@ import (
 type Writer struct {
 	w       io.Writer
 	cfg     *Config
-	kinds   []FieldKind
+	kinds   []dumpformat.FieldKind
 	buf     []byte
 	written int64
 }
 
 // NewWriter creates a Writer over w.
-func NewWriter(w io.Writer, kinds []FieldKind, cfg *Config) *Writer {
+func NewWriter(w io.Writer, kinds []dumpformat.FieldKind, cfg *Config) *Writer {
 	return &Writer{w: w, cfg: cfg, kinds: kinds}
 }
 
@@ -59,7 +61,7 @@ func (cw *Writer) WriteHeader(names [][]byte) error {
 		if i > 0 {
 			cw.buf = append(cw.buf, cw.cfg.FieldsTerminatedBy...)
 		}
-		cw.buf = appendField(cw.buf, name, false, KindString, cw.cfg)
+		cw.buf = appendField(cw.buf, name, false, dumpformat.KindString, cw.cfg)
 	}
 	return cw.flush()
 }

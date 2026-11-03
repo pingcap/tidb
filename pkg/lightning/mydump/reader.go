@@ -155,13 +155,6 @@ func ExportStatement(ctx context.Context, store storeapi.Storage,
 	return data, nil
 }
 
-// ReadSeekCloser = Reader + Seeker + Closer
-type ReadSeekCloser interface {
-	io.Reader
-	io.Seeker
-	io.Closer
-}
-
 // StringReader is a wrapper around *strings.Reader with an additional Close() method
 type StringReader struct{ *strings.Reader }
 
@@ -178,12 +171,12 @@ func (StringReader) Close() error {
 // PooledReader is a throttled reader wrapper, where Read() calls have an upper limit of concurrency
 // imposed by the given worker pool.
 type PooledReader struct {
-	reader    ReadSeekCloser
+	reader    io.ReadSeekCloser
 	ioWorkers *worker.Pool
 }
 
 // MakePooledReader constructs a new PooledReader.
-func MakePooledReader(reader ReadSeekCloser, ioWorkers *worker.Pool) PooledReader {
+func MakePooledReader(reader io.ReadSeekCloser, ioWorkers *worker.Pool) PooledReader {
 	return PooledReader{
 		reader:    reader,
 		ioWorkers: ioWorkers,

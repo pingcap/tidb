@@ -114,6 +114,26 @@ func (e *baseCountDistinct4Int) AppendFinalResult2Chunk(_ AggFuncUpdateContext, 
 	return nil
 }
 
+func (e *baseCountDistinct4Int) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4CountDistinctInt)(partialResult)
+	resBuf := spillHelper.serializePartialResult4CountDistinctInt(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *baseCountDistinct4Int) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *baseCountDistinct4Int) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4CountDistinctInt)(pr)
+	success, dataMemDelta := helper.deserializePartialResult4CountDistinctInt(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
+}
+
 type countPartialWithDistinct4Int struct {
 	baseCountDistinct4Int
 }
@@ -179,6 +199,26 @@ func (e *baseCountDistinct4Real) AppendFinalResult2Chunk(_ AggFuncUpdateContext,
 	p := (*partialResult4CountDistinctReal)(pr)
 	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
+}
+
+func (e *baseCountDistinct4Real) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4CountDistinctReal)(partialResult)
+	resBuf := spillHelper.serializePartialResult4CountDistinctReal(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *baseCountDistinct4Real) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *baseCountDistinct4Real) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4CountDistinctReal)(pr)
+	success, dataMemDelta := helper.deserializePartialResult4CountDistinctReal(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
 }
 
 type countPartialWithDistinct4Real struct {
@@ -253,6 +293,26 @@ func (e *baseCountDistinct4Decimal) AppendFinalResult2Chunk(_ AggFuncUpdateConte
 	return nil
 }
 
+func (e *baseCountDistinct4Decimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4CountDistinctDecimal)(partialResult)
+	resBuf := spillHelper.serializePartialResult4CountDistinctDecimal(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *baseCountDistinct4Decimal) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *baseCountDistinct4Decimal) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4CountDistinctDecimal)(pr)
+	success, dataMemDelta := helper.deserializePartialResult4CountDistinctDecimal(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
+}
+
 type countPartialWithDistinct4Decimal struct {
 	baseCountDistinct4Decimal
 }
@@ -319,6 +379,26 @@ func (e *baseCountDistinct4Duration) AppendFinalResult2Chunk(_ AggFuncUpdateCont
 	p := (*partialResult4CountDistinctDuration)(pr)
 	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
+}
+
+func (e *baseCountDistinct4Duration) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4CountDistinctDuration)(partialResult)
+	resBuf := spillHelper.serializePartialResult4CountDistinctDuration(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *baseCountDistinct4Duration) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *baseCountDistinct4Duration) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4CountDistinctDuration)(pr)
+	success, dataMemDelta := helper.deserializePartialResult4CountDistinctDuration(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
 }
 
 type countPartialWithDistinct4Duration struct {
@@ -391,6 +471,26 @@ func (e *baseCountDistinct4String) AppendFinalResult2Chunk(_ AggFuncUpdateContex
 	p := (*partialResult4CountDistinctString)(pr)
 	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
+}
+
+func (e *baseCountDistinct4String) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4CountDistinctString)(partialResult)
+	resBuf := spillHelper.serializePartialResult4CountDistinctString(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *baseCountDistinct4String) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *baseCountDistinct4String) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4CountDistinctString)(pr)
+	success, dataMemDelta := helper.deserializePartialResult4CountDistinctString(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
 }
 
 type countPartialWithDistinct4String struct {
@@ -471,6 +571,26 @@ func (e *baseCountDistinct4MultiArgs) AppendFinalResult2Chunk(_ AggFuncUpdateCon
 	p := (*partialResult4CountWithDistinct)(pr)
 	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
+}
+
+func (e *baseCountDistinct4MultiArgs) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4CountWithDistinct)(partialResult)
+	resBuf := spillHelper.serializePartialResult4CountWithDistinct(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *baseCountDistinct4MultiArgs) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *baseCountDistinct4MultiArgs) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4CountWithDistinct)(pr)
+	success, dataMemDelta := helper.deserializePartialResult4CountWithDistinct(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
 }
 
 type countPartialWithDistinct struct {
@@ -902,6 +1022,26 @@ func (e *baseApproxCountDistinct) AppendFinalResult2Chunk(_ AggFuncUpdateContext
 	p := (*partialResult4ApproxCountDistinct)(pr)
 	chk.AppendInt64(e.ordinal, int64(p.fixedSize()))
 	return nil
+}
+
+func (e *baseApproxCountDistinct) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4ApproxCountDistinct)(partialResult)
+	resBuf := spillHelper.serializePartialResult4ApproxCountDistinct(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *baseApproxCountDistinct) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *baseApproxCountDistinct) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4ApproxCountDistinct)(pr)
+	success, dataMemDelta := helper.deserializePartialResult4ApproxCountDistinct(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
 }
 
 func (*baseApproxCountDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {

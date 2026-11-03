@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package client is the gRPC client to the external workload controller.
-// Requests that act on workload state carry keyspace identity in
+// Requests that act on workload state carry keyspace information in
 // externalworkloadpb.RequestHeader so the controller can route to the right pool.
 package client
 
@@ -135,7 +135,9 @@ func (c *grpcClient) Close() error { return c.conn.Close() }
 
 func (c *grpcClient) header() *pb.RequestHeader {
 	return &pb.RequestHeader{
-		KeyspaceId:   c.opt.KeyspaceID,
+		Keyspace: &pb.RequestHeader_KeyspaceId{
+			KeyspaceId: c.opt.KeyspaceID,
+		},
 		KeyspaceName: c.opt.KeyspaceName,
 		TidbPool:     c.opt.TiDBPool,
 	}

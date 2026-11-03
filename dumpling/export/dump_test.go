@@ -5,6 +5,7 @@ package export
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -76,6 +77,7 @@ func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {
 		keyspaceMeta  []string // [name,id]
 		queryErr      error
 		confPD        string
+		nextGen       bool
 		expectErr     string
 		expectKSPName string
 		expectKSPID   uint32
@@ -88,10 +90,11 @@ func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {
 			expectKSPID:   123,
 		},
 		{
-			name:         "premium_missing_pd",
-			keyspaceMeta: []string{"ks1", "123"},
-			confPD:       "",
-			expectErr:    "requires --pd",
+			name:          "premium_missing_pd_is_ok",
+			keyspaceMeta:  []string{"ks1", "123"},
+			confPD:        "",
+			expectKSPName: "ks1",
+			expectKSPID:   123,
 		},
 		{
 			name:         "classical_ok",
@@ -113,6 +116,22 @@ func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {
 			name:      "premium_no_keyspace_meta_table_is_error",
 			queryErr:  &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.KEYSPACE_META' doesn't exist"},
 			confPD:    "pd1:2379",
+			expectErr: "KEYSPACE_META",
+		},
+		{
+			// A next-gen cluster always exposes KEYSPACE_META, so a lookup error
+			// must not silently fall back to the classical global-safepoint path.
+			name:      "nextgen_keyspace_meta_error_is_fatal",
+			queryErr:  &mysql.MySQLError{Number: 1142, Message: "SELECT command denied to user 'cloud' for table 'KEYSPACE_META'"},
+			confPD:    "",
+			nextGen:   true,
+			expectErr: "denied",
+		},
+		{
+			name:      "nextgen_no_keyspace_meta_table_is_error",
+			queryErr:  &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.KEYSPACE_META' doesn't exist"},
+			confPD:    "",
+			nextGen:   true,
 			expectErr: "KEYSPACE_META",
 		},
 	}
@@ -142,6 +161,7 @@ func TestTiDBResolveKeyspaceMetaForGC(t *testing.T) {
 			d.conf.ServerInfo = version.ServerInfo{
 				ServerType:    version.ServerTypeTiDB,
 				ServerVersion: gcSafePointVersion,
+				NextGen:       tc.nextGen,
 			}
 			d.conf.PDAddr = tc.confPD
 			err = tidbResolveKeyspaceMetaForGC(d)
@@ -175,6 +195,12 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 		expectID         uint32
 		useKeyspaceGC    bool
 		expectBarrierAPI bool
+		// expectNoPDClient means the cluster is premium but --pd is absent, so
+		// tidbSetPDClientForGC must disable GC pause instead of failing.
+		expectNoPDClient bool
+		// expectSetPDErr means tidbSetPDClientForGC must fail with an actionable
+		// error instead of silently disabling GC pause.
+		expectSetPDErr string
 	}{
 		{
 			name:             "premium_uses_keyspace_barrier_api",
@@ -202,6 +228,24 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 			expectID:         0,
 			useKeyspaceGC:    false,
 			expectBarrierAPI: false,
+		},
+		{
+			name:             "premium_without_pd_disables_gc_pause",
+			keyspaceMeta:     []string{"ks1", "42"},
+			confPD:           "",
+			expectKeyspace:   "ks1",
+			expectID:         42,
+			expectNoPDClient: true,
+		},
+		{
+			// A non-empty but unusable --pd (a typo such as ",") must surface as
+			// an error, not be treated as "flag not provided".
+			name:           "premium_malformed_pd_is_error",
+			keyspaceMeta:   []string{"ks1", "42"},
+			confPD:         " , ",
+			expectKeyspace: "ks1",
+			expectID:       42,
+			expectSetPDErr: "invalid --pd",
 		},
 	}
 
@@ -238,6 +282,26 @@ func TestResolveKeyspaceMetaGCAPIChoice(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tc.expectKeyspace, d.tidbKeyspaceName)
 			require.Equal(t, tc.expectID, d.tidbKeyspaceID)
+
+			if tc.expectNoPDClient {
+				// Premium cluster without --pd: no error, and GC pause is
+				// disabled because no PD client is created.
+				require.NoError(t, tidbSetPDClientForGC(d))
+				require.Nil(t, d.tidbPDClientForGC)
+				require.False(t, d.tidbUseKeyspaceGC)
+				return
+			}
+
+			if tc.expectSetPDErr != "" {
+				// Premium cluster with a malformed --pd: fail with an actionable
+				// error and do not install a PD client.
+				err = tidbSetPDClientForGC(d)
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.expectSetPDErr)
+				require.Nil(t, d.tidbPDClientForGC)
+				require.False(t, d.tidbUseKeyspaceGC)
+				return
+			}
 
 			// Simulate the PD client being set already (we don't test actual
 			// PD connections here, just the dispatch decision).
@@ -621,21 +685,28 @@ func TestUpdateServiceSafePointCancelDuringRetry(t *testing.T) {
 	mockPD.mu.Unlock()
 }
 
-func TestDumpTableMeta(t *testing.T) {
+func newMockDumpConn(t *testing.T) (*tcontext.Context, sqlmock.Sqlmock, *BaseConn) {
+	t.Helper()
+
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, db.Close())
-	}()
 
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
-	defer cancel()
 	conn, err := db.Conn(tctx)
 	require.NoError(t, err)
-	baseConn := newBaseConn(conn, true, nil)
+	t.Cleanup(func() {
+		cancel()
+		require.NoError(t, db.Close())
+	})
 
+	return tctx, mock, newBaseConn(conn, true, nil)
+}
+
+func TestDumpTableMeta(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
 	conf := DefaultConfig()
 	conf.NoSchemas = true
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
 
 	for serverType := version.ServerTypeUnknown; serverType < version.ServerTypeAll; serverType++ {
 		conf.ServerInfo.ServerType = serverType
@@ -643,13 +714,15 @@ func TestDumpTableMeta(t *testing.T) {
 		mock.ExpectQuery("SHOW COLUMNS FROM").
 			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 				AddRow("id", "int(11)", "NO", "PRI", nil, ""))
+		mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `id` FROM `%s`.`%s` LIMIT 1", database, table))).
+			WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+				sqlmock.NewColumn("id").OfType("INT", int64(0)),
+			).AddRow(1))
 		if serverType == version.ServerTypeTiDB {
 			mock.ExpectExec("SELECT _tidb_rowid from").
 				WillReturnResult(sqlmock.NewResult(0, 0))
 			hasImplicitRowID = true
 		}
-		mock.ExpectQuery(fmt.Sprintf("SELECT \\* FROM `%s`.`%s`", database, table)).
-			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 		meta, err := dumpTableMeta(tctx, conf, baseConn, database, &TableInfo{Type: TableTypeBase, Name: table})
 		require.NoError(t, err)
 		require.Equal(t, database, meta.DatabaseName())
@@ -659,6 +732,415 @@ func TestDumpTableMeta(t *testing.T) {
 		require.Equal(t, "", meta.ShowCreateTable())
 		require.Equal(t, hasImplicitRowID, meta.HasImplicitRowID())
 	}
+}
+
+func TestTableMetaSplitSourceColumns(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
+	columnFilter := newColumnFilterConfigForTest(t,
+		columnFilterRule{Matcher: []string{fmt.Sprintf("%s.%s", database, table)}, Columns: []string{"name"}},
+	)
+	conf := DefaultConfig()
+	conf.NoSchemas = true
+	conf.ServerInfo.ServerType = version.ServerTypeMySQL
+	conf.columnFilter = columnFilter
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("id", "int(11)", "NO", "PRI", nil, "").
+			AddRow("name", "varchar(12)", "NO", "", nil, ""))
+	mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `id`,`name` FROM `%s`.`%s` LIMIT 1", database, table))).
+		WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+			sqlmock.NewColumn("id").OfType("INT", int64(0)),
+			sqlmock.NewColumn("name").OfType("VARCHAR", ""),
+		).AddRow(1, "alice"))
+	require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+	// Make a second filter application fail if it happens, so this covers using the prepared projection result.
+	conf.columnFilter = newColumnFilterConfigForTest(t,
+		columnFilterRule{Matcher: []string{fmt.Sprintf("%s.%s", database, table)}, Columns: []string{"missing"}},
+	)
+
+	meta, err := dumpTableMeta(tctx, conf, baseConn, database, &TableInfo{Type: TableTypeBase, Name: table})
+	require.NoError(t, err)
+	require.Equal(t, "`name`", meta.SelectedField())
+	require.Equal(t, []string{"name"}, meta.ColumnNames())
+	require.Equal(t, []string{"VARCHAR"}, meta.ColumnTypes())
+
+	require.Equal(t, []string{"id", "name"}, tableSourceColumnNames(meta))
+	require.Equal(t, []string{"INT", "VARCHAR"}, tableSourceColumnTypes(meta))
+
+	mock.ExpectQuery(fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", database, table)).
+		WillReturnRows(sqlmock.NewRows(showIndexHeaders).
+			AddRow(table, 0, "PRIMARY", 1, "id", "A", 1, nil, nil, "", "BTREE", "", ""))
+	field, err := getNumericIndex(tctx, baseConn, meta)
+	require.NoError(t, err)
+	require.Equal(t, "id", field)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestTableMetaAllGeneratedColumns(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
+	conf := DefaultConfig()
+	conf.NoSchemas = true
+	conf.ServerInfo.ServerType = version.ServerTypeMySQL
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("generated", "varchar(12)", "NO", "", nil, "VIRTUAL GENERATED"))
+
+	meta, err := dumpTableMeta(tctx, conf, baseConn, database, &TableInfo{Type: TableTypeBase, Name: table})
+	require.NoError(t, err)
+	require.Empty(t, meta.SelectedField())
+	require.Zero(t, meta.SelectedLen())
+	require.Empty(t, meta.ColumnNames())
+	require.Empty(t, meta.ColumnTypes())
+	require.Empty(t, tableSourceColumnNames(meta))
+	require.Empty(t, tableSourceColumnTypes(meta))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestColumnProjectionMatchedGeneratedOnly(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
+	conf := DefaultConfig()
+	conf.NoSchemas = true
+	conf.ServerInfo.ServerType = version.ServerTypeMySQL
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+	conf.columnFilter = newColumnFilterConfigForTest(t,
+		columnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"*"}},
+	)
+
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("generated", "varchar(12)", "NO", "", nil, "VIRTUAL GENERATED"))
+	err := prepareColumnProjection(tctx, conf, baseConn)
+	require.ErrorContains(t, err, "column filter selects no writable columns")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestColumnProjectionEmptyRows(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
+	conf := DefaultConfig()
+	conf.NoSchemas = true
+	conf.ServerInfo.ServerType = version.ServerTypeMySQL
+	conf.Tables = NewDatabaseTables().AppendTables("lightning_task_info", []string{"conflict_records_v2"}, []uint64{0})
+
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("id", "bigint(20)", "NO", "PRI", nil, "").
+			AddRow("task_id", "bigint(20)", "NO", "", nil, ""))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT `id`,`task_id` FROM `lightning_task_info`.`conflict_records_v2` LIMIT 1")).
+		WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+			sqlmock.NewColumn("id").OfType("BIGINT", int64(0)),
+			sqlmock.NewColumn("task_id").OfType("BIGINT", int64(0)),
+		))
+
+	require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+	projection, ok := conf.columnProjection[tableName{db: "lightning_task_info", table: "conflict_records_v2"}]
+	require.True(t, ok)
+	require.Equal(t, "*", projection.selectField)
+	require.Equal(t, []string{"id", "task_id"}, columnNames(projection.sourceTypes))
+	require.Equal(t, []string{"BIGINT", "BIGINT"}, columnTypes(projection.sourceTypes))
+	require.Equal(t, []string{"id", "task_id"}, columnNames(projection.selectedTypes))
+	require.Equal(t, []string{"BIGINT", "BIGINT"}, columnTypes(projection.selectedTypes))
+
+	meta, err := dumpTableMeta(
+		tctx,
+		conf,
+		baseConn,
+		"lightning_task_info",
+		&TableInfo{Type: TableTypeBase, Name: "conflict_records_v2"},
+	)
+	require.NoError(t, err)
+	require.Equal(t, 2, meta.SelectedLen())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestTableMetaView(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
+	conf := DefaultConfig()
+	conf.NoSchemas = true
+	conf.ServerInfo.ServerType = version.ServerTypeMySQL
+	conf.Tables = NewDatabaseTables().AppendViews(database, table)
+	conf.columnFilter = newColumnFilterConfigForTest(t,
+		columnFilterRule{Matcher: []string{database + ".*"}, Columns: []string{"missing"}},
+	)
+
+	require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+
+	meta, err := dumpTableMeta(tctx, conf, baseConn, database, &TableInfo{Type: TableTypeView, Name: table})
+	require.NoError(t, err)
+	require.Empty(t, meta.SelectedField())
+	require.Zero(t, meta.SelectedLen())
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	t.Run("rejects views before schema queries", func(t *testing.T) {
+		tctx, mock, baseConn := newMockDumpConn(t)
+		conf := DefaultConfig()
+		conf.Tables = NewDatabaseTables().
+			AppendTables(database, []string{table}, []uint64{0}).
+			AppendViews(database, "v")
+		conf.columnFilter = newColumnFilterConfigForTest(t,
+			columnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"id"}},
+		)
+
+		mock.ExpectQuery("SHOW COLUMNS FROM").
+			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+				AddRow("id", "int(11)", "NO", "PRI", nil, "").
+				AddRow("secret", "varchar(12)", "YES", "", nil, ""))
+		mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf(
+			"SELECT `id`,`secret` FROM `%s`.`%s` LIMIT 1",
+			database,
+			table,
+		))).WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+			sqlmock.NewColumn("id").OfType("INT", int64(0)),
+			sqlmock.NewColumn("secret").OfType("VARCHAR", ""),
+		).AddRow(1, "hidden"))
+
+		err := prepareColumnProjection(tctx, conf, baseConn)
+		require.EqualError(t, err, "schema output with an active column filter is not supported when the dump includes views")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestColumnProjection(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
+	conf := DefaultConfig()
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+	conf.columnFilter = newColumnFilterConfigForTest(t,
+		columnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"*", "!missing"}},
+	)
+
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("id", "int(11)", "NO", "PRI", nil, "").
+			AddRow("name", "varchar(12)", "NO", "", nil, ""))
+	mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `id`,`name` FROM `%s`.`%s` LIMIT 1", database, table))).
+		WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+			sqlmock.NewColumn("id").OfType("INT", int64(0)),
+			sqlmock.NewColumn("name").OfType("VARCHAR", ""),
+		).AddRow(1, "alice"))
+	require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+	projection, ok := conf.columnProjection[tableName{db: database, table: table}]
+	require.True(t, ok)
+	require.Equal(t, "*", projection.selectField)
+	require.Equal(t, []string{"id", "name"}, columnNames(projection.sourceTypes))
+	require.Equal(t, []string{"INT", "VARCHAR"}, columnTypes(projection.sourceTypes))
+	require.Equal(t, []string{"id", "name"}, columnNames(projection.selectedTypes))
+	require.Equal(t, []string{"INT", "VARCHAR"}, columnTypes(projection.selectedTypes))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestColumnProjectionCompleteInsert(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
+	conf := DefaultConfig()
+	conf.CompleteInsert = true
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("id", "int(11)", "NO", "PRI", nil, "").
+			AddRow("name", "varchar(12)", "NO", "", nil, "").
+			AddRow("quo`te", "varchar(12)", "NO", "UNI", nil, ""))
+	mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `id`,`name`,`quo``te` FROM `%s`.`%s` LIMIT 1", database, table))).
+		WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+			sqlmock.NewColumn("id").OfType("INT", int64(0)),
+			sqlmock.NewColumn("name").OfType("VARCHAR", ""),
+			sqlmock.NewColumn("quo`te").OfType("VARCHAR", ""),
+		).AddRow(1, "alice", "quoted"))
+
+	require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+	projection, ok := conf.columnProjection[tableName{db: database, table: table}]
+	require.True(t, ok)
+	require.Equal(t, "`id`,`name`,`quo``te`", projection.selectField)
+	require.Equal(t, []string{"id", "name", "quo`te"}, columnNames(projection.sourceTypes))
+	require.Equal(t, []string{"INT", "VARCHAR", "VARCHAR"}, columnTypes(projection.sourceTypes))
+	require.Equal(t, []string{"id", "name", "quo`te"}, columnNames(projection.selectedTypes))
+	require.Equal(t, []string{"INT", "VARCHAR", "VARCHAR"}, columnTypes(projection.selectedTypes))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestColumnProjectionNoFilter(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
+	conf := DefaultConfig()
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("id", "int(11)", "NO", "PRI", nil, "").
+			AddRow("name", "varchar(12)", "NO", "", nil, ""))
+	mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `id`,`name` FROM `%s`.`%s` LIMIT 1", database, table))).
+		WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+			sqlmock.NewColumn("id").OfType("INT", int64(0)),
+			sqlmock.NewColumn("name").OfType("VARCHAR", ""),
+		).AddRow(1, "alice"))
+	require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+	projection, ok := conf.columnProjection[tableName{db: database, table: table}]
+	require.True(t, ok)
+	require.Equal(t, "*", projection.selectField)
+	require.Equal(t, []string{"id", "name"}, columnNames(projection.sourceTypes))
+	require.Equal(t, []string{"INT", "VARCHAR"}, columnTypes(projection.sourceTypes))
+	require.Equal(t, []string{"id", "name"}, columnNames(projection.selectedTypes))
+	require.Equal(t, []string{"INT", "VARCHAR"}, columnTypes(projection.selectedTypes))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestColumnProjectionGeneratedColumn(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
+	conf := DefaultConfig()
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("id", "int(11)", "NO", "PRI", nil, "").
+			AddRow("generated", "int(11)", "YES", "", nil, "VIRTUAL GENERATED"))
+	mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `id` FROM `%s`.`%s` LIMIT 1", database, table))).
+		WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+			sqlmock.NewColumn("id").OfType("INT", int64(0)),
+		).AddRow(1))
+
+	require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+	projection, ok := conf.columnProjection[tableName{db: database, table: table}]
+	require.True(t, ok)
+	require.Equal(t, "`id`", projection.selectField)
+	require.Equal(t, []string{"id"}, columnNames(projection.sourceTypes))
+	require.Equal(t, []string{"INT"}, columnTypes(projection.sourceTypes))
+	require.Equal(t, []string{"id"}, columnNames(projection.selectedTypes))
+	require.Equal(t, []string{"INT"}, columnTypes(projection.selectedTypes))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestColumnProjectionIncludeStoredGeneratedColumns(t *testing.T) {
+	showColumns := func() *sqlmock.Rows {
+		return sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("id", "int(11)", "NO", "PRI", nil, "").
+			AddRow("stored", "int(11)", "YES", "", nil, "STORED GENERATED").
+			AddRow("virtual", "int(11)", "YES", "", nil, "VIRTUAL GENERATED").
+			AddRow("invisible", "int(11)", "YES", "", nil, "STORED GENERATED INVISIBLE")
+	}
+
+	t.Run("disabled", func(t *testing.T) {
+		tctx, mock, baseConn := newMockDumpConn(t)
+		conf := DefaultConfig()
+		conf.NoSchemas = true
+		conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+
+		mock.ExpectQuery("SHOW COLUMNS FROM").WillReturnRows(showColumns())
+		mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `id` FROM `%s`.`%s` LIMIT 1", database, table))).
+			WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+				sqlmock.NewColumn("id").OfType("INT", int64(0)),
+			).AddRow(1))
+
+		require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+		projection := conf.columnProjection[tableName{db: database, table: table}]
+		require.Equal(t, "`id`", projection.selectField)
+		require.Equal(t, []string{"id"}, columnNames(projection.selectedTypes))
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("enabled", func(t *testing.T) {
+		tctx, mock, baseConn := newMockDumpConn(t)
+		conf := DefaultConfig()
+		conf.NoSchemas = true
+		conf.IncludeGeneratedColumns = GeneratedColumnsStored
+		conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+
+		mock.ExpectQuery("SHOW COLUMNS FROM").WillReturnRows(showColumns())
+		mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `id`,`stored`,`invisible` FROM `%s`.`%s` LIMIT 1", database, table))).
+			WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+				sqlmock.NewColumn("id").OfType("INT", int64(0)),
+				sqlmock.NewColumn("stored").OfType("INT", int64(0)),
+				sqlmock.NewColumn("invisible").OfType("INT", int64(0)),
+			).AddRow(1, 2, 3))
+
+		require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+		projection := conf.columnProjection[tableName{db: database, table: table}]
+		// The VIRTUAL generated column is skipped, so the columns must be listed explicitly.
+		require.Equal(t, "`id`,`stored`,`invisible`", projection.selectField)
+		require.Equal(t, []string{"id", "stored", "invisible"}, columnNames(projection.sourceTypes))
+		require.Equal(t, []string{"id", "stored", "invisible"}, columnNames(projection.selectedTypes))
+		require.False(t, projection.hasFilteredColumns())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("enabled without virtual columns selects all", func(t *testing.T) {
+		tctx, mock, baseConn := newMockDumpConn(t)
+		conf := DefaultConfig()
+		conf.NoSchemas = true
+		conf.IncludeGeneratedColumns = GeneratedColumnsStored
+		conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+
+		mock.ExpectQuery("SHOW COLUMNS FROM").
+			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+				AddRow("id", "int(11)", "NO", "PRI", nil, "").
+				AddRow("stored", "int(11)", "YES", "", nil, "STORED GENERATED"))
+		mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `id`,`stored` FROM `%s`.`%s` LIMIT 1", database, table))).
+			WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+				sqlmock.NewColumn("id").OfType("INT", int64(0)),
+				sqlmock.NewColumn("stored").OfType("INT", int64(0)),
+			).AddRow(1, 2))
+
+		require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+		projection := conf.columnProjection[tableName{db: database, table: table}]
+		require.Equal(t, "*", projection.selectField)
+		require.Equal(t, []string{"id", "stored"}, columnNames(projection.selectedTypes))
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestColumnProjectionInvisibleColumns(t *testing.T) {
+	// MySQL 8.0.23+ excludes INVISIBLE columns from SELECT *, so they must be listed explicitly.
+	for _, tc := range []struct {
+		name          string
+		includeStored bool
+		extra         string
+		fields        string
+	}{
+		{name: "plain invisible column", extra: "INVISIBLE", fields: "`id`,`inv`"},
+		{name: "included stored invisible column", includeStored: true, extra: "STORED GENERATED INVISIBLE", fields: "`id`,`inv`"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tctx, mock, baseConn := newMockDumpConn(t)
+			conf := DefaultConfig()
+			conf.NoSchemas = true
+			if tc.includeStored {
+				conf.IncludeGeneratedColumns = GeneratedColumnsStored
+			}
+			conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+
+			mock.ExpectQuery("SHOW COLUMNS FROM").
+				WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+					AddRow("id", "int(11)", "NO", "PRI", nil, "").
+					AddRow("inv", "int(11)", "YES", "", nil, tc.extra))
+			mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT %s FROM `%s`.`%s` LIMIT 1", tc.fields, database, table))).
+				WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+					sqlmock.NewColumn("id").OfType("INT", int64(0)),
+					sqlmock.NewColumn("inv").OfType("INT", int64(0)),
+				).AddRow(1, 2))
+
+			require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+			projection := conf.columnProjection[tableName{db: database, table: table}]
+			require.Equal(t, tc.fields, projection.selectField)
+			require.Equal(t, []string{"id", "inv"}, columnNames(projection.selectedTypes))
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestColumnProjectionNoSelectedColumns(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
+	conf := DefaultConfig()
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+	conf.columnFilter = newColumnFilterConfigForTest(t,
+		columnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"missing"}},
+	)
+
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
+	err := prepareColumnProjection(tctx, conf, baseConn)
+	require.ErrorContains(t, err, "column filter selects no writable columns")
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestGetListTableTypeByConf(t *testing.T) {

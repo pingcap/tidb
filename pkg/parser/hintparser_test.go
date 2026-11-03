@@ -14,6 +14,7 @@
 package parser_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -176,6 +177,22 @@ func TestParseHint(t *testing.T) {
 					HintName: ast.NewCIStr("INDEX_LOOKUP_PUSHDOWN"),
 					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("tbl5"), QBName: ast.NewCIStr("qb6")}},
 					Indexes:  []ast.CIStr{ast.NewCIStr("c3")},
+				},
+			},
+		},
+		{
+			input: "TIFLASH_LM_FILTER(@qb1 tbl1 a, b) TIFLASH_LM_FILTER(tbl2@qb2 c)",
+			output: []*ast.TableOptimizerHint{
+				{
+					HintName: ast.NewCIStr("TIFLASH_LM_FILTER"),
+					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("tbl1")}},
+					QBName:   ast.NewCIStr("qb1"),
+					Indexes:  []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+				},
+				{
+					HintName: ast.NewCIStr("TIFLASH_LM_FILTER"),
+					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("tbl2"), QBName: ast.NewCIStr("qb2")}},
+					Indexes:  []ast.CIStr{ast.NewCIStr("c")},
 				},
 			},
 		},
@@ -515,4 +532,13 @@ func TestParseHint(t *testing.T) {
 		}
 		require.Equalf(t, tc.output, output, "input = %s,\n... output = %q", tc.input, output)
 	}
+}
+
+func TestMaxOptimizerHintDepth(t *testing.T) {
+	input := "/*+LEADING(" + strings.Repeat("(", 10000) + "t" + strings.Repeat(")", 10000) + ")*/"
+	mode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	require.NoError(t, err)
+	_, errs := parser.ParseHint(input, mode, parser.Pos{Line: 1})
+	require.NotEmpty(t, errs)
+	require.Contains(t, errs[0].Error(), "parentheses nesting depth exceeds maximum 10000")
 }

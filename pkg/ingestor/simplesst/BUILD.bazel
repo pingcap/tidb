@@ -40,6 +40,7 @@ go_library(
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_golang_x_sync//errgroup",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
     ],

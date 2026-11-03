@@ -1487,6 +1487,9 @@ func (sw *sstWriter) writeKVs(kvs []common.KvPair) error {
 	}
 	sw.totalCount += int64(len(kvs))
 	sw.maxKey = append(sw.maxKey[:0], sw.lastKey...)
+	// Keys may reference Writer.sortedKeyBuf, which is reused across batches.
+	// Keep lastKey in the stable maxKey buffer for the next call.
+	sw.lastKey = sw.maxKey
 	return nil
 }
 

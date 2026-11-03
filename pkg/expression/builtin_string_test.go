@@ -1078,6 +1078,7 @@ func TestLocate(t *testing.T) {
 		require.NotNil(t, f)
 		require.Equalf(t, c["Want"][0], got, "[%d]: args: %v", i, c["Args"])
 	}
+
 	// 2. Test LOCATE with binary input
 	tbl2 := []struct {
 		Args []any

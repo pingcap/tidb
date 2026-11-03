@@ -60,17 +60,14 @@ func urlEqual(t *testing.T, expected, actual string) {
 	require.Equal(t, urlExpected.String(), urlGot.String())
 }
 
-func (s *mockGCSSuite) checkExternalFields(taskID int64, externalMetaCleanedUp bool) {
+func (s *mockGCSSuite) checkExternalFields(taskID int64, sortStorageURI string, externalMetaCleanedUp bool) {
 	s.T().Helper()
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	mgr, err := storage.GetTaskManager()
 	s.NoError(err)
-	task, err := mgr.GetTaskByIDWithHistory(ctx, taskID)
-	s.NoError(err)
-	taskMeta := importinto.TaskMeta{}
-	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
-	store, err := importer.GetSortStore(ctx, taskMeta.Plan.CloudStorageURI)
+	// Historical task metadata is redacted and must not be used for storage I/O.
+	store, err := importer.GetSortStore(ctx, sortStorageURI)
 	s.NoError(err)
 	defer store.Close()
 
@@ -216,7 +213,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	// check sensitive info is redacted
 	jobInfo, err := importer.GetJob(context.Background(), s.tk.Session(), int64(jobID), "", true)
 	s.NoError(err)
-	redactedSortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", gcsEndpoint)
+	redactedSortStorageURI := "gs://sorted/import?endpoint=xxxxxx&access-key=xxxxxx&secret-access-key=xxxxxx"
 	urlEqual(s.T(), redactedSortStorageURI, jobInfo.Parameters.Options["cloud_storage_uri"].(string))
 	s.EqualValues(6, jobInfo.Summary.ImportedRows)
 	taskManager, err := storage.GetTaskManager()
@@ -261,7 +258,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.Len(files, 0)
 
 	// check subtask external field
-	s.checkExternalFields(taskID, true)
+	s.checkExternalFields(taskID, sortStorageURI, true)
 }
 
 func (s *mockGCSSuite) prepare10Files(bucket string) []string {
@@ -323,6 +320,8 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 		s.NoError(err)
 		return task.State == proto.TaskStateSucceed
 	}, 30*time.Second, 300*time.Millisecond)
+	var taskMeta importinto.TaskMeta
+	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
 
@@ -341,13 +340,18 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 	s.EqualValues(12, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
-	s.EqualValues(sum.RowCnt.Load(), 10000)
+	logicalIngestSummary := taskMeta.Summary.IngestSummary
+	s.EqualValues(10000, logicalIngestSummary.RowCnt)
 	if kerneltype.IsClassic() {
-		s.EqualValues(sum.Processed.Load(), 2622604)
+		s.EqualValues(2622604, logicalIngestSummary.Bytes)
 	} else {
 		// There are total 10000 * 4 kv pairs, each with 4 bytes keyspace prefix.
-		s.EqualValues(sum.Processed.Load(), 2782604)
+		s.EqualValues(2782604, logicalIngestSummary.Bytes)
 	}
+	// Runtime write progress is retry-inclusive. An ingest retry can move a region
+	// job back to regionScanned and rewrite its KVs; the data KV group also recounts rows.
+	s.GreaterOrEqual(sum.RowCnt.Load(), logicalIngestSummary.RowCnt)
+	s.GreaterOrEqual(sum.Processed.Load(), logicalIngestSummary.Bytes)
 	s.EqualValues(20, sum.GetReqCnt.Load())
 	// No conflicts in this case, no need to rewrite the external subtask meta.
 	s.EqualValues(0, sum.PutReqCnt.Load())

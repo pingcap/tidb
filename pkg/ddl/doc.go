@@ -20,10 +20,14 @@
 //
 // DDL maintains the following invariant:
 //
-//	At any time, for each schema object, such as a table, there are at most 2 versions
+//	For nodes participating in DDL synchronization, for each schema object, such as a table, there are at most 2 versions
 //	can exist for it, current version N loaded by all TiDBs and version N+1 pushed
 //	forward by DDL, before we can finish the DDL or continue to next operation, we
 //	need to make sure all TiDBs have synchronized to version N+1.
 //	Note that we are using a global version number for all schema objects, so the
 //	versions related some table might not be continuous, as DDLs are executed in parallel.
+//
+// Diagnostic startup loads existing schema through Domain.StartDiagnostic and
+// bypasses DDL.Start. SwitchMDL rejects changes in diagnostic mode; the DDL
+// Start, EnableDDL and DisableDDL methods do not implement diagnostic guards.
 package ddl

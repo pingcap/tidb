@@ -65,7 +65,7 @@ func TestOnTaskError(t *testing.T) {
 			},
 		)
 		testutil.RegisterExampleTask(t, testutil.GetPlanErrSchedulerExt(c.MockCtrl, c.TestContext),
-			executorExt, testutil.GetCommonCleanUpRoutine(c.MockCtrl))
+			executorExt, testutil.GetCommonCleaner(c.MockCtrl))
 		tm, err := storage.GetTaskManager()
 		require.NoError(t, err)
 		taskID, err := tm.CreateTask(c.Ctx, taskKey, proto.TaskTypeExample, c.Store.GetKeyspace(), 1, scope, 2, proto.ExtraParams{ManualRecovery: true}, nil)

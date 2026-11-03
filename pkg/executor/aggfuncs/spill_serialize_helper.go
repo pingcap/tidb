@@ -221,6 +221,129 @@ func (s *SerializeHelper) serializePartialResult4SumFloat64(value partialResult4
 	return util.SerializeInt64(value.notNullRowCount, s.buf)
 }
 
+func (s *SerializeHelper) serializePartialResult4CountDistinctInt(value partialResult4CountDistinctInt) []byte {
+	return s.serializeInt64Set(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4CountDistinctReal(value partialResult4CountDistinctReal) []byte {
+	return s.serializeFloat64Set(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4CountDistinctDecimal(value partialResult4CountDistinctDecimal) []byte {
+	return s.serializeStringSet(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4CountDistinctDuration(value partialResult4CountDistinctDuration) []byte {
+	return s.serializeInt64Set(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4CountDistinctString(value partialResult4CountDistinctString) []byte {
+	return s.serializeStringSet(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4CountWithDistinct(value partialResult4CountWithDistinct) []byte {
+	return s.serializeStringSet(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4AvgDistinctDecimal(value partialResult4AvgDistinctDecimal) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(value.valSet.M), s.buf)
+	for key, val := range value.valSet.M {
+		s.buf = util.SerializeString(key, s.buf)
+		s.buf = util.SerializeMyDecimal(val, s.buf)
+	}
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4AvgDistinctFloat64(value partialResult4AvgDistinctFloat64) []byte {
+	return s.serializeFloat64Set(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4SumDistinctDecimal(value partialResult4SumDistinctDecimal) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(value.valSet.M), s.buf)
+	for key, val := range value.valSet.M {
+		s.buf = util.SerializeString(key, s.buf)
+		s.buf = util.SerializeMyDecimal(val, s.buf)
+	}
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4SumDistinctFloat64(value partialResult4SumDistinctFloat64) []byte {
+	return s.serializeFloat64Set(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4VarPopDistinctFloat64(value partialResult4VarPopDistinctFloat64) []byte {
+	return s.serializeFloat64Set(value.valSet.M)
+}
+
+func (s *SerializeHelper) serializePartialResult4VarPopFloat64(value partialResult4VarPopFloat64) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt64(value.count, s.buf)
+	s.buf = util.SerializeFloat64(value.sum, s.buf)
+	return util.SerializeFloat64(value.variance, s.buf)
+}
+
+func (s *SerializeHelper) serializePartialResult4PercentileInt(value partialResult4PercentileInt) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(value), s.buf)
+	for _, item := range value {
+		s.buf = util.SerializeInt64(item, s.buf)
+	}
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4PercentileReal(value partialResult4PercentileReal) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(value), s.buf)
+	for _, item := range value {
+		s.buf = util.SerializeFloat64(item, s.buf)
+	}
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4PercentileDecimal(value partialResult4PercentileDecimal) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(value), s.buf)
+	for i := range value {
+		s.buf = util.SerializeMyDecimal(&value[i], s.buf)
+	}
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4PercentileTime(value partialResult4PercentileTime) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(value), s.buf)
+	for _, item := range value {
+		s.buf = util.SerializeTime(item, s.buf)
+	}
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4PercentileDuration(value partialResult4PercentileDuration) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(value), s.buf)
+	for _, item := range value {
+		s.buf = util.SerializeTypesDuration(item, s.buf)
+	}
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4ApproxCountDistinct(value partialResult4ApproxCountDistinct) []byte {
+	s.buf = value.Serialize()
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4GroupConcatDistinct(value partialResult4GroupConcatDistinct) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(value.valSet.M), s.buf)
+	for key, val := range value.valSet.M {
+		s.buf = util.SerializeString(key, s.buf)
+		s.buf = util.SerializeString(val, s.buf)
+	}
+	return s.buf
+}
+
 func (s *SerializeHelper) serializePartialResult4SumInt64(value partialResult4SumInt64) []byte {
 	s.buf = s.buf[:0]
 	s.buf = util.SerializeInt64(value.val, s.buf)
@@ -321,6 +444,14 @@ func (s *SerializeHelper) serializePartialResult4FirstRowJSON(value partialResul
 	return s.buf
 }
 
+func (s *SerializeHelper) serializePartialResult4FirstRowVectorFloat32(value partialResult4FirstRowVectorFloat32) []byte {
+	s.buf = s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
+	if value.gotFirstRow && !value.isNull {
+		s.buf = value.val.SerializeTo(s.buf)
+	}
+	return s.buf
+}
+
 func (s *SerializeHelper) serializePartialResult4FirstRowEnum(value partialResult4FirstRowEnum) []byte {
 	s.buf = s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
 	s.buf = util.SerializeEnum(&value.val, s.buf)
@@ -330,5 +461,32 @@ func (s *SerializeHelper) serializePartialResult4FirstRowEnum(value partialResul
 func (s *SerializeHelper) serializePartialResult4FirstRowSet(value partialResult4FirstRowSet) []byte {
 	s.buf = s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
 	s.buf = util.SerializeSet(&value.val, s.buf)
+	return s.buf
+}
+
+func (s *SerializeHelper) serializeInt64Set(values map[int64]struct{}) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(values), s.buf)
+	for val := range values {
+		s.buf = util.SerializeInt64(val, s.buf)
+	}
+	return s.buf
+}
+
+func (s *SerializeHelper) serializeFloat64Set(values map[float64]struct{}) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(values), s.buf)
+	for val := range values {
+		s.buf = util.SerializeFloat64(val, s.buf)
+	}
+	return s.buf
+}
+
+func (s *SerializeHelper) serializeStringSet(values map[string]struct{}) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeInt(len(values), s.buf)
+	for val := range values {
+		s.buf = util.SerializeString(val, s.buf)
+	}
 	return s.buf
 }

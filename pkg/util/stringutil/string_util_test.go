@@ -133,7 +133,7 @@ func TestCompileLike2Regexp(t *testing.T) {
 		{`%_%_aA`, "^...*aA$"},
 	}
 	for _, v := range tbl {
-		result := CompileLike2Regexp(v.pattern)
+		result := CompileLike2Regexp(v.pattern, '\\')
 		require.Equalf(t, v.regexp, result, "source %v", v)
 	}
 }

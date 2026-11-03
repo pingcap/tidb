@@ -172,6 +172,11 @@ func (lm *LogFileManager) ShiftTS() uint64 {
 	return lm.shiftStartTS
 }
 
+func isEmptyTaggedBackupMeta(path string) bool {
+	parsedName, err := stream.TryParseTaggedBackupMetaFileNameWrapper(path)
+	return err == nil && parsedName.IsEmpty()
+}
+
 func (lm *LogFileManager) loadShiftTS(ctx context.Context) error {
 	shiftTS := struct {
 		sync.Mutex
@@ -189,6 +194,9 @@ func (lm *LogFileManager) loadShiftTS(ctx context.Context) error {
 			parsedName, err := stream.TryParseTaggedBackupMetaFileNameWrapper(filename)
 			if err != nil {
 				return false
+			}
+			if parsedName.IsEmpty() {
+				return true
 			}
 			ts, status := parsedName.CalculateShiftTS(lm.startTS, lm.restoreTS)
 			switch status {
@@ -257,6 +265,9 @@ func (lm *LogFileManager) createMetaIterOver(ctx context.Context, s storeapi.Sto
 	names := []string{}
 	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
 		if !strings.HasSuffix(path, ".meta") {
+			return nil
+		}
+		if isEmptyTaggedBackupMeta(path) {
 			return nil
 		}
 		newPath := stream.FilterPathByTs(path, lm.shiftStartTS, lm.restoreTS)
@@ -543,7 +554,7 @@ func (lm *LogFileManager) ReadFilteredEntriesFromFiles(
 			// the first prewrite key has the value but the second don't.
 			// so we can ignore the empty value key.
 			// see details at https://github.com/pingcap/tiflow/issues/5468.
-			log.Warn("txn entry is null", zap.Uint64("key-ts", ts), zap.ByteString("tnxKey", txnEntry.Key))
+			log.Warn("txn entry is null", zap.Uint64("key-ts", ts), zap.String("tnxKey", redact.Key(txnEntry.Key)))
 			continue
 		}
 

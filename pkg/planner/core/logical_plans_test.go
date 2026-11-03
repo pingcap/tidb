@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -41,12 +42,23 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGetHashOrKeyPartitionColumnNameUsesProvidedTable(t *testing.T) {
+	tblInfo := coretestsdk.MockHashPartitionTable()
+	snapshotTbl, err := table.TableFromMeta(autoid.NewAllocators(false), tblInfo)
+	require.NoError(t, err)
+
+	hashPartColName := getHashOrKeyPartitionColumnName(snapshotTbl)
+	require.NotNil(t, hashPartColName)
+	require.Equal(t, "ptn", hashPartColName.L)
+}
 
 func TestPredicatePushDown(t *testing.T) {
 	var input, output []string
@@ -61,7 +73,7 @@ func TestPredicatePushDown(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
 		require.NoError(t, err)
-		p, err = logicalOptimize(context.TODO(), rule.FlagConvertOuterToInnerJoin|rule.FlagPredicatePushDown|rule.FlagDecorrelate|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain|rule.FlagPredicateSimplification, p.(base.LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), rule.FlagPredicatePushDown|rule.FlagDecorrelate|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain|rule.FlagPredicateSimplification, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[ith] = ToString(p)
@@ -219,7 +231,7 @@ func TestSimplifyOuterJoin(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
 		require.NoError(t, err, comment)
-		p, err = logicalOptimize(context.TODO(), rule.FlagPredicatePushDown|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain|rule.FlagConvertOuterToInnerJoin, p.(base.LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), rule.FlagPredicatePushDown|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		planString := ToString(p)
 		testdata.OnRecord(func() {
@@ -1233,6 +1245,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.IndexPriv, "test", "", "", nil, false, nil, false},
 				{mysql.CreateViewPriv, "test", "", "", nil, false, nil, false},
 				{mysql.ShowViewPriv, "test", "", "", nil, false, nil, false},
+				{mysql.OperateViewPriv, "test", "", "", nil, false, nil, false},
 				{mysql.TriggerPriv, "test", "", "", nil, false, nil, false},
 			},
 		},
@@ -1257,6 +1270,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.TriggerPriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateViewPriv, "", "", "", nil, false, nil, false},
 				{mysql.ShowViewPriv, "", "", "", nil, false, nil, false},
+				{mysql.OperateViewPriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateRolePriv, "", "", "", nil, false, nil, false},
 				{mysql.DropRolePriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateTMPTablePriv, "", "", "", nil, false, nil, false},
@@ -1308,6 +1322,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.IndexPriv, "test", "", "", nil, false, nil, false},
 				{mysql.CreateViewPriv, "test", "", "", nil, false, nil, false},
 				{mysql.ShowViewPriv, "test", "", "", nil, false, nil, false},
+				{mysql.OperateViewPriv, "test", "", "", nil, false, nil, false},
 				{mysql.TriggerPriv, "test", "", "", nil, false, nil, false},
 			},
 		},
@@ -1346,6 +1361,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.TriggerPriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateViewPriv, "", "", "", nil, false, nil, false},
 				{mysql.ShowViewPriv, "", "", "", nil, false, nil, false},
+				{mysql.OperateViewPriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateRolePriv, "", "", "", nil, false, nil, false},
 				{mysql.DropRolePriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateTMPTablePriv, "", "", "", nil, false, nil, false},

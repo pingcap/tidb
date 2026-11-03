@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -51,7 +52,11 @@ import (
 // to avoid polluting the global scope of current package.
 type extractHelper struct {
 	enableScalarPushDown bool
-	pushedDownFuncs      map[string]func(string) string
+	// Statement summary time pruning may resolve execution-bound constants.
+	enableDeferredConst bool
+	// Statement summary coarse pruning must preserve all exact SQL matches.
+	conservativeTimeRange bool
+	pushedDownFuncs       map[string]func(string) string
 
 	// Store whether the extracted strings for a specific column are converted to lower case
 	extractLowerString map[string]bool
@@ -215,10 +220,24 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 	// SELECT * FROM t1 WHERE c='rhs'
 	// SELECT * FROM t1 WHERE 'lhs'=c
 	constant, ok := args[1-colIdx].(*expression.Constant)
-	if !ok || constant.DeferredExpr != nil {
+	if !ok {
 		return "", nil, false
 	}
 	v := constant.Value
+	if constant.DeferredExpr != nil {
+		if !helper.enableDeferredConst || !expression.IsRuntimeConstExpr(constant.DeferredExpr) ||
+			expression.IsMutableEffectsExpr(constant.DeferredExpr) {
+			return "", nil, false
+		}
+		var err error
+		v, err = constant.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+		if err != nil {
+			return "", nil, false
+		}
+		// The extracted range belongs to this execution's bindings. Even an
+		// empty-range plan must not cache it for the next execution.
+		ctx.GetExprCtx().SetSkipPlanCache("statement summary time range depends on deferred constants")
+	}
 	if constant.ParamMarker != nil {
 		var err error
 		v, err = constant.ParamMarker.GetUserVar(ctx.GetExprCtx().GetEvalCtx())
@@ -383,22 +402,25 @@ func (helper *extractHelper) extractLikePatternCol(
 			continue
 		}
 
-		var canBuildPattern bool
+		var canBuildPattern, isPrefilter bool
 		var pattern string
 		// We use '|' to combine DNF regular expression: .*a.*|.*b.*
 		// e.g:
 		// SELECT * FROM t WHERE c LIKE '%a%' OR c LIKE '%b%'
 		if fn.FuncName.L == ast.LogicOr && !toLower {
-			canBuildPattern, pattern = helper.extractOrLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
+			canBuildPattern, pattern, isPrefilter = helper.extractOrLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		} else {
-			canBuildPattern, pattern = helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
+			canBuildPattern, pattern, isPrefilter = helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		}
 		if canBuildPattern && toLower {
 			pattern = strings.ToLower(pattern)
 		}
 		if canBuildPattern {
 			patterns = append(patterns, pattern)
-		} else {
+		}
+		// A prefilter narrows the scan but is not exactly equivalent to the
+		// predicate, so it is pushed down *and* kept for a scalar recheck.
+		if !canBuildPattern || isPrefilter {
 			remained = append(remained, expr)
 		}
 	}
@@ -411,40 +433,51 @@ func (helper extractHelper) extractOrLikePattern(
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
 	needLike2Regexp bool,
+	toLower bool,
 ) (
 	ok bool,
 	pattern string,
+	isPrefilter bool,
 ) {
 	predicates := expression.SplitDNFItems(orFunc)
 	if len(predicates) == 0 {
-		return false, ""
+		return false, "", false
 	}
 
 	patternBuilder := make([]string, 0, len(predicates))
 	for _, predicate := range predicates {
 		fn, ok := predicate.(*expression.ScalarFunction)
 		if !ok {
-			return false, ""
+			return false, "", false
 		}
 
-		ok, partPattern := helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
+		ok, partPattern, partIsPrefilter := helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		if !ok {
-			return false, ""
+			return false, "", false
 		}
+		// One inexact branch makes the whole disjunction inexact.
+		isPrefilter = isPrefilter || partIsPrefilter
 		patternBuilder = append(patternBuilder, partPattern)
 	}
-	return true, strings.Join(patternBuilder, "|")
+	return true, strings.Join(patternBuilder, "|"), isPrefilter
 }
 
+// extractLikePattern builds the pushed-down pattern for a single predicate.
+// toLower reports whether the caller folds case on both the pattern and the
+// scanned value, which decides how a case-insensitive ILIKE is represented.
+// isPrefilter reports that the pattern only narrows the scan and is not exactly
+// equivalent to the predicate, so the caller must keep a scalar recheck.
 func (helper extractHelper) extractLikePattern(
 	ctx base.PlanContext,
 	fn *expression.ScalarFunction,
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
 	needLike2Regexp bool,
+	toLower bool,
 ) (
 	ok bool,
 	pattern string,
+	isPrefilter bool,
 ) {
 	var colName string
 	var datums []types.Datum
@@ -453,21 +486,64 @@ func (helper extractHelper) extractLikePattern(
 		colName, datums, _ = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
 	}
 	if colName != extractColName {
-		return false, ""
+		return false, "", false
 	}
 	switch fn.FuncName.L {
 	case ast.EQ:
-		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
+		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$", false
 	case ast.Like, ast.Ilike:
-		if needLike2Regexp {
-			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
+		// The pushed-down pattern must honour the LIKE ESCAPE so it does not
+		// diverge from the original predicate (issue #69653). The escape has to
+		// be resolvable at plan time: for a constant escape (including the
+		// default '\' and the empty escape of NO_BACKSLASH_ESCAPES) we compile
+		// the regexp with it; a non-constant/deferred escape can't be resolved
+		// here, so we skip extraction and let the scalar predicate be rechecked.
+		escape, ok := likeEscapeConst(fn)
+		if !ok {
+			return false, "", false
 		}
-		return true, datums[0].GetString()
+		if !needLike2Regexp {
+			return true, datums[0].GetString(), false
+		}
+		pattern = stringutil.CompileLike2Regexp(datums[0].GetString(), escape)
+		// ILIKE matches case-insensitively while the pattern above is
+		// case-sensitive. Callers that fold case (toLower) lower both the pattern
+		// and the scanned value, so it stays equivalent there. Callers that do
+		// not -- the cluster log path sends the pattern verbatim in
+		// SearchLogRequest.Patterns -- get a case-insensitive group instead, so
+		// an "ERROR" line still matches `message ILIKE '%error%'`. The scoped
+		// (?i:...) form keeps the flag from leaking across a '|' when several
+		// patterns are combined into one disjunction. Case folding there is the
+		// regexp engine's rather than ILIKE's, so it is only a prefilter and the
+		// predicate is rechecked.
+		if fn.FuncName.L == ast.Ilike && !toLower {
+			return true, "(?i:" + pattern + ")", true
+		}
+		// Case-folding extractors only provide a prefilter for LIKE: its
+		// collation may require a case-sensitive match of the original value.
+		return true, pattern, fn.FuncName.L == ast.Like && toLower
 	case ast.Regexp, ast.RegexpLike:
-		return true, datums[0].GetString()
+		return true, datums[0].GetString(), false
 	default:
-		return false, ""
+		return false, "", false
 	}
+}
+
+// likeEscapeConst returns the ESCAPE byte of a LIKE/ILIKE ScalarFunction when
+// it is a plan-time constant (ok=true). The escape must be constant so the
+// pushed-down pattern can be compiled to match the predicate exactly (issue
+// #69653); a non-constant, deferred, or parameterized escape returns ok=false,
+// telling the caller to skip pushdown and keep a scalar recheck.
+func likeEscapeConst(fn *expression.ScalarFunction) (byte, bool) {
+	args := fn.GetArgs()
+	if len(args) < 3 {
+		return 0, false
+	}
+	escape, ok := args[2].(*expression.Constant)
+	if !ok || escape.DeferredExpr != nil || escape.ParamMarker != nil {
+		return 0, false
+	}
+	return byte(escape.Value.GetInt64()), true
 }
 
 func (extractHelper) findColumn(schema *expression.Schema, names []*types.FieldName, colName string) map[int64]*types.FieldName {
@@ -582,7 +658,7 @@ func (helper extractHelper) extractTimeRange(
 			}
 
 			mysqlTime := timeDatum.GetMysqlTime()
-			timestamp := time.Date(mysqlTime.Year(),
+			localTime := time.Date(mysqlTime.Year(),
 				time.Month(mysqlTime.Month()),
 				mysqlTime.Day(),
 				mysqlTime.Hour(),
@@ -590,7 +666,25 @@ func (helper extractHelper) extractTimeRange(
 				mysqlTime.Second(),
 				mysqlTime.Microsecond()*1000,
 				timezone,
-			).UnixNano()
+			)
+			if helper.conservativeTimeRange {
+				// SQL datetime bounds can exceed UnixNano's range or identify more
+				// than one instant. Neither conversion is safe for coarse pruning.
+				if localTime.Before(time.Unix(0, math.MinInt64)) || localTime.After(time.Unix(0, math.MaxInt64)) ||
+					types.FromGoTime(localTime) != mysqlTime.CoreTime() || !timeutil.IsUniqueLocalTime(localTime) {
+					remained = append(remained, expr)
+					continue
+				}
+				// Retained SQL predicates enforce strictness. Inclusive coarse
+				// bounds avoid millisecond adjustments that can invert or overflow.
+				switch fnName {
+				case ast.GT:
+					fnName = ast.GE
+				case ast.LT:
+					fnName = ast.LE
+				}
+			}
+			timestamp := localTime.UnixNano()
 
 			switch fnName {
 			case ast.EQ:
@@ -1583,8 +1677,9 @@ func (e *StatementsSummaryExtractor) Extract(sctx base.PlanContext,
 	}
 
 	if tr.StartTime.After(tr.EndTime) {
-		e.SkipRequest = true
-		return nil
+		// These bounds constrain different columns. A window spanning both
+		// bounds can still match, so inversion does not imply an empty result.
+		return remained
 	}
 	e.CoarseTimeRange = tr
 	return remained
@@ -1602,10 +1697,8 @@ func (e *StatementsSummaryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
 	}
 	if e.CoarseTimeRange != nil && p.SCtx().GetSessionVars() != nil && p.SCtx().GetSessionVars().StmtCtx != nil {
 		stmtCtx := p.SCtx().GetSessionVars().StmtCtx
-		startTime := e.CoarseTimeRange.StartTime.In(stmtCtx.TimeZone())
-		endTime := e.CoarseTimeRange.EndTime.In(stmtCtx.TimeZone())
-		startTimeStr := types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String()
-		endTimeStr := types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String()
+		startTimeStr := formatStatementsSummaryTime(e.CoarseTimeRange.StartTime, stmtCtx.TimeZone())
+		endTimeStr := formatStatementsSummaryTime(e.CoarseTimeRange.EndTime, stmtCtx.TimeZone())
 		fmt.Fprintf(buf, "start_time: %v, end_time: %v, ", startTimeStr, endTimeStr)
 	}
 	// remove the last ", " in the message info
@@ -1616,6 +1709,19 @@ func (e *StatementsSummaryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
 	return s
 }
 
+func formatStatementsSummaryTime(t time.Time, timezone *time.Location) string {
+	minDatetime, _ := types.MinDatetime.GoTime(time.UTC)
+	if t.Equal(minDatetime) {
+		return types.NewTime(types.MinDatetime, mysql.TypeDatetime, types.MaxFsp).String()
+	}
+	maxDatetime, _ := types.MaxDatetime.GoTime(time.UTC)
+	if t.Equal(maxDatetime) {
+		return types.NewTime(types.MaxDatetime, mysql.TypeDatetime, types.MaxFsp).String()
+	}
+	t = t.In(timezone)
+	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp).String()
+}
+
 func (e *StatementsSummaryExtractor) findCoarseTimeRange(
 	sctx base.PlanContext,
 	schema *expression.Schema,
@@ -1623,28 +1729,31 @@ func (e *StatementsSummaryExtractor) findCoarseTimeRange(
 	predicates []expression.Expression,
 ) *TimeRange {
 	tz := sctx.GetSessionVars().StmtCtx.TimeZone()
-	_, _, endTime := e.extractTimeRange(sctx, schema, names, predicates, "summary_begin_time", tz)
-	_, startTime, _ := e.extractTimeRange(sctx, schema, names, predicates, "summary_end_time", tz)
+	// FROM_UNIXTIME(?) remains a deferred constant while planning prepared
+	// queries. Resolve it only for this coarse prefilter; retain the original
+	// predicates for the exact SQL comparison and the nonpersistent reader.
+	helper := e.extractHelper
+	helper.enableDeferredConst = true
+	helper.conservativeTimeRange = true
+	_, _, endTime := helper.extractTimeRange(sctx, schema, names, predicates, "summary_begin_time", tz)
+	_, startTime, _ := helper.extractTimeRange(sctx, schema, names, predicates, "summary_end_time", tz)
 	return e.buildTimeRange(startTime, endTime)
 }
 
 func (e *StatementsSummaryExtractor) buildTimeRange(start, end int64) *TimeRange {
-	const defaultStatementsDuration = time.Hour
 	var startTime, endTime time.Time
 	if start == 0 && end == 0 {
 		return nil
 	}
 	if start != 0 {
 		startTime = e.convertToTime(start)
+	} else {
+		startTime, _ = types.MinDatetime.GoTime(time.UTC)
 	}
 	if end != 0 {
 		endTime = e.convertToTime(end)
-	}
-	if start == 0 {
-		startTime = endTime.Add(-defaultStatementsDuration)
-	}
-	if end == 0 {
-		endTime = startTime.Add(defaultStatementsDuration)
+	} else {
+		endTime, _ = types.MaxDatetime.GoTime(time.UTC)
 	}
 	return &TimeRange{StartTime: startTime, EndTime: endTime}
 }
