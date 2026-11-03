@@ -1548,4 +1548,29 @@ func TestForbiddenDDLInNextGen(t *testing.T) {
 			require.ErrorIs(t, tk.ExecToErr(sql), dbterror.ErrForbiddenDDL)
 		})
 	}
+
+	tk.MustExec("drop view sys.schema_unused_indexes")
+	tk.MustExec("drop view mysql.tidb_mdl_view")
+
+	// Custom mysql tables are ordinary user objects despite their schema name.
+	tk.MustExec("create table mysql.custom_table(id int)")
+	tk.MustExec("insert into mysql.custom_table values (1)")
+	tk.MustExec("truncate table mysql.custom_table")
+	tk.MustQuery("select * from mysql.custom_table").Check(testkit.Rows())
+	tk.MustExec("insert into mysql.custom_table values (2)")
+	tk.MustExec("alter table mysql.custom_table partition by hash(id) partitions 2")
+	tk.MustExec("rename table mysql.custom_table to mysql.custom_renamed")
+	tk.MustExec("rename table test.t to test.t1, mysql.custom_renamed to test.custom_moved")
+	tk.MustExec("rename table test.custom_moved to mysql.custom_table")
+	tk.MustQuery("select * from mysql.custom_table").Check(testkit.Rows("2"))
+	tk.MustExec("drop table mysql.custom_table")
+
+	tk.MustExec("create table mysql.custom_exchange(id int)")
+	tk.MustExec("create table test.custom_partition(id int) partition by range(id) (partition p0 values less than (10))")
+	tk.MustExec("insert into mysql.custom_exchange values (1)")
+	tk.MustExec("insert into test.custom_partition values (2)")
+	tk.MustExec("alter table test.custom_partition exchange partition p0 with table mysql.custom_exchange")
+	tk.MustQuery("select * from mysql.custom_exchange").Check(testkit.Rows("2"))
+	tk.MustQuery("select * from test.custom_partition").Check(testkit.Rows("1"))
+	tk.MustExec("drop table mysql.custom_exchange, test.custom_partition")
 }

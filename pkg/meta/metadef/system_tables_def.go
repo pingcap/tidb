@@ -1020,3 +1020,217 @@ const (
 		KEY idx_state_table_id (state, table_id),
 		KEY idx_finish_time_table_id (finish_time, table_id))`
 )
+
+// Canonical names shared by bootstrap definitions and system-object classification.
+const (
+	// UserTableName is the name of mysql.user.
+	UserTableName = "user"
+	// PasswordHistoryTableName is the name of mysql.password_history.
+	PasswordHistoryTableName = "password_history"
+	// GlobalPrivTableName is the name of mysql.global_priv.
+	GlobalPrivTableName = "global_priv"
+	// DBTableName is the name of mysql.db.
+	DBTableName = "db"
+	// TablesPrivTableName is the name of mysql.tables_priv.
+	TablesPrivTableName = "tables_priv"
+	// ColumnsPrivTableName is the name of mysql.columns_priv.
+	ColumnsPrivTableName = "columns_priv"
+	// GlobalVariablesTableName is the name of mysql.global_variables.
+	GlobalVariablesTableName = "global_variables"
+	// TiDBTableName is the name of mysql.tidb.
+	TiDBTableName = "tidb"
+	// HelpTopicTableName is the name of mysql.help_topic.
+	HelpTopicTableName = "help_topic"
+	// StatsMetaTableName is the name of mysql.stats_meta.
+	StatsMetaTableName = "stats_meta"
+	// StatsHistogramsTableName is the name of mysql.stats_histograms.
+	StatsHistogramsTableName = "stats_histograms"
+	// StatsBucketsTableName is the name of mysql.stats_buckets.
+	StatsBucketsTableName = "stats_buckets"
+	// GCDeleteRangeTableName is the name of mysql.gc_delete_range.
+	GCDeleteRangeTableName = "gc_delete_range"
+	// GCDeleteRangeDoneTableName is the name of mysql.gc_delete_range_done.
+	GCDeleteRangeDoneTableName = "gc_delete_range_done"
+	// StatsFeedbackTableName is the name of mysql.stats_feedback.
+	StatsFeedbackTableName = "stats_feedback"
+	// RoleEdgesTableName is the name of mysql.role_edges.
+	RoleEdgesTableName = "role_edges"
+	// DefaultRolesTableName is the name of mysql.default_roles.
+	DefaultRolesTableName = "default_roles"
+	// BindInfoTableName is the name of mysql.bind_info.
+	BindInfoTableName = "bind_info"
+	// StatsTopNTableName is the name of mysql.stats_top_n.
+	StatsTopNTableName = "stats_top_n"
+	// ExprPushdownBlacklistTableName is the name of mysql.expr_pushdown_blacklist.
+	ExprPushdownBlacklistTableName = "expr_pushdown_blacklist"
+	// OptRuleBlacklistTableName is the name of mysql.opt_rule_blacklist.
+	OptRuleBlacklistTableName = "opt_rule_blacklist"
+	// StatsExtendedTableName is the name of mysql.stats_extended.
+	StatsExtendedTableName = "stats_extended"
+	// StatsFMSketchTableName is the name of mysql.stats_fm_sketch.
+	StatsFMSketchTableName = "stats_fm_sketch"
+	// GlobalGrantsTableName is the name of mysql.global_grants.
+	GlobalGrantsTableName = "global_grants"
+	// CapturePlanBaselinesBlacklistTableName is the name of mysql.capture_plan_baselines_blacklist.
+	CapturePlanBaselinesBlacklistTableName = "capture_plan_baselines_blacklist"
+	// ColumnStatsUsageTableName is the name of mysql.column_stats_usage.
+	ColumnStatsUsageTableName = "column_stats_usage"
+	// TableCacheMetaTableName is the name of mysql.table_cache_meta.
+	TableCacheMetaTableName = "table_cache_meta"
+	// AnalyzeOptionsTableName is the name of mysql.analyze_options.
+	AnalyzeOptionsTableName = "analyze_options"
+	// StatsHistoryTableName is the name of mysql.stats_history.
+	StatsHistoryTableName = "stats_history"
+	// StatsMetaHistoryTableName is the name of mysql.stats_meta_history.
+	StatsMetaHistoryTableName = "stats_meta_history"
+	// AnalyzeJobsTableName is the name of mysql.analyze_jobs.
+	AnalyzeJobsTableName = "analyze_jobs"
+	// AdvisoryLocksTableName is the name of mysql.advisory_locks.
+	AdvisoryLocksTableName = "advisory_locks"
+	// PlanReplayerStatusTableName is the name of mysql.plan_replayer_status.
+	PlanReplayerStatusTableName = "plan_replayer_status"
+	// PlanReplayerTaskTableName is the name of mysql.plan_replayer_task.
+	PlanReplayerTaskTableName = "plan_replayer_task"
+	// StatsTableLockedTableName is the name of mysql.stats_table_locked.
+	StatsTableLockedTableName = "stats_table_locked"
+	// TiDBTTLTableStatusTableName is the name of mysql.tidb_ttl_table_status.
+	TiDBTTLTableStatusTableName = "tidb_ttl_table_status"
+	// TiDBTTLTaskTableName is the name of mysql.tidb_ttl_task.
+	TiDBTTLTaskTableName = "tidb_ttl_task"
+	// TiDBTTLJobHistoryTableName is the name of mysql.tidb_ttl_job_history.
+	TiDBTTLJobHistoryTableName = "tidb_ttl_job_history"
+	// TiDBGlobalTaskTableName is the name of mysql.tidb_global_task.
+	TiDBGlobalTaskTableName = "tidb_global_task"
+	// TiDBGlobalTaskHistoryTableName is the name of mysql.tidb_global_task_history.
+	TiDBGlobalTaskHistoryTableName = "tidb_global_task_history"
+	// TiDBImportJobsTableName is the name of mysql.tidb_import_jobs.
+	TiDBImportJobsTableName = "tidb_import_jobs"
+	// TiDBRunawayWatchTableName is the name of mysql.tidb_runaway_watch.
+	TiDBRunawayWatchTableName = "tidb_runaway_watch"
+	// TiDBRunawayQueriesTableName is the name of mysql.tidb_runaway_queries.
+	TiDBRunawayQueriesTableName = "tidb_runaway_queries"
+	// TiDBTimersTableName is the name of mysql.tidb_timers.
+	TiDBTimersTableName = "tidb_timers"
+	// TiDBRunawayWatchDoneTableName is the name of mysql.tidb_runaway_watch_done.
+	TiDBRunawayWatchDoneTableName = "tidb_runaway_watch_done"
+	// DistFrameworkMetaTableName is the name of mysql.dist_framework_meta.
+	DistFrameworkMetaTableName = "dist_framework_meta"
+	// RequestUnitByGroupTableName is the name of mysql.request_unit_by_group.
+	RequestUnitByGroupTableName = "request_unit_by_group"
+	// TiDBPITRIDMapTableName is the name of mysql.tidb_pitr_id_map.
+	TiDBPITRIDMapTableName = "tidb_pitr_id_map"
+	// TiDBRestoreRegistryTableName is the name of mysql.tidb_restore_registry.
+	TiDBRestoreRegistryTableName = "tidb_restore_registry"
+	// IndexAdvisorResultsTableName is the name of mysql.index_advisor_results.
+	IndexAdvisorResultsTableName = "index_advisor_results"
+	// TiDBKernelOptionsTableName is the name of mysql.tidb_kernel_options.
+	TiDBKernelOptionsTableName = "tidb_kernel_options"
+	// TiDBWorkloadValuesTableName is the name of mysql.tidb_workload_values.
+	TiDBWorkloadValuesTableName = "tidb_workload_values"
+	// TiDBMaskingPolicyTableName is the name of mysql.tidb_masking_policy.
+	TiDBMaskingPolicyTableName = "tidb_masking_policy"
+	// TiDBMViewRefreshInfoTableName is the name of mysql.tidb_mview_refresh_info.
+	TiDBMViewRefreshInfoTableName = "tidb_mview_refresh_info"
+	// TiDBMLogPurgeInfoTableName is the name of mysql.tidb_mlog_purge_info.
+	TiDBMLogPurgeInfoTableName = "tidb_mlog_purge_info"
+	// TiDBMViewRefreshHistTableName is the name of mysql.tidb_mview_refresh_hist.
+	TiDBMViewRefreshHistTableName = "tidb_mview_refresh_hist"
+	// TiDBMViewRefreshAlertTableName is the name of mysql.tidb_mview_refresh_alert.
+	TiDBMViewRefreshAlertTableName = "tidb_mview_refresh_alert"
+	// TiDBMLogPurgeHistTableName is the name of mysql.tidb_mlog_purge_hist.
+	TiDBMLogPurgeHistTableName = "tidb_mlog_purge_hist"
+	// TiDBStorageClassTransitionHistoryTableName is the name of mysql.tidb_storage_class_transition_history.
+	TiDBStorageClassTransitionHistoryTableName = "tidb_storage_class_transition_history"
+	// TiDBDDLJobTableName is the name of mysql.tidb_ddl_job.
+	TiDBDDLJobTableName = "tidb_ddl_job"
+	// TiDBDDLReorgTableName is the name of mysql.tidb_ddl_reorg.
+	TiDBDDLReorgTableName = "tidb_ddl_reorg"
+	// TiDBDDLHistoryTableName is the name of mysql.tidb_ddl_history.
+	TiDBDDLHistoryTableName = "tidb_ddl_history"
+	// TiDBMDLInfoTableName is the name of mysql.tidb_mdl_info.
+	TiDBMDLInfoTableName = "tidb_mdl_info"
+	// TiDBBackgroundSubtaskTableName is the name of mysql.tidb_background_subtask.
+	TiDBBackgroundSubtaskTableName = "tidb_background_subtask"
+	// TiDBBackgroundSubtaskHistoryTableName is the name of mysql.tidb_background_subtask_history.
+	TiDBBackgroundSubtaskHistoryTableName = "tidb_background_subtask_history"
+)
+
+// builtinMySQLTableNames identifies built-in tables independently of their IDs.
+var builtinMySQLTableNames = map[string]struct{}{
+	UserTableName:                              {},
+	PasswordHistoryTableName:                   {},
+	GlobalPrivTableName:                        {},
+	DBTableName:                                {},
+	TablesPrivTableName:                        {},
+	ColumnsPrivTableName:                       {},
+	GlobalVariablesTableName:                   {},
+	TiDBTableName:                              {},
+	HelpTopicTableName:                         {},
+	StatsMetaTableName:                         {},
+	StatsHistogramsTableName:                   {},
+	StatsBucketsTableName:                      {},
+	GCDeleteRangeTableName:                     {},
+	GCDeleteRangeDoneTableName:                 {},
+	StatsFeedbackTableName:                     {},
+	RoleEdgesTableName:                         {},
+	DefaultRolesTableName:                      {},
+	BindInfoTableName:                          {},
+	StatsTopNTableName:                         {},
+	ExprPushdownBlacklistTableName:             {},
+	OptRuleBlacklistTableName:                  {},
+	StatsExtendedTableName:                     {},
+	StatsFMSketchTableName:                     {},
+	GlobalGrantsTableName:                      {},
+	CapturePlanBaselinesBlacklistTableName:     {},
+	ColumnStatsUsageTableName:                  {},
+	TableCacheMetaTableName:                    {},
+	AnalyzeOptionsTableName:                    {},
+	StatsHistoryTableName:                      {},
+	StatsMetaHistoryTableName:                  {},
+	AnalyzeJobsTableName:                       {},
+	AdvisoryLocksTableName:                     {},
+	PlanReplayerStatusTableName:                {},
+	PlanReplayerTaskTableName:                  {},
+	StatsTableLockedTableName:                  {},
+	TiDBTTLTableStatusTableName:                {},
+	TiDBTTLTaskTableName:                       {},
+	TiDBTTLJobHistoryTableName:                 {},
+	TiDBGlobalTaskTableName:                    {},
+	TiDBGlobalTaskHistoryTableName:             {},
+	TiDBImportJobsTableName:                    {},
+	TiDBRunawayWatchTableName:                  {},
+	TiDBRunawayQueriesTableName:                {},
+	TiDBTimersTableName:                        {},
+	TiDBRunawayWatchDoneTableName:              {},
+	DistFrameworkMetaTableName:                 {},
+	RequestUnitByGroupTableName:                {},
+	TiDBPITRIDMapTableName:                     {},
+	TiDBRestoreRegistryTableName:               {},
+	IndexAdvisorResultsTableName:               {},
+	TiDBKernelOptionsTableName:                 {},
+	TiDBWorkloadValuesTableName:                {},
+	TiDBMaskingPolicyTableName:                 {},
+	TiDBMViewRefreshInfoTableName:              {},
+	TiDBMLogPurgeInfoTableName:                 {},
+	TiDBMViewRefreshHistTableName:              {},
+	TiDBMViewRefreshAlertTableName:             {},
+	TiDBMLogPurgeHistTableName:                 {},
+	TiDBStorageClassTransitionHistoryTableName: {},
+	TiDBDDLJobTableName:                        {},
+	TiDBDDLReorgTableName:                      {},
+	TiDBDDLHistoryTableName:                    {},
+	TiDBMDLInfoTableName:                       {},
+	TiDBBackgroundSubtaskTableName:             {},
+	TiDBBackgroundSubtaskHistoryTableName:      {},
+	NotifierTableName:                          {},
+}
+
+// IsBuiltinSystemTable reports whether lower-case schema and table names identify
+// a built-in mysql table, independently of its persisted object ID.
+func IsBuiltinSystemTable(schemaLowerName, tableLowerName string) bool {
+	if !IsSystemDB(schemaLowerName) {
+		return false
+	}
+	_, ok := builtinMySQLTableNames[tableLowerName]
+	return ok
+}

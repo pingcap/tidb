@@ -36,4 +36,17 @@ func TestShouldCheckAssumedServer(t *testing.T) {
 	require.False(t, shouldCheckAssumedServer(&model.Job{SchemaID: 2, TableID: 10000}, is))
 	require.False(t, shouldCheckAssumedServer(&model.Job{SchemaID: 2}, is))
 	require.False(t, shouldCheckAssumedServer(&model.Job{TableID: 9999}, nil))
+	// A custom mysql table does not require the assumed SYSTEM server.
+	for _, job := range []*model.Job{
+		{TableID: 10000, SchemaName: "mysql", TableName: "custom_table"},
+		{TableID: 100, InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{Database: "test", Table: "user_table"},
+			{Database: "mysql", Table: "custom_table"},
+		}},
+	} {
+		require.False(t, shouldCheckAssumedServer(job, is))
+	}
+	require.False(t, shouldCheckAssumedServer(&model.Job{TableID: 100,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{Database: "test", Table: "user_table"}},
+	}, is))
 }

@@ -19,6 +19,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,15 +33,24 @@ func TestSyncerSkipMDLCheck(t *testing.T) {
 	require.False(t, syncer.skipMDLCheck(map[int64]struct{}{123: {}, metadef.ReservedGlobalIDUpperBound: {}}, nil))
 
 	cache := infoschema.NewCache(nil, 1)
-	cache.Insert(infoschema.MockInfoSchema(nil), 0)
+	db := &model.DBInfo{ID: 2, Name: ast.NewCIStr("mysql"), State: model.StatePublic}
+	db.Deprecated.Tables = []*model.TableInfo{
+		{ID: 9999, DBID: db.ID, Name: ast.NewCIStr("stats_meta"), State: model.StatePublic},
+		{ID: 10000, DBID: db.ID, Name: ast.NewCIStr("custom_table"), State: model.StatePublic},
+	}
+	builder := infoschema.NewBuilder(nil, 0, nil, infoschema.NewData(), false)
+	require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{db}, nil, nil, nil, 1))
+	cache.Insert(builder.Build(0), 0)
 	syncer = NewCrossKSSyncer(testStoreWithKS{}, cache, 0, nil, nil, "ks1")
 	require.True(t, syncer.skipMDLCheck(map[int64]struct{}{}, cache.GetLatest()))
 	require.True(t, syncer.skipMDLCheck(map[int64]struct{}{123: {}}, cache.GetLatest()))
 	require.True(t, syncer.skipMDLCheck(map[int64]struct{}{123: {}, 456: {}}, cache.GetLatest()))
 	require.True(t, syncer.skipMDLCheck(map[int64]struct{}{metadef.ReservedGlobalIDUpperBound: {}}, cache.GetLatest()))
 	require.True(t, syncer.skipMDLCheck(map[int64]struct{}{123: {}, metadef.ReservedGlobalIDUpperBound: {}}, cache.GetLatest()))
-	// MockInfoSchema loads mysql.stats_meta with legacy ID 9999 and mysql ID 2.
+	// mysql.stats_meta uses legacy ID 9999 in mysql schema ID 2.
 	require.False(t, syncer.skipMDLCheck(map[int64]struct{}{9999: {}}, cache.GetLatest()))
 	require.False(t, syncer.skipMDLCheck(map[int64]struct{}{123: {}, 9999: {}}, cache.GetLatest()))
 	require.True(t, syncer.skipMDLCheck(map[int64]struct{}{2: {}}, cache.GetLatest()))
+	require.True(t, syncer.skipMDLCheck(map[int64]struct{}{10000: {}}, cache.GetLatest()))
+	require.False(t, syncer.skipMDLCheck(map[int64]struct{}{9999: {}, 10000: {}}, cache.GetLatest()))
 }

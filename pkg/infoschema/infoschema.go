@@ -343,14 +343,15 @@ func IsSystemSchema(is InfoSchema, id int64) bool {
 	return ok && (metadef.IsSystemDB(db.Name.L) || db.Name.L == mysql.SysDB)
 }
 
-// IsSystemTable checks whether id identifies a mysql table in this keyspace,
+// IsSystemTable checks whether id identifies a built-in mysql table in this keyspace,
 // using the IDs already loaded into InfoSchema without accessing storage.
 func IsSystemTable(is InfoSchema, id int64) bool {
 	if is == nil || id <= 0 {
 		return false
 	}
 	tbl, ok := is.TableItemByID(id)
-	return ok && metadef.IsSystemDB(tbl.DBName.L)
+	return ok && metadef.IsSystemDB(tbl.DBName.L) &&
+		(metadef.IsReservedID(id) || metadef.IsBuiltinSystemTable(tbl.DBName.L, tbl.TableName.L))
 }
 
 // SchemaByTable get a table's schema name

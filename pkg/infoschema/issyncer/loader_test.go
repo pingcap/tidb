@@ -184,7 +184,7 @@ func TestLoadFromTSForCrossKS(t *testing.T) {
 				mu := meta.NewMutator(txn)
 				require.NoError(t, mu.CreateDatabase(&model.DBInfo{ID: systemDBID, Name: ast.NewCIStr(mysql.SystemDB)}))
 				testTblID := tc.tableID
-				require.NoError(t, mu.CreateTableOrView(systemDBID, &model.TableInfo{ID: testTblID, Name: ast.NewCIStr("t"), State: model.StatePublic}))
+				require.NoError(t, mu.CreateTableOrView(systemDBID, &model.TableInfo{ID: testTblID, Name: ast.NewCIStr("user"), State: model.StatePublic}))
 				schVer, err := mu.GenSchemaVersion()
 				require.NoError(t, err)
 				require.NoError(t, mu.SetSchemaDiff(&model.SchemaDiff{
@@ -210,13 +210,13 @@ func TestLoadFromTSForCrossKS(t *testing.T) {
 			tbls, err := is.SchemaTableInfos(ctx, ast.NewCIStr(mysql.SystemDB))
 			require.NoError(t, err)
 			require.Len(t, tbls, 1)
-			require.Equal(t, "t", tbls[0].Name.L)
+			require.Equal(t, "user", tbls[0].Name.L)
 
-			// Load new mysql tables by schema membership, including legacy IDs.
+			// Load new built-in mysql tables, including those with legacy IDs.
 			require.NoError(t, tidbkv.RunInNewTxn(ctx, l.store, true, func(_ context.Context, txn tidbkv.Transaction) error {
 				mu := meta.NewMutator(txn)
 				testTblID := tc.tableID + 1
-				require.NoError(t, mu.CreateTableOrView(systemDBID, &model.TableInfo{ID: testTblID, Name: ast.NewCIStr("t1"), State: model.StatePublic}))
+				require.NoError(t, mu.CreateTableOrView(systemDBID, &model.TableInfo{ID: testTblID, Name: ast.NewCIStr("global_priv"), State: model.StatePublic}))
 				schVer, err := mu.GenSchemaVersion()
 				require.NoError(t, err)
 				require.NoError(t, mu.SetSchemaDiff(&model.SchemaDiff{
@@ -253,12 +253,12 @@ func TestLoadFromTSForCrossKS(t *testing.T) {
 			require.Equal(t, systemDBID, allSchemas[0].ID)
 			require.False(t, hitCache)
 			require.EqualValues(t, 1, oldSchemaVersion)
-			require.Len(t, changes.PhyTblIDS, 2)
+			require.Len(t, changes.PhyTblIDS, 1)
 			tbls, err = is.SchemaTableInfos(ctx, ast.NewCIStr(mysql.SystemDB))
 			require.NoError(t, err)
-			require.Len(t, tbls, 3)
-			require.True(t, slices.ContainsFunc(tbls, func(t *model.TableInfo) bool { return t.Name.L == "t" }))
-			require.True(t, slices.ContainsFunc(tbls, func(t *model.TableInfo) bool { return t.Name.L == "t1" }))
+			require.Len(t, tbls, 2)
+			require.True(t, slices.ContainsFunc(tbls, func(t *model.TableInfo) bool { return t.Name.L == "user" }))
+			require.True(t, slices.ContainsFunc(tbls, func(t *model.TableInfo) bool { return t.Name.L == "global_priv" }))
 		})
 	}
 }
@@ -271,35 +271,50 @@ func (testStoreWithKS) GetKeyspace() string {
 	return "test_ks"
 }
 
+func mustSkipLoadingDiff(t *testing.T, loader *Loader, diff *model.SchemaDiff) bool {
+	t.Helper()
+	skip, err := loader.skipLoadingDiff(diff, nil)
+	require.NoError(t, err)
+	return skip
+}
+
 func TestLoaderSkipLoadingDiff(t *testing.T) {
 	syncer := New(nil, nil, 0, nil, nil, nil)
-	require.False(t, syncer.loader.skipLoadingDiff(&model.SchemaDiff{}))
-	require.False(t, syncer.loader.skipLoadingDiff(&model.SchemaDiff{TableID: 100}))
-	require.False(t, syncer.loader.skipLoadingDiff(&model.SchemaDiff{OldTableID: 100}))
-	require.False(t, syncer.loader.skipLoadingDiff(&model.SchemaDiff{TableID: 100, OldTableID: 100}))
-	require.False(t, syncer.loader.skipLoadingDiff(&model.SchemaDiff{TableID: metadef.ReservedGlobalIDUpperBound}))
-	require.False(t, syncer.loader.skipLoadingDiff(&model.SchemaDiff{OldTableID: metadef.ReservedGlobalIDUpperBound}))
-	require.False(t, syncer.loader.skipLoadingDiff(&model.SchemaDiff{TableID: metadef.ReservedGlobalIDUpperBound,
+	require.False(t, mustSkipLoadingDiff(t, syncer.loader, &model.SchemaDiff{}))
+	require.False(t, mustSkipLoadingDiff(t, syncer.loader, &model.SchemaDiff{TableID: 100}))
+	require.False(t, mustSkipLoadingDiff(t, syncer.loader, &model.SchemaDiff{OldTableID: 100}))
+	require.False(t, mustSkipLoadingDiff(t, syncer.loader, &model.SchemaDiff{TableID: 100, OldTableID: 100}))
+	require.False(t, mustSkipLoadingDiff(t, syncer.loader, &model.SchemaDiff{TableID: metadef.ReservedGlobalIDUpperBound}))
+	require.False(t, mustSkipLoadingDiff(t, syncer.loader, &model.SchemaDiff{OldTableID: metadef.ReservedGlobalIDUpperBound}))
+	require.False(t, mustSkipLoadingDiff(t, syncer.loader, &model.SchemaDiff{TableID: metadef.ReservedGlobalIDUpperBound,
 		OldTableID: metadef.ReservedGlobalIDUpperBound}))
 
 	cache := infoschema.NewCache(nil, 1)
 	cache.Insert(infoschema.MockInfoSchema(nil), 0)
 	loaderForCrossKS := NewLoaderForCrossKS(testStoreWithKS{}, cache)
-	require.True(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{}))
-	require.True(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{TableID: 100}))
-	require.True(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{OldTableID: 100}))
-	require.True(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{TableID: 100, OldTableID: 100}))
-	require.True(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{TableID: metadef.ReservedGlobalIDUpperBound}))
-	require.True(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{OldTableID: metadef.ReservedGlobalIDUpperBound}))
-	require.True(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{TableID: metadef.ReservedGlobalIDUpperBound,
+	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{}))
+	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{TableID: 100}))
+	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{OldTableID: 100}))
+	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{TableID: 100, OldTableID: 100}))
+	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{TableID: metadef.ReservedGlobalIDUpperBound}))
+	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{OldTableID: metadef.ReservedGlobalIDUpperBound}))
+	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{TableID: metadef.ReservedGlobalIDUpperBound,
 		OldTableID: metadef.ReservedGlobalIDUpperBound}))
 	// Use this target keyspace's loaded IDs, including new tables in mysql.
-	require.False(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{TableID: 9999}))
-	require.False(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{OldTableID: 9999}))
-	require.False(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{SchemaID: 2, TableID: 100}))
-	require.False(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{OldSchemaID: 2, OldTableID: 100}))
-	require.True(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{SchemaID: 2}))
-
+	require.False(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{TableID: 9999}))
+	require.False(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{OldTableID: 9999}))
+	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{SchemaID: 2, TableID: 100}))
+	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{OldSchemaID: 2, OldTableID: 100}))
+	require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{SchemaID: 2}))
+	// AffectedOpts alone must not make a diff relevant to system tables.
+	for _, affected := range []*model.AffectedOption{
+		{SchemaID: 2, TableID: 9999},
+		{OldSchemaID: 2, OldTableID: 9999},
+	} {
+		require.True(t, mustSkipLoadingDiff(t, loaderForCrossKS, &model.SchemaDiff{
+			TableID: 100, OldTableID: 100, AffectedOpts: []*model.AffectedOption{affected},
+		}))
+	}
 }
 
 func TestLoaderSkipLoadingDiffForBR(t *testing.T) {
@@ -340,7 +355,7 @@ func TestLoaderSkipLoadingDiffForBR(t *testing.T) {
 			SchemaID: 1, // mysql system database
 			TableID:  10,
 		}
-		require.False(t, loaderForBR.skipLoadingDiff(systemDiff), "should NOT skip diff for system database")
+		require.False(t, mustSkipLoadingDiff(t, loaderForBR, systemDiff), "should NOT skip diff for system database")
 	})
 
 	// Test case 1.1: CREATE DATABASE diff should always pass through the filter
@@ -349,7 +364,7 @@ func TestLoaderSkipLoadingDiffForBR(t *testing.T) {
 			Type:     model.ActionCreateSchema,
 			SchemaID: 4,
 		}
-		require.False(t, loaderForBR.skipLoadingDiff(createDBDiff), "should NOT skip CREATE DATABASE diffs even when the schema name is unknown")
+		require.False(t, mustSkipLoadingDiff(t, loaderForBR, createDBDiff), "should NOT skip CREATE DATABASE diffs even when the schema name is unknown")
 	})
 
 	// Test case 2: Schema diff for BR-related database - should NOT skip
@@ -358,7 +373,7 @@ func TestLoaderSkipLoadingDiffForBR(t *testing.T) {
 			SchemaID: 2, // BR-related database
 			TableID:  20,
 		}
-		require.False(t, loaderForBR.skipLoadingDiff(brDiff), "should NOT skip diff for BR-related database")
+		require.False(t, mustSkipLoadingDiff(t, loaderForBR, brDiff), "should NOT skip diff for BR-related database")
 	})
 
 	// Test case 3: Schema diff for user database - should skip
@@ -367,7 +382,7 @@ func TestLoaderSkipLoadingDiffForBR(t *testing.T) {
 			SchemaID: 3, // user database
 			TableID:  30,
 		}
-		require.True(t, loaderForBR.skipLoadingDiff(userDiff), "should skip diff for user database")
+		require.True(t, mustSkipLoadingDiff(t, loaderForBR, userDiff), "should skip diff for user database")
 	})
 
 	// Test case 4: Schema diff with OldSchemaID for system database - still skipped because selection is based on SchemaID
@@ -377,7 +392,7 @@ func TestLoaderSkipLoadingDiffForBR(t *testing.T) {
 			SchemaID:    3, // user database
 			TableID:     40,
 		}
-		require.True(t, loaderForBR.skipLoadingDiff(oldSystemDiff), "should skip diff when SchemaID is filtered out even if OldSchemaID is system database")
+		require.True(t, mustSkipLoadingDiff(t, loaderForBR, oldSystemDiff), "should skip diff when SchemaID is filtered out even if OldSchemaID is system database")
 	})
 
 	// Test case 5: Schema diff with OldSchemaID for BR-related database - still skipped because SchemaID is filtered out
@@ -387,7 +402,7 @@ func TestLoaderSkipLoadingDiffForBR(t *testing.T) {
 			SchemaID:    3, // user database
 			TableID:     50,
 		}
-		require.True(t, loaderForBR.skipLoadingDiff(oldBRDiff), "should skip diff when SchemaID is filtered out even if OldSchemaID is BR-related database")
+		require.True(t, mustSkipLoadingDiff(t, loaderForBR, oldBRDiff), "should skip diff when SchemaID is filtered out even if OldSchemaID is BR-related database")
 	})
 
 	// Test case 6: Schema diff with both SchemaID and OldSchemaID as user databases - should skip
@@ -397,7 +412,7 @@ func TestLoaderSkipLoadingDiffForBR(t *testing.T) {
 			SchemaID:    3, // user database
 			TableID:     60,
 		}
-		require.True(t, loaderForBR.skipLoadingDiff(userToUserDiff), "should skip diff when both SchemaID and OldSchemaID are user databases")
+		require.True(t, mustSkipLoadingDiff(t, loaderForBR, userToUserDiff), "should skip diff when both SchemaID and OldSchemaID are user databases")
 	})
 
 	// Test case 7: Schema diff with non-existent SchemaID - should skip
@@ -406,7 +421,7 @@ func TestLoaderSkipLoadingDiffForBR(t *testing.T) {
 			SchemaID: 999, // non-existent database
 			TableID:  70,
 		}
-		require.True(t, loaderForBR.skipLoadingDiff(nonExistentDiff), "should skip diff for non-existent database")
+		require.True(t, mustSkipLoadingDiff(t, loaderForBR, nonExistentDiff), "should skip diff for non-existent database")
 	})
 }
 

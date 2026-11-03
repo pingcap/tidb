@@ -53,16 +53,23 @@ import (
 )
 
 func TestMySQLDBTables(t *testing.T) {
+	require.False(t, metadef.IsBuiltinSystemTable(mysql.SystemDB, "schema_index_usage"))
+	require.False(t, metadef.IsBuiltinSystemTable(mysql.SystemDB, "tidb_mdl_view"))
+	require.False(t, metadef.IsBuiltinSystemTable(mysql.SysDB, "schema_unused_indexes"))
 	require.Len(t, systemTablesOfBaseNextGenVersion, 52, "DO NOT CHANGE IT")
 	for _, verBoot := range versionedBootstrapSchemas {
 		for _, schInfo := range verBoot.databases {
 			testTableBasicInfoSlice(t, schInfo.Tables, "IF NOT EXISTS mysql.%s (")
+			for _, tbl := range schInfo.Tables {
+				require.True(t, metadef.IsBuiltinSystemTable(schInfo.Name, tbl.Name), "missing built-in %s.%s", schInfo.Name, tbl.Name)
+			}
 		}
 	}
 	reservedIDs := make([]int64, 0, len(ddlTableVersionTables)*2)
 	for _, v := range ddlTableVersionTables {
 		for _, tbl := range v.tables {
 			reservedIDs = append(reservedIDs, tbl.ID)
+			require.True(t, metadef.IsBuiltinSystemTable(mysql.SystemDB, tbl.Name), "missing built-in mysql.%s", tbl.Name)
 		}
 	}
 	for _, verBoot := range versionedBootstrapSchemas {

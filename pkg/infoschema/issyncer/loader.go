@@ -295,40 +295,63 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 	return is, false, currentSchemaVersion, nil, nil
 }
 
-func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
+func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff, m meta.Reader) (bool, error) {
 	if l.filter != nil {
 		var latestIS infoschema.InfoSchema
 		if l.infoCache != nil {
 			latestIS = l.infoCache.GetLatest()
 		}
 		if l.filter.SkipLoadDiff(diff, latestIS) {
-			return true
+			return true, nil
 		}
 	}
 
 	if !l.crossKS {
-		return false
+		return false, nil
 	}
 
 	// Use the target keyspace's loaded IDs, including legacy Classic IDs.
 	is := l.infoCache.GetLatest()
-	// Check the schema IDs too: a newly created mysql table is not in the old
-	// InfoSchema yet. Database IDs alone must not match policy/resource diffs.
-	for _, obj := range []struct{ schemaID, tableID int64 }{
-		{diff.SchemaID, diff.TableID},
-		{diff.OldSchemaID, diff.OldTableID},
-	} {
-		if db, ok := is.SchemaByID(obj.schemaID); obj.tableID != 0 && ok && metadef.IsSystemDB(db.Name.L) {
-			return false
+	// Only built-ins participate in SYSTEM synchronization. For newly created
+	// tables, resolve their names from the snapshot because the old InfoSchema
+	// does not contain their IDs yet.
+	isSystemObject := func(schemaID, tableID int64) (bool, error) {
+		if infoschema.IsSystemTable(is, tableID) {
+			return true, nil
 		}
+		db, ok := is.SchemaByID(schemaID)
+		if tableID <= 0 || !ok || !metadef.IsSystemDB(db.Name.L) {
+			return false, nil
+		}
+		if metadef.IsReservedID(tableID) {
+			return true, nil
+		}
+		if m == nil {
+			return false, nil
+		}
+		tbl, err := m.GetTable(schemaID, tableID)
+		if err != nil {
+			return false, err
+		}
+		return tbl != nil && metadef.IsBuiltinSystemTable(db.Name.L, tbl.Name.L), nil
 	}
-
 	// for cross keyspace loader, we only load diff related to system tables.
 	// we don't check AffectedOpts, as we forbid doing DDL which involve multiple
 	// table IDs on system tables in nextgen, such as RenameTables, TruncateTable,
 	// ExchangePartition, etc.
-	isRelatedToSystemTables := infoschema.IsSystemTable(is, diff.TableID) || infoschema.IsSystemTable(is, diff.OldTableID)
-	return !isRelatedToSystemTables
+	for _, obj := range []struct{ schemaID, tableID int64 }{
+		{diff.SchemaID, diff.TableID},
+		{diff.OldSchemaID, diff.OldTableID},
+	} {
+		related, err := isSystemObject(obj.schemaID, obj.tableID)
+		if err != nil {
+			return false, err
+		}
+		if related {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // tryLoadSchemaDiffs tries to only load latest schema changes.
@@ -382,7 +405,11 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 	actions := make([]uint64, 0, len(diffs))
 	diffTypes := make([]string, 0, len(diffs))
 	for _, diff := range diffs {
-		if l.skipLoadingDiff(diff) {
+		skip, err := l.skipLoadingDiff(diff, m)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if skip {
 			// we still need to set the schema version even if we skip loading
 			// the diff to reflect where the I_S has been synced to.
 			builder.SetSchemaVersion(diff.Version)

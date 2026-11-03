@@ -16,7 +16,9 @@ package bootstrap
 
 import (
 	"go/ast"
+	"go/constant"
 	"go/token"
+	"go/types"
 	"maps"
 	"strconv"
 	"strings"
@@ -74,6 +76,26 @@ func isSliceVarDefNode(spec ast.Spec) (varName, eleTpName string, lit *ast.Compo
 	return valSpec.Names[0].Name, varTpIdent.Name, compLit, true
 }
 
+func bootstrapTableName(pass *analysis.Pass, expr ast.Expr) (string, bool) {
+	if literal, ok := expr.(*ast.BasicLit); ok && literal.Kind == token.STRING {
+		name, err := strconv.Unquote(literal.Value)
+		return name, err == nil
+	}
+	selector, ok := expr.(*ast.SelectorExpr)
+	if !ok || pass.TypesInfo == nil {
+		return "", false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	if !ok || pkg.Name != "metadef" {
+		return "", false
+	}
+	name, ok := pass.TypesInfo.ObjectOf(selector.Sel).(*types.Const)
+	if !ok || name.Pkg() == nil || name.Pkg().Path() != "github.com/pingcap/tidb/pkg/meta/metadef" || name.Val().Kind() != constant.String {
+		return "", false
+	}
+	return constant.StringVal(name.Val()), true
+}
+
 func checkSystemTablesDefinitionNode(pass *analysis.Pass, varName string, compLit *ast.CompositeLit) {
 	for _, elt := range compLit.Elts {
 		idIdentPkg := elt.(*ast.CompositeLit).Elts[0].(*ast.KeyValueExpr).Value.(*ast.SelectorExpr).X.(*ast.Ident).Name
@@ -81,10 +103,10 @@ func checkSystemTablesDefinitionNode(pass *analysis.Pass, varName string, compLi
 			pass.Reportf(elt.Pos(), "table ID must be defined in metadef pkg, but got %q", idIdentPkg)
 		}
 		idIdentName := elt.(*ast.CompositeLit).Elts[0].(*ast.KeyValueExpr).Value.(*ast.SelectorExpr).Sel.Name
-		quotedName := elt.(*ast.CompositeLit).Elts[1].(*ast.KeyValueExpr).Value.(*ast.BasicLit).Value
-		tableName, err := strconv.Unquote(quotedName)
-		if err != nil {
-			pass.Reportf(elt.Pos(), "the name of the table in %s must be a string literal, but got %q", varName, quotedName)
+		nameExpr := elt.(*ast.CompositeLit).Elts[1].(*ast.KeyValueExpr).Value
+		tableName, ok := bootstrapTableName(pass, nameExpr)
+		if !ok {
+			pass.Reportf(nameExpr.Pos(), "the name of the table in %s must be a string literal or a string constant defined in metadef", varName)
 			continue
 		}
 		sqlPkgName := elt.(*ast.CompositeLit).Elts[2].(*ast.KeyValueExpr).Value.(*ast.SelectorExpr).X.(*ast.Ident).Name

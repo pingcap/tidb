@@ -351,7 +351,7 @@ func TestIsUndroppableTable(t *testing.T) {
 			tableID: 100,
 			want:    true,
 		},
-		// All tables in mysql are protected in NextGen, including legacy IDs.
+		// Built-in tables in mysql are protected in NextGen, including legacy IDs.
 		{
 			name:    "legacy-ID system table in mysql schema",
 			schema:  mysql.SystemDB,
@@ -359,7 +359,35 @@ func TestIsUndroppableTable(t *testing.T) {
 			tableID: 100,
 			want:    kerneltype.IsNextGen(),
 		},
+		{
+			name:    "custom table in mysql schema",
+			schema:  mysql.SystemDB,
+			table:   "custom_table",
+			tableID: 100,
+			want:    false,
+		},
+		{
+			name:    "custom table with reserved ID in mysql schema",
+			schema:  mysql.SystemDB,
+			table:   "custom_table",
+			tableID: metadef.ReservedGlobalIDUpperBound,
+			want:    kerneltype.IsNextGen(),
+		},
 		// Test non-system schemas
+		{
+			name:    "view in sys schema",
+			schema:  mysql.SysDB,
+			table:   "schema_unused_indexes",
+			tableID: 100,
+			want:    false,
+		},
+		{
+			name:    "view with reserved ID in sys schema",
+			schema:  mysql.SysDB,
+			table:   "schema_unused_indexes",
+			tableID: metadef.ReservedGlobalIDUpperBound,
+			want:    false,
+		},
 		{
 			name:    "table in test schema",
 			schema:  "test",

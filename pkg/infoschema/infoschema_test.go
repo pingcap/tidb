@@ -55,8 +55,14 @@ func TestSystemSchemaIDs(t *testing.T) {
 		} {
 			t.Run(fmt.Sprintf("v2=%t/%s", useV2, layout.name), func(t *testing.T) {
 				mysqlDB := &model.DBInfo{ID: layout.mysqlID, Name: ast.NewCIStr(mysql.SystemDB), State: model.StatePublic}
-				mysqlDB.Deprecated.Tables = []*model.TableInfo{{ID: layout.tableID, DBID: layout.mysqlID, Name: ast.NewCIStr("tidb"), State: model.StatePublic}}
+				mysqlDB.Deprecated.Tables = []*model.TableInfo{
+					{ID: layout.tableID, DBID: layout.mysqlID, Name: ast.NewCIStr("tidb"), State: model.StatePublic},
+					{ID: 10000, DBID: layout.mysqlID, Name: ast.NewCIStr("custom_table"), State: model.StatePublic},
+					{ID: 10001, DBID: layout.mysqlID, Name: ast.NewCIStr("tidb_mdl_view"), State: model.StatePublic, View: &model.ViewInfo{}},
+				}
 				sysDB := &model.DBInfo{ID: layout.sysID, Name: ast.NewCIStr(mysql.SysDB), State: model.StatePublic}
+				sysDB.Deprecated.Tables = []*model.TableInfo{{ID: 10002, DBID: layout.sysID,
+					Name: ast.NewCIStr("schema_unused_indexes"), State: model.StatePublic, View: &model.ViewInfo{}}}
 				userDB := &model.DBInfo{ID: 3, Name: ast.NewCIStr("test"), State: model.StatePublic}
 				userTableID := metadef.ReservedGlobalIDLowerBound + 1
 				userDB.Deprecated.Tables = []*model.TableInfo{{ID: userTableID, DBID: userDB.ID, Name: ast.NewCIStr("user_table"), State: model.StatePublic}}
@@ -67,12 +73,18 @@ func TestSystemSchemaIDs(t *testing.T) {
 					// The ID index must work even when table metadata is not cached;
 					// there is no backing store for this test to load it from.
 					raw.EvictTable(mysqlDB.Name, ast.NewCIStr("tidb"))
+					raw.EvictTable(mysqlDB.Name, ast.NewCIStr("custom_table"))
+					raw.EvictTable(mysqlDB.Name, ast.NewCIStr("tidb_mdl_view"))
+					raw.EvictTable(sysDB.Name, ast.NewCIStr("schema_unused_indexes"))
 				}
 				require.True(t, infoschema.IsSystemSchema(is, layout.mysqlID))
 				require.True(t, infoschema.IsSystemSchema(is, layout.sysID))
 				require.False(t, infoschema.IsSystemSchema(is, userDB.ID))
 				require.False(t, infoschema.IsSystemSchema(is, layout.tableID))
 				require.True(t, infoschema.IsSystemTable(is, layout.tableID))
+				require.False(t, infoschema.IsSystemTable(is, 10000))
+				require.False(t, infoschema.IsSystemTable(is, 10001))
+				require.False(t, infoschema.IsSystemTable(is, 10002))
 				for _, id := range []int64{0, -1, layout.mysqlID, layout.sysID, userTableID, metadef.ReservedGlobalIDLowerBound + 2} {
 					require.False(t, infoschema.IsSystemTable(is, id), "id=%d", id)
 				}

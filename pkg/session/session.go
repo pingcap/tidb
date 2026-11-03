@@ -4281,24 +4281,24 @@ var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 	// DDLJobTables is a list of tables definitions used in concurrent DDL.
 	DDLJobTables = []TableBasicInfo{
-		{ID: metadef.TiDBDDLJobTableID, Name: "tidb_ddl_job", SQL: metadef.CreateTiDBDDLJobTable},
-		{ID: metadef.TiDBDDLReorgTableID, Name: "tidb_ddl_reorg", SQL: metadef.CreateTiDBReorgTable},
-		{ID: metadef.TiDBDDLHistoryTableID, Name: "tidb_ddl_history", SQL: metadef.CreateTiDBDDLHistoryTable},
+		{ID: metadef.TiDBDDLJobTableID, Name: metadef.TiDBDDLJobTableName, SQL: metadef.CreateTiDBDDLJobTable},
+		{ID: metadef.TiDBDDLReorgTableID, Name: metadef.TiDBDDLReorgTableName, SQL: metadef.CreateTiDBReorgTable},
+		{ID: metadef.TiDBDDLHistoryTableID, Name: metadef.TiDBDDLHistoryTableName, SQL: metadef.CreateTiDBDDLHistoryTable},
 	}
 	// MDLTables is a list of tables definitions used for metadata lock.
 	MDLTables = []TableBasicInfo{
-		{ID: metadef.TiDBMDLInfoTableID, Name: "tidb_mdl_info", SQL: metadef.CreateTiDBMDLTable},
+		{ID: metadef.TiDBMDLInfoTableID, Name: metadef.TiDBMDLInfoTableName, SQL: metadef.CreateTiDBMDLTable},
 	}
 	// BackfillTables is a list of tables definitions used in dist reorg DDL.
 	BackfillTables = []TableBasicInfo{
-		{ID: metadef.TiDBBackgroundSubtaskTableID, Name: "tidb_background_subtask", SQL: metadef.CreateTiDBBackgroundSubtaskTable},
-		{ID: metadef.TiDBBackgroundSubtaskHistoryTableID, Name: "tidb_background_subtask_history", SQL: metadef.CreateTiDBBackgroundSubtaskHistoryTable},
+		{ID: metadef.TiDBBackgroundSubtaskTableID, Name: metadef.TiDBBackgroundSubtaskTableName, SQL: metadef.CreateTiDBBackgroundSubtaskTable},
+		{ID: metadef.TiDBBackgroundSubtaskHistoryTableID, Name: metadef.TiDBBackgroundSubtaskHistoryTableName, SQL: metadef.CreateTiDBBackgroundSubtaskHistoryTable},
 	}
 	// DDLNotifierTables contains the table definitions used in DDL notifier.
 	// It only contains the notifier table.
 	// Put it here to reuse a unified initialization function and make it easier to find.
 	DDLNotifierTables = []TableBasicInfo{
-		{ID: metadef.TiDBDDLNotifierTableID, Name: "tidb_ddl_notifier", SQL: metadef.CreateTiDBDDLNotifierTable},
+		{ID: metadef.TiDBDDLNotifierTableID, Name: metadef.NotifierTableName, SQL: metadef.CreateTiDBDDLNotifierTable},
 	}
 
 	ddlTableVersionTables = []versionedDDLTables{

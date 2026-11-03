@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "bootstrap",
@@ -9,4 +9,13 @@ go_library(
         "//build/linter/util",
         "@org_golang_x_tools//go/analysis",
     ],
+)
+
+go_test(
+    name = "bootstrap_test",
+    timeout = "short",
+    srcs = ["analyzer_test.go"],
+    embed = [":bootstrap"],
+    flaky = True,
+    deps = ["@org_golang_x_tools//go/analysis"],
 )
