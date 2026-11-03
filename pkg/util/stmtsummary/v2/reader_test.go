@@ -35,6 +35,104 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestStmtFileRotationTimeZone(t *testing.T) {
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	oldLocal := time.Local
+	t.Cleanup(func() { time.Local = oldLocal })
+	dir := t.TempDir()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryFilename = filepath.Join(dir, "tidb-statements.log")
+	})
+	for _, tc := range []struct {
+		name, zone, stamp string
+		unbounded         bool
+	}{
+		{"NewYorkFold", "America/New_York", "2024-11-03T01-45-00.000", true},
+		{"NewYorkGap", "America/New_York", "2024-03-10T02-30-00.000", true},
+		{"LordHoweFold", "Australia/Lord_Howe", "2024-04-07T01-45-00.000", true},
+		{"LordHoweGap", "Australia/Lord_Howe", "2024-10-06T02-15-00.000", true},
+		{"NewYorkAfterFold", "America/New_York", "2024-11-03T03-45-00.000", false},
+		{"UTC", "UTC", "2024-11-03T01-45-00.000", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			loc, err := time.LoadLocation(tc.zone)
+			require.NoError(t, err)
+			time.Local = loc
+			path := filepath.Join(dir, "tidb-statements-"+tc.stamp+".log")
+			require.NoError(t, os.WriteFile(path, []byte("{\"begin\":1,\"end\":2}\n"), 0o600))
+			file, err := openStmtFile(path)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, file.close()) }()
+			if tc.unbounded {
+				require.Zero(t, file.end, "ambiguous or nonexistent wall time must not prune")
+			} else {
+				end, err := time.ParseInLocation(logFileTimeFormat, tc.stamp, loc)
+				require.NoError(t, err)
+				require.Equal(t, end.Unix(), file.end)
+			}
+		})
+	}
+}
+
+func TestHistoryReaderRotationTimeFold(t *testing.T) {
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	oldLocal := time.Local
+	t.Cleanup(func() { time.Local = oldLocal })
+	for _, tc := range []struct {
+		name, zone, stamp, first, match string
+	}{
+		{"NewYork", "America/New_York", "2024-11-03T01-45-00.000", "2024-11-03T04:00:00Z", "2024-11-03T06:25:00Z"},
+		{"LordHowe", "Australia/Lord_Howe", "2024-04-07T01-45-00.000", "2024-04-06T13:00:00Z", "2024-04-06T15:05:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			loc, err := time.LoadLocation(tc.zone)
+			require.NoError(t, err)
+			time.Local = loc
+			dir := t.TempDir()
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.Instance.StmtSummaryFilename = filepath.Join(dir, "tidb-statements.log")
+			})
+			// The file spans the fall-back transition and rotates at the second
+			// 01:45. An earlier interpretation must not hide the later row.
+			path := filepath.Join(dir, "tidb-statements-"+tc.stamp+".log")
+			first, err := time.Parse(time.RFC3339, tc.first)
+			require.NoError(t, err)
+			match, err := time.Parse(time.RFC3339, tc.match)
+			require.NoError(t, err)
+			content := fmt.Sprintf("{\"begin\":%d,\"end\":%d,\"digest\":\"early\"}\n{\"begin\":%d,\"end\":%d,\"digest\":\"matching\"}\n",
+				first.Unix(), first.Unix()+600, match.Unix(), match.Unix()+300)
+			require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+			window := &StmtTimeRange{Begin: match.Unix() - 300, End: match.Unix() + 900}
+
+			// A direct JSON full scan is independent of filename parsing and
+			// all optimized reader checks, including local-time uniqueness.
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			var reference []string
+			for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+				var record StmtRecord
+				require.NoError(t, json.Unmarshal([]byte(line), &record))
+				if record.Begin <= window.End && record.End >= window.Begin {
+					reference = append(reference, record.Digest)
+				}
+			}
+			require.Equal(t, []string{"matching"}, reference)
+
+			columns := []*model.ColumnInfo{{Name: ast.NewCIStr(DigestStr)}}
+			reader, err := NewHistoryReader(context.Background(), columns, "", time.UTC, nil, true, nil, []*StmtTimeRange{window}, 2)
+			require.NoError(t, err)
+			defer reader.Close()
+			var actual []string
+			for _, row := range readAllRows(t, reader) {
+				actual = append(actual, row[0].GetString())
+			}
+			require.Equal(t, reference, actual)
+		})
+	}
+}
+
 func TestTimeRangeOverlap(t *testing.T) {
 	require.False(t, timeRangeOverlap(1, 2, 3, 4))
 	require.False(t, timeRangeOverlap(3, 4, 1, 2))
