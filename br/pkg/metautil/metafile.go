@@ -687,7 +687,11 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 			return nil
 		}
 		for _, table := range tableMap {
-			output <- table
+			select {
+			case <-cctx.Done():
+				return errors.Trace(cctx.Err())
+			case output <- table:
+			}
 		}
 	}
 }
