@@ -206,6 +206,52 @@ pub fn process_jobs(
     Err(last_error.expect("three failed attempts"))
 }
 
+/// Go `PauseJobsBySystem` for one job, its error included (Go's
+/// `errs[0]` or `err`).
+///
+/// # Errors
+///
+/// The job's command error or the transaction's.
+pub fn pause_job_by_system(
+    sess: &mut dyn StepSqlSession,
+    job_id: i64,
+) -> Result<(), JobCommandError> {
+    one_job(process_jobs(pause_running_job, sess, &[job_id], AdminCommandOperator::BY_SYSTEM))
+}
+
+/// Go `ResumeJobsBySystem` for one job.
+///
+/// # Errors
+///
+/// The job's command error or the transaction's.
+pub fn resume_job_by_system(
+    sess: &mut dyn StepSqlSession,
+    job_id: i64,
+) -> Result<(), JobCommandError> {
+    one_job(process_jobs(resume_paused_job, sess, &[job_id], AdminCommandOperator::BY_SYSTEM))
+}
+
+fn one_job(
+    result: Result<Vec<Option<JobCommandError>>, MysqlError>,
+) -> Result<(), JobCommandError> {
+    match result {
+        Ok(mut errs) => match errs.pop().flatten() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        },
+        Err(error) => Err(JobCommandError::Sql(error)),
+    }
+}
+
+/// Go `util.HasSysDB`: whether the job involves a system-related database.
+#[must_use]
+pub fn has_sys_db(job: &Job) -> bool {
+    job.get_involving_schema_info()
+        .snapshot()
+        .iter()
+        .any(|info| tidb_metadef::db::is_system_related_db(&info.database.to_utf8_lossy_go()))
+}
+
 /// Go `getJobsBySQL`: the jobs of `mysql.tidb_ddl_job` matching
 /// `condition`.
 fn get_jobs_by_sql(sess: &mut dyn StepSqlSession, condition: &str) -> Result<Vec<Job>, MysqlError> {

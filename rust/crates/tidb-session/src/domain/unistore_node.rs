@@ -247,6 +247,8 @@ pub struct UnistoreClusterStack {
     pub _sysvar_reloader: tidb_domain_core::cluster_sysvar_seam::SysvarReloader,
     pub _stats_reloader: tidb_stats_handle_syncload::stats_watch::StatsReloader,
     pub _binding_reloader: tidb_bindinfo::cluster_binding_seam::BindingReloader,
+    /// Go `mdlCheckLoop` over the node's `MemSyncer`.
+    pub _schema_sync_ack: tidb_ddl::schema_sync::SchemaSyncAck,
     pub _async_stats_loader: tidb_stats_handle_syncload::stats_watch::AsyncStatsLoader,
     /// See [`InProcessStack::rpc`].
     pub rpc: tidb_unistore::rpc::RpcClient,
@@ -668,9 +670,29 @@ pub fn unistore_cluster_session_stack_from(
         )),
     )
     .map_err(|error| engine(SqlQueryError::unknown(error)))?;
+    // Go `NewDomain` without etcd: `NewMemSyncer`, and `mdlCheckLoop`
+    // acknowledging a job once no transaction holds its tables at an older
+    // version -- the owner's `WaitVersionSynced` waits on it.
+    let schema_pins = Arc::new(tidb_ddl::schema_sync::SchemaPinRegistry::default());
+    let min_job_id_refresher = Arc::new(tidb_ddl_systable::MinJobIdRefresher::new());
+    let schema_sync_ack = tidb_ddl::schema_sync::SchemaSyncAck::spawn(
+        Arc::clone(&catalog),
+        opener.clone(),
+        Arc::clone(&schema_pins),
+        Arc::clone(&min_job_id_refresher),
+        None,
+        server_info.get_local_server_info().static_info.id,
+        Arc::clone(&server_info),
+        Arc::clone(&schema_validator),
+        reloader.waker(),
+        reloader.stats_source(),
+        tidb_ddl::schema_sync::MDL_CHECK_LOOK_DURATION,
+        IN_PROCESS_TIMEOUT,
+    )
+    .map_err(|error| engine(SqlQueryError::unknown(error)))?;
     let ddl_session_pool = Arc::new(crate::ddl_session_pool::NodeDdlSessionPool::default());
     let cluster_ddl = Arc::new(
-        RealClusterDdl::new(
+        RealClusterDdl::new_with_min_job_id_refresher(
             opener.clone(),
             Arc::clone(&catalog),
             IN_PROCESS_TIMEOUT,
@@ -678,9 +700,10 @@ pub fn unistore_cluster_session_stack_from(
             // reload tick above is the only follower -- correct for one node.
             None,
             Arc::clone(&server_info),
-            None,
+            Some(schema_sync_ack.syncer()),
             Arc::clone(&schema_validator),
             config.run_ddl,
+            min_job_id_refresher,
             Arc::clone(&ddl_session_pool) as _,
             Arc::clone(&node_auto_ids),
         )
@@ -744,7 +767,8 @@ pub fn unistore_cluster_session_stack_from(
         &config.global_config,
         None,
     ))
-    .with_stats_owner(stats_owner);
+    .with_stats_owner(stats_owner)
+    .with_schema_pins(schema_pins);
     let factory = match spill_storage {
         Some(storage) => factory.with_spill_storage(storage),
         None => factory,
@@ -794,6 +818,7 @@ pub fn unistore_cluster_session_stack_from(
         _sysvar_reloader: sysvar_reloader,
         _stats_reloader: stats_reloader,
         _binding_reloader: binding_reloader,
+        _schema_sync_ack: schema_sync_ack,
         _async_stats_loader: async_stats_loader,
         rpc,
         _resource_groups: resource_groups,

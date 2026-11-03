@@ -222,7 +222,7 @@ impl SchemaSyncAck {
         opener: RealOptimisticTransactionOpener<S>,
         pins: Arc<SchemaPinRegistry>,
         min_job_id_refresher: Arc<MinJobIdRefresher>,
-        etcd: Arc<EtcdClient>,
+        etcd: Option<Arc<EtcdClient>>,
         ddl_id: String,
         server_info: Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>,
         schema_validator: Arc<SchemaValidator>,
@@ -234,8 +234,15 @@ impl SchemaSyncAck {
     where
         S: StoreClient + Send + 'static,
     {
-        let etcd_ops = Arc::new(crate::etcd_ops::EtcdClientOps::new(etcd));
-        let syncer = Arc::new(new_etcd_syncer(etcd_ops, &ddl_id));
+        // Go `NewDomain`: the etcd syncer when the store has etcd, else
+        // `NewMemSyncer`; `mdlCheckLoop` runs over either.
+        let syncer: Arc<dyn SchemaVersionSyncer> = match etcd {
+            Some(etcd) => {
+                let etcd_ops = Arc::new(crate::etcd_ops::EtcdClientOps::new(etcd));
+                Arc::new(new_etcd_syncer(etcd_ops, &ddl_id))
+            }
+            None => Arc::new(tidb_schemaver::mem_syncer::MemSyncer::new()),
+        };
         syncer.set_server_info_syncer(Arc::new(move || {
             server_info
                 .all_server_info()
@@ -286,7 +293,6 @@ impl SchemaSyncAck {
             }
         };
 
-        let syncer: Arc<dyn SchemaVersionSyncer> = syncer;
         let stop_seen = Arc::clone(&stop);
         let tick = tick.max(MDL_CHECK_LOOK_DURATION);
         let ack_syncer = Arc::clone(&syncer);

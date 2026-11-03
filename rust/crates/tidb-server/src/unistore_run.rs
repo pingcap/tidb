@@ -74,6 +74,7 @@ pub fn run_unistore_cluster_session(
         _sysvar_reloader: sysvar_reloader,
         _stats_reloader: stats_reloader,
         _binding_reloader: binding_reloader,
+        _schema_sync_ack: schema_sync_ack,
         _async_stats_loader,
         _stats_maintenance: stats_maintenance,
         rpc: _rpc,
@@ -155,5 +156,6 @@ pub fn run_unistore_cluster_session(
     drop(sysvar_reloader);
     drop(stats_reloader);
     drop(binding_reloader);
+    drop(schema_sync_ack);
     finish_with_signal_code(result, &last_signal)
 }

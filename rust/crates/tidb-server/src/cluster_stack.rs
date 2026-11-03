@@ -432,40 +432,32 @@ pub fn cluster_session_stack(
         },
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
-    // The other half of being registered: a node the owner can SEE must also
-    // ANSWER. Go's `WaitVersionSynced` waits on every `/tidb/server/info`
-    // entry, so this acknowledger is spawned exactly when the registration
-    // above is -- a node with no reachable etcd registers nowhere, is waited
-    // on by nobody, and correctly spawns no acknowledger either.
+    // Go `NewDomain` / `mdlCheckLoop`: the schema-version syncer -- etcd's
+    // when the node has etcd, else Go's `NewMemSyncer` -- and the MDL check
+    // that acknowledges a job once no transaction here holds its tables at
+    // an older version. The owner's `WaitVersionSynced` waits on it.
     let schema_pins = Arc::new(tidb_ddl::schema_sync::SchemaPinRegistry::default());
     let min_job_id_refresher = Arc::new(MinJobIdRefresher::new());
-    let schema_sync_ack = match etcd.clone() {
-        Some(etcd) => Some(
-            tidb_ddl::schema_sync::SchemaSyncAck::spawn(
-                Arc::clone(&catalog),
-                authority.transaction_opener(),
-                Arc::clone(&schema_pins),
-                Arc::clone(&min_job_id_refresher),
-                etcd,
-                server_info.get_local_server_info().static_info.id,
-                Arc::clone(&server_info),
-                Arc::clone(&schema_validator),
-                reloader.waker(),
-                reloader.stats_source(),
-                tidb_ddl::schema_sync::MDL_CHECK_LOOK_DURATION,
-                CONTROL_PLANE_TIMEOUT,
-            )
-            .map_err(|error| {
-                RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
-                    "initialize schema-version syncer failed: {error}"
-                )))
-            })?,
-        ),
-        None => None,
-    };
-    let schema_version_syncer = schema_sync_ack
-        .as_ref()
-        .map(tidb_ddl::schema_sync::SchemaSyncAck::syncer);
+    let schema_sync_ack = tidb_ddl::schema_sync::SchemaSyncAck::spawn(
+        Arc::clone(&catalog),
+        authority.transaction_opener(),
+        Arc::clone(&schema_pins),
+        Arc::clone(&min_job_id_refresher),
+        etcd.clone(),
+        server_info.get_local_server_info().static_info.id,
+        Arc::clone(&server_info),
+        Arc::clone(&schema_validator),
+        reloader.waker(),
+        reloader.stats_source(),
+        tidb_ddl::schema_sync::MDL_CHECK_LOOK_DURATION,
+        CONTROL_PLANE_TIMEOUT,
+    )
+    .map_err(|error| {
+        RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+            "initialize schema-version syncer failed: {error}"
+        )))
+    })?;
+    let schema_version_syncer = Some(schema_sync_ack.syncer());
     let ddl_session_pool = Arc::new(tidb_session::ddl_session_pool::NodeDdlSessionPool::default());
     let cluster_ddl = Arc::new(
         RealClusterDdl::new_with_min_job_id_refresher(

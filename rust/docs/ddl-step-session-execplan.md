@@ -181,6 +181,12 @@ system-table rows are the SQL statements Go executes, in the same commit.
 
 ## Surprises & Discoveries
 
+- 2026-11-03: the owner ran every job serially on one thread (a job
+  waiting on MDL held up all DDL), and the embedded node had no MDL wait at
+  all (no syncer, no `mdlCheckLoop`). Both are fixed beside this plan: Go's
+  `runningJobs` / worker pools (`ddl_running_jobs.rs`, `worker.rs`) and the
+  `MemSyncer` ack loop (`SchemaSyncAck::spawn` without etcd).
+
 - A session resets its staged buffer when it closes (`TxnManager::rollback`
   resets unconditionally), and a step session's buffer is the step's: the
   session hands it back before closing (`release_step_buffer`). Go's

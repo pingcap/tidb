@@ -238,6 +238,127 @@ const DDL_OWNER_KEY: &str = "/tidb/ddl/fg/owner";
 const ADDING_DDL_JOB_NOTIFY_KEY: &[u8] = b"/tidb/ddl/add_ddl_job_general";
 const DDL_SCHEDULER_INTERVAL: Duration = Duration::from_secs(1);
 
+/// Go `generalWorkerCnt`.
+const GENERAL_WORKER_CNT: usize = 10;
+/// Go `reorgWorkerCnt`.
+const REORG_WORKER_CNT: usize = 10;
+
+/// Go `workerPool`'s capacity: the workers of one job type not running a
+/// job.
+#[derive(Debug)]
+struct WorkerPool {
+    available: std::sync::atomic::AtomicUsize,
+}
+
+impl WorkerPool {
+    fn new(size: usize) -> Arc<Self> {
+        Arc::new(Self {
+            available: std::sync::atomic::AtomicUsize::new(size),
+        })
+    }
+
+    /// Go `available`.
+    fn available(&self) -> usize {
+        self.available.load(Ordering::Acquire)
+    }
+
+    /// Go `get`: only the scheduler takes workers, after `available`.
+    fn get(&self) {
+        self.available.fetch_sub(1, Ordering::AcqRel);
+    }
+
+    /// Go `put`.
+    fn put(&self) {
+        self.available.fetch_add(1, Ordering::AcqRel);
+    }
+}
+
+/// Go `jobScheduler.processJobDuringUpgrade`: whether the job may run now.
+/// During an upgrade every running job is paused by the system (a job on a
+/// system database, or one already pausing, still runs to reach its
+/// pause); afterwards a job the system paused is resumed.
+fn process_job_during_upgrade(
+    server_state: &dyn Syncer,
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    job: &tidb_model::Job,
+) -> Result<bool, String> {
+    use crate::job_control::{
+        has_sys_db, pause_job_by_system, resume_job_by_system, JobCommandError,
+    };
+    let job_field = || tidb_log::Field::new("job", tidb_log::Value::Str(job.to_string()));
+    if server_state.is_upgrading_state() {
+        if job.is_paused() {
+            return Ok(false);
+        }
+        // The 'pausing' job turns 'paused' in the worker, which also stops
+        // its reorganization.
+        if job.is_pausing() || has_sys_db(job) {
+            return Ok(true);
+        }
+        // During binary upgrade, pause all running DDL jobs.
+        let mut sess = sess_pool.open_sql_session().map_err(|error| error.to_string())?;
+        match pause_job_by_system(sess.as_mut(), job.id) {
+            Err(error) => {
+                let is_cannot_pause_ddl_job_err = matches!(
+                    &error,
+                    JobCommandError::Terror(terror)
+                        if terror.code() == tidb_dbterror::ERR_CANNOT_PAUSE_DDL_JOB.code()
+                );
+                tidb_ddl_logutil::ddl_upgrading_logger().warn(
+                    "pause the job failed",
+                    &[
+                        job_field(),
+                        tidb_log::Field::new(
+                            "isRunnable",
+                            tidb_log::Value::Bool(is_cannot_pause_ddl_job_err),
+                        ),
+                        zap_error(&error),
+                    ],
+                );
+                if is_cannot_pause_ddl_job_err {
+                    return Ok(true);
+                }
+            }
+            Ok(()) => tidb_ddl_logutil::ddl_upgrading_logger()
+                .warn("pause the job successfully", &[job_field()]),
+        }
+        return Ok(false);
+    }
+    if job.is_paused_by_system() {
+        if job.has_pause_reason(tidb_model::job::JOB_PAUSE_REASON_KV_DISK_FULL) {
+            return Ok(false);
+        }
+        let mut sess = sess_pool.open_sql_session().map_err(|error| error.to_string())?;
+        if let Err(error) = resume_job_by_system(sess.as_mut(), job.id) {
+            tidb_ddl_logutil::ddl_upgrading_logger().warn(
+                "normal cluster state, resume the job failed",
+                &[job_field(), zap_error(&error)],
+            );
+            return Err(error.to_string());
+        }
+        tidb_ddl_logutil::ddl_upgrading_logger()
+            .warn("normal cluster state, resume the job successfully", &[job_field()]);
+        return Err(format!("system paused job:{} need to be resumed", job.id));
+    }
+    Ok(!job.is_paused())
+}
+
+/// [`wait_ddl_retry`] for a job worker: the scheduler's stop flag ends the
+/// wait.
+fn wait_ddl_retry_until_stopped(stop: &AtomicBool, delay: Duration) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + delay;
+    loop {
+        if stop.load(Ordering::Acquire) {
+            return Err("DDL worker stopped or ownership lost".to_owned());
+        }
+        let now = std::time::Instant::now();
+        if now >= deadline {
+            return Ok(());
+        }
+        std::thread::sleep((deadline - now).min(Duration::from_millis(10)));
+    }
+}
+
 fn wait_ddl_retry(stopped: &Receiver<()>, delay: Duration) -> Result<(), String> {
     match stopped.recv_timeout(delay) {
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(()),
@@ -392,6 +513,14 @@ where
         // across ticks; each tick still reads its rows from a fresh
         // snapshot. See `load_active_persisted_ddl_jobs_cached`.
         let mut cached_job_table: Option<DdlJobTable> = None;
+        // Go `jobScheduler.runningJobs` and its worker pools: each job runs
+        // on a worker of its own, beside jobs on other schema objects.
+        let running_jobs = Arc::new(crate::ddl_running_jobs::RunningJobs::new());
+        let reorg_cnt = (std::thread::available_parallelism().map_or(1, |n| n.get()) / 4)
+            .clamp(1, REORG_WORKER_CNT);
+        let reorg_worker_pool = WorkerPool::new(reorg_cnt);
+        let general_ddl_worker_pool = WorkerPool::new(GENERAL_WORKER_CNT);
+        let mut job_workers: Vec<JoinHandle<()>> = Vec::new();
         while !stop.load(Ordering::Acquire) {
             // The wake generation is read BEFORE the jobs are loaded: a job
             // submitted while this pass runs bumps it, and the wait below then
@@ -403,69 +532,177 @@ where
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
             };
-            match load_active_persisted_ddl_jobs_cached(
-                Arc::clone(&opener),
-                timeout,
-                min_job_id_refresher.current_min_job_id(),
-                &mut cached_job_table,
-            ) {
+            job_workers.retain(|worker| !worker.is_finished());
+            // Go `loadAndDeliverJobs`: nothing is loaded while both pools
+            // are exhausted.
+            let exhausted = reorg_worker_pool.available() == 0
+                && general_ddl_worker_pool.available() == 0;
+            let loaded = if exhausted {
+                Ok(Vec::new())
+            } else {
+                load_active_persisted_ddl_jobs_cached(
+                    Arc::clone(&opener),
+                    timeout,
+                    min_job_id_refresher.current_min_job_id(),
+                    &mut cached_job_table,
+                )
+            };
+            match loaded {
                 Ok(jobs) => {
                     for job in jobs {
                         if stop.load(Ordering::Acquire) {
-                            return;
+                            break;
                         }
-                        let notifier_ref = notifier
-                            .as_ref()
-                            .map(|client| Arc::as_ref(client) as &dyn SchemaVersionNotifier);
+                        // Go's `job_id not in (runningJobs.allIDs())`.
+                        if running_jobs.is_running(job.id) {
+                            continue;
+                        }
                         if !crate::cluster_ddl::supports_persisted_ddl_job(job.type_) {
                             continue;
                         }
-                        let check_owner = || {
-                            if stop.load(Ordering::Acquire) || !owner.is_owner() {
-                                Err("DDL worker stopped or ownership lost".to_owned())
-                            } else {
-                                Ok(())
-                            }
+                        // Go reads the row's `reorg` column, which the insert
+                        // set from `MayNeedReorg`.
+                        let target_pool = if job.may_need_reorg() {
+                            &reorg_worker_pool
+                        } else {
+                            &general_ddl_worker_pool
                         };
-                        let backfiller = KvTableIndexBackfiller::new(&row_ids, &session_pool);
-                        // Go `getJobRunCtx`: the job context carries the
-                        // submitter's done signal, when this node has one.
-                        let job_done = ddl_job_done_ch_map.load(job.id);
-                        match run_persisted_ddl_job(
-                            Arc::clone(&opener),
-                            job.id,
-                            timeout,
-                            job_done.as_deref(),
-                            notifier_ref,
-                            &backfiller,
-                            &backfiller,
-                            schema_sync.as_ref(),
-                            &check_owner,
-                            &|delay| wait_ddl_retry(&stopped, delay),
+                        let involving = job.get_involving_schema_info().snapshot();
+                        if target_pool.available() == 0 {
+                            running_jobs.add_pending(&involving);
+                            continue;
+                        }
+                        // Go `processJobDuringUpgrade`; its error ends the
+                        // round.
+                        match process_job_during_upgrade(
+                            server_state.as_ref(),
+                            session_pool.as_ref(),
+                            &job,
                         ) {
-                            Ok(PersistedDdlJobOutcome::Finished) => {
-                                // Go `addDelRangeJob` wakes the emulator.
-                                if let Some(emulator) = del_range.get() {
-                                    emulator.notify();
-                                }
+                            Ok(true) => {}
+                            Ok(false) => {
+                                running_jobs.add_pending(&involving);
+                                continue;
                             }
-                            Ok(PersistedDdlJobOutcome::Paused) => {}
-                            Err(error) => tidb_ddl_logutil::ddl_logger().info(
-                                "transit one job step and wait sync failed",
-                                &[
-                                    zap_error(error),
-                                    tidb_log::Field::new(
-                                        "job",
-                                        tidb_log::Value::Str(job.to_string()),
-                                    ),
-                                ],
-                            ),
+                            Err(error) => {
+                                tidb_ddl_logutil::sample_logger()
+                                    .warn("load and deliver jobs failed", &[zap_error(error)]);
+                                break;
+                            }
+                        }
+                        if !running_jobs.check_runnable(job.id, &involving) {
+                            running_jobs.add_pending(&involving);
+                            continue;
+                        }
+                        target_pool.get();
+                        // Go `deliveryJob`.
+                        running_jobs.add_running(job.id, &involving);
+                        let job_id = job.id;
+                        let worker = sql_worker_thread("ddl-job-worker").spawn({
+                            let opener = Arc::clone(&opener);
+                            let notifier = notifier.clone();
+                            let schema_sync = Arc::clone(&schema_sync);
+                            let wake = Arc::clone(&wake);
+                            let stop = Arc::clone(&stop);
+                            let owner = Arc::clone(&owner);
+                            let row_ids = Arc::clone(&row_ids);
+                            let del_range = Arc::clone(&del_range);
+                            let ddl_job_done_ch_map = Arc::clone(&ddl_job_done_ch_map);
+                            let session_pool = Arc::clone(&session_pool);
+                            let running_jobs = Arc::clone(&running_jobs);
+                            let pool = Arc::clone(target_pool);
+                            let job_desc = job.to_string();
+                            move || {
+                                let notifier_ref = notifier.as_ref().map(|client| {
+                                    Arc::as_ref(client) as &dyn SchemaVersionNotifier
+                                });
+                                let check_owner = || {
+                                    if stop.load(Ordering::Acquire) || !owner.is_owner() {
+                                        Err("DDL worker stopped or ownership lost".to_owned())
+                                    } else {
+                                        Ok(())
+                                    }
+                                };
+                                let backfiller =
+                                    KvTableIndexBackfiller::new(&row_ids, &session_pool);
+                                // Go `getJobRunCtx`: the job context carries
+                                // the submitter's done signal, when this node
+                                // has one.
+                                let job_done = ddl_job_done_ch_map.load(job_id);
+                                let finished = match run_persisted_ddl_job(
+                                    Arc::clone(&opener),
+                                    job_id,
+                                    timeout,
+                                    job_done.as_deref(),
+                                    notifier_ref,
+                                    &backfiller,
+                                    &backfiller,
+                                    schema_sync.as_ref(),
+                                    &check_owner,
+                                    &|delay| wait_ddl_retry_until_stopped(&stop, delay),
+                                ) {
+                                    Ok(PersistedDdlJobOutcome::Finished) => {
+                                        // Go `addDelRangeJob` wakes the
+                                        // emulator.
+                                        if let Some(emulator) = del_range.get() {
+                                            emulator.notify();
+                                        }
+                                        true
+                                    }
+                                    Ok(PersistedDdlJobOutcome::Paused) => false,
+                                    Err(error) => {
+                                        tidb_ddl_logutil::ddl_logger().info(
+                                            "transit one job step and wait sync failed",
+                                            &[
+                                                zap_error(error),
+                                                tidb_log::Field::new(
+                                                    "job",
+                                                    tidb_log::Value::Str(job_desc),
+                                                ),
+                                            ],
+                                        );
+                                        false
+                                    }
+                                };
+                                // An unfinished job keeps its objects pending
+                                // so this round starts nothing else on them.
+                                running_jobs.finish_or_pend_job(job_id, &involving, !finished);
+                                // Go `asyncNotify(s.ddlJobNotifyCh)`.
+                                let (generation, condvar) = &*wake;
+                                let mut generation = generation
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                                *generation = generation.wrapping_add(1);
+                                condvar.notify_all();
+                                drop(generation);
+                                pool.put();
+                            }
+                        });
+                        match worker {
+                            Ok(worker) => job_workers.push(worker),
+                            Err(error) => {
+                                running_jobs.finish_or_pend_job(
+                                    job_id,
+                                    &job.get_involving_schema_info().snapshot(),
+                                    true,
+                                );
+                                target_pool.put();
+                                tidb_ddl_logutil::ddl_logger()
+                                    .warn("spawning a DDL job worker failed", &[zap_error(error)]);
+                            }
+                        }
+                        if reorg_worker_pool.available() == 0
+                            && general_ddl_worker_pool.available() == 0
+                        {
+                            break;
                         }
                     }
                 }
                 Err(error) => tidb_ddl_logutil::sample_logger()
                     .warn("load and deliver jobs failed", &[zap_error(error)]),
             }
+            // Go `defer s.runningJobs.resetAllPending()`.
+            running_jobs.reset_all_pending();
 
             let (generation, condvar) = &*wake;
             let guard = generation
@@ -490,6 +727,10 @@ where
                     owner.as_ref(),
                 );
             }
+        }
+        // Go `jobScheduler.close`: `s.wg.Wait()` for the job workers.
+        for worker in job_workers {
+            let _ = worker.join();
         }
     }
 }

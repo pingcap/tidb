@@ -26536,3 +26536,94 @@ fn admin_commands_on_a_live_ddl_job_as_go() {
         [["a"]]
     );
 }
+
+/// Go `jobScheduler.loadAndDeliverJobs`: a job runs on a worker of its own,
+/// and `runningJobs.checkRunnable` keeps only jobs on the same schema
+/// objects apart. An ALTER waiting on a reader's metadata lock does not hold
+/// up a CREATE TABLE of another table; it finishes once the reader commits.
+#[test]
+fn a_job_waiting_on_metadata_lock_does_not_block_other_tables_ddl_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut reader = stack.factory.open_session(session_context(194)).unwrap();
+    let mut probe = stack.factory.open_session(session_context(195)).unwrap();
+    rows(&mut reader, "create table test.sc1 (a int)");
+    rows(&mut reader, "begin");
+    rows(&mut reader, "select * from test.sc1");
+    let alter = std::thread::spawn({
+        let factory = Arc::clone(&stack.factory);
+        move || {
+            let mut writer = factory.open_session(session_context(196)).unwrap();
+            rows(&mut writer, "alter table test.sc1 add column b int");
+        }
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while displayed(rows(&mut probe, "select count(*) from mysql.tidb_mdl_info")) != [["1"]] {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the ALTER never waited on the reader"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let (created_tx, created_rx) = std::sync::mpsc::channel();
+    let create = std::thread::spawn({
+        let factory = Arc::clone(&stack.factory);
+        move || {
+            let mut other = factory.open_session(session_context(197)).unwrap();
+            rows(&mut other, "create table test.sc2 (a int)");
+            created_tx.send(()).unwrap();
+        }
+    });
+    let created = created_rx.recv_timeout(Duration::from_secs(20));
+    // The ALTER still waits on the reader.
+    assert_eq!(
+        displayed(rows(&mut probe, "select count(*) from mysql.tidb_mdl_info")),
+        [["1"]]
+    );
+    // A second job on the same table waits behind the first, unstarted
+    // (`runningJobs.checkRunnable`).
+    let second = std::thread::spawn({
+        let factory = Arc::clone(&stack.factory);
+        move || {
+            let mut writer = factory.open_session(session_context(198)).unwrap();
+            rows(&mut writer, "alter table test.sc1 add column c int");
+        }
+    });
+    let second_job = loop {
+        let jobs = displayed(rows(
+            &mut probe,
+            "select job_id, json_extract(cast(job_meta as char), '$.schema_state') from mysql.tidb_ddl_job order by job_id",
+        ));
+        if jobs.len() == 2 {
+            break jobs[1].clone();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the second ALTER never queued: {jobs:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    std::thread::sleep(Duration::from_millis(500));
+    let second_state = displayed(rows(
+        &mut probe,
+        &format!(
+            "select json_extract(cast(job_meta as char), '$.schema_state') from mysql.tidb_ddl_job where job_id = {}",
+            second_job[0]
+        ),
+    ));
+    assert_eq!(second_state, [["0"]], "the second job on the table started");
+    rows(&mut reader, "commit");
+    alter.join().unwrap();
+    second.join().unwrap();
+    assert!(
+        created.is_ok(),
+        "CREATE TABLE of another table waited for the blocked ALTER"
+    );
+    create.join().unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut probe,
+            "select column_name from information_schema.columns where table_schema = 'test' and table_name = 'sc1' order by ordinal_position"
+        )),
+        [["a"], ["b"], ["c"]]
+    );
+}
