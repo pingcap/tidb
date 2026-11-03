@@ -426,7 +426,7 @@ impl TableCommon {
             } else {
                 0
             };
-            copy_handle = self.handle_of_row(new_row, &ctx.session_zone(), shard)?;
+            copy_handle = self.handle_of_row(new_row, &ctx.session_zone(), shard, Some(ctx))?;
         }
         Ok(Some(ReorgUpdate {
             remove_from,

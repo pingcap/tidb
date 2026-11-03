@@ -339,7 +339,7 @@ pub fn table_rows(
         return Some(schemata_rows(catalog, visibility));
     }
     if name.go_lower_eq("TABLES") {
-        return Some(tables_rows(catalog, visibility, &ctx.session_zone()));
+        return Some(tables_rows(catalog, visibility, ctx));
     }
     if name.go_lower_eq("PARTITIONS") {
         return Some(partitions_rows(catalog, visibility, &ctx.session_zone()));
@@ -1414,14 +1414,14 @@ pub fn update_time_datum(update_ts: u64, zone: &tidb_datatype::SessionTimeZone) 
 pub fn show_table_status_rows(
     catalog: &SessionExtendedInfoSchema,
     visibility: &SchemaVisibility,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
     database: &str,
 ) -> Vec<Vec<Datum>> {
     const TABLE_SCHEMA: usize = 1;
     const TABLE_NAME: usize = 2;
     const CHECKSUM: usize = 18;
     let schema = database.go_to_lower();
-    let mut rows = tables_rows(catalog, visibility, zone)
+    let mut rows = tables_rows(catalog, visibility, ctx)
         .into_iter()
         .filter(|row| {
             tidb_datatype::datum_text::sysvar_datum_text(&row[TABLE_SCHEMA]).is_some_and(|name| name.go_to_lower() == schema)
@@ -1449,8 +1449,9 @@ pub fn show_table_status_rows(
 fn tables_rows(
     catalog: &SessionExtendedInfoSchema,
     visibility: &SchemaVisibility,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Vec<Vec<Datum>> {
+    let zone = &ctx.session_zone();
     // go's TABLES output lists the USER schemas first (the ci-alphabetical
     // order), then information_schema's own tables, then the
     // metrics/performance/sys views -- the oracle's first row is `d10.e1`,
@@ -1540,7 +1541,9 @@ fn tables_rows(
             Datum::Int(0),
             // Go `getAutoIncrementID`: the allocator's `Base() + 1`, 0 while
             // it has drawn nothing; NULL without an auto-increment column.
-            table.allocated_auto_increment().map_or(Datum::Null, Datum::Int),
+            table
+                .allocated_auto_increment(Some(ctx as &dyn tidb_tblctx::MutateContext))
+                .map_or(Datum::Null, Datum::Int),
             // Go `table.GetUpdateTime().In(loc)`: the creating job's TSO in
             // the session's zone; NULL where the creating tier recorded none.
             update_time_datum(table.update_ts(), zone),

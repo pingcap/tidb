@@ -408,6 +408,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         let [database, table_name] = path else {
             return Err(DriverError::unsupported("SHOW TABLE NEXT_ROW_ID without its table"));
         };
+        let ctx = self.statement_context(false);
         let ids = self.with_catalog_mut(|catalog| {
             let Some(entry) = catalog.persistent_table_in(database, table_name) else {
                 return Err(DriverError::from(
@@ -421,7 +422,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                 ));
             };
             table
-                .next_global_row_ids()
+                .next_global_row_ids(Some(&ctx as &dyn tidb_tblctx::MutateContext))
                 .map_err(|error| DriverError::from(tidb_terror::MysqlError::unknown(error.0)))
         })?;
         Ok(ids
@@ -673,7 +674,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             T::TableStatus => {
                 let database = contents.db_name.clone();
                 self.require_visible_database(&database)?;
-                let zone = self.session_time_zone();
+                let ctx = self.statement_context(false);
                 let visibility = self.schema_visibility();
                 let catalog = self.table_storage_statistics_catalog(true)?;
                 if catalog.table_names(&database).is_none() {
@@ -682,7 +683,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                             .generate_with_stack_by_args(&[database.into()]),
                     ));
                 }
-                crate::infoschema_reader::show_table_status_rows(&catalog, &visibility, &zone, &database)
+                crate::infoschema_reader::show_table_status_rows(&catalog, &visibility, &ctx, &database)
                     .into_iter()
                     .filter(|row| {
                         let name = go_to_lower(tidb_datatype::datum_text::sysvar_datum_text(&row[0]).unwrap_or_default());

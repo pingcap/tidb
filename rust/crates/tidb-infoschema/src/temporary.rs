@@ -121,32 +121,6 @@ impl SessionExtendedInfoSchema {
         }
     }
 
-    /// A mutable handle on a table for the temporary-table overlay, which
-    /// swaps row storage in and out without changing any schema.
-    ///
-    /// It deliberately does NOT bump [`SessionExtendedInfoSchema::version`]: moving a session's
-    /// own rows into and out of the slot they are read through is not a
-    /// schema change, and counting it as one would abort every concurrent
-    /// transaction whenever any session touched a temporary table.
-    pub fn temporary_overlay_table_mut(
-        &mut self,
-        database: &str,
-        name: &str,
-    ) -> Option<&mut TableCommon> {
-        // The row overlay keeps the schema epoch, but this public handle
-        // can also change an ID. Never retain a directory across that borrow.
-        self.invalidate_table_id_names();
-        match self
-            .database_mut(database)?
-            .tables
-            .get_mut(name)
-            .map(std::sync::Arc::make_mut)
-        {
-            Some(TableEntry::Kv(table)) => Some(std::sync::Arc::make_mut(table)),
-            _ => None,
-        }
-    }
-
     /// Resolves a durable DDL target without the session's local name
     /// overlay (Go `DetachLocalTemporaryTableInfoSchema`).
     pub fn persistent_table_in(&self, database: &str, name: &str) -> Option<&TableEntry> {

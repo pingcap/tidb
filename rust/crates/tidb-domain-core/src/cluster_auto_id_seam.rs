@@ -346,7 +346,7 @@ mod tests {
         let mut table = TableCommon::new(402, vec![]);
         table.set_auto_increment_offset(0);
         table.set_auto_id(allocator);
-        table.next_auto_increment_for_show()
+        table.next_auto_increment_for_show(None)
     }
     #[test]
     fn auto_id_owner_registry_selects_service_and_keeps_row_random_legacy_counters() {

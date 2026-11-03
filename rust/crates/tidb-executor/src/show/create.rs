@@ -522,7 +522,7 @@ for foreign_key in table.meta().read().foreign_keys.iter_deref() {
     // column and the allocator's next value exceeds 1 (fresh tables with no
     // inserts print nothing).
     if let Some(next) = table
-        .next_auto_increment_for_show()
+        .next_auto_increment_for_show(Some(ctx as &dyn tidb_tblctx::MutateContext))
         .map_err(|e| DriverError::from(tidb_terror::MysqlError::unknown(e.0)))?
         .filter(|next| *next > 1)
     {

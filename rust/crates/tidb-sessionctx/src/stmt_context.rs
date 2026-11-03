@@ -6034,12 +6034,22 @@ impl tidb_tblctx::MutateContext for StmtContext {
 
     fn add_temporary_table_to_txn(
         &self,
-        table_id: i64,
+        table: &tidb_model::TableInfo,
     ) -> Option<tidb_tblctx::temporary_table::TemporaryTableHandler> {
         Some(tidb_tblctx::temporary_table::add_temporary_table_to_txn(
             &self.txn_temporary_tables,
-            table_id,
+            table,
             self.temporary_table_data.as_ref(),
+        ))
+    }
+
+    fn get_temporary_table(
+        &self,
+        table: &tidb_model::TableInfo,
+    ) -> Option<Arc<tidb_tblctx::temporary_table::TempTable>> {
+        Some(tidb_tblctx::temporary_table::get_temporary_table(
+            &self.txn_temporary_tables,
+            table,
         ))
     }
 

@@ -1346,8 +1346,8 @@ impl SessionExtendedInfoSchema {
     /// DDL owns that, but this tier hands the entry out), so the planner's
     /// view cannot outlive a version. `table_id_names` does not move here:
     /// it maps a table's id to its (database, name) key, which only a
-    /// schema-changing operation can move -- `bump_metadata_version` below,
-    /// or `temporary_overlay_table_mut`'s own direct call. An ordinary DML
+    /// schema-changing operation can move -- `bump_metadata_version` below.
+    /// An ordinary DML
     /// write (every `get_mut_in` caller in production) never reassigns a
     /// table's id or its key, so it does not owe this cache a rebuild.
     fn bump_version(&mut self) {

@@ -1344,3 +1344,42 @@ fn a_local_temporary_table_outlives_its_dropped_schema() {
     s.run("drop table d.t").unwrap();
     assert_eq!(refusal(&mut s, "select * from d.t").0, 1146);
 }
+
+/// Go `MutateContext.AlternativeAllocators`: a GLOBAL temporary table
+/// allocates from its transaction's own allocator (`TxnCtx.TemporaryTables`,
+/// created by `TempTableFromMeta`), which every reader of the table's
+/// allocators sees through the session's context -- the insert, `SHOW CREATE
+/// TABLE`, `SHOW TABLE NEXT_ROW_ID` and `information_schema.TABLES` -- and the
+/// next transaction starts afresh. Expected values: gorun.
+#[test]
+fn a_global_temporary_table_allocates_from_its_transaction() {
+    let mut session = temporary_session();
+    session
+        .run("create global temporary table g (id int primary key auto_increment, v int) on commit delete rows")
+        .unwrap();
+    let auto_increment = "select auto_increment from information_schema.tables where table_name = 'g'";
+    session.run("begin").unwrap();
+    session.run("insert into g (v) values (1), (2)").unwrap();
+    assert_eq!(
+        row_text(session.run("select id, v from g order by id")),
+        [["1", "1"], ["2", "2"]]
+    );
+    assert_eq!(row_text(session.run(auto_increment)), [["3"]]);
+    assert_eq!(
+        row_text(session.run("show table g next_row_id")),
+        [["test", "g", "id", "3", "_TIDB_ROWID"]]
+    );
+    let create = show_create(&mut session, "g");
+    assert!(create.ends_with("AUTO_INCREMENT=3 ON COMMIT DELETE ROWS"), "{create}");
+    session.run("commit").unwrap();
+
+    session.run("begin").unwrap();
+    session.run("insert into g (v) values (3)").unwrap();
+    assert_eq!(row_text(session.run("select id, v from g order by id")), [["1", "3"]]);
+    session.run("commit").unwrap();
+    assert_eq!(row_text(session.run(auto_increment)), [["0"]]);
+    assert_eq!(
+        row_text(session.run("show table g next_row_id")),
+        [["test", "g", "id", "1", "_TIDB_ROWID"]]
+    );
+}

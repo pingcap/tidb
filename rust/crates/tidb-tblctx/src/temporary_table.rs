@@ -22,15 +22,42 @@ use std::sync::{Arc, Mutex};
 
 use tidb_variable::temporary_table_data::SessionData;
 
-/// Go `tableutil.TempTable`'s size and modified state: what one transaction
-/// wrote to one temporary table.
+/// Go `tableutil.TempTable` (`tables.TemporaryTable`): what one transaction
+/// wrote to one temporary table, and the auto-id allocator it allocates
+/// from.
 #[derive(Debug, Default)]
 pub struct TempTable {
     size: AtomicI64,
     modified: AtomicBool,
+    /// Go `autoIDAllocator`: `None` for a table with neither a `_tidb_rowid`
+    /// nor an auto-increment column.
+    auto_id_allocator: Option<tidb_autoid::AutoIdAllocator>,
 }
 
 impl TempTable {
+    /// Go `TempTableFromMeta`: an unmodified table with Go
+    /// `NewAllocatorFromTempTblInfo`'s in-memory allocator (one
+    /// `RowIDAllocType` allocator for `_tidb_rowid` and the auto-increment
+    /// column alike), rebased to `AutoIncID - 1` when CREATE set it.
+    #[must_use]
+    pub fn from_meta(table: &tidb_model::TableInfo) -> Self {
+        let has_row_id = !table.pk_is_handle && !table.is_common_handle;
+        let has_auto_inc_id = table.get_auto_increment_col_info().is_some();
+        Self {
+            size: AtomicI64::new(0),
+            modified: AtomicBool::new(false),
+            auto_id_allocator: (has_row_id || has_auto_inc_id).then(|| {
+                tidb_autoid::AutoIdAllocator::temporary(table.is_auto_inc_col_unsigned(), table.auto_inc_id)
+            }),
+        }
+    }
+
+    /// Go `GetAutoIDAllocator`.
+    #[must_use]
+    pub fn get_auto_id_allocator(&self) -> Option<&tidb_autoid::AutoIdAllocator> {
+        self.auto_id_allocator.as_ref()
+    }
+
     /// Go `GetSize`.
     pub fn get_size(&self) -> i64 {
         self.size.load(Ordering::Relaxed)
@@ -105,19 +132,26 @@ impl TemporaryTableHandler {
 /// Go `tblsession.MutateContext.AddTemporaryTableToTxn`: the transaction's
 /// entry for temporary table `table_id` (created at its first write), marked
 /// modified, with the session data its committed size is read from.
+/// Go `SessionVars.GetTemporaryTable`: the transaction's entry for a
+/// temporary table, created from its `TableInfo` on first use.
 #[must_use]
-pub fn add_temporary_table_to_txn(
-    tables: &TxnTemporaryTables,
-    table_id: i64,
-    data: Option<&SessionData>,
-) -> TemporaryTableHandler {
-    let tbl = Arc::clone(
+pub fn get_temporary_table(tables: &TxnTemporaryTables, table: &tidb_model::TableInfo) -> Arc<TempTable> {
+    Arc::clone(
         tables
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .entry(table_id)
-            .or_default(),
-    );
+            .entry(table.id)
+            .or_insert_with(|| Arc::new(TempTable::from_meta(table))),
+    )
+}
+
+#[must_use]
+pub fn add_temporary_table_to_txn(
+    tables: &TxnTemporaryTables,
+    table: &tidb_model::TableInfo,
+    data: Option<&SessionData>,
+) -> TemporaryTableHandler {
+    let tbl = get_temporary_table(tables, table);
     tbl.set_modified(true);
-    TemporaryTableHandler::new(tbl, table_id, data.cloned())
+    TemporaryTableHandler::new(tbl, table.id, data.cloned())
 }

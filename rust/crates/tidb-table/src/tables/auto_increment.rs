@@ -230,6 +230,7 @@ impl TableCommon {
     /// Rows produced by Go's `ShowNextRowIDExec` for this table.
     pub fn next_global_row_ids(
         &self,
+        ctx: Option<&dyn tidb_tblctx::MutateContext>,
     ) -> Result<Vec<(String, i64, &'static str)>, AutoIdStoreError> {
         let mut rows = Vec::new();
         let has_implicit_row_id =
@@ -242,14 +243,14 @@ impl TableCommon {
             };
             rows.push((
                 column,
-                self.row_id_allocator().next_global()? as i64,
+                self.row_id_allocator_in(ctx).next_global()? as i64,
                 "_TIDB_ROWID",
             ));
         }
         if self.row_id.is_some() && self.auto_increment_offset.is_some() {
             rows.push((
                 self.auto_increment_column_name().unwrap_or_default(),
-                self.auto_id.next_global()? as i64,
+                self.auto_id_allocator_in(ctx).next_global()? as i64,
                 "AUTO_INCREMENT",
             ));
         }
@@ -358,6 +359,7 @@ impl TableCommon {
             step,
             reuse,
             &super::AutoIdCall::with_timeout(std::time::Duration::from_secs(30)),
+            None,
         )
     }
 
@@ -368,10 +370,12 @@ impl TableCommon {
         step: (u64, u64),
         reuse: impl FnOnce() -> Option<u64>,
         call: &super::AutoIdCall,
+        ctx: Option<&dyn tidb_tblctx::MutateContext>,
     ) -> Result<AutoIncrement, AutoIdError> {
         let Some(offset) = self.auto_increment_offset else {
             return Ok(AutoIncrement::Absent);
         };
+        let allocator = self.auto_id_allocator_in(ctx);
         let current = row
             .get(offset)
             .map_or(0, |value| get_auto_record_id(value, true));
@@ -382,7 +386,7 @@ impl TableCommon {
             // `insert_common.go:897`; `adjustAutoIncrementDatum`, `:993`), so
             // the store crossing reserves a fresh window: an ascending run of
             // explicit ids pays the counter's home once per window, not per row.
-            self.auto_id
+            allocator
                 .rebase_allocating_in(call, current)
                 .map_err(AutoIdError::Store)?;
             return Ok(AutoIncrement::Given(current));
@@ -393,13 +397,15 @@ impl TableCommon {
         // that moves `LAST_INSERT_ID()` off the row it names.
         let (id, reused) = match reuse() {
             Some(id) => (id, true),
-            None => (self.auto_id.alloc_in(call, increment, step_offset)?, false),
+            None => (allocator.alloc_in(call, increment, step_offset)?, false),
         };
         self.check_auto_increment_fits(offset, id)?;
         // The allocated id skips the per-column cast the written values went
         // through, so it is placed in the column's own domain here: Go
         // `setDatumAutoIDAndCast` casts it to a FLOAT/DOUBLE column's type.
-        let integer = if self.auto_id.unsigned {
+        let unsigned = allocator.unsigned;
+        drop(allocator);
+        let integer = if unsigned {
             id as f64
         } else {
             id as i64 as f64
@@ -411,7 +417,7 @@ impl TableCommon {
         {
             Some(FieldTypeCode::Float) => Datum::Float32(f64::from(integer as f32)),
             Some(FieldTypeCode::Double) => Datum::Real(integer),
-            _ if self.auto_id.unsigned => Datum::UInt(id),
+            _ if unsigned => Datum::UInt(id),
             _ => Datum::Int(id as i64),
         };
         Ok(if reused {

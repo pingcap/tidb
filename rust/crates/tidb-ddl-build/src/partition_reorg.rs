@@ -126,7 +126,7 @@ impl KvTablePartitionReorg for TableCommon {
                     } else {
                         0
                     };
-                    handle = self.handle_of_row(&row, &zone, shard)?;
+                    handle = self.handle_of_row(&row, &zone, shard, Some(ctx))?;
                     self.add_partition_copy(
                         store,
                         physical_id,

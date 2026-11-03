@@ -7811,11 +7811,13 @@ name = "tidb-tblctx"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "tidb-autoid",
  "tidb-context",
  "tidb-datatype",
  "tidb-exprctx",
  "tidb-fastrand",
  "tidb-kv",
+ "tidb-model",
  "tidb-mysql",
  "tidb-txnkv",
  "tidb-util",

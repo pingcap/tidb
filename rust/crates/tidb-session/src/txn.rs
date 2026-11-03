@@ -153,25 +153,23 @@ pub(crate) struct Savepoint {
     table_delta: std::collections::HashMap<i64, tidb_variable::table_delta::TableDelta>,
 }
 
-/// The session's temporary-table state while it is OFF the catalog, and the
-/// two moves that put it on and take it back.
+/// The session's LOCAL temporary tables while they are OFF the catalog, and
+/// the two moves that put them on and take them back.
 ///
-/// Go does the same in two pieces that this tier has to do in one, because
-/// its infoschema and its store are separate objects and here they are the
-/// same object:
+/// Go does this in two pieces, both per statement:
 ///
 /// * `temptable.AttachLocalTemporaryTableInfoSchema` wraps the statement's
 ///   infoschema so `TableByName` finds a LOCAL temporary table before the
 ///   shared one of the same name;
 /// * `temptable.SessionSnapshotInterceptor` routes reads of a temporary
-///   table's key range away from TiKV and into the session's own membuffer.
+///   table's key range away from TiKV and into the session's own membuffer,
+///   for which the session publishes which ids are temporary.
 ///
-/// The local half is a whole table object moved into the catalog and back;
-/// the global half is only the ROW STORAGE, because a global temporary
-/// table's `TableInfo` is genuinely shared and must stay where it is.
+/// A GLOBAL temporary table's `TableInfo` is shared and stays where it is;
+/// its transaction state (allocator, size) is `TxnCtx.TemporaryTables`,
+/// which the table reaches through its mutate context.
 struct TemporaryTableOverlay {
     local: Vec<(String, String, tidb_table::tables::TableCommon)>,
-    global: std::collections::HashMap<i64, tidb_table::tables::TemporaryTableTxnData>,
 }
 
 impl TemporaryTableOverlay {
@@ -196,55 +194,36 @@ impl TemporaryTableOverlay {
             .map(|(_, _, table)| (table.table_id(), tidb_model::TempTableType::LOCAL))
             .collect();
         catalog.attach_local_temporary_table_info_schema(std::mem::take(&mut self.local));
-        self.swap_global_storage(catalog, &mut kinds);
+        global_temporary_kinds(catalog, &mut kinds);
         temporary.publish(kinds);
         let value = body(catalog);
-        self.swap_global_storage(catalog, &mut std::collections::HashMap::new());
         self.local = catalog.detach_local_temporary_table_info_schema();
         value
     }
+}
 
-    /// Exchanges every GLOBAL temporary table's row storage between the
-    /// catalog's (always-empty) one and this session's.
-    ///
-    /// The same call attaches and detaches, because the catalog's own copy
-    /// carries no rows in either direction: nothing writes to a global
-    /// temporary table except a session that has its own storage swapped in,
-    /// so what comes out at attach is empty and what goes back at detach can
-    /// be the empty store that came out.
-    fn swap_global_storage(
-        &mut self,
-        catalog: &mut SessionExtendedInfoSchema,
-        kinds: &mut std::collections::HashMap<i64, tidb_model::TempTableType>,
-    ) {
-        // Memoized walk (Go answers this from `temptable`'s session map, not
-        // by iterating infoschema): a session with no global temporary tables
-        // -- every OLTP workload -- pays one epoch compare per call.
-        let ids = catalog.global_temporary_table_ids_memo();
-        if ids.is_empty() {
-            return;
-        }
-        for (database, name) in ids.to_vec() {
-            let Some(table) = catalog.temporary_overlay_table_mut(&database, &name) else {
-                continue;
-            };
-            let id = table.table_id();
-            kinds.insert(id, tidb_model::TempTableType::GLOBAL);
-            // Go `TxnCtx.TemporaryTables`: the transaction's rows and its
-            // own allocator, created at its first touch of the table.
-            let incoming = self
-                .global
-                .remove(&id)
-                .unwrap_or_else(|| table.temp_table_from_meta());
-            let outgoing = table.swap_temporary_txn_data(incoming);
-            self.global.insert(id, outgoing);
+/// Adds every GLOBAL temporary table's id to `kinds`.
+///
+/// Memoized walk (Go answers this from `temptable`'s session map, not by
+/// iterating infoschema): a session with no global temporary tables -- every
+/// OLTP workload -- pays one epoch compare per call.
+fn global_temporary_kinds(
+    catalog: &mut SessionExtendedInfoSchema,
+    kinds: &mut std::collections::HashMap<i64, tidb_model::TempTableType>,
+) {
+    let ids = catalog.global_temporary_table_ids_memo();
+    if ids.is_empty() {
+        return;
+    }
+    for (database, name) in ids.to_vec() {
+        if let Some((_, table)) = catalog.table_info_by_name(&database, &name) {
+            kinds.insert(table.read().id, tidb_model::TempTableType::GLOBAL);
         }
     }
 }
 
-/// Runs a statement for a session that does not yet own a temporary-table
-/// overlay, returning one when the shared catalog already contains GLOBAL
-/// temporary metadata or the statement creates its first temporary table.
+/// Runs a statement for a session that owns no LOCAL temporary tables,
+/// returning the overlay when the statement creates its first one.
 ///
 /// The metadata-version check keeps the ordinary OLTP path at one memoized
 /// GLOBAL-table check: row statements cannot create temporary metadata, so
@@ -255,12 +234,10 @@ fn run_discovering_temporary_overlay<T>(
     body: impl FnOnce(&mut SessionExtendedInfoSchema) -> Result<T, DriverError>,
 ) -> (Result<T, DriverError>, Option<TemporaryTableOverlay>) {
     if !catalog.global_temporary_table_ids_memo().is_empty() {
-        let mut overlay = TemporaryTableOverlay {
-            local: Vec::new(),
-            global: std::collections::HashMap::new(),
-        };
+        let mut overlay = TemporaryTableOverlay { local: Vec::new() };
         let value = overlay.run(catalog, temporary, body);
-        return (value, Some(overlay));
+        let discovered = (!overlay.local.is_empty()).then_some(overlay);
+        return (value, discovered);
     }
 
     let metadata_version = catalog.metadata_version();
@@ -272,13 +249,11 @@ fn run_discovering_temporary_overlay<T>(
     // A metadata-changing statement may have created the session's first
     // LOCAL or GLOBAL temporary table. Detach it exactly as the ordinary
     // overlay path would have done around the statement.
-    let mut overlay = TemporaryTableOverlay {
-        local: Vec::new(),
-        global: std::collections::HashMap::new(),
-    };
     let mut kinds = std::collections::HashMap::new();
-    overlay.swap_global_storage(catalog, &mut kinds);
-    overlay.local = catalog.detach_local_temporary_table_info_schema();
+    global_temporary_kinds(catalog, &mut kinds);
+    let overlay = TemporaryTableOverlay {
+        local: catalog.detach_local_temporary_table_info_schema(),
+    };
     kinds.extend(
         overlay
             .local
@@ -286,7 +261,7 @@ fn run_discovering_temporary_overlay<T>(
             .map(|(_, _, table)| (table.table_id(), tidb_model::TempTableType::LOCAL)),
     );
     temporary.publish(kinds);
-    let discovered = (!overlay.local.is_empty() || !overlay.global.is_empty()).then_some(overlay);
+    let discovered = (!overlay.local.is_empty()).then_some(overlay);
     (value, discovered)
 }
 
@@ -1063,9 +1038,7 @@ impl Session {
         // GLOBAL table created by this very statement, closing the gap where
         // the old early return left the first temporary table shared.
         let temporary = self.temporary.clone();
-        if (!include_local || self.local_temporary_tables.is_empty())
-            && self.global_temporary_data.is_empty()
-        {
+        if !include_local || self.local_temporary_tables.is_empty() {
             let (value, discovered) = if let Some((_, read)) = &mut self.statement_snapshot {
                 run_discovering_temporary_overlay(&mut read.catalog, &temporary, body)
             } else if let Some((_, read)) = self.txn_ctx.as_mut().and_then(|ctx| ctx.stale.as_mut())
@@ -1084,7 +1057,6 @@ impl Session {
                 } else {
                     debug_assert!(discovered.local.is_empty());
                 }
-                self.global_temporary_data = discovered.global;
             }
             return value;
         }
@@ -1102,7 +1074,6 @@ impl Session {
             } else {
                 Vec::new()
             },
-            global: std::mem::take(&mut self.global_temporary_data),
         };
         let value = if let Some((_, read)) = &mut self.statement_snapshot {
             overlay.run(&mut read.catalog, &temporary, body)
@@ -1120,7 +1091,6 @@ impl Session {
         } else {
             debug_assert!(overlay.local.is_empty());
         }
-        self.global_temporary_data = std::mem::take(&mut overlay.global);
         value
     }
 
@@ -1162,15 +1132,6 @@ impl Session {
     /// its own and which knows no transaction continues into this statement.
     pub fn reset_transaction_scope(&mut self) {
         self.staged_writes = std::sync::Arc::default();
-        self.discard_global_temporary_rows();
-    }
-
-    /// Drops every row this session has written to a GLOBAL temporary table.
-    ///
-    /// See the call site in `dispatch` for why the transaction boundary is
-    /// the only place this happens.
-    pub(crate) fn discard_global_temporary_rows(&mut self) {
-        self.global_temporary_data.clear();
     }
 
     /// Runs one DML statement over the catalog this statement sees.

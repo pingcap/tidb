@@ -1559,6 +1559,7 @@ fn run_insert_rows(
                     ctx.auto_increment_step(),
                     || ctx.reuse_auto_increment_id(),
                     &tidb_autoid::AutoIdCall::statement(&ctx.statement_memory()),
+                    Some(ctx as &dyn tidb_tblctx::MutateContext),
                 ) {
                     Ok(outcome) => outcome,
                     Err(error) => {

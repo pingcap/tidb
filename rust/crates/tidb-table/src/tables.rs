@@ -51,7 +51,7 @@ pub mod table_meta;
 
 use tidb_autoid::{
     AutoIdError, AutoIdStoreError,
-    LocalAutoIdStore, DEFAULT_AUTO_ID_STEP,
+    DEFAULT_AUTO_ID_STEP,
 };
 
 use tidb_autoid::AutoIdCall;
@@ -441,15 +441,6 @@ impl tidb_exprctx::Columns for IndexConditionContext<'_> {
     fn time_zone(&self) -> SessionTimeZone {
         self.zone.clone()
     }
-}
-
-/// One session transaction's state of a GLOBAL temporary table: Go
-/// `TxnCtx.TemporaryTables[id]`'s auto-id allocators. Its rows are in the
-/// transaction's buffer like any table's.
-#[derive(Clone, Debug)]
-pub struct TemporaryTableTxnData {
-    auto_id: AutoIdAllocator,
-    row_id: Option<AutoIdAllocator>,
 }
 
 /// A table whose rows live as TiKV-format bytes in a sorted key/value map.
@@ -1788,6 +1779,31 @@ impl TableCommon {
         self.row_id.as_ref().unwrap_or(&self.auto_id)
     }
 
+    /// Go `t.Allocators(ctx).Get(autoid.AutoIncrementType)`: a GLOBAL
+    /// temporary table answers its session transaction's allocator
+    /// (`MutateContext.AlternativeAllocators`), any other table its own.
+    pub fn auto_id_allocator_in(
+        &self,
+        ctx: Option<&dyn tidb_tblctx::MutateContext>,
+    ) -> std::borrow::Cow<'_, AutoIdAllocator> {
+        match ctx.and_then(|ctx| ctx.alternative_allocators(&self.meta.read())) {
+            Some(allocator) => std::borrow::Cow::Owned(allocator),
+            None => std::borrow::Cow::Borrowed(&self.auto_id),
+        }
+    }
+
+    /// Go `t.Allocators(ctx).Get(autoid.RowIDAllocType)`; see
+    /// [`Self::auto_id_allocator_in`].
+    pub fn row_id_allocator_in(
+        &self,
+        ctx: Option<&dyn tidb_tblctx::MutateContext>,
+    ) -> std::borrow::Cow<'_, AutoIdAllocator> {
+        match ctx.and_then(|ctx| ctx.alternative_allocators(&self.meta.read())) {
+            Some(allocator) => std::borrow::Cow::Owned(allocator),
+            None => std::borrow::Cow::Borrowed(self.row_id_allocator()),
+        }
+    }
+
     /// Installs Go's separate RowIDAllocType for a SepAutoInc table.
     pub fn set_row_id(&mut self, allocator: TableAutoId) {
         self.row_id = Some(allocator.0);
@@ -1800,37 +1816,12 @@ impl TableCommon {
         self.meta.read().auto_id_cache
     }
 
-    /// Go `TempTableFromMeta`, the entry `TxnCtx.TemporaryTables` holds for a
-    /// GLOBAL temporary table: empty rows and `NewAllocatorFromTempTblInfo`'s
-    /// in-memory allocator, ONE for the auto-increment column and
-    /// `_tidb_rowid` alike, rebased to `AutoIncID - 1` when CREATE set it.
-    /// A transaction starts both afresh, which is why its first id is 1
-    /// again.
-    #[must_use]
-    pub fn temp_table_from_meta(&self) -> TemporaryTableTxnData {
-        TemporaryTableTxnData {
-            auto_id: AutoIdAllocator::temporary(self.auto_id.unsigned, self.meta.read().auto_inc_id),
-            row_id: None,
-        }
-    }
-
     /// Gives a LOCAL temporary table the allocator Go's
     /// `temptable.CreateLocalTemporaryTable` builds for it from its
     /// `TableInfo`: in-memory and session-owned, one id at a time.
     pub fn use_local_temporary_auto_id(&mut self) {
         self.auto_id = AutoIdAllocator::temporary(self.auto_id.unsigned, self.meta.read().auto_inc_id);
         self.row_id = None;
-    }
-
-    /// Exchanges this table's allocators for a session's transaction-scoped
-    /// ones (see [`Self::temp_table_from_meta`]), returning what it held. The
-    /// session's GLOBAL temporary table overlay swaps them in for a statement
-    /// and back out afterwards.
-    pub fn swap_temporary_txn_data(&mut self, data: TemporaryTableTxnData) -> TemporaryTableTxnData {
-        TemporaryTableTxnData {
-            auto_id: std::mem::replace(&mut self.auto_id, data.auto_id),
-            row_id: std::mem::replace(&mut self.row_id, data.row_id),
-        }
     }
 
     /// Counts the keys this copy's range scans and handle lookups process
@@ -2427,6 +2418,7 @@ impl TableCommon {
         row: &[Datum],
         zone: &SessionTimeZone,
         shard: i64,
+        ctx: Option<&dyn tidb_tblctx::MutateContext>,
     ) -> Result<TableHandle, KvTableError> {
         if !self.common_handle_offsets.is_empty() {
             let values: Vec<Datum> = self
@@ -2451,7 +2443,7 @@ impl TableCommon {
                 // Go AllocHandle uses RowIDAllocType, independent of the
                 // service-backed AUTO_INCREMENT authority for SepAutoInc.
                 let handle = self
-                    .row_id_allocator()
+                    .row_id_allocator_in(ctx)
                     .alloc(1, 1)
                     .map_err(|error| match error {
                         AutoIdError::Store(detail) => KvTableError::Encode(detail.0),
@@ -2605,21 +2597,18 @@ impl TableCommon {
         )
     }
 
-    /// Go `temptable.TruncateLocalTemporaryTable` retains metadata but gives
-    /// the replacement a new identity, empty storage and memory allocators.
+    /// Go `temptable.TruncateLocalTemporaryTable` / `newTemporaryTableFrom
+    /// TableInfo`: the replacement is the `TableInfo` cloned under a new
+    /// global id (`StatePublic`), with `NewAllocatorFromTempTblInfo`'s
+    /// in-memory allocator; its rows start empty.
     pub fn truncate_local_temporary_table(&mut self, table_id: i64) {
         debug_assert_eq!(self.temp_table_type(), tidb_model::TempTableType::LOCAL);
+        self.update_meta_cloned(|meta| {
+            meta.id = table_id;
+            meta.state = tidb_model::SchemaState::PUBLIC;
+        });
         self.table_id = table_id;
-        self.auto_id = AutoIdAllocator::over(
-            std::sync::Arc::new(LocalAutoIdStore::new()),
-            match self.auto_id_cache() {
-                0 => DEFAULT_AUTO_ID_STEP,
-                cache => cache as u64,
-            },
-        );
-        if self.row_id.is_some() {
-            self.row_id = Some(AutoIdAllocator::new());
-        }
+        self.use_local_temporary_auto_id();
         self.auto_random_id = AutoIdAllocator::new();
     }
 
@@ -3047,7 +3036,7 @@ impl TableCommon {
         let mut found: Vec<RowConflict> = Vec::new();
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
         let candidate_handle = if clustered {
-            Some(self.handle_of_row(row, &zone, 0)?)
+            Some(self.handle_of_row(row, &zone, 0, None)?)
         } else {
             row_id.map(TableHandle::Int)
         };
@@ -3151,7 +3140,7 @@ impl TableCommon {
         let physical_id = self.record_physical_id(row, ctx)?;
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
         let handle = if clustered {
-            Some(self.handle_of_row(row, &zone, 0)?)
+            Some(self.handle_of_row(row, &zone, 0, None)?)
         } else {
             row_id.map(TableHandle::Int)
         };
@@ -3277,7 +3266,7 @@ impl TableCommon {
         let mut seen = HashSet::with_capacity(rows.len());
         let mut keys = Vec::with_capacity(rows.len());
         for row in rows {
-            let handle = self.handle_of_row(row, &zone, 0)?;
+            let handle = self.handle_of_row(row, &zone, 0, None)?;
             let key = Key::from_bytes(encode_row_key_with_handle(
                 physical_id,
                 &handle.record_handle(),
@@ -3480,9 +3469,12 @@ impl TableCommon {
     /// Go `NextGlobalAutoID`, which SHOW CREATE TABLE prints: the shared
     /// counter's next id, including peer allocations.
     #[must_use]
-    pub fn next_auto_increment_for_show(&self) -> Result<Option<i64>, AutoIdStoreError> {
+    pub fn next_auto_increment_for_show(
+        &self,
+        ctx: Option<&dyn tidb_tblctx::MutateContext>,
+    ) -> Result<Option<i64>, AutoIdStoreError> {
         self.auto_increment_offset
-            .map(|_| self.auto_id.next_for_show().map(|v| v as i64))
+            .map(|_| self.auto_id_allocator_in(ctx).next_for_show().map(|v| v as i64))
             .transpose()
     }
 
@@ -3492,9 +3484,9 @@ impl TableCommon {
     /// print. `SHOW CREATE TABLE` reads the shared counter instead
     /// ([`Self::next_auto_increment_for_show`]).
     #[must_use]
-    pub fn allocated_auto_increment(&self) -> Option<i64> {
+    pub fn allocated_auto_increment(&self, ctx: Option<&dyn tidb_tblctx::MutateContext>) -> Option<i64> {
         self.auto_increment_offset
-            .map(|_| self.auto_id.status_next() as i64)
+            .map(|_| self.auto_id_allocator_in(ctx).status_next() as i64)
     }
 
     /// The table's indexes: every one of them, which is what index
@@ -3839,7 +3831,7 @@ impl TableCommon {
         // Go `addTemporaryTable` + `checkTempTableSize` before the write, and
         // `defer handleTempTableSize(tmpTable, txn.Size(), txn)` after it.
         let temporary = if self.is_temporary() {
-            ctx.add_temporary_table_to_txn(self.table_id)
+            ctx.add_temporary_table_to_txn(&self.meta.read())
         } else {
             None
         };
@@ -3959,7 +3951,7 @@ impl TableCommon {
         if self.pk_handle_offset.is_none() && self.common_handle_offsets.is_empty() {
             return Ok(None);
         }
-        self.handle_of_row(row, zone, 0).map(Some)
+        self.handle_of_row(row, zone, 0, None).map(Some)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4000,7 +3992,7 @@ impl TableCommon {
                 // ascending run of explicit row ids crosses to the counter's
                 // home once per reserved window.
                 if rebase_written_id {
-                    self.row_id_allocator()
+                    self.row_id_allocator_in(stats_ctx)
                         .rebase_allocating(value as u64)
                         .map_err(|error| {
                             KvTableError::from(tidb_kv::storage::StorageError::Backend(error.0))
@@ -4012,7 +4004,7 @@ impl TableCommon {
         };
         let handle = match explicit_handle {
             Some(handle) => handle,
-            None => self.handle_of_row(row, &zone, shard)?,
+            None => self.handle_of_row(row, &zone, shard, stats_ctx)?,
         };
         let row_encoding = stats_ctx.map_or_else(
             tidb_tblctx::RowEncodingConfig::default,
@@ -4281,7 +4273,7 @@ impl TableCommon {
                 .map_or(0, |value| auto_increment::get_auto_record_id(value, false));
             // Same arm Go's insert arms use: the rebase reserves a window on
             // its one store crossing, matching `Rebase(..., true)`.
-            self.auto_id
+            self.auto_id_allocator_in(Some(ctx))
                 .rebase_allocating_in(&AutoIdCall::statement(&ctx.statement_memory()), assigned)
                 .map_err(|error| {
                     if let Err(stop) = ctx.statement_memory().check() {
@@ -4311,7 +4303,7 @@ impl TableCommon {
         // that the row's values do not determine.
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
         let mut new_handle = if clustered {
-            self.handle_of_row(row, &zone, 0)?
+            self.handle_of_row(row, &zone, 0, None)?
         } else {
             handle.clone()
         };
@@ -4338,7 +4330,7 @@ impl TableCommon {
             } else {
                 0
             };
-            new_handle = self.handle_of_row(row, &zone, shard)?;
+            new_handle = self.handle_of_row(row, &zone, shard, Some(ctx))?;
         }
         // Go `partitionedTableUpdateRecord`'s reorganization half is decided
         // before the row's own write: a heap row whose reorganized copy

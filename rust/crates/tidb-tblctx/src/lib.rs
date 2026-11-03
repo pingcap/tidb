@@ -93,9 +93,28 @@ pub trait MutateContext: tidb_exprctx::Columns + Send + Sync {
     /// the context has no session transaction (Go's `ok == false`).
     fn add_temporary_table_to_txn(
         &self,
-        _table_id: i64,
+        _table: &tidb_model::TableInfo,
     ) -> Option<temporary_table::TemporaryTableHandler> {
         None
+    }
+
+    /// Go `SessionVars.GetTemporaryTable`: the session transaction's entry for
+    /// a temporary table; `None` for a context with no session transaction.
+    fn get_temporary_table(
+        &self,
+        _table: &tidb_model::TableInfo,
+    ) -> Option<std::sync::Arc<temporary_table::TempTable>> {
+        None
+    }
+
+    /// Go `MutateContext.AlternativeAllocators`: a GLOBAL temporary table
+    /// allocates from its transaction's independent allocator; any other
+    /// table (and a context outside a transaction) from its own.
+    fn alternative_allocators(&self, table: &tidb_model::TableInfo) -> Option<tidb_autoid::AutoIdAllocator> {
+        if table.temp_table_type != tidb_model::TempTableType::GLOBAL {
+            return None;
+        }
+        self.get_temporary_table(table)?.get_auto_id_allocator().cloned()
     }
 
     /// Go `GetCachedTableSupport().AddCachedTableHandleToTxn`: the

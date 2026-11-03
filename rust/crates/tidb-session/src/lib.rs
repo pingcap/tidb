@@ -477,20 +477,6 @@ pub struct Session {
     hypo_indexes: Arc<tidb_variable::hypo_index::HypoIndexes>,
     /// Go `SessionVars.HypoTiFlashReplicas`: session state, never schema.
     hypo_tiflash_replicas: Arc<tidb_variable::hypo_index::HypoTiFlashReplicas>,
-    /// Go `SessionVars.TxnCtx.TemporaryTables`: the rows this session has
-    /// written to GLOBAL temporary tables, by physical table id.
-    ///
-    /// A global temporary table's SCHEMA is shared -- it is created by a real
-    /// DDL job and every session can name it -- while its ROWS belong to one
-    /// transaction of one session. Go gets that from two places at once: the
-    /// snapshot interceptor answers an EMPTY iterator for a global temporary
-    /// table, so nothing outside the current transaction's own buffer is
-    /// readable, and `temporaryTableKVFilter` discards every temporary-table
-    /// key before two-phase commit, so nothing is ever written down. This map
-    /// is both halves: it is swapped into the shared table object for the
-    /// statement's duration and CLEARED at each transaction end, which is
-    /// what `ON COMMIT DELETE ROWS` means here.
-    global_temporary_data: std::collections::HashMap<i64, tidb_table::tables::TemporaryTableTxnData>,
     /// The session's system and user variables.
     vars: SessionVars,
     /// Go `StmtCtx.StmtHints`: the canonical statement-hint parse result for
@@ -899,7 +885,6 @@ impl Session {
             info_schema: None,
             hypo_indexes: Arc::default(),
             hypo_tiflash_replicas: Arc::default(),
-            global_temporary_data: std::collections::HashMap::new(),
             // Go `createSession`: `s.sessionVars.GlobalVarsAccessor = s`,
             // the node's accessor over its domain; a factory attaches its
             // shared one (`attach_globals`).

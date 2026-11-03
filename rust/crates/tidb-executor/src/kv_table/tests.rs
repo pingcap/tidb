@@ -36,6 +36,7 @@ fn auto_id_owner_separates_hidden_handles_from_single_point_values() {
                 &[Datum::Int(expected as i64), Datum::Null],
                 &SessionTimeZone::utc(),
                 0,
+                None,
             )
             .unwrap();
         assert_eq!(handle, TableHandle::Int(expected as i64));
@@ -63,7 +64,7 @@ fn auto_id_owner_show_lists_both_separate_counters() {
     let mut table = test_table();
     table.set_auto_increment_offset(0);
     table.init_auto_id_cache(1);
-    let rows = table.next_global_row_ids().unwrap();
+    let rows = table.next_global_row_ids(None).unwrap();
     assert_eq!(
         rows.iter()
             .map(|(name, _, kind)| (name.as_str(), *kind))

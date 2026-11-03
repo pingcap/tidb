@@ -183,15 +183,16 @@ CARGO_INCREMENTAL=0`.
   `TableCommon::{cleanup_index, drop_index, index_entry_records_for_check,
   index_entries_for_check}`. Catalog callers lend the table's own store
   through `with_own_store` until Milestone 4.
-- [ ] Milestone 4a: temporary tables through the transaction (design above).
+- [x] Milestone 4a: temporary tables through the transaction (design above).
   - [x] (2026-11-02, eea56309e09) Go `TemporaryTableData` ported to
     `tidb_variable::temporary_table_data`; Go
     `TemporaryTableSnapshotInterceptor` ported to
     `tidb_temptable::interceptor` as a `ClusterSnapshot` wrapper, with Go's
     `interceptor_test.go` cases (a limited scan is drained batch by batch
     and must equal the unlimited one).
-  - [ ] Session: hold `TemporaryTableData`; wrap the transaction snapshot in
-    the interceptor when the infoschema has temporary tables.
+  - [x] Session: hold `TemporaryTableData`; wrap the transaction snapshot in
+    the interceptor when the infoschema has temporary tables
+    (`Session::session_snapshot_interceptor` in `bind_snapshot`).
     The choke point is `tidb_session::statement_lifecycle::bind_snapshot`
     (every statement snapshot is bound there; Go installs the interceptor
     at the same moment, `sessiontxn/isolation/base.go:251`). Installing it
@@ -221,7 +222,8 @@ CARGO_INCREMENTAL=0`.
       during a routed statement) and on the session route.
     - Autocommit writes build their transaction options directly
       (`statement_lifecycle.rs`), so the filter's ids are added there too.
-  - [ ] The write switch, which must land as one change:
+  - [x] The write switch (landed with the item above), which had to land
+    as one change:
     1. `Session` holds its transaction store (`ClusterTableStorage` clone,
        set where `open_storage_session` builds it) and the live
        `TemporaryTableIds`; `TxnManager::statement_transaction_options`
@@ -256,8 +258,19 @@ CARGO_INCREMENTAL=0`.
        per-transaction allocators) and gains `size` and `modified`; Go checks
        on AddRecord, UpdateRecord and RemoveRecord, Rust today only on
        insert. The commit copy (item 5) walks only MODIFIED local tables.
-  - [ ] Delete `TemporaryTableOverlay`, `TemporaryTableTxnData`,
-    `swap_temporary_txn_data`.
+  - [x] (2026-11-03) `TemporaryTableTxnData` and `swap_temporary_txn_data`
+    are gone: Go `tableutil.TempTable` (`tidb_tblctx::temporary_table::
+    TempTable`) carries the transaction's allocator (`TempTableFromMeta`),
+    `MutateContext::alternative_allocators` is Go `AlternativeAllocators`,
+    and the table reads its allocators through the context
+    (`auto_id_allocator_in` / `row_id_allocator_in`, Go `Allocators(ctx)`)
+    instead of a per-statement swap into the shared table object. What is
+    left of `TemporaryTableOverlay` is Go's
+    `AttachLocalTemporaryTableInfoSchema` (LOCAL tables only) and the
+    temporary-id publication the interceptor reads. Found on the way: a
+    LOCAL TRUNCATE kept the old `TableInfo.ID` under a new table id; it now
+    clones the `TableInfo` under the new id with Go's in-memory allocator
+    (`newTemporaryTableFromTableInfo`).
 - [x] Milestone 4: the `store` field is gone (2026-11-02, 00fd5c8dcd3).
   - [x] (a) (2026-11-02, 6c9320a2ade) `StmtContext::txn_store` is Go
     `sctx.Txn()`: `Session::transaction_store` answers the stale read's
@@ -278,7 +291,7 @@ CARGO_INCREMENTAL=0`.
     temporary allocator swap, local-temporary TRUNCATE, and internal
     `tables.rs` helpers. Tests: about 338 (insert_row 104, store 104,
     with_own_store 82).
-  - [ ] (b, done above) about 20 executor/session library sites (admin check/recover/
+  - [x] (b, done above) about 20 executor/session library sites (admin check/recover/
     cleanup, foreign keys, TABLESAMPLE, the legacy `get_row_by_handle`,
     the prepared point get, physical-builder leaves, DML prefetch, ANALYZE,
     account and privilege tables) take the statement's store; several have
