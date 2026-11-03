@@ -17,7 +17,7 @@ independent prerequisite packages can proceed before a parent is complete.
 | --- | --- | --- | ---: |
 | B01 | Native PD and shared transport | P03, P06, T02, M04 | 4 |
 | B02 | Shared SQL session, planner and table execution | A01, E02, E03, T01, K03, S03, S04 | 7 |
-| B03 | Schema, identity and timestamp protection | O02, O03, O09, I04, K02 | 5 |
+| B03 | Schema, identity and timestamp protection | O02, O03, O09, I04, K02, Y01 | 6 |
 | B04 | Durable DDL and placement recovery | D01, D02, D03, D05, D08, D09, D10, D11, F01, F02, O14 | 11 |
 | B05 | Account security, wire bytes and administration | A02, A03, N01, N03, N05 | 5 |
 | B06 | Typed expression and optimizer execution | Q01, X01, E04 | 3 |
@@ -64,7 +64,7 @@ Integration dependencies: B03.
 
 Source owners: pkg/domain, domain/infosync, infoschema and issyncer; pkg/session, table/tables, store/gcworker.
 
-Completion: Versioned schema/upgrade, cluster identity/leases, cached-table leases and all active timestamp producers/reporters. Reporting precedes GC activation; GC also requires B04 durable delete-range work. Safe submilestones may proceed before the final cyclic integration gate.
+Completion: Versioned schema/upgrade, cluster identity/leases, cached-table leases and all active timestamp producers/reporters. Y01: every mysql.* reader on a session and the startup order of Go's bootstrapSessionImpl, which also retires the bootstrap's raw rows (O02). Reporting precedes GC activation; GC also requires B04 durable delete-range work. Safe submilestones may proceed before the final cyclic integration gate.
 
 Integration dependencies: B01, B04.
 

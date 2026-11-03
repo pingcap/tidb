@@ -8,11 +8,11 @@
   },
   "scope": "Known source-confirmed structural findings, including missing production owners. Not exhaustive semantic acceptance or a defect-free claim. Existing runtime reproductions are historical unless the current review receipt explicitly reruns them.",
   "counts": {
-    "tracked": 86,
+    "tracked": 87,
     "repaired": 32,
-    "unresolved": 54,
-    "open": 23,
-    "partial": 31
+    "unresolved": 55,
+    "open": 21,
+    "partial": 34
   },
   "findings": [
     {
@@ -125,10 +125,10 @@
     },
     {
       "id": "D03",
-      "status": "open",
+      "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "The scheduler runs each supported job to completion serially; it skips unsupported persisted jobs. It has no equivalent of the complete running-job/conflict/reorg-worker lifecycle. This limits independent DDL and mixed Go/Rust owner recovery.",
-      "rust_evidence": "`rust/crates/tidb-server/src/cluster_session_node/ddl.rs:212`",
+      "finding": "**P2; partially repaired (register refreshed 2026-11-04):** the owner admits jobs through Go's `runningJobs` (`ddl_running_jobs.rs`) and runs them on worker pools, so a job waiting on MDL no longer holds up other tables' DDL; the embedded node waits on MDL through `MemSyncer`. Open: jobs without a ported action still skip, and the reorg-worker structure of Go's backfill (a single sequential batch loop here) differs.",
+      "rust_evidence": "`rust/crates/tidb-ddl/src/ddl_running_jobs.rs`, `rust/crates/tidb-ddl/src/worker.rs`",
       "go_owner": "`pkg/ddl/job_scheduler.go`: job admission, running jobs, worker pools and dependency checks must own dispatch. Do not merely add more cases to the current loop.",
       "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. run_loop still iterates jobs serially and calls run_persisted_ddl_job to completion, skipping unsupported action types. Worker error continuation did not introduce worker pools. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
     },
@@ -377,10 +377,10 @@
     },
     {
       "id": "O03",
-      "status": "open",
+      "status": "partial",
       "group": "Domain and process services",
-      "finding": "A native GC client and metric families exist, but the Rust server does not start TiDB's store GC worker. Safe-point reads and region-cache eviction are not cluster GC leadership, scheduling and delete-range execution.",
-      "rust_evidence": "`rust/crates/tidb-server/src/cluster_session_node/boot.rs`, `rust/crates/tidb-txnkv/src/kv_api.rs:587` (trait declaration), `rust/crates/tidb-txnkv/src/client_go_metrics.rs`",
+      "finding": "**P2; partially repaired (2026-10-19, register refreshed 2026-11-04):** `tidb-gcworker` ports every function of Go `gc_worker.go` and its test file; the server starts it (`tidb-server/src/cluster_boot.rs`), and on a TiUP playground the node took the GC leader lease and wrote Go's rows in Go's formats (see `rust/docs/gcworker-execplan.md`). Open: the failpoint arms of `TestDoGCForOneRegion` (client-go `tikvStoreSendReqResult`).",
+      "rust_evidence": "`rust/crates/tidb-gcworker/src/gc_worker.rs`, `rust/crates/tidb-gcworker/src/node.rs`, `rust/crates/tidb-server/src/cluster_boot.rs`",
       "go_owner": "`pkg/store/driver/tikv_driver.go::StartGCWorker`, `pkg/store/gcworker`, session startup. A Rust-only deployment lacks this server responsibility; a Go peer may mask it.",
       "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Server startup still has no store GC worker construction. Native GC methods and metrics are present but not that runtime owner. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
     },
@@ -788,6 +788,15 @@
       "rust_evidence": "`rust/crates/tidb-br/src/restore_utils.rs`; `restore_utils/merge.rs`; `restore_utils/rewrite_rule.rs`; generated exports in `tidb-proto`",
       "go_owner": "Current master `93a01d31f6`, complete eight-artifact `br/pkg/restore/utils` review and original Go race tests: [receipt](restore-utils-protocol-repair.md). All original Rust cases and five merge workloads pass. P04's protocol consumer boundary is repaired; live BRIE (E07), diagnostics and external package acceptance are not implied.",
       "review_basis": "Review from integration d0f1c37115 against unchanged Go master 93a01d31f6 and native 19a56cc. Contract repaired: both handwritten restore protocol types are removed. Range merging retains shared complete generated files; lookup borrows generated rules and explicit cloning deep-copies them. SHA-256, versions, table metadata, size and cipher IV survive by identity. See mdl-mode-review.md and mdl-review-recheck/source-continuity.json."
+    },
+    {
+      "id": "Y01",
+      "status": "partial",
+      "group": "System-table access",
+      "finding": "**P1; partially repaired (2026-11-04):** every statement-time write of a mysql.* table now runs Go's SQL on a session (statistics saves/GC/history/delta/usage/subscriber, lock stats, analyze jobs and options, predicate columns, advisory locks, SET GLOBAL, accounts, DDL job/history/MDL/notifier/reorg/delete-range rows), and Go's session transaction API no longer runs as BEGIN/COMMIT statements. Open: (1) readers that scan table records where Go runs SELECTs -- the statistics cache refresh, sync/async load and init stats (storage/read.rs now holds read.go's statements), the DDL scheduler/systable manager/history reads, MDL info, and the startup loads of sysvars, privileges and bindings; (2) the startup order -- Go builds the domain and its session pools before loading those caches (bootstrapSessionImpl); (3) the bootstrap stages raw rows and submits DDL without a session, so the DDL owner keeps raw fallbacks for runs without step sessions; (4) the DDL packages hold a tidb-ddl-build pool trait above tidb-ddl-systable instead of Go's pkg/ddl/session.Pool (tidb-ddl-session, unused).",
+      "rust_evidence": "`rust/docs/system-table-sql-execplan.md` (inventory and progress), `rust/crates/tidb-stats-handle-storage/src/cluster_stats_load.rs`, `rust/crates/tidb-ddl-systable/src/lib.rs`, `rust/crates/tidb-session/src/mysql_bootstrap.rs`, `rust/crates/tidb-session/src/domain/unistore_node.rs`, `rust/crates/tidb-server/src/cluster_stack.rs`",
+      "go_owner": "Each table's owning package runs its statements on a session from a pool: pkg/statistics/handle (util.CallWithSCtx on SPool), pkg/ddl (sess.Pool, systable.Manager, job scheduler), pkg/domain (rebuildSysVarCache, LoadPrivilegeLoop, bindinfo), pkg/session (bootstrapSessionImpl, doDDLWorks/doDMLWorks).",
+      "review_basis": "Source comparison per owner with gorun/goeval confirmation; each repaired owner has a regression test and mutation checks (commits cac402bc79d..6e0b6b4ab72)."
     }
   ],
   "review_receipt": "https://github.com/pingcap/tidb/blob/0743b4a0bb5f81a4ce9cc0b03d32301680b5ec95/rust/docs/parity/current-audit/mdl-mode-review.md",
