@@ -388,6 +388,27 @@ func TestAntiSemiJoinConstFalse(t *testing.T) {
 		join, _ := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalJoin)
 		require.Equal(t, ca.joinType, join.JoinType.String(), comment)
 	}
+
+	for _, keepJoinKey := range []bool{false, true} {
+		t.Run(fmt.Sprintf("keepJoinKey=%t", keepJoinKey), func(t *testing.T) {
+			s.sctx.GetSessionVars().AlwaysKeepJoinKey = keepJoinKey
+			stmt, err := s.p.ParseOneStmt("select a from t t1 where not exists (select a from t t2 where t1.a = t2.a and t1.a = 1)", "", "")
+			require.NoError(t, err)
+			nodeW := resolve.NewNodeW(stmt)
+			p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+			require.NoError(t, err)
+			p, err = logicalOptimize(ctx, rule.FlagDecorrelate|rule.FlagPredicatePushDown|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain, p.(base.LogicalPlan))
+			require.NoError(t, err)
+			join := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalJoin)
+			right := join.Children()[1].(*logicalop.DataSource)
+			require.Equal(t, "[eq(1, test.t.a)]", expression.StringifyExpressionsWithCtx(s.ctx.GetExprCtx().GetEvalCtx(), right.PushedDownConds))
+			if keepJoinKey {
+				require.Len(t, join.EqualConditions, 1)
+			} else {
+				require.Empty(t, join.EqualConditions)
+			}
+		})
+	}
 }
 
 func TestDeriveNotNullConds(t *testing.T) {
