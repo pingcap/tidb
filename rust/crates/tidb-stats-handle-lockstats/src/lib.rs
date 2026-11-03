@@ -13,10 +13,10 @@
 // limitations under the License.
 
 //! Go `pkg/statistics/handle/lockstats`: `LOCK STATS` / `UNLOCK STATS` over
-//! `mysql.stats_table_locked`, planned (`cluster_stats_lock`) and committed
-//! (`real_tikv_stats_lock`).
+//! `mysql.stats_table_locked` -- the request (`cluster_stats_lock`), Go's
+//! lock policy (`lock_stats`) and its statements on a statistics session
+//! (`session_stats_lock`).
 
 pub mod cluster_stats_lock;
-pub mod real_tikv_stats_lock;
 pub mod lock_stats;
-pub mod cluster_stats_lock_seam;
+pub mod session_stats_lock;

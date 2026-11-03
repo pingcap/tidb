@@ -26627,3 +26627,77 @@ fn a_job_waiting_on_metadata_lock_does_not_block_other_tables_ddl_as_go() {
         [["a"], ["b"], ["c"]]
     );
 }
+
+/// Go `statsLockImpl.LockTables` runs Go's statements in a transaction of a
+/// statistics session of its own (`util.CallWithSCtx(..., FlagWrapTxn)`):
+/// the user's transaction stays open and the lock row outlives its
+/// rollback. A second LOCK STATS reports Go's skipped-target warning.
+#[test]
+fn lock_stats_runs_in_its_own_session_transaction_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(200)).unwrap();
+    let mut probe = stack.factory.open_session(session_context(201)).unwrap();
+    rows(&mut session, "create table test.ls1 (a int)");
+    let table_id = displayed(rows(
+        &mut probe,
+        "select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'ls1'",
+    ))[0][0]
+        .clone();
+    rows(&mut session, "begin");
+    rows(&mut session, "lock stats test.ls1");
+    assert!(session.in_transaction());
+    assert!(rows(&mut session, "show warnings").is_empty());
+    rows(&mut session, "lock stats test.ls1");
+    assert_eq!(
+        displayed(rows(&mut session, "show warnings")),
+        [["Warning", "1105", "skip locking locked table: test.ls1"]]
+    );
+    rows(&mut session, "rollback");
+    assert_eq!(
+        displayed(rows(
+            &mut probe,
+            &format!("select count(*) from mysql.stats_table_locked where table_id = {table_id}"),
+        )),
+        [["1"]]
+    );
+    rows(&mut session, "unlock stats test.ls1");
+    assert_eq!(
+        displayed(rows(&mut probe, "select count(*) from mysql.stats_table_locked")),
+        [["0"]]
+    );
+}
+
+/// Go `LockExec`: every target's INSERT and SELECT privilege is checked
+/// before the handle's transaction; a refused LOCK STATS locks nothing.
+#[test]
+fn lock_stats_checks_privileges_before_its_transaction_as_go() {
+    let (stack, users) = cop_backed_stack();
+    let mut root = stack.factory.open_session(session_context(202)).unwrap();
+    rows(&mut root, "create table test.ls2 (a int)");
+    rows(&mut root, "create user 'ls_low'@'%' identified by 'abc'");
+    rows(&mut root, "grant create temporary tables on test.* to 'ls_low'@'%'");
+    let identity = users
+        .authenticate_native(
+            "ls_low",
+            "127.0.0.1",
+            &super::node_fixture::SALT,
+            &super::node_fixture::scramble(b"abc", &super::node_fixture::SALT),
+        )
+        .expect("ls_low logs in");
+    let mut low = stack
+        .factory
+        .open_session(super::node_fixture::session_context_with_identity(203, identity))
+        .unwrap();
+    let error = low
+        .node_conn()
+        .execute_write("lock stats test.ls2")
+        .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1142, "INSERT command denied to user 'ls_low'@'%' for table 'ls2'")
+    );
+    assert_eq!(
+        displayed(rows(&mut root, "select count(*) from mysql.stats_table_locked")),
+        [["0"]]
+    );
+}

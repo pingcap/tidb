@@ -32,7 +32,6 @@ use tidb_store_driver::real_tikv_read::ProductionReadProcessAuthority;
 use tidb_domain_core::cluster_account_seam::RealClusterAccountWriter;
 use tidb_executor::cluster_analyze_seam::RealClusterAnalyze;
 use tidb_domain_core::cluster_session::SkippedTable;
-use tidb_stats_handle_lockstats::cluster_stats_lock_seam::RealClusterStatsLock;
 use tidb_session::cluster_sysvar_writer::RealClusterSysvarWriter;
 use tidb_domain_core::cluster_sysvar_seam::SysvarPublicationFence;
 use tidb_domain_core::node_config::NodeConfig;
@@ -547,10 +546,6 @@ pub fn cluster_session_stack(
             CONTROL_PLANE_TIMEOUT,
             etcd.clone(),
             sysvar_publication_fence,
-        )),
-        Arc::new(RealClusterStatsLock::new(
-            Arc::new(authority.transaction_opener()),
-            COPROCESSOR_QUERY_TIMEOUT,
         )),
         catalog,
         users.accounts(),

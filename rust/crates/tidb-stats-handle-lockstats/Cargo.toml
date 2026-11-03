@@ -21,6 +21,9 @@ tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-model = { path = "../tidb-model" }
 tidb-syssession = { path = "../tidb-syssession" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 
 [lints]

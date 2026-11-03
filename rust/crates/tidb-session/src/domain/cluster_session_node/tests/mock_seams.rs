@@ -773,16 +773,3 @@ impl ClusterAnalyze for MockAnalyze {
     }
 }
 
-/// The mock node's successful persisted lockstats route. Policy and row
-/// encoding are covered in `tidb-stats` and `tidb-exec`; server tests use
-/// this seam to prove routing and statement-state behavior.
-pub(super) struct MockStatsLock;
-
-impl tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock for MockStatsLock {
-    fn execute(
-        &self,
-        _: &tidb_stats_handle_lockstats::cluster_stats_lock::StatsLockRequest,
-    ) -> Result<tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockReport, SqlQueryError> {
-        Ok(tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockReport::default())
-    }
-}

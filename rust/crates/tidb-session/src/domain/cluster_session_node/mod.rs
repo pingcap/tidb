@@ -192,7 +192,6 @@ use tidb_stats_handle_storage::cluster_load_stats::prepare_cluster_load_stats_pa
 use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
 use tidb_executor_lockstats::{prepare_cluster_stats_lock_parsed, ClusterStatsLockStatement};
 use tidb_executor::real_tikv_analyze::prepare_cluster_analyze_parsed;
-use tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockCommitError;
 use tidb_stats_handle_syncload::stats_watch::SharedStats;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_kv::cluster_storage::ClusterSnapshot;
@@ -1180,9 +1179,9 @@ impl<'s> ClusterServerSession<'s> {
                     Ok(None) => Err(SqlQueryError::unknown(
                         "this node could not lower the statistics lock statement",
                     )),
-                    Err(refusal) => Err(tidb_stats_handle_lockstats::real_tikv_stats_lock::cluster_stats_lock_error(
-                        ClusterStatsLockCommitError::Plan(refusal),
-                    )),
+                    Err(refusal) => Err(
+                        tidb_stats_handle_lockstats::cluster_stats_lock::cluster_stats_lock_error(refusal),
+                    ),
                 }
             }
             // Go `DDLExec.Next`: a statement the session's `DDLExec` answers

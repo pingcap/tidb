@@ -58,19 +58,6 @@ impl ClusterAnalyze for PanickingAnalyze {
     }
 }
 
-/// Checks the tables the executor resolved against the node's catalog,
-/// and reports Go's skipped-target warning.
-struct WarningStatsLock {
-    calls: AtomicUsize,
-    catalog: Arc<tidb_infoschema_issyncer::catalog_watch::InfoCache>,
-}
-
-impl WarningStatsLock {
-    fn on(node: &MockNode) -> Self {
-        Self { calls: AtomicUsize::new(0), catalog: Arc::clone(&node.catalog) }
-    }
-}
-
 #[test]
 fn failed_later_column_usage_batch_requeues_every_entry() {
     let sessions = tidb_stats_handle_usage::SessionStatsList::new();
@@ -154,99 +141,9 @@ fn usage_workers_stop_before_the_shutdown_delta_flush() {
     assert_eq!(*events.lock().unwrap(), ["stopped", "flush"]);
 }
 
-impl tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock for WarningStatsLock {
-    fn execute(
-        &self,
-        request: &tidb_stats_handle_lockstats::cluster_stats_lock::StatsLockRequest,
-    ) -> Result<
-        tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockReport,
-        tidb_store_driver_error::sql_query_error::SqlQueryError,
-    > {
-        let catalog = self.catalog.get_latest();
-        let (_, table) = catalog.table_info_by_name("app", "t").expect("app.t");
-        let table = table.read();
-        assert_eq!(
-            *request,
-            tidb_stats_handle_lockstats::cluster_stats_lock::StatsLockRequest::Tables {
-                lock: true,
-                tables: [(
-                    table.id,
-                    tidb_stats_handle_types::StatsLockTable {
-                        partition_info: None,
-                        full_name: "app.t".to_owned(),
-                    },
-                )]
-                .into(),
-            }
-        );
-        self.calls.fetch_add(1, Ordering::AcqRel);
-        Ok(tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockReport {
-            warning: "skip locking locked table: app.t".to_owned(),
-        })
-    }
-}
-
-#[test]
-fn stats_lock_uses_the_internal_cluster_route_without_ending_the_user_transaction() {
-    let node = MockNode::start();
-    let stats_lock = Arc::new(WarningStatsLock::on(&node));
-    let mut session = open_session_on_with_stats_lock(
-        &node,
-        Arc::clone(&stats_lock) as Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
-    );
-
-    session.node_conn().execute_write("BEGIN").expect("begin");
-    session
-        .node_conn()
-        .execute_write("LOCK STATS t")
-        .expect("cluster lockstats route");
-    assert_eq!(stats_lock.calls.load(Ordering::Acquire), 1);
-    assert!(session.in_transaction());
-    assert_eq!(
-        rows(&mut session, "SHOW WARNINGS"),
-        vec![vec![
-            tidb_datatype::Datum::new_string("Warning"),
-            tidb_datatype::Datum::UInt(1105),
-            tidb_datatype::Datum::new_string("skip locking locked table: app.t"),
-        ]]
-    );
-    session
-        .node_conn()
-        .execute_write("ROLLBACK")
-        .expect("rollback user txn");
-}
-
-#[test]
-fn stats_lock_checks_every_target_privilege_before_the_internal_transaction() {
-    let node = MockNode::start();
-    node.accounts.live.create_user("low", "%", "");
-    node.accounts
-        .live
-        .grant_db("low", "%", "app", tidb_mysql::CreateTMPTablePriv.mask());
-    let stats_lock = Arc::new(WarningStatsLock::on(&node));
-    let mut session = open_session_as_with_stats_lock(
-        &node,
-        "low",
-        Arc::clone(&stats_lock) as Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
-    );
-
-    let error = session
-        .node_conn()
-        .execute_write("LOCK STATS t")
-        .expect_err("INSERT is checked before SELECT and before the stats transaction");
-    assert_eq!(error.code, 1142);
-    assert_eq!(error.state, *b"42000");
-    assert_eq!(
-        error.message,
-        "INSERT command denied to user 'low'@'%' for table 't'"
-    );
-    assert_eq!(stats_lock.calls.load(Ordering::Acquire), 0);
-}
-
 #[test]
 fn stats_lock_planning_keeps_go_error_identities() {
     use tidb_stats_handle_lockstats::cluster_stats_lock::ClusterStatsLockError;
-    use tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockCommitError;
 
     let cases = [
         (
@@ -278,7 +175,7 @@ fn stats_lock_planning_keeps_go_error_identities() {
     ];
     for (error, code, state, message) in cases {
         let error =
-            tidb_stats_handle_lockstats::real_tikv_stats_lock::cluster_stats_lock_error(ClusterStatsLockCommitError::Plan(error));
+            tidb_stats_handle_lockstats::cluster_stats_lock::cluster_stats_lock_error(error);
         assert_eq!((error.code, error.state), (code, state));
         assert_eq!(error.message, message);
     }
@@ -458,25 +355,12 @@ fn analyze_temporary_table_uses_the_session_storage_overlay() {
 /// Opens a connection authenticated as `user`, which is how a test says
 /// "somebody other than root".
 fn open_session_as(node: &MockNode, user: &str) -> Session {
-    open_session_as_with_stats_lock(
-        node,
-        user,
-        Arc::new(MockStatsLock) as Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
-    )
-}
-
-fn open_session_as_with_stats_lock(
-    node: &MockNode,
-    user: &str,
-    stats_lock: Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
-) -> Session {
     let cluster = Arc::clone(&node.cluster);
     let factory = Domain::new(
         Arc::new(MockTransactions(cluster)),
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         Arc::clone(&node.sysvars) as Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
-        stats_lock,
         Arc::clone(&node.catalog),
         node.accounts.live.clone(),
         node.sysvars.live.clone(),

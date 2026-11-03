@@ -34,6 +34,15 @@ const NO_ROWS: WriteOutcome = WriteOutcome {
 };
 
 /// A cluster seam's error as the session's.
+/// A statistics session's error as the statement's own: Go returns the
+/// statement's error unchanged.
+fn stats_session_sql_error(error: tidb_sqlexec::SqlExecError) -> SqlQueryError {
+    match error.downcast::<super::sessions::StatsSessionStatementError>() {
+        Ok(error) => error.0,
+        Err(error) => SqlQueryError::unknown(error.to_string()),
+    }
+}
+
 fn into_driver_error(error: SqlQueryError) -> tidb_driver_error::DriverError {
     tidb_driver_error::DriverError::Mysql(
         tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
@@ -396,7 +405,10 @@ pub(super) fn stats_statement_service(
     let stats = Arc::clone(&domain.stats);
     let global_vars = domain.global_vars.clone();
     let analyze = super::node_services(domain).analyze();
-    let stats_lock = Arc::clone(&domain.stats_lock);
+    let session_pool = domain
+        .binding_session_factory
+        .upgrade()
+        .map(|domain| domain.advanced_sys_session_pool());
     let row_ids = Arc::clone(&domain.auto_ids);
     Arc::new(move |session: &crate::Session| {
         Box::new(ClusterStatsStatementService {
@@ -407,7 +419,7 @@ pub(super) fn stats_statement_service(
             stats: Arc::clone(&stats),
             global_vars: global_vars.clone(),
             analyze: Arc::clone(&analyze),
-            stats_lock: Arc::clone(&stats_lock),
+            session_pool: session_pool.clone(),
             row_ids: Arc::clone(&row_ids),
         }) as Box<dyn tidb_executor::stats_exec::StatsStatementService>
     })
@@ -535,7 +547,9 @@ struct ClusterStatsStatementService {
     stats: Arc<super::SharedStats>,
     global_vars: crate::GlobalSysvars,
     analyze: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze>,
-    stats_lock: Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
+    /// Go `statsHandle.SPool()`: the sessions `statsLockImpl` runs its
+    /// statements on.
+    session_pool: Option<Arc<tidb_domain_core::sys_session::DomainSysSessionPool>>,
     row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 }
 
@@ -569,15 +583,17 @@ impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementS
         // schema (`do.InfoSchema()`) before the handle's transaction.
         let request = statement.resolve(&self.catalog.get_latest()).map_err(|error| {
             into_driver_error(
-                tidb_stats_handle_lockstats::real_tikv_stats_lock::cluster_stats_lock_error(
-                    tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockCommitError::Plan(error),
-                ),
+                tidb_stats_handle_lockstats::cluster_stats_lock::cluster_stats_lock_error(error),
             )
         })?;
-        self.stats_lock
-            .execute(&request)
-            .map(|report| report.warning)
-            .map_err(into_driver_error)
+        let session_pool = self.session_pool.as_ref().ok_or_else(|| {
+            tidb_driver_error::DriverError::unsupported("the node's domain is closed")
+        })?;
+        tidb_stats_handle_lockstats::session_stats_lock::execute_stats_lock(
+            session_pool.as_ref(),
+            &request,
+        )
+        .map_err(|error| into_driver_error(stats_session_sql_error(error)))
     }
 
     fn load_stats(

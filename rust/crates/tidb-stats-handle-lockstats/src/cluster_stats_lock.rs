@@ -14,28 +14,12 @@
 
 //! Cluster storage planning for Go `pkg/statistics/handle/lockstats`.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-use tidb_datatype::{Datum, Time};
-use tidb_model::table_info::TableInfo;
 use crate::lock_stats::StatsLockTransaction;
 use tidb_stats_handle_types::StatsLockTable;
-use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_infoschema::cluster_catalog::MetaSnapshot;
-use tidb_infoschema::SessionExtendedInfoSchema;
-use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
-use tidb_syssession::system_row_write::{defaults_row, delete_clustered_row, store_clustered_row, RowValues};
-use tidb_table::origin_default::RowEncodeError;
-use tidb_hack::GoToLower;
-
-const LOCK_TABLE: &str = "stats_table_locked";
-const META_TABLE: &str = "stats_meta";
-
-
-
-
-/// Why a cluster lock operation could not be planned.
+/// Why a `LOCK STATS` / `UNLOCK STATS` statement could not be planned.
 #[derive(Debug)]
 pub enum ClusterStatsLockError {
     /// The error value Go's `LOCK STATS` / `UNLOCK STATS` planning raises as
@@ -44,10 +28,6 @@ pub enum ClusterStatsLockError {
     Mysql(tidb_terror::MysqlError),
     /// Missing table or invalid target.
     Invalid(String),
-    /// System-row read failure.
-    Read(SystemTableError),
-    /// System-row encoding failure.
-    Encode(RowEncodeError),
 }
 
 impl std::fmt::Display for ClusterStatsLockError {
@@ -55,8 +35,6 @@ impl std::fmt::Display for ClusterStatsLockError {
         match self {
             Self::Mysql(error) => formatter.write_str(&error.message),
             Self::Invalid(detail) => formatter.write_str(detail),
-            Self::Read(error) => error.fmt(formatter),
-            Self::Encode(error) => error.fmt(formatter),
         }
     }
 }
@@ -70,15 +48,18 @@ impl From<tidb_terror::TerrorError> for ClusterStatsLockError {
     }
 }
 
-impl From<SystemTableError> for ClusterStatsLockError {
-    fn from(error: SystemTableError) -> Self {
-        Self::Read(error)
-    }
-}
-
-impl From<RowEncodeError> for ClusterStatsLockError {
-    fn from(error: RowEncodeError) -> Self {
-        Self::Encode(error)
+/// The session-visible error of a refused `LOCK STATS` / `UNLOCK STATS`.
+#[must_use]
+pub fn cluster_stats_lock_error(
+    error: ClusterStatsLockError,
+) -> tidb_store_driver_error::sql_query_error::SqlQueryError {
+    match error {
+        ClusterStatsLockError::Mysql(error) => {
+            tidb_store_driver_error::sql_query_error::SqlQueryError::from(error)
+        }
+        ClusterStatsLockError::Invalid(detail) => {
+            tidb_store_driver_error::sql_query_error::SqlQueryError::unknown(detail)
+        }
     }
 }
 
@@ -114,351 +95,31 @@ pub(crate) fn apply_stats_lock_request<T: StatsLockTransaction>(
     request: &StatsLockRequest,
 ) -> Result<String, T::Error> {
     match request {
-        StatsLockRequest::Partitions { lock: true, table_id, displayed, partitions } => {
+        StatsLockRequest::Partitions {
+            lock: true,
+            table_id,
+            displayed,
+            partitions,
+        } => {
             crate::lock_stats::add_locked_partitions(transaction, *table_id, displayed, partitions)
         }
-        StatsLockRequest::Partitions { lock: false, table_id, displayed, partitions } => {
-            crate::lock_stats::remove_locked_partitions(transaction, *table_id, displayed, partitions)
-        }
+        StatsLockRequest::Partitions {
+            lock: false,
+            table_id,
+            displayed,
+            partitions,
+        } => crate::lock_stats::remove_locked_partitions(
+            transaction,
+            *table_id,
+            displayed,
+            partitions,
+        ),
         StatsLockRequest::Tables { lock: true, tables } => {
             crate::lock_stats::add_locked_tables(transaction, tables)
         }
-        StatsLockRequest::Tables { lock: false, tables } => {
-            crate::lock_stats::remove_locked_tables(transaction, tables)
-        }
-    }
-}
-
-/// Plans Go's `SELECT table_id FROM mysql.stats_table_locked` statement.
-pub(crate) fn query_cluster_locked_tables<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-) -> Result<BTreeSet<i64>, ClusterStatsLockError> {
-    Ok(read_rows(snapshot, &system_table(catalog, LOCK_TABLE)?.read())?
-        .into_keys()
-        .collect())
-}
-
-/// Plans Go's one `INSERT ... ON DUPLICATE KEY UPDATE` lock statement.
-pub(crate) fn plan_cluster_insert_lock<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    table_id: i64,
-    now: Time,
-) -> Result<Vec<BufferMutation>, ClusterStatsLockError> {
-    let table = system_table(catalog, LOCK_TABLE)?;
-    let table = &*table.read();
-    let rows = read_rows(snapshot, table)?;
-    if let Some(row) = rows.get(&table_id) {
-        // The duplicate arm still writes `table_id = table_id` and therefore
-        // participates in Go's pessimistic statement locking.
-        return Ok(store_clustered_row(table, Some(row), row)?);
-    }
-    let mut row = defaults_row(table, now)?;
-    set(table, &mut row, "table_id", Datum::Int(table_id))?;
-    Ok(store_clustered_row(table, None, &row)?)
-}
-
-/// Plans Go's one stats-meta version update statement.
-pub(crate) fn plan_cluster_update_meta_version<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    table_id: i64,
-    start_ts: u64,
-) -> Result<Vec<BufferMutation>, ClusterStatsLockError> {
-    let table = system_table(catalog, META_TABLE)?;
-    let table = &*table.read();
-    let rows = read_rows(snapshot, table)?;
-    let Some(initial) = rows.get(&table_id) else {
-        return Ok(Vec::new());
-    };
-    let mut updated = initial.clone();
-    set(table, &mut updated, "version", Datum::UInt(start_ts))?;
-    Ok(store_clustered_row(table, Some(initial), &updated)?)
-}
-
-/// Executes Go's one lock-delta select against the transaction snapshot.
-pub(crate) fn query_cluster_lock_delta<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    table_id: i64,
-) -> Result<(i64, i64), ClusterStatsLockError> {
-    let table = system_table(catalog, LOCK_TABLE)?;
-    let table = &*table.read();
-    let rows = read_rows(snapshot, table)?;
-    let Some(row) = rows.get(&table_id) else {
-        return Ok((0, 0));
-    };
-    Ok((
-        row_i64(table, row, "count")?,
-        row_i64(table, row, "modify_count")?,
-    ))
-}
-
-/// Plans Go's one delta merge into `mysql.stats_meta`.
-pub(crate) fn plan_cluster_update_meta_delta<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    table_id: i64,
-    count_delta: i64,
-    modify_count_delta: i64,
-    start_ts: u64,
-) -> Result<Vec<BufferMutation>, ClusterStatsLockError> {
-    let table = system_table(catalog, META_TABLE)?;
-    let table = &*table.read();
-    let rows = read_rows(snapshot, table)?;
-    let Some(initial) = rows.get(&table_id) else {
-        return Ok(Vec::new());
-    };
-    let mut updated = initial.clone();
-    let count = i128::from(row_u64(table, initial, "count")?) + i128::from(count_delta);
-    let count = u64::try_from(count.max(0))
-        .map_err(|_| ClusterStatsLockError::Invalid("stats_meta.count overflow".to_owned()))?;
-    let modify_count = row_i64(table, initial, "modify_count")?
-        .checked_add(modify_count_delta)
-        .ok_or_else(|| {
-            ClusterStatsLockError::Invalid("stats_meta.modify_count overflow".to_owned())
-        })?;
-    set(table, &mut updated, "version", Datum::UInt(start_ts))?;
-    set(table, &mut updated, "count", Datum::UInt(count))?;
-    set(
-        table,
-        &mut updated,
-        "modify_count",
-        Datum::Int(modify_count),
-    )?;
-    Ok(store_clustered_row(table, Some(initial), &updated)?)
-}
-
-/// Plans Go's one lock-row delete statement.
-pub(crate) fn plan_cluster_delete_lock<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    table_id: i64,
-) -> Result<Vec<BufferMutation>, ClusterStatsLockError> {
-    let table = system_table(catalog, LOCK_TABLE)?;
-    let table = &*table.read();
-    let rows = read_rows(snapshot, table)?;
-    rows.get(&table_id)
-        .map_or(Ok(Vec::new()), |row| Ok(delete_clustered_row(table, row)?))
-}
-
-fn read_rows<S: MetaSnapshot>(
-    snapshot: &mut S,
-    table: &TableInfo,
-) -> Result<BTreeMap<i64, RowValues>, ClusterStatsLockError> {
-    let view = full_view(table);
-    let table_id_column = column_id(table, "table_id")?;
-    let mut rows = BTreeMap::new();
-    for (key, value) in scan_system_table(snapshot, &view)? {
-        let values = SystemRow::parse(&view, &key, &value)?.into_values();
-        let table_id = datum_i64(values.get(&table_id_column), "table_id")?;
-        rows.insert(table_id, values);
-    }
-    Ok(rows)
-}
-
-fn system_table<'a>(
-    catalog: &'a SessionExtendedInfoSchema,
-    name: &str,
-) -> Result<tidb_model::GoShared<TableInfo>, ClusterStatsLockError> {
-    user_table(catalog, "mysql", name)
-}
-
-fn user_table<'a>(
-    catalog: &'a SessionExtendedInfoSchema,
-    schema: &str,
-    table: &str,
-) -> Result<tidb_model::GoShared<TableInfo>, ClusterStatsLockError> {
-    catalog
-        .stored_schemas()
-        .iter()
-        .find(|database| database.read().name.lowercase() == schema.go_to_lower())
-        .and_then(|database| {
-            database
-                .read().deprecated_tables
-                .iter_deref()
-                .find(|stored| stored.read().name.lowercase() == table.go_to_lower())
-        })
-        .ok_or_else(|| {
-            ClusterStatsLockError::from(
-                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                    .generate_with_stack_by_args(&[schema.into(), table.into()]),
-            )
-        })
-}
-
-fn full_view(table: &TableInfo) -> SystemTableView {
-    let names = table
-        .cols()
-        .iter_deref()
-        .map(|column| column.read().name.lowercase().to_owned())
-        .collect::<Vec<_>>();
-    let borrowed = names.iter().map(String::as_str).collect::<Vec<_>>();
-    SystemTableView::project(table.name.original(), table, &borrowed)
-}
-
-fn column_id(table: &TableInfo, name: &str) -> Result<i64, ClusterStatsLockError> {
-    table
-        .find_public_column_by_name(name)
-        .map(|column| column.read().id)
-        .ok_or_else(|| {
-            ClusterStatsLockError::Invalid(format!(
-                "{}.{} has no column `{name}`",
-                table.name.original(),
-                table.id
-            ))
-        })
-}
-
-fn set(
-    table: &TableInfo,
-    row: &mut RowValues,
-    column: &str,
-    value: Datum,
-) -> Result<(), ClusterStatsLockError> {
-    row.insert(column_id(table, column)?, value);
-    Ok(())
-}
-
-fn row_i64(table: &TableInfo, row: &RowValues, column: &str) -> Result<i64, ClusterStatsLockError> {
-    datum_i64(row.get(&column_id(table, column)?), column)
-}
-
-fn row_u64(table: &TableInfo, row: &RowValues, column: &str) -> Result<u64, ClusterStatsLockError> {
-    match row.get(&column_id(table, column)?) {
-        Some(Datum::UInt(value)) => Ok(*value),
-        Some(Datum::Int(value)) => u64::try_from(*value)
-            .map_err(|_| ClusterStatsLockError::Invalid(format!("invalid {column}: {value}"))),
-        value => Err(ClusterStatsLockError::Invalid(format!(
-            "invalid {column}: {value:?}"
-        ))),
-    }
-}
-
-fn datum_i64(value: Option<&Datum>, column: &str) -> Result<i64, ClusterStatsLockError> {
-    match value {
-        Some(Datum::Int(value)) => Ok(*value),
-        Some(Datum::UInt(value)) => i64::try_from(*value)
-            .map_err(|_| ClusterStatsLockError::Invalid(format!("invalid {column}: {value}"))),
-        value => Err(ClusterStatsLockError::Invalid(format!(
-            "invalid {column}: {value:?}"
-        ))),
-    }
-}
-
-#[cfg(test)]
-mod statement_tests {
-    use super::*;
-    use tidb_infoschema::cluster_catalog::{
-        load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot,
-    };
-    use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
-    use tidb_stats_handle_storage::cluster_stats_write::plan_loaded_stats_meta_write;
-    use tidb_session::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment};
-    use std::collections::BTreeMap;
-    use tidb_datatype::TimeType;
-    use tidb_txnkv::transaction::BufferMutationOp;
-
-    #[derive(Default)]
-    struct MetaStore {
-        pairs: BTreeMap<Vec<u8>, Vec<u8>>,
-    }
-
-    impl MetaSnapshot for MetaStore {
-        fn get(&mut self, raw_key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
-            Ok(self.pairs.get(raw_key).cloned())
-        }
-
-        fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
-            Ok(self
-                .pairs
-                .iter()
-                .filter(|(key, _)| key.starts_with(prefix))
-                .map(|(key, value)| (key.clone(), value.clone()))
-                .collect())
-        }
-    }
-
-    impl MetaStore {
-        fn apply(&mut self, mutations: &[BufferMutation]) {
-            for mutation in mutations {
-                match mutation.kind() {
-                    BufferMutationOp::Set => {
-                        self.pairs
-                            .insert(mutation.key().to_vec(), mutation.value().to_vec());
-                    }
-                    BufferMutationOp::Delete => {
-                        self.pairs.remove(mutation.key());
-                    }
-                    BufferMutationOp::Lock => {}
-                }
-            }
-        }
-    }
-
-    fn timestamp() -> Time {
-        Time::from_date_checked(2026, 8, 31, 12, 0, 0, 0, TimeType::Timestamp, 0).unwrap()
-    }
-
-    fn bootstrapped() -> MetaStore {
-        let mut store = MetaStore::default();
-        let write = plan_mysql_bootstrap(
-            &mut store,
-            468_772_000_000_000_000,
-            &BootstrapEnvironment {
-                system_tz: "UTC".to_owned(),
-                new_collation_enabled: true,
-                cluster_id: 7,
-                current_timestamp: timestamp(),
-                ddl_table_version: 0,
-            },
-        )
-        .unwrap();
-        store.apply(&write.mutations);
-        store
-    }
-
-    #[test]
-    fn lock_insert_and_meta_version_are_separate_go_statements() {
-        const TABLE_ID: i64 = 42;
-        let mut store = bootstrapped();
-        let catalog = load_info_schema(&mut store).unwrap();
-        let meta = plan_loaded_stats_meta_write(
-            &mut store,
-            &catalog,
-            TABLE_ID,
-            5,
-            2,
-            10,
-            timestamp(),
-            None,
-        )
-        .unwrap();
-        store.apply(&meta.mutations);
-
-        let insert = plan_cluster_insert_lock(&mut store, &catalog, TABLE_ID, timestamp()).unwrap();
-        assert!(!insert.is_empty());
-        store.apply(&insert);
-        let loader = ClusterStatsLoader::locate(&catalog).unwrap();
-        assert_eq!(
-            loader.stats_meta_count_and_modify_count(&mut store, TABLE_ID).unwrap(),
-            Some((10, 0, 2, 5, 10))
-        );
-
-        let version = plan_cluster_update_meta_version(&mut store, &catalog, TABLE_ID, 11).unwrap();
-        assert!(!version.is_empty());
-        store.apply(&version);
-        assert_eq!(
-            loader.stats_meta_count_and_modify_count(&mut store, TABLE_ID).unwrap(),
-            Some((11, 0, 2, 5, 10))
-        );
-
-        let duplicate =
-            plan_cluster_insert_lock(&mut store, &catalog, TABLE_ID, timestamp()).unwrap();
-        assert!(
-            !duplicate.is_empty(),
-            "ON DUPLICATE KEY UPDATE must still lock the existing row"
-        );
+        StatsLockRequest::Tables {
+            lock: false,
+            tables,
+        } => crate::lock_stats::remove_locked_tables(transaction, tables),
     }
 }

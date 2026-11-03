@@ -53,7 +53,6 @@ use crate::cluster_account_seam::ClusterAccountWriter;
 use crate::cluster_session::{
     cluster_session_catalog, cluster_session_catalog_with_templates, SkippedTable,
 };
-use tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock;
 use crate::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::cluster_transactions::ClusterTransactions;
 use crate::ddl_job_history_store;
@@ -625,8 +624,6 @@ pub struct Domain {
     /// The route a `SET GLOBAL` change takes; see
     /// [`crate::cluster_sysvar_seam`].
     pub sysvars: Arc<dyn ClusterSysvarWriter>,
-    /// The route a persisted statistics-lock operation takes.
-    pub stats_lock: Arc<dyn ClusterStatsLock>,
     /// The cluster catalog, republished whole by the reload thread and by a
     /// DDL's own inline reload. A connection takes one `Arc` per statement, so
     /// no session ever sees a half-updated catalog.
@@ -851,7 +848,6 @@ impl Domain {
         ddl: Arc<dyn ClusterDdl>,
         accounts: Arc<dyn ClusterAccountWriter>,
         sysvars: Arc<dyn ClusterSysvarWriter>,
-        stats_lock: Arc<dyn ClusterStatsLock>,
         catalog: Arc<InfoCache>,
         privileges: PrivilegeRegistry,
         global_vars: GlobalSysvars,
@@ -912,7 +908,6 @@ impl Domain {
             ddl,
             accounts,
             sysvars,
-            stats_lock,
             catalog,
             privileges,
             processes: ProcessRegistry::default(),

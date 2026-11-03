@@ -748,10 +748,6 @@ pub fn unistore_cluster_session_stack_from(
             None,
             sysvar_publication_fence,
         )),
-        Arc::new(tidb_stats_handle_lockstats::cluster_stats_lock_seam::RealClusterStatsLock::new(
-            Arc::new(opener.clone()),
-            IN_PROCESS_TIMEOUT,
-        )),
         catalog,
         users.accounts(),
         users.global_vars(),

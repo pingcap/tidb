@@ -85,7 +85,19 @@ checksums).
 
 ## Progress
 
-- [ ] M1 ... M5 (not started).
+- [x] (2026-11-03) Lock stats (item 3, part of M3): `statsLockImpl` is
+  `session_stats_lock::execute_stats_lock` -- Go's statements
+  (`selectSQL`, `insertSQL` + `updateMetaVersionSQL`, `selectDeltaSQL`,
+  `updateDeltaSQL`, `DeleteLockSQL`) over `lock_stats`' policy, in
+  `call_with_sctx(pool, ..., FLAG_WRAP_TXN)` on the domain's system-session
+  pool (Go `statsHandle.SPool()`). The `ClusterStatsLock` seam, its raw
+  committer (`real_tikv_stats_lock.rs`) and row planners are gone; a
+  statistics session's statement error now keeps its MySQL code
+  (`StatsSessionStatementError`). Tests
+  `lock_stats_runs_in_its_own_session_transaction_as_go`,
+  `lock_stats_checks_privileges_before_its_transaction_as_go`.
+- [ ] M1 (the statistics handle's pool for the storage writes), M2, the rest
+  of M3, M4, M5.
 
 ## Surprises & Discoveries
 
