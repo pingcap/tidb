@@ -30,7 +30,6 @@ pub trait StatisticsItemLoader: Send + Sync {
     fn load_items(
         &self,
         items: &[tidb_model::StatsLoadItem],
-        resource_group: &str,
     ) -> Result<Vec<(i64, Arc<tidb_stats::Table>)>, String>;
 }
 
@@ -65,7 +64,6 @@ pub enum SyncLoadOutcome {
 
 struct NeededItemTask {
     item: tidb_model::StatsLoadItem,
-    resource_group: String,
     to_timeout: Instant,
     result: mpsc::SyncSender<SyncLoadOutcome>,
     loader: Arc<dyn StatisticsItemLoader>,
@@ -191,19 +189,17 @@ impl SyncLoadService {
     pub fn request(
         self: &Arc<Self>,
         items: &[tidb_model::StatsLoadItem],
-        resource_group: &str,
         timeout: Duration,
     ) -> Vec<mpsc::Receiver<SyncLoadOutcome>> {
         items
             .iter()
-            .map(|item| self.request_one(*item, resource_group, timeout))
+            .map(|item| self.request_one(*item, timeout))
             .collect()
     }
 
     fn request_one(
         self: &Arc<Self>,
         item: tidb_model::StatsLoadItem,
-        resource_group: &str,
         timeout: Duration,
     ) -> mpsc::Receiver<SyncLoadOutcome> {
         let (listener_tx, listener_rx) = mpsc::sync_channel(1);
@@ -220,9 +216,8 @@ impl SyncLoadService {
         }
 
         let service = Arc::clone(self);
-        let resource_group = resource_group.to_owned();
         std::thread::spawn(move || {
-            let outcome = service.run_flight(item, resource_group, timeout);
+            let outcome = service.run_flight(item, timeout);
             let mut flights = GLOBAL_SINGLEFLIGHT
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -237,7 +232,6 @@ impl SyncLoadService {
     fn run_flight(
         &self,
         item: tidb_model::StatsLoadItem,
-        resource_group: String,
         timeout: Duration,
     ) -> SyncLoadOutcome {
         let now = Instant::now();
@@ -245,7 +239,6 @@ impl SyncLoadService {
         let (result_tx, result_rx) = mpsc::sync_channel(1);
         let task = NeededItemTask {
             item,
-            resource_group,
             to_timeout: deadline,
             result: result_tx,
             loader: Arc::clone(&self.loader),
@@ -344,7 +337,7 @@ fn handle_task(task: NeededItemTask, retry_backoff: Duration) {
     for retry in 0..=RETRY_COUNT {
         let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             task.loader
-                .load_items(std::slice::from_ref(&task.item), &task.resource_group)
+                .load_items(std::slice::from_ref(&task.item))
         }))
         .unwrap_or_else(|panic| {
             let message = panic.downcast_ref::<&str>().map_or_else(
@@ -400,7 +393,6 @@ mod tests {
         fn load_items(
             &self,
             _items: &[tidb_model::StatsLoadItem],
-            _resource_group: &str,
         ) -> Result<Vec<(i64, Arc<tidb_stats::Table>)>, String> {
             self.calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -443,7 +435,6 @@ mod tests {
         fn load_items(
             &self,
             _items: &[tidb_model::StatsLoadItem],
-            _resource_group: &str,
         ) -> Result<Vec<(i64, Arc<tidb_stats::Table>)>, String> {
             self.started.send(()).expect("test receives worker start");
             self.release
@@ -472,7 +463,6 @@ mod tests {
         let (result, _receiver) = mpsc::sync_channel(1);
         NeededItemTask {
             item: item(id, true),
-            resource_group: "rg".to_owned(),
             to_timeout,
             result,
             loader: Arc::new(TestLoader::default()),
@@ -510,8 +500,7 @@ mod tests {
         pool.needed_items
             .send(NeededItemTask {
                 item: item(100, true),
-                resource_group: "rg".to_owned(),
-                to_timeout: Instant::now() + Duration::from_secs(1),
+                    to_timeout: Instant::now() + Duration::from_secs(1),
                 result,
                 loader,
                 cache: Weak::<TestCache>::new(),
@@ -549,11 +538,11 @@ mod tests {
         let cache = Arc::new(TestCache::default());
         let service =
             SyncLoadService::with_settings(loader, Arc::downgrade(&cache) as Weak<dyn StatsCache>, 1, 8, Duration::ZERO);
-        let first = service.request(&[item(101, true)], "rg", Duration::from_secs(1));
+        let first = service.request(&[item(101, true)], Duration::from_secs(1));
         started_rx
             .recv_timeout(Duration::from_secs(1))
             .expect("first load is active");
-        let second = service.request(&[item(101, true)], "rg", Duration::from_secs(1));
+        let second = service.request(&[item(101, true)], Duration::from_secs(1));
         // The first task stays active until the second request has joined.
         // A second token also releases a wrongly duplicated task on failure.
         release_tx.send(()).unwrap();
@@ -583,7 +572,7 @@ mod tests {
                 ..TestLoader::default()
             });
             let (_cache, service) = service(Arc::clone(&loader));
-            let receivers = service.request(&[item(id, true)], "rg", Duration::from_secs(1));
+            let receivers = service.request(&[item(id, true)], Duration::from_secs(1));
             assert!(matches!(
                 receivers[0].recv_timeout(Duration::from_secs(1)).unwrap(),
                 SyncLoadOutcome::Item { error: None, .. }
@@ -599,7 +588,7 @@ mod tests {
             ..TestLoader::default()
         });
         let (_cache, service) = service(Arc::clone(&loader));
-        let receivers = service.request(&[item(104, true)], "rg", Duration::from_secs(1));
+        let receivers = service.request(&[item(104, true)], Duration::from_secs(1));
         assert!(matches!(
             receivers[0].recv_timeout(Duration::from_secs(1)).unwrap(),
             SyncLoadOutcome::Item { error: Some(_), .. }
@@ -618,7 +607,7 @@ mod tests {
             .needed_items
             .send(task(105, Instant::now() + Duration::from_secs(1)))
             .expect("fill the sole queue slot");
-        let rejected = service.request(&[item(106, true)], "rg", Duration::from_millis(2));
+        let rejected = service.request(&[item(106, true)], Duration::from_millis(2));
         assert!(matches!(
             rejected[0]
                 .recv_timeout(Duration::from_secs(1))

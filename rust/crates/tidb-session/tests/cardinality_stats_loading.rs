@@ -83,7 +83,7 @@ fn subset_index_cardinality_after_async_statistics_load() {
     assert!(queued(), "planning must enqueue evicted statistics");
     {
         let catalog = shared.lock().unwrap();
-        catalog.load_needed_histograms(&shared.stats_handle(), "default").unwrap();
+        catalog.load_needed_histograms(&shared.stats_handle()).unwrap();
         let loaded = catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap();
         for id in column_ids {
             assert!(loaded.hist_coll.get_column(id).unwrap().read().unwrap().is_full_load());
@@ -190,7 +190,6 @@ impl tidb_stats_handle_syncload::sync_load::StatisticsItemLoader for NeverAnalyz
     fn load_items(
         &self,
         items: &[tidb_model::StatsLoadItem],
-        _resource_group: &str,
     ) -> Result<Vec<(i64, Arc<tidb_stats::Table>)>, String> {
         for requested in items {
             let item = requested.table_item_id;
@@ -439,7 +438,7 @@ fn datetime_range_overflow_survives_async_statistics_load() {
     assert!(queued(), "the first query must request evicted statistics");
     {
         let catalog = shared.lock().unwrap();
-        catalog.load_needed_histograms(&shared.stats_handle(), "default").unwrap();
+        catalog.load_needed_histograms(&shared.stats_handle()).unwrap();
         assert!(catalog
             .table_statistics_in(&shared.stats_handle(), table_id)
             .unwrap()

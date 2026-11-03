@@ -192,7 +192,6 @@ mod sync_load_tests {
         fn load_items(
             &self,
             _items: &[tidb_model::StatsLoadItem],
-            _resource_group: &str,
         ) -> Result<Vec<(i64, Arc<tidb_stats::Table>)>, String> {
             Ok(Vec::new())
         }

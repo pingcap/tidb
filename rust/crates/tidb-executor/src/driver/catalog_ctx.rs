@@ -65,7 +65,7 @@ impl CatalogStatisticsLoad for SessionExtendedInfoSchema {
         let Some(service) = context.stats_handle().sync_load_service() else {
             return Ok(());
         };
-        let receivers = service.request(&items, context.resource_group_name(), wait);
+        let receivers = service.request(&items, wait);
         context.install_pending_statistics_load(receivers, items, wait);
         Ok(())
     }

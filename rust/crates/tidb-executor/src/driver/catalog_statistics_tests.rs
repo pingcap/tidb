@@ -37,7 +37,6 @@
         fn load_items(
             &self,
             items: &[tidb_model::StatsLoadItem],
-            _resource_group: &str,
         ) -> Result<Vec<(i64, Arc<tidb_stats::Table>)>, String> {
             *self
                 .requests
@@ -439,7 +438,7 @@
             .expect("start asynchronous load");
         assert_eq!(catalog.clean_needed_statistics_items(&handle), 1);
         catalog
-            .load_needed_histograms(&handle, "")
+            .load_needed_histograms(&handle)
             .expect("domain tick drains asynchronous demand");
         assert_eq!(catalog.clean_needed_statistics_items(&handle), 0);
     }
@@ -460,7 +459,7 @@
         tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(requested, false);
 
         catalog
-            .load_needed_histograms(&handle, "")
+            .load_needed_histograms(&handle)
             .expect("metadata-only asynchronous load");
         assert_eq!(
             loader
@@ -499,7 +498,7 @@
         tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(requested, false);
 
         catalog
-            .load_needed_histograms(&handle, "")
+            .load_needed_histograms(&handle)
             .expect("asynchronous index load");
         assert_eq!(
             loader
@@ -539,7 +538,7 @@
         catalog
             .request_statistics_load(&usage, &context)
             .expect("start asynchronous load");
-        assert!(catalog.load_needed_histograms(&handle, "").is_err());
+        assert!(catalog.load_needed_histograms(&handle).is_err());
         assert!(!tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()
             .iter()
@@ -577,7 +576,7 @@
         handle.set_item_loader(loader, StatisticsLoadWorkers::new());
 
         catalog
-            .load_needed_histograms(&handle, "")
+            .load_needed_histograms(&handle)
             .expect("a dropped table is a successful skip");
         assert!(!tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()
@@ -607,7 +606,7 @@
         };
         tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
         catalog
-            .load_needed_histograms(&handle, "")
+            .load_needed_histograms(&handle)
             .expect("a dropped column is a successful skip");
         assert!(!tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()
@@ -639,7 +638,7 @@
         handle.set_item_loader(loader, StatisticsLoadWorkers::new());
 
         catalog
-            .load_needed_histograms(&handle, "")
+            .load_needed_histograms(&handle)
             .expect("a dropped table is a successful skip");
         assert!(!tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()
@@ -669,7 +668,7 @@
         };
         tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
         catalog
-            .load_needed_histograms(&handle, "")
+            .load_needed_histograms(&handle)
             .expect("a dropped index is a successful skip");
         assert!(!tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()

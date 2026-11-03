@@ -487,7 +487,6 @@ impl tidb_stats_handle_syncload::sync_load::StatisticsItemLoader for ClusterStat
     fn load_items(
         &self,
         items: &[tidb_model::StatsLoadItem],
-        _resource_group: &str,
     ) -> Result<Vec<(i64, Arc<tidb_stats::Table>)>, String> {
         let catalog = self.catalog.get_latest();
         let domain = self.domain.upgrade();

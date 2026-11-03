@@ -27252,7 +27252,6 @@ fn a_sync_load_reads_an_evicted_column_on_the_domains_sessions_as_go() {
                 },
                 full_load: true,
             }],
-            "default",
         )
         .expect("the item loads on the domain's sessions");
     let table = stats.get(table_id).unwrap();

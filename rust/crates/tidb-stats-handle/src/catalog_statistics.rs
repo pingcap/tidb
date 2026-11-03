@@ -29,7 +29,7 @@ use crate::StatsHandle;
 /// The statistics handle's reads of one schema image.
 pub trait CatalogStatistics {
     fn clean_needed_statistics_items(&self, handle: &StatsHandle) -> i64;
-    fn load_needed_histograms(&self, handle: &StatsHandle, resource_group: &str) -> Result<(), String>;
+    fn load_needed_histograms(&self, handle: &StatsHandle) -> Result<(), String>;
     fn statistics_demand(
         &self,
         handle: &StatsHandle,
@@ -81,7 +81,7 @@ impl CatalogStatistics for SessionExtendedInfoSchema {
     /// demand on the domain tick. Each item is attempted at most once and is
     /// removed even when storage returns an error; a later item remains queued
     /// when an earlier load fails.
-    fn load_needed_histograms(&self, handle: &StatsHandle, resource_group: &str) -> Result<(), String> {
+    fn load_needed_histograms(&self, handle: &StatsHandle) -> Result<(), String> {
         let loader = handle
             .loader
             .read()
@@ -121,7 +121,7 @@ impl CatalogStatistics for SessionExtendedInfoSchema {
                 table_item_id: item,
                 full_load: item.is_index || requested.full_load,
             };
-            let loaded = loader.load_items(std::slice::from_ref(&requested), resource_group);
+            let loaded = loader.load_items(std::slice::from_ref(&requested));
             needed.delete(item);
             let tables = loaded?;
             let mut values = handle
