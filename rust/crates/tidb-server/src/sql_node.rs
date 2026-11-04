@@ -1661,6 +1661,7 @@ mod tests {
             schema_lease: Duration::from_millis(45_000),
             run_ddl: true,
             stats_lease: crate::node_config::StatsLease::Positive(Duration::from_secs(3)),
+            plan_replayer_gc_lease: Duration::from_secs(600),
             cluster_security: tidb_pd_client::ClusterSecurity::plaintext(),
             spill_storage: tidb_spill_storage::SpillStorageSpec {
                 path: std::env::temp_dir().join("tidb-sql-node-unit-spill"),

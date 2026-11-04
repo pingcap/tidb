@@ -378,6 +378,7 @@ impl Session {
             start_time: chrono::Utc::now(),
             label: String::new(),
             prepared: false,
+            plan_replayer_continues_capture_valid: false,
             routed: false,
             original_table_hints: Vec::new(),
             binding_sql: String::new(),
@@ -606,6 +607,16 @@ impl Session {
                     tidb_bindinfo::binding::normalize_stmt_for_binding(stmt, &self.vars.current_db);
             }
             observation.prepared |= prepared;
+            observation.plan_replayer_continues_capture_valid = observation.prepared
+                || match stmt {
+                    Stmt::Query(query) => matches!(&**query, tidb_ast::QueryStmt::Select(_)),
+                    Stmt::Dml(dml) => matches!(
+                        &**dml,
+                        tidb_ast::DmlStmt::Insert(_) | tidb_ast::DmlStmt::Update(_) | tidb_ast::DmlStmt::Delete(_)
+                    ),
+                    Stmt::Session(session) => matches!(&**session, tidb_ast::SessionStmt::Execute { .. }),
+                    _ => false,
+                };
             // Go's ExecuteStmt node records whatever it executes.
             observation.record_last_query = observation.prepared || records_last_query_info(stmt);
             observation.crucial = is_crucial_stmt(stmt);
@@ -779,6 +790,9 @@ impl Session {
             let plan = plan_info
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Go `FinishExecuteStmt`: `a.checkPlanReplayerCapture(txnTS)`.
+            let (txn_ts, _) = self.txn_start_and_for_update_ts();
+            self.check_plan_replayer_capture(&observation, &plan, txn_ts);
             self.log_slow_query(
                 &observation,
                 elapsed,

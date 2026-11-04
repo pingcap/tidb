@@ -98,6 +98,7 @@ fn domain_with_sysvars(sysvars: FakeSysvars) -> DomainServices {
         stats: Arc::new(|_: &Session| -> Box<dyn StatsStatementService> {
             unreachable!("a SET changes no statistics")
         }),
+        domain: std::sync::Weak::new(),
     }
 }
 

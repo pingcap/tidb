@@ -223,6 +223,19 @@ pub fn set_circuit_breaker_pd_metadata_error_rate_threshold_ratio(value: f64) {
     CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO.store(value.to_bits(), Ordering::SeqCst);
 }
 
+/// Go `planReplayerGCLease` (`runtime.go`), in nanoseconds.
+static PLAN_REPLAYER_GC_LEASE: AtomicI64 = AtomicI64::new(10 * 60 * 1_000_000_000);
+
+/// Go `SetPlanReplayerGCLease`, in nanoseconds.
+pub fn set_plan_replayer_gc_lease(nanoseconds: i64) {
+    PLAN_REPLAYER_GC_LEASE.store(nanoseconds, Ordering::SeqCst);
+}
+
+/// Go `GetPlanReplayerGCLease`, in nanoseconds.
+pub fn get_plan_replayer_gc_lease() -> i64 {
+    PLAN_REPLAYER_GC_LEASE.load(Ordering::SeqCst)
+}
+
 /// Loads Go `vardef.GetPlanReplayerFileRetentionTime` as nanoseconds.
 pub fn plan_replayer_file_retention_time() -> i64 {
     PLAN_REPLAYER_FILE_RETENTION_TIME.load(Ordering::SeqCst)

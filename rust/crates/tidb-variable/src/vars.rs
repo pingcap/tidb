@@ -471,6 +471,9 @@ pub struct SessionVars {
     /// Go `SessionVars.InPlanReplayer`, set while the plan replayer runs its
     /// EXPLAINs.
     pub in_plan_replayer: bool,
+    /// Go `SessionVars.PlanReplayerFinishedTaskKey`: the keys this
+    /// session's continuous capture already sent.
+    pub plan_replayer_finished_task_key: std::collections::HashSet<tidb_replayer::PlanReplayerTaskKey>,
 }
 
 /// Go `GetSessionOrGlobalSystemVar`'s lazy population of `s.systems` for a
@@ -551,6 +554,7 @@ impl Default for SessionVars {
             last_txn_info: String::new(),
             last_plan_replayer_token: String::new(),
             in_plan_replayer: false,
+            plan_replayer_finished_task_key: std::collections::HashSet::new(),
             last_query_info: tidb_sessionstates::QueryInfo::default(),
             last_ddl_info: tidb_sessionstates::LastDDLInfo::default(),
             resource_group: "default".to_owned(),

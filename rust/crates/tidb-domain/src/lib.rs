@@ -27,7 +27,9 @@
 pub mod domain_errors;
 pub mod cluster_discovery;
 pub mod cluster_topology;
+pub mod extract;
 pub mod historical_stats;
+pub mod optimize_trace;
 pub mod plan_replayer;
 pub mod ru_stats;
 pub mod schema_checker;

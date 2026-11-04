@@ -6299,6 +6299,8 @@ fn plan_replayer_dump_writes_gos_archive_and_status() {
     rows(&mut session, "CREATE TABLE replayed (a INT, b INT, INDEX ia(a))");
     rows(&mut session, "INSERT INTO replayed VALUES (1, 1), (2, 2)");
     rows(&mut session, "ANALYZE TABLE replayed");
+    // Go `dumpSQLMeta` writes the live `vardef.EnableHistoricalStatsForCapture`.
+    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats_for_capture = ON");
     let answer = displayed(rows(&mut session, "PLAN REPLAYER DUMP EXPLAIN SELECT * FROM replayed WHERE a = 1"));
     assert_eq!(answer.len(), 1);
     assert_eq!(answer[0][0], "File token");
@@ -6328,6 +6330,7 @@ fn plan_replayer_dump_writes_gos_archive_and_status() {
     }
     let text = |name: &str| String::from_utf8(files[name].clone()).unwrap();
     assert_eq!(text("sql/sql0.sql"), "SELECT * FROM replayed WHERE a = 1");
+    assert!(text("sql_meta.toml").contains("enableHistoricalStats = \"true\""), "{}", text("sql_meta.toml"));
     assert!(text("schema/test.replayed.schema.txt").starts_with("create database if not exists `test`; use `test`;CREATE TABLE `replayed`"));
     assert!(text("explain.txt").contains("IndexLookUp") || text("explain.txt").contains("Reader"), "{}", text("explain.txt"));
     let stats: serde_json::Value = serde_json::from_slice(&files["stats/test.replayed.json"]).unwrap();
@@ -6347,6 +6350,109 @@ fn plan_replayer_dump_writes_gos_archive_and_status() {
     assert_eq!(again.to_mysql_error().message, "plan replayer capture task already exists");
     rows(&mut session, "PLAN REPLAYER CAPTURE REMOVE 'sql-digest' 'plan-digest'");
     assert!(rows(&mut session, "SELECT * FROM mysql.plan_replayer_task").is_empty());
+    tidb_planner_extstore::set_global_ext_storage_for_test(None);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// Go's capture path: `PLAN REPLAYER CAPTURE` reloads the handle's tasks,
+/// a matching statement's `FinishExecuteStmt` sends a dump task carrying its
+/// own variables, statement and encoded plan, a dump worker writes the
+/// archive on a system session and records the status, and the dump-file
+/// GC removes expired files on its lease.
+#[test]
+fn plan_replayer_capture_dumps_a_matching_statement_and_gc_expires_files() {
+    let base = std::env::temp_dir().join(format!("plan-replayer-capture-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let storage = Arc::new(tidb_planner_extstore::LocalStorage::new(&base).unwrap());
+    tidb_planner_extstore::set_global_ext_storage_for_test(Some(Arc::clone(&storage)));
+    let nanos = |at: chrono::DateTime<chrono::Utc>| at.timestamp_nanos_opt().unwrap();
+    let month_ago = nanos(chrono::Utc::now() - chrono::Duration::days(30));
+    let old_dump = format!("replayer/replayer_old_{month_ago}.zip");
+    let old_extract = format!("extract/extract_old_{month_ago}.zip");
+    let fresh_dump = format!("replayer/replayer_fresh_{}.zip", nanos(chrono::Utc::now()));
+    for name in [&old_dump, &old_extract, &fresh_dump] {
+        std::fs::create_dir_all(base.join(name).parent().unwrap()).unwrap();
+        std::fs::write(base.join(name), b"x").unwrap();
+    }
+    tidb_vardef::set_plan_replayer_gc_lease(200_000_000);
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    crate::domain::cluster_session_node::start_plan_replayer_handle(&stack.factory);
+    let mut session = stack.factory.open_session(session_context(78)).expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE captured (a INT, b INT, INDEX ia(a))");
+    rows(&mut session, "INSERT INTO captured VALUES (1, 1), (2, 2)");
+    let sql = "SELECT * FROM captured WHERE a = 1";
+    let (_, digest) = tidb_parser::normalize_digest(sql);
+    let digest = digest.as_str().to_owned();
+    rows(&mut session, &format!("PLAN REPLAYER CAPTURE '{digest}' '*'"));
+    // Go `registerCaptureTask` reloads the handle's tasks at once.
+    let handle = stack.factory.plan_replayer_handle().expect("the handle started");
+    assert_eq!(
+        handle.collector.get_tasks(),
+        [tidb_replayer::PlanReplayerTaskKey { sql_digest: digest.clone(), plan_digest: "*".to_owned() }]
+    );
+    // The capturing session's own value reaches the dump.
+    rows(&mut session, "SET @@tidb_opt_agg_push_down = ON");
+    assert_eq!(displayed(rows(&mut session, sql)), [["1", "1"]]);
+    let status = format!("SELECT plan_digest, origin_sql, token, fail_reason FROM mysql.plan_replayer_status WHERE sql_digest = '{digest}'");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let row = loop {
+        let found = displayed(rows(&mut session, &status));
+        if let Some(row) = found.into_iter().next() {
+            break row;
+        }
+        assert!(std::time::Instant::now() < deadline, "no capture status record");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    assert_ne!(row[0], "");
+    assert_eq!(row[1], sql);
+    assert_eq!(row[3], "NULL");
+    let token = row[2].clone();
+    assert!(token.starts_with("capture_normal_replayer_") && token.ends_with(".zip"), "{token}");
+    let archive = std::fs::read(base.join("replayer").join(&token)).expect("the archive is written");
+    let files: std::collections::BTreeMap<String, Vec<u8>> =
+        tidb_replayer::zip::read_zip(&archive).unwrap().into_iter().collect();
+    let text = |name: &str| String::from_utf8(files[name].clone()).unwrap();
+    assert_eq!(text("sql/sql0.sql"), sql);
+    assert!(text("sql_meta.toml").contains("isCapture = \"true\""), "{}", text("sql_meta.toml"));
+    assert!(text("sql_meta.toml").contains(&format!("sqlDigest = \"{digest}\"")), "{}", text("sql_meta.toml"));
+    assert!(text("variables.toml").contains("tidb_opt_agg_push_down = \"ON\""));
+    // The encoded plan, decoded, instead of a fresh EXPLAIN.
+    assert!(!files.contains_key("explain.txt"));
+    assert!(text("explain/sql.txt").contains("ia"), "{}", text("explain/sql.txt"));
+
+    // Go `checkPlanReplayerContinuesCapture`: every SELECT/DML sends once per
+    // key; other statements send nothing.
+    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
+    rows(&mut session, "SET @@tidb_enable_plan_replayer_continuous_capture = ON");
+    let continuous = "SELECT b FROM captured WHERE a = 2";
+    rows(&mut session, continuous);
+    rows(&mut session, continuous);
+    rows(&mut session, "SET @unrelated = 1");
+    assert_eq!(session.vars.plan_replayer_finished_task_key.len(), 1, "{:?}", session.vars.plan_replayer_finished_task_key);
+    let (_, continuous_digest) = tidb_parser::normalize_digest(continuous);
+    let status = format!(
+        "SELECT token FROM mysql.plan_replayer_status WHERE sql_digest = '{}'",
+        continuous_digest.as_str()
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let token = loop {
+        if let Some(row) = displayed(rows(&mut session, &status)).into_iter().next() {
+            break row[0].clone();
+        }
+        assert!(std::time::Instant::now() < deadline, "no continuous capture status record");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    assert!(token.starts_with("capture_replayer_"), "{token}");
+    // The GC lease passes: expired files go, fresh ones stay.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while base.join(&old_dump).exists() || base.join(&old_extract).exists() {
+        assert!(std::time::Instant::now() < deadline, "the dump-file GC never ran");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(base.join(&fresh_dump).exists());
+    assert!(base.join("replayer").join(&token).exists());
     tidb_planner_extstore::set_global_ext_storage_for_test(None);
     std::fs::remove_dir_all(&base).unwrap();
 }

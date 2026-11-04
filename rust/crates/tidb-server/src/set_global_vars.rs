@@ -147,6 +147,10 @@ pub fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
     tidb_vardef::set_memory_usage_alarm_ratio(
         config.global_config.instance.memory_usage_alarm_ratio,
     );
+    // Go `main`'s `vardef.SetPlanReplayerGCLease(planReplayerGCLease)`.
+    tidb_vardef::set_plan_replayer_gc_lease(
+        i64::try_from(config.plan_replayer_gc_lease.as_nanos()).unwrap_or(i64::MAX),
+    );
 }
 
 #[cfg(test)]
@@ -203,8 +207,10 @@ mod tests {
         let mut config = config;
         assert_eq!(config.global_config.instance.memory_usage_alarm_ratio, 0.8);
         config.isolation_read_engines = vec!["tikv".to_owned(), "tidb".to_owned()];
+        config.plan_replayer_gc_lease = std::time::Duration::from_secs(90);
         set_global_vars(&config, &globals);
         assert_eq!(tidb_vardef::memory_usage_alarm_ratio(), 0.8);
+        assert_eq!(tidb_vardef::get_plan_replayer_gc_lease(), 90_000_000_000);
 
         assert_eq!(
             globals

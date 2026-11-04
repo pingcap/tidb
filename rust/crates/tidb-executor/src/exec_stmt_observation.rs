@@ -41,6 +41,9 @@ pub struct StatementObservation {
     pub start_time: chrono::DateTime<chrono::Utc>,
     pub label: String,
     pub prepared: bool,
+    /// Go `checkPlanReplayerContinuesCaptureValidStmt`: a SELECT, DELETE,
+    /// UPDATE, INSERT or EXECUTE.
+    pub plan_replayer_continues_capture_valid: bool,
     pub routed: bool,
     /// Go `StmtCtx.OriginalTableHints`: the table hints the statement wrote,
     /// after the query-block handler took the view hints out.

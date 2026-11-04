@@ -98,6 +98,7 @@ impl DomainSessions for Domain {
             }),
             analyze: super::statistics::analyze_service(self),
             stats: super::statistics::stats_statement_service(self),
+            domain: self.binding_session_factory.clone(),
         });
         if let Some(bindings) = self.binding_handle() {
             session.set_global_binding_cache(bindings.cache());
@@ -1399,4 +1400,15 @@ pub fn open_pool_session(
         })
         .map_err(|error| error.message)?;
     Ok(Arc::new(ClusterStatsSessionContext::new(session, global_vars)))
+}
+
+/// Go `BootstrapSession`'s `SetupPlanReplayerHandle` + `StartPlanReplayerHandle`
+/// and `SetupDumpFileGCChecker` + `DumpFileGcCheckerLoop`: the dump workers
+/// run `DumpPlanReplayerInfo` on the domain's system sessions.
+pub fn start_plan_replayer_handle(domain: &Arc<Domain>) {
+    let sessions = Arc::downgrade(domain);
+    domain.start_plan_replayer_handle(Arc::new(crate::plan_replayer::PlanReplayerWorkerDumper::new(move || {
+        let domain = sessions.upgrade().ok_or_else(|| "the domain is closed".to_owned())?;
+        domain.open_system_session().map_err(|error| error.error_string())
+    })));
 }

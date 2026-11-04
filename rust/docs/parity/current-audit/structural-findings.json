@@ -106,7 +106,7 @@
       "id": "O08",
       "status": "partial",
       "group": "Domain and process services",
-      "finding": "`PLAN REPLAYER DUMP EXPLAIN [ANALYZE]` of a statement or a statement list and `PLAN REPLAYER CAPTURE [REMOVE]` run Go's `PlanReplayerExec` / `DumpPlanReplayerInfo` (`tidb-session/src/plan_replayer.rs` over `tidb_domain::plan_replayer`, the archive in Go `extstore`'s local storage), but the domain composes no plan-replayer owner: no `SetupPlanReplayerHandle` / `StartPlanReplayerHandle` (the 10s task collector, the dump workers, the statement path's capture check `checkPlanReplayerCaptureTask`) and no `DumpFileGcCheckerLoop`; `PLAN REPLAYER LOAD`, the file and slow-query dump targets and `WITH STATS AS OF TIMESTAMP` refuse; a next-gen `tidb_cloud_storage_uri` storage has no port",
+      "finding": "`PLAN REPLAYER DUMP EXPLAIN [ANALYZE]` of a statement or a statement list and `PLAN REPLAYER CAPTURE [REMOVE]` run Go's `PlanReplayerExec` / `DumpPlanReplayerInfo`, and the domain composes Go's plan-replayer owner (`tidb-domain-core` `plan_replayer_owner.rs`: the 10s task collector, the dump workers on system sessions, the statement-end `checkPlanReplayerCapture` with continuous capture, and the `DumpFileGcCheckerLoop` on `vardef.GetPlanReplayerGCLease()`); `PLAN REPLAYER LOAD`, the file and slow-query dump targets and `WITH STATS AS OF TIMESTAMP` (Go `calcTSForPlanReplayer`, whose strict unsigned `ConvertTo` has no port) refuse; a next-gen `tidb_cloud_storage_uri` storage has no port",
       "go_owner": "`pkg/domain/plan_replayer*.go`, `pkg/executor/plan_replayer.go`, `pkg/planner/extstore`"
     },
     {

@@ -20,6 +20,7 @@
 pub mod ddl_notifier;
 mod ru_stats_writer;
 pub mod workload_learning;
+pub mod plan_replayer_owner;
 mod telemetry;
 pub mod schema_lease;
 pub mod stats_maintenance;
@@ -766,6 +767,8 @@ pub struct Domain {
     pub historical_stats_worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
     /// Go `StartHistoricalStatsWorker`, installed after stable `Arc` ownership.
     historical_stats_runtime: std::sync::OnceLock<HistoricalStatsRuntime>,
+    /// Go `planReplayerHandle` and the dump-file GC loop.
+    plan_replayer: std::sync::OnceLock<plan_replayer_owner::PlanReplayerRuntime>,
     /// Go `Domain.LoadSigningCertLoop`'s reload thread.
     signing_cert_loop: std::sync::OnceLock<SigningCertLoop>,
     /// Go `Domain.expensiveQueryHandle`, built over the domain's exit
@@ -1073,6 +1076,7 @@ impl Domain {
             auto_analyze_worker: std::sync::OnceLock::new(),
             historical_stats_worker,
             historical_stats_runtime: std::sync::OnceLock::new(),
+            plan_replayer: std::sync::OnceLock::new(),
             signing_cert_loop: std::sync::OnceLock::new(),
             expensive_query_handle: Arc::new(tidb_expensivequery::Handle::new(expensive_query_exited)),
             expensive_query_exit: Mutex::new(Some(expensive_query_exit)),

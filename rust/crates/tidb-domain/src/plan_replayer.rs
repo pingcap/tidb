@@ -53,16 +53,12 @@
 //!
 //! ## Narrowings, all named
 //!
-//! - `// boundary:` Go `PlanReplayerDumpTask`'s dump payload — `TblStats`,
-//!   `StartTS`, `SessionBindings`, `EncodedPlan`, `SessionVars`,
-//!   `ExecStmts`, `Analyze`, `HistoricalStatsTS`, `DebugTrace` and `Zf
-//!   io.WriteCloser` (`plan_replayer.go:576-590`). Not one of them is read by
-//!   this file; every one is consumed by `DumpPlanReplayerInfo` in
-//!   `plan_replayer_dump.go`. They are omitted from [`PlanReplayerDumpTask`]
-//!   deliberately — carrying `*variable.SessionVars` or `[]ast.StmtNode`
-//!   would drag half the workspace into this crate — and the writer that Go
-//!   stores in `Zf` stays with the [`PlanReplayerDumper`] implementor, which
-//!   is the only thing that ever writes to it.
+//! - `// boundary:` Go `PlanReplayerDumpTask`'s payload carries
+//!   `SessionVars` and `ExecStmts` as what the dump reads of them
+//!   ([`PlanReplayerSessionVars`] and the statements' `Text()`), and
+//!   `SessionBindings` as the nine rows `dumpSessionBindRecords` writes.
+//!   `TblStats` is set by Go's capture and never read; the writer Go stores
+//!   in `Zf` stays with the [`PlanReplayerDumper`] implementor.
 //! - `// boundary:` Go `pkg/planner/extstore.GetGlobalExtStorage(ctx)` plus
 //!   `storeapi.Storage.WalkDir`/`DeleteFile` → [`DumpFileStorage`]. Go's
 //!   `WalkDir` takes a callback and a `*storeapi.WalkOption{SubDir: path}`;
@@ -261,10 +257,6 @@ pub struct PlanReplayerDumpTask {
     pub is_continues_capture: bool,
     /// Go `PlanReplayerDumpTask.StartTS`.
     pub start_ts: u64,
-    /// Go `PlanReplayerDumpTask.SQLDigest`.
-    pub sql_digest: String,
-    /// Go `PlanReplayerDumpTask.PlanDigest`.
-    pub plan_digest: String,
     /// Go `PlanReplayerDumpTask.HistoricalStatsTS`.
     pub historical_stats_ts: u64,
     /// Go `PlanReplayerDumpTask.Analyze`: `PLAN REPLAYER DUMP EXPLAIN
@@ -275,6 +267,32 @@ pub struct PlanReplayerDumpTask {
     /// Go `PlanReplayerDumpTask.SessionBindings` as the nine fields
     /// `dumpSessionBindRecords` writes per binding.
     pub session_bindings: Vec<Vec<String>>,
+    /// Go `PlanReplayerDumpTask.SessionVars`: the capturing session's
+    /// variables, read when the task is sent.
+    pub session_vars: PlanReplayerSessionVars,
+    /// Go `PlanReplayerDumpTask.ExecStmts` as their `Text()`.
+    pub exec_stmts: Vec<String>,
+}
+
+/// Go `*variable.SessionVars` as `DumpPlanReplayerInfo` reads it: the current
+/// database and every system variable's session-or-global value, read off
+/// the session the task describes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PlanReplayerSessionVars {
+    /// Go `SessionVars.CurrentDB`.
+    pub current_db: String,
+    /// Go `GetSessionOrGlobalSystemVar` of every registered variable.
+    pub values: std::collections::BTreeMap<String, Result<String, String>>,
+}
+
+impl PlanReplayerSessionVars {
+    /// Go `sessionVars.GetSessionOrGlobalSystemVar(ctx, name)`.
+    ///
+    /// # Errors
+    /// The read's error, or an unknown variable.
+    pub fn get_session_or_global_system_var(&self, name: &str) -> Result<String, String> {
+        self.values.get(name).cloned().unwrap_or_else(|| Err(format!("unknown system variable '{name}'")))
+    }
 }
 
 /// Go `infosync.ServerInfo`'s two fields that reach the `instance` column.
@@ -1035,15 +1053,7 @@ impl<E: InternalSqlExecutor, D: PlanReplayerDumper> PlanReplayerTaskDumpWorker<E
         // Go assigns `task.Zf` and `task.FileName` before dumping.
         let mut dumped = task.clone();
         dumped.file_name = Some(file_name);
-        // Go's dump routine increments exactly one result counter after the
-        // dump attempt; failures before this call do not affect either child.
-        let success = self.dumper.dump_plan_replayer_info(&dumped).is_ok();
-        if success {
-            domain_metrics::plan_replayer_dump_task_success().inc();
-        } else {
-            domain_metrics::plan_replayer_dump_task_failed().inc();
-        }
-        success
+        self.dumper.dump_plan_replayer_info(&dumped).is_ok()
     }
 
     /// boundary: Go `vardef.EnableHistoricalStatsForCapture.Load()`. There is
@@ -2172,10 +2182,10 @@ pub fn build_sql_meta_records(
         sql_meta_key::IS_CONTINUES.to_owned(),
         task.is_continues_capture.to_string(),
     );
-    records.insert(sql_meta_key::SQL_DIGEST.to_owned(), task.sql_digest.clone());
+    records.insert(sql_meta_key::SQL_DIGEST.to_owned(), task.key.sql_digest.clone());
     records.insert(
         sql_meta_key::PLAN_DIGEST.to_owned(),
-        task.plan_digest.clone(),
+        task.key.plan_digest.clone(),
     );
     records.insert(
         sql_meta_key::ENABLE_HISTORICAL_STATS.to_owned(),
@@ -2204,8 +2214,7 @@ mod dump_seed_tests {
             start_ts: 4_377_391_814_500_000_000,
             is_capture: true,
             is_continues_capture: false,
-            sql_digest: "dig".to_owned(),
-            plan_digest: "pdig".to_owned(),
+            key: PlanReplayerTaskKey { sql_digest: "dig".to_owned(), plan_digest: "pdig".to_owned() },
             historical_stats_ts: 4_377_391_814_600_000_000,
             ..PlanReplayerDumpTask::default()
         };
@@ -2731,14 +2740,13 @@ mod dump_archive_tests {
 /// Go `dumpVariables`' variable source: the sys-var registry with the
 /// noop/SEM filters and the per-session value read.
 pub trait VariablesDumpSource {
-    /// The registry's variable names, in registry order.
+    /// Go `variable.GetSysVars()`'s names, in registry order.
     fn variable_names(&self) -> Vec<String>;
     /// Go `SysVar.IsNoop`.
     fn is_noop(&self, name: &str) -> bool;
-    /// Go `infoschema.SysVarHiddenForSem(sctx, v.Name)`.
+    /// Go `infoschema.SysVarHiddenForSem(sctx, v.Name)` for the dumping
+    /// session.
     fn hidden_for_sem(&self, name: &str) -> bool;
-    /// Go `sessionVars.GetSessionOrGlobalSystemVar(ctx, name)`.
-    fn session_or_global_value(&self, name: &str) -> Result<String, String>;
     /// Go `vardef.EnableNoopVariables.Load()`.
     fn enable_noop_variables(&self) -> bool;
 }
@@ -2751,6 +2759,7 @@ pub trait VariablesDumpSource {
 /// Whatever the value read reports; Go aborts the whole file.
 pub fn build_variables_records(
     source: &dyn VariablesDumpSource,
+    session_vars: &PlanReplayerSessionVars,
 ) -> Result<std::collections::BTreeMap<String, String>, String> {
     let mut records = std::collections::BTreeMap::new();
     for name in source.variable_names() {
@@ -2760,38 +2769,31 @@ pub fn build_variables_records(
         if source.hidden_for_sem(&name) {
             continue;
         }
-        records.insert(name.clone(), source.session_or_global_value(&name)?);
+        records.insert(name.clone(), session_vars.get_session_or_global_system_var(&name)?);
     }
     Ok(records)
 }
 
 #[cfg(test)]
-mod variables_dump_tests {
+pub(super) mod variables_dump_tests {
     use super::*;
-    use std::collections::HashMap;
 
-    struct FakeVars {
-        values: HashMap<String, String>,
-        noop: HashSet<String>,
-        hidden: HashSet<String>,
-        enable_noop: bool,
+    pub(super) struct FakeVars {
+        pub(super) names: Vec<String>,
+        pub(super) noop: HashSet<String>,
+        pub(super) hidden: HashSet<String>,
+        pub(super) enable_noop: bool,
     }
 
     impl VariablesDumpSource for FakeVars {
         fn variable_names(&self) -> Vec<String> {
-            self.values.keys().cloned().collect()
+            self.names.clone()
         }
         fn is_noop(&self, name: &str) -> bool {
             self.noop.contains(name)
         }
         fn hidden_for_sem(&self, name: &str) -> bool {
             self.hidden.contains(name)
-        }
-        fn session_or_global_value(&self, name: &str) -> Result<String, String> {
-            self.values
-                .get(name)
-                .cloned()
-                .ok_or_else(|| format!("unknown variable {name}"))
         }
         fn enable_noop_variables(&self) -> bool {
             self.enable_noop
@@ -2803,17 +2805,23 @@ mod variables_dump_tests {
     /// session-or-global value.
     #[test]
     fn variables_records_apply_the_filters() {
-        let mut values = HashMap::new();
-        values.insert("windowing_use_high_precision".to_owned(), "ON".to_owned());
-        values.insert("tidb_enable_noop_func".to_owned(), "OFF".to_owned());
+        let session_vars = PlanReplayerSessionVars {
+            current_db: String::new(),
+            values: [
+                ("windowing_use_high_precision".to_owned(), Ok("ON".to_owned())),
+                ("tidb_enable_noop_func".to_owned(), Ok("OFF".to_owned())),
+                ("hidden_one".to_owned(), Ok("x".to_owned())),
+            ]
+            .into_iter()
+            .collect(),
+        };
         let mut vars = FakeVars {
-            values,
+            names: session_vars.values.keys().cloned().collect(),
             noop: HashSet::from(["tidb_enable_noop_func".to_owned()]),
             hidden: HashSet::from(["hidden_one".to_owned()]),
             enable_noop: false,
         };
-        vars.values.insert("hidden_one".to_owned(), "x".to_owned());
-        let records = build_variables_records(&vars).unwrap();
+        let records = build_variables_records(&vars, &session_vars).unwrap();
         assert!(!records.contains_key("tidb_enable_noop_func"));
         assert!(!records.contains_key("hidden_one"));
         assert_eq!(
@@ -2822,7 +2830,12 @@ mod variables_dump_tests {
                 .map(String::as_str),
             Some("ON")
         );
-        let _ = &vars.noop;
+        vars.enable_noop = true;
+        let records = build_variables_records(&vars, &session_vars).unwrap();
+        assert_eq!(records.get("tidb_enable_noop_func").map(String::as_str), Some("OFF"));
+        // A registered variable the session cannot read fails the file.
+        vars.names.push("unread".to_owned());
+        assert!(build_variables_records(&vars, &session_vars).is_err());
     }
 }
 
@@ -2873,8 +2886,8 @@ pub fn generate_status_records(
     let mut records = Vec::new();
     for exec_stmt in exec_stmts {
         records.push(PlanReplayerStatusRecord {
-            sql_digest: task.sql_digest.clone(),
-            plan_digest: task.plan_digest.clone(),
+            sql_digest: task.key.sql_digest.clone(),
+            plan_digest: task.key.plan_digest.clone(),
             origin_sql: exec_stmt.clone(),
             token: task.file_name.clone().unwrap_or_default(),
             failed_reason: String::new(),
@@ -2920,7 +2933,7 @@ mod presign_tests {
         let mut capture = PlanReplayerDumpTask {
             is_capture: true,
             file_name: Some("capture_normal_replayer_x.zip".to_owned()),
-            sql_digest: "sdig".to_owned(),
+            key: PlanReplayerTaskKey { sql_digest: "sdig".to_owned(), plan_digest: String::new() },
             ..PlanReplayerDumpTask::default()
         };
         assert!(
@@ -2933,7 +2946,7 @@ mod presign_tests {
         let mut dump = PlanReplayerDumpTask {
             is_capture: false,
             file_name: Some("replayer_y.zip".to_owned()),
-            sql_digest: "sdig".to_owned(),
+            key: PlanReplayerTaskKey { sql_digest: "sdig".to_owned(), plan_digest: String::new() },
             ..PlanReplayerDumpTask::default()
         };
         let records = generate_status_records(
@@ -3296,9 +3309,10 @@ pub struct DumpSeams<'a> {
     pub stats: &'a dyn StatsDumpSource,
     pub mem_stats: &'a dyn StatsDumpSource,
     pub tiflash: &'a dyn TiFlashReplicaSource,
-    pub variables: &'a dyn VariablesDumpSource,
     pub presign: &'a dyn PresignSource,
-    pub cur_db: String,
+    /// The registry and the dumping session's SEM view `dumpVariables`
+    /// filters on.
+    pub variables: &'a dyn VariablesDumpSource,
     pub enable_historical_stats_for_capture: bool,
 }
 
@@ -3458,9 +3472,10 @@ fn dump_explain(
 pub fn dump_plan_replayer_info(
     seams: &DumpSeams<'_>,
     task: &mut PlanReplayerDumpTask,
-    exec_stmts: &[String],
     zw: &mut dyn DumpArchiveWriter,
 ) -> DumpOutcome {
+    let exec_stmts = task.exec_stmts.clone();
+    let exec_stmts = exec_stmts.as_slice();
     let mut records = Vec::new();
     let mut err_msgs: Vec<String> = Vec::new();
     let result = (|| -> Result<(), PlanReplayerError> {
@@ -3480,7 +3495,7 @@ pub fn dump_plan_replayer_info(
         let mut extractor = TableNameExtractor {
             schema: seams.extract_schema,
             parser: seams.view_parser,
-            cur_db: seams.cur_db.clone(),
+            cur_db: task.session_vars.current_db.clone(),
             names: BTreeSet::new(),
             cte_names: HashSet::new(),
             err: None,
@@ -3512,7 +3527,7 @@ pub fn dump_plan_replayer_info(
         }
         dump_stats_mem_status(seams.mem_stats, &pairs, zw)?;
         // Dump variables
-        let variables = build_variables_records(seams.variables).map_err(PlanReplayerError::Other)?;
+        let variables = build_variables_records(seams.variables, &task.session_vars).map_err(PlanReplayerError::Other)?;
         zw.create_file(dump_file::PLAN_REPLAYER_VARIABLES_FILE, flat_toml(&variables).as_bytes())?;
         // Dump sql
         dump_sqls(exec_stmts, zw)?;
@@ -3562,9 +3577,14 @@ pub fn dump_plan_replayer_info(
         }
         Ok(())
     })();
+    // Go's deferred result counter, one per dump attempt.
     match result {
-        Ok(()) => DumpOutcome { records, error: None },
+        Ok(()) => {
+            domain_metrics::plan_replayer_dump_task_success().inc();
+            DumpOutcome { records, error: None }
+        }
         Err(error) => {
+            domain_metrics::plan_replayer_dump_task_failed().inc();
             for record in &mut records {
                 record.failed_reason = error.to_string();
             }
@@ -3577,7 +3597,6 @@ pub fn dump_plan_replayer_info(
 mod dump_assembly_tests {
     use super::table_name_extractor_tests::RealParser;
     use super::*;
-    use std::collections::HashMap;
 
     struct EmptySchema;
 
@@ -3621,31 +3640,6 @@ mod dump_assembly_tests {
     impl TiFlashReplicaSource for NoReplica {
         fn tiflash_replica_count(&self, _db: &str, _table: &str) -> Option<u64> {
             None
-        }
-    }
-
-    struct FixedVars(HashMap<String, String>);
-
-    impl VariablesDumpSource for FixedVars {
-        fn variable_names(&self) -> Vec<String> {
-            let mut names: Vec<String> = self.0.keys().cloned().collect();
-            names.sort();
-            names
-        }
-        fn is_noop(&self, _name: &str) -> bool {
-            false
-        }
-        fn hidden_for_sem(&self, _name: &str) -> bool {
-            false
-        }
-        fn session_or_global_value(&self, name: &str) -> Result<String, String> {
-            self.0
-                .get(name)
-                .cloned()
-                .ok_or_else(|| format!("unknown {name}"))
-        }
-        fn enable_noop_variables(&self) -> bool {
-            false
         }
     }
 
@@ -3709,9 +3703,16 @@ mod dump_assembly_tests {
         let stats = EmptyStats;
         let mem_stats = EmptyStats;
         let tiflash = NoReplica;
-        let mut vars = HashMap::new();
-        vars.insert("sql_mode".to_owned(), "STRICT".to_owned());
-        let variables = FixedVars(vars);
+        let session_vars = PlanReplayerSessionVars {
+            current_db: "db1".to_owned(),
+            values: [("sql_mode".to_owned(), Ok("STRICT".to_owned()))].into_iter().collect(),
+        };
+        let registry = super::variables_dump_tests::FakeVars {
+            names: vec!["sql_mode".to_owned()],
+            noop: HashSet::new(),
+            hidden: HashSet::new(),
+            enable_noop: false,
+        };
         let presign = NoPresign;
         let sql = ScriptedSql::default();
         let seams = DumpSeams {
@@ -3721,26 +3722,24 @@ mod dump_assembly_tests {
             stats: &stats,
             mem_stats: &mem_stats,
             tiflash: &tiflash,
-            variables: &variables,
             presign: &presign,
-            cur_db: "db1".to_owned(),
+            variables: &registry,
             enable_historical_stats_for_capture: false,
         };
         let mut task = PlanReplayerDumpTask {
-            sql_digest: "sdig".to_owned(),
+            key: PlanReplayerTaskKey { sql_digest: "sdig".to_owned(), plan_digest: String::new() },
+            session_vars: session_vars.clone(),
+            exec_stmts: vec!["select * from db1.t1".to_owned()],
             ..PlanReplayerDumpTask::default()
         };
         let mut writer = Collecting {
             files: std::collections::BTreeMap::new(),
             order: Vec::new(),
         };
-        let outcome = dump_plan_replayer_info(
-            &seams,
-            &mut task,
-            &["select * from db1.t1".to_owned()],
-            &mut writer,
-        );
+        let success = domain_metrics::plan_replayer_dump_task_success().get();
+        let outcome = dump_plan_replayer_info(&seams, &mut task, &mut writer);
         assert!(outcome.error.is_none(), "{:?}", outcome.error);
+        assert_eq!(domain_metrics::plan_replayer_dump_task_success().get(), success + 1.0);
         assert_eq!(1, outcome.records.len());
         assert_eq!(outcome.records[0].origin_sql, "select * from db1.t1");
         // Go's files, in Go's order of creation.
@@ -3767,6 +3766,8 @@ mod dump_assembly_tests {
             "create database if not exists `db1`; use `db1`;CREATE TABLE `t1` (`a` int)"
         );
         assert_eq!(text_of(&writer, "schema/schema_meta.txt"), "db1.t1;");
+        // The task's captured variables, not the dumping session's.
+        assert_eq!(text_of(&writer, "variables.toml"), "sql_mode = \"STRICT\"\n");
         // `show bindings` turns an empty value into `<nil>` too.
         assert_eq!(text_of(&writer, "session_bindings.sql"), "select ?\t<nil>\t<nil>\n");
         assert_eq!(text_of(&writer, "explain.txt"), "TableReader_5\t10000.00\n");
@@ -3774,17 +3775,27 @@ mod dump_assembly_tests {
 
         // An explain failure goes to the error file; the dump still succeeds.
         let mut writer = Collecting { files: std::collections::BTreeMap::new(), order: Vec::new() };
-        let mut task = PlanReplayerDumpTask { analyze: true, ..PlanReplayerDumpTask::default() };
-        let outcome = dump_plan_replayer_info(&seams, &mut task, &["select * from db1.t1".to_owned()], &mut writer);
+        let mut task = PlanReplayerDumpTask {
+            analyze: true,
+            session_vars: session_vars.clone(),
+            exec_stmts: vec!["select * from db1.t1".to_owned()],
+            ..PlanReplayerDumpTask::default()
+        };
+        let outcome = dump_plan_replayer_info(&seams, &mut task, &mut writer);
         assert!(outcome.error.is_none());
         assert_eq!(text_of(&writer, "errors.txt"), "unexpected explain analyze select * from db1.t1\n");
 
         // A failed `SHOW CREATE` is the dump's error, stamped on no record.
-        let broken = DumpSeams { cur_db: "db2".to_owned(), ..seams };
         let mut writer = Collecting { files: std::collections::BTreeMap::new(), order: Vec::new() };
-        let outcome =
-            dump_plan_replayer_info(&broken, &mut PlanReplayerDumpTask::default(), &["select * from t9".to_owned()], &mut writer);
+        let mut task = PlanReplayerDumpTask {
+            session_vars: PlanReplayerSessionVars { current_db: "db2".to_owned(), ..session_vars },
+            exec_stmts: vec!["select * from t9".to_owned()],
+            ..PlanReplayerDumpTask::default()
+        };
+        let failed = domain_metrics::plan_replayer_dump_task_failed().get();
+        let outcome = dump_plan_replayer_info(&seams, &mut task, &mut writer);
         assert_eq!(outcome.error.unwrap().to_string(), "unexpected show create table `db2`.`t9`");
+        assert_eq!(domain_metrics::plan_replayer_dump_task_failed().get(), failed + 1.0);
         assert!(outcome.records.is_empty());
     }
 }

@@ -161,6 +161,9 @@ pub struct NodeConfig {
     /// Go `Performance.StatsLease`, retaining the negative/zero distinction
     /// that controls whether and how `loadStatsWorker` starts.
     pub stats_lease: StatsLease,
+    /// Go `parseDuration(cfg.Performance.PlanReplayerGCLease)`, which
+    /// `main` stores with `vardef.SetPlanReplayerGCLease`.
+    pub plan_replayer_gc_lease: Duration,
     /// Server certificate for inbound TLS on the MySQL port (TiDB's
     /// `[security] ssl-cert`). `None` with [`Self::auto_tls`] set generates a
     /// self-signed pair instead.
@@ -302,6 +305,15 @@ fn parse_file_schema_lease(value: &str) -> Result<Duration, NodeConfigError> {
     ))
 }
 
+/// Go `cmd/tidb-server` `parseDuration`: `time.ParseDuration`, then again
+/// with an `s` suffix; an unparsable or negative lease stops the server.
+fn parse_lease_duration(key: &str, value: &str) -> Result<Duration, NodeConfigError> {
+    let nanos = tidb_config_configtypes::parse_duration(value)
+        .or_else(|_| tidb_config_configtypes::parse_duration(&format!("{value}s")))
+        .map_err(|reason| invalid(key, &reason))?;
+    u64::try_from(nanos).map(Duration::from_nanos).map_err(|_| invalid(key, "value must not be negative"))
+}
+
 fn parse_stats_lease(value: &str) -> Result<StatsLease, NodeConfigError> {
     let nanos = serde_json::from_value::<tidb_config_configtypes::Duration>(
         serde_json::Value::String(value.to_owned()),
@@ -415,6 +427,10 @@ impl NodeConfig {
         };
         let schema_lease = parse_file_schema_lease(&global_config.lease)?;
         let stats_lease = parse_stats_lease(&global_config.performance.stats_lease)?;
+        let plan_replayer_gc_lease = parse_lease_duration(
+            "performance.plan-replayer-gc-lease",
+            &global_config.performance.plan_replayer_gc_lease,
+        )?;
         let spill_encryption = global_config
             .security
             .spilled_file_encryption_method
@@ -481,6 +497,7 @@ impl NodeConfig {
             schema_lease,
             run_ddl: global_config.instance.tidb_enable_ddl.load(),
             stats_lease,
+            plan_replayer_gc_lease,
             load_privileges,
             ssl_cert: nonempty(global_config.security.ssl_cert.clone()).map(PathBuf::from),
             ssl_key: nonempty(global_config.security.ssl_key.clone()).map(PathBuf::from),
@@ -592,7 +609,17 @@ pub fn invalid(option: &str, reason: &str) -> NodeConfigError {
 mod tests {
     use std::time::Duration;
 
-    use super::{parse_stats_lease, StatsLease};
+    use super::{parse_lease_duration, parse_stats_lease, StatsLease};
+
+    #[test]
+    fn plan_replayer_gc_lease_follows_gos_main_parse_duration() {
+        let key = "performance.plan-replayer-gc-lease";
+        assert_eq!(parse_lease_duration(key, "10m").unwrap(), std::time::Duration::from_secs(600));
+        // A bare number is seconds, Go's retry with an `s` suffix.
+        assert_eq!(parse_lease_duration(key, "30").unwrap(), std::time::Duration::from_secs(30));
+        assert!(parse_lease_duration(key, "-1s").is_err());
+        assert!(parse_lease_duration(key, "soon").is_err());
+    }
 
     #[test]
     fn stats_lease_uses_go_duration_parsing_and_allows_zero() {

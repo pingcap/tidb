@@ -11,6 +11,7 @@ description = "Go pkg/sessionctx/variable for the TiDB Rust rewrite."
 tidb-executor-join-joinversion = { path = "../tidb-executor-join-joinversion" }
 tracing = "0.1"
 tidb-exeerrors = { path = "../tidb-exeerrors" }
+tidb-replayer = { path = "../tidb-replayer" }
 tidb-spill-storage = { path = "../tidb-spill-storage" }
 tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-charset = { path = "../tidb-charset" }

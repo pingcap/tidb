@@ -47,6 +47,9 @@ pub struct DomainServices {
     /// The statistics handle's statement surface: LOAD STATS, FLUSH
     /// STATS_DELTA, DROP STATS and the statistics locks.
     pub stats: StatementService<dyn StatsStatementService>,
+    /// Go `domain.GetDomain(sctx)`, for what the session reads off the
+    /// domain itself (its plan replayer handle).
+    pub domain: std::sync::Weak<tidb_domain_core::domain::Domain>,
 }
 
 impl Session {

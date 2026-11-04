@@ -659,6 +659,9 @@ pub fn cluster_session_stack(
     if tidb_config::config_tree::config::get_global_config().enable_telemetry {
         factory.telemetry_loop();
     }
+    // Go `BootstrapSession`: the plan replayer handle and the dump-file GC
+    // loop start before the historical stats worker.
+    tidb_session::domain::cluster_session_node::start_plan_replayer_handle(&factory);
     factory.start_historical_stats_worker();
     // Go `BootstrapSession`: after the statistics loops.
     factory.setup_workload_based_learning_worker();

@@ -29,6 +29,13 @@ use tidb_infoschema::SessionExtendedInfoSchema;
 
 use crate::Session;
 
+/// Go `domain.planReplayerHandle` over the domain's internal sessions.
+type PlanReplayerHandle =
+    replayer::PlanReplayerHandle<tidb_domain_core::domain::plan_replayer_owner::PooledSql>;
+
+/// Go `planReplayerSessionFinishedTaskKeyLen`.
+const PLAN_REPLAYER_SESSION_FINISHED_TASK_KEY_LEN: usize = 128;
+
 /// The dumping session as Go's `sctx.GetSQLExecutor()`.
 struct SessionSql<'a>(RefCell<&'a mut Session>);
 
@@ -158,26 +165,24 @@ impl replayer::StatsDumpSource for StatsSource {
     }
 }
 
-/// The session's variables, read before the dump runs its statements.
-struct VariableValues {
-    values: BTreeMap<String, Result<String, String>>,
+/// Go `variable.GetSysVars()`'s flags and `SysVarHiddenForSem` for the
+/// dumping session, read before the dump runs its statements.
+struct SysVarRegistry {
+    names: Vec<String>,
     noop: std::collections::BTreeSet<String>,
     hidden: std::collections::BTreeSet<String>,
     enable_noop_variables: bool,
 }
 
-impl replayer::VariablesDumpSource for VariableValues {
+impl replayer::VariablesDumpSource for SysVarRegistry {
     fn variable_names(&self) -> Vec<String> {
-        self.values.keys().cloned().collect()
+        self.names.clone()
     }
     fn is_noop(&self, name: &str) -> bool {
         self.noop.contains(name)
     }
     fn hidden_for_sem(&self, name: &str) -> bool {
         self.hidden.contains(name)
-    }
-    fn session_or_global_value(&self, name: &str) -> Result<String, String> {
-        self.values.get(name).cloned().unwrap_or_else(|| Err(format!("unknown system variable '{name}'")))
     }
     fn enable_noop_variables(&self) -> bool {
         self.enable_noop_variables
@@ -278,10 +283,6 @@ impl Session {
         let (mut file, file_name) =
             tidb_replayer::generate_plan_replayer_file(storage.as_ref(), false, false, false)
                 .map_err(|error| unknown(error.to_string()))?;
-        let catalog = self.with_catalog_mut(|catalog| Ok(catalog.clone()))?;
-        let variables = self.plan_replayer_variables();
-        let stats = StatsSource(self.domain_services().map(|services| (services.stats)(self)));
-        let cur_db = self.current_database().to_owned();
         // Go `GetTxnManager(sctx).GetStmtReadTS()`: the statement's read
         // snapshot.
         let start_ts = self.statement_snapshot.as_ref().map_or(0, |(ts, _)| *ts);
@@ -289,10 +290,36 @@ impl Session {
             file_name: Some(file_name.clone()),
             start_ts,
             analyze,
+            session_vars: self.plan_replayer_session_vars(),
+            exec_stmts: exec_stmts.to_vec(),
             ..replayer::PlanReplayerDumpTask::default()
         };
-        let catalog = CatalogSource(catalog);
-        let presign = LocalPresign(Some(std::sync::Arc::clone(&storage)));
+        self.dump_plan_replayer_info(&mut task, &mut file).map_err(|error| unknown(error.to_string()))?;
+        let token = task.presigned_url.filter(|url| !url.is_empty()).unwrap_or(file_name);
+        self.vars.last_plan_replayer_token = token.clone();
+        Ok(token)
+    }
+
+    /// Go `DumpPlanReplayerInfo(ctx, sctx, task)` with this session as
+    /// `sctx`: the archive goes to `zf`, Go's deferred close of the zip
+    /// writer and of `zf` runs, and the status records are inserted.
+    pub(crate) fn dump_plan_replayer_info(
+        &mut self,
+        task: &mut replayer::PlanReplayerDumpTask,
+        zf: &mut dyn tidb_replayer::WriteCloser,
+    ) -> Result<(), replayer::PlanReplayerError> {
+        let catalog = CatalogSource(
+            self.with_catalog_mut(|catalog| Ok(catalog.clone()))
+                .map_err(|error| replayer::PlanReplayerError::Other(error.to_mysql_error().message))?,
+        );
+        let stats = StatsSource(self.domain_services().map(|services| (services.stats)(self)));
+        let presign = LocalPresign(tidb_planner_extstore::get_global_ext_storage().ok());
+        // Go `vardef.EnableHistoricalStatsForCapture.Load()`.
+        let enable_historical_stats_for_capture = self
+            .vars
+            .get_global(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS_FOR_CAPTURE)
+            .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
+        let variables = self.plan_replayer_sys_var_registry();
         let mut archive = ArchiveWriter(tidb_replayer::zip::ZipWriter::new(Vec::new()));
         let outcome = {
             let sql = SessionSql(RefCell::new(&mut *self));
@@ -303,12 +330,11 @@ impl Session {
                 stats: &stats,
                 mem_stats: &stats,
                 tiflash: &catalog,
-                variables: &variables,
                 presign: &presign,
-                cur_db,
-                enable_historical_stats_for_capture: false,
+                variables: &variables,
+                enable_historical_stats_for_capture,
             };
-            replayer::dump_plan_replayer_info(&seams, &mut task, exec_stmts, &mut archive)
+            replayer::dump_plan_replayer_info(&seams, task, &mut archive)
         };
         // Go's deferred `zw.Close` / `zf.Close`, then the status records.
         let mut close_error = String::new();
@@ -319,8 +345,7 @@ impl Session {
                 Vec::new()
             }
         };
-        let write = tidb_replayer::WriteCloser::write(&mut file, &bytes)
-            .and_then(|_| tidb_replayer::WriteCloser::close(&mut file));
+        let write = zf.write(&bytes).and_then(|_| zf.close());
         if let Err(error) = write {
             close_error = if close_error.is_empty() { error.to_string() } else { format!("{close_error},{error}") };
         }
@@ -337,32 +362,142 @@ impl Session {
             }
         }
         self.insert_plan_replayer_status(&records);
-        if let Some(error) = outcome.error {
-            return Err(unknown(error.to_string()));
-        }
-        let token = task.presigned_url.filter(|url| !url.is_empty()).unwrap_or(file_name);
-        self.vars.last_plan_replayer_token = token.clone();
-        Ok(token)
+        outcome.error.map_or(Ok(()), Err)
     }
 
-    /// Go `dumpVariables`' reads: every system variable's session-or-global
-    /// value.
-    fn plan_replayer_variables(&self) -> VariableValues {
-        let vars = &self.vars;
-        let mut values = BTreeMap::new();
-        let mut noop = std::collections::BTreeSet::new();
-        let mut hidden = std::collections::BTreeSet::new();
+    /// Go `*variable.SessionVars` as the dump reads it: the current database
+    /// and every system variable's session-or-global value.
+    fn plan_replayer_session_vars(&self) -> replayer::PlanReplayerSessionVars {
+        let values = tidb_variable::sysvar::SYS_VARS
+            .iter()
+            .map(|definition| {
+                (definition.name.to_owned(), self.vars.get_system(definition.name).map_err(|error| error.to_string()))
+            })
+            .collect();
+        replayer::PlanReplayerSessionVars { current_db: self.current_database().to_owned(), values }
+    }
+
+    /// Go `dumpVariables`' registry walk for this (the dumping) session.
+    fn plan_replayer_sys_var_registry(&self) -> SysVarRegistry {
+        let mut registry = SysVarRegistry {
+            names: Vec::new(),
+            noop: std::collections::BTreeSet::new(),
+            hidden: std::collections::BTreeSet::new(),
+            enable_noop_variables: self.vars.enable_noop_variables(),
+        };
         for definition in tidb_variable::sysvar::SYS_VARS {
-            let name = definition.name.to_owned();
+            registry.names.push(definition.name.to_owned());
             if definition.is_noop() {
-                noop.insert(name.clone());
+                registry.noop.insert(definition.name.to_owned());
             }
             if tidb_executor::sessionctx::sys_var_hidden_for_sem(self, definition.name) {
-                hidden.insert(name.clone());
+                registry.hidden.insert(definition.name.to_owned());
             }
-            values.insert(name, vars.get_system(definition.name).map_err(|error| error.to_string()));
         }
-        VariableValues { values, noop, hidden, enable_noop_variables: vars.enable_noop_variables() }
+        registry
+    }
+
+    /// Go `ExecStmt.checkPlanReplayerCapture`, the first step of
+    /// `FinishExecuteStmt`: a matching capture task, or the continuous
+    /// capture, sends this statement to the dump workers.
+    pub(crate) fn check_plan_replayer_capture(
+        &mut self,
+        observation: &tidb_executor::exec_stmt_observation::StatementObservation,
+        plan: &tidb_stmtctx::ProcessPlanInfo,
+        txn_ts: u64,
+    ) {
+        // Go also skips the statistics request sources; this node's
+        // statistics statements all run on restricted sessions.
+        let on = |name: &str| {
+            self.vars.get_system(name).is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value))
+        };
+        let continues = on(tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_REPLAYER_CONTINUOUS_CAPTURE);
+        // Go `IsPlanReplayerCaptureEnabled`.
+        if self.vars.restricted_sql || !(on(tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_REPLAYER_CAPTURE) || continues) {
+            return;
+        }
+        let Some(handle) = self.plan_replayer_handle() else {
+            return;
+        };
+        let key = tidb_replayer::PlanReplayerTaskKey {
+            sql_digest: observation.digest.as_str().to_owned(),
+            plan_digest: plan.plan_digest.clone(),
+        };
+        if continues {
+            // Go `checkPlanReplayerContinuesCapture`.
+            if !observation.plan_replayer_continues_capture_valid
+                || self.vars.plan_replayer_finished_task_key.contains(&key)
+            {
+                return;
+            }
+            self.send_plan_replayer_dump_task(&handle, key.clone(), observation, plan, txn_ts, true);
+            // Go `AddPlanReplayerFinishedTaskKey`.
+            if self.vars.plan_replayer_finished_task_key.len() >= PLAN_REPLAYER_SESSION_FINISHED_TASK_KEY_LEN {
+                self.vars.plan_replayer_finished_task_key.clear();
+            }
+            self.vars.plan_replayer_finished_task_key.insert(key);
+            return;
+        }
+        // Go `checkPlanReplayerCaptureTask`.
+        let tasks = handle.collector.get_tasks();
+        if tasks.is_empty() || key.sql_digest.is_empty() || key.plan_digest.is_empty() {
+            return;
+        }
+        if tasks
+            .iter()
+            .any(|task| task.sql_digest == key.sql_digest && (task.plan_digest == "*" || task.plan_digest == key.plan_digest))
+        {
+            self.send_plan_replayer_dump_task(&handle, key, observation, plan, txn_ts, false);
+        }
+    }
+
+    /// Go `sendPlanReplayerDumpTask`.
+    fn send_plan_replayer_dump_task(
+        &self,
+        handle: &PlanReplayerHandle,
+        key: tidb_replayer::PlanReplayerTaskKey,
+        observation: &tidb_executor::exec_stmt_observation::StatementObservation,
+        plan: &tidb_stmtctx::ProcessPlanInfo,
+        start_ts: u64,
+        is_continues_capture: bool,
+    ) {
+        let session_bindings = self
+            .session_bindings
+            .get_all_session_bindings()
+            .into_iter()
+            .map(|binding| {
+                vec![
+                    binding.original_sql.clone(),
+                    binding.bind_sql.clone(),
+                    binding.db.clone(),
+                    binding.status.to_owned(),
+                    binding.create_time.clone(),
+                    binding.update_time.clone(),
+                    binding.charset.clone(),
+                    binding.collation.clone(),
+                    binding.source.to_owned(),
+                ]
+            })
+            .collect();
+        handle.send_task(replayer::PlanReplayerDumpTask {
+            key,
+            start_ts,
+            session_bindings,
+            session_vars: self.plan_replayer_session_vars(),
+            // Go `[]ast.StmtNode{stmtNode}`, an EXECUTE's being the prepared
+            // statement: the statement's original text either way.
+            exec_stmts: vec![observation.text.clone()],
+            encoded_plan: plan.encoded_plan.clone(),
+            analyze: false,
+            is_capture: true,
+            is_continues_capture,
+            ..replayer::PlanReplayerDumpTask::default()
+        });
+    }
+
+    /// Go `domain.GetDomain(sctx).GetPlanReplayerHandle()`.
+    fn plan_replayer_handle(&self) -> Option<std::sync::Arc<PlanReplayerHandle>> {
+        self.domain_services()?.domain.upgrade()?.plan_replayer_handle()
     }
 
     /// Go `insertPlanReplayerStatus`: one row per record into
@@ -420,7 +555,19 @@ impl Session {
         self.exec_restricted_sql(&format!(
             "insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('{sql_digest}','{plan_digest}')"
         ))?;
-        Ok(())
+        self.collect_plan_replayer_task()
+    }
+
+    /// Go `GetPlanReplayerHandle().CollectPlanReplayerTask()` after a
+    /// capture task is added or removed.
+    fn collect_plan_replayer_task(&self) -> Result<(), DriverError> {
+        match self.plan_replayer_handle() {
+            Some(handle) => handle
+                .collector
+                .collect_plan_replayer_task()
+                .map_err(|error| DriverError::Mysql(tidb_terror::MysqlError::unknown(error.to_string()))),
+            None => Ok(()),
+        }
     }
 
     /// Go `PlanReplayerExec.removeCaptureTask`.
@@ -428,7 +575,59 @@ impl Session {
         self.exec_restricted_sql(&format!(
             "delete from mysql.plan_replayer_task where sql_digest = '{sql_digest}' and plan_digest = '{plan_digest}'"
         ))?;
-        Ok(())
+        self.collect_plan_replayer_task()
+    }
+}
+
+/// Go `planReplayerTaskDumpWorker`'s dumping half: the archive Go's
+/// `GeneratePlanReplayerFile` creates waits here (Go `task.Zf`) until
+/// `DumpPlanReplayerInfo` runs on a worker session.
+pub struct PlanReplayerWorkerDumper {
+    open_session: Box<dyn Fn() -> Result<Session, String> + Send + Sync>,
+    files: std::sync::Mutex<std::collections::HashMap<String, Box<dyn tidb_replayer::WriteCloser + Send>>>,
+}
+
+impl PlanReplayerWorkerDumper {
+    /// A dumper whose worker sessions `open_session` opens.
+    pub fn new(open_session: impl Fn() -> Result<Session, String> + Send + Sync + 'static) -> Self {
+        Self { open_session: Box::new(open_session), files: std::sync::Mutex::default() }
+    }
+
+    fn take_file(&self, file_name: &str) -> Option<Box<dyn tidb_replayer::WriteCloser + Send>> {
+        self.files.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(file_name)
+    }
+}
+
+impl replayer::PlanReplayerDumper for PlanReplayerWorkerDumper {
+    fn generate_plan_replayer_file(
+        &self,
+        is_capture: bool,
+        is_continues_capture: bool,
+        enable_historical_stats_for_capture: bool,
+    ) -> Result<String, replayer::PlanReplayerError> {
+        let storage = tidb_planner_extstore::get_global_ext_storage().map_err(replayer::PlanReplayerError::Other)?;
+        let (file, file_name) = tidb_replayer::generate_plan_replayer_file(
+            storage.as_ref(),
+            is_capture,
+            is_continues_capture,
+            enable_historical_stats_for_capture,
+        )
+        .map_err(|error| replayer::PlanReplayerError::Other(error.to_string()))?;
+        self.files
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(file_name.clone(), Box::new(file));
+        Ok(file_name)
+    }
+
+    fn dump_plan_replayer_info(&self, task: &replayer::PlanReplayerDumpTask) -> Result<(), replayer::PlanReplayerError> {
+        let file_name = task.file_name.clone().unwrap_or_default();
+        let mut zf = self
+            .take_file(&file_name)
+            .ok_or_else(|| replayer::PlanReplayerError::Other(format!("plan replayer: no file {file_name}")))?;
+        let mut session = (self.open_session)().map_err(replayer::PlanReplayerError::Other)?;
+        let mut task = task.clone();
+        session.dump_plan_replayer_info(&mut task, zf.as_mut())
     }
 }
 

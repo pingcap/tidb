@@ -431,6 +431,11 @@ impl SessionBindings {
         self.bindings.is_empty()
     }
 
+    /// Go `GetAllSessionBindings`.
+    pub fn get_all_session_bindings(&self) -> Vec<&Binding> {
+        self.bindings.values().collect()
+    }
+
     /// Go `fetchShowBind`'s order: descending update time, then descending
     /// create time.
     pub fn all_sorted(&self) -> Vec<&Binding> {
