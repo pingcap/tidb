@@ -91,13 +91,12 @@ func TestInitCreateMaterializedViewBuildSessionAppliesDefinitionDivPrecisionIncr
 	require.Equal(t, "default", sessVars.ResourceGroupName)
 	require.False(t, sessVars.TrackAggregateMemoryUsage)
 	require.False(t, sessVars.EnableParallelHashaggSpill)
-	// The session variable takes the value of the field it had.
-	require.Equal(t, "2", sessionVar(vardef.DivPrecisionIncrement))
-	for _, name := range names[1:] {
+	// Restore the original cached values independently of the session fields.
+	for _, name := range names {
 		require.Equal(t, before[name], sessionVar(name))
 	}
 
-	// The session variable takes the definition even if the field already does.
+	// Synchronize the cached value even when the field already matches the definition.
 	sessCtx = mock.NewContext()
 	sessVars = sessCtx.GetSessionVars()
 	require.NoError(t, sessVars.SetSystemVar(vardef.DivPrecisionIncrement, "4"))
@@ -106,6 +105,8 @@ func TestInitCreateMaterializedViewBuildSessionAppliesDefinitionDivPrecisionIncr
 	require.NoError(t, err)
 	require.Equal(t, "9", sessionVar(vardef.DivPrecisionIncrement))
 	restore()
+	require.Equal(t, 9, sessVars.DivPrecisionIncrement)
+	require.Equal(t, "4", sessionVar(vardef.DivPrecisionIncrement))
 
 	// The variables are restored even if the session has not read them before.
 	sessCtx = mock.NewContext()
