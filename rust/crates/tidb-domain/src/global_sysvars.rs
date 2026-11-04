@@ -400,7 +400,37 @@ fn runtime_instance_value(globals: &GlobalSysvars, def: &'static SysVarDef) -> O
 /// GLOBAL getter hooks. The registry still owns validation and persistence;
 /// these atomics are the live consumer-facing authority.
 fn runtime_global_value(name: &str) -> Option<String> {
+    use std::sync::atomic::Ordering::SeqCst;
+    let day_time = |time: &std::sync::RwLock<tidb_vardef::DayTime>| {
+        time.read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .format()
+    };
     match name {
+        tidb_vardef::tidb_vars::TIDB_TTL_SCAN_BATCH_SIZE => {
+            Some(tidb_vardef::TTL_SCAN_BATCH_SIZE.load(SeqCst).to_string())
+        }
+        tidb_vardef::tidb_vars::TIDB_TTL_DELETE_BATCH_SIZE => {
+            Some(tidb_vardef::TTL_DELETE_BATCH_SIZE.load(SeqCst).to_string())
+        }
+        tidb_vardef::tidb_vars::TIDB_TTL_DELETE_RATE_LIMIT => {
+            Some(tidb_vardef::TTL_DELETE_RATE_LIMIT.load(SeqCst).to_string())
+        }
+        tidb_vardef::tidb_vars::TIDB_TTL_JOB_SCHEDULE_WINDOW_START_TIME => {
+            Some(day_time(&tidb_vardef::TTL_JOB_SCHEDULE_WINDOW_START_TIME))
+        }
+        tidb_vardef::tidb_vars::TIDB_TTL_JOB_SCHEDULE_WINDOW_END_TIME => {
+            Some(day_time(&tidb_vardef::TTL_JOB_SCHEDULE_WINDOW_END_TIME))
+        }
+        tidb_vardef::tidb_vars::TIDB_TTL_SCAN_WORKER_COUNT => {
+            Some(tidb_vardef::TTL_SCAN_WORKER_COUNT.load(SeqCst).to_string())
+        }
+        tidb_vardef::tidb_vars::TIDB_TTL_DELETE_WORKER_COUNT => {
+            Some(tidb_vardef::TTL_DELETE_WORKER_COUNT.load(SeqCst).to_string())
+        }
+        tidb_vardef::tidb_vars::TIDB_TTL_RUNNING_TASKS => {
+            Some(tidb_vardef::TTL_RUNNING_TASKS.load(SeqCst).to_string())
+        }
         tidb_vardef::tidb_vars::PERFORMANCE_SCHEMA_SESSION_CONNECT_ATTRS_SIZE => Some(
             tidb_vardef::CONNECT_ATTRS_SIZE
                 .load(std::sync::atomic::Ordering::SeqCst)
@@ -1104,6 +1134,14 @@ impl GlobalSysvars {
             REQUIRE_SECURE_TRANSPORT
                 | PERFORMANCE_SCHEMA_SESSION_CONNECT_ATTRS_SIZE
                 | TIDB_TTL_JOB_ENABLE
+                | TIDB_TTL_SCAN_BATCH_SIZE
+                | TIDB_TTL_DELETE_BATCH_SIZE
+                | TIDB_TTL_DELETE_RATE_LIMIT
+                | TIDB_TTL_JOB_SCHEDULE_WINDOW_START_TIME
+                | TIDB_TTL_JOB_SCHEDULE_WINDOW_END_TIME
+                | TIDB_TTL_SCAN_WORKER_COUNT
+                | TIDB_TTL_DELETE_WORKER_COUNT
+                | TIDB_TTL_RUNNING_TASKS
                 | TIDB_ENABLE_FOREIGN_KEY
                 | TIDB_ENABLE_ROW_LEVEL_CHECKSUM
                 | TIDB_ENABLE_TS_VALIDATION
@@ -1171,6 +1209,53 @@ impl GlobalSysvars {
                 SeqCst,
             ),
             TIDB_TTL_JOB_ENABLE => tidb_vardef::ENABLE_TTL_JOB.store(on, SeqCst),
+            // Go `SetGlobal`: `strconv.ParseInt(s, 10, 64)` then `Store`; the
+            // registry has validated the value, so the parse cannot fail.
+            TIDB_TTL_SCAN_BATCH_SIZE => {
+                if let Ok(value) = value.parse::<i64>() {
+                    tidb_vardef::TTL_SCAN_BATCH_SIZE.store(value, SeqCst);
+                }
+            }
+            TIDB_TTL_DELETE_BATCH_SIZE => {
+                if let Ok(value) = value.parse::<i64>() {
+                    tidb_vardef::TTL_DELETE_BATCH_SIZE.store(value, SeqCst);
+                }
+            }
+            TIDB_TTL_DELETE_RATE_LIMIT => {
+                if let Ok(value) = value.parse::<i64>() {
+                    tidb_vardef::TTL_DELETE_RATE_LIMIT.store(value, SeqCst);
+                }
+            }
+            // Go `SetGlobal`: `time.ParseInLocation(FullDayTimeFormat, s, time.UTC)`.
+            TIDB_TTL_JOB_SCHEDULE_WINDOW_START_TIME => {
+                if let Ok(time) = tidb_vardef::DayTime::parse(value) {
+                    *tidb_vardef::TTL_JOB_SCHEDULE_WINDOW_START_TIME
+                        .write()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = time;
+                }
+            }
+            TIDB_TTL_JOB_SCHEDULE_WINDOW_END_TIME => {
+                if let Ok(time) = tidb_vardef::DayTime::parse(value) {
+                    *tidb_vardef::TTL_JOB_SCHEDULE_WINDOW_END_TIME
+                        .write()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = time;
+                }
+            }
+            TIDB_TTL_SCAN_WORKER_COUNT => {
+                if let Ok(value) = value.parse::<i64>() {
+                    tidb_vardef::TTL_SCAN_WORKER_COUNT.store(value as i32, SeqCst);
+                }
+            }
+            TIDB_TTL_DELETE_WORKER_COUNT => {
+                if let Ok(value) = value.parse::<i64>() {
+                    tidb_vardef::TTL_DELETE_WORKER_COUNT.store(value as i32, SeqCst);
+                }
+            }
+            TIDB_TTL_RUNNING_TASKS => {
+                if let Ok(value) = value.parse::<i64>() {
+                    tidb_vardef::TTL_RUNNING_TASKS.store(value as i32, SeqCst);
+                }
+            }
             // Go `SetGlobal`: `ForcePriority = Str2Priority(val)`.
             TIDB_FORCE_PRIORITY => tidb_vardef::FORCE_PRIORITY
                 .store(tidb_mysql::priority_from_str(value).as_enum(), SeqCst),

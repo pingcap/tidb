@@ -108,6 +108,9 @@ pub fn run_unistore_cluster_session(
     factory.start_historical_stats_worker();
     // Go `BootstrapSession`: after the statistics loops.
     factory.setup_workload_based_learning_worker();
+    // Go `BootstrapSession`: `dom.StartTTLJobManager()` after the stats
+    // collector is attached.
+    let ttl_job_manager = factory.start_ttl_job_manager();
     let stats_receipt = stats.receipt();
 
     let node = ConcurrentSqlNode::bind(&config, Arc::clone(&factory), Arc::clone(&users))
@@ -137,6 +140,7 @@ pub fn run_unistore_cluster_session(
                 transactions: Some(Arc::clone(&factory.transactions)),
                 stats_dump: Some(crate::node_status::stats_dump(&factory)),
                 schema_storage: Some(crate::node_status::schema_storage(&factory)),
+                ttl_job_trigger: Some(crate::node_status::ttl_job_trigger(&factory)),
                 schema_reload: {
                     let ddl = Arc::clone(&factory.ddl);
                     Some(Arc::new(move || ddl.reload_schema()))
@@ -171,6 +175,8 @@ pub fn run_unistore_cluster_session(
         stats_receipt.pseudo,
     );
     let result = node.run().map_err(|error| RunConfiguredNodeError::Node(Box::new(error)));
+    // Go `Domain.Close` stops the TTL job manager first.
+    drop(ttl_job_manager);
     drop(stats_maintenance);
     drop(reloader);
     drop(sysvar_reloader);

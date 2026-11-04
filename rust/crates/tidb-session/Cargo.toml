@@ -10,6 +10,11 @@ description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-ttl = { path = "../tidb-ttl" }
+tidb-ttl-ttlworker = { path = "../tidb-ttl-ttlworker" }
+tidb-ttl-client = { path = "../tidb-ttl-client" }
+tidb-timer = { path = "../tidb-timer" }
+tidb-timer-tablestore = { path = "../tidb-timer-tablestore" }
 tidb-structure = { path = "../tidb-structure" }
 tidb-planner-core-operator-physicalop = { path = "../tidb-planner-core-operator-physicalop" }
 tidb-planner-cardinality = { path = "../tidb-planner-cardinality" }

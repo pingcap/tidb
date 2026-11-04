@@ -692,6 +692,10 @@ pub fn cluster_session_stack(
     if let Some(client) = &etcd {
         factory.install_etcd_client(Arc::clone(client));
     }
+    // Go `BootstrapSession`'s `dom.StartTTLJobManager()`, over the domain's
+    // etcd client; Go `Domain.Close` stops it first, so its guard is the
+    // first worker retired.
+    let ttl_job_manager = factory.start_ttl_job_manager();
     let skipped = render_skipped(factory.boot_skipped_tables());
     let stats_receipt = stats.receipt();
     // The controller stops in the closure, before the authority closes the
@@ -705,6 +709,7 @@ pub fn cluster_session_stack(
         skipped,
         stats_receipt,
         workers: vec![
+            Box::new(ttl_job_manager),
             Box::new(replica_read_checker),
             Box::new(stats_maintenance),
             Box::new(replica_poll),

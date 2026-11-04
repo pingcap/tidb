@@ -96,6 +96,46 @@ pub struct StatusRoutes {
     pub stats_dump: Option<StatsDump>,
     /// Go `SchemaStorageHandler`'s storage rows of a database or one table.
     pub schema_storage: Option<SchemaStorage>,
+    /// Go `TTLJobTriggerHandler`'s `ttlclient.TriggerNewTTLJob` over the
+    /// domain's TTL job manager.
+    pub ttl_job_trigger: Option<TtlJobTrigger>,
+}
+
+/// Go `ttlcient.TriggerNewTTLJob(ctx, dom.TTLJobManager().GetCommandCli(),
+/// db, table)`: the response's JSON text.
+pub type TtlJobTrigger = Arc<dyn Fn(&str, &str) -> Result<String, String> + Send + Sync>;
+
+/// Go `TTLJobTriggerHandler` (`/test/ttl/trigger/{db}/{table}`), which Go
+/// registers for tests to accelerate a TTL job's schedule.
+fn ttl_job_trigger_response(
+    path: &str,
+    request: &str,
+    trigger: Option<&TtlJobTrigger>,
+) -> Option<Result<String, String>> {
+    let route = path.split_once('?').map_or(path, |(route, _)| route);
+    let rest = route.strip_prefix("/test/ttl/trigger/")?;
+    let (db, table) = rest.split_once('/').filter(|(db, table)| !db.is_empty() && !table.is_empty() && !table.contains('/'))?;
+    if request.split_whitespace().next() != Some("POST") {
+        return Some(Err("This api only support POST method".to_owned()));
+    }
+    let trigger = trigger?;
+    let (db_name, table_name) = (db.to_lowercase(), table.to_lowercase());
+    let response = trigger(&db_name, &table_name);
+    match &response {
+        Ok(body) => tidb_logutil::bg_logger().info(
+            "trigger TTL job manually successfully",
+            &[
+                tidb_log::Field::new("dbName", tidb_log::Value::Str(db_name)),
+                tidb_log::Field::new("tableName", tidb_log::Value::Str(table_name)),
+                tidb_log::Field::new("response", tidb_log::Value::Reflect(body.clone())),
+            ],
+        ),
+        Err(error) => tidb_logutil::bg_logger().error(
+            "failed to trigger new TTL job",
+            &[tidb_log::Field::new("error", tidb_log::Value::Str(error.clone()))],
+        ),
+    }
+    Some(response)
 }
 
 /// Go `getSchemaTablesStorageInfo` + `WriteData` for `/schema_storage`
@@ -575,6 +615,7 @@ fn route_response(
         .or_else(|| ddl_history_response(path, routes.ddl_history.as_deref()))
         .or_else(|| stats_dump_response(path, routes.stats_dump.as_ref()))
         .or_else(|| schema_storage_response(path, routes.schema_storage.as_ref()))
+        .or_else(|| ttl_job_trigger_response(path, request, routes.ttl_job_trigger.as_ref()))
     {
         match answer {
             Ok(body) => (200, "application/json", write_data(&body)),
@@ -2003,6 +2044,41 @@ mod schema_route_tests {
             .unwrap()
             .to_vec();
         (code, format!("{content_type}|{disposition}"), body)
+    }
+
+    /// Go `TTLJobTriggerHandler`: POST only, the names lowered, the
+    /// response written with `WriteData` and an error with `WriteError`.
+    #[test]
+    fn ttl_trigger_route_is_gos_post_only_handler() {
+        let trigger: TtlJobTrigger = Arc::new(|db: &str, table: &str| {
+            if table == "missing" {
+                return Err(format!("table {db}.{table} not exists"));
+            }
+            Ok(format!(r#"{{"table_result":[{{"table_id":1,"db_name":"{db}","table_name":"{table}"}}]}}"#))
+        });
+        let routes = StatusRoutes { ttl_job_trigger: Some(trigger), ..StatusRoutes::default() };
+        let post = |path: &str| {
+            let tracker = ConnectionTracker::default();
+            let response = route_response(path, &format!("POST {path} HTTP/1.1\r\n\r\n"), &tracker, "v", "h", &routes);
+            let code = response.status().as_u16();
+            let body = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(axum::body::to_bytes(response.into_body(), usize::MAX))
+                .unwrap();
+            (code, String::from_utf8(body.to_vec()).unwrap())
+        };
+        assert_eq!(
+            post("/test/ttl/trigger/Test/T1"),
+            (
+                200,
+                "{\n \"table_result\": [\n  {\n   \"table_id\": 1,\n   \"db_name\": \"test\",\n   \"table_name\": \"t1\"\n  }\n ]\n}".to_owned()
+            )
+        );
+        assert_eq!(post("/test/ttl/trigger/test/missing"), (400, "table test.missing not exists".to_owned()));
+        let (code, _, body) = routed("/test/ttl/trigger/test/t1", &routes);
+        assert_eq!((code, String::from_utf8(body).unwrap().as_str()), (400, "This api only support POST method"));
+        assert_eq!(routed("/test/ttl/trigger/test", &routes).0, 404);
     }
 
     /// Go `handler.WriteData`: `json.MarshalIndent(data, "", " ")`, with

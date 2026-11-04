@@ -1,0 +1,20 @@
+[package]
+name = "tidb-ttl-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/ttl/client: TTL command and notification clients over etcd, and their in-memory mocks."
+
+[lints]
+workspace = true
+
+[dependencies]
+crossbeam-channel = "0.5"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-timer = { path = "../tidb-timer" }

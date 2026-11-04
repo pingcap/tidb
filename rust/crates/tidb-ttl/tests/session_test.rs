@@ -41,15 +41,16 @@
 //!   need the system-variable catalog plus a live session to run `SET`/`SELECT
 //!   @@`, both outside this crate.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tidb_datatype::{CoreTime, Datum, Time, TimeType};
 use tidb_sqlkiller::{KillSignal, SqlKiller};
 use tidb_timeutil::TimeZone;
 
 use tidb_ttl::session::{
-    Phase, PhaseTracer, ResultRow, Session, SessionContext, SessionError, TtlSession, TxnMode,
+    ResultRow, Session, SessionContext, SessionError, TtlSession, TxnMode,
 };
+use tidb_ttl_metrics::{new_phase_tracer, PhaseTracer, PhaseTracerExt};
 
 /// A row that is never read: these tests exercise statement flow, not results.
 #[derive(Debug, Clone)]
@@ -168,21 +169,26 @@ impl SessionContext for MockContext {
     }
 }
 
-/// A tracer that records every phase it is moved into.
-#[derive(Default)]
+/// A tracer that records every phase it leaves, in order.
 struct RecordingTracer {
-    phases: Mutex<Vec<Phase>>,
-    current: Mutex<Option<Phase>>,
+    tracer: PhaseTracer,
+    left: Arc<Mutex<Vec<String>>>,
 }
 
-impl PhaseTracer for RecordingTracer {
-    fn phase(&self) -> Phase {
-        self.current.lock().unwrap().unwrap_or(Phase::Other)
+impl Default for RecordingTracer {
+    fn default() -> Self {
+        let left = Arc::new(Mutex::new(Vec::new()));
+        let tracer = new_phase_tracer(Box::new(std::time::Instant::now), {
+            let left = Arc::clone(&left);
+            Box::new(move |phase, _| left.lock().unwrap().push(phase.to_owned()))
+        });
+        Self { tracer, left }
     }
+}
 
-    fn enter_phase(&self, phase: Phase) {
-        *self.current.lock().unwrap() = Some(phase);
-        self.phases.lock().unwrap().push(phase);
+impl RecordingTracer {
+    fn get(&self) -> Option<&PhaseTracer> {
+        Some(&self.tracer)
     }
 }
 
@@ -201,7 +207,7 @@ fn test_session_run_in_txn() {
     let tracer = RecordingTracer::default();
 
     assert!(se
-        .run_in_txn(&mut || Ok(()), TxnMode::OPTIMISTIC, &tracer)
+        .run_in_txn(&mut || Ok(()), TxnMode::OPTIMISTIC, tracer.get())
         .is_ok());
     assert_eq!(
         se.context().executed(),
@@ -213,7 +219,7 @@ fn test_session_run_in_txn() {
         .run_in_txn(
             &mut || Err(SessionError("mockErr".to_owned())),
             TxnMode::OPTIMISTIC,
-            &tracer,
+            tracer.get(),
         )
         .unwrap_err();
     assert_eq!(err.to_string(), "mockErr");
@@ -225,7 +231,7 @@ fn test_session_run_in_txn() {
     // A third transaction on a fresh session commits as the first one did.
     let se = TtlSession::new(MockContext::new(), Box::new(|| {}));
     assert!(se
-        .run_in_txn(&mut || Ok(()), TxnMode::OPTIMISTIC, &tracer)
+        .run_in_txn(&mut || Ok(()), TxnMode::OPTIMISTIC, tracer.get())
         .is_ok());
     assert_eq!(
         se.context().executed(),
@@ -240,7 +246,7 @@ fn test_run_in_txn_modes() {
     let se = TtlSession::new(MockContext::new(), Box::new(|| {}));
     let tracer = RecordingTracer::default();
     assert!(se
-        .run_in_txn(&mut || Ok(()), TxnMode::PESSIMISTIC, &tracer)
+        .run_in_txn(&mut || Ok(()), TxnMode::PESSIMISTIC, tracer.get())
         .is_ok());
     assert_eq!(
         se.context().executed(),
@@ -249,7 +255,7 @@ fn test_run_in_txn_modes() {
 
     let se = TtlSession::new(MockContext::new(), Box::new(|| {}));
     let err = se
-        .run_in_txn(&mut || Ok(()), TxnMode(7), &tracer)
+        .run_in_txn(&mut || Ok(()), TxnMode(7), tracer.get())
         .unwrap_err();
     assert_eq!(err.to_string(), "unknown transaction mode");
     // Go still rolls back: the `defer` runs even when only the mode check failed.
@@ -273,7 +279,7 @@ fn test_run_in_txn_rolls_back_a_failed_begin() {
                 Ok(())
             },
             TxnMode::OPTIMISTIC,
-            &tracer,
+            tracer.get(),
         )
         .unwrap_err();
     assert_eq!(err.to_string(), "killed");
@@ -284,28 +290,23 @@ fn test_run_in_txn_rolls_back_a_failed_begin() {
     );
 }
 
-/// The phase sequence `RunInTxn` drives the tracer through.
+/// The phase sequence `RunInTxn` drives the tracer through: Go's `defer
+/// tracer.EnterPhase(tracer.Phase())` restores whatever phase the caller was
+/// in, here `query`.
 #[test]
 fn test_run_in_txn_phases() {
     let se = TtlSession::new(MockContext::new(), Box::new(|| {}));
     let tracer = RecordingTracer::default();
-    tracer.enter_phase(Phase::Other);
-    tracer.phases.lock().unwrap().clear();
+    tracer.get().enter_phase(tidb_ttl_metrics::PHASE_QUERY);
 
-    se.run_in_txn(&mut || Ok(()), TxnMode::OPTIMISTIC, &tracer)
+    se.run_in_txn(&mut || Ok(()), TxnMode::OPTIMISTIC, tracer.get())
         .unwrap();
 
     assert_eq!(
-        *tracer.phases.lock().unwrap(),
-        vec![
-            Phase::BeginTxn,
-            Phase::Other,
-            Phase::CommitTxn,
-            Phase::Other,
-            // the deferred restore of the phase captured on entry
-            Phase::Other,
-        ]
+        *tracer.left.lock().unwrap(),
+        vec!["query", "begin_txn", "other", "commit_txn", "other"]
     );
+    assert_eq!(tracer.get().phase(), "query");
 }
 
 /// Go `TestSessionResetTimeZone`, without the live store.

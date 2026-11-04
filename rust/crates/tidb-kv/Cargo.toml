@@ -14,6 +14,7 @@ tidb-errno = { path = "../tidb-errno" }
 tidb-terror = { path = "../tidb-terror" }
 smallvec = { workspace = true }
 tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-intest = { path = "../tidb-intest" }
 tikv-client = { workspace = true }
 
 [dev-dependencies]

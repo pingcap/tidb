@@ -39,11 +39,10 @@
 //!   [`SessionContext::InfoSchema`] `// boundary:`
 //!   `pkg/infoschema/context.MetaOnlyInfoSchema`. `session.go` only passes both
 //!   through, so both stay opaque associated types.
-//! - [`PhaseTracer`] `// boundary:` `pkg/ttl/metrics.PhaseTracer`. That package
-//!   is not yet transcreated. Go reads the tracer out of the `context.Context`;
-//!   with no context plumbing here it is an explicit `run_in_txn` argument, and
-//!   [`NoopPhaseTracer`] reproduces `PhaseTracerFromCtx`'s behaviour when the
-//!   context carries none.
+//! - `pkg/ttl/metrics.PhaseTracer` is [`tidb_ttl_metrics::PhaseTracer`]. Go
+//!   reads the tracer out of the `context.Context`; with no context plumbing
+//!   here it is an explicit `run_in_txn` argument, `None` being the nil tracer
+//!   `PhaseTracerFromCtx` returns when the context carries none.
 //!
 //! Two further narrowings are behavioural rather than structural:
 //!
@@ -65,6 +64,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tidb_datatype::Datum;
+use tidb_ttl_metrics::{PhaseTracer, PhaseTracerExt, PHASE_BEGIN_TXN, PHASE_COMMIT_TXN, PHASE_OTHER};
 use tidb_sqlkiller::{KillSignal, SqlKiller};
 use tidb_timeutil::{parse_time_zone, TimeZone};
 
@@ -124,42 +124,6 @@ pub trait ResultRow {
     /// Go follows every call with `.GoTime(tz)`; that conversion is named as a
     /// boundary by the `cache` modules that need it.
     fn get_time(&self, col_idx: usize) -> tidb_datatype::Time;
-}
-
-/// `// boundary:` `pkg/ttl/metrics.PhaseTracer`, whose package is not yet
-/// transcreated.
-///
-/// `RunInTxn` only enters phases, and reads the current one so the deferred
-/// call can restore it, so those are the whole of the contract.
-pub trait PhaseTracer {
-    /// Go `PhaseTracer.Phase`.
-    fn phase(&self) -> Phase;
-    /// Go `PhaseTracer.EnterPhase`.
-    fn enter_phase(&self, phase: Phase);
-}
-
-/// Go `pkg/ttl/metrics`'s phase names, limited to the three `RunInTxn` uses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Phase {
-    /// Go `metrics.PhaseBeginTxn`.
-    BeginTxn,
-    /// Go `metrics.PhaseCommitTxn`.
-    CommitTxn,
-    /// Go `metrics.PhaseOther`.
-    Other,
-}
-
-/// The tracer `metrics.PhaseTracerFromCtx` hands back when the context carries
-/// none: every call is a no-op.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NoopPhaseTracer;
-
-impl PhaseTracer for NoopPhaseTracer {
-    fn phase(&self) -> Phase {
-        Phase::Other
-    }
-
-    fn enter_phase(&self, _phase: Phase) {}
 }
 
 /// `// boundary:` `pkg/sessionctx.Context` and
@@ -264,7 +228,7 @@ pub trait Session {
         &self,
         body: &mut dyn FnMut() -> Result<()>,
         txn_mode: TxnMode,
-        tracer: &dyn PhaseTracer,
+        tracer: Option<&PhaseTracer>,
     ) -> Result<()>;
     /// Go `Session.ResetWithGlobalTimeZone`.
     fn reset_with_global_time_zone(&self) -> Result<()>;
@@ -287,7 +251,7 @@ pub trait Session {
 /// by reference from the context.
 pub struct TtlSession<C: SessionContext> {
     sctx: C,
-    avoid_reuse: Box<dyn Fn()>,
+    avoid_reuse: Box<dyn Fn() + Send + Sync>,
 }
 
 impl<C: SessionContext> TtlSession<C> {
@@ -296,7 +260,7 @@ impl<C: SessionContext> TtlSession<C> {
     /// Go's `intest.AssertNotNil` on both arguments is a debug assertion; a
     /// non-optional `sctx` and an explicit `avoid_reuse` carry the same
     /// requirement in the type system.
-    pub fn new(sctx: C, avoid_reuse: Box<dyn Fn()>) -> Self {
+    pub fn new(sctx: C, avoid_reuse: Box<dyn Fn() + Send + Sync>) -> Self {
         Self { sctx, avoid_reuse }
     }
 
@@ -343,7 +307,7 @@ impl<C: SessionContext> Session for TtlSession<C> {
         &self,
         body: &mut dyn FnMut() -> Result<()>,
         txn_mode: TxnMode,
-        tracer: &dyn PhaseTracer,
+        tracer: Option<&PhaseTracer>,
     ) -> Result<()> {
         // Go's `defer`: always try to ROLLBACK unless the whole body committed,
         // even when only the BEGIN failed — a BEGIN killed after its first
@@ -352,7 +316,7 @@ impl<C: SessionContext> Session for TtlSession<C> {
         let result = self.run_in_txn_body(body, txn_mode, tracer);
         // Go registers the rollback `defer` first and the phase-restoring one
         // second, so the phase is restored before the rollback runs.
-        tracer.enter_phase(restore_phase);
+        tracer.enter_phase(&restore_phase);
         if result.is_err() {
             // Go logs the rollback error through `terror.Log` and drops it.
             let _ = self.execute_sql("ROLLBACK", &[]);
@@ -410,22 +374,22 @@ impl<C: SessionContext> TtlSession<C> {
         &self,
         body: &mut dyn FnMut() -> Result<()>,
         txn_mode: TxnMode,
-        tracer: &dyn PhaseTracer,
+        tracer: Option<&PhaseTracer>,
     ) -> Result<()> {
-        tracer.enter_phase(Phase::BeginTxn);
+        tracer.enter_phase(PHASE_BEGIN_TXN);
         let sql = match txn_mode {
             TxnMode::OPTIMISTIC => "BEGIN OPTIMISTIC",
             TxnMode::PESSIMISTIC => "BEGIN PESSIMISTIC",
             _ => return Err(error("unknown transaction mode")),
         };
         self.execute_sql(sql, &[])?;
-        tracer.enter_phase(Phase::Other);
+        tracer.enter_phase(PHASE_OTHER);
 
         body()?;
 
-        tracer.enter_phase(Phase::CommitTxn);
+        tracer.enter_phase(PHASE_COMMIT_TXN);
         self.execute_sql("COMMIT", &[])?;
-        tracer.enter_phase(Phase::Other);
+        tracer.enter_phase(PHASE_OTHER);
         Ok(())
     }
 }

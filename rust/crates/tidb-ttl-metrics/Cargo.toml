@@ -1,0 +1,15 @@
+[package]
+name = "tidb-ttl-metrics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/ttl/metrics: the TTL worker's phase tracer and metric handles."
+
+[lints]
+workspace = true
+
+[dependencies]
+prometheus = { version = "0.14", default-features = false }
+tidb-metrics = { path = "../tidb-metrics" }

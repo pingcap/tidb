@@ -325,6 +325,27 @@ pub trait PdClient: Send + Sync + 'static {
         Err(crate::Error::Unimplemented)
     }
 
+    /// client-go `RegionCache.LocateKeyRange(bo, startKey, endKey)`: the
+    /// leader-bearing regions covering `[start_key, end_key)`. Clients
+    /// without a region cache refuse.
+    async fn locate_key_range(
+        &self,
+        _start_key: Key,
+        _end_key: Key,
+        _backoffer: &mut crate::retry::RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
+        Err(crate::Error::Unimplemented)
+    }
+
+    /// client-go `RegionCache.GetStoresByType(typ)`; `None` for a client
+    /// without a region cache (Go's failed `tikv.Storage` assertion).
+    fn get_stores_by_type(
+        &self,
+        _endpoint_type: crate::store::EndpointType,
+    ) -> Option<Vec<metapb::Store>> {
+        None
+    }
+
     /// Loads metadata using client-go's canonical default keyspace name.
     async fn get_keyspace_meta(&self, name: &str) -> Result<keyspacepb::KeyspaceMeta> {
         self.load_keyspace(&build_keyspace_name(name)).await
@@ -1806,6 +1827,24 @@ where
         self.region_cache
             .load_regions_in_key_range(start_key, end_key, backoffer)
             .await
+    }
+
+    async fn locate_key_range(
+        &self,
+        start_key: Key,
+        end_key: Key,
+        backoffer: &mut crate::retry::RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
+        self.region_cache
+            .locate_key_range(start_key, end_key, backoffer)
+            .await
+    }
+
+    fn get_stores_by_type(
+        &self,
+        endpoint_type: crate::store::EndpointType,
+    ) -> Option<Vec<metapb::Store>> {
+        Some(self.region_cache.cached_stores_by_type(endpoint_type))
     }
 }
 

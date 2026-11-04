@@ -22,6 +22,7 @@ mod ru_stats_writer;
 pub mod workload_learning;
 pub mod plan_replayer_owner;
 pub mod runaway_owner;
+pub mod ttl_owner;
 mod telemetry;
 pub mod schema_lease;
 pub mod stats_maintenance;
@@ -772,6 +773,8 @@ pub struct Domain {
     plan_replayer: std::sync::OnceLock<plan_replayer_owner::PlanReplayerRuntime>,
     /// Go `runawayManager` and its loops.
     runaway: std::sync::OnceLock<runaway_owner::RunawayRuntime>,
+    /// Go `ttlJobManager`.
+    ttl_job_manager: std::sync::OnceLock<Arc<tidb_ttl_ttlworker::JobManager>>,
     /// Go `Domain.LoadSigningCertLoop`'s reload thread.
     signing_cert_loop: std::sync::OnceLock<SigningCertLoop>,
     /// Go `Domain.expensiveQueryHandle`, built over the domain's exit
@@ -1081,6 +1084,7 @@ impl Domain {
             historical_stats_runtime: std::sync::OnceLock::new(),
             plan_replayer: std::sync::OnceLock::new(),
             runaway: std::sync::OnceLock::new(),
+            ttl_job_manager: std::sync::OnceLock::new(),
             signing_cert_loop: std::sync::OnceLock::new(),
             expensive_query_handle: Arc::new(tidb_expensivequery::Handle::new(expensive_query_exited)),
             expensive_query_exit: Mutex::new(Some(expensive_query_exit)),

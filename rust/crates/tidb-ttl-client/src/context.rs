@@ -1,0 +1,218 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Go's standard `context` package, as `pkg/ttl` uses it: a cancellation
+//! tree whose `Done()` is a channel a `select` can wait on (here a
+//! `crossbeam_channel::Receiver` that disconnects when the context ends),
+//! `Err()`, `WithCancel` and `WithTimeout`. Context values have no
+//! counterpart: `pkg/ttl` passes its phase tracer explicitly instead.
+
+use std::sync::{Arc, Mutex, Weak};
+use std::time::Duration;
+
+use crossbeam_channel::{Receiver, Sender};
+
+/// Go's `context.Canceled` and `context.DeadlineExceeded`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CtxError {
+    /// Go `context.Canceled`.
+    Canceled,
+    /// Go `context.DeadlineExceeded`.
+    DeadlineExceeded,
+}
+
+impl std::fmt::Display for CtxError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Canceled => "context canceled",
+            Self::DeadlineExceeded => "context deadline exceeded",
+        })
+    }
+}
+
+impl std::error::Error for CtxError {}
+
+struct Inner {
+    /// Dropped on cancel, which disconnects every `done` receiver.
+    done_tx: Mutex<Option<Sender<()>>>,
+    done_rx: Receiver<()>,
+    /// The first cancellation's reason; also guards `children` registration.
+    err: Mutex<Option<CtxError>>,
+    children: Mutex<Vec<Weak<Inner>>>,
+}
+
+impl Inner {
+    fn new() -> Arc<Self> {
+        let (done_tx, done_rx) = crossbeam_channel::bounded(0);
+        Arc::new(Self {
+            done_tx: Mutex::new(Some(done_tx)),
+            done_rx,
+            err: Mutex::new(None),
+            children: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn cancel(&self, reason: CtxError) {
+        {
+            let mut err = self.err.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if err.is_some() {
+                return;
+            }
+            *err = Some(reason);
+            self.done_tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+        }
+        let children =
+            std::mem::take(&mut *self.children.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+        for child in children.iter().filter_map(Weak::upgrade) {
+            child.cancel(reason);
+        }
+    }
+}
+
+/// Go `context.Context`. The default value is `context.Background()`.
+#[derive(Clone, Default)]
+pub struct Context {
+    inner: Option<Arc<Inner>>,
+}
+
+impl std::fmt::Debug for Context {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Context").field("err", &self.err()).finish()
+    }
+}
+
+/// Go `context.CancelFunc`.
+#[derive(Clone)]
+pub struct CancelFunc {
+    inner: Arc<Inner>,
+}
+
+impl CancelFunc {
+    /// Cancels the context and its descendants (Go's `cancel()`).
+    pub fn cancel(&self) {
+        self.inner.cancel(CtxError::Canceled);
+    }
+}
+
+impl Context {
+    /// Go `context.Background()`: never done.
+    pub fn background() -> Self {
+        Self::default()
+    }
+
+    fn child(parent: &Context) -> (Self, Arc<Inner>) {
+        let inner = Inner::new();
+        if let Some(parent) = &parent.inner {
+            let err = parent.err.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            match *err {
+                Some(reason) => inner.cancel(reason),
+                None => parent
+                    .children
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(Arc::downgrade(&inner)),
+            }
+        }
+        (
+            Self {
+                inner: Some(Arc::clone(&inner)),
+            },
+            inner,
+        )
+    }
+
+    /// Go `context.WithCancel(parent)`.
+    pub fn with_cancel(parent: &Context) -> (Self, CancelFunc) {
+        let (ctx, inner) = Self::child(parent);
+        (ctx, CancelFunc { inner })
+    }
+
+    /// Go `context.WithTimeout(parent, timeout)`.
+    pub fn with_timeout(parent: &Context, timeout: Duration) -> (Self, CancelFunc) {
+        let (ctx, inner) = Self::child(parent);
+        let timer = Arc::downgrade(&inner);
+        let done = inner.done_rx.clone();
+        std::thread::Builder::new()
+            .name("context-timeout".to_owned())
+            .spawn(move || {
+                if let Err(crossbeam_channel::RecvTimeoutError::Timeout) = done.recv_timeout(timeout) {
+                    if let Some(inner) = timer.upgrade() {
+                        inner.cancel(CtxError::DeadlineExceeded);
+                    }
+                }
+            })
+            .expect("context timer thread spawns");
+        (ctx, CancelFunc { inner })
+    }
+
+    /// Go `ctx.Done()`: a channel that disconnects once the context ends.
+    /// `context.Background()`'s never does.
+    pub fn done(&self) -> Receiver<()> {
+        match &self.inner {
+            Some(inner) => inner.done_rx.clone(),
+            None => crossbeam_channel::never(),
+        }
+    }
+
+    /// Go `ctx.Err()`.
+    pub fn err(&self) -> Option<CtxError> {
+        self.inner
+            .as_ref()
+            .and_then(|inner| *inner.err.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    /// Go's `select { case <-ctx.Done(): ... case <-time.After(d): }`:
+    /// whether the context ended before `d` elapsed.
+    pub fn sleep(&self, d: Duration) -> bool {
+        matches!(
+            self.done().recv_timeout(d),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected)
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cancel_reaches_descendants_and_not_ancestors() {
+        let (parent, cancel_parent) = Context::with_cancel(&Context::background());
+        let (child, cancel_child) = Context::with_cancel(&parent);
+        let (grandchild, _cancel) = Context::with_cancel(&child);
+
+        cancel_child.cancel();
+        assert_eq!(child.err(), Some(CtxError::Canceled));
+        assert_eq!(grandchild.err(), Some(CtxError::Canceled));
+        assert!(grandchild.done().recv().is_err());
+        assert_eq!(parent.err(), None);
+
+        cancel_parent.cancel();
+        let (late, _cancel) = Context::with_cancel(&parent);
+        assert_eq!(late.err(), Some(CtxError::Canceled));
+        assert!(Context::background().err().is_none());
+    }
+
+    #[test]
+    fn timeout_ends_with_deadline_exceeded() {
+        let (ctx, _cancel) = Context::with_timeout(&Context::background(), Duration::from_millis(20));
+        assert!(ctx.sleep(Duration::from_secs(5)));
+        assert_eq!(ctx.err(), Some(CtxError::DeadlineExceeded));
+
+        let (ctx, cancel) = Context::with_timeout(&Context::background(), Duration::from_secs(60));
+        cancel.cancel();
+        assert_eq!(ctx.err(), Some(CtxError::Canceled));
+        assert!(!Context::background().sleep(Duration::from_millis(1)));
+    }
+}

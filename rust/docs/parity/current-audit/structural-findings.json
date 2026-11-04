@@ -2,8 +2,8 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 31,
-    "open": 9,
+    "unresolved": 30,
+    "open": 8,
     "partial": 22
   },
   "findings": [
@@ -87,13 +87,6 @@
       "finding": "No versioned upgrade: startup knows only bootstrapped or not (`tidb-session/src/mysql_bootstrap`)",
       "rust_evidence": "`rust/crates/tidb-session/src/mysql_bootstrap`",
       "go_owner": "`pkg/session/upgrade*.go`"
-    },
-    {
-      "id": "O04",
-      "status": "open",
-      "group": "Domain and process services",
-      "finding": "No TTL job/task manager (`tidb-ttl` has helpers only)",
-      "go_owner": "`pkg/ttl/ttlworker`"
     },
     {
       "id": "O08",

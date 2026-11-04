@@ -12,6 +12,9 @@ description = "TiDB domain: Go pkg/domain's Domain and the cluster services it o
 test-util = []
 
 [dependencies]
+tidb-ttl-ttlworker = { path = "../tidb-ttl-ttlworker" }
+tidb-ttl-client = { path = "../tidb-ttl-client" }
+tidb-intest = { path = "../tidb-intest" }
 tidb-ddl-jobsubmit = { path = "../tidb-ddl-jobsubmit" }
 tidb-stats-util = { path = "../tidb-stats-util" }
 tidb-exprctx = { path = "../tidb-exprctx" }

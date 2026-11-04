@@ -4268,6 +4268,7 @@ dependencies = [
  "tidb-infoschema-issyncer",
  "tidb-infoschema-isvalidator",
  "tidb-infoschema-perfschema",
+ "tidb-intest",
  "tidb-kv",
  "tidb-log",
  "tidb-logutil",
@@ -4315,6 +4316,8 @@ dependencies = [
  "tidb-telemetry",
  "tidb-terror",
  "tidb-test-isolation",
+ "tidb-ttl-client",
+ "tidb-ttl-ttlworker",
  "tidb-txnkv",
  "tidb-vardef",
  "tidb-variable",
@@ -5328,6 +5331,7 @@ dependencies = [
  "tidb-dbterror",
  "tidb-errno",
  "tidb-exeerrors",
+ "tidb-intest",
  "tidb-terror",
  "tidb-txnkv",
  "tikv-client",
@@ -6717,6 +6721,7 @@ dependencies = [
  "tidb-topsql-reporter-metrics",
  "tidb-topsql-stmtstats",
  "tidb-traceevent",
+ "tidb-ttl-client",
  "tidb-txninfo",
  "tidb-txnkv",
  "tidb-unistore",
@@ -6940,12 +6945,17 @@ dependencies = [
  "tidb-terror",
  "tidb-test-isolation",
  "tidb-tikvutil",
+ "tidb-timer",
+ "tidb-timer-tablestore",
  "tidb-timeutil",
  "tidb-tls",
  "tidb-topsql-state",
  "tidb-topsql-stmtstats",
  "tidb-traceevent",
  "tidb-tracing",
+ "tidb-ttl",
+ "tidb-ttl-client",
+ "tidb-ttl-ttlworker",
  "tidb-txninfo",
  "tidb-txnkv",
  "tidb-unistore",
@@ -8208,7 +8218,61 @@ dependencies = [
  "tidb-sqlkiller",
  "tidb-tablecodec",
  "tidb-timeutil",
+ "tidb-ttl-metrics",
  "tidb-txnkv",
+]
+
+[[package]]
+name = "tidb-ttl-client"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "serde",
+ "serde_json",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-pd-client",
+ "tidb-timer",
+]
+
+[[package]]
+name = "tidb-ttl-metrics"
+version = "0.0.0"
+dependencies = [
+ "prometheus 0.14.0",
+ "tidb-metrics",
+]
+
+[[package]]
+name = "tidb-ttl-ttlworker"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "crossbeam-channel",
+ "serde",
+ "serde_json",
+ "tidb-ast",
+ "tidb-codec",
+ "tidb-datatype",
+ "tidb-intest",
+ "tidb-kv",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-metrics",
+ "tidb-model",
+ "tidb-pd-client",
+ "tidb-sqlexec",
+ "tidb-sqlkiller",
+ "tidb-syssession",
+ "tidb-timer",
+ "tidb-timer-runtime",
+ "tidb-timer-tablestore",
+ "tidb-timeutil",
+ "tidb-ttl",
+ "tidb-ttl-client",
+ "tidb-ttl-metrics",
+ "tidb-vardef",
 ]
 
 [[package]]
@@ -8401,6 +8465,7 @@ name = "tidb-vardef"
 version = "0.0.0"
 dependencies = [
  "tidb-executor-join-joinversion",
+ "tidb-go-time-layout",
  "tidb-hack",
 ]
 

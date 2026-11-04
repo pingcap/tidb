@@ -311,6 +311,7 @@ pub use crate::resource_control::{
 };
 #[doc(inline)]
 pub use crate::store::CommandType;
+pub use crate::store::EndpointType;
 #[doc(inline)]
 pub use crate::timestamp::Timestamp;
 #[doc(inline)]

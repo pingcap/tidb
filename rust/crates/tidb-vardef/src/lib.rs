@@ -152,6 +152,79 @@ pub static ENABLE_FAST_REORG: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_EN
 
 /// Go `vardef.EnableTTLJob`, the process-wide switch used by the TTL worker.
 pub static ENABLE_TTL_JOB: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_TTL_JOB_ENABLE);
+/// Go `vardef.TTLScanBatchSize`.
+pub static TTL_SCAN_BATCH_SIZE: AtomicI64 = AtomicI64::new(defaults::DEF_TIDB_TTL_SCAN_BATCH_SIZE);
+/// Go `vardef.TTLDeleteBatchSize`.
+pub static TTL_DELETE_BATCH_SIZE: AtomicI64 =
+    AtomicI64::new(defaults::DEF_TIDB_TTL_DELETE_BATCH_SIZE);
+/// Go `vardef.TTLDeleteRateLimit`.
+pub static TTL_DELETE_RATE_LIMIT: AtomicI64 =
+    AtomicI64::new(defaults::DEF_TIDB_TTL_DELETE_RATE_LIMIT);
+/// Go `vardef.TTLJobScheduleWindowStartTime`.
+pub static TTL_JOB_SCHEDULE_WINDOW_START_TIME: std::sync::RwLock<DayTime> =
+    std::sync::RwLock::new(DayTime::new(0, 0, 0));
+/// Go `vardef.TTLJobScheduleWindowEndTime`.
+pub static TTL_JOB_SCHEDULE_WINDOW_END_TIME: std::sync::RwLock<DayTime> =
+    std::sync::RwLock::new(DayTime::new(23, 59, 0));
+/// Go `vardef.TTLScanWorkerCount`.
+pub static TTL_SCAN_WORKER_COUNT: AtomicI32 =
+    AtomicI32::new(defaults::DEF_TIDB_TTL_SCAN_WORKER_COUNT as i32);
+/// Go `vardef.TTLDeleteWorkerCount`.
+pub static TTL_DELETE_WORKER_COUNT: AtomicI32 =
+    AtomicI32::new(defaults::DEF_TIDB_TTL_DELETE_WORKER_COUNT as i32);
+/// Go `vardef.TTLRunningTasks`.
+pub static TTL_RUNNING_TASKS: AtomicI32 = AtomicI32::new(defaults::DEF_TIDB_TTL_RUNNING_TASKS as i32);
+
+/// The `time.Time` Go's `time.ParseInLocation(FullDayTimeFormat, s, time.UTC)`
+/// yields for a TTL schedule-window variable: a wall clock on Go's zero date
+/// in a fixed zone. Only the clock and the zone are observable -- `Format`
+/// prints them and `timeutil.WithinDayTimePeriod` compares them in UTC.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DayTime {
+    /// The wall-clock hour.
+    pub hour: u32,
+    /// The wall-clock minute.
+    pub minute: u32,
+    /// The zone's offset east of UTC, in seconds.
+    pub offset_secs: i32,
+}
+
+impl DayTime {
+    /// A day time from its fields.
+    pub const fn new(hour: u32, minute: u32, offset_secs: i32) -> Self {
+        Self {
+            hour,
+            minute,
+            offset_secs,
+        }
+    }
+
+    /// Go `time.ParseInLocation(vardef.FullDayTimeFormat, s, time.UTC)`.
+    pub fn parse(value: &str) -> Result<Self, String> {
+        let clock = tidb_go_time_layout::parse_clock(tidb_vars::FULL_DAY_TIME_FORMAT, value)?;
+        Ok(Self::new(clock.hour, clock.minute, clock.zone_offset.unwrap_or(0)))
+    }
+
+    /// Go `t.Format(vardef.FullDayTimeFormat)`.
+    pub fn format(&self) -> String {
+        let offset_minutes = self.offset_secs / 60;
+        let sign = if offset_minutes < 0 { '-' } else { '+' };
+        let absolute = offset_minutes.unsigned_abs();
+        format!(
+            "{:02}:{:02} {sign}{:02}{:02}",
+            self.hour,
+            self.minute,
+            absolute / 60,
+            absolute % 60
+        )
+    }
+
+    /// Go `t.UTC()`'s hour and minute, as minutes since midnight.
+    pub fn utc_minutes(&self) -> i64 {
+        (i64::from(self.hour) * 60 + i64::from(self.minute) - i64::from(self.offset_secs / 60))
+            .rem_euclid(24 * 60)
+    }
+}
 
 /// Go instance plan-cache process switches, published only from committed GLOBAL values.
 pub static ENABLE_INSTANCE_PLAN_CACHE: AtomicBool = AtomicBool::new(false);

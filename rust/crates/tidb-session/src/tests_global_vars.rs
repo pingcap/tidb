@@ -120,6 +120,74 @@ fn ttl_job_enable_global_hook_updates_the_process_switch() {
     assert!(tidb_vardef::ENABLE_TTL_JOB.load(std::sync::atomic::Ordering::SeqCst));
 }
 
+/// Go's TTL `SetGlobal`/`GetGlobal` hooks: each value lands in its `vardef`
+/// atomic, which the TTL worker reads, and the global reads back from it.
+#[test]
+fn ttl_global_hooks_update_the_worker_settings() {
+    use std::sync::atomic::Ordering::SeqCst;
+    use tidb_vardef::tidb_vars::*;
+    let _serialised = process_switch_tests();
+    let globals = tidb_domain::global_sysvars::GlobalSysvars::new();
+    let set = |name: &str, value: &str| globals.set(name, value.to_owned()).unwrap();
+
+    set(TIDB_TTL_SCAN_BATCH_SIZE, "1000");
+    assert_eq!(tidb_vardef::TTL_SCAN_BATCH_SIZE.load(SeqCst), 1000);
+    set(TIDB_TTL_DELETE_BATCH_SIZE, "77");
+    assert_eq!(tidb_vardef::TTL_DELETE_BATCH_SIZE.load(SeqCst), 77);
+    set(TIDB_TTL_DELETE_RATE_LIMIT, "5");
+    assert_eq!(tidb_vardef::TTL_DELETE_RATE_LIMIT.load(SeqCst), 5);
+    set(TIDB_TTL_SCAN_WORKER_COUNT, "8");
+    assert_eq!(tidb_vardef::TTL_SCAN_WORKER_COUNT.load(SeqCst), 8);
+    set(TIDB_TTL_DELETE_WORKER_COUNT, "9");
+    assert_eq!(tidb_vardef::TTL_DELETE_WORKER_COUNT.load(SeqCst), 9);
+    set(TIDB_TTL_RUNNING_TASKS, "32");
+    assert_eq!(tidb_vardef::TTL_RUNNING_TASKS.load(SeqCst), 32);
+    set(TIDB_TTL_JOB_SCHEDULE_WINDOW_START_TIME, "01:30 +0800");
+    assert_eq!(
+        *tidb_vardef::TTL_JOB_SCHEDULE_WINDOW_START_TIME.read().unwrap(),
+        tidb_vardef::DayTime::new(1, 30, 8 * 3600)
+    );
+    // Go compares the window in UTC: 01:30 +0800 is 17:30 UTC.
+    assert_eq!(tidb_vardef::TTL_JOB_SCHEDULE_WINDOW_START_TIME.read().unwrap().utc_minutes(), 17 * 60 + 30);
+    set(TIDB_TTL_JOB_SCHEDULE_WINDOW_END_TIME, "06:00 +0000");
+    assert_eq!(
+        *tidb_vardef::TTL_JOB_SCHEDULE_WINDOW_END_TIME.read().unwrap(),
+        tidb_vardef::DayTime::new(6, 0, 0)
+    );
+    for (name, value) in [
+        (TIDB_TTL_SCAN_BATCH_SIZE, "1000"),
+        (TIDB_TTL_DELETE_RATE_LIMIT, "5"),
+        (TIDB_TTL_RUNNING_TASKS, "32"),
+        (TIDB_TTL_JOB_SCHEDULE_WINDOW_START_TIME, "01:30 +0800"),
+    ] {
+        assert_eq!(globals.get(name).unwrap(), value, "{name}");
+    }
+    // Go `GetGlobal` reads the atomic, not the stored value.
+    tidb_vardef::TTL_RUNNING_TASKS.store(7, SeqCst);
+    tidb_vardef::TTL_SCAN_BATCH_SIZE.store(9, SeqCst);
+    assert_eq!(globals.get(TIDB_TTL_RUNNING_TASKS).unwrap(), "7");
+    assert_eq!(globals.get(TIDB_TTL_SCAN_BATCH_SIZE).unwrap(), "9");
+
+    for name in [
+        TIDB_TTL_SCAN_BATCH_SIZE,
+        TIDB_TTL_DELETE_BATCH_SIZE,
+        TIDB_TTL_DELETE_RATE_LIMIT,
+        TIDB_TTL_SCAN_WORKER_COUNT,
+        TIDB_TTL_DELETE_WORKER_COUNT,
+        TIDB_TTL_RUNNING_TASKS,
+        TIDB_TTL_JOB_SCHEDULE_WINDOW_START_TIME,
+        TIDB_TTL_JOB_SCHEDULE_WINDOW_END_TIME,
+    ] {
+        globals.reset(name).unwrap();
+    }
+    assert_eq!(tidb_vardef::TTL_SCAN_BATCH_SIZE.load(SeqCst), 500);
+    assert_eq!(tidb_vardef::TTL_RUNNING_TASKS.load(SeqCst), -1);
+    assert_eq!(
+        *tidb_vardef::TTL_JOB_SCHEDULE_WINDOW_END_TIME.read().unwrap(),
+        tidb_vardef::DayTime::new(23, 59, 0)
+    );
+}
+
 /// Go's `TiDBEnableMDL` `SetGlobal` hook reaches `vardef.SetEnableMDL` from
 /// the sysvar cache rebuild, so a loaded or set global value decides which
 /// etcd key this node acknowledges DDL schema versions on.

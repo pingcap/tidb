@@ -134,6 +134,26 @@ impl GoTime {
         Self::from_local(naive, location)
     }
 
+    /// The instant `instant` seen in `location`: Go's `t.In(loc)` of a time
+    /// built elsewhere.
+    pub fn from_instant(instant: DateTime<Utc>, location: &TimeZone) -> Self {
+        Self {
+            instant,
+            location: location.clone(),
+        }
+    }
+
+    /// The UTC instant (Go `t.UTC()` without its location).
+    pub fn instant(&self) -> DateTime<Utc> {
+        self.instant
+    }
+
+    /// Go `t.Format(time.DateTime)`: `2006-01-02 15:04:05` in the time's own
+    /// location.
+    pub fn format_date_time(&self) -> String {
+        self.naive_local().format("%Y-%m-%d %H:%M:%S").to_string()
+    }
+
     /// Go `t.IsZero()`.
     pub fn is_zero(&self) -> bool {
         self.instant == zero_instant()

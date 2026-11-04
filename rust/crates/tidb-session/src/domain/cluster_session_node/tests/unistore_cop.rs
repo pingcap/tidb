@@ -28104,3 +28104,121 @@ fn a_commit_reports_its_commit_details_in_the_statement_summary() {
         .execute_write("SET GLOBAL tidb_enable_stmt_summary = DEFAULT")
         .unwrap();
 }
+
+/// Go `boostJobScheduleForTest`: every TTL loop interval down to 100ms.
+fn boost_ttl_job_schedule_for_test() {
+    use tidb_ttl_ttlworker::config::{set_failpoint, Failpoint};
+    for failpoint in [
+        Failpoint::CheckJobTriggeredInterval,
+        Failpoint::SyncTimer,
+        Failpoint::CheckJobInterval,
+        Failpoint::ResizeWorkersInterval,
+        Failpoint::UpdateStatusTableCacheInterval,
+        Failpoint::UpdateInfoSchemaCacheInterval,
+        Failpoint::TaskManagerLoopInterval,
+        Failpoint::CheckTaskInterval,
+        Failpoint::GcInterval,
+    ] {
+        set_failpoint(failpoint, std::time::Duration::from_millis(100));
+    }
+}
+
+/// Go `waitTTLJobFinished`: the table's last job is recorded, no job is
+/// current, and its timer has no triggered event.
+fn wait_ttl_job_finished(session: &mut Session, table_id: i64) {
+    let start = std::time::Instant::now();
+    while start.elapsed() < std::time::Duration::from_secs(60) {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let status = displayed(rows(
+            session,
+            &format!(
+                "select last_job_id, current_job_id, parent_table_id from mysql.tidb_ttl_table_status where table_id={table_id}"
+            ),
+        ));
+        let Some(row) = status.first() else {
+            continue;
+        };
+        // Go testkit prints NULL as `<nil>`; this harness displays `NULL`.
+        if row[0] == "NULL" || row[1] != "NULL" {
+            continue;
+        }
+        let event_status = displayed(rows(
+            session,
+            &format!(
+                "select EVENT_STATUS from mysql.tidb_timers where TIMER_KEY='/tidb/ttl/physical_table/{}/{table_id}'",
+                row[2]
+            ),
+        ));
+        if event_status.first().is_some_and(|status| status[0] == "TRIGGER") {
+            continue;
+        }
+        return;
+    }
+    let state = [
+        "select * from mysql.tidb_ttl_table_status",
+        "select * from mysql.tidb_timers",
+        "select * from mysql.tidb_ttl_task",
+        "select * from mysql.tidb_ttl_job_history",
+    ]
+    .map(|sql| format!("{sql}: {:?}", displayed(rows(session, sql))));
+    panic!("timeout: {state:#?}");
+}
+
+/// Go `TestTriggerTTLJob`: the table's first scheduled job runs, then a
+/// manually triggered job deletes the expired rows and leaves the others.
+#[test]
+fn ttl_job_manager_runs_scheduled_and_triggered_jobs_like_go() {
+    boost_ttl_job_schedule_for_test();
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    let _ttl_job_manager = stack.factory.start_ttl_job_manager().expect("the TTL job manager starts");
+    let mut session = stack.factory.open_session(session_context(81)).expect("session opens");
+    rows(&mut session, "use test");
+    rows(&mut session, "create table t(id int primary key, t timestamp) TTL=`t` + INTERVAL 1 DAY");
+    let table_id: i64 = displayed(rows(
+        &mut session,
+        "select TIDB_TABLE_ID from information_schema.tables where table_schema='test' and table_name='t'",
+    ))[0][0]
+        .parse()
+        .unwrap();
+
+    // make sure the table had run a job one time to make the test stable
+    wait_ttl_job_finished(&mut session, table_id);
+
+    rows(&mut session, "insert into t values(1, now() - interval 25 hour)");
+    rows(&mut session, "insert into t values(2, now())");
+    rows(&mut session, "insert into t values(3, now() - interval 25 hour)");
+    rows(&mut session, "insert into t values(4, now())");
+
+    let cli = stack.factory.ttl_job_manager().expect("started").get_command_cli();
+    let res = tidb_ttl_client::command::trigger_new_ttl_job(
+        &tidb_ttl_client::Context::background(),
+        cli.as_ref(),
+        "test",
+        "t",
+    )
+    .unwrap();
+    let table_results = res.table_result.unwrap();
+    assert_eq!(table_results.len(), 1);
+    let table_result = &table_results[0];
+    assert_eq!(table_result.table_id, table_id);
+    assert!(!table_result.job_id.is_empty());
+    assert_eq!(table_result.db_name, "test");
+    assert_eq!(table_result.table_name, "t");
+    assert_eq!(table_result.error_message, "");
+    assert_eq!(table_result.partition_name, "");
+
+    wait_ttl_job_finished(&mut session, table_id);
+    assert_eq!(displayed(rows(&mut session, "select id from t order by id asc")), [["2"], ["4"]]);
+    // The finished job's history row carries Go's summary of the two deletions.
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            &format!(
+                "select status, expired_rows, deleted_rows, error_delete_rows from mysql.tidb_ttl_job_history where job_id='{}'",
+                table_result.job_id
+            ),
+        )),
+        [["finished", "2", "2", "0"]]
+    );
+}

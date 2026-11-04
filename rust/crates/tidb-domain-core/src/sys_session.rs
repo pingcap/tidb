@@ -25,6 +25,7 @@ use tidb_datatype::Datum;
 pub trait DomainSysSession:
     tidb_stats_handle_util::StatsSessionContext
     + tidb_stats_handle_autoanalyze_exec::AutoAnalyzeSessionContext
+    + tidb_ttl_ttlworker::SysSessionContext
 {
     /// The first column of the first row of an internal query, if any.
     fn scalar(&self, sql: &str) -> Result<Option<Datum>, String>;

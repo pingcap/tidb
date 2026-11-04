@@ -89,7 +89,7 @@ impl InfoSchemaCache {
     /// the warning does not.
     pub fn update<S>(&mut self, se: &S) -> Result<()>
     where
-        S: Session,
+        S: Session + ?Sized,
         S::InfoSchema: TtlInfoSchema,
     {
         let is = se.get_latest_info_schema();

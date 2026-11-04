@@ -1145,7 +1145,7 @@ fn test_with_session() {
     // withSctx
     let cb2 = |result: Result<()>| {
         let sctx = sctx.clone();
-        move |_ctx: &dyn SessionContext| -> Result<()> {
+        move |_ctx: &(dyn SessionContext + 'static)| -> Result<()> {
             sctx.assert_expectations();
             expect_restore(&sctx);
             result.clone()

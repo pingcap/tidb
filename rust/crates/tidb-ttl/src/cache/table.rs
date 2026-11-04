@@ -1137,7 +1137,7 @@ impl PhysicalTable {
     ) -> Result<DateTime<Tz>>
     where
         Tz: chrono::TimeZone,
-        S: crate::session::Session,
+        S: crate::session::Session + ?Sized,
     {
         // Go guards this on `intest.InTest`; the value only exists when a test
         // put it there, so the guard and the lookup collapse into one.

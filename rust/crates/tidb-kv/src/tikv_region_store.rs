@@ -147,6 +147,33 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
         Ok(metas)
     }
 
+    fn tikv_store_count(&self) -> Option<usize> {
+        self.store
+            .store()
+            .pd_client()
+            .get_stores_by_type(tikv_client::EndpointType::TiKv)
+            .map(|stores| stores.len())
+    }
+
+    fn locate_key_range(&self, start: &[u8], end: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+        let pd = self.store.store().pd_client();
+        // Go `splitRawKeyRanges`' `tikv.NewBackofferWithVars(ctx, maxSleep,
+        // nil)`: 20000ms, reduced to 500ms in test.
+        let max_sleep = if tidb_intest::IN_TEST { 500 } else { 20_000 };
+        let mut backoffer = tikv_client::retry::RetryBackoffer::new(
+            tikv_client::async_util::Cancellation::default(),
+            max_sleep,
+        );
+        let (start, end) = (start.to_vec().into(), end.to_vec().into());
+        let regions = self
+            .block_on(async move { pd.locate_key_range(start, end, &mut backoffer).await })
+            .map_err(|error| error.to_string())?;
+        Ok(regions
+            .into_iter()
+            .map(|region| (region.region.start_key.clone(), region.region.end_key.clone()))
+            .collect())
+    }
+
     /// Go `store.GetPDHTTPClient()`: the store's PD HTTP client when the
     /// store has PD addresses (the embedded store has none).
     fn pd_http_client(&self) -> Option<tikv_client::pd_http::Client> {

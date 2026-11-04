@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**31 unresolved: 9 open, 22 partial.**
+**30 unresolved: 8 open, 22 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -57,7 +57,6 @@ unresolved until it is restated against its Go owner or closed.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| O04 | open | No TTL job/task manager (`tidb-ttl` has helpers only) | `pkg/ttl/ttlworker` |
 | O08 | partial | `PLAN REPLAYER DUMP EXPLAIN [ANALYZE]` of a statement or a statement list and `PLAN REPLAYER CAPTURE [REMOVE]` run Go's `PlanReplayerExec` / `DumpPlanReplayerInfo`, and the domain composes Go's plan-replayer owner (`tidb-domain-core` `plan_replayer_owner.rs`: the 10s task collector, the dump workers on system sessions, the statement-end `checkPlanReplayerCapture` with continuous capture, and the `DumpFileGcCheckerLoop` on `vardef.GetPlanReplayerGCLease()`); `PLAN REPLAYER LOAD`, the file and slow-query dump targets and `WITH STATS AS OF TIMESTAMP` (Go `calcTSForPlanReplayer`, whose strict unsigned `ConvertTo` has no port) refuse; a next-gen `tidb_cloud_storage_uri` storage has no port | `pkg/domain/plan_replayer*.go`, `pkg/executor/plan_replayer.go`, `pkg/planner/extstore` |
 | O10 | open | No DXF scheduler/executor managers composed | `pkg/disttask/framework` |
 | O11 | partial | TopSQL has its `state`, `stmtstats` and the reporter's data models only: `topsql.go` (`SetupTopSQL`, `AttachSQLAndPlanInfo`, `RegisterSQL` / `RegisterPlan`), `collector/cpu.go` (the SQL CPU collector) and the reporter (`reporter.go` `RemoteTopSQLReporter`, `datasink.go`, `pubsub.go`, `single_target.go`, `report_ticker.go`) have no port, so nothing collects or reports TopSQL | `pkg/util/topsql` |

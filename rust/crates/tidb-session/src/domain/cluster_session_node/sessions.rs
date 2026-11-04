@@ -771,7 +771,7 @@ impl ClusterStatsSessionContext {
         self.state.with_session(callback)
     }
 
-    fn set_var(&self, name: &str, value: impl Into<String>) {
+    pub(super) fn set_var(&self, name: &str, value: impl Into<String>) {
         let value = value.into();
         self.with_session(
             |session| match session.session.set_internal_system_var(name, value) {

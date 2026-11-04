@@ -1,0 +1,41 @@
+[package]
+name = "tidb-ttl-ttlworker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/ttl/ttlworker: the TTL job manager, task manager, scan and delete workers, and their timers."
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { workspace = true }
+crossbeam-channel = "0.5"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-metrics = { path = "../tidb-metrics" }
+tidb-model = { path = "../tidb-model" }
+tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-syssession = { path = "../tidb-syssession" }
+tidb-timer = { path = "../tidb-timer" }
+tidb-timer-runtime = { path = "../tidb-timer-runtime" }
+tidb-timer-tablestore = { path = "../tidb-timer-tablestore" }
+tidb-timeutil = { path = "../tidb-timeutil" }
+tidb-ttl = { path = "../tidb-ttl" }
+tidb-ttl-client = { path = "../tidb-ttl-client" }
+tidb-ttl-metrics = { path = "../tidb-ttl-metrics" }
+tidb-vardef = { path = "../tidb-vardef" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-intest = { path = "../tidb-intest" }
+
+[dev-dependencies]
+chrono-tz = { workspace = true }

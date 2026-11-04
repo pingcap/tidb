@@ -280,22 +280,26 @@ pub trait SessionContext: tidb_syssession::SessionContext {
 
 /// Go `pkg/session/syssession.Session` retaining the concrete session-context
 /// capability used by this package.
-pub type SysSession = tidb_syssession::Session<dyn SessionContext>;
+pub type SysSession<C = dyn SessionContext> = tidb_syssession::Session<C>;
 
 /// Go `pkg/session/syssession.Pool`.
 
 /// Go `tableTimerStoreCore`.
-pub struct TableTimerStoreCore {
-    pool: Arc<dyn tidb_syssession::Pool<dyn SessionContext>>,
+///
+/// Generic over the pool's session context, as Go's `syssession.Pool` hands
+/// out whatever `sessionctx.Context` its factory built; the store only uses
+/// the [`SessionContext`] surface of it.
+pub struct TableTimerStoreCore<C: SessionContext + ?Sized + 'static = dyn SessionContext> {
+    pool: Arc<dyn tidb_syssession::Pool<C>>,
     db_name: String,
     tbl_name: String,
     notifier: Arc<dyn TimerWatchEventNotifier>,
 }
 
-impl TableTimerStoreCore {
+impl<C: SessionContext + ?Sized + 'static> TableTimerStoreCore<C> {
     /// The core behind [`new_table_timer_store`].
     pub fn new(
-        pool: Arc<dyn tidb_syssession::Pool<dyn SessionContext>>,
+        pool: Arc<dyn tidb_syssession::Pool<C>>,
         db_name: &str,
         tbl_name: &str,
     ) -> Self {
@@ -309,7 +313,7 @@ impl TableTimerStoreCore {
 
     /// The same core with a caller-supplied notifier.
     pub fn with_notifier(
-        pool: Arc<dyn tidb_syssession::Pool<dyn SessionContext>>,
+        pool: Arc<dyn tidb_syssession::Pool<C>>,
         db_name: &str,
         tbl_name: &str,
         notifier: Arc<dyn TimerWatchEventNotifier>,
@@ -327,7 +331,7 @@ impl TableTimerStoreCore {
     /// Go's `defer` for the time-zone restore becomes [`RestoreGuard`], whose
     /// `Drop` runs on the normal path, on the error path, and while a panic
     /// unwinds — the three cases the upstream test exercises.
-    pub fn with_session(&self, callback: &mut dyn FnMut(&SysSession) -> Result<()>) -> Result<()> {
+    pub fn with_session(&self, callback: &mut dyn FnMut(&SysSession<C>) -> Result<()>) -> Result<()> {
         let result = self.pool.with_session(&mut |se| {
             // rollback first to terminate unexpected transactions
             execute_sql(se, "ROLLBACK", &[])?;
@@ -361,13 +365,13 @@ impl TableTimerStoreCore {
     /// Go `(*tableTimerStoreCore).withSctx`.
     pub fn with_sctx(
         &self,
-        callback: &mut dyn FnMut(&dyn SessionContext) -> Result<()>,
+        callback: &mut dyn FnMut(&C) -> Result<()>,
     ) -> Result<()> {
         self.with_session(&mut |se| se.with_session_context(|context| callback(context)))
     }
 
     /// Go `(*tableTimerStoreCore).createWithSession`.
-    fn create_with_session(&self, se: &SysSession, record: &TimerRecord) -> Result<String> {
+    fn create_with_session(&self, se: &SysSession<C>, record: &TimerRecord) -> Result<String> {
         let (sql, args) = build_insert_timer_sql(&self.db_name, &self.tbl_name, record)?;
         execute_sql(se, &sql, &args)?;
 
@@ -384,7 +388,7 @@ impl TableTimerStoreCore {
     /// Go `(*tableTimerStoreCore).listWithSctx`.
     fn list_with_sctx(
         &self,
-        sctx: &dyn SessionContext,
+        sctx: &C,
         cond: Option<&dyn Cond>,
     ) -> Result<Vec<TimerRecord>> {
         // Enable index merge is used to make sure filtering timers with tags
@@ -403,7 +407,7 @@ impl TableTimerStoreCore {
 
     fn list_with_sctx_inner(
         &self,
-        sctx: &dyn SessionContext,
+        sctx: &C,
         cond: Option<&dyn Cond>,
     ) -> Result<Vec<TimerRecord>> {
         let se_tz = sctx.location();
@@ -499,7 +503,7 @@ impl TableTimerStoreCore {
     /// Go `(*tableTimerStoreCore).updateWithSession`.
     fn update_with_session(
         &self,
-        se: &SysSession,
+        se: &SysSession<C>,
         timer_id: &str,
         update: &TimerUpdate,
     ) -> Result<()> {
@@ -533,7 +537,7 @@ impl TableTimerStoreCore {
     }
 
     /// Go `(*tableTimerStoreCore).deleteWithSession`.
-    fn delete_with_session(&self, se: &SysSession, timer_id: &str) -> Result<bool> {
+    fn delete_with_session(&self, se: &SysSession<C>, timer_id: &str) -> Result<bool> {
         let (delete_sql, args) = build_delete_timer_sql(&self.db_name, &self.tbl_name, timer_id);
         execute_sql(se, &delete_sql, &args)?;
 
@@ -548,12 +552,12 @@ impl TableTimerStoreCore {
 
 /// The `defer` in `withSession` that restores the session's original time zone
 /// and marks the session unreusable when the restore itself fails.
-struct RestoreGuard<'session> {
-    session: &'session SysSession,
+struct RestoreGuard<'session, C: SessionContext + ?Sized + 'static> {
+    session: &'session SysSession<C>,
     original_time_zone: String,
 }
 
-impl Drop for RestoreGuard<'_> {
+impl<C: SessionContext + ?Sized + 'static> Drop for RestoreGuard<'_, C> {
     fn drop(&mut self) {
         // Though `pool.WithSession` will discard a not committed transaction,
         // we still rollback here so the assertion in `Pool.Put` passes.
@@ -645,7 +649,7 @@ pub fn check_update_constraints(
     Ok(())
 }
 
-impl TimerStoreCore for TableTimerStoreCore {
+impl<C: SessionContext + ?Sized + 'static> TimerStoreCore for TableTimerStoreCore<C> {
     fn create(&self, _ctx: &Context, record: &TimerRecord) -> Result<String> {
         if !record.id.is_empty() {
             return Err(TimerError::message(
@@ -714,9 +718,9 @@ impl TimerStoreCore for TableTimerStoreCore {
 ///
 /// A supplied etcd client selects the source-compatible notifier and a `None`
 /// client selects the in-memory notifier, matching Go's nil branch.
-pub fn new_table_timer_store(
+pub fn new_table_timer_store<C: SessionContext + ?Sized + 'static>(
     cluster_id: u64,
-    pool: Arc<dyn tidb_syssession::Pool<dyn SessionContext>>,
+    pool: Arc<dyn tidb_syssession::Pool<C>>,
     db_name: &str,
     tbl_name: &str,
     etcd: Option<Arc<EtcdClient>>,

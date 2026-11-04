@@ -270,7 +270,7 @@ enum EtcdCommand {
     Delete {
         key: Vec<u8>,
         timeout: Duration,
-        reply: mpsc::Sender<Result<(), EtcdError>>,
+        reply: mpsc::Sender<Result<i64, EtcdError>>,
     },
     /// `KV.DeleteRange` over `[prefix, prefix+1)` -- Go's
     /// `DeleteKeysWithPrefixFromEtcd`.
@@ -856,6 +856,15 @@ impl EtcdClient {
 
     /// Deletes one key with the caller's exact per-operation deadline.
     pub fn delete_with_timeout(&self, key: &[u8], timeout: Duration) -> Result<(), EtcdError> {
+        self.delete_count_with_timeout(key, timeout).map(|_| ())
+    }
+
+    /// Go `clientv3.KV.Delete(ctx, key)`: the response's `Deleted` count.
+    pub fn delete_count(&self, key: &[u8]) -> Result<i64, EtcdError> {
+        self.delete_count_with_timeout(key, self.shared.timeout)
+    }
+
+    fn delete_count_with_timeout(&self, key: &[u8], timeout: Duration) -> Result<i64, EtcdError> {
         let (reply, response) = mpsc::channel();
         self.shared
             .commands
@@ -1052,7 +1061,10 @@ fn run_kv_worker(
                 EtcdCommand::DeleteKeysAndPutWithLease { reply, .. } => {
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
-                EtcdCommand::Delete { reply, .. } | EtcdCommand::DeletePrefix { reply, .. } => {
+                EtcdCommand::Delete { reply, .. } => {
+                    let _ = reply.send(Err(EtcdError::Closed));
+                }
+                EtcdCommand::DeletePrefix { reply, .. } => {
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
                 EtcdCommand::LeaseGrant { reply, .. } => {
@@ -1504,7 +1516,7 @@ impl KvWorker {
                     |runtime, mut client| {
                         runtime
                             .block_on(client.delete(key.clone(), None))
-                            .map(|_| ())
+                            .map(|response| response.deleted())
                     },
                 );
                 let _ = reply.send(result);

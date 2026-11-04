@@ -284,3 +284,24 @@ mod tests {
         dump("test", "stored", snapshot(&chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string())).unwrap();
     }
 }
+
+/// Go `TTLJobTriggerHandler.ServeHTTP`'s `dom.TTLJobManager().GetCommandCli()`
+/// and `ttlcient.TriggerNewTTLJob`, read at request time as Go reads the
+/// domain's manager.
+pub fn ttl_job_trigger(factory: &Arc<Domain>) -> crate::http_status::TtlJobTrigger {
+    let domain = Arc::downgrade(factory);
+    Arc::new(move |db_name: &str, table_name: &str| {
+        let domain = domain.upgrade().ok_or_else(|| "the domain is closed".to_owned())?;
+        let manager = domain
+            .ttl_job_manager()
+            .ok_or_else(|| "the TTL job manager is not started".to_owned())?;
+        let cli = manager.get_command_cli();
+        let response = tidb_ttl_client::command::trigger_new_ttl_job(
+            &tidb_ttl_client::Context::background(),
+            cli.as_ref(),
+            db_name,
+            table_name,
+        )?;
+        serde_json::to_string(&response).map_err(|error| error.to_string())
+    })
+}

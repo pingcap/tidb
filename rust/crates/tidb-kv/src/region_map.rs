@@ -103,6 +103,22 @@ pub trait RegionStore: Send + Sync + std::fmt::Debug {
             "region cache unavailable: cannot locate region {region_id}"
         ))
     }
+
+    /// client-go `RegionCache.GetStoresByType(tikvrpc.TiKV)`'s length, as
+    /// the TTL worker sizes its scan split and running-task limit with it;
+    /// `None` for a store that is not a `tikv.Storage` (Go's failed type
+    /// assertion), such as the in-process region map.
+    fn tikv_store_count(&self) -> Option<usize> {
+        None
+    }
+
+    /// client-go `RegionCache.LocateKeyRange(bo, start, end)`: the `[start,
+    /// end)` bounds of each region covering the range, in key order. Only
+    /// asked of a store whose [`Self::tikv_store_count`] answered.
+    fn locate_key_range(&self, start: &[u8], end: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+        let _ = (start, end);
+        Err("region cache unavailable".to_owned())
+    }
 }
 
 /// The regions overlapping `[start, end)`, clipped to it, as Go
