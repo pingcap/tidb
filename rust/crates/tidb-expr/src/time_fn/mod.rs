@@ -31,7 +31,7 @@ pub(crate) mod extract;
 pub(crate) mod session_tz;
 pub(crate) mod time_diff;
 
-use self::calendar::{civil_from_days, days_from_civil, parse_date_ymd, week_of_year};
+use self::calendar::{civil_from_days, days_from_civil, parse_date_ymd, week_core};
 use crate::coerce::coerce_str;
 use crate::{Columns, Datum, EvalError};
 
@@ -581,10 +581,8 @@ fn day_of_year(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     Ok(
         checked_date_arg(value, cols, tidb_datatype::Time::invalid_zero)?.map_or(
             Datum::Null,
-            |time| {
-                let (year, month, day) = date_fields(time);
-                Datum::Int(days_from_civil(year, month, day) - days_from_civil(year, 1, 1) + 1)
-            },
+            // Go `builtinDayOfYearSig`: `arg.YearDay()`.
+            |time| Datum::Int(i64::from(time.core_time().year_day())),
         ),
     )
 }
@@ -637,7 +635,7 @@ fn week_of_year_builtin(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Eva
     let Some(date) = checked_date_arg(value, cols, zero_or_invalid_zero)?.map(date_fields) else {
         return Ok(Datum::Null);
     };
-    Ok(Datum::Int(week_of_year(date.0, date.1, date.2, 3, false).1))
+    Ok(Datum::Int(i64::from(week_core(date.0, date.1, date.2).week(3))))
 }
 
 /// `TIDB_PARSE_TSO_LOGICAL(tso)`. Port of `builtinTidbParseTsoLogicalSig` =
@@ -742,9 +740,7 @@ pub(crate) fn week(
     } else {
         default_week_format
     };
-    Ok(Datum::Int(
-        week_of_year(date.0, date.1, date.2, mode, false).1,
-    ))
+    Ok(Datum::Int(i64::from(week_core(date.0, date.1, date.2).week(mode as u8))))
 }
 
 /// `builtinYearWeekWithModeSig` / `builtinYearWeekWithoutModeSig` in
@@ -768,8 +764,8 @@ fn yearweek(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     } else {
         0
     };
-    let (year, number) = week_of_year(date.0, date.1, date.2, mode, true);
-    let result = year * 100 + number;
+    let (year, number) = week_core(date.0, date.1, date.2).year_week(mode as u8);
+    let result = i64::from(year) * 100 + i64::from(number);
     Ok(Datum::Int(if result < 0 {
         i64::from(u32::MAX)
     } else {
@@ -839,11 +835,10 @@ fn last_day(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
         let core = time.core_time();
         core.month() == 0 || (core.day() == 0 && no_zero_date)
     })?;
+    // Go: `types.GetLastDay(year, month)` as the DATE's day.
     Ok(time.map(date_fields).map_or(Datum::Null, |(y, m, _)| {
-        let next_month = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
-        let (last_y, last_m, last_d) =
-            civil_from_days(days_from_civil(next_month.0, next_month.1, 1) - 1);
-        Datum::new_string_datum(format!("{last_y:04}-{last_m:02}-{last_d:02}"))
+        let last_d = tidb_datatype::get_last_day(y as i32, m as u8);
+        Datum::new_string_datum(format!("{y:04}-{m:02}-{last_d:02}"))
     }))
 }
 
@@ -1164,24 +1159,16 @@ fn makedate(vals: &[Datum]) -> Result<Datum, EvalError> {
     } else if year < 100 {
         year += 1900;
     }
-    // Go adds in `int`, which wraps: a day count past the int range lands
-    // negative, and `TimeFromDays` turns a negative number into the zero
-    // date, which MAKEDATE answers with NULL. Anything past 9999-12-31 is
-    // NULL as well, so the civil conversion only sees days it can hold.
-    const DAYS_FROM_YEAR_ZERO_TO_EPOCH: i64 = 719_528;
-    let day_number = (days_from_civil(year, 1, 1) + DAYS_FROM_YEAR_ZERO_TO_EPOCH)
-        .wrapping_add(day)
-        .wrapping_sub(1);
-    if !(0..=3_652_424).contains(&day_number) {
+    // Go `builtinMakeDateSig.evalTime`: `TimestampDiff("DAY", ZeroDate,
+    // startTime)` is `calcDaynr(year, 1, 1)`, and the day count is added in
+    // `int` (wrapping) before `TimeFromDays`; a zero date or a year past 9999
+    // is NULL.
+    let ret_timestamp = tidb_datatype::calc_daynr(year, 1, 1);
+    let ret = tidb_datatype::time_from_days(ret_timestamp.wrapping_add(day).wrapping_sub(1));
+    if ret.is_zero() || ret.core_time().year() > 9999 {
         return Ok(Datum::Null);
     }
-    let (result_y, result_m, result_d) = civil_from_days(day_number - DAYS_FROM_YEAR_ZERO_TO_EPOCH);
-    if !(1..=9999).contains(&result_y) {
-        return Ok(Datum::Null);
-    }
-    Ok(Datum::new_string_datum(format!(
-        "{result_y:04}-{result_m:02}-{result_d:02}"
-    )))
+    Ok(Datum::new_time(ret))
 }
 
 /// `builtinMakeTimeSig` in `pkg/expression/builtin_time.go`.

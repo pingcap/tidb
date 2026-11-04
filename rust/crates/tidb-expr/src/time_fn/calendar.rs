@@ -17,7 +17,6 @@
 use crate::cast::to_i64_signed;
 use crate::coerce::coerce_str;
 use crate::{Columns, Datum, ErrorLevel, EvalError};
-use tidb_datatype::{CoreTime, Time, TimeType};
 
 /// The calendar `(year, month, day)` a *component* date-part function
 /// (`YEAR`/`MONTH`/`DAYOFMONTH`/`QUARTER`) reads, which in Go is the whole of
@@ -287,46 +286,18 @@ pub(crate) fn expand_year_for_time_diff(value: u32, digits: usize) -> i64 {
     expand_year(value, digits)
 }
 
-/// Computes TiDB's `calcDaynr` value for `TIMEDIFF` datetime arithmetic.
-/// Unlike normal calendar parsing, the source permits zero month/day
-/// components when `IgnoreZeroInDate` is enabled; mirroring `calcDaynr`
-/// preserves those values instead of forcing them through Gregorian
-/// month normalization.
+/// Go `calcDaynr` for `TIMEDIFF` datetime arithmetic, which permits zero
+/// month/day components under `IgnoreZeroInDate`.
 pub(crate) fn time_diff_daynr(year: i64, month: u32, day: u32) -> i64 {
-    if year == 0 && month == 0 {
-        return 0;
-    }
-    let month = i64::from(month);
-    let day = i64::from(day);
-    let mut daynr = 365 * year + 31 * (month - 1) + day;
-    let year = if month <= 2 {
-        year - 1
-    } else {
-        daynr -= (month * 4 + 23) / 10;
-        year
-    };
-    let century = ((year / 100 + 1) * 3) / 4;
-    daynr + year / 4 - century
+    tidb_datatype::calc_daynr(year, i64::from(month), i64::from(day))
 }
 
-fn is_leap_year(year: i64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
-}
-
-/// The number of days in `month` of `year` (Gregorian, leap-year aware);
-/// `0` for an out-of-range month so a range check against it always fails.
+/// Go `GetLastDay`: the days in `month` of `year`, `0` for an out-of-range
+/// month so a range check against it always fails.
 fn days_in_month(year: i64, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => {
-            if is_leap_year(year) {
-                29
-            } else {
-                28
-            }
-        }
-        _ => 0,
+    match u8::try_from(month) {
+        Ok(month) => u32::from(tidb_datatype::get_last_day(year as i32, month)),
+        Err(_) => 0,
     }
 }
 
@@ -335,70 +306,10 @@ pub(crate) fn days_in_month_for_time_diff(year: i64, month: u32) -> u32 {
     days_in_month(year, month)
 }
 
-/// TiDB's `types.CoreTime.Week` / `YearWeek` calculation, ported from
-/// `pkg/types/core_time.go:calcDaynr`, `weekMode`, and `calcWeek`.
-/// `mode` is masked to its low three bits exactly as the Go implementation
-/// does.  `with_year` selects `YearWeek`'s always-year-numbered variant.
-pub(crate) fn week_of_year(y: i64, m: u32, d: u32, mode: i64, with_year: bool) -> (i64, i64) {
-    const MONDAY_FIRST: u8 = 1;
-    const WEEK_YEAR: u8 = 2;
-    const FIRST_WEEKDAY: u8 = 4;
-    let calc_daynr = |year: i64, month: u32, day: u32| {
-        if year == 0 && month == 0 {
-            return 0;
-        }
-        let mut year = year;
-        let mut sum = 365 * year + 31 * (i64::from(month) - 1) + i64::from(day);
-        if month <= 2 {
-            year -= 1;
-        } else {
-            sum -= (i64::from(month) * 4 + 23) / 10;
-        }
-        sum + year / 4 - ((year / 100 + 1) * 3) / 4
-    };
-    let days_in_year = |year: i64| {
-        if year & 3 == 0 && (year % 100 != 0 || (year % 400 == 0 && year != 0)) {
-            366
-        } else {
-            365
-        }
-    };
-    let mut behavior = (mode as u8) & 7;
-    if behavior & MONDAY_FIRST == 0 {
-        behavior ^= FIRST_WEEKDAY;
-    }
-    if with_year {
-        behavior |= WEEK_YEAR;
-    }
-    let monday_first = behavior & MONDAY_FIRST != 0;
-    let mut week_year = behavior & WEEK_YEAR != 0;
-    let first_weekday = behavior & FIRST_WEEKDAY != 0;
-    let mut year = y;
-    let daynr = calc_daynr(y, m, d);
-    let mut first_daynr = calc_daynr(y, 1, 1);
-    let mut weekday = (first_daynr + 5 + if monday_first { 0 } else { 1 }) % 7;
-    if m == 1 && d <= (7 - weekday) as u32 {
-        if !week_year && ((first_weekday && weekday != 0) || (!first_weekday && weekday >= 4)) {
-            return (year, 0);
-        }
-        week_year = true;
-        year -= 1;
-        let days = days_in_year(year);
-        first_daynr -= days;
-        weekday = (weekday + 53 * 7 - days) % 7;
-    }
-    let days = if (first_weekday && weekday != 0) || (!first_weekday && weekday >= 4) {
-        daynr - (first_daynr + 7 - weekday)
-    } else {
-        daynr - (first_daynr - weekday)
-    };
-    if week_year && days >= 52 * 7 {
-        weekday = (weekday + days_in_year(year)) % 7;
-        if (!first_weekday && weekday < 4) || (first_weekday && weekday == 0) {
-            return (year + 1, 1);
-        }
-    }
-    (year, days / 7 + 1)
+/// Go `CoreTime` of a calendar date, for `DATE_FORMAT`'s week fields
+/// (`t.Week(mode)` / `t.YearWeek(mode)`).
+pub(crate) fn week_core(y: i64, m: u32, d: u32) -> tidb_datatype::CoreTime {
+    tidb_datatype::CoreTime::from_date(y as u16, m as u8, d as u8, 0, 0, 0, 0)
 }
 
 /// Days since an arbitrary fixed epoch (1970-01-01) for a Gregorian
@@ -458,20 +369,13 @@ pub(crate) fn from_days(vals: &[Datum]) -> Result<Datum, EvalError> {
         Datum::Null => return Ok(Datum::Null),
         value => to_i64_signed(value),
     };
-    if (3_652_425..=3_652_499).contains(&n) {
+    // Go `builtinFromDaysSig.evalTime`: `types.TimeFromDays(n)`, NULL past
+    // year 9999 ("the maximum date value is 9999-12-31 in mysql 5.8").
+    let ret = tidb_datatype::time_from_days(n);
+    if ret.core_time().year() > 9999 {
         return Ok(Datum::Null);
     }
-    if !(366..=3_652_424).contains(&n) {
-        // Go `builtinFromDaysSig.evalTime` answers a zero `types.Time`, which
-        // the wire renders as `0000-00-00` -- NOT NULL. Carrying a real Time
-        // datum also keeps the result-typed coercion from re-parsing the
-        // zero date into NULL.
-        let zero = Time::new(CoreTime::default(), TimeType::Date, 0)
-            .expect("the zero date is a valid Time");
-        return Ok(Datum::new_time(zero));
-    }
-    let (y, m, d) = civil_from_days(n - 719_528);
-    Ok(Datum::new_string_datum(format!("{y:04}-{m:02}-{d:02}")))
+    Ok(Datum::new_time(ret))
 }
 
 /// `DATEDIFF(date1, date2)`, ported from `builtinDateDiffSig.evalInt` in
@@ -490,8 +394,9 @@ pub(crate) fn date_diff(vals: &[Datum]) -> Result<Datum, EvalError> {
     else {
         return Ok(Datum::Null);
     };
+    // Go `types.DateDiff`: `calcDaynr(t1) - calcDaynr(t2)`.
     Ok(Datum::Int(
-        days_from_civil(ly, lm, ld) - days_from_civil(ry, rm, rd),
+        time_diff_daynr(ly, lm, ld) - time_diff_daynr(ry, rm, rd),
     ))
 }
 
@@ -551,8 +456,9 @@ pub(crate) fn timestamp_diff(vals: &[Datum]) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     };
 
-    let left_day = days_from_civil(left.year, left.month, left.day);
-    let right_day = days_from_civil(right.year, right.month, right.day);
+    // Go `calcTimeTimeDiff` counts days with `calcDaynr`.
+    let left_day = time_diff_daynr(left.year, left.month, left.day);
+    let right_day = time_diff_daynr(right.year, right.month, right.day);
     let left_clock = i64::from(left.hour) * 3_600_000_000
         + i64::from(left.minute) * 60_000_000
         + i64::from(left.second) * 1_000_000
@@ -2466,7 +2372,8 @@ pub(crate) fn date_format_in(
     // `days_from_civil + 4 (mod 7)` gives 0=Sunday .. 6=Saturday (the same
     // offset `DAYOFWEEK` uses, verified against real TiDB).
     let wd = (days_from_civil(y, m, d) + 4).rem_euclid(7) as usize;
-    let doy = days_from_civil(y, m, d) - days_from_civil(y, 1, 1) + 1;
+    // Go `%j`: `t.YearDay()`.
+    let doy = i64::from(week_core(y, m, d).year_day());
     let h12 = ((h + 11) % 12) + 1;
     let suffix = |n: u32| -> &'static str {
         match (n % 100, n % 10) {
@@ -2527,12 +2434,12 @@ pub(crate) fn date_format_in(
             // `week_of_year` above. `%U`/`%u` retain the week number's
             // possible zero; `%V`/`%v` force the corresponding year-week
             // mode and `%X`/`%x` render its possibly adjacent calendar year.
-            Some('U') => out.push_str(&format!("{:02}", week_of_year(y, m, d, 0, false).1)),
-            Some('u') => out.push_str(&format!("{:02}", week_of_year(y, m, d, 1, false).1)),
-            Some('V') => out.push_str(&format!("{:02}", week_of_year(y, m, d, 2, false).1)),
-            Some('v') => out.push_str(&format!("{:02}", week_of_year(y, m, d, 3, false).1)),
-            Some('X') => out.push_str(&format_week_year(week_of_year(y, m, d, 2, true).0)),
-            Some('x') => out.push_str(&format_week_year(week_of_year(y, m, d, 3, true).0)),
+            Some('U') => out.push_str(&format!("{:02}", week_core(y, m, d).week(0))),
+            Some('u') => out.push_str(&format!("{:02}", week_core(y, m, d).week(1))),
+            Some('V') => out.push_str(&format!("{:02}", week_core(y, m, d).week(2))),
+            Some('v') => out.push_str(&format!("{:02}", week_core(y, m, d).year_week(3).1)),
+            Some('X') => out.push_str(&format_week_year(i64::from(week_core(y, m, d).year_week(2).0))),
+            Some('x') => out.push_str(&format_week_year(i64::from(week_core(y, m, d).year_week(3).0))),
             Some('%') => out.push('%'),
             // An unknown specifier emits the letter verbatim (MySQL rule).
             Some(other) => out.push(other),
@@ -2659,19 +2566,17 @@ mod date_add_microsecond_tests {
 
 #[cfg(test)]
 mod week_tests {
-    use super::week_of_year;
+    use super::week_core;
 
-    /// `week_of_year(y, m, d, mode, with_year) -> (week_year, week)` ports TiDB
-    /// `core_time.go` calcWeek/weekMode, driving DATE_FORMAT's %U/%u/%V/%v/%X/%x.
+    /// DATE_FORMAT's %U/%u/%V/%v/%X/%x read Go `CoreTime.Week` /
+    /// `YearWeek` (`core_time.go` calcWeek/weekMode).
     /// Vectors are authoritative goeval `DATE_FORMAT(d,'%U %u %V %v %X %x')` on
     /// boundary dates that stress week 0/52/53 and the week-year transition.
     #[test]
     fn week_of_year_matches_go_for_boundary_dates() {
         // y, m, d, %U, %u, %V, %v, %X, %x
         for &(y, m, d, uu, ul, vu, vl, xu, xl) in &[
-            (
-                2000i64, 1u32, 1u32, 0i64, 0i64, 52i64, 52i64, 1999i64, 1999i64,
-            ),
+            (2000i64, 1u32, 1u32, 0i32, 0i32, 52i32, 52i32, 1999i32, 1999i32),
             (2001, 1, 1, 0, 1, 53, 1, 2000, 2001),
             (1999, 12, 31, 52, 52, 52, 52, 1999, 1999),
             (2000, 12, 31, 53, 52, 53, 52, 2000, 2000),
@@ -2680,12 +2585,13 @@ mod week_tests {
             (2015, 12, 31, 52, 53, 52, 53, 2015, 2015),
             (2016, 1, 1, 0, 0, 52, 53, 2015, 2015),
         ] {
-            assert_eq!(week_of_year(y, m, d, 0, false).1, uu, "%U {y}-{m}-{d}");
-            assert_eq!(week_of_year(y, m, d, 1, false).1, ul, "%u {y}-{m}-{d}");
-            assert_eq!(week_of_year(y, m, d, 2, false).1, vu, "%V {y}-{m}-{d}");
-            assert_eq!(week_of_year(y, m, d, 3, false).1, vl, "%v {y}-{m}-{d}");
-            assert_eq!(week_of_year(y, m, d, 2, true).0, xu, "%X {y}-{m}-{d}");
-            assert_eq!(week_of_year(y, m, d, 3, true).0, xl, "%x {y}-{m}-{d}");
+            let t = week_core(y, m, d);
+            assert_eq!(t.week(0), uu, "%U {y}-{m}-{d}");
+            assert_eq!(t.week(1), ul, "%u {y}-{m}-{d}");
+            assert_eq!(t.week(2), vu, "%V {y}-{m}-{d}");
+            assert_eq!(t.year_week(3).1, vl, "%v {y}-{m}-{d}");
+            assert_eq!(t.year_week(2).0, xu, "%X {y}-{m}-{d}");
+            assert_eq!(t.year_week(3).0, xl, "%x {y}-{m}-{d}");
         }
     }
 }

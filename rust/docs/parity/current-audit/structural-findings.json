@@ -2,9 +2,9 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 35,
+    "unresolved": 34,
     "open": 12,
-    "partial": 23
+    "partial": 22
   },
   "findings": [
     {
@@ -187,13 +187,6 @@
       "go_owner": "`pkg/expression` (embedding), `pkg/domain`"
     },
     {
-      "id": "X04",
-      "status": "partial",
-      "group": "Expanded subsystem ownership review",
-      "finding": "`tidb-expr`'s date builtins carry their own copy of Go `pkg/types` date math (`time_fn/calendar.rs`: `week_of_year`, `days_in_month`, `is_leap_year`, `time_diff_daynr`, a local `calc_daynr`, and the chrono-style `days_from_civil` / `civil_from_days`) instead of calling the `tidb-datatype` port (`CoreTime::week` / `year_week`, `get_last_day`, `is_leap_year`, `calc_daynr`, `get_date_from_daynr`) as Go's `builtin_time.go` calls `types`",
-      "go_owner": "`pkg/expression/builtin_time.go`, `pkg/types/core_time.go`"
-    },
-    {
       "id": "K03",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
@@ -211,7 +204,7 @@
       "id": "I05",
       "status": "partial",
       "group": "Runtime information-schema providers",
-      "finding": "SLOW_QUERY and CLUSTER_SLOW_QUERY are parsed in one serial pass over the selected files (`retrieve_slow_query_rows`, `tidb-executor/src/slow_query.rs`) that charges no memory tracker and reports no runtime stats, where Go's `slowQueryRetriever` reads line batches through its worker task list (`parseSlowLog` / `dataForSlowLog`), charges each batch's log size and every parsed row's `EstimatedMemUsage` to the reader's `memTracker`, and reports `slowQueryRuntimeStats`",
+      "finding": "SLOW_QUERY reads Go's batches (`getBatchLog`, `parseLog`), charges Go's `memConsume` sequence and reports `slowQueryRuntimeStats`, but parses the batches one after another where Go runs them on `DistSQLScanConcurrency` workers (`parseSlowLogByBatchGetter`), has no reverse scanner for a descending TopN by time (`slowLogReverseScanner`, so a `desc` row-limit hint is not applied), and CLUSTER_SLOW_QUERY's reader charges no tracker",
       "go_owner": "`pkg/executor/slow_query.go` (`slowQueryRetriever`)"
     },
     {

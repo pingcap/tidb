@@ -156,9 +156,10 @@ impl ViewerState {
         &self,
         extractors: &[&tidb_planner::memtable_predicate_extractor::SlowQueryExtractor],
         zone: &tidb_datatype::SessionTimeZone,
-    ) -> Result<(Vec<Vec<Datum>>, Vec<String>), DriverError> {
+        mem_tracker: Option<&std::sync::Arc<tidb_memory::Tracker>>,
+    ) -> Result<(Vec<Vec<Datum>>, Vec<String>, crate::slow_query::SlowQueryRuntimeStats), DriverError> {
         if !extractors.is_empty() && extractors.iter().all(|extractor| extractor.skip_request) {
-            return Ok((Vec::new(), Vec::new()));
+            return Ok((Vec::new(), Vec::new(), crate::slow_query::SlowQueryRuntimeStats::default()));
         }
         let mut checker = crate::slow_query::SlowLogChecker {
             has_process_priv: self.has_process,
@@ -188,9 +189,16 @@ impl ViewerState {
             &checker,
             zone,
             &self.slow_query_file,
+            mem_tracker,
+            // Go reads a forward-ordered log; a descending TopN needs its
+            // reverse scanner, which this reader does not have.
+            match extractors {
+                [extractor] if !extractor.desc => extractor.limit,
+                _ => 0,
+            },
         )
         .map_err(|error| DriverError::Mysql(crate::MysqlError::unknown(error)))?;
-        Ok((read.rows, read.warnings))
+        Ok((read.rows, read.warnings, read.stats))
     }
 
     /// Go `DDLJobRetriever.initial`: the running jobs, then the meta history
@@ -325,9 +333,21 @@ impl MemTableRetriever for InstanceStateRetriever {
                 Some(Extractor::SlowQuery(extractor)) => vec![extractor],
                 _ => Vec::new(),
             };
-            let (rows, warnings) = self
-                .viewer
-                .slow_query_rows(&extractors, &ctx.session_zone())?;
+            // Go `buildMemTable`'s `slowQueryRetriever.memTracker`: the
+            // reader's own tracker under the statement's.
+            let mem_tracker = ctx
+                .statement_memory()
+                .persistent_operator_tracker(i64::from(read.plan_id));
+            let (rows, warnings, stats) = self.viewer.slow_query_rows(
+                &extractors,
+                &ctx.session_zone(),
+                Some(&mem_tracker),
+            )?;
+            // Go `MemTableReaderExec.Close`: `RegisterStats(e.ID(),
+            // retriever.getRuntimeStats())`.
+            if let Some(source) = ctx.executor_runtime_stats_source() {
+                source.register_stats(i64::from(read.plan_id), Box::new(stats));
+            }
             for warning in warnings {
                 ctx.append_warning_parts(1105, &warning);
             }

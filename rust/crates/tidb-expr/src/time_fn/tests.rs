@@ -600,9 +600,9 @@ fn sec_to_time_source_vectors() {
 
 #[test]
 fn go_week_vectors_cover_year_boundaries() {
-    assert_eq!(week_of_year(2008, 2, 20, 0, false), (2008, 7));
-    assert_eq!(week_of_year(2008, 2, 20, 1, false), (2008, 8));
-    assert_eq!(week_of_year(2020, 1, 1, 3, true), (2020, 1));
+    assert_eq!(week_core(2008, 2, 20).week(0), 7);
+    assert_eq!(week_core(2008, 2, 20).week(1), 8);
+    assert_eq!(week_core(2020, 1, 1).year_week(3), (2020, 1));
     assert_eq!(
         yearweek(
             &[datetime_str_arg("2000-01-01").remove(0), Datum::Int(0)],
@@ -993,9 +993,8 @@ fn str_to_date_day_of_month_follows_allow_invalid_dates() {
 }
 
 /// Exact source rows from `TestFromDays` at
-/// `pkg/expression/builtin_time_test.go:1864`.  The evaluator keeps the
-/// result as a date-shaped string; the Go function's typed DATE result and
-/// warning/SQL-mode state remain outside the value-only boundary.
+/// `pkg/expression/builtin_time_test.go:1864`: Go's DATE result
+/// (`types.TimeFromDays`, NULL past year 9999).
 #[test]
 fn from_days_source_vectors() {
     use tidb_datatype::{CoreTime, Time, TimeType};
@@ -1028,11 +1027,11 @@ fn from_days_source_vectors() {
         if want == "0000-00-00" {
             assert_eq!(result, zero_date(), "FROM_DAYS({day})");
         } else {
-            assert_eq!(
-                result,
-                Datum::new_string_datum(want.to_string()),
-                "FROM_DAYS({day})"
-            );
+            // Go answers the DATE itself (`evalTime`).
+            let Datum::Time(time) = result else {
+                panic!("FROM_DAYS({day}) is a DATE: {result:?}");
+            };
+            assert_eq!(time.to_string(), want, "FROM_DAYS({day})");
         }
     }
     assert_eq!(
@@ -1048,11 +1047,10 @@ fn from_days_source_vectors() {
         if want == "0000-00-00" {
             assert_eq!(result, zero_date(), "FROM_DAYS({input:?})");
         } else {
-            assert_eq!(
-                result,
-                Datum::new_string_datum(want.to_string()),
-                "FROM_DAYS({input:?})"
-            );
+            let Datum::Time(time) = result else {
+                panic!("FROM_DAYS({input:?}) is a DATE: {result:?}");
+            };
+            assert_eq!(time.to_string(), want, "FROM_DAYS({input:?})");
         }
     }
     assert_eq!(calendar::from_days(&[Datum::Null]).unwrap(), Datum::Null);

@@ -277,6 +277,19 @@ fn get_all_files(
     checker: &SlowLogChecker,
     log_file_path: &str,
     warnings: &mut Vec<String>,
+    stats: &mut SlowQueryRuntimeStats,
+) -> Result<Vec<LogFile>, String> {
+    let started = std::time::Instant::now();
+    let files = get_all_files_counted(checker, log_file_path, warnings, &mut stats.total_file_num);
+    stats.initialize = started.elapsed();
+    files
+}
+
+fn get_all_files_counted(
+    checker: &SlowLogChecker,
+    log_file_path: &str,
+    warnings: &mut Vec<String>,
+    total_file_num: &mut usize,
 ) -> Result<Vec<LogFile>, String> {
     let log_dir = go_dir(log_file_path);
     let ext = Path::new(log_file_path)
@@ -304,6 +317,7 @@ fn get_all_files(
         if !path.starts_with(prefix) {
             continue;
         }
+        *total_file_num += 1;
         let compressed = path.ends_with(".gz");
         let start = match file_start_time(&path, compressed) {
             Ok(Some(start)) => start.with_timezone(&Utc),
@@ -618,6 +632,64 @@ pub struct SlowQueryRows {
     pub rows: Vec<Vec<Datum>>,
     /// Go's `StmtCtx.AppendWarning` texts, in order.
     pub warnings: Vec<String>,
+    /// Go `slowQueryRetriever.stats`, which `MemTableReaderExec.Close`
+    /// registers for the scan.
+    pub stats: SlowQueryRuntimeStats,
+}
+
+/// Go `slowQueryRuntimeStats`.
+#[derive(Clone, Debug, Default)]
+pub struct SlowQueryRuntimeStats {
+    total_file_num: usize,
+    read_file_num: usize,
+    read_file: Duration,
+    initialize: Duration,
+    read_file_size: i64,
+    parse_log: Duration,
+    /// Divergence: Go parses batches on `DistSQLScanConcurrency` workers;
+    /// this reader parses them one after another and reports 1.
+    concurrent: usize,
+}
+
+impl tidb_execdetails::RuntimeStats for SlowQueryRuntimeStats {
+    /// Go `slowQueryRuntimeStats.String`.
+    fn string(&self) -> String {
+        format!(
+            "initialize: {}, read_file: {}, parse_log: {{time:{}, concurrency:{}}}, total_file: {}, read_file: {}, read_size: {}",
+            tidb_execdetails::format_duration(self.initialize),
+            tidb_execdetails::format_duration(self.read_file),
+            tidb_execdetails::format_duration(self.parse_log),
+            self.concurrent,
+            self.total_file_num,
+            self.read_file_num,
+            tidb_memory::format_bytes(self.read_file_size),
+        )
+    }
+
+    /// Go `slowQueryRuntimeStats.Merge`.
+    fn merge(&mut self, other: &dyn tidb_execdetails::RuntimeStats) {
+        let Some(tmp) = other.as_any().downcast_ref::<Self>() else {
+            return;
+        };
+        self.total_file_num += tmp.total_file_num;
+        self.read_file_num += tmp.read_file_num;
+        self.read_file += tmp.read_file;
+        self.initialize += tmp.initialize;
+        self.read_file_size += tmp.read_file_size;
+        self.parse_log += tmp.parse_log;
+    }
+
+    fn clone_box(&self) -> Box<dyn tidb_execdetails::RuntimeStats> {
+        Box::new(self.clone())
+    }
+
+    fn tp(&self) -> i32 {
+        tidb_execdetails::TP_SLOW_QUERY_RUNTIME_STAT
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 struct Parser<'a> {
@@ -742,27 +814,82 @@ impl Parser<'_> {
         Ok(true)
     }
 
-    /// Go `parseLog` over every line of the files, in order.
-    fn parse(&mut self, files: &[LogFile]) -> Result<Vec<Vec<Datum>>, String> {
+    /// Go `parseSlowLog` with `parseSlowLogByBatchGetter`, one batch after
+    /// another: `getBatchLog` reads up to [`PARSE_SLOW_LOG_BATCH_SIZE`] entries
+    /// across the files, `parseLog` turns the batch into rows, and the reader's
+    /// `memConsume` charges what Go's does -- the batch's log size while it is
+    /// parsed (`calculateLogSize`), each row's `EstimatedMemUsage`, and the
+    /// previous batch's rows released when the next is fetched
+    /// (`dataForSlowLog`'s `lastFetchSize`).
+    fn parse(
+        &mut self,
+        files: &[LogFile],
+        mem_tracker: Option<&std::sync::Arc<tidb_memory::Tracker>>,
+        stats: &mut SlowQueryRuntimeStats,
+        limit: u64,
+    ) -> Result<Vec<Vec<Datum>>, String> {
+        let mem_consume = |bytes: i64| {
+            if let Some(tracker) = mem_tracker {
+                tracker.consume(bytes);
+            }
+        };
+        let mut reader = BatchReader::new(files);
+        let mut data = Vec::new();
+        let mut last_fetch_size = 0;
+        // Go `parseDataForSlowLog`'s `batchSize = min(ParseSlowLogBatchSize,
+        // limit)`, and `parseSlowLogByBatchGetterWithLimit`'s stop once
+        // `limit` rows are produced.
+        let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+        loop {
+            let remaining = if limit > 0 { limit - data.len() } else { usize::MAX };
+            if remaining == 0 {
+                break;
+            }
+            let batch_size = PARSE_SLOW_LOG_BATCH_SIZE.min(remaining);
+            let started = std::time::Instant::now();
+            let log = reader.get_batch_log(batch_size, stats)?;
+            stats.read_file += started.elapsed();
+            if log.is_empty() {
+                break;
+            }
+            let log_size = calculate_log_size(&log);
+            mem_consume(log_size);
+            let started = std::time::Instant::now();
+            let mut rows = self.parse_log(&log, &mem_consume);
+            stats.parse_log += started.elapsed();
+            rows.truncate(remaining);
+            mem_consume(-log_size);
+            mem_consume(-last_fetch_size);
+            last_fetch_size = calculate_datums_size(&rows);
+            data.extend(rows);
+        }
+        mem_consume(-last_fetch_size);
+        Ok(data)
+    }
+
+    /// Go `parseLog`: one batch of lines, each with its line number in its
+    /// file, into rows.
+    fn parse_log(
+        &mut self,
+        log: &[(String, usize)],
+        mem_consume: &dyn Fn(i64),
+    ) -> Vec<Vec<Datum>> {
         let mut data = Vec::new();
         let mut row: Vec<Option<Datum>> = Vec::new();
         let mut user = String::new();
         let mut start_flag = false;
-        for file in files {
-            let mut reader = open_reader(&file.path, file.compressed)?;
-            let mut line_num = 0usize;
-            while let Some(line) = read_line(reader.as_mut())? {
-                line_num += 1;
-                if !start_flag {
-                    if let Some(value) = line.strip_prefix(SLOW_LOG_START_PREFIX_STR) {
-                        row = vec![None; self.columns.len()];
-                        user.clear();
-                        if self.set_column_value(&mut row, "Time", value, line_num) {
-                            start_flag = true;
-                        }
+        for (line, line_num) in log {
+            let (line, line_num) = (line.as_str(), *line_num);
+            if !start_flag {
+                if let Some(value) = line.strip_prefix(SLOW_LOG_START_PREFIX_STR) {
+                    row = vec![None; self.columns.len()];
+                    user.clear();
+                    if self.set_column_value(&mut row, "Time", value, line_num) {
+                        start_flag = true;
                     }
-                    continue;
                 }
+                continue;
+            }
                 if let Some(rest) = line.strip_prefix(SLOW_LOG_ROW_PREFIX_STR) {
                     let mut valid = true;
                     if let Some(value) = rest.strip_prefix(SLOW_LOG_PREV_STMT_PREFIX) {
@@ -825,7 +952,7 @@ impl Parser<'_> {
                         start_flag = false;
                         continue;
                     }
-                    let _ = self.set_column_value(&mut row, "Query", &line, line_num);
+                    let _ = self.set_column_value(&mut row, "Query", line, line_num);
                     // Go `setDefaultValue`: an unset column takes its type's
                     // zero value.
                     let finished = row
@@ -836,15 +963,87 @@ impl Parser<'_> {
                                 .take()
                                 .unwrap_or_else(|| crate::bad_null::get_zero_value(field_type))
                         })
-                        .collect();
+                        .collect::<Vec<_>>();
+                    mem_consume(tidb_datatype::estimated_mem_usage(&finished, 1));
                     data.push(finished);
                     start_flag = false;
                 } else {
                     start_flag = false;
                 }
+        }
+        data
+    }
+}
+
+/// Go `ParseSlowLogBatchSize`: the slow-log entries one batch holds.
+const PARSE_SLOW_LOG_BATCH_SIZE: usize = 64;
+
+/// Go `calculateLogSize`.
+fn calculate_log_size(log: &[(String, usize)]) -> i64 {
+    log.iter().map(|(line, _)| line.len() as i64).sum()
+}
+
+/// Go `calculateDatumsSize`.
+fn calculate_datums_size(rows: &[Vec<Datum>]) -> i64 {
+    rows.iter().map(|row| tidb_datatype::estimated_mem_usage(row, 1)).sum()
+}
+
+/// Go `slowQueryRetriever`'s reader state over the selected files: the open
+/// file (`getNextReader`) and the line within it (`fileLine`).
+struct BatchReader<'a> {
+    files: std::slice::Iter<'a, LogFile>,
+    reader: Option<Box<dyn BufRead>>,
+    file_line: usize,
+}
+
+impl<'a> BatchReader<'a> {
+    fn new(files: &'a [LogFile]) -> Self {
+        Self {
+            files: files.iter(),
+            reader: None,
+            file_line: 0,
+        }
+    }
+
+    /// Go `getBatchLog`: up to `batch_size` entries, each ending at a line
+    /// with the SQL suffix that is not a `use` or `# ` line; at a file's end
+    /// the next file continues the batch.
+    fn get_batch_log(
+        &mut self,
+        batch_size: usize,
+        stats: &mut SlowQueryRuntimeStats,
+    ) -> Result<Vec<(String, usize)>, String> {
+        let mut log = Vec::with_capacity(batch_size);
+        for _ in 0..batch_size {
+            loop {
+                if self.reader.is_none() {
+                    let Some(file) = self.files.next() else {
+                        return Ok(log);
+                    };
+                    // Go `getNextFile`'s `readFileSize` / `readFileNum`.
+                    if let Ok(metadata) = std::fs::metadata(&file.path) {
+                        stats.read_file_size += i64::try_from(metadata.len()).unwrap_or(i64::MAX);
+                        stats.read_file_num += 1;
+                    }
+                    self.reader = Some(open_reader(&file.path, file.compressed)?);
+                    self.file_line = 0;
+                }
+                let reader = self.reader.as_mut().expect("opened above");
+                let Some(line) = read_line(reader.as_mut())? else {
+                    self.reader = None;
+                    continue;
+                };
+                self.file_line += 1;
+                let ends_entry = line.ends_with(SLOW_LOG_SQL_SUFFIX_STR)
+                    && !line.starts_with("use")
+                    && !line.starts_with(SLOW_LOG_ROW_PREFIX_STR);
+                log.push((line, self.file_line));
+                if ends_entry {
+                    break;
+                }
             }
         }
-        Ok(data)
+        Ok(log)
     }
 }
 
@@ -861,9 +1060,15 @@ pub fn retrieve_slow_query_rows(
     checker: &SlowLogChecker,
     tz: &SessionTimeZone,
     log_file_path: &str,
+    mem_tracker: Option<&std::sync::Arc<tidb_memory::Tracker>>,
+    limit: u64,
 ) -> Result<SlowQueryRows, String> {
     let mut warnings = Vec::new();
-    let files = get_all_files(checker, log_file_path, &mut warnings)?;
+    let mut stats = SlowQueryRuntimeStats {
+        concurrent: 1,
+        ..SlowQueryRuntimeStats::default()
+    };
+    let files = get_all_files(checker, log_file_path, &mut warnings, &mut stats)?;
     let mut parser = Parser {
         columns,
         kinds: columns.iter().map(|(name, _)| column_kind(name)).collect(),
@@ -871,16 +1076,65 @@ pub fn retrieve_slow_query_rows(
         tz,
         warnings,
     };
-    let rows = parser.parse(&files)?;
+    if limit > 0 {
+        // Go `parseSlowLogByBatchGetterWithLimit` parses serially and leaves
+        // `concurrent` unset.
+        stats.concurrent = 0;
+    }
+    let rows = parser.parse(&files, mem_tracker, &mut stats, limit)?;
     Ok(SlowQueryRows {
         rows,
         warnings: parser.warnings,
+        stats,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `slowQueryRetriever.memConsume`: a batch charges its log size while
+    /// it is parsed and each row it yields; the rows are released when the
+    /// next batch is fetched, so one batch peaks at both and ends at zero.
+    #[test]
+    fn a_slow_log_read_charges_its_log_and_rows_like_go() {
+        let dir = std::env::temp_dir().join(format!("slow-query-mem-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tidb-slow.log");
+        let log = "# Time: 2026-11-05T10:00:00.000000+08:00\n# Query_time: 1.5\nselect 1;\n\
+                   # Time: 2026-11-05T10:00:01.000000+08:00\n# Query_time: 2.5\nselect 2;\n";
+        std::fs::write(&path, log).unwrap();
+        let columns = tidb_infoschema::infoschema_meta::table_schema("SLOW_QUERY").unwrap();
+        let checker = SlowLogChecker {
+            has_process_priv: true,
+            ..Default::default()
+        };
+        let tracker = tidb_memory::Tracker::new(1, -1);
+        let read = retrieve_slow_query_rows(
+            &columns,
+            &checker,
+            &SessionTimeZone::utc(),
+            path.to_str().unwrap(),
+            Some(&tracker),
+            0,
+        )
+        .unwrap();
+        assert_eq!(read.rows.len(), 2);
+        let log_size: i64 = log.lines().map(|line| line.len() as i64).sum();
+        assert_eq!(tracker.max_consumed(), log_size + calculate_datums_size(&read.rows));
+        assert_eq!(tracker.bytes_consumed(), 0);
+        // Go `slowQueryRuntimeStats`: the files the directory holds with the
+        // log's prefix, the ones read and their bytes.
+        let stats = tidb_execdetails::RuntimeStats::string(&read.stats);
+        assert!(
+            stats.ends_with(&format!(
+                "concurrency:1}}, total_file: 1, read_file: 1, read_size: {}",
+                tidb_memory::format_bytes(log.len() as i64)
+            )),
+            "{stats}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     /// Go `TestSplitbyColon` (`slow_query_test.go`).
     #[test]
@@ -934,5 +1188,32 @@ mod tests {
         assert!(parse_time("2020-04-15T18:00:01Z").is_ok());
         assert!(parse_time("2019-04-28-15:24:04.309074 +0800").is_ok());
         assert!(parse_time("xx").is_err());
+    }
+
+    /// Go `parseSlowLogByBatchGetterWithLimit`: a row-limit hint stops the
+    /// read once that many rows are produced.
+    #[test]
+    fn a_slow_log_read_stops_at_its_row_limit() {
+        let dir = std::env::temp_dir().join(format!("slow-query-limit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tidb-slow.log");
+        let log: String = (0..3)
+            .map(|i| format!("# Time: 2026-11-05T10:00:0{i}.000000+08:00\nselect {i};\n"))
+            .collect();
+        std::fs::write(&path, &log).unwrap();
+        let columns = tidb_infoschema::infoschema_meta::table_schema("SLOW_QUERY").unwrap();
+        let checker = SlowLogChecker {
+            has_process_priv: true,
+            ..Default::default()
+        };
+        let read = |limit| {
+            retrieve_slow_query_rows(&columns, &checker, &SessionTimeZone::utc(), path.to_str().unwrap(), None, limit)
+                .unwrap()
+                .rows
+                .len()
+        };
+        assert_eq!(read(0), 3);
+        assert_eq!(read(2), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
