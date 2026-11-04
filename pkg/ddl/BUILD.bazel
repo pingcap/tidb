@@ -322,6 +322,7 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/meta/metabuild",
         "//pkg/meta/model",
+        "//pkg/owner",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
