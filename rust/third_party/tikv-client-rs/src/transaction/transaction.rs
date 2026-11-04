@@ -3620,11 +3620,43 @@ impl<PdC: PdClient> Transaction<PdC> {
         }
         // client-go `KVTxn.LockKeys` opens a "Shared Lock" span for a shared
         // lock and runs the rest of the call under it.
-        if context.in_share_mode {
+        let started = std::time::Instant::now();
+        let result = if context.in_share_mode {
             crate::trace::client_span("Shared Lock", self.lock_keys_checked(context, keys)).await
         } else {
             self.lock_keys_checked(context, keys).await
+        };
+        // client-go `LockKeys`' deferred `lockCtx.Stats.TotalTime`.
+        if let Some(stats) = context.stats.as_mut() {
+            stats.total_time = started.elapsed();
         }
+        result
+    }
+
+    /// client-go `collectAggressiveLockingStats`.
+    fn collect_aggressive_locking_stats(
+        context: &mut LockContext,
+        keys: usize,
+        skipped_lock_keys: usize,
+        filtered_aggressive_locked_keys_count: usize,
+        lock_wake_up_mode: kvrpcpb::PessimisticLockWakeUpMode,
+    ) {
+        let locked_with_conflict_count = (keys > 0).then(|| context.locked_with_conflict_count());
+        let Some(stats) = context.stats.as_mut() else {
+            return;
+        };
+        if let Some(locked_with_conflict_count) = locked_with_conflict_count {
+            stats.aggressive_lock_new_count += keys - skipped_lock_keys;
+            stats.locked_with_conflict_count += locked_with_conflict_count;
+            crate::metrics::add_shortcut_counter(
+                "AggressiveLockedKeysLockedWithConflict",
+                locked_with_conflict_count as f64,
+            );
+            if lock_wake_up_mode == kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeNormal {
+                crate::metrics::add_shortcut_counter("AggressiveLockedKeysNonForceLock", keys as f64);
+            }
+        }
+        stats.aggressive_lock_derived_count += filtered_aggressive_locked_keys_count;
     }
 
     /// The part of `lock_keys_with_context_inner` after client-go's
@@ -3758,6 +3790,11 @@ impl<PdC: PdClient> Transaction<PdC> {
                     "pessimistic lock in share mode requires primary key to be selected".to_owned(),
                 ));
             }
+            // client-go `lockKeysWithSharedLockUpgrade`'s `lockCtx.Stats`.
+            context.stats = Some(crate::util::LockKeysDetails {
+                lock_keys: (pending.len() + upgrade_keys.len()) as i32,
+                ..Default::default()
+            });
             if !pending.is_empty() {
                 self.pessimistic_lock_with_context_options(
                     pending,
@@ -3783,6 +3820,12 @@ impl<PdC: PdClient> Transaction<PdC> {
             self.maybe_flush_pipelined(false).await?;
             return Ok(());
         }
+        // client-go `lockKeys`' `lockCtx.Stats`, before filtering the locks
+        // aggressive locking already holds.
+        context.stats = Some(crate::util::LockKeysDetails {
+            lock_keys: pending.len() as i32,
+            ..Default::default()
+        });
         if self.aggressive_locking.is_some() && pending.len() == 1 {
             let key = pending[0].clone();
             let assigned_primary = if self.buffer.get_primary_key().is_none() {
@@ -3849,6 +3892,16 @@ impl<PdC: PdClient> Transaction<PdC> {
                         .expect("aggressive locking checked above")
                         .current
                         .insert(key, entry);
+                    // client-go: every key was filtered, so no RPC is sent.
+                    crate::metrics::add_shortcut_counter("AggressiveLockedKeysDerived", 1.0);
+                    crate::metrics::add_shortcut_counter("AggressiveLockedKeysNew", 0.0);
+                    Self::collect_aggressive_locking_stats(
+                        context,
+                        0,
+                        0,
+                        1,
+                        kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeNormal,
+                    );
                     return Ok(());
                 }
             }
@@ -3877,8 +3930,31 @@ impl<PdC: PdClient> Transaction<PdC> {
         } else {
             kvrpcpb::Op::PessimisticLock
         };
+        let aggressive_keys = self.aggressive_locking.is_some().then(|| {
+            // client-go `filterAggressiveLockedKeys` kept every key.
+            crate::metrics::add_shortcut_counter("AggressiveLockedKeysDerived", 0.0);
+            crate::metrics::add_shortcut_counter("AggressiveLockedKeysNew", pending.len() as f64);
+            pending.clone()
+        });
         self.pessimistic_lock_with_context_options(pending, lock_type, wake_up_mode, context)
             .await?;
+        if let Some(keys) = aggressive_keys {
+            // client-go `lockKeys`: a `LockOnlyIfExists` key whose value does
+            // not exist was not locked.
+            let skipped_lock_keys = if context.lock_only_if_exists {
+                keys.iter()
+                    .filter(|key| {
+                        let logical_key = (*key).clone().truncate_keyspace(self.keyspace);
+                        context
+                            .returned_value(<&[u8]>::from(&logical_key))
+                            .is_some_and(|value| !value.exists)
+                    })
+                    .count()
+            } else {
+                0
+            };
+            Self::collect_aggressive_locking_stats(context, keys.len(), skipped_lock_keys, 0, wake_up_mode);
+        }
         self.maybe_flush_pipelined(false).await?;
         Ok(())
     }

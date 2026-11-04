@@ -991,6 +991,14 @@ pub(crate) enum TxnCommitProtocol {
     OnePc,
 }
 
+/// Adds `value` to the client-go counter shortcut `source_name`.
+pub(crate) fn add_shortcut_counter(source_name: &str, value: f64) {
+    match global_metrics().shortcut(source_name) {
+        Some(ClientGoShortcut::Counter(counter)) => counter.inc_by(value),
+        shortcut => panic!("shortcut {source_name} is not a counter: {shortcut:?}"),
+    }
+}
+
 pub(crate) fn record_txn_commit(protocol: TxnCommitProtocol, succeeded: bool) {
     let source_name = match (protocol, succeeded) {
         (TxnCommitProtocol::TwoPc, true) => "TwoPCTxnCounterOk",

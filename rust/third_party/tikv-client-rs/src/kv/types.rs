@@ -1,6 +1,5 @@
 // Copyright 2026 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::any::Any;
 use std::collections::HashMap;
 use std::mem::size_of;
 use std::sync::atomic::AtomicU32;
@@ -22,16 +21,6 @@ pub struct ReturnedValue {
     pub exists: bool,
     pub locked_with_conflict_ts: u64,
     pub already_locked: bool,
-}
-
-/// Marker for lock statistics owned by the observability layer.
-pub trait LockStatistics: Any + Send + Sync {
-    fn as_any(&self) -> &dyn Any;
-}
-impl<T: Any + Send + Sync> LockStatistics for T {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
 
 /// client-go's `LockCtx.OnDeadlock` receives the same `tikverr.ErrDeadlock`
@@ -58,7 +47,9 @@ pub struct LockContext {
     values: Mutex<HashMap<Vec<u8>, ReturnedValue>>,
     pub max_locked_with_conflict_ts: u64,
     pub lock_expired: Option<Arc<AtomicU32>>,
-    pub stats: Option<Arc<dyn LockStatistics>>,
+    /// client-go `LockCtx.Stats`: the details of the latest `LockKeys`
+    /// call, set by that call.
+    pub stats: Option<crate::util::LockKeysDetails>,
     pub resource_group_tag: Vec<u8>,
     pub resource_group_tagger: Option<ResourceGroupTagger>,
     pub on_deadlock: Option<DeadlockHandler>,
@@ -133,6 +124,17 @@ impl LockContext {
     /// metadata in addition to the optional value convenience above.
     pub fn returned_value(&self, key: &[u8]) -> Option<ReturnedValue> {
         self.values.lock().unwrap().get(key).cloned()
+    }
+
+    /// client-go `collectAggressiveLockingStats`' count over `lockCtx.Values`:
+    /// the keys locked despite a newer committed version.
+    pub fn locked_with_conflict_count(&self) -> usize {
+        self.values
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|value| value.locked_with_conflict_ts != 0)
+            .count()
     }
 
     /// Returns the number of per-key pessimistic-lock results collected.

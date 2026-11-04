@@ -213,6 +213,9 @@ fn acquire_statement_locks<S: StoreClient>(
     };
     match result {
         Ok(acquired) => {
+            if let Some(detail) = &acquired.lock_keys_detail {
+                accumulate_lock_keys_detail(detail);
+            }
             lock_values.current.extend(acquired.values);
             if acquired.locked_with_conflict.is_empty() {
                 return LockKeysOutcome::Locked {
@@ -1592,6 +1595,12 @@ pub struct PessimisticLockObservation {
     pub retries: usize,
     /// Go `LockKeysDetail.TotalTime`.
     pub lock_elapsed: std::time::Duration,
+    /// Go `LockKeysDetail.AggressiveLockNewCount`.
+    pub aggressive_lock_new_count: usize,
+    /// Go `LockKeysDetail.AggressiveLockDerivedCount`.
+    pub aggressive_lock_derived_count: usize,
+    /// Go `LockKeysDetail.LockedWithConflictCount`.
+    pub locked_with_conflict_count: usize,
 }
 
 thread_local! {
@@ -1605,6 +1614,9 @@ thread_local! {
             lock_keys: 0,
             retries: 0,
             lock_elapsed: std::time::Duration::ZERO,
+            aggressive_lock_new_count: 0,
+            aggressive_lock_derived_count: 0,
+            locked_with_conflict_count: 0,
         });
 }
 
@@ -1615,6 +1627,24 @@ pub fn take_last_pessimistic_lock_observation() -> Option<PessimisticLockObserva
         let observation = slot.replace(PessimisticLockObservation::default());
         (observation.lock_keys > 0 || observation.retries > 0).then_some(observation)
     })
+}
+
+/// The running statement's accumulated lock observation, left in place.
+#[must_use]
+pub fn peek_last_pessimistic_lock_observation() -> PessimisticLockObservation {
+    LAST_LOCK_OBSERVATION.with(std::cell::Cell::get)
+}
+
+/// Go `execDetails.LockKeysDetail.Merge(lockKeysDetail)`: the fair-locking
+/// half of one `LockKeys` call's details.
+fn accumulate_lock_keys_detail(detail: &tikv_client::util::LockKeysDetails) {
+    LAST_LOCK_OBSERVATION.with(|slot| {
+        let mut observation = slot.get();
+        observation.aggressive_lock_new_count += detail.aggressive_lock_new_count;
+        observation.aggressive_lock_derived_count += detail.aggressive_lock_derived_count;
+        observation.locked_with_conflict_count += detail.locked_with_conflict_count;
+        slot.set(observation);
+    });
 }
 
 fn accumulate_lock_observation(keys: u64, elapsed: std::time::Duration) {

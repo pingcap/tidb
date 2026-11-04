@@ -114,6 +114,60 @@ impl Session {
             .unwrap_or(0)
     }
 
+    /// Go `ExecStmt`'s fair-locking accounting of a finished statement:
+    /// `FinishExecuteStmt`'s statement counters, and -- for a statement that
+    /// succeeded inside a transaction still open -- `Exec`'s `TxnCtx` flags.
+    pub(crate) fn finish_statement_fair_locking(
+        &mut self,
+        observation: &tidb_store_driver_txn::cluster_table_storage::PessimisticLockObservation,
+        succeeded: bool,
+    ) {
+        let (used, effective) = fair_locking_of(observation);
+        if used {
+            tidb_metrics::session::TRANSACTION_FAIR_LOCKING_USAGE
+                .with_label_values(&["stmt-used"])
+                .inc();
+            if effective {
+                tidb_metrics::session::TRANSACTION_FAIR_LOCKING_USAGE
+                    .with_label_values(&["stmt-effective"])
+                    .inc();
+            }
+        }
+        if succeeded && used && self.in_transaction() {
+            self.txn_fair_locking.0 = true;
+            self.txn_fair_locking.1 |= effective;
+        }
+    }
+
+    /// Go `FinishExecuteStmt`'s transaction counters once a commit ran,
+    /// with the committing statement's own locks when it is an autocommit
+    /// statement whose observation is still running.
+    pub(crate) fn finish_txn_fair_locking(&mut self, autocommit_statement: bool) {
+        let (mut used, mut effective) = std::mem::take(&mut self.txn_fair_locking);
+        if autocommit_statement {
+            let (statement_used, statement_effective) = fair_locking_of(
+                &tidb_store_driver_txn::cluster_table_storage::peek_last_pessimistic_lock_observation(),
+            );
+            used |= statement_used;
+            effective |= statement_used && statement_effective;
+        }
+        if used {
+            tidb_metrics::session::TRANSACTION_FAIR_LOCKING_USAGE
+                .with_label_values(&["txn-used"])
+                .inc();
+        }
+        if effective {
+            tidb_metrics::session::TRANSACTION_FAIR_LOCKING_USAGE
+                .with_label_values(&["txn-effective"])
+                .inc();
+        }
+    }
+
+    /// A rolled-back transaction's flags end with it.
+    pub(crate) fn reset_txn_fair_locking(&mut self) {
+        self.txn_fair_locking = (false, false);
+    }
+
     /// Go `session.BuiltinFunctionUsageInc`.
     pub fn builtin_function_usage_inc(&self, scalar_func_sig_name: &str) {
         self.builtin_function_usage
@@ -261,4 +315,15 @@ impl StatementTelemetry {
             tidb_telemetry::CURRENT_TIFLASH_EXCHANGE_PUSH_DOWN_COUNT.fetch_add(1, Ordering::Relaxed);
         }
     }
+}
+
+/// Go `adapter.go`'s reading of `LockKeysDetail`: fair locking was used when
+/// keys were locked or derived aggressively, and took effect when a key was
+/// locked despite a conflict or derived from the previous retry.
+fn fair_locking_of(
+    observation: &tidb_store_driver_txn::cluster_table_storage::PessimisticLockObservation,
+) -> (bool, bool) {
+    let used = observation.aggressive_lock_new_count > 0 || observation.aggressive_lock_derived_count > 0;
+    let effective = observation.locked_with_conflict_count > 0 || observation.aggressive_lock_derived_count > 0;
+    (used, used && effective)
 }

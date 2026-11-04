@@ -393,6 +393,19 @@ impl TxnManager {
         read_ts: Option<u64>,
         resource_group: &str,
     ) -> Result<(), SqlQueryError> {
+        let result = self.commit_autocommit_buffer_once(session, hooks, read_ts, resource_group);
+        // Go `finishStmt`'s `FinishExecuteStmt` after the commit ran.
+        session.finish_txn_fair_locking(true);
+        result
+    }
+
+    fn commit_autocommit_buffer_once(
+        &mut self,
+        session: &mut Session,
+        hooks: &dyn CommitHooks,
+        read_ts: Option<u64>,
+        resource_group: &str,
+    ) -> Result<(), SqlQueryError> {
         let bindings_changed = hooks.binding_records_changed(&self.buffer);
         let renew = session.start_cached_table_renew_lease()?;
         let mut options = Self::statement_transaction_options(session);
@@ -500,6 +513,17 @@ impl TxnManager {
         session: &mut Session,
         hooks: &dyn CommitHooks,
     ) -> Result<(), SqlQueryError> {
+        let result = self.commit_once(session, hooks);
+        // Go COMMIT's `FinishExecuteStmt` after `CommitTxn` ran.
+        session.finish_txn_fair_locking(false);
+        result
+    }
+
+    fn commit_once(
+        &mut self,
+        session: &mut Session,
+        hooks: &dyn CommitHooks,
+    ) -> Result<(), SqlQueryError> {
         session.current_tso().clear();
         self.pin = None;
         let Some(mut transaction) = self.explicit.take() else {
@@ -582,6 +606,7 @@ impl TxnManager {
     /// Drops the explicit transaction without publishing anything, along with
     /// every write it staged (Go `RollbackTxn`).
     pub fn rollback(&mut self, session: &mut Session) -> Result<(), SqlQueryError> {
+        session.reset_txn_fair_locking();
         session.clear_table_delta();
         session.current_tso().clear();
         self.pin = None;

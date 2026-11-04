@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**43 unresolved: 14 open, 29 partial.**
+**42 unresolved: 13 open, 29 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -67,7 +67,7 @@ unresolved until it is restated against its Go owner or closed.
 | O08 | open | No plan-replayer owner composed | `pkg/domain/plan_replayer*.go` |
 | O10 | open | No DXF scheduler/executor managers composed | `pkg/disttask/framework` |
 | O11 | partial | TopSQL: plan-digest attribution, DML write/commit attribution, CPU/RU profiling, reporter lifetime | `pkg/util/topsql` |
-| X03 | open | A plain EXPLAIN prepares the plan but builds no target executor, where Go `buildExplain` builds it (`explainExec.analyzeExec = b.build(v.TargetPlan)`): the builder's side effects (index-merge and table-lookup telemetry, partition pruning at build) do not happen | `pkg/executor/builder.go` (`buildExplain`) |
+| X03 | open | A plain EXPLAIN prepares the plan but builds no target executor, where Go `buildExplain` builds it (`explainExec.analyzeExec = b.build(v.TargetPlan)`): the builder's side effects (index-merge and table-lookup telemetry) do not happen. Blocked on memory tables: a Rust memtable reader needs its retrieved rows at build (`MemTableRetrievalNeeded`), where Go's retriever reads them at `Next` | `pkg/executor/builder.go` (`buildExplain`) |
 | O15 | open | No cross-keyspace runtime (null keyspace only) | `pkg/keyspace`, `pkg/domain` |
 | O18 | partial | Statement summary: normalized plan digests, encoded plans, RU/CPU/network metadata | `pkg/util/stmtsummary` |
 | O19 | open | `StmtNodeCounter` is counted at the wire (`tidb-server/src/mysql_connection.rs`) instead of in `executor.Compile` after `Optimize` succeeds: sessions without a wire (internal, embedded) count nothing, and a statement whose planning fails is counted | `pkg/executor/compiler.go` (`CountStmtNode`) |
@@ -84,7 +84,6 @@ unresolved until it is restated against its Go owner or closed.
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
 | T02 | partial | Two region-cache lifecycles (TiDB and the native client): coprocessor RequestSelector, store-health recovery, batch-scan follower reads | client-go `internal/locate` |
-| T03 | open | Pessimistic lock RPCs carry only key counts and time to the statement (`cluster_table_storage::PessimisticLockObservation`), not client-go's `LockKeysDetail`: `TxnCtx.FairLockingUsed`/`FairLockingEffective` and the `FairLockingUsageCount` statement/transaction counters `FinishExecuteStmt` keeps are never set | `pkg/executor/adapter.go` (`FinishExecuteStmt`), client-go `util.LockKeysDetails` |
 | P03 | partial | PD router transport; primaryless member publication; readiness/prewarm; idle recovery | PD client `pkg/client` |
 | P06 | partial | TSO dispatcher options and stream construction; RPC concurrency | PD client `tso_dispatcher.go` |
 | M01 | open | The MPP coordinator lowers a hand-built single-fragment scan DAG and refuses every pushed Selection, TopN and aggregation, where Go builds the fragment/task graph from the physical plan (including disaggregated compute placement) | `pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`, `pkg/store/copr/mpp.go` |

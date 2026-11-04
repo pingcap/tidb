@@ -1159,6 +1159,7 @@ impl<S: PdClient> RealTransaction<S> {
             keys: newly_locked,
             locked_with_conflict,
             values,
+            lock_keys_detail: context.stats.take(),
         })
     }
     /// Cancels the active statement and rolls back the native transaction.

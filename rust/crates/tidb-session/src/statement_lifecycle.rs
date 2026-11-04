@@ -309,6 +309,8 @@ impl StatementLifecycle<'_> {
         if let Some(observation) =
             tidb_store_driver_txn::cluster_table_storage::take_last_pessimistic_lock_observation()
         {
+            self.session
+                .finish_statement_fair_locking(&observation, outcome.is_ok());
             if observation.lock_keys > 0 {
                 tidb_metrics::session::STATEMENT_LOCK_KEYS_COUNT
                     .with_label_values(&[] as &[&str])

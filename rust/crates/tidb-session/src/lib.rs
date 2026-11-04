@@ -805,6 +805,9 @@ pub struct Session {
     /// Go `StmtCtx.ReadFromTableCache` of the statement now running, which
     /// `FinishExecuteStmt` counts.
     read_from_table_cache: Arc<std::sync::atomic::AtomicBool>,
+    /// Go `TxnCtx.FairLockingUsed` / `TxnCtx.FairLockingEffective` of the
+    /// open transaction.
+    txn_fair_locking: (bool, bool),
     /// Go `ExecStmt.Ti` of the statement now running, which
     /// `updateTelemetryMetric` counts.
     telemetry_info: Arc<std::sync::Mutex<tidb_sessionctx::telemetry_info::TelemetryInfo>>,
@@ -1001,6 +1004,7 @@ impl Session {
             client_local_file_reader: None,
             planned_apply: Arc::default(),
             read_from_table_cache: Arc::default(),
+            txn_fair_locking: (false, false),
             telemetry_info: Arc::default(),
             builtin_function_usage: Arc::default(),
             wait_lock_lease_time: std::time::Duration::ZERO,

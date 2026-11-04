@@ -26,7 +26,7 @@ pub use store_vars::{
 };
 pub use types::{
     batch_get_to_get_options, BatchGetOptions, BatchGetter, DeadlockError, DeadlockHandler,
-    GetOption, GetOptions, Getter, LockContext, LockStatistics, ResourceGroupTagger, ReturnedValue,
+    GetOption, GetOptions, Getter, LockContext, ResourceGroupTagger, ReturnedValue,
     ValueEntry, LOCK_ALWAYS_WAIT, LOCK_NO_WAIT,
 };
 pub use value::Value;

@@ -472,7 +472,6 @@ fn cte_usage_counts_recursive_non_recursive_and_none() {
 
 /// Go `TestFairLockingUsage`.
 #[test]
-#[ignore = "lock RPCs carry no LockKeysDetail to the statement (register row T03)"]
 fn fair_locking_usage() {
     if tidb_config_kerneltype::is_next_gen() {
         return;

@@ -2,8 +2,8 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 43,
-    "open": 14,
+    "unresolved": 42,
+    "open": 13,
     "partial": 29
   },
   "findings": [
@@ -121,13 +121,6 @@
       "group": "Transaction and routing ownership",
       "finding": "Two region-cache lifecycles (TiDB and the native client): coprocessor RequestSelector, store-health recovery, batch-scan follower reads",
       "go_owner": "client-go `internal/locate`"
-    },
-    {
-      "id": "T03",
-      "status": "open",
-      "group": "Transaction and routing ownership",
-      "finding": "Pessimistic lock RPCs carry only key counts and time to the statement (`cluster_table_storage::PessimisticLockObservation`), not client-go's `LockKeysDetail`: `TxnCtx.FairLockingUsed`/`FairLockingEffective` and the `FairLockingUsageCount` statement/transaction counters `FinishExecuteStmt` keeps are never set",
-      "go_owner": "`pkg/executor/adapter.go` (`FinishExecuteStmt`), client-go `util.LockKeysDetails`"
     },
     {
       "id": "O02",
@@ -303,7 +296,7 @@
       "id": "X03",
       "status": "open",
       "group": "Expanded subsystem ownership review",
-      "finding": "A plain EXPLAIN prepares the plan but builds no target executor, where Go `buildExplain` builds it (`explainExec.analyzeExec = b.build(v.TargetPlan)`): the builder's side effects (index-merge and table-lookup telemetry, partition pruning at build) do not happen",
+      "finding": "A plain EXPLAIN prepares the plan but builds no target executor, where Go `buildExplain` builds it (`explainExec.analyzeExec = b.build(v.TargetPlan)`): the builder's side effects (index-merge and table-lookup telemetry) do not happen. Blocked on memory tables: a Rust memtable reader needs its retrieved rows at build (`MemTableRetrievalNeeded`), where Go's retriever reads them at `Next`",
       "go_owner": "`pkg/executor/builder.go` (`buildExplain`)"
     },
     {

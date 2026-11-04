@@ -100,7 +100,7 @@ impl PessimisticLockFailure {
 }
 
 /// Locks one statement acquired, and the timestamp they were acquired under.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AcquiredLocks {
     /// Statement timestamp every lock in this batch carries.
     pub for_update_ts: u64,
@@ -124,4 +124,7 @@ pub struct AcquiredLocks {
     /// [`crate::transaction::RealTransaction::acquire_locks_returning_values`] was
     /// used. A key maps to `None` when TiKV reports it absent.
     pub values: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+    /// client-go `LockCtx.Stats` of the call, which Go hands the statement
+    /// through `util.LockKeysDetailCtxKey`.
+    pub lock_keys_detail: Option<tikv_client::util::LockKeysDetails>,
 }
