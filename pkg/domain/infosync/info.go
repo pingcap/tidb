@@ -132,6 +132,21 @@ type InfoSyncer struct {
 	infoCache             infoschemaMinTS
 }
 
+type syncerOptions struct {
+	disableRPC bool
+}
+
+// SyncerOption configures a Syncer during construction.
+type SyncerOption func(*syncerOptions)
+
+// WithDisableRPC marks the published server info as ineligible for TiDB RPC.
+// Domain passes it when the domain is started as standalone BR.
+func WithDisableRPC() SyncerOption {
+	return func(options *syncerOptions) {
+		options.disableRPC = true
+	}
+}
+
 // ServerInfo represents the server's basic information.
 // It consists of two sections: static and dynamic.
 // The static information is generated during the startup of the TiDB server and should never be modified while the TiDB server is running.
@@ -187,6 +202,10 @@ type StaticServerInfo struct {
 
 	// JSONServerID is `serverID` for json marshal/unmarshal ONLY.
 	JSONServerID uint64 `json:"server_id"`
+	// DisableRPC marks that this process should not be selected as a TiDB
+	// RPC target, such as standalone BR. Missing/false means the node can serve
+	// TiDB-type RPC requests, which keeps compatibility with older server info.
+	DisableRPC bool `json:"disable_rpc,omitempty"`
 }
 
 // DynamicServerInfo represents the dynamic information of the server.
@@ -252,7 +271,12 @@ func GlobalInfoSyncerInit(
 	codec tikv.Codec,
 	skipRegisterToDashBoard bool,
 	infoCache infoschemaMinTS,
+	options ...SyncerOption,
 ) (*InfoSyncer, error) {
+	args := &syncerOptions{}
+	for _, option := range options {
+		option(args)
+	}
 	if pdHTTPCli != nil {
 		pdHTTPCli = pdHTTPCli.
 			WithCallerID("tidb-info-syncer").
@@ -266,7 +290,7 @@ func GlobalInfoSyncerInit(
 		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 		infoCache:         infoCache,
 	}
-	is.info.Store(getServerInfo(id, serverIDGetter))
+	is.info.Store(getServerInfo(id, serverIDGetter, args.disableRPC))
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
 		return nil, err
@@ -453,6 +477,12 @@ func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	failpoint.Inject("mockGetAllServerInfo", func(val failpoint.Value) {
 		res := make(map[string]*ServerInfo)
 		err := json.Unmarshal([]byte(val.(string)), &res)
+		// Match the server ID lookup initialized when reading info from etcd.
+		for _, info := range res {
+			if info != nil {
+				info.ServerIDGetter = func() uint64 { return info.JSONServerID }
+			}
+		}
 		failpoint.Return(res, err)
 	})
 	is, err := getGlobalInfoSyncer()
@@ -696,7 +726,7 @@ func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerI
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
 		info := is.info.Load()
-		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter)
+		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter, info.DisableRPC)
 		return allInfo, nil
 	}
 	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformationPath, keyOpDefaultRetryCnt, keyOpDefaultTimeout, clientv3.WithPrefix())
@@ -1087,7 +1117,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 }
 
 // getServerInfo gets self tidb server information.
-func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
+func getServerInfo(id string, serverIDGetter func() uint64, disableRPC bool) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
 		StaticServerInfo: StaticServerInfo{
@@ -1098,6 +1128,7 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 			Lease:          cfg.Lease,
 			StartTimestamp: time.Now().Unix(),
 			ServerIDGetter: serverIDGetter,
+			DisableRPC:     disableRPC,
 		},
 		DynamicServerInfo: DynamicServerInfo{
 			Labels: maps.Clone(cfg.Labels),

@@ -6053,7 +6053,7 @@ Int64Num:
 	{
 		v, rangeErrMsg := getInt64FromNUM($1)
 		if len(rangeErrMsg) != 0 {
-			yylex.AppendError(yylex.Errorf(rangeErrMsg))
+			yylex.AppendError(yylex.Errorf("%s", rangeErrMsg))
 			return 1
 		}
 		$$ = v
@@ -6696,17 +6696,17 @@ IndexOption:
 			Global: false,
 		}
 	}
-|   "PRE_SPLIT_REGIONS" EqOpt '(' SplitOption ')'
-    {
+|	"PRE_SPLIT_REGIONS" EqOpt '(' SplitOption ')'
+	{
 		$$ = &ast.IndexOption{
 			SplitOpt: $4.(*ast.SplitOption),
 		}
 	}
-|   "PRE_SPLIT_REGIONS" EqOpt Int64Num
+|	"PRE_SPLIT_REGIONS" EqOpt Int64Num
 	{
 		$$ = &ast.IndexOption{
-			SplitOpt:  &ast.SplitOption{
-				Num:   $3.(int64),
+			SplitOpt: &ast.SplitOption{
+				Num: $3.(int64),
 			},
 		}
 	}
@@ -13872,7 +13872,7 @@ ConnectionOptions:
 		for _, option := range $2.([]*ast.ResourceOption) {
 			switch option.Type {
 			case ast.MaxUserConnections:
-				// do nothing.
+			// do nothing.
 			default:
 				needWarning = true
 			}

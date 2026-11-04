@@ -61,7 +61,7 @@ func (s *mockGCSSuite) TestErrorMessage() {
 	err = s.tk.ExecToErr(fmt.Sprintf(`LOAD DATA INFILE 'gs://wrong-bucket/p?endpoint=%s'
 		INTO TABLE t;`, gcsEndpoint))
 	checkClientErrorMessage(s.T(), err,
-		"ERROR 8160 (HY000): Failed to read source files. Reason: the object doesn't exist, file info: input.bucket='wrong-bucket', input.key='p': storage: object doesn't exist. Please check the file location is correct")
+		"ERROR 8160 (HY000): Failed to read source files. Reason: the object doesn't exist, file info: input.bucket='wrong-bucket', input.key='p': storage: object doesn't exist: googleapi: Error 404: Not Found. Please check the file location is correct")
 
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{

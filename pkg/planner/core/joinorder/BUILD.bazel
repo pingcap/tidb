@@ -29,11 +29,17 @@ go_library(
 go_test(
     name = "joinorder_test",
     timeout = "short",
-    srcs = ["bitset_bench_test.go"],
+    srcs = [
+        "bitset_bench_test.go",
+        "join_order_test.go",
+    ],
     embed = [":joinorder"],
     flaky = True,
     deps = [
+        "//pkg/planner/core/operator/logicalop",
         "//pkg/util/intset",
+        "//pkg/util/mock",
         "@com_github_bits_and_blooms_bitset//:bitset",
+        "@com_github_stretchr_testify//require",
     ],
 )

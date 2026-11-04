@@ -397,11 +397,16 @@ func TestNewGCSStorage(t *testing.T) {
 	// without http client
 	{
 		gcs := &backuppb.GCS{
-			Bucket:          bucketName,
-			Prefix:          "a/b",
-			StorageClass:    "NEARLINE",
-			PredefinedAcl:   "private",
-			CredentialsBlob: `{"type": "service_account"}`,
+			Bucket:        bucketName,
+			Prefix:        "a/b",
+			StorageClass:  "NEARLINE",
+			PredefinedAcl: "private",
+			CredentialsBlob: `{
+				"type": "service_account",
+				"client_email": "test@example.com",
+				"private_key": "fake-private-key",
+				"token_uri": "https://oauth2.googleapis.com/token"
+			}`,
 		}
 		_, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  false,
