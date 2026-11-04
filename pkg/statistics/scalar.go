@@ -76,7 +76,7 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 		case mysql.TypeDatetime:
 			minTime = types.NewTime(types.MinDatetime, mysql.TypeDatetime, types.DefaultFsp)
 		case mysql.TypeTimestamp:
-			minTime = types.MinTimestamp
+			return timestampToScalar(valueTime)
 		}
 		return float64(valueTime.Sub(UTCWithAllowInvalidDateCtx, &minTime).Duration)
 	case types.KindString, types.KindBytes:
@@ -93,6 +93,37 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 		// do not know how to convert
 		return 0
 	}
+}
+
+// timestampToScalar uses integer Unix microseconds before converting to float64.
+// The entire legal TIMESTAMP range fits in 53 bits, so every microsecond is exact.
+func timestampToScalar(value types.Time) float64 {
+	// Keep zero and out-of-range bounds just outside the legal range. In
+	// particular, zero must not acquire an enormous distance from normal values.
+	if value.Compare(types.MinTimestamp) < 0 {
+		minTime, _ := types.MinTimestamp.GoTime(time.UTC)
+		return float64(minTime.UnixMicro() - 1)
+	}
+	if value.Compare(types.MaxTimestamp) > 0 {
+		maxTime, _ := types.MaxTimestamp.GoTime(time.UTC)
+		return float64(maxTime.UnixMicro() + 1)
+	}
+	converted, err := value.GoTime(time.UTC)
+	if err == nil {
+		return float64(converted.UnixMicro())
+	}
+	// Ranger retains impossible DATE/DATETIME bounds when converting them to
+	// TIMESTAMP. Their time-of-day is valid, but the month/day can be zero or
+	// the day can exceed the month's length. Map these gaps in calendar order
+	// to the preceding valid microsecond, rather than GoTime's normalized date.
+	month := time.Month(value.Month())
+	if month == 0 {
+		month = time.January
+	} else if value.Day() != 0 {
+		month++
+	}
+	boundary := time.Date(value.Year(), month, 1, 0, 0, 0, 0, time.UTC)
+	return float64(boundary.UnixMicro() - 1)
 }
 
 // PreCalculateScalar converts the lower and upper to scalar. When the datum type is KindString or KindBytes, we also

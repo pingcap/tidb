@@ -34,10 +34,12 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
@@ -870,6 +872,53 @@ func TestColumnRange(t *testing.T) {
 			got := fmt.Sprintf("%v", result)
 			require.Equal(t, tt.resultStr, got)
 		})
+	}
+}
+
+func TestInvalidTimestampRangeEstimation(t *testing.T) {
+	sctx := mock.NewContext()
+	tp := types.NewFieldType(mysql.TypeTimestamp)
+	tp.SetDecimal(types.MaxFsp)
+	col := &expression.Column{UniqueID: 1, RetType: tp}
+	// A uniform bucket spanning two days gives each half an estimate of two rows.
+	lower := types.NewTimeDatum(types.NewTime(types.FromDate(2017, 2, 28, 0, 0, 0, 0), mysql.TypeTimestamp, types.MaxFsp))
+	upper := types.NewTimeDatum(types.NewTime(types.FromDate(2017, 3, 2, 0, 0, 0, 0), mysql.TypeTimestamp, types.MaxFsp))
+	hg := statistics.NewHistogram(0, 4, 0, 0, tp, 1, 0)
+	hg.AppendBucket(&lower, &upper, 4, 0)
+	hg.PreCalculateScalar()
+	for _, dateType := range []byte{mysql.TypeDate, mysql.TypeDatetime} {
+		for _, invalidLower := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/lower=%t", types.NewFieldType(dateType), invalidLower), func(t *testing.T) {
+				low := &expression.Constant{Value: lower, RetType: tp}
+				high := &expression.Constant{Value: upper, RetType: tp}
+				invalid := &expression.Constant{
+					Value:   types.NewTimeDatum(types.NewTime(types.FromDate(2017, 2, 30, 0, 0, 0, 0), dateType, types.DefaultFsp)),
+					RetType: types.NewFieldType(dateType),
+				}
+				if invalidLower {
+					low = invalid
+				} else {
+					high = invalid
+				}
+				conds := []expression.Expression{
+					expression.NewFunctionInternal(sctx.GetExprCtx(), ast.GE, types.NewFieldType(mysql.TypeTiny), col, low),
+					expression.NewFunctionInternal(sctx.GetExprCtx(), ast.LT, types.NewFieldType(mysql.TypeTiny), col, high),
+				}
+				ranges, _, _, err := ranger.BuildColumnRange(conds, sctx.GetRangerCtx(), tp, types.UnspecifiedLength, 0)
+				require.NoError(t, err)
+				require.Len(t, ranges, 1)
+				r := ranges[0]
+				require.False(t, r.LowExclude)
+				require.True(t, r.HighExclude)
+				for i, bound := range []types.Datum{r.LowVal[0], r.HighVal[0]} {
+					endpoint := bound.GetMysqlTime()
+					require.Equal(t, mysql.TypeTimestamp, endpoint.Type())
+					// Conversion must preserve the calendar fields, including the impossible date.
+					require.Zero(t, endpoint.Compare([]types.Datum{low.Value, high.Value}[i].GetMysqlTime()))
+				}
+				require.InDelta(t, 2.0, hg.BetweenRowCount(nil, r.LowVal[0], r.HighVal[0]).Est, 1e-9)
+			})
+		}
 	}
 }
 
