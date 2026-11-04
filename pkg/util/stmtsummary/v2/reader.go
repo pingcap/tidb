@@ -30,6 +30,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -169,6 +171,7 @@ type HistoryReader struct {
 	timeLocation *time.Location
 
 	columnFactories []columnFactory
+	projection      *stmtRecordProjection
 	checker         *stmtChecker
 	files           *stmtFiles
 
@@ -210,6 +213,7 @@ func NewHistoryReader(
 		instanceAddr:    instanceAddr,
 		timeLocation:    timeLocation,
 		columnFactories: makeColumnFactories(columns),
+		projection:      makeStmtRecordProjection(columns),
 		checker: &stmtChecker{
 			user:           user,
 			hasProcessPriv: hasProcessPriv,
@@ -314,6 +318,7 @@ func (r *HistoryReader) scheduleTasks(
 		timeLocation:    r.timeLocation,
 		checker:         r.checker,
 		columnFactories: r.columnFactories,
+		projection:      r.projection,
 	}
 
 	concurrent := r.concurrent
@@ -392,6 +397,7 @@ func (r *HistoryReader) scheduleTasks(
 				}
 				select {
 				case filesCh <- file:
+					failpoint.InjectCall("stmtSummaryHistoryScanFile", file.path)
 				case <-ctx.Done():
 					file.closeAndLogError()
 					return
@@ -724,6 +730,11 @@ func parseEndTs(file *os.File) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
+		// Rotation names contain local wall time without an offset. A repeated
+		// time can denote a later instant, so it is not a safe pruning bound.
+		if end.Format(logFileTimeFormat) != timeStr || !timeutil.IsUniqueLocalTime(end) {
+			return 0, nil
+		}
 		return end.Unix(), nil
 	}
 	return 0, nil
@@ -968,6 +979,7 @@ type stmtParseWorker struct {
 	timeLocation    *time.Location
 	checker         *stmtChecker
 	columnFactories []columnFactory
+	projection      *stmtRecordProjection
 }
 
 func (w *stmtParseWorker) run(
@@ -1008,6 +1020,7 @@ func (w *stmtParseWorker) handleLines(
 				continue
 			}
 		}
+		failpoint.InjectCall("stmtSummaryHistoryParseRecord")
 		record, skipped, err := w.parse(line)
 		if err != nil {
 			// ignore invalid lines
@@ -1044,7 +1057,10 @@ func (w *stmtParseWorker) putRows(
 	}
 }
 
-func (*stmtParseWorker) parse(raw []byte) (*StmtRecord, bool, error) {
+func (w *stmtParseWorker) parse(raw []byte) (*StmtRecord, bool, error) {
+	if w.projection != nil {
+		return w.projection.parse(raw)
+	}
 	var record stmtPersistedRecord
 	if err := json.Unmarshal(raw, &record); err != nil {
 		return nil, false, err
