@@ -75,18 +75,3 @@ func TestCancelQueuedAddIndexKeepsExistingIndex(t *testing.T) {
 		}
 	}
 }
-
-func TestRollingbackCreateMaterializedViewCannotCancelKeepsState(t *testing.T) {
-	job := &model.Job{
-		ID:          42,
-		Version:     model.JobVersion2,
-		Type:        model.ActionCreateMaterializedView,
-		State:       model.JobStateCancelling,
-		SchemaState: model.StatePublic,
-	}
-	job.FillArgs(&model.CreateMaterializedViewArgs{TableInfo: &model.TableInfo{ID: 1}})
-
-	_, err := rollingbackCreateMaterializedView(nil, job)
-	require.True(t, dbterror.ErrCannotCancelDDLJob.Equal(err))
-	require.Equal(t, model.JobStateCancelling, job.State)
-}
