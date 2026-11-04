@@ -185,7 +185,7 @@ const (
 
 	deleteNullDataRow = `
 		DELETE FROM %s.` + ConflictErrorTableName + `
-		WHERE kv_type = 2
+		WHERE table_name = ? AND kv_type = 2
 		LIMIT ?;
 	`
 
@@ -527,6 +527,8 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		HideQueryLog: redact.NeedRedact(),
 	}
 
+	// Incremental imports share conflict records for a table across task IDs.
+	// Resolution must include other tasks' records, not just em.taskID.
 	const rowLimit = 1000
 	indexTaskCh := make(chan [2]int64)
 	indexTaskWg := &sync.WaitGroup{}
@@ -573,7 +575,9 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				}
 
 				var lastRowID int64
+				rowsRead := 0
 				for indexKvRows.Next() {
+					rowsRead++
 					var rawKey, rawValue, rawHandle []byte
 					var indexName string
 					if err := indexKvRows.Scan(&lastRowID, &rawKey, &indexName, &rawValue, &rawHandle); err != nil {
@@ -673,8 +677,13 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err := indexKvRows.Close(); err != nil {
 					return errors.Trace(err)
 				}
-				if len(handleKeys) == 0 {
+				if rowsRead == 0 {
 					break
+				}
+				// A page with no deletions can still be followed by conflicting rows.
+				start = lastRowID + 1
+				if len(handleKeys) == 0 {
+					continue
 				}
 				if err := fnDeleteKeys(indexGCtx, handleKeys); err != nil {
 					return errors.Trace(err)
@@ -707,7 +716,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					}); err != nil {
 					return errors.Trace(err)
 				}
-				start = lastRowID + 1
 				// If the remaining tasks cannot be processed at once, split the task
 				// into two subtasks and send one of them to the other idle worker if possible.
 				if end-start > rowLimit {
@@ -773,8 +781,10 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				var lastRowID int64
 				var previousRawKey, latestValue []byte
 				var mustKeepKvPairs *kv.Pairs
+				rowsRead := 0
 
 				for dataKvRows.Next() {
+					rowsRead++
 					var rawKey, rawValue []byte
 					if err := dataKvRows.Scan(&lastRowID, &rawKey, &rawValue); err != nil {
 						return errors.Trace(err)
@@ -879,13 +889,16 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err := dataKvRows.Close(); err != nil {
 					return errors.Trace(err)
 				}
-				if len(handleKeys) == 0 {
+				if rowsRead == 0 {
 					break
+				}
+				start = lastRowID + 1
+				if len(handleKeys) == 0 {
+					continue
 				}
 				if err := fnDeleteKeys(dataGCtx, handleKeys); err != nil {
 					return errors.Trace(err)
 				}
-				start = lastRowID + 1
 				// If the remaining tasks cannot be processed at once, split the task
 				// into two subtasks and send one of them to the other idle worker if possible.
 				if end-start > rowLimit {
@@ -917,7 +930,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err2 != nil {
 					return errors.Trace(err2)
 				}
-				result, err := txn.ExecContext(c, sb.String(), rowLimit)
+				result, err := txn.ExecContext(c, sb.String(), tableName, rowLimit)
 				if err != nil {
 					return errors.Trace(err)
 				}
