@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1439,6 +1440,7 @@ func TestRedactConfig(t *testing.T) {
 	}{
 		{"", ""},
 		{":", ":"},
+		{"s3://bucket:port/file?access-key=AKID", storage.InvalidURLPlaceholder},
 		{"~/file", "~/file"},
 		{"gs://bucket/file", "gs://bucket/file"},
 		{"gs://bucket/file?access-key=123", "gs://bucket/file?access-key=123"},
@@ -1456,5 +1458,30 @@ func TestRedactConfig(t *testing.T) {
 
 		require.Contains(t, cfg.Redact(), tt.redact)
 		require.Contains(t, cfg.String(), tt.origin)
+	}
+}
+
+func TestAdjustFileRouterRedactsSourceDir(t *testing.T) {
+	cfg := NewConfig()
+	cfg.Mydumper.SourceDir = "s3://bucket/data?access-key=AKID&secret-access-key=SKEY"
+	cfg.Mydumper.FileRouters = []*FileRouteRule{{
+		Pattern: `(.*)\.csv`, Path: "/abs/dir/file.csv", Schema: "db", Table: "t", Type: "csv",
+	}}
+	err := cfg.Mydumper.adjust()
+	require.ErrorContains(t, err, "cannot find relative path for file route path /abs/dir/file.csv")
+	require.NotContains(t, err.Error(), "AKID")
+	require.NotContains(t, err.Error(), "SKEY")
+}
+
+func TestAdjustFilePathRedactsSourceDir(t *testing.T) {
+	for _, dir := range []string{
+		"s3://bucket:port/data?access-key=AKID&secret-access-key=SKEY",
+		"unknown://bucket/data?access-key=AKID&secret-access-key=SKEY",
+	} {
+		m := &MydumperRuntime{SourceDir: dir}
+		err := m.adjustFilePath()
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "AKID")
+		require.NotContains(t, err.Error(), "SKEY")
 	}
 }

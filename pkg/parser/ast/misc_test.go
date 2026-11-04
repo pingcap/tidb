@@ -404,6 +404,8 @@ func TestRedactURL(t *testing.T) {
 		// underline
 		{args{"s3://bucket/file?access_key=123"}, "s3://bucket/file?access_key=xxxxxx"},
 		{args{"s3://bucket/file?secret_access_key=123"}, "s3://bucket/file?secret_access_key=xxxxxx"},
+		{args{"oss://bucket/file?access-key=AKID&secret_access_key=SKEY&session-token=TOKEN"}, "oss://bucket/file?access-key=xxxxxx&secret_access_key=xxxxxx&session-token=xxxxxx"},
+		{args{"azure://bucket/file?account-key=AZKEY&encryption_key=ENC&endpoint=https%3A%2F%2Faccount.blob.core.windows.net%2F%3Fsig%3DSAS"}, "azure://bucket/file?account-key=xxxxxx&encryption_key=xxxxxx&endpoint=xxxxxx"},
 		{args{"azure://bucket/file?sas-token=123"}, "azure://bucket/file?sas-token=xxxxxx"},
 		{args{"azblob://container/file?sas-token=123"}, "azblob://container/file?sas-token=xxxxxx"},
 		{args{"azure://container/file?account-name=test&sas_token=123"}, "azure://container/file?account-name=test&sas_token=xxxxxx"},
