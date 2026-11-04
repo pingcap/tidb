@@ -20,6 +20,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"hash"
+	"maps"
 	"math"
 	"slices"
 	"sync"
@@ -576,6 +577,9 @@ type PlanCacheValue struct {
 	ParamTypes       []*types.FieldType // all parameters' types, different parameters may share same plan
 	StmtHints        *hint.StmtHints    // related hints of this plan, like 'max_execution_time'.
 
+	// Resolved OF targets must outlive the statement context, which is reset before every execution.
+	lockTableIDs map[int64]struct{}
+
 	// Parameter indexes requiring exact DECIMAL precision and scale.
 	// Only COALESCE arguments are included; immutable once the plan is cached.
 	exactDecimalParamOffsets []int
@@ -638,6 +642,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutputColumns))*size.SizeOfPointer +
 		size.SizeOfMap + size.SizeOfInt64*2
 	sum += size.SizeOfSlice + int64(cap(v.exactDecimalParamOffsets))*size.SizeOfInt
+	sum += size.SizeOfMap + int64(len(v.lockTableIDs))*size.SizeOfInt64
 	if v.ParamTypes != nil {
 		sum += int64(cap(v.ParamTypes)) * size.SizeOfPointer
 		for _, ft := range v.ParamTypes {
@@ -721,6 +726,9 @@ func NewPlanCacheValue(
 		ParamTypes:               userParamTypes,
 		StmtHints:                stmtHints.Clone(),
 		exactDecimalParamOffsets: slices.Clone(stmt.exactDecimalParamOffsets),
+	}
+	if lockTableIDs := sctx.GetSessionVars().StmtCtx.LockTableIDs; len(lockTableIDs) > 0 {
+		pcv.lockTableIDs = maps.Clone(lockTableIDs)
 	}
 	pcv.MemoryUsage() // initialize the memory usage field
 	return pcv

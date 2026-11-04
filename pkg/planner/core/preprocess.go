@@ -1963,15 +1963,36 @@ func (p *preprocessor) popLockSelectCtx() {
 // checkLockClauseTables validates/attaches tables referenced by SELECT ... FOR UPDATE/LOCK IN SHARE MODE.
 // It binds lock targets to the tables in FROM and keeps backward compatibility by accepting
 // base-table names even when aliases exist, with a warning to guide users to explicit aliases.
+// It rejects MV-related lock targets within the current SELECT.
 func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, lockCtx *lockSelectCtx) {
-	if stmt.LockInfo == nil || stmt.LockInfo.LockType == ast.SelectLockNone || len(stmt.LockInfo.Tables) == 0 {
+	if stmt.LockInfo == nil || stmt.LockInfo.LockType == ast.SelectLockNone {
 		return
 	}
 	if lockCtx == nil {
 		emptyCtx := newLockSelectCtx(nil)
 		lockCtx = &emptyCtx
 	}
+	checkMViewLockTarget := func(target *ast.TableName) error {
+		tNameW := p.resolveCtx.GetTableName(target)
+		if tNameW == nil {
+			// CTE references have no resolved table metadata.
+			return nil
+		}
+		return CheckMViewUpdatable(p.sctx.GetSessionVars(), tNameW.TableInfo, target.Name.O, "SELECT")
+	}
+	if len(stmt.LockInfo.Tables) == 0 {
+		// Derived queries and CTE bodies have their own SELECT contexts, so their
+		// underlying tables must not become lock targets of this SELECT.
+		for _, ref := range lockCtx.orderedRefs {
+			if err := checkMViewLockTarget(ref.table); err != nil {
+				p.err = err
+				return
+			}
+		}
+		return
+	}
 	warnedCompatRefs := make(map[string]struct{})
+	hasResolvedLockTarget := false
 
 	for _, ref := range stmt.LockInfo.Tables {
 		name := ref.Name.L
@@ -2040,12 +2061,33 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, lockCtx *lock
 			// CTE has no *model.HintedTable, we need to skip it.
 			continue
 		}
+		hasResolvedLockTarget = true
 
 		p.resolveCtx.AddTableName(&resolve.TableNameW{
 			TableName: ref,
 			DBInfo:    tNameW.DBInfo,
 			TableInfo: tNameW.TableInfo,
 		})
+	}
+	if p.err != nil {
+		return
+	}
+
+	for _, target := range stmt.LockInfo.Tables {
+		if err := checkMViewLockTarget(target); err != nil {
+			p.err = err
+			return
+		}
+	}
+	if !hasResolvedLockTarget {
+		// CTE-only OF targets leave the executor's lock-all fallback active. Check
+		// this SELECT's direct references without descending into derived queries or CTE bodies.
+		for _, ref := range lockCtx.orderedRefs {
+			if err := checkMViewLockTarget(ref.table); err != nil {
+				p.err = err
+				return
+			}
+		}
 	}
 }
 

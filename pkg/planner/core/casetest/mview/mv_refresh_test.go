@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -43,6 +44,251 @@ func mviewRefreshTestContext() *mock.Context {
 	sctx := coretestsdk.MockContext()
 	sctx.GetSessionVars().EnableMView = true
 	return sctx
+}
+
+func TestMViewSelectLock(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_mview_enable = on")
+	tk.MustExec("set tidb_enable_noop_functions = on")
+	tk.MustExec("set tidb_enable_shared_lock_promotion = off")
+	tk.MustExec("create table t_lock (a int primary key, b int not null)")
+	tk.MustExec("create materialized view log on t_lock (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("insert into t_lock values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view mv_lock (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_lock group by a")
+
+	targets := []struct {
+		name  string
+		table string
+		key   string
+	}{
+		{name: "mv", table: "mv_lock", key: "a"},
+		{name: "mlog", table: "`$mlog$t_lock`", key: "_tidb_rowid"},
+	}
+	for _, target := range targets {
+		t.Run(target.name, func(t *testing.T) {
+			tk := testkit.NewTestKitWithSession(t, store, tk.Session())
+			pointSQL := fmt.Sprintf("select * from %s where %s = 1", target.table, target.key)
+			batchSQL := fmt.Sprintf("select * from %s where %s in (1, 2)", target.table, target.key)
+			require.Contains(t, fmt.Sprint(tk.MustQuery("explain format = 'brief' "+pointSQL).Rows()), "Point_Get")
+			require.Contains(t, fmt.Sprint(tk.MustQuery("explain format = 'brief' "+batchSQL).Rows()), "Batch_Point_Get")
+			tk.MustQuery(pointSQL)
+			tk.MustQuery(batchSQL)
+
+			for _, lock := range []string{
+				"for update", "for update nowait", "for update wait 1",
+				"for share", "for share nowait", "lock in share mode",
+			} {
+				t.Run(strings.ReplaceAll(lock, " ", "_"), func(t *testing.T) {
+					for _, access := range []struct {
+						name string
+						sql  string
+					}{
+						{name: "table_scan", sql: "select * from " + target.table},
+						{name: "point_get", sql: pointSQL},
+						{name: "batch_point_get", sql: batchSQL},
+						{name: "alias", sql: fmt.Sprintf("select m.* from %s m where m.%s = 1", target.table, target.key)},
+					} {
+						t.Run(access.name, func(t *testing.T) {
+							testkit.NewTestKitWithSession(t, store, tk.Session()).MustGetErrCode(access.sql+" "+lock, mysql.ErrNonUpdatableTable)
+						})
+					}
+				})
+			}
+
+			t.Run("join_lock_targets", func(t *testing.T) {
+				tk := testkit.NewTestKitWithSession(t, store, tk.Session())
+				tk.MustExec("begin pessimistic")
+				defer tk.MustExec("rollback")
+				joinSQL := fmt.Sprintf("select n.a from t_lock n join %s m on n.a = m.a", target.table)
+				tk.MustGetErrCode(joinSQL+" for update", mysql.ErrNonUpdatableTable)
+				tk.MustGetErrCode(joinSQL+" for update of m", mysql.ErrNonUpdatableTable)
+				tk.MustGetErrCode(joinSQL+" for update of n, m", mysql.ErrNonUpdatableTable)
+				tk.MustGetErrCode(joinSQL+" for update of m, missing", mysql.ErrUnknownTable)
+				tk.MustQuery(joinSQL + " for update of n").Sort().Check(testkit.Rows("1", "2"))
+			})
+
+			t.Run("query_block_lock_targets", func(t *testing.T) {
+				tk := testkit.NewTestKitWithSession(t, store, tk.Session())
+				tk.MustExec("begin pessimistic")
+				defer tk.MustExec("rollback")
+				for _, tc := range []struct {
+					name    string
+					sql     string
+					wantErr bool
+				}{
+					{name: "derived", sql: "select n.a from t_lock n join (select a from %s) d on n.a = d.a for update"},
+					{name: "derived_of_n", sql: "select n.a from t_lock n join (select a from %s) d on n.a = d.a for update of n"},
+					{name: "cte", sql: "with d as (select a from %s) select n.a from t_lock n join d on n.a = d.a for update"},
+					{name: "cte_of", sql: "with d as (select a from %s) select n.a from t_lock n join d on n.a = d.a for update of d"},
+					{name: "cte_only_of", sql: "with d as (select a from %s) select d.a from d for update of d"},
+					{name: "cte_of_direct_mv", sql: "with d as (select a from t_lock) select m.a from %s m join d on m.a = d.a for update of d", wantErr: true},
+					{name: "cte_alias_of_direct_mv", sql: "with d as (select a from t_lock) select m.a from %s m join d c on m.a = c.a for update of c", wantErr: true},
+					{name: "cte_and_base_of", sql: "with d as (select a from t_lock) select n.a from t_lock n join %s m on n.a = m.a join d on n.a = d.a for update of d, n"},
+					{name: "derived_only", sql: "select d.a from (select a from %s) d for update"},
+					{name: "derived_inner_lock", sql: "select n.a from t_lock n join (select a from %s for update) d on n.a = d.a", wantErr: true},
+					{name: "derived_inner_lock_outer_of_n", sql: "select n.a from t_lock n join (select a from %s for update) d on n.a = d.a for update of n", wantErr: true},
+					{name: "cte_inner_lock", sql: "with d as (select a from %s for update) select n.a from t_lock n join d on n.a = d.a for update of n", wantErr: true},
+				} {
+					t.Run(tc.name, func(t *testing.T) {
+						tk := testkit.NewTestKitWithSession(t, store, tk.Session())
+						sql := fmt.Sprintf(tc.sql, target.table)
+						if tc.wantErr {
+							tk.MustGetErrCode(sql, mysql.ErrNonUpdatableTable)
+						} else {
+							tk.MustQuery(sql).Sort().Check(testkit.Rows("1", "2"))
+						}
+					})
+				}
+			})
+
+			t.Run("shared_lock_promotion", func(t *testing.T) {
+				tk := testkit.NewTestKitWithSession(t, store, tk.Session())
+				tk.MustExec("set tidb_enable_shared_lock_promotion = on")
+				defer tk.MustExec("set tidb_enable_shared_lock_promotion = off")
+				for _, lock := range []string{"for share", "for share nowait", "lock in share mode"} {
+					tk.MustGetErrCode(pointSQL+" "+lock, mysql.ErrNonUpdatableTable)
+				}
+			})
+
+			t.Run("pessimistic_transaction", func(t *testing.T) {
+				tk := testkit.NewTestKitWithSession(t, store, tk.Session())
+				tk.MustExec("begin pessimistic")
+				defer tk.MustExec("rollback")
+				tk.MustGetErrCode(pointSQL+" for update", mysql.ErrNonUpdatableTable)
+				tk.MustGetErrCode(batchSQL+" for update", mysql.ErrNonUpdatableTable)
+				tk.MustQuery("select * from t_lock where a = 1 for update").Check(testkit.Rows("1 10"))
+			})
+
+			t.Run("prepared_statement", func(t *testing.T) {
+				tk := testkit.NewTestKitWithSession(t, store, tk.Session())
+				tk.MustGetErrCode(fmt.Sprintf("prepare lock_stmt from 'select * from %s where %s = ? for update'", target.table, target.key), mysql.ErrNonUpdatableTable)
+			})
+
+			for _, instanceCache := range []bool{false, true} {
+				t.Run(fmt.Sprintf("prepared_lock_scope/instance=%v", instanceCache), func(t *testing.T) {
+					ctx := context.Background()
+					if instanceCache {
+						ctx = context.WithValue(ctx, plannercore.PlanCacheKeyEnableInstancePlanCache{}, true)
+					}
+					newReader := func() *testkit.TestKit {
+						reader := testkit.NewTestKit(t, store)
+						reader.MustExec("use test")
+						reader.MustExec("set tidb_mview_enable = on")
+						reader.MustExec("set tidb_enable_prepared_plan_cache = on")
+						reader.MustExec(fmt.Sprintf("prepare lock_scope_stmt from 'select /*+ USE_PLAN_CACHE() */ t_lock.a, m.a from t_lock join %s m on t_lock.a = m.a where t_lock.a > ? for update of t_lock'", target.table))
+						reader.MustExec("set @p = 0")
+						reader.MustExec("begin pessimistic")
+						t.Cleanup(func() { reader.MustExec("rollback") })
+						return reader
+					}
+					probe := testkit.NewTestKit(t, store)
+					probe.MustExec("use test")
+					probe.MustExec("set tidb_mview_enable = on")
+					probeVars := probe.Session().GetSessionVars()
+					probeVars.InRestrictedSQL, probeVars.InMViewMaintenance = true, true
+					maintenanceCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMViewMaintenance)
+					t.Cleanup(func() { probe.MustExecWithContext(maintenanceCtx, "rollback") })
+					checkLockScope := func(reader *testkit.TestKit, cacheHit bool) {
+						t.Helper()
+						reader.MustQueryWithContext(ctx, "execute lock_scope_stmt using @p").Sort().Check(testkit.Rows("1 1", "2 2"))
+						require.Equal(t, cacheHit, reader.Session().GetSessionVars().FoundInPlanCache)
+						// The user transaction must lock the ordinary target and leave MV/MLog rows available.
+						probe.MustExecWithContext(maintenanceCtx, "begin pessimistic")
+						probe.MustQueryWithContext(maintenanceCtx, "select a from "+target.table+" for update nowait").Sort().Check(testkit.Rows("1", "2"))
+						probe.MustExecWithContext(maintenanceCtx, "rollback")
+						probe.MustExecWithContext(maintenanceCtx, "begin pessimistic")
+						probe.MustGetErrCode("select * from t_lock for update nowait", mysql.ErrLockAcquireFailAndNoWaitSet)
+						probe.MustExecWithContext(maintenanceCtx, "rollback")
+					}
+					reader := newReader()
+					for execution := range 3 {
+						checkLockScope(reader, execution > 0)
+					}
+					reader.MustExec("rollback")
+					if instanceCache {
+						// A different session must preserve the same scope when sharing this cached plan.
+						checkLockScope(newReader(), true)
+					}
+				})
+			}
+
+			t.Run("internal_maintenance", func(t *testing.T) {
+				tk := testkit.NewTestKitWithSession(t, store, tk.Session())
+				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMViewMaintenance)
+				vars := tk.Session().GetSessionVars()
+				vars.InRestrictedSQL, vars.InMViewMaintenance = true, true
+				defer func() {
+					vars.InRestrictedSQL, vars.InMViewMaintenance = false, false
+				}()
+				tk.MustExecWithContext(ctx, "begin pessimistic")
+				defer tk.MustExecWithContext(ctx, "rollback")
+				tk.MustQueryWithContext(ctx, pointSQL+" for update")
+				tk.MustQueryWithContext(ctx, batchSQL+" for update")
+				tk.MustQueryWithContext(ctx, "select * from "+target.table+" for update")
+			})
+		})
+	}
+
+	t.Run("ordinary_tables", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t_lock_left (a int primary key)")
+		tk.MustExec("create table t_lock_right (a int primary key)")
+		tk.MustExec("insert into t_lock_left values (1), (2)")
+		tk.MustExec("insert into t_lock_right values (1), (2)")
+		for _, instanceCache := range []bool{false, true} {
+			t.Run(fmt.Sprintf("instance=%v", instanceCache), func(t *testing.T) {
+				ctx := context.Background()
+				if instanceCache {
+					ctx = context.WithValue(ctx, plannercore.PlanCacheKeyEnableInstancePlanCache{}, true)
+				}
+				reader := testkit.NewTestKit(t, store)
+				reader.MustExec("use test")
+				reader.MustExec("set tidb_enable_prepared_plan_cache = on")
+				reader.MustExec("set @p = 0")
+				probe := testkit.NewTestKit(t, store)
+				probe.MustExec("use test")
+				t.Cleanup(func() {
+					probe.MustExec("rollback")
+					reader.MustExec("rollback")
+				})
+				for _, tc := range []struct {
+					name   string
+					clause string
+					locks  [2]bool
+				}{
+					{name: "left", clause: "for update of t_lock_left", locks: [2]bool{true, false}},
+					{name: "right", clause: "for update of t_lock_right", locks: [2]bool{false, true}},
+					{name: "all", clause: "for update", locks: [2]bool{true, true}},
+				} {
+					t.Run(tc.name, func(t *testing.T) {
+						reader := testkit.NewTestKitWithSession(t, store, reader.Session())
+						probe := testkit.NewTestKitWithSession(t, store, probe.Session())
+						reader.MustExec("prepare lock_targets from 'select /*+ USE_PLAN_CACHE() */ t_lock_left.a, t_lock_right.a from t_lock_left join t_lock_right on t_lock_left.a = t_lock_right.a where t_lock_left.a > ? " + tc.clause + "'")
+						for execution := range 3 {
+							reader.MustExec("begin pessimistic")
+							reader.MustQueryWithContext(ctx, "execute lock_targets using @p").Sort().Check(testkit.Rows("1 1", "2 2"))
+							require.Equal(t, execution > 0, reader.Session().GetSessionVars().FoundInPlanCache)
+							for tableIndex, table := range []string{"t_lock_left", "t_lock_right"} {
+								probe.MustExec("begin pessimistic")
+								sql := "select * from " + table + " for update nowait"
+								if tc.locks[tableIndex] {
+									probe.MustGetErrCode(sql, mysql.ErrLockAcquireFailAndNoWaitSet)
+								} else {
+									probe.MustQuery(sql).Sort().Check(testkit.Rows("1", "2"))
+								}
+								probe.MustExec("rollback")
+							}
+							reader.MustExec("rollback")
+						}
+					})
+				}
+			})
+		}
+	})
 }
 
 func TestBuildDryRunRefreshMaterializedViewPlan(t *testing.T) {
