@@ -346,7 +346,7 @@ func probeFirstMDLSchedulerDispatch(t *testing.T) func(bool) {
 	}
 }
 
-func TestBootstrapMDLBeforeScheduler(t *testing.T) {
+func testBootstrapMDLBeforeScheduler(t *testing.T) {
 	assertFirstDispatch := probeFirstMDLSchedulerDispatch(t)
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -354,7 +354,7 @@ func TestBootstrapMDLBeforeScheduler(t *testing.T) {
 	assertFirstDispatch(true)
 }
 
-func TestUpgradeMDLStartupState(t *testing.T) {
+func testUpgradeMDLStartupState(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Legacy MDL migration only applies to the classic kernel")
 	}
@@ -451,6 +451,12 @@ func TestUpgradeMDLStartupState(t *testing.T) {
 }
 
 func TestUpgradeVersionMockLatest(t *testing.T) {
+	t.Run("fresh bootstrap", testBootstrapMDLBeforeScheduler)
+	t.Run("MDL startup state", testUpgradeMDLStartupState)
+	t.Run("version upgrade", testUpgradeVersionMockLatest)
+}
+
+func testUpgradeVersionMockLatest(t *testing.T) {
 	mock := true
 	session.WithMockUpgrade = &mock
 
