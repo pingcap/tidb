@@ -431,6 +431,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return err
 	}
 	defer e.ReleaseSysSession(releaseCtx, refreshSctx)
+	if e.stepObserver != nil {
+		defer setMVRefreshObserveRedaction(refreshSctx, e.Ctx().GetSessionVars().EnableRedactLog)()
+	}
 	if collectorAware, ok := refreshSctx.(interface{ AttachStatsCollectorForInternalSession() func() }); ok {
 		// REFRESH MATERIALIZED VIEW runs real maintenance reads/writes against user tables, so
 		// reuse the full session collectors here, including index usage collection when enabled.
@@ -1009,6 +1012,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		return 0, err
 	}
 	defer e.ReleaseSysSession(releaseCtx, buildSctx)
+	if e.stepObserver != nil {
+		defer setMVRefreshObserveRedaction(buildSctx, e.Ctx().GetSessionVars().EnableRedactLog)()
+	}
 
 	buildSessVars := buildSctx.GetSessionVars()
 	restoreBuildExecutionVars, err := applyRefreshExecutionSessionVars(buildSessVars, targetExecutionVars, isInternalSQL)

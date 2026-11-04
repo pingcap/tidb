@@ -252,6 +252,41 @@ func TestProfileMaterializedViewRefreshStepRuntime(t *testing.T) {
 	requireRowsContainPrefix(t, deltaApplyProfileRows, "[S07 FINALIZE_HIST]")
 }
 
+func TestProfileMaterializedViewRefreshRedaction(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := newMViewTestKit(t, store)
+	originalMode := tk.MustQuery("select @@global.tidb_redact_log").Rows()[0][0]
+	t.Cleanup(func() { tk.MustExec(fmt.Sprintf("set global tidb_redact_log = '%s'", originalMode)) })
+	tk.MustExec("use test")
+	tk.MustExec("create table t_profile_redact (a int not null, b int not null)")
+	tk.MustExec("insert into t_profile_redact values (1, 123456790), (2, 1)")
+	tk.MustExec("create materialized view log on t_profile_redact (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_profile_redact (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_profile_redact where b > 123456789 group by a")
+
+	for _, tc := range []struct {
+		mode, predicateSuffix string
+	}{
+		{vardef.Off, ", 123456789)"},
+		{vardef.On, ", ?)"},
+		{vardef.Marker, ", ‹123456789›)"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			tk.MustExec("set global tidb_redact_log = " + tc.mode)
+			for _, refreshMode := range []string{"complete in place", "complete out of place"} {
+				t.Run(refreshMode, func(t *testing.T) {
+					rows := tk.MustQuery("refresh materialized view mv_profile_redact " + refreshMode + " with profile").Rows()
+					plan := joinRowsAsText(rows)
+					require.Contains(t, plan, tc.predicateSuffix)
+					if tc.mode != vardef.Off {
+						require.NotContains(t, plan, ", 123456789)")
+					}
+					tk.MustQuery("select a, s, cnt from mv_profile_redact").Check(testkit.Rows("1 123456790 1"))
+				})
+			}
+		})
+	}
+}
+
 func TestMaterializedViewRefreshFastDryRun(t *testing.T) {
 	t.Run("current_db", func(t *testing.T) {
 		store, _ := testkit.CreateMockStoreAndDomain(t)
