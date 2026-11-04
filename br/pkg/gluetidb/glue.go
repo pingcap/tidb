@@ -108,10 +108,6 @@ func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 		return nil, errors.Trace(err)
 	}
 	if existDom == nil {
-		_, err = session.InitMDLVariable(store, session.MDLInitKeepDisabledOnNull)
-		if err != nil {
-			return nil, err
-		}
 		// create stats handler for backup and restore.
 		err = dom.UpdateTableStatsLoop()
 		if err != nil {
@@ -139,6 +135,12 @@ func (g Glue) startDomainAsNeeded(store kv.Storage) error {
 	existDom, _ := g.getDomainInner(nil)
 	if existDom != nil {
 		return nil
+	}
+	// Load MDL before creating or starting a domain, under the same lock that
+	// serializes its startup. BR must preserve absent and explicitly disabled
+	// settings rather than enable MDL on an already bootstrapped cluster.
+	if err := session.InitMDLVariableForBR(store); err != nil {
+		return errors.Trace(err)
 	}
 	if err := ddl.StartOwnerManager(context.Background(), store); err != nil {
 		return errors.Trace(err)
@@ -200,10 +202,6 @@ func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if _, err = session.InitMDLVariable(store, session.MDLInitKeepDisabledOnNull); err != nil {
-		return errors.Trace(err)
-	}
-
 	// because domain was created during the whole program exists.
 	// and it will register br info to info syncer.
 	// we'd better close it as soon as possible.

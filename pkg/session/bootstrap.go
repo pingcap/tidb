@@ -75,7 +75,7 @@ func bootstrap(s sessionapi.Session) {
 		if b {
 			// Bootstrap initialization has already persisted and enabled MDL
 			// before the domain started, so no legacy MDL migration is needed.
-			upgradeWithMDLState(s, false)
+			upgradeWithMDLMigration(s, skipLegacyMDLMigration)
 			logutil.BgLogger().Info("upgrade successful in bootstrap",
 				zap.Duration("take time", time.Since(startTime)))
 			return

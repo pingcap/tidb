@@ -60,6 +60,49 @@ func TestGetStartMode(t *testing.T) {
 	require.Equal(t, ddl.Bootstrap, getStartMode(0))
 }
 
+func TestMDLInitializationPolicies(t *testing.T) {
+	original := vardef.IsMDLEnabled()
+	t.Cleanup(func() { vardef.SetEnableMDL(original) })
+	for _, initializer := range []struct {
+		name string
+		init func(kv.Storage) error
+	}{
+		{"normal", InitMDLVariable},
+		{"bootstrap", InitMDLVariableForBootstrap},
+		{"upgrade", func(store kv.Storage) error {
+			_, err := InitMDLVariableForUpgrade(store)
+			return err
+		}},
+		{"BR", InitMDLVariableForBR},
+	} {
+		for _, state := range []string{"missing", "enabled", "disabled"} {
+			t.Run(initializer.name+"/"+state, func(t *testing.T) {
+				store, err := mockstore.NewMockStore()
+				require.NoError(t, err)
+				defer func() { require.NoError(t, store.Close()) }()
+				if state != "missing" {
+					txn, err := store.Begin()
+					require.NoError(t, err)
+					require.NoError(t, meta.NewMutator(txn).SetMetadataLock(state == "enabled"))
+					require.NoError(t, txn.Commit(context.Background()))
+				}
+				expectedEnabled := state == "enabled" || initializer.name == "bootstrap" ||
+					(state == "missing" && initializer.name == "normal")
+				vardef.SetEnableMDL(!expectedEnabled)
+				require.NoError(t, initializer.init(store))
+				require.Equal(t, expectedEnabled, vardef.IsMDLEnabled())
+				txn, err := store.Begin()
+				require.NoError(t, err)
+				enabled, missing, err := meta.NewMutator(txn).GetMetadataLock()
+				require.NoError(t, err)
+				require.NoError(t, txn.Rollback())
+				require.Equal(t, expectedEnabled, enabled)
+				require.Equal(t, state == "missing" && !expectedEnabled, missing)
+			})
+		}
+	}
+}
+
 func TestNormalizeStmtCancellationError(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
 	require.NoError(t, handlePendingSQLKillerSignal(vars))
