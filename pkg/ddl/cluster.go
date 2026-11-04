@@ -209,6 +209,8 @@ func checkFlashbackMaterializedViews(t meta.Reader, snapshot string) error {
 				objectType = "materialized view"
 			case table.MaterializedViewLog != nil:
 				objectType = "materialized view log"
+			case table.MaterializedViewShadow != nil:
+				objectType = "materialized view shadow"
 			default:
 				return nil
 			}

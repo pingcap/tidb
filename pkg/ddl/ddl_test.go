@@ -85,6 +85,51 @@ func createMockStore(t *testing.T) kv.Storage {
 	return store
 }
 
+func TestCheckFlashbackMaterializedViews(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		info *model.TableInfo
+	}{
+		{name: "ordinary", info: &model.TableInfo{}},
+		{name: "materialized view", info: &model.TableInfo{MaterializedView: &model.MaterializedViewInfo{}}},
+		{name: "materialized view log", info: &model.TableInfo{MaterializedViewLog: &model.MaterializedViewLogInfo{}}},
+		{name: "materialized view shadow", info: &model.TableInfo{MaterializedViewShadow: &model.MaterializedViewShadowInfo{SourceMViewID: 100}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := createMockStore(t)
+			defer func() { require.NoError(t, store.Close()) }()
+			tc.info.ID = 2
+			tc.info.Name = pmodel.NewCIStr("object")
+			tc.info.State = model.StatePublic
+			require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
+				m := meta.NewMutator(txn)
+				if err := m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("db"), State: model.StatePublic}); err != nil {
+					return err
+				}
+				return m.CreateTableOrView(1, tc.info)
+			}))
+			version, err := store.CurrentVersion(kv.GlobalTxnScope)
+			require.NoError(t, err)
+			history := meta.NewReader(store.GetSnapshot(version))
+			err = checkFlashbackMaterializedViews(history, "current state")
+			if tc.name == "ordinary" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tc.name+" db.object in current state")
+			plain := tc.info.Clone()
+			plain.MaterializedView, plain.MaterializedViewLog, plain.MaterializedViewShadow = nil, nil, nil
+			require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
+				return meta.NewMutator(txn).UpdateTable(1, plain)
+			}))
+			currentVersion, err := store.CurrentVersion(kv.GlobalTxnScope)
+			require.NoError(t, err)
+			require.NoError(t, checkFlashbackMaterializedViews(meta.NewReader(store.GetSnapshot(currentVersion)), "current state"))
+			require.ErrorContains(t, checkFlashbackMaterializedViews(history, "target snapshot"), tc.name+" db.object in target snapshot")
+		})
+	}
+}
+
 func TestGetIntervalFromPolicy(t *testing.T) {
 	policy := []time.Duration{
 		1 * time.Second,

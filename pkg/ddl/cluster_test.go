@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -333,5 +334,65 @@ func TestFlashbackClusterWithMaterializedViews(t *testing.T) {
 			tk.MustQuery("select * from test.flashback_guard order by a").Check(testkit.Rows("1", "2"))
 			tk.MustExec("insert into test.flashback_guard values (3)")
 		})
+	}
+}
+
+func TestFlashbackTableMaterializedViews(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	tk.MustExec("create table base (a int not null)")
+	tk.MustExec("insert into base values (1)")
+	// Older ordinary tables must not be recovered past a newer MV/MLog drop.
+	for _, name := range []string{"mv", "$mlog$base"} {
+		tk.MustExec(fmt.Sprintf("create table `%s` (a int)", name))
+		tk.MustExec(fmt.Sprintf("insert into `%s` values (10)", name))
+		tk.MustExec(fmt.Sprintf("drop table `%s`", name))
+	}
+	tk.MustExec("create materialized view log on base (a)")
+	tk.MustExec("create materialized view mv (a, cnt) as select a, count(*) from base group by a")
+
+	checkUnsupported := func(name, objectType string) {
+		t.Helper()
+		for _, suffix := range []string{"", " to restored"} {
+			tk.MustGetErrMsg(fmt.Sprintf("flashback table `%s`%s", name, suffix),
+				"[ddl:8200]Unsupported FLASHBACK TABLE on "+objectType)
+		}
+	}
+	checkUnsupported("mv", "materialized view table")
+	checkUnsupported("$mlog$base", "materialized view log table")
+
+	mv, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	shadow := mv.Meta().Clone()
+	shadow.ID = 0
+	shadow.Name = pmodel.NewCIStr("mv_shadow")
+	shadow.MaterializedView = nil
+	shadow.MaterializedViewBase = nil
+	shadow.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: mv.Meta().ID}
+	schema, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
+	require.True(t, ok)
+	require.NoError(t, dom.DDLExecutor().CreateMaterializedViewShadowTable(tk.Session(), schema.ID, schema.Name, shadow))
+	checkUnsupported("mv_shadow", "materialized view shadow table")
+	require.NoError(t, dom.DDLExecutor().DropMaterializedViewShadowTable(tk.Session(), pmodel.NewCIStr("test"), shadow.Name))
+	checkUnsupported("mv_shadow", "materialized view shadow table")
+
+	tk.MustExec("drop materialized view mv")
+	checkUnsupported("mv", "materialized view table")
+	tk.MustExec("drop materialized view log on base")
+	checkUnsupported("$mlog$base", "materialized view log table")
+	tk.MustQuery("show tables").Check(testkit.Rows("base"))
+
+	// A newer ordinary table must still take precedence over older MV history.
+	for _, name := range []string{"mv", "$mlog$base", "mv_shadow"} {
+		tk.MustExec(fmt.Sprintf("create table `%s` (a int)", name))
+		tk.MustExec(fmt.Sprintf("insert into `%s` values (20)", name))
+		tk.MustExec(fmt.Sprintf("drop table `%s`", name))
+		tk.MustExec(fmt.Sprintf("flashback table `%s` to restored", name))
+		tk.MustQuery("select * from restored").Check(testkit.Rows("20"))
+		tk.MustExec("drop table restored")
 	}
 }

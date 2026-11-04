@@ -265,3 +265,45 @@ drop materialized view log on mv_oop_log;
 drop materialized view mv_oop_log;
 drop materialized view log on t_oop_log;
 drop table t_oop_log;
+
+# TestFlashbackTableMaterializedViewsRejected
+
+set @flashback_gc_enabled = @@global.tidb_gc_enable;
+set global tidb_gc_enable = off;
+set @flashback_gc_safe_point = (select variable_value from mysql.tidb where variable_name = 'tikv_gc_safe_point');
+insert into mysql.tidb(variable_name, variable_value, comment)
+values ('tikv_gc_safe_point', '20060102-15:04:05 +0000', '')
+on duplicate key update variable_value = values(variable_value);
+
+create table t_flashback_mv (a int not null);
+insert into t_flashback_mv values (1);
+# Older ordinary tables with the same names must not be recovered instead.
+create table mv_flashback (a int);
+drop table mv_flashback;
+create table `$mlog$t_flashback_mv` (a int);
+drop table `$mlog$t_flashback_mv`;
+create materialized view log on t_flashback_mv (a);
+create materialized view mv_flashback (a, cnt) as select a, count(*) from t_flashback_mv group by a;
+-- error 8200
+flashback table mv_flashback;
+-- error 8200
+flashback table `$mlog$t_flashback_mv` to mv_flashback_restored;
+
+drop materialized view mv_flashback;
+-- error 8200
+flashback table mv_flashback;
+-- error 8200
+flashback table mv_flashback to mv_flashback_restored;
+drop materialized view log on t_flashback_mv;
+-- error 8200
+flashback table `$mlog$t_flashback_mv`;
+-- error 8200
+flashback table `$mlog$t_flashback_mv` to mv_flashback_restored;
+select count(*) as restored_objects from information_schema.tables
+where table_schema = 'test' and table_name in ('mv_flashback', '$mlog$t_flashback_mv', 'mv_flashback_restored');
+drop table t_flashback_mv;
+
+update mysql.tidb set variable_value = @flashback_gc_safe_point
+where variable_name = 'tikv_gc_safe_point' and @flashback_gc_safe_point is not null;
+delete from mysql.tidb where variable_name = 'tikv_gc_safe_point' and @flashback_gc_safe_point is null;
+set global tidb_gc_enable = @flashback_gc_enabled;

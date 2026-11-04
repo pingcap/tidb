@@ -416,7 +416,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	var tblInfo *model.TableInfo
 	// Let check table first. Related isssue #46296.
 	if s.Table != nil {
-		job, tblInfo, err = e.getRecoverTableByTableName(s.Table)
+		job, tblInfo, err = e.getRecoverTableByTableName(s.Table, false)
 	} else {
 		job, tblInfo, err = e.getRecoverTableByJobID(s, dom)
 	}
@@ -495,16 +495,32 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 
 // GetDropOrTruncateTableInfoFromJobs gets the dropped/truncated table information from DDL jobs,
 // it will use the `start_ts` of DDL job as snapshot to get the dropped/truncated table information.
-func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, dom *domain.Domain, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
+// extraJobTypes lets callers inspect additional candidates to explicitly reject unsupported objects.
+func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, dom *domain.Domain, fn func(*model.Job, *model.TableInfo) (bool, error), extraJobTypes ...model.ActionType) (bool, error) {
 	getTable := func(startTS uint64, schemaID int64, tableID int64) (*model.TableInfo, error) {
 		snapMeta := dom.GetSnapshotMeta(startTS)
 		tbl, err := snapMeta.GetTable(schemaID, tableID)
 		return tbl, err
 	}
-	return ddl.GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, fn)
+	return ddl.GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, fn, extraJobTypes...)
 }
 
-func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.Job, *model.TableInfo, error) {
+func checkFlashbackTableMaterializedView(tblInfo *model.TableInfo) error {
+	var objectType string
+	switch {
+	case tblInfo.MaterializedView != nil:
+		objectType = "materialized view table"
+	case tblInfo.MaterializedViewLog != nil:
+		objectType = "materialized view log table"
+	case tblInfo.MaterializedViewShadow != nil:
+		objectType = "materialized view shadow table"
+	default:
+		return nil
+	}
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("FLASHBACK TABLE on " + objectType)
+}
+
+func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName, forFlashback bool) (*model.Job, *model.TableInfo, error) {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return nil, nil, err
@@ -516,13 +532,26 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	if schemaName == "" {
 		return nil, nil, errors.Trace(plannererrors.ErrNoDB)
 	}
+	dom := domain.GetDomain(e.Ctx())
+	if forFlashback {
+		is := dom.InfoSchema()
+		if schema, ok := is.SchemaByName(pmodel.NewCIStr(schemaName)); ok {
+			currentTable, err := is.TableByName(context.Background(), schema.Name, tableName.Name)
+			if err != nil {
+				if !infoschema.ErrTableNotExists.Equal(err) {
+					return nil, nil, err
+				}
+			} else if err := checkFlashbackTableMaterializedView(currentTable.Meta()); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
 	gcSafePoint, err := gcutil.GetGCSafePoint(e.Ctx())
 	if err != nil {
 		return nil, nil, err
 	}
 	var jobInfo *model.Job
 	var tableInfo *model.TableInfo
-	dom := domain.GetDomain(e.Ctx())
 	handleJobAndTableInfo := func(job *model.Job, tblInfo *model.TableInfo) (bool, error) {
 		if tblInfo.Name.L != tableName.Name.L {
 			return false, nil
@@ -532,14 +561,25 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 			return false, nil
 		}
 		if schema.Name.L == schemaName {
+			if forFlashback {
+				if err := checkFlashbackTableMaterializedView(tblInfo); err != nil {
+					return false, err
+				}
+			}
 			tableInfo = tblInfo
 			jobInfo = job
 			return true, nil
 		}
 		return false, nil
 	}
+	var extraJobTypes []model.ActionType
+	if forFlashback {
+		// Inspect MV drops in history order so they cannot be skipped in favor of
+		// an older ordinary table with the same name. The callback rejects them.
+		extraJobTypes = []model.ActionType{model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog, model.ActionDropMaterializedViewShadow}
+	}
 	fn := func(jobs []*model.Job) (bool, error) {
-		return GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
+		return GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo, extraJobTypes...)
 	}
 	err = ddl.IterHistoryDDLJobs(txn, fn)
 	if err != nil {
@@ -579,7 +619,7 @@ func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error
 }
 
 func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
-	job, tblInfo, err := e.getRecoverTableByTableName(s.Table)
+	job, tblInfo, err := e.getRecoverTableByTableName(s.Table, true)
 	if err != nil {
 		return err
 	}
