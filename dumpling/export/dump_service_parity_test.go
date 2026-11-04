@@ -30,6 +30,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/pqarrow"
+	"github.com/pingcap/tidb/dumpling/internal/dumpservicetest"
 	srv "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/tests/servertestkit"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -312,8 +313,8 @@ func dumpParityOutputs(
 	}
 
 	sqlOutput := dump("", editSQLConfig)
-	socket := startTestDumpService(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		serveKVTestRequest(server.Store, writer, request)
+	socket := dumpservicetest.Start(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		dumpservicetest.ServeKVRequest(server.Store, writer, request)
 	}))
 	service := (&url.URL{Scheme: "unix", Path: socket}).String()
 	return sqlOutput, dump(service, editServiceConfig)

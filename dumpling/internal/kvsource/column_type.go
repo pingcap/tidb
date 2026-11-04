@@ -12,13 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Copyright 2017 The Go-MySQL-Driver Authors. All rights reserved.
-//
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this file,
-// You can obtain one at http://mozilla.org/MPL/2.0/.
-
-package export
+package kvsource
 
 import (
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -26,13 +20,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
-// kvColumnType returns the database/sql ColumnType.DatabaseTypeName() value that
+// ColumnType returns the database/sql ColumnType.DatabaseTypeName() value that
 // go-sql-driver/mysql reports for a table column. The dump-service path reads
 // table metadata directly and has no SQL connection, so it reconstructs the wire
 // metadata the server would send and then maps it to the name a MySQL client
 // observes. This keeps the KV path's ColumnTypes in step with the regular SQL
 // dump path.
-func kvColumnType(column *model.ColumnInfo) string {
+func ColumnType(column *model.ColumnInfo) string {
 	return driverDatabaseTypeName(
 		dumpType(column.GetType()),
 		dumpFlag(column.GetType(), uint16(column.GetFlag())),
@@ -82,99 +76,5 @@ func dumpFlag(tp byte, flag uint16) uint16 {
 		return flag & ^uint16(mysql.BinaryFlag)
 	default:
 		return flag
-	}
-}
-
-// driverDatabaseTypeName mirrors go-sql-driver/mysql v1.7.1
-// (*mysqlField).typeDatabaseName. tp and flag are the normalized wire values and
-// binary reports whether the advertised charset is the binary collation. Keep it
-// in sync when the driver is upgraded.
-func driverDatabaseTypeName(tp byte, flag uint16, binary bool) string {
-	unsigned := flag&uint16(mysql.UnsignedFlag) != 0
-	switch tp {
-	case mysql.TypeBit:
-		return "BIT"
-	case mysql.TypeBlob:
-		if binary {
-			return "BLOB"
-		}
-		return "TEXT"
-	case mysql.TypeTinyBlob:
-		if binary {
-			return "TINYBLOB"
-		}
-		return "TINYTEXT"
-	case mysql.TypeMediumBlob:
-		if binary {
-			return "MEDIUMBLOB"
-		}
-		return "MEDIUMTEXT"
-	case mysql.TypeLongBlob:
-		if binary {
-			return "LONGBLOB"
-		}
-		return "LONGTEXT"
-	case mysql.TypeDate, mysql.TypeNewDate:
-		return "DATE"
-	case mysql.TypeDatetime:
-		return "DATETIME"
-	case mysql.TypeUnspecified, mysql.TypeNewDecimal:
-		// MYSQL_TYPE_DECIMAL (0) and MYSQL_TYPE_NEWDECIMAL are both reported as DECIMAL.
-		return "DECIMAL"
-	case mysql.TypeDouble:
-		return "DOUBLE"
-	case mysql.TypeEnum:
-		return "ENUM"
-	case mysql.TypeFloat:
-		return "FLOAT"
-	case mysql.TypeGeometry:
-		return "GEOMETRY"
-	case mysql.TypeInt24:
-		// The driver reports MEDIUMINT even for the unsigned flag.
-		return "MEDIUMINT"
-	case mysql.TypeJSON:
-		return "JSON"
-	case mysql.TypeLong:
-		if unsigned {
-			return "UNSIGNED INT"
-		}
-		return "INT"
-	case mysql.TypeLonglong:
-		if unsigned {
-			return "UNSIGNED BIGINT"
-		}
-		return "BIGINT"
-	case mysql.TypeNull:
-		return "NULL"
-	case mysql.TypeSet:
-		return "SET"
-	case mysql.TypeShort:
-		if unsigned {
-			return "UNSIGNED SMALLINT"
-		}
-		return "SMALLINT"
-	case mysql.TypeString:
-		if binary {
-			return "BINARY"
-		}
-		return "CHAR"
-	case mysql.TypeTimestamp:
-		return "TIMESTAMP"
-	case mysql.TypeDuration:
-		return "TIME"
-	case mysql.TypeTiny:
-		if unsigned {
-			return "UNSIGNED TINYINT"
-		}
-		return "TINYINT"
-	case mysql.TypeVarchar, mysql.TypeVarString:
-		if binary {
-			return "VARBINARY"
-		}
-		return "VARCHAR"
-	case mysql.TypeYear:
-		return "YEAR"
-	default:
-		return ""
 	}
 }

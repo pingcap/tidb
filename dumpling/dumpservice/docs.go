@@ -127,9 +127,9 @@
 //
 // A range's position in the table's combined range list becomes the output chunk
 // index, and a task may produce several files when output-size limits apply. See
-// shardKVTableRanges and dumpKVTasks in dumpling/export/kv.go, and
-// tryToWriteTableData in dumpling/export/writer.go. Metadata shard discovery and
-// caching are implemented separately in dumpling/export/kv_metadata.go.
+// ShardTableRanges in dumpling/internal/kvsource/ranges.go, dumpKVTasks in
+// dumpling/export/kv.go, and tryToWriteTableData in dumpling/export/writer.go.
+// Metadata shard discovery and caching live in dumpling/internal/kvsource/metadata.go.
 //
 // # GET /data
 //

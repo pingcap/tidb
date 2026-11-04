@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package export
+package kvsource
 
 import (
 	"bytes"
@@ -51,7 +51,8 @@ type kvMetadataPair struct {
 
 var _ kv.Snapshot = (*kvMetadataSnapshot)(nil)
 
-func newKVMetadataSnapshot(ctx context.Context, scanner kvScanner) (*kvMetadataSnapshot, error) {
+// NewMetadataSnapshot caches whole service shards for TiDB metadata readers.
+func NewMetadataSnapshot(ctx context.Context, scanner Scanner) (kv.Snapshot, error) {
 	start := kv.Key("m")
 	end := start.PrefixNext()
 	ranges, err := scanner.Shards(ctx, start, end)
@@ -76,9 +77,9 @@ func newKVMetadataSnapshot(ctx context.Context, scanner kvScanner) (*kvMetadataS
 	return r, nil
 }
 
-func loadKVMetadataShard(ctx context.Context, scanner kvScanner, shard dumpservice.Range) ([]kvMetadataPair, error) {
+func loadKVMetadataShard(ctx context.Context, scanner Scanner, shard dumpservice.Range) ([]kvMetadataPair, error) {
 	var pairs []kvMetadataPair
-	err := scanKVRange(ctx, scanner, shard.Start, shard.End, func(key, value []byte) error {
+	err := scanRange(ctx, scanner, shard.Start, shard.End, func(key, value []byte) error {
 		if bytes.Compare(key, shard.Start) < 0 || bytes.Compare(key, shard.End) >= 0 {
 			return errors.Errorf("metadata key %x is outside shard [%x, %x)", key, shard.Start, shard.End)
 		}

@@ -16,26 +16,19 @@ package export
 
 import (
 	"context"
-	"encoding/binary"
-	"encoding/hex"
-	"encoding/json"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
-	"github.com/pingcap/tidb/dumpling/dumpservice"
-	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/dumpling/internal/dumpservicetest"
 	"github.com/pingcap/tidb/pkg/testkit"
 	tf "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
-	"golang.org/x/net/http2"
 )
 
 func TestDumpServiceFromTiDBStorage(t *testing.T) {
@@ -64,8 +57,8 @@ func TestDumpServiceFromTiDBStorage(t *testing.T) {
 	tk.MustExec("create table kv_partition (id int primary key, value varchar(16)) partition by range (id) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 	tk.MustExec("insert into kv_partition values (1, 'first'), (11, 'second')")
 
-	socketPath := startTestDumpService(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		serveKVTestRequest(store, writer, request)
+	socketPath := dumpservicetest.Start(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		dumpservicetest.ServeKVRequest(store, writer, request)
 	}))
 	outputDir := t.TempDir()
 	config := DefaultConfig()
@@ -150,8 +143,8 @@ func TestDumpServiceLifecycle(t *testing.T) {
 			tk.MustExec("create database lifecycle")
 			tk.MustExec("create table lifecycle.t (id int primary key)")
 			tk.MustExec("insert into lifecycle.t values (1), (2)")
-			socket := startTestDumpService(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				startKey, _, err := decodeKVTestRange(request)
+			socket := dumpservicetest.Start(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				startKey, _, err := dumpservicetest.DecodeRange(request)
 				if err != nil {
 					http.Error(writer, err.Error(), http.StatusBadRequest)
 					return
@@ -161,7 +154,7 @@ func TestDumpServiceLifecycle(t *testing.T) {
 					http.Error(writer, "source unavailable", http.StatusServiceUnavailable)
 					return
 				}
-				serveKVTestRequest(store, writer, request)
+				dumpservicetest.ServeKVRequest(store, writer, request)
 			}))
 			conf := DefaultConfig()
 			conf.DumpService = (&url.URL{Scheme: "unix", Path: socket}).String()
@@ -238,9 +231,9 @@ func TestDumpServiceColumnFilterValidation(t *testing.T) {
 		{name: "schema only", tables: []string{"column_filter.z_parent"}, columns: []string{"keep"}, noData: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			socket := startTestDumpService(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			socket := dumpservicetest.Start(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				if testCase.noData {
-					start, _, err := decodeKVTestRange(request)
+					start, _, err := dumpservicetest.DecodeRange(request)
 					if err != nil {
 						http.Error(writer, err.Error(), http.StatusBadRequest)
 						return
@@ -251,7 +244,7 @@ func TestDumpServiceColumnFilterValidation(t *testing.T) {
 						return
 					}
 				}
-				serveKVTestRequest(store, writer, request)
+				dumpservicetest.ServeKVRequest(store, writer, request)
 			}))
 			conf := DefaultConfig()
 			conf.DumpService = (&url.URL{Scheme: "unix", Path: socket}).String()
@@ -295,179 +288,4 @@ func TestDumpServiceColumnFilterValidation(t *testing.T) {
 			require.Len(t, entries, 3, "schema-only export writes database/table schemas and metadata")
 		})
 	}
-}
-
-func startTestDumpService(t *testing.T, handler http.Handler) string {
-	t.Helper()
-	socketPath := filepath.Join(t.TempDir(), "kv-store.sock")
-	listener, err := net.Listen("unix", socketPath)
-	require.NoError(t, err)
-	serverDone := make(chan struct{})
-	go func() {
-		defer close(serverDone)
-		connection, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer connection.Close()
-		server := &http2.Server{}
-		server.ServeConn(connection, &http2.ServeConnOpts{
-			Handler: handler,
-		})
-	}()
-
-	t.Cleanup(func() {
-		require.NoError(t, listener.Close())
-		select {
-		case <-serverDone:
-		case <-time.After(time.Second):
-			require.Fail(t, "test dump service did not stop")
-		}
-	})
-	return socketPath
-}
-
-func serveKVTestRequest(store kv.Storage, writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodGet {
-		http.Error(writer, "unsupported kv test request", http.StatusNotFound)
-		return
-	}
-	switch request.URL.Path {
-	case "/shards":
-		serveKVTestShards(store, writer, request)
-	case "/data":
-		serveKVTestScan(store, writer, request)
-	default:
-		http.Error(writer, "unsupported kv test request", http.StatusNotFound)
-	}
-}
-
-func decodeKVTestRange(request *http.Request) ([]byte, []byte, error) {
-	query := request.URL.Query()
-	startKey, err := hex.DecodeString(query.Get("start_key_hex"))
-	if err != nil {
-		return nil, nil, err
-	}
-	endKey, err := hex.DecodeString(query.Get("end_key_hex"))
-	if err != nil {
-		return nil, nil, err
-	}
-	return startKey, endKey, nil
-}
-
-func serveKVTestShards(store kv.Storage, writer http.ResponseWriter, request *http.Request) {
-	startKey, endKey, err := decodeKVTestRange(request)
-	if err != nil {
-		http.Error(writer, err.Error(), http.StatusBadRequest)
-		return
-	}
-	ranges, err := shardKVTestRange(store, startKey, endKey)
-	if err != nil {
-		http.Error(writer, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	response := testShardsResponse{Ranges: make([]testHexRange, 0, len(ranges))}
-	for _, rangeToScan := range ranges {
-		response.Ranges = append(response.Ranges, testHexRange{
-			StartKeyHex: hex.EncodeToString(rangeToScan.Start),
-			EndKeyHex:   hex.EncodeToString(rangeToScan.End),
-		})
-	}
-	writer.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(writer).Encode(response); err != nil {
-		http.Error(writer, err.Error(), http.StatusInternalServerError)
-	}
-}
-
-func serveKVTestScan(store kv.Storage, writer http.ResponseWriter, request *http.Request) {
-	startKey, endKey, err := decodeKVTestRange(request)
-	if err != nil {
-		http.Error(writer, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	writer.Header().Add("Trailer", "x-dumper-scan-status")
-	writer.Header().Add("Trailer", "x-dumper-scan-error")
-	if err := writeKVTestRange(store, writer, startKey, endKey); err != nil {
-		writer.Header().Set("x-dumper-scan-status", "failed")
-		writer.Header().Set("x-dumper-scan-error", url.QueryEscape(err.Error()))
-		return
-	}
-	writer.Header().Set("x-dumper-scan-status", "complete")
-}
-
-func shardKVTestRange(store kv.Storage, startKey, endKey []byte) ([]dumpservice.Range, error) {
-	txn, err := store.Begin()
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = txn.Rollback() }()
-	iterator, err := txn.Iter(kv.Key(startKey), kv.Key(endKey))
-	if err != nil {
-		return nil, err
-	}
-	defer iterator.Close()
-	ranges := make([]dumpservice.Range, 0, 1)
-	nextStart := append([]byte(nil), startKey...)
-	first := true
-	for iterator.Valid() {
-		if first {
-			first = false
-		} else {
-			nextEnd := append([]byte(nil), iterator.Key()...)
-			ranges = append(ranges, dumpservice.Range{Start: nextStart, End: nextEnd})
-			nextStart = nextEnd
-		}
-		if err := iterator.Next(); err != nil {
-			return nil, err
-		}
-	}
-	return append(ranges, dumpservice.Range{Start: nextStart, End: append([]byte(nil), endKey...)}), nil
-}
-
-func writeKVTestRange(store kv.Storage, output io.Writer, startKey, endKey []byte) error {
-	txn, err := store.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = txn.Rollback() }()
-	iterator, err := txn.Iter(kv.Key(startKey), kv.Key(endKey))
-	if err != nil {
-		return err
-	}
-	defer iterator.Close()
-	for iterator.Valid() {
-		if err := writeKVTestRow(output, iterator.Key(), iterator.Value()); err != nil {
-			return err
-		}
-		if err := iterator.Next(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func writeKVTestRow(output io.Writer, key, value []byte) error {
-	var header [8]byte
-	binary.LittleEndian.PutUint32(header[:4], uint32(len(key)))
-	binary.LittleEndian.PutUint32(header[4:], uint32(len(value)))
-	for _, data := range [][]byte{header[:], key, value} {
-		written, err := output.Write(data)
-		if err != nil {
-			return err
-		}
-		if written != len(data) {
-			return io.ErrShortWrite
-		}
-	}
-	return nil
-}
-
-type testHexRange struct {
-	StartKeyHex string `json:"start_key_hex"`
-	EndKeyHex   string `json:"end_key_hex"`
-}
-
-type testShardsResponse struct {
-	Ranges []testHexRange `json:"ranges"`
 }
