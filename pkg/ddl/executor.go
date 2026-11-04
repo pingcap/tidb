@@ -4923,6 +4923,9 @@ func orderDropTableObjectsByForeignKey(is infoschema.InfoSchema, objects []*ast.
 			continue
 		}
 		for _, fk := range childTable.Meta().ForeignKeys {
+			if fk.Version < model.FKVersion1 {
+				continue
+			}
 			parentSchema := fk.RefSchema.L
 			if parentSchema == "" {
 				parentSchema = child.Schema.L
