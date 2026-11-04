@@ -239,3 +239,39 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
 }
+
+func TestFlashbackClusterWithAffinityChanges(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int) affinity = 'table'")
+	tk.MustExec("create table tp(a int) affinity = 'partition' partition by hash(a) partitions 2")
+	tk.MustExec("create table t_plain(a int)")
+
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`)
+
+	flashbackAfter := func(ddl string) error {
+		time.Sleep(10 * time.Millisecond)
+		ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+			fmt.Sprintf("return(%v)", oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(10*time.Second))))
+		tk.MustExec(ddl)
+		return tk.ExecToErr(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
+	}
+	const errMsg = "Detected affinity changes of table"
+
+	// DDL that creates, drops or replaces affinity groups.
+	require.ErrorContains(t, flashbackAfter("create table t1(a int) affinity = 'table'"), errMsg)
+	require.ErrorContains(t, flashbackAfter("alter table t_plain affinity = 'table'"), errMsg)
+	require.ErrorContains(t, flashbackAfter("alter table tp truncate partition p0"), errMsg)
+	require.ErrorContains(t, flashbackAfter("truncate table t"), errMsg)
+	require.ErrorContains(t, flashbackAfter("drop table t1"), errMsg)
+
+	// DDL that keeps the expected groups does not block flashback.
+	require.NoError(t, flashbackAfter("alter table tp add column b int"))
+	require.NoError(t, flashbackAfter("create table t2(a int)"))
+}

@@ -265,6 +265,10 @@ func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context,
 		}
 	}
 
+	if err = checkFlashbackAffinityGroups(store.GetCodec(), flashbackSnapshotMeta, t, flashbackTSString); err != nil {
+		return err
+	}
+
 	jobs, err := GetAllDDLJobs(ctx, se)
 	if err != nil {
 		return errors.Trace(err)
