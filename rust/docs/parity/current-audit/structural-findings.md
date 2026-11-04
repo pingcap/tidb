@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**43 unresolved: 12 open, 31 partial.**
+**42 unresolved: 12 open, 30 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -84,7 +84,6 @@ unresolved until it is restated against its Go owner or closed.
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
 | T02 | partial | Two region-cache lifecycles (TiDB and the native client): coprocessor RequestSelector, store-health recovery, batch-scan follower reads | client-go `internal/locate` |
-| T04 | partial | client-rust's committer charges `CommitDetails` as client-go does (a pipelined transaction's one detail across its flushes and commit included), but a prewrite fan-out merges its last batch's Backoffer into the prewrite Backoffer where client-go's batch executor does not (`UpdateUsingForked`), and a standard-2PC undetermined prewrite restarts and regroups the whole prewrite where client-go's `handleRegionErr` retries the batch in place | client-go `txnkv/transaction` (`twoPhaseCommitter` detail), `pkg/session` (`doCommit`), `pkg/util/execdetails` |
 | P03 | partial | PD router transport; primaryless member publication; readiness/prewarm; idle recovery | PD client `pkg/client` |
 | P06 | partial | TSO dispatcher options and stream construction; RPC concurrency | PD client `tso_dispatcher.go` |
 | M01 | open | The MPP coordinator lowers a hand-built single-fragment scan DAG and refuses every pushed Selection, TopN and aggregation, where Go builds the fragment/task graph from the physical plan (including disaggregated compute placement) | `pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`, `pkg/store/copr/mpp.go` |

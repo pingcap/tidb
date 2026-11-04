@@ -9503,7 +9503,6 @@ impl<PdC: PdClient> Committer<PdC> {
         &mut self,
         source_retry_owner: Option<Arc<tokio::sync::Mutex<RetryBackoffer>>>,
     ) -> Result<Option<Timestamp>> {
-        let undetermined_retry_owner = source_retry_owner.clone();
         let primary_lock = self.primary_key.clone().unwrap();
         let elapsed = self.start_instant.elapsed().as_millis() as u64;
         let mut lock_ttl = self.calc_txn_lock_ttl().saturating_add(elapsed);
@@ -9777,23 +9776,6 @@ impl<PdC: PdClient> Committer<PdC> {
             Err(error) => {
                 let ambiguous = !ambiguous_prewrite_keys.lock().unwrap().is_empty()
                     || has_undetermined_region_error(&error);
-                if !self.options.async_commit
-                    && !self.options.try_one_pc
-                    && has_undetermined_region_error(&error)
-                {
-                    if let Some(owner) = undetermined_retry_owner {
-                        owner
-                            .lock()
-                            .await
-                            .backoff(
-                                BO_REGION_MISS,
-                                format!("standard 2PC prewrite result undetermined: {error}"),
-                            )
-                            .await
-                            .map_err(Error::from)?;
-                        return Box::pin(self.prewrite_with_retry_owner(Some(owner))).await;
-                    }
-                }
                 let error = normalize_prewrite_error(self.validate_key_exists_error(error));
                 if (self.options.async_commit || self.options.try_one_pc) && ambiguous {
                     self.undetermined = true;
@@ -19607,6 +19589,57 @@ mod tests {
         );
     }
 
+    /// client-go's 2PC batch executor gives each concurrent batch a forked
+    /// Backoffer it never merges back: a secondary batch's sleep does not
+    /// reach the `LockKeys` Backoffer, so `Stats.BackoffTime` stays zero.
+    #[tokio::test]
+    async fn source_pessimistic_lock_fanout_batch_backoff_stays_in_its_fork() {
+        let busy = Arc::new(AtomicBool::new(false));
+        let rpc = Arc::new(MockPdClient::with_client_and_regions(
+            MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+                let request = request
+                    .downcast_ref::<kvrpcpb::PessimisticLockRequest>()
+                    .expect("lock_keys only sends pessimistic-lock requests");
+                if request.mutations.iter().any(|mutation| mutation.key == [20])
+                    && !busy.swap(true, Ordering::SeqCst)
+                {
+                    return Ok(Box::new(kvrpcpb::PessimisticLockResponse {
+                        region_error: Some(crate::proto::errorpb::Error {
+                            server_is_busy: Some(crate::proto::errorpb::ServerIsBusy::default()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                Ok(Box::<kvrpcpb::PessimisticLockResponse>::default() as Box<dyn Any>)
+            }),
+            vec![
+                MockPdClient::region1(),
+                MockPdClient::region2(),
+                MockPdClient::region3(),
+            ],
+        ));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            rpc,
+            TransactionOptions::new_pessimistic()
+                .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                .drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        let mut context = LockContext::new(2, 0, SystemTime::now());
+        transaction
+            .lock_keys_with_context(&mut context, [vec![1], vec![20], vec![250, 250]])
+            .await
+            .unwrap();
+        transaction.set_status(TransactionStatus::Rolledback);
+
+        let stats = context.stats.expect("lock_keys fills the stats");
+        assert_eq!(stats.lock_rpc_count, 4);
+        assert_eq!(stats.backoff_time_ns, 0);
+        assert!(stats.detail.backoff_types.is_empty());
+    }
+
     /// client-go `actionPessimisticLock` resolves a met lock into
     /// `Stats.ResolveLock`, and both lock RPCs charge the stats.
     #[tokio::test]
@@ -21903,6 +21936,55 @@ mod tests {
         assert!(cleanup_error
             .to_string()
             .contains("session 42 txn file cleanup failed"));
+    }
+
+    /// client-go `prewrite1BatchReqHandler.handleRegionErr`: a standard-2PC
+    /// prewrite batch that meets `UndeterminedResult` backs off and is
+    /// resent alone; the other batch is not sent again.
+    #[tokio::test]
+    async fn source_standard_prewrite_retries_an_undetermined_batch_in_place() {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&sent);
+        let undetermined = Arc::new(AtomicBool::new(false));
+        let rpc = Arc::new(MockPdClient::with_client_and_regions(
+            MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+                let request = request
+                    .downcast_ref::<kvrpcpb::PrewriteRequest>()
+                    .expect("prewrite only");
+                let keys = request
+                    .mutations
+                    .iter()
+                    .map(|mutation| mutation.key.clone())
+                    .collect::<Vec<_>>();
+                captured.lock().unwrap().push(keys.clone());
+                if keys == [vec![20]] && !undetermined.swap(true, Ordering::SeqCst) {
+                    return Ok(Box::new(kvrpcpb::PrewriteResponse {
+                        region_error: Some(crate::proto::errorpb::Error {
+                            undetermined_result: Some(Default::default()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                Ok(Box::<kvrpcpb::PrewriteResponse>::default() as Box<dyn Any>)
+            }),
+            vec![MockPdClient::region1(), MockPdClient::region2()],
+        ));
+        let mut committer = source_test_committer(
+            rpc,
+            Some(Key::from(vec![1])),
+            vec![
+                source_test_mutation(vec![1], kvrpcpb::Op::Put),
+                source_test_mutation(vec![20], kvrpcpb::Op::Put),
+            ],
+            TransactionOptions::new_optimistic(),
+            CommitSettings::default(),
+        );
+        committer.prewrite().await.unwrap();
+        let mut sent = sent.lock().unwrap().clone();
+        sent.sort();
+        assert_eq!(sent, [vec![vec![1]], vec![vec![20]], vec![vec![20]]]);
+        assert!(!committer.undetermined);
     }
 
     #[tokio::test]

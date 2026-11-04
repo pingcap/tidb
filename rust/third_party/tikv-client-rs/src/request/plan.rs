@@ -1502,7 +1502,10 @@ where
             last_forked = Some(forked);
             results[index] = Some(result);
         }
-        if let Some(forked) = last_forked.as_ref() {
+        // client-go's 2PC batch executor never merges a batch's forked
+        // Backoffer back (`UpdateUsingForked` is for snapshot, raw and
+        // resolver fan-outs).
+        if let Some(forked) = last_forked.as_ref().filter(|_| current_plan.absorbs_forked_backoff()) {
             backoff.update_using_forked(forked);
         }
 
@@ -1883,6 +1886,22 @@ where
             // RawKV's generic region-miss retry resend a possibly committed
             // write when a malformed response also carries another field.
             if e.undetermined_result.is_some() {
+                // client-go `prewrite1BatchReqHandler.handleRegionErr`: a
+                // standard-2PC prewrite backs off `BoRegionMiss` and relocates
+                // its batch instead of failing the transaction.
+                if plan.retries_undetermined_result() && backoff.retries_terminal_region_errors() {
+                    drop(on_region_error_span);
+                    let error = Error::RegionError(Box::new(e));
+                    return SendReqOutcome::Resplit {
+                        plan,
+                        backoff,
+                        region_miss: Some((
+                            BO_REGION_MISS,
+                            format!("raw region error: {error:?}"),
+                            error,
+                        )),
+                    };
+                }
                 return SendReqOutcome::Done(Err(Error::RegionError(Box::new(e))), backoff);
             }
             if source_configurable_server_busy_timeout(&plan, &e) {

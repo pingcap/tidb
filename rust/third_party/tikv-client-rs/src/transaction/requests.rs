@@ -688,6 +688,17 @@ impl Shardable for kvrpcpb::PrewriteRequest {
         }
     }
 
+    // client-go's 2PC batch executor keeps each batch's Backoffer apart.
+    fn absorbs_forked_backoff(&self) -> bool {
+        false
+    }
+
+    // client-go `handleRegionErr` fails an async-commit or 1PC prewrite on
+    // `UndeterminedResult`; a standard 2PC one retries.
+    fn retries_undetermined_result(&self) -> bool {
+        !self.use_async_commit && !self.try_one_pc
+    }
+
     fn apply_shard(&mut self, shard: Self::Shard) {
         let full_txn_size = self.txn_size;
         let (mutations, pessimistic_actions, constraints, region_txn_size) = shard;
@@ -789,6 +800,11 @@ impl Shardable for kvrpcpb::CommitRequest {
             .boxed()
     }
 
+    // client-go's 2PC batch executor keeps each batch's Backoffer apart.
+    fn absorbs_forked_backoff(&self) -> bool {
+        false
+    }
+
     fn apply_shard(&mut self, shard: Self::Shard) {
         if !self.primary_key.is_empty() {
             self.commit_role = if shard.iter().any(|key| key == &self.primary_key) {
@@ -863,6 +879,11 @@ impl Shardable for kvrpcpb::BatchRollbackRequest {
             .boxed()
     }
 
+    // client-go's 2PC batch executor keeps each batch's Backoffer apart.
+    fn absorbs_forked_backoff(&self) -> bool {
+        false
+    }
+
     fn apply_shard(&mut self, shard: Self::Shard) {
         self.keys = shard;
     }
@@ -928,6 +949,11 @@ impl Shardable for kvrpcpb::PessimisticRollbackRequest {
                 Err(error) => stream::iter(Err(error)).boxed(),
             })
             .boxed()
+    }
+
+    // client-go's 2PC batch executor keeps each batch's Backoffer apart.
+    fn absorbs_forked_backoff(&self) -> bool {
+        false
     }
 
     fn apply_shard(&mut self, shard: Self::Shard) {
@@ -1011,6 +1037,11 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
                 Err(error) => stream::iter(Err(error)).boxed(),
             })
             .boxed()
+    }
+
+    // client-go's 2PC batch executor keeps each batch's Backoffer apart.
+    fn absorbs_forked_backoff(&self) -> bool {
+        false
     }
 
     fn apply_shard(&mut self, shard: Self::Shard) {
@@ -1997,6 +2028,11 @@ impl Shardable for kvrpcpb::FlushRequest {
                 Err(error) => stream::iter(Err(error)).boxed(),
             })
             .boxed()
+    }
+
+    // client-go's 2PC batch executor keeps each batch's Backoffer apart.
+    fn absorbs_forked_backoff(&self) -> bool {
+        false
     }
 
     fn apply_shard(&mut self, shard: Self::Shard) {

@@ -102,6 +102,14 @@ macro_rules! impl_inner_shardable {
             self.inner.observe_batch_backoff(sleep_ms, types);
         }
 
+        fn absorbs_forked_backoff(&self) -> bool {
+            self.inner.absorbs_forked_backoff()
+        }
+
+        fn retries_undetermined_result(&self) -> bool {
+            self.inner.retries_undetermined_result()
+        }
+
         fn mark_replica_data_not_ready(&mut self, peer_id: u64) {
             self.inner.mark_replica_data_not_ready(peer_id);
         }
@@ -247,6 +255,19 @@ pub trait Shardable {
     /// client-go's batch executor finished one concurrent batch on its own
     /// Backoffer. Only prewrite records it.
     fn observe_batch_backoff(&self, _sleep_ms: u64, _types: &[&'static str]) {}
+
+    /// Whether the caller's Backoffer takes over the final concurrent batch's
+    /// forked one (client-go `UpdateUsingForked`); a 2PC action's batches do
+    /// not.
+    fn absorbs_forked_backoff(&self) -> bool {
+        true
+    }
+
+    /// Whether the caller retries an `UndeterminedResult` region error like
+    /// any other region miss (client-go's standard-2PC prewrite).
+    fn retries_undetermined_result(&self) -> bool {
+        false
+    }
 
     fn mark_replica_data_not_ready(&mut self, _peer_id: u64) {}
 
@@ -633,6 +654,14 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         self.request.observe_batch_backoff(sleep_ms, types);
     }
 
+    fn absorbs_forked_backoff(&self) -> bool {
+        self.request.absorbs_forked_backoff()
+    }
+
+    fn retries_undetermined_result(&self) -> bool {
+        self.request.retries_undetermined_result()
+    }
+
     fn mark_retry_request(&mut self) {
         self.request.set_is_retry_request();
         if let Some(timeout) = self.retry_request_timeout {
@@ -805,6 +834,14 @@ impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
         self.inner.observe_batch_backoff(sleep_ms, types);
     }
 
+    fn absorbs_forked_backoff(&self) -> bool {
+        self.inner.absorbs_forked_backoff()
+    }
+
+    fn retries_undetermined_result(&self) -> bool {
+        self.inner.retries_undetermined_result()
+    }
+
     fn mark_replica_data_not_ready(&mut self, peer_id: u64) {
         self.inner.mark_replica_data_not_ready(peer_id);
     }
@@ -915,6 +952,14 @@ impl<P: Plan + Shardable, PdC: PdClient> Shardable for CleanupLocks<P, PdC> {
 
     fn observe_batch_backoff(&self, sleep_ms: u64, types: &[&'static str]) {
         self.inner.observe_batch_backoff(sleep_ms, types);
+    }
+
+    fn absorbs_forked_backoff(&self) -> bool {
+        self.inner.absorbs_forked_backoff()
+    }
+
+    fn retries_undetermined_result(&self) -> bool {
+        self.inner.retries_undetermined_result()
     }
 
     fn region_request_runtime_stats(&self) -> Option<Arc<crate::RegionRequestRuntimeStats>> {

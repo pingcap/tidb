@@ -2,9 +2,9 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 43,
+    "unresolved": 42,
     "open": 12,
-    "partial": 31
+    "partial": 30
   },
   "findings": [
     {
@@ -121,13 +121,6 @@
       "group": "Transaction and routing ownership",
       "finding": "Two region-cache lifecycles (TiDB and the native client): coprocessor RequestSelector, store-health recovery, batch-scan follower reads",
       "go_owner": "client-go `internal/locate`"
-    },
-    {
-      "id": "T04",
-      "status": "partial",
-      "group": "Transaction and routing ownership",
-      "finding": "client-rust's committer charges `CommitDetails` as client-go does (a pipelined transaction's one detail across its flushes and commit included), but a prewrite fan-out merges its last batch's Backoffer into the prewrite Backoffer where client-go's batch executor does not (`UpdateUsingForked`), and a standard-2PC undetermined prewrite restarts and regroups the whole prewrite where client-go's `handleRegionErr` retries the batch in place",
-      "go_owner": "client-go `txnkv/transaction` (`twoPhaseCommitter` detail), `pkg/session` (`doCommit`), `pkg/util/execdetails`"
     },
     {
       "id": "O02",
