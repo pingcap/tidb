@@ -6,6 +6,7 @@ go_library(
         "config.go",
         "config_util.go",
         "const.go",
+        "diagnostic_log.go",
         "external_workload.go",
         "keyspace_observability.go",
         "store.go",
@@ -43,13 +44,14 @@ go_test(
     srcs = [
         "config_test.go",
         "config_util_test.go",
+        "diagnostic_log_test.go",
         "main_test.go",
         "store_test.go",
     ],
     data = glob(["**"]),
     embed = [":config"],
     flaky = True,
-    shard_count = 40,
+    shard_count = 41,
     deps = [
         "//pkg/config/deploymode",
         "//pkg/config/diagnosticmode",

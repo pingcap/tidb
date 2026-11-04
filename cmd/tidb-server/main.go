@@ -21,6 +21,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -73,6 +74,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
+	"github.com/pingcap/tidb/pkg/util/diagnosticlog"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -1239,6 +1241,13 @@ func setupLog() error {
 	if err != nil {
 		return err
 	}
+	logFile := cfg.Log.File.Filename
+	if logFile == "" {
+		logFile = cfg.Log.SlowQueryFile
+	}
+	if err := diagnosticlog.Initialize(cfg.DiagnosticLog.Types, filepath.Dir(logFile)); err != nil {
+		return err
+	}
 
 	// trigger internal http(s) client init.
 	util.InternalHTTPClient()
@@ -1344,6 +1353,9 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	topsql.Close()
 	closeDDLOwnerMgrDomainAndStorage(storage, dom)
 	disk.CleanUp()
+	if err := diagnosticlog.Close(); err != nil {
+		logutil.BgLogger().Warn("close diagnostic log failed", zap.Error(err))
+	}
 	closeStmtSummary()
 	cgmon.StopCgroupMonitor()
 }

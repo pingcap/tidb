@@ -168,6 +168,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(DistSQLScanKeysHistogram)
 	prometheus.MustRegister(DistSQLScanKeysPartialHistogram)
 	prometheus.MustRegister(ExecuteErrorCounter)
+	prometheus.MustRegister(DiagnosticLogCounter)
+	prometheus.MustRegister(DiagnosticLogWriteDuration)
 	prometheus.MustRegister(ExecutorCounter)
 	prometheus.MustRegister(GetTokenDurationHistogram)
 	prometheus.MustRegister(NumOfMultiQueryHistogram)

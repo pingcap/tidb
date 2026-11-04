@@ -240,6 +240,7 @@ type Config struct {
 	KeyspaceName               string                  `toml:"keyspace-name" json:"keyspace-name"`
 	TiKVWorkerURL              string                  `toml:"tikv-worker-url" json:"tikv-worker-url"`
 	Log                        Log                     `toml:"log" json:"log"`
+	DiagnosticLog              DiagnosticLog           `toml:"diagnostic-log" json:"diagnostic-log"`
 	Instance                   Instance                `toml:"instance" json:"instance"`
 	Security                   Security                `toml:"security" json:"security"`
 	Status                     Status                  `toml:"status" json:"status"`
@@ -1134,6 +1135,7 @@ type StarterParams struct {
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
 var defaultConf = Config{
+	DiagnosticLog:                DiagnosticLog{Types: []string{}},
 	Host:                         DefHost,
 	AdvertiseAddress:             "",
 	Port:                         DefPort,
@@ -1719,6 +1721,9 @@ func prepareErrorMessageExtensions(extensions []ErrorMessageExtension, ignoreInv
 
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
+	if err := c.DiagnosticLog.validate(); err != nil {
+		return err
+	}
 	switch c.RUV2.ReportMode {
 	case RUReportModeResult, RUReportModeFull:
 	default:
