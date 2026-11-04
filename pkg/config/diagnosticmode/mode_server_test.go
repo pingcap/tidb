@@ -237,7 +237,9 @@ func startTiDBServer(t *testing.T) (*tidbserver.Server, *config.Config) {
 
 	runErr := make(chan error, 1)
 	go func() {
-		runErr <- server.Run(nil)
+		// Pass the Domain as cmd/tidb-server does, so force-init-stats holds
+		// the listener until the diagnostic initial stats load has finished.
+		runErr <- server.Run(dom)
 	}()
 	select {
 	case <-tidbserver.RunInGoTestChan:
@@ -247,6 +249,14 @@ func startTiDBServer(t *testing.T) (*tidbserver.Server, *config.Config) {
 	case <-time.After(10 * time.Second):
 		server.Close()
 		require.FailNow(t, "timed out waiting for TiDB server to start")
+	}
+	// The goroutine allowlist check is only meaningful once the asynchronous
+	// stats load and its SQL workers are gone.
+	select {
+	case <-dom.StatsHandle().InitStatsDone:
+	default:
+		server.Close()
+		require.FailNow(t, "initial stats load still running after the listener started")
 	}
 
 	t.Cleanup(func() {
