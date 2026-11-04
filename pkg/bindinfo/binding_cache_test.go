@@ -121,7 +121,6 @@ func TestBindCache(t *testing.T) {
 		value[i] = []Binding{{OriginalSQL: cacheKey}}
 		bigKey += cacheKey
 
-<<<<<<< HEAD
 		require.Equal(t, int64(116), calcBindCacheKVMem(key[i], value[i]))
 	}
 
@@ -159,77 +158,4 @@ func TestBindCache(t *testing.T) {
 	require.NotNil(t, err)
 	result = bindCache.get(bigBindCacheKey)
 	require.Nil(t, result)
-=======
-	err = bindCache.SetBinding("digest2", binding)
-	require.Nil(t, err)
-	require.NotNil(t, bindCache.GetBinding("digest2"))
-
-	err = bindCache.SetBinding("digest3", binding)
-	require.Nil(t, err)
-	require.NotNil(t, bindCache.GetBinding("digest3"))
-
-	require.Eventually(t, func() bool {
-		hit := 0
-		for _, digest := range []string{"digest1", "digest2", "digest3"} {
-			if bindCache.GetBinding(digest) != nil {
-				hit++
-			}
-		}
-		return hit == 2
-	}, time.Second*5, time.Millisecond*100)
-}
-
-func TestExtractTableName(t *testing.T) {
-	tc := []struct {
-		sql    string
-		tables []string
-	}{
-		{
-			"select /*+ HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t1.a=t2.a where t1.b is not null;",
-			[]string{"t1", "t1"},
-		},
-		{
-			"select * from t",
-			[]string{"t"},
-		},
-		{
-			"select * from t1, t2, t3;",
-			[]string{"t1", "t2", "t3"},
-		},
-		{
-			"select * from t1 where t1.a > (select max(a) from t2);",
-			[]string{"t1", "t2"},
-		},
-		{
-			"select * from t1 where t1.a > (select max(a) from t2 where t2.a > (select max(a) from t3));",
-			[]string{"t1", "t2", "t3"},
-		},
-		{
-			"select a,b,c,d,* from t1 where t1.a > (select max(a) from t2 where t2.a > (select max(a) from t3));",
-			[]string{"t1", "t2", "t3"},
-		},
-	}
-	for _, tt := range tc {
-		stmt, err := parser.New().ParseOneStmt(tt.sql, "", "")
-		require.NoErrorf(t, err, "sql: %s", tt.sql)
-		rs := CollectTableNames(stmt)
-		result, err := getTableName(rs)
-		require.NoErrorf(t, err, "sql: %s", tt.sql)
-		require.Equalf(t, tt.tables, result, "sql: %s", tt.sql)
-	}
->>>>>>> 27a4771206d (bindinfo: save bindinfo into stmtctx to avoid calling NormalizeStmtForBinding and getbindcache repeatedly (#65484))
-}
-
-func getTableName(n []*ast.TableName) ([]string, error) {
-	result := make([]string, 0, len(n))
-	for _, v := range n {
-		var sb strings.Builder
-		restoreFlags := format.RestoreKeyWordLowercase
-		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
-		if err := v.Restore(restoreCtx); err != nil {
-			return nil, err
-		}
-		result = append(result, sb.String())
-	}
-	return result, nil
 }
