@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -104,7 +105,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 	tk.MustExec("set group_concat_max_len=7")
 	tk.MustExec("set @runtime_v = 42")
 	hinted := func(t *testing.T, vars *variable.SessionVars) {
-		require.True(t, vars.StmtCtx.StmtHints.QueryHasHints)
+		assert.True(t, vars.StmtCtx.StmtHints.QueryHasHints)
 	}
 	cases := []struct {
 		sqlMode, sql string
@@ -115,7 +116,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		{sqlMode: "NO_BACKSLASH_ESCAPES", sql: `select hex(_binary'\0\\a'), _latin1'a', 'a''b'`},
 		{sql: "select /*+ STREAM_AGG() SET_VAR(tidb_distsql_scan_concurrency=2) */ count(*) from query_src", check: func(t *testing.T, vars *variable.SessionVars) {
 			hinted(t, vars)
-			require.Equal(t, 2, vars.DistSQLScanConcurrency())
+			assert.Equal(t, 2, vars.DistSQLScanConcurrency())
 		}},
 		// The quota of the worker overrides the quota of the submitter and hints.
 		{sql: "select /*+ STREAM_AGG() SET_VAR(tidb_mem_quota_query=1073741824) */ count(*) from query_src", check: hinted},
@@ -136,8 +137,8 @@ func TestImportQueryPlanExecution(t *testing.T) {
 			q := captureImportQuery(t, tk, sql)
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
 				vars := p.SCtx().GetSessionVars()
-				require.EqualValues(t, importQueryMemQuota, vars.MemQuotaQuery)
-				require.EqualValues(t, importQueryMemQuota, vars.MemTracker.GetBytesLimit())
+				assert.EqualValues(t, importQueryMemQuota, vars.MemQuotaQuery)
+				assert.EqualValues(t, importQueryMemQuota, vars.MemTracker.GetBytesLimit())
 				if c.check != nil {
 					c.check(t, vars)
 				}
@@ -162,7 +163,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 			submitVars.InMViewMaintenance = false
 			require.Equal(t, inMaintenance, q.InMViewMaintenance)
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
-				require.Equal(t, inMaintenance, p.SCtx().GetSessionVars().InMViewMaintenance)
+				assert.Equal(t, inMaintenance, p.SCtx().GetSessionVars().InMViewMaintenance)
 			})
 			runImportQuery(t, newWorkerSession(t, store), q, sql)
 		}
@@ -196,8 +197,8 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		q := captureImportQuery(t, tk, sql)
 		require.NotZero(t, q.SchemaVersion)
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
-			require.Equal(t, q.SchemaVersion, p.SCtx().GetSessionVars().SnapshotInfoschema.(infoschema.InfoSchema).SchemaMetaVersion())
-			require.Equal(t, "rg1", p.SCtx().GetSessionVars().StmtCtx.ResourceGroupName)
+			assert.Equal(t, q.SchemaVersion, p.SCtx().GetSessionVars().SnapshotInfoschema.(infoschema.InfoSchema).SchemaMetaVersion())
+			assert.Equal(t, "rg1", p.SCtx().GetSessionVars().StmtCtx.ResourceGroupName)
 		})
 		tk.Session().RollbackTxn(context.Background())
 		tk.MustExec("insert into query_src values (9,90,9)")
