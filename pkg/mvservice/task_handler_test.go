@@ -19,213 +19,13 @@ package mvservice
 import (
 	"context"
 	"errors"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/ngaut/pools"
-	basic "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
-
-type mockSessionPool struct{}
-
-type mockMVServiceHelper struct {
-	refreshNext                       time.Time
-	purgeNext                         time.Time
-	refreshErr                        error
-	purgeErr                          error
-	refreshPanic                      bool
-	purgePanic                        bool
-	fetchLogs                         map[int64]*mlogPurgeTask
-	fetchViews                        map[int64]*mviewTask
-	fetchLogsErr                      error
-	fetchViewsErr                     error
-	fetchLogsCalls                    atomic.Int32
-	fetchViewCalls                    atomic.Int32
-	serverRefreshCalls                atomic.Int32
-	refreshManualCancelBackoffApplied bool
-	purgeManualCancelBackoffApplied   bool
-	refreshManualCancelBackoffNext    time.Time
-	purgeManualCancelBackoffNext      time.Time
-	refreshManualCancelBackoffNextSet bool
-	purgeManualCancelBackoffNextSet   bool
-	refreshManualCancelBackoffErr     error
-	purgeManualCancelBackoffErr       error
-	refreshManualCancelBackoffCalls   atomic.Int32
-	purgeManualCancelBackoffCalls     atomic.Int32
-
-	lastRefreshID int64
-	lastPurgeID   int64
-
-	metricsMu          sync.Mutex
-	taskDurationCounts map[string]int
-	runEventCounts     map[string]int
-}
-
-type scriptedServerDiscoveryHelper struct {
-	*mockMVServiceHelper
-
-	mu           sync.Mutex
-	selfID       string
-	seq          []map[string]serverInfo
-	seqIdx       int
-	refreshErr   error
-	refreshCalls atomic.Int32
-}
-
-func (mockSessionPool) Get() (pools.Resource, error) { return nil, nil }
-
-func (mockSessionPool) Put(pools.Resource) {}
-
-func (mockSessionPool) Close() {}
-
-func (*mockMVServiceHelper) serverFilter(serverInfo) bool { return true }
-
-func (*mockMVServiceHelper) getServerInfo() (serverInfo, error) {
-	return serverInfo{ID: "test-server"}, nil
-}
-
-func (m *mockMVServiceHelper) getAllServerInfo(context.Context) (map[string]serverInfo, error) {
-	m.serverRefreshCalls.Add(1)
-	return map[string]serverInfo{"test-server": {ID: "test-server"}}, nil
-}
-
-func (m *mockMVServiceHelper) RefreshMV(_ context.Context, _ basic.SessionPool, mviewID int64) (nextRefresh time.Time, err error) {
-	m.lastRefreshID = mviewID
-	if m.refreshPanic {
-		panic("mock refresh panic")
-	}
-	return m.refreshNext, m.refreshErr
-}
-
-func (m *mockMVServiceHelper) PurgeMVLog(_ context.Context, _ basic.SessionPool, mlogID int64) (nextPurge time.Time, err error) {
-	m.lastPurgeID = mlogID
-	if m.purgePanic {
-		panic("mock purge panic")
-	}
-	return m.purgeNext, m.purgeErr
-}
-
-func (m *mockMVServiceHelper) TryBackoffRefreshManualCancel(_ context.Context, _ basic.SessionPool, _ int64, next time.Time) (bool, time.Time, error) {
-	m.refreshManualCancelBackoffCalls.Add(1)
-	if !m.refreshManualCancelBackoffNextSet && m.refreshManualCancelBackoffNext.IsZero() {
-		m.refreshManualCancelBackoffNext = next
-	}
-	return m.refreshManualCancelBackoffApplied, m.refreshManualCancelBackoffNext, m.refreshManualCancelBackoffErr
-}
-
-func (m *mockMVServiceHelper) TryBackoffPurgeManualCancel(_ context.Context, _ basic.SessionPool, _ int64, next time.Time) (bool, time.Time, error) {
-	m.purgeManualCancelBackoffCalls.Add(1)
-	if !m.purgeManualCancelBackoffNextSet && m.purgeManualCancelBackoffNext.IsZero() {
-		m.purgeManualCancelBackoffNext = next
-	}
-	return m.purgeManualCancelBackoffApplied, m.purgeManualCancelBackoffNext, m.purgeManualCancelBackoffErr
-}
-
-func (m *mockMVServiceHelper) LoadAllTiDBMVLogPurge(context.Context, basic.SessionPool) (map[int64]*mlogPurgeTask, error) {
-	m.fetchLogsCalls.Add(1)
-	if m.fetchLogsErr != nil {
-		return nil, m.fetchLogsErr
-	}
-	return m.fetchLogs, nil
-}
-
-func (m *mockMVServiceHelper) LoadAllTiDBMVRefresh(context.Context, basic.SessionPool) (map[int64]*mviewTask, error) {
-	m.fetchViewCalls.Add(1)
-	if m.fetchViewsErr != nil {
-		return nil, m.fetchViewsErr
-	}
-	return m.fetchViews, nil
-}
-
-func (*mockMVServiceHelper) reportMetrics(*MVService) {}
-
-func (m *mockMVServiceHelper) observeTaskDuration(taskType, result string, duration time.Duration) {
-	if duration < 0 {
-		return
-	}
-	m.metricsMu.Lock()
-	if m.taskDurationCounts == nil {
-		m.taskDurationCounts = make(map[string]int)
-	}
-	m.taskDurationCounts[taskType+"/"+result]++
-	m.metricsMu.Unlock()
-}
-
-func (m *mockMVServiceHelper) taskDurationCount(taskType, result string) int {
-	m.metricsMu.Lock()
-	defer m.metricsMu.Unlock()
-	return m.taskDurationCounts[taskType+"/"+result]
-}
-
-func (m *mockMVServiceHelper) fetchDurationCount(fetchType, result string) int {
-	m.metricsMu.Lock()
-	defer m.metricsMu.Unlock()
-	return m.taskDurationCounts[fetchType+"/"+result]
-}
-
-func (m *mockMVServiceHelper) observeRunEvent(eventType string) {
-	if eventType == "" {
-		return
-	}
-	m.metricsMu.Lock()
-	if m.runEventCounts == nil {
-		m.runEventCounts = make(map[string]int)
-	}
-	m.runEventCounts[eventType]++
-	m.metricsMu.Unlock()
-}
-
-func (m *mockMVServiceHelper) runEventCount(eventType string) int {
-	m.metricsMu.Lock()
-	defer m.metricsMu.Unlock()
-	return m.runEventCounts[eventType]
-}
-
-func (h *scriptedServerDiscoveryHelper) serverFilter(serverInfo) bool {
-	return true
-}
-
-func (h *scriptedServerDiscoveryHelper) getServerInfo() (serverInfo, error) {
-	if h.selfID != "" {
-		return serverInfo{ID: h.selfID}, nil
-	}
-	return serverInfo{ID: "test-server"}, nil
-}
-
-func (h *scriptedServerDiscoveryHelper) getAllServerInfo(context.Context) (map[string]serverInfo, error) {
-	h.refreshCalls.Add(1)
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.refreshErr != nil {
-		return nil, h.refreshErr
-	}
-	if len(h.seq) == 0 {
-		return map[string]serverInfo{"test-server": {ID: "test-server"}}, nil
-	}
-	cur := h.seq[h.seqIdx]
-	if h.seqIdx < len(h.seq)-1 {
-		h.seqIdx++
-	}
-	return cloneServerInfoMap(cur), nil
-}
-
-func waitExecutorFinishedCount(t *testing.T, svc *MVService, expected int64) {
-	t.Helper()
-	require.Eventually(t, func() bool {
-		return svc.combinedTaskExecutorMetrics().finishedCount == expected
-	}, testEventuallyWait, testEventuallyTick)
-}
-
-func cloneServerInfoMap(in map[string]serverInfo) map[string]serverInfo {
-	out := make(map[string]serverInfo, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
 
 func TestMVServiceDefaultTaskHandler(t *testing.T) {
 	installMockTimeForTest(t)
@@ -874,4 +674,324 @@ func TestMVServiceExecuteTaskSkipWhenDeleted(t *testing.T) {
 		require.NotEqual(t, int64(maxNextScheduleTs), item.Value.orderTs)
 		svc.mlogPurgeMu.Unlock()
 	})
+}
+
+func TestMVServiceMaintenanceTimerTriggersHistoryGC(t *testing.T) {
+	module := installMockTimeForTest(t)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	helper := &mockMVServiceHelper{
+		currentTSO: 1 << 40,
+		fetchLogs:  map[int64]*mlogPurgeTask{},
+		fetchViews: map[int64]*mviewTask{},
+	}
+	cfg := DefaultMVServiceConfig()
+	cfg.BasicInterval = time.Second
+	cfg.FetchInterval = 24 * time.Hour
+	svc := NewMVService(ctx, mockSessionPool{}, helper, cfg)
+	svc.lastMetaFetchMillis.Store(mvsNow().UnixMilli())
+	svc.nextHistoryGCAtMillis.Store(mvsNow().Add(defaultMVHistoryGCInterval).UnixMilli())
+	runMVServiceForTest(t, svc, cancel)
+
+	require.Equal(t, int32(0), helper.historyGCCalls.Load())
+	require.Eventually(t, func() bool {
+		return helper.serverRefreshCalls.Load() > 0
+	}, testEventuallyWait, testEventuallyTick)
+
+	module.Advance(defaultMVHistoryGCInterval + cfg.BasicInterval)
+	require.Eventually(t, func() bool {
+		return helper.historyGCCalls.Load() > 0
+	}, testEventuallyWait, testEventuallyTick)
+	require.Equal(t, helper.currentTSO, helper.lastHistoryGCCurrentTSO.Load())
+	require.Equal(t, int64(defaultMVHistoryGCRetention), helper.lastMViewHistoryGCRetention.Load())
+	require.Equal(t, int64(defaultMVHistoryGCRetention), helper.lastMLogHistoryGCRetention.Load())
+	require.Equal(t, defaultMVHistoryGCMaxRecords, helper.lastMViewHistoryGCMaxRecords.Load())
+	require.Equal(t, defaultMVHistoryGCMaxRecords, helper.lastMLogHistoryGCMaxRecords.Load())
+	require.Eventually(t, func() bool {
+		return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultSuccess) > 0
+	}, testEventuallyWait, testEventuallyTick)
+}
+
+func TestMVServiceMaybeGCMVHistorySkipsWhenNotOwner(t *testing.T) {
+	installMockTimeForTest(t)
+	helper := &mockMVServiceHelper{
+		currentTSO: 1 << 40,
+	}
+	cfg := DefaultMVServiceConfig()
+	cfg.ServerConsistentHashReplicas = 1
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+	svc.nextHistoryGCAtMillis.Store(0)
+	svc.historyGCRetryCount.Store(3)
+	setHistoryGCOwnerForTest(svc, 20)
+
+	svc.maybeGCOperationHistory(mvsNow())
+	require.Equal(t, int32(0), helper.historyGCCalls.Load())
+	require.Equal(t, 0, helper.runEventCount(mvRunEventGetTSOErr))
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultSuccess))
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultFailed))
+	require.Equal(t, int64(0), svc.historyGCRetryCount.Load())
+}
+
+func TestMVServiceMaybeGCMVHistoryReportsMetrics(t *testing.T) {
+	installMockTimeForTest(t)
+
+	t.Run("success", func(t *testing.T) {
+		helper := &mockMVServiceHelper{currentTSO: 1 << 40}
+		cfg := DefaultMVServiceConfig()
+		cfg.ServerConsistentHashReplicas = 1
+		svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+		setHistoryGCOwnerForTest(svc, 5)
+
+		svc.maybeGCOperationHistory(mvsNow())
+		require.Eventually(t, func() bool {
+			return helper.historyGCCalls.Load() == 1
+		}, testEventuallyWait, testEventuallyTick)
+		require.Eventually(t, func() bool {
+			return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultSuccess) > 0
+		}, testEventuallyWait, testEventuallyTick)
+	})
+
+	t.Run("get_tso_error", func(t *testing.T) {
+		helper := &mockMVServiceHelper{currentTSOErr: errors.New("get tso failed")}
+		cfg := DefaultMVServiceConfig()
+		cfg.ServerConsistentHashReplicas = 1
+		svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+		setHistoryGCOwnerForTest(svc, 5)
+
+		svc.maybeGCOperationHistory(mvsNow())
+		require.Equal(t, int32(0), helper.historyGCCalls.Load())
+		require.Eventually(t, func() bool {
+			return helper.runEventCount(mvRunEventGetTSOErr) > 0
+		}, testEventuallyWait, testEventuallyTick)
+		require.Eventually(t, func() bool {
+			return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultFailed) > 0
+		}, testEventuallyWait, testEventuallyTick)
+	})
+
+	t.Run("purge_error", func(t *testing.T) {
+		helper := &mockMVServiceHelper{
+			currentTSO:   1 << 40,
+			historyGCErr: errors.New("purge failed"),
+		}
+		cfg := DefaultMVServiceConfig()
+		cfg.ServerConsistentHashReplicas = 1
+		svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+		setHistoryGCOwnerForTest(svc, 5)
+
+		svc.maybeGCOperationHistory(mvsNow())
+		require.Eventually(t, func() bool {
+			return helper.historyGCCalls.Load() == 1
+		}, testEventuallyWait, testEventuallyTick)
+		require.Eventually(t, func() bool {
+			return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultFailed) > 0
+		}, testEventuallyWait, testEventuallyTick)
+	})
+
+	t.Run("get_tso_error_retries_quickly", func(t *testing.T) {
+		helper := &mockMVServiceHelper{currentTSOErr: errors.New("get tso failed")}
+		cfg := DefaultMVServiceConfig()
+		cfg.ServerConsistentHashReplicas = 1
+		cfg.BasicInterval = 100 * time.Millisecond
+		svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+		setHistoryGCOwnerForTest(svc, 5)
+
+		startAt := mvsNow()
+		svc.maybeGCOperationHistory(startAt)
+		require.Equal(t, int32(0), helper.historyGCCalls.Load())
+		require.Eventually(t, func() bool {
+			return helper.runEventCount(mvRunEventGetTSOErr) > 0
+		}, testEventuallyWait, testEventuallyTick)
+
+		helper.currentTSOErr = nil
+		svc.maybeGCOperationHistory(startAt.Add(cfg.BasicInterval))
+		require.Eventually(t, func() bool {
+			return helper.historyGCCalls.Load() == 1
+		}, testEventuallyWait, testEventuallyTick)
+	})
+
+	t.Run("error_waits_for_basic_interval_retry", func(t *testing.T) {
+		helper := &mockMVServiceHelper{currentTSOErr: context.Canceled}
+		cfg := DefaultMVServiceConfig()
+		cfg.ServerConsistentHashReplicas = 1
+		cfg.BasicInterval = 100 * time.Millisecond
+		svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+		setHistoryGCOwnerForTest(svc, 5)
+
+		startAt := mvsNow()
+		svc.maybeGCOperationHistory(startAt)
+		require.Equal(t, int32(0), helper.historyGCCalls.Load())
+		require.Eventually(t, func() bool {
+			return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultFailed) > 0
+		}, testEventuallyWait, testEventuallyTick)
+
+		helper.currentTSOErr = nil
+		svc.maybeGCOperationHistory(startAt.Add(cfg.BasicInterval / 2))
+		require.Equal(t, int32(0), helper.historyGCCalls.Load())
+
+		svc.maybeGCOperationHistory(startAt.Add(cfg.BasicInterval))
+		require.Eventually(t, func() bool {
+			return helper.historyGCCalls.Load() == 1
+		}, testEventuallyWait, testEventuallyTick)
+	})
+
+	t.Run("panic_in_history_gc_is_recovered", func(t *testing.T) {
+		helper := &mockMVServiceHelper{
+			currentTSO:     1 << 40,
+			historyGCPanic: true,
+		}
+		cfg := DefaultMVServiceConfig()
+		cfg.ServerConsistentHashReplicas = 1
+		svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+		setHistoryGCOwnerForTest(svc, 5)
+
+		svc.maybeGCOperationHistory(mvsNow())
+		require.Eventually(t, func() bool {
+			return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultFailed) > 0
+		}, testEventuallyWait, testEventuallyTick)
+		require.Eventually(t, func() bool {
+			return !svc.historyGCRunning.Load()
+		}, testEventuallyWait, testEventuallyTick)
+	})
+}
+
+func TestServerHelperMLogAnalyzeControls(t *testing.T) {
+	oldEnabled := vardef.RunAutoAnalyze.Load()
+	t.Cleanup(func() { vardef.RunAutoAnalyze.Store(oldEnabled) })
+	restoreTime := InstallMockTimeModuleForTest(NewMockTimeModule(time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC)))
+	t.Cleanup(restoreTime)
+	for _, tt := range []struct {
+		name    string
+		enabled bool
+		start   string
+		end     string
+		allowed bool
+	}{
+		{name: "disabled", start: "00:00 +0000", end: "23:59 +0000"},
+		{name: "outside window", enabled: true, start: "13:00 +0000", end: "14:00 +0000"},
+		{name: "inside window", enabled: true, start: "11:00 +0000", end: "13:00 +0000", allowed: true},
+		{name: "overnight inside", enabled: true, start: "11:00 +0000", end: "01:00 +0000", allowed: true},
+		{name: "overnight outside", enabled: true, start: "23:00 +0000", end: "01:00 +0000"},
+		{name: "offset inside", enabled: true, start: "19:00 +0800", end: "21:00 +0800", allowed: true},
+		{name: "invalid window", enabled: true, start: "invalid", end: "13:00 +0000"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			vardef.RunAutoAnalyze.Store(tt.enabled)
+			for _, phase := range []string{"scan", "execute"} {
+				t.Run(phase, func(t *testing.T) {
+					helper, se := newMLogAnalyzeHelperForTest(t)
+					se.restrictedRows[testSQLAutoAnalyzeParameters] = []chunk.Row{
+						chunk.MutRowFromValues(vardef.TiDBAutoAnalyzeStartTime, tt.start).ToRow(),
+						chunk.MutRowFromValues(vardef.TiDBAutoAnalyzeEndTime, tt.end).ToRow(),
+					}
+					pool := recordingSessionPool{se: se}
+					if phase == "scan" {
+						tasks, err := helper.LoadAllTiDBMVLogAnalyzeTasks(context.Background(), pool)
+						require.NoError(t, err)
+						require.Equal(t, tt.allowed, len(tasks) == 1)
+					} else {
+						require.NoError(t, helper.AnalyzeMVLog(context.Background(), pool, 201))
+						require.Equal(t, tt.allowed, containsAnalyzeSQL(se.executedRestrictedSQL))
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestMVServiceMLogAnalyzeScanSubmitsTasks(t *testing.T) {
+	installMockTimeForTest(t)
+	helper := &mockMVServiceHelper{
+		fetchAnalyzeTasks: map[int64]*mlogAnalyzeTask{
+			101: {schemaName: "test", mlogName: "$mlog$t"},
+		},
+	}
+	cfg := DefaultMVServiceConfig()
+	cfg.ServerConsistentHashReplicas = 1
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+	setTaskOwnersForTest(svc, map[int64]uint32{101: 5})
+	svc.mlogAnalyzeExecutor.Run()
+	t.Cleanup(func() {
+		svc.mlogAnalyzeExecutor.Close()
+	})
+
+	now := mvsNow()
+	svc.maybeScanMLogAnalyze(now)
+	require.Eventually(t, func() bool {
+		return helper.analyzeMLogCalls.Load() == 1 && svc.metrics.mvLogAnalyzeTaskCount.Load() == 0
+	}, testEventuallyWait, testEventuallyTick)
+	require.Equal(t, int64(101), helper.lastAnalyzeID.Load())
+	require.Equal(t, int64(0), svc.metrics.mvLogAnalyzeTaskCount.Load())
+	require.Equal(t, now.Add(mlogAnalyzeScanInterval).UnixMilli(), svc.nextMLogAnalyzeScanMillis.Load())
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchTypeMLogAnalyze, mvDurationResultSuccess))
+
+	svc.maybeScanMLogAnalyze(now.Add(mlogAnalyzeScanInterval - time.Second))
+	require.Equal(t, int32(1), helper.fetchAnalyzeTaskCalls.Load())
+}
+
+func TestMVServiceMLogAnalyzeScanFailureWaitsUntilNextInterval(t *testing.T) {
+	installMockTimeForTest(t)
+	helper := &mockMVServiceHelper{
+		fetchAnalyzeTasksErr: errors.New("mock mlog analyze scan failed"),
+	}
+	cfg := DefaultMVServiceConfig()
+	cfg.ServerConsistentHashReplicas = 1
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+
+	now := mvsNow()
+	svc.maybeScanMLogAnalyze(now)
+	require.Eventually(t, func() bool {
+		return !svc.mlogAnalyzeScanRunning.Load()
+	}, testEventuallyWait, testEventuallyTick)
+	require.Equal(t, int32(1), helper.fetchAnalyzeTaskCalls.Load())
+	require.Equal(t, int32(0), helper.analyzeMLogCalls.Load())
+	require.Equal(t, now.Add(mlogAnalyzeScanInterval).UnixMilli(), svc.nextMLogAnalyzeScanMillis.Load())
+	require.Equal(t, 1, helper.fetchDurationCount(mvFetchTypeMLogAnalyze, mvDurationResultFailed))
+
+	svc.maybeScanMLogAnalyze(now.Add(mlogAnalyzeScanInterval - time.Second))
+	require.Equal(t, int32(1), helper.fetchAnalyzeTaskCalls.Load())
+}
+
+func TestMVServiceMLogAnalyzeTaskDedupAndNoImmediateRetry(t *testing.T) {
+	installMockTimeForTest(t)
+	entered := make(chan struct{}, 1)
+	block := make(chan struct{})
+	helper := &mockMVServiceHelper{
+		analyzeMLogErr:     errors.New("analyze failed"),
+		analyzeMLogEntered: entered,
+		blockAnalyzeMLog:   block,
+	}
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+	svc.mlogAnalyzeExecutor.Run()
+	t.Cleanup(func() {
+		close(block)
+		svc.mlogAnalyzeExecutor.Close()
+	})
+
+	svc.analyzeMVLog([]int64{101, 101})
+	require.Eventually(t, func() bool {
+		return helper.analyzeMLogCalls.Load() == 1
+	}, testEventuallyWait, testEventuallyTick)
+	<-entered
+	require.Equal(t, int64(1), svc.metrics.mvLogAnalyzeTaskCount.Load())
+	require.Equal(t, int64(0), svc.mlogAnalyzeExecutor.metrics.counters.failedCount.Load())
+
+	block <- struct{}{}
+	require.Eventually(t, func() bool {
+		return svc.metrics.mvLogAnalyzeTaskCount.Load() == 0
+	}, testEventuallyWait, testEventuallyTick)
+	require.Equal(t, int32(1), helper.analyzeMLogCalls.Load())
+	require.Equal(t, int64(1), svc.mlogAnalyzeExecutor.metrics.counters.failedCount.Load())
+}
+
+func TestMVServiceMLogAnalyzeSubmitRejectedCleansDedupState(t *testing.T) {
+	installMockTimeForTest(t)
+	helper := &mockMVServiceHelper{}
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+	require.True(t, svc.mlogAnalyzeExecutor.Close())
+
+	svc.analyzeMVLog([]int64{101})
+
+	require.Equal(t, int64(0), svc.metrics.mvLogAnalyzeTaskCount.Load())
+	require.Equal(t, int32(0), helper.analyzeMLogCalls.Load())
+	require.Equal(t, int64(1), svc.mlogAnalyzeExecutor.metrics.counters.rejectedCount.Load())
 }

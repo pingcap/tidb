@@ -1628,6 +1628,7 @@ func TestTiFlashFallback(t *testing.T) {
 	require.NoError(t, cc.HandleStmtPrepare(ctx, "select sum(a) from t"))
 	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
+	require.Contains(t, cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
 
 	// test COM_STMT_FETCH (cursor mode)
 	require.Error(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}))
@@ -1645,6 +1646,10 @@ func TestTiFlashFallback(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/fetchNextErr", "return(\"secondNext\")"))
 	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
 	require.Error(t, cc.handleQuery(ctx, "select * from t t1 join t t2 on t1.a = t2.a"))
+	// Only the first execution will fail: a replay would succeed and hide the error.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/fetchNextErr", `2*return("secondNext")->off`))
+	require.Error(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
+	require.Contains(t, cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/fetchNextErr"))
 
 	// simple TiFlash query (unary + non-streaming)

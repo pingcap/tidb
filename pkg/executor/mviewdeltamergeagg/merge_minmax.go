@@ -188,7 +188,13 @@ func (e *Exec) buildMinMaxMerger(
 		}
 	}
 
-	switch retTp.EvalType() {
+	evalType := retTp.EvalType()
+	// Match ordinary MIN/MAX aggregation: BIT values use byte literals in chunks,
+	// even though their evaluation type is ETInt. Keep that layout for writes and recomputation.
+	if retTp.GetType() == mysql.TypeBit {
+		evalType = types.ETString
+	}
+	switch evalType {
 	case types.ETInt:
 		if mysql.HasUnsignedFlag(retTp.GetFlag()) {
 			return &minMaxUintMerger{minMaxMergerBase: base}, nil
@@ -207,7 +213,7 @@ func (e *Exec) buildMinMaxMerger(
 		return &minMaxDurationMerger{minMaxMergerBase: base}, nil
 	case types.ETString:
 		switch retTp.GetType() {
-		case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		case mysql.TypeBit, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 			return &minMaxStringMerger{
 				minMaxMergerBase: base,
 				collator:         collate.GetCollator(retTp.GetCollate()),

@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,6 +37,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/stretchr/testify/require"
 	clientutil "github.com/tikv/client-go/v2/util"
@@ -697,6 +699,275 @@ func TestStmtSummaryHistoryOpenEndedTimeRange(t *testing.T) {
 		"history_early 2022-12-27 10:00:00",
 		"history_middle 2022-12-27 14:00:00",
 	))
+}
+
+// TestStmtSummaryHistoryPreparedTimeRange exercises Dashboard's real prepared
+// query through the persistent reader, including the session prepared-statement
+// API with bound arguments.
+func TestStmtSummaryHistoryPreparedTimeRange(t *testing.T) {
+	defer config.RestoreFunc()()
+	dir := t.TempDir()
+	filename := filepath.Join(dir, "tidb-statements.log")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryFilename = filename
+		conf.Instance.StmtSummaryEnablePersistent = true
+	})
+	require.NoError(t, stmtsummaryv2.Setup(&stmtsummaryv2.Config{Filename: filename}))
+	defer stmtsummaryv2.Close()
+
+	const begin = int64(1672106400) // 2022-12-27 02:00:00 UTC
+	for i := range 3 {
+		start := begin + int64(i)*3600
+		end := start + 600
+		name := time.Unix(end, 0).In(time.Local).Format("2006-01-02T15-04-05.000")
+		path := filepath.Join(dir, "tidb-statements-"+name+".log")
+		content := fmt.Sprintf("{\"begin\":%d,\"end\":%d,\"digest\":\"window%d\",\"exec_count\":1}\n", start, end, i)
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	}
+
+	store := testkit.CreateMockStore(t)
+	tk := newTestKitWithRoot(t, store)
+	const query = "select digest, sum(exec_count) from information_schema.statements_summary_history where summary_begin_time <= from_unixtime(?) and summary_end_time >= from_unixtime(?) group by digest order by digest"
+	tk.MustExec("prepare stmt from '" + query + "'")
+	var scans, parses atomic.Int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/util/stmtsummary/v2/stmtSummaryHistoryScanFile", func(string) {
+		scans.Add(1)
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/util/stmtsummary/v2/stmtSummaryHistoryParseRecord", func() {
+		parses.Add(1)
+	})
+
+	for _, cache := range []int{1, 0} {
+		tk.MustExec(fmt.Sprintf("set tidb_enable_prepared_plan_cache = %d", cache))
+		for _, tz := range []string{"+00:00", "+09:00"} {
+			tk.MustExec("set time_zone = '" + tz + "'")
+			for _, i := range []int{1, 0, 2, 1} {
+				start := begin + int64(i)*3600
+				// The exact boundary overlaps the persisted window at its end.
+				for _, bounds := range [][2]int64{{start + 600, start}, {start + 600, start + 600}} {
+					end, start := bounds[0], bounds[1]
+					tk.MustExec(fmt.Sprintf("set @end = %d, @begin = %d", end, start))
+					scans.Store(0)
+					parses.Store(0)
+					prepared := tk.MustQuery("execute stmt using @end, @begin").Rows()
+					require.Equal(t, int64(1), scans.Load(), "cache=%d tz=%s window=%d", cache, tz, i)
+					require.Equal(t, int64(1), parses.Load())
+					require.Equal(t, testkit.Rows(fmt.Sprintf("window%d 1", i)), prepared)
+					scans.Store(0)
+					parses.Store(0)
+					tk.MustQuery(query, end, start).Check(prepared)
+					require.Equal(t, int64(1), scans.Load(), "binary prepared execution")
+					// Disable predicate extraction to compare with a genuine full scan.
+					testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor", "return(true)")
+					scans.Store(0)
+					parses.Store(0)
+					tk.MustQuery("execute stmt using @end, @begin").Check(prepared)
+					require.Equal(t, int64(3), scans.Load(), "unpruned baseline")
+					require.Equal(t, int64(3), parses.Load())
+					testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor")
+				}
+			}
+			tk.MustExec(fmt.Sprintf("set @end = %d, @begin = %d", begin-1, begin-600))
+			scans.Store(0)
+			parses.Store(0)
+			tk.MustQuery("execute stmt using @end, @begin").Check(testkit.Rows())
+			require.Zero(t, scans.Load(), "nonoverlapping time range")
+			require.Zero(t, parses.Load())
+			tk.MustExec(fmt.Sprintf("set @end = %d, @begin = %d", begin, begin+7200))
+			tk.MustQuery("execute stmt using @end, @begin").Check(testkit.Rows())
+			tk.MustExec(fmt.Sprintf("set @end = %d, @begin = %d", begin+600, begin))
+			tk.MustQuery("execute stmt using @end, @begin").Check(testkit.Rows("window0 1"))
+			tk.MustQuery(query, fmt.Sprint(begin+600), fmt.Sprint(begin)).Check(testkit.Rows("window0 1"))
+			tk.MustExec("set @end = null, @begin = null")
+			tk.MustQuery("execute stmt using @end, @begin").Check(testkit.Rows())
+			// Missing time predicates still scan all retained files.
+			scans.Store(0)
+			parses.Store(0)
+			tk.MustQuery("select distinct digest from information_schema.statements_summary_history where digest like 'window%' order by digest").Check(testkit.Rows("window0", "window1", "window2"))
+			require.Equal(t, int64(3), scans.Load())
+		}
+	}
+	t.Log("Prepared range: 1 file scanned / 1 record parsed; unpruned baseline: 3 files / 3 records; no match: 0 / 0. File-header reads are not counted.")
+
+	// Fractional-second bounds must never prune a window the exact predicates keep:
+	// the coarse range may only widen, and the retained SQL predicates filter exactly.
+	tk.MustExec("set time_zone = '+00:00'")
+	fractionalCases := []struct {
+		query string
+		end   string
+		begin string
+	}{
+		{
+			// window0 begins exactly at `begin`; begin_time < begin+500us keeps it.
+			"select digest from information_schema.statements_summary_history where summary_begin_time < from_unixtime(?) and summary_end_time >= from_unixtime(?) order by digest",
+			fmt.Sprintf("%d.000500", begin), fmt.Sprint(begin - 1),
+		},
+		{
+			"select digest from information_schema.statements_summary_history where summary_begin_time <= from_unixtime(?) and summary_end_time > from_unixtime(?) order by digest",
+			fmt.Sprintf("%d.000500", begin), fmt.Sprint(begin - 600),
+		},
+	}
+	for _, fc := range fractionalCases {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor", "return(true)")
+		baseline := tk.MustQuery(fc.query, fc.end, fc.begin).Rows()
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor")
+		require.Equal(t, testkit.Rows("window0"), baseline)
+		tk.MustQuery(fc.query, fc.end, fc.begin).Check(baseline)
+	}
+
+	// Time pruning must preserve windows containing both bounds, and bounds
+	// outside UnixNano's range must not turn into unrelated historical dates.
+	for _, cache := range []int{0, 1} {
+		for _, ca := range []struct {
+			name      string
+			predicate string
+			args      []any
+			want      []string
+		}{
+			{
+				name:      "CrossedEndpoints",
+				predicate: "summary_begin_time <= from_unixtime(?) and summary_end_time >= from_unixtime(?)",
+				args:      []any{begin + 100, begin + 500},
+				want:      []string{"window0"},
+			},
+			{
+				name:      "StrictPoint",
+				predicate: "summary_begin_time < from_unixtime(?) and summary_end_time > from_unixtime(?)",
+				args:      []any{begin + 300, begin + 300},
+				want:      []string{"window0"},
+			},
+			{
+				name:      "FractionalPoint",
+				predicate: "summary_begin_time < from_unixtime(?) and summary_end_time >= from_unixtime(?)",
+				args:      []any{fmt.Sprintf("%d.000500", begin), begin},
+				want:      []string{"window0"},
+			},
+			{
+				name:      "FutureOverflow",
+				predicate: "summary_begin_time <= from_unixtime(?)",
+				args:      []any{int64(32536771199)},
+				want:      []string{"window0", "window1", "window2"},
+			},
+			{
+				name:      "FutureOverflowWithSafeLowerBound",
+				predicate: "summary_begin_time <= from_unixtime(?) and summary_end_time >= from_unixtime(?)",
+				args:      []any{int64(32536771199), begin + 3600},
+				want:      []string{"window1", "window2"},
+			},
+		} {
+			t.Run(fmt.Sprintf("%s/cache%d", ca.name, cache), func(t *testing.T) {
+				tk := newTestKitWithRoot(t, store)
+				tk.MustExec("set time_zone = '+00:00'")
+				tk.MustExec(fmt.Sprintf("set tidb_enable_prepared_plan_cache = %d", cache))
+				// Exclude the live summary so collecting the test SQL cannot affect
+				// the far-future upper-bound baseline between repeated executions.
+				query := "select digest from information_schema.statements_summary_history where digest in ('window0', 'window1', 'window2') and " + ca.predicate + " order by digest"
+				testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor", "return(true)")
+				baseline := tk.MustQuery(query, ca.args...).Rows()
+				testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor")
+				require.Equal(t, testkit.Rows(ca.want...), baseline)
+				tk.MustQuery(query, ca.args...).Check(baseline)
+
+				tk.MustExec("prepare review_stmt from '" + strings.ReplaceAll(query, "'", "''") + "'")
+				vars := make([]string, 0, len(ca.args))
+				for i, arg := range ca.args {
+					name := fmt.Sprintf("@review%d", i)
+					value := fmt.Sprint(arg)
+					if _, ok := arg.(string); ok {
+						value = "'" + strings.ReplaceAll(value, "'", "''") + "'"
+					}
+					tk.MustExec("set " + name + " = " + value)
+					vars = append(vars, name)
+				}
+				tk.MustQuery("execute review_stmt using " + strings.Join(vars, ", ")).Check(baseline)
+			})
+		}
+	}
+}
+
+func TestStmtSummaryHistoryPreparedTimeRangeDST(t *testing.T) {
+	for _, ca := range []struct {
+		name     string
+		timezone string
+		first    time.Time
+		second   time.Time
+	}{
+		{
+			name:     "NewYork",
+			timezone: "America/New_York",
+			first:    time.Date(2024, 11, 3, 5, 30, 0, 0, time.UTC),
+			second:   time.Date(2024, 11, 3, 6, 30, 0, 0, time.UTC),
+		},
+		{
+			name:     "LordHowe",
+			timezone: "Australia/Lord_Howe",
+			first:    time.Date(2024, 4, 6, 14, 45, 0, 0, time.UTC),
+			second:   time.Date(2024, 4, 6, 15, 15, 0, 0, time.UTC),
+		},
+	} {
+		t.Run(ca.name, func(t *testing.T) {
+			defer config.RestoreFunc()()
+			dir := t.TempDir()
+			filename := filepath.Join(dir, "tidb-statements.log")
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.Instance.StmtSummaryFilename = filename
+				conf.Instance.StmtSummaryEnablePersistent = true
+			})
+			require.NoError(t, stmtsummaryv2.Setup(&stmtsummaryv2.Config{Filename: filename}))
+			defer stmtsummaryv2.Close()
+			// Both windows have the same wall-clock time, but distinct Unix times.
+			for i, point := range []time.Time{ca.first, ca.second} {
+				end := point.Add(time.Minute)
+				// Keep filenames distinct even when the server's local time also folds.
+				path := filepath.Join(dir, "tidb-statements-"+end.Add(time.Duration(i)*time.Millisecond).In(time.Local).Format("2006-01-02T15-04-05.000")+".log")
+				content := fmt.Sprintf("{\"begin\":%d,\"end\":%d,\"digest\":\"fold%d\",\"exec_count\":1}\n", point.Add(-time.Minute).Unix(), end.Unix(), i)
+				require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+			}
+			store := testkit.CreateMockStore(t)
+			tk := newTestKitWithRoot(t, store)
+			tk.MustExec("set time_zone = '" + ca.timezone + "'")
+			for _, cache := range []int{0, 1} {
+				tk.MustExec(fmt.Sprintf("set tidb_enable_prepared_plan_cache = %d", cache))
+				for _, predicate := range []string{
+					"summary_begin_time <= from_unixtime(?) and summary_end_time >= from_unixtime(?)",
+					"summary_begin_time <= from_unixtime(?)",
+					"summary_end_time >= from_unixtime(?)",
+				} {
+					query := "select digest, sum(exec_count) from information_schema.statements_summary_history where " + predicate + " and digest in ('fold0', 'fold1') group by digest order by digest"
+					tk.MustExec("prepare dst_stmt from '" + strings.ReplaceAll(query, "'", "''") + "'")
+					for _, bounds := range [][2]int64{
+						{ca.first.Unix(), ca.first.Unix()},
+						{ca.second.Unix(), ca.second.Unix()},
+						// Unix bounds are reversed, while their local-time interval is valid.
+						{ca.first.Add(5 * time.Minute).Unix(), ca.second.Add(-5 * time.Minute).Unix()},
+					} {
+						tk.MustExec(fmt.Sprintf("set @end = %d, @begin = %d", bounds[0], bounds[1]))
+						execute := "execute dst_stmt using @end, @begin"
+						if predicate == "summary_begin_time <= from_unixtime(?)" {
+							execute = "execute dst_stmt using @end"
+						}
+						if predicate == "summary_end_time >= from_unixtime(?)" {
+							execute = "execute dst_stmt using @begin"
+						}
+						testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor", "return(true)")
+						baseline := tk.MustQuery(execute).Rows()
+						testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor")
+						require.Equal(t, testkit.Rows("fold0 1", "fold1 1"), baseline)
+						tk.MustQuery(execute).Check(baseline)
+						if predicate == "summary_begin_time <= from_unixtime(?)" {
+							tk.MustQuery(query, bounds[0]).Check(baseline)
+							continue
+						}
+						if predicate == "summary_end_time >= from_unixtime(?)" {
+							tk.MustQuery(query, bounds[1]).Check(baseline)
+							continue
+						}
+						tk.MustQuery(query, bounds[0], bounds[1]).Check(baseline)
+					}
+				}
+			}
+		})
+	}
 }
 
 func TestPerformanceSchemaforNonPrepPlanCache(t *testing.T) {
