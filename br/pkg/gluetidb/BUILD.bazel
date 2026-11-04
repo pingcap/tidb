@@ -40,6 +40,7 @@ go_test(
     flaky = True,
     deps = [
         "//br/pkg/glue",
+        "//pkg/domain/infosync",
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/session",

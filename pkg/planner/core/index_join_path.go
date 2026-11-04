@@ -345,9 +345,9 @@ func indexJoinPathCountAfterAccess4Compare(
 	usedColsLen int,
 ) (countAfterAccess4IndexJoin float64, countAfterAccess4IndexJoinOK bool) {
 	if path.CountAfterAccess <= 0 ||
-		indexJoinInfo.innerTableStats == nil ||
-		indexJoinInfo.innerTableStats.StatsVersion == statistics.PseudoVersion ||
-		indexJoinInfo.innerTableStats.HistColl == nil {
+		indexJoinInfo.innerStats == nil ||
+		indexJoinInfo.innerStats.StatsVersion == statistics.PseudoVersion ||
+		indexJoinInfo.innerStats.HistColl == nil {
 		return path.CountAfterAccess, false
 	}
 	var (
@@ -377,7 +377,7 @@ func indexJoinPathCountAfterAccess4Compare(
 	if !joinKeyFound || joinKeyColSeen > 1 {
 		return path.CountAfterAccess, false
 	}
-	colStats := indexJoinInfo.innerTableStats.HistColl.GetCol(joinKeyColID)
+	colStats := indexJoinInfo.innerStats.HistColl.GetCol(joinKeyColID)
 	if colStats == nil || !colStats.IsStatsInitialized() || colStats.NDV <= 0 {
 		return path.CountAfterAccess, false
 	}
@@ -671,10 +671,11 @@ func indexJoinPathRemoveUselessEQIn(buildTmp *indexJoinPathTmp, idxCols []*expre
 func getBestIndexJoinPathResult(
 	join *logicalop.LogicalJoin,
 	innerChild *logicalop.DataSource,
+	rangeOtherConds []expression.Expression,
 	innerJoinKeys, outerJoinKeys []*expression.Column,
 	checkPathValid func(path *util.AccessPath) bool) (*indexJoinPathResult, []int) {
 	indexJoinInfo := &indexJoinPathInfo{
-		joinOtherConditions:   join.OtherConditions,
+		joinOtherConditions:   rangeOtherConds,
 		outerJoinKeys:         outerJoinKeys,
 		innerJoinKeys:         innerJoinKeys,
 		innerPushedConditions: innerChild.PushedDownConds,

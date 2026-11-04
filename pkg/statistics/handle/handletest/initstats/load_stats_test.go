@@ -101,7 +101,9 @@ func testConcurrentlyInitStats(t *testing.T) {
 			require.False(t, col.IsAllEvicted())
 		}
 	}
-	require.Equal(t, int64(128), handle.GetMaxTidRecordForTest())
+	lastTable, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t9"))
+	require.NoError(t, err)
+	require.Equal(t, lastTable.Meta().ID, handle.GetMaxTidRecordForTest())
 }
 
 func TestDropTableBeforeConcurrentlyInitStats(t *testing.T) {

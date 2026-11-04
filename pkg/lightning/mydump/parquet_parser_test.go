@@ -106,6 +106,44 @@ func TestParquetParser(t *testing.T) {
 	require.ErrorIs(t, reader.ReadRow(), io.EOF)
 }
 
+type closeTrackingExternalStorage struct {
+	storage.ExternalStorage
+	reader storage.ExternalFileReader
+}
+
+// Open returns the reader tracked by the test.
+func (s *closeTrackingExternalStorage) Open(context.Context, string, *storage.ReaderOption) (storage.ExternalFileReader, error) {
+	return s.reader, nil
+}
+
+type closeTrackingExternalFileReader struct {
+	storage.ExternalFileReader
+	closed bool
+}
+
+// Close records the call and closes the underlying reader.
+func (r *closeTrackingExternalFileReader) Close() error {
+	r.closed = true
+	return r.ExternalFileReader.Close()
+}
+
+// TestReadParquetFileRowCountClosesReader verifies row count reads release their object reader.
+func TestReadParquetFileRowCountClosesReader(t *testing.T) {
+	ctx := context.Background()
+	localStore, err := storage.NewLocalStorage(".")
+	require.NoError(t, err)
+	defer localStore.Close()
+	reader, err := localStore.Open(ctx, "examples/test.parquet", nil)
+	require.NoError(t, err)
+	trackedReader := &closeTrackingExternalFileReader{ExternalFileReader: reader}
+	store := &closeTrackingExternalStorage{ExternalStorage: localStore, reader: trackedReader}
+
+	rows, err := ReadParquetFileRowCountByFile(ctx, store, SourceFileMeta{Path: "examples/test.parquet"})
+	require.NoError(t, err)
+	require.Greater(t, rows, int64(0))
+	assert.True(t, trackedReader.closed)
+}
+
 func TestParquetVariousTypes(t *testing.T) {
 	pc := []ParquetColumn{
 		{
