@@ -105,6 +105,9 @@ pub fn cluster_session_stack(
     memory_arbitrator: Option<Arc<tidb_memory::MemArbitrator>>,
 ) -> Result<(ClusterStack, ProductionReadProcessAuthority), RunConfiguredNodeError> {
     let mut loaded = None;
+    let mut start_mode = tidb_ddl::StartMode::Normal;
+    let mut run_upgrade = false;
+    let mut upgrade_lock: Option<Box<dyn FnOnce() + Send>> = None;
     // Go `tikv.NewKVStore` in `driver.TiKVDriver.Open`: the node's one
     // client-rust store, which loads the txn safe point before serving.
     let tikv_store = tidb_txnkv::driver::tikv_store::TikvStore::connect_with_security(
@@ -155,12 +158,43 @@ pub fn cluster_session_stack(
             // catalog from then on, so bootstrap it right here and let the
             // catalog load below read the schema just published. A cluster a
             // TiDB already bootstrapped skips the publish entirely.
+            let upgrade_store =
+                tidb_session::bootstrap::TxnUpgradeStore::new(opener, COPROCESSOR_QUERY_TIMEOUT);
+            // Go `getStoreBootstrapVersionWithCache` and `getStartMode`.
+            let ver = tidb_session::upgrade_run::must_get_store_bootstrap_version(&upgrade_store)?;
+            let mut mode = tidb_session::upgrade_run::get_start_mode(ver);
+            if mode == tidb_ddl::StartMode::Upgrade {
+                // Go `runInBootstrapSession`: the lock is held until the
+                // upgrade finishes.
+                tidb_logutil::bg_logger().info("[upgrade] get owner lock to upgrade", &[]);
+                let release = tidb_session::bootstrap::acquire_lock(
+                    etcd.clone().map(|client| client as Arc<dyn tidb_owner::OwnerStore>),
+                )
+                .map_err(|error| format!("[upgrade] get owner lock failed: {error}"))?;
+                upgrade_lock = Some(release);
+                let curr_ver =
+                    tidb_session::upgrade_run::must_get_store_bootstrap_version(&upgrade_store)?;
+                if curr_ver >= tidb_session::upgrade_def::CURRENT_BOOTSTRAP_VERSION {
+                    // It is already bootstrapped/upgraded by another TiDB instance.
+                    tidb_logutil::bg_logger().info(
+                        "[upgrade] already upgraded by other nodes, switch to normal mode",
+                        &[],
+                    );
+                    mode = tidb_ddl::StartMode::Normal;
+                }
+            }
+            start_mode = mode;
             let bootstrap = tidb_domain_core::real_tikv_privileges::read_bootstrap_state_from_cluster(
                 opener,
                 COPROCESSOR_QUERY_TIMEOUT,
             )
             .map_err(|error| error.to_string())?;
-            if !bootstrap.already_bootstrapped() {
+            // Go `bootstrap(s)`: a store whose `mysql.tidb` is already
+            // bootstrapped is upgraded instead -- "for rolling upgrade, we
+            // can't do upgrade only in the owner".
+            run_upgrade = mode == tidb_ddl::StartMode::Upgrade
+                || (mode == tidb_ddl::StartMode::Bootstrap && bootstrap.already_bootstrapped());
+            if mode == tidb_ddl::StartMode::Bootstrap && !bootstrap.already_bootstrapped() {
                 let started = std::time::Instant::now();
                 let (outcome, schema_version, bootstrap_splits) =
                     tidb_session::bootstrap_publish::publish_bootstrap_with_splits(
@@ -196,7 +230,19 @@ pub fn cluster_session_stack(
     let schema_version = startup.schema_meta_version();
 
     let users = node_accounts(config, global_vars)?;
-    tidb_session::domain::real_tikv_node::init_startup_variables_from_cluster(&authority.transaction_opener())?;
+    if start_mode == tidb_ddl::StartMode::Normal {
+        tidb_logutil::bg_logger().info(
+            "cluster already bootstrapped",
+            &[tidb_log::Field::new(
+                "version",
+                tidb_log::Value::I64(tidb_session::upgrade_def::CURRENT_BOOTSTRAP_VERSION),
+            )],
+        );
+    }
+    tidb_session::domain::real_tikv_node::init_startup_variables_from_cluster(
+        &authority.transaction_opener(),
+        start_mode,
+    )?;
     // Go `domain_sysvars.go`: the TSO and follower sysvars tune the store's
     // PD client (`store.GetPDClient().UpdateOption`).
     if let Some(options) = authority.tikv_store().store().pd_client().pd_options() {
@@ -411,13 +457,15 @@ pub fn cluster_session_stack(
             min_job_id_refresher,
             Arc::clone(&ddl_session_pool) as _,
             Arc::clone(&node_auto_ids),
+            start_mode,
         )
         .map_err(|error| {
             RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
                 "campaign DDL owner failed: {error}"
             )))
         })?
-        .with_auto_ids(auto_id_service.clone()),
+        .with_auto_ids(auto_id_service.clone())
+        .with_region_store(Arc::clone(&region_store)),
     );
     // Go `GlobalInfoSyncerInit(..., store.GetPDHTTPClient(), ...)`: the
     // info syncer's managers share the store's PD HTTP client.
@@ -535,6 +583,43 @@ pub fn cluster_session_stack(
             .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?,
     ))
     .bind(&factory);
+    // Go `runInBootstrapSession`'s `upgrade(s)` and `finishBootstrap`, on the
+    // domain's sessions before any global variable or privilege loads, so
+    // the rows the upgrade writes are the ones those loops read.
+    if start_mode != tidb_ddl::StartMode::Normal {
+        let opener = authority.transaction_opener();
+        let upgrade_store =
+            tidb_session::bootstrap::TxnUpgradeStore::new(&opener, CONTROL_PLANE_TIMEOUT);
+        if run_upgrade {
+            if start_mode == tidb_ddl::StartMode::Upgrade {
+                // below sleep is used to mitigate https://github.com/pingcap/tidb/issues/57003,
+                // to let the older owner have time to notice that it's already retired.
+                std::thread::sleep(std::time::Duration::from_millis(
+                    tidb_owner::WAIT_TIME_ON_FORCE_OWNER_MILLIS
+                        .load(std::sync::atomic::Ordering::Acquire)
+                        .max(0) as u64,
+                ));
+            }
+            let state_syncer: Box<dyn tidb_ddl_serverstate::Syncer> = match &etcd {
+                Some(client) => Box::new(tidb_ddl_serverstate::EtcdSyncer::new(
+                    Arc::clone(client),
+                    tidb_ddl_serverstate::SERVER_GLOBAL_STATE,
+                )),
+                None => Box::new(tidb_ddl_serverstate::MemSyncer::new()),
+            };
+            tidb_session::domain::cluster_session_node::run_upgrade(
+                &factory,
+                &upgrade_store,
+                state_syncer.as_ref(),
+            )
+            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+        }
+        tidb_session::upgrade_run::finish_bootstrap(&upgrade_store)
+            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    }
+    if let Some(release) = upgrade_lock.take() {
+        release();
+    }
     // Go `LoadSysVarCacheLoop`, started once the domain's sessions exist:
     // each rebuild reads `mysql.global_variables` through them.
     let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(

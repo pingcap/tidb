@@ -130,6 +130,34 @@ impl DdlSessionPool for NodeDdlSessionPool {
         rows
     }
 
+    fn exec_restricted_sql_opts(
+        &self,
+        options: tidb_ddl_build::session_pool::RestrictedSqlOptions,
+        sql: &str,
+        args: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, MysqlError> {
+        let domain = self
+            .domain
+            .get()
+            .and_then(Weak::upgrade)
+            .ok_or_else(|| MysqlError::unknown("the DDL session pool has no running node"))?;
+        let to_mysql = |error: tidb_store_driver_error::sql_query_error::SqlQueryError| {
+            MysqlError::from_parts(error.code, error.state, error.message)
+                .with_identity_opt(error.identity)
+        };
+        let sql = tidb_sqlescape::escape_sql_text(sql, args)
+            .map_err(|error| MysqlError::unknown(error.to_string()))?;
+        let mut session = domain.open_system_session().map_err(to_mysql)?;
+        if options.utc_time_zone {
+            session
+                .set_session_sys_var("time_zone", "UTC".to_owned())
+                .map_err(|error| MysqlError::unknown(format!("{error:?}")))?;
+        }
+        session.vars.enable_ddl_analyze_exec_opt = options.enable_ddl_analyze;
+        let rows = session.node_conn().execute_internal(&sql).map_err(to_mysql);
+        rows
+    }
+
     fn current_version(&self) -> Result<u64, MysqlError> {
         let domain = self
             .domain

@@ -215,7 +215,7 @@ pub(crate) fn analyze_physical_table_with_progress<S: PagedMetaSnapshot>(
     selected_column_ids: Option<&HashSet<i64>>,
     mut progress: impl FnMut(i64),
 ) -> Result<AnalyzeReport, AnalyzeError> {
-    let plan = cluster_analyze_plan(table, selected_column_ids)?;
+    let plan = cluster_analyze_plan(table, selected_column_ids, false)?;
     let mut run = AnalyzeRun::start(&plan, options, realtime_count)?;
     let eval_context = crate::StmtContext::for_query();
     let virtuals = virtual_samples::VirtualSamples::new(table, &plan, &eval_context)?;
@@ -322,6 +322,15 @@ fn report_from_analyzed(
 /// Go `IndexInfo.IsColumnarIndex`: a vector, inverted or full-text index,
 /// which ANALYZE skips with a warning.
 #[must_use]
+/// Go's `indexStateAnalyzable`: for an index in state public, we can always
+/// analyze it for internal analyze session; for an index in state
+/// WriteReorg, we can only analyze it under `EnableDDLAnalyzeExecOpt`.
+#[must_use]
+pub fn index_state_analyzable(index: &IndexInfo, enable_ddl_analyze_exec_opt: bool) -> bool {
+    index.state == SchemaState::PUBLIC
+        || (index.state == SchemaState::WRITE_REORGANIZATION && enable_ddl_analyze_exec_opt)
+}
+
 pub fn is_columnar_index(index: &IndexInfo) -> bool {
     index.vector_info.is_some() || index.inverted_info.is_some() || index.full_text_info.is_some()
 }
@@ -440,14 +449,15 @@ fn stored_item(built: AnalyzedHistogram, is_index: bool) -> ClusterStatsItem {
 fn cluster_analyze_plan(
     table: &TableInfo,
     selected_column_ids: Option<&HashSet<i64>>,
+    enable_ddl_analyze_exec_opt: bool,
 ) -> Result<AnalyzePlan, AnalyzeError> {
     let mut columns = Vec::new();
     let mut by_offset: BTreeMap<i64, usize> = BTreeMap::new();
-    for column in table.cols().iter_deref() {
+    // Go `getFullAnalyzeColumnsInfo`: `tbl.TableInfo.Columns`, every
+    // column whatever its state -- a reorganizing DDL's hidden changing
+    // column among them.
+    for column in table.columns.iter_deref() {
         let column = column.read();
-        if column.state != SchemaState::PUBLIC {
-            continue;
-        }
         if selected_column_ids.is_some_and(|selected| !selected.contains(&column.id)) {
             continue;
         }
@@ -477,7 +487,7 @@ fn cluster_analyze_plan(
     let mut indexes = Vec::new();
     for index in table.indices.iter_deref() {
         let index = index.read();
-        if index.state != SchemaState::PUBLIC {
+        if !index_state_analyzable(&index, enable_ddl_analyze_exec_opt) {
             continue;
         }
         let is_special_global = index.global
@@ -597,7 +607,7 @@ mod tests {
     #[test]
     fn cluster_sample_plan_retains_virtual_index_inputs() {
         let table = virtual_sample_table();
-        let plan = cluster_analyze_plan(&table, None).unwrap();
+        let plan = cluster_analyze_plan(&table, None, false).unwrap();
         assert_eq!(plan.columns().len(), 2);
         assert_eq!(plan.indexes().len(), 1);
         assert_eq!(plan.indexes()[0].column_positions, vec![1]);
@@ -610,7 +620,7 @@ mod tests {
         };
         for all_null in [false, true] {
             let table = virtual_sample_table();
-            let plan = cluster_analyze_plan(&table, None).unwrap();
+            let plan = cluster_analyze_plan(&table, None, false).unwrap();
             assert_eq!(plan.indexes().len(), 1);
             assert!(super::sampling::index_requires_ndv_scan(
                 &table,
@@ -728,7 +738,7 @@ mod tests {
             .write()
             .offset = 3;
         let selected = [1, 2, 4].into_iter().collect();
-        let plan = cluster_analyze_plan(&table, Some(&selected)).unwrap();
+        let plan = cluster_analyze_plan(&table, Some(&selected), false).unwrap();
         assert_eq!(
             plan.columns()
                 .iter()
@@ -763,7 +773,7 @@ mod tests {
         let table = virtual_sample_table();
         table.columns.get(1).unwrap().write().generated_expr_string =
             "hour(timestamp '2020-01-01 10:00:00+00:00')".to_owned();
-        let plan = cluster_analyze_plan(&table, None).unwrap();
+        let plan = cluster_analyze_plan(&table, None, false).unwrap();
         for (hours, expected) in [(0, 10), (5, 15), (-8, 2)] {
             let context = crate::StmtContext::for_query().with_time_zone(
                 tidb_datatype::SessionTimeZone::Fixed {
@@ -790,7 +800,7 @@ mod tests {
             column.generated_expr_string = "a".to_owned();
         }
         let context = crate::StmtContext::for_query();
-        let plan = cluster_analyze_plan(&table, None).unwrap();
+        let plan = cluster_analyze_plan(&table, None, false).unwrap();
         let samples = super::virtual_samples::VirtualSamples::new(&table, &plan, &context).unwrap();
         let mut row = vec![Datum::new_string_datum("a  "), Datum::Null];
         samples.materialize(&mut row, &context).unwrap();
@@ -803,7 +813,7 @@ mod tests {
             );
         }
         table.columns.get(0).unwrap().write().field_type = FieldType::new(FieldTypeCode::LongLong);
-        let plan = cluster_analyze_plan(&table, None).unwrap();
+        let plan = cluster_analyze_plan(&table, None, false).unwrap();
         let samples = super::virtual_samples::VirtualSamples::new(&table, &plan, &context).unwrap();
         for input in [Datum::Int(-1), Datum::Null] {
             let mut row = vec![input, Datum::Null];
@@ -847,7 +857,7 @@ mod tests {
             .into(),
             ..TableInfo::default()
         };
-        let plan = cluster_analyze_plan(&table, None).unwrap();
+        let plan = cluster_analyze_plan(&table, None, false).unwrap();
         let schema = super::sampling::SamplingSchema::new(&table, &plan).unwrap();
         assert_eq!(schema.handle_positions, vec![1, 0]);
         assert_eq!(schema.statistics_slots(&plan), vec![0, 1, 2]);
@@ -875,7 +885,7 @@ mod tests {
             .into(),
             ..TableInfo::default()
         };
-        let plan = cluster_analyze_plan(&table, None).unwrap();
+        let plan = cluster_analyze_plan(&table, None, false).unwrap();
         let schema = super::sampling::SamplingSchema::new(&table, &plan).unwrap();
         let request = schema
             .request(&plan, &AnalyzeOptions::default(), 0.01, 0, 0)
@@ -912,7 +922,7 @@ mod tests {
             ..TableInfo::default()
         };
 
-        let plan = cluster_analyze_plan(&table, None)
+        let plan = cluster_analyze_plan(&table, None, false)
             .expect("an ordinary global index uses the column sampling task");
         assert_eq!(plan.indexes().len(), 1);
         assert_eq!(plan.indexes()[0].id, 2);
@@ -942,7 +952,7 @@ mod tests {
             ..TableInfo::default()
         };
 
-        let plan = cluster_analyze_plan(&table, None)
+        let plan = cluster_analyze_plan(&table, None, false)
             .expect("the independent task owns a special global index");
         assert!(plan.indexes().is_empty());
     }

@@ -323,6 +323,8 @@ pub(crate) use tidb_domain_core::sys_session::stats_session_error;
 pub(crate) use tidb_domain_core::util::is_analyze_table_sql;
 mod sessions;
 mod ttl_sessions;
+mod upgrade_session;
+pub use upgrade_session::run_upgrade;
 pub use login_policy::DomainLoginPolicy;
 pub use sessions::*;
 pub use settings::DomainSessionSettings;

@@ -62,6 +62,38 @@ pub mod pre_split;
 
 pub use worker::{ClusterDdl, RealClusterDdl};
 
+/// Go `ddl.StartMode`: the mode a node starts its DDL in. `Upgrade` forces
+/// the node to be the DDL owner; Go's other readers -- the executor's `BR`
+/// checks and the masking-policy DDL's bootstrap tolerance -- belong to
+/// executor methods this port lacks (D01).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StartMode {
+    /// Go `Normal` mode, cluster is in normal state.
+    Normal,
+    /// Go `Bootstrap` mode, cluster is during bootstrap.
+    Bootstrap,
+    /// Go `Upgrade` mode, cluster is during upgrade, we will force current
+    /// node to be the DDL owner, to make sure all upgrade related DDLs are
+    /// run on new version TiDB instance.
+    Upgrade,
+    /// Go `BR` mode, Start DDL from br, with this mode can skip loading
+    /// keyspace meta.
+    Br,
+}
+
+impl StartMode {
+    /// Go's string value of the mode.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Bootstrap => "bootstrap",
+            Self::Upgrade => "upgrade",
+            Self::Br => "br",
+        }
+    }
+}
+
 /// Tests of process-global sysvar hooks must not share those hooks with other
 /// simulated nodes. Runs the original test body in its own harness process.
 #[cfg(test)]

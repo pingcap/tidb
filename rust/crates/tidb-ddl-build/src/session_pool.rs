@@ -82,6 +82,18 @@ pub struct ForeignKeyCheck {
     pub foreign_key: Box<tidb_model::table::FKInfo>,
 }
 
+/// Go `sqlexec.ExecOption` and the session settings the DDL worker's
+/// restricted SQL makes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RestrictedSqlOptions {
+    /// Go `ExecOptionEnableDDLAnalyze`: the session's
+    /// `EnableDDLAnalyzeExecOpt`, which lets an ANALYZE cover the indexes
+    /// still in write-reorganization.
+    pub enable_ddl_analyze: bool,
+    /// Go `sessCtx.GetSessionVars().TimeZone = time.UTC` for the statement.
+    pub utc_time_zone: bool,
+}
+
 /// Go `pkg/ddl/session.Pool` as the DDL package uses it: the sessions the
 /// domain hands DDL, for a job the domain submits itself and for the data
 /// checks the owner runs as restricted SQL -- `checkModifyColumnData` and
@@ -129,6 +141,24 @@ pub trait DdlSessionPool: Send + Sync {
         let escaped = tidb_sqlescape::escape_sql_text(sql, args)
             .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
         self.exec_restricted_sql(&escaped)
+    }
+
+    /// Go `w.sessPool.Get()`, the caller's settings on that session's
+    /// `SessionVars` ([`RestrictedSqlOptions::utc_time_zone`]), and
+    /// `ExecRestrictedSQL(ctx, opts, sql, params...)` with
+    /// `ExecOptionUseCurSession` on it.
+    ///
+    /// # Errors
+    ///
+    /// The escaping's error, or the statement's.
+    fn exec_restricted_sql_opts(
+        &self,
+        options: RestrictedSqlOptions,
+        sql: &str,
+        args: &[tidb_sqlescape::SqlArg<'_>],
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
+        let _ = (options, sql, args);
+        Err(tidb_terror::MysqlError::unknown("not restricted SQL executor"))
     }
 
     /// Go `sctx.GetStore().CurrentVersion(kv.GlobalTxnScope)` on one of the

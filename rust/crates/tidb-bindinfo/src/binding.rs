@@ -542,6 +542,9 @@ pub const STATUS_DELETED: &str = "deleted";
 /// Go `bindinfo.StatusUsing`, the pre-v6 spelling of `enabled`, still
 /// accepted by `SET BINDING DISABLED`'s status guard and by the match.
 pub const STATUS_USING: &str = "using";
+/// Go `bindinfo.StatusBuiltin` indicates the binding is a builtin record for
+/// internal locking purpose. It is also the status for the builtin binding.
+pub const STATUS_BUILTIN: &str = "builtin";
 /// Go `bindinfo.SourceManual`.
 pub const SOURCE_MANUAL: &str = "manual";
 /// Go `bindinfo.SourceHistory`: a binding created `FROM HISTORY`.

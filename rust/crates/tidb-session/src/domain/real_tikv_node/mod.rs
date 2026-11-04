@@ -159,18 +159,34 @@ fn load_cluster_sysvars_with_read(
     Ok(())
 }
 
-/// Go `BootstrapSession`'s steps before the domain starts: `InitMDLVariable`
-/// publishes the persisted metadata-lock setting to the process, then
-/// `initGlobalVarFromSystemDB` the bootstrap-persisted system time zone. The
-/// sysvar cache itself is the domain's (`LoadSysVarCacheLoop`, started by
+/// Go `BootstrapSession`'s steps before the domain starts: the start mode's
+/// metadata-lock initialization publishes the persisted setting to the
+/// process (`InitMDLVariable` in normal mode, `InitMDLVariableForBootstrap`
+/// in bootstrap mode; an upgrade runs `InitMDLVariableForUpgrade` itself),
+/// then `initGlobalVarFromSystemDB` the bootstrap-persisted system time zone.
+/// The sysvar cache itself is the domain's (`LoadSysVarCacheLoop`, started by
 /// [`tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn`]).
 pub fn init_startup_variables_from_cluster<S>(
     opener: &RealOptimisticTransactionOpener<S>,
+    start_mode: tidb_ddl::StartMode,
 ) -> Result<(), RunConfiguredNodeError>
 where
     S: StoreClient,
 {
-    init_mdl_variable(opener, PRODUCTION_CONTROL_PLANE_TIMEOUT)?;
+    match start_mode {
+        tidb_ddl::StartMode::Bootstrap => crate::upgrade_run::init_mdl_variable_for_bootstrap(
+            &crate::bootstrap::TxnUpgradeStore::new(opener, PRODUCTION_CONTROL_PLANE_TIMEOUT),
+        )
+        .map_err(|error| {
+            RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
+                "init metadata lock failed during bootstrap: {error}"
+            )))
+        })?,
+        tidb_ddl::StartMode::Upgrade => {}
+        tidb_ddl::StartMode::Normal | tidb_ddl::StartMode::Br => {
+            init_mdl_variable(opener, PRODUCTION_CONTROL_PLANE_TIMEOUT)?;
+        }
+    }
     let system_tz = tidb_domain_core::real_tikv_privileges::load_system_tz_from_cluster(
         opener,
         PRODUCTION_CONTROL_PLANE_TIMEOUT,

@@ -406,6 +406,18 @@ pub trait PdClient: Send + Sync + 'static {
         Err(crate::Error::Unimplemented)
     }
 
+    /// client-go `RegionCache.PDClient().BatchScanRegions(ctx, ranges, limit,
+    /// opts...)`: the regions PD itself reports, through the cache's key
+    /// codec but not its cached regions. A zero `limit` is Go's `-1`.
+    async fn batch_scan_regions(
+        &self,
+        _ranges: Vec<pdpb::KeyRange>,
+        _limit: usize,
+        _options: crate::pd::retry::RegionScanOptions,
+    ) -> Result<Vec<RegionWithLeader>> {
+        Err(crate::Error::Unimplemented)
+    }
+
     fn group_keys_by_region<K, K2>(
         self: Arc<Self>,
         keys: impl Iterator<Item = K> + Send + Sync + 'static,
@@ -1565,6 +1577,18 @@ where
 
     async fn get_all_stores(&self) -> Result<Vec<metapb::Store>> {
         self.pd.clone().get_all_stores().await
+    }
+
+    async fn batch_scan_regions(
+        &self,
+        ranges: Vec<pdpb::KeyRange>,
+        limit: usize,
+        options: crate::pd::retry::RegionScanOptions,
+    ) -> Result<Vec<RegionWithLeader>> {
+        self.region_cache
+            .pd_client()
+            .batch_scan_regions(ranges, limit, options)
+            .await
     }
 
     async fn all_stores(&self) -> Result<Vec<Store>> {

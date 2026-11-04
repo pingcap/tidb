@@ -380,6 +380,7 @@ pub mod scalar_subquery;
 pub mod schema;
 pub mod simple_expr;
 mod string_fn;
+pub use string_fn::quote_str;
 mod string_packet;
 mod string_signature;
 mod time_fn;

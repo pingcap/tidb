@@ -1166,7 +1166,7 @@ mod execute_prepared;
 pub use binding_arm::GlobalBindingWriter;
 use tidb_bindinfo::binding_cache;
 use tidb_executor::blacklist;
-mod bootstrap;
+pub mod bootstrap;
 mod classify;
 pub mod session_errors;
 mod ddl_jobs;
@@ -3388,6 +3388,8 @@ mod tests_write_conversion;
 #[cfg(test)]
 mod tests_zero_date;
 pub mod mysql_bootstrap;
+pub mod upgrade_def;
+pub mod upgrade_run;
 pub mod bootstrap_publish;
 pub mod ddl_session_pool;
 pub mod cluster_sysvar_writer;

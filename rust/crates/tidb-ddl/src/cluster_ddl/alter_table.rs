@@ -1784,7 +1784,7 @@ pub(super) fn plan_persisted_alter_table_job_step(
             } else {
                 if info.tiflash_replica.is_some() {
                     // Go `infosync.DeleteTiFlashTableSyncProgress`.
-                    crate::tiflash_replica_manager::delete_tiflash_table_sync_progress(&info);
+                    tidb_domain_infosync::tiflash_manager::delete_tiflash_table_sync_progress(&info);
                 }
                 info.tiflash_replica = None;
             }

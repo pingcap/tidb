@@ -57,35 +57,6 @@ const POLL_INTERVAL: Duration = Duration::from_secs(2);
 // TiDB's InternalHTTPClient deadline; the PD HTTP client carries its own.
 const TIFLASH_HTTP_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-// Go infosync's process-scoped replica manager owns the shared progress image.
-static PROGRESS: LazyLock<Arc<RwLock<HashMap<i64, f64>>>> =
-    LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
-
-/// Go `infosync.DeleteTiFlashTableSyncProgress`: drops the cached progress
-/// of the table, or of each of its partitions.
-pub fn delete_tiflash_table_sync_progress(info: &tidb_model::table_info::TableInfo) {
-    let mut progress = PROGRESS.write().expect("TiFlash progress cache");
-    match info.get_partition_info() {
-        Some(partition) => {
-            for definition in partition.read().definitions.snapshot() {
-                progress.remove(&definition.id);
-            }
-        }
-        None => {
-            progress.remove(&info.id);
-        }
-    }
-}
-
-/// Cached full-replica progress, distinct from one-replica SQL availability.
-pub fn cached_replica_progress(physical_id: i64) -> Option<f64> {
-    PROGRESS
-        .read()
-        .expect("TiFlash progress cache")
-        .get(&physical_id)
-        .copied()
-}
-
 /// DDL capabilities used by the poller; the DDL executor owns publication.
 pub trait TiFlashReplicaControl: Send + Sync {
     /// Whether this node currently owns DDL work.
@@ -121,7 +92,6 @@ struct PollState {
     counter: u64,
     stores: Vec<PdStore>,
     backoff: HashMap<i64, BackoffElement>,
-    progress: Arc<RwLock<HashMap<i64, f64>>>,
     pending: VecDeque<i64>,
 }
 
@@ -276,11 +246,6 @@ impl TiFlashReplicaManager {
             ddl,
             pd_http_client,
         )?;
-        manager
-            .state
-            .get_mut()
-            .expect("TiFlash poll state")
-            .progress = Arc::clone(&PROGRESS);
         manager.http = client;
         manager.http_scheme = scheme;
         Ok(manager)
@@ -326,12 +291,9 @@ impl TiFlashReplicaManager {
         })
     }
 
-    fn record_progress(&self, state: &mut PollState, id: i64, progress: f64) {
-        state
-            .progress
-            .write()
-            .expect("TiFlash progress cache")
-            .insert(id, progress);
+    /// Go `infosync.UpdateTiFlashProgressCache`.
+    fn record_progress(&self, _state: &mut PollState, id: i64, progress: f64) {
+        tidb_domain_infosync::tiflash_manager::update_tiflash_progress_cache(id, progress);
     }
 
     fn http_call(
@@ -374,13 +336,7 @@ impl TiFlashReplicaManager {
             }
         }
         if !self.ddl.is_owner() {
-            self.state
-                .lock()
-                .expect("TiFlash poll state")
-                .progress
-                .write()
-                .expect("TiFlash progress cache")
-                .clear();
+            tidb_domain_infosync::tiflash_manager::clean_tiflash_progress_cache();
             return Ok(());
         }
         let catalog = self.catalog.get_latest();
@@ -633,13 +589,7 @@ impl TiFlashReplicaManager {
 
 impl Drop for TiFlashReplicaManager {
     fn drop(&mut self) {
-        self.state
-            .get_mut()
-            .expect("TiFlash poll state")
-            .progress
-            .write()
-            .expect("TiFlash progress cache")
-            .clear();
+        tidb_domain_infosync::tiflash_manager::clean_tiflash_progress_cache();
     }
 }
 
@@ -972,25 +922,14 @@ mod tests {
         ddl.owner.store(true, Ordering::SeqCst);
         let poller = fixture_manager(&http, ddl.clone(), &[(7, true)]);
         poller.poll_once().unwrap();
-        assert!(poller
-            .state
-            .lock()
-            .unwrap()
-            .progress
-            .read()
-            .unwrap()
-            .is_empty());
+        assert_eq!(
+            tidb_domain_infosync::tiflash_manager::get_tiflash_progress_from_cache(7),
+            None
+        );
         poller.poll_once().unwrap();
         assert_eq!(
-            poller
-                .state
-                .lock()
-                .unwrap()
-                .progress
-                .read()
-                .unwrap()
-                .get(&7),
-            Some(&0.5)
+            tidb_domain_infosync::tiflash_manager::get_tiflash_progress_from_cache(7),
+            Some(0.5)
         );
         assert!(
             ddl.updates.lock().unwrap().is_empty(),
@@ -998,15 +937,9 @@ mod tests {
         );
         ddl.owner.store(false, Ordering::SeqCst);
         poller.poll_once().unwrap();
-        assert!(
-            poller
-                .state
-                .lock()
-                .unwrap()
-                .progress
-                .read()
-                .unwrap()
-                .is_empty(),
+        assert_eq!(
+            tidb_domain_infosync::tiflash_manager::get_tiflash_progress_from_cache(7),
+            None,
             "Go clears progress on owner loss"
         );
     }
@@ -1040,7 +973,7 @@ mod tests {
         )
         .unwrap();
         poller.poll_once().unwrap();
-        assert_eq!(cached_replica_progress(66661), Some(0.5));
+        assert_eq!(tidb_domain_infosync::tiflash_manager::get_tiflash_progress_from_cache(66661), Some(0.5));
         poller.poll_once().unwrap();
         assert_eq!(
             http.requests
@@ -1052,7 +985,7 @@ mod tests {
             1
         );
         drop(poller);
-        assert_eq!(cached_replica_progress(66661), None);
+        assert_eq!(tidb_domain_infosync::tiflash_manager::get_tiflash_progress_from_cache(66661), None);
     }
 
     #[test]
@@ -1509,6 +1442,12 @@ mod tests {
                     _ => Err("PD unreachable".to_owned()),
                 }
             }
+            fn update_tiflash_progress_cache(&self, _: i64, _: f64) {}
+            fn get_tiflash_progress_from_cache(&self, _: i64) -> Option<f64> {
+                None
+            }
+            fn delete_tiflash_progress_from_cache(&self, _: i64) {}
+            fn clean_tiflash_progress_cache(&self) {}
         }
         init_tiflash_replica_manager(Some(Arc::new(Rules)));
         let http = HttpFixture::new(successful_response);

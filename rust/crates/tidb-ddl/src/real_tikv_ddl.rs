@@ -415,6 +415,12 @@ pub trait IndexBackfiller {
         None
     }
 
+    /// Go `jobCtx.store`'s region cache and PD client. `None` for a worker
+    /// without one.
+    fn region_store(&self) -> Option<Arc<dyn tidb_kv::region_map::RegionStore>> {
+        None
+    }
+
     /// Go `checkForeignKeyConstrain` for an `ADD FOREIGN KEY`: the child's
     /// existing rows against its parent, through the same snapshot and
     /// buffer as the other stages.
@@ -916,6 +922,7 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
             opener: Arc::clone(&opener),
             timeout,
         })),
+        region_store: backfiller.region_store(),
     });
     loop {
         schema_state.mdl_enabled =
@@ -1005,6 +1012,8 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                 // handles are cleaned and only then is the submitting
                 // session notified (`jobCtx.notifyDone`); `cleanMDLInfo`
                 // follows in `transitOneJobStepAndWaitSync`.
+                // Go `removeJobCtx`: the job context goes with the job.
+                crate::cluster_ddl::analyze::remove_job_ctx(ddl_job_id);
                 #[cfg(feature = "failpoints")]
                 fail::fail_point!("beforeCleanupDDLReorgHandles");
                 if let Err(error) = add_index_reorg::clean_ddl_reorg_handles(
@@ -1590,6 +1599,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
                     step_buffer: MutationBuffer::new(),
                     step_sql: Default::default(),
                     store: None,
+                    region_store: None,
                 };
                 let gc_safe_point = crate::cluster_ddl::recover_gc_safe_point(&worker)?;
                 let catalog = load_info_schema(&mut snapshot).map_err(DdlPlanError::Meta)?;

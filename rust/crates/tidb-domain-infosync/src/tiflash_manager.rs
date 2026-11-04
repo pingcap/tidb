@@ -36,11 +36,49 @@ pub trait TiFlashReplicaManager: Send + Sync {
     fn get_placement_rule(&self, table_id: i64) -> Result<pd_http::Rule, String>;
     /// Go `PostAccelerateScheduleBatch`.
     fn post_accelerate_schedule_batch(&self, table_ids: &[i64]) -> Result<(), String>;
+    /// Go `UpdateTiFlashProgressCache` updates tiflashProgressCache.
+    fn update_tiflash_progress_cache(&self, table_id: i64, progress: f64);
+    /// Go `GetTiFlashProgressFromCache` gets tiflash replica progress from
+    /// tiflashProgressCache.
+    fn get_tiflash_progress_from_cache(&self, table_id: i64) -> Option<f64>;
+    /// Go `DeleteTiFlashProgressFromCache` delete tiflash replica progress
+    /// from tiflashProgressCache.
+    fn delete_tiflash_progress_from_cache(&self, table_id: i64);
+    /// Go `CleanTiFlashProgressCache` clean progress cache.
+    fn clean_tiflash_progress_cache(&self);
+}
+
+/// Go `tiflashProgressCache` with the four methods both of Go's managers
+/// implement the same way over it.
+#[derive(Default)]
+pub struct TiFlashProgressCache(std::sync::RwLock<std::collections::HashMap<i64, f64>>);
+
+impl TiFlashProgressCache {
+    /// Go `UpdateTiFlashProgressCache`.
+    pub fn update(&self, table_id: i64, progress: f64) {
+        self.0.write().unwrap_or_else(PoisonError::into_inner).insert(table_id, progress);
+    }
+
+    /// Go `GetTiFlashProgressFromCache`.
+    pub fn get(&self, table_id: i64) -> Option<f64> {
+        self.0.read().unwrap_or_else(PoisonError::into_inner).get(&table_id).copied()
+    }
+
+    /// Go `DeleteTiFlashProgressFromCache`.
+    pub fn delete(&self, table_id: i64) {
+        self.0.write().unwrap_or_else(PoisonError::into_inner).remove(&table_id);
+    }
+
+    /// Go `CleanTiFlashProgressCache`.
+    pub fn clean(&self) {
+        self.0.write().unwrap_or_else(PoisonError::into_inner).clear();
+    }
 }
 
 /// Go `TiFlashReplicaManagerCtx` over the info syncer's PD HTTP client.
 pub struct TiFlashReplicaManagerCtx {
     pd_http_client: pd_http::Client,
+    tiflash_progress_cache: TiFlashProgressCache,
 }
 
 impl TiFlashReplicaManagerCtx {
@@ -48,6 +86,7 @@ impl TiFlashReplicaManagerCtx {
     pub fn new(pd_http_client: &pd_http::Client) -> Self {
         Self {
             pd_http_client: crate::pd_http::info_syncer_pd_http_client(pd_http_client),
+            tiflash_progress_cache: TiFlashProgressCache::default(),
         }
     }
 }
@@ -121,6 +160,22 @@ impl TiFlashReplicaManager for TiFlashReplicaManagerCtx {
             .collect();
         block_on(self.pd_http_client.accelerate_schedule_in_batch(&key_ranges))
     }
+
+    fn update_tiflash_progress_cache(&self, table_id: i64, progress: f64) {
+        self.tiflash_progress_cache.update(table_id, progress);
+    }
+
+    fn get_tiflash_progress_from_cache(&self, table_id: i64) -> Option<f64> {
+        self.tiflash_progress_cache.get(table_id)
+    }
+
+    fn delete_tiflash_progress_from_cache(&self, table_id: i64) {
+        self.tiflash_progress_cache.delete(table_id);
+    }
+
+    fn clean_tiflash_progress_cache(&self) {
+        self.tiflash_progress_cache.clean();
+    }
 }
 
 /// Go `mockTiFlashReplicaManagerCtx` with no mock TiFlash: every write is a
@@ -128,6 +183,7 @@ impl TiFlashReplicaManager for TiFlashReplicaManagerCtx {
 #[derive(Default)]
 pub struct MockTiFlashReplicaManagerCtx {
     calls: Mutex<Vec<String>>,
+    tiflash_progress_cache: TiFlashProgressCache,
 }
 
 impl MockTiFlashReplicaManagerCtx {
@@ -167,6 +223,22 @@ impl TiFlashReplicaManager for MockTiFlashReplicaManagerCtx {
     fn get_placement_rule(&self, _table_id: i64) -> Result<pd_http::Rule, String> {
         Err("not implemented".to_owned())
     }
+
+    fn update_tiflash_progress_cache(&self, table_id: i64, progress: f64) {
+        self.tiflash_progress_cache.update(table_id, progress);
+    }
+
+    fn get_tiflash_progress_from_cache(&self, table_id: i64) -> Option<f64> {
+        self.tiflash_progress_cache.get(table_id)
+    }
+
+    fn delete_tiflash_progress_from_cache(&self, table_id: i64) {
+        self.tiflash_progress_cache.delete(table_id);
+    }
+
+    fn clean_tiflash_progress_cache(&self) {
+        self.tiflash_progress_cache.clean();
+    }
 }
 
 /// The info syncer's `tiflashReplicaManager`.
@@ -197,6 +269,39 @@ fn tiflash_enabled() -> bool {
 
 fn info(message: &str, fields: &[Field]) {
     tidb_logutil::bg_logger().info(message, fields);
+}
+
+/// Go `infosync.UpdateTiFlashProgressCache`.
+pub fn update_tiflash_progress_cache(table_id: i64, progress: f64) {
+    tiflash_replica_manager().update_tiflash_progress_cache(table_id, progress);
+}
+
+/// Go `infosync.GetTiFlashProgressFromCache`.
+pub fn get_tiflash_progress_from_cache(table_id: i64) -> Option<f64> {
+    tiflash_replica_manager().get_tiflash_progress_from_cache(table_id)
+}
+
+/// Go `infosync.DeleteTiFlashProgressFromCache`.
+pub fn delete_tiflash_progress_from_cache(table_id: i64) {
+    tiflash_replica_manager().delete_tiflash_progress_from_cache(table_id);
+}
+
+/// Go `infosync.CleanTiFlashProgressCache`.
+pub fn clean_tiflash_progress_cache() {
+    tiflash_replica_manager().clean_tiflash_progress_cache();
+}
+
+/// Go `infosync.DeleteTiFlashTableSyncProgress`: drops the cached progress
+/// of the table, or of each of its partitions.
+pub fn delete_tiflash_table_sync_progress(table_info: &tidb_model::table_info::TableInfo) {
+    let manager = tiflash_replica_manager();
+    if let Some(pi) = table_info.get_partition_info() {
+        for p in pi.read().definitions.snapshot() {
+            manager.delete_tiflash_progress_from_cache(p.id);
+        }
+    } else {
+        manager.delete_tiflash_progress_from_cache(table_info.id);
+    }
 }
 
 /// Go `infosync.SetTiFlashGroupConfig`.

@@ -441,6 +441,9 @@ where
     ddl_job_done_ch_map: Arc<crate::real_tikv_ddl::DdlJobDoneChMap>,
     /// Go `pkg/ddl/session.Pool`: the sessions the node hands DDL.
     session_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
+    /// Go `jobCtx.store`'s region cache and PD client, bound once the node
+    /// has its region store.
+    region_store: Arc<std::sync::OnceLock<Arc<dyn tidb_kv::region_map::RegionStore>>>,
 }
 
 impl<S> PersistedDdlScheduler<S>
@@ -514,6 +517,7 @@ where
         >,
         ddl_job_done_ch_map: Arc<crate::real_tikv_ddl::DdlJobDoneChMap>,
         session_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
+        region_store: Arc<std::sync::OnceLock<Arc<dyn tidb_kv::region_map::RegionStore>>>,
     ) {
         must_reload_schemas(schema_sync.as_ref(), &stopped, DDL_SCHEDULER_INTERVAL);
         if stop.load(Ordering::Acquire) {
@@ -620,6 +624,7 @@ where
                             let del_range = Arc::clone(&del_range);
                             let ddl_job_done_ch_map = Arc::clone(&ddl_job_done_ch_map);
                             let session_pool = Arc::clone(&session_pool);
+                            let region_store = region_store.get().cloned();
                             let running_jobs = Arc::clone(&running_jobs);
                             let pool = Arc::clone(target_pool);
                             let job_desc = job.to_string();
@@ -635,7 +640,8 @@ where
                                     }
                                 };
                                 let backfiller =
-                                    KvTableIndexBackfiller::new(&row_ids, &session_pool);
+                                    KvTableIndexBackfiller::new(&row_ids, &session_pool)
+                                        .with_region_store(region_store);
                                 // Go `getJobRunCtx`: the job context carries
                                 // the submitter's done signal, when this node
                                 // has one.
@@ -808,6 +814,7 @@ where
                 let del_range = Arc::clone(&self.del_range);
                 let ddl_job_done_ch_map = Arc::clone(&self.ddl_job_done_ch_map);
                 let session_pool = Arc::clone(&self.session_pool);
+                let region_store = Arc::clone(&self.region_store);
                 let owner = self
                     .owner
                     .lock()
@@ -832,6 +839,7 @@ where
                         del_range,
                         ddl_job_done_ch_map,
                         session_pool,
+                        region_store,
                     )
                 }
             })
@@ -877,6 +885,34 @@ where
     submitter: crate::job_submitter::JobSubmitter,
 }
 
+/// Go `ddl.Start`'s owner half.
+fn start_owner(
+    owner: &dyn tidb_owner::Manager,
+    campaign_owner: bool,
+    start_mode: crate::StartMode,
+) -> Result<(), String> {
+    // Go `ddl.Start` (`ddl.go:872`): an upgrading node runs the upgrade's
+    // DDL itself.
+    if start_mode == crate::StartMode::Upgrade {
+        if !campaign_owner {
+            return Err("DDL must be enabled when upgrading".to_owned());
+        }
+
+        tidb_ddl_logutil::ddl_logger().info("DDL is in upgrade mode, force to be owner", &[]);
+        owner.force_to_be_owner(&tidb_owner::Context::background())?;
+    }
+    // Go `ddl.Start` (`ddl.go:871`, `:926`): only `Instance.TiDBEnableDDL`
+    // (`--run-ddl`) campaigns and runs the worker; a node with it off
+    // submits its DDL to whichever node owns the cluster's queue. This
+    // tier's owner loop runs the CHECK CONSTRAINT job types only, so the
+    // switch is how a mixed cluster keeps every other job type on a
+    // node that executes it.
+    if campaign_owner {
+        owner.campaign_owner(&[])?;
+    }
+    Ok(())
+}
+
 impl<S> RealClusterDdl<S>
 where
     S: StoreClient,
@@ -897,6 +933,14 @@ where
     /// DDL rebases use the process AutoID service rather than stale IID metadata.
     pub fn with_auto_ids(mut self, client: Arc<tidb_autoid::auto_id_client::AutoIdClient>) -> Self {
         self.auto_ids = Some(client);
+        self
+    }
+
+    /// Go `jobCtx.store`'s region cache and PD client, which job steps read
+    /// (`checkPartitionReplica`).
+    #[must_use]
+    pub fn with_region_store(self, store: Arc<dyn tidb_kv::region_map::RegionStore>) -> Self {
+        let _ = self.scheduler.region_store.set(store);
         self
     }
 
@@ -926,6 +970,7 @@ where
             Arc::new(MinJobIdRefresher::new()),
             session_pool,
             row_ids,
+            crate::StartMode::Normal,
         )
     }
 
@@ -944,6 +989,7 @@ where
         min_job_id_refresher: Arc<MinJobIdRefresher>,
         session_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
         row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
+        start_mode: crate::StartMode,
     ) -> Result<Self, String> {
         let owner_id = server_info.get_local_server_info().static_info.id;
         // Go `ddl.Start`: on the classic kernel, settle the job version and
@@ -1009,6 +1055,7 @@ where
             del_range: Arc::new(std::sync::OnceLock::new()),
             ddl_job_done_ch_map: Arc::default(),
             session_pool,
+            region_store: Arc::default(),
         });
         let owner: Arc<dyn tidb_owner::Manager> = match notifier.as_ref() {
             Some(etcd) => Arc::new(tidb_owner::OwnerManager::new(
@@ -1025,15 +1072,7 @@ where
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::clone(&owner));
         owner.set_listener(Arc::clone(&scheduler) as Arc<dyn tidb_owner::Listener>);
-        // Go `ddl.Start` (`ddl.go:871`, `:926`): only `Instance.TiDBEnableDDL`
-        // (`--run-ddl`) campaigns and runs the worker; a node with it off
-        // submits its DDL to whichever node owns the cluster's queue. This
-        // tier's owner loop runs the CHECK CONSTRAINT job types only, so the
-        // switch is how a mixed cluster keeps every other job type on a
-        // node that executes it.
-        if campaign_owner {
-            owner.campaign_owner(&[])?;
-        }
+        start_owner(owner.as_ref(), campaign_owner, start_mode)?;
         Ok(Self {
             auto_ids: None,
             opener,
@@ -1214,6 +1253,38 @@ fn local_ddl_owner(owner_id: String, authority_id: u64) -> tidb_owner::MockManag
 #[cfg(test)]
 mod schema_sync_tests {
     use super::*;
+
+    /// Go `ddl.Start`: an upgrade needs a DDL-enabled node, which it makes
+    /// the owner; otherwise only a DDL-enabled node campaigns.
+    #[test]
+    fn upgrade_mode_requires_and_takes_the_ddl_owner() {
+        let manager = |id: &str| {
+            tidb_owner::MockManager::new(
+                tidb_owner::Context::background(),
+                id,
+                Some(&format!("start-owner-{id}")),
+                "/tidb/ddl/fg/owner",
+            )
+        };
+        let refused = manager("refused");
+        assert_eq!(
+            start_owner(&refused, false, crate::StartMode::Upgrade),
+            Err("DDL must be enabled when upgrading".to_owned())
+        );
+        assert!(!tidb_owner::Manager::is_owner(&refused));
+
+        let upgrading = manager("upgrading");
+        start_owner(&upgrading, true, crate::StartMode::Upgrade).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !tidb_owner::Manager::is_owner(&upgrading) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(tidb_owner::Manager::is_owner(&upgrading));
+
+        let normal = manager("normal");
+        start_owner(&normal, false, crate::StartMode::Normal).unwrap();
+        assert!(!tidb_owner::Manager::is_owner(&normal));
+    }
 
     /// The backfiller the node builds, its data checks the executor's.
     fn test_backfiller() -> KvTableIndexBackfiller {
@@ -2990,7 +3061,8 @@ where
                 self.timeout,
                 self.server_state.is_upgrading_state(),
                 self.min_job_id_refresher.get_curr_min_job_id(),
-                &KvTableIndexBackfiller::new(&self.scheduler.row_ids, &self.scheduler.session_pool),
+                &KvTableIndexBackfiller::new(&self.scheduler.row_ids, &self.scheduler.session_pool)
+                    .with_region_store(self.scheduler.region_store.get().cloned()),
                 self.auto_ids.as_ref(),
                 Some(&self.scheduler.ddl_job_done_ch_map),
                 Some(&self.submitter),
@@ -3280,6 +3352,8 @@ struct KvTableIndexBackfiller {
     row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
     /// The data checks Go runs as restricted SQL through its session pool.
     session_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
+    /// Go `jobCtx.store`'s region cache and PD client.
+    region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
 }
 
 impl KvTableIndexBackfiller {
@@ -3290,13 +3364,23 @@ impl KvTableIndexBackfiller {
         Self {
             row_ids: Arc::clone(row_ids),
             session_pool: Arc::clone(session_pool),
+            region_store: None,
         }
+    }
+
+    fn with_region_store(mut self, store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>) -> Self {
+        self.region_store = store;
+        self
     }
 }
 
 impl IndexBackfiller for KvTableIndexBackfiller {
     fn session_pool(&self) -> Option<Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>> {
         Some(Arc::clone(&self.session_pool))
+    }
+
+    fn region_store(&self) -> Option<Arc<dyn tidb_kv::region_map::RegionStore>> {
+        self.region_store.clone()
     }
 
     fn system_row_ids(&self) -> Arc<dyn tidb_table::table_from_meta::TableAutoIds> {

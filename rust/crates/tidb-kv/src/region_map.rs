@@ -87,6 +87,16 @@ pub struct PdRegion {
     pub region_epoch: Option<(u64, u64)>,
 }
 
+/// client-go `metapb.Store` as the DDL reads PD's store list: its id and
+/// labels, in PD metadata order.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PdStoreMeta {
+    /// `Store.Id`.
+    pub id: u64,
+    /// `Store.Labels` as `(Key, Value)`.
+    pub labels: Vec<(String, String)>,
+}
+
 /// Go `kv.SplittableStore` with the reads `SHOW TABLE ... REGIONS` and
 /// `TABLESAMPLE REGIONS()` make of the store's region cache and PD.
 pub trait RegionStore: Send + Sync + std::fmt::Debug {
@@ -148,6 +158,20 @@ pub trait RegionStore: Send + Sync + std::fmt::Debug {
     /// [`Self::tikv_store_count`] answered.
     fn pd_region_by_id(&self, region_id: u64) -> Result<PdRegion, String> {
         Err(format!("region cache unavailable: cannot get region {region_id}"))
+    }
+
+    /// client-go `pdClient.GetAllStores()`: every store PD knows. Only asked
+    /// of a store whose [`Self::tikv_store_count`] answered.
+    fn pd_get_all_stores(&self) -> Result<Vec<PdStoreMeta>, String> {
+        Err("region cache unavailable".to_owned())
+    }
+
+    /// client-go `pdClient.BatchScanRegions([{start, end}], -1,
+    /// opt.WithAllowFollowerHandle())` asked of PD itself: every region of
+    /// `[start, end)` with its meta, as PD has it now.
+    fn pd_batch_scan_regions(&self, start: &[u8], end: &[u8]) -> Result<Vec<PdRegion>, String> {
+        let _ = (start, end);
+        Err("region cache unavailable".to_owned())
     }
 
     /// client-go `pdClient.BatchScanRegions([{start, end}], -1)`: every

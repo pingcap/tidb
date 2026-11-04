@@ -1578,6 +1578,24 @@ pub(crate) fn ord_with_type(
     Ok(Datum::Int(n))
 }
 
+/// Go `expression.Quote`: `str` wrapped in single quotes with `'`, `\`, NUL
+/// and Ctrl-Z backslash-escaped.
+pub fn quote_str(str: &str) -> String {
+    let mut out = String::with_capacity(str.len() + 2);
+    out.push('\'');
+    for c in str.chars() {
+        match c {
+            '\'' => out.push_str("\\'"),
+            '\\' => out.push_str("\\\\"),
+            '\0' => out.push_str("\\0"),
+            '\x1a' => out.push_str("\\Z"),
+            _ => out.push(c),
+        }
+    }
+    out.push('\'');
+    out
+}
+
 /// `QUOTE(s)`: `s` wrapped in single quotes with `'`, `\`, NUL and Ctrl-Z
 /// backslash-escaped — a value safe to paste into SQL. A `NULL` argument
 /// yields the four-character string `NULL` (NOT SQL `NULL`), matching MySQL.
@@ -1595,20 +1613,9 @@ pub(crate) fn quote(vals: &[Datum]) -> Result<Datum, EvalError> {
     let Some(bytes) = crate::arg_eval_type::eval_string(&vals[0])? else {
         return Ok(Datum::new_string_datum("NULL".to_string()));
     };
-    let mut out = String::with_capacity(bytes.len() + 2);
-    out.push('\'');
     // `String::from_utf8_lossy` is Go's `[]rune` conversion: both replace
     // each malformed byte with U+FFFD rather than refusing the value.
-    for c in String::from_utf8_lossy(&bytes).chars() {
-        match c {
-            '\'' => out.push_str("\\'"),
-            '\\' => out.push_str("\\\\"),
-            '\0' => out.push_str("\\0"),
-            '\x1a' => out.push_str("\\Z"),
-            _ => out.push(c),
-        }
-    }
-    out.push('\'');
+    let out = quote_str(&String::from_utf8_lossy(&bytes));
     // Go's `SetBinFlagOrBinStr(args[0].GetType(...), bf.tp)` (`:3184`): a
     // binary argument makes the quoted result binary too.
     Ok(if crate::string_signature::is_binary_str(&vals[0]) {

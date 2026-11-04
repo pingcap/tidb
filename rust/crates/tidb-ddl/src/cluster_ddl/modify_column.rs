@@ -2781,10 +2781,23 @@ fn do_modify_column_index_reorg(
                         }
                     }
                 }
-                // Completed: no analyze for a job whose
-                // `tidb_enable_ddl_analyze` is off.
-                set_analyze_state(&active.job, tidb_model::reorg::analyze_state::SKIPPED);
-                check_and_mark_non_revertible(&mut active.job);
+                // Completed. For multi-schema change, analyze is done by parent job.
+                if active.job.multi_schema_info.is_none()
+                    && super::analyze::check_need_analyze(&active.job, &target.info)
+                {
+                    set_analyze_state(&active.job, tidb_model::reorg::analyze_state::RUNNING);
+                } else {
+                    set_analyze_state(&active.job, tidb_model::reorg::analyze_state::SKIPPED);
+                    check_and_mark_non_revertible(&mut active.job);
+                }
+                return Ok(with_args(
+                    active,
+                    args,
+                    action_step(job_only_write(active.job.id, Vec::new())),
+                ));
+            }
+            if analyze_state(&active.job) == tidb_model::reorg::analyze_state::RUNNING {
+                super::analyze::start_analyze_and_wait(txn, &active.job, &target.info);
                 return Ok(with_args(
                     active,
                     args,
@@ -3059,10 +3072,23 @@ fn do_modify_column_type_with_data(
                         }
                     }
                 }
-                // Completed: no analyze for a job whose
-                // `tidb_enable_ddl_analyze` is off.
-                set_analyze_state(&active.job, tidb_model::reorg::analyze_state::SKIPPED);
-                check_and_mark_non_revertible(&mut active.job);
+                // Completed. For multi-schema change, analyze is done by parent job.
+                if active.job.multi_schema_info.is_none()
+                    && super::analyze::check_need_analyze(&active.job, &target.info)
+                {
+                    set_analyze_state(&active.job, tidb_model::reorg::analyze_state::RUNNING);
+                } else {
+                    set_analyze_state(&active.job, tidb_model::reorg::analyze_state::SKIPPED);
+                    check_and_mark_non_revertible(&mut active.job);
+                }
+                return Ok(with_args(
+                    active,
+                    args,
+                    action_step(job_only_write(active.job.id, Vec::new())),
+                ));
+            }
+            if analyze_state(&active.job) == tidb_model::reorg::analyze_state::RUNNING {
+                super::analyze::start_analyze_and_wait(txn, &active.job, &target.info);
                 return Ok(with_args(
                     active,
                     args,

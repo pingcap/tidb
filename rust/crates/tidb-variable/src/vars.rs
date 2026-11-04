@@ -222,6 +222,10 @@ pub struct SessionVars {
     /// transaction, planner-cache, process-list, and wire-status consumers
     /// read this field exactly as Go reads `SessionVars.status`.
     autocommit: bool,
+    /// Go `SessionVars.EnableDDLAnalyzeExecOpt` is a internal flag to notify
+    /// internal session whether we do ddl analyze: such an ANALYZE also
+    /// covers the indexes still in write-reorganization.
+    pub enable_ddl_analyze_exec_opt: bool,
     /// Go's typed `SessionVars.SQLMode`, maintained by the sql_mode sysvar's
     /// `SetSession` hook and read directly by parser and executor consumers.
     sql_mode: tidb_mysql::SqlMode,
@@ -591,6 +595,7 @@ impl Default for SessionVars {
             prev_found_in_binding: false,
             systems: HashMap::new(),
             autocommit: true,
+            enable_ddl_analyze_exec_opt: false,
             sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
                 .expect("the compiled default SQL mode is valid"),
             max_allowed_packet: 64 << 20,

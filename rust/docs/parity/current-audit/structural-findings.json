@@ -2,9 +2,9 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 29,
-    "open": 7,
-    "partial": 22
+    "unresolved": 27,
+    "open": 6,
+    "partial": 21
   },
   "findings": [
     {
@@ -48,8 +48,8 @@
       "id": "D11",
       "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "ADD INDEX / MODIFY COLUMN always skip the DDL-time ANALYZE that Go's `checkNeedAnalyze` / `doAnalyzeWithoutReorg` run when `tidb_stats_update_during_ddl` is ON (default OFF); and a multi-schema change has no `promoteProxyKVDiskFullPause`, whose only producer (`autoPauseAddIndexJobOnKVDiskFull`, the DXF add-index task) Rust lacks (D02, O10)",
-      "go_owner": "`pkg/ddl/multi_schema_change.go`, `pkg/ddl/index.go`, `pkg/ddl/modify_column.go`"
+      "finding": "A multi-schema change has no `promoteProxyKVDiskFullPause`, whose only producer (`autoPauseAddIndexJobOnKVDiskFull`, the DXF add-index task) Rust lacks (D02, O10)",
+      "go_owner": "`pkg/ddl/multi_schema_change.go`"
     },
     {
       "id": "E02",
@@ -81,14 +81,6 @@
       "go_owner": "`pkg/executor/importer`, `pkg/disttask/importinto`"
     },
     {
-      "id": "O02",
-      "status": "open",
-      "group": "Domain and process services",
-      "finding": "No versioned upgrade: startup knows only bootstrapped or not (`tidb-session/src/mysql_bootstrap`)",
-      "rust_evidence": "`rust/crates/tidb-session/src/mysql_bootstrap`",
-      "go_owner": "`pkg/session/upgrade*.go`"
-    },
-    {
       "id": "O08",
       "status": "partial",
       "group": "Domain and process services",
@@ -115,13 +107,6 @@
       "group": "Domain and process services",
       "finding": "Statement-summary records (`exec_stmt_observation.rs`) leave Go fields unset: `plan_cache_unqualified` (empty: a prepared statement's refusal is warned by the session (`prepare_bound_execution`) or recorded on a planning `StmtContext` whose `PlanCacheTracker` is not the one that publishes the process plan, so Go's `StmtCtx.PlanCacheUnqualified()` has no single owner), `mem_arbitration` (0) and every `CpuUsages` term but TiKV time (Go's `SQLCPUUsages` also records TiDB CPU, O11)",
       "go_owner": "`pkg/util/stmtsummary`"
-    },
-    {
-      "id": "F02",
-      "status": "partial",
-      "group": "TiFlash and MPP",
-      "finding": "With TiFlash enabled, ADD PARTITION and REORGANIZE PARTITION of a table whose TiFlash replica is available refuse in the replica-only state instead of Go's `checkPartitionReplica` wait (PD stores' TiFlash engine labels and each added partition's region peers), its rollback when that check errs, and `UpdateTiFlashProgressCache` for the added partitions",
-      "go_owner": "`pkg/ddl/partition.go`"
     },
     {
       "id": "M01",

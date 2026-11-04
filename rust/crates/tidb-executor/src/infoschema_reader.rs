@@ -452,14 +452,14 @@ fn tiflash_replica_rows(catalog: &SessionExtendedInfoSchema, visibility: &Schema
             } else {
                 ids.iter()
                     .map(|id| {
-                        tidb_ddl::tiflash_replica_manager::cached_replica_progress(*id)
+                        tidb_domain_infosync::tiflash_manager::get_tiflash_progress_from_cache(*id)
                             .unwrap_or(fallback)
                     })
                     .sum::<f64>()
                     / ids.len() as f64
             }
         } else {
-            tidb_ddl::tiflash_replica_manager::cached_replica_progress(table.table_id())
+            tidb_domain_infosync::tiflash_manager::get_tiflash_progress_from_cache(table.table_id())
                 .unwrap_or(fallback)
         };
         let progress = tidb_datatype::truncate(progress, 2);

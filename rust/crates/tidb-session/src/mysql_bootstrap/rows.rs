@@ -38,12 +38,7 @@ use super::{
     NEW_COLLATION_ENABLED_VAR, SYSTEM_TZ_VAR, TIDB_SERVER_VERSION_VAR, VAR_FALSE, VAR_TRUE,
 };
 
-/// Compatibility bootstrap marker currently written by Rust.
-///
-/// Keep this at 287 until the corresponding versioned SQL/schema migrations
-/// exist. Go master has advanced beyond this marker; changing the number alone
-/// would incorrectly claim that those upgrades had run.
-pub const CURRENT_BOOTSTRAP_VERSION: i64 = 287;
+pub use crate::upgrade_def::CURRENT_BOOTSTRAP_VERSION;
 
 /// One value of a seed row, named by its column so a schema that renames or
 /// reorders columns fails loudly instead of writing into the wrong one.

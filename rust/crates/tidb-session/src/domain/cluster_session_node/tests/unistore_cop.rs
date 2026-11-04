@@ -44,6 +44,9 @@ use crate::domain::configured_user_store::ConfiguredUserStore;
 use crate::domain::unistore_node::{unistore_cluster_session_stack, UnistoreClusterStack};
 
 mod go_executor_protocol;
+mod upgrade;
+mod tiflash_partition;
+mod ddl_analyze;
 
 pub(super) fn cop_backed_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
     cop_backed_stack_with_stats_lease(None)

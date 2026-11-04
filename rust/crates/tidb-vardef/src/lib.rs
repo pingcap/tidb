@@ -38,6 +38,10 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64, AtomicU8, O
 // per-node key while a Go owner waits on the MDL per-job key.
 static ENABLE_MDL: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_ENABLE_MDL);
 
+/// Go `vardef.ForeignKeyChecks` (`sysvar.go`) is the name for
+/// 'foreign_key_checks' system variable.
+pub const FOREIGN_KEY_CHECKS: &str = "foreign_key_checks";
+
 static DDL_ERROR_COUNT_LIMIT: AtomicI64 = AtomicI64::new(defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT);
 
 /// Go `GetDDLErrorCountLimit`, retained when a worker cannot refresh globals.

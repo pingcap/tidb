@@ -230,16 +230,45 @@ impl RetryClientTrait for PdClient {
             .collect())
     }
 
-    /// Go `BatchScanRegions`: unistore's `pdClient` does not override it, so
-    /// client-go falls back to scanning, as client-rust does on
-    /// `Unimplemented`.
+    /// Go `MockPD.BatchScanRegions` scans regions in batch, return flattened
+    /// regions. limit limits the maximum number of regions returned;
+    /// client-rust's zero is Go's unlimited `-1`.
     async fn batch_scan_regions(
         self: Arc<Self>,
-        _ranges: Vec<pdpb::KeyRange>,
-        _limit: usize,
+        ranges: Vec<pdpb::KeyRange>,
+        limit: usize,
         _options: RegionScanOptions,
     ) -> Result<Vec<RegionWithLeader>> {
-        Err(Error::Unimplemented)
+        let mut limit = if limit == 0 { -1 } else { limit as i64 };
+        let mut regions: Vec<RegionWithLeader> = Vec::with_capacity(ranges.len());
+        let mut last_end_key: Option<Vec<u8>> = None;
+        for mut key_range in ranges {
+            if let Some(end_key) = &last_end_key {
+                if end_key.is_empty() {
+                    return Ok(regions);
+                }
+                if *end_key >= key_range.end_key {
+                    continue;
+                } else if *end_key > key_range.start_key {
+                    key_range.start_key = end_key.clone();
+                }
+            }
+            let range_regions = self.mock_pd.scan_regions(
+                &key_range.start_key,
+                &key_range.end_key,
+                limit.max(0) as usize,
+            );
+            if range_regions.is_empty() {
+                continue;
+            }
+            last_end_key = range_regions.last().map(|(region, _)| region.end_key.clone());
+            limit -= range_regions.len() as i64;
+            regions.extend(range_regions.into_iter().map(region_with_leader));
+            if limit <= 0 {
+                break;
+            }
+        }
+        Ok(regions)
     }
 
     /// Go `GetStore`.

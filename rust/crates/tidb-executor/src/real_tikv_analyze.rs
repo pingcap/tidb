@@ -278,7 +278,7 @@ impl ResolvedClusterAnalyze {
                 let index = index.read();
                 // The column task's own indexes (Go `AnalyzeColumnsTask.
                 // Indexes`): independent and columnar ones are not among them.
-                (index.state == tidb_model::SchemaState::PUBLIC
+                (crate::cluster_analyze::index_state_analyzable(&index, self.statement.enable_ddl_analyze_exec_opt)
                     && !is_special_global_index(&self.table, &index)
                     && !index.mv_index
                     && !crate::cluster_analyze::is_columnar_index(&index))
@@ -332,7 +332,7 @@ impl ResolvedClusterAnalyze {
             .iter_deref()
             .filter_map(|index| {
                 let index = index.read();
-                (index.state == tidb_model::SchemaState::PUBLIC && index.mv_index)
+                (crate::cluster_analyze::index_state_analyzable(&index, self.statement.enable_ddl_analyze_exec_opt) && index.mv_index)
                     .then_some(index.id)
             })
             .collect()
@@ -465,7 +465,8 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
     let pseudo_cacheable = table.temp_table_type == tidb_model::TempTableType::NONE
         && !tidb_filter::is_system_schema(&tidb_hack::go_to_lower(&statement.schema));
     for options in &mut resolution.physical {
-        let (columns, missing) = final_column_choice(&table, &options.columns)?;
+        let (columns, missing) =
+            final_column_choice(&table, &options.columns, statement.enable_ddl_analyze_exec_opt)?;
         options.columns = columns;
         // Go's planner warns once, while it builds the column list.
         if let Some(missing) = missing {
@@ -551,10 +552,15 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
                 }
                 _ => false,
             };
-            add_mandatory_columns(&table, selected, predicate);
+            add_mandatory_columns(&table, selected, predicate, statement.enable_ddl_analyze_exec_opt);
         }
         selected =
-            filter_skipped_column_types(&table, selected, &target_statement.skip_column_types);
+            filter_skipped_column_types(
+                &table,
+                selected,
+                &target_statement.skip_column_types,
+                statement.enable_ddl_analyze_exec_opt,
+            );
         selected_columns_by_id.insert(options.physical_id, selected);
         predicate_columns_empty.insert(options.physical_id, empty);
     }
@@ -638,7 +644,7 @@ fn select_index_tasks(
                     .iter_deref()
                     .filter_map(|index| {
                         let index = index.read();
-                        (index.state == tidb_model::SchemaState::PUBLIC
+                        (crate::cluster_analyze::index_state_analyzable(&index, statement.enable_ddl_analyze_exec_opt)
                             && is_special_global_index(table, &index))
                         .then_some(index.id)
                     })
@@ -689,7 +695,7 @@ fn select_index_tasks(
                         .iter_deref()
                         .filter_map(|index| {
                             let index = index.read();
-                            (index.state == tidb_model::SchemaState::PUBLIC
+                            (crate::cluster_analyze::index_state_analyzable(&index, statement.enable_ddl_analyze_exec_opt)
                                 && is_special_global_index(table, &index))
                             .then_some(index.id)
                         })
@@ -783,6 +789,7 @@ fn analyze_partition_ids(
 fn final_column_choice(
     table: &tidb_model::table_info::TableInfo,
     columns: &AnalyzeColumnChoice,
+    enable_ddl_analyze_exec_opt: bool,
 ) -> Result<(AnalyzeColumnChoice, Option<String>), ClusterAnalyzeError> {
     let AnalyzeColumnChoice::Explicit(names) = columns else {
         return Ok((columns.clone(), None));
@@ -802,7 +809,7 @@ fn final_column_choice(
         selected.insert(column.read().id);
     }
     let explicit = selected.clone();
-    add_mandatory_columns(table, &mut selected, false);
+    add_mandatory_columns(table, &mut selected, false, enable_ddl_analyze_exec_opt);
     let missing: Vec<String> = table
         .cols()
         .iter_deref()
@@ -1137,7 +1144,7 @@ pub fn commit_cluster_analyze<S: StoreClient>(
             .skipped_columnar_indexes
             .extend(resolved.table.indices.iter_deref().filter_map(|index| {
                 let index = index.read();
-                (index.state == tidb_model::SchemaState::PUBLIC
+                (crate::cluster_analyze::index_state_analyzable(&index, resolved.statement.enable_ddl_analyze_exec_opt)
                     && crate::cluster_analyze::is_columnar_index(&index))
                 .then(|| index.name.lowercase().to_owned())
             }));
@@ -2393,7 +2400,7 @@ fn commit_cluster_independent_index<S: StoreClient>(
             .iter_deref()
             .find_map(|index| {
                 let index = index.read();
-                (index.id == index_id && index.state == tidb_model::SchemaState::PUBLIC)
+                (index.id == index_id && crate::cluster_analyze::index_state_analyzable(&index, statement.enable_ddl_analyze_exec_opt))
                     .then(|| index.clone())
             })
             .ok_or_else(|| {
@@ -2547,6 +2554,7 @@ fn selected_columns_for_choice(
         default_columns: AnalyzeColumnChoice::All,
         dynamic_partition_prune: true,
         skip_missing_partition_stats: true,
+        enable_ddl_analyze_exec_opt: false,
         analyze_snapshot: false,
         enable_async_merge_global_stats: true,
         partition_merge_concurrency: 1,
@@ -2570,6 +2578,7 @@ fn add_mandatory_columns(
     table: &tidb_model::table_info::TableInfo,
     selected: &mut HashSet<i64>,
     expand_selected: bool,
+    enable_ddl_analyze_exec_opt: bool,
 ) {
     // Columns whose base columns are followed: Go's `cols.data` before the
     // virtual-expression walk.
@@ -2580,12 +2589,14 @@ fn add_mandatory_columns(
     };
     for index in table.indices.iter_deref() {
         let index = index.read();
-        if index.state != tidb_model::SchemaState::PUBLIC || index.mv_index {
+        if !crate::cluster_analyze::index_state_analyzable(&index, enable_ddl_analyze_exec_opt) || index.mv_index {
             continue;
         }
+        // Go `tblInfo.Columns[idxCol.Offset]`: a write-reorganization
+        // index's column is the hidden changing column, past `Cols()`.
         for indexed in index.columns.iter_deref() {
             let offset = indexed.read().offset;
-            if let Some(column) = table.cols().get(offset as usize) {
+            if let Some(column) = table.columns.iter_deref().nth(offset as usize) {
                 let id = column.read().id;
                 selected.insert(id);
                 roots.insert(id);
@@ -2600,15 +2611,17 @@ fn add_mandatory_columns(
             }
         }
     }
+    // Go `addColumnsWithVirtualExprs` walks the `VirtualExpr` of the
+    // columns built from `tblInfo.Columns`.
     loop {
         let before = roots.len();
-        for column in table.cols().iter_deref() {
+        for column in table.columns.iter_deref() {
             let column = column.read();
             if !roots.contains(&column.id) || !column.is_generated() || column.generated_stored {
                 continue;
             }
             for dependency in column.dependences.snapshot() {
-                if let Some(base) = table.cols().iter_deref().find(|candidate| {
+                if let Some(base) = table.columns.iter_deref().find(|candidate| {
                     dependency.as_utf8().is_ok_and(|dependency| {
                         candidate.read().name.lowercase() == dependency.go_to_lower()
                     })
@@ -2633,6 +2646,7 @@ fn filter_skipped_column_types(
     table: &tidb_model::table_info::TableInfo,
     selected: Option<HashSet<i64>>,
     skip_types: &std::collections::BTreeSet<String>,
+    enable_ddl_analyze_exec_opt: bool,
 ) -> Option<HashSet<i64>> {
     let columns = table.cols().iter_deref().collect::<Vec<_>>();
     let mut selected = selected.unwrap_or_else(|| {
@@ -2642,7 +2656,7 @@ fn filter_skipped_column_types(
             .collect::<HashSet<_>>()
     });
     let mut mandatory = HashSet::new();
-    add_mandatory_columns(table, &mut mandatory, false);
+    add_mandatory_columns(table, &mut mandatory, false, enable_ddl_analyze_exec_opt);
     let mut skipped_names = HashSet::new();
     for column in &columns {
         let column = column.read();
@@ -3025,6 +3039,7 @@ mod tests {
             default_columns: AnalyzeColumnChoice::All,
             dynamic_partition_prune: true,
             skip_missing_partition_stats: skip_missing,
+            enable_ddl_analyze_exec_opt: false,
             analyze_snapshot: false,
             enable_async_merge_global_stats: true,
             partition_merge_concurrency: 1,
@@ -3131,6 +3146,7 @@ mod tests {
                 &table,
                 None,
                 &BTreeSet::from(["json".to_owned(), "blob".to_owned()]),
+                false,
             ),
             Some(HashSet::from([1, 3]))
         );
@@ -3498,7 +3514,7 @@ mod tests {
         };
 
         assert_eq!(
-            final_column_choice(&table, &AnalyzeColumnChoice::Explicit(vec!["c".to_owned()]))
+            final_column_choice(&table, &AnalyzeColumnChoice::Explicit(vec!["c".to_owned()]), false)
                 .expect("the final LIST is valid"),
             (
                 AnalyzeColumnChoice::Explicit(

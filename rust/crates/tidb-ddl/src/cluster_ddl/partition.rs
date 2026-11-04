@@ -773,19 +773,52 @@ pub(super) fn on_add_table_partition(
             Ok(action_step(write))
         }
         SchemaState::REPLICA_ONLY => {
+            #[cfg(feature = "failpoints")]
+            if let Some(sleep_second) =
+                fail::eval("sleepBeforeReplicaOnly", |val| val.and_then(|val| val.parse::<u64>().ok()))
+                    .flatten()
+            {
+                std::thread::sleep(std::time::Duration::from_secs(sleep_second));
+            }
+            // Here need do some tiflash replica complement check.
+            if let Some(replica) = info.tiflash_replica.clone() {
+                let (available, count) = {
+                    let replica = replica.read();
+                    (replica.available, replica.count)
+                };
+                if available {
+                    // For available state, the new added partition should wait it's replica to
+                    // be finished. Otherwise the query to this partition will be blocked.
+                    let adding = partition.read().adding_definitions.snapshot();
+                    let need_retry = match check_partition_replica(count, &adding, txn) {
+                        Ok(need_retry) => need_retry,
+                        Err(error) => {
+                            return convert_add_table_partition_job2_rollback_job(
+                                txn, active, database_id, &info, start_ts, error,
+                            );
+                        }
+                    };
+                    if need_retry {
+                        // The new added partition hasn't been replicated.
+                        // Do nothing to the job this time, wait next worker round.
+                        std::thread::sleep(TIFLASH_CHECK_TIDB_HTTP_API_HALF_INTERVAL);
+                        // Set the error here which will lead this job exit when it's retry times beyond the limitation.
+                        return Err(DdlPlanError::plain_refusal(
+                            "[ddl] add partition wait for tiflash replica to complete",
+                        ));
+                    }
+                }
+            }
+
+            // When TiFlash Replica is ready, we must move them into `AvailablePartitionIDs`.
             if let Some(replica) = &info.tiflash_replica {
                 if replica.read().available {
-                    // Go `checkPartitionReplica` waits for each new
-                    // partition's regions to get a TiFlash peer; with
-                    // TiFlash disabled there is nothing to wait for.
-                    if tidb_config::config_tree::config::get_global_config()
-                        .cse
-                        .is_tiflash_enabled()
-                    {
-                        return Err(DdlPlanError::Unsupported(
-                            "waiting for TiFlash replicas of added partitions is not supported yet"
-                                .to_owned(),
-                        ));
+                    for definition in part_info.definitions.snapshot().iter() {
+                        // Go: a failed cache update only logs.
+                        tidb_domain_infosync::tiflash_manager::update_tiflash_progress_cache(
+                            definition.id,
+                            1.0,
+                        );
                     }
                     let mut replica = replica.write();
                     let mut ids = replica
@@ -1384,6 +1417,142 @@ pub(super) fn on_truncate_table_partition(
     }
 }
 
+/// Go `tiflashCheckTiDBHTTPAPIHalfInterval`.
+const TIFLASH_CHECK_TIDB_HTTP_API_HALF_INTERVAL: std::time::Duration =
+    std::time::Duration::from_millis(2500);
+
+/// Go `checkPartitionReplica`: whether the adding partitions must still wait
+/// for a TiFlash peer on each of their regions.
+pub(super) fn check_partition_replica(
+    replica_count: u64,
+    adding_definitions: &[tidb_model::PartitionDefinition],
+    txn: &JobTxn<'_>,
+) -> Result<bool, DdlPlanError> {
+    #[cfg(feature = "failpoints")]
+    {
+        if fail::eval("mockWaitTiFlashReplica", |val| val.as_deref() == Some("true")) == Some(true) {
+            return Ok(true);
+        }
+        if fail::eval("mockWaitTiFlashReplicaOK", |val| val.as_deref() == Some("true")) == Some(true) {
+            return Ok(false);
+        }
+    }
+
+    let tiflash_enabled = tidb_config::config_tree::config::get_global_config()
+        .cse
+        .is_tiflash_enabled();
+    if !tiflash_enabled {
+        return Ok(false);
+    }
+
+    let pd_cli = txn
+        .region_store()
+        .ok_or_else(|| DdlPlanError::plain_refusal("region cache unavailable"))?;
+    let stores = pd_cli.pd_get_all_stores().map_err(DdlPlanError::plain_refusal)?;
+    // Check whether stores have `count` tiflash engines.
+    let tiflash_store_count = stores
+        .iter()
+        .filter(|store| store_has_engine_tiflash_label(store))
+        .count() as u64;
+    if replica_count > tiflash_store_count {
+        return Err(DdlPlanError::plain_refusal(format!(
+            "[ddl] the tiflash replica count: {replica_count} should be less than the total tiflash server count: {tiflash_store_count}"
+        )));
+    }
+    for p_def in adding_definitions {
+        let (start_key, end_key) = tidb_tablecodec::table_key::get_table_handle_key_range(p_def.id);
+        let regions = pd_cli
+            .pd_batch_scan_regions(&start_key, &end_key)
+            .map_err(DdlPlanError::plain_refusal)?;
+        // For every region in the partition, if it has some corresponding peers and
+        // no pending peers, that means the replication has completed.
+        for region in regions {
+            #[allow(unused_mut)]
+            let mut tiflash_peer_at_least_one =
+                check_tiflash_peer_store_at_least_one(&stores, &region.peers);
+            #[cfg(feature = "failpoints")]
+            if let Some(forced) =
+                fail::eval("ForceTiflashNotAvailable", |val| val.as_deref().map(|val| val == "true"))
+                    .flatten()
+            {
+                tiflash_peer_at_least_one = forced;
+            }
+            // It's unnecessary to wait all tiflash peer to be replicated.
+            // Here only make sure that tiflash peer count > 0 (at least one).
+            if tiflash_peer_at_least_one {
+                continue;
+            }
+            tidb_ddl_logutil::ddl_logger().info(
+                "partition replicas check failed in replica-only DDL state",
+                &[
+                    tidb_log::Field::new("pID", tidb_log::Value::I64(p_def.id)),
+                    tidb_log::Field::new("wait region ID", tidb_log::Value::U64(region.id)),
+                    tidb_log::Field::new(
+                        "tiflash peer at least one",
+                        tidb_log::Value::Bool(tiflash_peer_at_least_one),
+                    ),
+                ],
+            );
+            return Ok(true);
+        }
+    }
+    tidb_ddl_logutil::ddl_logger().info("partition replicas check ok in replica-only DDL state", &[]);
+    Ok(false)
+}
+
+/// Go `checkTiFlashPeerStoreAtLeastOne`.
+fn check_tiflash_peer_store_at_least_one(
+    stores: &[tidb_kv::region_map::PdStoreMeta],
+    peers: &[tidb_kv::region_map::PdPeer],
+) -> bool {
+    peers.iter().any(|peer| {
+        stores
+            .iter()
+            .any(|store| peer.store_id == store.id && store_has_engine_tiflash_label(store))
+    })
+}
+
+/// Go `storeHasEngineTiFlashLabel`.
+fn store_has_engine_tiflash_label(store: &tidb_kv::region_map::PdStoreMeta) -> bool {
+    store.labels.iter().any(|(key, value)| {
+        key == tidb_placement::ENGINE_LABEL_KEY && value == tidb_placement::ENGINE_LABEL_TIFLASH
+    })
+}
+
+/// Go `convertAddTablePartitionJob2RollbackJob`: the job turns to roll back
+/// its adding partitions, failing with `otherwise_err`.
+fn convert_add_table_partition_job2_rollback_job(
+    txn: &mut JobTxn<'_>,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    database_id: i64,
+    tbl_info: &TableInfo,
+    start_ts: u64,
+    otherwise_err: DdlPlanError,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    let adding_definitions = tbl_info
+        .get_partition_info()
+        .map(|partition| partition.read().adding_definitions.snapshot())
+        .unwrap_or_default();
+    let args = GoShared::new(tidb_model::TablePartitionArgs {
+        part_names: GoField::new(GoSharedSlice::from_vec(
+            adding_definitions
+                .iter()
+                .map(|definition| definition.name.lowercase().to_owned().into())
+                .collect(),
+        )),
+        ..tidb_model::TablePartitionArgs::default()
+    });
+    tidb_model::fill_rollback_args_for_add_partition(&mut active.job, Some(&args));
+    let write = update_version_and_table_info(txn, active, database_id, tbl_info, true, start_ts)?;
+    active.job.state = JobState::ROLLINGBACK;
+    Ok(PersistedDdlActionStep {
+        write,
+        update_raw_args: true,
+        run_error: Some(otherwise_err),
+        reorg: None,
+    })
+}
+
 /// Go `rollingbackAddTablePartition`, `rollingbackDropTablePartition` and
 /// `rollingbackTruncateTablePartition` (`convertTruncateTablePartitionJob2RollbackJob`).
 pub(super) fn rollingback_add_table_partition(
@@ -1404,28 +1573,17 @@ pub(super) fn rollingback_add_table_partition(
             if adding.is_empty() {
                 return Err(cancelled_ddl_job(active));
             }
-            // `convertAddTablePartitionJob2RollbackJob`.
-            let args = GoShared::new(tidb_model::TablePartitionArgs {
-                part_names: GoField::new(GoSharedSlice::from_vec(
-                    adding
-                        .iter()
-                        .map(|definition| definition.name.lowercase().to_owned().into())
-                        .collect(),
-                )),
-                ..tidb_model::TablePartitionArgs::default()
-            });
-            tidb_model::fill_rollback_args_for_add_partition(&mut active.job, Some(&args));
-            let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
-            active.job.state = JobState::ROLLINGBACK;
-            Ok(PersistedDdlActionStep {
-                write,
-                update_raw_args: true,
-                run_error: Some(DdlPlanError::from(
+            convert_add_table_partition_job2_rollback_job(
+                txn,
+                active,
+                database_id,
+                &info,
+                start_ts,
+                DdlPlanError::from(
                     tidb_dbterror::ERR_CANCELLED_DDL_JOB
                         .generate(tidb_errno::errname::ErrCancelledDDLJob.raw),
-                )),
-                reorg: None,
-            })
+                ),
+            )
         }
         // `cancelOnlyNotHandledJob(job, model.StatePublic)`.
         ActionType::ACTION_DROP_TABLE_PARTITION => {

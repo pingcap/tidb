@@ -711,19 +711,35 @@ pub(super) fn on_reorganize_partition(
             Ok(action_step(write))
         }
         SchemaState::DELETE_ONLY => {
-            if let Some(replica) = &info.tiflash_replica {
-                if replica.read().available {
-                    // Go `checkPartitionReplica`; with TiFlash disabled there
-                    // is nothing to wait for.
-                    if tidb_config::config_tree::config::get_global_config()
-                        .cse
-                        .is_tiflash_enabled()
-                    {
-                        return Err(DdlPlanError::Unsupported(
-                            "waiting for TiFlash replicas of reorganized partitions is not supported yet"
-                                .to_owned(),
+            if let Some(replica) = info.tiflash_replica.clone() {
+                let (available, count) = {
+                    let replica = replica.read();
+                    (replica.available, replica.count)
+                };
+                if available {
+                    // For available state, the new added partition should wait its replica to
+                    // be finished, otherwise the query to this partition will be blocked.
+                    let adding = partition.read().adding_definitions.snapshot();
+                    let need_retry = match super::partition::check_partition_replica(count, &adding, txn) {
+                        Ok(need_retry) => need_retry,
+                        Err(error) => {
+                            return rollback_reorganize_partition_with_err(
+                                txn, catalog, active, &args, start_ts, error,
+                            );
+                        }
+                    };
+                    if need_retry {
+                        // The new added partition hasn't been replicated.
+                        // Do nothing to the job this time, wait next worker round.
+                        std::thread::sleep(std::time::Duration::from_millis(2500));
+                        // Set the error here which will lead this job exit when it's retry times beyond the limitation.
+                        return Err(DdlPlanError::plain_refusal(
+                            "[ddl] add partition wait for tiflash replica to complete",
                         ));
                     }
+
+                    // When TiFlash Replica is ready, we must move them into `AvailablePartitionIDs`.
+                    // Since onUpdateFlashReplicaStatus cannot see the partitions yet (not public)
                     let mut replica = replica.write();
                     let mut ids = replica
                         .available_partition_ids

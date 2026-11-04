@@ -33,6 +33,9 @@ pub struct JobTxn<'a> {
     /// the step's system-table statements run. `None` for a run without a
     /// session pool (bootstrap, planner tests).
     session: Option<StepSession>,
+    /// Go `jobCtx.store`'s region cache and PD client; `None` for a run
+    /// without one.
+    region_store: Option<std::sync::Arc<dyn tidb_kv::region_map::RegionStore>>,
     /// Each written key's value; `None` deletes it.
     writes: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
     /// The snapshot's own error for a read the meta reader made that failed,
@@ -51,6 +54,7 @@ impl<'a> JobTxn<'a> {
             inner,
             start_ts,
             session: None,
+            region_store: None,
             writes: BTreeMap::new(),
             failed: None,
         }
@@ -61,6 +65,22 @@ impl<'a> JobTxn<'a> {
     pub fn with_session(mut self, session: Option<StepSession>) -> Self {
         self.session = session;
         self
+    }
+
+    /// The step's region store (see [`Self::region_store`]).
+    #[must_use]
+    pub fn with_region_store(
+        mut self,
+        region_store: Option<std::sync::Arc<dyn tidb_kv::region_map::RegionStore>>,
+    ) -> Self {
+        self.region_store = region_store;
+        self
+    }
+
+    /// Go `jobCtx.store`'s region cache and PD client.
+    #[must_use]
+    pub fn region_store(&self) -> Option<std::sync::Arc<dyn tidb_kv::region_map::RegionStore>> {
+        self.region_store.clone()
     }
 
     /// The step's session, for a transaction nested in this one.

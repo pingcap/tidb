@@ -78,6 +78,7 @@ pub fn run_unistore_cluster_session(
         _async_stats_loader,
         _stats_maintenance: stats_maintenance,
         rpc: _rpc,
+        opener: _opener,
         // Go `initResourceGroupsController`: the controller lives as long as
         // the server, stopped by its guard when this function returns.
         _resource_groups,

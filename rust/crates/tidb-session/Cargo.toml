@@ -184,6 +184,7 @@ tidb-unistore = { path = "../tidb-unistore" }
 tidb-meta = { path = "../tidb-meta" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-owner = { path = "../tidb-owner" }
+tidb-ddl-serverstate = { path = "../tidb-ddl-serverstate" }
 tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
 tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-stats-handle-autoanalyze-exec = { path = "../tidb-stats-handle-autoanalyze-exec" }

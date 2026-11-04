@@ -1059,13 +1059,23 @@ fn plan_write_reorganization(
             }
             CreateIndexReorg::Done => {}
         }
-        // Go: no analyze for a job whose `tidb_enable_ddl_analyze` is off.
-        if let Some(meta) = &active.job.reorg_meta {
-            meta.write().analyze_state = tidb_model::reorg::analyze_state::SKIPPED;
+        // For multi-schema change, analyze is done by parent job.
+        if active.job.multi_schema_info.is_none() && super::analyze::check_need_analyze(&active.job, &info) {
+            if let Some(meta) = &active.job.reorg_meta {
+                meta.write().analyze_state = tidb_model::reorg::analyze_state::RUNNING;
+            }
+        } else {
+            if let Some(meta) = &active.job.reorg_meta {
+                meta.write().analyze_state = tidb_model::reorg::analyze_state::SKIPPED;
+            }
+            check_and_mark_non_revertible(&mut active.job);
         }
-        check_and_mark_non_revertible(&mut active.job);
         let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
         return Ok(action_step(write));
+    }
+    if analyze_state == tidb_model::reorg::analyze_state::RUNNING {
+        super::analyze::start_analyze_and_wait(txn, &active.job, &info);
+        return Ok(action_step(super::job_only_write(active.job.id, Vec::new())));
     }
     // Analyze done or skipped: public.
     for index in &indexes {

@@ -790,7 +790,8 @@ fn run_sub_job_step(
         // sub-job now rolling back or cancelled returns none.
         let ddl_job_id = proxy.job.id;
         let session = txn.session();
-        let cancelled = run_in_job_txn(txn, start_ts, session, |txn| {
+        let region_store = txn.region_store();
+        let cancelled = run_in_job_txn_with(txn, start_ts, session, region_store, |txn| {
             plan_cancel_persisted_ddl_job(txn, catalog, &mut proxy, start_ts)
         });
         let (mut step, error) = match cancelled {
@@ -1001,15 +1002,11 @@ pub(super) fn on_multi_schema_change(
 
         // Save the table and the sub-jobs for rolling back.
         let saved_info = checked_job_table(catalog, active, true)?.read().clone_like_go();
-        // Go `doAnalyzeWithoutReorg`: no analyze for a job whose
-        // `tidb_enable_ddl_analyze` is off, decided in a step of its own.
-        if let Some(meta) = &active.job.reorg_meta {
-            if meta.read().analyze_state == tidb_model::reorg::analyze_state::NONE {
-                meta.write().analyze_state = tidb_model::reorg::analyze_state::SKIPPED;
-                let schema_id = active.job.schema_id;
-                let write = update_version_and_table_info(txn, active, schema_id, &saved_info, true, start_ts)?;
-                return Ok(action_step(write));
-            }
+        let finished = super::analyze::do_analyze_without_reorg(txn, &active.job, &saved_info);
+        if !finished {
+            let schema_id = active.job.schema_id;
+            let write = update_version_and_table_info(txn, active, schema_id, &saved_info, true, start_ts)?;
+            return Ok(action_step(write));
         }
         let saved: Vec<SubJob> = sub_jobs.iter().map(|sub| sub.read().clone()).collect();
         // Step every sub-job past its revertible point at once, under the
@@ -1021,7 +1018,10 @@ pub(super) fn on_multi_schema_change(
         // The sub-jobs' writes, which reach the step only when every one of
         // them stepped (a failed one restores the table alone).
         let session = txn.session();
-        let mut subs = JobTxn::new(txn, start_ts).with_session(session);
+        let region_store = txn.region_store();
+        let mut subs = JobTxn::new(txn, start_ts)
+            .with_session(session)
+            .with_region_store(region_store);
         for (seq, sub) in sub_jobs.iter().enumerate() {
             if sub.read().is_finished() {
                 continue;

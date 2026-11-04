@@ -6834,6 +6834,7 @@ dependencies = [
  "tidb-ddl-jobsubmit",
  "tidb-ddl-notifier",
  "tidb-ddl-resourcegroup",
+ "tidb-ddl-serverstate",
  "tidb-ddl-session",
  "tidb-ddl-systable",
  "tidb-deadlockhistory",

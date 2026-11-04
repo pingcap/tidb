@@ -5153,6 +5153,7 @@ pub enum PersistedDdlJobPlan {
 
 pub mod add_column;
 pub mod add_index;
+pub(crate) mod analyze;
 pub mod alter_schema;
 pub mod alter_table;
 pub mod cached_table;
@@ -5280,7 +5281,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
     sessions: Option<&DdlStepWorker>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    run_in_job_txn(snapshot, start_ts, step_session(sessions), |txn| {
+    run_in_job_txn(snapshot, start_ts, sessions, |txn| {
         dispatch_persisted_action(txn, catalog, active, start_ts, reorg_outcomes, row_ids, sessions)
     })
 }
@@ -5302,10 +5303,29 @@ fn step_session(worker: Option<&DdlStepWorker>) -> Option<crate::job_txn::StepSe
 fn run_in_job_txn(
     snapshot: &mut dyn MetaSnapshot,
     start_ts: u64,
-    session: Option<crate::job_txn::StepSession>,
+    worker: Option<&DdlStepWorker>,
     handler: impl FnOnce(&mut JobTxn<'_>) -> Result<PersistedDdlActionStep, DdlPlanError>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    let mut txn = JobTxn::new(snapshot, start_ts).with_session(session);
+    run_in_job_txn_with(
+        snapshot,
+        start_ts,
+        step_session(worker),
+        worker.and_then(|worker| worker.region_store.clone()),
+        handler,
+    )
+}
+
+/// [`run_in_job_txn`] with the step's session and region store given.
+fn run_in_job_txn_with(
+    snapshot: &mut dyn MetaSnapshot,
+    start_ts: u64,
+    session: Option<crate::job_txn::StepSession>,
+    region_store: Option<std::sync::Arc<dyn tidb_kv::region_map::RegionStore>>,
+    handler: impl FnOnce(&mut JobTxn<'_>) -> Result<PersistedDdlActionStep, DdlPlanError>,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    let mut txn = JobTxn::new(snapshot, start_ts)
+        .with_session(session)
+        .with_region_store(region_store);
     let mut step = handler(&mut txn)?;
     let mut mutations = txn.into_mutations()?;
     mutations.append(&mut step.write.mutations);
@@ -5643,7 +5663,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     let previous_schema_version = active.job.last_schema_version;
     let outcome = recover_ddl_action(|| {
         if cancelling {
-            run_in_job_txn(snapshot, start_ts, step_session(schema_state.worker.as_ref()), |txn| {
+            run_in_job_txn(snapshot, start_ts, schema_state.worker.as_ref(), |txn| {
                 plan_cancel_persisted_ddl_job(txn, &catalog, &mut active, start_ts)
             })
         } else {

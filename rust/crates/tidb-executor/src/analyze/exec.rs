@@ -1363,6 +1363,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
             .is_ok_and(|value| value.eq_ignore_ascii_case("static"));
         statement.skip_missing_partition_stats =
             on(tidb_vardef::tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS);
+        statement.enable_ddl_analyze_exec_opt = self.session_vars().enable_ddl_analyze_exec_opt;
         statement.analyze_snapshot = on(tidb_vardef::tidb_vars::TIDB_ENABLE_ANALYZE_SNAPSHOT);
         statement.enable_async_merge_global_stats =
             on(tidb_vardef::tidb_vars::TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS);

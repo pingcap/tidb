@@ -252,6 +252,9 @@ pub struct UnistoreClusterStack {
     pub _async_stats_loader: tidb_stats_handle_syncload::stats_watch::AsyncStatsLoader,
     /// See [`InProcessStack::rpc`].
     pub rpc: tidb_unistore::rpc::RpcClient,
+    /// Go `kv.Storage` of the store: the transaction opener the bootstrap
+    /// and upgrade's meta transactions run on.
+    pub opener: tidb_ddl::embedded_store::InProcessOpener,
     /// Go `initResourceGroupsController` over unistore's mock PD client.
     pub _resource_groups: EmbeddedResourceGroups,
 }
@@ -285,9 +288,11 @@ pub fn unistore_cluster_session_stack(
 }
 
 /// Go `mockstore.WithMockTiFlash(nodes)`: `nodes` stores labelled
-/// `engine=tiflash` (`tiflash0`, `tiflash1`, ...), each with a peer on every
-/// region (Go adds it to the only region before the first split).
+/// `engine=tiflash` (`tiflash0`, `tiflash1`, ...), each with a peer on the
+/// store's one region (`BootstrapWithSingleStore`'s `region1`), which every
+/// later split copies.
 fn with_mock_tiflash(regions: &tidb_unistore_tikv::region_manager::MockRegionManager, nodes: usize) {
+    let region1 = tidb_unistore_tikv::region_manager::BOOTSTRAP_REGION_ID;
     for index in 0..nodes {
         let store_id = regions.alloc_id();
         regions.add_store(
@@ -298,9 +303,7 @@ fn with_mock_tiflash(regions: &tidb_unistore_tikv::region_manager::MockRegionMan
                 value: "tiflash".to_owned(),
             }],
         );
-        for (region, _) in regions.scan_regions(b"", b"", 0) {
-            regions.add_peer(region.id, store_id, regions.alloc_id());
-        }
+        regions.add_peer(region1, store_id, regions.alloc_id());
     }
 }
 
@@ -338,6 +341,10 @@ impl BootstrapImage {
             published.schema_version,
             None,
         )?;
+        crate::upgrade_run::finish_bootstrap(&crate::bootstrap::TxnUpgradeStore::new(
+            &stack.opener,
+            IN_PROCESS_TIMEOUT,
+        ))?;
         // Go's image is a copy of a CLOSED store: `KVStore.Close` waits for
         // the async-commit secondaries the bootstrap's commits left running,
         // so no committed transaction's lock is in it. A lock carried into
@@ -562,6 +569,11 @@ pub fn unistore_cluster_session_stack_from(
             )
             .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
             crate::bootstrap_publish::log_bootstrap_successful(bootstrap_started);
+            crate::upgrade_run::finish_bootstrap(&crate::bootstrap::TxnUpgradeStore::new(
+                &opener,
+                IN_PROCESS_TIMEOUT,
+            ))
+            .map_err(|error| engine(SqlQueryError::unknown(error)))?;
             (schema_version, bootstrap_splits)
         }
         Some(image) => {
@@ -598,7 +610,12 @@ pub fn unistore_cluster_session_stack_from(
     // The bootstrap persisted the system time zone and the global-variable
     // rows this instant; reading them back through the same seam is the
     // production boot's own order.
-    crate::domain::real_tikv_node::init_startup_variables_from_cluster(&opener)?;
+    // Go `runInBootstrapSession` in bootstrap mode: the store is fresh every
+    // boot, or an image of one taken after its `finishBootstrap`.
+    crate::domain::real_tikv_node::init_startup_variables_from_cluster(
+        &opener,
+        tidb_ddl::StartMode::Bootstrap,
+    )?;
 
     // One registry for the whole node: sessions' INSERTs, the DDL owner's and
     // the statistics writers' `mysql.*` rows, and the reload's rebases.
@@ -685,6 +702,7 @@ pub fn unistore_cluster_session_stack_from(
             min_job_id_refresher,
             Arc::clone(&ddl_session_pool) as _,
             Arc::clone(&node_auto_ids),
+            tidb_ddl::StartMode::Bootstrap,
         )
         .map_err(|error| {
             crate::domain::real_tikv_node::RunConfiguredNodeError::Engine(SqlQueryError::unknown(format!(
@@ -696,7 +714,8 @@ pub fn unistore_cluster_session_stack_from(
         .new_del_range_manager()
         .map_err(|error| {
             crate::domain::real_tikv_node::RunConfiguredNodeError::Engine(SqlQueryError::unknown(error))
-        })?,
+        })?
+        .with_region_store(Arc::clone(&region_store)),
     );
 
     let analyze: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze> = Arc::new(
@@ -805,6 +824,7 @@ pub fn unistore_cluster_session_stack_from(
     )
     .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
     factory.attach_login_storage(&users);
+    let stack_opener = opener.clone();
     factory.install_bdr_role_store(Arc::new(opener), IN_PROCESS_TIMEOUT);
     factory.load_signing_cert_loop(
         &config.global_config.security.session_token_signing_cert,
@@ -832,6 +852,7 @@ pub fn unistore_cluster_session_stack_from(
         _schema_sync_ack: schema_sync_ack,
         _async_stats_loader: async_stats_loader,
         rpc,
+        opener: stack_opener,
         _resource_groups: resource_groups,
     })
 }

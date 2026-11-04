@@ -278,6 +278,9 @@ pub struct AnalyzeStatement {
     pub dynamic_partition_prune: bool,
     /// Pinned `tidb_skip_missing_partition_stats` value for global merging.
     pub skip_missing_partition_stats: bool,
+    /// Go `SessionVars.EnableDDLAnalyzeExecOpt`: the DDL's own ANALYZE also
+    /// covers the indexes still in write-reorganization.
+    pub enable_ddl_analyze_exec_opt: bool,
     /// Pinned `tidb_enable_analyze_snapshot` count-reconciliation policy.
     pub analyze_snapshot: bool,
     /// Pinned `tidb_enable_async_merge_global_stats` worker selection.
@@ -609,6 +612,7 @@ pub fn lower_analyze_admin(
             default_columns: AnalyzeColumnChoice::All,
             dynamic_partition_prune: true,
             skip_missing_partition_stats: true,
+            enable_ddl_analyze_exec_opt: false,
             analyze_snapshot: false,
             enable_async_merge_global_stats: true,
             partition_merge_concurrency: 1,

@@ -39,6 +39,8 @@ pub struct DdlStepWorker {
     pub step_sql: crate::job_txn::StepSqlSlot,
     /// Go `meta.NewReader(w.store.GetSnapshot(kv.NewVersion(ts)))`.
     pub store: Option<Arc<dyn SnapshotMetaAt>>,
+    /// Go `jobCtx.store`'s region cache and PD client.
+    pub region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
 }
 
 impl std::fmt::Debug for DdlStepWorker {

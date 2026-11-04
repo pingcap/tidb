@@ -169,6 +169,44 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
         Ok(pd_region(region))
     }
 
+    fn pd_get_all_stores(&self) -> Result<Vec<crate::region_map::PdStoreMeta>, String> {
+        let pd = self.store.store().pd_client();
+        let stores = self
+            .block_on(async move { pd.get_all_stores().await })
+            .map_err(|error| error.to_string())?;
+        Ok(stores
+            .into_iter()
+            .map(|store| crate::region_map::PdStoreMeta {
+                id: store.id,
+                labels: store
+                    .labels
+                    .into_iter()
+                    .map(|label| (label.key, label.value))
+                    .collect(),
+            })
+            .collect())
+    }
+
+    fn pd_batch_scan_regions(
+        &self,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<Vec<crate::region_map::PdRegion>, String> {
+        let pd = self.store.store().pd_client();
+        let ranges = vec![tikv_client::proto::pdpb::KeyRange {
+            start_key: start.to_vec(),
+            end_key: end.to_vec(),
+        }];
+        let options = tikv_client::RegionScanOptions {
+            allow_follower_handle: true,
+            ..Default::default()
+        };
+        let regions = self
+            .block_on(async move { pd.batch_scan_regions(ranges, 0, options).await })
+            .map_err(|error| error.to_string())?;
+        Ok(regions.into_iter().map(pd_region).collect())
+    }
+
     fn pd_scan_regions(&self, start: &[u8], end: &[u8]) -> Result<Vec<crate::region_map::PdRegion>, String> {
         let pd = self.store.store().pd_client();
         let mut backoffer = tikv_client::retry::RetryBackoffer::new(
