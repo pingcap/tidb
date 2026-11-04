@@ -30,6 +30,36 @@ use tikv_client::{PdClient, PdRpcClient};
 
 use crate::gc_state::{StoreVisibility, VisibilityError};
 
+/// Go PD client `pbToGCState` without the barriers: a scope's keyspace ID
+/// (`GetKeyspaceId`, 0 for another scope kind), `NullKeyspaceID` without one.
+pub fn pb_to_gc_state(pb: &tikv_client::proto::pdpb::GcState) -> GcState {
+    let keyspace_id = match pb.keyspace_scope.as_ref().map(|scope| scope.keyspace.as_ref()) {
+        Some(Some(tikv_client::proto::pdpb::keyspace_scope::Keyspace::KeyspaceId(id))) => *id,
+        Some(_) => 0,
+        None => NULL_KEYSPACE_ID,
+    };
+    GcState {
+        keyspace_id,
+        txn_safe_point: pb.txn_safe_point,
+        gc_safe_point: pb.gc_safe_point,
+    }
+}
+
+/// Go PD client `constants.NullKeyspaceID`.
+pub const NULL_KEYSPACE_ID: u32 = u32::MAX;
+
+/// Go PD client `gc.GCState` without its GC barriers (which Go keeps
+/// unexported, so `json.Marshal` shows only these fields).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GcState {
+    /// Go `KeyspaceID`.
+    pub keyspace_id: u32,
+    /// Go `TxnSafePoint`.
+    pub txn_safe_point: u64,
+    /// Go `GCSafePoint`.
+    pub gc_safe_point: u64,
+}
+
 /// Go `tikvStore`'s `*tikv.KVStore`, over any client-rust PD client: a real
 /// cluster's, or the embedded store's.
 pub struct TikvStore<PdC: PdClient = PdRpcClient> {
@@ -208,6 +238,17 @@ impl<PdC: PdClient> TikvStore<PdC> {
         self.block_on(async move { pd.get_gc_state().await })
             .map(|state| state.gc_safe_point)
             .map_err(|error| error.to_string())
+    }
+
+    /// Go `GetGCStatesClient(keyspaceID).GetGCState`'s `pbToGCState`: the
+    /// keyspace (Go `NullKeyspaceID` without a scope), the transaction safe
+    /// point and the GC safe point.
+    pub fn get_gc_state(&self) -> Result<GcState, String> {
+        let pd = self.store.pd_client();
+        let state = self
+            .block_on(async move { pd.get_gc_state().await })
+            .map_err(|error| error.to_string())?;
+        Ok(pb_to_gc_state(&state))
     }
 
     /// The TiKV stores' client addresses, as the store's region cache reads
@@ -490,5 +531,25 @@ where
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
         }),
         Err(_) => runtime.block_on(operation),
+    }
+}
+
+#[cfg(test)]
+mod gc_state_tests {
+    use super::*;
+    use tikv_client::proto::pdpb;
+
+    /// Go `pbToGCState`: no scope is `NullKeyspaceID`, a scope's ID is kept.
+    #[test]
+    fn pb_to_gc_state_takes_the_scope_keyspace_like_go() {
+        let mut pb = pdpb::GcState { txn_safe_point: 7, gc_safe_point: 5, ..Default::default() };
+        assert_eq!(
+            pb_to_gc_state(&pb),
+            GcState { keyspace_id: NULL_KEYSPACE_ID, txn_safe_point: 7, gc_safe_point: 5 }
+        );
+        pb.keyspace_scope = Some(pdpb::KeyspaceScope { keyspace: Some(pdpb::keyspace_scope::Keyspace::KeyspaceId(3)) });
+        assert_eq!(pb_to_gc_state(&pb).keyspace_id, 3);
+        pb.keyspace_scope = Some(pdpb::KeyspaceScope { keyspace: None });
+        assert_eq!(pb_to_gc_state(&pb).keyspace_id, 0);
     }
 }

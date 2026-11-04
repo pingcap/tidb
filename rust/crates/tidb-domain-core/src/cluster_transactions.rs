@@ -217,6 +217,12 @@ pub trait ClusterTransactions: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Go `TxnGCStatesHandler`'s PD GC state; a store without PD refuses it
+    /// with Go's error.
+    fn get_gc_state(&self) -> Result<tidb_txnkv::driver::tikv_store::GcState, String> {
+        Err("GC API only support storage with PD".to_owned())
+    }
+
     /// Go `TiFlashSystemTableRetriever`'s `CmdGetTiFlashSystemTable`
     /// request to the TiFlash store at `address`; a store that is not
     /// TiKV-compatible refuses it with Go's error.
@@ -1397,6 +1403,10 @@ where
         timeout: std::time::Duration,
     ) -> Result<Vec<u8>, String> {
         self.opener.store().get_tiflash_system_table(address, sql, timeout)
+    }
+
+    fn get_gc_state(&self) -> Result<tidb_txnkv::driver::tikv_store::GcState, String> {
+        self.opener.store().get_gc_state()
     }
 
     /// Go `infoschema_reader.go`'s `DATA_LOCK_WAITS` source: the store's

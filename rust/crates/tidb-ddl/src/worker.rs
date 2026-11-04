@@ -95,6 +95,12 @@ pub trait ClusterDdl: Send + Sync {
         None
     }
 
+    /// Go `Domain.Reload`: brings this node's schema up to the latest
+    /// published version.
+    fn reload_schema(&self) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Go `infoschema.GetTiFlashStoreCount(ctx.GetStore())`: the TiFlash
     /// stores PD lists, which `checkTiFlashReplicaCount` bounds a replica
     /// count by.
@@ -2774,6 +2780,10 @@ where
 
     fn owner_manager(&self) -> Option<Arc<dyn tidb_owner::Manager>> {
         Some(Arc::clone(&self.owner))
+    }
+
+    fn reload_schema(&self) -> Result<(), String> {
+        crate::ddl_job_scheduler::SchemaLoader::reload(self.schema_sync.as_ref())
     }
 
     fn tiflash_store_count(&self) -> Result<u64, SqlQueryError> {

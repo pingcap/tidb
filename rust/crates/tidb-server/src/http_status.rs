@@ -87,6 +87,10 @@ pub struct StatusRoutes {
     pub ddl_owner: Option<Arc<dyn tidb_owner::Manager>>,
     /// The DDL history `/ddl/history` scans (Go reads the store's meta).
     pub ddl_history: Option<Arc<dyn tidb_ddl::ddl_history::DdlJobHistoryStore>>,
+    /// Go `TxnGCStatesHandler`'s store, whose PD answers `/txn-gc-states`.
+    pub transactions: Option<Arc<dyn tidb_domain_core::cluster_transactions::ClusterTransactions>>,
+    /// Go `Domain.Reload`, which `/tiflash/replica?reload=true` runs first.
+    pub schema_reload: Option<Arc<dyn Fn() -> Result<(), String> + Send + Sync>>,
 }
 
 /// Bind HTTP and generated gRPC routes on Go's shared status port.
@@ -247,6 +251,10 @@ fn route_response(
             }
         }
         (200, "text/plain; version=0.0.4", body)
+    } else if route == "/tiflash/replica" {
+        flash_replica_summary_response(path, request, routes)
+    } else if route == "/txn-gc-states" {
+        txn_gc_states_response(request, routes.transactions.as_deref())
     } else if let Some(answer) = settings_response(path, request, routes.settings.as_ref()) {
         match answer {
             Ok(body) => (200, "application/json", body),
@@ -639,6 +647,100 @@ fn info_response(
             Ok(out)
         })()),
         _ => None,
+    }
+}
+
+/// Go `FlashReplicaSummaryHandler` (`/tiflash/replica`): GET only; the
+/// count of tables with a TiFlash replica in the (optionally reloaded)
+/// schema, beside the keyspace, `tidb_columnar_storage_enabled` and the CSE
+/// columnar store type.
+fn flash_replica_summary_response(path: &str, request: &str, routes: &StatusRoutes) -> (u16, &'static str, String) {
+    if request.split_whitespace().next() != Some("GET") {
+        return (405, "text/plain", "method not allowed".to_owned());
+    }
+    let query = path.split_once('?').map_or("", |(_, query)| query);
+    // Go `parseFlashReplicaReloadQuery` over `URL.Query().Get("reload")`.
+    let raw = query
+        .split('&')
+        .find_map(|pair| pair.split_once('=').filter(|(key, _)| *key == "reload").map(|(_, value)| value))
+        .unwrap_or("");
+    let do_reload = match raw {
+        "" => false,
+        "1" | "t" | "T" | "TRUE" | "true" | "True" => true,
+        "0" | "f" | "F" | "FALSE" | "false" | "False" => false,
+        _ => {
+            return (
+                400,
+                "text/plain",
+                format!("invalid reload query value \"{raw}\", expect true/false/1/0"),
+            )
+        }
+    };
+    let (Some(schema), Some(settings)) = (&routes.schema, &routes.settings) else {
+        return (500, "text/plain", "schema is unavailable".to_owned());
+    };
+    if do_reload {
+        if let Some(Err(error)) = routes.schema_reload.as_ref().map(|reload| reload()) {
+            return (500, "text/plain", error);
+        }
+    }
+    // Go `ListTablesWithSpecialAttribute(TiFlashAttribute)`.
+    let table_count = schema()
+        .stored_schemas()
+        .iter()
+        .map(|database| {
+            database
+                .read()
+                .deprecated_tables
+                .iter_deref()
+                .filter(|table| table.read().tiflash_replica.is_some())
+                .count()
+        })
+        .sum::<usize>();
+    let enabled = match settings.get_global_var(tidb_vardef::tidb_vars::TIDB_COLUMNAR_STORAGE_ENABLED) {
+        Ok(enabled) => enabled,
+        Err(error) => return (500, "text/plain", error),
+    };
+    let config = tidb_config::config_tree::config::get_global_config();
+    // Go `BoolToOnOff(TiDBOptOn(...))`.
+    let on = enabled.eq_ignore_ascii_case("ON") || enabled == "1";
+    let body = serde_json::json!({
+        "keyspace": tidb_keyspace::get_keyspace_name_by_settings(),
+        // The store codec's keyspace: `NulSpaceID` on a classic store.
+        "keyspace_id": tidb_txnkv::driver::tikv_store::NULL_KEYSPACE_ID,
+        "tidb_columnar_storage_enabled": if on { "ON" } else { "OFF" },
+        "columnar_store_type": config.cse.columnar_store_type,
+        "can_disable": table_count == 0,
+        "table_count": table_count,
+        "reloaded": do_reload,
+    });
+    (200, "application/json", body.to_string())
+}
+
+/// Go `TxnGCStatesHandler` (`/txn-gc-states`): GET only (Go's
+/// `http.Error` 405 otherwise); the PD GC state of the store's keyspace.
+fn txn_gc_states_response(
+    request: &str,
+    transactions: Option<&dyn tidb_domain_core::cluster_transactions::ClusterTransactions>,
+) -> (u16, &'static str, String) {
+    if request.split_whitespace().next() != Some("GET") {
+        return (405, "text/plain; charset=utf-8", "This API only supports GET method\n".to_owned());
+    }
+    let state = transactions
+        .ok_or_else(|| "GC API only support storage with PD".to_owned())
+        .and_then(|transactions| transactions.get_gc_state());
+    match state {
+        // Go `WriteData` of `gc.GCState`, whose exported fields carry no
+        // JSON tags.
+        Ok(state) => (
+            200,
+            "application/json",
+            format!(
+                "{{\"KeyspaceID\":{},\"TxnSafePoint\":{},\"GCSafePoint\":{}}}",
+                state.keyspace_id, state.txn_safe_point, state.gc_safe_point
+            ),
+        ),
+        Err(message) => (400, "text/plain", message),
     }
 }
 
@@ -1291,6 +1393,63 @@ mod schema_route_tests {
             "strconv.Atoi: parsing \"x\": invalid syntax"
         );
         assert!(ddl_history_response("/ddl/historyx", Some(&store)).is_none());
+    }
+
+    /// Go `TxnGCStatesHandler`: anything but GET is `http.Error` 405; a
+    /// store without PD is Go's `WriteError`.
+    #[test]
+    fn the_txn_gc_states_route_is_get_only() {
+        assert_eq!(
+            txn_gc_states_response("POST /txn-gc-states HTTP/1.1\r\n\r\n", None),
+            (405, "text/plain; charset=utf-8", "This API only supports GET method\n".to_owned())
+        );
+        assert_eq!(
+            txn_gc_states_response("GET /txn-gc-states HTTP/1.1\r\n\r\n", None),
+            (400, "text/plain", "GC API only support storage with PD".to_owned())
+        );
+    }
+
+    /// Go `FlashReplicaSummaryHandler`: GET only; counts the tables with a
+    /// TiFlash replica; `reload` is Go `strconv.ParseBool` and runs the
+    /// schema reload first.
+    #[test]
+    fn the_tiflash_replica_route_counts_replicated_tables() {
+        let mut replicated = table("t1");
+        replicated.tiflash_replica = Some(tidb_model::GoShared::new(tidb_model::TiFlashReplicaInfo::default()));
+        let reloads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = Arc::clone(&reloads);
+        let routes = StatusRoutes {
+            schema: Some(catalog_with(vec![database("test", vec![replicated, table("t2"), table("t3")])])),
+            settings: Some(crate::http_settings::Settings::new(
+                tidb_domain::global_sysvars::GlobalSysvars::new(),
+                Arc::new(|_, _| Err("test has no storage".into())),
+            )),
+            schema_reload: Some(Arc::new(move || {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            })),
+            ..StatusRoutes::default()
+        };
+        let get = |path: &str| flash_replica_summary_response(path, &format!("GET {path} HTTP/1.1\r\n\r\n"), &routes);
+        let (code, _, body) = get("/tiflash/replica");
+        assert_eq!(code, 200, "{body}");
+        let summary: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(summary["table_count"], 1, "{body}");
+        assert_eq!(summary["can_disable"], false);
+        assert_eq!(summary["reloaded"], false);
+        assert_eq!(summary["keyspace_id"], u64::from(u32::MAX));
+        assert_eq!(reloads.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let (_, _, body) = get("/tiflash/replica?reload=1");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap()["reloaded"], true);
+        assert_eq!(reloads.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            get("/tiflash/replica?reload=yes"),
+            (400, "text/plain", "invalid reload query value \"yes\", expect true/false/1/0".to_owned())
+        );
+        assert_eq!(
+            flash_replica_summary_response("/tiflash/replica", "POST / HTTP/1.1\r\n\r\n", &routes).0,
+            405
+        );
     }
 
     /// Go `TestDecodeColumnValue`: each column of a new-format row decodes

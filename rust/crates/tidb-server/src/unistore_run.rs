@@ -131,6 +131,11 @@ pub fn run_unistore_cluster_session(
                 server_info: factory.server_info(),
                 ddl_owner: factory.ddl.owner_manager(),
                 ddl_history: factory.ddl_job_history_store.get().cloned(),
+                transactions: Some(Arc::clone(&factory.transactions)),
+                schema_reload: {
+                    let ddl = Arc::clone(&factory.ddl);
+                    Some(Arc::new(move || ddl.reload_schema()))
+                },
             },
         ) {
             Ok(server) => Some(server),

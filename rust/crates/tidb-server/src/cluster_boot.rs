@@ -72,6 +72,10 @@ pub(crate) fn run_cluster_session_node_with_spill(
         let server_info = factory.server_info();
         let ddl_owner = factory.ddl.owner_manager();
         let ddl_history = factory.ddl_job_history_store.get().cloned();
+        let transactions = Some(Arc::clone(&factory.transactions));
+        let reload_ddl = Arc::clone(&factory.ddl);
+        let schema_reload: Option<Arc<dyn Fn() -> Result<(), String> + Send + Sync>> =
+            Some(Arc::new(move || reload_ddl.reload_schema()));
         let node =
             ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
                 tidb_session::domain::real_tikv_node::emit_connections_startup_failure(&error);
@@ -86,6 +90,8 @@ pub(crate) fn run_cluster_session_node_with_spill(
             server_info,
             ddl_owner,
             ddl_history,
+            transactions,
+            schema_reload,
         )
         .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
         let address = node.local_addr().map_err(|error| {
@@ -137,6 +143,8 @@ fn start_cluster_status(
     server_info: Option<Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>>,
     ddl_owner: Option<Arc<dyn tidb_owner::Manager>>,
     ddl_history: Option<Arc<dyn tidb_ddl::ddl_history::DdlJobHistoryStore>>,
+    transactions: Option<Arc<dyn tidb_domain_core::cluster_transactions::ClusterTransactions>>,
+    schema_reload: Option<Arc<dyn Fn() -> Result<(), String> + Send + Sync>>,
 ) -> std::io::Result<Option<crate::http_status::StatusServer>> {
     // Go Server.Run starts status HTTP beside SQL when ReportStatus is set.
     // Publishing server info alone does not make that endpoint reachable.
@@ -158,6 +166,8 @@ fn start_cluster_status(
             server_info,
             ddl_owner,
             ddl_history,
+            transactions,
+            schema_reload,
         },
     ) {
         Ok(server) => Ok(Some(server)),
@@ -207,6 +217,8 @@ mod status_tests {
             None,
             None,
             None,
+            None,
+            None,
             None
         )
         .unwrap()
@@ -214,7 +226,7 @@ mod status_tests {
         let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         config.report_status = true;
         config.status_port = occupied.local_addr().unwrap().port();
-        assert!(start_cluster_status(&config, tracker, schema, test_settings(), None, None, None, None).is_err());
+        assert!(start_cluster_status(&config, tracker, schema, test_settings(), None, None, None, None, None, None).is_err());
     }
 
     #[test]
@@ -233,7 +245,7 @@ mod status_tests {
             Vec::new(),
             1,
         ));
-        let server = start_cluster_status(&config, tracker, schema, test_settings(), None, None, None, None)
+        let server = start_cluster_status(&config, tracker, schema, test_settings(), None, None, None, None, None, None)
             .unwrap()
             .expect("cluster startup must bind the advertised status service like Go");
         for path in ["/status", "/metrics", "/settings", "/config", "/schema"] {

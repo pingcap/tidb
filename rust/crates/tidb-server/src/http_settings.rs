@@ -31,6 +31,11 @@ pub struct Settings {
 }
 
 impl Settings {
+    /// Go `Domain.GetGlobalVar`.
+    pub fn get_global_var(&self, name: &str) -> Result<String, String> {
+        self.globals.get(name).map_err(|error| error.to_string())
+    }
+
     /// Binds process variables and the existing durable GLOBAL writer.
     pub fn new(globals: GlobalSysvars, set_global: GlobalSetter) -> Self {
         Self {
