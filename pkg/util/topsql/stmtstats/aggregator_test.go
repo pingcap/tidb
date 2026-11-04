@@ -16,6 +16,7 @@ package stmtstats
 
 import (
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,6 +69,47 @@ func Test_aggregator_register_collect(t *testing.T) {
 	assert.NotEmpty(t, total)
 	assert.Equal(t, uint64(1), total[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
 	assert.Equal(t, uint64(time.Millisecond.Nanoseconds()), total[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
+}
+
+func TestStatementStatsRegistrationHonorsHardCap(t *testing.T) {
+	a := newAggregator()
+	a.statsLen.Store(maxStmtStatsSize)
+	stats := &StatementStats{}
+	a.register(stats)
+
+	_, registered := a.statsSet.Load(stats)
+	require.False(t, registered)
+	require.Equal(t, uint32(maxStmtStatsSize), a.statsLen.Load())
+
+	const (
+		attempts = 20
+		workers  = 256
+	)
+	for range attempts {
+		a = newAggregator()
+		a.statsLen.Store(maxStmtStatsSize - 1)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(workers)
+		for range workers {
+			stats = &StatementStats{}
+			go func(stats *StatementStats) {
+				defer wg.Done()
+				<-start
+				a.register(stats)
+			}(stats)
+		}
+		close(start)
+		wg.Wait()
+
+		require.Equal(t, uint32(maxStmtStatsSize), a.statsLen.Load())
+		registeredCount := 0
+		a.statsSet.Range(func(_, _ any) bool {
+			registeredCount++
+			return true
+		})
+		require.Equal(t, 1, registeredCount)
+	}
 }
 
 func Test_aggregator_run_close(t *testing.T) {

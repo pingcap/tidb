@@ -227,9 +227,9 @@ func canBroadcastAnalyzeStatsDeltaForTest(ctx context.Context) (bool, error) {
 	}
 	rpcAddrs := make([]string, 0, len(servers))
 	for _, server := range servers {
-		// Keep the same skip behavior as buildTiDBMemCopTasks for placeholder
-		// nodes that should not receive TiDB-type coprocessor requests.
-		if server.IP == "<nil>" {
+		// Skip processes that register server info but cannot receive TiDB RPC,
+		// such as standalone BR.
+		if server.DisableRPC {
 			continue
 		}
 		// In-process test domains can register server info without starting a
@@ -678,7 +678,9 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	enableAnalyzeSnapshot := e.Ctx().GetSessionVars().EnableAnalyzeSnapshot
 	for i := 0; i < saveStatsConcurrency; i++ {
 		worker := newAnalyzeSaveStatsWorker(saveResultsCh, errCh, &e.Ctx().GetSessionVars().SQLKiller)
-		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		// Deliberately not the analyze source: the heavy TiKV scan is already done,
+		// so there is no point in throttling the save-stats writes as background work.
+		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 		wg.Run(func() {
 			worker.run(ctx1, statsHandle, enableAnalyzeSnapshot)
 		})

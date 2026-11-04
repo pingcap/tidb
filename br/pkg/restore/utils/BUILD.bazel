@@ -16,6 +16,7 @@ go_library(
         "//br/pkg/metautil",
         "//br/pkg/rtree",
         "//pkg/meta/model",
+        "//pkg/parser/model",
         "//pkg/tablecodec",
         "//pkg/util",
         "//pkg/util/codec",
