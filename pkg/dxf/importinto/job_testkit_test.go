@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/configtypes"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
@@ -37,12 +38,14 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -101,6 +104,82 @@ func TestShouldUseAsyncPrepare(t *testing.T) {
 			require.Equal(t, tt.want, importinto.ShouldUseAsyncPrepare(globalSortPlan))
 		})
 	}
+}
+
+// TestSubmitTaskRejectsStalePlanSchema is a regression test for
+// https://github.com/pingcap/tidb/issues/70580: if the table's schema
+// changes (e.g. a concurrent ADD UNIQUE INDEX) between when IMPORT INTO
+// captures its Plan.TableInfo snapshot and when doSubmitTask acquires the
+// TableModeImport guard, submission must be rejected instead of silently
+// proceeding against a stale schema. The rejection happens inside the
+// AlterTableMode DDL job itself (see onAlterTableMode's ExpectedRevision
+// check), which reads the table atomically w.r.t. other concurrent DDL, so
+// this also covers the narrower window where the concurrent ADD INDEX lands
+// after doSubmitTask's own checks but before the AlterTableMode job runs.
+func TestSubmitTaskRejectsStalePlanSchema(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("table mode is only set in classic kernel")
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, v int)")
+
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	dbInfo, ok := is.SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	// staleTableInfo mimics the schema snapshot IMPORT INTO captures during
+	// its unguarded prepare phase, before this test performs a concurrent DDL.
+	staleTableInfo := tbl.Meta().Clone()
+
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	manager := storage.NewTaskManager(pool)
+	storage.SetTaskManager(manager)
+	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
+
+	// concurrent ALTER TABLE ... ADD UNIQUE INDEX bumps the table's Revision,
+	// simulating the race window described in the issue.
+	tk.MustExec("alter table t add unique index kv(v)")
+
+	_, _, err = importinto.SubmitTask(ctx, &importer.Plan{
+		DBName:     "test",
+		DBID:       dbInfo.ID,
+		TableInfo:  staleTableInfo,
+		Parameters: &importer.ImportParameters{},
+	}, "import into t from '/path/to/file'")
+	require.True(t, dbterror.ErrInfoSchemaChanged.Equal(err), "expected ErrInfoSchemaChanged, got: %v", err)
+
+	// the job/task rollback must leave no residue behind for the rejected submission.
+	tk.MustQuery("select count(1) from mysql.tidb_import_jobs").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(1) from mysql.tidb_global_task").Check(testkit.Rows("0"))
+
+	// table mode must remain Normal since the guard rejected before AlterTableMode.
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
+
+	// sanity: submitting with the current (fresh) schema still succeeds.
+	freshTbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	jobID, task, err := importinto.SubmitTask(ctx, &importer.Plan{
+		DBName:     "test",
+		DBID:       dbInfo.ID,
+		TableInfo:  freshTbl.Meta(),
+		Parameters: &importer.ImportParameters{},
+	}, "import into t from '/path/to/file'")
+	require.NoError(t, err)
+	require.NotZero(t, jobID)
+	require.NotNil(t, task)
 }
 
 func TestSubmitTaskNextgen(t *testing.T) {

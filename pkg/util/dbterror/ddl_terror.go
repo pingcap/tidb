@@ -37,6 +37,10 @@ var (
 	ErrPausedDDLJob = ClassDDL.NewStd(mysql.ErrPausedDDLJob)
 	// ErrBDRRestrictedDDL means the DDL is restricted in BDR mode.
 	ErrBDRRestrictedDDL = ClassDDL.NewStd(mysql.ErrBDRRestrictedDDL)
+	// ErrInfoSchemaChanged means the table's schema changed concurrently with
+	// a DDL job that expected a specific schema revision (e.g. AlterTableMode
+	// requested by IMPORT INTO after capturing a schema snapshot).
+	ErrInfoSchemaChanged = ClassDDL.NewStd(mysql.ErrInfoSchemaChanged)
 	// ErrDDLAutoPausedByKVDiskFull means TiDB paused the DDL job because a storage node disk is full.
 	ErrDDLAutoPausedByKVDiskFull = ClassDDL.NewStd(mysql.ErrDDLAutoPausedByKVDiskFull)
 	// ErrRunMultiSchemaChanges means we run multi schema changes.
