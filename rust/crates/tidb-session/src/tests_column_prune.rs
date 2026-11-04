@@ -44,6 +44,15 @@ fn prune_session() -> Session {
 /// there the ids are the ones its DAG table scans request -- the form Go's
 /// pruned `TableScan.Columns` takes on the wire.
 fn rows_and_decoded(session: &mut Session, sql: &str) -> (Vec<Vec<String>>, BTreeSet<i64>) {
+    // The hook sees the whole store, which the domain's own loops (the
+    // runaway watch sync, the plan replayer collector) also scan; only the
+    // statement's tables are measured.
+    let tables: BTreeSet<i64> = row_text(session.run(
+        "SELECT TIDB_TABLE_ID FROM information_schema.tables WHERE table_schema = DATABASE()",
+    ))
+    .into_iter()
+    .map(|row| row[0].parse::<i64>().unwrap())
+    .collect();
     let requested: std::sync::Arc<std::sync::Mutex<BTreeSet<i64>>> = std::sync::Arc::default();
     let recorded = std::sync::Arc::clone(&requested);
     session.set_store_send_hook(Some(std::sync::Arc::new(move |request| {
@@ -59,7 +68,7 @@ fn rows_and_decoded(session: &mut Session, sql: &str) -> (Vec<Vec<String>>, BTre
         };
         let mut ids = recorded.lock().unwrap();
         for executor in &dag.executors {
-            if let Some(scan) = &executor.tbl_scan {
+            if let Some(scan) = executor.tbl_scan.as_ref().filter(|scan| tables.contains(&scan.table_id.unwrap_or_default())) {
                 ids.extend(
                     scan.columns
                         .iter()

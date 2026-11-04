@@ -48,6 +48,15 @@ impl LocalStorage {
             .map_or_else(String::new, |name| name.to_string_lossy().into_owned())
     }
 
+    /// Go `LocalStorage.FileExists`.
+    pub fn file_exists(&self, name: &str) -> io::Result<bool> {
+        match std::fs::metadata(self.base.join(name)) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Go `ReadFile`.
     pub fn read_file(&self, name: &str) -> io::Result<Vec<u8>> {
         std::fs::read(self.base.join(name))

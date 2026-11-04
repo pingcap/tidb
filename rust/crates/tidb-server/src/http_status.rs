@@ -94,11 +94,48 @@ pub struct StatusRoutes {
     /// Go `StatsHandle().DumpStatsToJSON(db, table, nil, dumpPartitionStats)`
     /// for the named table of the latest schema, as JSON text.
     pub stats_dump: Option<StatsDump>,
+    /// Go `SchemaStorageHandler`'s storage rows of a database or one table.
+    pub schema_storage: Option<SchemaStorage>,
 }
 
-/// Dumps one table's statistics as JSON (`db`, `table`,
-/// `dump_partition_stats`).
-pub type StatsDump = Arc<dyn Fn(&str, &str, bool) -> Result<String, String> + Send + Sync>;
+/// Go `getSchemaTablesStorageInfo` + `WriteData` for `/schema_storage`
+/// (`db`, `table`), as JSON text.
+pub type SchemaStorage = Arc<dyn Fn(Option<&str>, Option<&str>) -> Result<String, String> + Send + Sync>;
+
+/// Go `SchemaStorageHandler` (`/schema_storage`, `/schema_storage/{db}`,
+/// `/schema_storage/{db}/{table}`).
+fn schema_storage_response(path: &str, storage: Option<&SchemaStorage>) -> Option<Result<String, String>> {
+    let route = path.split_once('?').map_or(path, |(route, _)| route);
+    let rest = route.strip_prefix("/schema_storage")?;
+    if !rest.is_empty() && !rest.starts_with('/') {
+        return None;
+    }
+    let parts: Vec<&str> = rest.split('/').filter(|part| !part.is_empty()).collect();
+    let (db, table) = match parts.as_slice() {
+        [] => (None, None),
+        [db] => (Some(*db), None),
+        [db, table] => (Some(*db), Some(*table)),
+        _ => return None,
+    };
+    let storage = storage?;
+    Some(storage(db, table))
+}
+
+/// Dumps one table's statistics as JSON (`db`, `table`, which dump).
+pub type StatsDump = Arc<dyn Fn(&str, &str, StatsDumpRequest<'_>) -> Result<String, String> + Send + Sync>;
+
+/// The dump a `/stats/dump` route asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatsDumpRequest<'a> {
+    /// Go `StatsHandler`: the latest statistics, `dumpPartitionStats`.
+    Latest { dump_partition_stats: bool },
+    /// Go `StatsHistoryHandler`: the historical statistics as of the
+    /// `{snapshot}` time text.
+    Snapshot(&'a str),
+    /// Go `DumpHistoricalStatsBySnapshot` of the latest schema's table at a
+    /// TSO, as `handlePlanReplayerCaptureFile` asks for it.
+    HistoricalAt(u64),
+}
 
 /// Bind HTTP and generated gRPC routes on Go's shared status port.
 pub fn start_status_listener_with_routes(
@@ -218,6 +255,247 @@ async fn http_response(
     }
 }
 
+/// Go `downloadFileHandler`: one dump file of the global storage.
+struct DownloadFile {
+    file_path: String,
+    file_name: String,
+    url_path: String,
+    downloaded_filename: &'static str,
+}
+
+/// Go `PlanReplayerHandler` (`/plan_replayer/dump/{filename}`) and
+/// `OptimizeTraceHandler` (`/optimize_trace/dump/{filename}`): Go
+/// `handleDownloadFile`.
+fn download_file_response(path: &str, routes: &StatusRoutes) -> Option<axum::response::Response> {
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    let file = if let Some(name) = route.strip_prefix("/plan_replayer/dump/").filter(|name| !name.contains('/')) {
+        DownloadFile {
+            file_path: format!("{}/{name}", tidb_replayer::get_plan_replayer_dir_name()),
+            file_name: name.to_owned(),
+            url_path: format!("plan_replayer/dump/{name}"),
+            downloaded_filename: "plan_replayer",
+        }
+    } else if let Some(name) = route.strip_prefix("/optimize_trace/dump/").filter(|name| !name.contains('/')) {
+        let instance_id = routes
+            .server_info
+            .as_ref()
+            .map(|syncer| syncer.get_local_server_info().static_info.id)
+            .unwrap_or_default();
+        DownloadFile {
+            file_path: format!("{}/{name}", tidb_domain::optimize_trace::get_optimizer_trace_dir_name(&instance_id)),
+            file_name: name.to_owned(),
+            url_path: format!("optimize_trace/dump/{name}"),
+            downloaded_filename: "optimize_trace",
+        }
+    } else {
+        return None;
+    };
+    let is_forwarded = query
+        .split('&')
+        .filter_map(|pair| pair.split_once('=').or(Some((pair, ""))))
+        .any(|(key, value)| key == "forward" && !value.is_empty());
+    Some(handle_download_file(&file, is_forwarded, routes))
+}
+
+/// Go `handleDownloadFile`: the file from the global storage, or from the
+/// first other TiDB server whose status port has it.
+fn handle_download_file(file: &DownloadFile, is_forwarded: bool, routes: &StatusRoutes) -> axum::response::Response {
+    let respond = |code: u16, content_type: &str, disposition: Option<String>, body: Vec<u8>| {
+        let mut builder = axum::http::Response::builder()
+            .status(code)
+            .header("content-type", content_type)
+            .header("content-length", body.len())
+            .header("connection", "close");
+        if let Some(disposition) = disposition {
+            builder = builder.header("content-disposition", disposition);
+        }
+        builder.body(axum::body::Body::from(body)).expect("status response headers")
+    };
+    // Go `handler.WriteError`.
+    let write_error = |message: String| respond(400, "text/plain", None, message.into_bytes());
+    let zip = |body: Vec<u8>| {
+        respond(
+            200,
+            "application/zip",
+            Some(format!("attachment; filename=\"{}.zip\"", file.downloaded_filename)),
+            body,
+        )
+    };
+    let config = tidb_config::config_tree::config::get_global_config();
+    let address = config.advertise_address.clone();
+    let status_port = config.status.status_port;
+    let local_addr = tidb_domain::plan_replayer::join_host_port(&address, status_port as u64);
+    let storage = match tidb_planner_extstore::get_global_ext_storage() {
+        Ok(storage) => storage,
+        Err(error) => return write_error(error),
+    };
+    let exists = match storage.file_exists(&file.file_path) {
+        Ok(exists) => exists,
+        Err(error) => return write_error(error.to_string()),
+    };
+    let log = |message: &str, fields: Vec<(&str, tidb_log::Value)>| {
+        let fields: Vec<_> = fields.into_iter().map(|(key, value)| tidb_log::Field::new(key, value)).collect();
+        tidb_logutil::bg_logger().info(message, &fields);
+    };
+    if exists {
+        let content = match storage.read_file(&file.file_path) {
+            Ok(content) => content,
+            Err(error) => return write_error(error.to_string()),
+        };
+        // A capture_replayer file gets its historical statistics now.
+        let content = if file.downloaded_filename == "plan_replayer" && file.file_name.starts_with("capture_replayer") {
+            match handle_plan_replayer_capture_file(content, routes) {
+                Ok(content) => content,
+                Err(error) => return write_error(error),
+            }
+        } else {
+            content
+        };
+        log(
+            "return dump file successfully",
+            vec![
+                ("filename", tidb_log::Value::Str(file.file_name.clone())),
+                ("address", tidb_log::Value::Str(local_addr.clone())),
+                ("forwarded", tidb_log::Value::Bool(is_forwarded)),
+            ],
+        );
+        return zip(content);
+    }
+    // Without a server-info syncer, or for a forwarded request, the file is
+    // simply not here.
+    let Some(syncer) = routes.server_info.as_ref().filter(|_| !is_forwarded) else {
+        log(
+            "failed to find dump file",
+            vec![
+                ("filename", tidb_log::Value::Str(file.file_name.clone())),
+                ("address", tidb_log::Value::Str(local_addr)),
+                ("forwarded", tidb_log::Value::Bool(is_forwarded)),
+            ],
+        );
+        return respond(404, "text/plain", None, Vec::new());
+    };
+    // Ask every other TiDB server for the file.
+    let topos = match syncer.get_all_tidb_topology() {
+        Ok(topos) => topos,
+        Err(error) => return write_error(error),
+    };
+    let client = match tidb_store_driver_txn::cluster_http::internal_http_client(&routes.security) {
+        Ok(client) => client,
+        Err(error) => return write_error(error),
+    };
+    let scheme = if config.security.cluster_ssl_ca.is_empty() { "http" } else { "https" };
+    for topo in topos {
+        if topo.ip == address && topo.status_port as usize == status_port {
+            continue;
+        }
+        let remote_addr = tidb_domain::plan_replayer::join_host_port(&topo.ip, topo.status_port as u64);
+        let url = format!("{scheme}://{remote_addr}/{}?forward=true", file.url_path);
+        let response = match client.get(&url).send() {
+            Ok(response) => response,
+            Err(error) => {
+                tidb_logutil::bg_logger().warn(
+                    "forward request failed",
+                    &[
+                        tidb_log::Field::new("remote-addr", tidb_log::Value::Str(remote_addr)),
+                        tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+                    ],
+                );
+                continue;
+            }
+        };
+        if response.status() != reqwest::StatusCode::OK {
+            log(
+                "can't find file in remote server",
+                vec![
+                    ("filename", tidb_log::Value::Str(file.file_name.clone())),
+                    ("remote-addr", tidb_log::Value::Str(remote_addr)),
+                    ("status-code", tidb_log::Value::I64(i64::from(response.status().as_u16()))),
+                ],
+            );
+            continue;
+        }
+        let body = match response.bytes() {
+            Ok(body) => body.to_vec(),
+            Err(error) => return write_error(error.to_string()),
+        };
+        log(
+            "return dump file successfully in remote server",
+            vec![
+                ("filename", tidb_log::Value::Str(file.file_name.clone())),
+                ("remote-addr", tidb_log::Value::Str(remote_addr)),
+            ],
+        );
+        return zip(body);
+    }
+    log(
+        "can't find dump file in any remote server",
+        vec![("filename", tidb_log::Value::Str(file.file_name.clone()))],
+    );
+    respond(
+        404,
+        "text/plain",
+        None,
+        format!("can't find dump file {} in any remote server", file.file_name).into_bytes(),
+    )
+}
+
+/// Go `handlePlanReplayerCaptureFile`: a capture_replayer archive gets each
+/// table's historical statistics as of its `startTS`.
+///
+/// Go's `loadSchemaMeta` takes each `schema_meta.txt` line as `db;table`,
+/// which no dump writes (`dumpSchemaMeta` writes `db.table;` entries, as
+/// `PLAN REPLAYER LOAD` reads them), so every such download fails there;
+/// the entries are read here the way the writer and `LOAD` agree on.
+fn handle_plan_replayer_capture_file(content: Vec<u8>, routes: &StatusRoutes) -> Result<Vec<u8>, String> {
+    let entries = tidb_replayer::zip::read_zip(&content).map_err(|error| error.to_string())?;
+    // Go `loadSQLMetaFile`.
+    let start_ts = match entries.iter().find(|(name, _)| name == tidb_domain::plan_replayer::dump_file::PLAN_REPLAYER_SQL_META_FILE) {
+        Some((_, meta)) => {
+            let meta: std::collections::BTreeMap<String, String> =
+                toml::from_str(&String::from_utf8_lossy(meta)).map_err(|error| error.to_string())?;
+            let start_ts = meta.get(tidb_domain::plan_replayer::sql_meta_key::START_TS).map_or("", String::as_str);
+            start_ts.parse::<u64>().map_err(|_| {
+                format!("strconv.ParseUint: parsing {}: invalid syntax", tidb_go_strconv::quote_bytes(start_ts.as_bytes()))
+            })?
+        }
+        None => 0,
+    };
+    if start_ts == 0 {
+        return Ok(content);
+    }
+    // Go `loadSchemaMeta`.
+    let schema_meta = format!("schema/{}", tidb_domain::plan_replayer::dump_file::PLAN_REPLAYER_SCHEMA_META_FILE);
+    let mut tables = std::collections::BTreeMap::new();
+    if let Some((_, meta)) = entries.iter().find(|(name, _)| *name == schema_meta) {
+        for entry in String::from_utf8_lossy(meta).split(['\n', ';']).filter(|entry| !entry.is_empty()) {
+            let (db, table) = entry.split_once('.').unwrap_or((entry, ""));
+            tables.insert((db.to_owned(), table.to_owned()), ());
+        }
+    }
+    let dump = routes.stats_dump.as_ref().ok_or_else(|| "this node has no statistics to dump".to_owned())?;
+    let mut stats = Vec::new();
+    for (db, table) in tables.keys() {
+        stats.push((format!("stats/{db}.{table}.json"), dump(db, table, StatsDumpRequest::HistoricalAt(start_ts))?));
+    }
+    // Go `dumpJSONStatsIntoZipInMemory`: the archive's files, then the stats.
+    let mut writer = tidb_replayer::zip::ZipWriter::new(Vec::new());
+    for (name, contents) in &entries {
+        writer.create_file(name, contents).map_err(|error| error.to_string())?;
+    }
+    for (name, json) in &stats {
+        writer.create_file(name, json.as_bytes()).map_err(|error| error.to_string())?;
+    }
+    writer.close().map_err(|error| error.to_string())?;
+    Ok(writer.into_inner())
+}
+
+/// Go `handler.WriteData`: `json.MarshalIndent(data, "", " ")`, which is the
+/// value's marshalled text (with Go's string escapes) indented by
+/// `json.Indent`.
+fn write_data(compact: &str) -> String {
+    tidb_stringutil::go_json_indent(&tidb_stringutil::go_json_html_escape(compact), "", " ")
+}
+
 fn route_response(
     path: &str,
     request: &str,
@@ -226,6 +504,9 @@ fn route_response(
     git_hash: &str,
     routes: &StatusRoutes,
 ) -> axum::response::Response {
+    if let Some(response) = download_file_response(path, routes) {
+        return response;
+    }
     let route = path.split_once('?').map_or(path, |(route, _)| route);
     let (code, content_type, body) = if route == "/status" {
         let percentage = tidb_stats_handle_initstats::INIT_STATS_PERCENTAGE.load();
@@ -264,7 +545,13 @@ fn route_response(
         txn_gc_states_response(request, routes.transactions.as_deref())
     } else if let Some(answer) = settings_response(path, request, routes.settings.as_ref()) {
         match answer {
-            Ok(body) => (200, "application/json", body),
+            // Go `fn.Wrap`'s `json.NewEncoder(w).Encode(config)`.
+            Ok(body) if route == "/config" => (
+                200,
+                "application/json; charset=utf-8",
+                format!("{}\n", tidb_stringutil::go_json_html_escape(&body)),
+            ),
+            Ok(body) => (200, "application/json", write_data(&body)),
             Err(message) => (400, "text/plain", message),
         }
     } else if let Some(answer) = routes
@@ -273,7 +560,7 @@ fn route_response(
         .and_then(|source| schema_response(path, source.as_ref()))
     {
         match answer {
-            Ok(body) => (200, "application/json", body),
+            Ok(body) => (200, "application/json", write_data(&body)),
             // Go `handler.WriteError`: 400 with the error text.
             Err(message) => (400, "text/plain", message),
         }
@@ -287,9 +574,10 @@ fn route_response(
         .or_else(|| ddl_resign_owner_response(path, request, routes.ddl_owner.as_deref()))
         .or_else(|| ddl_history_response(path, routes.ddl_history.as_deref()))
         .or_else(|| stats_dump_response(path, routes.stats_dump.as_ref()))
+        .or_else(|| schema_storage_response(path, routes.schema_storage.as_ref()))
     {
         match answer {
-            Ok(body) => (200, "application/json", body),
+            Ok(body) => (200, "application/json", write_data(&body)),
             Err(message) => (400, "text/plain", message),
         }
     } else {
@@ -712,17 +1000,17 @@ fn flash_replica_summary_response(path: &str, request: &str, routes: &StatusRout
     let config = tidb_config::config_tree::config::get_global_config();
     // Go `BoolToOnOff(TiDBOptOn(...))`.
     let on = enabled.eq_ignore_ascii_case("ON") || enabled == "1";
-    let body = serde_json::json!({
-        "keyspace": tidb_keyspace::get_keyspace_name_by_settings(),
+    // Go `FlashReplicaSummary`, in its field order.
+    let body = format!(
+        "{{\"keyspace\":{},\"keyspace_id\":{},\"tidb_columnar_storage_enabled\":\"{}\",\"columnar_store_type\":{},\"can_disable\":{},\"table_count\":{table_count},\"reloaded\":{do_reload}}}",
+        serde_json::Value::from(tidb_keyspace::get_keyspace_name_by_settings()),
         // The store codec's keyspace: `NulSpaceID` on a classic store.
-        "keyspace_id": tidb_txnkv::driver::tikv_store::NULL_KEYSPACE_ID,
-        "tidb_columnar_storage_enabled": if on { "ON" } else { "OFF" },
-        "columnar_store_type": config.cse.columnar_store_type,
-        "can_disable": table_count == 0,
-        "table_count": table_count,
-        "reloaded": do_reload,
-    });
-    (200, "application/json", body.to_string())
+        tidb_txnkv::driver::tikv_store::NULL_KEYSPACE_ID,
+        if on { "ON" } else { "OFF" },
+        serde_json::Value::from(config.cse.columnar_store_type.clone()),
+        table_count == 0,
+    );
+    (200, "application/json", write_data(&body))
 }
 
 /// Go `TxnGCStatesHandler` (`/txn-gc-states`): GET only (Go's
@@ -743,10 +1031,10 @@ fn txn_gc_states_response(
         Ok(state) => (
             200,
             "application/json",
-            format!(
+            write_data(&format!(
                 "{{\"KeyspaceID\":{},\"TxnSafePoint\":{},\"GCSafePoint\":{}}}",
                 state.keyspace_id, state.txn_safe_point, state.gc_safe_point
-            ),
+            )),
         ),
         Err(message) => (400, "text/plain", message),
     }
@@ -757,6 +1045,10 @@ fn txn_gc_states_response(
 fn stats_dump_response(path: &str, dump: Option<&StatsDump>) -> Option<Result<String, String>> {
     let (route, query) = path.split_once('?').unwrap_or((path, ""));
     let parts: Vec<&str> = route.strip_prefix("/stats/dump/")?.split('/').collect();
+    if let [database, table, snapshot] = parts.as_slice() {
+        let dump = dump.ok_or_else(|| "this node has no statistics to dump".to_owned());
+        return Some(dump.and_then(|dump| dump(database, table, StatsDumpRequest::Snapshot(snapshot))));
+    }
     let [database, table] = parts.as_slice() else {
         return None;
     };
@@ -779,7 +1071,7 @@ fn stats_dump_response(path: &str, dump: Option<&StatsDump>) -> Option<Result<St
             };
         }
         let dump = dump.ok_or_else(|| "this node has no statistics to dump".to_owned())?;
-        dump(database, table, dump_partition_stats)
+        dump(database, table, StatsDumpRequest::Latest { dump_partition_stats })
     })())
 }
 
@@ -1497,15 +1789,21 @@ mod schema_route_tests {
     fn the_stats_dump_route_reads_its_names_and_flag() {
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
         let record = Arc::clone(&seen);
-        let dump: StatsDump = Arc::new(move |db: &str, table: &str, partitions: bool| {
-            record.lock().unwrap().push((db.to_owned(), table.to_owned(), partitions));
+        let dump: StatsDump = Arc::new(move |db: &str, table: &str, request: StatsDumpRequest<'_>| {
+            record.lock().unwrap().push((db.to_owned(), table.to_owned(), format!("{request:?}")));
             Ok("{}".to_owned())
         });
         assert_eq!(stats_dump_response("/stats/dump/test/t", Some(&dump)).unwrap().unwrap(), "{}");
         stats_dump_response("/stats/dump/test/t?dumpPartitionStats=0", Some(&dump)).unwrap().unwrap();
+        // Go `StatsHistoryHandler`'s route: the third segment is the snapshot.
+        stats_dump_response("/stats/dump/test/t/20261105010203", Some(&dump)).unwrap().unwrap();
         assert_eq!(
             *seen.lock().unwrap(),
-            [("test".to_owned(), "t".to_owned(), true), ("test".to_owned(), "t".to_owned(), false)]
+            [
+                ("test".to_owned(), "t".to_owned(), "Latest { dump_partition_stats: true }".to_owned()),
+                ("test".to_owned(), "t".to_owned(), "Latest { dump_partition_stats: false }".to_owned()),
+                ("test".to_owned(), "t".to_owned(), "Snapshot(\"20261105010203\")".to_owned()),
+            ]
         );
         assert_eq!(
             stats_dump_response("/stats/dump/test/t?dumpPartitionStats=x", Some(&dump)).unwrap().unwrap_err(),
@@ -1682,5 +1980,109 @@ mod schema_route_tests {
         }
         // A query string is stripped before matching, as Go's mux does.
         assert!(schema_response("/schema?id_name_only=true", source.as_ref()).is_some());
+    }
+
+    fn routed(path: &str, routes: &StatusRoutes) -> (u16, String, Vec<u8>) {
+        let tracker = ConnectionTracker::default();
+        let response = route_response(path, &format!("GET {path} HTTP/1.1\r\n\r\n"), &tracker, "v", "h", routes);
+        let code = response.status().as_u16();
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .map(|value| value.to_str().unwrap().to_owned())
+            .unwrap_or_default();
+        let disposition = response
+            .headers()
+            .get("content-disposition")
+            .map(|value| value.to_str().unwrap().to_owned())
+            .unwrap_or_default();
+        let body = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(axum::body::to_bytes(response.into_body(), usize::MAX))
+            .unwrap()
+            .to_vec();
+        (code, format!("{content_type}|{disposition}"), body)
+    }
+
+    /// Go `handler.WriteData`: `json.MarshalIndent(data, "", " ")`, with
+    /// `encoding/json`'s HTML escapes.
+    #[test]
+    fn json_routes_write_gos_indented_data() {
+        let dump: StatsDump = Arc::new(|_: &str, _: &str, _: StatsDumpRequest<'_>| {
+            Ok(r#"{"table_name":"<t>","columns":{},"buckets":[1,2]}"#.to_owned())
+        });
+        let routes = StatusRoutes { stats_dump: Some(dump), ..StatusRoutes::default() };
+        let (code, kind, body) = routed("/stats/dump/test/t", &routes);
+        assert_eq!((code, kind.as_str()), (200, "application/json|"));
+        assert_eq!(
+            String::from_utf8(body).unwrap(),
+            "{\n \"table_name\": \"\\u003ct\\u003e\",\n \"columns\": {},\n \"buckets\": [\n  1,\n  2\n ]\n}"
+        );
+    }
+
+    /// Go `SchemaStorageHandler`'s three routes.
+    #[test]
+    fn the_schema_storage_routes_pass_their_names() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = Arc::clone(&seen);
+        let storage: SchemaStorage = Arc::new(move |db: Option<&str>, table: Option<&str>| {
+            record.lock().unwrap().push((db.map(str::to_owned), table.map(str::to_owned)));
+            Ok("[]".to_owned())
+        });
+        for path in ["/schema_storage", "/schema_storage/test", "/schema_storage/test/t"] {
+            schema_storage_response(path, Some(&storage)).unwrap().unwrap();
+        }
+        assert!(schema_storage_response("/schema_storagex", Some(&storage)).is_none());
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [
+                (None, None),
+                (Some("test".to_owned()), None),
+                (Some("test".to_owned()), Some("t".to_owned())),
+            ]
+        );
+    }
+
+    /// Go `handleDownloadFile`: a stored dump is served as a zip attachment;
+    /// a forwarded request for a missing one is 404; a capture_replayer
+    /// archive with a start TS gets each table's historical statistics.
+    #[test]
+    fn dump_files_download_like_go() {
+        let base = std::env::temp_dir().join(format!("status-download-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let storage = Arc::new(tidb_planner_extstore::LocalStorage::new(&base).unwrap());
+        tidb_planner_extstore::set_global_ext_storage_for_test(Some(Arc::clone(&storage)));
+        std::fs::create_dir_all(base.join("replayer")).unwrap();
+        std::fs::write(base.join("replayer/replayer_x_1.zip"), b"PK-bytes").unwrap();
+        let mut archive = tidb_replayer::zip::ZipWriter::new(Vec::new());
+        archive.create_file("sql_meta.toml", b"startTS = \"42\"\n").unwrap();
+        archive.create_file("schema/schema_meta.txt", b"test.t1;test.t2;").unwrap();
+        archive.close().unwrap();
+        std::fs::write(base.join("replayer/capture_replayer_x_1.zip"), archive.into_inner()).unwrap();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = Arc::clone(&seen);
+        let dump: StatsDump = Arc::new(move |db: &str, table: &str, request: StatsDumpRequest<'_>| {
+            record.lock().unwrap().push(format!("{db}.{table} {request:?}"));
+            Ok(format!("{{\"table_name\":\"{table}\"}}"))
+        });
+        let routes = StatusRoutes { stats_dump: Some(dump), ..StatusRoutes::default() };
+
+        let (code, kind, body) = routed("/plan_replayer/dump/replayer_x_1.zip", &routes);
+        assert_eq!(code, 200);
+        assert_eq!(kind, "application/zip|attachment; filename=\"plan_replayer.zip\"");
+        assert_eq!(body, b"PK-bytes");
+        assert_eq!(routed("/plan_replayer/dump/missing.zip?forward=true", &routes).0, 404);
+        assert_eq!(routed("/optimize_trace/dump/missing.zip", &routes).0, 404);
+
+        let (code, _, body) = routed("/plan_replayer/dump/capture_replayer_x_1.zip", &routes);
+        assert_eq!(code, 200);
+        let files: std::collections::BTreeMap<_, _> = tidb_replayer::zip::read_zip(&body).unwrap().into_iter().collect();
+        assert_eq!(files["stats/test.t1.json"], b"{\"table_name\":\"t1\"}");
+        assert_eq!(files["stats/test.t2.json"], b"{\"table_name\":\"t2\"}");
+        assert!(files.contains_key("sql_meta.toml"));
+        assert_eq!(*seen.lock().unwrap(), ["test.t1 HistoricalAt(42)", "test.t2 HistoricalAt(42)"]);
+        tidb_planner_extstore::set_global_ext_storage_for_test(None);
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

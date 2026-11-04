@@ -155,10 +155,16 @@ tidb-resourcemanager-pool-workerpool = { path = "../tidb-resourcemanager-pool-wo
 serde_json = { workspace = true }
 tidb-config = { path = "../tidb-config" }
 toml.workspace = true
+tidb-stringutil = { path = "../tidb-stringutil" }
+tidb-replayer = { path = "../tidb-replayer" }
+tidb-planner-extstore = { path = "../tidb-planner-extstore" }
+reqwest = { workspace = true, features = ["blocking"] }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-syssession = { path = "../tidb-syssession" }
+serde = { workspace = true }
 
 [dev-dependencies]
 tidb-sem-v2 = { path = "../tidb-sem-v2" }
-tidb-stringutil = { path = "../tidb-stringutil" }
 tidb-ddl = { path = "../tidb-ddl", features = ["failpoints"] }
 tidb-build-tags = { path = "../tidb-build-tags", features = ["failpoints"] }
 fail = { version = "0.4", features = ["failpoints"] }

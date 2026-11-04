@@ -46,7 +46,7 @@ impl Settings {
 
     /// Reads canonical configuration at request time, including SQL updates.
     pub fn read(&self) -> Result<String, String> {
-        serde_json::to_string_pretty(get_global_config().as_ref()).map_err(|e| e.to_string())
+        serde_json::to_string(get_global_config().as_ref()).map_err(|e| e.to_string())
     }
 
     /// Applies fields in Go order, retaining preceding effects on error.

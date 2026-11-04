@@ -513,8 +513,14 @@ pub fn go_json_float(value: f64) -> String {
 /// Go `json.Marshal` of a value: `encoding/json` escapes `<`, `>`, `&` and the
 /// U+2028/U+2029 separators inside strings.
 pub fn go_json_marshal<T: serde::Serialize + ?Sized>(value: &T) -> String {
-    serde_json::to_string(value)
-        .unwrap_or_default()
+    go_json_html_escape(&serde_json::to_string(value).unwrap_or_default())
+}
+
+/// The escapes Go `json.Marshal` applies inside strings over serde's compact
+/// text: `<`, `>`, `&` and U+2028/U+2029 (none of them can occur outside a
+/// string in JSON text).
+pub fn go_json_html_escape(compact: &str) -> String {
+    compact
         .replace('<', "\\u003c")
         .replace('>', "\\u003e")
         .replace('&', "\\u0026")
@@ -522,11 +528,96 @@ pub fn go_json_marshal<T: serde::Serialize + ?Sized>(value: &T) -> String {
         .replace('\u{2029}', "\\u2029")
 }
 
+/// Go `json.Indent(dst, src, prefix, indent)` over valid JSON text: a newline
+/// and the indentation after `{`, `[` and `,`, a space after `:`, and empty
+/// objects and arrays kept as `{}` and `[]`; strings are copied unchanged and
+/// insignificant whitespace is dropped.
+#[must_use]
+pub fn go_json_indent(src: &str, prefix: &str, indent: &str) -> String {
+    let newline = |dst: &mut String, depth: usize| {
+        dst.push('\n');
+        dst.push_str(prefix);
+        for _ in 0..depth {
+            dst.push_str(indent);
+        }
+    };
+    let mut dst = String::with_capacity(src.len() * 2);
+    let mut need_indent = false;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for c in src.chars() {
+        if in_string {
+            dst.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if matches!(c, ' ' | '\t' | '\n' | '\r') {
+            continue;
+        }
+        if need_indent && c != '}' && c != ']' {
+            need_indent = false;
+            depth += 1;
+            newline(&mut dst, depth);
+        }
+        match c {
+            // delay indent so that empty object and array are formatted as {} and [].
+            '{' | '[' => {
+                need_indent = true;
+                dst.push(c);
+            }
+            ',' => {
+                dst.push(c);
+                newline(&mut dst, depth);
+            }
+            ':' => {
+                dst.push(c);
+                dst.push(' ');
+            }
+            '}' | ']' => {
+                if need_indent {
+                    // suppress indent in empty object/array
+                    need_indent = false;
+                } else {
+                    depth = depth.saturating_sub(1);
+                    newline(&mut dst, depth);
+                }
+                dst.push(c);
+            }
+            '"' => {
+                in_string = true;
+                dst.push(c);
+            }
+            c => dst.push(c),
+        }
+    }
+    dst
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
 
     use super::*;
+
+    /// Go `json.MarshalIndent(v, "", " ")` (verified against Go 1.26): nested
+    /// values, empty containers kept inline, strings untouched.
+    #[test]
+    fn go_json_indent_follows_go() {
+        let src = r#"{"a":[1,{"b":"x, y: {z}"}],"e":{},"f":[],"g":"q\"\\"}"#;
+        assert_eq!(
+            go_json_indent(src, "", " "),
+            "{\n \"a\": [\n  1,\n  {\n   \"b\": \"x, y: {z}\"\n  }\n ],\n \"e\": {},\n \"f\": [],\n \"g\": \"q\\\"\\\\\"\n}"
+        );
+        assert_eq!(go_json_indent("\"success!\"", "", " "), "\"success!\"");
+        assert_eq!(go_json_html_escape(r#"{"a":"<&>"}"#), r#"{"a":"\u003c\u0026\u003e"}"#);
+    }
 
     #[test]
     fn test_unquote() {

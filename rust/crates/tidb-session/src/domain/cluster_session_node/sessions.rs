@@ -364,32 +364,21 @@ impl DomainSessions for Domain {
                 safe_ts_transactions.min_safe_ts(txn_scope)
             }));
             session.set_snapshot_schema_provider(Arc::new(move |ts, resource_group, validate| {
-                let hold = tidb_txnkv::ACTIVE_START_TS.hold(ts);
+                let _hold = tidb_txnkv::ACTIVE_START_TS.hold(ts);
                 let snapshot = transactions
                     .open_snapshot_at(ts, resource_group)
                     .map_err(tidb_driver_error::DriverError::unsupported)?;
                 if validate {
                     crate::gcutil::validate_snapshot(restricted_sql.as_ref(), ts)?;
                 }
-                let mut metadata = SnapshotMetaSnapshot::new(snapshot);
-                let capacity = globals
-                    .get("tidb_schema_version_cache_limit")
-                    .ok()
-                    .and_then(|value| value.parse::<usize>().ok())
-                    .unwrap_or(16);
-                let loaded = catalogs
-                    .load_with_ts(&mut metadata, capacity)
-                    .map_err(historical_catalog_error)?;
-                let built = cluster_session_catalog_with_templates(
-                    &loaded,
-                    Some(Arc::clone(&statistics_view)),
+                load_snapshot_catalog(
+                    snapshot,
+                    &catalogs,
+                    &globals,
+                    &statistics_view,
                     auto_ids.as_ref(),
-                    None,
-                    Some(cached_table_session.as_ref()),
-                );
-                drop(metadata);
-                drop(hold);
-                Ok(built.catalog)
+                    cached_table_session.as_ref(),
+                )
             }));
         }
         let services = super::node_services(self);
@@ -1412,4 +1401,59 @@ pub fn start_plan_replayer_handle(domain: &Arc<Domain>) {
         let domain = sessions.upgrade().ok_or_else(|| "the domain is closed".to_owned())?;
         domain.open_system_session().map_err(|error| error.error_string())
     })));
+}
+
+/// The schema image of `snapshot`: the info cache's `load_with_ts` over its
+/// meta, built into a session catalog.
+fn load_snapshot_catalog(
+    snapshot: Box<dyn tidb_kv::cluster_storage::ClusterSnapshot>,
+    catalogs: &tidb_infoschema_issyncer::catalog_watch::InfoCache,
+    globals: &tidb_domain::global_sysvars::GlobalSysvars,
+    statistics_view: &Arc<tidb_stats_handle::StatisticsView>,
+    auto_ids: &dyn tidb_table::table_from_meta::TableAutoIds,
+    cached_table_session: &tidb_domain_core::cluster_session::CachedTableSessionFactory,
+) -> Result<tidb_infoschema::SessionExtendedInfoSchema, tidb_driver_error::DriverError> {
+    let mut metadata = SnapshotMetaSnapshot::new(snapshot);
+    let capacity = globals
+        .get("tidb_schema_version_cache_limit")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(16);
+    let loaded = catalogs
+        .load_with_ts(&mut metadata, capacity)
+        .map_err(historical_catalog_error)?;
+    let built = cluster_session_catalog_with_templates(
+        &loaded,
+        Some(Arc::clone(statistics_view)),
+        auto_ids,
+        None,
+        Some(cached_table_session),
+    );
+    drop(metadata);
+    Ok(built.catalog)
+}
+
+/// Go `Domain.GetSnapshotInfoSchema(snapshotTS)`: the schema as of `ts`.
+///
+/// # Errors
+/// The snapshot or the schema load failed.
+pub fn get_snapshot_info_schema(
+    domain: &Domain,
+    ts: u64,
+) -> Result<tidb_infoschema::SessionExtendedInfoSchema, tidb_driver_error::DriverError> {
+    let _hold = tidb_txnkv::ACTIVE_START_TS.hold(ts);
+    let snapshot = domain
+        .transactions
+        .open_snapshot_at(ts, tidb_model::DEFAULT_RESOURCE_GROUP_NAME)
+        .map_err(tidb_driver_error::DriverError::unsupported)?;
+    let cached_table_session: Arc<tidb_domain_core::cluster_session::CachedTableSessionFactory> =
+        Arc::from(domain.cached_table_session_factory());
+    load_snapshot_catalog(
+        snapshot,
+        &domain.catalog,
+        &domain.global_vars,
+        &domain.statistics_view,
+        domain.auto_ids.as_ref(),
+        cached_table_session.as_ref(),
+    )
 }
