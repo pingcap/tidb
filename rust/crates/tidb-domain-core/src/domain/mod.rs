@@ -19,6 +19,7 @@
 
 pub mod ddl_notifier;
 mod ru_stats_writer;
+pub mod workload_learning;
 pub mod schema_lease;
 pub mod stats_maintenance;
 
@@ -739,6 +740,7 @@ pub struct Domain {
     pub analyze_jobs_cleanup_worker: std::sync::OnceLock<AnalyzeJobsCleanupWorker>,
     /// Go `Domain.requestUnitsWriterLoop`.
     ru_stats_writer: std::sync::OnceLock<ru_stats_writer::RuStatsWriterWorker>,
+    workload_learning_worker: std::sync::OnceLock<workload_learning::WorkloadLearningWorker>,
     /// The cluster's BDR role in TiKV meta, which every session's ADMIN
     /// BDR ROLE statements read and write.
     pub bdr_role_store: std::sync::OnceLock<Arc<dyn tidb_meta::BdrRoleStore>>,
@@ -1050,6 +1052,7 @@ impl Domain {
             ddl_notifier: std::sync::OnceLock::new(),
             analyze_jobs_cleanup_worker: std::sync::OnceLock::new(),
             ru_stats_writer: std::sync::OnceLock::new(),
+            workload_learning_worker: std::sync::OnceLock::new(),
             bdr_role_store: std::sync::OnceLock::new(),
             ddl_job_history_store: std::sync::OnceLock::new(),
             auto_analyze_worker: std::sync::OnceLock::new(),
@@ -1129,6 +1132,17 @@ impl Domain {
     }
 
     /// Starts Go `Domain.StartHistoricalStatsWorker`.
+    /// Go `Domain.SetupWorkloadBasedLearningWorker`: the read-table-cost
+    /// worker, started after the statistics loops as Go's bootstrap does.
+    pub fn setup_workload_based_learning_worker(self: &Arc<Self>) {
+        if self.workload_learning_worker.get().is_some() {
+            return;
+        }
+        let _ = self
+            .workload_learning_worker
+            .set(workload_learning::WorkloadLearningWorker::start(self));
+    }
+
     pub fn start_historical_stats_worker(self: &Arc<Self>) {
         if !tidb_domain::historical_stats::enable_dump_historical_stats()
             || self.historical_stats_runtime.get().is_some()

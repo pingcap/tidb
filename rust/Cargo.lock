@@ -4311,6 +4311,7 @@ dependencies = [
  "tidb-vardef",
  "tidb-variable",
  "tidb-worker-stack",
+ "tidb-workloadlearning",
  "tikv-client",
 ]
 
@@ -6884,6 +6885,7 @@ dependencies = [
  "tidb-variable",
  "tidb-versioninfo",
  "tidb-vitess",
+ "tidb-workloadlearning",
  "tikv-client",
  "tokio",
  "toml",
@@ -8369,6 +8371,26 @@ dependencies = [
 [[package]]
 name = "tidb-worker-stack"
 version = "0.0.0"
+
+[[package]]
+name = "tidb-workloadlearning"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "prost 0.14.4",
+ "serde",
+ "serde_json",
+ "tidb-ast",
+ "tidb-config-configtypes",
+ "tidb-datatype",
+ "tidb-infoschema",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-model",
+ "tidb-plancodec",
+ "tidb-proto",
+ "tidb-sqlescape",
+]
 
 [[package]]
 name = "tidb-workloadrepo"

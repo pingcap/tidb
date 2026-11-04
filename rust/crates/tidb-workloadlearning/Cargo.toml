@@ -1,0 +1,27 @@
+[package]
+name = "tidb-workloadlearning"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB workloadlearning: Go pkg/workloadlearning (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { workspace = true }
+prost = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tidb-ast = { path = "../tidb-ast" }
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-model = { path = "../tidb-model" }
+tidb-plancodec = { path = "../tidb-plancodec" }
+tidb-proto = { path = "../tidb-proto" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }

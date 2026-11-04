@@ -124,6 +124,7 @@ tidb-kv = { path = "../tidb-kv" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-ddl-session = { path = "../tidb-ddl-session" }
+tidb-workloadlearning = { path = "../tidb-workloadlearning" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-lexer = { path = "../tidb-lexer" }

@@ -647,6 +647,8 @@ pub fn cluster_session_stack(
     factory.start_auto_analyze_worker(config.stats_lease);
     factory.start_analyze_jobs_cleanup_worker(config.stats_lease);
     factory.start_historical_stats_worker();
+    // Go `BootstrapSession`: after the statistics loops.
+    factory.setup_workload_based_learning_worker();
     factory.load_signing_cert_loop(
         &config.global_config.security.session_token_signing_cert,
         &config.global_config.security.session_token_signing_key,

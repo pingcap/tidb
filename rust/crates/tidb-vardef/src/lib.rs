@@ -55,6 +55,16 @@ pub fn set_ddl_error_count_limit(limit: i64) {
 pub static MAX_AUTO_ANALYZE_TIME: AtomicI64 =
     AtomicI64::new(defaults::DEF_TIDB_MAX_AUTO_ANALYZE_TIME);
 
+/// Go `vardef.EnableWorkloadBasedLearning`. Go registers no system variable
+/// for it.
+pub static ENABLE_WORKLOAD_BASED_LEARNING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(defaults::DEF_TIDB_ENABLE_WORKLOAD_BASED_LEARNING);
+
+/// Go `vardef.WorkloadBasedLearningInterval`, nanoseconds. Go registers no
+/// system variable for it.
+pub static WORKLOAD_BASED_LEARNING_INTERVAL: AtomicI64 =
+    AtomicI64::new(defaults::DEF_TIDB_WORKLOAD_BASED_LEARNING_INTERVAL);
+
 /// Go `vardef.EnableFastCreateTable`: the DDL submitter merges CREATE TABLE
 /// jobs.
 pub static ENABLE_FAST_CREATE_TABLE: std::sync::atomic::AtomicBool =

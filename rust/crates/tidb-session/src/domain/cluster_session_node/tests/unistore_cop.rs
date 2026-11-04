@@ -27464,6 +27464,83 @@ fn column_distribution_stats_read_on_a_statistics_session_as_go() {
     assert!(read(&w_info).is_none(), "an unanalyzed column has no distribution");
 }
 
+fn workload_learning_pool(stack: &UnistoreClusterStack) -> Arc<dyn tidb_workloadlearning::SessionPool> {
+    Arc::new(tidb_domain_core::domain::workload_learning::WorkloadLearningSessionPool(
+        stack.factory.advanced_sys_session_pool(),
+    ))
+}
+
+fn workload_metric(table: &str, scan_time: i64, mem_usage: i64, read_frequency: i64, read_cost: f64) -> tidb_workloadlearning::TableReadCostMetrics {
+    tidb_workloadlearning::TableReadCostMetrics {
+        db_name: tidb_ast::CiString::new("test"),
+        table_name: tidb_ast::CiString::new(table),
+        table_scan_time: scan_time,
+        table_mem_usage: mem_usage,
+        read_frequency,
+        table_read_cost: read_cost,
+    }
+}
+
+fn now_naive() -> chrono::NaiveDateTime {
+    chrono::Local::now().naive_local()
+}
+
+/// Go `workloadlearning.TestSaveReadTableCostMetrics`.
+#[test]
+fn workload_learning_saves_read_table_cost_metrics() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(313)).unwrap();
+    rows(&mut session, "CREATE TABLE test.test (a int, b int, index idx(a))");
+    let handle = tidb_workloadlearning::Handle::new(workload_learning_pool(&stack));
+    let metrics = std::collections::HashMap::from([(1, workload_metric("test", 10, 10, 10, 1.0))]);
+    handle.save_table_read_cost_metrics(&metrics, now_naive(), now_naive());
+    assert_eq!(rows(&mut session, "SELECT * FROM mysql.tidb_workload_values").len(), 1);
+}
+
+/// Go `workloadlearning.TestAccumulateMetricsGroupByTableID`.
+#[test]
+fn workload_learning_accumulates_metrics_by_table_id() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(314)).unwrap();
+    rows(&mut session, "CREATE TABLE test.test1 (a int, b int, index idx(a))");
+    rows(&mut session, "CREATE TABLE test.test2 (a int, b int, index idx(b))");
+    let catalog = stack.factory.catalog.get_latest();
+    let id = |name: &str| catalog.table_info_by_name("test", name).unwrap().1.read().id;
+    let mut previous = std::collections::HashMap::from([(id("test1"), workload_metric("test1", 10, 10, 1, 0.0))]);
+    tidb_workloadlearning::accumulate_metrics_group_by_table_id(
+        vec![Some(workload_metric("test1", 10, 10, 0, 0.0)), Some(workload_metric("test2", 10, 10, 0, 0.0))],
+        2,
+        &mut previous,
+        &catalog,
+    );
+    assert_eq!(previous.len(), 2);
+    let test1 = &previous[&id("test1")];
+    assert_eq!((test1.read_frequency, test1.table_scan_time, test1.table_mem_usage, test1.table_read_cost), (3, 30, 30, 0.0));
+    let test2 = &previous[&id("test2")];
+    assert_eq!((test2.read_frequency, test2.table_scan_time, test2.table_mem_usage, test2.table_read_cost), (2, 20, 20, 0.0));
+}
+
+/// Go `workloadlearning.TestUpdateTableCostCache` and
+/// `TestGetTableReadCacheMetricsWithNoData`.
+#[test]
+fn workload_learning_cache_loads_the_latest_version() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(315)).unwrap();
+    let pool = workload_learning_pool(&stack);
+    let empty = tidb_workloadlearning::WlCacheWorker::new(Arc::clone(&pool));
+    assert!(empty.get_table_read_cost_metrics(1).is_none());
+
+    rows(&mut session, "CREATE TABLE test.test (a int, b int, index idx(a))");
+    let table_id = stack.factory.catalog.get_latest().table_info_by_name("test", "test").unwrap().1.read().id;
+    let handle = tidb_workloadlearning::Handle::new(Arc::clone(&pool));
+    let metrics = std::collections::HashMap::from([(table_id, workload_metric("test", 10, 10, 10, 10.0))]);
+    handle.save_table_read_cost_metrics(&metrics, now_naive(), now_naive());
+    let worker = tidb_workloadlearning::WlCacheWorker::new(pool);
+    worker.update_table_read_cost_cache();
+    let cached = worker.get_table_read_cost_metrics(table_id).expect("the saved metrics are cached");
+    assert_eq!((cached.table_scan_time, cached.table_mem_usage, cached.read_frequency, cached.table_read_cost), (10, 10, 10, 10.0));
+}
+
 /// Go `cache.TableRowStatsCache` is one process-wide cache whose
 /// `UpdateByID` reads both `mysql.stats_meta` and `mysql.stats_histograms`
 /// on the domain's sessions and only adds to the cache: a `TABLE_ROWS`-only

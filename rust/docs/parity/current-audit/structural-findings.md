@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**45 unresolved: 13 open, 32 partial.**
+**44 unresolved: 12 open, 32 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -69,7 +69,6 @@ unresolved until it is restated against its Go owner or closed.
 | O10 | open | No DXF scheduler/executor managers composed | `pkg/disttask/framework` |
 | O11 | partial | TopSQL: plan-digest attribution, DML write/commit attribution, CPU/RU profiling, reporter lifetime | `pkg/util/topsql` |
 | O15 | open | No cross-keyspace runtime (null keyspace only) | `pkg/keyspace`, `pkg/domain` |
-| O16 | open | No workload-learning worker | `pkg/domain/workloadlearning` |
 | O17 | open | No telemetry collection/reporting | `pkg/telemetry` |
 | O18 | partial | Statement summary: normalized plan digests, encoded plans, RU/CPU/network metadata | `pkg/util/stmtsummary` |
 

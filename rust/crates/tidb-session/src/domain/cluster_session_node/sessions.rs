@@ -1284,6 +1284,13 @@ impl tidb_domain_core::sys_session::DomainSysSession for ClusterStatsSessionCont
         .map_err(|error| error.to_string())
     }
 
+    fn set_enable_non_prepared_plan_cache(&self, enabled: bool) {
+        self.set_var(
+            tidb_vardef::tidb_vars::TIDB_ENABLE_NON_PREPARED_PLAN_CACHE,
+            if enabled { "ON" } else { "OFF" },
+        );
+    }
+
     /// Go `ddlHandlerImpl.HandleDDLEvent`'s subscriber, its statements on
     /// this (the notifier's) session in its transaction.
     fn handle_stats_ddl_event(

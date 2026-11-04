@@ -2,8 +2,8 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 45,
-    "open": 13,
+    "unresolved": 44,
+    "open": 12,
     "partial": 32
   },
   "findings": [
@@ -164,13 +164,6 @@
       "group": "Domain and process services",
       "finding": "No cross-keyspace runtime (null keyspace only)",
       "go_owner": "`pkg/keyspace`, `pkg/domain`"
-    },
-    {
-      "id": "O16",
-      "status": "open",
-      "group": "Domain and process services",
-      "finding": "No workload-learning worker",
-      "go_owner": "`pkg/domain/workloadlearning`"
     },
     {
       "id": "O17",

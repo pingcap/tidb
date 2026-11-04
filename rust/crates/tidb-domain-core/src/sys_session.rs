@@ -43,6 +43,9 @@ pub trait DomainSysSession:
     /// Go `StmtCommit` + `CommitTxn` (`pkg/ddl/session.Session.Commit`).
     fn commit_txn(&self) -> Result<(), String>;
 
+    /// Go `GetSessionVars().EnableNonPreparedPlanCache = enabled`.
+    fn set_enable_non_prepared_plan_cache(&self, enabled: bool);
+
     /// Go `ddlHandlerImpl.HandleDDLEvent`'s statistics writes for one schema
     /// change, in this session's transaction.
     fn handle_stats_ddl_event(

@@ -98,6 +98,8 @@ pub fn run_unistore_cluster_session(
     factory.start_stats_usage_workers(config.stats_lease);
     factory.start_analyze_jobs_cleanup_worker(config.stats_lease);
     factory.start_historical_stats_worker();
+    // Go `BootstrapSession`: after the statistics loops.
+    factory.setup_workload_based_learning_worker();
     let stats_receipt = stats.receipt();
 
     let node = ConcurrentSqlNode::bind(&config, Arc::clone(&factory), Arc::clone(&users))
