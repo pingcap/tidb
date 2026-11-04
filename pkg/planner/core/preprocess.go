@@ -1992,6 +1992,7 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, lockCtx *lock
 		return
 	}
 	warnedCompatRefs := make(map[string]struct{})
+	hasResolvedLockTarget := false
 
 	for _, ref := range stmt.LockInfo.Tables {
 		name := ref.Name.L
@@ -2060,6 +2061,7 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, lockCtx *lock
 			// CTE has no *model.HintedTable, we need to skip it.
 			continue
 		}
+		hasResolvedLockTarget = true
 
 		p.resolveCtx.AddTableName(&resolve.TableNameW{
 			TableName: ref,
@@ -2075,6 +2077,16 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, lockCtx *lock
 		if err := checkMViewLockTarget(target); err != nil {
 			p.err = err
 			return
+		}
+	}
+	if !hasResolvedLockTarget {
+		// CTE-only OF targets leave the executor's lock-all fallback active. Check
+		// this SELECT's direct references without descending into derived queries or CTE bodies.
+		for _, ref := range lockCtx.orderedRefs {
+			if err := checkMViewLockTarget(ref.table); err != nil {
+				p.err = err
+				return
+			}
 		}
 	}
 }

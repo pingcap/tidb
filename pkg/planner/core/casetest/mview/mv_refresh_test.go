@@ -121,6 +121,11 @@ func TestMViewSelectLock(t *testing.T) {
 					{name: "derived", sql: "select n.a from t_lock n join (select a from %s) d on n.a = d.a for update"},
 					{name: "derived_of_n", sql: "select n.a from t_lock n join (select a from %s) d on n.a = d.a for update of n"},
 					{name: "cte", sql: "with d as (select a from %s) select n.a from t_lock n join d on n.a = d.a for update"},
+					{name: "cte_of", sql: "with d as (select a from %s) select n.a from t_lock n join d on n.a = d.a for update of d"},
+					{name: "cte_only_of", sql: "with d as (select a from %s) select d.a from d for update of d"},
+					{name: "cte_of_direct_mv", sql: "with d as (select a from t_lock) select m.a from %s m join d on m.a = d.a for update of d", wantErr: true},
+					{name: "cte_alias_of_direct_mv", sql: "with d as (select a from t_lock) select m.a from %s m join d c on m.a = c.a for update of c", wantErr: true},
+					{name: "cte_and_base_of", sql: "with d as (select a from t_lock) select n.a from t_lock n join %s m on n.a = m.a join d on n.a = d.a for update of d, n"},
 					{name: "derived_only", sql: "select d.a from (select a from %s) d for update"},
 					{name: "derived_inner_lock", sql: "select n.a from t_lock n join (select a from %s for update) d on n.a = d.a", wantErr: true},
 					{name: "derived_inner_lock_outer_of_n", sql: "select n.a from t_lock n join (select a from %s for update) d on n.a = d.a for update of n", wantErr: true},
@@ -160,6 +165,54 @@ func TestMViewSelectLock(t *testing.T) {
 				tk := testkit.NewTestKitWithSession(t, store, tk.Session())
 				tk.MustGetErrCode(fmt.Sprintf("prepare lock_stmt from 'select * from %s where %s = ? for update'", target.table, target.key), mysql.ErrNonUpdatableTable)
 			})
+
+			for _, instanceCache := range []bool{false, true} {
+				t.Run(fmt.Sprintf("prepared_lock_scope/instance=%v", instanceCache), func(t *testing.T) {
+					ctx := context.Background()
+					if instanceCache {
+						ctx = context.WithValue(ctx, plannercore.PlanCacheKeyEnableInstancePlanCache{}, true)
+					}
+					newReader := func() *testkit.TestKit {
+						reader := testkit.NewTestKit(t, store)
+						reader.MustExec("use test")
+						reader.MustExec("set tidb_mview_enable = on")
+						reader.MustExec("set tidb_enable_prepared_plan_cache = on")
+						reader.MustExec(fmt.Sprintf("prepare lock_scope_stmt from 'select /*+ USE_PLAN_CACHE() */ t_lock.a, m.a from t_lock join %s m on t_lock.a = m.a where t_lock.a > ? for update of t_lock'", target.table))
+						reader.MustExec("set @p = 0")
+						reader.MustExec("begin pessimistic")
+						t.Cleanup(func() { reader.MustExec("rollback") })
+						return reader
+					}
+					probe := testkit.NewTestKit(t, store)
+					probe.MustExec("use test")
+					probe.MustExec("set tidb_mview_enable = on")
+					probeVars := probe.Session().GetSessionVars()
+					probeVars.InRestrictedSQL, probeVars.InMViewMaintenance = true, true
+					maintenanceCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMViewMaintenance)
+					t.Cleanup(func() { probe.MustExecWithContext(maintenanceCtx, "rollback") })
+					checkLockScope := func(reader *testkit.TestKit, cacheHit bool) {
+						t.Helper()
+						reader.MustQueryWithContext(ctx, "execute lock_scope_stmt using @p").Sort().Check(testkit.Rows("1 1", "2 2"))
+						require.Equal(t, cacheHit, reader.Session().GetSessionVars().FoundInPlanCache)
+						// The user transaction must lock the ordinary target and leave MV/MLog rows available.
+						probe.MustExecWithContext(maintenanceCtx, "begin pessimistic")
+						probe.MustQueryWithContext(maintenanceCtx, "select a from "+target.table+" for update nowait").Sort().Check(testkit.Rows("1", "2"))
+						probe.MustExecWithContext(maintenanceCtx, "rollback")
+						probe.MustExecWithContext(maintenanceCtx, "begin pessimistic")
+						probe.MustGetErrCode("select * from t_lock for update nowait", mysql.ErrLockAcquireFailAndNoWaitSet)
+						probe.MustExecWithContext(maintenanceCtx, "rollback")
+					}
+					reader := newReader()
+					for execution := range 3 {
+						checkLockScope(reader, execution > 0)
+					}
+					reader.MustExec("rollback")
+					if instanceCache {
+						// A different session must preserve the same scope when sharing this cached plan.
+						checkLockScope(newReader(), true)
+					}
+				})
+			}
 
 			t.Run("internal_maintenance", func(t *testing.T) {
 				tk := testkit.NewTestKitWithSession(t, store, tk.Session())
