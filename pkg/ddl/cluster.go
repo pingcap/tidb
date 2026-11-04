@@ -196,6 +196,31 @@ func checkSystemSchemaID(t meta.Reader, schemaID int64, flashbackTSString string
 	return nil
 }
 
+func checkFlashbackMaterializedViews(t meta.Reader, snapshot string) error {
+	schemas, err := t.ListDatabases()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, db := range schemas {
+		err := t.IterTables(db.ID, func(table *model.TableInfo) error {
+			var objectType string
+			switch {
+			case table.MaterializedView != nil:
+				objectType = "materialized view"
+			case table.MaterializedViewLog != nil:
+				objectType = "materialized view log"
+			default:
+				return nil
+			}
+			return errors.Errorf("Detected %s %s.%s in %s, can't do flashback", objectType, db.Name.O, table.Name.O, snapshot)
+		})
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
 func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context, store kv.Storage, t *meta.Mutator, job *model.Job, flashbackTS uint64) (err error) {
 	if err = ValidateFlashbackTS(ctx, se, flashbackTS); err != nil {
 		return err
@@ -288,7 +313,12 @@ func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context,
 		}
 		return errors.Errorf("have other ddl jobs(jobID: %d) in queue, can't do flashback", otherJob.ID)
 	}
-	return nil
+	// MV maintenance tables are not flashed back. Check both endpoints because
+	// objects dropped after flashbackTS can reappear without their maintenance state.
+	if err := checkFlashbackMaterializedViews(t, "current state"); err != nil {
+		return err
+	}
+	return checkFlashbackMaterializedViews(flashbackSnapshotMeta, fmt.Sprintf("target snapshot at TSO %d", flashbackTS))
 }
 
 func addToSlice(schema string, tableName string, tableID int64, flashbackIDs []int64) []int64 {
