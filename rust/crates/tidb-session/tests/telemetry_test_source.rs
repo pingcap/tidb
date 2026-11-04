@@ -367,7 +367,6 @@ fn cost_model_ver2_usage_info() {
 
 /// Go `TestTxnSavepointUsageInfo`.
 #[test]
-#[ignore = "StmtNodeCounter is counted at the wire, not in Compile (register row O19)"]
 fn txn_savepoint_usage_info() {
     let mut tk = TestKit::new();
     tk.must_exec("savepoint sp1");

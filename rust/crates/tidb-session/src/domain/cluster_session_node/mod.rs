@@ -1640,6 +1640,8 @@ impl<'s> ClusterServerSession<'s> {
             Err(_) => classify_transaction_control_stmt(stmt).is_some(),
         };
         if ran_control {
+            // Go `Compile` counts the `Simple` plan before `runStmt`.
+            self.session.count_stmt_node(stmt);
             // Go `runStmt`'s `updateTelemetryMetric` after `Exec`, and
             // `ExecuteStmt`'s count when it succeeded.
             self.session.update_telemetry_metric();
@@ -1652,7 +1654,12 @@ impl<'s> ClusterServerSession<'s> {
         let execute_stmt = tidb_tracing::begin_thread_region_scope("session.ExecuteStmt");
         self.session.on_stmt_start(stmt);
         self.begin_statement();
-        let compiled = match self.compile(sql, stmt) {
+        let compiled = self.compile(sql, stmt);
+        if compiled.is_ok() {
+            // Go `Compile`'s `CountStmtNode` once the plan is built.
+            self.session.count_stmt_node(stmt);
+        }
+        let compiled = match compiled {
             Ok(CompiledStatement::Query) => return Ok(Executed::Query(execute_stmt)),
             // Go `TraceExec` runs the statement it wraps and reports its spans.
             Ok(CompiledStatement::Trace) => return Ok(Executed::Trace),
@@ -1822,6 +1829,9 @@ impl<'s> ClusterServerSession<'s> {
         // transaction-control route.
         if statement.template().is_none() && classify_transaction_control(statement.sql()).is_some()
         {
+            if let Ok(parsed) = (*self.session).parse_statement(statement.sql()) {
+                self.session.count_stmt_node(&parsed);
+            }
             self.session.set_binary_prepared_execution(true);
             let result = self.control_transaction(statement.sql());
             self.session.set_binary_prepared_execution(false);
@@ -1863,6 +1873,10 @@ impl<'s> ClusterServerSession<'s> {
             (Some(effective), binding_sql)
         });
         let effective = effective_template.as_deref();
+        // Go `Compile` of the EXECUTE counts the prepared statement.
+        if let Some(template) = effective {
+            self.session.count_stmt_node(template);
+        }
         // Plan-cache validation must see the current schema before the read
         // policy is declared. Rebuilding only inside the statement lifecycle
         // would let a stale row-handle plan new_row_sample_collector MaxTS and then fall back to

@@ -168,6 +168,30 @@ impl Session {
         self.txn_fair_locking = (false, false);
     }
 
+    /// Go `executor.Compile`'s `CountStmtNode`: a compiled statement is
+    /// counted under its label, an EXECUTE under its prepared statement's.
+    pub(crate) fn count_stmt_node(&self, stmt: &tidb_ast::Stmt) {
+        let counted = match stmt {
+            tidb_ast::Stmt::Session(session) => match &**session {
+                tidb_ast::SessionStmt::Execute { name, .. } => {
+                    match self.prepared_statements.get(name) {
+                        Some(prepared) => &prepared.statement,
+                        // Go `GetPreparedStmt` fails `Compile`.
+                        None => return,
+                    }
+                }
+                _ => stmt,
+            },
+            _ => stmt,
+        };
+        tidb_executor::compiler::count_stmt_node::count_stmt_node(
+            counted,
+            &self.vars.current_db,
+            self.vars.restricted_sql,
+            &self.statement_resource_group(stmt),
+        );
+    }
+
     /// Go `session.BuiltinFunctionUsageInc`.
     pub fn builtin_function_usage_inc(&self, scalar_func_sig_name: &str) {
         self.builtin_function_usage

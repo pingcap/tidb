@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 45,
-    "open": 14,
-    "partial": 31
+    "open": 13,
+    "partial": 32
   },
   "findings": [
     {
@@ -195,9 +195,9 @@
     },
     {
       "id": "O19",
-      "status": "open",
+      "status": "partial",
       "group": "Domain and process services",
-      "finding": "`StmtNodeCounter` is counted at the wire (`tidb-server/src/mysql_connection.rs`) instead of in `executor.Compile` after `Optimize` succeeds: sessions without a wire (internal, embedded) count nothing, and a statement whose planning fails is counted",
+      "finding": "`CountStmtNode` runs at the session's compile (text, binary EXECUTE, transaction control) under the statement's resource group and an EXECUTE's prepared label, but a query is counted before its plan is built (Rust plans inside `open`), so a query whose planning fails is counted where Go's `Optimize` error is not; `getStmtDbLabel` lacks Go's CALL, SHOW, IMPORT INTO, DISTRIBUTE TABLE, DROP STATS, ADMIN, FLUSH, REPAIR TABLE and binding cases",
       "go_owner": "`pkg/executor/compiler.go` (`CountStmtNode`)"
     },
     {

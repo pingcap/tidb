@@ -19,7 +19,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 /// Duration after which an internal transaction is considered long-running.
 pub const TIME_TO_PRINT_LONG_INTERNAL_TXN: Duration = Duration::from_secs(5 * 60);

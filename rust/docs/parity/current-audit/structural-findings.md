@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**45 unresolved: 14 open, 31 partial.**
+**45 unresolved: 13 open, 32 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -70,7 +70,7 @@ unresolved until it is restated against its Go owner or closed.
 | X03 | open | A plain EXPLAIN prepares the plan but builds no target executor, where Go `buildExplain` builds it (`explainExec.analyzeExec = b.build(v.TargetPlan)`): the builder's side effects (index-merge and table-lookup telemetry) do not happen. Blocked on memory tables: a Rust memtable reader needs its retrieved rows at build (`MemTableRetrievalNeeded`), where Go's retriever reads them at `Next` | `pkg/executor/builder.go` (`buildExplain`) |
 | O15 | open | No cross-keyspace runtime (null keyspace only) | `pkg/keyspace`, `pkg/domain` |
 | O18 | partial | Statement summary: normalized plan digests, encoded plans, RU/CPU/network metadata | `pkg/util/stmtsummary` |
-| O19 | open | `StmtNodeCounter` is counted at the wire (`tidb-server/src/mysql_connection.rs`) instead of in `executor.Compile` after `Optimize` succeeds: sessions without a wire (internal, embedded) count nothing, and a statement whose planning fails is counted | `pkg/executor/compiler.go` (`CountStmtNode`) |
+| O19 | partial | `CountStmtNode` runs at the session's compile (text, binary EXECUTE, transaction control) under the statement's resource group and an EXECUTE's prepared label, but a query is counted before its plan is built (Rust plans inside `open`), so a query whose planning fails is counted where Go's `Optimize` error is not; `getStmtDbLabel` lacks Go's CALL, SHOW, IMPORT INTO, DISTRIBUTE TABLE, DROP STATS, ADMIN, FLUSH, REPAIR TABLE and binding cases | `pkg/executor/compiler.go` (`CountStmtNode`) |
 
 ### Information schema
 

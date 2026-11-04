@@ -4554,6 +4554,7 @@ dependencies = [
  "tidb-meta",
  "tidb-metabuild",
  "tidb-metadef",
+ "tidb-metrics",
  "tidb-model",
  "tidb-murmur3",
  "tidb-mysql",

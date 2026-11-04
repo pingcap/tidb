@@ -178,6 +178,7 @@ tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-telemetry = { path = "../tidb-telemetry" }
+tidb-metrics = { path = "../tidb-metrics" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-resolve = { path = "../tidb-resolve" }
 tidb-stats = { path = "../tidb-stats" }

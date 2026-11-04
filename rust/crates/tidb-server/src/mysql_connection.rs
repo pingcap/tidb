@@ -2349,11 +2349,6 @@ fn run_connection_commands<S: QuerySession>(
                             break;
                         }
                         command_metrics.sql_type = stmt.label();
-                        // Go `executor.go`: StmtNodeCounter counts every
-                        // executed statement by its executor label.
-                        tidb_metrics::executor::STATEMENT_TOTAL
-                            .with_label_values(&["", engine.metrics_resource_group(), stmt.label()])
-                            .inc();
                         // Go excludes text DDL from addQueryMetrics.
                         command_metrics.skip = matches!(stmt, Stmt::Ddl(_));
                         // Go `handleStmt`: the statement runs with the connection's
@@ -2768,15 +2763,6 @@ fn run_connection_commands<S: QuerySession>(
                         }
                     };
                     let values = execute.values;
-                    // Go `executor.Compile` (`pkg/executor/compiler.go:125`)
-                    // counts every optimized statement through CountStmtNode,
-                    // including `EXECUTE` -- the prepared object supplies the
-                    // inner statement for the label -- so the binary protocol
-                    // feeds `tidb_executor_statement_total` exactly like the
-                    // text protocol does.
-                    tidb_metrics::executor::STATEMENT_TOTAL
-                        .with_label_values(&["", engine.metrics_resource_group(), statement_label])
-                        .inc();
                     let general = prepared_statement.as_ref();
                     if let Some(ast) = general.prepared_ast() {
                         if let Err(error) = prepared.session_states_handler(engine, ast.statement())

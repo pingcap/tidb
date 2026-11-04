@@ -22,6 +22,7 @@ use crate::{SessionExtendedInfoSchema, DriverError};
 use tidb_ast::Stmt;
 
 // modules
+pub mod count_stmt_node;
 pub mod explain;
 pub mod prepared;
 pub mod prepared_ast;

@@ -110,6 +110,14 @@ pub static STATEMENT_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
     ))
 });
 
+/// Go `DbStmtNodeCounter`.
+pub static DB_STATEMENT_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
+    register(CounterVec::new(
+        Opts::new("tidb_executor_statement_db_total", "Counter of StmtNode by Database."),
+        &["db", "type"],
+    ))
+});
+
 /// Materializes the series Go's subsystem startup writes, mirroring the
 /// exported label combinations exactly.
 pub fn init_dashboard_series() {
