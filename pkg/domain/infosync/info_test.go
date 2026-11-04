@@ -211,6 +211,39 @@ func TestPDResponseHandlerPlacementCompatibility(t *testing.T) {
 	}
 }
 
+func TestAffinityCallsAgainstPDWithoutAffinityAPI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	discovery := servicediscovery.NewMockServiceDiscovery([]string{server.URL}, nil)
+	require.NoError(t, discovery.Init())
+	cli := pdhttp.NewClientWithServiceDiscovery("test", discovery)
+	defer cli.Close()
+	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, cli, keyspace.CodecV1, false, nil)
+	require.NoError(t, err)
+	defer affinity.InitManager(nil)
+
+	groups := map[string][]pdhttp.AffinityGroupKeyRange{
+		"_tidb_t_1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
+	}
+	err = affinity.CreateGroupsIfNotExists(context.Background(), groups)
+	require.True(t, ErrHTTPServiceError.Equal(err))
+	var statusError interface{ HTTPStatusCode() int }
+	require.ErrorAs(t, err, &statusError)
+	require.Equal(t, http.StatusNotFound, statusError.HTTPStatusCode())
+	// Reads and forced deletes see no groups, as before.
+	got, err := affinity.GetGroups(context.Background(), []string{"_tidb_t_1"})
+	require.NoError(t, err)
+	require.Empty(t, got)
+	require.NoError(t, affinity.DeleteGroups(context.Background(), []string{"_tidb_t_1"}))
+
+	// Other PD calls still treat 404 as no data.
+	bundle, err := GetRuleBundle(context.Background(), "TiDB_DDL_1")
+	require.NoError(t, err)
+	require.True(t, bundle.IsEmpty())
+}
+
 func TestPutBundlesRetry(t *testing.T) {
 	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
 	require.NoError(t, err)
