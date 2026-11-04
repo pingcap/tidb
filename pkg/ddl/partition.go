@@ -4190,7 +4190,8 @@ func (w *worker) reorgPartitionDataAndIndex(
 			return errors.Trace(err)
 		}
 	}
-	if _, err = findNextNonTouchedPartitionID(reorgInfo.PhysicalTableID, pi); err == nil {
+	if reorgInfo.PhysicalTableID != 0 {
+		// There are non-touched partitions to add to the new global indexes.
 		err = w.addTableIndex(jobCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
@@ -4285,7 +4286,7 @@ func checkExchangePartitionRecordValidation(
 			if i != 0 {
 				buf.WriteString(" and ")
 			}
-			buf.WriteString(fmt.Sprintf("(%s)", cons.ExprString))
+			fmt.Fprintf(&buf, "(%s)", cons.ExprString)
 		}
 		buf.WriteString(")")
 		return buf.String()
@@ -4551,7 +4552,7 @@ func buildCheckSQLConditionForListPartition(pi *model.PartitionInfo, index int) 
 				buf.WriteString(" AND ")
 			}
 			// null-safe compare '<=>'
-			buf.WriteString(fmt.Sprintf("(%s) <=> %s", pi.Expr, val))
+			fmt.Fprintf(&buf, "(%s) <=> %s", pi.Expr, val)
 		}
 	}
 	buf.WriteString(")")
@@ -4586,7 +4587,7 @@ func buildCheckSQLConditionForListColumnsPartition(pi *model.PartitionInfo, inde
 				buf.WriteString(" AND ")
 			}
 			// null-safe compare '<=>'
-			buf.WriteString(fmt.Sprintf("%s <=> %s", colNames[j], val))
+			fmt.Fprintf(&buf, "%s <=> %s", colNames[j], val)
 		}
 	}
 	buf.WriteString(")")

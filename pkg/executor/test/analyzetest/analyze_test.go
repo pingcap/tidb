@@ -2009,35 +2009,15 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 func checkAnalyzeStatus(t *testing.T, tk *testkit.TestKit, jobInfo, status, failReason, comment string, timeLimit int64) {
-	rows := tk.MustQuery("show analyze status where table_schema = 'test' and table_name = 't' and partition_name = ''").Rows()
-	require.Equal(t, 1, len(rows), comment)
-	require.Equal(t, jobInfo, rows[0][3], comment)
-	require.Equal(t, status, rows[0][7], comment)
-	require.Equal(t, failReason, rows[0][8], comment)
-	if timeLimit <= 0 {
-		return
-=======
-func checkAnalyzeStatus(t *testing.T, tk *testkit.TestKit, jobInfo, status, failReason, comment string) {
 	query := "show analyze status where table_schema = 'test' and table_name = 't' and partition_name = ''"
+	var rows [][]any
 	require.Eventually(t, func() bool {
-		rows := tk.MustQuery(query).Rows()
+		rows = tk.MustQuery(query).Rows()
 		return len(rows) == 1 && rows[0][3] == jobInfo && rows[0][7] == status && rows[0][8] == failReason
 	}, 3*time.Second, 10*time.Millisecond, comment)
-}
-
-func getMockKillAutoAnalyzeFailpoint(status string) string {
-	switch status {
-	case "pending":
-		return "github.com/pingcap/tidb/pkg/executor/mockKillPendingAnalyzeJob"
-	case "running":
-		return "github.com/pingcap/tidb/pkg/executor/mockKillRunningV2AnalyzeJob"
-	case "finished":
-		return "github.com/pingcap/tidb/pkg/executor/mockKillFinishedAnalyzeJob"
-	default:
-		return ""
->>>>>>> a45a797289f (test: stabilize flaky TestKillAutoAnalyze (#69211))
+	if timeLimit <= 0 {
+		return
 	}
 	const layout = time.DateTime
 	startTime, err := time.Parse(layout, rows[0][5].(string))

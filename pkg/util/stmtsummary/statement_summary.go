@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"cmp"
 	"container/list"
+	"encoding/binary"
 	"fmt"
 	"maps"
 	"math"
@@ -54,8 +55,16 @@ type StmtDigestKey struct {
 }
 
 // Init initialize the hash key.
-func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resourceGroupName string) {
-	length := len(schemaName) + len(digest) + len(prevDigest) + len(planDigest) + len(resourceGroupName)
+// When user is empty (group_by_user disabled), the hash is byte-identical to
+// the pre-user-dimension layout. When user is non-empty, the hash appends a
+// length-prefixed user segment after resourceGroupName so the boundary is
+// unambiguous and pairs like ("rg", "alice") and ("rga", "lice") cannot
+// collide.
+func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resourceGroupName, user string) {
+	length := len(schemaName) + len(digest) + len(prevDigest) + len(planDigest) + len(resourceGroupName) + len(user)
+	if len(user) > 0 {
+		length += 4
+	}
 	if cap(key.hash) < length {
 		key.hash = make([]byte, 0, length)
 	} else {
@@ -66,6 +75,12 @@ func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resou
 	key.hash = append(key.hash, hack.Slice(prevDigest)...)
 	key.hash = append(key.hash, hack.Slice(planDigest)...)
 	key.hash = append(key.hash, hack.Slice(resourceGroupName)...)
+	if len(user) > 0 {
+		var buf [4]byte
+		binary.BigEndian.PutUint32(buf[:], uint32(len(user)))
+		key.hash = append(key.hash, buf[:]...)
+		key.hash = append(key.hash, hack.Slice(user)...)
+	}
 }
 
 // Hash implements SimpleLRUCache.Key.
@@ -90,6 +105,7 @@ type stmtSummaryByDigestMap struct {
 	optRefreshInterval     *atomic2.Int64
 	optHistorySize         *atomic2.Int32
 	optMaxSQLLength        *atomic2.Int32
+	optGroupByUser         *atomic2.Bool
 
 	// other stores summary of evicted data.
 	other *stmtSummaryByDigestEvicted
@@ -301,6 +317,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 		optRefreshInterval:     atomic2.NewInt64(1800),
 		optHistorySize:         atomic2.NewInt32(24),
 		optMaxSQLLength:        atomic2.NewInt32(4096),
+		optGroupByUser:         atomic2.NewBool(false),
 		other:                  ssbde,
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
@@ -330,8 +347,6 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	historySize := ssMap.historySize()
 
 	key := StmtDigestKeyPool.Get().(*StmtDigestKey)
-	// Init hash value in advance, to reduce the time holding the lock.
-	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName)
 
 	var exist bool
 	// Enclose the block in a function to ensure the lock will always be released.
@@ -346,6 +361,15 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		if sei.IsInternal && !ssMap.EnabledInternal() {
 			return nil, 0
 		}
+
+		// Decide userForKey under the lock so SetGroupByUser's flag flip + Clear
+		// is atomic w.r.t. AddStatement; otherwise a post-clear insert could land
+		// under the wrong grouping mode.
+		userForKey := ""
+		if ssMap.optGroupByUser.Load() {
+			userForKey = sei.User
+		}
+		key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName, userForKey)
 
 		if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
 			// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
@@ -381,6 +405,11 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	ssMap.Lock()
 	defer ssMap.Unlock()
 
+	ssMap.clearLocked()
+}
+
+// clearLocked removes all statement summaries. ssMap.Lock must be held.
+func (ssMap *stmtSummaryByDigestMap) clearLocked() {
 	ssMap.summaryMap.DeleteAll()
 	ssMap.other.Clear()
 	ssMap.beginTimeForCurInterval = 0
@@ -507,6 +536,28 @@ func (ssMap *stmtSummaryByDigestMap) historySize() int {
 	return int(ssMap.optHistorySize.Load())
 }
 
+// SetGroupByUser enables or disables grouping statement summaries by the
+// executing user. Switching the flag clears existing data because existing
+// rows were aggregated under a different grouping key.
+func (ssMap *stmtSummaryByDigestMap) SetGroupByUser(value bool) error {
+	// Hold ssMap.Lock across the flag flip and clear so AddStatement (which
+	// reads the flag under the same lock) cannot insert a record with the
+	// old grouping mode after Clear() completes.
+	ssMap.Lock()
+	defer ssMap.Unlock()
+	if ssMap.optGroupByUser.Load() == value {
+		return nil
+	}
+	ssMap.optGroupByUser.Store(value)
+	ssMap.clearLocked()
+	return nil
+}
+
+// GroupByUser reports whether statement summaries are grouped by user.
+func (ssMap *stmtSummaryByDigestMap) GroupByUser() bool {
+	return ssMap.optGroupByUser.Load()
+}
+
 // SetHistorySize sets the history size for all summaries.
 func (ssMap *stmtSummaryByDigestMap) SetMaxStmtCount(value uint) error {
 	// `optMaxStmtCount` and `ssMap` don't need to be strictly atomically updated.
@@ -563,20 +614,19 @@ func GetBindableStmtFromCluster(rows []chunk.Row) *BindableStmt {
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
 func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int) {
 	// Use "," to separate table names to support FIND_IN_SET.
-	var buffer bytes.Buffer
-	for i, value := range sei.StmtCtx.Tables {
+	var tableNames strings.Builder
+	for _, value := range sei.StmtCtx.Tables {
 		// In `create database` statement, DB name is not empty but table name is empty.
 		if len(value.Table) == 0 {
 			continue
 		}
-		buffer.WriteString(strings.ToLower(value.DB))
-		buffer.WriteString(".")
-		buffer.WriteString(strings.ToLower(value.Table))
-		if i < len(sei.StmtCtx.Tables)-1 {
-			buffer.WriteString(",")
+		if tableNames.Len() > 0 {
+			tableNames.WriteByte(',')
 		}
+		tableNames.WriteString(strings.ToLower(value.DB))
+		tableNames.WriteByte('.')
+		tableNames.WriteString(strings.ToLower(value.Table))
 	}
-	tableNames := buffer.String()
 
 	planDigest := sei.PlanDigest
 	if len(planDigest) == 0 {
@@ -588,7 +638,7 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 	ssbd.planDigest = planDigest
 	ssbd.stmtType = sei.StmtCtx.StmtType
 	ssbd.normalizedSQL = formatSQL(sei.NormalizedSQL)
-	ssbd.tableNames = tableNames
+	ssbd.tableNames = tableNames.String()
 	ssbd.history = list.New()
 	ssbd.initialized = true
 }
@@ -651,11 +701,12 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(checker *stmtSummaryChe
 		return nil
 	}
 
-	ssElements := make([]*stmtSummaryByDigestElement, 0, ssbd.history.Len())
-	for listElement := ssbd.history.Front(); listElement != nil && len(ssElements) < historySize; listElement = listElement.Next() {
+	ssElements := make([]*stmtSummaryByDigestElement, 0, min(ssbd.history.Len(), historySize))
+	for listElement := ssbd.history.Back(); listElement != nil && len(ssElements) < historySize; listElement = listElement.Prev() {
 		ssElement := listElement.Value.(*stmtSummaryByDigestElement)
 		ssElements = append(ssElements, ssElement)
 	}
+	slices.Reverse(ssElements)
 	return ssElements
 }
 
@@ -667,7 +718,8 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 	// because it compacts performance to update every time.
 	samplePlan, planHint, e := sei.LazyInfo.GetEncodedPlan()
 	if e != nil {
-		return nil
+		samplePlan = plancodec.PlanDiscardedEncoded
+		planHint = ""
 	}
 	if len(samplePlan) > MaxEncodedPlanSizeInBytes {
 		samplePlan = plancodec.PlanDiscardedEncoded
