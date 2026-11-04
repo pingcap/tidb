@@ -673,7 +673,8 @@ func TestWarningsInSlowQuery(t *testing.T) {
 func checkStorageEngines(t *testing.T, tk *testkit.TestKit, where, expected string) {
 	t.Helper()
 	tk.EventuallyMustQueryAndCheck(
-		"select storage_from_kv, storage_from_mpp from information_schema.slow_query where "+where,
+		"select storage_from_kv, storage_from_mpp from information_schema.slow_query where "+where+
+			" order by time desc limit 1",
 		nil, testkit.Rows(expected), 2*time.Second, 50*time.Millisecond)
 }
 
