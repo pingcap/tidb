@@ -987,6 +987,7 @@ def go_deps():
     go_repository(
         name = "com_github_envoyproxy_protoc_gen_validate",
         build_file_proto_mode = "disable_global",
+        build_file_generation = "clean",
         importpath = "github.com/envoyproxy/protoc-gen-validate",
         sum = "h1:MVQghNeW+LZcmXe7SY1V36Z+WFMDjpqGAGacLe2T0ds=",
         version = "v1.3.3",
@@ -1938,6 +1939,7 @@ def go_deps():
     go_repository(
         name = "com_github_grpc_ecosystem_grpc_gateway_v2",
         build_file_proto_mode = "disable_global",
+        build_file_generation = "clean",
         importpath = "github.com/grpc-ecosystem/grpc-gateway/v2",
         sum = "h1:8Tjv8EJ+pM1xP8mK6egEbD1OgnVTyacbefKhmbLhIhU=",
         version = "v2.27.2",
@@ -5011,6 +5013,7 @@ def go_deps():
     go_repository(
         name = "dev_cel_expr",
         build_file_proto_mode = "disable_global",
+        build_file_generation = "clean",
         importpath = "cel.dev/expr",
         sum = "h1:K6j46C81hXtZQfuX60cVWQFBJahKSE2gfRbNuvr5bFs=",
         version = "v0.25.2",
@@ -5187,6 +5190,10 @@ def go_deps():
         name = "io_etcd_go_etcd_server_v3",
         build_file_proto_mode = "disable_global",
         importpath = "go.etcd.io/etcd/server/v3",
+        patch_args = ["-p1"],
+        patches = [
+            "//build/patches:io_etcd_go_etcd_server_v3.patch",
+        ],
         sum = "h1:EtMjsbfyfkwZuA2JlKOiBfuGkFCekv5H178qjXypbG8=",
         version = "v3.5.12",
     )
