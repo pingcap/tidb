@@ -523,7 +523,6 @@ func ReadParquetFileRowCountByFile(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-
 	defer func() {
 		if closeErr := r.Close(); closeErr != nil && err == nil {
 			err = errors.Annotate(closeErr, "close parquet row-count reader")

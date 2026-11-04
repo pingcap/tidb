@@ -201,6 +201,7 @@ go_library(
         "//pkg/util/syncutil",
         "//pkg/util/texttree",
         "//pkg/util/tiflashcompute",
+        "//pkg/util/timeutil",
         "//pkg/util/tracing",
         "@com_github_bits_and_blooms_bitset//:bitset",
         "@com_github_docker_go_units//:go-units",

@@ -277,6 +277,7 @@ select /*+ hash_join(t1) merge_join(t2) */ * from t t1 join t t2 join t t3 where
 a	b	a	b	a	b
 Level	Code	Message
 Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
+Warning	1815	Join hints conflict after join reorder phase, you can only specify one type of join
 set @@tidb_opt_advanced_join_hint=DEFAULT;
 drop table if exists t1, t2;
 create table t1(a int not null, b int, key(a));

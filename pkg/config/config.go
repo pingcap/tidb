@@ -659,12 +659,12 @@ func (e *ErrConfigInstanceSection) Error() string {
 	builder.WriteString("Please use the latter config options in [instance] instead: ")
 	for _, configSection := range *e.configSections {
 		for oldName, newName := range configSection.NameMappings {
-			builder.WriteString(fmt.Sprintf(" (%s, %s)", oldName, newName))
+			fmt.Fprintf(&builder, " (%s, %s)", oldName, newName)
 		}
 	}
 	for _, configSection := range *e.deprecatedSections {
 		for oldName, newName := range configSection.NameMappings {
-			builder.WriteString(fmt.Sprintf(" (%s, %s)", oldName, newName))
+			fmt.Fprintf(&builder, " (%s, %s)", oldName, newName)
 		}
 	}
 	builder.WriteString(".")

@@ -69,6 +69,7 @@ go_library(
         "//pkg/privilege",
         "//pkg/privilege/conn",
         "//pkg/privilege/privileges",
+        "//pkg/resourcegroup",
         "//pkg/session/cursor",
         "//pkg/session/metrics",
         "//pkg/session/txninfo",
