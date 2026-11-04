@@ -71,8 +71,11 @@ func TestTopology(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, client, nil, nil, keyspace.CodecV1, false, nil)
+	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, client, nil, nil, keyspace.CodecV1, false, nil, WithDisableRPC())
 	require.NoError(t, err)
+	allInfo, err := info.getAllServerInfo(ctx)
+	require.NoError(t, err)
+	require.True(t, allInfo[currentID].DisableRPC)
 
 	err = info.newTopologySessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
 	require.NoError(t, err)
@@ -324,4 +327,44 @@ func TestInfoSyncerMarshal(t *testing.T) {
 	require.Equal(t, info.StartTimestamp, decodeInfo.StartTimestamp)
 	require.Equal(t, info.JSONServerID, decodeInfo.JSONServerID)
 	require.Equal(t, info.Labels, decodeInfo.Labels)
+	require.False(t, decodeInfo.DisableRPC) // Older server info omits disable_rpc.
+}
+
+func TestInfoSyncerDisableRPC(t *testing.T) {
+	original := globalInfoSyncer.Load()
+	t.Cleanup(func() { globalInfoSyncer.Store(original) })
+	ctx := context.Background()
+	for _, disableRPC := range []bool{false, true} {
+		t.Run(fmt.Sprintf("disable_rpc=%t", disableRPC), func(t *testing.T) {
+			var options []SyncerOption
+			if disableRPC {
+				options = append(options, WithDisableRPC())
+			}
+			_, err := GlobalInfoSyncerInit(ctx, "test", func() uint64 { return 42 }, nil, nil, nil, nil, keyspace.CodecV1, true, nil, options...)
+			require.NoError(t, err)
+			local, err := GetServerInfo()
+			require.NoError(t, err)
+			require.Equal(t, disableRPC, local.DisableRPC)
+			require.Equal(t, disableRPC, local.clone().DisableRPC)
+
+			// The no-etcd path regenerates server info from config and must retain the flag.
+			all, err := GetAllServerInfo(ctx)
+			require.NoError(t, err)
+			require.Len(t, all, 1)
+			require.Equal(t, disableRPC, all["test"].DisableRPC)
+			require.Equal(t, uint64(42), all["test"].ServerIDGetter())
+
+			data, err := local.Marshal()
+			require.NoError(t, err)
+			if disableRPC {
+				require.Contains(t, string(data), `"disable_rpc":true`)
+			} else {
+				require.NotContains(t, string(data), `"disable_rpc"`)
+			}
+			var decoded ServerInfo
+			require.NoError(t, decoded.Unmarshal(data))
+			require.Equal(t, disableRPC, decoded.DisableRPC)
+			require.Equal(t, uint64(42), decoded.ServerIDGetter())
+		})
+	}
 }

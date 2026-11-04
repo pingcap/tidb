@@ -155,7 +155,7 @@ drop user if exists 'testflush'@'localhost';
 CREATE USER 'testflush'@'localhost' IDENTIFIED BY '';
 UPDATE mysql.User SET Select_priv='Y' WHERE User="testflush" and Host="localhost";
 SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost";
-Error 1143 (42000): SELECT command denied to user 'testflush'@'localhost' for column 'user' in table 'user'
+Error 1142 (42000): SELECT command denied to user 'testflush'@'localhost' for table 'user'
 FLUSH PRIVILEGES;
 SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost";
 authentication_string
@@ -407,7 +407,7 @@ SELECT user, host, attribute FROM information_schema.user_attributes where user 
 user	host	attribute
 testuser1	%	{"age": 20, "name": "Tom"}
 SELECT user, host, user_attributes FROM mysql.user ORDER BY user;
-Error 1143 (42000): SELECT command denied to user 'testuser1'@'%' for column 'user' in table 'user'
+Error 1142 (42000): SELECT command denied to user 'testuser1'@'%' for table 'user'
 create user usr1@'%' identified by 'passord';
 alter user usr1 comment 'comment1';
 select user_attributes from mysql.user where user = 'usr1';

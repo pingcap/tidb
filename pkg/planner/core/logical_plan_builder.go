@@ -4344,6 +4344,11 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
+	oldInSelect := b.inSelect
+	b.inSelect = true
+	defer func() {
+		b.inSelect = oldInSelect
+	}()
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {
@@ -5104,6 +5109,31 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	if b.isCreateView && tableInfo.TempTableType == model.TempTableLocal {
 		return nil, plannererrors.ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
+	}
+
+	// Reading a table in a SELECT requires a SELECT privilege on that table even
+	// when the query does not reference any of its columns, such as
+	// `SELECT 1 FROM t` or `SELECT COUNT(*) FROM t`.
+	//
+	// Column-level privileges make the per-column checks recorded by the
+	// expression rewriter insufficient on their own: a table whose columns are
+	// never referenced produces no SELECT requirement at all, so a user without
+	// any grant could still read the table (leaking its row count) and probe its
+	// existence. `"*"` requires a table-level SELECT privilege or a column-level
+	// SELECT privilege on any column, matching MySQL.
+	//
+	// This is deliberately limited to SELECT so that the target tables of
+	// UPDATE/DELETE do not gain a spurious SELECT requirement.
+	if b.inSelect && !tableInfo.IsSequence() {
+		var selectErr error
+		if len(b.SavedViews) > 0 {
+			view := b.SavedViews[len(b.SavedViews)-1]
+			selectErr = plannererrors.ErrViewInvalid.GenWithStackByArgs(view.Schema.O, view.Name.O)
+		} else {
+			user, host := auth.GetUserAndHostName(sessionVars.User)
+			selectErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", user, host, tableInfo.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "*", selectErr)
 	}
 
 	if tbl.Type().IsVirtualTable() {

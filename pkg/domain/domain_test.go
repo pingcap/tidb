@@ -515,3 +515,43 @@ func TestDeferFn(t *testing.T) {
 	require.True(t, d)
 	require.Len(t, df.data, 1)
 }
+
+func TestClosestReplicaReadCheckerSkipsNonServingNodes(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	dom := NewDomain(store, 80*time.Millisecond, 0, 0, mockFactory, nil)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+	dom.sysVarCache.Lock()
+	dom.sysVarCache.global = map[string]string{variable.TiDBReplicaRead: "closest-adaptive"}
+	dom.sysVarCache.Unlock()
+	original := variable.IsAdaptiveReplicaReadEnabled()
+	t.Cleanup(func() { variable.SetEnableAdaptiveReplicaRead(original) })
+	pdClient := &mockInfoPdClient{stores: []*metapb.Store{
+		{Labels: []*metapb.StoreLabel{{Key: "zone", Value: "zone1"}}},
+		{Labels: []*metapb.StoreLabel{{Key: "zone", Value: "zone2"}}},
+	}}
+	const realServers = `"s1":{"ddl_id":"s1","labels":{"zone":"zone1"}},"s2":{"ddl_id":"s2","labels":{"zone":"zone2"},"disable_rpc":false}`
+	for _, tc := range []struct {
+		name       string
+		serverInfo string
+		localInfo  string
+		enabled    bool
+	}{
+		{"BR sorts before serving node", `{` + realServers + `,"br":{"ddl_id":"br","disable_rpc":true,"labels":{"zone":"zone1"}}}`, `{"ddl_id":"s1","labels":{"zone":"zone1"}}`, true},
+		{"BR must not fill an empty zone", `{"s1":{"ddl_id":"s1","labels":{"zone":"zone1"}},"br":{"ddl_id":"br","disable_rpc":true,"labels":{"zone":"zone2"}}}`, `{"ddl_id":"s1","labels":{"zone":"zone1"}}`, false},
+		{"local BR", `{"br":{"ddl_id":"br","disable_rpc":true,"labels":{"zone":"zone1"}}}`, `{"ddl_id":"br","disable_rpc":true,"labels":{"zone":"zone1"}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for fp, data := range map[string]string{"mockGetAllServerInfo": tc.serverInfo, "mockGetServerInfo": tc.localInfo} {
+				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/"+fp, fmt.Sprintf("return(`%s`)", data)))
+				t.Cleanup(func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/"+fp)) })
+			}
+			variable.SetEnableAdaptiveReplicaRead(!tc.enabled)
+			require.NoError(t, dom.checkReplicaRead(context.Background(), pdClient))
+			require.Equal(t, tc.enabled, variable.IsAdaptiveReplicaReadEnabled())
+		})
+	}
+}
