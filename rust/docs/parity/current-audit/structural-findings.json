@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 32,
-    "open": 11,
-    "partial": 21
+    "open": 10,
+    "partial": 22
   },
   "findings": [
     {
@@ -104,10 +104,10 @@
     },
     {
       "id": "O08",
-      "status": "open",
+      "status": "partial",
       "group": "Domain and process services",
-      "finding": "No plan-replayer owner composed",
-      "go_owner": "`pkg/domain/plan_replayer*.go`"
+      "finding": "`PLAN REPLAYER DUMP EXPLAIN [ANALYZE]` of a statement or a statement list and `PLAN REPLAYER CAPTURE [REMOVE]` run Go's `PlanReplayerExec` / `DumpPlanReplayerInfo` (`tidb-session/src/plan_replayer.rs` over `tidb_domain::plan_replayer`, the archive in Go `extstore`'s local storage), but the domain composes no plan-replayer owner: no `SetupPlanReplayerHandle` / `StartPlanReplayerHandle` (the 10s task collector, the dump workers, the statement path's capture check `checkPlanReplayerCaptureTask`) and no `DumpFileGcCheckerLoop`; `PLAN REPLAYER LOAD`, the file and slow-query dump targets and `WITH STATS AS OF TIMESTAMP` refuse; a next-gen `tidb_cloud_storage_uri` storage has no port",
+      "go_owner": "`pkg/domain/plan_replayer*.go`, `pkg/executor/plan_replayer.go`, `pkg/planner/extstore`"
     },
     {
       "id": "O09",

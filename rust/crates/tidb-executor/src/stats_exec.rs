@@ -55,6 +55,30 @@ pub trait StatsStatementService {
         json: &JsonTable,
         historical_stats_enabled: bool,
     ) -> Result<(), DriverError>;
+
+    /// Go `getStatsForTable` for the plan replayer: the named table's
+    /// statistics as JSON (`DumpHistoricalStatsBySnapshot` when
+    /// `history_stats_ts` is set, else `DumpStatsToJSON(..., true)`), and
+    /// the tables whose historical statistics fell back to the latest.
+    fn plan_replayer_stats_json(
+        &self,
+        _db: &str,
+        _table: &str,
+        _history_stats_ts: u64,
+    ) -> Result<(Option<JsonTable>, Vec<String>), DriverError> {
+        Err(DriverError::unsupported("this node has no statistics to dump"))
+    }
+
+    /// Go `dumpStatsMemStatus`'s lines for the named table -- each index's
+    /// and column's `<name>=<StatusToString>` -- or `None` without cached
+    /// statistics.
+    fn plan_replayer_stats_mem(
+        &self,
+        _db: &str,
+        _table: &str,
+    ) -> Result<Option<(Vec<String>, Vec<String>)>, DriverError> {
+        Ok(None)
+    }
 }
 
 /// Go's statistics-statement executors over the session.

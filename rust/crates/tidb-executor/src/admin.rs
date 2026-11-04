@@ -721,6 +721,12 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
     /// Go `Compile` + `runStmt` over `buildShow`'s plan.
     fn run_planned_show(&mut self, show: &tidb_ast::ShowStmt) -> Result<StmtOutput, DriverError>;
     /// Go `globalconn`'s server id of this node.
+    /// Go `PlanReplayerExec.Next`.
+    fn plan_replayer_stmt(
+        &mut self,
+        stmt: &tidb_ast::PlanReplayerStmt,
+    ) -> Result<Option<StmtOutput>, DriverError>;
+
     fn server_id(&self) -> u64;
     /// Go's TiDB peer RPC client (`KILL` of another node's connection).
     fn cluster_peer(&self) -> Option<&std::sync::Arc<crate::cluster_peer::ClusterPeerClient>>;
@@ -889,6 +895,8 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             tidb_ast::AdminStmt::ExplainFor(explain_for) => self.explain_for_stmt(explain_for),
             // Go `TraceExec`: runs the statement, then reports the spans.
             tidb_ast::AdminStmt::Trace(trace) => self.trace_stmt(trace),
+            // Go `PlanReplayerExec`.
+            tidb_ast::AdminStmt::PlanReplayer(replayer) => self.plan_replayer_stmt(replayer),
             // Go `getTiProxyAddrs`: every TRAFFIC statement talks to a
             // TiProxy, and this deployment has none.
             tidb_ast::AdminStmt::Traffic(_) => Err(DriverError::Mysql(crate::MysqlError::unknown(

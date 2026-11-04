@@ -775,6 +775,13 @@ impl Session {
                 }
                 // `@@tidb_last_ddl_info`: Go's JSON-marshalled
                 // `SessionVars.LastDDLInfo`.
+                // `@@tidb_last_plan_replayer_token`: Go's getter over
+                // `SessionVars.LastPlanReplayerToken`.
+                if *scope != Some(tidb_ast::SysVarScope::Global)
+                    && name.eq_ignore_ascii_case("tidb_last_plan_replayer_token")
+                {
+                    return Ok(Expr::String(self.vars.last_plan_replayer_token.clone()));
+                }
                 if *scope != Some(tidb_ast::SysVarScope::Global)
                     && name.eq_ignore_ascii_case("tidb_last_ddl_info")
                 {

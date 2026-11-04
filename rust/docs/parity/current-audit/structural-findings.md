@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**32 unresolved: 11 open, 21 partial.**
+**32 unresolved: 10 open, 22 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -59,7 +59,7 @@ unresolved until it is restated against its Go owner or closed.
 | --- | --- | --- | --- |
 | O04 | open | No TTL job/task manager (`tidb-ttl` has helpers only) | `pkg/ttl/ttlworker` |
 | O05 | open | `pkg/resourcegroup/runaway` (`RunawayChecker`, `Manager`, the `mysql.tidb_runaway_queries` flusher and the watch syncer) has no port: `kv_contract.rs`'s `RunawayChecker` trait has no implementation, so a resource group's QUERY_LIMIT is stored but no statement is checked, killed, cooled down or watched | `pkg/resourcegroup/runaway` |
-| O08 | open | No plan-replayer owner composed | `pkg/domain/plan_replayer*.go` |
+| O08 | partial | `PLAN REPLAYER DUMP EXPLAIN [ANALYZE]` of a statement or a statement list and `PLAN REPLAYER CAPTURE [REMOVE]` run Go's `PlanReplayerExec` / `DumpPlanReplayerInfo` (`tidb-session/src/plan_replayer.rs` over `tidb_domain::plan_replayer`, the archive in Go `extstore`'s local storage), but the domain composes no plan-replayer owner: no `SetupPlanReplayerHandle` / `StartPlanReplayerHandle` (the 10s task collector, the dump workers, the statement path's capture check `checkPlanReplayerCaptureTask`) and no `DumpFileGcCheckerLoop`; `PLAN REPLAYER LOAD`, the file and slow-query dump targets and `WITH STATS AS OF TIMESTAMP` refuse; a next-gen `tidb_cloud_storage_uri` storage has no port | `pkg/domain/plan_replayer*.go`, `pkg/executor/plan_replayer.go`, `pkg/planner/extstore` |
 | O10 | open | No DXF scheduler/executor managers composed | `pkg/disttask/framework` |
 | O11 | partial | TopSQL has its `state`, `stmtstats` and the reporter's data models only: `topsql.go` (`SetupTopSQL`, `AttachSQLAndPlanInfo`, `RegisterSQL` / `RegisterPlan`), `collector/cpu.go` (the SQL CPU collector) and the reporter (`reporter.go` `RemoteTopSQLReporter`, `datasink.go`, `pubsub.go`, `single_target.go`, `report_ticker.go`) have no port, so nothing collects or reports TopSQL | `pkg/util/topsql` |
 | O15 | open | No cross-keyspace runtime (null keyspace only) | `pkg/keyspace`, `pkg/domain` |

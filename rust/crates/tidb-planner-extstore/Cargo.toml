@@ -1,0 +1,17 @@
+[package]
+name = "tidb-planner-extstore"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-config = { path = "../tidb-config" }
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-replayer = { path = "../tidb-replayer" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-log = { path = "../tidb-log" }

@@ -83,6 +83,7 @@ pub fn fetch_show_variables(
                 "tidb_last_ddl_info" => Some(vars.last_ddl_info_value()),
                 "tidb_last_query_info" => Some(vars.last_query_info_value()),
                 "tidb_last_txn_info" => Some(vars.last_txn_info_value()),
+                "tidb_last_plan_replayer_token" => Some(vars.last_plan_replayer_token.clone()),
                 _ => None,
             }
         };

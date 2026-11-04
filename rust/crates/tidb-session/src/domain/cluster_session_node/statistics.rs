@@ -444,8 +444,10 @@ pub(super) fn stats_statement_service(
         .binding_session_factory
         .upgrade()
         .map(|domain| domain.advanced_sys_session_pool());
+    let factory = domain.binding_session_factory.clone();
     Arc::new(move |_session: &crate::Session| {
         Box::new(ClusterStatsStatementService {
+            domain: factory.clone(),
             stats_usage: Arc::clone(&stats_usage),
             catalog: Arc::clone(&catalog),
             stats: Arc::clone(&stats),
@@ -576,6 +578,9 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
 ///
 /// [`StatsStatementService`]: crate::stats_statement_service::StatsStatementService
 struct ClusterStatsStatementService {
+    /// The domain whose `DumpStatsToJSON` / `DumpHistoricalStatsBySnapshot`
+    /// the plan replayer reads.
+    domain: std::sync::Weak<super::Domain>,
     stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
     catalog: Arc<super::InfoCache>,
     stats: Arc<super::SharedStats>,
@@ -587,6 +592,64 @@ struct ClusterStatsStatementService {
 }
 
 impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementService {
+    fn plan_replayer_stats_json(
+        &self,
+        db: &str,
+        table: &str,
+        history_stats_ts: u64,
+    ) -> Result<(Option<tidb_stats_util::JsonTable>, Vec<String>), tidb_driver_error::DriverError> {
+        let domain = self
+            .domain
+            .upgrade()
+            .ok_or_else(|| tidb_driver_error::DriverError::unsupported("the node's domain is closed"))?;
+        // Go `is.TableByName` on the domain's latest schema.
+        let catalog = self.catalog.get_latest();
+        let (_, info) = catalog.table_info_by_name(db, table).ok_or_else(|| {
+            tidb_driver_error::DriverError::unsupported(format!("[schema:1146]Table '{db}.{table}' doesn't exist"))
+        })?;
+        let info = info.read().clone();
+        drop(catalog);
+        if history_stats_ts > 0 {
+            return domain
+                .dump_historical_stats_by_snapshot(db, &info, history_stats_ts)
+                .map_err(tidb_driver_error::DriverError::unsupported);
+        }
+        domain
+            .dump_stats_to_json(db, &info, true)
+            .map(|json| (json, Vec::new()))
+            .map_err(tidb_driver_error::DriverError::unsupported)
+    }
+
+    fn plan_replayer_stats_mem(
+        &self,
+        db: &str,
+        table: &str,
+    ) -> Result<Option<(Vec<String>, Vec<String>)>, tidb_driver_error::DriverError> {
+        let catalog = self.catalog.get_latest();
+        let (_, info) = catalog.table_info_by_name(db, table).ok_or_else(|| {
+            tidb_driver_error::DriverError::unsupported(format!("[schema:1146]Table '{db}.{table}' doesn't exist"))
+        })?;
+        let table_id = info.read().id;
+        drop(catalog);
+        // Go `GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())`.
+        let Some(stats) = self.stats.get(table_id) else {
+            return Ok(None);
+        };
+        let mut indices = Vec::new();
+        stats.hist_coll.for_each_index(|_, index| {
+            let name = index.info.as_ref().map(|info| info.read().name.original().to_owned()).unwrap_or_default();
+            indices.push(format!("{name}={}", index.stats_loaded_status.status_to_string()));
+            false
+        });
+        let mut columns = Vec::new();
+        stats.hist_coll.for_each_column(|_, column| {
+            let name = column.info.as_ref().map(|info| info.read().name.original().to_owned()).unwrap_or_default();
+            columns.push(format!("{name}={}", column.stats_loaded_status.status_to_string()));
+            false
+        });
+        Ok(Some((indices, columns)))
+    }
+
     fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), tidb_driver_error::DriverError> {
         super::Domain::dump_stats_delta_to_kv_parts(
             self.stats_usage.as_ref(),

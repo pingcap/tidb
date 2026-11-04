@@ -6119,6 +6119,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-planner-extstore"
+version = "0.0.0"
+dependencies = [
+ "tidb-config",
+ "tidb-config-kerneltype",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-replayer",
+]
+
+[[package]]
 name = "tidb-planner-indexadvisor"
 version = "0.0.0"
 dependencies = [
@@ -6349,6 +6360,8 @@ name = "tidb-replayer"
 version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
+ "crc32fast",
+ "flate2",
  "getrandom 0.3.4",
 ]
 
@@ -6841,6 +6854,7 @@ dependencies = [
  "tidb-planner-cardinality",
  "tidb-planner-core-metrics",
  "tidb-planner-core-operator-physicalop",
+ "tidb-planner-extstore",
  "tidb-plannererrors",
  "tidb-ppcpuusage",
  "tidb-privilege",

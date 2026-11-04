@@ -383,6 +383,13 @@ impl tidb_executor::admin::AdminExec for Session {
         Session::run_planned_show(self, show)
     }
 
+    fn plan_replayer_stmt(
+        &mut self,
+        stmt: &tidb_ast::PlanReplayerStmt,
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        Session::plan_replayer_stmt(self, stmt)
+    }
+
     fn server_id(&self) -> u64 {
         (self.server_id_getter)()
     }

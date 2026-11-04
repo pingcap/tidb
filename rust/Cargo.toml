@@ -9,6 +9,7 @@ members = [
     "crates/tidb-server-err",
     "crates/tidb-plannererrors",
     "crates/tidb-errctx",
+    "crates/tidb-planner-extstore",
     "crates/tidb-terror",
     "crates/tidb-errno",
     "crates/tidb-terror-identity",

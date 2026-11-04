@@ -14,6 +14,8 @@
 
 //! Go `pkg/util/replayer`.
 
+pub mod zip;
+
 use std::io;
 use std::path::Path;
 use std::sync::{Once, RwLock};

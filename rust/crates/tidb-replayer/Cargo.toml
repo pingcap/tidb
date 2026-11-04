@@ -13,3 +13,5 @@ workspace = true
 [dependencies]
 getrandom.workspace = true
 base64.workspace = true
+flate2.workspace = true
+crc32fast.workspace = true

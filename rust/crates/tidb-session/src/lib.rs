@@ -1226,6 +1226,7 @@ mod privilege_tables;
 mod tests_privilege_tls;
 mod process_arm;
 mod show;
+mod plan_replayer;
 use tidb_variable::vars;
 #[cfg(test)]
 mod tests_variable_session;

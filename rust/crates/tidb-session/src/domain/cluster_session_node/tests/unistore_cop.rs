@@ -6280,6 +6280,77 @@ fn modify_column_ddl_events_follow_go() {
     assert_eq!(after, before.parse::<i64>().unwrap() + 1);
 }
 
+/// Go `PlanReplayerExec`: `PLAN REPLAYER DUMP EXPLAIN` writes the archive
+/// into the global storage's replayer directory (Go's files, the table's
+/// schema, statistics and explain), records the dump in
+/// `mysql.plan_replayer_status` and answers the file token, which
+/// `@@tidb_last_plan_replayer_token` then shows; `CAPTURE` registers a task
+/// once, and `CAPTURE REMOVE` deletes it.
+#[test]
+fn plan_replayer_dump_writes_gos_archive_and_status() {
+    let base = std::env::temp_dir().join(format!("plan-replayer-dump-{}", std::process::id()));
+    tidb_planner_extstore::set_global_ext_storage_for_test(Some(Arc::new(
+        tidb_planner_extstore::LocalStorage::new(&base).unwrap(),
+    )));
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    let mut session = stack.factory.open_session(session_context(77)).expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE replayed (a INT, b INT, INDEX ia(a))");
+    rows(&mut session, "INSERT INTO replayed VALUES (1, 1), (2, 2)");
+    rows(&mut session, "ANALYZE TABLE replayed");
+    let answer = displayed(rows(&mut session, "PLAN REPLAYER DUMP EXPLAIN SELECT * FROM replayed WHERE a = 1"));
+    assert_eq!(answer.len(), 1);
+    assert_eq!(answer[0][0], "File token");
+    let token = answer[0][1].clone();
+    assert!(token.starts_with("replayer_") && token.ends_with(".zip"), "{token}");
+    assert_eq!(displayed(rows(&mut session, "SELECT @@tidb_last_plan_replayer_token")), [[token.clone()]]);
+    let archive = std::fs::read(base.join("replayer").join(&token)).expect("the archive is written");
+    let files: std::collections::BTreeMap<String, Vec<u8>> =
+        tidb_replayer::zip::read_zip(&archive).unwrap().into_iter().collect();
+    for name in [
+        "sql_meta.toml",
+        "config.toml",
+        "meta.txt",
+        "schema/test.replayed.schema.txt",
+        "schema/schema_meta.txt",
+        "table_tiflash_replica.txt",
+        "stats/test.replayed.json",
+        "statsMem/test.replayed.txt",
+        "variables.toml",
+        "sql/sql0.sql",
+        "session_bindings.sql",
+        "global_bindings.sql",
+        "explain.txt",
+        "debug_trace/debug_trace0.json",
+    ] {
+        assert!(files.contains_key(name), "missing {name}: {:?}", files.keys().collect::<Vec<_>>());
+    }
+    let text = |name: &str| String::from_utf8(files[name].clone()).unwrap();
+    assert_eq!(text("sql/sql0.sql"), "SELECT * FROM replayed WHERE a = 1");
+    assert!(text("schema/test.replayed.schema.txt").starts_with("create database if not exists `test`; use `test`;CREATE TABLE `replayed`"));
+    assert!(text("explain.txt").contains("IndexLookUp") || text("explain.txt").contains("Reader"), "{}", text("explain.txt"));
+    let stats: serde_json::Value = serde_json::from_slice(&files["stats/test.replayed.json"]).unwrap();
+    assert_eq!(stats["table_name"], "replayed", "{stats}");
+    assert!(text("statsMem/test.replayed.txt").starts_with("[INDEX]\nia="), "{}", text("statsMem/test.replayed.txt"));
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT origin_sql, token, fail_reason FROM mysql.plan_replayer_status")),
+        [["SELECT * FROM replayed WHERE a = 1".to_owned(), token, "NULL".to_owned()]]
+    );
+
+    rows(&mut session, "PLAN REPLAYER CAPTURE 'sql-digest' 'plan-digest'");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT sql_digest, plan_digest FROM mysql.plan_replayer_task")),
+        [["sql-digest", "plan-digest"]]
+    );
+    let again = session.run("PLAN REPLAYER CAPTURE 'sql-digest' 'plan-digest'").unwrap_err();
+    assert_eq!(again.to_mysql_error().message, "plan replayer capture task already exists");
+    rows(&mut session, "PLAN REPLAYER CAPTURE REMOVE 'sql-digest' 'plan-digest'");
+    assert!(rows(&mut session, "SELECT * FROM mysql.plan_replayer_task").is_empty());
+    tidb_planner_extstore::set_global_ext_storage_for_test(None);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// Go `DumpStatsToJSONBySnapshot` at snapshot 0: a plain table dumps its
 /// own statistics; a partitioned one dumps `global`, plus its partitions
 /// under static pruning or `dumpPartitionStats`.
