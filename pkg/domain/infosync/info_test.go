@@ -28,6 +28,7 @@ import (
 	keyspacepb "github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	pdhttp "github.com/tikv/pd/client/http"
+	sd "github.com/tikv/pd/client/servicediscovery"
 	"go.uber.org/goleak"
 )
 
@@ -48,6 +50,35 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	goleak.VerifyTestMain(m, opts...)
+}
+
+func TestAffinityDDLFailsWhenPDDoesNotServeAffinityAPI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	discovery := sd.NewMockServiceDiscovery([]string{server.URL}, nil)
+	require.NoError(t, discovery.Init())
+	cli := pdhttp.NewClientWithServiceDiscovery("test", discovery)
+	defer cli.Close()
+	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, cli, keyspace.CodecV1, false, nil)
+	require.NoError(t, err)
+	defer affinity.InitManager(nil)
+
+	groups := map[string][]pdhttp.AffinityGroupKeyRange{
+		"_tidb_t_1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
+	}
+	require.ErrorContains(t, affinity.CreateGroupsIfNotExists(context.Background(), groups), "404")
+	// Reads and forced deletes see no groups, as before.
+	got, err := affinity.GetGroups(context.Background(), []string{"_tidb_t_1"})
+	require.NoError(t, err)
+	require.Empty(t, got)
+	require.NoError(t, affinity.DeleteGroups(context.Background(), []string{"_tidb_t_1"}))
+
+	// Other PD calls still treat 404 as no data.
+	bundle, err := GetRuleBundle(context.Background(), "TiDB_DDL_1")
+	require.NoError(t, err)
+	require.True(t, bundle.IsEmpty())
 }
 
 func TestPutBundlesRetry(t *testing.T) {

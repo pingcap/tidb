@@ -162,10 +162,14 @@ func GlobalInfoSyncerInit(
 	infoCache infoschemaMinTS,
 	serverInfoOptions ...serverinfo.SyncerOption,
 ) (*InfoSyncer, error) {
+	var affinityPDHTTPCli pdhttp.Client
 	if pdHTTPCli != nil {
-		pdHTTPCli = pdHTTPCli.
-			WithCallerID("tidb-info-syncer").
-			WithRespHandler(pdResponseHandler)
+		pdHTTPCli = pdHTTPCli.WithCallerID("tidb-info-syncer")
+		// pdResponseHandler turns 404 and 412 into success. Affinity calls keep
+		// the client's default handling, which returns an error for any non-200
+		// status, so affinity DDL fails when PD cannot create the groups.
+		affinityPDHTTPCli = pdHTTPCli
+		pdHTTPCli = pdHTTPCli.WithRespHandler(pdResponseHandler)
 	}
 	is := &InfoSyncer{
 		etcdCli:           etcdCli,
@@ -189,7 +193,7 @@ func GlobalInfoSyncerInit(
 	setGlobalInfoSyncer(is)
 
 	// Initialize affinity package
-	affinity.InitManager(is.pdHTTPCli)
+	affinity.InitManager(affinityPDHTTPCli)
 
 	return is, nil
 }

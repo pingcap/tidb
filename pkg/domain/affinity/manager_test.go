@@ -53,6 +53,10 @@ func (m *mockPDClient) GetAffinityGroups(ctx context.Context, ids []string) (map
 	return args.Get(0).(map[string]*pdhttp.AffinityGroupState), args.Error(1)
 }
 
+func (m *mockPDClient) BatchDeleteAffinityGroups(ctx context.Context, ids []string, force bool) error {
+	return m.Called(ctx, ids, force).Error(0)
+}
+
 func (m *mockPDClient) GetAllAffinityGroups(ctx context.Context) (map[string]*pdhttp.AffinityGroupState, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {
@@ -133,6 +137,37 @@ func TestCreateAffinityGroupsIfNotExistsDoNotFallbackForNonCompatibilityError(t 
 	require.ErrorIs(t, err, testErr)
 	client.AssertExpectations(t)
 	client.AssertNotCalled(t, "GetAffinityGroups", mock.Anything, mock.Anything)
+}
+
+func TestPDWithoutAffinityAPI(t *testing.T) {
+	ctx := context.Background()
+	client := &mockPDClient{}
+	manager := &pdManager{Client: client}
+	notFound := pdStatusErr(http.StatusNotFound)
+
+	// Creation fails instead of reporting success without any group.
+	groups := map[string][]pdhttp.AffinityGroupKeyRange{
+		"g1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
+	}
+	client.On("CreateAffinityGroups", mock.Anything, groups, 1).Return(nil, notFound).Once()
+	require.ErrorIs(t, manager.CreateAffinityGroupsIfNotExists(ctx, groups), notFound)
+
+	// Reads see no groups.
+	client.On("GetAffinityGroups", mock.Anything, []string{"g1"}).Return(nil, notFound).Once()
+	client.On("GetAllAffinityGroups", mock.Anything).Return(nil, notFound).Once()
+	got, err := manager.GetAffinityGroups(ctx, []string{"g1"})
+	require.NoError(t, err)
+	require.Empty(t, got)
+
+	// A forced delete has nothing to delete.
+	client.On("BatchDeleteAffinityGroups", mock.Anything, []string{"g1"}, true).Return(notFound).Once()
+	require.NoError(t, manager.DeleteAffinityGroups(ctx, []string{"g1"}))
+
+	// Other delete errors are still returned.
+	serverErr := pdStatusErr(http.StatusInternalServerError)
+	client.On("BatchDeleteAffinityGroups", mock.Anything, []string{"g2"}, true).Return(serverErr).Once()
+	require.ErrorIs(t, manager.DeleteAffinityGroups(ctx, []string{"g2"}), serverErr)
+	client.AssertExpectations(t)
 }
 
 func TestGetAffinityGroupsFilterDirectResponse(t *testing.T) {

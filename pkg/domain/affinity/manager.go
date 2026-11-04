@@ -77,7 +77,13 @@ func (m *pdManager) DeleteAffinityGroups(ctx context.Context, ids []string) erro
 	if len(ids) == 0 {
 		return nil
 	}
-	return m.Client.BatchDeleteAffinityGroups(ctx, ids, true)
+	err := m.Client.BatchDeleteAffinityGroups(ctx, ids, true)
+	// With force, PD ignores missing groups, so a 404 means PD does not serve the
+	// affinity API and has no groups to delete.
+	if isPDHTTPStatusError(err, http.StatusNotFound) {
+		return nil
+	}
+	return err
 }
 
 // GetAffinityGroups gets affinity groups from PD.
@@ -132,6 +138,11 @@ func (m *pdManager) createAffinityGroupsIfNotExistsByFiltering(ctx context.Conte
 func (m *pdManager) getAffinityGroupsByScanningAll(ctx context.Context, ids []string) (map[string]*pdhttp.AffinityGroupState, error) {
 	allGroups, err := m.Client.GetAllAffinityGroups(ctx)
 	if err != nil {
+		// A PD that does not serve the affinity API has no groups. Creation still
+		// fails on such a PD, so this only keeps reads such as SHOW AFFINITY working.
+		if isPDHTTPStatusError(err, http.StatusNotFound) {
+			return make(map[string]*pdhttp.AffinityGroupState), nil
+		}
 		return nil, err
 	}
 	return filterAffinityGroups(allGroups, ids), nil

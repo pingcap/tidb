@@ -23,7 +23,7 @@ go_test(
     srcs = ["manager_test.go"],
     embed = [":affinity"],
     flaky = True,
-    shard_count = 11,
+    shard_count = 12,
     deps = [
         "//pkg/errno",
         "//pkg/parser/terror",
