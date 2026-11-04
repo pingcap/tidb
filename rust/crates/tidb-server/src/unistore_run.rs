@@ -132,6 +132,7 @@ pub fn run_unistore_cluster_session(
                 ddl_owner: factory.ddl.owner_manager(),
                 ddl_history: factory.ddl_job_history_store.get().cloned(),
                 transactions: Some(Arc::clone(&factory.transactions)),
+                stats_dump: Some(crate::node_status::stats_dump(&factory)),
                 schema_reload: {
                     let ddl = Arc::clone(&factory.ddl);
                     Some(Arc::new(move || ddl.reload_schema()))

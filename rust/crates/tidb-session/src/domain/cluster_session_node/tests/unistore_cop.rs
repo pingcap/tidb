@@ -6280,6 +6280,49 @@ fn modify_column_ddl_events_follow_go() {
     assert_eq!(after, before.parse::<i64>().unwrap() + 1);
 }
 
+/// Go `DumpStatsToJSONBySnapshot` at snapshot 0: a plain table dumps its
+/// own statistics; a partitioned one dumps `global`, plus its partitions
+/// under static pruning or `dumpPartitionStats`.
+#[test]
+fn dump_stats_to_json_follows_gos_partition_rules() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    let mut session = stack.factory.open_session(session_context(76)).expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE plain_dump (a INT, INDEX ia(a))");
+    rows(&mut session, "INSERT INTO plain_dump VALUES (1), (2), (3)");
+    rows(&mut session, "CREATE TABLE part_dump (a INT) PARTITION BY HASH(a) PARTITIONS 2");
+    rows(&mut session, "INSERT INTO part_dump VALUES (1), (2), (3)");
+    rows(&mut session, "ANALYZE TABLE plain_dump, part_dump");
+    let info = |name: &str| {
+        let catalog = stack.factory.catalog.get_latest();
+        let (_, table) = catalog.table_info_by_name("test", name).expect("table is published");
+        let table = table.read().clone();
+        table
+    };
+    let plain = stack
+        .factory
+        .dump_stats_to_json("test", &info("plain_dump"), true)
+        .expect("dump succeeds")
+        .expect("analyzed table has statistics");
+    assert!(plain.columns.as_ref().is_some_and(|columns| columns.contains_key("a")), "{plain:?}");
+    assert!(plain.indices.as_ref().is_some_and(|indices| indices.contains_key("ia")), "{plain:?}");
+    let keys = |dump_partition_stats: bool| {
+        let json = stack
+            .factory
+            .dump_stats_to_json("test", &info("part_dump"), dump_partition_stats)
+            .expect("dump succeeds")
+            .expect("a partitioned table always answers its JSON table");
+        assert_eq!(json.table_name, "part_dump");
+        json.partitions.unwrap_or_default().into_keys().collect::<Vec<_>>()
+    };
+    // `tidb_partition_prune_mode` is dynamic by default.
+    assert_eq!(keys(false), ["global"]);
+    assert_eq!(keys(true), ["global", "p0", "p1"]);
+    rows(&mut session, "SET GLOBAL tidb_partition_prune_mode = 'static'");
+    assert_eq!(keys(false), ["global", "p0", "p1"]);
+}
+
 /// Pinned `TestRecordHistoryStatsAfterAnalyze`: the global switch suppresses
 /// task creation while off; once enabled, a successful ANALYZE posts its
 /// physical ID and the domain dump path writes canonical blocks to

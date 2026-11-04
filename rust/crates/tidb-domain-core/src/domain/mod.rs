@@ -1198,6 +1198,51 @@ impl Domain {
         let _ = self.signing_cert_loop.get_or_init(SigningCertLoop::start);
     }
 
+    /// Go `statsReadWriter.DumpStatsToJSON` without a history executor
+    /// (`DumpStatsToJSONBySnapshot` at snapshot 0): a partitioned table's
+    /// partitions are dumped under static pruning or `dump_partition_stats`,
+    /// its global stats under `global`.
+    pub fn dump_stats_to_json(
+        &self,
+        database_name: &str,
+        table: &tidb_model::table_info::TableInfo,
+        dump_partition_stats: bool,
+    ) -> Result<Option<tidb_stats_util::JsonTable>, String> {
+        let handle = ClusterHistoricalStatsHandle {
+            transactions: Arc::clone(&self.transactions),
+            catalog: Arc::clone(&self.catalog),
+            global_vars: self.global_vars.clone(),
+            auto_ids: Arc::clone(&self.auto_ids),
+            domain: self.binding_session_factory.clone(),
+        };
+        // Go `util.GetCurrentPruneMode`.
+        let prune_mode = self
+            .global_vars
+            .get(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+            .map_err(|error| format!("{error:?}"))?;
+        let is_dynamic_mode = prune_mode.eq_ignore_ascii_case("dynamic");
+        let Some(partition) = table.get_partition_info() else {
+            return handle.table_json(database_name, table, table.id);
+        };
+        let mut partitions = std::collections::BTreeMap::new();
+        if !is_dynamic_mode || dump_partition_stats {
+            for definition in partition.read().definitions.snapshot() {
+                if let Some(json) = handle.table_json(database_name, table, definition.id)? {
+                    partitions.insert(definition.name.lowercase().to_owned(), Some(json));
+                }
+            }
+        }
+        if let Some(global) = handle.table_json(database_name, table, table.id)? {
+            partitions.insert(tidb_stats_util::TIDB_GLOBAL_STATS.to_owned(), Some(global));
+        }
+        Ok(Some(tidb_stats_util::JsonTable {
+            database_name: database_name.to_owned(),
+            table_name: table.name.lowercase().to_owned(),
+            partitions: Some(partitions),
+            ..tidb_stats_util::JsonTable::default()
+        }))
+    }
+
     /// Pinned Go `StatsHandle.DumpHistoricalStatsBySnapshot` over the live
     /// shared catalog and restricted cluster transactions.
     pub fn dump_historical_stats_by_snapshot(

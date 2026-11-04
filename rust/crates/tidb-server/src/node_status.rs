@@ -40,3 +40,18 @@ pub(crate) fn peer_service(factory: &Arc<Domain>) -> crate::peer_rpc::PeerServic
 pub(crate) fn status_settings(factory: &Arc<Domain>) -> crate::http_settings::Settings {
     crate::http_settings::Settings::new(factory.global_vars(), factory.http_global_setter())
 }
+
+/// Go `StatsHandler`'s dump: the named table of the latest schema
+/// (`is.TableByName`) through the domain's `DumpStatsToJSON`.
+pub(crate) fn stats_dump(factory: &Arc<Domain>) -> crate::http_status::StatsDump {
+    let factory = Arc::clone(factory);
+    Arc::new(move |database: &str, table: &str, dump_partition_stats: bool| {
+        let catalog = factory.catalog_snapshot();
+        let (_, info) = catalog
+            .table_info_by_name(database, table)
+            .ok_or_else(|| format!("[schema:1146]Table '{database}.{table}' doesn't exist"))?;
+        let info = info.read().clone();
+        let json = factory.dump_stats_to_json(database, &info, dump_partition_stats)?;
+        serde_json::to_string(&json).map_err(|error| error.to_string())
+    })
+}

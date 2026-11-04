@@ -91,7 +91,14 @@ pub struct StatusRoutes {
     pub transactions: Option<Arc<dyn tidb_domain_core::cluster_transactions::ClusterTransactions>>,
     /// Go `Domain.Reload`, which `/tiflash/replica?reload=true` runs first.
     pub schema_reload: Option<Arc<dyn Fn() -> Result<(), String> + Send + Sync>>,
+    /// Go `StatsHandle().DumpStatsToJSON(db, table, nil, dumpPartitionStats)`
+    /// for the named table of the latest schema, as JSON text.
+    pub stats_dump: Option<StatsDump>,
 }
+
+/// Dumps one table's statistics as JSON (`db`, `table`,
+/// `dump_partition_stats`).
+pub type StatsDump = Arc<dyn Fn(&str, &str, bool) -> Result<String, String> + Send + Sync>;
 
 /// Bind HTTP and generated gRPC routes on Go's shared status port.
 pub fn start_status_listener_with_routes(
@@ -279,6 +286,7 @@ fn route_response(
         .or_else(|| info_response(path, routes.server_info.as_deref(), routes.ddl_owner.as_deref()))
         .or_else(|| ddl_resign_owner_response(path, request, routes.ddl_owner.as_deref()))
         .or_else(|| ddl_history_response(path, routes.ddl_history.as_deref()))
+        .or_else(|| stats_dump_response(path, routes.stats_dump.as_ref()))
     {
         match answer {
             Ok(body) => (200, "application/json", body),
@@ -742,6 +750,37 @@ fn txn_gc_states_response(
         ),
         Err(message) => (400, "text/plain", message),
     }
+}
+
+/// Go `StatsHandler` (`/stats/dump/{db}/{table}`): the table's statistics
+/// JSON; `dumpPartitionStats` (Go `strconv.ParseBool`) defaults to true.
+fn stats_dump_response(path: &str, dump: Option<&StatsDump>) -> Option<Result<String, String>> {
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    let parts: Vec<&str> = route.strip_prefix("/stats/dump/")?.split('/').collect();
+    let [database, table] = parts.as_slice() else {
+        return None;
+    };
+    Some((|| {
+        let mut dump_partition_stats = true;
+        if let Some(value) = query
+            .split('&')
+            .find_map(|pair| pair.split_once('=').filter(|(key, _)| *key == "dumpPartitionStats").map(|(_, value)| value))
+            .filter(|value| !value.is_empty())
+        {
+            dump_partition_stats = match value {
+                "1" | "t" | "T" | "TRUE" | "true" | "True" => true,
+                "0" | "f" | "F" | "FALSE" | "false" | "False" => false,
+                _ => {
+                    return Err(format!(
+                        "strconv.ParseBool: parsing {}: invalid syntax",
+                        tidb_go_strconv::quote_bytes(value.as_bytes())
+                    ))
+                }
+            };
+        }
+        let dump = dump.ok_or_else(|| "this node has no statistics to dump".to_owned())?;
+        dump(database, table, dump_partition_stats)
+    })())
 }
 
 /// Go `DDLHistoryJobHandler` (`/ddl/history`): `ScanHistoryDDLJobs` with
@@ -1450,6 +1489,29 @@ mod schema_route_tests {
             flash_replica_summary_response("/tiflash/replica", "POST / HTTP/1.1\r\n\r\n", &routes).0,
             405
         );
+    }
+
+    /// Go `StatsHandler`: `/stats/dump/{db}/{table}` passes the names and
+    /// `dumpPartitionStats` (true by default, `strconv.ParseBool`).
+    #[test]
+    fn the_stats_dump_route_reads_its_names_and_flag() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = Arc::clone(&seen);
+        let dump: StatsDump = Arc::new(move |db: &str, table: &str, partitions: bool| {
+            record.lock().unwrap().push((db.to_owned(), table.to_owned(), partitions));
+            Ok("{}".to_owned())
+        });
+        assert_eq!(stats_dump_response("/stats/dump/test/t", Some(&dump)).unwrap().unwrap(), "{}");
+        stats_dump_response("/stats/dump/test/t?dumpPartitionStats=0", Some(&dump)).unwrap().unwrap();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [("test".to_owned(), "t".to_owned(), true), ("test".to_owned(), "t".to_owned(), false)]
+        );
+        assert_eq!(
+            stats_dump_response("/stats/dump/test/t?dumpPartitionStats=x", Some(&dump)).unwrap().unwrap_err(),
+            "strconv.ParseBool: parsing \"x\": invalid syntax"
+        );
+        assert!(stats_dump_response("/stats/dump/test", Some(&dump)).is_none());
     }
 
     /// Go `TestDecodeColumnValue`: each column of a new-format row decodes
