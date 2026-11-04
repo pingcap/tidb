@@ -436,7 +436,7 @@ func TestSyncWaitStatsLoadWithFailedResultBeforeTimer(t *testing.T) {
 	tk.MustExec("analyze table t")
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	neededColumns := []model.StatsLoadItem{
