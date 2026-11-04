@@ -335,13 +335,10 @@ impl NodeGcRules {
 }
 
 impl GcRuleClient for NodeGcRules {
+    /// Go `infosync.DeleteTiFlashPlacementRules`.
     fn delete_tiflash_placement_rules(&self, physical_table_ids: &[i64]) -> GcResult<()> {
-        tidb_ddl::placement_delivery::delete_tiflash_placement_rules(
-            self.pd_http_client()?,
-            physical_table_ids,
-            GC_RPC_TIMEOUT,
-        )
-        .map_err(gc_error)
+        tidb_domain_infosync::tiflash_manager::delete_tiflash_placement_rules(physical_table_ids)
+            .map_err(GcError::new)
     }
 
     fn put_rule_bundles(&self, bundles: Vec<tidb_placement::Bundle>) -> GcResult<()> {

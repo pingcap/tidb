@@ -672,9 +672,12 @@ pub(super) fn on_reorganize_partition(
             if !changed.is_empty() {
                 partition.write().ddl_changed_index = Some(GoShared::new(changed));
             }
-            // Go configures TiFlash's PD rules for the adding partitions
-            // here (`ConfigureTiFlashPDForPartitions`); this node configures
-            // none for any table yet.
+            // Go: the adding partitions' TiFlash PD rules must be set; a
+            // refusal cancels.
+            if let Some((count, labels)) = tiflash_replica_spec(&info) {
+                configure_tiflash_pd_for_partitions(true, &adding, count, &labels, info.id)
+                    .map_err(|error| cancel_ddl_job(active, error))?;
+            }
             let bundles =
                 super::partition::alter_table_partition_bundles(txn, &info, adding.clone())
                     .map_err(|error| cancel_ddl_job(active, error))?;

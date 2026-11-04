@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/domain/infosync`: the PD-facing label, resource-manager and affinity clients.
+//! Go `pkg/domain/infosync`: the PD-facing label, resource-manager, affinity
+//! and TiFlash replica clients.
 pub mod infosync_errors;
 pub mod pd_http;
 pub mod label_manager;
 pub mod resource_manager_client;
 pub mod label_delivery;
 pub mod pd_affinity_client;
+pub mod tiflash_manager;
 

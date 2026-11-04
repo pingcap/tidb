@@ -742,9 +742,11 @@ pub(super) fn on_add_table_partition(
                 )
                 .map_err(|error| cancel_ddl_job(active, error))?;
             }
-            // Go configures TiFlash's PD rules for the new partitions here
-            // (`ConfigureTiFlashPDForPartitions`); this node configures
-            // none for any table yet.
+            // Go: the new partitions' TiFlash PD rules must be set; a
+            // refusal fails the step.
+            if let Some((count, labels)) = tiflash_replica_spec(&info) {
+                configure_tiflash_pd_for_partitions(true, &adding, count, &labels, info.id)?;
+            }
             let bundles = alter_table_partition_bundles(txn, &info, adding.clone())
                 .map_err(|error| cancel_ddl_job(active, error))?;
             // `alterTableLabelRule` over the table's ids and the adding ones.
@@ -1250,9 +1252,11 @@ pub(super) fn on_truncate_table_partition(
                     }
                 }
             }
-            // `clearTruncatePartitionTiflashStatus`; Go configures TiFlash's
-            // PD rules for the new partitions too, which this node does for
-            // no table yet.
+            // `clearTruncatePartitionTiflashStatus`: the new partitions'
+            // TiFlash PD rules first; a refusal fails the step.
+            if let Some((count, labels)) = tiflash_replica_spec(&info) {
+                configure_tiflash_pd_for_partitions(true, &new_definitions, count, &labels, info.id)?;
+            }
             if let Some(replica) = &info.tiflash_replica {
                 replica.write().available = false;
                 remove_tiflash_available_partition_ids(&info, &old_ids);

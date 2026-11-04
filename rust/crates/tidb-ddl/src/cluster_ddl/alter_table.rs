@@ -740,6 +740,9 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
         } => {
             let (_, stored) = locate_table(catalog, schema, table)?;
             let stored = stored.read();
+            // Go's rule repair (`refreshTiFlashPlacementRules`) submits its
+            // reset job directly (`doDDLJob2`), past the statement's checks.
+            if !*reset_available {
             tidb_ddl_build::ddl_executor::is_table_tiflash_supported(schema, &stored)
                 .map_err(DdlPlanError::from_mysql_error)?;
             let current = stored.tiflash_replica.as_ref().map(|replica| replica.read().clone());
@@ -766,6 +769,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             // Go `checkTiFlashReplicaCount`: with TiFlash enabled, no more
             // replicas than PD's TiFlash stores.
             check_tiflash_replica_count(*count, tiflash_stores)?;
+            }
             (
             ActionType::ACTION_SET_TI_FLASH_REPLICA,
             schema,
@@ -1724,7 +1728,7 @@ pub(super) fn plan_persisted_alter_table_job_step(
             }
             tidb_ddl_build::table_info_build::set_region_split_policy(&mut info, &index_name, policy);
         }
-        // Go `onSetTableFlashReplica`; PD's rules are the replica manager's.
+        // Go `onSetTableFlashReplica`.
         ActionType::ACTION_SET_TI_FLASH_REPLICA => {
             let args = tidb_model::get_set_tiflash_replica_args(&mut active.job)
                 .map_err(|error| args_error(active, error))?
@@ -1739,6 +1743,33 @@ pub(super) fn plan_persisted_alter_table_job_step(
                         .clone(),
                 ));
             }
+            // Go `w.checkTiFlashReplicaCount` over a session of `w.sessPool`;
+            // a run without a session pool (bootstrap, planner tests) has no
+            // store to count.
+            if let Some(session) = txn.session() {
+                let stores = || {
+                    session
+                        .pool
+                        .tiflash_store_count()
+                        .map_err(|error| error.message.to_string())
+                };
+                check_tiflash_replica_count(spec.count, &stores).map_err(|error| cancel_ddl_job(active, error))?;
+            }
+            // Go: the PD rules before the table info; a refusal cancels.
+            let labels = spec.labels.clone().unwrap_or_default();
+            if let Some(partition) = info.get_partition_info() {
+                let (definitions, adding) = {
+                    let partition = partition.read();
+                    (partition.definitions.snapshot(), partition.adding_definitions.snapshot())
+                };
+                configure_tiflash_pd_for_partitions(false, &definitions, spec.count, &labels, info.id)
+                    .map_err(|error| cancel_ddl_job(active, error))?;
+                configure_tiflash_pd_for_partitions(true, &adding, spec.count, &labels, info.id)
+                    .map_err(|error| cancel_ddl_job(active, error))?;
+            } else {
+                configure_tiflash_pd_for_table(info.id, spec.count, &labels)
+                    .map_err(|error| cancel_ddl_job(active, error))?;
+            }
             if spec.count > 0 {
                 let available = !reset_available
                     && info
@@ -1751,6 +1782,10 @@ pub(super) fn plan_persisted_alter_table_job_step(
                 replica.available = available;
                 info.tiflash_replica = Some(GoShared::new(replica));
             } else {
+                if info.tiflash_replica.is_some() {
+                    // Go `infosync.DeleteTiFlashTableSyncProgress`.
+                    crate::tiflash_replica_manager::delete_tiflash_table_sync_progress(&info);
+                }
                 info.tiflash_replica = None;
             }
         }

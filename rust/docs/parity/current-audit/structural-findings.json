@@ -2,9 +2,9 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 44,
+    "unresolved": 41,
     "open": 12,
-    "partial": 32
+    "partial": 29
   },
   "findings": [
     {
@@ -62,8 +62,8 @@
       "id": "D11",
       "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "Restate (multi-schema change durability and recovery)",
-      "go_owner": "`pkg/ddl/multi_schema_change.go`"
+      "finding": "A multi-schema change does not promote a sub-job's KV-disk-full pause to the parent job (Go `promoteProxyKVDiskFullPause`), and ADD INDEX / MODIFY COLUMN always skip the DDL-time ANALYZE that Go's `checkNeedAnalyze` runs when `tidb_stats_update_during_ddl` is ON (default OFF)",
+      "go_owner": "`pkg/ddl/multi_schema_change.go`, `pkg/ddl/index.go`, `pkg/ddl/modify_column.go`"
     },
     {
       "id": "E02",
@@ -180,13 +180,6 @@
       "go_owner": "`pkg/util/stmtsummary`"
     },
     {
-      "id": "F01",
-      "status": "partial",
-      "group": "TiFlash and MPP",
-      "finding": "Restate: placement bundles are delivered by the DDL commit and the GC worker deletes retired rules; the TiFlash replica path is still polled",
-      "go_owner": "`pkg/ddl/placement*`, `pkg/domain/infosync`"
-    },
-    {
       "id": "F02",
       "status": "partial",
       "group": "TiFlash and MPP",
@@ -197,8 +190,8 @@
       "id": "M01",
       "status": "open",
       "group": "TiFlash and MPP",
-      "finding": "The MPP coordinator refuses every pushed Selection, TopN and aggregation",
-      "go_owner": "`pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`"
+      "finding": "The MPP coordinator lowers a hand-built single-fragment scan DAG and refuses every pushed Selection, TopN and aggregation, where Go builds the fragment/task graph from the physical plan (including disaggregated compute placement)",
+      "go_owner": "`pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`, `pkg/store/copr/mpp.go`"
     },
     {
       "id": "M04",
@@ -206,13 +199,6 @@
       "group": "TiFlash and MPP",
       "finding": "MPP coordinator registration/reporting; exact-epoch RetryRegions invalidation",
       "go_owner": "`pkg/executor/internal/mpp`"
-    },
-    {
-      "id": "M05",
-      "status": "partial",
-      "group": "TiFlash and MPP",
-      "finding": "Restate (disaggregated compute topology coordinator)",
-      "go_owner": "`pkg/store/copr/mpp.go`"
     },
     {
       "id": "P03",
@@ -305,13 +291,6 @@
       "group": "Expanded subsystem ownership review",
       "finding": "TopSQL: plan-digest attribution, DML write/commit attribution, CPU/RU profiling, reporter lifetime",
       "go_owner": "`pkg/util/topsql`"
-    },
-    {
-      "id": "O13",
-      "status": "partial",
-      "group": "Expanded subsystem ownership review",
-      "finding": "Restate (replica-read: local transaction scope, task-build-error counters, AZ/SafeTS)",
-      "go_owner": "`pkg/store/copr`, `pkg/sessiontxn`"
     },
     {
       "id": "Y01",

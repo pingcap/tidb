@@ -858,6 +858,9 @@ mod tiflash_cluster_http_tests {
         fn update_replica_status(&self, _: i64, _: bool) -> Result<(), (u16, String)> {
             Ok(())
         }
+        fn reset_tiflash_replica(&self, _: &str, _: &str, _: u64, _: Vec<String>) -> Result<(), (u16, String)> {
+            Ok(())
+        }
     }
 
     fn exercise_tls_discovery(trust_server: bool) {

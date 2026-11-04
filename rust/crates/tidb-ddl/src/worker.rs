@@ -3089,6 +3089,22 @@ where
         .map(|_| ())
         .map_err(|error| (error.code, error.message))
     }
+
+    fn reset_tiflash_replica(&self, schema: &str, table: &str, count: u64, labels: Vec<String>) -> Result<(), (u16, String)> {
+        self.execute(
+            &DdlStatement::SetTiFlashReplica {
+                schema: schema.to_owned(),
+                table: table.to_owned(),
+                count,
+                labels,
+                reset_available: true,
+                hypo: false,
+            },
+            &*self.scheduler.session_pool.system_session(),
+        )
+        .map(|_| ())
+        .map_err(|error| (error.code, error.message))
+    }
 }
 
 impl<S> Drop for RealClusterDdl<S>

@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The TiFlash replica availability poller: Go
-//! `pkg/ddl/ddl_tiflash_api.go` supplies its lifecycle and availability policy.
-//! This existing classic (NULL-keyspace, API V1) path still retains legacy rule
-//! reconciliation pending migration to the DDL/GC owners.
+//! The TiFlash replica availability poller: Go `PollTiFlashRoutine` on a
+//! classic (NULL-keyspace, API V1) cluster. It sets the TiFlash rule group's
+//! config once and polls availability; the rules themselves are set by the
+//! DDL jobs (`infosync.ConfigureTiFlashPDFor*`) and deleted by the GC worker.
 //!
 //! Every tick, for each table whose `TiFlashReplica` is set but not yet
 //! available:
@@ -61,6 +61,22 @@ const TIFLASH_HTTP_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 static PROGRESS: LazyLock<Arc<RwLock<HashMap<i64, f64>>>> =
     LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
 
+/// Go `infosync.DeleteTiFlashTableSyncProgress`: drops the cached progress
+/// of the table, or of each of its partitions.
+pub fn delete_tiflash_table_sync_progress(info: &tidb_model::table_info::TableInfo) {
+    let mut progress = PROGRESS.write().expect("TiFlash progress cache");
+    match info.get_partition_info() {
+        Some(partition) => {
+            for definition in partition.read().definitions.snapshot() {
+                progress.remove(&definition.id);
+            }
+        }
+        None => {
+            progress.remove(&info.id);
+        }
+    }
+}
+
 /// Cached full-replica progress, distinct from one-replica SQL availability.
 pub fn cached_replica_progress(physical_id: i64) -> Option<f64> {
     PROGRESS
@@ -77,7 +93,13 @@ pub trait TiFlashReplicaControl: Send + Sync {
     /// Go UpdateTableReplicaInfo through the ordinary DDL execution path. A
     /// failure carries its MySQL error code and message.
     fn update_replica_status(&self, table_id: i64, available: bool) -> Result<(), (u16, String)>;
+    /// Go `refreshTiFlashPlacementRules`' repair: an `ActionSetTiFlashReplica`
+    /// job with `ResetAvailable`, submitted directly.
+    fn reset_tiflash_replica(&self, schema: &str, table: &str, count: u64, labels: Vec<String>) -> Result<(), (u16, String)>;
 }
+
+/// Go `RefreshRulesTick`.
+const REFRESH_RULES_TICK: u64 = 10;
 
 /// One poller over the node's catalog and PD membership. It owns no transaction.
 pub struct TiFlashReplicaManager {
@@ -93,6 +115,9 @@ pub struct TiFlashReplicaManager {
 
 #[derive(Default)]
 struct PollState {
+    /// Go `hasSetTiFlashGroup` and `nextSetTiFlashGroupTime`.
+    has_set_tiflash_group: bool,
+    next_set_tiflash_group_time: Option<std::time::Instant>,
     counter: u64,
     stores: Vec<PdStore>,
     backoff: HashMap<i64, BackoffElement>,
@@ -294,6 +319,10 @@ impl TiFlashReplicaManager {
                 tidb_ddl_logutil::ddl_logger()
                     .warn("refreshTiFlashTicker returns error", &[zap_error(&error)]);
             }
+            if tidb_config_kerneltype::is_next_gen() && self.ddl.is_owner() {
+                let tick = self.state.lock().expect("TiFlash poll state").counter;
+                self.refresh_tiflash_placement_rules(&self.catalog.get_latest(), tick);
+            }
         })
     }
 
@@ -329,6 +358,21 @@ impl TiFlashReplicaManager {
     /// One poll pass: sync placement rules for replica tables, then flip
     /// availability for tables whose learners are all in place.
     fn poll_once(&self) -> Result<(), String> {
+        // Go: the TiFlash rule group's config is set until it succeeds once,
+        // retried a minute after a failure, owner or not.
+        {
+            let mut state = self.state.lock().expect("TiFlash poll state");
+            let now = std::time::Instant::now();
+            if !state.has_set_tiflash_group && state.next_set_tiflash_group_time.is_none_or(|next| now >= next) {
+                match tidb_domain_infosync::tiflash_manager::set_tiflash_group_config() {
+                    Ok(()) => state.has_set_tiflash_group = true,
+                    Err(error) => {
+                        tidb_ddl_logutil::ddl_logger().warn("SetTiFlashGroupConfig failed", &[zap_error(&error)]);
+                        state.next_set_tiflash_group_time = Some(now + Duration::from_secs(60));
+                    }
+                }
+            }
+        }
         if !self.ddl.is_owner() {
             self.state
                 .lock()
@@ -383,58 +427,9 @@ impl TiFlashReplicaManager {
         }
         let refill_pending = state.pending.is_empty();
 
-        // Legacy rule reconciliation remains here until configuration and
-        // cleanup migrate to the DDL/GC owners. Go classic clusters do not
-        // run refreshTiFlashPlacementRules in this poller.
-        // Go `GetTiFlashGroupRules` -> `GetPlacementRulesByGroup`.
-        let existing = block_on_pd_http(
-            self.pd_http_client
-                .get_placement_rules_by_group(tidb_placement::TIFLASH_RULE_GROUP_ID),
-        )?;
-        for rule in existing {
-            let id = rule.id;
-            let desired = replica_tables
-                .iter()
-                .any(|table| id == make_rule_id(table.id));
-            if desired || id.is_empty() {
-                continue;
-            }
-            // Go `DeletePlacementRule`; a refused delete is retried next tick.
-            // Go's poller has no such pass and no line for it.
-            let _ = block_on_pd_http(
-                self.pd_http_client
-                    .delete_placement_rule(tidb_placement::TIFLASH_RULE_GROUP_ID, &id),
-            );
-        }
-
-        if !replica_tables.is_empty() {
-            self.set_tiflash_group_config()?;
-        }
         for table in &replica_tables {
             let table_id = table.id;
             let count = table.count;
-
-            // Set one rule, like infosync.SetPlacementRule. A bundle for
-            // the shared "tiflash" group would replace every sibling rule.
-            let rule = make_new_rule(table_id, count, &table.labels);
-            block_on_pd_http(self.pd_http_client.set_placement_rule(&rule))
-                .map_err(|error| format!("placement rule sync refused by PD: {error}"))?;
-
-            // Go `PostAccelerateScheduleBatch` (tiflash_manager.go:317):
-            // nudge PD to schedule the table's regions onto the TiFlash
-            // store; without this the learner peers can wait on the
-            // balance loop.
-            // The accelerate-schedule range is the SAME
-            // `EncodeBytes`-escaped range the placement rule carries. Go
-            // returns a refusal to its DDL job and logs nothing; here the
-            // next tick retries.
-            let (accel_start, accel_end) = table_region_range(table_id);
-            let key_ranges = [pd_http::new_key_range(accel_start, accel_end)];
-            let _ = block_on_pd_http(
-                self.pd_http_client
-                    .accelerate_schedule_in_batch(&key_ranges),
-            );
-
             if table.available || table.logical_available {
                 if refill_pending {
                     state.pending.push_front(table_id);
@@ -513,6 +508,80 @@ impl TiFlashReplicaManager {
         Ok(())
     }
 
+    /// Go `refreshTiFlashPlacementRules`, which only next-gen kernels run:
+    /// every `RefreshRulesTick` owner ticks, a replica table one of whose
+    /// physical tables PD has no rule for gets a reset replica job.
+    fn refresh_tiflash_placement_rules(&self, catalog: &tidb_infoschema::SessionExtendedInfoSchema, tick: u64) {
+        if tick % REFRESH_RULES_TICK != 0 {
+            return;
+        }
+        if !tidb_config::config_tree::config::get_global_config().cse.is_tiflash_enabled() {
+            return;
+        }
+        let manager = tidb_domain_infosync::tiflash_manager::tiflash_replica_manager();
+        let mut fixed = std::collections::HashSet::new();
+        for database in catalog.stored_schemas() {
+            let database = database.read();
+            for table in database.deprecated_tables.iter_deref() {
+                let table = table.read();
+                let Some(replica) = table.tiflash_replica.as_ref() else {
+                    continue;
+                };
+                let (count, labels) = {
+                    let replica = replica.read();
+                    (replica.count, replica.location_labels.iter().cloned().collect::<Vec<String>>())
+                };
+                let ids: Vec<i64> = match table.get_partition_info() {
+                    Some(partition) => {
+                        let partition = partition.read();
+                        partition
+                            .definitions
+                            .snapshot()
+                            .iter()
+                            .chain(partition.adding_definitions.snapshot().iter())
+                            .map(|definition| definition.id)
+                            .collect()
+                    }
+                    None => vec![table.id],
+                };
+                for id in ids {
+                    if fixed.contains(&table.id) {
+                        continue;
+                    }
+                    let rule = match manager.get_placement_rule(id) {
+                        Ok(rule) => rule,
+                        Err(error) => {
+                            tidb_ddl_logutil::ddl_logger().warn("get placement rule err", &[zap_error(&error)]);
+                            continue;
+                        }
+                    };
+                    if rule.id.is_empty() && count > 0 {
+                        let fields = [
+                            Field::new("tableID", Value::I64(table.id)),
+                            Field::new("count", Value::U64(count)),
+                        ];
+                        match self.ddl.reset_tiflash_replica(
+                            database.name.original(),
+                            table.name.original(),
+                            count,
+                            labels.clone(),
+                        ) {
+                            Ok(()) => {
+                                tidb_ddl_logutil::ddl_logger().info("fix tiflash placement rule success", &fields);
+                                fixed.insert(table.id);
+                            }
+                            Err((_, error)) => {
+                                let mut fields = fields.to_vec();
+                                fields.push(zap_error(&error));
+                                tidb_ddl_logutil::ddl_logger().warn("fix tiflash placement rule err", &fields);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Go `calculateTiFlashProgress`: `(one-replica progress, full progress)`.
     fn progress(
         &self,
@@ -522,7 +591,7 @@ impl TiFlashReplicaManager {
     ) -> Result<(f64, f64), String> {
         // Go `GetRegionCountFromPD`: `GetRegionStatusByKeyRange(.., true)`
         // over the escaped binary memcomparable keys.
-        let (start_key, end_key) = table_region_range(table_id);
+        let (start_key, end_key) = tidb_domain_infosync::tiflash_manager::table_region_range(table_id);
         let stats = block_on_pd_http(
             self.pd_http_client
                 .get_region_status_by_key_range(&pd_http::new_key_range(start_key, end_key), true),
@@ -559,25 +628,6 @@ impl TiFlashReplicaManager {
         let one_replica_progress = regions_with_peer.len() as f64 / region_count;
         let full_progress = (peer_count as f64 / (region_count * replica_count as f64)).min(1.0);
         Ok((one_replica_progress, full_progress))
-    }
-
-    // Go infosync.SetTiFlashGroupConfig: group priority must precede individual rules.
-    fn set_tiflash_group_config(&self) -> Result<(), String> {
-        let group_config = block_on_pd_http(
-            self.pd_http_client
-                .get_placement_rule_group_by_id(tidb_placement::TIFLASH_RULE_GROUP_ID),
-        )?;
-        if group_config.index == tidb_placement::RULE_INDEX_TIFLASH && !group_config.r#override {
-            return Ok(());
-        }
-        block_on_pd_http(
-            self.pd_http_client
-                .set_placement_rule_group(&pd_http::RuleGroup {
-                    id: tidb_placement::TIFLASH_RULE_GROUP_ID.to_owned(),
-                    index: tidb_placement::RULE_INDEX_TIFLASH,
-                    r#override: false,
-                }),
-        )
     }
 }
 
@@ -661,45 +711,8 @@ fn zap_error(error: &str) -> Field {
     Field::new("error", Value::Str(error.to_owned()))
 }
 
-fn table_region_range(table_id: i64) -> (Vec<u8>, Vec<u8>) {
-    let mut start = Vec::new();
-    let mut end = Vec::new();
-    tidb_codec::encode_bytes(&mut start, &tidb_tablecodec::table_key::gen_table_record_prefix(table_id));
-    tidb_codec::encode_bytes(
-        &mut end,
-        &tidb_tablecodec::table_key::encode_table_prefix(table_id + 1),
-    );
-    (start, end)
-}
 
-/// Go `infosync.MakeRuleID`: the rule ID for TiFlash with the given table ID.
-pub fn make_rule_id(id: i64) -> String {
-    format!("table-{id}-r")
-}
 
-/// Go `infosync.MakeNewRule` (over `makeBaseRule`): the TiFlash learner rule
-/// of one physical table. The raw keys are the record range; the classic
-/// (API V1) codec's `EncodeRange` leaves them as they are, and the rule's
-/// JSON carries them memcomparable-encoded in hex.
-pub fn make_new_rule(id: i64, count: u64, location_labels: &[String]) -> pd_http::Rule {
-    pd_http::Rule {
-        group_id: tidb_placement::TIFLASH_RULE_GROUP_ID.to_owned(),
-        id: make_rule_id(id),
-        index: tidb_placement::RULE_INDEX_TIFLASH,
-        r#override: false,
-        start_key: tidb_tablecodec::table_key::gen_table_record_prefix(id),
-        end_key: tidb_tablecodec::table_key::encode_table_prefix(id + 1),
-        role: pd_http::LEARNER,
-        count: count as i64,
-        label_constraints: vec![pd_http::LabelConstraint {
-            key: tidb_placement::ENGINE_LABEL_KEY.to_owned(),
-            op: pd_http::IN,
-            values: vec![tidb_placement::ENGINE_LABEL_TIFLASH.to_owned()],
-        }],
-        location_labels: location_labels.to_vec(),
-        ..pd_http::Rule::default()
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -711,6 +724,7 @@ mod tests {
     struct Ddl {
         owner: AtomicBool,
         updates: Mutex<Vec<(i64, bool)>>,
+        resets: Mutex<Vec<(String, u64)>>,
     }
     impl TiFlashReplicaControl for Ddl {
         fn is_owner(&self) -> bool {
@@ -722,6 +736,10 @@ mod tests {
             available: bool,
         ) -> Result<(), (u16, String)> {
             self.updates.lock().unwrap().push((table_id, available));
+            Ok(())
+        }
+        fn reset_tiflash_replica(&self, _: &str, table: &str, count: u64, _: Vec<String>) -> Result<(), (u16, String)> {
+            self.resets.lock().unwrap().push((table.to_owned(), count));
             Ok(())
         }
     }
@@ -932,39 +950,19 @@ mod tests {
             tables.iter().map(|table| table.id).collect::<Vec<_>>(),
             vec![71, 72]
         );
-        let http = HttpFixture::new(|path| {
-            if path == "/pd/api/v1/config/rules/group/tiflash" {
-                (
-                    200,
-                    r#"[{"id":"table-71-r"},{"id":"table-72-r"}]"#.to_owned(),
-                )
-            } else {
-                successful_response(path)
-            }
-        });
+        let http = HttpFixture::new(successful_response);
         let ddl = Arc::new(Ddl::default());
         ddl.owner.store(true, Ordering::SeqCst);
         let poller = fixture_manager(&http, ddl, &[]);
         poller.catalog.upsert((*image).clone());
         poller.poll_once().unwrap();
-        let requests = http.requests.lock().unwrap();
-        assert!(
-            !requests
-                .iter()
-                .any(|(path, _)| path.contains("/config/rule/tiflash/")),
-            "physical partition rules are desired, not stale logical-table rules"
-        );
-        let ids = requests
+        // Go's classic poller sets no rule: the DDL jobs do.
+        assert!(!http
+            .requests
+            .lock()
+            .unwrap()
             .iter()
-            .filter(|(path, _)| path == "/pd/api/v1/config/rule")
-            .map(|(_, body)| {
-                serde_json::from_str::<serde_json::Value>(body).unwrap()["id"]
-                    .as_str()
-                    .unwrap()
-                    .to_owned()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(ids, vec!["table-71-r", "table-72-r"]);
+            .any(|(path, _)| path.contains("/config/rule")));
     }
 
     #[test]
@@ -1190,6 +1188,7 @@ mod tests {
                         .iter()
                         .map(|&(id, available)| tidb_model::table_info::TableInfo {
                             id,
+                            name: tidb_ast::CiString::new(&format!("t{id}")),
                             tiflash_replica: Some(tidb_model::GoShared::new(
                                 tidb_model::table::TiFlashReplicaInfo {
                                     count: 2,
@@ -1240,45 +1239,41 @@ mod tests {
         .unwrap()
     }
 
+    /// Go `TiFlashReplicaManagerCtx.SetPlacementRuleBatch`: the group config
+    /// first, then one batch of per-table rules, so sibling rules in the
+    /// shared "tiflash" group survive.
     #[test]
-    fn per_table_rule_updates_preserve_sibling_rules_in_the_tiflash_group() {
+    fn rule_batches_set_the_group_first_and_keep_sibling_rules() {
+        use tidb_domain_infosync::tiflash_manager::{make_new_rule, TiFlashReplicaManager, TiFlashReplicaManagerCtx};
         let http = HttpFixture::new(successful_response);
-        let ddl = Arc::new(Ddl::default());
-        ddl.owner.store(true, Ordering::SeqCst);
-        fixture_manager(&http, ddl, &[(7, false), (8, false)])
-            .poll_once()
+        TiFlashReplicaManagerCtx::new(&pd_http_client(&http.address))
+            .set_placement_rule_batch(&[make_new_rule(7, 2, &[]), make_new_rule(8, 0, &[])])
             .unwrap();
         let requests = http.requests.lock().unwrap();
         assert!(
-            !requests
-                .iter()
-                .any(|(path, _)| path.contains("placement-rule")),
+            !requests.iter().any(|(path, _)| path.contains("placement-rule")),
             "a group bundle replaces sibling table rules"
         );
-        let rules: Vec<serde_json::Value> = requests
-            .iter()
-            .filter(|(path, _)| path == "/pd/api/v1/config/rule")
-            .map(|(_, body)| serde_json::from_str(body).unwrap())
-            .collect();
-        assert_eq!(rules.len(), 2);
         let group_index = requests
             .iter()
             .position(|(path, _)| path == "/pd/api/v1/config/rule_group")
             .unwrap();
-        let first_rule_index = requests
+        let batch_index = requests
             .iter()
-            .position(|(path, _)| path == "/pd/api/v1/config/rule")
+            .position(|(path, _)| path == "/pd/api/v1/config/rules/batch")
             .unwrap();
-        assert!(group_index < first_rule_index);
+        assert!(group_index < batch_index);
         let group: serde_json::Value = serde_json::from_str(&requests[group_index].1).unwrap();
         // Go `pd.RuleGroup` omits a false `override` (`json:",omitempty"`).
         assert_eq!(group, serde_json::json!({"id": "tiflash", "index": 120}));
-        assert_eq!(rules[0]["id"], "table-7-r");
-        assert_eq!(rules[1]["id"], "table-8-r");
-        for rule in rules {
-            assert_eq!(rule["group_id"], "tiflash");
-            assert_eq!(rule["index"], 120);
-            assert_eq!(rule["count"], 2);
+        let ops: Vec<serde_json::Value> = serde_json::from_str(&requests[batch_index].1).unwrap();
+        assert_eq!(ops.len(), 2);
+        assert_eq!((ops[0]["id"].as_str(), ops[0]["action"].as_str()), (Some("table-7-r"), Some("add")));
+        // A zero-count rule is Go's delete.
+        assert_eq!((ops[1]["id"].as_str(), ops[1]["action"].as_str()), (Some("table-8-r"), Some("del")));
+        for op in ops {
+            assert_eq!(op["group_id"], "tiflash");
+            assert_eq!(op["index"], 120);
         }
     }
 
@@ -1449,29 +1444,25 @@ mod tests {
         );
     }
 
+    /// Go `SetTiFlashGroupConfig` under `SetPlacementRule`: a group already
+    /// at the TiFlash index needs no write, and a refused group write stops
+    /// the rule.
     #[test]
     fn existing_group_priority_needs_no_write_and_failure_prevents_rule_updates() {
+        use tidb_domain_infosync::tiflash_manager::{make_new_rule, TiFlashReplicaManager, TiFlashReplicaManagerCtx};
         let http = HttpFixture::new(|path| {
             if path == "/pd/api/v1/config/rule_group/tiflash" {
-                (
-                    200,
-                    r#"{"id":"tiflash","index":120,"override":false}"#.to_owned(),
-                )
+                (200, r#"{"id":"tiflash","index":120,"override":false}"#.to_owned())
             } else {
                 successful_response(path)
             }
         });
-        let ddl = Arc::new(Ddl::default());
-        ddl.owner.store(true, Ordering::SeqCst);
-        fixture_manager(&http, ddl, &[(7, false)])
-            .poll_once()
+        TiFlashReplicaManagerCtx::new(&pd_http_client(&http.address))
+            .set_placement_rule(&make_new_rule(7, 2, &[]))
             .unwrap();
-        assert!(!http
-            .requests
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|(path, _)| path == "/pd/api/v1/config/rule_group"));
+        let requests = http.requests.lock().unwrap().clone();
+        assert!(!requests.iter().any(|(path, _)| path == "/pd/api/v1/config/rule_group"));
+        assert!(requests.iter().any(|(path, _)| path == "/pd/api/v1/config/rule"));
 
         let http = HttpFixture::new(|path| {
             if path == "/pd/api/v1/config/rule_group" {
@@ -1480,17 +1471,54 @@ mod tests {
                 successful_response(path)
             }
         });
-        let ddl = Arc::new(Ddl::default());
-        ddl.owner.store(true, Ordering::SeqCst);
-        assert!(fixture_manager(&http, ddl.clone(), &[(7, false)])
-            .poll_once()
+        assert!(TiFlashReplicaManagerCtx::new(&pd_http_client(&http.address))
+            .set_placement_rule(&make_new_rule(7, 2, &[]))
             .is_err());
-        assert!(ddl.updates.lock().unwrap().is_empty());
         assert!(!http
             .requests
             .lock()
             .unwrap()
             .iter()
             .any(|(path, _)| path == "/pd/api/v1/config/rule"));
+    }
+
+    /// Go `refreshTiFlashPlacementRules`: every tenth tick, one reset job
+    /// per replica table that PD lost a rule for; a table PD still has a rule
+    /// for, a zero-count table and a failed lookup are left alone.
+    #[test]
+    fn missing_tiflash_rules_are_repaired_by_a_reset_replica_job() {
+        use tidb_domain_infosync::tiflash_manager::{init_tiflash_replica_manager, make_new_rule, TiFlashReplicaManager};
+        struct Rules;
+        impl TiFlashReplicaManager for Rules {
+            fn set_tiflash_group_config(&self) -> Result<(), String> {
+                Ok(())
+            }
+            fn set_placement_rule(&self, _: &pd_http::Rule) -> Result<(), String> {
+                Ok(())
+            }
+            fn set_placement_rule_batch(&self, _: &[pd_http::Rule]) -> Result<(), String> {
+                Ok(())
+            }
+            fn post_accelerate_schedule_batch(&self, _: &[i64]) -> Result<(), String> {
+                Ok(())
+            }
+            fn get_placement_rule(&self, table_id: i64) -> Result<pd_http::Rule, String> {
+                match table_id {
+                    7 => Ok(pd_http::Rule::default()),
+                    8 => Ok(make_new_rule(8, 2, &[])),
+                    _ => Err("PD unreachable".to_owned()),
+                }
+            }
+        }
+        init_tiflash_replica_manager(Some(Arc::new(Rules)));
+        let http = HttpFixture::new(successful_response);
+        let ddl = Arc::new(Ddl::default());
+        let manager = fixture_manager(&http, ddl.clone(), &[(7, false), (8, false), (9, false)]);
+        let catalog = manager.catalog.get_latest();
+        manager.refresh_tiflash_placement_rules(&catalog, 3);
+        assert!(ddl.resets.lock().unwrap().is_empty(), "only every tenth tick");
+        manager.refresh_tiflash_placement_rules(&catalog, 10);
+        // Table 7's rule is missing; 8 has one; 9's lookup failed.
+        assert_eq!(*ddl.resets.lock().unwrap(), [("t7".to_owned(), 2)]);
     }
 }

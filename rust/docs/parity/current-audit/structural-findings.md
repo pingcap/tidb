@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**44 unresolved: 12 open, 32 partial.**
+**41 unresolved: 12 open, 29 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -29,8 +29,7 @@ unresolved until it is restated against its Go owner or closed.
 | D02 | partial | No ingest (fast-reorg) backfill: it falls back to the transactional merge (`tidb-ddl/src/cluster_ddl/add_index.rs`) | `pkg/ddl/backfilling*.go`, `pkg/ddl/ingest` |
 | D03 | partial | Backfill is one sequential batch loop, not Go's reorg worker pool | `pkg/ddl/backfilling_scheduler.go` |
 | D05 | partial | Restate (DDL error identity and rollback classification) | `pkg/ddl` |
-| D11 | partial | Restate (multi-schema change durability and recovery) | `pkg/ddl/multi_schema_change.go` |
-| F01 | partial | Restate: placement bundles are delivered by the DDL commit and the GC worker deletes retired rules; the TiFlash replica path is still polled | `pkg/ddl/placement*`, `pkg/domain/infosync` |
+| D11 | partial | A multi-schema change does not promote a sub-job's KV-disk-full pause to the parent job (Go `promoteProxyKVDiskFullPause`), and ADD INDEX / MODIFY COLUMN always skip the DDL-time ANALYZE that Go's `checkNeedAnalyze` runs when `tidb_stats_update_during_ddl` is ON (default OFF) | `pkg/ddl/multi_schema_change.go`, `pkg/ddl/index.go`, `pkg/ddl/modify_column.go` |
 | F02 | partial | ADD PARTITION TiFlash readiness and rollback | `pkg/ddl/partition.go` |
 
 ### Executor, DML and expressions
@@ -86,8 +85,6 @@ unresolved until it is restated against its Go owner or closed.
 | T02 | partial | Two region-cache lifecycles (TiDB and the native client): coprocessor RequestSelector, store-health recovery, batch-scan follower reads | client-go `internal/locate` |
 | P03 | partial | PD router transport; primaryless member publication; readiness/prewarm; idle recovery | PD client `pkg/client` |
 | P06 | partial | TSO dispatcher options and stream construction; RPC concurrency | PD client `tso_dispatcher.go` |
-| O13 | partial | Restate (replica-read: local transaction scope, task-build-error counters, AZ/SafeTS) | `pkg/store/copr`, `pkg/sessiontxn` |
-| M01 | open | The MPP coordinator refuses every pushed Selection, TopN and aggregation | `pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go` |
+| M01 | open | The MPP coordinator lowers a hand-built single-fragment scan DAG and refuses every pushed Selection, TopN and aggregation, where Go builds the fragment/task graph from the physical plan (including disaggregated compute placement) | `pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`, `pkg/store/copr/mpp.go` |
 | M04 | partial | MPP coordinator registration/reporting; exact-epoch RetryRegions invalidation | `pkg/executor/internal/mpp` |
-| M05 | partial | Restate (disaggregated compute topology coordinator) | `pkg/store/copr/mpp.go` |
 

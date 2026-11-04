@@ -138,3 +138,38 @@ fn enforced_mpp_says_why_tiflash_is_not_read_like_go() {
     )
     .check(["Warning 1105 MPP mode may be blocked because you have set a hint to read table `t` from TiKV."]);
 }
+
+fn table_id(tk: &mut TestKit, table: &str) -> String {
+    tk.must_query(&format!(
+        "select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = '{table}'"
+    ))
+    .rows()[0][0]
+        .clone()
+}
+
+/// Go `onSetTableFlashReplica`, `onTruncateTable` and `createTable` set the
+/// table's TiFlash placement rule through `infosync.ConfigureTiFlashPDForTable`
+/// as the job runs; a zero count is the rule's delete.
+#[test]
+fn tiflash_replica_jobs_set_pd_rules_through_infosync() {
+    use tidb_domain_infosync::tiflash_manager::{init_tiflash_replica_manager, MockTiFlashReplicaManager};
+    let _store_count = enable_failpoint("mockTiFlashStoreCount", "return(true)");
+    let mut tk = TestKit::new();
+    let manager = std::sync::Arc::new(MockTiFlashReplicaManager::default());
+    init_tiflash_replica_manager(Some(manager.clone()));
+    tk.must_exec("drop table if exists t1");
+    tk.must_exec("create table t1 (a int)");
+    tk.must_exec("alter table t1 set tiflash replica 1");
+    let first = table_id(&mut tk, "t1");
+    tk.must_exec("truncate table t1");
+    let second = table_id(&mut tk, "t1");
+    tk.must_exec("alter table t1 set tiflash replica 0");
+    assert_eq!(
+        manager.calls(),
+        [
+            format!("set table-{first}-r 1"),
+            format!("set table-{second}-r 1"),
+            format!("set table-{second}-r 0"),
+        ]
+    );
+}

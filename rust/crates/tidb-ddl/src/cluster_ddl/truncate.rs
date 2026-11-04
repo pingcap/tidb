@@ -164,6 +164,17 @@ pub(super) fn on_truncate_table(
         &mut affinity_groups,
         &mut label_rules,
     )?;
+    // Go: the TiFlash replica's PD rules over the new ids; a refusal cancels.
+    if let Some((count, labels)) = tiflash_replica_spec(&info) {
+        if let Some(partition) = info.get_partition_info() {
+            let definitions = partition.read().definitions.snapshot();
+            configure_tiflash_pd_for_partitions(true, &definitions, count, &labels, info.id)
+                .map_err(|error| cancel_ddl_job(active, error))?;
+        } else {
+            configure_tiflash_pd_for_table(new_table_id, count, &labels)
+                .map_err(|error| cancel_ddl_job(active, error))?;
+        }
+    }
     let (schema_version, diff) = update_schema_version(
         &txn.meta(),
         active,

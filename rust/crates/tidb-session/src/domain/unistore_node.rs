@@ -514,6 +514,7 @@ pub fn unistore_cluster_session_stack_from(
     tidb_domain_affinity::init_manager(None);
     // Go `initLabelRuleManager` without PD: a fresh `mockLabelManager`.
     tidb_domain_infosync::label_manager::init_label_rule_manager(None);
+    tidb_domain_infosync::tiflash_manager::init_tiflash_replica_manager(None);
     // Go `initResourceManagerClient(nil)`: the mock resource manager.
     tidb_domain_infosync::resource_manager_client::init_resource_manager_client(None);
     // Go `initDomainSysVars` registering `setGlobalResourceControl` for every

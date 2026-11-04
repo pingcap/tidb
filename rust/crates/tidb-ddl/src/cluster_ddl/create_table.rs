@@ -209,6 +209,21 @@ pub(super) fn create_table(
         catalog, &schema, info, fk_check,
     )
     .map_err(|error| cancel_ddl_job(active, DdlPlanError::Admission(error)))?;
+    // Go: the TiFlash replica's PD rules; a refusal cancels.
+    if let Some((count, labels)) = tiflash_replica_spec(info) {
+        if let Some(partition) = info.get_partition_info() {
+            let (definitions, adding) = {
+                let partition = partition.read();
+                (partition.definitions.snapshot(), partition.adding_definitions.snapshot())
+            };
+            configure_tiflash_pd_for_partitions(false, &definitions, count, &labels, info.id)
+                .map_err(|error| cancel_ddl_job(active, error))?;
+            configure_tiflash_pd_for_partitions(true, &adding, count, &labels, info.id)
+                .map_err(|error| cancel_ddl_job(active, error))?;
+        } else {
+            configure_tiflash_pd_for_table(info.id, count, &labels).map_err(|error| cancel_ddl_job(active, error))?;
+        }
+    }
     info.state = SchemaState::PUBLIC;
     apply_create_table(txn, database_id, info, start_ts, placement_bundles, affinity_groups)
         .map_err(|error| cancel_ddl_job(active, error))

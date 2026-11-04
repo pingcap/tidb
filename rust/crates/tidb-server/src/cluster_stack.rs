@@ -435,6 +435,12 @@ pub fn cluster_session_stack(
         Arc::new(tidb_domain_infosync::label_delivery::PdLabelManager::new(client))
             as Arc<dyn tidb_domain_infosync::label_manager::LabelRuleManager>
     }));
+    // Go `InfoSyncer.initTiFlashReplicaManager`: the TiFlash placement rules
+    // DDL jobs set and the GC worker deletes.
+    tidb_domain_infosync::tiflash_manager::init_tiflash_replica_manager(pd_http_client.as_ref().map(|client| {
+        Arc::new(tidb_domain_infosync::tiflash_manager::TiFlashReplicaManagerCtx::new(client))
+            as Arc<dyn tidb_domain_infosync::tiflash_manager::TiFlashReplicaManager>
+    }));
     // One DDL-gated worker. Its guard joins before the node releases DDL/PD.
     let replica_poll = tidb_session::domain::cluster_session_node::build_tiflash_replica_poll(
         Arc::clone(&catalog),

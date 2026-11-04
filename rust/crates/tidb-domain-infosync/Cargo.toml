@@ -26,3 +26,7 @@ tidb-proto = { path = "../tidb-proto" }
 tidb-ast = { path = "../tidb-ast" }
 serde_json.workspace = true
 tidb-ddl-label = { path = "../tidb-ddl-label" }
+tidb-placement = { path = "../tidb-placement" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-config = { path = "../tidb-config" }

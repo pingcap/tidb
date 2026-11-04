@@ -139,6 +139,18 @@ impl DdlSessionPool for NodeDdlSessionPool {
         domain.transactions.fresh_timestamp().map_err(MysqlError::unknown)
     }
 
+    fn tiflash_store_count(&self) -> Result<u64, MysqlError> {
+        let domain = self
+            .domain
+            .get()
+            .and_then(Weak::upgrade)
+            .ok_or_else(|| MysqlError::unknown("the DDL session pool has no running node"))?;
+        domain
+            .ddl
+            .tiflash_store_count()
+            .map_err(|error| MysqlError::from_parts(error.code, error.state, error.message))
+    }
+
     fn open_sql_session(
         &self,
     ) -> Result<Box<dyn tidb_ddl_build::session_pool::StepSqlSession>, MysqlError> {

@@ -80,3 +80,27 @@ fn http_service_error_prefix() -> String {
 pub fn is_http_service_error(message: &str) -> bool {
     message.starts_with(&http_service_error_prefix())
 }
+
+/// The info syncer's `ErrHTTPServiceError` that `message` carries, as the
+/// coded error Go returns (`ErrHTTPServiceError.FastGen("%s", body)`).
+pub fn http_service_error(message: &str) -> Option<tidb_terror::TerrorError> {
+    message
+        .strip_prefix(&http_service_error_prefix())
+        .map(|body| crate::infosync_errors::ERR_HTTP_SERVICE_ERROR.generate(body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A non-200 PD answer through the info syncer's handler is Go's coded
+    /// `ErrHTTPServiceError` (8243) carrying PD's body; other failures are not.
+    #[test]
+    fn http_service_errors_stay_coded_with_the_body() {
+        let message = format!("{}rule not found", http_service_error_prefix());
+        let error = http_service_error(&message).expect("an info syncer HTTP error");
+        assert_eq!(error.to_sql_error().code, 8243);
+        assert_eq!(error.message(), "rule not found");
+        assert!(http_service_error("connection refused").is_none());
+    }
+}

@@ -143,6 +143,18 @@ pub trait DdlSessionPool: Send + Sync {
         ))
     }
 
+    /// Go `infoschema.GetTiFlashStoreCount(ctx.GetStore())` over one of the
+    /// pool's sessions: the TiFlash stores PD lists.
+    ///
+    /// # Errors
+    ///
+    /// The store lookup's failure.
+    fn tiflash_store_count(&self) -> Result<u64, tidb_terror::MysqlError> {
+        Err(tidb_terror::MysqlError::unknown(
+            "this DDL session pool has no store",
+        ))
+    }
+
     /// Go `sessPool.Get()`: a system session of the pool whose statements
     /// run in its own transactions.
     ///

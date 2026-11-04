@@ -525,9 +525,8 @@ pub enum DdlStatement {
     /// `ALTER TABLE ... SET TIFLASH REPLICA n [LOCATION LABELS '...']`, and
     /// `SET TIFLASH REPLICA 0` as the reset. Go
     /// `ast.AlterTableSetTiFlashReplica` -> the `ActionSetTiFlashReplica` job
-    /// (pkg/ddl/executor.go:625), which only persists the replica metadata:
-    /// PD placement rules and availability are the replica manager's business
-    /// (pkg/domain/infosync/tiflash_manager.go).
+    /// (pkg/ddl/executor.go:625); the job sets the table's PD placement rules
+    /// (`infosync.ConfigureTiFlashPDFor*`) and the replica metadata.
     SetTiFlashReplica {
         /// Database containing the table.
         schema: String,
@@ -6920,13 +6919,46 @@ const CREATE_TABLE_AFFINITY_ERROR: &str = "failed to create table affinity group
 
 /// A PD-side step of a job that failed -- an affinity group definition it
 /// cannot build, or a label-rule read -- as Go's `errors.Errorf` /
-/// `errors.Wrapf`, wrapped by its caller when it wraps one.
+/// `errors.Wrapf`, wrapped by its caller when it wraps one. The info
+/// syncer's `ErrHTTPServiceError` stays that coded error: Go reports a
+/// wrapped error by its cause.
 fn pd_step_error(context: Option<&str>, error: String) -> DdlPlanError {
+    if let Some(coded) = tidb_domain_infosync::pd_http::http_service_error(&error) {
+        return DdlPlanError::Source(coded);
+    }
     DdlPlanError::Admission(DdlAdmissionError::plain(match context {
             Some(context) => format!("{context}: {error}"),
             None => error,
         },
     ))
+}
+
+/// Go `infosync.ConfigureTiFlashPDForTable` in a job step; a PD refusal is
+/// the step's error.
+pub(crate) fn configure_tiflash_pd_for_table(id: i64, count: u64, labels: &[String]) -> Result<(), DdlPlanError> {
+    tidb_domain_infosync::tiflash_manager::configure_tiflash_pd_for_table(id, count, labels)
+        .map_err(|error| pd_step_error(None, error))
+}
+
+/// Go `infosync.ConfigureTiFlashPDForPartitions` in a job step.
+pub(crate) fn configure_tiflash_pd_for_partitions(
+    accel: bool,
+    definitions: &[tidb_model::PartitionDefinition],
+    count: u64,
+    labels: &[String],
+    table_id: i64,
+) -> Result<(), DdlPlanError> {
+    let ids: Vec<i64> = definitions.iter().map(|definition| definition.id).collect();
+    tidb_domain_infosync::tiflash_manager::configure_tiflash_pd_for_partitions(accel, &ids, count, labels, table_id)
+        .map_err(|error| pd_step_error(None, error))
+}
+
+/// A table's TiFlash replica count and location labels.
+pub(crate) fn tiflash_replica_spec(info: &TableInfo) -> Option<(u64, Vec<String>)> {
+    info.tiflash_replica.as_ref().map(|replica| {
+        let replica = replica.read();
+        (replica.count, replica.location_labels.iter().cloned().collect())
+    })
 }
 
 /// Go `doDDLJob2` outside a multi-schema change: a built job goes through
