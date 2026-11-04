@@ -586,8 +586,7 @@ func TestMaterializedViewOutOfPlaceCutoverFailureKeepsOldAffinityGroup(t *testin
 	require.NoError(t, dom.Reload())
 	oldMView = mustGetMaterializedView(t, dom, "mv_cutover_affinity")
 	oldMViewID := oldMView.Meta().ID
-	oldAffinityGroupID, err := ddl.GetTableAffinityGroupID(store.GetCodec(), oldMViewID)
-	require.NoError(t, err)
+	oldAffinityGroupID := ddl.GetTableAffinityGroupID(store.GetCodec(), oldMViewID)
 	groups, err := affinity.GetGroups(context.Background(), []string{oldAffinityGroupID})
 	require.NoError(t, err)
 	require.Contains(t, groups, oldAffinityGroupID)
