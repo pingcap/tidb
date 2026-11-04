@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -306,6 +307,11 @@ const (
 	LastSeenStr                       = "LAST_SEEN"
 	PlanInCacheStr                    = "PLAN_IN_CACHE"
 	PlanCacheHitsStr                  = "PLAN_CACHE_HITS"
+	PlanCacheMissesStr                = "PLAN_CACHE_MISSES"
+	PlanCacheMissTopReasonStr         = "PLAN_CACHE_MISS_TOP_REASON"
+	PlanCacheMissTopReasonCountStr    = "PLAN_CACHE_MISS_TOP_REASON_COUNT"
+	PlanCacheMissLastReasonStr        = "PLAN_CACHE_MISS_LAST_REASON"
+	PlanCacheMissLastSeenStr          = "PLAN_CACHE_MISS_LAST_SEEN"
 	PlanCacheUnqualifiedStr           = "PLAN_CACHE_UNQUALIFIED"
 	PlanCacheUnqualifiedLastReasonStr = "PLAN_CACHE_UNQUALIFIED_LAST_REASON"
 	PlanInBindingStr                  = "PLAN_IN_BINDING"
@@ -618,6 +624,57 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	},
 	PlanCacheHitsStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.planCacheHits
+	},
+	PlanCacheMissesStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return ssElement.planCacheMisses
+	},
+	PlanCacheMissTopReasonStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		reason, count := ssElement.planCacheFallbackCounts.Top()
+		if count == 0 {
+			return nil
+		}
+		return reason.String()
+	},
+	PlanCacheMissTopReasonCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		_, count := ssElement.planCacheFallbackCounts.Top()
+		return count
+	},
+	PlanCacheMissUnknownCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return ssElement.planCacheFallbackCounts.Count(contextutil.PlanCacheFallbackUnknown)
+	},
+	PlanCacheMissCacheDisabledCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return ssElement.planCacheFallbackCounts.Count(contextutil.PlanCacheFallbackCacheDisabled)
+	},
+	PlanCacheMissUnsupportedStatementTypeCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return ssElement.planCacheFallbackCounts.Count(contextutil.PlanCacheFallbackUnsupportedStatementType)
+	},
+	PlanCacheMissNotCacheableCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return ssElement.planCacheFallbackCounts.Count(contextutil.PlanCacheFallbackNotCacheable)
+	},
+	PlanCacheMissParameterTypeMismatchCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return ssElement.planCacheFallbackCounts.Count(contextutil.PlanCacheFallbackParameterTypeMismatch)
+	},
+	PlanCacheMissLookupMissCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return ssElement.planCacheFallbackCounts.Count(contextutil.PlanCacheFallbackLookupMiss)
+	},
+	PlanCacheMissReuseRejectedCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return ssElement.planCacheFallbackCounts.Count(contextutil.PlanCacheFallbackReuseRejected)
+	},
+	PlanCacheMissCacheInsertFailedCountStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return ssElement.planCacheFallbackCounts.Count(contextutil.PlanCacheFallbackCacheInsertFailed)
+	},
+	PlanCacheMissLastReasonStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		if ssElement.planCacheMissLastSeen == 0 {
+			return nil
+		}
+		return ssElement.lastPlanCacheMissReason
+	},
+	PlanCacheMissLastSeenStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		if ssElement.planCacheMissLastSeen == 0 {
+			return nil
+		}
+		lastSeen := time.Unix(0, ssElement.planCacheMissLastSeen).In(reader.tz)
+		return types.NewTime(types.FromGoTime(lastSeen), mysql.TypeTimestamp, 6)
 	},
 	PlanInBindingStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.planInBinding

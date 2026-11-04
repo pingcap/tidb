@@ -2635,8 +2635,6 @@ func (s *session) rebuildFromPrepareCache(
 		SQLDigest:           cached.Stmt.SQLDigest,
 		ForUpdateRead:       cached.Stmt.ForUpdateRead,
 		SnapshotTSEvaluator: cached.Stmt.SnapshotTSEvaluator,
-		StmtCacheable:       cached.Stmt.StmtCacheable,
-		UncacheableReason:   cached.Stmt.UncacheableReason,
 		SchemaVersion:       cached.Stmt.SchemaVersion,
 
 		// Mutable containers – clone so each stmt has independent state:
@@ -2645,6 +2643,7 @@ func (s *session) rebuildFromPrepareCache(
 		// NormalizedPlan / PlanDigest are left as zero values; they will be
 		// populated on the first plan-cache miss during Execute.
 	}
+	newStmt.CopyCacheabilityFrom(cached.Stmt)
 
 	// Walk the new AST to populate limits, hasSubquery, and tables.
 	// These fields hold pointers into the AST, so they must refer to the

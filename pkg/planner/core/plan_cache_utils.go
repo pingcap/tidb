@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -136,16 +137,25 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 
 	var (
-		cacheable bool
-		reason    string
+		cacheable       bool
+		reason          string
+		uncacheableKind planCacheUncacheableKind
 	)
 	if (isPrepStmt && !vars.EnablePreparedPlanCache) || // prepared statement
 		(!isPrepStmt && !vars.EnableNonPreparedPlanCache) { // non-prepared statement
 		cacheable = false
 		reason = "plan cache is disabled"
+		uncacheableKind = planCacheUncacheableCacheDisabled
 	} else {
 		if isPrepStmt {
 			cacheable, reason = IsASTCacheable(ctx, sctx.GetPlanCtx(), paramStmt, ret.InfoSchema)
+			if !cacheable {
+				if isPlanCacheStmtTypeSupported(paramStmt) {
+					uncacheableKind = planCacheUncacheableOther
+				} else {
+					uncacheableKind = planCacheUncacheableUnsupportedStatementType
+				}
+			}
 		} else {
 			// The non-prepared caller checks cacheability before building the PlanCacheStmt.
 			cacheable = true
@@ -155,6 +165,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("force plan-cache: may use risky cached plan: %s", reason))
 			cacheable = true
 			reason = ""
+			uncacheableKind = planCacheUncacheableNone
 		}
 
 		if !cacheable {
@@ -184,6 +195,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		// dynamic prune mode is not used, could be that global statistics not yet available!
 		cacheable = false
 		reason = "static partition prune mode used"
+		uncacheableKind = planCacheUncacheableOther
 		if isPrepStmt || !vars.EnableNonPreparedPlanCacheUnified {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("skip prepared plan-cache: " + reason))
 		}
@@ -222,6 +234,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
+		uncacheableKind:     uncacheableKind,
 		dbName:              dbName,
 		tbls:                tbls,
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
@@ -670,6 +683,7 @@ type PlanCacheStmt struct {
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
+	uncacheableKind   planCacheUncacheableKind
 
 	limits      []*ast.Limit
 	hasSubquery bool
@@ -710,6 +724,38 @@ type PlanCacheStmt struct {
 	tbls   []table.Table
 
 	nonPreparedASTValidation nonPreparedASTValidationState
+}
+
+type planCacheUncacheableKind uint8
+
+const (
+	planCacheUncacheableNone planCacheUncacheableKind = iota
+	planCacheUncacheableCacheDisabled
+	planCacheUncacheableUnsupportedStatementType
+	planCacheUncacheableOther
+)
+
+// CopyCacheabilityFrom copies the complete structured cacheability result.
+func (s *PlanCacheStmt) CopyCacheabilityFrom(src *PlanCacheStmt) {
+	s.StmtCacheable = src.StmtCacheable
+	s.UncacheableReason = src.UncacheableReason
+	s.uncacheableKind = src.uncacheableKind
+}
+
+func (s *PlanCacheStmt) uncacheableFallbackReason() contextutil.PlanCacheFallbackReason {
+	switch s.uncacheableKind {
+	case planCacheUncacheableCacheDisabled:
+		return contextutil.PlanCacheFallbackCacheDisabled
+	case planCacheUncacheableUnsupportedStatementType:
+		return contextutil.PlanCacheFallbackUnsupportedStatementType
+	case planCacheUncacheableOther:
+		return contextutil.PlanCacheFallbackNotCacheable
+	default:
+		if !s.StmtCacheable {
+			return contextutil.PlanCacheFallbackNotCacheable
+		}
+		return contextutil.PlanCacheFallbackUnknown
+	}
 }
 
 // PrepareStmtCacheEntry is stored in the session-level prepare dedup cache.

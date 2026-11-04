@@ -939,6 +939,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	vars.StmtCtx.SetVarHintRestore = nil
 	var sc *stmtctx.StatementContext
+	lastMissReason, _ := vars.StmtCtx.PlanCacheFallback()
 	if vars.TxnCtx.CouldRetry || vars.HasStatusFlag(mysql.ServerStatusCursorExists) {
 		// Must construct new statement context object, the retry history need context for every statement.
 		// TODO: Maybe one day we can get rid of transaction retry, then this logic can be deleted.
@@ -1296,6 +1297,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.ExchangeChunkStatus()
 	vars.StmtCtx = sc
 	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
+	vars.PrevPlanCacheMissReason = lastMissReason.String()
 	vars.FoundInPlanCache = false
 	vars.PrevFoundInBinding = vars.FoundInBinding
 	vars.FoundInBinding = false

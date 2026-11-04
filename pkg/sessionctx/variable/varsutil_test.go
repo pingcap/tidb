@@ -86,6 +86,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefTiDBOptJoinReorderThreshold, vars.TiDBOptJoinReorderThreshold)
 	require.Equal(t, DefTiDBUseFastAnalyze, vars.EnableFastAnalyze)
 	require.Equal(t, DefTiDBFoundInPlanCache, vars.FoundInPlanCache)
+	require.Empty(t, vars.PrevPlanCacheMissReason)
 	require.Equal(t, DefTiDBFoundInBinding, vars.FoundInBinding)
 	require.Equal(t, DefTiDBAllowAutoRandExplicitInsert, vars.AllowAutoRandExplicitInsert)
 	require.Equal(t, int64(DefTiDBShardAllocateStep), vars.ShardAllocateStep)
@@ -427,6 +428,10 @@ func TestVarsutil(t *testing.T) {
 	err = v.SetSystemVar(TiDBFoundInPlanCache, "1")
 	require.Error(t, err)
 	require.Regexp(t, "]Variable 'last_plan_from_cache' is a read only variable$", err.Error())
+
+	err = v.SetSystemVar(TiDBLastExecutionPlanCacheMissReason, "lookup_miss")
+	require.Error(t, err)
+	require.Regexp(t, "]Variable 'last_execution_plan_cache_miss_reason' is a read only variable$", err.Error())
 
 	err = v.SetSystemVar(TiDBFoundInBinding, "1")
 	require.Error(t, err)

@@ -2261,6 +2261,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.ResourceGroupName = sessVars.StmtCtx.ResourceGroupName
 	stmtExecInfo.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	stmtExecInfo.PlanCacheUnqualified = sessVars.StmtCtx.PlanCacheUnqualified()
+	stmtExecInfo.PlanCacheFallbackReason, stmtExecInfo.PlanCacheFallbackTimeUnixNano = sessVars.StmtCtx.PlanCacheFallback()
 	stmtExecInfo.LazyInfo = a
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)

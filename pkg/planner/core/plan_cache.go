@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"math"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -223,13 +224,20 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
-	cacheEnabled := false
+	missReason := contextutil.PlanCacheFallbackUnknown
+	cacheSwitchEnabled := false
 	if isNonPrepared {
 		stmtCtx.SetCacheType(contextutil.SessionNonPrepared)
-		cacheEnabled = sessVars.EnableNonPreparedPlanCache // plan-cache might be disabled after prepare.
+		cacheSwitchEnabled = sessVars.EnableNonPreparedPlanCache // plan-cache might be disabled after prepare.
 	} else {
 		stmtCtx.SetCacheType(contextutil.SessionPrepared)
-		cacheEnabled = sessVars.EnablePreparedPlanCache
+		cacheSwitchEnabled = sessVars.EnablePreparedPlanCache
+	}
+	cacheEnabled := cacheSwitchEnabled
+	if !cacheSwitchEnabled {
+		missReason = contextutil.PlanCacheFallbackCacheDisabled
+	} else if !stmt.StmtCacheable {
+		missReason = stmt.uncacheableFallbackReason()
 	}
 
 	actualParamTypes := parseParamTypes(sctx, params)
@@ -249,6 +257,9 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		if decimalNums > sessVars.PlanCacheMaxDecimalParamNums {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("skip prepared plan-cache: too many decimal parameters"))
 			cacheEnabled = false
+			if missReason == contextutil.PlanCacheFallbackUnknown {
+				missReason = contextutil.PlanCacheFallbackNotCacheable
+			}
 		}
 	}
 
@@ -258,6 +269,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		)
 		if fix70751Enabled && sessVars.PlanCacheParams.HasInvalidZeroTemporal() {
 			stmtCtx.WarnSkipPlanCache("invalid-zero temporal parameter")
+			missReason = contextutil.PlanCacheFallbackNotCacheable
 		} else {
 			stmtCtx.EnablePlanCache()
 		}
@@ -275,22 +287,35 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 		if !cacheable {
 			stmtCtx.SetSkipPlanCache(reason)
+			missReason = contextutil.PlanCacheFallbackNotCacheable
 		}
 	}
 
 	if stmtCtx.UseCache() {
-		cachedVal, hit := lookupPlanCache(ctx, sctx, cacheKey, paramInput)
-		if hit {
+		cachedVal, status := lookupPlanCache(ctx, sctx, cacheKey, paramInput)
+		switch status {
+		case sessionctx.PlanCacheLookupHit:
+			if cachedVal == nil {
+				missReason = contextutil.PlanCacheFallbackReuseRejected
+				break
+			}
 			if plan, names, ok, err := adjustCachedPlan(ctx, sctx, cachedVal, isNonPrepared, binding, is, stmt); err != nil || ok {
 				if err == nil && ok && !stmt.ReplayWarningsOnHit {
 					appendRejectedParamMatchHintWarning(sctx, stmt)
 				}
 				return plan, names, err
 			}
+			missReason = contextutil.PlanCacheFallbackReuseRejected
+		case sessionctx.PlanCacheLookupKeyNotFound:
+			missReason = contextutil.PlanCacheFallbackLookupMiss
+		case sessionctx.PlanCacheLookupParamTypeMismatch:
+			missReason = contextutil.PlanCacheFallbackParameterTypeMismatch
+		default:
+			missReason = contextutil.PlanCacheFallbackUnknown
 		}
 	}
 
-	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, paramInput)
+	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, paramInput, missReason)
 }
 
 func instancePlanCacheEnabled(ctx context.Context) bool {
@@ -301,18 +326,24 @@ func instancePlanCacheEnabled(ctx context.Context) bool {
 	return enableInstancePlanCache
 }
 
-func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey string, input paramMatchInput) (cachedVal *PlanCacheValue, hit bool) {
+func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey string, input paramMatchInput) (*PlanCacheValue, sessionctx.PlanCacheLookupStatus) {
 	if instancePlanCacheEnabled(ctx) {
-		if v, hit := domain.GetDomain(sctx).GetInstancePlanCache().Get(cacheKey, input); hit {
-			cachedVal = v.(*PlanCacheValue)
-			return cachedVal.CloneForInstancePlanCache(ctx, sctx.GetPlanCtx()) // clone the value to solve concurrency problem
+		v, status := domain.GetDomain(sctx).GetInstancePlanCache().Get(cacheKey, input)
+		if status != sessionctx.PlanCacheLookupHit {
+			return nil, status
 		}
-	} else {
-		if v, hit := sctx.GetSessionPlanCache().Get(cacheKey, input); hit {
-			return v.(*PlanCacheValue), true
+		cachedVal := v.(*PlanCacheValue)
+		cloned, ok := cachedVal.CloneForInstancePlanCache(ctx, sctx.GetPlanCtx())
+		if !ok {
+			return nil, sessionctx.PlanCacheLookupHit
 		}
+		return cloned, sessionctx.PlanCacheLookupHit
 	}
-	return nil, false
+	v, status := sctx.GetSessionPlanCache().Get(cacheKey, input)
+	if status == sessionctx.PlanCacheLookupHit {
+		return v.(*PlanCacheValue), status
+	}
+	return nil, status
 }
 
 func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonPrepared bool,
@@ -365,12 +396,19 @@ func replayCachedPlanWarnings(stmtCtx *stmtctx.StatementContext, cached *PlanCac
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema,
-	stmt *PlanCacheStmt, cacheKey string, input paramMatchInput) (base.Plan, []*types.FieldName, error) {
+	stmt *PlanCacheStmt, cacheKey string, input paramMatchInput,
+	fallbackReason contextutil.PlanCacheFallbackReason) (base.Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 
-	core_metrics.GetPlanCacheMissCounter(isNonPrepared).Inc()
+	fallbackTimeUnixNano := time.Now().UnixNano()
+	defer func() {
+		fallbackReason = contextutil.NormalizePlanCacheFallbackReason(fallbackReason)
+		core_metrics.GetPlanCacheMissCounter(isNonPrepared).Inc()
+		core_metrics.IncPlanCacheFallback(isNonPrepared, fallbackReason)
+		stmtCtx.SetPlanCacheFallback(fallbackReason, fallbackTimeUnixNano)
+	}()
 	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = true
 	nodeW := resolve.NewNodeWWithCtx(stmtAst.Stmt, stmt.ResolveCtx)
 	p, names, err := OptimizeAstNode(ctx, sctx, nodeW, is)
@@ -383,6 +421,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	if stmtCtx.UseCache() {
 		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(input.actualTypes), len(stmt.limits), stmt.hasSubquery); !cacheable {
 			stmtCtx.SetSkipPlanCache(reason)
+			if fallbackReason == contextutil.PlanCacheFallbackLookupMiss {
+				fallbackReason = contextutil.PlanCacheFallbackNotCacheable
+			}
 		}
 	}
 
@@ -396,7 +437,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
+		retained := false
 		if instancePlanCacheEnabled(ctx) {
+			instanceCache := domain.GetDomain(sctx).GetInstancePlanCache()
 			if cloned, ok := p.CloneForPlanCache(sctx.GetPlanCtx()); ok {
 				// Clone this plan before putting it into the cache to avoid read-write DATA RACE. For example,
 				// before this session finishes the execution, the next session has started cloning this plan.
@@ -404,10 +447,25 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 				// Sess1: | put plan into cache | ----------- execution (might modify the plan) ----------- |
 				// Sess2:                  | start | ------- hit this plan and clone it (DATA RACE) ------- |
 				cached.Plan = cloned
-				domain.GetDomain(sctx).GetInstancePlanCache().Put(cacheKey, cached, input)
+				retained = instanceCache.Put(cacheKey, cached, input)
+			}
+			if !retained && fallbackReason == contextutil.PlanCacheFallbackLookupMiss {
+				// A concurrent writer may have inserted a compatible plan after this
+				// execution missed. In that case the cache can serve the next lookup,
+				// so the final reason should remain the lookup or reuse reason.
+				_, status := instanceCache.Get(cacheKey, input)
+				retained = status == sessionctx.PlanCacheLookupHit
 			}
 		} else {
-			sctx.GetSessionPlanCache().Put(cacheKey, cached, input)
+			sessionCache := sctx.GetSessionPlanCache()
+			sessionCache.Put(cacheKey, cached, input)
+			if fallbackReason == contextutil.PlanCacheFallbackLookupMiss {
+				_, status := sessionCache.Get(cacheKey, input)
+				retained = status == sessionctx.PlanCacheLookupHit
+			}
+		}
+		if !retained && fallbackReason == contextutil.PlanCacheFallbackLookupMiss {
+			fallbackReason = contextutil.PlanCacheFallbackCacheInsertFailed
 		}
 	}
 	sessVars.FoundInPlanCache = false

@@ -363,6 +363,22 @@ before executing:
   their historical behavior and do not replay those warnings on hits.
 - if rebuild fails or hits a safety fallback, the cached plan is treated as
   unusable and the execution falls back to "miss" behavior.
+- Plan-cache fallback observability carries a provisional reason into the shared
+  `generateNewPlan` path, then commits exactly once after plan cacheability and
+  cache insertion are known. Only `lookup_miss` is refined by the outcome: a
+  generated plan that cannot be cached becomes `not_cacheable`, and a cacheable
+  plan that is not retained becomes `cache_insert_failed`. Parameter type
+  mismatches and rejected reuse keep their lookup-stage reasons. Hits and
+  non-prepared front-end bypasses do not record a fallback. Optimization errors
+  still count as attempted fallbacks, matching the legacy miss counter.
+- Statement Summary keeps per-reason counters in a lazily allocated fixed-size
+  array. Updates and history merges add every reason independently; the exposed
+  top reason and count are derived from the merged counters, rather than from
+  the most recently completed execution.
+- `@@last_execution_plan_cache_miss_reason` exposes the final reason for the previous
+  execution in the session, following the same statement-boundary convention as
+  `@@last_plan_from_cache`. It is empty after a cache hit or a statement that did
+  not enter the plan-cache fallback path.
 
 Why this exists:
 - the cached plan is a template; ranges are execution-specific and must not be

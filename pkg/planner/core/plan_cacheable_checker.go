@@ -54,13 +54,20 @@ func CacheableWithCtx(sctx base.PlanContext, node ast.Node, is infoschema.InfoSc
 	return IsASTCacheable(nil, sctx, node, is)
 }
 
+func isPlanCacheStmtTypeSupported(node ast.Node) bool {
+	switch node.(type) {
+	case *ast.SelectStmt, *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt, *ast.SetOprStmt:
+		return true
+	default:
+		return false
+	}
+}
+
 // IsASTCacheable checks whether the input ast(query) is cacheable.
 // Handle "ignore_plan_cache()" hint
 // If there are multiple hints, only one will take effect
 func IsASTCacheable(ctx context.Context, sctx base.PlanContext, node ast.Node, is infoschema.InfoSchema) (bool, string) {
-	switch node.(type) {
-	case *ast.SelectStmt, *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt, *ast.SetOprStmt:
-	default:
+	if !isPlanCacheStmtTypeSupported(node) {
 		return false, "not a SELECT/UPDATE/INSERT/DELETE/SET statement"
 	}
 	checker := cacheableChecker{

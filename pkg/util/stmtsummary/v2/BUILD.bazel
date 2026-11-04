@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "column.go",
         "logger.go",
+        "pkdb_plan_cache_miss_columns.go",
         "reader.go",
         "record.go",
         "stmtsummary.go",
@@ -19,6 +20,7 @@ go_library(
         "//pkg/sessionctx/stmtctx",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/context",
         "//pkg/util/execdetails",
         "//pkg/util/kvcache",
         "//pkg/util/logutil",
@@ -57,6 +59,7 @@ go_test(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",
+        "//pkg/util/context",
         "//pkg/util/set",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

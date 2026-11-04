@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	stmtsummaryv1 "github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 )
 
@@ -160,4 +162,36 @@ func (mockColumnInfo) getInstanceAddr() string {
 func (mockColumnInfo) getTimeLocation() *time.Location {
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	return loc
+}
+
+func TestPlanCacheMissColumns(t *testing.T) {
+	occurredAt := time.Date(2026, 9, 10, 12, 34, 56, 123456000, time.UTC)
+	counts := new(stmtsummaryv1.PlanCacheFallbackCounts)
+	counts.Add(contextutil.PlanCacheFallbackLookupMiss)
+	counts.Add(contextutil.PlanCacheFallbackLookupMiss)
+	counts.Add(contextutil.PlanCacheFallbackReuseRejected)
+	record := &StmtRecord{
+		PlanCacheMisses:         3,
+		PlanCacheFallbackCounts: counts,
+		PlanCacheMissLastReason: "lookup_miss",
+		PlanCacheMissLastSeen:   occurredAt.UnixNano(),
+	}
+	info := mockColumnInfo{}
+	require.Equal(t, int64(3), columnFactoryMap[PlanCacheMissesStr](info, record))
+	require.Equal(t, "lookup_miss", columnFactoryMap[PlanCacheMissTopReasonStr](info, record))
+	require.Equal(t, int64(2), columnFactoryMap[PlanCacheMissTopReasonCountStr](info, record))
+	require.Equal(t, int64(2), columnFactoryMap[PlanCacheMissLookupMissCountStr](info, record))
+	require.Equal(t, int64(1), columnFactoryMap[PlanCacheMissReuseRejectedCountStr](info, record))
+	require.Equal(t, int64(0), columnFactoryMap[PlanCacheMissCacheDisabledCountStr](info, record))
+	require.Equal(t, "lookup_miss", columnFactoryMap[PlanCacheMissLastReasonStr](info, record))
+	lastSeen := columnFactoryMap[PlanCacheMissLastSeenStr](info, record).(types.Time)
+	require.Equal(t, "2026-09-10 20:34:56.123456", lastSeen.String())
+
+	record.PlanCacheMissLastSeen = 0
+	require.Nil(t, columnFactoryMap[PlanCacheMissLastReasonStr](info, record))
+	require.Nil(t, columnFactoryMap[PlanCacheMissLastSeenStr](info, record))
+	record.PlanCacheFallbackCounts = nil
+	require.Nil(t, columnFactoryMap[PlanCacheMissTopReasonStr](info, record))
+	require.Equal(t, int64(0), columnFactoryMap[PlanCacheMissTopReasonCountStr](info, record))
+	require.Equal(t, int64(0), columnFactoryMap[PlanCacheMissLookupMissCountStr](info, record))
 }

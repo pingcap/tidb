@@ -8591,7 +8591,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "decimals": null,
-          "description": "TiDB read table cache hit total",
+          "description": "Plan cache fallback attempts per second by reason, including optimization failures. Prepared executions with the cache disabled are counted; non-prepared statements skipped by the planner front end before entering the plan-cache backend are not counted.",
           "editable": true,
           "error": false,
           "fieldConfig": {
@@ -8606,6 +8606,223 @@
             "w": 12,
             "x": 0,
             "y": 29
+          },
+          "hiddenSeries": false,
+          "id": 340,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": false,
+            "hideEmpty": true,
+            "hideZero": true,
+            "max": false,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "sort": null,
+            "sortDesc": null,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.11",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "sum(rate(tidb_server_plan_cache_fallback_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (reason)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{reason}}",
+              "refId": "A",
+              "step": 30
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Plan Cache Fallback OPS by Reason",
+          "tooltip": {
+            "msResolution": false,
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": "0",
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "decimals": 0,
+          "description": "Approximate cumulative plan cache fallback attempts from the selected time range start to each point, by reason, including optimization failures. The counter subquery excludes samples before the selected start and handles counter resets. Prepared executions with the cache disabled are counted; non-prepared statements skipped by the planner front end before entering the plan-cache backend are not counted.",
+          "editable": true,
+          "error": false,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "grid": {},
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 29
+          },
+          "hiddenSeries": false,
+          "id": 341,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": false,
+            "hideEmpty": true,
+            "hideZero": true,
+            "max": false,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "sort": null,
+            "sortDesc": null,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "maxDataPoints": 240,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.11",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "sum by (reason) (increase((tidb_server_plan_cache_fallback_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} unless (timestamp(tidb_server_plan_cache_fallback_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) < timestamp(tidb_server_plan_cache_fallback_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} @ start())))[$__range:$__interval]))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{reason}}",
+              "refId": "A",
+              "step": 30
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Cumulative Plan Cache Fallbacks by Reason",
+          "tooltip": {
+            "msResolution": false,
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": "Cumulative Fallbacks",
+              "logBase": 1,
+              "max": null,
+              "min": "0",
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "decimals": null,
+          "description": "TiDB read table cache hit total",
+          "editable": true,
+          "error": false,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "grid": {},
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 37
           },
           "hiddenSeries": false,
           "id": 249,
@@ -8713,7 +8930,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 29
+            "y": 37
           },
           "hiddenSeries": false,
           "id": 269,
@@ -8818,7 +9035,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 37
+            "y": 45
           },
           "hiddenSeries": false,
           "id": 271,
@@ -8924,7 +9141,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 37
+            "y": 45
           },
           "hiddenSeries": false,
           "id": 311,
@@ -9024,7 +9241,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 45
+            "y": 53
           },
           "hiddenSeries": false,
           "id": 312,
@@ -9149,7 +9366,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 47
+            "y": 55
           },
           "hiddenSeries": false,
           "id": 23763574009,
@@ -9285,7 +9502,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 47
+            "y": 55
           },
           "hiddenSeries": false,
           "id": 23763574010,
@@ -9416,7 +9633,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 54
+            "y": 62
           },
           "hiddenSeries": false,
           "id": 23763574013,
@@ -9547,7 +9764,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 54
+            "y": 62
           },
           "heatmap": {},
           "hideZeroBuckets": true,

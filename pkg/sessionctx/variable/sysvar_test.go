@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -378,6 +379,17 @@ func TestSessionGetterFuncs(t *testing.T) {
 	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBFoundInPlanCache)
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(vars.PrevFoundInPlanCache), val)
+
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBLastExecutionPlanCacheMissReason)
+	require.NoError(t, err)
+	require.Equal(t, vars.PrevPlanCacheMissReason, val)
+	vars.PrevPlanCacheMissReason = "lookup_miss"
+	var states sessionstates.SessionStates
+	require.NoError(t, vars.EncodeSessionStates(context.Background(), &states))
+	require.Equal(t, "lookup_miss", states.PlanCacheMissReason)
+	restored := NewSessionVars(nil)
+	require.NoError(t, restored.DecodeSessionStates(context.Background(), &states))
+	require.Equal(t, "lookup_miss", restored.PrevPlanCacheMissReason)
 
 	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBFoundInBinding)
 	require.NoError(t, err)

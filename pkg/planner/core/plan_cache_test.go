@@ -25,9 +25,11 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -39,11 +41,13 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
@@ -2819,6 +2823,222 @@ func TestIssue49344(t *testing.T) {
 	tk.MustExec(`prepare s from "select * from t"`)
 	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=0`)
 	tk.MustExec(`execute s`) // no error
+}
+
+func TestPlanCacheFallbackReasonAndMetrics(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table fallback_reason_t(a int primary key)")
+	tk.MustExec("insert into fallback_reason_t values (1)")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+
+	readCounter := func(counterType string, reason contextutil.PlanCacheFallbackReason) float64 {
+		return promtestutils.ToFloat64(metrics.PlanCacheFallbackCounter.WithLabelValues(counterType, reason.String()))
+	}
+	readLegacy := func(counterType string) float64 {
+		return promtestutils.ToFloat64(metrics.PlanCacheMissCounter.WithLabelValues(counterType))
+	}
+	readFallbackTotal := func(counterType string) float64 {
+		var total float64
+		for reason := contextutil.PlanCacheFallbackUnknown; reason < contextutil.PlanCacheFallbackReasonCount; reason++ {
+			total += readCounter(counterType, reason)
+		}
+		return total
+	}
+	require.Equal(t, 16, promtestutils.CollectAndCount(metrics.PlanCacheFallbackCounter))
+	assertReason := func(expected contextutil.PlanCacheFallbackReason) {
+		reason, timestamp := tk.Session().GetSessionVars().StmtCtx.PlanCacheFallback()
+		require.Equal(t, expected, reason)
+		if expected == contextutil.PlanCacheFallbackNone {
+			require.Zero(t, timestamp)
+		} else {
+			require.Positive(t, timestamp)
+		}
+	}
+	preparedLegacyAtStart := readLegacy("prepared")
+	preparedFallbackAtStart := readFallbackTotal("prepared")
+	core_metrics.IncPlanCacheFallback(false, contextutil.PlanCacheFallbackNone)
+	require.Equal(t, preparedFallbackAtStart, readFallbackTotal("prepared"))
+
+	tk.MustExec("set @a=1")
+	tk.MustExec("prepare fallback_lookup from 'select a from fallback_reason_t where a=?'")
+	legacyBefore := readLegacy("prepared")
+	fallbackBefore := readCounter("prepared", contextutil.PlanCacheFallbackLookupMiss)
+	tk.MustQuery("execute fallback_lookup using @a").Check(testkit.Rows("1"))
+	assertReason(contextutil.PlanCacheFallbackLookupMiss)
+	require.Equal(t, legacyBefore+1, readLegacy("prepared"))
+	require.Equal(t, fallbackBefore+1, readCounter("prepared", contextutil.PlanCacheFallbackLookupMiss))
+
+	legacyBefore = readLegacy("prepared")
+	fallbackBefore = readCounter("prepared", contextutil.PlanCacheFallbackLookupMiss)
+	tk.MustQuery("execute fallback_lookup using @a").Check(testkit.Rows("1"))
+	assertReason(contextutil.PlanCacheFallbackNone)
+	require.Equal(t, legacyBefore, readLegacy("prepared"))
+	require.Equal(t, fallbackBefore, readCounter("prepared", contextutil.PlanCacheFallbackLookupMiss))
+
+	tk.MustExec("prepare fallback_disabled_now from 'select a from fallback_reason_t where a=? and 1=1'")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=0")
+	fallbackBefore = readCounter("prepared", contextutil.PlanCacheFallbackCacheDisabled)
+	tk.MustQuery("execute fallback_disabled_now using @a").Check(testkit.Rows("1"))
+	assertReason(contextutil.PlanCacheFallbackCacheDisabled)
+	require.Equal(t, fallbackBefore+1, readCounter("prepared", contextutil.PlanCacheFallbackCacheDisabled))
+
+	tk.MustExec("prepare fallback_disabled_at_prepare from 'select a from fallback_reason_t where a=? and 2=2'")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustQuery("execute fallback_disabled_at_prepare using @a").Check(testkit.Rows("1"))
+	assertReason(contextutil.PlanCacheFallbackCacheDisabled)
+
+	tk.MustExec("set tidb_enable_prepared_plan_cache=0")
+	tk.MustExec("prepare fallback_disabled_decimal from 'select a from fallback_reason_t where a=? and 6=6'")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("set tidb_plan_cache_max_decimal_param_nums=0")
+	tk.MustExec("set @decimal_a=cast(1 as decimal(10,2))")
+	tk.MustQuery("execute fallback_disabled_decimal using @decimal_a").Check(testkit.Rows("1"))
+	assertReason(contextutil.PlanCacheFallbackCacheDisabled)
+	tk.MustExec("set tidb_plan_cache_max_decimal_param_nums=default")
+
+	tk.MustExec("prepare fallback_not_cacheable from 'select /*+ ignore_plan_cache() */ a from fallback_reason_t where a=?'")
+	tk.MustQuery("execute fallback_not_cacheable using @a").Check(testkit.Rows("1"))
+	assertReason(contextutil.PlanCacheFallbackNotCacheable)
+
+	tk.MustExec("set tidb_plan_cache_max_plan_size=1")
+	tk.MustExec("prepare fallback_plan_not_cacheable from 'select a from fallback_reason_t where a=? and 7=7'")
+	for range 2 {
+		fallbackBefore = readCounter("prepared", contextutil.PlanCacheFallbackNotCacheable)
+		tk.MustQuery("execute fallback_plan_not_cacheable using @a").Check(testkit.Rows("1"))
+		assertReason(contextutil.PlanCacheFallbackNotCacheable)
+		require.Equal(t, fallbackBefore+1,
+			readCounter("prepared", contextutil.PlanCacheFallbackNotCacheable))
+	}
+	tk.MustExec("set tidb_plan_cache_max_plan_size=default")
+
+	tk.MustExec("prepare fallback_unsupported from 'show tables'")
+	tk.MustQuery("execute fallback_unsupported")
+	assertReason(contextutil.PlanCacheFallbackUnsupportedStatementType)
+
+	tk.MustExec("prepare fallback_param_type from 'select a from fallback_reason_t where a=? and 3=3'")
+	tk.MustQuery("execute fallback_param_type using @a").Check(testkit.Rows("1"))
+	tk.MustExec("set @a='1'")
+	tk.MustQuery("execute fallback_param_type using @a").Check(testkit.Rows("1"))
+	assertReason(contextutil.PlanCacheFallbackParameterTypeMismatch)
+
+	tk.MustExec("prepare fallback_reuse_rejected from 'select a from fallback_reason_t where a=1 and 5=5'")
+	tk.MustQuery("execute fallback_reuse_rejected").Check(testkit.Rows("1"))
+	prepared, err := tk.Session().GetSessionVars().GetPreparedStmtByName("fallback_reuse_rejected")
+	require.NoError(t, err)
+	cacheKey, _, cacheable, reason, err := plannercore.NewPreparedPlanCacheKey(
+		tk.Session(), prepared.(*plannercore.PlanCacheStmt))
+	require.NoError(t, err)
+	require.True(t, cacheable, reason)
+	raw, status := tk.Session().GetSessionPlanCache().Get(cacheKey, nil)
+	require.Equal(t, sessionctx.PlanCacheLookupHit, status)
+	raw.(*plannercore.PlanCacheValue).Plan = nil
+	tk.MustExec("set tidb_plan_cache_max_plan_size=1")
+	fallbackBefore = readCounter("prepared", contextutil.PlanCacheFallbackReuseRejected)
+	tk.MustQuery("execute fallback_reuse_rejected").Check(testkit.Rows("1"))
+	assertReason(contextutil.PlanCacheFallbackReuseRejected)
+	require.Equal(t, fallbackBefore+1,
+		readCounter("prepared", contextutil.PlanCacheFallbackReuseRejected))
+	tk.MustExec("set tidb_plan_cache_max_plan_size=default")
+
+	instanceCache := domain.GetDomain(tk.Session()).GetInstancePlanCache()
+	softLimit, hardLimit := instanceCache.GetLimits()
+	configuredHardLimit := variable.InstancePlanCacheMaxMemSize.Load()
+	t.Cleanup(func() {
+		variable.InstancePlanCacheMaxMemSize.Store(configuredHardLimit)
+		instanceCache.SetLimits(softLimit, hardLimit)
+	})
+	variable.InstancePlanCacheMaxMemSize.Store(1)
+	instanceCache.SetLimits(1, 1)
+	instanceCtx := context.WithValue(context.Background(), plannercore.PlanCacheKeyEnableInstancePlanCache{}, true)
+	tk.MustExecWithContext(instanceCtx, "set @a=2")
+	tk.MustExecWithContext(instanceCtx,
+		"prepare fallback_insert_failed from 'select a from fallback_reason_t where a<? and 8=8'")
+	fallbackBefore = readCounter("prepared", contextutil.PlanCacheFallbackCacheInsertFailed)
+	tk.MustQueryWithContext(instanceCtx, "execute fallback_insert_failed using @a").Check(testkit.Rows("1"))
+	assertReason(contextutil.PlanCacheFallbackCacheInsertFailed)
+	require.Equal(t, fallbackBefore+1,
+		readCounter("prepared", contextutil.PlanCacheFallbackCacheInsertFailed))
+	variable.InstancePlanCacheMaxMemSize.Store(configuredHardLimit)
+	instanceCache.SetLimits(softLimit, hardLimit)
+
+	tk.MustExecWithContext(instanceCtx, "set @a=1")
+	tk.MustExecWithContext(instanceCtx,
+		"prepare fallback_insert_param_type from 'select a from fallback_reason_t where a=? and 9=9'")
+	tk.MustQueryWithContext(instanceCtx, "execute fallback_insert_param_type using @a").Check(testkit.Rows("1"))
+	tk.MustQueryWithContext(instanceCtx, "execute fallback_insert_param_type using @a").Check(testkit.Rows("1"))
+	assertReason(contextutil.PlanCacheFallbackNone)
+	variable.InstancePlanCacheMaxMemSize.Store(1)
+	instanceCache.SetLimits(1, 1)
+	tk.MustExecWithContext(instanceCtx, "set @a='1'")
+	fallbackBefore = readCounter("prepared", contextutil.PlanCacheFallbackParameterTypeMismatch)
+	tk.MustQueryWithContext(instanceCtx, "execute fallback_insert_param_type using @a").Check(testkit.Rows("1"))
+	assertReason(contextutil.PlanCacheFallbackParameterTypeMismatch)
+	require.Equal(t, fallbackBefore+1,
+		readCounter("prepared", contextutil.PlanCacheFallbackParameterTypeMismatch))
+	variable.InstancePlanCacheMaxMemSize.Store(configuredHardLimit)
+	instanceCache.SetLimits(softLimit, hardLimit)
+
+	require.Equal(t, readLegacy("prepared")-preparedLegacyAtStart,
+		readFallbackTotal("prepared")-preparedFallbackAtStart)
+
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+	nonPreparedFallbackAtStart := readFallbackTotal("non-prepared")
+	tk.MustQuery("show tables")
+	assertReason(contextutil.PlanCacheFallbackNone)
+	require.Equal(t, nonPreparedFallbackAtStart, readFallbackTotal("non-prepared"))
+
+	nonPreparedLegacyBefore := readLegacy("non-prepared")
+	nonPreparedFallbackBefore := readCounter("non-prepared", contextutil.PlanCacheFallbackLookupMiss)
+	tk.MustQuery("select a from fallback_reason_t where a=1 and 4=4").Check(testkit.Rows("1"))
+	assertReason(contextutil.PlanCacheFallbackLookupMiss)
+	require.Equal(t, nonPreparedLegacyBefore+1, readLegacy("non-prepared"))
+	require.Equal(t, nonPreparedFallbackBefore+1,
+		readCounter("non-prepared", contextutil.PlanCacheFallbackLookupMiss))
+
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
+	nonPreparedFallbackBefore = readFallbackTotal("non-prepared")
+	tk.MustQuery("select a from fallback_reason_t where a=1 and 10=10").Check(testkit.Rows("1"))
+	assertReason(contextutil.PlanCacheFallbackNone)
+	require.Equal(t, nonPreparedFallbackBefore, readFallbackTotal("non-prepared"))
+}
+
+func TestLastExecutionPlanCacheMissReason(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table last_execution_plan_cache_miss_reason_t(a int)")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("prepare st from 'select * from last_execution_plan_cache_miss_reason_t where a=?'")
+	tk.MustExec("set @a=1")
+
+	tk.MustQuery("select @@last_execution_plan_cache_miss_reason").Check(testkit.Rows(""))
+	tk.MustQuery("execute st using @a")
+	tk.MustQuery("select @@last_execution_plan_cache_miss_reason").Check(testkit.Rows("lookup_miss"))
+
+	tk.MustQuery("execute st using @a")
+	tk.MustQuery("select @@last_execution_plan_cache_miss_reason").Check(testkit.Rows(""))
+
+	tk.MustExec("set tidb_enable_prepared_plan_cache=0")
+	tk.MustQuery("execute st using @a")
+	tk.MustQuery("select @@last_execution_plan_cache_miss_reason").Check(testkit.Rows("cache_disabled"))
+	tk.MustQuery("select @@last_execution_plan_cache_miss_reason").Check(testkit.Rows(""))
+}
+
+func TestLastExecutionPlanCacheMissReasonPerSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	first := testkit.NewTestKit(t, store)
+	second := testkit.NewTestKit(t, store)
+	first.MustExec("use test")
+	second.MustExec("use test")
+	first.MustExec("create table last_plan_cache_miss_session_t(a int)")
+	first.MustExec("set tidb_enable_prepared_plan_cache=1")
+	first.MustExec("prepare st from 'select * from last_plan_cache_miss_session_t where a=?'")
+	first.MustExec("set @a=1")
+	first.MustQuery("execute st using @a")
+	first.MustQuery("select @@last_execution_plan_cache_miss_reason").Check(testkit.Rows("lookup_miss"))
+	second.MustQuery("select @@last_execution_plan_cache_miss_reason").Check(testkit.Rows(""))
 }
 
 func TestIssue40093(t *testing.T) {

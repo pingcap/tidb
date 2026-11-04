@@ -703,6 +703,64 @@ func TestStmtSummaryResultRows(t *testing.T) {
 		Check(testkit.Rows("10 30 20"))
 }
 
+func TestStmtSummaryPlanCacheMiss(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+
+	tk := s.newTestKitWithRoot(t)
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval=999999999")
+	tk.MustExec("set global tidb_stmt_summary_history_size=24")
+	tk.MustExec("set global tidb_enable_stmt_summary=0")
+	tk.MustExec("set global tidb_enable_stmt_summary=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table stmt_summary_plan_cache_miss(a int primary key)")
+	tk.MustExec("insert into stmt_summary_plan_cache_miss values (1)")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("prepare stmt_summary_pc from 'select a from stmt_summary_plan_cache_miss where a=?'")
+	tk.MustExec("set @a=1")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=0")
+	tk.MustQuery("execute stmt_summary_pc using @a").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt_summary_pc using @a").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+	tk.MustQuery("execute stmt_summary_pc using @a").Check(testkit.Rows("1"))
+
+	where := " where table_names like '%test.stmt_summary_plan_cache_miss%' and stmt_type='Select'"
+	for _, tableName := range []string{
+		"statements_summary",
+		"statements_summary_history",
+		"cluster_statements_summary",
+		"cluster_statements_summary_history",
+	} {
+		tk.MustQuery("select sum(plan_cache_miss_cache_disabled_count), " +
+			"sum(plan_cache_miss_lookup_miss_count), sum(plan_cache_miss_reuse_rejected_count) " +
+			"from information_schema." + tableName + where).
+			Check(testkit.Rows("2 1 0"))
+		tk.MustQuery("select sum(plan_cache_misses), max(plan_cache_miss_top_reason), " +
+			"max(plan_cache_miss_top_reason_count), max(plan_cache_miss_last_reason), " +
+			"count(plan_cache_miss_last_seen) from information_schema." + tableName + where).
+			Check(testkit.Rows("3 cache_disabled 2 lookup_miss 1"))
+	}
+
+	tk.MustQuery("execute stmt_summary_pc using @a").Check(testkit.Rows("1"))
+	for _, tableName := range []string{
+		"statements_summary",
+		"statements_summary_history",
+		"cluster_statements_summary",
+		"cluster_statements_summary_history",
+	} {
+		tk.MustQuery("select sum(plan_cache_misses), sum(plan_cache_hits), max(plan_cache_miss_top_reason), " +
+			"max(plan_cache_miss_top_reason_count), " +
+			"max(plan_cache_miss_last_reason), count(plan_cache_miss_last_seen) " +
+			"from information_schema." + tableName + where).
+			Check(testkit.Rows("3 1 cache_disabled 2 lookup_miss 1"))
+	}
+}
+
 func TestSlowQueryOOM(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)

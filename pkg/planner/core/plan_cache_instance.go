@@ -78,24 +78,29 @@ func (pc *instancePlanCache) getHead(key string, create bool) *instancePCNode {
 }
 
 // Get gets the cached value according to key and paramTypes.
-func (pc *instancePlanCache) Get(key string, paramTypes any) (value any, ok bool) {
+func (pc *instancePlanCache) Get(key string, paramTypes any) (value any, status sessionctx.PlanCacheLookupStatus) {
 	headNode := pc.getHead(key, false)
 	if headNode == nil { // cache miss
-		return nil, false
+		return nil, sessionctx.PlanCacheLookupKeyNotFound
 	}
 	return pc.getPlanFromList(headNode, paramTypes)
 }
 
-func (pc *instancePlanCache) getPlanFromList(headNode *instancePCNode, paramTypes any) (any, bool) {
+func (pc *instancePlanCache) getPlanFromList(headNode *instancePCNode, paramTypes any) (any, sessionctx.PlanCacheLookupStatus) {
+	hasCandidate := false
 	for node := headNode.next.Load(); node != nil; node = node.next.Load() {
+		hasCandidate = true
 		if checkPlanCacheParamCompatibility(node.value, paramTypes) { // v.Plan is read-only, no need to lock
 			if !pc.inEvict.Load() {
 				node.lastUsed.Store(time.Now()) // atomically update the lastUsed field
 			}
-			return node.value, true
+			return node.value, sessionctx.PlanCacheLookupHit
 		}
 	}
-	return nil, false
+	if !hasCandidate {
+		return nil, sessionctx.PlanCacheLookupKeyNotFound
+	}
+	return nil, sessionctx.PlanCacheLookupParamTypeMismatch
 }
 
 // Put puts the key and values into the cache.
@@ -112,7 +117,7 @@ func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) 
 	if headNode == nil {
 		return false // for safety
 	}
-	if _, ok := pc.getPlanFromList(headNode, paramTypes); ok {
+	if _, status := pc.getPlanFromList(headNode, paramTypes); status == sessionctx.PlanCacheLookupHit {
 		return // some other thread has inserted the same plan before
 	}
 	if pc.inEvict.Load() {

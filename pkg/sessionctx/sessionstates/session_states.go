@@ -77,6 +77,7 @@ type SessionStates struct {
 	LastDDLInfo          *LastDDLInfo                 `json:"ddl-info,omitempty"`
 	LastFoundRows        uint64                       `json:"found-rows,omitempty"`
 	FoundInPlanCache     bool                         `json:"in-plan-cache,omitempty"`
+	PlanCacheMissReason  string                       `json:"plan-cache-miss-reason,omitempty"`
 	FoundInBinding       bool                         `json:"in-binding,omitempty"`
 	SequenceLatestValues map[int64]int64              `json:"seq-values,omitempty"`
 	LastAffectedRows     int64                        `json:"affected-rows,omitempty"`

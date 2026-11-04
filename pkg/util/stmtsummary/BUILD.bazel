@@ -4,6 +4,7 @@ go_library(
     name = "stmtsummary",
     srcs = [
         "evicted.go",
+        "pkdb_plan_cache_miss_columns.go",
         "reader.go",
         "statement_summary.go",
     ],
@@ -16,6 +17,7 @@ go_library(
         "//pkg/sessionctx/stmtctx",
         "//pkg/types",
         "//pkg/util/chunk",
+        "//pkg/util/context",
         "//pkg/util/execdetails",
         "//pkg/util/hack",
         "//pkg/util/kvcache",
@@ -51,6 +53,7 @@ go_test(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",
+        "//pkg/util/context",
         "//pkg/util/execdetails",
         "//pkg/util/hack",
         "//pkg/util/plancodec",

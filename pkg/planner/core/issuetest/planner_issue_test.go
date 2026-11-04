@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -40,8 +41,8 @@ func instanceCachedPlanForPrepared(t *testing.T, tk *testkit.TestKit, name strin
 	cacheKey, _, cacheable, reason, err := core.NewPreparedPlanCacheKey(tk.Session(), prepared.(*core.PlanCacheStmt))
 	require.NoError(t, err)
 	require.True(t, cacheable, reason)
-	raw, ok := domain.GetDomain(tk.Session()).GetInstancePlanCache().Get(cacheKey, nil)
-	require.True(t, ok)
+	raw, status := domain.GetDomain(tk.Session()).GetInstancePlanCache().Get(cacheKey, nil)
+	require.Equal(t, sessionctx.PlanCacheLookupHit, status)
 	return raw.(*core.PlanCacheValue).Plan
 }
 
@@ -51,8 +52,8 @@ func sessionCachedPlanForPrepared(t *testing.T, tk *testkit.TestKit, name string
 	cacheKey, _, cacheable, reason, err := core.NewPreparedPlanCacheKey(tk.Session(), prepared.(*core.PlanCacheStmt))
 	require.NoError(t, err)
 	require.True(t, cacheable, reason)
-	raw, ok := tk.Session().GetSessionPlanCache().Get(cacheKey, nil)
-	require.True(t, ok)
+	raw, status := tk.Session().GetSessionPlanCache().Get(cacheKey, nil)
+	require.Equal(t, sessionctx.PlanCacheLookupHit, status)
 	return raw.(*core.PlanCacheValue).Plan
 }
 

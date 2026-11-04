@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/testkit"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/stretchr/testify/require"
 )
 
@@ -104,6 +105,32 @@ func TestPrepareStmtDedupCacheExecute(t *testing.T) {
 	require.Equal(t, []int64{3}, ids)
 
 	tk.MustExec("set tidb_enable_cache_prepare_stmt = default")
+}
+
+func TestPrepareStmtDedupCachePreservesDisabledReason(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_cache_prepare_stmt = 1")
+	tk.MustExec("set tidb_enable_prepared_plan_cache = 0")
+	tk.MustExec("create table dedup_disabled_reason (id int primary key)")
+
+	const sql = "select id from dedup_disabled_reason where id = ?"
+	firstID, _, _, err := tk.Session().PrepareStmt(sql)
+	require.NoError(t, err)
+	tk.MustExec("set tidb_enable_prepared_plan_cache = 1")
+	secondID, _, _, err := tk.Session().PrepareStmt(sql)
+	require.NoError(t, err)
+	require.NotEqual(t, firstID, secondID)
+
+	rs, err := tk.Session().ExecutePreparedStmt(context.Background(), secondID, expression.Args2Expressions4Test(1))
+	require.NoError(t, err)
+	if rs != nil {
+		require.NoError(t, rs.Close())
+	}
+	reason, timestamp := tk.Session().GetSessionVars().StmtCtx.PlanCacheFallback()
+	require.Equal(t, contextutil.PlanCacheFallbackCacheDisabled, reason)
+	require.Positive(t, timestamp)
 }
 
 // TestPrepareStmtDedupCacheDirectWriteParamMatch verifies that the PlanCacheStmt

@@ -398,6 +398,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBFoundInPlanCache, Value: BoolToOnOff(DefTiDBFoundInPlanCache), Type: TypeBool, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(s.PrevFoundInPlanCache), nil
 	}},
+	{Scope: ScopeSession, Name: TiDBLastExecutionPlanCacheMissReason, Value: "", Type: TypeStr, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
+		return s.PrevPlanCacheMissReason, nil
+	}},
 	{Scope: ScopeSession, Name: TiDBFoundInBinding, Value: BoolToOnOff(DefTiDBFoundInBinding), Type: TypeBool, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(s.PrevFoundInBinding), nil
 	}},

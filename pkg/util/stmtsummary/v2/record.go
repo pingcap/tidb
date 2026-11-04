@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
@@ -141,9 +142,13 @@ type StmtRecord struct {
 	// The last time this type of SQL executes.
 	LastSeen time.Time `json:"last_seen"`
 	// Plan cache
-	PlanInCache   bool  `json:"plan_in_cache"`
-	PlanCacheHits int64 `json:"plan_cache_hits"`
-	PlanInBinding bool  `json:"plan_in_binding"`
+	PlanInCache             bool                                 `json:"plan_in_cache"`
+	PlanCacheHits           int64                                `json:"plan_cache_hits"`
+	PlanCacheMisses         int64                                `json:"plan_cache_misses"`
+	PlanCacheFallbackCounts *stmtsummary.PlanCacheFallbackCounts `json:"plan_cache_fallback_counts,omitempty"`
+	PlanCacheMissLastReason string                               `json:"plan_cache_miss_last_reason"`
+	PlanCacheMissLastSeen   int64                                `json:"plan_cache_miss_last_seen,omitempty"`
+	PlanInBinding           bool                                 `json:"plan_in_binding"`
 	// Pessimistic execution retry information.
 	ExecRetryCount uint          `json:"exec_retry_count"`
 	ExecRetryTime  time.Duration `json:"exec_retry_time"`
@@ -380,6 +385,19 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 		r.PlanCacheUnqualifiedCount++
 		r.PlanCacheUnqualifiedLastReason = info.PlanCacheUnqualified
 	}
+	if info.PlanCacheFallbackReason != contextutil.PlanCacheFallbackNone {
+		r.PlanCacheMisses++
+		if r.PlanCacheFallbackCounts == nil {
+			r.PlanCacheFallbackCounts = new(stmtsummary.PlanCacheFallbackCounts)
+		}
+		r.PlanCacheFallbackCounts.Add(info.PlanCacheFallbackReason)
+		reason := contextutil.NormalizePlanCacheFallbackReason(info.PlanCacheFallbackReason).String()
+		if stmtsummary.ShouldUpdatePlanCacheFallback(r.PlanCacheMissLastSeen, r.PlanCacheMissLastReason,
+			info.PlanCacheFallbackTimeUnixNano, reason) {
+			r.PlanCacheMissLastSeen = info.PlanCacheFallbackTimeUnixNano
+			r.PlanCacheMissLastReason = reason
+		}
+	}
 	// SPM
 	if info.PlanInBinding {
 		r.PlanInBinding = true
@@ -559,6 +577,18 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	}
 	// Plan cache
 	r.PlanCacheHits += other.PlanCacheHits
+	r.PlanCacheMisses += other.PlanCacheMisses
+	if other.PlanCacheFallbackCounts != nil {
+		if r.PlanCacheFallbackCounts == nil {
+			r.PlanCacheFallbackCounts = new(stmtsummary.PlanCacheFallbackCounts)
+		}
+		r.PlanCacheFallbackCounts.Merge(other.PlanCacheFallbackCounts)
+	}
+	if stmtsummary.ShouldUpdatePlanCacheFallback(r.PlanCacheMissLastSeen, r.PlanCacheMissLastReason,
+		other.PlanCacheMissLastSeen, other.PlanCacheMissLastReason) {
+		r.PlanCacheMissLastSeen = other.PlanCacheMissLastSeen
+		r.PlanCacheMissLastReason = other.PlanCacheMissLastReason
+	}
 	r.PlanCacheUnqualifiedCount += other.PlanCacheUnqualifiedCount
 	if other.PlanCacheUnqualifiedLastReason != "" {
 		r.PlanCacheUnqualifiedLastReason = other.PlanCacheUnqualifiedLastReason

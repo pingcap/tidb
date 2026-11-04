@@ -254,6 +254,9 @@ const (
 	// TiDBFoundInPlanCache indicates whether the last statement was found in plan cache
 	TiDBFoundInPlanCache = "last_plan_from_cache"
 
+	// TiDBLastExecutionPlanCacheMissReason indicates why the previous execution did not reuse a plan cache entry.
+	TiDBLastExecutionPlanCacheMissReason = "last_execution_plan_cache_miss_reason"
+
 	// TiDBFoundInBinding indicates whether the last statement was matched with the hints in the binding.
 	TiDBFoundInBinding = "last_plan_from_binding"
 

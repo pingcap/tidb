@@ -1463,6 +1463,11 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.LastSeenStr, tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "The time these statements are seen for the last time"},
 	{name: stmtsummary.PlanInCacheStr, tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement hit plan cache"},
 	{name: stmtsummary.PlanCacheHitsStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times these statements hit plan cache"},
+	{name: stmtsummary.PlanCacheMissesStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times these statements fall back from plan cache"},
+	{name: stmtsummary.PlanCacheMissTopReasonStr, tp: mysql.TypeVarchar, size: 64, comment: "The most frequent plan cache fallback reason"},
+	{name: stmtsummary.PlanCacheMissTopReasonCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache fallbacks with the most frequent reason"},
+	{name: stmtsummary.PlanCacheMissLastReasonStr, tp: mysql.TypeVarchar, size: 64, comment: "The reason for the latest plan cache fallback"},
+	{name: stmtsummary.PlanCacheMissLastSeenStr, tp: mysql.TypeTimestamp, size: 26, decimal: 6, comment: "The time of the latest plan cache fallback"},
 	{name: stmtsummary.PlanInBindingStr, tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement is matched with the hints in the binding"},
 	{name: stmtsummary.QuerySampleTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled original statement"},
 	{name: stmtsummary.PrevSampleTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The previous statement before commit"},
@@ -1483,6 +1488,15 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.PlanCacheUnqualifiedLastReasonStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The last reason why the statement is not supported by the plan cache"},
 	{name: stmtsummary.StorageKVStr, tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement read data from TiKV"},
 	{name: stmtsummary.StorageMPPStr, tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement read data from TiFlash"},
+	// Keep new columns at the end to preserve existing statement-summary column offsets.
+	{name: stmtsummary.PlanCacheMissUnknownCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache misses with an unknown reason"},
+	{name: stmtsummary.PlanCacheMissCacheDisabledCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache misses because the cache was disabled"},
+	{name: stmtsummary.PlanCacheMissUnsupportedStatementTypeCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache misses for unsupported statement types"},
+	{name: stmtsummary.PlanCacheMissNotCacheableCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache misses because the plan was not cacheable"},
+	{name: stmtsummary.PlanCacheMissParameterTypeMismatchCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache misses from parameter type mismatch"},
+	{name: stmtsummary.PlanCacheMissLookupMissCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache misses with no cached candidate"},
+	{name: stmtsummary.PlanCacheMissReuseRejectedCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache misses after rejecting a cached candidate"},
+	{name: stmtsummary.PlanCacheMissCacheInsertFailedCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of plan cache misses because no cache entry was retained"},
 }
 
 var tableStorageStatsCols = []columnInfo{

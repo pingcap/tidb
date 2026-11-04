@@ -1368,6 +1368,8 @@ type SessionVars struct {
 	FoundInPlanCache bool
 	// PrevFoundInPlanCache indicates whether the last statement was found in plan cache.
 	PrevFoundInPlanCache bool
+	// PrevPlanCacheMissReason indicates why the last statement did not reuse a plan cache entry.
+	PrevPlanCacheMissReason string
 
 	// FoundInBinding indicates whether the execution plan is matched with the hints in the binding.
 	FoundInBinding bool
@@ -3196,6 +3198,7 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 	sessionStates.LastFoundRows = s.LastFoundRows
 	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
+	sessionStates.PlanCacheMissReason = s.PrevPlanCacheMissReason
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
 	sessionStates.ResourceGroupName = s.ResourceGroupName
 	sessionStates.HypoIndexes = s.HypoIndexes
@@ -3234,6 +3237,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.LastFoundRows = sessionStates.LastFoundRows
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
+	s.PrevPlanCacheMissReason = sessionStates.PlanCacheMissReason
 	s.FoundInBinding = sessionStates.FoundInBinding
 	s.SetResourceGroupName(sessionStates.ResourceGroupName)
 	s.HypoIndexes = sessionStates.HypoIndexes

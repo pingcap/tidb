@@ -53,7 +53,7 @@ type SessionStatesHandler interface {
 
 // SessionPlanCache is an interface for prepare and non-prepared plan cache
 type SessionPlanCache interface {
-	Get(key string, paramTypes any) (value any, ok bool)
+	Get(key string, paramTypes any) (value any, status PlanCacheLookupStatus)
 	Put(key string, value, paramTypes any)
 	Delete(key string)
 	DeleteAll()
@@ -62,11 +62,26 @@ type SessionPlanCache interface {
 	Close()
 }
 
+// PlanCacheLookupStatus describes the result of a plan cache lookup without
+// exposing planner implementation details through the session context package.
+type PlanCacheLookupStatus uint8
+
+const (
+	// PlanCacheLookupStatusUnknown is the defensive status for an unclassified result.
+	PlanCacheLookupStatusUnknown PlanCacheLookupStatus = iota
+	// PlanCacheLookupHit means a compatible cached plan was found.
+	PlanCacheLookupHit
+	// PlanCacheLookupKeyNotFound means the lookup key has no cache bucket.
+	PlanCacheLookupKeyNotFound
+	// PlanCacheLookupParamTypeMismatch means the bucket has no compatible parameter type.
+	PlanCacheLookupParamTypeMismatch
+)
+
 // InstancePlanCache represents the instance/node level plan cache.
 // Value and Opts should always be *PlanCacheValue and *PlanCacheMatchOpts, use any to avoid cycle-import.
 type InstancePlanCache interface {
 	// Get gets the cached value from the cache according to key and opts.
-	Get(key string, paramTypes any) (value any, ok bool)
+	Get(key string, paramTypes any) (value any, status PlanCacheLookupStatus)
 	// Put puts the key and value into the cache.
 	Put(key string, value, paramTypes any) (succ bool)
 	// Evict evicts some cached values.

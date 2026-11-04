@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
@@ -391,6 +392,10 @@ func TestIssue59377(t *testing.T) {
 }
 
 func TestHashJoinRandomFail(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	ctx := mock.NewContext()

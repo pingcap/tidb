@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -139,8 +140,8 @@ func TestParamMatchModesIsolateSessionAndInstanceCaches(t *testing.T) {
 		cache.Put("dml", newValue(strictInput), strictInput)
 		cache.Put("dml", newValue(ignoredInput), ignoredInput)
 		require.Equal(t, 2, cache.Size())
-		value, ok := cache.Get("dml", ignoredInput)
-		require.True(t, ok)
+		value, status := cache.Get("dml", ignoredInput)
+		require.Equal(t, sessionctx.PlanCacheLookupHit, status)
 		require.Equal(t, ignoredInput.modes, value.(*PlanCacheValue).paramMatchModes)
 	})
 
@@ -149,9 +150,40 @@ func TestParamMatchModesIsolateSessionAndInstanceCaches(t *testing.T) {
 		require.True(t, cache.Put("dml", newValue(strictInput), strictInput))
 		require.True(t, cache.Put("dml", newValue(ignoredInput), ignoredInput))
 		require.Equal(t, int64(2), cache.Size())
-		value, ok := cache.Get("dml", strictInput)
-		require.True(t, ok)
+		value, status := cache.Get("dml", strictInput)
+		require.Equal(t, sessionctx.PlanCacheLookupHit, status)
 		require.Equal(t, strictInput.modes, value.(*PlanCacheValue).paramMatchModes)
+	})
+}
+
+func TestPlanCacheLookupStatus(t *testing.T) {
+	ctx := MockContext()
+	cachedInput := paramMatchInput{actualTypes: []*types.FieldType{types.NewFieldType(mysql.TypeLong)}}
+	incompatibleInput := paramMatchInput{actualTypes: []*types.FieldType{types.NewFieldType(mysql.TypeVarchar)}}
+	newValue := func() *PlanCacheValue {
+		return newPlanCacheValue(&Update{}, nil, cachedInput, &hint.StmtHints{})
+	}
+
+	t.Run("session", func(t *testing.T) {
+		cache := NewLRUPlanCache(4, 0, 0, ctx, false)
+		cache.Put("cached", newValue(), cachedInput)
+		_, status := cache.Get("missing", cachedInput)
+		require.Equal(t, sessionctx.PlanCacheLookupKeyNotFound, status)
+		_, status = cache.Get("cached", incompatibleInput)
+		require.Equal(t, sessionctx.PlanCacheLookupParamTypeMismatch, status)
+		_, status = cache.Get("cached", cachedInput)
+		require.Equal(t, sessionctx.PlanCacheLookupHit, status)
+	})
+
+	t.Run("instance", func(t *testing.T) {
+		cache := NewInstancePlanCache(1<<30, 1<<30)
+		require.True(t, cache.Put("cached", newValue(), cachedInput))
+		_, status := cache.Get("missing", cachedInput)
+		require.Equal(t, sessionctx.PlanCacheLookupKeyNotFound, status)
+		_, status = cache.Get("cached", incompatibleInput)
+		require.Equal(t, sessionctx.PlanCacheLookupParamTypeMismatch, status)
+		_, status = cache.Get("cached", cachedInput)
+		require.Equal(t, sessionctx.PlanCacheLookupHit, status)
 	})
 }
 

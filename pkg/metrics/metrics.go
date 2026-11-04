@@ -174,6 +174,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PanicCounter)
 	prometheus.MustRegister(PlanCacheCounter)
 	prometheus.MustRegister(PlanCacheMissCounter)
+	prometheus.MustRegister(PlanCacheFallbackCounter)
 	prometheus.MustRegister(PlanCacheInstanceMemoryUsage)
 	prometheus.MustRegister(PlanCacheInstancePlanNumCounter)
 	prometheus.MustRegister(PseudoEstimation)
