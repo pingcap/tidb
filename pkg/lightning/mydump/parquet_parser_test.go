@@ -712,5 +712,4 @@ func TestReadParquetFileRowCountReaderLifecycle(t *testing.T) {
 			}
 		})
 	}
-
 }
