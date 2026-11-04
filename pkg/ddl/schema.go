@@ -729,6 +729,10 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 		if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
 			return ver, err
 		}
+		createRecoveredTablesAffinityGroups(jobCtx, job, recoverTbls)
+		if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+			return ver, err
+		}
 		schemaInfo.State = model.StatePublic
 		// use to update InfoSchema
 		job.SchemaID = schemaInfo.ID

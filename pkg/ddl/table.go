@@ -379,6 +379,10 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 		if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
 			return ver, err
 		}
+		createRecoveredTablesAffinityGroups(jobCtx, job, args.RecoverTableInfos())
+		if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+			return ver, err
+		}
 		tableInfo := tblInfo.Clone()
 		tableInfo.State = model.StatePublic
 		tableInfo.UpdateTS = metaMut.StartTS
