@@ -279,6 +279,7 @@ func TestClusterLogTableExtractor(t *testing.T) {
 		startTime, endTime int64
 		patterns           []string
 		level              set.StringSet
+		recheck            bool
 	}{
 		{
 			sql:       "select * from information_schema.cluster_log",
@@ -543,9 +544,26 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			instances: set.NewStringSet(),
 			level:     set.NewStringSet("debug", "error"),
 		},
+		{
+			sql:       "select * from information_schema.cluster_log where message ilike '%error%'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"(?i:^.*error.*$)"},
+			recheck:   true,
+		},
+		{
+			sql:       "select * from information_schema.cluster_log where (message ilike '%pd%' or message like '%tikv%')",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"(?i:^.*pd.*$)|^.*tikv.*$"},
+			recheck:   true,
+		},
 	}
 	for _, ca := range cases {
-		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, ok, remained := getLogicalMemTableWithRemained(t, dom, se, parser, ca.sql)
+		if ca.recheck {
+			require.Len(t, remained, 1, ca.sql)
+		}
 		if ok {
 			require.NotNil(t, logicalMemTable.Extractor, ca.sql)
 

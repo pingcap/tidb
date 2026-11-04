@@ -183,12 +183,9 @@ select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table
 TABLE_NAME	PARTITION_NAME
 explain format='brief' select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_schema = 'infoschema__infoschema';
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-Projection	10000.00	root		Column#3, Column#4
-=======
-Selection	8000.00	root		like(Column#3, "pt0", 92)
->>>>>>> ece360bd7f5 (planner: retain LIKE filters after case-folded metadata extraction (#71255))
-└─MemTableScan	10000.00	root	table:PARTITIONS	table_schema:["infoschema__infoschema"], table_name_pattern:[pt0]
+Projection	8000.00	root		Column#3, Column#4
+└─Selection	8000.00	root		like(Column#3, "pt0", 92)
+  └─MemTableScan	10000.00	root	table:PARTITIONS	table_schema:["infoschema__infoschema"], table_name_pattern:[pt0]
 select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_schema = 'infoschema__infoschema';
 TABLE_NAME	PARTITION_NAME
 drop table pt1;
