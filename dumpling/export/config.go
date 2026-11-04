@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"text/template/parse"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
@@ -20,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/dumpling/dumpservice"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -86,10 +88,41 @@ const (
 	flagClusterSSLCA             = "cluster-ssl-ca"
 	flagClusterSSLCert           = "cluster-ssl-cert"
 	flagClusterSSLKey            = "cluster-ssl-key"
+	flagDumpService              = "dump-service"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
 )
+
+var dumpServiceIncompatibleFlags = []string{
+	flagSnapshot,
+	flagDatabase,
+	flagHost,
+	flagUser,
+	flagPort,
+	flagPassword,
+	flagAllowCleartextPasswords,
+	flagConsistency,
+	flagNoViews,
+	flagNoSequences,
+	flagSortByPk,
+	flagRows,
+	flagWhere,
+	flagSQL,
+	flagDumpEmptyDatabase,
+	flagTidbMemQuotaQuery,
+	flagCA,
+	flagCert,
+	flagKey,
+	flagCompleteInsert,
+	flagParams,
+	flagReadTimeout,
+	flagTransactionalConsistency,
+	flagPDAddr,
+	flagClusterSSLCA,
+	flagClusterSSLCert,
+	flagClusterSSLKey,
+}
 
 // CSVDialect is the dialect of the CSV output for compatible with different import target
 type CSVDialect int
@@ -211,6 +244,8 @@ type Config struct {
 	// It's used for controlling GC in keyspace-level clusters where PD addresses
 	// may not be discoverable from TiDB.
 	PDAddr string
+	// DumpService is the Unix URL of an externally managed dump service.
+	DumpService string
 	// ClusterSSLCA/ClusterSSLCert/ClusterSSLKey override Security.* when connecting
 	// to PD endpoints for GC control.
 	ClusterSSLCA   string
@@ -362,7 +397,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringP(flagLogfile, "L", "", "Log file `path`, leave empty to write to console")
 	flags.String(flagLogfmt, "text", "Log `format`: {text|json}")
 	flags.String(flagConsistency, ConsistencyTypeAuto, "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
-	flags.String(flagSnapshot, "", "Snapshot position (uint64 or MySQL style string timestamp). Valid only when consistency=snapshot")
+	flags.String(flagSnapshot, "", "Snapshot position as uint64 or a MySQL style string timestamp. Requires consistency=snapshot")
 	flags.BoolP(flagNoViews, "W", true, "Do not dump views")
 	flags.Bool(flagNoSequences, true, "Do not dump sequences")
 	flags.Bool(flagSortByPk, true, "Sort dump results by primary key through order by sql")
@@ -394,7 +429,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagCsvSeparator, ",", "The separator for csv files, default ','")
 	flags.String(flagCsvDelimiter, "\"", "The delimiter for values in csv files, default '\"'")
 	flags.String(flagCsvLineTerminator, "\r\n", "The line terminator for csv files, default '\\r\\n'")
-	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension)")
+	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension). With --dump-service, include {{.Index}} to avoid overwriting task files")
 	flags.Bool(flagCompleteInsert, false, "Use complete INSERT statements that include column names")
 	flags.String(flagIncludeGeneratedColumns, string(GeneratedColumnsNone), "Which generated column values to include in data files: none, stored. Only supported with --filetype csv, and can't be used with --sql, --where, --column-filter, --column-filter-file or --no-data. Schema files are unchanged, so the output may not be importable back into TiDB/MySQL as-is")
 	flags.StringToString(flagParams, nil, `Extra session variables used while dumping, accepted format: --params "character_set_client=latin1,character_set_connection=latin1"`)
@@ -410,11 +445,16 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagClusterSSLCA, "", "CA certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --ca")
 	flags.String(flagClusterSSLCert, "", "Client certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --cert")
 	flags.String(flagClusterSSLKey, "", "Client private key path for TLS connections to PD endpoints used by GC control; if empty, reuse --key")
+	flags.String(flagDumpService, "", "Export using an external dump service at unix:///absolute/path.sock. Renders schema SQL using TiDB default session settings with time_zone='+00:00', character_set_connection='utf8mb4', character_set_results='utf8mb4'")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
 // nolint: gocyclo
 func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
+	if err := validateDumpServiceFlags(flags); err != nil {
+		return err
+	}
+
 	var err error
 	conf.Databases, err = flags.GetStringSlice(flagDatabase)
 	if err != nil {
@@ -660,6 +700,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	conf.DumpService, err = flags.GetString(flagDumpService)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	if outputFilenameFormat == "" && conf.SQL != "" {
 		outputFilenameFormat = DefaultAnonymousOutputFileTemplateText
@@ -667,6 +711,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	tmpl, err := ParseOutputFileTemplate(outputFilenameFormat)
 	if err != nil {
 		return errors.Errorf("failed to parse output filename template (--output-filename-template '%s')", outputFilenameFormat)
+	}
+	outputSplitIntoMultipleFiles := conf.DumpService != ""
+	if flags.Changed(flagOutputFilenameTemplate) && outputSplitIntoMultipleFiles && !outputTemplateUsesIndex(tmpl, outputFileTemplateData) {
+		return errors.New("--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') with --dump-service; otherwise chunk files may overwrite each other")
 	}
 	conf.OutputFileTemplate = tmpl
 
@@ -707,7 +755,6 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	for k, v := range params {
 		conf.SessionParams[strings.ToLower(k)] = v
 	}
@@ -720,11 +767,139 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	return nil
 }
 
+func validateDumpServiceFlags(flags *pflag.FlagSet) error {
+	dumpService, err := flags.GetString(flagDumpService)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if dumpService == "" && !flags.Changed(flagDumpService) {
+		return nil
+	}
+	if _, err := dumpservice.ParseSocketURL(dumpService); err != nil {
+		return err
+	}
+	for _, flagName := range dumpServiceIncompatibleFlags {
+		if flags.Changed(flagName) {
+			return errors.Errorf("--%s cannot be combined with --dump-service", flagName)
+		}
+	}
+	return nil
+}
+
 func validateColumnFilterOptions(conf *Config, flagName string) error {
 	if conf.SQL != "" {
 		return errors.Errorf("can't specify both --sql and --%s at the same time", flagName)
 	}
 	return nil
+}
+
+func outputTemplateUsesIndex(tmpl *template.Template, templateName string) bool {
+	if tmpl == nil {
+		return false
+	}
+
+	type templateVisitState struct {
+		name          string
+		inConditional bool
+	}
+	visitedTemplate := make(map[templateVisitState]struct{})
+
+	var visitTemplate func(name string, inConditional bool) bool
+	var visitNode func(node parse.Node, inConditional bool) bool
+	visitTemplate = func(name string, inConditional bool) bool {
+		state := templateVisitState{name: name, inConditional: inConditional}
+		if _, ok := visitedTemplate[state]; ok {
+			return false
+		}
+		visitedTemplate[state] = struct{}{}
+
+		t := tmpl.Lookup(name)
+		if t == nil || t.Tree == nil || t.Tree.Root == nil {
+			return false
+		}
+
+		return visitNode(t.Tree.Root, inConditional)
+	}
+
+	visitNode = func(node parse.Node, inConditional bool) bool {
+		if node == nil {
+			return false
+		}
+
+		switch n := node.(type) {
+		case *parse.ListNode:
+			if n == nil {
+				return false
+			}
+			for _, child := range n.Nodes {
+				if visitNode(child, inConditional) {
+					return true
+				}
+			}
+		case *parse.ActionNode:
+			if n == nil {
+				return false
+			}
+			if inConditional {
+				return false
+			}
+			return isStandaloneOutputIndexAction(n)
+		case *parse.TemplateNode:
+			if n == nil {
+				return false
+			}
+			return visitTemplate(n.Name, inConditional)
+		case *parse.IfNode:
+			if n == nil {
+				return false
+			}
+			if visitNode(n.List, true) {
+				return true
+			}
+			return visitNode(n.ElseList, true)
+		case *parse.RangeNode:
+			if n == nil {
+				return false
+			}
+			if visitNode(n.List, true) {
+				return true
+			}
+			return visitNode(n.ElseList, true)
+		case *parse.WithNode:
+			if n == nil {
+				return false
+			}
+			if visitNode(n.List, true) {
+				return true
+			}
+			return visitNode(n.ElseList, true)
+		}
+
+		return false
+	}
+
+	return visitTemplate(templateName, false)
+}
+
+func isStandaloneOutputIndexAction(action *parse.ActionNode) bool {
+	if action == nil || action.Pipe == nil {
+		return false
+	}
+
+	// A standalone {{.Index}} must be a single command with a single argument.
+	if len(action.Pipe.Decl) != 0 || len(action.Pipe.Cmds) != 1 {
+		return false
+	}
+	cmd := action.Pipe.Cmds[0]
+	if cmd == nil || len(cmd.Args) != 1 {
+		return false
+	}
+
+	field, ok := cmd.Args[0].(*parse.FieldNode)
+	if !ok {
+		return false
+	}
+	return len(field.Ident) == 1 && field.Ident[0] == "Index"
 }
 
 // ParseFileSize parses file size from tables-list and filter arguments
@@ -869,6 +1044,22 @@ func buildTLSConfig(conf *Config) error {
 func validateSpecifiedSQL(conf *Config) error {
 	if conf.SQL != "" && conf.Where != "" {
 		return errors.New("can't specify both --sql and --where at the same time. Please try to combine them into --sql")
+	}
+	return nil
+}
+
+func validateDumpService(conf *Config) error {
+	if conf.DumpService == "" {
+		return nil
+	}
+	if _, err := dumpservice.ParseSocketURL(conf.DumpService); err != nil {
+		return err
+	}
+	if conf.Snapshot != "" {
+		return errors.New("--snapshot cannot be combined with --dump-service; the service owns the snapshot")
+	}
+	if conf.SQL != "" || conf.Where != "" || conf.Rows != UnspecifiedSize {
+		return errors.New("--dump-service cannot be combined with --sql, --where, or --rows")
 	}
 	return nil
 }
