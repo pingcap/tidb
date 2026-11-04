@@ -53,6 +53,9 @@ pub type HistoricalReadProvider =
 /// start timestamp to the session's `CurrentTso`.
 pub type StatementTxnActivator = dyn Fn() + Send + Sync;
 
+/// Go `kv.Storage.GetMinSafeTS(txnScope)`.
+pub type MinSafeTsProvider = dyn Fn(&str) -> u64 + Send + Sync;
+
 /// SET-time validation and schema loading, without replacing the active row snapshot.
 pub type SnapshotSchemaProvider =
     dyn Fn(u64, &str, bool) -> Result<SessionExtendedInfoSchema, DriverError> + Send + Sync;
@@ -522,6 +525,11 @@ impl Session {
 
     /// Installs the store's SET-time schema loader. The boolean requests timestamp
     /// and GC validation when a new nonzero timestamp is selected, as in Go SetExecutor.
+    /// Installs the store's min SafeTS (Go `GetMinSafeTS`).
+    pub fn set_min_safe_ts_provider(&mut self, provider: std::sync::Arc<MinSafeTsProvider>) {
+        self.min_safe_ts_provider = Some(provider);
+    }
+
     pub fn set_snapshot_schema_provider(
         &mut self,
         provider: std::sync::Arc<SnapshotSchemaProvider>,

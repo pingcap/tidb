@@ -7065,8 +7065,8 @@ fn cancelled_ddl_job(active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob
     )
 }
 
-// Go convertJob2RollbackJob, restricted to the actions integrated into this
-// worker. Conversion is its own step; an irreversible DROP resumes next time.
+// Go convertJob2RollbackJob. Conversion is its own step; an irreversible
+// DROP resumes next time.
 fn plan_cancel_persisted_ddl_job(
     txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
@@ -7090,7 +7090,9 @@ fn plan_cancel_persisted_ddl_job(
         | ActionType::ACTION_UNLOCK_TABLE => true,
         // `cancelOnlyNotHandledJob(job, model.StateNone)`.
         ActionType::ACTION_MODIFY_SCHEMA_CHARSET_AND_COLLATE
-        | ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT => {
+        | ActionType::ACTION_MODIFY_SCHEMA_DEFAULT_PLACEMENT
+        | ActionType::ACTION_REPAIR_TABLE
+        | ActionType::ACTION_RECOVER_SCHEMA => {
             active.job.schema_state == SchemaState::NONE
         }
         ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES => {
@@ -7170,12 +7172,8 @@ fn plan_cancel_persisted_ddl_job(
             checked_job_table(catalog, active, false)?;
             active.job.schema_state == SchemaState::NONE
         }
-        _ => {
-            return Err(DdlPlanError::Encode(format!(
-                "cancellation for disabled action {} is not integrated",
-                active.job.type_
-            )))
-        }
+        // Go's `default`: the job is cancelled (RECOVER TABLE among them).
+        _ => true,
     };
     if cancel {
         return Err(cancelled_ddl_job(active));

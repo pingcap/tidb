@@ -620,6 +620,8 @@ pub struct Session {
     /// [`Self::set_statement_txn_activator`].
     statement_txn_activator: Option<Arc<txn::StatementTxnActivator>>,
     snapshot_schema_provider: Option<Arc<txn::SnapshotSchemaProvider>>,
+    /// Go `sctx.GetStore().GetMinSafeTS(txnScope)`.
+    min_safe_ts_provider: Option<Arc<txn::MinSafeTsProvider>>,
     snapshot_schema: Option<(u64, SessionExtendedInfoSchema)>,
     /// Statement-only SnapshotTS override; the ordinary transaction stays intact.
     statement_snapshot: Option<(u64, txn::HistoricalRead)>,
@@ -951,6 +953,7 @@ impl Session {
             historical_read_provider: None,
             statement_txn_activator: None,
             snapshot_schema_provider: None,
+            min_safe_ts_provider: None,
             snapshot_schema: None,
             statement_snapshot: None,
             restricted_sql_executor: None,

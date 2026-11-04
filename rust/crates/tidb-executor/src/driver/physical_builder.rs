@@ -1548,6 +1548,29 @@ fn retrieval_error(error: DriverError) -> crate::ExecError {
     crate::ExecError::Retrieval(Box::new(error))
 }
 
+/// Go's executors take the plan's `*IndexInfo`; a plan here names its index
+/// by id, so a session's hypothetical index (which only a plain EXPLAIN
+/// builds) joins the table it indexes for the build.
+fn table_with_plan_index(
+    mut table: Arc<crate::TableCommon>,
+    index_id: Option<i64>,
+    ctx: &crate::StmtContext,
+) -> Result<Arc<crate::TableCommon>, DriverError> {
+    let Some(index_id) = index_id else {
+        return Ok(table);
+    };
+    if table.indexes().iter().any(|index| index.read().id == index_id) {
+        return Ok(table);
+    }
+    let Some(hypo) = ctx.hypo_indexes().and_then(|hypo| hypo.index_by_id(index_id)) else {
+        return Ok(table);
+    };
+    let index = tidb_table::table_from_meta::kv_index(&tidb_model::GoShared::new(hypo.clone()), table.columns())
+        .map_err(DriverError::unsupported)?;
+    Arc::make_mut(&mut table).add_index(index, false);
+    Ok(table)
+}
+
 /// Resolves the rows of the memory-table scan `plan_id` over
 /// `database`.`table`. A virtual table's rows are not stored: the session
 /// retrieves them per scan, so a scan read before that fails with
@@ -1575,9 +1598,14 @@ fn memory_table_rows(
                     source: MemoryTableRowSource::Owned(read, retriever),
                 });
             }
-            let rows = mem_table_read_of(plan)
-                .and_then(|read| ctx.mem_table_retrieval().rows(&read))
-                .ok_or(DriverError::MemTableRetrievalNeeded)?;
+            let rows = match mem_table_read_of(plan).and_then(|read| ctx.mem_table_retrieval().rows(&read)) {
+                Some(rows) => rows,
+                // A plain EXPLAIN builds the reader and never reads it.
+                None if ctx.in_explain_stmt() && !ctx.in_explain_analyze_stmt() => {
+                    std::sync::Arc::new(Vec::new())
+                }
+                None => return Err(DriverError::MemTableRetrievalNeeded),
+            };
             Ok(MemoryTableRows {
                 column_names,
                 source: MemoryTableRowSource::Retrieved(rows),
@@ -1599,8 +1627,15 @@ fn build_mem_table(
         // go's metrics tables query the metric storage (Prometheus/PD),
         // which is absent -- the queries fail `query metric error: pd
         // unavailable` (oracle g-is: metrics_schema scans answer 1105).
-        return Err(DriverError::Mysql(crate::driver::MysqlError::unknown(
-            "query metric error: pd unavailable".to_owned(),
+        // Go's `metricRetriever` fails when it is read, not when built.
+        let meta = meta(ctx, plan, plan_schema(plan)?);
+        return Ok(Box::new(MemTableSourceExec::lazy(
+            meta,
+            Box::new(|| {
+                Err(retrieval_error(DriverError::Mysql(crate::driver::MysqlError::unknown(
+                    "query metric error: pd unavailable".to_owned(),
+                ))))
+            }),
         )));
     }
     let table = memory_table_rows(plan, &scan.db_name, &scan.table_name, catalog, ctx)?;
@@ -2619,6 +2654,7 @@ fn build_index_reader(
     if let Some(ids) = global_index_partition_restriction(index_plan) {
         std::sync::Arc::make_mut(&mut table).restrict_read_to_partitions(&ids);
     }
+    let table = table_with_plan_index(table, Some(scan.index_id), ctx)?;
     if !table
         .indexes()
         .iter()
@@ -3144,6 +3180,7 @@ fn index_join_probe_key_domains(
     join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
     probe_parts: &[LookupProbePart],
     catalog: &SessionExtendedInfoSchema,
+    ctx: &crate::StmtContext,
 ) -> Result<Vec<IndexProbeKeyDomain>, DriverError> {
     let table_id = join.inner_access_table_id.ok_or_else(|| {
         DriverError::unsupported("a physical index join has no retained inner table ID")
@@ -3151,6 +3188,7 @@ fn index_join_probe_key_domains(
     let table = catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
         DriverError::unsupported("a physical index-join table ID is absent from the catalog")
     })?;
+    let table = table_with_plan_index(table, join.inner_access_index_id, ctx)?;
     let object_types = if let Some(index_id) = join.inner_access_index_id {
         let index = table
             .plan_indexes()
@@ -3347,10 +3385,16 @@ fn build_index_inner_reader(
     let table_id = join.inner_access_table_id.ok_or_else(|| {
         DriverError::unsupported("a physical index join has no retained inner table ID")
     })?;
-    let (mut table, store, separated) =
-        storage.table(ctx, catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
-            DriverError::unsupported("a physical index-join table ID is absent from the catalog")
-        })?);
+    let (mut table, store, separated) = storage.table(
+        ctx,
+        table_with_plan_index(
+            catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
+                DriverError::unsupported("a physical index-join table ID is absent from the catalog")
+            })?,
+            join.inner_access_index_id,
+            ctx,
+        )?,
+    );
     let (embedded, covering) = index_inner_reader_payload(plan).ok_or_else(|| {
         DriverError::unsupported("an index-join inner leaf is not a physical reader")
     })?;
@@ -3815,7 +3859,7 @@ fn build_index_join(
         conditions.extend(resolve_expressions(outer_conditions, &condition_schema)?);
     }
     let (probe_keys, probe_parts) = index_join_probe_shape(join)?;
-    let probe_key_domains = index_join_probe_key_domains(join, &probe_parts, catalog)?;
+    let probe_key_domains = index_join_probe_key_domains(join, &probe_parts, catalog, ctx)?;
     let probe_bounds = join
         .compare_filters
         .as_ref()
@@ -5184,6 +5228,7 @@ fn build_point_get(
     let table = catalog
         .physical_kv_table_by_id(physical_id)
         .ok_or_else(|| DriverError::unsupported("physical point-get table ID is absent"))?;
+    let table = table_with_plan_index(table, point.index_id, ctx)?;
     let snapshot_stats =
         configure_point_snapshot_read(ctx, plan.point_avg_row_size(true), snapshot_stats);
     let schema = plan_schema(plan)?;
@@ -5263,6 +5308,7 @@ fn build_batch_point_get(
     let table = catalog
         .physical_kv_table_by_id(batch.table_id)
         .ok_or_else(|| DriverError::unsupported("physical batch-point table ID is absent"))?;
+    let table = table_with_plan_index(table, batch.index_id, ctx)?;
     let snapshot_stats =
         configure_point_snapshot_read(ctx, plan.point_avg_row_size(true), snapshot_stats);
     let schema = plan_schema(plan)?;
@@ -5993,8 +6039,8 @@ pub(crate) fn prepare_execution_plan(
 }
 
 /// [`prepare_execution_plan`] for a plan that is only reported, never run
-/// (plain `EXPLAIN`): Go's `EXPLAIN` builds no executor, so no memory-table
-/// retriever runs.
+/// (plain `EXPLAIN`): no memory-table retrieval is requested, as Go's
+/// `MemTableReaderExec` retrieves only when it is read.
 pub(crate) fn prepare_plan_for_explain(
     plan: &mut PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
@@ -6002,6 +6048,29 @@ pub(crate) fn prepare_plan_for_explain(
 ) -> Result<(), DriverError> {
     record_tiflash_contained(plan, ctx);
     prepare_execution_plan_node(plan, catalog, ctx, false)
+}
+
+/// Go `buildExplain`'s `b.build(v.TargetPlan)` for a plain EXPLAIN: the
+/// executor tree is built (its checks and side effects happen) and dropped
+/// unopened. A DML root's own executor is the write the session drives; its
+/// source plan is what is built here.
+pub(crate) fn build_for_explain(
+    plan: &PhysicalPlan,
+    catalog: &SessionExtendedInfoSchema,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let target = match plan {
+        PhysicalPlan::Dml(root) => match root.select_plan.as_deref() {
+            Some(select) => select,
+            None => return Ok(()),
+        },
+        _ => plan,
+    };
+    let mut state = BuildState {
+        projection_workers_allowed: true,
+        ..BuildState::default()
+    };
+    build_with_state(target, catalog, ctx, &mut state).map(drop)
 }
 
 /// Go `ExecuteStmt`'s `plannercore.IsTiFlashContained(stmt.Plan)`, recorded

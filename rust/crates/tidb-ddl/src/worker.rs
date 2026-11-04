@@ -1088,11 +1088,17 @@ where
     /// history. The signal is dropped when the wait ends (`delJobDoneCh`).
     fn wait_persisted_job(
         &self,
+        job_context: &dyn tidb_ddl_build::session_context::DdlSessionContext,
         ddl_job_id: i64,
         action: tidb_model::ActionType,
     ) -> Result<ClusterDdlReport, SqlQueryError> {
+        // Go `DoDDLJobWrapper`: once the job is queued the session's
+        // `StmtCtx.IsDDLJobInQueue` is set (and `DDLExec` clears it), so the
+        // min-start-TS reporter ignores the waiting session.
+        job_context.set_ddl_job_in_queue(true);
         let result = self.wait_persisted_job_done(ddl_job_id, action);
         self.scheduler.ddl_job_done_ch_map.delete(ddl_job_id);
+        job_context.set_ddl_job_in_queue(false);
         result
     }
 
@@ -2904,7 +2910,7 @@ where
             )
             .map_err(cluster_ddl_error)?;
             self.notify_new_job_submitted();
-            let report = self.wait_persisted_job(ddl_job_id, action)?;
+            let report = self.wait_persisted_job(job_context, ddl_job_id, action)?;
             self.refresh_catalog();
             return Ok(report);
         }
@@ -2982,7 +2988,7 @@ where
                     merged_table_id,
                 ) => {
                     self.notify_new_job_submitted();
-                    let mut report = self.wait_persisted_job(ddl_job_id, action)?;
+                    let mut report = self.wait_persisted_job(job_context, ddl_job_id, action)?;
                     // A merged CREATE TABLE created this statement's table
                     // under the id its submission assigned.
                     if let (Some(table_id), ClusterDdlReport::Applied { created_id, .. }) =

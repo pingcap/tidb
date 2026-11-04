@@ -171,20 +171,32 @@ impl Session {
     /// Go `executor.Compile`'s `CountStmtNode`: a compiled statement is
     /// counted under its label, an EXECUTE under its prepared statement's.
     pub(crate) fn count_stmt_node(&self, stmt: &tidb_ast::Stmt) {
+        if let Some(count) = self.stmt_node_count(stmt) {
+            count.record();
+        }
+    }
+
+    /// [`Self::count_stmt_node`]'s labels, taken before the statement is
+    /// planned; [`tidb_executor::compiler::count_stmt_node::StmtNodeCount::record`]
+    /// charges them once `Compile` succeeded.
+    pub(crate) fn stmt_node_count(
+        &self,
+        stmt: &tidb_ast::Stmt,
+    ) -> Option<tidb_executor::compiler::count_stmt_node::StmtNodeCount> {
         let counted = match stmt {
             tidb_ast::Stmt::Session(session) => match &**session {
                 tidb_ast::SessionStmt::Execute { name, .. } => {
                     match self.prepared_statements.get(name) {
                         Some(prepared) => &prepared.statement,
                         // Go `GetPreparedStmt` fails `Compile`.
-                        None => return,
+                        None => return None,
                     }
                 }
                 _ => stmt,
             },
             _ => stmt,
         };
-        tidb_executor::compiler::count_stmt_node::count_stmt_node(
+        tidb_executor::compiler::count_stmt_node::stmt_node_count(
             counted,
             &self.vars.current_db,
             self.vars.restricted_sql,
@@ -194,7 +206,7 @@ impl Session {
                     .table_info_by_name(schema, table)
                     .is_some()
             },
-        );
+        )
     }
 
     /// Go `session.BuiltinFunctionUsageInc`.

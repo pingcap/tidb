@@ -33,6 +33,8 @@ pub trait DdlSessionContext: Send + Sync {
     fn auto_increment_in_generated(&self) -> bool;
     /// Go `sessionctx.QueryString`: the statement text the job records.
     fn ddl_query(&self) -> &str;
+    /// Go `StmtCtx.IsDDLJobInQueue.Store(in_queue)`.
+    fn set_ddl_job_in_queue(&self, _in_queue: bool) {}
     /// The complete `SessionVars.SQLMode` the job records.
     fn ddl_sql_mode(&self) -> i64;
     /// The lexer's view of the SQL mode (`ANSI_QUOTES` and friends).
@@ -125,6 +127,10 @@ impl<T: DdlSessionContext + ?Sized> DdlSessionContext for std::sync::Arc<T> {
 
     fn ddl_query(&self) -> &str {
         (**self).ddl_query()
+    }
+
+    fn set_ddl_job_in_queue(&self, in_queue: bool) {
+        (**self).set_ddl_job_in_queue(in_queue);
     }
 
     fn ddl_sql_mode(&self) -> i64 {

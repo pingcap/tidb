@@ -180,6 +180,11 @@ impl<PdC: PdClient> TikvStore<PdC> {
         self.pd_http_client.clone()
     }
 
+    /// Go `KVStore.GetMinSafeTS(txnScope)`.
+    pub fn get_min_safe_ts(&self, txn_scope: &str) -> u64 {
+        self.store.get_min_safe_ts(txn_scope)
+    }
+
     /// Go `store.GetOracle().SetExternalTimestamp` with `Some`, and
     /// `GetExternalTimestamp` with `None`.
     pub fn external_timestamp(&self, value: Option<u64>) -> Result<u64, String> {

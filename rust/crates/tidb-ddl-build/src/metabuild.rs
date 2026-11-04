@@ -45,6 +45,10 @@ impl crate::session_context::DdlSessionContext for StmtContext {
         new_metabuild_context_with_sctx(self)
     }
 
+    fn set_ddl_job_in_queue(&self, in_queue: bool) {
+        StmtContext::set_ddl_job_in_queue(self, in_queue);
+    }
+
     fn enable_check_constraint(&self) -> bool {
         StmtContext::enable_check_constraint(self)
     }
@@ -172,7 +176,3 @@ impl crate::session_context::DdlSessionContext for StmtContext {
         Box::new(StmtContext::with_isolated_warnings(self))
     }
 }
-
-
-
-

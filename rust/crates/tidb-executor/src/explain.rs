@@ -3809,6 +3809,18 @@ fn prepare_task_dot(plan: &PhysicalPlan, task_tp: &str, buffer: &mut String) {
     buffer.push_str("}\n");
 }
 
+/// Go `buildExplain` for a plain EXPLAIN: the target plan is built, not run
+/// (`analyzeExec = b.build(v.TargetPlan)`), and then reported.
+fn render_built_plan(
+    ctx: &crate::StmtContext,
+    physical: &PhysicalPlan,
+    catalog: &SessionExtendedInfoSchema,
+    format: ExplainFormat,
+) -> Result<SelectMeta, DriverError> {
+    crate::driver::physical_builder::build_for_explain(physical, catalog, ctx)?;
+    render_physical_plan(ctx, ctx, physical, catalog, format, false, None, &[])
+}
+
 fn render_physical_query(
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
@@ -3824,6 +3836,7 @@ fn render_physical_query(
         crate::driver::physical_builder::prepare_execution_plan(&mut physical, catalog, ctx)?;
     } else {
         crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
+        crate::driver::physical_builder::build_for_explain(&physical, catalog, ctx)?;
     }
     let runtime = analyze
         .then(|| crate::driver::physical_builder::execute_for_explain(&mut physical, catalog, ctx))
@@ -3851,7 +3864,7 @@ pub fn explain_physical_plan(
 ) -> Result<SelectMeta, DriverError> {
     let mut physical = physical.deep_clone();
     crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
-    render_physical_plan(ctx, ctx, &physical, catalog, format, false, None, &[])
+    render_built_plan(ctx, &physical, catalog, format)
 }
 
 /// `EXPLAIN [FORMAT = f] FOR CONNECTION`: Go renders the target's retained
@@ -4030,7 +4043,7 @@ pub fn explain_insert_stmt(
         _ => None,
     };
     crate::driver::validate_insert_for_explain(insert, catalog, current_db, ctx, select_width)?;
-    render_physical_plan(ctx, ctx, &physical, catalog, format, false, None, &[])
+    render_built_plan(ctx, &physical, catalog, format)
 }
 
 /// `EXPLAIN ANALYZE <insert>`: unlike [`explain_insert_stmt`], this really
@@ -4094,7 +4107,7 @@ pub fn explain_update_stmt(
         current_db,
         ctx,
     )? {
-        return render_physical_plan(ctx, ctx, &physical, catalog, format, false, None, &[]);
+        return render_built_plan(ctx, &physical, catalog, format);
     }
     let source = crate::driver::update_source_query(update).ok_or_else(|| {
         DriverError::unsupported("UPDATE has no single-table source")
@@ -4109,7 +4122,7 @@ pub fn explain_update_stmt(
         ctx,
         &fk_spec,
     )?;
-    render_physical_plan(ctx, ctx, &physical, catalog, format, false, None, &[])
+    render_built_plan(ctx, &physical, catalog, format)
 }
 
 /// Plans a `DELETE` and reports the plan as EXPLAIN rows, executing nothing.
@@ -4127,7 +4140,7 @@ pub fn explain_delete_stmt(
         current_db,
         ctx,
     )? {
-        return render_physical_plan(ctx, ctx, &physical, catalog, format, false, None, &[]);
+        return render_built_plan(ctx, &physical, catalog, format);
     }
     let source = crate::driver::delete_source_query(delete).ok_or_else(|| {
         DriverError::unsupported("DELETE has no single-table source")
@@ -4142,7 +4155,7 @@ pub fn explain_delete_stmt(
         ctx,
         &fk_spec,
     )?;
-    render_physical_plan(ctx, ctx, &physical, catalog, format, false, None, &[])
+    render_built_plan(ctx, &physical, catalog, format)
 }
 
 /// `EXPLAIN ANALYZE <update>`: unlike [`explain_update_stmt`], this really

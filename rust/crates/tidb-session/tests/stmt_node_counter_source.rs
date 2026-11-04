@@ -41,3 +41,16 @@ fn compiled_statements_count_by_label_and_an_execute_by_its_prepared_statement()
     assert_eq!(count("Execute") - execute, 0.0);
     assert_eq!(count("Begin") - begin, 1.0);
 }
+
+/// Go counts at the end of `Compile`: a query whose planning fails is not
+/// counted.
+#[test]
+fn a_query_whose_planning_fails_is_not_counted() {
+    let mut tk = TestKit::new();
+    tk.must_exec("create table stmt_count_plan_t (a int)");
+    let select = count("Select");
+    tk.must_exec_to_err("select nosuchcol from stmt_count_plan_t");
+    assert_eq!(count("Select") - select, 0.0);
+    tk.must_query("select a from stmt_count_plan_t");
+    assert_eq!(count("Select") - select, 1.0);
+}

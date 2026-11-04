@@ -358,6 +358,10 @@ impl DomainSessions for Domain {
                 factory: self.binding_session_factory.clone(),
             });
             session.set_restricted_sql_executor(Arc::clone(&restricted_sql) as _);
+            let safe_ts_transactions = Arc::clone(&transactions);
+            session.set_min_safe_ts_provider(Arc::new(move |txn_scope| {
+                safe_ts_transactions.min_safe_ts(txn_scope)
+            }));
             session.set_snapshot_schema_provider(Arc::new(move |ts, resource_group, validate| {
                 let hold = tidb_txnkv::ACTIVE_START_TS.hold(ts);
                 let snapshot = transactions

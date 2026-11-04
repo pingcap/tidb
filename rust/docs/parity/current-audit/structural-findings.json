@@ -2,24 +2,17 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 42,
-    "open": 12,
-    "partial": 30
+    "unresolved": 39,
+    "open": 11,
+    "partial": 28
   },
   "findings": [
     {
       "id": "A01",
       "status": "partial",
       "group": "Privilege and account policy owners",
-      "finding": "Some query privilege visits are collected in the executor driver instead of the planner's `visitInfo`",
+      "finding": "A statement's privilege check plans it a second, logical-only time to collect `visitInfo` (`query_visit_info` / `dml_visit_info`, from `Session` in `identity.rs`), where Go's `optimize` checks the `visitInfo` of the one `PlanBuilder` that builds the statement before optimizing it (`CheckPrivilege`)",
       "go_owner": "`pkg/planner/core` (`visitInfo`, `CheckPrivilege`)"
-    },
-    {
-      "id": "A02",
-      "status": "partial",
-      "group": "Privilege and account policy owners",
-      "finding": "Restate (account policy lifecycle; overlaps Y01's lazy account loading)",
-      "go_owner": "`pkg/privilege/privileges`"
     },
     {
       "id": "N03",
@@ -55,7 +48,7 @@
       "id": "D05",
       "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "Restate (DDL error identity and rollback classification)",
+      "finding": "Cancellation follows Go's `convertJob2RollbackJob` for every action the worker runs; ADD COLUMNAR INDEX has no worker step here, so its `rollingbackAddColumanrIndex` is absent with it",
       "go_owner": "`pkg/ddl`"
     },
     {
@@ -98,15 +91,15 @@
       "id": "I01",
       "status": "partial",
       "group": "Runtime information-schema providers",
-      "finding": "Other dynamic memtable providers; internal transactions in TIDB_TRX",
+      "finding": "Every table Go's `buildMemTable` serves has a provider here (CLUSTER_* through their local sources) except the TiFlash system tables: TIFLASH_TABLES and TIFLASH_SEGMENTS answer no rows and TIFLASH_INDEXES has none, where Go's `tiflashSystemTableRetriever` queries each TiFlash store's system tables over HTTP",
       "go_owner": "`pkg/executor/infoschema_reader.go`"
     },
     {
       "id": "I03",
       "status": "partial",
       "group": "Runtime information-schema providers",
-      "finding": "Other cluster tables and pushed operators; memory accounting",
-      "go_owner": "`pkg/executor/memtable_reader.go`"
+      "finding": "The memory-table rows a retriever builds charge no memory tracker, where Go's `memtableRetriever` accounts them to the reader's `memTracker` in batches of 1024 (`recordMemoryConsume`)",
+      "go_owner": "`pkg/executor/infoschema_reader.go` (`memtableRetriever`)"
     },
     {
       "id": "T01",
@@ -155,7 +148,7 @@
       "id": "O09",
       "status": "partial",
       "group": "Domain and process services",
-      "finding": "The min-start-TS reporter lacks V2 recent-schema reporting and DDL-queue exclusion",
+      "finding": "`ReportMinStartTS` skips sessions waiting on a queued DDL job, but lazy cursor fetch (`execStmtResult.TryDetach`, `tidb_enable_lazy_cursor_fetch`) is not ported, so no session owns a `CursorTracker` (the `tidb-session-cursor` port is unused) and a detached cursor's start TS is not reported; and there is no InfoCache recent-schema TS (`GetAndResetRecentInfoSchemaTS`, InfoSchema V2: I04)",
       "go_owner": "`pkg/domain/infosync`"
     },
     {
@@ -176,14 +169,14 @@
       "id": "O19",
       "status": "partial",
       "group": "Domain and process services",
-      "finding": "`CountStmtNode` runs at the session's compile (text, binary EXECUTE, transaction control) under the statement's resource group, an EXECUTE's prepared label and Go's `getStmtDbLabel` rules, but a query is counted before its plan is built (Rust plans inside `open`), so a query whose planning fails is counted where Go's `Optimize` error is not",
+      "finding": "A text query is counted once its compile boundary planned it, but a binary-protocol EXECUTE counts its prepared statement before any of its plan paths (cached point get, cached SELECT, cached DML, rebuilt) binds or plans it, so an EXECUTE whose planning fails is counted where Go's `Compile` error is not",
       "go_owner": "`pkg/executor/compiler.go` (`CountStmtNode`)"
     },
     {
       "id": "F02",
       "status": "partial",
       "group": "TiFlash and MPP",
-      "finding": "ADD PARTITION TiFlash readiness and rollback",
+      "finding": "With TiFlash enabled, ADD PARTITION and REORGANIZE PARTITION of a table whose TiFlash replica is available refuse in the replica-only state instead of Go's `checkPartitionReplica` wait (PD stores' TiFlash engine labels and each added partition's region peers), its rollback when that check errs, and `UpdateTiFlashProgressCache` for the added partitions",
       "go_owner": "`pkg/ddl/partition.go`"
     },
     {
@@ -250,17 +243,10 @@
       "go_owner": "`pkg/infoschema`"
     },
     {
-      "id": "S03",
-      "status": "partial",
-      "group": "Expanded subsystem ownership review",
-      "finding": "Session-state migration of DDL and hypothetical state",
-      "go_owner": "`pkg/sessionctx/sessionstates`"
-    },
-    {
       "id": "S04",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "SafeTS topology; the standalone fallback path",
+      "finding": "`tidb_read_staleness` reads at Go's `CalAppropriateTime` against the stores' min SafeTS, but `TIDB_BOUNDED_STALENESS` still evaluates without it: no statement's evaluation context supplies `GetStmtMinSafeTime` (`Columns::bounded_staleness_safe_time` has no production override), so it always falls back to its lower bound",
       "go_owner": "`pkg/sessiontxn/staleread`"
     },
     {
@@ -291,13 +277,6 @@
       "group": "Expanded subsystem ownership review",
       "finding": "TopSQL: plan-digest attribution, DML write/commit attribution, CPU/RU profiling, reporter lifetime",
       "go_owner": "`pkg/util/topsql`"
-    },
-    {
-      "id": "X03",
-      "status": "open",
-      "group": "Expanded subsystem ownership review",
-      "finding": "A plain EXPLAIN prepares the plan but builds no target executor, where Go `buildExplain` builds it (`explainExec.analyzeExec = b.build(v.TargetPlan)`): the builder's side effects (index-merge and table-lookup telemetry) do not happen. Blocked on memory tables: a Rust memtable reader needs its retrieved rows at build (`MemTableRetrievalNeeded`), where Go's retriever reads them at `Next`",
-      "go_owner": "`pkg/executor/builder.go` (`buildExplain`)"
     },
     {
       "id": "Y01",

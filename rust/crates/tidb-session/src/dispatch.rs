@@ -1352,8 +1352,13 @@ impl Session {
     ) -> Result<crate::OpenedStatement, DriverError> {
         self.begin_statement_execution(sql)?;
         self.begin_text_statement_boundary(&stmt);
+        // Go `Compile`'s `CountStmtNode`, once the query is planned.
+        let count = self.stmt_node_count(&stmt);
         let result =
             self.prepare_parsed_statement_with_optional_physical_plan(sql, stmt, None, None, None);
+        if let (Ok(_), Some(count)) = (&result, count) {
+            count.record();
+        }
         self.return_opened_record_set(result)
     }
 
@@ -2448,21 +2453,29 @@ impl Session {
         if seconds == 0 {
             return self.external_read_ts();
         }
-        // This store has no published SafeTS; Go's zero SafeTS selects the lower bound.
         let now = self.eval_value(&tidb_ast::Expr::Func {
             name: "NOW".into(),
             args: vec![tidb_ast::Expr::Int("6".into())],
             origin_position: 0,
         })?;
-        let ts = self.calculate_as_of_ts_expr(&tidb_ast::Expr::String(
+        let now_ts = self.calculate_as_of_ts_expr(&tidb_ast::Expr::String(
             now.sql_string().unwrap_or_default(),
         ))?;
-        // Go `oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(readStaleness))`.
+        // Go `CalculateTsWithReadStaleness`: `now + readStaleness`, clamped
+        // by `CalAppropriateTime` between it and `now` at the stores' min
+        // SafeTS (`GetStmtMinSafeTime`; zero without a store). A read above
+        // the SafeTS is validated when its snapshot opens
+        // (`ValidateSnapshotReadTS`).
         let staleness_ms = i64::try_from(seconds.unsigned_abs().saturating_mul(1000)).unwrap_or(i64::MAX);
-        Ok(Some(tikv_client::oracle::compose_timestamp(
-            tikv_client::oracle::extract_physical(ts).saturating_sub(staleness_ms).max(0),
-            0,
-        )))
+        let now_physical = tikv_client::oracle::extract_physical(now_ts);
+        let min_physical = now_physical.saturating_sub(staleness_ms).max(0);
+        let min_safe_ts = self
+            .min_safe_ts_provider
+            .as_ref()
+            .map_or(0, |provider| provider(&tidb_config::tikvcfg::get_txn_scope_from_config()));
+        let safe_physical = tikv_client::oracle::extract_physical(min_safe_ts);
+        let read_physical = safe_physical.clamp(min_physical, now_physical);
+        Ok(Some(tikv_client::oracle::compose_timestamp(read_physical, 0)))
     }
 
     fn refuse_pinned_historical_read(&mut self, stmt: &Stmt) -> Result<(), DriverError> {

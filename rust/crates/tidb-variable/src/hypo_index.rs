@@ -89,6 +89,17 @@ impl HypoIndexes {
         indexes
     }
 
+    /// The hypothetical index a plan names by its id (see [`Self::add`]):
+    /// Go's plan carries the `*IndexInfo` itself.
+    #[must_use]
+    pub fn index_by_id(&self, id: i64) -> Option<&IndexInfo> {
+        self.by_table
+            .values()
+            .flat_map(BTreeMap::values)
+            .flat_map(BTreeMap::values)
+            .find(|index| index.id == id)
+    }
+
     /// Go `addHypoIndexIntoCtx`.
     ///
     /// Go leaves a hypothetical index's id 0 and every plan carries the

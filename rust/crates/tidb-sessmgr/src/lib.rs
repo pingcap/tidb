@@ -880,6 +880,7 @@ impl ProcessRegistry {
                 brief_binary_plan: plan_info.brief_binary_plan,
                 table_ids: plan_info.table_ids,
                 index_names: plan_info.index_names,
+                is_ddl_job_in_queue: plan_info.is_ddl_job_in_queue,
                 stats_info: plan_info.stats_info,
                 max_execution_time: if running {
                     plan_info.max_execution_time
@@ -1137,4 +1138,30 @@ pub fn normalize_statement_digest(sql: &str) -> (String, tidb_parser::Digest) {
     #[cfg(any(test, feature = "test-util"))]
     STATEMENT_DIGEST_CALLS.with(|count| count.set(count.get() + 1));
     tidb_parser::normalize_digest(sql)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go `ProcessInfo.StmtCtx.IsDDLJobInQueue`: the process list shows the
+    /// flag the session's statement context sets on its shared cell.
+    #[test]
+    fn the_process_list_shows_a_queued_ddl_job() {
+        let registry = ProcessRegistry::default();
+        let guard = registry.register(7, "root".to_owned(), "%".to_owned(), String::new(), None);
+        let plan = Arc::new(Mutex::new(tidb_stmtctx::ProcessPlanInfo::default()));
+        guard.set_process_plan_info(Arc::clone(&plan));
+        let queued = || {
+            SessionManager::show_process_list(&registry)
+                .iter()
+                .find(|info| info.id == 7)
+                .expect("registered")
+                .is_ddl_job_in_queue
+        };
+        assert!(!queued());
+        plan.lock().unwrap().is_ddl_job_in_queue = true;
+        assert!(queued());
+        drop(guard);
+    }
 }

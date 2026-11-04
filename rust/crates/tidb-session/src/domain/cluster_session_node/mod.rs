@@ -1655,8 +1655,9 @@ impl<'s> ClusterServerSession<'s> {
         self.session.on_stmt_start(stmt);
         self.begin_statement();
         let compiled = self.compile(sql, stmt);
-        if compiled.is_ok() {
-            // Go `Compile`'s `CountStmtNode` once the plan is built.
+        // Go `Compile`'s `CountStmtNode` once the plan is built; a query is
+        // planned when it is opened, which counts it.
+        if matches!(&compiled, Ok(compiled) if !matches!(compiled, CompiledStatement::Query)) {
             self.session.count_stmt_node(stmt);
         }
         let compiled = match compiled {

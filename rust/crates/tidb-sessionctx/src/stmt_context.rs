@@ -4497,6 +4497,16 @@ impl StmtContext {
             .map(|notify| notify as &(dyn std::any::Any + Send + Sync))
     }
 
+    /// Go `StmtCtx.IsDDLJobInQueue.Store(in_queue)`, which the process list
+    /// shows the min-start-TS reporter.
+    pub fn set_ddl_job_in_queue(&self, in_queue: bool) {
+        if let Some(sink) = &self.process_plan_info {
+            sink.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_ddl_job_in_queue = in_queue;
+        }
+    }
+
     /// Publishes the fields derived from the retained physical tree before
     /// executor construction.
     pub fn publish_process_plan_info(&self, plan: ProcessPlanInfo) {
@@ -6647,6 +6657,18 @@ fn sequence_error(error: tidb_terror::TerrorError) -> tidb_exprctx::EvalError {
 
 #[cfg(test)]
 mod tests {
+    /// Go `StmtCtx.IsDDLJobInQueue`: a DDL marking its job queued reaches the
+    /// cell the process list reads.
+    #[test]
+    fn a_queued_ddl_job_reaches_the_process_list_cell() {
+        let cell = std::sync::Arc::new(std::sync::Mutex::new(tidb_stmtctx::ProcessPlanInfo::default()));
+        let ctx = super::StmtContext::for_query().with_process_plan_info_sink(std::sync::Arc::clone(&cell));
+        ctx.set_ddl_job_in_queue(true);
+        assert!(cell.lock().unwrap().is_ddl_job_in_queue);
+        ctx.set_ddl_job_in_queue(false);
+        assert!(!cell.lock().unwrap().is_ddl_job_in_queue);
+    }
+
     /// Go `initStats`' `RecordUsedInfo` stores a source's table entry like
     /// `sync.Map.Store`: a later source over the same physical table
     /// replaces it, and `recordUsedItemStatsStatus` adds item statuses to

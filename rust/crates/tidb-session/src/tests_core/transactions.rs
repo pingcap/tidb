@@ -542,6 +542,28 @@ fn read_staleness_reads_the_present_and_a_snapshot_pin_is_refused() {
     );
 }
 
+/// Go `CalculateTsWithReadStaleness` clamps `now + staleness` by the stores'
+/// min SafeTS (`CalAppropriateTime`): a SafeTS past now (a store reporting
+/// none, client-go's MaxUint64) reads the present, a zero SafeTS reads at
+/// the staleness bound, where the table just created does not exist yet.
+#[test]
+fn read_staleness_is_clamped_by_the_stores_min_safe_ts() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT PRIMARY KEY, b INT)").unwrap();
+    session.run("INSERT INTO t VALUES (1, 10)").unwrap();
+    session.run("SET @@tidb_read_staleness = -1").unwrap();
+    session.set_min_safe_ts_provider(std::sync::Arc::new(|_| u64::MAX));
+    assert_eq!(
+        crate::tests_support::row_text(session.run("SELECT b FROM t")),
+        vec![vec!["10"]]
+    );
+    session.set_min_safe_ts_provider(std::sync::Arc::new(|_| 0));
+    assert_eq!(
+        crate::tests_support::err_code(session.run("SELECT b FROM t")),
+        1146
+    );
+}
+
 /// `AS OF TIMESTAMP` on a table reference reads the store's history --
 /// the corpus recipe (`executor/stale_txn`, `TestAsOfTimestampSupportTSO`):
 /// the last commit's TSO comes out of `@@tidb_last_txn_info`, reading AS OF

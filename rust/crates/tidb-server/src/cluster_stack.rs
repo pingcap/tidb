@@ -600,10 +600,12 @@ pub fn cluster_session_stack(
         runner
             .start_min_start_ts_reporter(move || {
                 let mut active = tidb_txnkv::ACTIVE_START_TS.snapshot();
+                // Go `ReportMinStartTS` ignores a session waiting on its
+                // queued DDL job.
                 active.extend(
-                    processes
-                        .snapshot()
+                    tidb_sessmgr::processinfo::SessionManager::show_process_list(&processes)
                         .into_iter()
+                        .filter(|process| !process.is_ddl_job_in_queue)
                         .map(|process| process.cur_txn_start_ts),
                 );
                 let internal = processes.internal_session_start_ts(|id| tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(id));

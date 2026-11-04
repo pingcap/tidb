@@ -42,30 +42,67 @@ pub fn count_stmt_node(
     resource_group: &str,
     table_exists: &dyn Fn(&str, &str) -> bool,
 ) {
-    if in_restricted_sql {
-        return;
+    if let Some(count) = stmt_node_count(stmt, current_db, in_restricted_sql, resource_group, table_exists) {
+        count.record();
     }
-    let type_label = stmt.label();
+}
+
+/// The labels Go's `CountStmtNode` charges, taken from the statement before
+/// it is planned and recorded once `Compile` succeeds.
+#[derive(Debug)]
+pub struct StmtNodeCount {
+    type_label: &'static str,
+    resource_group: String,
+    /// Go `getStmtDbLabel`, when `status.record-qps-by-db` or
+    /// `status.record-db-label` asks for it.
+    db_labels: Option<BTreeSet<String>>,
+}
+
+/// [`count_stmt_node`]'s labels, or `None` for internal SQL.
+pub fn stmt_node_count(
+    stmt: &Stmt,
+    current_db: &str,
+    in_restricted_sql: bool,
+    resource_group: &str,
+    table_exists: &dyn Fn(&str, &str) -> bool,
+) -> Option<StmtNodeCount> {
+    if in_restricted_sql {
+        return None;
+    }
     let status = &tidb_config::config_tree::config::get_global_config().status;
-    if status.record_qps_by_db || status.record_db_label {
-        let db_labels = get_stmt_db_label(stmt, current_db, table_exists);
-        if status.record_qps_by_db {
-            for db_label in &db_labels {
-                tidb_metrics::executor::DB_STATEMENT_TOTAL
-                    .with_label_values(&[db_label.as_str(), type_label])
-                    .inc();
+    Some(StmtNodeCount {
+        type_label: stmt.label(),
+        resource_group: resource_group.to_owned(),
+        db_labels: (status.record_qps_by_db || status.record_db_label)
+            .then(|| get_stmt_db_label(stmt, current_db, table_exists)),
+    })
+}
+
+impl StmtNodeCount {
+    /// Charges Go `CountStmtNode`'s counters.
+    pub fn record(self) {
+        let record_qps_by_db = tidb_config::config_tree::config::get_global_config().status.record_qps_by_db;
+        match &self.db_labels {
+            Some(db_labels) if record_qps_by_db => {
+                for db_label in db_labels {
+                    tidb_metrics::executor::DB_STATEMENT_TOTAL
+                        .with_label_values(&[db_label.as_str(), self.type_label])
+                        .inc();
+                }
             }
-        } else {
-            for db_label in &db_labels {
+            Some(db_labels) => {
+                for db_label in db_labels {
+                    tidb_metrics::executor::STATEMENT_TOTAL
+                        .with_label_values(&[db_label.as_str(), &self.resource_group, self.type_label])
+                        .inc();
+                }
+            }
+            None => {
                 tidb_metrics::executor::STATEMENT_TOTAL
-                    .with_label_values(&[db_label.as_str(), resource_group, type_label])
+                    .with_label_values(&["", &self.resource_group, self.type_label])
                     .inc();
             }
         }
-    } else {
-        tidb_metrics::executor::STATEMENT_TOTAL
-            .with_label_values(&["", resource_group, type_label])
-            .inc();
     }
 }
 

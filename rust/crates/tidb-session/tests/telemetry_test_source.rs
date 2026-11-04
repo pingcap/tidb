@@ -418,7 +418,6 @@ fn global_memory_control_usage() {
 /// Go's `buildExplain` builds the target executor, which records the index
 /// merge.
 #[test]
-#[ignore = "a plain EXPLAIN builds no target executor here (register row X03)"]
 fn index_merge_usage() {
     let mut tk = TestKit::new();
     tk.must_exec("create table t1(c1 int, c2 int, index idx1(c1), index idx2(c2))");

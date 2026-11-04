@@ -197,6 +197,11 @@ pub trait ClusterTransactions: Send + Sync {
     fn external_timestamp(&self, _value: Option<u64>) -> Result<u64, String> {
         Err("external timestamp is unavailable from this storage owner".into())
     }
+    /// Go `kv.Storage.GetMinSafeTS(txnScope)`; zero without a store (Go's
+    /// `GetStmtMinSafeTime` over a nil store).
+    fn min_safe_ts(&self, _txn_scope: &str) -> u64 {
+        0
+    }
     /// PD region count and approximate storage-key count for one physical
     /// table's record range. Embedded stores have no PD HTTP authority.
     fn record_region_stats(
@@ -1350,6 +1355,10 @@ where
 
     fn external_timestamp(&self, value: Option<u64>) -> Result<u64, String> {
         self.opener.store().external_timestamp(value)
+    }
+
+    fn min_safe_ts(&self, txn_scope: &str) -> u64 {
+        self.opener.store().get_min_safe_ts(txn_scope)
     }
 
     fn record_region_stats(

@@ -103,6 +103,9 @@ pub struct ProcessPlanInfo {
     pub table_ids: Vec<i64>,
     /// Go `StmtCtx.IndexNames`.
     pub index_names: Vec<String>,
+    /// Go `StmtCtx.IsDDLJobInQueue`: the statement's DDL job is queued and
+    /// the session waits for it.
+    pub is_ddl_job_in_queue: bool,
     /// Go `physicalop.GetStatsInfo(ProcessInfo.Plan)`.
     pub stats_info: std::collections::HashMap<String, u64>,
     /// Go `ProcessInfo.MaxExecutionTime` as `ExecStmt.Exec` publishes it:
