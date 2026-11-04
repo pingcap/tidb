@@ -232,9 +232,6 @@ func InitMViewSession(
 	mviewInfo *model.MaterializedViewInfo,
 	currentDB, resourceGroup string,
 ) (func(), error) {
-	if mviewInfo == nil {
-		return nil, errors.New("materialized view: invalid materialized view metadata")
-	}
 	timezone := mviewInfo.DefinitionTimeZone.Clone()
 	loc, err := timezone.GetLocation()
 	if err != nil {
