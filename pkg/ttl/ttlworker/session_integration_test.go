@@ -475,6 +475,8 @@ func TestTTLJobRUAttribution(t *testing.T) {
 	se, closeSe := sessionFactory(t, dom)()
 	defer closeSe()
 	vars := se.GetSessionVars()
+	// SQL observation must work even when internal session logs are redacted.
+	vars.EnableRedactLog = vardef.On
 	ctx := context.Background()
 	manager := ttlworker.NewJobManager("ttl-ru-owner", nil, store, nil, nil)
 	manager.InfoSchemaCache().Tables[tbl.ID] = tbl
@@ -485,7 +487,8 @@ func TestTTLJobRUAttribution(t *testing.T) {
 		if stmt.Ctx.GetSessionVars() != vars {
 			return
 		}
-		sql := stmt.GetTextToLog(false)
+		// Classify the original SQL independently of log redaction.
+		sql := stmt.Text()
 		if strings.HasPrefix(sql, "SELECT LOW_PRIORITY ") && strings.HasSuffix(sql, " FROM mysql.tidb_ttl_table_status") {
 			require.Empty(t, vars.TTLJobID, sql)
 			globalRefreshes++
