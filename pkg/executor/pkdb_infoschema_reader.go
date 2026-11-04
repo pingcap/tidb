@@ -97,7 +97,9 @@ func buildLogReplStatusGlobalRow(status *pdpb.LogReplicationStatus) []types.Datu
 		}
 	}
 
-	row[12].SetFloat32(status.InitializingProgress) // INITIALIZING_PROGRESS
+	if status.GetState() == pdpb.LogReplication_INITIALIZING.String() || status.GetState() == pdpb.LogReplication_RESUMING.String() {
+		row[12].SetFloat32(status.InitializingProgress) // PROGRESS
+	}
 	if status.GetLearnerCount() > 0 {
 		row[14].SetUint64(uint64(status.GetLearnerCount())) // LEARNER_COUNT target
 	}
@@ -343,7 +345,9 @@ func buildLogReplStatusLocalRow(localStatus *pdpb.LogReplicationLocalStatus) ([]
 		failoverEnum = newEnum
 	}
 	row[17].SetMysqlEnum(failoverEnum, mysql.DefaultCollationName) // FAILOVER_READY
-	row[18].SetFloat32(status.GetInitializingProgress())           // INITIALIZING_PROGRESS
+	if status.GetState() == pdpb.LogReplication_INITIALIZING.String() || status.GetState() == pdpb.LogReplication_RESUMING.String() {
+		row[18].SetFloat32(status.GetInitializingProgress()) // PROGRESS
+	}
 	if status.GetLearnerCount() > 0 {
 		row[19].SetUint64(uint64(status.GetLearnerCount())) // LEARNER_COUNT target
 	}

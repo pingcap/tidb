@@ -35,7 +35,7 @@ func TestLogReplicationInfoSchemaDefaultStatus(t *testing.T) {
 			CHECKPOINT_LAG,
 			SWITCHOVER_READY,
 			FAILOVER_READY,
-			INITIALIZING_PROGRESS
+			PROGRESS
 		from information_schema.LR_STATUS_LOCAL`).Check(testkit.Rows(
 		"STANDARD 0 <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil>",
 	))

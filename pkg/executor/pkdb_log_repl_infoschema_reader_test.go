@@ -67,7 +67,7 @@ func TestBuildLogReplStatusLocalRow(t *testing.T) {
 		requireNull(t, row, 15) // CHECKPOINT_LAG
 		requireNull(t, row, 16) // SWITCHOVER_READY
 		requireNull(t, row, 17) // FAILOVER_READY
-		requireNull(t, row, 18) // INITIALIZING_PROGRESS
+		requireNull(t, row, 18) // PROGRESS
 	})
 
 	t.Run("standby full status", func(t *testing.T) {
@@ -115,7 +115,7 @@ func TestBuildLogReplStatusLocalRow(t *testing.T) {
 		require.Equal(t, uint64(3), row[15].GetUint64())
 		requireEnum(t, row, 16, "YES")
 		requireEnum(t, row, 17, "NO")
-		require.Equal(t, float32(88.5), row[18].GetFloat32())
+		requireNull(t, row, 18) // PROGRESS
 	})
 
 	t.Run("standby empty ready status", func(t *testing.T) {
@@ -249,4 +249,26 @@ func TestLearnerCountStatusRows(t *testing.T) {
 	primary, err := buildLogReplStatusLocalRow(&pdpb.LogReplicationLocalStatus{Status: &pdpb.LogReplicationStatus{ReplicaClusterId: 1}})
 	require.NoError(t, err)
 	require.True(t, primary[19].IsNull())
+}
+
+func TestLogReplicationProgressByState(t *testing.T) {
+	for _, state := range []pdpb.LogReplication_State{
+		pdpb.LogReplication_UNKNOWN, pdpb.LogReplication_INITIALIZING,
+		pdpb.LogReplication_RESUMING, pdpb.LogReplication_REPLICATING,
+		pdpb.LogReplication_PAUSED, pdpb.LogReplication_SUSPENDED, pdpb.LogReplication_DROPPED,
+	} {
+		t.Run(state.String(), func(t *testing.T) {
+			status := &pdpb.LogReplicationStatus{SourceClusterId: 1, State: state.String(), InitializingProgress: 42.5}
+			global := buildLogReplStatusGlobalRow(status)
+			local, err := buildLogReplStatusLocalRow(&pdpb.LogReplicationLocalStatus{Status: status})
+			require.NoError(t, err)
+			for _, value := range []types.Datum{global[12], local[18]} {
+				if state == pdpb.LogReplication_INITIALIZING || state == pdpb.LogReplication_RESUMING {
+					require.Equal(t, float32(42.5), value.GetFloat32())
+				} else {
+					require.True(t, value.IsNull())
+				}
+			}
+		})
+	}
 }
