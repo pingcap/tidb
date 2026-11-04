@@ -432,11 +432,6 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 	if err := CheckMViewReadable(ctx.GetSessionVars(), tbl, tblAlias.O); err != nil {
 		return nil
 	}
-	if selStmt.LockInfo != nil && selStmt.LockInfo.LockType != ast.SelectLockNone {
-		if CheckMViewUpdatable(ctx.GetSessionVars(), tbl, tblAlias.O, "SELECT") != nil {
-			return nil
-		}
-	}
 	// Skip the optimization with partition selection.
 	// TODO: Add test and remove this!
 	if len(tblName.PartitionNames) > 0 {
@@ -549,11 +544,6 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	tbl := tnW.TableInfo
 	if err := CheckMViewReadable(ctx.GetSessionVars(), tbl, tblAlias.O); err != nil {
 		return nil
-	}
-	if selStmt.LockInfo != nil && selStmt.LockInfo.LockType != ast.SelectLockNone {
-		if CheckMViewUpdatable(ctx.GetSessionVars(), tbl, tblAlias.O, "SELECT") != nil {
-			return nil
-		}
 	}
 
 	var pkColOffset int

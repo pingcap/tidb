@@ -105,7 +105,37 @@ func TestMViewSelectLock(t *testing.T) {
 				tk.MustGetErrCode(joinSQL+" for update", mysql.ErrNonUpdatableTable)
 				tk.MustGetErrCode(joinSQL+" for update of m", mysql.ErrNonUpdatableTable)
 				tk.MustGetErrCode(joinSQL+" for update of n, m", mysql.ErrNonUpdatableTable)
+				tk.MustGetErrCode(joinSQL+" for update of m, missing", mysql.ErrUnknownTable)
 				tk.MustQuery(joinSQL + " for update of n").Sort().Check(testkit.Rows("1", "2"))
+			})
+
+			t.Run("query_block_lock_targets", func(t *testing.T) {
+				tk := testkit.NewTestKitWithSession(t, store, tk.Session())
+				tk.MustExec("begin pessimistic")
+				defer tk.MustExec("rollback")
+				for _, tc := range []struct {
+					name    string
+					sql     string
+					wantErr bool
+				}{
+					{name: "derived", sql: "select n.a from t_lock n join (select a from %s) d on n.a = d.a for update"},
+					{name: "derived_of_n", sql: "select n.a from t_lock n join (select a from %s) d on n.a = d.a for update of n"},
+					{name: "cte", sql: "with d as (select a from %s) select n.a from t_lock n join d on n.a = d.a for update"},
+					{name: "derived_only", sql: "select d.a from (select a from %s) d for update"},
+					{name: "derived_inner_lock", sql: "select n.a from t_lock n join (select a from %s for update) d on n.a = d.a", wantErr: true},
+					{name: "derived_inner_lock_outer_of_n", sql: "select n.a from t_lock n join (select a from %s for update) d on n.a = d.a for update of n", wantErr: true},
+					{name: "cte_inner_lock", sql: "with d as (select a from %s for update) select n.a from t_lock n join d on n.a = d.a for update of n", wantErr: true},
+				} {
+					t.Run(tc.name, func(t *testing.T) {
+						tk := testkit.NewTestKitWithSession(t, store, tk.Session())
+						sql := fmt.Sprintf(tc.sql, target.table)
+						if tc.wantErr {
+							tk.MustGetErrCode(sql, mysql.ErrNonUpdatableTable)
+						} else {
+							tk.MustQuery(sql).Sort().Check(testkit.Rows("1", "2"))
+						}
+					})
+				}
 			})
 
 			t.Run("shared_lock_promotion", func(t *testing.T) {
