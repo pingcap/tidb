@@ -90,7 +90,8 @@ func TestMDLInitializationPolicies(t *testing.T) {
 					(state == "missing" && initializer.name == "normal")
 				vardef.SetEnableMDL(!expectedEnabled)
 				require.NoError(t, initializer.init(store))
-				require.Equal(t, expectedEnabled, vardef.IsMDLEnabled())
+				// Next-gen always reports MDL enabled, independently of persisted metadata.
+				require.Equal(t, expectedEnabled || kerneltype.IsNextGen(), vardef.IsMDLEnabled())
 				txn, err := store.Begin()
 				require.NoError(t, err)
 				enabled, missing, err := meta.NewMutator(txn).GetMetadataLock()
