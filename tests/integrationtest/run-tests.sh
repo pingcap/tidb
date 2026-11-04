@@ -78,6 +78,9 @@ function help_message()
                     Run all tests if this option is not provided.
 
     -P <port>: Use tidb-server running on <port> for testing.
+               Before running, execute SET GLOBAL tidb_redact_log = OFF; on that server.
+               This persists the global setting; -P does not apply init.sql.
+               See README.md for external-server and reused-store setup.
 
 "
 }
