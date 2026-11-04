@@ -448,6 +448,14 @@ func TestKillDuringIndexHashJoinProbe(t *testing.T) {
 	for _, q := range queries {
 		tk.MustHavePlan(q, "IndexHashJoin")
 	}
+	// Hot key, semi join that keeps the outer order: the outer scan keeps order
+	// and no sort is added above the join.
+	ordered := hot("select /*+ INL_HASH_JOIN(i@sel_2) */ o.id from %s o where exists (select 1 from %s i where i.k = o.k and i.id <> o.v) order by o.id")
+	tk.MustHavePlan(ordered, "IndexHashJoin")
+	tk.MustNotHavePlan(ordered, "Sort")
+	tk.MustNotHavePlan(ordered, "TopN")
+	tk.MustQuery("explain format = 'brief' " + ordered).CheckContain("keep order:true")
+	queries = append(queries, ordered)
 
 	fp := "github.com/pingcap/tidb/pkg/executor/join/killedDuringIndexHashJoinProbe"
 	require.NoError(t, failpoint.Enable(fp, "return(true)"))
