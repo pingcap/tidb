@@ -2212,7 +2212,7 @@ func TestAutoRandomAllocatorMigration(t *testing.T) {
 	readIDs := func(t *testing.T, tk *testkit.TestKit) model.AutoIDGroup {
 		t.Helper()
 		tbl := external.GetTableByName(t, tk, "test", "t")
-		db, ok := domain.GetDomain(tk.Session()).InfoSchema().SchemaByName(ast.NewCIStr("test"))
+		db, ok := domain.GetDomain(tk.Session()).InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
 		require.True(t, ok)
 		txn, err := store.Begin()
 		require.NoError(t, err)
@@ -2381,7 +2381,7 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 		tk.MustExec("insert into t(payload) values ('old')")
 	}
 	tbl := external.GetTableByName(t, tk, "auto_inc_force", "t")
-	db, ok := domain.GetDomain(tk.Session()).InfoSchema().SchemaByName(ast.NewCIStr("auto_inc_force"))
+	db, ok := domain.GetDomain(tk.Session()).InfoSchema().SchemaByName(pmodel.NewCIStr("auto_inc_force"))
 	require.True(t, ok)
 	txn, err := store.Begin()
 	require.NoError(t, err)
