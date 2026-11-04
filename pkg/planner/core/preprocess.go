@@ -1963,7 +1963,7 @@ func (p *preprocessor) popLockSelectCtx() {
 // checkLockClauseTables validates/attaches tables referenced by SELECT ... FOR UPDATE/LOCK IN SHARE MODE.
 // It binds lock targets to the tables in FROM and keeps backward compatibility by accepting
 // base-table names even when aliases exist, with a warning to guide users to explicit aliases.
-// After binding, it rejects MV-related lock targets within the current SELECT.
+// It rejects MV-related lock targets within the current SELECT.
 func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, lockCtx *lockSelectCtx) {
 	if stmt.LockInfo == nil || stmt.LockInfo.LockType == ast.SelectLockNone {
 		return
@@ -1971,6 +1971,25 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, lockCtx *lock
 	if lockCtx == nil {
 		emptyCtx := newLockSelectCtx(nil)
 		lockCtx = &emptyCtx
+	}
+	checkMViewLockTarget := func(target *ast.TableName) error {
+		tNameW := p.resolveCtx.GetTableName(target)
+		if tNameW == nil {
+			// CTE references have no resolved table metadata.
+			return nil
+		}
+		return CheckMViewUpdatable(p.sctx.GetSessionVars(), tNameW.TableInfo, target.Name.O, "SELECT")
+	}
+	if len(stmt.LockInfo.Tables) == 0 {
+		// Derived queries and CTE bodies have their own SELECT contexts, so their
+		// underlying tables must not become lock targets of this SELECT.
+		for _, ref := range lockCtx.orderedRefs {
+			if err := checkMViewLockTarget(ref.table); err != nil {
+				p.err = err
+				return
+			}
+		}
+		return
 	}
 	warnedCompatRefs := make(map[string]struct{})
 
@@ -2052,22 +2071,8 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, lockCtx *lock
 		return
 	}
 
-	lockTargets := stmt.LockInfo.Tables
-	if len(lockTargets) == 0 {
-		// Derived queries and CTE bodies have their own SELECT contexts, so their
-		// underlying tables must not become lock targets of this SELECT.
-		lockTargets = make([]*ast.TableName, 0, len(lockCtx.orderedRefs))
-		for _, ref := range lockCtx.orderedRefs {
-			lockTargets = append(lockTargets, ref.table)
-		}
-	}
-	for _, target := range lockTargets {
-		tNameW := p.resolveCtx.GetTableName(target)
-		if tNameW == nil {
-			// CTE references have no resolved table metadata.
-			continue
-		}
-		if err := CheckMViewUpdatable(p.sctx.GetSessionVars(), tNameW.TableInfo, target.Name.O, "SELECT"); err != nil {
+	for _, target := range stmt.LockInfo.Tables {
+		if err := checkMViewLockTarget(target); err != nil {
 			p.err = err
 			return
 		}
