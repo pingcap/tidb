@@ -1953,8 +1953,6 @@ func TestDivPrecisionIncrement(t *testing.T) {
 
 	tk.MustExec("set @@div_precision_increment = 0")
 	tk.MustQuery("select @@div_precision_increment;").Check(testkit.Rows("0"))
-	require.Zero(t, tk.Session().GetSessionVars().GetDivPrecisionIncrement())
-	tk.MustQuery("select avg(b) from (select 2 b union all select 4) t").Check(testkit.Rows("3"))
 
 	tk.MustExec("set @@div_precision_increment = 30")
 	tk.MustQuery("select @@div_precision_increment;").Check(testkit.Rows("30"))
@@ -1966,12 +1964,7 @@ func TestDivPrecisionIncrement(t *testing.T) {
 	tk.MustExec("set @@div_precision_increment = 31")
 	tk.MustQuery("select @@div_precision_increment;").Check(testkit.Rows("30"))
 
-	// New sessions must inherit a global zero as the runtime precision as well.
-	tk.MustExec("set global div_precision_increment = 0")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustQuery("select @@div_precision_increment").Check(testkit.Rows("0"))
-	require.Zero(t, tk2.Session().GetSessionVars().GetDivPrecisionIncrement())
-	tk2.MustQuery("select avg(b) from (select 2 b union all select 4) t").Check(testkit.Rows("3"))
+	// Test set global.
 	tk.MustExec("set global div_precision_increment = 4")
 }
 

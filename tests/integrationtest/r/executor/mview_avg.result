@@ -154,28 +154,28 @@ create materialized view mv_avg_zero (a, av, s, c, n) refresh fast as
 select a, avg(b), sum(b), count(b), count(*) from t_mv_avg_zero group by a;
 select column_type from information_schema.columns where table_schema='test' and table_name='mv_avg_zero' and column_name='av';
 column_type
-decimal(11,0)
+decimal(15,4)
 select * from mv_avg_zero;
 a	av	s	c	n
-1	3	6	2	2
+1	3.0000	6	2	2
 set div_precision_increment = 30;
 insert into t_mv_avg_zero values (1, 6);
 refresh materialized view mv_avg_zero fast;
 select * from mv_avg_zero;
 a	av	s	c	n
-1	4	12	3	3
+1	4.0000	12	3	3
 refresh materialized view mv_avg_zero complete in place;
 select * from mv_avg_zero;
 a	av	s	c	n
-1	4	12	3	3
+1	4.0000	12	3	3
 refresh materialized view mv_avg_zero complete out of place;
 select * from mv_avg_zero;
 a	av	s	c	n
-1	4	12	3	3
+1	4.0000	12	3	3
 refresh materialized view mv_avg_zero complete delta apply;
 select * from mv_avg_zero;
 a	av	s	c	n
-1	4	12	3	3
+1	4.0000	12	3	3
 drop materialized view mv_avg_zero;
 drop materialized view log on t_mv_avg_zero;
 drop table t_mv_avg_zero;
@@ -193,7 +193,7 @@ a	av	s	c	n
 1	1.666666666666666666666666666667	5.000000000000000000000000000000	3	3
 2	NULL	NULL	0	1
 3	99999999999999999999999999999999999.123456789012345678901234567890	99999999999999999999999999999999999.123456789012345678901234567890	1	1
-set div_precision_increment = 0;
+set div_precision_increment = 8;
 insert into t_mv_avg_high values (6, 1, 1);
 refresh materialized view mv_avg_high fast;
 select * from mv_avg_high order by a;

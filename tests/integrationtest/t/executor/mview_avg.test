@@ -126,7 +126,7 @@ drop materialized view mv_avg_case;
 drop materialized view log on t_mv_avg_case;
 drop table t_mv_avg_case;
 
-# Zero must be captured as the runtime precision, rather than the default four.
+# Preserve legacy SET-zero behavior: MV snapshots the effective runtime default.
 set div_precision_increment = 0;
 create table t_mv_avg_zero (a int not null, b int);
 insert into t_mv_avg_zero values (1, 2), (1, 4);
@@ -158,7 +158,7 @@ create materialized view mv_avg_high (a, av, s, c, n) refresh fast as
 select a, avg(b), sum(b), count(b), count(*) from t_mv_avg_high group by a;
 select column_type from information_schema.columns where table_schema='test' and table_name='mv_avg_high' and column_name='av';
 select * from mv_avg_high order by a;
-set div_precision_increment = 0;
+set div_precision_increment = 8;
 insert into t_mv_avg_high values (6, 1, 1);
 refresh materialized view mv_avg_high fast;
 select * from mv_avg_high order by a;

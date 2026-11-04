@@ -4178,9 +4178,8 @@ var defaultSysVars = []*SysVar{
 		}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.DivPrecisionIncrement, Value: strconv.Itoa(vardef.DefDivPrecisionIncrement), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: vardef.MaxDivPrecisionIncrement,
 		SetSession: func(s *SessionVars, val string) error {
-			var err error
-			s.DivPrecisionIncrement, err = strconv.Atoi(val)
-			return err
+			s.DivPrecisionIncrement = tidbOptPositiveInt32(val, vardef.DefDivPrecisionIncrement)
+			return nil
 		}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBDMLType, Value: vardef.DefTiDBDMLType, Type: vardef.TypeStr,
 		Validation: func(_ *SessionVars, val string, _ string, _ vardef.ScopeFlag) (string, error) {
