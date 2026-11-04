@@ -785,6 +785,112 @@ func TestClusterLogTableExtractor(t *testing.T) {
 	}
 }
 
+func TestMemTableTimeRangeExtractorConstantLeft(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	t.Cleanup(se.Close)
+	se.GetSessionVars().TimeZone = time.Local
+	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
+	parser := parser.New()
+
+	start := timestamp(t, "2019-10-10 10:10:10")
+	end := timestamp(t, "2019-10-11 10:10:10")
+	tables := []struct {
+		name, column string
+	}{
+		{"information_schema.cluster_log", "time"},
+		{"information_schema.tidb_hot_regions_history", "update_time"},
+		{"metrics_schema.tidb_query_duration", "time"},
+		{"information_schema.slow_query", "time"},
+	}
+	cases := []struct {
+		name, constantLeft, columnLeft string
+		start, end                     int64
+		skipRequest                    bool
+	}{
+		{
+			name:         "Strict",
+			constantLeft: "'2019-10-10 10:10:10' < %[1]s and '2019-10-11 10:10:10' > %[1]s",
+			columnLeft:   "%[1]s > '2019-10-10 10:10:10' and %[1]s < '2019-10-11 10:10:10'",
+			start:        start + 1,
+			end:          end - 1,
+		},
+		{
+			name:         "Inclusive",
+			constantLeft: "'2019-10-10 10:10:10' <= %[1]s and '2019-10-11 10:10:10' >= %[1]s",
+			columnLeft:   "%[1]s >= '2019-10-10 10:10:10' and %[1]s <= '2019-10-11 10:10:10'",
+			start:        start,
+			end:          end,
+		},
+		{
+			name:         "Equality",
+			constantLeft: "'2019-10-10 10:10:10' = %[1]s",
+			columnLeft:   "%[1]s = '2019-10-10 10:10:10'",
+			start:        start,
+			end:          start,
+		},
+		{
+			name:         "Mixed",
+			constantLeft: "'2019-10-10 10:10:10' < %[1]s and %[1]s <= '2019-10-11 10:10:10'",
+			columnLeft:   "%[1]s > '2019-10-10 10:10:10' and %[1]s <= '2019-10-11 10:10:10'",
+			start:        start + 1,
+			end:          end,
+		},
+		{
+			name:         "Empty",
+			constantLeft: "'2019-10-11 10:10:10' <= %[1]s and '2019-10-10 10:10:10' >= %[1]s",
+			columnLeft:   "%[1]s >= '2019-10-11 10:10:10' and %[1]s <= '2019-10-10 10:10:10'",
+			start:        end,
+			end:          start,
+			skipRequest:  true,
+		},
+	}
+	for _, table := range tables {
+		t.Run(table.name, func(t *testing.T) {
+			for _, ca := range cases {
+				t.Run(ca.name, func(t *testing.T) {
+					for _, form := range []struct{ name, predicate string }{
+						{"ConstantLeft", ca.constantLeft},
+						{"ColumnLeft", ca.columnLeft},
+					} {
+						t.Run(form.name, func(t *testing.T) {
+							sql := "select * from " + table.name + " where " + fmt.Sprintf(form.predicate, table.column)
+							memTable, ok := getLogicalMemTable(t, dom, se, parser, sql)
+							if !ok {
+								require.True(t, ca.skipRequest, sql)
+								return
+							}
+							var gotStart, gotEnd int64
+							var skipRequest bool
+							switch extractor := memTable.Extractor.(type) {
+							case *plannercore.ClusterLogTableExtractor:
+								gotStart, gotEnd, skipRequest = extractor.StartTime, extractor.EndTime, extractor.SkipRequest
+							case *plannercore.HotRegionsHistoryTableExtractor:
+								gotStart, gotEnd, skipRequest = extractor.StartTime, extractor.EndTime, extractor.SkipRequest
+							case *plannercore.MetricTableExtractor:
+								gotStart, gotEnd, skipRequest = extractor.StartTime.UnixMilli(), extractor.EndTime.UnixMilli(), extractor.SkipRequest
+							case *plannercore.SlowQueryExtractor:
+								require.True(t, extractor.Enable)
+								require.Len(t, extractor.TimeRanges, 1)
+								gotStart, gotEnd = extractor.TimeRanges[0].StartTime.UnixMilli(), extractor.TimeRanges[0].EndTime.UnixMilli()
+								skipRequest = extractor.SkipRequest
+							default:
+								t.Fatalf("unexpected extractor %T", memTable.Extractor)
+							}
+							// Check concrete bounds independently for both equivalent forms;
+							// comparing the forms alone could miss a shared extraction error.
+							require.Equal(t, ca.start, gotStart, sql)
+							require.Equal(t, ca.end, gotEnd, sql)
+							require.Equal(t, ca.skipRequest, skipRequest, sql)
+						})
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestMetricTableExtractor(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
