@@ -38,7 +38,7 @@ use tidb_proto::mpp::{
     DispatchTaskRequest, EstablishMppConnectionRequest, MppDataPacket, TaskMeta,
 };
 use tidb_txnkv::driver::tikv_store::TikvStore;
-use tidb_txnkv::retry::{RegionBackoffBudget, RegionBackoffKind};
+use tidb_txnkv::retry::RegionBackoffBudget;
 use tidb_txnkv::{
     MppBuildTasksRequest, MppContext, MppError, MppStoreTask, MppStreamResponse,
     QueryResponseError, QueryResultSubset,
@@ -292,7 +292,7 @@ impl<S: tikv_client::PdClient> TiFlashMppClient<S> {
                 "Cannot find proper topo to dispatch MPPTask: detect aliveness failed, no alive ComputeNode"
             };
             let delay = budget
-                .next_delay(RegionBackoffKind::TiFlashRpc)
+                .next_delay(tikv_client::retry::BO_TIFLASH_RPC)
                 .map_err(|_| error.to_owned())?;
             let waited = self.store.block_on(mpp_setup(
                 Some(memory.as_ref()),
@@ -827,7 +827,7 @@ async fn establish_mpp_response<S: tikv_client::PdClient>(
                 if !error.retryable() {
                     break Err(error.to_string());
                 }
-                let delay = match backoff.next_delay(RegionBackoffKind::TiFlashRpc) {
+                let delay = match backoff.next_delay(tikv_client::retry::BO_TIFLASH_RPC) {
                     Ok(delay) => delay,
                     Err(_) => break Err(error.to_string()),
                 };

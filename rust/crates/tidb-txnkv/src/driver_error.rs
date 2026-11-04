@@ -163,34 +163,35 @@ pub enum StorageDriverError {
 }
 
 impl StorageDriverError {
-    /// Classifies the longest effective client-go backoff when its budget
-    /// is exhausted, using that category's source error identity or message.
+    /// Go `ToTiDBErr` of the client-go `Config.err` a backoff class returns
+    /// when its budget is exhausted.
     #[must_use]
-    pub fn from_backoff(kind: crate::retry::RegionBackoffKind, detail: &str) -> Self {
-        use crate::retry::RegionBackoffKind;
-        match kind {
-            RegionBackoffKind::TikvRpc => Self::TiKvServerTimeout,
-            RegionBackoffKind::TiFlashRpc => Self::TiFlashServerTimeout,
-            RegionBackoffKind::RegionMiss | RegionBackoffKind::RegionScheduling => {
-                Self::RegionUnavailable
+    pub fn from_backoff(terminal: tikv_client::retry::RetryTerminal, detail: &str) -> Self {
+        use tikv_client::error::StaticError;
+        use tikv_client::retry::RetryTerminal;
+        match terminal {
+            RetryTerminal::Static(StaticError::TiKvServerTimeout) => Self::TiKvServerTimeout,
+            RetryTerminal::Static(StaticError::TiFlashServerTimeout) => Self::TiFlashServerTimeout,
+            RetryTerminal::Static(StaticError::RegionUnavailable) => Self::RegionUnavailable,
+            RetryTerminal::Static(StaticError::TiKvStaleCommand) => Self::TiKvStaleCommand,
+            RetryTerminal::Static(StaticError::TiKvMaxTimestampNotSynced) => {
+                Self::TiKvMaxTimestampNotSynced
             }
-            RegionBackoffKind::TikvServerBusy => Self::Other(detail.to_owned()),
-            RegionBackoffKind::StaleCommand => Self::TiKvStaleCommand,
-            RegionBackoffKind::MaxTimestampNotSynced => Self::TiKvMaxTimestampNotSynced,
-            RegionBackoffKind::TxnLock
-            | RegionBackoffKind::TxnLockFast
-            | RegionBackoffKind::TxnNotFound => Self::ResolveLockTimeout,
-            RegionBackoffKind::TikvDiskFull => Self::Other("tikv disk full".to_owned()),
-            RegionBackoffKind::RegionRecoveryInProgress => {
+            RetryTerminal::Static(StaticError::ResolveLockTimeout) => Self::ResolveLockTimeout,
+            RetryTerminal::Static(StaticError::TiKvDiskFull) => Self::Other("tikv disk full".to_owned()),
+            RetryTerminal::Static(StaticError::RegionRecoveryInProgress) => {
                 Self::Other("region is being online unsafe recovered".to_owned())
             }
-            RegionBackoffKind::RegionNotInitialized => {
+            RetryTerminal::Static(StaticError::RegionNotInitialized) => {
                 Self::Other("region not Initialized".to_owned())
             }
-            RegionBackoffKind::IsWitness => Self::Other("peer is witness".to_owned()),
-            RegionBackoffKind::PdRpc => Self::PdServerTimeout {
+            RetryTerminal::Static(StaticError::IsWitness) => Self::Other("peer is witness".to_owned()),
+            RetryTerminal::PdServerTimeout => Self::PdServerTimeout {
                 message: detail.to_owned(),
             },
+            // `BoTiKVServerBusy` (and any other class) keeps the backoff's own
+            // message.
+            RetryTerminal::Static(_) => Self::Other(detail.to_owned()),
         }
     }
 

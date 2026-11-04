@@ -31,8 +31,8 @@ pub fn coordinator_sql_error(error: OptimisticCoordinatorError) -> LockSqlError 
             write_conflict: None,
             identity: None,
         },
-        OptimisticCoordinatorError::SnapshotBackoff { kind, detail } => {
-            transaction_cause_to_sql_error(&TransactionCause::BackoffExhausted { kind, detail })
+        OptimisticCoordinatorError::SnapshotBackoff { terminal, detail } => {
+            transaction_cause_to_sql_error(&TransactionCause::BackoffExhausted { terminal, detail })
         }
         // Go `ToTiDBErr`: client-go's `ErrTxnAbortedByGC` becomes TiDB's
         // `ErrTxnAbortedByGC` (9006) and `ErrPDServerTimeout` keeps its own.

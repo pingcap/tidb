@@ -43,7 +43,7 @@ pub enum OptimisticCoordinatorError {
     /// A snapshot exhausted a client-go retry category; retain its SQL identity.
     SnapshotBackoff {
         /// Longest effective backoff category.
-        kind: crate::retry::RegionBackoffKind,
+        terminal: tikv_client::retry::RetryTerminal,
         /// Source backoff diagnostic for unregistered categories.
         detail: String,
     },
@@ -74,8 +74,8 @@ impl fmt::Display for OptimisticCoordinatorError {
             Self::SnapshotGet(error) => write!(formatter, "snapshot Get failed: {error}"),
             // client-go's backoffer returns its config's sentinel error when the
             // budget runs out; TiDB's `ToTiDBErr` maps it at the SQL boundary.
-            Self::SnapshotBackoff { kind, detail } => {
-                crate::StorageDriverError::from_backoff(*kind, detail).fmt(formatter)
+            Self::SnapshotBackoff { terminal, detail } => {
+                crate::StorageDriverError::from_backoff(*terminal, detail).fmt(formatter)
             }
             Self::Visibility(error) => error.fmt(formatter),
             Self::GcState(error) => write!(formatter, "txn safe point unavailable: {error}"),

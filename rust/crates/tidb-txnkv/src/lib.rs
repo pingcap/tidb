@@ -149,7 +149,7 @@ pub use resource_group::{
 };
 pub use retry::{
     retry_backoff_upper_bound_ms, should_retry_after_failure, RegionBackoffBudget,
-    RegionBackoffExhausted, RegionBackoffKind, RETRY_BACKOFF_BASE_MS, RETRY_BACKOFF_CAP_MS,
+    RegionBackoffExhausted, RETRY_BACKOFF_BASE_MS, RETRY_BACKOFF_CAP_MS,
 };
 pub use rpc::{CancelHandle, UnaryCallContext, UnaryCancellation};
 pub use txn_scope::{TxnScopeVar, GLOBAL_TXN_SCOPE, LOCAL_TXN_SCOPE};

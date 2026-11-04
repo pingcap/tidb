@@ -23,7 +23,6 @@ use tidb_domain_core::cluster_sysvar_seam::{ClusterSysvarWriter, PendingSysvarCh
 use std::sync::Arc;
 use tidb_datatype::Datum;
 use crate::GlobalSysvars;
-use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause};
 
 struct UndeterminedSysvarWriter(GlobalSysvars);
@@ -77,7 +76,7 @@ impl PendingSysvarChange for BackoffSysvarChange {
         let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
             receipt: OptimisticTransactionReceipt::new(1, 2, b"key".to_vec(), 1),
             cause: TransactionCause::BackoffExhausted {
-                kind: RegionBackoffKind::MaxTimestampNotSynced,
+                terminal: tikv_client::retry::BO_MAX_TS_NOT_SYNCED.terminal_error,
                 detail: "maxTimestampNotSynced backoffer exhausted".to_owned(),
             },
         });

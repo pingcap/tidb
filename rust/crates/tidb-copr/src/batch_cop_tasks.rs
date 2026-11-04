@@ -32,7 +32,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use tidb_txnkv::driver::tikv_store::TikvStore;
-use tidb_txnkv::retry::{RegionBackoffBudget, RegionBackoffKind};
+use tidb_txnkv::retry::RegionBackoffBudget;
 use tidb_tiflash::ReplicaRead;
 use tidb_tiflash::MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS;
 use tikv_client::TiFlashLabelFilter;
@@ -167,7 +167,7 @@ pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
         }
         if need_retry {
             let delay = budget
-                .next_delay(RegionBackoffKind::TiFlashRpc)
+                .next_delay(tikv_client::retry::BO_TIFLASH_RPC)
                 .map_err(|_| "Cannot find region with TiFlash peer".to_owned())?;
             let waited = crate::mpp_client::mpp_retry_wait(memory.as_ref(), delay).await;
             budget.finish_wait(waited.is_ok());

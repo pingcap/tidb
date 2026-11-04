@@ -14,7 +14,6 @@ use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
 use tidb_store_driver_error::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_ddl::real_tikv_ddl::classify_session_ddl_commit_error;
-use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause, UndeterminedTransaction};
 
 use super::mock_seams::DeprecatedTables;
@@ -209,7 +208,7 @@ fn full_cluster_ddl_keeps_a_region_backoff_error_coded_on_the_wire() {
     let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
         receipt: OptimisticTransactionReceipt::new(1, 2, b"key".to_vec(), 1),
         cause: TransactionCause::BackoffExhausted {
-            kind: RegionBackoffKind::RegionScheduling,
+            terminal: tikv_client::retry::BO_REGION_SCHEDULING.terminal_error,
             detail: "regionScheduling backoffer exhausted".to_owned(),
         },
     });

@@ -2603,18 +2603,18 @@ mod tests {
     fn snapshot_backoff_errors_keep_their_registered_sql_identity() {
         for (kind, code, message) in [
             (
-                tidb_txnkv::retry::RegionBackoffKind::TxnLockFast,
+                tikv_client::retry::BO_TXN_LOCK_FAST,
                 9004,
                 "Resolve lock timeout",
             ),
             (
-                tidb_txnkv::retry::RegionBackoffKind::RegionMiss,
+                tikv_client::retry::BO_REGION_MISS,
                 9005,
                 "Region is unavailable",
             ),
         ] {
             let error = OptimisticCoordinatorError::SnapshotBackoff {
-                kind,
+                terminal: kind.terminal_error,
                 detail: "exhausted".to_owned(),
             };
             let storage = classify(error.clone());

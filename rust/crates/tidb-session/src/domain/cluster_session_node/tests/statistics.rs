@@ -17,7 +17,6 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Condvar;
 use tidb_datatype::Datum;
-use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause};
 
 struct UndeterminedAnalyze;
@@ -234,7 +233,7 @@ fn analyze_commit_keeps_a_backoff_driver_error_coded_on_the_wire() {
     let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
         receipt: OptimisticTransactionReceipt::new(1, 2, b"key".to_vec(), 1),
         cause: TransactionCause::BackoffExhausted {
-            kind: RegionBackoffKind::StaleCommand,
+            terminal: tikv_client::retry::BO_STALE_CMD.terminal_error,
             detail: "staleCommand backoffer exhausted".to_owned(),
         },
     });

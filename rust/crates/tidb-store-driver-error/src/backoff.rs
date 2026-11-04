@@ -17,25 +17,23 @@
 /// Go `ToTiDBErr`'s backoff arm: the backoff class whose sentinel client-go
 /// returns when that class's budget ran out (`tikverr.ErrRegionUnavailable`
 /// for `BoRegionMiss`, and so on), from client-rust's sentinel.
-pub fn client_backoff_kind(error: &tikv_client::Error) -> Option<tidb_txnkv::retry::RegionBackoffKind> {
-    use tidb_txnkv::retry::RegionBackoffKind as Kind;
+pub fn client_backoff_terminal(error: &tikv_client::Error) -> Option<tikv_client::retry::RetryTerminal> {
     use tikv_client::error::StaticError;
-    let terminal = match error {
-        tikv_client::Error::Static(error) => *error,
-        tikv_client::Error::PdServerTimeout(_) => return Some(Kind::PdRpc),
-        _ => return None,
-    };
-    Some(match terminal {
-        StaticError::TiKvServerTimeout => Kind::TikvRpc,
-        StaticError::RegionUnavailable => Kind::RegionMiss,
-        StaticError::TiKvStaleCommand => Kind::StaleCommand,
-        StaticError::TiKvMaxTimestampNotSynced => Kind::MaxTimestampNotSynced,
-        StaticError::ResolveLockTimeout => Kind::TxnLock,
-        StaticError::TiKvServerBusy => Kind::TikvServerBusy,
-        StaticError::TiKvDiskFull => Kind::TikvDiskFull,
-        StaticError::RegionRecoveryInProgress => Kind::RegionRecoveryInProgress,
-        StaticError::RegionNotInitialized => Kind::RegionNotInitialized,
-        StaticError::IsWitness => Kind::IsWitness,
-        _ => return None,
-    })
+    use tikv_client::retry::RetryTerminal;
+    match error {
+        tikv_client::Error::PdServerTimeout(_) => Some(RetryTerminal::PdServerTimeout),
+        tikv_client::Error::Static(
+            error @ (StaticError::TiKvServerTimeout
+            | StaticError::RegionUnavailable
+            | StaticError::TiKvStaleCommand
+            | StaticError::TiKvMaxTimestampNotSynced
+            | StaticError::ResolveLockTimeout
+            | StaticError::TiKvServerBusy
+            | StaticError::TiKvDiskFull
+            | StaticError::RegionRecoveryInProgress
+            | StaticError::RegionNotInitialized
+            | StaticError::IsWitness),
+        ) => Some(RetryTerminal::Static(*error)),
+        _ => None,
+    }
 }

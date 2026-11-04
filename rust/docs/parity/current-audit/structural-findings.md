@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**45 unresolved: 13 open, 32 partial.**
+**44 unresolved: 13 open, 31 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -86,7 +86,6 @@ unresolved until it is restated against its Go owner or closed.
 | T02 | partial | Two region-cache lifecycles (TiDB and the native client): coprocessor RequestSelector, store-health recovery, batch-scan follower reads | client-go `internal/locate` |
 | T04 | partial | client-rust's committer fills `CommitDetails`' write keys/size and prewrite, latest-ts, commit-ts, commit and local-latch times (published through `CommitDetailCtxKey` and merged into the statement), but not client-go's prewrite/commit backoff time and types, per-request `MergePrewriteReqDetails`/`MergeCommitReqDetails`, prewrite region and request counts, resolve-lock detail or binlog wait | client-go `txnkv/transaction` (`twoPhaseCommitter` detail), `pkg/session` (`doCommit`), `pkg/util/execdetails` |
 | T05 | open | client-rust's `LockKeysDetails` carries the locked-key count, total time and fair-locking counts, but not client-go's region count, lock RPC time/count, retry count, backoff time/types or resolve-lock detail | client-go `txnkv/transaction` (`pessimisticLockMutations`, `LockKeys`), `util.LockKeysDetails` |
-| T06 | partial | `tidb-txnkv::retry::RegionBackoffBudget`/`RegionBackoffKind` wrap client-rust's Backoffer under their own names, where Go TiDB's copr/MPP/lock callers use client-go `backoff.NewBackofferWithVars` and its configs directly | client-go `config/retry`, `pkg/store/copr` |
 | P03 | partial | PD router transport; primaryless member publication; readiness/prewarm; idle recovery | PD client `pkg/client` |
 | P06 | partial | TSO dispatcher options and stream construction; RPC concurrency | PD client `tso_dispatcher.go` |
 | M01 | open | The MPP coordinator lowers a hand-built single-fragment scan DAG and refuses every pushed Selection, TopN and aggregation, where Go builds the fragment/task graph from the physical plan (including disaggregated compute placement) | `pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`, `pkg/store/copr/mpp.go` |

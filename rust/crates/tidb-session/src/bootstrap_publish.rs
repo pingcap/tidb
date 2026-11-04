@@ -184,7 +184,6 @@ pub fn log_bootstrap_successful(started: std::time::Instant) {
 mod tests {
     use super::{notify_committed_bootstrap, SchemaVersionNotifier};
     use std::cell::Cell;
-    use tidb_txnkv::retry::RegionBackoffKind;
     use tidb_txnkv::transaction::{CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause, UndeterminedTransaction};
 
     struct RecordingNotifier(Cell<usize>);
@@ -206,7 +205,7 @@ mod tests {
         let rolled_back = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
             receipt: receipt(),
             cause: TransactionCause::BackoffExhausted {
-                kind: RegionBackoffKind::RegionMiss,
+                terminal: tikv_client::retry::BO_REGION_MISS.terminal_error,
                 detail: "regionMiss backoffer exhausted".to_owned(),
             },
         });

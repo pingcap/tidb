@@ -33,7 +33,6 @@
 use tidb_terror::ERR_RESULT_UNDETERMINED;
 use tidb_kv::cluster_storage::DuplicateKeyHint;
 use tidb_txnkv::driver::transaction_error::WriteConflictArgs;
-use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{OptimisticCommitOutcome, PessimisticLockFailure, TransactionCause};
 use tidb_txnkv::StorageDriverError;
 use crate::driver_error::to_tidb_driver_error;
@@ -281,8 +280,8 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
         TransactionCause::WriteConflict { detail, args } => {
             write_conflict_error(detail).with_write_conflict(args.clone())
         }
-        TransactionCause::BackoffExhausted { kind, detail } => {
-            backoff_exhausted_to_sql_error(*kind, detail)
+        TransactionCause::BackoffExhausted { terminal, detail } => {
+            backoff_exhausted_to_sql_error(*terminal, detail)
         }
         TransactionCause::SharedLockLost { start_ts, key } => {
             shared_lock_lost_to_sql_error(*start_ts, key)
@@ -369,8 +368,8 @@ fn shared_lock_lost_to_sql_error(start_ts: u64, key: &str) -> LockSqlError {
     }
 }
 
-fn backoff_exhausted_to_sql_error(kind: RegionBackoffKind, detail: &str) -> LockSqlError {
-    let source = StorageDriverError::from_backoff(kind, detail);
+fn backoff_exhausted_to_sql_error(terminal: tikv_client::retry::RetryTerminal, detail: &str) -> LockSqlError {
+    let source = StorageDriverError::from_backoff(terminal, detail);
     match to_tidb_driver_error(&source) {
         ConvertedDriverError::Terror(converted) => {
             LockSqlError::from(tidb_terror::MysqlError::from_terror(&converted))
@@ -436,7 +435,6 @@ mod tests {
     use tidb_kv::cluster_storage::DuplicateKeyHint;
     use tikv_client::proto::{deadlock::WaitForEntry, kvrpcpb};
     use tikv_client::DeadlockError;
-    use tidb_txnkv::retry::RegionBackoffKind;
     use tidb_txnkv::transaction::{CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt, PessimisticLockFailure, RolledBackTransaction, TransactionCause, UndeterminedTransaction};
 
     fn receipt() -> OptimisticTransactionReceipt {
@@ -590,7 +588,7 @@ mod tests {
 
         let lock_path = lock_failure_to_sql_error(&PessimisticLockFailure::Transaction(
             TransactionCause::BackoffExhausted {
-                kind: RegionBackoffKind::RegionScheduling,
+                terminal: tikv_client::retry::BO_REGION_SCHEDULING.terminal_error,
                 detail: "region scheduling exhausted".to_owned(),
             },
         ));
@@ -622,77 +620,77 @@ mod tests {
 
         let cases = [
             (
-                RegionBackoffKind::TikvRpc,
+                tikv_client::retry::BO_TIKV_RPC,
                 Some(errcode::ErrTiKVServerTimeout),
                 None,
             ),
             (
-                RegionBackoffKind::RegionMiss,
+                tikv_client::retry::BO_REGION_MISS,
                 Some(ERR_REGION_UNAVAILABLE),
                 None,
             ),
             (
-                RegionBackoffKind::RegionScheduling,
+                tikv_client::retry::BO_REGION_SCHEDULING,
                 Some(ERR_REGION_UNAVAILABLE),
                 None,
             ),
             (
-                RegionBackoffKind::TikvServerBusy,
+                tikv_client::retry::BO_TIKV_SERVER_BUSY,
                 None,
-                Some("TikvServerBusy backoffer exhausted"),
+                Some("tikvServerBusy backoffer exhausted"),
             ),
             (
-                RegionBackoffKind::TikvDiskFull,
+                tikv_client::retry::BO_TIKV_DISK_FULL,
                 None,
                 Some("tikv disk full"),
             ),
             (
-                RegionBackoffKind::RegionRecoveryInProgress,
+                tikv_client::retry::BO_REGION_RECOVERY_IN_PROGRESS,
                 None,
                 Some("region is being online unsafe recovered"),
             ),
             (
-                RegionBackoffKind::StaleCommand,
+                tikv_client::retry::BO_STALE_CMD,
                 Some(errcode::ErrTiKVStaleCommand),
                 None,
             ),
             (
-                RegionBackoffKind::MaxTimestampNotSynced,
+                tikv_client::retry::BO_MAX_TS_NOT_SYNCED,
                 Some(errcode::ErrTiKVMaxTimestampNotSynced),
                 None,
             ),
             (
-                RegionBackoffKind::RegionNotInitialized,
+                tikv_client::retry::BO_MAX_REGION_NOT_INITIALIZED,
                 None,
                 Some("region not Initialized"),
             ),
-            (RegionBackoffKind::IsWitness, None, Some("peer is witness")),
+            (tikv_client::retry::BO_IS_WITNESS, None, Some("peer is witness")),
             (
-                RegionBackoffKind::TxnLock,
+                tikv_client::retry::BO_TXN_LOCK,
                 Some(errcode::ErrResolveLockTimeout),
                 None,
             ),
             (
-                RegionBackoffKind::TxnLockFast,
+                tikv_client::retry::BO_TXN_LOCK_FAST,
                 Some(errcode::ErrResolveLockTimeout),
                 None,
             ),
             (
-                RegionBackoffKind::TxnNotFound,
+                tikv_client::retry::BO_TXN_NOT_FOUND,
                 Some(errcode::ErrResolveLockTimeout),
                 None,
             ),
             (
-                RegionBackoffKind::PdRpc,
+                tikv_client::retry::BO_PD_RPC,
                 Some(errcode::ErrPDServerTimeout),
                 None,
             ),
         ];
 
         for (kind, expected_code, expected_passthrough) in cases {
-            let detail = format!("{kind:?} backoffer exhausted");
+            let detail = format!("{} backoffer exhausted", kind.name);
             let error = transaction_cause_to_sql_error(&TransactionCause::BackoffExhausted {
-                kind,
+                terminal: kind.terminal_error,
                 detail: detail.clone(),
             });
             match expected_code {
@@ -714,15 +712,15 @@ mod tests {
         let mut budget =
             tidb_txnkv::retry::RegionBackoffBudget::new(std::time::Duration::from_secs(20));
         let exhausted = loop {
-            match budget.next_delay(RegionBackoffKind::TikvServerBusy) {
+            match budget.next_delay(tikv_client::retry::BO_TIKV_SERVER_BUSY) {
                 Ok(_) => continue,
                 Err(exhausted) => break exhausted,
             }
         };
-        assert_eq!(exhausted.kind, RegionBackoffKind::TikvServerBusy);
+        assert_eq!(exhausted.config, tikv_client::retry::BO_TIKV_SERVER_BUSY);
 
         let error = transaction_cause_to_sql_error(&TransactionCause::BackoffExhausted {
-            kind: exhausted.kind,
+            terminal: exhausted.config.terminal_error,
             detail: "server is busy".to_owned(),
         });
         assert_eq!(error.code, 1105);

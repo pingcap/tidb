@@ -2,9 +2,9 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 45,
+    "unresolved": 44,
     "open": 13,
-    "partial": 32
+    "partial": 31
   },
   "findings": [
     {
@@ -135,13 +135,6 @@
       "group": "Transaction and routing ownership",
       "finding": "client-rust's `LockKeysDetails` carries the locked-key count, total time and fair-locking counts, but not client-go's region count, lock RPC time/count, retry count, backoff time/types or resolve-lock detail",
       "go_owner": "client-go `txnkv/transaction` (`pessimisticLockMutations`, `LockKeys`), `util.LockKeysDetails`"
-    },
-    {
-      "id": "T06",
-      "status": "partial",
-      "group": "Transaction and routing ownership",
-      "finding": "`tidb-txnkv::retry::RegionBackoffBudget`/`RegionBackoffKind` wrap client-rust's Backoffer under their own names, where Go TiDB's copr/MPP/lock callers use client-go `backoff.NewBackofferWithVars` and its configs directly",
-      "go_owner": "client-go `config/retry`, `pkg/store/copr`"
     },
     {
       "id": "O02",

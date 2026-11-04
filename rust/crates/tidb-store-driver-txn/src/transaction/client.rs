@@ -407,8 +407,8 @@ impl<S: PdClient> RealTransaction<S> {
             ));
         }
         match crate::driver::tikv_transaction::classify_client_cause(&error) {
-            TransactionCause::BackoffExhausted { kind, detail } => {
-                OptimisticCoordinatorError::SnapshotBackoff { kind, detail }
+            TransactionCause::BackoffExhausted { terminal, detail } => {
+                OptimisticCoordinatorError::SnapshotBackoff { terminal, detail }
             }
             _ => Self::read_error(error),
         }
@@ -1232,11 +1232,11 @@ mod tests {
         ] {
             let error =
                 RealTransaction::<tikv_client::PdRpcClient>::client_read_error(error.into());
-            let OptimisticCoordinatorError::SnapshotBackoff { kind, detail } = error else {
+            let OptimisticCoordinatorError::SnapshotBackoff { terminal, detail } = error else {
                 panic!("native backoff was flattened: {error:?}");
             };
             let sql = tidb_store_driver_error::driver_error::to_tidb_driver_error(&tidb_txnkv::StorageDriverError::from_backoff(
-                kind, &detail,
+                terminal, &detail,
             ));
             let tidb_store_driver_error::driver_error::ConvertedDriverError::Terror(sql) = sql else {
                 panic!("expected a TiDB error, got {sql:?}");

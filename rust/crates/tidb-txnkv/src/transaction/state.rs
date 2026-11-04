@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::retry::RegionBackoffKind;
 
 /// Typed error identity used by executor/server mapping and receipts.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -81,7 +80,7 @@ pub enum TransactionCause {
     /// longest-sleep category, or reached the excluded-only cap.
     BackoffExhausted {
         /// Exact backoff category whose source error must reach SQL mapping.
-        kind: RegionBackoffKind,
+        terminal: tikv_client::retry::RetryTerminal,
         /// Operator/backoff diagnostic retained on the cause. SQL conversion
         /// selects the pinned client-go source sentinel from `kind`.
         detail: String,

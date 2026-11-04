@@ -33,95 +33,11 @@ pub const RETRY_BACKOFF_CAP_MS: u64 = 100;
 /// Campaign 11's per-region effective recovery sleep budget.
 pub const REGION_RETRY_MAX_SLEEP: Duration = Duration::from_secs(20);
 
-/// Pinned client-go region backoff categories.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
-pub enum RegionBackoffKind {
-    /// TiKV RPC transport failure.
-    TikvRpc,
-    /// TiFlash RPC transport failure, including MPP setup.
-    TiFlashRpc,
-    /// Epoch cache miss or stale TiKV epoch.
-    RegionMiss,
-    /// Election, split, merge, or read-index scheduling.
-    RegionScheduling,
-    /// TiKV admission control rejected the request.
-    TikvServerBusy,
-    /// TiKV reported a full disk.
-    TikvDiskFull,
-    /// Unsafe recovery is still in progress.
-    RegionRecoveryInProgress,
-    /// The raft command term became stale.
-    StaleCommand,
-    /// The new leader has not synchronized max timestamp.
-    MaxTimestampNotSynced,
-    /// The target region peer is not initialized.
-    RegionNotInitialized,
-    /// The selected peer is a witness.
-    IsWitness,
-    /// A read or write is blocked behind another transaction's lock.
-    TxnLock,
-    /// The same wait after a cheap resolve, which client-go starts far shorter
-    /// because the common case is a lock that is already gone.
-    TxnLockFast,
-    /// CheckTxnStatus found a secondary lock whose primary record does not
-    /// exist yet, which a concurrent prewrite resolves on its own.
-    TxnNotFound,
-    /// A PD region-lookup RPC failed (client-go `retry.BoPDRPC`).
-    PdRpc,
-}
-
-impl RegionBackoffKind {
-    const COUNT: usize = 15;
-    const ALL: [Self; Self::COUNT] = [
-        Self::TikvRpc,
-        Self::TiFlashRpc,
-        Self::RegionMiss,
-        Self::RegionScheduling,
-        Self::TikvServerBusy,
-        Self::TikvDiskFull,
-        Self::RegionRecoveryInProgress,
-        Self::StaleCommand,
-        Self::MaxTimestampNotSynced,
-        Self::RegionNotInitialized,
-        Self::IsWitness,
-        Self::TxnLock,
-        Self::TxnLockFast,
-        Self::TxnNotFound,
-        Self::PdRpc,
-    ];
-
-    /// Pinned client-go Config.name used in snapshot runtime statistics.
-    pub(crate) const fn name(self) -> &'static str {
-        self.config().name
-    }
-
-    const fn config(self) -> RetryConfig {
-        match self {
-            Self::TikvRpc => retry::BO_TIKV_RPC,
-            Self::TiFlashRpc => retry::BO_TIFLASH_RPC,
-            Self::RegionMiss => retry::BO_REGION_MISS,
-            Self::RegionScheduling => retry::BO_REGION_SCHEDULING,
-            Self::TikvServerBusy => retry::BO_TIKV_SERVER_BUSY,
-            Self::TikvDiskFull => retry::BO_TIKV_DISK_FULL,
-            Self::RegionRecoveryInProgress => retry::BO_REGION_RECOVERY_IN_PROGRESS,
-            Self::StaleCommand => retry::BO_STALE_CMD,
-            Self::MaxTimestampNotSynced => retry::BO_MAX_TS_NOT_SYNCED,
-            Self::RegionNotInitialized => retry::BO_MAX_REGION_NOT_INITIALIZED,
-            Self::IsWitness => retry::BO_IS_WITNESS,
-            Self::TxnLock => retry::BO_TXN_LOCK,
-            Self::TxnLockFast => retry::BO_TXN_LOCK_FAST,
-            Self::TxnNotFound => retry::BO_TXN_NOT_FOUND,
-            Self::PdRpc => retry::BO_PD_RPC,
-        }
-    }
-}
-
 /// Synchronous wait adapter over the native client-go retry owner.
 /// All limits, delay schedules, fork history and diagnostics live in client-rust.
 pub struct RegionBackoffBudget {
     owner: Arc<Mutex<RetryBackoffer>>,
-    pending: Option<(RegionBackoffKind, BackoffWait)>,
+    pending: Option<(RetryConfig, BackoffWait)>,
 }
 
 impl std::fmt::Debug for RegionBackoffBudget {
@@ -175,15 +91,15 @@ impl RegionBackoffBudget {
     /// Selects a wait from the native schedule; finish it after waiting.
     pub fn next_delay(
         &mut self,
-        kind: RegionBackoffKind,
+        config: RetryConfig,
     ) -> Result<Duration, RegionBackoffExhausted> {
-        self.next_delay_capped(kind, Duration::MAX)
+        self.next_delay_capped(config, Duration::MAX)
     }
 
     /// Caps this wait by the observed lock TTL without resetting its schedule.
     pub fn next_delay_capped(
         &mut self,
-        kind: RegionBackoffKind,
+        config: RetryConfig,
         max_sleep: Duration,
     ) -> Result<Duration, RegionBackoffExhausted> {
         self.finish_wait(true);
@@ -192,10 +108,10 @@ impl RegionBackoffBudget {
             .try_lock()
             .expect("retry owner is exclusively borrowed");
         let wait = owner
-            .prepare_backoff(kind.config(), Some(duration_ms(max_sleep)), kind.name())
-            .map_err(|_| Self::exhausted(&owner, kind))?;
+            .prepare_backoff(config, Some(duration_ms(max_sleep)), config.name)
+            .map_err(|_| Self::exhausted(&owner, config))?;
         let duration = wait.duration();
-        self.pending = Some((kind, wait));
+        self.pending = Some((config, wait));
         Ok(duration)
     }
 
@@ -214,18 +130,13 @@ impl RegionBackoffBudget {
 
     pub(crate) fn exhausted(
         owner: &RetryBackoffer,
-        fallback: RegionBackoffKind,
+        fallback: RetryConfig,
     ) -> RegionBackoffExhausted {
-        let kind = owner
-            .longest_sleep_config()
-            .and_then(|config| {
-                RegionBackoffKind::ALL
-                    .into_iter()
-                    .find(|kind| kind.name() == config.name)
-            })
-            .unwrap_or(fallback);
+        // client-go `Backoffer.Backoff`: the error names the longest-slept
+        // class.
+        let config = owner.longest_sleep_config().unwrap_or(fallback);
         RegionBackoffExhausted {
-            kind,
+            config,
             max_sleep: Duration::from_millis(owner.max_sleep_ms()),
         }
     }
@@ -250,19 +161,21 @@ impl RegionBackoffBudget {
             .owner
             .try_lock()
             .expect("retry owner is exclusively borrowed");
-        RegionBackoffKind::ALL
+        let mut names: Vec<&'static str> = owner.times_by_type().keys().copied().collect();
+        if let Some((config, _)) = &self.pending {
+            if !names.contains(&config.name) {
+                names.push(config.name);
+            }
+        }
+        names
             .into_iter()
-            .filter_map(|kind| {
-                let pending = self
-                    .pending
-                    .as_ref()
-                    .filter(|(pending, _)| *pending == kind);
-                let count = owner.times_by_type().get(kind.name()).copied().unwrap_or(0)
+            .filter_map(|name| {
+                let pending = self.pending.as_ref().filter(|(pending, _)| pending.name == name);
+                let count = owner.times_by_type().get(name).copied().unwrap_or(0)
                     + u64::from(pending.is_some());
-                let sleep = Duration::from_millis(
-                    owner.sleep_by_type().get(kind.name()).copied().unwrap_or(0),
-                ) + pending.map_or(Duration::ZERO, |(_, wait)| wait.duration());
-                (count != 0).then_some((kind.name(), count, sleep))
+                let sleep = Duration::from_millis(owner.sleep_by_type().get(name).copied().unwrap_or(0))
+                    + pending.map_or(Duration::ZERO, |(_, wait)| wait.duration());
+                (count != 0).then_some((name, count, sleep))
             })
             .collect::<Vec<_>>()
             .into_iter()
@@ -292,7 +205,7 @@ impl RegionBackoffBudget {
         let pending = self
             .pending
             .as_ref()
-            .filter(|(kind, _)| kind.config().excluded_budget_limit_ms.is_none())
+            .filter(|(config, _)| config.excluded_budget_limit_ms.is_none())
             .map_or(0, |(_, wait)| duration_ms(wait.duration()));
         Duration::from_millis(
             owner.max_sleep_ms().saturating_sub(
@@ -307,8 +220,8 @@ impl RegionBackoffBudget {
 /// Exhaustion result returned before reserving a new sleep.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RegionBackoffExhausted {
-    /// Category which observed exhaustion.
-    pub kind: RegionBackoffKind,
+    /// client-go config of the class that exhausted the budget.
+    pub config: RetryConfig,
     /// Configured effective maximum.
     pub max_sleep: Duration,
 }
@@ -361,12 +274,12 @@ mod tests {
     fn completed_and_interrupted_waits_keep_separate_counts_and_sleep() {
         let mut budget = RegionBackoffBudget::new(Duration::from_secs(20));
         assert_eq!(
-            budget.next_delay(RegionBackoffKind::RegionMiss).unwrap(),
+            budget.next_delay(tikv_client::retry::BO_REGION_MISS).unwrap(),
             Duration::from_millis(2)
         );
         budget.finish_wait(true);
         assert_eq!(
-            budget.next_delay(RegionBackoffKind::RegionMiss).unwrap(),
+            budget.next_delay(tikv_client::retry::BO_REGION_MISS).unwrap(),
             Duration::from_millis(4)
         );
         budget.finish_wait(false);
@@ -377,12 +290,12 @@ mod tests {
         );
         // Go's canceled backoffFn does not advance its exponential schedule.
         assert_eq!(
-            budget.next_delay(RegionBackoffKind::RegionMiss).unwrap(),
+            budget.next_delay(tikv_client::retry::BO_REGION_MISS).unwrap(),
             Duration::from_millis(4)
         );
         budget.finish_wait(true);
         budget
-            .next_delay(RegionBackoffKind::TikvServerBusy)
+            .next_delay(tikv_client::retry::BO_TIKV_SERVER_BUSY)
             .unwrap();
         budget.finish_wait(false);
         assert_eq!(budget.remaining(), Duration::from_millis(19_994));
@@ -398,17 +311,17 @@ mod tests {
     #[test]
     fn tiflash_wait_uses_native_jitter_budget_and_error_identity() {
         let mut budget = RegionBackoffBudget::new(Duration::from_millis(1));
-        let delay = budget.next_delay(RegionBackoffKind::TiFlashRpc).unwrap();
+        let delay = budget.next_delay(tikv_client::retry::BO_TIFLASH_RPC).unwrap();
         assert!((Duration::from_millis(50)..Duration::from_millis(100)).contains(&delay));
         budget.finish_wait(false);
         assert_eq!(budget.total_sleep(), Duration::ZERO);
-        let delay = budget.next_delay(RegionBackoffKind::TiFlashRpc).unwrap();
+        let delay = budget.next_delay(tikv_client::retry::BO_TIFLASH_RPC).unwrap();
         assert!((Duration::from_millis(50)..Duration::from_millis(100)).contains(&delay));
         budget.finish_wait(true);
         let exhausted = budget
-            .next_delay(RegionBackoffKind::TiFlashRpc)
+            .next_delay(tikv_client::retry::BO_TIFLASH_RPC)
             .unwrap_err();
-        assert_eq!(exhausted.kind, RegionBackoffKind::TiFlashRpc);
+        assert_eq!(exhausted.config, tikv_client::retry::BO_TIFLASH_RPC);
         assert_eq!(
             budget.runtime_stats().collect::<Vec<_>>(),
             vec![("tiflashRPC", 2, delay)]
@@ -418,16 +331,16 @@ mod tests {
     #[test]
     fn forked_history_replaces_the_parent_without_replacing_its_schedule() {
         let mut parent = RegionBackoffBudget::new(Duration::from_secs(20));
-        parent.next_delay(RegionBackoffKind::RegionMiss).unwrap();
+        parent.next_delay(tikv_client::retry::BO_REGION_MISS).unwrap();
         parent.finish_wait(true);
         let mut first = parent.fork();
         let mut last = parent.fork();
         assert_eq!(
-            first.next_delay(RegionBackoffKind::RegionMiss).unwrap(),
+            first.next_delay(tikv_client::retry::BO_REGION_MISS).unwrap(),
             Duration::from_millis(2)
         );
         first.finish_wait(true);
-        last.next_delay(RegionBackoffKind::StaleCommand).unwrap();
+        last.next_delay(tikv_client::retry::BO_STALE_CMD).unwrap();
         last.finish_wait(true);
         parent.update_from_forked(&first);
         parent.update_from_forked(&last);
@@ -439,7 +352,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            parent.next_delay(RegionBackoffKind::RegionMiss).unwrap(),
+            parent.next_delay(tikv_client::retry::BO_REGION_MISS).unwrap(),
             Duration::from_millis(4)
         );
     }

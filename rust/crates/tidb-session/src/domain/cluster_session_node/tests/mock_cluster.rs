@@ -20,7 +20,6 @@ use tidb_store_driver_error::pessimistic_lock_error::commit_outcome_to_sql_error
 use tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions;
 use tidb_kv::cluster_storage::{DuplicateKeyHint, SnapshotPairs};
 use tidb_kv::storage::StorageError;
-use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause, UndeterminedTransaction};
 use tidb_txnkv::Key;
 
@@ -475,7 +474,7 @@ impl ClusterTransactions for MockTransactions {
             let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
                 receipt: OptimisticTransactionReceipt::new(1, 2, b"k".to_vec(), 1),
                 cause: TransactionCause::BackoffExhausted {
-                    kind: RegionBackoffKind::RegionMiss,
+                    terminal: tikv_client::retry::BO_REGION_MISS.terminal_error,
                     detail: "regionMiss backoffer exhausted".to_owned(),
                 },
             });

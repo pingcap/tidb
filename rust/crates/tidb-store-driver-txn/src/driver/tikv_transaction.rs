@@ -558,9 +558,9 @@ pub(crate) fn classify_client_cause(
 ) -> tidb_txnkv::transaction::TransactionCause {
     use tidb_txnkv::transaction::TransactionCause;
     use tikv_client::Error as ClientError;
-    if let Some(kind) = tidb_store_driver_error::backoff::client_backoff_kind(client_error) {
+    if let Some(terminal) = tidb_store_driver_error::backoff::client_backoff_terminal(client_error) {
         return TransactionCause::BackoffExhausted {
-            kind,
+            terminal,
             detail: client_error.to_string(),
         };
     }
@@ -633,7 +633,7 @@ pub(crate) fn classify_client_cause(
                 terminal: Some(tikv_client::retry::RetryTerminal::PdServerTimeout),
                 ..
             } => TransactionCause::BackoffExhausted {
-                kind: tidb_txnkv::retry::RegionBackoffKind::PdRpc,
+                terminal: tikv_client::retry::RetryTerminal::PdServerTimeout,
                 detail: retry_error.to_string(),
             },
             _ => TransactionCause::Region {
@@ -1031,7 +1031,7 @@ mod tests {
         assert!(matches!(
             cause,
             TransactionCause::BackoffExhausted {
-                kind: tidb_txnkv::retry::RegionBackoffKind::PdRpc,
+                terminal: tikv_client::retry::RetryTerminal::PdServerTimeout,
                 ..
             }
         ));
