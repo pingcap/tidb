@@ -2,8 +2,8 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 44,
-    "open": 13,
+    "unresolved": 43,
+    "open": 12,
     "partial": 31
   },
   "findings": [
@@ -62,7 +62,7 @@
       "id": "D11",
       "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "A multi-schema change does not promote a sub-job's KV-disk-full pause to the parent job (Go `promoteProxyKVDiskFullPause`), and ADD INDEX / MODIFY COLUMN always skip the DDL-time ANALYZE that Go's `checkNeedAnalyze` runs when `tidb_stats_update_during_ddl` is ON (default OFF)",
+      "finding": "ADD INDEX / MODIFY COLUMN always skip the DDL-time ANALYZE that Go's `checkNeedAnalyze` / `doAnalyzeWithoutReorg` run when `tidb_stats_update_during_ddl` is ON (default OFF); and a multi-schema change has no `promoteProxyKVDiskFullPause`, whose only producer (`autoPauseAddIndexJobOnKVDiskFull`, the DXF add-index task) Rust lacks (D02, O10)",
       "go_owner": "`pkg/ddl/multi_schema_change.go`, `pkg/ddl/index.go`, `pkg/ddl/modify_column.go`"
     },
     {
@@ -83,7 +83,7 @@
       "id": "E04",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "`enable_parallel_apply` decides clonability by `supports_apply_worker_clone` (refuses only CTE/CTETable/Shuffle) instead of Go's `SafeClone` over each operator's `Clone` (29 implement it; others such as BatchPointGet refuse, while PhysicalCTE clones), and never appends Go's `Some apply operators can not be executed in parallel` warning",
+      "finding": "`enableParallelApply` follows Go's `SafeClone` (with its warning) and `KeepOrder`, but the executor runs an Apply whose inner child holds a CTE serially (`supports_apply_worker_clone`), where Go clones `PhysicalCTE` and runs its workers in parallel",
       "go_owner": "`pkg/planner/core/optimizer.go` (`enableParallelApply`), `physicalop.SafeClone`"
     },
     {
@@ -126,15 +126,8 @@
       "id": "T04",
       "status": "partial",
       "group": "Transaction and routing ownership",
-      "finding": "client-rust's committer fills `CommitDetails`' write keys/size and prewrite, latest-ts, commit-ts, commit and local-latch times (published through `CommitDetailCtxKey` and merged into the statement), but not client-go's prewrite/commit backoff time and types, per-request `MergePrewriteReqDetails`/`MergeCommitReqDetails`, prewrite region and request counts, resolve-lock detail or binlog wait",
+      "finding": "client-rust's committer charges `CommitDetails` as client-go does (a pipelined transaction's one detail across its flushes and commit included), but a prewrite fan-out merges its last batch's Backoffer into the prewrite Backoffer where client-go's batch executor does not (`UpdateUsingForked`), and a standard-2PC undetermined prewrite restarts and regroups the whole prewrite where client-go's `handleRegionErr` retries the batch in place",
       "go_owner": "client-go `txnkv/transaction` (`twoPhaseCommitter` detail), `pkg/session` (`doCommit`), `pkg/util/execdetails`"
-    },
-    {
-      "id": "T05",
-      "status": "open",
-      "group": "Transaction and routing ownership",
-      "finding": "client-rust's `LockKeysDetails` carries the locked-key count, total time and fair-locking counts, but not client-go's region count, lock RPC time/count, retry count, backoff time/types or resolve-lock detail",
-      "go_owner": "client-go `txnkv/transaction` (`pessimisticLockMutations`, `LockKeys`), `util.LockKeysDetails`"
     },
     {
       "id": "O02",
@@ -190,7 +183,7 @@
       "id": "O19",
       "status": "partial",
       "group": "Domain and process services",
-      "finding": "`CountStmtNode` runs at the session's compile (text, binary EXECUTE, transaction control) under the statement's resource group and an EXECUTE's prepared label, but a query is counted before its plan is built (Rust plans inside `open`), so a query whose planning fails is counted where Go's `Optimize` error is not; `getStmtDbLabel` lacks Go's CALL, SHOW, IMPORT INTO, DISTRIBUTE TABLE, DROP STATS, ADMIN, FLUSH, REPAIR TABLE and binding cases",
+      "finding": "`CountStmtNode` runs at the session's compile (text, binary EXECUTE, transaction control) under the statement's resource group, an EXECUTE's prepared label and Go's `getStmtDbLabel` rules, but a query is counted before its plan is built (Rust plans inside `open`), so a query whose planning fails is counted where Go's `Optimize` error is not",
       "go_owner": "`pkg/executor/compiler.go` (`CountStmtNode`)"
     },
     {

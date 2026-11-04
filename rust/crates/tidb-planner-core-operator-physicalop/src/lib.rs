@@ -5528,6 +5528,47 @@ pub mod expand;
 
 
 /// Clone eligibility for an independently owned Apply worker executor tree.
+/// Go `SafeClone`: the `%T doesn't support cloning` error of the first
+/// operator, in Go's clone order (an operator, its children, then a CTE's
+/// seed and recursive plans), whose type implements no `Clone`.
+///
+/// # Errors
+///
+/// Go's clone error text.
+pub fn safe_clone(plan: &PhysicalPlan) -> Result<(), String> {
+    let uncloneable = match plan {
+        PhysicalPlan::Shuffle(_) => "PhysicalShuffle",
+        PhysicalPlan::ShuffleReceiver(_) => "PhysicalShuffleReceiverStub",
+        PhysicalPlan::TableSample(_) => "PhysicalTableSample",
+        PhysicalPlan::MemTable(_) => "PhysicalMemTable",
+        PhysicalPlan::TableDual(_) => "PhysicalTableDual",
+        PhysicalPlan::NominalSort(_) => "NominalSort",
+        PhysicalPlan::CTETable(_) => "PhysicalCTETable",
+        PhysicalPlan::Show(_) => "PhysicalShow",
+        PhysicalPlan::ShowDDLJobs(_) => "PhysicalShowDDLJobs",
+        PhysicalPlan::Lock(_) => "PhysicalLock",
+        PhysicalPlan::PointGet(_) => "PointGetPlan",
+        PhysicalPlan::BatchPointGet(_) => "BatchPointGetPlan",
+        PhysicalPlan::IndexMergeReader(_) => "PhysicalIndexMergeReader",
+        PhysicalPlan::UnionScan(_) => "PhysicalUnionScan",
+        PhysicalPlan::Dml(dml) => dml.go_operator.as_str(),
+        _ => {
+            plan.children().iter().try_for_each(safe_clone)?;
+            if let PhysicalPlan::CTE(cte) = plan {
+                safe_clone(&cte.seed_plan)?;
+                if let Some(recursive) = &cte.recursive_plan {
+                    safe_clone(recursive)?;
+                }
+            }
+            return Ok(());
+        }
+    };
+    Err(format!("*physicalop.{uncloneable} doesn't support cloning"))
+}
+
+/// Whether the Rust executor can build independent worker copies of an Apply
+/// inner tree: recursive CTE and shuffle runtime state cannot be cloned yet,
+/// so such a tree runs the parallel Apply serially.
 pub fn supports_apply_worker_clone(plan: &PhysicalPlan) -> bool {
     !matches!(
         plan,

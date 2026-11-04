@@ -94,6 +94,14 @@ macro_rules! impl_inner_shardable {
             self.inner.mark_retry_request();
         }
 
+        fn observe_grouping(&self, region_groups: usize, batches: usize, regroup: bool) {
+            self.inner.observe_grouping(region_groups, batches, regroup);
+        }
+
+        fn observe_batch_backoff(&self, sleep_ms: u64, types: &[&'static str]) {
+            self.inner.observe_batch_backoff(sleep_ms, types);
+        }
+
         fn mark_replica_data_not_ready(&mut self, peer_id: u64) {
             self.inner.mark_replica_data_not_ready(peer_id);
         }
@@ -228,6 +236,17 @@ pub trait Shardable {
     /// Source `RegionRequestSender` marks every resend in the wire context.
     /// Plans without a TiKV request retain a no-op implementation.
     fn mark_retry_request(&mut self) {}
+
+    /// client-go `doActionOnGroupMutations` grouped the request's keys into
+    /// `region_groups` regions and `batches` batches: on the request's first
+    /// grouping, and again (`regroup`) when a region error relocates a batch
+    /// (`handleRegionError` running the action's `doActionOnMutations`).
+    /// Only prewrite and pessimistic lock record it.
+    fn observe_grouping(&self, _region_groups: usize, _batches: usize, _regroup: bool) {}
+
+    /// client-go's batch executor finished one concurrent batch on its own
+    /// Backoffer. Only prewrite records it.
+    fn observe_batch_backoff(&self, _sleep_ms: u64, _types: &[&'static str]) {}
 
     fn mark_replica_data_not_ready(&mut self, _peer_id: u64) {}
 
@@ -606,6 +625,14 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
         self.replica_selector_state.largest_pending_backoff()
     }
 
+    fn observe_grouping(&self, region_groups: usize, batches: usize, regroup: bool) {
+        self.request.observe_grouping(region_groups, batches, regroup);
+    }
+
+    fn observe_batch_backoff(&self, sleep_ms: u64, types: &[&'static str]) {
+        self.request.observe_batch_backoff(sleep_ms, types);
+    }
+
     fn mark_retry_request(&mut self) {
         self.request.set_is_retry_request();
         if let Some(timeout) = self.retry_request_timeout {
@@ -770,6 +797,14 @@ impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
         self.inner.mark_retry_request();
     }
 
+    fn observe_grouping(&self, region_groups: usize, batches: usize, regroup: bool) {
+        self.inner.observe_grouping(region_groups, batches, regroup);
+    }
+
+    fn observe_batch_backoff(&self, sleep_ms: u64, types: &[&'static str]) {
+        self.inner.observe_batch_backoff(sleep_ms, types);
+    }
+
     fn mark_replica_data_not_ready(&mut self, peer_id: u64) {
         self.inner.mark_replica_data_not_ready(peer_id);
     }
@@ -872,6 +907,14 @@ impl<P: Plan + Shardable, PdC: PdClient> Shardable for CleanupLocks<P, PdC> {
 
     fn mark_retry_request(&mut self) {
         self.inner.mark_retry_request();
+    }
+
+    fn observe_grouping(&self, region_groups: usize, batches: usize, regroup: bool) {
+        self.inner.observe_grouping(region_groups, batches, regroup);
+    }
+
+    fn observe_batch_backoff(&self, sleep_ms: u64, types: &[&'static str]) {
+        self.inner.observe_batch_backoff(sleep_ms, types);
     }
 
     fn region_request_runtime_stats(&self) -> Option<Arc<crate::RegionRequestRuntimeStats>> {

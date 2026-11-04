@@ -1125,6 +1125,9 @@ impl Default for AggressiveLockingContext {
 
 #[derive(Clone, Default)]
 struct PipelinedTransactionState {
+    /// client-go `InitPipelinedMemDB`'s `CommitDetails`, which the pipelined
+    /// committer's flushes and commit charge and its commit publishes.
+    commit_detail: Arc<Mutex<crate::util::CommitDetails>>,
     generation: u64,
     range_start: Option<Vec<u8>>,
     range_end: Option<Vec<u8>>,
@@ -1744,7 +1747,8 @@ impl<PdC: PdClient> Transaction<PdC> {
                         memdb.size() as u64,
                         memdb.size() as u64,
                         start_instant,
-                    );
+                    )
+                    .with_pipelined_commit_detail();
                     let heartbeat_committer = committer.clone();
                     let heartbeat_cancellation = pipelined_cancellation.clone();
                     let heartbeat_started = pipelined_heartbeat_started.clone();
@@ -4431,8 +4435,12 @@ impl<PdC: PdClient> Transaction<PdC> {
         .with_constraint_check_keys(self.buffer.constraint_check_keys())
         .with_for_update_ts_constraints(self.for_update_ts_constraints.clone())
         .with_stashed_assertion(stashed_assertion)
-        .with_auto_heartbeat_starter(auto_heartbeat_starter)
-        .with_commit_detail(write_keys, write_size as usize, local_latch_time);
+        .with_auto_heartbeat_starter(auto_heartbeat_starter);
+        let committer = if self.is_pipelined() {
+            committer.with_pipelined_commit_detail()
+        } else {
+            committer.with_commit_detail(write_keys, write_size as usize, local_latch_time)
+        };
         let detail = Arc::clone(&committer.detail);
         let res = committer
             .commit_with_value_discard(|| self.buffer.mem_buffer().discard_values())
@@ -4443,7 +4451,14 @@ impl<PdC: PdClient> Transaction<PdC> {
             let mut slot = slot.lock().unwrap();
             match slot.as_mut() {
                 Some(published) => published.transaction_retry += 1,
-                None => *slot = Some(detail.lock().unwrap().clone()),
+                None => {
+                    // client-go publishes the committer's detail itself,
+                    // `PrewriteReqNum` included (which `Clone` drops).
+                    let detail = detail.lock().unwrap();
+                    let mut published = detail.clone();
+                    published.prewrite_request_num = detail.prewrite_request_num;
+                    *slot = Some(published);
+                }
             }
         }
 
@@ -5650,20 +5665,74 @@ impl<PdC: PdClient> Transaction<PdC> {
         wait_timeout: i64,
         wake_up_mode: kvrpcpb::PessimisticLockWakeUpMode,
         is_shared_lock_upgrade: bool,
-        context: Option<&mut LockContext>,
+        mut context: Option<&mut LockContext>,
     ) -> Result<Vec<KvPair>> {
         let source_retry_owner = self.source_retry_owner(PESSIMISTIC_LOCK_MAX_BACKOFF);
-        self.pessimistic_lock_impl_with_retry_owner(
+        // client-go `actionPessimisticLock` charges `lockCtx.Stats` from each
+        // lock RPC, its region grouping and its lock resolution; the slot
+        // carries them through the request's ctx.
+        let rpc_details = context
+            .as_ref()
+            .and_then(|context| context.stats.as_ref())
+            .map(|stats| {
+                Arc::new(std::sync::Mutex::new(crate::util::LockKeysDetails {
+                    region_num: stats.region_num,
+                    ..Default::default()
+                }))
+            });
+        let lock = self.pessimistic_lock_impl_with_retry_owner(
             locks,
             need_value,
             lock_type,
             wait_timeout,
             wake_up_mode,
             is_shared_lock_upgrade,
-            context,
-            source_retry_owner,
-        )
-        .await
+            context.as_deref_mut(),
+            source_retry_owner.clone(),
+        );
+        let result = match &rpc_details {
+            Some(details) => {
+                let trace_context = crate::util::context_with_lock_keys_details(
+                    &crate::trace::current_trace_context(),
+                    Arc::clone(details),
+                );
+                crate::trace::with_trace_context(trace_context, lock).await
+            }
+            None => lock.await,
+        };
+        let Some(stats) = context.and_then(|context| context.stats.as_mut()) else {
+            return result;
+        };
+        if let Some(details) = rpc_details {
+            let details = details.lock().unwrap();
+            stats.region_num = details.region_num;
+            stats.resolve_lock.merge(&details.resolve_lock);
+            stats.lock_rpc_time_ns = stats.lock_rpc_time_ns.wrapping_add(details.lock_rpc_time_ns);
+            stats.lock_rpc_count = stats.lock_rpc_count.wrapping_add(details.lock_rpc_count);
+            if stats.detail.slowest_request_total_time < details.detail.slowest_request_total_time {
+                stats.detail.slowest_request_total_time = details.detail.slowest_request_total_time;
+                stats.detail.slowest_region = details.detail.slowest_region;
+                stats.detail.slowest_store_address = details.detail.slowest_store_address.clone();
+                stats.detail.slowest_exec_details = details.detail.slowest_exec_details.clone();
+            }
+        }
+        // client-go `lockKeys`: the lock Backoffer's sleep and classes join
+        // `lockCtx.Stats`.
+        if let Some(owner) = source_retry_owner {
+            if let Ok(owner) = owner.try_lock() {
+                let sleep_ms = owner.total_sleep_ms();
+                if sleep_ms > 0 {
+                    stats.backoff_time_ns = stats.backoff_time_ns.wrapping_add(
+                        i64::try_from(sleep_ms.saturating_mul(1_000_000)).unwrap_or(i64::MAX),
+                    );
+                    stats
+                        .detail
+                        .backoff_types
+                        .extend(owner.types().into_iter().map(str::to_owned));
+                }
+            }
+        }
+        result
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -5794,6 +5863,18 @@ impl<PdC: PdClient> Transaction<PdC> {
             .await
             .into_iter()
             .collect::<Result<Vec<_>>>()?;
+        // client-go `doActionOnGroupMutations`: a pessimistic lock sets
+        // `Stats.RegionNum` to the number of region groups.
+        if let Some(details) =
+            crate::util::lock_keys_details_from_context(&crate::trace::current_trace_context())
+        {
+            let mut regions = located_shards
+                .iter()
+                .map(|(_, region)| region.id())
+                .collect::<Vec<_>>();
+            regions.dedup();
+            details.lock().unwrap().region_num = regions.len() as i32;
+        }
         let primary_batch = (located_shards.len() > 1)
             .then(|| {
                 located_shards.iter().find_map(|((mutations, _), _)| {
@@ -7220,6 +7301,13 @@ impl<PdC: PdClient> Committer<PdC> {
 
     /// client-go `twoPhaseCommitter.initKeysAndMutations`' `CommitDetails`:
     /// the transaction's write keys and size.
+    /// A pipelined transaction's one committer detail (client-go keeps the
+    /// `InitPipelinedMemDB` detail; `Commit` skips `initKeysAndMutations`).
+    fn with_pipelined_commit_detail(mut self) -> Self {
+        self.detail = Arc::clone(&self.pipelined_state.commit_detail);
+        self
+    }
+
     fn with_commit_detail(mut self, write_keys: usize, write_size: usize, local_latch_time: Duration) -> Self {
         self.detail = Arc::new(Mutex::new(crate::util::CommitDetails {
             write_keys,
@@ -7811,11 +7899,23 @@ impl<PdC: PdClient> Committer<PdC> {
         on_primary_success: Option<Arc<dyn Fn() + Send + Sync>>,
     ) -> Result<()> {
         let source_retry_owner = self.source_retry_owner(PIPELINED_FLUSH_MAX_BACKOFF);
-        self.flush_pipelined_generation_with_retry_owner(
-            mutations,
-            generation,
-            on_primary_success,
-            source_retry_owner,
+        // client-go's pipelined flush resolves into the committer's
+        // `ResolveLock` detail.
+        let trace_context = crate::util::context_with_committer_detail(
+            &crate::trace::current_trace_context(),
+            crate::util::CommitterDetail {
+                detail: Arc::clone(&self.detail),
+                merge_commit_primary: false,
+            },
+        );
+        crate::trace::with_trace_context(
+            trace_context,
+            Box::pin(self.flush_pipelined_generation_with_retry_owner(
+                mutations,
+                generation,
+                on_primary_success,
+                source_retry_owner,
+            )),
         )
         .await
     }
@@ -8900,6 +9000,7 @@ impl<PdC: PdClient> Committer<PdC> {
             let lock_count = locks.len();
             let mut lock_resolver_context = self.lock_resolver_context.clone();
             lock_resolver_context.pessimistic_region_resolve = true;
+            let resolve_started = Instant::now();
             let resolution = crate::transaction::resolve_locks_with_context_result(
                 locks,
                 self.start_version.clone(),
@@ -8908,7 +9009,16 @@ impl<PdC: PdClient> Committer<PdC> {
                 self.keyspace_name.as_deref(),
                 lock_resolver_context,
             )
-            .await?;
+            .await;
+            // client-go's txn-file prewrite resolves into the committer's
+            // `ResolveLock` detail.
+            if lock_count > 0 {
+                let mut detail = self.detail.lock().unwrap();
+                detail.resolve_lock.resolve_lock_time_ns = detail.resolve_lock.resolve_lock_time_ns.wrapping_add(
+                    i64::try_from(resolve_started.elapsed().as_nanos()).unwrap_or(i64::MAX),
+                );
+            }
+            let resolution = resolution?;
             if resolution.ms_before_expired > 0 {
                 retry_backoff
                     .backoff_lock(
@@ -9359,12 +9469,33 @@ impl<PdC: PdClient> Committer<PdC> {
                 .share_client_span_slot(bo.clone());
         }
         let span = bo.start_span("twoPhaseCommitter.prewriteMutations");
-        let result = crate::trace::with_bo_span_slot(
-            bo.clone(),
-            self.prewrite_with_retry_owner(source_retry_owner),
+        let detail = Arc::clone(&self.detail);
+        let trace_context = crate::util::context_with_committer_detail(
+            &crate::trace::current_trace_context(),
+            crate::util::CommitterDetail {
+                detail: Arc::clone(&detail),
+                merge_commit_primary: false,
+            },
+        );
+        let result = crate::trace::with_trace_context(
+            trace_context,
+            crate::trace::with_bo_span_slot(
+                bo.clone(),
+                Box::pin(self.prewrite_with_retry_owner(source_retry_owner.clone())),
+            ),
         )
         .await;
         drop(span);
+        // client-go `execute`: the prewrite Backoffer's sleep, when longer
+        // than any batch's.
+        if let Some(owner) = source_retry_owner {
+            if let Ok(owner) = owner.try_lock() {
+                detail
+                    .lock()
+                    .unwrap()
+                    .record_prewrite_backoff(owner.total_sleep_ms(), &owner.types());
+            }
+        }
         result
     }
 
@@ -9934,18 +10065,46 @@ impl<PdC: PdClient> Committer<PdC> {
         };
         let span = commit_bo.start_span("twoPhaseCommitter.commitMutations");
         let started = Instant::now();
-        let result = crate::trace::with_bo_span_slot(
-            commit_bo.clone(),
-            self.commit_mutations(
-                commit_version,
-                discard_values,
-                source_retry_owner,
-                &commit_bo,
+        let trace_context = crate::util::context_with_committer_detail(
+            &crate::trace::current_trace_context(),
+            crate::util::CommitterDetail {
+                detail: Arc::clone(&self.detail),
+                merge_commit_primary: !self.options.async_commit,
+            },
+        );
+        let result = crate::trace::with_trace_context(
+            trace_context,
+            crate::trace::with_bo_span_slot(
+                commit_bo.clone(),
+                Box::pin(self.commit_mutations(
+                    commit_version,
+                    discard_values,
+                    source_retry_owner.clone(),
+                    &commit_bo,
+                )),
             ),
         )
         .await;
-        // client-go `commitTxn`'s `commitDetail.CommitTime`.
-        self.detail.lock().unwrap().commit_time = started.elapsed();
+        let mut detail = self.detail.lock().unwrap();
+        // client-go `commitTxn`'s `commitDetail.CommitTime`, and the commit
+        // Backoffer's sleep and classes.
+        detail.commit_time = started.elapsed();
+        if let Some(owner) = source_retry_owner {
+            if let Ok(owner) = owner.try_lock() {
+                let sleep_ms = owner.total_sleep_ms();
+                if sleep_ms > 0 {
+                    detail.detail.commit_backoff_time_ns = detail
+                        .detail
+                        .commit_backoff_time_ns
+                        .wrapping_add(i64::try_from(sleep_ms.saturating_mul(1_000_000)).unwrap_or(i64::MAX));
+                    detail
+                        .detail
+                        .commit_backoff_types
+                        .extend(owner.types().into_iter().map(str::to_owned));
+                }
+            }
+        }
+        drop(detail);
         drop(span);
         result
     }
@@ -19196,6 +19355,318 @@ mod tests {
         );
     }
 
+    /// client-go `actionPessimisticLock` charges `lockCtx.Stats`: the region
+    /// groups of the call, every lock RPC and the slowest successful one.
+    #[tokio::test]
+    async fn source_pessimistic_lock_fills_the_lock_keys_details() {
+        let rpc = Arc::new(MockPdClient::with_client_and_regions(
+            MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+                assert!(request.is::<kvrpcpb::PessimisticLockRequest>());
+                Ok(Box::<kvrpcpb::PessimisticLockResponse>::default() as Box<dyn Any>)
+            }),
+            vec![
+                MockPdClient::region1(),
+                MockPdClient::region2(),
+                MockPdClient::region3(),
+            ],
+        ));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            rpc,
+            TransactionOptions::new_pessimistic()
+                .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                .drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        let mut context = LockContext::new(2, 0, SystemTime::now());
+        transaction
+            .lock_keys_with_context(&mut context, [vec![250, 250], vec![20], vec![1]])
+            .await
+            .unwrap();
+        transaction.set_status(TransactionStatus::Rolledback);
+
+        let stats = context.stats.expect("lock_keys fills the stats");
+        assert_eq!(stats.lock_keys, 3);
+        assert_eq!(stats.region_num, 3);
+        assert_eq!(stats.lock_rpc_count, 3);
+        assert!(stats.lock_rpc_time_ns > 0);
+        assert_ne!(stats.detail.slowest_region, 0);
+        assert_eq!(stats.backoff_time_ns, 0);
+    }
+
+    /// client-go's committer charges `CommitDetails` per batch: the prewrite
+    /// grouping's regions and requests, every successful prewrite and the
+    /// primary commit (slowest request), and the longest prewrite Backoffer.
+    #[tokio::test]
+    async fn source_commit_fills_the_commit_details_per_batch() {
+        let busy = Arc::new(AtomicBool::new(false));
+        let rpc = Arc::new(MockPdClient::with_client_and_regions(
+            MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+                if let Some(request) = request.downcast_ref::<kvrpcpb::PrewriteRequest>() {
+                    if request.mutations.iter().any(|mutation| mutation.key == [20])
+                        && !busy.swap(true, Ordering::SeqCst)
+                    {
+                        return Ok(Box::new(kvrpcpb::PrewriteResponse {
+                            region_error: Some(crate::proto::errorpb::Error {
+                                server_is_busy: Some(crate::proto::errorpb::ServerIsBusy::default()),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    return Ok(Box::<kvrpcpb::PrewriteResponse>::default() as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::CommitRequest>() {
+                    return Ok(Box::<kvrpcpb::CommitResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request while committing");
+            }),
+            vec![
+                MockPdClient::region1(),
+                MockPdClient::region2(),
+                MockPdClient::region3(),
+            ],
+        ));
+        rpc.set_timestamp(Timestamp::from_version(10));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(5),
+            rpc,
+            TransactionOptions::new_optimistic()
+                .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                .drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        transaction.put(vec![1], b"v".to_vec()).await.unwrap();
+        transaction.put(vec![20], b"v".to_vec()).await.unwrap();
+        let details: crate::util::SharedCommitDetails = Arc::new(Mutex::new(None));
+        let context =
+            crate::util::context_with_commit_details(&crate::trace::TraceContext::new(), details.clone());
+        crate::trace::with_trace_context(context, transaction.commit())
+            .await
+            .unwrap();
+
+        // Read the published detail in place: `CommitDetails::clone` drops
+        // `prewrite_request_num`, as Go's `Clone` drops `PrewriteReqNum`.
+        let details = details.lock().unwrap();
+        let details = details.as_ref().expect("commit publishes its details");
+        assert_eq!(details.prewrite_region_num, 2);
+        assert_eq!(details.prewrite_request_num, 2);
+        assert_eq!(details.write_keys, 2);
+        assert_ne!(details.detail.slowest_prewrite.region, 0);
+        assert_eq!(details.detail.commit_primary.region, 1);
+        assert!(details.detail.commit_backoff_time_ns > 0);
+        assert!(
+            details.detail.prewrite_backoff_types.iter().any(|name| name == "tikvServerBusy"),
+            "{:?}",
+            details.detail.prewrite_backoff_types
+        );
+        assert!(details.resolve_lock.resolve_lock_time_ns == 0);
+    }
+
+    /// client-go `handleRegionError`: a lock batch whose region split is
+    /// locked again through `doActionOnMutations`, which resets
+    /// `Stats.RegionNum` to the batch's new region groups; a batch whose
+    /// region is unchanged retries in place and keeps the count.
+    #[tokio::test]
+    async fn source_pessimistic_lock_region_num_follows_a_relocated_batch() {
+        for (split, expected_region_num) in [(true, 2), (false, 3)] {
+            let mut split_low = MockPdClient::region2();
+            split_low.region.id = 4;
+            split_low.region.end_key = vec![25];
+            split_low.region.region_epoch = Some(crate::proto::metapb::RegionEpoch { conf_ver: 0, version: 1 });
+            let mut split_high = MockPdClient::region2();
+            split_high.region.id = 5;
+            split_high.region.start_key = vec![25];
+            split_high.region.region_epoch = Some(crate::proto::metapb::RegionEpoch { conf_ver: 0, version: 1 });
+            let current_regions = if split {
+                vec![
+                    MockPdClient::region1(),
+                    split_low,
+                    split_high,
+                    MockPdClient::region3(),
+                ]
+            } else {
+                vec![
+                    MockPdClient::region1(),
+                    MockPdClient::region2(),
+                    MockPdClient::region3(),
+                ]
+            };
+            let pd_slot = Arc::new(Mutex::new(None::<Arc<MockPdClient>>));
+            let captured_pd_slot = Arc::clone(&pd_slot);
+            let failed = Arc::new(AtomicBool::new(false));
+            let rpc = Arc::new(MockPdClient::with_client_and_regions(
+                MockKvClient::with_dispatch_hook(move |request: &dyn Any| {
+                    let request = request
+                        .downcast_ref::<kvrpcpb::PessimisticLockRequest>()
+                        .expect("lock_keys only sends pessimistic-lock requests");
+                    if request.mutations.iter().any(|mutation| mutation.key == [20])
+                        && !failed.swap(true, Ordering::SeqCst)
+                    {
+                        captured_pd_slot
+                            .lock()
+                            .unwrap()
+                            .as_ref()
+                            .unwrap()
+                            .replace_regions(current_regions.clone());
+                        return Ok(Box::new(kvrpcpb::PessimisticLockResponse {
+                            region_error: Some(crate::proto::errorpb::Error {
+                                epoch_not_match: Some(crate::proto::errorpb::EpochNotMatch {
+                                    current_regions: current_regions
+                                        .iter()
+                                        .map(|region| {
+                                            let mut region = region.region.clone();
+                                            let codec = crate::request::ApiV1Codec::new(
+                                                crate::request::KeyMode::Txn,
+                                            );
+                                            (region.start_key, region.end_key) = codec
+                                                .encode_region_range(
+                                                    &region.start_key,
+                                                    &region.end_key,
+                                                );
+                                            region
+                                        })
+                                        .collect(),
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    Ok(Box::<kvrpcpb::PessimisticLockResponse>::default() as Box<dyn Any>)
+                }),
+                vec![
+                    MockPdClient::region1(),
+                    MockPdClient::region2(),
+                    MockPdClient::region3(),
+                ],
+            ));
+            *pd_slot.lock().unwrap() = Some(Arc::clone(&rpc));
+            let mut transaction = Transaction::new(
+                Timestamp::from_version(1),
+                rpc,
+                TransactionOptions::new_pessimistic()
+                    .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                    .drop_check(CheckLevel::None),
+                Keyspace::Disable,
+            );
+            let mut context = LockContext::new(2, 0, SystemTime::now());
+            transaction
+                .lock_keys_with_context(&mut context, [vec![1], vec![20], vec![30], vec![250, 250]])
+                .await
+                .unwrap();
+            transaction.set_status(TransactionStatus::Rolledback);
+
+            let stats = context.stats.expect("lock_keys fills the stats");
+            assert_eq!(stats.region_num, expected_region_num, "split: {split}");
+            assert_eq!(stats.lock_rpc_count, if split { 5 } else { 4 }, "split: {split}");
+        }
+    }
+
+    /// client-go `lockKeys` adds the lock Backoffer's sleep and classes to
+    /// `lockCtx.Stats`.
+    #[tokio::test]
+    async fn source_pessimistic_lock_charges_its_backoff() {
+        let busy = Arc::new(AtomicBool::new(false));
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                assert!(request.is::<kvrpcpb::PessimisticLockRequest>());
+                if !busy.swap(true, Ordering::SeqCst) {
+                    return Ok(Box::new(kvrpcpb::PessimisticLockResponse {
+                        region_error: Some(crate::proto::errorpb::Error {
+                            server_is_busy: Some(crate::proto::errorpb::ServerIsBusy::default()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                Ok(Box::<kvrpcpb::PessimisticLockResponse>::default() as Box<dyn Any>)
+            },
+        )));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(1),
+            rpc,
+            TransactionOptions::new_pessimistic()
+                .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                .drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        let mut context = LockContext::new(2, 0, SystemTime::now());
+        transaction
+            .lock_keys_with_context(&mut context, [b"key".to_vec()])
+            .await
+            .unwrap();
+        transaction.set_status(TransactionStatus::Rolledback);
+
+        let stats = context.stats.expect("lock_keys fills the stats");
+        assert!(stats.backoff_time_ns > 0);
+        assert!(
+            stats.detail.backoff_types.iter().any(|name| name == "tikvServerBusy"),
+            "{:?}",
+            stats.detail.backoff_types
+        );
+    }
+
+    /// client-go `actionPessimisticLock` resolves a met lock into
+    /// `Stats.ResolveLock`, and both lock RPCs charge the stats.
+    #[tokio::test]
+    async fn source_pessimistic_lock_charges_resolve_lock_time() {
+        let lock_requests = Arc::new(AtomicUsize::new(0));
+        let captured_lock_requests = Arc::clone(&lock_requests);
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if request.is::<kvrpcpb::PessimisticLockRequest>() {
+                    if captured_lock_requests.fetch_add(1, Ordering::SeqCst) == 0 {
+                        return Ok(Box::new(kvrpcpb::PessimisticLockResponse {
+                            errors: vec![kvrpcpb::KeyError {
+                                locked: Some(kvrpcpb::LockInfo {
+                                    key: b"key".to_vec(),
+                                    primary_lock: b"other".to_vec(),
+                                    lock_version: 1,
+                                    lock_type: kvrpcpb::Op::PessimisticLock as i32,
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }],
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    return Ok(Box::<kvrpcpb::PessimisticLockResponse>::default() as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::<kvrpcpb::CheckTxnStatusResponse>::default() as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::ResolveLockRequest>() {
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::PessimisticRollbackRequest>() {
+                    return Ok(Box::<kvrpcpb::PessimisticRollbackResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request while resolving a lock for a pessimistic lock");
+            },
+        )));
+        rpc.set_timestamp(Timestamp::from_version(3));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(2),
+            rpc,
+            TransactionOptions::new_pessimistic()
+                .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                .drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        let mut context = LockContext::new(2, 0, SystemTime::now());
+        transaction
+            .lock_keys_with_context(&mut context, [b"key".to_vec()])
+            .await
+            .unwrap();
+        transaction.set_status(TransactionStatus::Rolledback);
+
+        let stats = context.stats.expect("lock_keys fills the stats");
+        assert_eq!(lock_requests.load(Ordering::SeqCst), 2);
+        assert_eq!(stats.lock_rpc_count, 2);
+        assert!(stats.resolve_lock.resolve_lock_time_ns > 0);
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn source_pessimistic_secondaries_wait_for_primary_success() {
         let primary_completed = Arc::new(AtomicBool::new(false));
@@ -20081,6 +20552,85 @@ mod tests {
         assert_eq!(statuses[0].commit_ts, 0);
         assert!(statuses[0].rolled_back);
         assert!(statuses[0].is_completed);
+    }
+
+    /// client-go `InitPipelinedMemDB` gives the pipelined committer one
+    /// `CommitDetails`: its flushes resolve locks into it and its commit
+    /// publishes it, without `initKeysAndMutations`' write keys.
+    #[cfg(not(feature = "nextgen"))]
+    #[tokio::test]
+    async fn source_pipelined_flush_resolves_into_the_published_commit_detail() {
+        let first_flush = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let first_flush_by_hook = first_flush.clone();
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if request.is::<kvrpcpb::FlushRequest>() {
+                    if !first_flush_by_hook.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                        return Ok(Box::<kvrpcpb::FlushResponse>::default() as Box<dyn Any>);
+                    }
+                    return Ok(Box::new(kvrpcpb::FlushResponse {
+                        errors: vec![kvrpcpb::KeyError {
+                            locked: Some(kvrpcpb::LockInfo {
+                                key: b"a".to_vec(),
+                                primary_lock: b"other".to_vec(),
+                                lock_version: 1,
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }) as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::<kvrpcpb::CheckTxnStatusResponse>::default() as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::ResolveLockRequest>() {
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::CommitRequest>() {
+                    return Ok(Box::<kvrpcpb::CommitResponse>::default() as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::TxnHeartBeatRequest>() {
+                    return Ok(Box::<kvrpcpb::TxnHeartBeatResponse>::default() as Box<dyn Any>);
+                }
+                Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>)
+            },
+        )));
+        rpc.set_timestamp(Timestamp::from_version(10));
+        let mut transaction = Transaction::new(
+            Timestamp::from_version(5),
+            rpc,
+            TransactionOptions::new_optimistic()
+                .pipelined(super::PipelinedTxnOptions {
+                    enable: true,
+                    flush_concurrency: 1,
+                    resolve_lock_concurrency: 1,
+                    write_throttle_ratio: 0.0,
+                })
+                .heartbeat_option(HeartbeatOption::NoHeartbeat)
+                .drop_check(CheckLevel::None),
+            Keyspace::Disable,
+        );
+        transaction
+            .put("a".to_owned(), b"value".to_vec())
+            .await
+            .unwrap();
+        assert!(transaction.maybe_flush_pipelined(true).await.unwrap());
+        transaction.buffer.mem_buffer().flush_wait().unwrap();
+        let details: crate::util::SharedCommitDetails = Arc::new(Mutex::new(None));
+        let context =
+            crate::util::context_with_commit_details(&crate::trace::TraceContext::new(), details.clone());
+        crate::trace::with_trace_context(context, transaction.commit())
+            .await
+            .unwrap();
+
+        let details = details.lock().unwrap();
+        let details = details.as_ref().expect("commit publishes its details");
+        assert!(details.resolve_lock.resolve_lock_time_ns > 0);
+        assert_eq!(details.write_keys, 0);
+        // client-go's pipelined `execute` returns `commitFlushedMutations`,
+        // which charges no `CommitTime`.
+        assert_eq!(details.commit_time, Duration::ZERO);
     }
 
     #[cfg(not(feature = "nextgen"))]
@@ -21015,6 +21565,57 @@ mod tests {
             *observed.lock().unwrap(),
             vec![("prewrite", true), ("commit", true), ("rollback", true)]
         );
+    }
+
+    /// client-go's txn-file prewrite resolves the locks it meets into the
+    /// committer's `ResolveLock` detail.
+    #[tokio::test]
+    async fn source_txn_file_prewrite_resolves_into_the_commit_detail() {
+        let prewrites = Arc::new(AtomicUsize::new(0));
+        let captured = prewrites.clone();
+        let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+            move |request: &dyn Any| {
+                if request.is::<kvrpcpb::PrewriteRequest>() {
+                    if captured.fetch_add(1, Ordering::SeqCst) == 0 {
+                        return Ok(Box::new(kvrpcpb::PrewriteResponse {
+                            errors: vec![kvrpcpb::KeyError {
+                                locked: Some(kvrpcpb::LockInfo {
+                                    key: b"k".to_vec(),
+                                    primary_lock: b"other".to_vec(),
+                                    lock_version: 1,
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }],
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    return Ok(Box::<kvrpcpb::PrewriteResponse>::default() as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::CheckTxnStatusRequest>() {
+                    return Ok(Box::<kvrpcpb::CheckTxnStatusResponse>::default() as Box<dyn Any>);
+                }
+                if request.is::<kvrpcpb::ResolveLockRequest>() {
+                    return Ok(Box::<kvrpcpb::ResolveLockResponse>::default() as Box<dyn Any>);
+                }
+                panic!("unexpected request while resolving a txn-file prewrite lock");
+            },
+        )));
+        rpc.set_timestamp(Timestamp::from_version(3));
+        let mut committer = source_test_committer(
+            rpc,
+            Some(Key::from(b"k".to_vec())),
+            vec![source_test_mutation("k", kvrpcpb::Op::Put)],
+            TransactionOptions::new_optimistic(),
+            CommitSettings::default(),
+        );
+        let batch = source_test_chunk_batch(true);
+        committer
+            .prewrite_txn_file_batch_with_retry(&batch, false)
+            .await
+            .unwrap();
+        assert_eq!(prewrites.load(Ordering::SeqCst), 2);
+        assert!(committer.detail.lock().unwrap().resolve_lock.resolve_lock_time_ns > 0);
     }
 
     #[tokio::test]

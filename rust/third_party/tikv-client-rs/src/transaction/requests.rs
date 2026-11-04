@@ -660,6 +660,34 @@ impl Shardable for kvrpcpb::PrewriteRequest {
             .boxed()
     }
 
+    // client-go `doActionOnGroupMutations` for a prewrite: every grouping
+    // adds its regions to `PrewriteRegionNum`, and the first one's batches
+    // are `prewriteTotalReqNum`.
+    fn observe_grouping(&self, region_groups: usize, batches: usize, _regroup: bool) {
+        if let Some(committer) =
+            crate::util::committer_detail_from_context(&crate::trace::current_trace_context())
+        {
+            let mut detail = committer.detail.lock().unwrap();
+            detail.prewrite_region_num = detail
+                .prewrite_region_num
+                .wrapping_add(region_groups as i32);
+            if detail.prewrite_request_num == 0 {
+                detail.prewrite_request_num = batches;
+            }
+        }
+    }
+
+    // client-go's batch executor records a prewrite batch's Backoffer when it
+    // slept longer than any batch before it.
+    fn observe_batch_backoff(&self, sleep_ms: u64, types: &[&'static str]) {
+        if let Some(committer) =
+            crate::util::committer_detail_from_context(&crate::trace::current_trace_context())
+        {
+            let mut detail = committer.detail.lock().unwrap();
+            detail.record_prewrite_backoff(sleep_ms, types);
+        }
+    }
+
     fn apply_shard(&mut self, shard: Self::Shard) {
         let full_txn_size = self.txn_size;
         let (mutations, pessimistic_actions, constraints, region_txn_size) = shard;
@@ -988,6 +1016,20 @@ impl Shardable for kvrpcpb::PessimisticLockRequest {
     fn apply_shard(&mut self, shard: Self::Shard) {
         self.mutations = shard.0;
         self.wake_up_mode = shard.1;
+    }
+
+    // client-go `doActionOnGroupMutations`: a pessimistic lock sets
+    // `Stats.RegionNum` to the number of region groups. The first grouping
+    // is the committer's own (`pessimistic_lock_impl_with_retry_owner`).
+    fn observe_grouping(&self, region_groups: usize, _batches: usize, regroup: bool) {
+        if !regroup {
+            return;
+        }
+        if let Some(details) =
+            crate::util::lock_keys_details_from_context(&crate::trace::current_trace_context())
+        {
+            details.lock().unwrap().region_num = region_groups as i32;
+        }
     }
 
     fn apply_store(&mut self, store: &RegionStore) -> Result<()> {

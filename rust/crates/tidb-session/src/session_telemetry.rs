@@ -189,6 +189,11 @@ impl Session {
             &self.vars.current_db,
             self.vars.restricted_sql,
             &self.statement_resource_group(stmt),
+            &|schema, table| {
+                tidb_telemetry::Session::info_schema(self)
+                    .table_info_by_name(schema, table)
+                    .is_some()
+            },
         );
     }
 

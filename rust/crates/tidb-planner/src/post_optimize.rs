@@ -294,33 +294,38 @@ pub(crate) fn eliminate_projection_preserving_shuffle(
     projection.base.children_mut().remove(0)
 }
 
-/// Go postOptimize enableParallelApply: inner Apply descendants remain serial.
-/// Shared recursive CTE/shuffle runtime state cannot be independently cloned
-/// by the Rust builder yet, so those inner trees retain the serial fallback.
-pub fn enable_parallel_apply(plan: &mut PhysicalPlan, concurrency: usize) {
+/// Go postOptimize `enableParallelApply`: an Apply whose inner child clones
+/// runs with the executor concurrency (keeping the outer order when its outer
+/// child requires one), else it warns; inner Apply descendants remain serial.
+pub fn enable_parallel_apply<C: crate::optimize::OptimizeContext>(ctx: &C, plan: &mut PhysicalPlan) {
     if let PhysicalPlan::Apply(apply) = plan {
         let outer = 1 - apply.hash_join.inner_child_idx;
-        if outer > 1 {
-            return;
+        let has_order = apply
+            .hash_join
+            .base
+            .child_req_prop(outer)
+            .is_some_and(|prop| !prop.is_sort_item_empty());
+        let cloned = tidb_planner_core_operator_physicalop::safe_clone(
+            &apply.hash_join.base.children()[apply.hash_join.inner_child_idx],
+        );
+        match cloned {
+            Ok(()) => {
+                apply.concurrency = ctx.executor_concurrency();
+                if has_order {
+                    apply.keep_order = true;
+                }
+            }
+            Err(error) => ctx.append_task_warning(
+                false,
+                1105,
+                &format!("Some apply operators can not be executed in parallel: {error}"),
+            ),
         }
-        let inner = 1 - outer;
-        if plan
-            .children()
-            .get(inner)
-            .is_some_and(supports_apply_worker_clone)
-        {
-            let PhysicalPlan::Apply(apply) = plan else {
-                unreachable!()
-            };
-            apply.concurrency = concurrency;
-        }
-        if let Some(child) = plan.base_mut().children_mut().get_mut(outer) {
-            enable_parallel_apply(child, concurrency);
-        }
+        enable_parallel_apply(ctx, &mut plan.base_mut().children_mut()[outer]);
         return;
     }
     for child in plan.base_mut().children_mut() {
-        enable_parallel_apply(child, concurrency);
+        enable_parallel_apply(ctx, child);
     }
 }
 

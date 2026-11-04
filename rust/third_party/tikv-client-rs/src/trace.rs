@@ -998,6 +998,17 @@ where
     ACTIVE_TRACE_CONTEXT.scope(context, future).await
 }
 
+/// Scope a future spawned for one shard of a request to the spawning task's
+/// trace context, as client-go's batch goroutines share the request's `ctx`.
+/// The shard future moves to the heap here, so the scope adds no copy of it
+/// to the spawning task's stack.
+pub(crate) fn inherit_trace_context<F>(future: F) -> impl Future<Output = F::Output>
+where
+    F: Future,
+{
+    ACTIVE_TRACE_CONTEXT.scope(current_trace_context(), Box::pin(future))
+}
+
 /// Look at the active trace context without cloning it.
 pub(crate) fn with_active_trace_context<R>(read: impl FnOnce(&TraceContext) -> R) -> Option<R> {
     ACTIVE_TRACE_CONTEXT.try_with(read).ok()

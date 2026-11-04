@@ -289,6 +289,90 @@ impl<Req: KvRequest> Dispatch<Req> {
     }
 }
 
+impl<Req: KvRequest> Dispatch<Req> {
+    /// The transaction details client-go's per-batch handlers charge from
+    /// one RPC. Kept out of `execute` so its temporaries do not enlarge every
+    /// poll of the (deeply nested) dispatch future.
+    #[inline(never)]
+    fn charge_transaction_details(
+        &self,
+        duration: Duration,
+        result: &Result<Box<dyn std::any::Any>>,
+    ) {
+        // client-go `actionPessimisticLock.handleSingleBatch`: each lock RPC
+        // charges `LockRPCTime`/`LockRPCCount`, and one whose keys all locked
+        // is a candidate for the slowest request.
+        if let Some(lock) = (&self.request as &dyn std::any::Any).downcast_ref::<kvrpcpb::PessimisticLockRequest>() {
+            if let Some(details) = crate::util::lock_keys_details_from_context(&self.trace_context)
+                .cloned()
+                .or_else(|| {
+                    crate::util::lock_keys_details_from_context(&crate::trace::current_trace_context()).cloned()
+                })
+            {
+                let mut details = details.lock().unwrap();
+                details.lock_rpc_time_ns = details
+                    .lock_rpc_time_ns
+                    .wrapping_add(i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX));
+                details.lock_rpc_count = details.lock_rpc_count.wrapping_add(1);
+                if let Some(response) = result
+                    .as_ref()
+                    .ok()
+                    .and_then(|response| response.downcast_ref::<kvrpcpb::PessimisticLockResponse>())
+                {
+                    if response.region_error.is_none() && response.errors.is_empty() {
+                        details.merge_request_details(
+                            duration,
+                            lock.context.as_ref().map_or(0, |context| context.region_id),
+                            self.target.clone(),
+                            response.exec_details_v2.as_ref(),
+                        );
+                    }
+                }
+            }
+        }
+        // client-go `prewrite1BatchReqHandler.handleSingleBatchSucceed` and
+        // `actionCommit.handleSingleBatch` merge the request into the
+        // committer's detail: every prewrite whose keys all succeeded, and the
+        // primary commit of a non-async-commit transaction.
+        if let Some(committer) = crate::util::committer_detail_from_context(&self.trace_context)
+            .cloned()
+            .or_else(|| crate::util::committer_detail_from_context(&crate::trace::current_trace_context()).cloned())
+        {
+            let request = &self.request as &dyn std::any::Any;
+            let response = result.as_ref().ok();
+            if let (Some(prewrite), Some(response)) = (
+                request.downcast_ref::<kvrpcpb::PrewriteRequest>(),
+                response.and_then(|response| response.downcast_ref::<kvrpcpb::PrewriteResponse>()),
+            ) {
+                if response.region_error.is_none() && response.errors.is_empty() {
+                    committer.detail.lock().unwrap().merge_prewrite_request_details(
+                        duration,
+                        prewrite.context.as_ref().map_or(0, |context| context.region_id),
+                        self.target.clone(),
+                        response.exec_details_v2.as_ref(),
+                    );
+                }
+            }
+            if let (Some(commit), Some(response)) = (
+                request.downcast_ref::<kvrpcpb::CommitRequest>(),
+                response.and_then(|response| response.downcast_ref::<kvrpcpb::CommitResponse>()),
+            ) {
+                if committer.merge_commit_primary
+                    && commit.commit_role == kvrpcpb::CommitRole::Primary as i32
+                    && response.region_error.is_none()
+                {
+                    committer.detail.lock().unwrap().merge_commit_request_details(
+                        duration,
+                        commit.context.as_ref().map_or(0, |context| context.region_id),
+                        self.target.clone(),
+                        response.exec_details_v2.as_ref(),
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl<Req: KvRequest> Plan for Dispatch<Req> {
     type Result = Req::Response;
@@ -447,6 +531,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
         if let Some(exec_details) = &exec_details {
             exec_details.add_wait_kv_response(started_at.elapsed());
         }
+        self.charge_transaction_details(started_at.elapsed(), &result);
         let network_collector = crate::traffic::NetworkCollector {
             stale_read: self.network_stale_read || self.replica_read_config.stale_read,
             access_location: self.resource_control_access_location,
@@ -754,6 +839,12 @@ pub(crate) trait RegionRetryState: Clone + Send + Sync + 'static {
     /// per-shard behavior.
     fn update_using_forked(&mut self, forked: &Self);
 
+    /// client-go `Backoffer.GetTotalSleep` and `GetTypes` of a source-owned
+    /// retry state; legacy strategies have none.
+    fn sleep_and_types(&self) -> Option<(u64, Vec<&'static str>)> {
+        None
+    }
+
     /// Publish the completed operation's selected retry history.
     async fn record_stats(&self) {}
 
@@ -921,6 +1012,11 @@ impl RegionRetryState for SnapshotRegionBackoff {
         }
     }
 
+    fn sleep_and_types(&self) -> Option<(u64, Vec<&'static str>)> {
+        let backoff = self.backoff.try_lock().ok()?;
+        Some((backoff.total_sleep_ms(), backoff.types()))
+    }
+
     fn update_using_forked(&mut self, forked: &Self) {
         let forked = forked
             .backoff
@@ -1070,6 +1166,10 @@ impl RegionRetryState for RetryBackoffer {
 
     fn update_using_forked(&mut self, forked: &Self) {
         RetryBackoffer::update_using_forked(self, forked);
+    }
+
+    fn sleep_and_types(&self) -> Option<(u64, Vec<&'static str>)> {
+        Some((self.total_sleep_ms(), self.types()))
     }
 
     fn retries_terminal_region_errors(&self) -> bool {
@@ -1224,8 +1324,30 @@ where
         one_region: Option<bool>,
         snapshot_region_scope: Option<bool>,
         snapshot_async_batch_get: bool,
+        relocated_from: Option<crate::region::RegionVerId>,
     ) -> (Result<<Self as Plan>::Result>, R) {
         let mut shards = current_plan.shards(&pd_client).collect::<Vec<_>>().await;
+        // client-go `doActionOnGroupMutations` on the request's grouping. A
+        // region error's `batch.relocate` retries a batch whose first key
+        // stays in the same region in place, and otherwise runs the action on
+        // the batch's keys again, regrouping them.
+        if shards.iter().all(Result::is_ok)
+            && relocated_from.as_ref().is_none_or(|previous| {
+                shards
+                    .first()
+                    .and_then(|shard| shard.as_ref().ok())
+                    .map(|(_, region)| region.ver_id())
+                    .as_ref()
+                    != Some(previous)
+            })
+        {
+            let mut regions = shards
+                .iter()
+                .filter_map(|shard| shard.as_ref().ok().map(|(_, region)| region.id()))
+                .collect::<Vec<_>>();
+            regions.dedup();
+            current_plan.observe_grouping(regions.len(), shards.len(), relocated_from.is_some());
+        }
         if let Some(internal) = snapshot_region_scope {
             if shards.iter().all(Result::is_ok) {
                 let regions = shards
@@ -1319,7 +1441,7 @@ where
                 clone.set_snapshot_retry_owner(owner);
             }
             let permits = permits.clone();
-            join_set.spawn(crate::async_util::inherit_background_rpc_context(
+            join_set.spawn(crate::trace::inherit_trace_context(crate::async_util::inherit_background_rpc_context(
                 crate::trace::inherit_client_spans(async move {
                     (
                         idx,
@@ -1336,7 +1458,7 @@ where
                         .await,
                     )
                 }),
-            ));
+            )));
         }
 
         let mut results = std::iter::repeat_with(|| None)
@@ -1373,6 +1495,9 @@ where
                         cancel.cancel();
                     }
                 }
+            }
+            if let Some((sleep_ms, types)) = forked.sleep_and_types() {
+                current_plan.observe_batch_backoff(sleep_ms, &types);
             }
             last_forked = Some(forked);
             results[index] = Some(result);
@@ -1457,6 +1582,7 @@ where
         // BatchGet path sends its first attempt with `SendReqAsync`, which
         // opens no span.
         let slot = Self::bo_span_slot(&backoff, &plan).await;
+        let batch_region = region.ver_id();
         let shard = Self::single_shard_handler(
             pd_client.clone(),
             plan,
@@ -1493,6 +1619,7 @@ where
                         permits,
                         preserve_region_results,
                         one_region,
+                        batch_region,
                     ),
                 )
                 .await
@@ -1524,6 +1651,7 @@ where
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
         one_region: Option<bool>,
+        batch_region: crate::region::RegionVerId,
     ) -> (Result<<Self as Plan>::Result>, R) {
         if let Some((config, reason, error)) = region_miss {
             match backoff.backoff(config, reason).await {
@@ -1541,6 +1669,7 @@ where
             one_region,
             None,
             false,
+            Some(batch_region),
         )
         .await
     }
@@ -2598,6 +2727,7 @@ where
                 self.one_region,
                 self.snapshot_region_scope,
                 self.snapshot_async_batch_get,
+                None,
             ),
         )
         .await;
@@ -2656,14 +2786,14 @@ where
             clone.apply_store(&store);
             let backoff = self.backoff.clone();
             let concurrency_permits = concurrency_permits.clone();
-            join_set.spawn(crate::async_util::inherit_background_rpc_context(
+            join_set.spawn(crate::trace::inherit_trace_context(crate::async_util::inherit_background_rpc_context(
                 crate::trace::inherit_client_spans(async move {
                     (
                         idx,
                         Self::single_store_handler(clone, backoff, concurrency_permits).await,
                     )
                 }),
-            ));
+            )));
         }
 
         let results =
@@ -2774,7 +2904,7 @@ impl<P: Plan + StoreRequest, PdC: PdClient> Plan for BroadcastTiKvStores<P, PdC>
             let permits = permits.clone();
             let timeout = self.timeout;
             let (store_id, store_addr) = (store.id, store.target.clone());
-            join_set.spawn(crate::async_util::inherit_background_rpc_context(
+            join_set.spawn(crate::trace::inherit_trace_context(crate::async_util::inherit_background_rpc_context(
                 crate::trace::inherit_client_spans(async move {
                     let _permit = permits.acquire_owned().await;
                     let result = match tokio::time::timeout(timeout, plan.execute()).await {
@@ -2792,7 +2922,7 @@ impl<P: Plan + StoreRequest, PdC: PdClient> Plan for BroadcastTiKvStores<P, PdC>
                         },
                     )
                 }),
-            ));
+            )));
         }
         collect_join_set_results(join_set, stores_len, "broadcast_tikv_store").await
     }
@@ -3206,7 +3336,8 @@ where
             // Only resolve holders retained by the source filters above.
             let resolver_locks = locks.clone().encode_keyspace(self.keyspace, KeyMode::Txn);
             let pd_client = self.pd_client.clone();
-            let started = self.snapshot_runtime_stats.as_ref().map(|_| Instant::now());
+            let charges_detail = resolve_lock_detail_charged();
+            let started = (self.snapshot_runtime_stats.is_some() || charges_detail).then(Instant::now);
             let lock_result = match &self.read_lock_context {
                 Some(read_lock_context) => {
                     resolve_locks_for_read_with_context_result(
@@ -3238,6 +3369,9 @@ where
             };
             if let (Some(stats), Some(started)) = (&self.snapshot_runtime_stats, started) {
                 stats.record_resolve_lock(started.elapsed());
+            }
+            if let (true, Some(started)) = (charges_detail, started) {
+                charge_resolve_lock_detail(started.elapsed());
             }
             let lock_result = lock_result?;
             let live_locks = lock_result.live_locks;
@@ -3299,6 +3433,32 @@ impl<P: Plan, PdC: PdClient> ResolveLock<P, PdC> {
             .execute()
             .await
             .map(|result| (result, request_lock_hints))
+    }
+}
+
+/// Whether the request's ctx carries a detail client-go resolves locks into:
+/// `actionPessimisticLock`'s `Stats.ResolveLock` or the committer's
+/// (`prewrite1BatchReqHandler.resolveLocks`).
+#[inline(never)]
+fn resolve_lock_detail_charged() -> bool {
+    let context = crate::trace::current_trace_context();
+    crate::util::lock_keys_details_from_context(&context).is_some()
+        || crate::util::committer_detail_from_context(&context).is_some()
+}
+
+#[inline(never)]
+fn charge_resolve_lock_detail(elapsed: Duration) {
+    let elapsed_ns = i64::try_from(elapsed.as_nanos()).unwrap_or(i64::MAX);
+    let context = crate::trace::current_trace_context();
+    if let Some(details) = crate::util::lock_keys_details_from_context(&context) {
+        let mut details = details.lock().unwrap();
+        details.resolve_lock.resolve_lock_time_ns =
+            details.resolve_lock.resolve_lock_time_ns.wrapping_add(elapsed_ns);
+    }
+    if let Some(committer) = crate::util::committer_detail_from_context(&context) {
+        let mut detail = committer.detail.lock().unwrap();
+        detail.resolve_lock.resolve_lock_time_ns =
+            detail.resolve_lock.resolve_lock_time_ns.wrapping_add(elapsed_ns);
     }
 }
 

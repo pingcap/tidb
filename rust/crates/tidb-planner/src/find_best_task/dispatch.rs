@@ -1472,7 +1472,8 @@ fn exhaust_physical_plans(
                 },
                 can_use_cache,
                 concurrency: 0,
-                keep_order: !prop.is_sort_item_empty(),
+                // Go sets `KeepOrder` in postOptimize `enableParallelApply`.
+                keep_order: false,
                 outer_schema: op.cor_cols.clone(),
                 no_decorrelate: op.no_decorrelate,
             };

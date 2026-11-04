@@ -565,7 +565,7 @@ pub fn physical_optimize<C: OptimizeContext>(
         crate::post_optimize::eliminate_union_scan_and_lock(physical, ctx.in_transaction());
     tidb_planner_core_operator_physicalop::shuffle::install_receivers(&mut physical, plan_ids)?;
     if ctx.enable_parallel_apply() {
-        crate::post_optimize::enable_parallel_apply(&mut physical, ctx.executor_concurrency());
+        crate::post_optimize::enable_parallel_apply(ctx, &mut physical);
     }
     // Go postOptimize: handleFineGrainedShuffle.
     crate::fine_grained_shuffle::handle_fine_grained_shuffle(ctx, &mut physical);

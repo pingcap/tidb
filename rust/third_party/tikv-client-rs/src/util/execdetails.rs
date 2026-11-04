@@ -13,6 +13,7 @@ use super::{format_bytes, format_duration};
 
 struct CommitDetailsContextKey;
 struct LockKeysDetailsContextKey;
+struct CommitterDetailContextKey;
 struct ExecDetailsContextKey;
 struct RuDetailsContextKey;
 
@@ -30,6 +31,27 @@ pub fn context_with_commit_details(
 
 pub fn commit_details_from_context(context: &TraceContext) -> Option<&SharedCommitDetails> {
     context.value::<CommitDetailsContextKey, SharedCommitDetails>()
+}
+
+/// The committer's own `CommitDetails`, which client-go's per-batch handlers
+/// charge through `c.getDetail()`; Rust request plans reach it through the
+/// request's ctx. `merge_commit_primary` is client-go's `!c.isAsyncCommit()`
+/// for the primary commit request.
+#[derive(Clone)]
+pub(crate) struct CommitterDetail {
+    pub(crate) detail: Arc<Mutex<CommitDetails>>,
+    pub(crate) merge_commit_primary: bool,
+}
+
+pub(crate) fn context_with_committer_detail(
+    context: &TraceContext,
+    detail: CommitterDetail,
+) -> TraceContext {
+    context.with_value::<CommitterDetailContextKey, _>(detail)
+}
+
+pub(crate) fn committer_detail_from_context(context: &TraceContext) -> Option<&CommitterDetail> {
+    context.value::<CommitterDetailContextKey, CommitterDetail>()
 }
 
 pub fn context_with_lock_keys_details(
@@ -359,6 +381,19 @@ impl CommitDetails {
             < other.detail.commit_primary.request_total_time
         {
             self.detail.commit_primary = other.detail.commit_primary.clone();
+        }
+    }
+
+    /// client-go's prewrite Backoffer accounting: the longest prewrite
+    /// Backoffer's sleep and classes.
+    pub(crate) fn record_prewrite_backoff(&mut self, sleep_ms: u64, types: &[&'static str]) {
+        if sleep_ms == 0 {
+            return;
+        }
+        let sleep_ns = i64::try_from(sleep_ms.saturating_mul(1_000_000)).unwrap_or(i64::MAX);
+        if sleep_ns > self.detail.commit_backoff_time_ns {
+            self.detail.commit_backoff_time_ns = sleep_ns;
+            self.detail.prewrite_backoff_types = types.iter().map(|&name| name.to_owned()).collect();
         }
     }
 
@@ -2186,7 +2221,7 @@ mod tests {
     #[test]
     fn source_uncovered_typed_context_keys_do_not_collide() {
         let base = TraceContext::new();
-        let commit = Arc::new(Mutex::new(CommitDetails::default()));
+        let commit: SharedCommitDetails = Arc::new(Mutex::new(None));
         let lock = Arc::new(Mutex::new(LockKeysDetails::default()));
         let exec = Arc::new(ExecDetails::default());
         let ru = Arc::new(RuDetails::new());

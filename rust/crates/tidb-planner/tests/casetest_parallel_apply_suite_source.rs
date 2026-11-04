@@ -12,19 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Executable post-optimization regressions replacing empty ignored shells.
-//! The three original Go casetest obligations (recursive hierarchy/full golden
-//! plans/hinted warning matrices) remain tracked in the batch repair receipt;
-//! these tests assert the common eligibility boundary, not full family parity.
+//! Go postOptimize `enableParallelApply`: an Apply whose inner child clones
+//! (`SafeClone`) runs with the executor concurrency, keeping the outer order
+//! its outer child requires; one that does not clone warns; inner Apply
+//! descendants stay serial.
 use tidb_planner::post_optimize::enable_parallel_apply;
 use tidb_planner_core_operator_physicalop::*;
 
-fn leaf() -> PhysicalPlan {
-    PhysicalPlan::TableDual(Default::default())
+/// A leaf whose Go type clones.
+fn cloneable() -> PhysicalPlan {
+    PhysicalPlan::TableScan(Default::default())
 }
 fn apply(outer: PhysicalPlan, inner: PhysicalPlan, ordered: bool) -> PhysicalPlan {
     let mut base = BasePhysicalPlan::with_id(1, "Apply", 0);
     base.set_children(vec![outer, inner]);
+    let outer_prop = tidb_planner_property::PhysicalProperty {
+        sort_items: if ordered {
+            vec![tidb_planner_property::SortItem::new(1, false)]
+        } else {
+            Vec::new()
+        },
+        ..Default::default()
+    };
+    base.set_children_req_props(vec![Some(outer_prop), None]);
     PhysicalPlan::Apply(PhysicalApply {
         hash_join: PhysicalHashJoin {
             base,
@@ -33,49 +43,61 @@ fn apply(outer: PhysicalPlan, inner: PhysicalPlan, ordered: bool) -> PhysicalPla
             mpp_shuffle_join: false,
             ..Default::default()
         },
-        keep_order: ordered,
         ..Default::default()
     })
 }
-#[test]
-fn parallel_apply_only_recurses_into_the_outer_apply_child() {
-    let mut plan = apply(
-        apply(leaf(), leaf(), false),
-        apply(leaf(), leaf(), false),
-        false,
-    );
-    enable_parallel_apply(&mut plan, 5);
-    let PhysicalPlan::Apply(root) = &plan else {
+fn concurrency(plan: &PhysicalPlan) -> usize {
+    let PhysicalPlan::Apply(apply) = plan else {
         panic!("Apply");
     };
-    assert_eq!(root.concurrency, 5);
-    let PhysicalPlan::Apply(outer) = &plan.children()[0] else {
-        panic!("outer Apply");
-    };
-    let PhysicalPlan::Apply(inner) = &plan.children()[1] else {
-        panic!("inner Apply");
-    };
-    assert_eq!(outer.concurrency, 5);
-    assert_eq!(inner.concurrency, 0);
+    apply.concurrency
 }
 #[test]
-fn parallel_apply_keeps_the_existing_outer_order_contract() {
+fn parallel_apply_only_recurses_into_the_outer_apply_child() {
+    let ctx = tidb_sessionctx::StmtContext::default();
+    let mut plan = apply(
+        apply(cloneable(), cloneable(), false),
+        apply(cloneable(), cloneable(), false),
+        false,
+    );
+    enable_parallel_apply(&ctx, &mut plan);
+    let concurrency_of = ctx.executor_concurrency();
+    assert_eq!(concurrency(&plan), concurrency_of);
+    assert_eq!(concurrency(&plan.children()[0]), concurrency_of);
+    assert_eq!(concurrency(&plan.children()[1]), 0);
+    assert!(ctx.take_warnings().is_empty());
+}
+#[test]
+fn parallel_apply_keeps_the_order_its_outer_child_requires() {
     for ordered in [false, true] {
-        let mut plan = apply(leaf(), leaf(), ordered);
-        enable_parallel_apply(&mut plan, 4);
+        let ctx = tidb_sessionctx::StmtContext::default();
+        let mut plan = apply(PhysicalPlan::TableDual(Default::default()), cloneable(), ordered);
+        enable_parallel_apply(&ctx, &mut plan);
         let PhysicalPlan::Apply(plan) = plan else {
             panic!("Apply");
         };
-        assert_eq!(plan.concurrency, 4);
+        assert_eq!(plan.concurrency, ctx.executor_concurrency());
         assert_eq!(plan.keep_order, ordered);
     }
 }
 #[test]
-fn parallel_apply_falls_back_for_shared_cte_runtime_ownership() {
-    let mut plan = apply(leaf(), PhysicalPlan::CTETable(Default::default()), false);
-    enable_parallel_apply(&mut plan, 4);
-    let PhysicalPlan::Apply(plan) = plan else {
-        panic!("Apply");
-    };
-    assert_eq!(plan.concurrency, 0);
+fn parallel_apply_warns_with_the_first_operator_that_does_not_clone() {
+    for (inner, type_name) in [
+        (PhysicalPlan::CTETable(Default::default()), "PhysicalCTETable"),
+        (PhysicalPlan::TableDual(Default::default()), "PhysicalTableDual"),
+    ] {
+        let ctx = tidb_sessionctx::StmtContext::default();
+        let mut plan = apply(cloneable(), inner, false);
+        enable_parallel_apply(&ctx, &mut plan);
+        assert_eq!(concurrency(&plan), 0);
+        let warnings = ctx.take_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].level, "Warning");
+        assert_eq!(
+            warnings[0].err.to_string(),
+            format!(
+                "Some apply operators can not be executed in parallel: *physicalop.{type_name} doesn't support cloning"
+            )
+        );
+    }
 }

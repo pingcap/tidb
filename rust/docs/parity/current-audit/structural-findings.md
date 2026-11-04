@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**44 unresolved: 13 open, 31 partial.**
+**43 unresolved: 12 open, 31 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -29,7 +29,7 @@ unresolved until it is restated against its Go owner or closed.
 | D02 | partial | No ingest (fast-reorg) backfill: it falls back to the transactional merge (`tidb-ddl/src/cluster_ddl/add_index.rs`) | `pkg/ddl/backfilling*.go`, `pkg/ddl/ingest` |
 | D03 | partial | Backfill is one sequential batch loop, not Go's reorg worker pool | `pkg/ddl/backfilling_scheduler.go` |
 | D05 | partial | Restate (DDL error identity and rollback classification) | `pkg/ddl` |
-| D11 | partial | A multi-schema change does not promote a sub-job's KV-disk-full pause to the parent job (Go `promoteProxyKVDiskFullPause`), and ADD INDEX / MODIFY COLUMN always skip the DDL-time ANALYZE that Go's `checkNeedAnalyze` runs when `tidb_stats_update_during_ddl` is ON (default OFF) | `pkg/ddl/multi_schema_change.go`, `pkg/ddl/index.go`, `pkg/ddl/modify_column.go` |
+| D11 | partial | ADD INDEX / MODIFY COLUMN always skip the DDL-time ANALYZE that Go's `checkNeedAnalyze` / `doAnalyzeWithoutReorg` run when `tidb_stats_update_during_ddl` is ON (default OFF); and a multi-schema change has no `promoteProxyKVDiskFullPause`, whose only producer (`autoPauseAddIndexJobOnKVDiskFull`, the DXF add-index task) Rust lacks (D02, O10) | `pkg/ddl/multi_schema_change.go`, `pkg/ddl/index.go`, `pkg/ddl/modify_column.go` |
 | F02 | partial | ADD PARTITION TiFlash readiness and rollback | `pkg/ddl/partition.go` |
 
 ### Executor, DML and expressions
@@ -39,7 +39,7 @@ unresolved until it is restated against its Go owner or closed.
 | A01 | partial | Some query privilege visits are collected in the executor driver instead of the planner's `visitInfo` | `pkg/planner/core` (`visitInfo`, `CheckPrivilege`) |
 | E02 | partial | Foreign keys: distributed locking, physical cascade sub-statements, runtime stats | `pkg/executor/foreign_key.go` |
 | E03 | partial | UPDATE/DELETE: retained handle metadata and chunk streaming | `pkg/executor/update.go`, `delete.go` |
-| E04 | partial | `enable_parallel_apply` decides clonability by `supports_apply_worker_clone` (refuses only CTE/CTETable/Shuffle) instead of Go's `SafeClone` over each operator's `Clone` (29 implement it; others such as BatchPointGet refuse, while PhysicalCTE clones), and never appends Go's `Some apply operators can not be executed in parallel` warning | `pkg/planner/core/optimizer.go` (`enableParallelApply`), `physicalop.SafeClone` |
+| E04 | partial | `enableParallelApply` follows Go's `SafeClone` (with its warning) and `KeepOrder`, but the executor runs an Apply whose inner child holds a CTE serially (`supports_apply_worker_clone`), where Go clones `PhysicalCTE` and runs its workers in parallel | `pkg/planner/core/optimizer.go` (`enableParallelApply`), `physicalop.SafeClone` |
 | E05 | open | IMPORT INTO refuses (`tidb-session/src/dispatch.rs`) | `pkg/executor/importer`, `pkg/disttask/importinto` |
 | E07 | open | BRIE statements are classified but never executed | `pkg/executor/brie.go` |
 | K03 | partial | Datum conversion: source/error taxonomy, unsigned table overflow, ANALYZE adapters | `pkg/types`, `pkg/table/tables` |
@@ -70,7 +70,7 @@ unresolved until it is restated against its Go owner or closed.
 | X03 | open | A plain EXPLAIN prepares the plan but builds no target executor, where Go `buildExplain` builds it (`explainExec.analyzeExec = b.build(v.TargetPlan)`): the builder's side effects (index-merge and table-lookup telemetry) do not happen. Blocked on memory tables: a Rust memtable reader needs its retrieved rows at build (`MemTableRetrievalNeeded`), where Go's retriever reads them at `Next` | `pkg/executor/builder.go` (`buildExplain`) |
 | O15 | open | No cross-keyspace runtime (null keyspace only) | `pkg/keyspace`, `pkg/domain` |
 | O18 | partial | Statement summary: normalized plan digests, encoded plans, RU/CPU/network metadata | `pkg/util/stmtsummary` |
-| O19 | partial | `CountStmtNode` runs at the session's compile (text, binary EXECUTE, transaction control) under the statement's resource group and an EXECUTE's prepared label, but a query is counted before its plan is built (Rust plans inside `open`), so a query whose planning fails is counted where Go's `Optimize` error is not; `getStmtDbLabel` lacks Go's CALL, SHOW, IMPORT INTO, DISTRIBUTE TABLE, DROP STATS, ADMIN, FLUSH, REPAIR TABLE and binding cases | `pkg/executor/compiler.go` (`CountStmtNode`) |
+| O19 | partial | `CountStmtNode` runs at the session's compile (text, binary EXECUTE, transaction control) under the statement's resource group, an EXECUTE's prepared label and Go's `getStmtDbLabel` rules, but a query is counted before its plan is built (Rust plans inside `open`), so a query whose planning fails is counted where Go's `Optimize` error is not | `pkg/executor/compiler.go` (`CountStmtNode`) |
 
 ### Information schema
 
@@ -84,8 +84,7 @@ unresolved until it is restated against its Go owner or closed.
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
 | T02 | partial | Two region-cache lifecycles (TiDB and the native client): coprocessor RequestSelector, store-health recovery, batch-scan follower reads | client-go `internal/locate` |
-| T04 | partial | client-rust's committer fills `CommitDetails`' write keys/size and prewrite, latest-ts, commit-ts, commit and local-latch times (published through `CommitDetailCtxKey` and merged into the statement), but not client-go's prewrite/commit backoff time and types, per-request `MergePrewriteReqDetails`/`MergeCommitReqDetails`, prewrite region and request counts, resolve-lock detail or binlog wait | client-go `txnkv/transaction` (`twoPhaseCommitter` detail), `pkg/session` (`doCommit`), `pkg/util/execdetails` |
-| T05 | open | client-rust's `LockKeysDetails` carries the locked-key count, total time and fair-locking counts, but not client-go's region count, lock RPC time/count, retry count, backoff time/types or resolve-lock detail | client-go `txnkv/transaction` (`pessimisticLockMutations`, `LockKeys`), `util.LockKeysDetails` |
+| T04 | partial | client-rust's committer charges `CommitDetails` as client-go does (a pipelined transaction's one detail across its flushes and commit included), but a prewrite fan-out merges its last batch's Backoffer into the prewrite Backoffer where client-go's batch executor does not (`UpdateUsingForked`), and a standard-2PC undetermined prewrite restarts and regroups the whole prewrite where client-go's `handleRegionErr` retries the batch in place | client-go `txnkv/transaction` (`twoPhaseCommitter` detail), `pkg/session` (`doCommit`), `pkg/util/execdetails` |
 | P03 | partial | PD router transport; primaryless member publication; readiness/prewarm; idle recovery | PD client `pkg/client` |
 | P06 | partial | TSO dispatcher options and stream construction; RPC concurrency | PD client `tso_dispatcher.go` |
 | M01 | open | The MPP coordinator lowers a hand-built single-fragment scan DAG and refuses every pushed Selection, TopN and aggregation, where Go builds the fragment/task graph from the physical plan (including disaggregated compute placement) | `pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`, `pkg/store/copr/mpp.go` |
