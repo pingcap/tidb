@@ -552,7 +552,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 				return nil
 			}
 
-			if tblInfo.IsView() {
+			if !isTableHandledByPriorityQueue(tblInfo) {
 				return nil
 			}
 
@@ -857,6 +857,9 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 		return nil
 	}
 	tableMeta := tableInfo.Meta()
+	if !isTableHandledByPriorityQueue(tableMeta) {
+		return nil
+	}
 	partitionedTable := tableMeta.GetPartitionInfo()
 	if partitionedTable == nil {
 		// If the table is locked, we do not analyze it.
@@ -1273,4 +1276,8 @@ func (pq *AnalysisPriorityQueue) resetSyncFields() {
 	pq.syncFields.mustRetryJobs = nil
 	pq.syncFields.lastDMLUpdateFetchTimestamp = 0
 	pq.syncFields.cancel = nil
+}
+
+func isTableHandledByPriorityQueue(tblInfo *model.TableInfo) bool {
+	return !tblInfo.IsView() && tblInfo.MaterializedViewLog == nil
 }
