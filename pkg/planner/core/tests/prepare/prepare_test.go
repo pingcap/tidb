@@ -318,6 +318,7 @@ func randValue(tk *testkit.TestKit, tbl, col, dtype, rtype string) string {
 func TestPrepareCacheChangingParamType(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	t.Cleanup(tk.Session().Close)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec(`use test`)
@@ -327,6 +328,28 @@ func TestPrepareCacheChangingParamType(t *testing.T) {
 	tk.MustExec(`create table t_float(a float, b float, key(a))`)
 	tk.MustExec(`create table t_decimal(a decimal(10,2), b decimal(10,2), key(a))`)
 	tk.MustExec(`create table t_year(a year, b year, key(a))`)
+	tk.MustExec(`create table t_float_negative_zero(a float, b float, key(a))`)
+	// A cached plan built with a positive float must also work when the parameter becomes -0.
+	tk.MustExec(`insert into t_float_negative_zero values (1, 0), (2, 1)`)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=0`)
+	tk.MustExec(`prepare s_neg_zero_nocache from 'select * from t_float_negative_zero where b=?'`)
+	tk.MustExec(`set @float_param=-0.0000E0`)
+	tk.MustQuery(`execute s_neg_zero_nocache using @float_param`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec(`prepare s_neg_zero from 'select * from t_float_negative_zero where b=?'`)
+	tk.MustExec(`set @float_param=1E0`)
+	tk.MustQuery(`execute s_neg_zero using @float_param`).Check(testkit.Rows("2 1"))
+	tk.MustQuery(`execute s_neg_zero using @float_param`).Check(testkit.Rows("2 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`set @float_param=-0.0000E0`)
+	tk.MustQuery(`execute s_neg_zero using @float_param`).Check(testkit.Rows("1 0"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select * from t_float_negative_zero where b=-0.0000E0`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`set @float_param=1E0`)
+	tk.MustQuery(`execute s_neg_zero using @float_param`).Check(testkit.Rows("2 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`deallocate prepare s_neg_zero_nocache`)
+	tk.MustExec(`deallocate prepare s_neg_zero`)
 	for _, dtype := range []string{"tinyint", "unsigned", "float", "decimal", "year"} {
 		tbl := "t_" + dtype
 		for range 10 {
@@ -462,8 +485,9 @@ func TestPrepareOverMaxPreparedStmtCount(t *testing.T) {
 
 	// test change global limit and make it affected in test session.
 	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("-1"))
-	tk.MustExec("set @@global.max_prepared_stmt_count = 2")
-	tk.MustQuery("select @@global.max_prepared_stmt_count").Check(testkit.Rows("2"))
+	maxPreparedStmtCount := deallocPrepared + 2
+	tk.MustExec(fmt.Sprintf("set @@global.max_prepared_stmt_count = %d", maxPreparedStmtCount))
+	tk.MustQuery("select @@global.max_prepared_stmt_count").Check(testkit.Rows(strconv.Itoa(maxPreparedStmtCount)))
 
 	// test close session to give up all prepared stmt
 	tk.MustExec(`prepare stmt2 from "select 1"`)
@@ -474,10 +498,10 @@ func TestPrepareOverMaxPreparedStmtCount(t *testing.T) {
 
 	// test meet max limit.
 	tk.RefreshSession()
-	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("2"))
+	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows(strconv.Itoa(maxPreparedStmtCount)))
 	for i := 1; ; i++ {
 		prePrepared = readGaugeInt(metrics.PreparedStmtGauge)
-		if prePrepared >= 2 {
+		if prePrepared >= maxPreparedStmtCount {
 			tk.MustGetErrCode(`prepare stmt`+strconv.Itoa(i)+` from "select 1"`, errno.ErrMaxPreparedStmtCountReached)
 			break
 		}
