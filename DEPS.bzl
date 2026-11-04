@@ -6209,6 +6209,13 @@ def go_deps():
         version = "v1.45.0",
     )
     go_repository(
+        name = "io_opentelemetry_go_otel_bridge_opentracing",
+        build_file_proto_mode = "disable_global",
+        importpath = "go.opentelemetry.io/otel/bridge/opentracing",
+        sum = "h1:hFf959SYHZpFc8ZWlqiYlnH3Ke5w4fcWZh7He+CmqXk=",
+        version = "v1.45.0",
+    )
+    go_repository(
         name = "io_opentelemetry_go_otel_exporters_otlp_otlptrace",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel/exporters/otlp/otlptrace",

@@ -366,6 +366,27 @@ log-spans = false
 #  LocalAgentHostPort instructs reporter to send spans to jaeger-agent at this address
 local-agent-host-port = ""
 
+[opentelemetry]
+# Export tracing spans over OTLP/gRPC with the OpenTelemetry SDK, for example to an
+# OpenTelemetry Collector, Jaeger, or Grafana Tempo. TiDB's existing spans are
+# forwarded through the OpenTracing bridge, so this replaces the Jaeger client
+# configured in [opentracing]. Only one of opentracing.enable and
+# opentelemetry.enable can be true.
+enable = false
+
+# OTLP/gRPC endpoint, either "host:port" or a URL such as "http://otel-collector:4317".
+# If empty, the standard OTEL_EXPORTER_OTLP_TRACES_ENDPOINT and OTEL_EXPORTER_OTLP_ENDPOINT
+# environment variables are used, falling back to "localhost:4317".
+# Other OTEL_* variables such as OTEL_EXPORTER_OTLP_HEADERS, OTEL_SERVICE_NAME and
+# OTEL_RESOURCE_ATTRIBUTES are also honored.
+endpoint = ""
+
+# Disable TLS for the connection to the endpoint.
+insecure = false
+
+# Fraction of traces to sample, between 0 and 1. Child spans follow the decision of their parent.
+sample-ratio = 1.0
+
 [pd-client]
 # Max time which PD client will wait for the PD server in seconds.
 pd-server-timeout = 3

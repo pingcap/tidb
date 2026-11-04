@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"net"
 	"os"
 	"runtime"
 	"strconv"
@@ -92,6 +93,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/systimemon"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/pkg/util/topsql"
+	"github.com/pingcap/tidb/pkg/util/tracing/oteltracing"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	repository "github.com/pingcap/tidb/pkg/util/workloadrepo"
 	"github.com/prometheus/client_golang/prometheus"
@@ -1297,8 +1299,32 @@ func setupMetrics() {
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
 }
 
+// otelTracer is set when spans are exported over OTLP, so that buffered spans
+// can be flushed on shutdown.
+var otelTracer *oteltracing.Tracer
+
 func setupTracing() error {
 	cfg := config.GetGlobalConfig()
+	if cfg.OpenTelemetry.Enable {
+		tracer, err := oteltracing.New(context.Background(), oteltracing.Config{
+			Endpoint:          cfg.OpenTelemetry.Endpoint,
+			Insecure:          cfg.OpenTelemetry.Insecure,
+			SampleRatio:       cfg.OpenTelemetry.SampleRatio,
+			ServiceName:       "TiDB",
+			ServiceVersion:    mysql.TiDBReleaseVersion,
+			ServiceInstanceID: net.JoinHostPort(cfg.AdvertiseAddress, strconv.Itoa(int(cfg.Port))),
+			WarningHandler: func(msg string) {
+				log.Warn("opentelemetry tracing bridge warning", zap.String("message", msg))
+			},
+		})
+		if err != nil {
+			log.Error("setup opentelemetry tracer failed", zap.Error(err))
+			return err
+		}
+		otelTracer = tracer
+		opentracing.SetGlobalTracer(tracer)
+		return nil
+	}
 	tracingCfg := cfg.OpenTracing.ToTracingConfig()
 	tracingCfg.ServiceName = "TiDB"
 	tracer, _, err := tracingCfg.NewTracer()
@@ -1308,6 +1334,18 @@ func setupTracing() error {
 	}
 	opentracing.SetGlobalTracer(tracer)
 	return nil
+}
+
+// shutdownTracing flushes spans buffered by the OTLP exporter.
+func shutdownTracing() {
+	if otelTracer == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := otelTracer.Shutdown(ctx); err != nil {
+		log.Warn("shutdown opentelemetry tracer failed", zap.Error(err))
+	}
 }
 
 func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
@@ -1346,6 +1384,7 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	disk.CleanUp()
 	closeStmtSummary()
 	cgmon.StopCgroupMonitor()
+	shutdownTracing()
 }
 
 func stringToList(repairString string) []string {
