@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -578,4 +579,51 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 		d.wg.Wait()
 		require.EqualValues(t, 6, iterateCnt)
 	})
+}
+
+// Only the owner state and campaign cancellation are used by DisableDDL.
+type disableDDLOwnerManager struct {
+	owner.Manager
+	isOwner  bool
+	canceled bool
+}
+
+func (m *disableDDLOwnerManager) IsOwner() bool { return m.isOwner }
+
+func (m *disableDDLOwnerManager) CampaignCancel() {
+	m.canceled = true
+	m.isOwner = false
+}
+
+func TestDisableDDLSkipsNonServingNodes(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		serverInfo string
+		isOwner    bool
+		reject     bool
+	}{
+		{"one TiDB", `{"tidb":{}}`, true, true},
+		{"one TiDB and BR", `{"tidb":{},"br":{"disable_rpc":true}}`, true, true},
+		{"only BR", `{"br":{"disable_rpc":true}}`, true, true},
+		{"no nodes", `{}`, true, true},
+		{"two TiDBs and BR", `{"tidb":{},"tidb2":{"disable_rpc":false},"br":{"disable_rpc":true}}`, true, false},
+		{"non-owner", `{"tidb":{},"br":{"disable_rpc":true}}`, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", fmt.Sprintf("return(`%s`)", tc.serverInfo))
+			manager := &disableDDLOwnerManager{isOwner: tc.isOwner}
+			d := &ddl{ddlCtx: &ddlCtx{ctx: context.Background(), ownerManager: manager}}
+			err := d.DisableDDL()
+			if tc.reject {
+				require.Error(t, err)
+				require.True(t, dbterror.ErrDDLSetting.Equal(err))
+				require.True(t, manager.IsOwner())
+				require.False(t, manager.canceled)
+			} else {
+				require.NoError(t, err)
+				require.False(t, manager.IsOwner())
+				require.True(t, manager.canceled)
+			}
+		})
+	}
 }
