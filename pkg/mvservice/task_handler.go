@@ -40,6 +40,8 @@ type mlogAccumulationTask struct {
 type mlogAnalyzeTask struct {
 	schemaName string
 	mlogName   string
+	reason     string
+	ratio      float64
 }
 
 // MVTaskHandler defines all task operations needed by MVService.
