@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 36,
-    "open": 11,
-    "partial": 25
+    "open": 12,
+    "partial": 24
   },
   "findings": [
     {
@@ -18,7 +18,7 @@
       "id": "D01",
       "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "DDL is submitted as jobs (`tidb-ddl/src/job_submitter.rs`); inventory any statement still outside the job path",
+      "finding": "53 of Go's 86 `ddl.executor` methods (`pkg/ddl/executor.go`) have no counterpart, `DoDDLJob` / `DoDDLJobWrapper` among them: a statement is lowered into this port's own `DdlStatement` (`cluster_ddl.rs` `lower_ddl_with_context`, then a `lower_*` builder) and submitted by `submit_built_job` / `submit_persisted_job_with_retry`; the missing methods include `AlterSchema`, `CreateTableWithInfo` / `BatchCreateTableWithInfo`, `RebaseAutoID`, `ShardRowID`, `ChangeColumn`, `RenameColumn`, `RenameIndex`, `DropView`, `CreatePrimaryKey`, `LockTables`, `CleanupTableLock`, `RepairTable`, `CreateSequence` / `AlterSequence`, the placement-policy, check-constraint, masking-policy, TTL, cache and attribute alters",
       "rust_evidence": "`rust/crates/tidb-ddl/src/job_submitter.rs`",
       "go_owner": "`pkg/ddl/executor.go`, `DoDDLJob`"
     },
@@ -34,7 +34,7 @@
       "id": "D03",
       "status": "partial",
       "group": "DDL: migrate responsibility before deleting implementations",
-      "finding": "Backfill is one sequential batch loop, not Go's reorg worker pool",
+      "finding": "Backfill runs one batch per reorg step on the DDL worker (`worker.rs` `AddIndexReorgWork::Backfill` -> `KvTableBackfill::backfill_index_batch`), where Go's `txnBackfillScheduler` (`backfilling_scheduler.go`) runs `tidb_ddl_reorg_worker_cnt` backfill workers over split task ranges and resizes them (`adjustWorkerSize`)",
       "go_owner": "`pkg/ddl/backfilling_scheduler.go`"
     },
     {
@@ -55,14 +55,14 @@
       "id": "E02",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "Foreign keys: distributed locking, physical cascade sub-statements, runtime stats",
+      "finding": "`foreign_key.rs` enforces a foreign key by reading the referencing rows (`lookup_handles` / `cascade_at_depth`), where Go's `FKCheckExec` checks the referenced keys against the transaction (`checkKeys` / `checkIndexKeys`, with prefetch and locks) and `FKCascadeExec` builds a DELETE/UPDATE sub-statement (`GenCascadeDeleteAST`, `buildFKCascadePlan`) and runs it as an executor; and neither reports `FKCheckRuntimeStats` / `FKCascadeRuntimeStats`",
       "go_owner": "`pkg/executor/foreign_key.go`"
     },
     {
       "id": "E03",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "UPDATE/DELETE: retained handle metadata and chunk streaming",
+      "finding": "UPDATE and DELETE are driver functions that stream their physical child (`driver/dml.rs` `run_delete_with_physical` / the update runners, `multi_dml.rs`), not Go's `UpdateExec` / `DeleteExec` executors: no executor node owns their `memTracker`, `updatedRowKeys` (`kv.MemAwareHandleMap`, charged per handle) or runtime stats",
       "go_owner": "`pkg/executor/update.go`, `delete.go`"
     },
     {
@@ -91,7 +91,7 @@
       "id": "T01",
       "status": "partial",
       "group": "Transaction and routing ownership",
-      "finding": "Writes during non-public, temporary and global-index transitions",
+      "finding": "Go's write-time consistency check (`tables/mutation_checker.go` `CheckDataConsistency`, on by default through `tidb_enable_mutation_checker`) has no port, and key assertions are set by the store driver (`tidb-store-driver-txn` `cluster_storage.rs`) instead of `tables/assertion.go` `setAssertion` at each row and index write",
       "go_owner": "`pkg/table/tables`"
     },
     {
@@ -111,9 +111,9 @@
     },
     {
       "id": "O05",
-      "status": "partial",
+      "status": "open",
       "group": "Domain and process services",
-      "finding": "Runaway-query policy (the resource-group controller is installed)",
+      "finding": "`pkg/resourcegroup/runaway` (`RunawayChecker`, `Manager`, the `mysql.tidb_runaway_queries` flusher and the watch syncer) has no port: `kv_contract.rs`'s `RunawayChecker` trait has no implementation, so a resource group's QUERY_LIMIT is stored but no statement is checked, killed, cooled down or watched",
       "go_owner": "`pkg/resourcegroup/runaway`"
     },
     {
@@ -141,7 +141,7 @@
       "id": "O18",
       "status": "partial",
       "group": "Domain and process services",
-      "finding": "Statement summary: normalized plan digests, encoded plans, RU/CPU/network metadata",
+      "finding": "Statement-summary records (`exec_stmt_observation.rs`) leave Go fields unset: `plan_cache_unqualified` (empty), `mem_arbitration` (0) and every `CpuUsages` term but TiKV time (Go's `SQLCPUUsages` also records TiDB CPU, O11)",
       "go_owner": "`pkg/util/stmtsummary`"
     },
     {
@@ -169,7 +169,7 @@
       "id": "M04",
       "status": "partial",
       "group": "TiFlash and MPP",
-      "finding": "MPP coordinator registration/reporting; exact-epoch RetryRegions invalidation",
+      "finding": "`pkg/executor/mppcoordmanager` (`MPPCoordinatorManager`: coordinator registration, `detectAndDelete` expiry, the server address) and the RPC server's `ReportMPPTaskStatus` have no port, so TiFlash's task-status reports reach no coordinator; TiFlash's stale regions are invalidated by exact epoch but without Go's `EpochNotMatch` reason",
       "go_owner": "`pkg/executor/internal/mpp`"
     },
     {
@@ -204,7 +204,7 @@
       "id": "K03",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "Datum conversion: source/error taxonomy, unsigned table overflow, ANALYZE adapters",
+      "finding": "Restate: datum conversion -- source/error taxonomy, unsigned table overflow, ANALYZE adapters (names no concrete mismatch yet)",
       "go_owner": "`pkg/types`, `pkg/table/tables`"
     },
     {
@@ -254,7 +254,7 @@
       "id": "O11",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "TopSQL: plan-digest attribution, DML write/commit attribution, CPU/RU profiling, reporter lifetime",
+      "finding": "TopSQL has its `state`, `stmtstats` and the reporter's data models only: `topsql.go` (`SetupTopSQL`, `AttachSQLAndPlanInfo`, `RegisterSQL` / `RegisterPlan`), `collector/cpu.go` (the SQL CPU collector) and the reporter (`reporter.go` `RemoteTopSQLReporter`, `datasink.go`, `pubsub.go`, `single_target.go`, `report_ticker.go`) have no port, so nothing collects or reports TopSQL",
       "go_owner": "`pkg/util/topsql`"
     },
     {
