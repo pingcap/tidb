@@ -213,9 +213,9 @@ func ZoneName(loc *time.Location) string {
 		sign = '-'
 		offset = -offset
 	}
-	hours := offset / int64(time.Hour/time.Second)
-	minutes := offset % int64(time.Hour/time.Second) / int64(time.Minute/time.Second)
-	seconds := offset % int64(time.Minute/time.Second)
+	hours := offset / int64(time.Hour.Seconds())
+	minutes := offset % int64(time.Hour.Seconds()) / int64(time.Minute.Seconds())
+	seconds := offset % int64(time.Minute.Seconds())
 	if seconds != 0 {
 		return fmt.Sprintf("%c%02d:%02d:%02d", sign, hours, minutes, seconds)
 	}
