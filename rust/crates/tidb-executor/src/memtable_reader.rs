@@ -77,6 +77,8 @@ pub struct ViewerState {
     /// Go's SQL-digest text retriever over this node and its peers.
     pub digest_retriever: SqlDigestTextRetriever,
     pub data_lock_waits: Option<Arc<dyn DataLockWaitsProvider>>,
+    /// The store client the TiFlash system tables query TiFlash through.
+    pub tiflash_system_table: Option<Arc<dyn tidb_kv::tiflash_system_table::TiFlashSystemTableClient>>,
     /// The cluster's discovery and diagnostics clients; absent for a session
     /// no server front end owns, which reads these tables as empty.
     pub cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
@@ -157,6 +159,7 @@ impl ViewerState {
         extractors: &[&tidb_planner::memtable_predicate_extractor::SlowQueryExtractor],
         zone: &tidb_datatype::SessionTimeZone,
         mem_tracker: Option<&std::sync::Arc<tidb_memory::Tracker>>,
+        concurrency: usize,
     ) -> Result<(Vec<Vec<Datum>>, Vec<String>, crate::slow_query::SlowQueryRuntimeStats), DriverError> {
         if !extractors.is_empty() && extractors.iter().all(|extractor| extractor.skip_request) {
             return Ok((Vec::new(), Vec::new(), crate::slow_query::SlowQueryRuntimeStats::default()));
@@ -190,12 +193,14 @@ impl ViewerState {
             zone,
             &self.slow_query_file,
             mem_tracker,
-            // Go reads a forward-ordered log; a descending TopN needs its
-            // reverse scanner, which this reader does not have.
+            // Go's `limit` and `Desc` hints come from the one scan's
+            // extractor; a union of scans reads every entry forward.
             match extractors {
-                [extractor] if !extractor.desc => extractor.limit,
+                [extractor] => extractor.limit,
                 _ => 0,
             },
+            matches!(extractors, [extractor] if extractor.desc),
+            concurrency,
         )
         .map_err(|error| DriverError::Mysql(crate::MysqlError::unknown(error)))?;
         Ok((read.rows, read.warnings, read.stats))
@@ -313,6 +318,9 @@ impl MemTableRetriever for InstanceStateRetriever {
             "INSPECTION_SUMMARY",
             "METRICS_SUMMARY",
             "METRICS_SUMMARY_BY_LABEL",
+            "TIFLASH_TABLES",
+            "TIFLASH_SEGMENTS",
+            "TIFLASH_INDEXES",
         ]
         .iter()
         .any(|name| table.go_lower_eq(name))
@@ -342,6 +350,7 @@ impl MemTableRetriever for InstanceStateRetriever {
                 &extractors,
                 &ctx.session_zone(),
                 Some(&mem_tracker),
+                usize::try_from(ctx.dist_sql_scan_concurrency()).unwrap_or(usize::MAX),
             )?;
             // Go `MemTableReaderExec.Close`: `RegisterStats(e.ID(),
             // retriever.getRuntimeStats())`.
@@ -377,6 +386,30 @@ impl MemTableRetriever for InstanceStateRetriever {
         }
         if table.go_lower_eq("INSPECTION_RULES") {
             return Ok(crate::inspection::inspection_rules_rows());
+        }
+        if table.go_lower_eq("TIFLASH_TABLES")
+            || table.go_lower_eq("TIFLASH_SEGMENTS")
+            || table.go_lower_eq("TIFLASH_INDEXES")
+        {
+            let Some(Extractor::TiFlashSystemTable(extractor)) = &read.extractor else {
+                return Ok(Vec::new());
+            };
+            // A session no server front end owns has no store topology and
+            // reads these tables as empty.
+            let Some(topology) = &self.viewer.cluster_topology else {
+                return Ok(Vec::new());
+            };
+            let stores = topology
+                .get_store_server_info()
+                .map_err(DriverError::unsupported)?;
+            return crate::infoschema_reader::tiflash_system_table_rows(
+                table,
+                &read.columns,
+                extractor,
+                &stores,
+                self.viewer.tiflash_system_table.as_deref(),
+                catalog,
+            );
         }
         // Go's retrievers query the metrics tables through the restricted SQL
         // executor.

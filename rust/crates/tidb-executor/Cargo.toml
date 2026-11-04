@@ -164,6 +164,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 tikv-client = { workspace = true }
 tidb-hack = { path = "../tidb-hack" }
+tidb-go-strconv = { path = "../tidb-go-strconv" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-hint = { path = "../tidb-hint" }
 tidb-chunk = { path = "../tidb-chunk" }

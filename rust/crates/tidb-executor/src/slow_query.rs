@@ -174,70 +174,80 @@ fn file_start_time(path: &str, compressed: bool) -> Result<Option<DateTime<Fixed
     Err(format!("malform slow query file {path}"))
 }
 
-/// Go `getFileEndTime` over `readLastLines`: the last `# Time:` among the
-/// file's last 128 lines.
+/// Go `maxReadCacheSize`.
+const MAX_READ_CACHE_SIZE: u64 = 1024 * 1024 * 64;
+
+/// Go `readLastLines`: the whole lines that end at `end_cursor`, growing the
+/// window backwards until it holds a line break that starts a non-empty
+/// line, and the bytes they span (0 at the file's start).
+fn read_last_lines(file: &mut std::fs::File, end_cursor: u64) -> Result<(Vec<String>, usize), String> {
+    let mut lines: Vec<u8> = Vec::new();
+    let mut first_non_newline = 0usize;
+    let mut cursor = end_cursor;
+    let mut size: u64 = 2048;
+    loop {
+        // stop if we are at the beginning
+        if cursor == 0 {
+            break;
+        }
+        if size < MAX_READ_CACHE_SIZE {
+            size *= 2;
+        }
+        if cursor < size {
+            size = cursor;
+        }
+        cursor -= size;
+        file.seek(SeekFrom::Start(cursor))
+            .map_err(|error| error.to_string())?;
+        let mut chars = vec![0u8; size as usize];
+        file.read_exact(&mut chars)
+            .map_err(|error| error.to_string())?;
+        let scanned = chars.len();
+        chars.extend_from_slice(&lines);
+        lines = chars;
+        // find first '\n' or '\r'
+        for i in 0..scanned.saturating_sub(1) {
+            if (lines[i] == b'\n' || lines[i] == b'\r') && lines[i + 1] != b'\n' && lines[i + 1] != b'\r' {
+                first_non_newline = i + 1;
+                break;
+            }
+        }
+        if first_non_newline > 0 {
+            break;
+        }
+    }
+    let tail = &lines[first_non_newline..];
+    Ok((split_slow_log_lines(&String::from_utf8_lossy(tail)), tail.len()))
+}
+
+/// Go `splitSlowLogLines`.
+fn split_slow_log_lines(s: &str) -> Vec<String> {
+    let mut lines: Vec<String> = s.replace("\r\n", "\n").split('\n').map(str::to_owned).collect();
+    // strip the last empty string if the ending is new line symbol.
+    if lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    lines
+}
+
+/// Go `getFileEndTime`: the last `# Time:` among the file's last 128 lines.
 fn file_end_time(path: &str) -> Result<DateTime<FixedOffset>, String> {
-    const MAX_READ_CACHE_SIZE: u64 = 1024 * 1024 * 64;
     let mut file = std::fs::File::open(path).map_err(|error| go_open_error(path, &error))?;
     let mut end_cursor = file.metadata().map_err(|error| error.to_string())?.len();
     let mut tried = 0usize;
     loop {
-        // Go `readLastLines`: grow the window backwards until it holds a line
-        // break that starts a non-empty line.
-        let mut lines: Vec<u8> = Vec::new();
-        let mut first_non_newline = 0usize;
-        let mut cursor = end_cursor;
-        let mut size: u64 = 2048;
-        loop {
-            if cursor == 0 {
-                break;
-            }
-            if size < MAX_READ_CACHE_SIZE {
-                size *= 2;
-            }
-            if cursor < size {
-                size = cursor;
-            }
-            cursor -= size;
-            file.seek(SeekFrom::Start(cursor))
-                .map_err(|error| error.to_string())?;
-            let mut chars = vec![0u8; size as usize];
-            file.read_exact(&mut chars)
-                .map_err(|error| error.to_string())?;
-            chars.extend_from_slice(&lines);
-            lines = chars;
-            let scanned = size as usize;
-            for i in 0..scanned.saturating_sub(1) {
-                if (lines[i] == b'\n' || lines[i] == b'\r')
-                    && lines[i + 1] != b'\n'
-                    && lines[i + 1] != b'\r'
-                {
-                    first_non_newline = i + 1;
-                    break;
-                }
-            }
-            if first_non_newline > 0 {
-                break;
-            }
-        }
-        let tail = String::from_utf8_lossy(&lines[first_non_newline..]).into_owned();
-        let read_bytes = lines.len() - first_non_newline;
+        let (lines, read_bytes) = read_last_lines(&mut file, end_cursor)?;
+        // read out the file
         if read_bytes == 0 {
             break;
         }
         end_cursor -= read_bytes as u64;
-        let mut split: Vec<&str> = Vec::new();
-        let normalized = tail.replace("\r\n", "\n");
-        split.extend(normalized.split('\n'));
-        if split.last() == Some(&"") {
-            split.pop();
-        }
-        for line in split.iter().rev() {
+        for line in lines.iter().rev() {
             if let Some(value) = line.strip_prefix(SLOW_LOG_START_PREFIX_STR) {
                 return parse_time(value);
             }
         }
-        tried += split.len();
+        tried += lines.len();
         if tried >= 128 {
             break;
         }
@@ -646,8 +656,8 @@ pub struct SlowQueryRuntimeStats {
     initialize: Duration,
     read_file_size: i64,
     parse_log: Duration,
-    /// Divergence: Go parses batches on `DistSQLScanConcurrency` workers;
-    /// this reader parses them one after another and reports 1.
+    /// The parse workers (`DistSQLScanConcurrency`); unset under a row
+    /// limit, which parses serially.
     concurrent: usize,
 }
 
@@ -710,7 +720,8 @@ impl Parser<'_> {
 
     /// Go `setColumnValue`: `false` invalidates the entry.
     fn set_column_value(
-        &mut self,
+        &self,
+        warnings: &mut Vec<String>,
         row: &mut [Option<Datum>],
         field: &str,
         value: &str,
@@ -723,7 +734,7 @@ impl Parser<'_> {
                 return match parse_time(value) {
                     Ok(t) => self.checker.is_time_valid(t.with_timezone(&Utc)),
                     Err(error) => {
-                        self.warnings.push(format!(
+                        warnings.push(format!(
                             "Parse slow log at line {line_num}, failed field is {field}, failed value is {value}, error is {error}"
                         ));
                         false
@@ -735,7 +746,7 @@ impl Parser<'_> {
         match self.factory(row, index, kind, value) {
             Ok(valid) => valid,
             Err(error) => {
-                self.warnings.push(format!(
+                warnings.push(format!(
                     "Parse slow log at line {line_num}, failed field is {field}, failed value is {value}, error is {error}"
                 ));
                 true
@@ -823,45 +834,98 @@ impl Parser<'_> {
     /// (`dataForSlowLog`'s `lastFetchSize`).
     fn parse(
         &mut self,
-        files: &[LogFile],
+        next_batch: &mut dyn FnMut(usize, &mut SlowQueryRuntimeStats) -> Result<Vec<(String, usize)>, String>,
         mem_tracker: Option<&std::sync::Arc<tidb_memory::Tracker>>,
         stats: &mut SlowQueryRuntimeStats,
         limit: u64,
+        concurrency: usize,
     ) -> Result<Vec<Vec<Datum>>, String> {
         let mem_consume = |bytes: i64| {
             if let Some(tracker) = mem_tracker {
                 tracker.consume(bytes);
             }
         };
-        let mut reader = BatchReader::new(files);
         let mut data = Vec::new();
         let mut last_fetch_size = 0;
-        // Go `parseDataForSlowLog`'s `batchSize = min(ParseSlowLogBatchSize,
-        // limit)`, and `parseSlowLogByBatchGetterWithLimit`'s stop once
-        // `limit` rows are produced.
-        let limit = usize::try_from(limit).unwrap_or(usize::MAX);
-        loop {
-            let remaining = if limit > 0 { limit - data.len() } else { usize::MAX };
-            if remaining == 0 {
-                break;
+        if limit > 0 {
+            // Go `parseSlowLogByBatchGetterWithLimit`: serial, `batchSize =
+            // min(ParseSlowLogBatchSize, limit)`, stopping once `limit` rows
+            // are produced.
+            let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+            while data.len() < limit {
+                let remaining = limit - data.len();
+                let started = std::time::Instant::now();
+                let log = next_batch(PARSE_SLOW_LOG_BATCH_SIZE.min(remaining), stats)?;
+                stats.read_file += started.elapsed();
+                if log.is_empty() {
+                    break;
+                }
+                let log_size = calculate_log_size(&log);
+                mem_consume(log_size);
+                let started = std::time::Instant::now();
+                let mut warnings = Vec::new();
+                let mut rows = self.parse_log(&log, &mem_consume, &mut warnings);
+                stats.parse_log += started.elapsed();
+                self.warnings.extend(warnings);
+                rows.truncate(remaining);
+                mem_consume(-log_size);
+                mem_consume(-last_fetch_size);
+                last_fetch_size = calculate_datums_size(&rows);
+                data.extend(rows);
             }
-            let batch_size = PARSE_SLOW_LOG_BATCH_SIZE.min(remaining);
-            let started = std::time::Instant::now();
-            let log = reader.get_batch_log(batch_size, stats)?;
-            stats.read_file += started.elapsed();
-            if log.is_empty() {
-                break;
-            }
-            let log_size = calculate_log_size(&log);
-            mem_consume(log_size);
-            let started = std::time::Instant::now();
-            let mut rows = self.parse_log(&log, &mem_consume);
-            stats.parse_log += started.elapsed();
-            rows.truncate(remaining);
-            mem_consume(-log_size);
             mem_consume(-last_fetch_size);
-            last_fetch_size = calculate_datums_size(&rows);
-            data.extend(rows);
+            return Ok(data);
+        }
+        // Go `parseSlowLogByBatchGetter`: the sender reads batches in order
+        // and `concurrency` workers parse them; `dataForSlowLog` takes the
+        // results in the order the tasks were sent.
+        stats.concurrent = concurrency;
+        let concurrency = concurrency.max(1);
+        loop {
+            let started = std::time::Instant::now();
+            let mut batches = Vec::with_capacity(concurrency);
+            while batches.len() < concurrency {
+                let log = next_batch(PARSE_SLOW_LOG_BATCH_SIZE, stats)?;
+                if log.is_empty() {
+                    break;
+                }
+                batches.push(log);
+            }
+            stats.read_file += started.elapsed();
+            if batches.is_empty() {
+                break;
+            }
+            let parser = &*self;
+            let mem_consume = &mem_consume;
+            let parsed: Vec<(Vec<Vec<Datum>>, Vec<String>, Duration)> = std::thread::scope(|scope| {
+                let workers: Vec<_> = batches
+                    .iter()
+                    .map(|log| {
+                        scope.spawn(move || {
+                            // Go `parseLog`: the log size is held while parsing.
+                            let started = std::time::Instant::now();
+                            let log_size = calculate_log_size(log);
+                            mem_consume(log_size);
+                            let mut warnings = Vec::new();
+                            let rows = parser.parse_log(log, mem_consume, &mut warnings);
+                            mem_consume(-log_size);
+                            (rows, warnings, started.elapsed())
+                        })
+                    })
+                    .collect();
+                workers
+                    .into_iter()
+                    .map(|worker| worker.join().expect("a slow-log parse worker panicked"))
+                    .collect()
+            });
+            for (rows, warnings, elapsed) in parsed {
+                // Go adds each worker's `parseLog` time.
+                stats.parse_log += elapsed;
+                self.warnings.extend(warnings);
+                mem_consume(-last_fetch_size);
+                last_fetch_size = calculate_datums_size(&rows);
+                data.extend(rows);
+            }
         }
         mem_consume(-last_fetch_size);
         Ok(data)
@@ -870,9 +934,10 @@ impl Parser<'_> {
     /// Go `parseLog`: one batch of lines, each with its line number in its
     /// file, into rows.
     fn parse_log(
-        &mut self,
+        &self,
         log: &[(String, usize)],
-        mem_consume: &dyn Fn(i64),
+        mem_consume: &(dyn Fn(i64) + Sync),
+        warnings: &mut Vec<String>,
     ) -> Vec<Vec<Datum>> {
         let mut data = Vec::new();
         let mut row: Vec<Option<Datum>> = Vec::new();
@@ -884,7 +949,7 @@ impl Parser<'_> {
                 if let Some(value) = line.strip_prefix(SLOW_LOG_START_PREFIX_STR) {
                     row = vec![None; self.columns.len()];
                     user.clear();
-                    if self.set_column_value(&mut row, "Time", value, line_num) {
+                    if self.set_column_value(warnings, &mut row, "Time", value, line_num) {
                         start_flag = true;
                     }
                 }
@@ -893,7 +958,7 @@ impl Parser<'_> {
                 if let Some(rest) = line.strip_prefix(SLOW_LOG_ROW_PREFIX_STR) {
                     let mut valid = true;
                     if let Some(value) = rest.strip_prefix(SLOW_LOG_PREV_STMT_PREFIX) {
-                        valid = self.set_column_value(&mut row, "Prev_stmt", value, line_num);
+                        valid = self.set_column_value(warnings, &mut row, "Prev_stmt", value, line_num);
                     } else if let Some(value) = rest.strip_prefix("User@Host: ") {
                         let Some((user_part, host_part)) = value.split_once('@') else {
                             continue;
@@ -904,18 +969,19 @@ impl Parser<'_> {
                             continue;
                         }
                         let user_value = user.clone();
-                        if !self.set_column_value(&mut row, "User", &user_value, line_num) {
+                        if !self.set_column_value(warnings, &mut row, "User", &user_value, line_num) {
                             start_flag = false;
                             continue;
                         }
                         let host = parse_user_or_host_value(host_part);
-                        valid = self.set_column_value(&mut row, "Host", &host, line_num);
+                        valid = self.set_column_value(warnings, &mut row, "Host", &host, line_num);
                     } else if rest.starts_with("Cop_backoff_") {
-                        valid = self.set_column_value(&mut row, "Backoff_Detail", rest, line_num);
+                        valid = self.set_column_value(warnings, &mut row, "Backoff_Detail", rest, line_num);
                     } else if let Some(value) = rest.strip_prefix("Warnings: ") {
-                        valid = self.set_column_value(&mut row, "Warnings", value, line_num);
+                        valid = self.set_column_value(warnings, &mut row, "Warnings", value, line_num);
                     } else if let Some(value) = rest.strip_prefix("Session_connect_attrs: ") {
                         valid = self.set_column_value(
+                            warnings,
                             &mut row,
                             "Session_connect_attrs",
                             value,
@@ -923,17 +989,18 @@ impl Parser<'_> {
                         );
                     } else if let Some(value) = rest.strip_prefix("Request_unit_v2_detail: ") {
                         valid = self.set_column_value(
+                            warnings,
                             &mut row,
                             "Request_unit_v2_detail",
                             value,
                             line_num,
                         );
                     } else if let Some(value) = rest.strip_prefix("DB: ") {
-                        valid = self.set_column_value(&mut row, "DB", value, line_num);
+                        valid = self.set_column_value(warnings, &mut row, "DB", value, line_num);
                     } else {
                         let (fields, values) = split_by_colon(rest);
                         for (field, value) in fields.iter().zip(values.iter()) {
-                            if !self.set_column_value(&mut row, field, value, line_num) {
+                            if !self.set_column_value(warnings, &mut row, field, value, line_num) {
                                 start_flag = false;
                                 break;
                             }
@@ -952,7 +1019,7 @@ impl Parser<'_> {
                         start_flag = false;
                         continue;
                     }
-                    let _ = self.set_column_value(&mut row, "Query", line, line_num);
+                    let _ = self.set_column_value(warnings, &mut row, "Query", line, line_num);
                     // Go `setDefaultValue`: an unset column takes its type's
                     // zero value.
                     let finished = row
@@ -1020,11 +1087,7 @@ impl<'a> BatchReader<'a> {
                     let Some(file) = self.files.next() else {
                         return Ok(log);
                     };
-                    // Go `getNextFile`'s `readFileSize` / `readFileNum`.
-                    if let Ok(metadata) = std::fs::metadata(&file.path) {
-                        stats.read_file_size += i64::try_from(metadata.len()).unwrap_or(i64::MAX);
-                        stats.read_file_num += 1;
-                    }
+                    count_next_file(file, stats);
                     self.reader = Some(open_reader(&file.path, file.compressed)?);
                     self.file_line = 0;
                 }
@@ -1034,17 +1097,210 @@ impl<'a> BatchReader<'a> {
                     continue;
                 };
                 self.file_line += 1;
-                let ends_entry = line.ends_with(SLOW_LOG_SQL_SUFFIX_STR)
-                    && !line.starts_with("use")
-                    && !line.starts_with(SLOW_LOG_ROW_PREFIX_STR);
+                let ends = ends_entry(&line);
                 log.push((line, self.file_line));
-                if ends_entry {
+                if ends {
                     break;
                 }
             }
         }
         Ok(log)
     }
+}
+
+/// Go `getNextFile`'s `readFileSize` / `readFileNum`.
+fn count_next_file(file: &LogFile, stats: &mut SlowQueryRuntimeStats) {
+    if let Ok(metadata) = std::fs::metadata(&file.path) {
+        stats.read_file_size += i64::try_from(metadata.len()).unwrap_or(i64::MAX);
+        stats.read_file_num += 1;
+    }
+}
+
+/// Go's test for a line that ends an entry: the SQL suffix on a line that is
+/// neither a `use` nor a `# ` line.
+fn ends_entry(line: &str) -> bool {
+    line.ends_with(SLOW_LOG_SQL_SUFFIX_STR) && !line.starts_with("use") && !line.starts_with(SLOW_LOG_ROW_PREFIX_STR)
+}
+
+/// Go `slowLogReverseScanner`: the entries of the selected files (newest
+/// file first) from the last to the first, stopping at the first entry that
+/// started before every time range (less `slowLogTimeRangeInternalTolerance`).
+struct ReverseScanner<'a> {
+    files: std::slice::Iter<'a, LogFile>,
+    file: Option<std::fs::File>,
+    end_cursor: u64,
+    /// A compressed file can only be read forward: its blocks are loaded
+    /// whole and handed out from the last.
+    compressed_blocks: Option<Vec<Vec<String>>>,
+    /// The block being scanned backwards, its lines in reverse order.
+    pending_block: Vec<String>,
+    pending_has_sql_suffix: bool,
+    /// The lines `readLastLines` returned, handed out from the last.
+    cached_lines: Vec<String>,
+    min_start_time: Option<DateTime<Utc>>,
+    finished: bool,
+}
+
+impl<'a> ReverseScanner<'a> {
+    /// Go `newSlowLogReverseScanner`.
+    fn new(files: &'a [LogFile], checker: &SlowLogChecker) -> Self {
+        let min_start_time = if checker.enable_time_check {
+            checker
+                .time_ranges
+                .iter()
+                .map(|(start, _)| *start)
+                .min()
+                .map(|start| start - SLOW_LOG_TIME_RANGE_INTERNAL_TOLERANCE)
+        } else {
+            None
+        };
+        Self {
+            files: files.iter(),
+            file: None,
+            end_cursor: 0,
+            compressed_blocks: None,
+            pending_block: Vec::with_capacity(8),
+            pending_has_sql_suffix: false,
+            cached_lines: Vec::new(),
+            min_start_time,
+            finished: false,
+        }
+    }
+
+    /// Go `slowLogReverseScanner.nextBatch`: up to `batch_size` entries. A
+    /// line's number is its place in the batch (Go parses it at offset 0).
+    fn next_batch(
+        &mut self,
+        batch_size: usize,
+        stats: &mut SlowQueryRuntimeStats,
+    ) -> Result<Vec<(String, usize)>, String> {
+        if self.finished {
+            return Ok(Vec::new());
+        }
+        let mut blocks = Vec::with_capacity(batch_size);
+        while blocks.len() < batch_size {
+            let Some(block) = self.next_block(stats)? else {
+                break;
+            };
+            let started_before = self.min_start_time.is_some_and(|min_start_time| {
+                block
+                    .first()
+                    .and_then(|line| line.strip_prefix(SLOW_LOG_START_PREFIX_STR))
+                    .and_then(|value| parse_time(value).ok())
+                    .is_some_and(|t| t.with_timezone(&Utc) < min_start_time)
+            });
+            if started_before {
+                self.finished = true;
+                break;
+            }
+            blocks.push(block);
+        }
+        Ok(blocks
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .map(|(index, line)| (line, index + 1))
+            .collect())
+    }
+
+    /// Go `slowLogReverseScanner.nextBlock`: the previous entry, `None` once
+    /// every file is read.
+    fn next_block(&mut self, stats: &mut SlowQueryRuntimeStats) -> Result<Option<Vec<String>>, String> {
+        loop {
+            if let Some(blocks) = &mut self.compressed_blocks {
+                let Some(block) = blocks.pop() else {
+                    self.compressed_blocks = None;
+                    self.file = None;
+                    continue;
+                };
+                if !block.iter().any(|line| ends_entry(line)) {
+                    if !self.pending_has_sql_suffix {
+                        continue;
+                    }
+                    let mut merged = block;
+                    merged.extend(self.pending_block.drain(..).rev());
+                    self.pending_has_sql_suffix = false;
+                    return Ok(Some(merged));
+                }
+                return Ok(Some(block));
+            }
+            if self.file.is_none() {
+                let Some(file) = self.files.next() else {
+                    return Ok(None);
+                };
+                count_next_file(file, stats);
+                self.cached_lines.clear();
+                if file.compressed {
+                    self.compressed_blocks = Some(load_compressed_blocks(&file.path)?);
+                    continue;
+                }
+                let opened = std::fs::File::open(&file.path).map_err(|error| go_open_error(&file.path, &error))?;
+                self.end_cursor = opened.metadata().map_err(|error| error.to_string())?.len();
+                self.file = Some(opened);
+            }
+            let Some(line) = self.cached_lines.pop() else {
+                let file = self.file.as_mut().expect("opened above");
+                let (lines, read_bytes) = read_last_lines(file, self.end_cursor)?;
+                if read_bytes == 0 {
+                    // Reach the beginning of the current file.
+                    self.file = None;
+                    self.end_cursor = 0;
+                    continue;
+                }
+                self.end_cursor -= read_bytes as u64;
+                self.cached_lines = lines;
+                continue;
+            };
+            if self.pending_block.is_empty() && line.is_empty() {
+                continue;
+            }
+            let is_start = line.starts_with(SLOW_LOG_START_PREFIX_STR);
+            if ends_entry(&line) {
+                self.pending_has_sql_suffix = true;
+            }
+            self.pending_block.push(line);
+            // In reverse scanning, the start prefix ends a block.
+            if is_start {
+                if !self.pending_has_sql_suffix {
+                    self.pending_block.clear();
+                    continue;
+                }
+                let block = self.pending_block.drain(..).rev().collect();
+                self.pending_has_sql_suffix = false;
+                return Ok(Some(block));
+            }
+        }
+    }
+}
+
+/// Go `loadCompressedBlocks`: a compressed file's entries, each from a
+/// `# Time:` line to the line that ends it, plus a trailing unfinished one.
+fn load_compressed_blocks(path: &str) -> Result<Vec<Vec<String>>, String> {
+    let mut reader = open_reader(path, true)?;
+    let mut blocks = Vec::new();
+    let mut block = Vec::new();
+    let mut has_start_flag = false;
+    while let Some(line) = read_line(reader.as_mut())? {
+        if line.starts_with(SLOW_LOG_START_PREFIX_STR) {
+            if has_start_flag {
+                block.clear();
+            } else {
+                has_start_flag = true;
+            }
+        }
+        if has_start_flag {
+            let ends = ends_entry(&line);
+            block.push(line);
+            if ends {
+                blocks.push(std::mem::replace(&mut block, Vec::with_capacity(8)));
+                has_start_flag = false;
+            }
+        }
+    }
+    if !block.is_empty() {
+        blocks.push(block);
+    }
+    Ok(blocks)
 }
 
 /// Go `slowQueryRetriever.retrieve` for one read of `SLOW_QUERY`: the rows
@@ -1062,13 +1318,12 @@ pub fn retrieve_slow_query_rows(
     log_file_path: &str,
     mem_tracker: Option<&std::sync::Arc<tidb_memory::Tracker>>,
     limit: u64,
+    desc: bool,
+    concurrency: usize,
 ) -> Result<SlowQueryRows, String> {
     let mut warnings = Vec::new();
-    let mut stats = SlowQueryRuntimeStats {
-        concurrent: 1,
-        ..SlowQueryRuntimeStats::default()
-    };
-    let files = get_all_files(checker, log_file_path, &mut warnings, &mut stats)?;
+    let mut stats = SlowQueryRuntimeStats::default();
+    let mut files = get_all_files(checker, log_file_path, &mut warnings, &mut stats)?;
     let mut parser = Parser {
         columns,
         kinds: columns.iter().map(|(name, _)| column_kind(name)).collect(),
@@ -1076,12 +1331,15 @@ pub fn retrieve_slow_query_rows(
         tz,
         warnings,
     };
-    if limit > 0 {
-        // Go `parseSlowLogByBatchGetterWithLimit` parses serially and leaves
-        // `concurrent` unset.
-        stats.concurrent = 0;
-    }
-    let rows = parser.parse(&files, mem_tracker, &mut stats, limit)?;
+    let rows = if desc {
+        // Go `initialize` reverses the files for `parseSlowLogReversed`.
+        files.reverse();
+        let mut scanner = ReverseScanner::new(&files, checker);
+        parser.parse(&mut |batch_size, stats| scanner.next_batch(batch_size, stats), mem_tracker, &mut stats, limit, concurrency)?
+    } else {
+        let mut reader = BatchReader::new(&files);
+        parser.parse(&mut |batch_size, stats| reader.get_batch_log(batch_size, stats), mem_tracker, &mut stats, limit, concurrency)?
+    };
     Ok(SlowQueryRows {
         rows,
         warnings: parser.warnings,
@@ -1117,6 +1375,8 @@ mod tests {
             path.to_str().unwrap(),
             Some(&tracker),
             0,
+            false,
+            1,
         )
         .unwrap();
         assert_eq!(read.rows.len(), 2);
@@ -1207,13 +1467,227 @@ mod tests {
             ..Default::default()
         };
         let read = |limit| {
-            retrieve_slow_query_rows(&columns, &checker, &SessionTimeZone::utc(), path.to_str().unwrap(), None, limit)
+            retrieve_slow_query_rows(&columns, &checker, &SessionTimeZone::utc(), path.to_str().unwrap(), None, limit, false, 4)
                 .unwrap()
                 .rows
                 .len()
         };
         assert_eq!(read(0), 3);
         assert_eq!(read(2), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn utc(rfc3339: &str) -> DateTime<Utc> {
+        parse_time(rfc3339).unwrap().with_timezone(&Utc)
+    }
+
+    /// The `Query` column of `rows`.
+    fn queries(columns: &[(String, FieldType)], rows: &[Vec<Datum>]) -> Vec<String> {
+        let query = columns.iter().position(|(name, _)| name == "Query").unwrap();
+        rows.iter().map(|row| row[query].sql_string().unwrap()).collect()
+    }
+
+    /// Go `TestBatchLogForReversedScan`.
+    #[test]
+    fn a_reverse_batch_reads_the_newest_entries_first() {
+        let dir = std::env::temp_dir().join(format!("slow-query-reverse-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let logs = [
+            ("tidb-slow-reverse-scan-2020-02-14T19-04-05.01.log", ""),
+            (
+                "tidb-slow-reverse-scan-2020-02-15T19-04-05.01.log",
+                "\n# Time: 2020-02-15T18:00:01.000000+08:00\nselect 1;\n# Time: 2020-02-15T19:00:05.000000+08:00\nselect 2;\n# Time: 2020-02-15T20:00:05.000000+08:00",
+            ),
+            (
+                "tidb-slow-reverse-scan-2020-02-16T19-04-05.01.log",
+                "select 3;\n# Time: 2020-02-16T18:00:01.000000+08:00\nselect 4;\n# Time: 2020-02-16T18:00:05.000000+08:00\nselect 5;",
+            ),
+            (
+                "tidb-slow-reverse-scan-2020-02-17T19-04-05.01.log",
+                "\n# Time: 2020-02-16T19:00:00.000000+08:00\nselect 6;\n# Time: 2020-02-17T18:00:05.000000+08:00\nselect 7;\n# Time: 2020-04-15T18:00:05.299063744+08:00",
+            ),
+            (
+                "tidb-slow-reverse-scan.log",
+                "select 8;\n# Time: 2020-04-15T19:00:05.299063744+08:00\nselect 9;",
+            ),
+        ];
+        for (name, data) in logs {
+            std::fs::write(dir.join(name), data).unwrap();
+        }
+        let path = dir.join("tidb-slow-reverse-scan.log");
+        let cases: [(&str, &str, &[&str]); 4] = [
+            // `select 4;` started more than the tolerance before the range,
+            // which ends the scan.
+            (
+                "2020-02-16T18:00:03.000000+08:00",
+                "2020-02-16T18:00:06.000000+08:00",
+                &["# Time: 2020-02-16T18:00:05.000000+08:00", "select 5;", "", ""],
+            ),
+            (
+                "2020-02-15T18:00:00.000000+08:00",
+                "2020-02-15T19:00:00.000000+08:00",
+                &[
+                    "# Time: 2020-02-15T19:00:05.000000+08:00",
+                    "select 2;",
+                    "# Time: 2020-02-15T18:00:01.000000+08:00",
+                    "select 1;",
+                ],
+            ),
+            (
+                "2020-02-15T20:00:05.000000+08:00",
+                "2020-02-17T19:00:00.000000+08:00",
+                &[
+                    "# Time: 2020-02-17T18:00:05.000000+08:00",
+                    "select 7;",
+                    "# Time: 2020-02-16T19:00:00.000000+08:00",
+                    "select 6;",
+                    "# Time: 2020-02-16T18:00:05.000000+08:00",
+                    "select 5;",
+                    "# Time: 2020-02-16T18:00:01.000000+08:00",
+                    "select 4;",
+                    "# Time: 2020-02-15T20:00:05.000000+08:00",
+                    "select 3;",
+                ],
+            ),
+            (
+                "2020-02-16T19:00:00.000000+08:00",
+                "2020-04-15T20:00:00.000000+08:00",
+                &[
+                    "# Time: 2020-04-15T19:00:05.299063744+08:00",
+                    "select 9;",
+                    "# Time: 2020-04-15T18:00:05.299063744+08:00",
+                    "select 8;",
+                    "# Time: 2020-02-17T18:00:05.000000+08:00",
+                    "select 7;",
+                    "# Time: 2020-02-16T19:00:00.000000+08:00",
+                    "select 6;",
+                ],
+            ),
+        ];
+        for (start, end, want) in cases {
+            let checker = SlowLogChecker {
+                has_process_priv: true,
+                enable_time_check: true,
+                time_ranges: vec![(utc(start), utc(end))],
+                ..Default::default()
+            };
+            let mut stats = SlowQueryRuntimeStats::default();
+            let mut files = get_all_files(&checker, path.to_str().unwrap(), &mut Vec::new(), &mut stats).unwrap();
+            files.reverse();
+            let mut scanner = ReverseScanner::new(&files, &checker);
+            let got: Vec<String> = scanner
+                .next_batch(want.len() / 2, &mut stats)
+                .unwrap()
+                .into_iter()
+                .map(|(line, _)| line)
+                .collect();
+            let want: Vec<&str> = want.iter().copied().filter(|line| !line.is_empty()).collect();
+            assert_eq!(got, want, "{start}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Go `TestSlowQueryRetrieverReversedScanWithLimit` and
+    /// `TestSlowQueryRetrieverReversedScanWithTimeJitter`.
+    #[test]
+    fn a_descending_read_takes_its_limit_from_the_end() {
+        let dir = std::env::temp_dir().join(format!("slow-query-desc-limit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let columns = tidb_infoschema::infoschema_meta::table_schema("SLOW_QUERY").unwrap();
+        let read = |name: &str, data: &str, checker: &SlowLogChecker, limit| {
+            let path = dir.join(name);
+            std::fs::write(&path, data).unwrap();
+            let read = retrieve_slow_query_rows(
+                &columns,
+                checker,
+                &SessionTimeZone::utc(),
+                path.to_str().unwrap(),
+                None,
+                limit,
+                true,
+                4,
+            )
+            .unwrap();
+            queries(&columns, &read.rows)
+        };
+        let all = SlowLogChecker {
+            has_process_priv: true,
+            ..Default::default()
+        };
+        let log = "# Time: 2020-02-15T18:00:01.000000+08:00\nselect 1;\n# Time: 2020-02-15T19:00:05.000000+08:00\nselect 2;\n# Time: 2020-02-15T20:00:05.000000+08:00\nselect 3;\n# Time: 2020-02-15T21:00:05.000000+08:00\nselect 4;\n# Time: 2020-02-15T22:00:05.000000+08:00\nselect 5;";
+        assert_eq!(read("limit.log", log, &all, 2), ["select 5;", "select 4;"]);
+        assert_eq!(read("limit.log", log, &all, 0), ["select 5;", "select 4;", "select 3;", "select 2;", "select 1;"]);
+        // The long DB line makes the middle block cross `readLastLines` chunks.
+        let cross_chunk = format!(
+            "# Time: 2020-02-15T18:00:01.000000+08:00\nselect 1;\n# Time: 2020-02-15T19:00:05.000000+08:00\n# DB: {}\nselect 2;\n# Time: 2020-02-15T20:00:05.000000+08:00\nselect 3;",
+            "x".repeat(5000)
+        );
+        assert_eq!(read("cross-chunk.log", &cross_chunk, &all, 3), ["select 3;", "select 2;", "select 1;"]);
+        // A block just before the lower bound does not stop the scan before
+        // earlier in-range blocks.
+        let jitter = "# Time: 2020-02-15T18:00:00.000500+08:00\nselect in-window-1;\n# Time: 2020-02-15T18:00:00.001000+08:00\nselect in-window-2;\n# Time: 2020-02-15T17:59:59.999700+08:00\nselect just-before-window;\n# Time: 2020-02-15T18:00:00.001500+08:00\nselect in-window-3;";
+        let window = SlowLogChecker {
+            has_process_priv: true,
+            enable_time_check: true,
+            time_ranges: vec![(
+                utc("2020-02-15T18:00:00.000000+08:00"),
+                utc("2020-02-15T18:00:00.002000+08:00"),
+            )],
+            ..Default::default()
+        };
+        assert_eq!(
+            read("jitter.log", jitter, &window, 3),
+            ["select in-window-3;", "select in-window-2;", "select in-window-1;"]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn parse_workers_keep_the_logs_order() {
+        let dir = std::env::temp_dir().join(format!("slow-query-workers-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tidb-slow.log");
+        // 300 entries are five batches of `ParseSlowLogBatchSize`; every
+        // 40th has a bad Query_time, which warns.
+        let log: String = (0..300)
+            .map(|i| {
+                let query_time = if i % 40 == 0 { "bad".to_string() } else { format!("0.{i:03}") };
+                format!(
+                    "# Time: 2026-11-05T10:{:02}:{:02}.000000+08:00\n# Query_time: {query_time}\nselect {i};\n",
+                    i / 60,
+                    i % 60
+                )
+            })
+            .collect();
+        std::fs::write(&path, &log).unwrap();
+        let columns = tidb_infoschema::infoschema_meta::table_schema("SLOW_QUERY").unwrap();
+        let checker = SlowLogChecker {
+            has_process_priv: true,
+            ..Default::default()
+        };
+        let read = |concurrency| {
+            let read = retrieve_slow_query_rows(
+                &columns,
+                &checker,
+                &SessionTimeZone::utc(),
+                path.to_str().unwrap(),
+                None,
+                0,
+                false,
+                concurrency,
+            )
+            .unwrap();
+            let rows: Vec<Vec<String>> =
+                read.rows.iter().map(|row| row.iter().map(Datum::string).collect()).collect();
+            (rows, read.warnings, read.stats.concurrent)
+        };
+        let (serial_rows, serial_warnings, _) = read(1);
+        let (rows, warnings, concurrent) = read(4);
+        assert_eq!(serial_rows.len(), 300);
+        assert_eq!(serial_warnings.len(), 8);
+        assert_eq!(rows, serial_rows);
+        assert_eq!(warnings, serial_warnings);
+        assert_eq!(concurrent, 4);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

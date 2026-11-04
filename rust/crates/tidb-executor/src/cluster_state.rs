@@ -444,7 +444,7 @@ impl ViewerState {
             // A cluster scan carries no slow-query extractor here: Go's
             // receiving reader then reads every file with no time filter.
             "SLOW_QUERY" => {
-                let (rows, warnings, _) = self.slow_query_rows(&[], &ctx.session_zone(), None)?;
+                let (rows, warnings, _) = self.slow_query_rows(&[], &ctx.session_zone(), None, usize::try_from(ctx.dist_sql_scan_concurrency()).unwrap_or(usize::MAX))?;
                 for warning in warnings {
                     ctx.append_warning_parts(1105, &warning);
                 }

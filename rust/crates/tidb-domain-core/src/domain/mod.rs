@@ -63,6 +63,17 @@ pub struct ClusterDataLockWaits {
     transactions: Arc<dyn ClusterTransactions>,
 }
 
+/// The node's store client for the TiFlash system tables.
+pub struct ClusterTiFlashSystemTables {
+    pub transactions: Arc<dyn ClusterTransactions>,
+}
+
+impl tidb_kv::tiflash_system_table::TiFlashSystemTableClient for ClusterTiFlashSystemTables {
+    fn get_tiflash_system_table(&self, address: &str, sql: &str, timeout: Duration) -> Result<Vec<u8>, String> {
+        self.transactions.get_tiflash_system_table(address, sql, timeout)
+    }
+}
+
 pub struct ClusterStatisticsItemLoader {
     /// Go `statsHandle.SPool()`'s owner.
     pub domain: Weak<Domain>,

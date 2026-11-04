@@ -904,6 +904,7 @@ fn open_scan(
         .set_keep_order(plan.keep_order)
         .set_allow_unordered_response(plan.allow_unordered)
         .set_desc(plan.desc)
+        .set_mem_tracker(memory_tracker.clone())
         .set_dag_request(plan.envelope, plan.dag.encode_to_vec());
     let request = builder
         .build_transport_request(Arc::clone(&cancellation))

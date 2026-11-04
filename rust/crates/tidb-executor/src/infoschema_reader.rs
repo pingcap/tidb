@@ -310,8 +310,6 @@ pub const SERVED_TABLES: &[&str] = &[
     "PLUGINS",
     "SEQUENCES",
     "RUNAWAY_WATCHES",
-    "TIFLASH_TABLES",
-    "TIFLASH_SEGMENTS",
     "RESOURCE_GROUPS",
     "COLLATIONS",
     "COLLATION_CHARACTER_SET_APPLICABILITY",
@@ -409,12 +407,6 @@ pub fn table_rows(
     }
     if name.go_lower_eq("RUNAWAY_WATCHES") {
         return Some(runaway_watches_rows());
-    }
-    if name.go_lower_eq("TIFLASH_TABLES") {
-        return Some(tiflash_tables_rows());
-    }
-    if name.go_lower_eq("TIFLASH_SEGMENTS") {
-        return Some(tiflash_segments_rows());
     }
     if name.go_lower_eq("RESOURCE_GROUPS") {
         return Some(resource_groups_rows(catalog));
@@ -2501,12 +2493,223 @@ fn runaway_watches_rows() -> Vec<Vec<Datum>> {
     Vec::new()
 }
 
-fn tiflash_tables_rows() -> Vec<Vec<Datum>> {
-    Vec::new()
+/// Go `tiflashTargetTableName`: the TiFlash system table each table reads.
+fn tiflash_target_table_name(table: &str) -> Option<&'static str> {
+    match table.go_to_lower().as_str() {
+        "tiflash_tables" => Some("dt_tables"),
+        "tiflash_segments" => Some("dt_segments"),
+        "tiflash_indexes" => Some("dt_local_indexes"),
+        _ => None,
+    }
 }
 
-fn tiflash_segments_rows() -> Vec<Vec<Datum>> {
-    Vec::new()
+/// Go `fmt.Sprint` of one `encoding/json`-decoded value (`[]any` element):
+/// numbers are float64 printed `%v`.
+fn go_sprint_json(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "<nil>".to_owned(),
+        serde_json::Value::Bool(value) => value.to_string(),
+        serde_json::Value::Number(number) => tidb_goruntime::go_strconv::format_float(
+            number.as_f64().unwrap_or_default(),
+            b'g',
+            -1,
+            64,
+        ),
+        serde_json::Value::String(value) => value.clone(),
+        serde_json::Value::Array(values) => format!(
+            "[{}]",
+            values.iter().map(go_sprint_json).collect::<Vec<_>>().join(" ")
+        ),
+        // Go prints a map with its keys sorted.
+        serde_json::Value::Object(map) => {
+            let mut entries: Vec<_> = map.iter().collect();
+            entries.sort_by(|left, right| left.0.cmp(right.0));
+            format!(
+                "map[{}]",
+                entries
+                    .iter()
+                    .map(|(key, value)| format!("{key}:{}", go_sprint_json(value)))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        }
+    }
+}
+
+/// Go `TiFlashSystemTableRetriever.retrieve` over every selected instance:
+/// `initialize` lists the TiFlash stores (`GetStoreServerInfo`, filtered by
+/// the extractor's `TiFlashInstances`) and `dataForTiFlashSystemTables` pages
+/// each store's system table by `LIMIT rowIdx, 1024`. Values are set on the
+/// pruned `output_columns` as Go's are -- the instance on the last one -- and
+/// returned at their positions in the table's full rows.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn tiflash_system_table_rows(
+    table_name: &str,
+    output_columns: &[String],
+    extractor: &tidb_planner::memtable_predicate_extractor::TiFlashSystemTableExtractor,
+    stores: &[tidb_domain::cluster_topology::ClusterServer],
+    client: Option<&dyn tidb_kv::tiflash_system_table::TiFlashSystemTableClient>,
+    catalog: &SessionExtendedInfoSchema,
+) -> Result<Vec<Vec<Datum>>, crate::DriverError> {
+    const MAX_COUNT: usize = 1024;
+    if extractor.skip_request {
+        return Ok(Vec::new());
+    }
+    let columns = tidb_infoschema::infoschema_meta::table_schema(table_name).unwrap_or_default();
+    let output: Vec<(usize, &FieldType)> = output_columns
+        .iter()
+        .filter_map(|name| {
+            columns
+                .iter()
+                .position(|(column, _)| column.eq_ignore_ascii_case(name))
+                .map(|index| (index, &columns[index].1))
+        })
+        .collect();
+    let mut instance_ids = Vec::new();
+    for info in stores {
+        // Go's `ServerType` is `tiflash` for a write node too.
+        if info.server_type != "tiflash" && info.server_type != "tiflash_write" {
+            continue;
+        }
+        if !extractor.tiflash_instances.is_empty() && !extractor.tiflash_instances.contains(&info.address) {
+            continue;
+        }
+        if info.status_address.split(':').count() != 2 {
+            return Err(crate::DriverError::unsupported(format!(
+                "node status addr: {} format illegal",
+                info.status_address
+            )));
+        }
+        instance_ids.push(info.address.clone());
+    }
+    if instance_ids.is_empty() || output.is_empty() {
+        return Ok(Vec::new());
+    }
+    let client = client.ok_or_else(|| {
+        crate::DriverError::unsupported("Get tiflash system tables can only run with tikv compatible storage")
+    })?;
+    let target_table = tiflash_target_table_name(table_name).unwrap_or_default();
+    // Go adds `keyspace_id=` only under a keyspace name, which this port
+    // does not run (O15).
+    let mut filters = Vec::new();
+    if !extractor.tidb_databases.is_empty() {
+        filters.push(format!("tidb_database IN ({})", extractor.tidb_databases.replace('"', "'")));
+    }
+    if !extractor.tidb_tables.is_empty() {
+        filters.push(format!("tidb_table IN ({})", extractor.tidb_tables.replace('"', "'")));
+    }
+    let mut base_sql = format!("SELECT * FROM system.{target_table}");
+    if !filters.is_empty() {
+        base_sql = format!("{base_sql} WHERE {}", filters.join(" AND "));
+    }
+    // Go `outputColIndexMap`: lower-cased output column name -> output index.
+    let output_index: std::collections::HashMap<String, usize> = output
+        .iter()
+        .enumerate()
+        .map(|(output_index, (index, _))| (columns[*index].0.go_to_lower(), output_index))
+        .collect();
+    let lookup = |name: &str| output_index.get(name).copied().unwrap_or(0);
+    let mut full_rows = Vec::new();
+    for instance_id in &instance_ids {
+        let mut row_idx = 0usize;
+        loop {
+            let sql = format!("{base_sql} LIMIT {row_idx}, {MAX_COUNT}");
+            // Go's 5 minutes per-request timeout.
+            let data = client
+                .get_tiflash_system_table(instance_id, &sql, std::time::Duration::from_secs(5 * 60))
+                .map_err(crate::DriverError::unsupported)?;
+            let result: serde_json::Value = serde_json::from_slice(&data).map_err(|error| {
+                crate::DriverError::unsupported(format!("Failed to decode JSON from TiFlash: {error}"))
+            })?;
+            let meta = result.get("meta").and_then(serde_json::Value::as_array).cloned().unwrap_or_default();
+            let data_rows = result.get("data").and_then(serde_json::Value::as_array).cloned().unwrap_or_default();
+            // Go `tiflashColIndexMap`: TiFlash column index -> output index.
+            let tiflash_col_index: std::collections::HashMap<usize, usize> = meta
+                .iter()
+                .enumerate()
+                .filter_map(|(tiflash_index, column)| {
+                    let name = column.get("name").and_then(serde_json::Value::as_str).unwrap_or_default();
+                    output_index.get(&name.to_lowercase()).map(|output| (tiflash_index, *output))
+                })
+                .collect();
+            let mut output_rows = Vec::with_capacity(data_rows.len());
+            for row_fields in &data_rows {
+                let Some(row_fields) = row_fields.as_array().filter(|fields| !fields.is_empty()) else {
+                    continue;
+                };
+                let mut output_row = vec![Datum::Null; output.len()];
+                for (tiflash_index, field_value) in row_fields.iter().enumerate() {
+                    let Some(&output_idx) = tiflash_col_index.get(&tiflash_index) else {
+                        continue;
+                    };
+                    if field_value.is_null() {
+                        continue;
+                    }
+                    let value = go_sprint_json(field_value);
+                    let column = output[output_idx].1;
+                    output_row[output_idx] = match column.code() {
+                        FieldTypeCode::Varchar => text(&value),
+                        FieldTypeCode::LongLong => Datum::Int(value.parse::<i64>().map_err(|_| {
+                            crate::DriverError::unsupported(format!(
+                                "strconv.ParseInt: parsing {}: invalid syntax",
+                                tidb_go_strconv::quote_bytes(value.as_bytes())
+                            ))
+                        })?),
+                        FieldTypeCode::Double => Datum::Real(value.parse::<f64>().map_err(|_| {
+                            crate::DriverError::unsupported(format!(
+                                "strconv.ParseFloat: parsing {}: invalid syntax",
+                                tidb_go_strconv::quote_bytes(value.as_bytes())
+                            ))
+                        })?),
+                        _ => {
+                            return Err(crate::DriverError::unsupported(format!(
+                                "Meet column of unknown type {}",
+                                columns[output[output_idx].0].0
+                            )))
+                        }
+                    };
+                }
+                let last = output_row.len() - 1;
+                output_row[last] = text(instance_id);
+                // For TIFLASH_INDEXES, the column and index names come from
+                // the TableInfo.
+                if table_name.go_lower_eq("tiflash_indexes") {
+                    let int_of = |datum: &Datum| match datum {
+                        Datum::Int(value) => Some(*value),
+                        _ => None,
+                    };
+                    let mut logical_table_id = int_of(&output_row[lookup("table_id")]).unwrap_or(0);
+                    if let Some(belonging) = int_of(&output_row[lookup("belonging_table_id")]) {
+                        if belonging != -1 && belonging != 0 {
+                            logical_table_id = belonging;
+                        }
+                    }
+                    if let Some((_, table)) = catalog.table_by_id(logical_table_id) {
+                        let table_info = table.meta();
+                        let table_info = table_info.read();
+                        let column_id = int_of(&output_row[lookup("column_id")]).unwrap_or(0);
+                        output_row[lookup("column_name")] = text(&table_info.find_column_name_by_id(column_id));
+                        let index_id = int_of(&output_row[lookup("index_id")]).unwrap_or(0);
+                        output_row[lookup("index_name")] = text(&table_info.find_index_name_by_id(index_id));
+                    }
+                }
+                output_rows.push(output_row);
+            }
+            let fetched = output_rows.len();
+            for output_row in output_rows {
+                let mut full = vec![Datum::Null; columns.len()];
+                for ((index, _), value) in output.iter().zip(output_row) {
+                    full[*index] = value;
+                }
+                full_rows.push(full);
+            }
+            row_idx += fetched;
+            if fetched < MAX_COUNT {
+                break;
+            }
+        }
+    }
+    Ok(full_rows)
 }
 
 /// Go `memtableRetriever.setDataFromResourceGroups` over the groups the
@@ -2672,3 +2875,144 @@ pub fn datetime_datum(unix_seconds: i64) -> tidb_datatype::Datum {
     .map_or(tidb_datatype::Datum::Null, tidb_datatype::Datum::Time)
 }
 
+
+#[cfg(test)]
+mod tiflash_system_table_tests {
+    use super::*;
+    use std::sync::Mutex;
+    use tidb_domain::cluster_topology::ClusterServer;
+    use tidb_planner::memtable_predicate_extractor::TiFlashSystemTableExtractor;
+
+    /// A TiFlash store client answering each request from `answer`, keeping
+    /// the requests it was sent.
+    struct FakeTiFlash {
+        sent: Mutex<Vec<(String, String)>>,
+        answer: Box<dyn Fn(&str, &str) -> serde_json::Value + Send + Sync>,
+    }
+
+    impl tidb_kv::tiflash_system_table::TiFlashSystemTableClient for FakeTiFlash {
+        fn get_tiflash_system_table(&self, address: &str, sql: &str, _timeout: std::time::Duration) -> Result<Vec<u8>, String> {
+            self.sent.lock().unwrap().push((address.to_owned(), sql.to_owned()));
+            Ok(serde_json::to_vec(&(self.answer)(address, sql)).unwrap())
+        }
+    }
+
+    fn store(server_type: &str, address: &str) -> ClusterServer {
+        ClusterServer {
+            server_type: server_type.to_owned(),
+            address: address.to_owned(),
+            status_address: format!("{}:20292", address.split(':').next().unwrap()),
+            ..ClusterServer::default()
+        }
+    }
+
+    fn names(columns: &[&str]) -> Vec<String> {
+        columns.iter().map(|column| (*column).to_owned()).collect()
+    }
+
+    /// Go `TiFlashSystemTableRetriever`: each TiFlash store (a write node
+    /// too, never TiKV) is paged by `LIMIT rowIdx, 1024`; TiFlash's columns
+    /// map onto the pruned output columns by name, JSON numbers print as
+    /// Go's `%v` of a float64, and the instance lands on the last output
+    /// column.
+    #[test]
+    fn tiflash_system_tables_page_each_tiflash_store_like_go() {
+        let catalog = tidb_infoschema_perfschema::mock_catalog();
+        let client = FakeTiFlash {
+            sent: Mutex::new(Vec::new()),
+            answer: Box::new(|address, sql| {
+                let rows = if address == "tf1:3930" && sql.ends_with("LIMIT 0, 1024") { 1024 } else { 1 };
+                serde_json::json!({
+                    "meta": [{"name": "tidb_database"}, {"name": "unknown"}, {"name": "TABLE_ID"}, {"name": "delta_rate_rows"}],
+                    "data": (0..rows).map(|i| serde_json::json!(["test", 7, i.to_string(), 1000000])).collect::<Vec<_>>(),
+                })
+            }),
+        };
+        let stores = [store("tikv", "kv:20160"), store("tiflash", "tf1:3930"), store("tiflash_write", "tf2:3930")];
+        let mut extractor = TiFlashSystemTableExtractor::default();
+        extractor.tidb_databases = "\"test\"".to_owned();
+        let read = |columns: &[&str], extractor: &TiFlashSystemTableExtractor| {
+            tiflash_system_table_rows("TIFLASH_TABLES", &names(columns), extractor, &stores, Some(&client), &catalog)
+        };
+        let columns = tidb_infoschema::infoschema_meta::table_schema("TIFLASH_TABLES").unwrap();
+        let at = |name: &str| columns.iter().position(|(column, _)| column == name).unwrap();
+        let rows = read(&["TIDB_DATABASE", "TABLE_ID", "DELTA_RATE_ROWS", "TIFLASH_INSTANCE"], &extractor).unwrap();
+        assert_eq!(rows.len(), 1026);
+        assert_eq!(rows[1023][at("TABLE_ID")], Datum::Int(1023));
+        assert_eq!(rows[0][at("TIDB_DATABASE")], text("test"));
+        assert_eq!(rows[0][at("DELTA_RATE_ROWS")], Datum::Real(1e6));
+        assert_eq!(rows[1024][at("TIFLASH_INSTANCE")], text("tf1:3930"));
+        assert_eq!(rows[1025][at("TIFLASH_INSTANCE")], text("tf2:3930"));
+        let sent: Vec<_> = client.sent.lock().unwrap().drain(..).collect();
+        let base = "SELECT * FROM system.dt_tables WHERE tidb_database IN ('test')";
+        assert_eq!(
+            sent,
+            [
+                ("tf1:3930".to_owned(), format!("{base} LIMIT 0, 1024")),
+                ("tf1:3930".to_owned(), format!("{base} LIMIT 1024, 1024")),
+                ("tf2:3930".to_owned(), format!("{base} LIMIT 0, 1024")),
+            ]
+        );
+        // Go sets the instance on the last OUTPUT column, whatever it is.
+        let mut only = TiFlashSystemTableExtractor::default();
+        only.tiflash_instances.insert("tf2:3930".to_owned());
+        let rows = read(&["TIDB_DATABASE", "TIDB_TABLE"], &only).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][at("TIDB_TABLE")], text("tf2:3930"));
+        // A JSON number for a BIGINT prints `1e+06`, which ParseInt refuses.
+        let error = tiflash_system_table_rows(
+            "TIFLASH_TABLES",
+            &names(&["TABLE_ID", "TIFLASH_INSTANCE"]),
+            &only,
+            &stores,
+            Some(&FakeTiFlash {
+                sent: Mutex::new(Vec::new()),
+                answer: Box::new(|_, _| serde_json::json!({"meta": [{"name": "table_id"}], "data": [[1000000]]})),
+            }),
+            &catalog,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("strconv.ParseInt: parsing \"1e+06\": invalid syntax"), "{error}");
+    }
+
+    /// Go's TIFLASH_INDEXES names its column and index from the TableInfo of
+    /// `table_id`. The table has no `BELONGING_TABLE_ID` column, so Go's
+    /// lookup of it reads output column 0 and never overrides the id.
+    #[test]
+    fn tiflash_indexes_take_their_names_from_the_table_info() {
+        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
+        crate::run_create_table_on("create table t (a int, b int, index ib(b))", &mut catalog).unwrap();
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
+            panic!("fixture table");
+        };
+        let (table_id, column_id, index_id) = {
+            let table = table.meta();
+            let table = table.read();
+            (table.id, table.columns.get(1).unwrap().read().id, table.indices.get(0).unwrap().read().id)
+        };
+        let client = FakeTiFlash {
+            sent: Mutex::new(Vec::new()),
+            answer: Box::new(move |_, _| {
+                serde_json::json!({
+                    "meta": [{"name": "tidb_database"}, {"name": "table_id"}, {"name": "belonging_table_id"}, {"name": "column_id"}, {"name": "index_id"}],
+                    "data": [["test", table_id.to_string(), "999", column_id.to_string(), index_id.to_string()]],
+                })
+            }),
+        };
+        let columns = tidb_infoschema::infoschema_meta::table_schema("TIFLASH_INDEXES").unwrap();
+        let output: Vec<String> = columns.iter().map(|(name, _)| name.clone()).collect();
+        let rows = tiflash_system_table_rows(
+            "TIFLASH_INDEXES",
+            &output,
+            &TiFlashSystemTableExtractor::default(),
+            &[store("tiflash", "tf1:3930")],
+            Some(&client),
+            &catalog,
+        )
+        .unwrap();
+        let at = |name: &str| columns.iter().position(|(column, _)| column == name).unwrap();
+        assert_eq!(rows[0][at("COLUMN_NAME")], text("b"));
+        assert_eq!(rows[0][at("INDEX_NAME")], text("ib"));
+        assert_eq!(rows[0][at("TIFLASH_INSTANCE")], text("tf1:3930"));
+    }
+}

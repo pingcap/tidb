@@ -86,6 +86,7 @@ impl Session {
             analyze_status: self.analyze_status.clone(),
             digest_retriever: self.sql_digest_text_retriever(),
             data_lock_waits: self.data_lock_waits.clone(),
+            tiflash_system_table: self.tiflash_system_table.clone(),
             cluster_topology: self.cluster_topology.clone(),
             cluster_config: self.cluster_config.clone(),
             cluster_diagnostics: self.cluster_diagnostics.clone(),

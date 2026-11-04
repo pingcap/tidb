@@ -415,6 +415,11 @@ impl DomainSessions for Domain {
         }
         session.set_stats_collector(self.stats_usage.new_session_stats_item());
         session.set_data_lock_waits_provider(self.data_lock_waits.clone());
+        session.set_tiflash_system_table_client(Arc::new(
+            tidb_domain_core::domain::ClusterTiFlashSystemTables {
+                transactions: Arc::clone(&self.transactions),
+            },
+        ));
         session.set_column_stats_usage_provider(Arc::new(ClusterColumnStatsUsageProvider {
             domain: self.binding_session_factory.clone(),
         }));

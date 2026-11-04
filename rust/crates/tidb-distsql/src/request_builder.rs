@@ -342,6 +342,12 @@ impl RequestBuilder {
         self
     }
 
+    /// Go `SetMemTracker`.
+    pub fn set_mem_tracker(&mut self, tracker: Option<Arc<tidb_memory::Tracker>>) -> &mut Self {
+        self.request.mem_tracker = tracker;
+        self
+    }
+
     /// Sets descending range order.
     pub fn set_desc(&mut self, desc: bool) -> &mut Self {
         self.request.desc = desc;

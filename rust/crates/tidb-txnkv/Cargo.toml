@@ -22,6 +22,7 @@ tidb-resourcegrouptag = { path = "../tidb-resourcegrouptag" }
 tidb-go-time-layout = { path = "../tidb-go-time-layout" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-paging = { path = "../tidb-paging" }
+tidb-memory = { path = "../tidb-memory" }
 tidb-tiflashcompute = { path = "../tidb-tiflashcompute" }
 tidb-tracing = { path = "../tidb-tracing" }
 tidb-metrics = { path = "../tidb-metrics" }

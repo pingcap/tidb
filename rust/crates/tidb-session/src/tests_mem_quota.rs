@@ -265,12 +265,19 @@ fn the_suite_s_oom_insert_is_8175_at_200_and_inserts_at_10000() {
         .run("INSERT INTO t1 VALUES (1),(2),(3),(4),(5)")
         .expect_err("the quota must be enforced on the write path");
     assert_eq!(error.to_mysql_error().code, 8175);
+    // Even the empty table's read is 8175 here: its coprocessor response's
+    // `MemSize` alone passes 200 (Go's `copIteratorWorker.checkRespOOM`,
+    // gorun).
+    assert_eq!(
+        session.run("SELECT a FROM t1").expect_err("the response is charged").to_mysql_error().code,
+        8175
+    );
+
+    session.run("SET @@tidb_mem_quota_query = 10000").unwrap();
     assert!(
         crate::tests_support::row_text(session.run("SELECT a FROM t1")).is_empty(),
         "a cancelled INSERT stores nothing"
     );
-
-    session.run("SET @@tidb_mem_quota_query = 10000").unwrap();
     session
         .run("INSERT INTO t1 VALUES (1),(2),(3),(4),(5)")
         .unwrap();

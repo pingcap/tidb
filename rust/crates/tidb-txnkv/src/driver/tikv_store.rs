@@ -339,6 +339,29 @@ impl<PdC: PdClient> TikvStore<PdC> {
         })
     }
 
+    /// Go `TiFlashSystemTableRetriever.dataForTiFlashSystemTables`'s request:
+    /// a `tikvrpc.CmdGetTiFlashSystemTable` (`StoreTp: tikvrpc.TiFlash`) to
+    /// the store at `address`, answering the response's JSON `Data`.
+    pub fn get_tiflash_system_table(&self, address: &str, sql: &str, timeout: Duration) -> Result<Vec<u8>, String> {
+        self.block_on(async {
+            let mut request = tikv_client::proto::kvrpcpb::TiFlashSystemTableRequest { sql: sql.to_owned() };
+            let response = self
+                .store
+                .send_request_with_store_type(
+                    address,
+                    &mut request,
+                    tikv_client::tikv::EndpointType::TiFlash,
+                    timeout,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            match response.downcast::<tikv_client::proto::kvrpcpb::TiFlashSystemTableResponse>() {
+                Ok(response) => Ok(response.data.to_vec()),
+                Err(_) => Err("Unexpected response type: <nil>".to_owned()),
+            }
+        })
+    }
+
     /// Go `domain.setLowResolutionTSOUpdateInterval`:
     /// `store.GetOracle().SetLowResolutionTimestampUpdateInterval`.
     pub fn set_low_resolution_timestamp_update_interval(

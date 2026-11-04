@@ -18,6 +18,7 @@
 //! `pkg/distsql`'s (`tidb_distsql::remote_scan`).
 pub mod tikv_region_store;
 pub mod lock_waits;
+pub mod tiflash_system_table;
 pub mod kv_errors;
 pub mod key;
 pub mod region_map;

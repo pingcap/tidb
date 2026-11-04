@@ -572,6 +572,7 @@ impl CopReadTaskRuntime {
                         metadata.paging.max_size,
                         generation,
                         ema.clone(),
+                        metadata.mem_tracker.clone(),
                     ),
                     task,
                 }
@@ -1052,6 +1053,7 @@ impl CopReadTaskRuntime {
                 self.metadata.paging.max_size,
                 self.tasks[failed.logical_task_index].paging.generation(),
                 self.ema.clone(),
+                self.metadata.mem_tracker.clone(),
             );
             let insert_at = failed.logical_task_index + 1 + inserted;
             self.tasks
@@ -1182,7 +1184,7 @@ impl CopReadTaskRuntime {
             let runtime = CopReadTaskResponse::success(child).collect_cop_runtime_stats(callee_address);
             self.tasks[logical_task_index]
                 .paging
-                .accept_batched_child(batch.data.clone(), Some(runtime))?;
+                .accept_batched_child(batch.data.clone(), batch.exec_details_v2.clone(), Some(runtime))?;
         }
         remains.extend(pending.into_values().map(|task| BatchedRemain {
             task,
@@ -1228,6 +1230,7 @@ impl CopReadTaskRuntime {
                 self.metadata.paging.max_size,
                 self.tasks[after].paging.generation(),
                 self.ema.clone(),
+                self.metadata.mem_tracker.clone(),
             );
             let index = after + 1 + offset;
             self.tasks

@@ -18,7 +18,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
-use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::Duration;
 
@@ -678,8 +678,9 @@ pub struct Request {
     pub isolation_level: IsolationLevel,
     /// Priority.
     pub priority: Priority,
-    /// Coprocessor memory tracker.
-    pub memory_tracker: Option<Arc<AtomicI64>>,
+    /// Go `MemTracker`: the reader's tracker, which the coprocessor
+    /// iterator charges each queued response to.
+    pub mem_tracker: Option<Arc<tidb_memory::Tracker>>,
     /// Preserve response ordering.
     pub keep_order: bool,
     /// Permit the coprocessor transport to publish region responses without

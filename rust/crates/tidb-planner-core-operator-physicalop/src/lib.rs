@@ -5543,7 +5543,6 @@ pub fn safe_clone(plan: &PhysicalPlan) -> Result<(), String> {
         PhysicalPlan::MemTable(_) => "PhysicalMemTable",
         PhysicalPlan::TableDual(_) => "PhysicalTableDual",
         PhysicalPlan::NominalSort(_) => "NominalSort",
-        PhysicalPlan::CTETable(_) => "PhysicalCTETable",
         PhysicalPlan::Show(_) => "PhysicalShow",
         PhysicalPlan::ShowDDLJobs(_) => "PhysicalShowDDLJobs",
         PhysicalPlan::Lock(_) => "PhysicalLock",
@@ -5552,6 +5551,9 @@ pub fn safe_clone(plan: &PhysicalPlan) -> Result<(), String> {
         PhysicalPlan::IndexMergeReader(_) => "PhysicalIndexMergeReader",
         PhysicalPlan::UnionScan(_) => "PhysicalUnionScan",
         PhysicalPlan::Dml(dml) => dml.go_operator.as_str(),
+        // Go's `PhysicalCTETable.Init` sets no `Self`, so the base `Clone`
+        // formats a nil `%T`.
+        PhysicalPlan::CTETable(_) => return Err("<nil> doesn't support cloning".to_owned()),
         _ => {
             plan.children().iter().try_for_each(safe_clone)?;
             if let PhysicalPlan::CTE(cte) = plan {
@@ -5564,19 +5566,6 @@ pub fn safe_clone(plan: &PhysicalPlan) -> Result<(), String> {
         }
     };
     Err(format!("*physicalop.{uncloneable} doesn't support cloning"))
-}
-
-/// Whether the Rust executor can build independent worker copies of an Apply
-/// inner tree: recursive CTE and shuffle runtime state cannot be cloned yet,
-/// so such a tree runs the parallel Apply serially.
-pub fn supports_apply_worker_clone(plan: &PhysicalPlan) -> bool {
-    !matches!(
-        plan,
-        PhysicalPlan::CTE(_)
-            | PhysicalPlan::CTETable(_)
-            | PhysicalPlan::Shuffle(_)
-            | PhysicalPlan::ShuffleReceiver(_)
-    ) && plan.children().iter().all(supports_apply_worker_clone)
 }
 
 /// Clone every correlated binding cell once, preserving internal aliasing

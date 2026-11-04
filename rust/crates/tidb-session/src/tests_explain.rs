@@ -2946,6 +2946,76 @@ fn explain_analyze_reports_operator_memory_and_disk() {
     assert_eq!((scan[7].as_str(), scan[8].as_str()), ("N/A", "N/A"), "{scan:?}");
 }
 
+/// Go `copIterator.memTracker`: the TableReader's tracker (the request's
+/// `MemTracker`) holds each coprocessor response's `MemSize` while it is
+/// queued, beside the select result's chunk. Go's `EXPLAIN ANALYZE` of a
+/// 3-row `t(a INT)` read prints `TableReader_5 ... 246 Bytes` or `245 Bytes`
+/// (gorun; the response's execution-detail durations are varints), where
+/// the select result's chunk alone is under 100.
+#[test]
+fn a_table_reader_charges_its_queued_coprocessor_responses() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT)").unwrap();
+    session.run("INSERT INTO t VALUES (1),(2),(3)").unwrap();
+    let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM t"));
+    let reader = rows
+        .iter()
+        .find(|row| row[0].starts_with("TableReader_"))
+        .unwrap_or_else(|| panic!("no TableReader in {rows:?}"));
+    let bytes: i64 = reader[7]
+        .strip_suffix(" Bytes")
+        .and_then(|bytes| bytes.parse().ok())
+        .unwrap_or_else(|| panic!("{reader:?}"));
+    assert!((240..=256).contains(&bytes), "{reader:?}");
+}
+
+/// Go `buildApply` / `buildCTE`: an Apply whose inner side holds a CTE that
+/// `SafeClone` accepts runs on its workers, which share the statement's CTE
+/// producer (`CTEStorageMap`); a recursive CTE's `PhysicalCTETable` refuses
+/// cloning with a nil `%T`. A CTE correlated to the outer row stays serial
+/// here: Go's workers read the shared producer built from the original plan,
+/// whose correlated cells no worker binds, and answer every row NULL. Rows
+/// and warning from gorun.
+#[test]
+fn a_parallel_apply_shares_its_inner_cte_producer() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT)").unwrap();
+    session
+        .run("INSERT INTO t VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12)")
+        .unwrap();
+    session.run("SET tidb_enable_parallel_apply = 1").unwrap();
+    let shared = "SELECT a, (WITH c AS (SELECT t2.a FROM t t2 WHERE t2.a <= 3) SELECT SUM(x.a) FROM c x JOIN c y ON x.a = y.a WHERE x.a < t.a) s FROM t ORDER BY a";
+    let expected: Vec<Vec<String>> = [
+        ("1", "NULL"), ("2", "1"), ("3", "3"), ("4", "6"), ("5", "6"), ("6", "6"),
+        ("7", "6"), ("8", "6"), ("9", "6"), ("10", "6"), ("11", "6"), ("12", "6"),
+    ]
+    .iter()
+    .map(|(a, s)| vec![(*a).to_owned(), (*s).to_owned()])
+    .collect();
+    assert_eq!(row_text(session.run(shared)), expected);
+    let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {shared}")));
+    let apply = rows
+        .iter()
+        .find(|row| row[0].trim_start_matches(['└', '├', '─', '│', ' ']).starts_with("Apply_"))
+        .unwrap_or_else(|| panic!("no Apply in {rows:?}"));
+    assert!(apply[5].contains("Concurrency:5"), "{apply:?}");
+
+    let correlated = "SELECT a, (WITH c AS (SELECT t2.a FROM t t2 WHERE t2.a <= t.a) SELECT SUM(x.a) FROM c x JOIN c y ON x.a = y.a) s FROM t ORDER BY a";
+    let sums: Vec<String> = row_text(session.run(correlated)).into_iter().map(|row| row[1].clone()).collect();
+    assert_eq!(sums, ["1", "3", "6", "10", "15", "21", "28", "36", "45", "55", "66", "78"]);
+
+    let recursive = "SELECT a, (WITH RECURSIVE c(n) AS (SELECT t2.a FROM t t2 WHERE t2.a = t.a UNION ALL SELECT n + 1 FROM c WHERE n < t.a + 2) SELECT SUM(n) FROM c) s FROM t ORDER BY a";
+    session.run(recursive).unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning".to_owned(),
+            "1105".to_owned(),
+            "Some apply operators can not be executed in parallel: <nil> doesn't support cloning".to_owned(),
+        ]]
+    );
+}
+
 /// `EXPLAIN ANALYZE <insert>` really inserts -- captured: real TiDB's
 /// `EXPLAIN ANALYZE INSERT` leaves the row in the table afterward, the
 /// inverse of `EXPLAIN INSERT`, which inserts nothing (see the

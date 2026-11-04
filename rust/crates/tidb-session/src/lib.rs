@@ -615,6 +615,7 @@ pub struct Session {
         Option<Arc<Mutex<tidb_stats_handle_usage_indexusage::SessionIndexUsageCollector>>>,
     /// The node's storage-backed current lock-wait reader.
     data_lock_waits: Option<std::sync::Arc<dyn DataLockWaitsProvider>>,
+    tiflash_system_table: Option<std::sync::Arc<dyn tidb_kv::tiflash_system_table::TiFlashSystemTableClient>>,
     historical_read_provider: Option<Arc<txn::HistoricalReadProvider>>,
     /// The server's activation of the statement's transaction; see
     /// [`Self::set_statement_txn_activator`].
@@ -954,6 +955,7 @@ impl Session {
             index_usage_collector: Arc::new(tidb_stats_handle_usage_indexusage::Collector::new()),
             session_index_usage_collector: None,
             data_lock_waits: None,
+            tiflash_system_table: None,
             historical_read_provider: None,
             statement_txn_activator: None,
             snapshot_schema_provider: None,
@@ -1628,6 +1630,15 @@ impl Session {
         provider: std::sync::Arc<dyn DataLockWaitsProvider>,
     ) {
         self.data_lock_waits = Some(provider);
+    }
+
+    /// Installs the store client Go's `TiFlashSystemTableRetriever` sends
+    /// its requests through.
+    pub fn set_tiflash_system_table_client(
+        &mut self,
+        client: std::sync::Arc<dyn tidb_kv::tiflash_system_table::TiFlashSystemTableClient>,
+    ) {
+        self.tiflash_system_table = Some(client);
     }
 
     /// Installs the node-global persisted predicate-column usage reader.

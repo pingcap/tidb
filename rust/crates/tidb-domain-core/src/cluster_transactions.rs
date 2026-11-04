@@ -217,6 +217,18 @@ pub trait ClusterTransactions: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Go `TiFlashSystemTableRetriever`'s `CmdGetTiFlashSystemTable`
+    /// request to the TiFlash store at `address`; a store that is not
+    /// TiKV-compatible refuses it with Go's error.
+    fn get_tiflash_system_table(
+        &self,
+        _address: &str,
+        _sql: &str,
+        _timeout: std::time::Duration,
+    ) -> Result<Vec<u8>, String> {
+        Err("Get tiflash system tables can only run with tikv compatible storage".to_owned())
+    }
+
     /// Starts preparing one ordinary autocommit snapshot without waiting for
     /// its timestamp. The first read consumes the returned future.
     /// `low_resolution` is Go `newOracleFuture`'s `UseLowResolutionTSO`: the
@@ -1376,6 +1388,15 @@ where
                 self.timeout,
             ))
             .map(Some)
+    }
+
+    fn get_tiflash_system_table(
+        &self,
+        address: &str,
+        sql: &str,
+        timeout: std::time::Duration,
+    ) -> Result<Vec<u8>, String> {
+        self.opener.store().get_tiflash_system_table(address, sql, timeout)
     }
 
     /// Go `infoschema_reader.go`'s `DATA_LOCK_WAITS` source: the store's

@@ -4447,7 +4447,14 @@ fn build_apply(
         } else {
             right_plan
         };
-        if tidb_planner_core_operator_physicalop::supports_apply_worker_clone(inner_plan) {
+        // Go `buildApply`: an inner tree `SafeClone` refuses runs serially.
+        // An inner CTE correlated to this Apply's outer row also does: Go's
+        // workers share the one producer built from the original inner plan
+        // (`CTEStorageMap`), whose correlated cells no worker binds, so Go
+        // answers such a CTE from NULL bindings (gorun: every row NULL).
+        if tidb_planner_core_operator_physicalop::safe_clone(inner_plan).is_ok()
+            && !cte_correlated_to(inner_plan, outer.schema())
+        {
             let worker_ctx = ctx.clone().with_coprocessor_worker_scope();
             let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let mut workers = Vec::with_capacity(apply.concurrency);
@@ -4477,9 +4484,12 @@ fn build_apply(
                     seed_apply_clone_runtime(inner_plan, &cloned, counters, &mut worker_counters);
                     worker_state.runtime_counters = Some(worker_counters);
                 }
-                let Ok(worker_inner) =
-                    build_with_state(&cloned, catalog, &worker_ctx, &mut worker_state)
-                else {
+                // Go's CTE storages are statement-wide (`StmtCtx.CTEStorageMap`):
+                // every worker's CTE reads the producer the first build set up.
+                worker_state.cte_slots = std::mem::take(&mut state.cte_slots);
+                let built = build_with_state(&cloned, catalog, &worker_ctx, &mut worker_state);
+                state.cte_slots = std::mem::take(&mut worker_state.cte_slots);
+                let Ok(worker_inner) = built else {
                     workers.clear();
                     break;
                 };
@@ -6405,6 +6415,24 @@ fn build_cte(
         .expect("CTE slot inserted before recursive executor build")
         .producer = Some(Arc::clone(&producer));
     cte_reader(plan, cte, producer, ctx)
+}
+
+/// Whether a CTE in `plan` (or in a CTE it holds) reads a column of
+/// `schema` through a correlated column.
+fn cte_correlated_to(plan: &PhysicalPlan, schema: &tidb_expr::schema::Schema) -> bool {
+    if let PhysicalPlan::CTE(cte) = plan {
+        let parts = std::iter::once(&cte.seed_plan).chain(cte.recursive_plan.as_ref());
+        for part in parts {
+            if tidb_planner_core_operator_physicalop::extract_correlated_cols_4_physical_plan(part)
+                .iter()
+                .any(|correlated| schema.column_index(&correlated.column) >= 0)
+                || cte_correlated_to(part, schema)
+            {
+                return true;
+            }
+        }
+    }
+    plan.children().iter().any(|child| cte_correlated_to(child, schema))
 }
 
 fn build_cte_table(

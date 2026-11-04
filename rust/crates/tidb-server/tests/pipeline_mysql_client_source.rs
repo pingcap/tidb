@@ -1896,7 +1896,11 @@ fn cursor_materialization_without_tmp_storage_is_8175_and_never_opens_cursor() {
         run_write(
             &mut client,
             &mut reader,
-            "SET @@tidb_mem_quota_query = 1"
+            // Above the read's queued coprocessor response (Go's
+            // `copIteratorWorker.checkRespOOM` charges it, and at a quota of
+            // 1 Go cancels the read itself, gorun) but below the cursor's
+            // materialized rows.
+            "SET @@tidb_mem_quota_query = 300"
         ),
         0
     );

@@ -211,6 +211,25 @@ pub struct CopPagingState {
     responses: ResponseChannel<prost::bytes::Bytes>,
     response_capacity: usize,
     queued_responses: usize,
+    /// Go `copIterator.memTracker` (the request's `MemTracker`).
+    mem_tracker: Option<Arc<tidb_memory::Tracker>>,
+    /// The `MemSize` charged for each queued response, in queue order.
+    charged: std::collections::VecDeque<i64>,
+}
+
+/// Go `sizeofExecDetails`, `unsafe.Sizeof(execdetails.ExecDetails{})`.
+const SIZEOF_EXEC_DETAILS: i64 = 160;
+
+/// Go `copResponse.MemSize`: the response's start key, its `CopRuntimeStats`
+/// when execution info is collected, and its protobuf size. Go counts the
+/// start key's capacity; this counts its length.
+fn cop_response_mem_size(response: &CoprocessorResponse, start_key_len: usize, has_detail: bool) -> i64 {
+    use prost::Message;
+    let mut size = start_key_len as i64;
+    if has_detail {
+        size += SIZEOF_EXEC_DETAILS;
+    }
+    size + response.encoded_len() as i64
 }
 
 impl CopPagingState {
@@ -229,6 +248,7 @@ impl CopPagingState {
             max_paging_size,
             generation,
             Arc::new(ReadBytesEma::new(seed_read_bytes)),
+            None,
         )
     }
 
@@ -264,6 +284,7 @@ impl CopPagingState {
         max_paging_size: u64,
         generation: ReadEngineGeneration,
         ema: Arc<ReadBytesEma>,
+        mem_tracker: Option<Arc<tidb_memory::Tracker>>,
     ) -> Self {
         let ranges = task
             .ranges
@@ -294,6 +315,8 @@ impl CopPagingState {
                 .max(1)
                 .saturating_add(task.batch_task_list.len()),
             queued_responses: 0,
+            mem_tracker,
+            charged: std::collections::VecDeque::new(),
         }
     }
 
@@ -355,6 +378,13 @@ impl CopPagingState {
             return Ok(self.completed_outcome());
         }
         self.preflight_accept_response()?;
+        // Go `handleCopResponse`: the start key is the page's when paging,
+        // else the task's first range's; then `checkRespOOM`.
+        let start_key_len = match response.range.as_ref() {
+            Some(range) => range.start.len(),
+            None => self.ranges.to_ranges().first().map_or(0, |range| range.start_key.len()),
+        };
+        self.check_resp_oom(cop_response_mem_size(response, start_key_len, runtime.is_some()));
         match runtime {
             Some(runtime) => self
                 .responses
@@ -402,6 +432,7 @@ impl CopPagingState {
     pub(super) fn accept_batched_child(
         &mut self,
         data: prost::bytes::Bytes,
+        exec_details_v2: Option<tidb_proto::kvrpcpb::ExecDetailsV2>,
         runtime: Option<tidb_txnkv::ResponseRuntimeStats>,
     ) -> Result<(), CopPagingError> {
         if self.queued_responses >= self.response_capacity {
@@ -409,6 +440,14 @@ impl CopPagingState {
                 capacity: self.response_capacity,
             });
         }
+        // Go builds the child's `copResponse` from its data and execution
+        // details only (no start key) before `checkRespOOM`.
+        let child = CoprocessorResponse {
+            data: data.clone(),
+            exec_details_v2,
+            ..CoprocessorResponse::default()
+        };
+        self.check_resp_oom(cop_response_mem_size(&child, 0, runtime.is_some()));
         match runtime {
             Some(runtime) => self.responses.push_result_with_runtime(data, runtime)?,
             None => self.responses.push_result(data)?,
@@ -439,7 +478,18 @@ impl CopPagingState {
         }
     }
 
-    /// Drains the next accepted response or terminal lifecycle event.
+    /// Go `copIteratorWorker.checkRespOOM`: a fetched response is charged
+    /// while it waits for the consumer.
+    fn check_resp_oom(&mut self, consumed: i64) {
+        if let Some(tracker) = &self.mem_tracker {
+            tracker.consume(consumed);
+        }
+        self.charged.push_back(consumed);
+    }
+
+    /// Drains the next accepted response or terminal lifecycle event. A
+    /// response leaves the tracker as it is taken (Go `copIterator.Next`'s
+    /// `memTrackerConsumeResp`).
     pub fn next_response(&mut self) -> Option<ResponseChannelEvent<prost::bytes::Bytes>> {
         let event = self.responses.next_event();
         if matches!(
@@ -447,6 +497,10 @@ impl CopPagingState {
             Some(ResponseChannelEvent::Result(_) | ResponseChannelEvent::ResultWithRuntime { .. })
         ) {
             self.queued_responses -= 1;
+            let consumed = self.charged.pop_front().unwrap_or(0);
+            if let Some(tracker) = &self.mem_tracker {
+                tracker.consume(-consumed);
+            }
         }
         event
     }
@@ -511,5 +565,47 @@ impl BatchBucketVersionUpdate {
         region.buckets_version = self.latest_version;
         region.bucket_keys.clone_from(&self.keys);
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go `checkRespOOM` / `memTrackerConsumeResp`: a response holds its
+    /// `MemSize` on the request's tracker from its arrival until the
+    /// consumer takes it.
+    #[test]
+    fn a_queued_response_holds_its_mem_size_until_taken() {
+        let tracker = tidb_memory::Tracker::new(1, -1);
+        let task = RegionTaskEnvelope {
+            ranges: vec![tidb_txnkv::KeyRange {
+                start_key: b"t1_r".to_vec().into(),
+                end_key: b"t1_s".to_vec().into(),
+            }],
+            response_channel_capacity: 2,
+            ..RegionTaskEnvelope::default()
+        };
+        let mut paging = CopPagingState::new_with_shared_ema(
+            &task,
+            false,
+            0,
+            ReadEngineGeneration::Classic,
+            Arc::new(ReadBytesEma::new(0)),
+            Some(Arc::clone(&tracker)),
+        );
+        let response = CoprocessorResponse {
+            data: vec![7; 30].into(),
+            ..CoprocessorResponse::default()
+        };
+        paging
+            .accept_response_with_runtime(&response, Some(tidb_txnkv::ResponseRuntimeStats::default()), Duration::ZERO)
+            .unwrap();
+        // The task's start key (4), `sizeofExecDetails` and the protobuf.
+        let mem_size = 4 + 160 + prost::Message::encoded_len(&response) as i64;
+        assert_eq!(tracker.bytes_consumed(), mem_size);
+        assert!(matches!(paging.next_response(), Some(ResponseChannelEvent::ResultWithRuntime { .. })));
+        assert_eq!(tracker.bytes_consumed(), 0);
+        assert_eq!(tracker.max_consumed(), mem_size);
     }
 }
