@@ -109,7 +109,14 @@ go_test(
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+<<<<<<< HEAD
+=======
+        "@com_github_pingcap_log//:log",
+        "@com_github_pingcap_tipb//go-tipb",
+>>>>>>> 8c6cb106410 (types, statistics: handle zero timestamp stats scalarization (#69448))
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )
