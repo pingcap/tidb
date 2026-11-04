@@ -73,6 +73,13 @@ func testDumpServiceColumnFilter(t *testing.T, server *servertestkit.TidbTestSui
 	dbt.MustExec("alter table parity.t add column added int not null default 7")
 	dbt.MustExec("create table parity.untouched (id int primary key, secret varchar(16))")
 	dbt.MustExec("insert into parity.untouched values (1,'keep')")
+	for _, database := range []string{"parity_empty", "parity_filtered"} {
+		dbt.MustExec("create database " + database)
+		t.Cleanup(func() { dbt.MustExec("drop database " + database) })
+	}
+	dbt.MustExec("create table parity_filtered.t (id int primary key)")
+	tableFilter, err := tf.Parse([]string{"parity*.*", "!parity_filtered.t"})
+	require.NoError(t, err)
 
 	for _, format := range dumpServiceParityFormats {
 		for _, noSchemas := range []bool{false, true} {
@@ -85,6 +92,10 @@ func testDumpServiceColumnFilter(t *testing.T, server *servertestkit.TidbTestSui
 				formatWithSchema.read = func(t *testing.T, dir string) []string {
 					rows := format.read(t, dir)
 					require.NotEmpty(t, rows)
+					for _, database := range []string{"parity_empty", "parity_filtered"} {
+						_, err := os.Stat(filepath.Join(dir, database+"-schema-create.sql"))
+						require.ErrorIs(t, err, os.ErrNotExist)
+					}
 					path := filepath.Join(dir, "parity.t-schema.sql")
 					if noSchemas {
 						_, err := os.Stat(path)
@@ -106,6 +117,8 @@ func testDumpServiceColumnFilter(t *testing.T, server *servertestkit.TidbTestSui
 				}
 				editConfig := func(conf *Config) {
 					conf.NoSchemas = noSchemas
+					conf.DumpEmptyDatabase = false
+					conf.TableFilter = tableFilter
 					conf.FileSize = 1
 					conf.columnFilter = newColumnFilterConfigForTest(t,
 						columnFilterRule{Matcher: []string{"parity.t"}, Columns: []string{"*", "!secret", "!tenant"}},

@@ -393,6 +393,9 @@ func (d *Dumper) loadKVTables(reader tidbmeta.Reader) ([]kvDatabaseTables, error
 			return table.State != model.StatePublic || table.IsView() || table.IsSequence() ||
 				!d.conf.TableFilter.MatchTable(database.Name.O, table.Name.O)
 		})
+		if len(tables) == 0 && !d.conf.DumpEmptyDatabase {
+			continue
+		}
 		slices.SortFunc(tables, func(left, right *model.TableInfo) int {
 			return strings.Compare(left.Name.L, right.Name.L)
 		})
