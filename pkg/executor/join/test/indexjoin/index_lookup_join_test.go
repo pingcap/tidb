@@ -461,40 +461,48 @@ func TestKillDuringIndexHashJoinProbe(t *testing.T) {
 }
 
 // TestIndexHashJoinSemiJoinResult checks that index hash semi joins return the
-// same rows as hash joins on hot keys (issue#72481). The join keys are not null,
-// so IN and NOT IN can use an index join instead of a cartesian join.
+// same rows as hash joins on hot and distinct keys (issue#72481). The join keys
+// are not null, so IN and NOT IN can use an index join instead of a cartesian join.
 func TestIndexHashJoinSemiJoinResult(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t_outer (id int primary key, k int not null, v int)")
-	tk.MustExec("create table t_outer_early (id int primary key, k int not null, v int)")
-	tk.MustExec("create table t_inner (id int primary key, k int not null, w int, index(k))")
+	for _, table := range []string{"t_outer", "t_outer_early", "t_outer_distinct"} {
+		tk.MustExec("create table " + table + " (id int primary key, k int not null, v int)")
+	}
+	for _, table := range []string{"t_inner", "t_inner_distinct"} {
+		tk.MustExec("create table " + table + " (id int primary key, k int not null, w int, index(k))")
+	}
 	// Rows with key 2 never match, so no task stops probing early.
 	tk.MustExec("insert into t_outer with recursive s(n) as (select 1 union all select n + 1 from s where n < 300) select n, mod(n, 3), if(mod(n, 50) = 0, null, n) from s")
 	// Most rows match early and one in 50 matches late, so tasks stop probing
 	// early, except the last ones, which have NULLs.
 	tk.MustExec("insert into t_outer_early with recursive s(n) as (select 1 union all select n + 1 from s where n < 300) select n, mod(n, 2), if(n > 250 and mod(n, 10) = 0, null, if(mod(n, 50) = 25, 15, mod(n, 3))) from s")
 	tk.MustExec("insert into t_inner with recursive s(n) as (select 1 union all select n + 1 from s where n < 20) select n, mod(n, 2), n from s")
-	tk.MustExec("analyze table t_outer, t_outer_early, t_inner")
+	// One outer row per key. Keys above 250 have no inner rows, and every 40th key
+	// gets a NULL from its first inner row, which its second row matches or not.
+	tk.MustExec("insert into t_outer_distinct with recursive s(n) as (select 1 union all select n + 1 from s where n < 300) select n, n, if(mod(n, 50) = 0, null, n) from s")
+	tk.MustExec("insert into t_inner_distinct with recursive s(n) as (select 1 union all select n + 1 from s where n < 250) select n, n, if(mod(n, 40) = 0, null, n) from s")
+	tk.MustExec("insert into t_inner_distinct with recursive s(n) as (select 1 union all select n + 1 from s where n < 250) select n + 1000, n, if(mod(n, 80) = 0, null, n) from s")
+	tk.MustExec("analyze table t_outer, t_outer_early, t_outer_distinct, t_inner, t_inner_distinct")
 	// Several tasks, each with more rows per key than fit in a chunk.
 	tk.MustExec("set @@tidb_index_join_batch_size = 256")
 	tk.MustExec("set @@tidb_max_chunk_size = 32")
 
 	const (
-		exists      = "select /*+ %[1]s(i@sel_2) */ o.id from %[2]s o where exists (select 1 from t_inner i where i.k = o.k and i.w > mod(o.v, 25))"
-		notExists   = "select /*+ %[1]s(i@sel_2) */ o.id from %[2]s o where not exists (select 1 from t_inner i where i.k = o.k and i.w > mod(o.v, 25))"
-		in          = "select /*+ %[1]s(i@sel_2) */ o.id from %[2]s o where o.k in (select i.k from t_inner i where i.w > mod(o.v, 25))"
-		notIn       = "select /*+ %[1]s(i@sel_2) */ o.id from %[2]s o where o.k not in (select i.k from t_inner i where i.w > mod(o.v, 25))"
-		inSelect    = "select /*+ %[1]s(i@sel_2) */ o.id, o.k in (select i.k from t_inner i where i.w > mod(o.v, 25)) from %[2]s o"
-		notInSelect = "select /*+ %[1]s(i@sel_2) */ o.id, o.k not in (select i.k from t_inner i where i.w > mod(o.v, 25)) from %[2]s o"
+		exists      = "select /*+ %[1]s(i@sel_2) */ o.id from %[2]s o where exists (select 1 from %[3]s i where i.k = o.k and i.w > mod(o.v, 25))"
+		notExists   = "select /*+ %[1]s(i@sel_2) */ o.id from %[2]s o where not exists (select 1 from %[3]s i where i.k = o.k and i.w > mod(o.v, 25))"
+		in          = "select /*+ %[1]s(i@sel_2) */ o.id from %[2]s o where o.k in (select i.k from %[3]s i where i.w > mod(o.v, 25))"
+		notIn       = "select /*+ %[1]s(i@sel_2) */ o.id from %[2]s o where o.k not in (select i.k from %[3]s i where i.w > mod(o.v, 25))"
+		inSelect    = "select /*+ %[1]s(i@sel_2) */ o.id, o.k in (select i.k from %[3]s i where i.w > mod(o.v, 25)) from %[2]s o"
+		notInSelect = "select /*+ %[1]s(i@sel_2) */ o.id, o.k not in (select i.k from %[3]s i where i.w > mod(o.v, 25)) from %[2]s o"
 	)
 	check := func() {
-		for _, table := range []string{"t_outer", "t_outer_early"} {
+		for _, tables := range [][2]string{{"t_outer", "t_inner"}, {"t_outer_early", "t_inner"}, {"t_outer_distinct", "t_inner_distinct"}} {
 			for _, q := range []string{exists, notExists, in, notIn, inSelect, notInSelect} {
 				for _, order := range []string{"", " order by o.id"} {
-					inlSQL := fmt.Sprintf(q, "INL_HASH_JOIN", table) + order
-					hashSQL := fmt.Sprintf(q, "HASH_JOIN", table) + order
+					inlSQL := fmt.Sprintf(q, "INL_HASH_JOIN", tables[0], tables[1]) + order
+					hashSQL := fmt.Sprintf(q, "HASH_JOIN", tables[0], tables[1]) + order
 					tk.MustHavePlan(inlSQL, "IndexHashJoin")
 					tk.MustNotHavePlan(hashSQL, "IndexHashJoin")
 					expected := tk.MustQuery(hashSQL).Sort().Rows()
