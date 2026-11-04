@@ -19,13 +19,43 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
+
+func newCollationDisabledBootstrapTestKit(t *testing.T) *testkit.TestKit {
+	t.Helper()
+
+	originCfg := *config.GetGlobalConfig()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(&originCfg)
+	})
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.NewCollationsEnabledOnFirstBootstrap = false
+	})
+
+	oldNewCollationEnabled := collate.NewCollationEnabled()
+	t.Cleanup(func() {
+		collate.SetNewCollationEnabledForTest(oldNewCollationEnabled)
+	})
+	// Keep the in-process flag aligned before bootstrap; bootstrap will reload
+	// and enforce the persisted cluster value again.
+	collate.SetNewCollationEnabledForTest(false)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	tk.MustQuery(`SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='new_collation_enabled'`).
+		Check(testkit.Rows("False"))
+	require.False(t, collate.NewCollationEnabled())
+	return tk
+}
 
 func TestGrantGlobal(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -104,6 +134,18 @@ func TestGrantDBScope(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, exeerrors.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "NON-DB PRIVILEGES")))
 }
 
+func TestGrantDBScopeCaseInsensitiveWithNewCollationDisabled(t *testing.T) {
+	tk := newCollationDisabledBootstrapTestKit(t)
+
+	tk.MustExec(`DROP USER IF EXISTS 'testDBCase'@'%'`)
+	tk.MustExec(`CREATE USER 'testDBCase'@'%' IDENTIFIED BY '123'`)
+
+	tk.MustExec(`GRANT SELECT ON test.* TO 'testDBCase'@'%'`)
+	tk.MustExec(`GRANT SELECT ON TEST.* TO 'testDBCase'@'%'`)
+	tk.MustQuery(`SELECT DB, Select_priv FROM mysql.db WHERE User='testDBCase' AND Host='%' ORDER BY DB`).
+		Check(testkit.Rows("test Y"))
+}
+
 func TestGrantTableScope(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -145,6 +187,63 @@ func TestGrantTableScope(t *testing.T) {
 
 	tk.MustGetErrMsg("GRANT SUPER ON test2 TO 'testTbl1'@'localhost';",
 		"[executor:1144]Illegal GRANT/REVOKE command; please consult the manual to see which privileges can be used")
+}
+
+func TestGrantTableScopeCaseInsensitiveWithNewCollationDisabled(t *testing.T) {
+	t.Run("table-name", func(t *testing.T) {
+		tk := newCollationDisabledBootstrapTestKit(t)
+
+		tk.MustExec(`DROP USER IF EXISTS 'testTblCase'@'%'`)
+		tk.MustExec(`CREATE USER 'testTblCase'@'%' IDENTIFIED BY '123'`)
+		tk.MustExec(`DROP TABLE IF EXISTS test.issue66867_grant`)
+		tk.MustExec(`CREATE TABLE test.issue66867_grant(c1 int)`)
+
+		tk.MustExec(`GRANT SELECT ON test.issue66867_grant TO 'testTblCase'@'%'`)
+		tk.MustExec(`GRANT SELECT ON test.ISSUE66867_GRANT TO 'testTblCase'@'%'`)
+		tk.MustQuery(`SELECT Table_name, Table_priv FROM mysql.tables_priv WHERE User='testTblCase' AND Host='%' AND DB='test' ORDER BY Table_name`).
+			Check(testkit.Rows("issue66867_grant Select"))
+	})
+
+	t.Run("schema-name", func(t *testing.T) {
+		tk := newCollationDisabledBootstrapTestKit(t)
+
+		tk.MustExec(`DROP USER IF EXISTS 'testTblCaseSchema'@'%'`)
+		tk.MustExec(`CREATE USER 'testTblCaseSchema'@'%'`)
+		tk.MustExec(`DROP TABLE IF EXISTS test.issue68406_grant`)
+		tk.MustExec(`CREATE TABLE test.issue68406_grant(id int, name int)`)
+
+		tk.MustExec(`GRANT SELECT ON TEST.issue68406_grant TO 'testTblCaseSchema'@'%'`)
+		tk.MustExec(`GRANT SELECT,INSERT,UPDATE,DELETE ON test.issue68406_grant TO 'testTblCaseSchema'@'%'`)
+		tk.MustQuery(`SELECT DB, Table_name, Table_priv FROM mysql.tables_priv WHERE User='testTblCaseSchema' AND Host='%' ORDER BY DB, Table_name`).
+			Check(testkit.Rows("test issue68406_grant Select,Insert,Update,Delete"))
+		tk.MustQuery(`SHOW GRANTS FOR 'testTblCaseSchema'@'%'`).
+			Check(testkit.Rows(
+				"GRANT USAGE ON *.* TO 'testTblCaseSchema'@'%'",
+				"GRANT SELECT,INSERT,UPDATE,DELETE ON `test`.`issue68406_grant` TO 'testTblCaseSchema'@'%'",
+			))
+
+		tkUser := testkit.NewTestKit(t, tk.Session().GetStore())
+		require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "testTblCaseSchema", Hostname: "%"}, nil, nil, nil))
+		tkUser.MustExec(`INSERT INTO test.issue68406_grant VALUES (1, 2)`)
+		tkUser.MustQuery(`SELECT * FROM test.issue68406_grant`).Check(testkit.Rows("1 2"))
+	})
+
+	t.Run("missing-table fallback", func(t *testing.T) {
+		tk := newCollationDisabledBootstrapTestKit(t)
+
+		tk.MustExec(`DROP USER IF EXISTS 'testTblCaseMissing'@'%'`)
+		tk.MustExec(`CREATE USER 'testTblCaseMissing'@'%'`)
+		tk.MustExec(`DROP TABLE IF EXISTS test.missing_tbl`)
+
+		tk.MustExec(`GRANT CREATE ON TEST.missing_tbl TO 'testTblCaseMissing'@'%'`)
+		tk.MustQuery(`SELECT DB, Table_name, Table_priv FROM mysql.tables_priv WHERE User='testTblCaseMissing' AND Host='%'`).
+			Check(testkit.Rows("test missing_tbl Create"))
+		tk.MustQuery(`SHOW GRANTS FOR 'testTblCaseMissing'@'%'`).
+			Check(testkit.Rows(
+				"GRANT USAGE ON *.* TO 'testTblCaseMissing'@'%'",
+				"GRANT CREATE ON `test`.`missing_tbl` TO 'testTblCaseMissing'@'%'",
+			))
+	})
 }
 
 func TestGrantColumnScope(t *testing.T) {
@@ -190,6 +289,23 @@ func TestGrantColumnScope(t *testing.T) {
 
 	tk.MustGetErrMsg("GRANT SUPER(c2) ON test3 TO 'testCol1'@'localhost';",
 		"[executor:1221]Incorrect usage of COLUMN GRANT and NON-COLUMN PRIVILEGES")
+}
+
+func TestGrantColumnScopeCaseInsensitiveSchemaNameWithNewCollationDisabled(t *testing.T) {
+	tk := newCollationDisabledBootstrapTestKit(t)
+
+	tk.MustExec(`DROP USER IF EXISTS 'testColCaseSchema'@'%'`)
+	tk.MustExec(`CREATE USER 'testColCaseSchema'@'%' IDENTIFIED BY '123'`)
+	tk.MustExec(`DROP TABLE IF EXISTS test.issue68406_grant_col`)
+	tk.MustExec(`CREATE TABLE test.issue68406_grant_col(id int, name int)`)
+
+	tk.MustExec(`GRANT SELECT(id) ON TEST.issue68406_grant_col TO 'testColCaseSchema'@'%'`)
+	tk.MustExec(`GRANT INSERT(id), UPDATE(name) ON test.issue68406_grant_col TO 'testColCaseSchema'@'%'`)
+	tk.MustQuery(`SELECT DB, Table_name, Column_name, Column_priv FROM mysql.columns_priv WHERE User='testColCaseSchema' AND Host='%' ORDER BY DB, Table_name, Column_name`).
+		Check(testkit.Rows(
+			"test issue68406_grant_col id Select,Insert",
+			"test issue68406_grant_col name Update",
+		))
 }
 
 func TestShowColumnsForDifferentHost(t *testing.T) {

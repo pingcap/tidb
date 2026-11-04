@@ -243,6 +243,14 @@ func (p *PhysicalLimit) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (
 	for _, item := range p.PartitionBy {
 		limitExec.PartitionBy = append(limitExec.PartitionBy, expression.SortByItemToPB(ctx.GetExprCtx().GetEvalCtx(), client, item.Col.Clone(), item.Desc))
 	}
+	if p.PrefixCol != nil {
+		truncateKeyExprs := []expression.Expression{p.PrefixCol}
+		truncateKeyExprsPB, err := expression.ExpressionsToPBList(ctx.GetExprCtx().GetEvalCtx(), truncateKeyExprs, client)
+		if err != nil {
+			return nil, err
+		}
+		limitExec.TruncateKeyExpr = truncateKeyExprsPB
+	}
 	if storeType == kv.TiFlash {
 		var err error
 		limitExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
@@ -494,11 +502,12 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
 	tableColumns := p.Table.Cols()
 	for _, col := range p.schema.Columns {
-		if col.ID == model.ExtraHandleID {
+		switch col.ID {
+		case model.ExtraHandleID:
 			columns = append(columns, model.NewExtraHandleColInfo())
-		} else if col.ID == model.ExtraPhysTblID {
+		case model.ExtraPhysTblID:
 			columns = append(columns, model.NewExtraPhysTblIDColInfo())
-		} else {
+		default:
 			columns = append(columns, FindColumnInfoByID(tableColumns, col.ID))
 		}
 	}
@@ -509,7 +518,7 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.
 	idxExec := &tipb.IndexScan{
 		TableId:          p.Table.ID,
 		IndexId:          p.Index.ID,
-		Columns:          util.ColumnsToProto(columns, p.Table.PKIsHandle, true, false),
+		Columns:          util.ColumnsToProto(columns, p.Table.PKIsHandle, true, false /* Doesn't support IndexScan on TiFlash for now */),
 		Desc:             p.Desc,
 		PrimaryColumnIds: pkColIDs,
 	}

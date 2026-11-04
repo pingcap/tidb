@@ -79,6 +79,9 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if len(dbName) == 0 {
 		dbName = e.Ctx().GetSessionVars().CurrentDB
 	}
+	if e.Level.Level == ast.GrantLevelDB {
+		dbName = getTargetSchemaName(e.Ctx(), dbName, e.is)
+	}
 
 	// For table & column level, check whether table exists and privilege is valid
 	if e.Level.Level == ast.GrantLevelTable {
@@ -118,6 +121,7 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			if grantTable := e.Level.TableName; tbl.Meta().Name.L != strings.ToLower(grantTable) {
 				return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, grantTable)
 			}
+			e.Level.TableName = tbl.Meta().Name.O
 			for _, p := range e.Privs {
 				for _, c := range p.Cols {
 					if tbl.Meta().FindPublicColumnByName(strings.ToLower(c.Name.L)) == nil {
@@ -126,9 +130,12 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				}
 			}
 		}
+		db, succ := schema.SchemaByName(dbNameStr)
+		if succ {
+			dbName = db.Name.O
+		}
 		if len(e.Level.DBName) > 0 {
 			// The database name should also match.
-			db, succ := schema.SchemaByName(dbNameStr)
 			if !succ || db.Name.L != dbNameStr.L {
 				return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 			}
@@ -495,7 +502,7 @@ func (e *GrantExec) grantLevelPriv(ctx context.Context, priv *ast.PrivElem, user
 		return e.grantDBLevel(priv, user, internalSession)
 	case ast.GrantLevelTable:
 		if len(priv.Cols) == 0 {
-			return e.grantTableLevel(priv, user, internalSession)
+			return e.grantTableLevel(ctx, priv, user, internalSession)
 		}
 		return e.grantColumnLevel(ctx, priv, user, internalSession)
 	default:
@@ -551,6 +558,7 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 	if len(dbName) == 0 {
 		dbName = e.Ctx().GetSessionVars().CurrentDB
 	}
+	dbName = getTargetSchemaName(e.Ctx(), dbName, e.is)
 
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.DBTable)
@@ -566,23 +574,28 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 }
 
 // grantTableLevel manipulates mysql.tables_priv table.
-func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	dbName := e.Level.DBName
-	if len(dbName) == 0 {
-		dbName = e.Ctx().GetSessionVars().CurrentDB
+func (e *GrantExec) grantTableLevel(ctx context.Context, priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
+	dbName, tbl, err := getTargetSchemaAndTable(ctx, e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
+	// Earlier validation may allow GRANT on a missing table, for example CREATE/ALL.
+	// Keep that behavior here: ignore ErrTableNotExists and continue with the input table name.
+	if err != nil && !terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+		return err
 	}
 	tblName := e.Level.TableName
+	if tbl != nil {
+		tblName = tbl.Meta().Name.O
+	}
 
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.TablePrivTable)
-	err := composeTablePrivUpdateForGrant(internalSession, sql, priv.Priv, user.User.Username, user.User.Hostname, dbName, tblName)
+	err = composeTablePrivUpdateForGrant(internalSession, sql, priv.Priv, user.User.Username, user.User.Hostname, dbName, tblName)
 	if err != nil {
 		return err
 	}
 	sqlescape.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?", user.User.Username, user.User.Hostname, dbName, tblName)
 
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err = internalSession.GetSQLExecutor().ExecuteInternal(internalCtx, sql.String())
 	return err
 }
 
@@ -828,6 +841,22 @@ func getColumnPriv(sctx sessionctx.Context, name string, host string, db string,
 	return cPriv, nil
 }
 
+// getTargetSchemaName returns the real schema name from infoschema when it exists.
+// Keep the original input for non-existent schemas so GRANT/REVOKE on them preserves
+// the current behavior.
+func getTargetSchemaName(sctx sessionctx.Context, dbName string, is infoschema.InfoSchema) string {
+	if len(dbName) == 0 {
+		dbName = sctx.GetSessionVars().CurrentDB
+	}
+	if len(dbName) == 0 {
+		return ""
+	}
+	if db, ok := is.SchemaByName(model.NewCIStr(dbName)); ok {
+		return db.Name.O
+	}
+	return dbName
+}
+
 // getTargetSchemaAndTable finds the schema and table by dbName and tableName.
 func getTargetSchemaAndTable(ctx context.Context, sctx sessionctx.Context, dbName, tableName string, is infoschema.InfoSchema) (string, table.Table, error) {
 	if len(dbName) == 0 {
@@ -836,6 +865,7 @@ func getTargetSchemaAndTable(ctx context.Context, sctx sessionctx.Context, dbNam
 			return "", nil, errors.New("miss DB name for grant privilege")
 		}
 	}
+	dbName = getTargetSchemaName(sctx, dbName, is)
 	tbl, err := is.TableByName(ctx, model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
 		return dbName, nil, err

@@ -445,17 +445,9 @@ func TestStmtHints(t *testing.T) {
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
 	require.True(t, tk.Session().GetSessionVars().GetAllowInSubqToJoinAndAgg())
 
-	// Test USE_CASCADES hint
-	tk.Session().GetSessionVars().SetEnableCascadesPlanner(true)
-	tk.MustExec("select /*+ USE_CASCADES(false) */ 1;")
-	require.False(t, tk.Session().GetSessionVars().GetEnableCascadesPlanner())
-	tk.Session().GetSessionVars().SetEnableCascadesPlanner(false)
+	// USE_CASCADES() is deprecated: the Cascades planner has been removed, so the
+	// hint is accepted but has no effect.
 	tk.MustExec("select /*+ USE_CASCADES(true) */ 1;")
-	require.True(t, tk.Session().GetSessionVars().GetEnableCascadesPlanner())
-	tk.MustExec("select /*+ USE_CASCADES(false), USE_CASCADES(true) */ 1;")
-	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
-	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "USE_CASCADES() is defined more than once, only the last definition takes effect: USE_CASCADES(true)")
-	require.True(t, tk.Session().GetSessionVars().GetEnableCascadesPlanner())
 
 	// Test READ_CONSISTENT_REPLICA hint
 	tk.Session().GetSessionVars().SetReplicaRead(kv.ReplicaReadLeader)
@@ -635,7 +627,7 @@ func TestRandomBinary(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	allBytes := [][]byte{
 		{4, 0, 0, 0, 0, 0, 0, 4, '2'},
 		{4, 0, 0, 0, 0, 0, 0, 4, '.'},
@@ -680,20 +672,47 @@ func TestSQLModeOp(t *testing.T) {
 }
 
 func TestRequestSource(t *testing.T) {
+	tikvrpc.SetDefaultRequestOrigin(kvrpcpb.RequestOrigin_RequestOriginTiDB)
+	t.Cleanup(func() {
+		tikvrpc.SetDefaultRequestOrigin(kvrpcpb.RequestOrigin_RequestOriginUnknown)
+	})
+
 	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.MockTiKV))
 	tk := testkit.NewTestKit(t, store)
 	withCheckInterceptor := func(source string) interceptor.RPCInterceptor {
 		return interceptor.NewRPCInterceptor("kv-request-source-verify", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 				tikvrpc.AttachContext(req, req.Context)
-				requestSource := req.Context.GetRequestSource()
+				requestSource := ""
+				requestOrigin := kvrpcpb.RequestOrigin_RequestOriginUnknown
 				readType := ""
-				switch req.Req.(type) {
-				case *kvrpcpb.PrewriteRequest, *kvrpcpb.CommitRequest:
-				case *coprocessor.Request, *kvrpcpb.GetRequest, *kvrpcpb.BatchGetRequest:
+				switch r := req.Req.(type) {
+				case *kvrpcpb.PrewriteRequest:
+					requestSource = r.GetContext().GetRequestSource()
+					requestOrigin = r.GetContext().GetRequestOrigin()
+				case *kvrpcpb.CommitRequest:
+					requestSource = r.GetContext().GetRequestSource()
+					requestOrigin = r.GetContext().GetRequestOrigin()
+				case *coprocessor.Request:
 					readType = "leader_" // read request will be attached with read type
+					requestSource = r.GetContext().GetRequestSource()
+					requestOrigin = r.GetContext().GetRequestOrigin()
+				case *kvrpcpb.GetRequest:
+					readType = "leader_" // read request will be attached with read type
+					requestSource = r.GetContext().GetRequestSource()
+					requestOrigin = r.GetContext().GetRequestOrigin()
+				case *kvrpcpb.BatchGetRequest:
+					readType = "leader_" // read request will be attached with read type
+					requestSource = r.GetContext().GetRequestSource()
+					requestOrigin = r.GetContext().GetRequestOrigin()
+				case *kvrpcpb.PessimisticLockRequest:
+					requestSource = r.GetContext().GetRequestSource()
+					requestOrigin = r.GetContext().GetRequestOrigin()
+				default:
+					fmt.Printf("unexpected request type %T\n", r)
 				}
 				require.Equal(t, readType+source, requestSource)
+				require.Equal(t, kvrpcpb.RequestOrigin_RequestOriginTiDB, requestOrigin)
 				return next(target, req)
 			}
 		})

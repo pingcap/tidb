@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 )
 
 func TestLogicalPlan(t *testing.T) {
@@ -363,7 +364,7 @@ func TestSplitForOneSubtask(t *testing.T) {
 	t.Cleanup(func() {
 		importer.NewClientWithContext = bak
 	})
-	importer.NewClientWithContext = func(_ context.Context, _ []string, _ pd.SecurityOption, _ ...pd.ClientOption) (pd.Client, error) {
+	importer.NewClientWithContext = func(_ context.Context, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
 		return nil, errors.New("mock error")
 	}
 

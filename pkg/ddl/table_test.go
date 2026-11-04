@@ -73,9 +73,8 @@ func testRenameTable(
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
 
-	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkJobWithHistory(t, ctx, job.ID, nil, tblInfo)
 	tblInfo.State = model.StateNone
 	return job
 }
@@ -104,8 +103,7 @@ func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTes
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
 
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 	return job
 }
 
@@ -140,8 +138,7 @@ func testLockTable(
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 	return job
 }
 
@@ -183,9 +180,8 @@ func testTruncateTable(t *testing.T, ctx sessionctx.Context, store kv.Storage, d
 	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
-	v := getSchemaVer(t, ctx)
 	tblInfo.ID = newTableID
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkJobWithHistory(t, ctx, job.ID, nil, tblInfo)
 	return job
 }
 
@@ -323,9 +319,8 @@ func TestCreateView(t *testing.T) {
 	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
-	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: newTblInfo0})
+	checkJobWithHistory(t, ctx, job.ID, nil, newTblInfo0)
 	tblInfo.State = model.StateNone
 	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
@@ -347,9 +342,8 @@ func TestCreateView(t *testing.T) {
 	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
-	v = getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: newTblInfo1})
+	checkJobWithHistory(t, ctx, job.ID, nil, newTblInfo1)
 	tblInfo.State = model.StateNone
 	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
@@ -420,8 +414,7 @@ func testAlterCacheTable(
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true))
 	require.NoError(t, err)
 
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 	return job
 }
 
@@ -446,8 +439,7 @@ func testAlterNoCacheTable(
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true)))
 
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 	return job
 }
 
@@ -599,8 +591,7 @@ func TestAlterTTL(t *testing.T) {
 	}
 	require.NoError(t, de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
 
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 
 	// assert the ddlInfo as expected
 	historyJob, err := ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)
@@ -620,8 +611,7 @@ func TestAlterTTL(t *testing.T) {
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true)))
 
-	v = getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 
 	// assert the ddlInfo as expected
 	historyJob, err = ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)

@@ -42,6 +42,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
@@ -71,7 +72,7 @@ func TestInfo(t *testing.T) {
 		Storage: s,
 		pdAddrs: []string{cluster.Members[0].GRPCURL()}}
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(mockStore, ddlLease, 0, 0, mockFactory)
+	dom := NewDomain(mockStore, ddlLease, 0, 0, mockFactory, nil)
 	defer func() {
 		dom.Close()
 		err := s.Close()
@@ -176,7 +177,7 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	require.NoError(t, err)
 
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
+	dom := NewDomain(store, ddlLease, 0, 0, mockFactory, nil)
 
 	metrics.PanicCounter.Reset()
 	// Since the stats lease is 0 now, so create a new ticker will panic.
@@ -254,7 +255,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	require.NoError(t, err)
 
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
+	dom := NewDomain(store, ddlLease, 0, 0, mockFactory, nil)
 	defer func() {
 		dom.Close()
 		require.Nil(t, store.Close())
@@ -451,7 +452,7 @@ type mockInfoPdClient struct {
 	err    error
 }
 
-func (c *mockInfoPdClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (c *mockInfoPdClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return c.stores, c.err
 }
 
@@ -513,4 +514,44 @@ func TestDeferFn(t *testing.T) {
 	require.False(t, c)
 	require.True(t, d)
 	require.Len(t, df.data, 1)
+}
+
+func TestClosestReplicaReadCheckerSkipsNonServingNodes(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	dom := NewDomain(store, 80*time.Millisecond, 0, 0, mockFactory, nil)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+	dom.sysVarCache.Lock()
+	dom.sysVarCache.global = map[string]string{variable.TiDBReplicaRead: "closest-adaptive"}
+	dom.sysVarCache.Unlock()
+	original := variable.IsAdaptiveReplicaReadEnabled()
+	t.Cleanup(func() { variable.SetEnableAdaptiveReplicaRead(original) })
+	pdClient := &mockInfoPdClient{stores: []*metapb.Store{
+		{Labels: []*metapb.StoreLabel{{Key: "zone", Value: "zone1"}}},
+		{Labels: []*metapb.StoreLabel{{Key: "zone", Value: "zone2"}}},
+	}}
+	const realServers = `"s1":{"ddl_id":"s1","labels":{"zone":"zone1"}},"s2":{"ddl_id":"s2","labels":{"zone":"zone2"},"disable_rpc":false}`
+	for _, tc := range []struct {
+		name       string
+		serverInfo string
+		localInfo  string
+		enabled    bool
+	}{
+		{"BR sorts before serving node", `{` + realServers + `,"br":{"ddl_id":"br","disable_rpc":true,"labels":{"zone":"zone1"}}}`, `{"ddl_id":"s1","labels":{"zone":"zone1"}}`, true},
+		{"BR must not fill an empty zone", `{"s1":{"ddl_id":"s1","labels":{"zone":"zone1"}},"br":{"ddl_id":"br","disable_rpc":true,"labels":{"zone":"zone2"}}}`, `{"ddl_id":"s1","labels":{"zone":"zone1"}}`, false},
+		{"local BR", `{"br":{"ddl_id":"br","disable_rpc":true,"labels":{"zone":"zone1"}}}`, `{"ddl_id":"br","disable_rpc":true,"labels":{"zone":"zone1"}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for fp, data := range map[string]string{"mockGetAllServerInfo": tc.serverInfo, "mockGetServerInfo": tc.localInfo} {
+				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/"+fp, fmt.Sprintf("return(`%s`)", data)))
+				t.Cleanup(func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/"+fp)) })
+			}
+			variable.SetEnableAdaptiveReplicaRead(!tc.enabled)
+			require.NoError(t, dom.checkReplicaRead(context.Background(), pdClient))
+			require.Equal(t, tc.enabled, variable.IsAdaptiveReplicaReadEnabled())
+		})
+	}
 }

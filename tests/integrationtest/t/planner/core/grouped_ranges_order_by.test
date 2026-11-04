@@ -316,3 +316,125 @@ explain format = 'brief' select * from t3 where a in (1,2,3,4,5,6,7) and b > 1 o
 select * from t3 where a in (1,2,3,4,5,6,7) and b > 1 order by b;
 commit;
 select * from t3 where a in (1,2,3,4,5,6,7) and b > 1 order by b;
+
+--echo ///// IndexMerge with IN conditions and ORDER BY LIMIT
+drop table if exists t_im_in;
+create table t_im_in (
+  id int not null,
+  a int default null,
+  b int default null,
+  c int default null,
+  padding varchar(100) default null,
+  primary key (id) clustered,
+  key idx_a_c (a, c),
+  key idx_b_c (b, c)
+);
+
+insert into t_im_in values
+(1, 1, 1, 10, 'row1'), (2, 1, 2, 20, 'row2'),
+(3, 2, 1, 30, 'row3'), (4, 2, 2, 40, 'row4'),
+(5, 1, 3, 50, 'row5'), (6, 3, 1, 60, 'row6'),
+(7, 3, 2, 70, 'row7'), (8, 1, 1, 5, 'row8'),
+(9, 2, 3, 15, 'row9'), (10, 3, 3, 25, 'row10'),
+(11, 4, 5, 35, 'row11'), (12, 4, 4, 45, 'row12'),
+(13, 5, 5, 55, 'row13'), (14, 2, 5, 65, 'row14'),
+(15, 5, 1, 75, 'row15'), (16, 6, 5, 85, 'row16');
+analyze table t_im_in;
+
+explain format = 'brief' select /*+ use_index_merge(t_im_in, idx_a_c, idx_b_c) */ * from t_im_in where a = 4 or b in (1, 3, 5) order by c limit 7;
+select /*+ use_index_merge(t_im_in, idx_a_c, idx_b_c) */ * from t_im_in where a = 4 or b in (1, 3, 5) order by c limit 7;
+
+explain format = 'brief' select /*+ use_index_merge(t_im_in, idx_a_c, idx_b_c) */ * from t_im_in where a in (1, 4) or b in (1, 3, 5) order by c limit 7;
+select /*+ use_index_merge(t_im_in, idx_a_c, idx_b_c) */ * from t_im_in where a in (1, 4) or b in (1, 3, 5) order by c limit 7;
+
+explain format = 'brief' select /*+ use_index_merge(t_im_in, idx_a_c, idx_b_c) */ * from t_im_in where a = 4 or b in (1, 3, 5) order by c desc limit 6;
+select /*+ use_index_merge(t_im_in, idx_a_c, idx_b_c) */ * from t_im_in where a = 4 or b in (1, 3, 5) order by c desc limit 6;
+
+--echo # Prepare/Execute with parameterized IN values
+prepare stmt_im from 'select /*+ use_index_merge(t_im_in, idx_a_c, idx_b_c) */ id,a,b,c from t_im_in where a = ? or b in (?, ?, ?) order by c limit ?';
+set @im_a = 4, @im_b1 = 1, @im_b2 = 3, @im_b3 = 5, @im_limit = 6;
+execute stmt_im using @im_a, @im_b1, @im_b2, @im_b3, @im_limit;
+execute stmt_im using @im_a, @im_b1, @im_b2, @im_b3, @im_limit;
+set @im_a = 1, @im_b1 = 2, @im_b2 = 4, @im_b3 = 5, @im_limit = 5;
+execute stmt_im using @im_a, @im_b1, @im_b2, @im_b3, @im_limit;
+deallocate prepare stmt_im;
+
+--echo # UnionScan with uncommitted rows
+begin;
+insert into t_im_in values (17, 4, 5, 1, 'uncommitted-low'), (18, 7, 5, 95, 'uncommitted-high');
+explain format = 'brief' select /*+ use_index_merge(t_im_in, idx_a_c, idx_b_c) */ id,a,b,c from t_im_in where a = 4 or b in (1, 3, 5) order by c limit 7;
+select /*+ use_index_merge(t_im_in, idx_a_c, idx_b_c) */ id,a,b,c from t_im_in where a = 4 or b in (1, 3, 5) order by c limit 7;
+rollback;
+
+--echo # Correlated subquery
+drop table if exists t_im_outer;
+create table t_im_outer(k int, tag varchar(20), key idx_k(k));
+insert into t_im_outer values (1, 'outer-1'), (4, 'outer-4'), (6, 'outer-6');
+explain format = 'brief'
+select o.k, (
+  select /*+ no_decorrelate() use_index_merge(i, idx_a_c, idx_b_c) */ id
+  from t_im_in i
+  where (i.a = o.k and i.a in (1, 4, 6)) or i.b in (2, 5)
+  order by i.c limit 1
+) as first_id
+from t_im_outer o order by o.k;
+select o.k, (
+  select /*+ no_decorrelate() use_index_merge(i, idx_a_c, idx_b_c) */ id
+  from t_im_in i
+  where (i.a = o.k and i.a in (1, 4, 6)) or i.b in (2, 5)
+  order by i.c limit 1
+) as first_id
+from t_im_outer o order by o.k;
+
+--echo # Partition table
+drop table if exists t_im_part;
+create table t_im_part (
+  id int,
+  a int default null,
+  b int default null,
+  c int default null,
+  padding varchar(100) default null,
+  key idx_a_c (a, c),
+  key idx_b_c (b, c)
+) partition by range (c) (
+  partition p0 values less than (30),
+  partition p1 values less than (60),
+  partition p2 values less than (90),
+  partition p3 values less than maxvalue
+);
+insert into t_im_part select * from t_im_in;
+analyze table t_im_part;
+explain format = 'brief' select /*+ use_index_merge(t_im_part, idx_a_c, idx_b_c) */ id,a,b,c from t_im_part where a = 4 or b in (1, 3, 5) order by c limit 7;
+select /*+ use_index_merge(t_im_part, idx_a_c, idx_b_c) */ id,a,b,c from t_im_part where a = 4 or b in (1, 3, 5) order by c limit 7;
+
+--echo # IndexMerge partial table path with grouped ranges and UnionScan
+drop table if exists t_im_table_path;
+create table t_im_table_path (
+  a int not null,
+  b int default null,
+  c int not null,
+  d int not null,
+  padding varchar(100) default null,
+  primary key (a, c, d) clustered,
+  key idx_b_c (b, c)
+);
+
+insert into t_im_table_path values
+(1, 1, 10, 1, 'row1'), (1, 2, 20, 2, 'row2'),
+(2, 1, 30, 3, 'row3'), (2, 2, 40, 4, 'row4'),
+(1, 3, 50, 5, 'row5'), (3, 1, 60, 6, 'row6'),
+(3, 2, 70, 7, 'row7'), (1, 1, 5, 8, 'row8'),
+(2, 3, 15, 9, 'row9'), (3, 3, 25, 10, 'row10'),
+(4, 5, 35, 11, 'row11'), (4, 4, 45, 12, 'row12'),
+(5, 5, 55, 13, 'row13'), (2, 5, 65, 14, 'row14'),
+(5, 1, 75, 15, 'row15'), (6, 5, 85, 16, 'row16');
+analyze table t_im_table_path;
+
+explain format = 'brief' select /*+ use_index_merge(t_im_table_path, primary, idx_b_c) */ a,b,c,d from t_im_table_path where a in (1, 4) or b in (1, 3, 5) order by c limit 7;
+select /*+ use_index_merge(t_im_table_path, primary, idx_b_c) */ a,b,c,d from t_im_table_path where a in (1, 4) or b in (1, 3, 5) order by c limit 7;
+
+begin;
+insert into t_im_table_path values (4, 5, 1, 17, 'uncommitted-low'), (7, 5, 95, 18, 'uncommitted-high');
+explain format = 'brief' select /*+ use_index_merge(t_im_table_path, primary, idx_b_c) */ a,b,c,d from t_im_table_path where a in (1, 4) or b in (1, 3, 5) order by c limit 7;
+select /*+ use_index_merge(t_im_table_path, primary, idx_b_c) */ a,b,c,d from t_im_table_path where a in (1, 4) or b in (1, 3, 5) order by c limit 7;
+rollback;

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -386,6 +387,27 @@ func TestAntiSemiJoinConstFalse(t *testing.T) {
 		require.Equal(t, ca.best, ToString(p), comment)
 		join, _ := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalJoin)
 		require.Equal(t, ca.joinType, join.JoinType.String(), comment)
+	}
+
+	for _, keepJoinKey := range []bool{false, true} {
+		t.Run(fmt.Sprintf("keepJoinKey=%t", keepJoinKey), func(t *testing.T) {
+			s.sctx.GetSessionVars().AlwaysKeepJoinKey = keepJoinKey
+			stmt, err := s.p.ParseOneStmt("select a from t t1 where not exists (select a from t t2 where t1.a = t2.a and t1.a = 1)", "", "")
+			require.NoError(t, err)
+			nodeW := resolve.NewNodeW(stmt)
+			p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+			require.NoError(t, err)
+			p, err = logicalOptimize(ctx, rule.FlagDecorrelate|rule.FlagPredicatePushDown|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain, p.(base.LogicalPlan))
+			require.NoError(t, err)
+			join := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalJoin)
+			right := join.Children()[1].(*logicalop.DataSource)
+			require.Equal(t, "[eq(1, test.t.a)]", expression.StringifyExpressionsWithCtx(s.ctx.GetExprCtx().GetEvalCtx(), right.PushedDownConds))
+			if keepJoinKey {
+				require.Len(t, join.EqualConditions, 1)
+			} else {
+				require.Empty(t, join.EqualConditions)
+			}
+		})
 	}
 }
 
@@ -1165,7 +1187,28 @@ func TestAggPrune(t *testing.T) {
 func TestVisitInfo(t *testing.T) {
 	t.Run("test non-column privilege visit info", testNormalVisitInfo)
 	t.Run("test column privilege visit info", testColumnPrivilegeVisitInfo)
+	t.Run("test raw select visit info retains fallback", testRawSelectVisitInfoRetainsFallback)
 	t.Run("test column privilege visit info with PointGet", testColumnPrivilegePointGetVisitInfo)
+}
+
+func testRawSelectVisitInfoRetainsFallback(t *testing.T) {
+	const sql = "SELECT a FROM t"
+	s := createPlannerSuite()
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	nodeW := resolve.NewNodeW(stmt)
+	require.NoError(t, Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is})))
+	sctx := MockContext()
+	builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
+	_, err = builder.Build(context.Background(), nodeW)
+	require.NoError(t, err)
+
+	checkRawVisitInfo(t, builder.visitInfo, []visitInfo{
+		{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+		{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+	}, sql)
 }
 
 func testNormalVisitInfo(t *testing.T) {
@@ -1431,6 +1474,30 @@ func testNormalVisitInfo(t *testing.T) {
 			sql: "flush privileges",
 			ans: []visitInfo{
 				{mysql.ReloadPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, nil, false},
+			},
+		},
+		{
+			sql: "flush stats_delta ttt",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "ttt", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "flush stats_delta test.ttt, test.*",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "flush stats_delta test.*",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "flush stats_delta *.*",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "", "", "", plannererrors.ErrPrivilegeCheckFail, false, nil, false},
 			},
 		},
 		{
@@ -2560,14 +2627,12 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 			sql: `SELECT count(a) FROM t`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
 			},
 		},
 		{
 			sql: `SELECT 1 FROM (SELECT count(a) FROM t) tt`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
 			},
 		},
 		{
@@ -2599,8 +2664,6 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
 			},
 		},
 
@@ -3021,7 +3084,27 @@ func unique(v []visitInfo) []visitInfo {
 	return v[:len(v)-repeat]
 }
 
+// effectiveVisitInfoForTest ignores intentionally retained fallback SELECT
+// requirements when a concrete column requirement exists for the same table.
+func effectiveVisitInfoForTest(vs []visitInfo) []visitInfo {
+	withConcreteColumn := make(map[[2]string]struct{}, len(vs))
+	for _, v := range vs {
+		if v.privilege == mysql.SelectPriv && v.column != "" && v.column != "*" {
+			withConcreteColumn[[2]string{v.db, v.table}] = struct{}{}
+		}
+	}
+	return slices.DeleteFunc(vs, func(v visitInfo) bool {
+		_, concrete := withConcreteColumn[[2]string{v.db, v.table}]
+		return concrete && v.privilege == mysql.SelectPriv && v.column == "*"
+	})
+}
+
 func checkVisitInfo(t *testing.T, actual, expected []visitInfo, comment string) {
+	actual = effectiveVisitInfoForTest(actual)
+	checkRawVisitInfo(t, actual, expected, comment)
+}
+
+func checkRawVisitInfo(t *testing.T, actual, expected []visitInfo, comment string) {
 	sort.Sort(visitInfoArray(actual))
 	sort.Sort(visitInfoArray(expected))
 	actual = unique(actual)

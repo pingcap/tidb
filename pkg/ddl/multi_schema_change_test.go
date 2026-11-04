@@ -810,6 +810,35 @@ func TestMultiSchemaChangeModifyColumnOrderByStates(t *testing.T) {
 	tk.MustExec("alter table t1 modify column c2 int, drop column id;")
 }
 
+func TestMultiSchemaChangeModifyColumnReorgMeta(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a int);")
+
+	// Regression test for issue #70136.
+	originalFastReorg := variable.EnableFastReorg.Load()
+	originalDistTask := variable.EnableDistTask.Load()
+	t.Cleanup(func() {
+		variable.EnableFastReorg.Store(originalFastReorg)
+		variable.EnableDistTask.Store(originalDistTask)
+	})
+	variable.EnableFastReorg.Store(true)
+	variable.EnableDistTask.Store(true)
+
+	var fastReorgInitialized, distReorgInitialized bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeInitReorgMeta", func(m *model.DDLReorgMeta) {
+		fastReorgInitialized = m.IsFastReorg
+		distReorgInitialized = m.IsDistReorg
+		// Keep the test independent of the ingest backend.
+		m.IsFastReorg = false
+		m.IsDistReorg = false
+	})
+	tk.MustExec("alter table t modify column a char(10), add column b int;")
+	require.True(t, fastReorgInitialized)
+	require.True(t, distReorgInitialized)
+}
+
 func TestMultiSchemaChangeDMLUpdate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

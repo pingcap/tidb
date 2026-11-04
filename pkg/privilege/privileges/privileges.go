@@ -314,6 +314,42 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 	return false
 }
 
+// GetEncodedPassword implements the Manager interface.
+func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
+	if SkipWithGrant {
+		return ""
+	}
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		logutil.BgLogger().Error("get user privilege record fail",
+			zap.String("user", user), zap.String("host", host))
+		return ""
+	}
+	if p.isValidHash(record) {
+		return record.AuthenticationString
+	}
+	return ""
+}
+
+// GetUserResources gets the maximum number of connections for the current user
+func (p *UserPrivileges) GetUserResources(user, host string) (int64, error) {
+	if SkipWithGrant {
+		return 0, nil
+	}
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		logutil.BgLogger().Error("get user privilege record fail",
+			zap.String("user", user), zap.String("host", host))
+		return 0, errors.New("failed to get user record")
+	}
+	if p.isValidHash(record) {
+		return record.MaxUserConnections, nil
+	}
+	return 0, errors.New("failed to get max user connections")
+}
+
 // GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
 func (p *UserPrivileges) GetAuthPluginForConnection(user, host string) (string, error) {
 	if SkipWithGrant {
