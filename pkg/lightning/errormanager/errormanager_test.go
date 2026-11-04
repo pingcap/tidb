@@ -19,11 +19,8 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
-<<<<<<< HEAD:pkg/lightning/errormanager/errormanager_test.go
 	"io"
-=======
 	"math"
->>>>>>> be9ac15a4ff (lightning: continue replace conflict pagination across effect-free pages (#71185)):lightning/pkg/errormanager/errormanager_test.go
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -42,10 +39,10 @@ import (
 )
 
 func TestReplaceConflictEmptyEffectPage(t *testing.T) {
-	col := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("id"), State: model.StatePublic,
+	col := &model.ColumnInfo{ID: 1, Name: pmodel.NewCIStr("id"), State: model.StatePublic,
 		FieldType: *types.NewFieldType(mysql.TypeLonglong)}
 	col.AddFlag(mysql.PriKeyFlag)
-	info := &model.TableInfo{ID: 104, Name: ast.NewCIStr("t"), State: model.StatePublic,
+	info := &model.TableInfo{ID: 104, Name: pmodel.NewCIStr("t"), State: model.StatePublic,
 		PKIsHandle: true, Columns: []*model.ColumnInfo{col}}
 	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(info.SepAutoInc()), info)
 	require.NoError(t, err)
