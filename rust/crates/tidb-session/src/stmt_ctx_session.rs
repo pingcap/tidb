@@ -129,6 +129,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.planned_apply
     }
 
+    fn telemetry_info_ref(&self) -> &Arc<std::sync::Mutex<tidb_sessionctx::telemetry_info::TelemetryInfo>> {
+        &self.telemetry_info
+    }
+
     fn read_from_table_cache_ref(&self) -> &Arc<std::sync::atomic::AtomicBool> {
         &self.read_from_table_cache
     }

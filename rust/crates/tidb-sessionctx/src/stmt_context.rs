@@ -497,6 +497,8 @@ pub struct StmtContextSessionState {
     pub planned_apply: Arc<AtomicBool>,
     /// The session's cell for Go `StmtCtx.ReadFromTableCache`.
     pub read_from_table_cache: Arc<AtomicBool>,
+    /// The session's cell for Go `ExecStmt.Ti`.
+    pub telemetry_info: Arc<Mutex<crate::telemetry_info::TelemetryInfo>>,
     /// Current catalog sequence snapshot; `None` reaches no sequence.
     pub sequences: Option<Arc<dyn SequenceSchema>>,
     /// Go `SessionVars.SequenceState`: the session's per-sequence `LASTVAL`.
@@ -568,6 +570,7 @@ impl Default for StmtContextSessionState {
             row_id_shards: Arc::default(),
             planned_apply: Arc::default(),
             read_from_table_cache: Arc::default(),
+            telemetry_info: Arc::default(),
             sequences: None,
             sequence_state: Arc::default(),
             resource_group_name: "default".to_owned(),
@@ -726,6 +729,8 @@ pub struct StmtContextData {
     /// Go `StmtCtx.ReadFromTableCache`: a read of this statement was served
     /// by a cached table's in-memory copy.
     read_from_table_cache: Arc<AtomicBool>,
+    /// Go `ExecStmt.Ti`, which the executor builder writes.
+    telemetry_info: Arc<Mutex<crate::telemetry_info::TelemetryInfo>>,
     /// The exact Go `func(string)` value copied from the session context.
     breakpoint_notify_func: Option<Arc<dyn Fn(String) + Send + Sync + 'static>>,
     division_by_zero: ErrorLevel,
@@ -2772,6 +2777,7 @@ impl StmtContext {
             before_executor_first_run: session.before_executor_first_run,
             index_force: Arc::default(),
             read_from_table_cache: Arc::clone(&session.read_from_table_cache),
+            telemetry_info: Arc::clone(&session.telemetry_info),
             breakpoint_notify_func: session.breakpoint_notify_func,
             division_by_zero,
             bad_null: if strict {
@@ -4453,6 +4459,15 @@ impl StmtContext {
     #[must_use]
     pub fn read_from_table_cache(&self) -> bool {
         self.0.read_from_table_cache.load(Ordering::Acquire)
+    }
+
+    /// Go `b.Ti` under `withStmtCtxLock`: the statement's telemetry, which
+    /// its executor build writes.
+    pub fn telemetry_info(&self) -> std::sync::MutexGuard<'_, crate::telemetry_info::TelemetryInfo> {
+        self.0
+            .telemetry_info
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Go `StatementContext.GetIndexForce` (`stmtctx.go:1011`).

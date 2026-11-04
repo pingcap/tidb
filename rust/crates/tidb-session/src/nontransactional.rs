@@ -467,10 +467,20 @@ impl Session {
 
         match &stmt.dml {
             BatchDml::Delete(delete) => {
-                check_read_clauses(delete.limit.is_some(), !delete.order_by.is_empty())
+                check_read_clauses(delete.limit.is_some(), !delete.order_by.is_empty())?;
+                // Go `session_metrics.NonTransactionalDeleteCount.Inc()`.
+                tidb_metrics::session::NON_TRANSACTIONAL_DML_COUNT
+                    .with_label_values(&["delete"])
+                    .inc();
+                Ok(())
             }
             BatchDml::Update(update) => {
-                check_read_clauses(update.limit.is_some(), !update.order_by.is_empty())
+                check_read_clauses(update.limit.is_some(), !update.order_by.is_empty())?;
+                // Go `session_metrics.NonTransactionalUpdateCount.Inc()`.
+                tidb_metrics::session::NON_TRANSACTIONAL_DML_COUNT
+                    .with_label_values(&["update"])
+                    .inc();
+                Ok(())
             }
             BatchDml::Insert(insert) => {
                 let Some(source) = &insert.source else {
@@ -486,7 +496,12 @@ impl Session {
                 if select.from.is_none() {
                     return Err(plain_error("table reference is nil"));
                 }
-                check_read_clauses(select.limit.is_some(), !select.order_by.is_empty())
+                check_read_clauses(select.limit.is_some(), !select.order_by.is_empty())?;
+                // Go `session_metrics.NonTransactionalInsertCount.Inc()`.
+                tidb_metrics::session::NON_TRANSACTIONAL_DML_COUNT
+                    .with_label_values(&["insert"])
+                    .inc();
+                Ok(())
             }
         }
     }

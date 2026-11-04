@@ -3340,6 +3340,10 @@ fn build_index_inner_reader(
     offset_schema: Option<&Schema>,
     storage: &ReaderStorage,
 ) -> Result<IndexJoinLookupExec, DriverError> {
+    // Go `buildIndexLookUpReaderForIndexJoin`: `builder.Ti.UseTableLookUp.Store(true)`.
+    if let Some((PhysicalPlan::IndexLookUpReader(_), _)) = index_inner_reader_payload(plan) {
+        ctx.telemetry_info().use_table_lookup = true;
+    }
     let table_id = join.inner_access_table_id.ok_or_else(|| {
         DriverError::unsupported("a physical index join has no retained inner table ID")
     })?;
@@ -5980,6 +5984,7 @@ pub(crate) fn prepare_execution_plan(
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    record_tiflash_contained(plan, ctx);
     prepare_execution_plan_node(plan, catalog, ctx, true)?;
     if ctx.mem_table_retrieval().has_pending() {
         return Err(DriverError::MemTableRetrievalNeeded);
@@ -5995,7 +6000,17 @@ pub(crate) fn prepare_plan_for_explain(
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    record_tiflash_contained(plan, ctx);
     prepare_execution_plan_node(plan, catalog, ctx, false)
+}
+
+/// Go `ExecuteStmt`'s `plannercore.IsTiFlashContained(stmt.Plan)`, recorded
+/// for the session's telemetry count.
+fn record_tiflash_contained(plan: &PhysicalPlan, ctx: &crate::StmtContext) {
+    let (push_down, exchange_push_down) = tidb_planner::telemetry::is_tiflash_contained(plan);
+    let mut ti = ctx.telemetry_info();
+    ti.tiflash_push_down = push_down;
+    ti.tiflash_exchange_push_down = exchange_push_down;
 }
 
 /// What the memory-table scan `plan` hands its retriever (Go's
@@ -6182,6 +6197,14 @@ fn build_cte(
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
+    // Go `buildCTE`'s telemetry, under `withStmtCtxLock`.
+    {
+        let mut ti = ctx.telemetry_info();
+        ti.use_non_recursive = true;
+        if cte.recursive_plan.is_some() {
+            ti.use_recursive = true;
+        }
+    }
     if let Some(producer) = state
         .cte_slots
         .get(&cte.id_for_storage)
@@ -6746,10 +6769,21 @@ fn build_with_state(
             &state.reader_storage,
             state.cop_chain.as_ref(),
         ),
-        PhysicalPlan::TableReader(_)
-        | PhysicalPlan::IndexReader(_)
-        | PhysicalPlan::IndexLookUpReader(_) => build_range_grouped_reader(plan, catalog, ctx, state),
+        PhysicalPlan::TableReader(_) | PhysicalPlan::IndexReader(_) => {
+            build_range_grouped_reader(plan, catalog, ctx, state)
+        }
+        PhysicalPlan::IndexLookUpReader(_) => {
+            // Go `buildIndexLookUpReader`: `b.Ti.UseTableLookUp.Store(true)`.
+            ctx.telemetry_info().use_table_lookup = true;
+            build_range_grouped_reader(plan, catalog, ctx, state)
+        }
         PhysicalPlan::IndexMergeReader(reader) => {
+            // Go `buildIndexMergeReader`.
+            {
+                let mut ti = ctx.telemetry_info();
+                ti.use_index_merge = true;
+                ti.use_table_lookup = true;
+            }
             let executor = build_index_merge_reader(plan, reader, catalog, ctx, state)?;
             ctx.mark_physical_table_reader();
             Ok(executor)

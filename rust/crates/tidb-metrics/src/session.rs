@@ -75,6 +75,27 @@ pub static TRANSACTION_FAIR_LOCKING_USAGE: LazyLock<CounterVec> = LazyLock::new(
     ))
 });
 
+/// Go `NonTransactionalDMLCount` (`pkg/metrics/session.go`).
+pub static NON_TRANSACTIONAL_DML_COUNT: LazyLock<CounterVec> = LazyLock::new(|| {
+    register(CounterVec::new(
+        Opts::new(
+            "tidb_session_non_transactional_dml_count",
+            "Counter of non-transactional delete",
+        ),
+        &["type"],
+    ))
+});
+
+/// Go `LazyPessimisticUniqueCheckSetCount` (`pkg/metrics/session.go`),
+/// which Go never registers: only telemetry reads it.
+pub static LAZY_PESSIMISTIC_UNIQUE_CHECK_SET_COUNT: LazyLock<Counter> = LazyLock::new(|| {
+    Counter::new(
+        "tidb_session_lazy_pessimistic_unique_check_set_count",
+        "Counter of setting tidb_constraint_check_in_place to false, note that it doesn't count the default value set by tidb config",
+    )
+    .expect("valid metric definition")
+});
+
 /// Go `TxnStateEnteringCounter` (`pkg/metrics`).
 pub static TXN_STATE_ENTERING_COUNT: LazyLock<CounterVec> = LazyLock::new(|| {
     register(CounterVec::new(

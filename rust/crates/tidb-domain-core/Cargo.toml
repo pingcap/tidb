@@ -36,6 +36,7 @@ tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-test-isolation = { path = "../tidb-test-isolation" }
 tidb-worker-stack = { path = "../tidb-worker-stack" }
 tidb-workloadlearning = { path = "../tidb-workloadlearning" }
+tidb-telemetry = { path = "../tidb-telemetry" }
 tidb-stats-handle-history = { path = "../tidb-stats-handle-history" }
 tidb-stats-handle-autoanalyze = { path = "../tidb-stats-handle-autoanalyze" }
 tidb-stats-handle-usage-predicatecolumn = { path = "../tidb-stats-handle-usage-predicatecolumn" }

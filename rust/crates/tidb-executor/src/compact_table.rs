@@ -71,6 +71,8 @@ pub fn build_compact_table(
                 ]),
             ));
         }
+        // Go `buildCompactTable`'s partition telemetry.
+        ctx.telemetry_info().partition_telemetry().use_compact_table_partition = true;
     }
     if table
         .and_then(|table| table.tiflash_replica())

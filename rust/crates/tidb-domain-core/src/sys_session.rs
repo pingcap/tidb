@@ -46,6 +46,12 @@ pub trait DomainSysSession:
     /// Go `GetSessionVars().EnableNonPreparedPlanCache = enabled`.
     fn set_enable_non_prepared_plan_cache(&self, enabled: bool);
 
+    /// Go `GetSessionVars().CostModelVersion`.
+    fn cost_model_version(&self) -> i64;
+
+    /// Go `GetSessionVars().EnablePaging`.
+    fn enable_paging(&self) -> bool;
+
     /// Go `ddlHandlerImpl.HandleDDLEvent`'s statistics writes for one schema
     /// change, in this session's transaction.
     fn handle_stats_ddl_event(

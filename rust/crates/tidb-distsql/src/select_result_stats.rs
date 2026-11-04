@@ -129,9 +129,16 @@ impl SelectResultRuntimeStats {
         }
     }
 
+    /// Go `r.stats.copRespTime.Size()`: the responses recorded so far.
+    #[must_use]
+    pub fn cop_resp_count(&self) -> usize {
+        self.cop_resp_time.size()
+    }
+
     /// Go `selectResultRuntimeStats.calcCacheHit`.
     #[expect(clippy::cast_precision_loss, reason = "Go float64(int64) division")]
-    fn calc_cache_hit(&self) -> f64 {
+    #[must_use]
+    pub fn calc_cache_hit(&self) -> f64 {
         let hit = self.copr_cache_hit_num;
         let mut total = self.cop_resp_time.size();
         if self.store_batched_num > 0 {

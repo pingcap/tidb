@@ -433,6 +433,11 @@ impl Session {
 }
 
 impl NodeConn {
+    /// Go `domain.GetDomain(sctx)`.
+    pub(crate) fn domain(&self) -> &Arc<Domain> {
+        &self.domain
+    }
+
     /// The tables this connection's catalog left out, with their reasons.
     #[must_use]
     pub fn skipped_tables(&self) -> &[SkippedTable] {
@@ -489,6 +494,8 @@ impl ClusterServerSession<'_> {
                 self.session.finish_cluster_lock_job(&statement);
             }
         }
+        // Go `session.Close`: `GlobalBuiltinFunctionsUsage.Collect`.
+        self.session.collect_builtin_function_usage();
     }
 }
 
@@ -1623,7 +1630,21 @@ impl<'s> ClusterServerSession<'s> {
         if let Some((body_sql, body)) = self.session.prepared_ddl_body(stmt) {
             return self.run_statement(&body_sql, &body, record_failure);
         }
-        if self.control_transaction_parsed(sql, stmt)?.is_some() {
+        // Go `Compile`'s fresh `TelemetryInfo`, for every statement
+        // `runStmt` executes -- transaction control included.
+        self.session.reset_telemetry_info();
+        let controlled = self.control_transaction_parsed(sql, stmt);
+        let ran_control = match &controlled {
+            Ok(handled) => handled.is_some(),
+            // A transaction statement that failed in its `SimpleExec`.
+            Err(_) => classify_transaction_control_stmt(stmt).is_some(),
+        };
+        if ran_control {
+            // Go `runStmt`'s `updateTelemetryMetric` after `Exec`, and
+            // `ExecuteStmt`'s count when it succeeded.
+            self.session.update_telemetry_metric();
+            controlled?;
+            self.session.count_executed_statement();
             return Ok(Executed::Done(WriteOutcome::default()));
         }
         // Go's `session.ExecuteStmt` region covers `Compile` and `runStmt`;
@@ -1637,8 +1658,17 @@ impl<'s> ClusterServerSession<'s> {
             Ok(CompiledStatement::Trace) => return Ok(Executed::Trace),
             compiled => compiled,
         };
-        match compiled.and_then(|compiled| self.run_without_result(compiled, sql, stmt)) {
+        let executed = compiled.and_then(|compiled| {
+            self.session.set_statement_telemetry_info(stmt);
+            let outcome = self.run_without_result(compiled, sql, stmt);
+            // Go `runStmt`: `updateTelemetryMetric` follows `Exec`, whatever
+            // it returned.
+            self.session.update_telemetry_metric();
+            outcome
+        });
+        match executed {
             Ok(outcome) => {
+                self.session.count_executed_statement();
                 self.node.ok_packet = outcome;
                 Ok(Executed::Done(outcome))
             }
@@ -1773,6 +1803,9 @@ impl<'s> ClusterServerSession<'s> {
         values: &[tidb_param::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'s>, SqlQueryError> {
         self.session.restore_statement_variables();
+        // Go `ExecutePreparedStmt` runs `ExecuteStmt`: `Compile`'s fresh
+        // `TelemetryInfo` and `runStmt`'s `updateTelemetryMetric`.
+        self.session.reset_telemetry_info();
         let process_statement = self
             .session
             .retain_process_statement_with_digest(statement.sql(), statement.digest());
@@ -1792,7 +1825,9 @@ impl<'s> ClusterServerSession<'s> {
             self.session.set_binary_prepared_execution(true);
             let result = self.control_transaction(statement.sql());
             self.session.set_binary_prepared_execution(false);
+            self.session.update_telemetry_metric();
             result?;
+            self.session.count_executed_statement();
             return Ok(GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: 0,
                 last_insert_id: 0,
@@ -1932,6 +1967,7 @@ impl<'s> ClusterServerSession<'s> {
             if let Some(template) = effective {
                 self.session.on_stmt_start(template);
             }
+            let telemetry = self.session.statement_telemetry();
             let result = self.open_statement_result(shape, &resource_group, |session| {
                 session.set_binary_prepared_execution(true);
                 let opened = (|| {
@@ -1972,7 +2008,10 @@ impl<'s> ClusterServerSession<'s> {
                 })();
                 session.set_binary_prepared_execution(false);
                 opened.map_err(map_error)
-            })?;
+            });
+            telemetry.update_telemetry_metric();
+            let result = result?;
+            telemetry.count_executed_statement();
             return Ok(GeneralExecuteOutcome::Rows(match process_statement {
                 Some(statement) => result.with_process_statement(statement),
                 None => result,
@@ -1988,6 +2027,9 @@ impl<'s> ClusterServerSession<'s> {
         self.session.set_binary_prepared_execution(true);
         self.node.activate_statement_txn =
             is_write && effective.is_some_and(|stmt| self.activates_txn_at_build(stmt));
+        if let Some(stmt) = effective {
+            self.session.set_statement_telemetry_info(stmt);
+        }
         let attempt = self.with_prelocked_statement(shape, &resource_group, is_write, |session| {
             if direct_dml {
                 let cached = cached_dml
@@ -2020,6 +2062,10 @@ impl<'s> ClusterServerSession<'s> {
         });
         self.node.activate_statement_txn = false;
         self.session.set_binary_prepared_execution(false);
+        self.session.update_telemetry_metric();
+        if attempt.is_ok() {
+            self.session.count_executed_statement();
+        }
         if observed_write {
             let affected_rows = match &attempt {
                 Ok(StmtOutput::Affected(count)) => *count,
@@ -2395,11 +2441,18 @@ impl<'s> ClusterServerSession<'s> {
         let resource_group = self.session.statement_resource_group(stmt).into_owned();
         let shape = self.session.statement_read_shape_bound(stmt);
         self.session.on_stmt_start(stmt);
+        let telemetry = self.session.statement_telemetry();
         let result = self.open_statement_result(shape, &resource_group, |session| {
             session
                 .open_record_set_parsed(stmt.clone(), sql)
                 .map_err(map_error)
-        })?;
+        });
+        // Go `runStmt`'s `updateTelemetryMetric` after `Exec` opened the
+        // record set (once, whatever retries it took), and `ExecuteStmt`'s
+        // count when it succeeded.
+        telemetry.update_telemetry_metric();
+        let result = result?;
+        telemetry.count_executed_statement();
         Ok(match process_statement {
             Some(statement) => result.with_process_statement(statement),
             None => result,

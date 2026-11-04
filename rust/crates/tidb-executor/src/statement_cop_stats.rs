@@ -121,6 +121,9 @@ pub struct RuntimeStatsCollSink {
     streams: std::sync::Mutex<
         HashMap<u64, tidb_distsql::select_result_stats::SelectResultRuntimeStats>,
     >,
+    /// Go `r.ctx.InRestrictedSQL`, which keeps internal reads out of the
+    /// coprocessor-cache telemetry.
+    in_restricted_sql: bool,
 }
 
 impl std::fmt::Debug for RuntimeStatsCollSink {
@@ -140,7 +143,43 @@ impl RuntimeStatsCollSink {
             coll,
             inner,
             streams: std::sync::Mutex::default(),
+            in_restricted_sql: false,
         }
+    }
+
+    /// The sink of an internal (`InRestrictedSQL`) statement.
+    #[must_use]
+    pub const fn with_in_restricted_sql(mut self, in_restricted_sql: bool) -> Self {
+        self.in_restricted_sql = in_restricted_sql;
+        self
+    }
+}
+
+/// Go `selectResult.fetchRespWithIntermediateResults`' deferred
+/// coprocessor-cache telemetry: the cumulative hit ratio after a response.
+fn record_copr_cache_hit_telemetry(stats: &tidb_distsql::select_result_stats::SelectResultRuntimeStats) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let ratio = stats.calc_cache_hit();
+    if ratio >= 1.0 {
+        tidb_telemetry::CURRENT_COPR_CACHE_HIT_RATIO_GTE100_COUNT.fetch_add(1, Relaxed);
+    }
+    if ratio >= 0.8 {
+        tidb_telemetry::CURRENT_COPR_CACHE_HIT_RATIO_GTE80_COUNT.fetch_add(1, Relaxed);
+    }
+    if ratio >= 0.4 {
+        tidb_telemetry::CURRENT_COPR_CACHE_HIT_RATIO_GTE40_COUNT.fetch_add(1, Relaxed);
+    }
+    if ratio >= 0.2 {
+        tidb_telemetry::CURRENT_COPR_CACHE_HIT_RATIO_GTE20_COUNT.fetch_add(1, Relaxed);
+    }
+    if ratio >= 0.1 {
+        tidb_telemetry::CURRENT_COPR_CACHE_HIT_RATIO_GTE10_COUNT.fetch_add(1, Relaxed);
+    }
+    if ratio >= 0.01 {
+        tidb_telemetry::CURRENT_COPR_CACHE_HIT_RATIO_GTE1_COUNT.fetch_add(1, Relaxed);
+    }
+    if ratio >= 0.0 {
+        tidb_telemetry::CURRENT_COPR_CACHE_HIT_RATIO_GTE0_COUNT.fetch_add(1, Relaxed);
     }
 }
 
@@ -210,6 +249,10 @@ impl CopResponseSink for RuntimeStatsCollSink {
                 },
                 sample.resp_time,
             );
+            // Ignore internal sql.
+            if !self.in_restricted_sql && stats.cop_resp_count() > 0 {
+                record_copr_cache_hit_telemetry(stats);
+            }
         }
         // Only TiKV's positional summaries are recorded here: TiFlash's
         // carry executor IDs and have their own arm.

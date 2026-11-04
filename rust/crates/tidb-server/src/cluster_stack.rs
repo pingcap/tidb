@@ -652,6 +652,11 @@ pub fn cluster_session_stack(
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     factory.start_auto_analyze_worker(config.stats_lease);
     factory.start_analyze_jobs_cleanup_worker(config.stats_lease);
+    // Go `BootstrapSession`: there is no way to turn telemetry on with the
+    // global variable when the configuration disables it.
+    if tidb_config::config_tree::config::get_global_config().enable_telemetry {
+        factory.telemetry_loop();
+    }
     factory.start_historical_stats_worker();
     // Go `BootstrapSession`: after the statistics loops.
     factory.setup_workload_based_learning_worker();

@@ -805,6 +805,12 @@ pub struct Session {
     /// Go `StmtCtx.ReadFromTableCache` of the statement now running, which
     /// `FinishExecuteStmt` counts.
     read_from_table_cache: Arc<std::sync::atomic::AtomicBool>,
+    /// Go `ExecStmt.Ti` of the statement now running, which
+    /// `updateTelemetryMetric` counts.
+    telemetry_info: Arc<std::sync::Mutex<tidb_sessionctx::telemetry_info::TelemetryInfo>>,
+    /// Go `session.functionUsageMu.builtinFunctionUsage`, which `Close`
+    /// hands to telemetry.
+    builtin_function_usage: Arc<std::sync::Mutex<tidb_telemetry::BuiltinFunctionsUsage>>,
     /// Go `StmtCtx.WaitLockLeaseTime`: how long this statement's commit
     /// waited for cached tables' write locks.
     wait_lock_lease_time: std::time::Duration,
@@ -995,6 +1001,8 @@ impl Session {
             client_local_file_reader: None,
             planned_apply: Arc::default(),
             read_from_table_cache: Arc::default(),
+            telemetry_info: Arc::default(),
+            builtin_function_usage: Arc::default(),
             wait_lock_lease_time: std::time::Duration::ZERO,
             mpp_query_info: Arc::default(),
             external_mpp_query_scope: false,
@@ -1149,6 +1157,7 @@ pub mod stats_statement_service;
 mod dispatch;
 mod gcutil;
 pub mod restricted_sql;
+mod session_telemetry;
 mod identity;
 pub mod load_stats_arm;
 mod account_state;

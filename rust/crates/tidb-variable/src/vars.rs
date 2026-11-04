@@ -1986,6 +1986,11 @@ impl SessionVars {
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_WINDOW_FUNCTION {
             self.enable_window_function = value == "ON";
         }
+        // Go `TiDBConstraintCheckInPlacePessimistic`'s SetSession hook counts
+        // every lazy setting.
+        if key == "tidb_constraint_check_in_place_pessimistic" && !tidb_vardef::option_values::tidb_opt_on(&value) {
+            tidb_metrics::session::LAZY_PESSIMISTIC_UNIQUE_CHECK_SET_COUNT.inc();
+        }
         if key == tidb_vardef::tidb_vars::TIDB_QUERY_COP_STORE_LIMIT {
             self.query_cop_store_limit = value
                 .parse::<i64>()

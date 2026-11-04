@@ -154,6 +154,9 @@ pub fn append_mpp_dispatch_req(
     for column in &mut columns {
         column.collation = tidb_datatype::rewrite_new_collation_id_if_needed(column.collation);
     }
+    // Go `PhysicalTableScan.ToPB` for TiFlash counts the scan; the scan
+    // below never asks for fast scan.
+    tidb_telemetry::CURRENT_TIFLASH_TABLE_SCAN_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let scan_executor = Executor {
         tp: Some(ExecType::TypeTableScan as i32),
         tbl_scan: Some(TableScan {

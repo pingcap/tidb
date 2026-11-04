@@ -99,6 +99,7 @@ tidb-copr = { path = "../tidb-copr" }
 tidb-infoschema-isvalidator = { path = "../tidb-infoschema-isvalidator" }
 tidb-deadlockhistory = { path = "../tidb-deadlockhistory" }
 tidb-metrics = { path = "../tidb-metrics" }
+tidb-telemetry = { path = "../tidb-telemetry" }
 tidb-keyspace = { path = "../tidb-keyspace" }
 tidb-bindinfo = { path = "../tidb-bindinfo" }
 tidb-stats-handle = { path = "../tidb-stats-handle" }

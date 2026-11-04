@@ -4305,6 +4305,7 @@ dependencies = [
  "tidb-syssession",
  "tidb-table",
  "tidb-tablecodec",
+ "tidb-telemetry",
  "tidb-terror",
  "tidb-test-isolation",
  "tidb-txnkv",
@@ -4627,6 +4628,7 @@ dependencies = [
  "tidb-table",
  "tidb-tablecodec",
  "tidb-tblctx",
+ "tidb-telemetry",
  "tidb-temptable",
  "tidb-terror",
  "tidb-tiflash",
@@ -5586,6 +5588,8 @@ version = "0.0.0"
 dependencies = [
  "prometheus 0.13.4",
  "prometheus 0.14.0",
+ "serde",
+ "serde_json",
  "tidb-terror",
  "tikv-client",
 ]
@@ -6869,6 +6873,7 @@ dependencies = [
  "tidb-table",
  "tidb-tablecodec",
  "tidb-tblctx",
+ "tidb-telemetry",
  "tidb-temptable",
  "tidb-terror",
  "tidb-test-isolation",
@@ -7887,6 +7892,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-telemetry"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tidb-br",
+ "tidb-charset",
+ "tidb-config",
+ "tidb-datatype",
+ "tidb-infoschema",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-memory",
+ "tidb-metrics",
+ "tidb-model",
+ "tidb-ttl",
+ "tidb-vardef",
+]
+
+[[package]]
 name = "tidb-temptable"
 version = "0.0.0"
 dependencies = [
@@ -8331,6 +8357,7 @@ dependencies = [
  "tidb-hack",
  "tidb-kv",
  "tidb-memory",
+ "tidb-metrics",
  "tidb-model",
  "tidb-mysql",
  "tidb-naming",

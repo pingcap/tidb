@@ -75,6 +75,7 @@ mod update_generated_assignments_source;
 mod update_ignore_check_constraint_source;
 mod serial_create_table_like_source;
 mod table_lifecycle_job_source;
+mod telemetry_test_source;
 mod tiflash_replica_test_source;
 mod update_accounting_source;
 mod update_order_limit_multi_source;

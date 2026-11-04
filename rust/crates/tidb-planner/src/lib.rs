@@ -81,6 +81,7 @@ pub mod configured_order_limit_contract;
 pub mod common_plans;
 pub mod explain;
 pub mod expression_rewriter;
+pub mod telemetry;
 pub mod find_best_task;
 pub mod from_scope;
 pub mod point_get_key;

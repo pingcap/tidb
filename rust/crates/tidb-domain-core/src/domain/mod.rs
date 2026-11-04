@@ -20,6 +20,7 @@
 pub mod ddl_notifier;
 mod ru_stats_writer;
 pub mod workload_learning;
+mod telemetry;
 pub mod schema_lease;
 pub mod stats_maintenance;
 
@@ -741,6 +742,8 @@ pub struct Domain {
     /// Go `Domain.requestUnitsWriterLoop`.
     ru_stats_writer: std::sync::OnceLock<ru_stats_writer::RuStatsWriterWorker>,
     workload_learning_worker: std::sync::OnceLock<workload_learning::WorkloadLearningWorker>,
+    /// Go `TelemetryLoop`'s goroutine.
+    telemetry_worker: std::sync::OnceLock<telemetry::TelemetryWorker>,
     /// The cluster's BDR role in TiKV meta, which every session's ADMIN
     /// BDR ROLE statements read and write.
     pub bdr_role_store: std::sync::OnceLock<Arc<dyn tidb_meta::BdrRoleStore>>,
@@ -1053,6 +1056,7 @@ impl Domain {
             analyze_jobs_cleanup_worker: std::sync::OnceLock::new(),
             ru_stats_writer: std::sync::OnceLock::new(),
             workload_learning_worker: std::sync::OnceLock::new(),
+            telemetry_worker: std::sync::OnceLock::new(),
             bdr_role_store: std::sync::OnceLock::new(),
             ddl_job_history_store: std::sync::OnceLock::new(),
             auto_analyze_worker: std::sync::OnceLock::new(),
@@ -1141,6 +1145,17 @@ impl Domain {
         let _ = self
             .workload_learning_worker
             .set(workload_learning::WorkloadLearningWorker::start(self));
+    }
+
+    /// Go `Domain.TelemetryLoop`, which `BootstrapSession` starts only when
+    /// the configuration enables telemetry.
+    pub fn telemetry_loop(self: &Arc<Self>) {
+        if self.telemetry_worker.get().is_some() {
+            return;
+        }
+        if let Some(worker) = telemetry::TelemetryWorker::start(self) {
+            let _ = self.telemetry_worker.set(worker);
+        }
     }
 
     pub fn start_historical_stats_worker(self: &Arc<Self>) {

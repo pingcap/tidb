@@ -2,8 +2,8 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 41,
-    "open": 12,
+    "unresolved": 43,
+    "open": 14,
     "partial": 29
   },
   "findings": [
@@ -123,6 +123,13 @@
       "go_owner": "client-go `internal/locate`"
     },
     {
+      "id": "T03",
+      "status": "open",
+      "group": "Transaction and routing ownership",
+      "finding": "Pessimistic lock RPCs carry only key counts and time to the statement (`cluster_table_storage::PessimisticLockObservation`), not client-go's `LockKeysDetail`: `TxnCtx.FairLockingUsed`/`FairLockingEffective` and the `FairLockingUsageCount` statement/transaction counters `FinishExecuteStmt` keeps are never set",
+      "go_owner": "`pkg/executor/adapter.go` (`FinishExecuteStmt`), client-go `util.LockKeysDetails`"
+    },
+    {
       "id": "O02",
       "status": "open",
       "group": "Domain and process services",
@@ -166,18 +173,18 @@
       "go_owner": "`pkg/keyspace`, `pkg/domain`"
     },
     {
-      "id": "O17",
-      "status": "open",
-      "group": "Domain and process services",
-      "finding": "No telemetry collection/reporting",
-      "go_owner": "`pkg/telemetry`"
-    },
-    {
       "id": "O18",
       "status": "partial",
       "group": "Domain and process services",
       "finding": "Statement summary: normalized plan digests, encoded plans, RU/CPU/network metadata",
       "go_owner": "`pkg/util/stmtsummary`"
+    },
+    {
+      "id": "O19",
+      "status": "open",
+      "group": "Domain and process services",
+      "finding": "`StmtNodeCounter` is counted at the wire (`tidb-server/src/mysql_connection.rs`) instead of in `executor.Compile` after `Optimize` succeeds: sessions without a wire (internal, embedded) count nothing, and a statement whose planning fails is counted",
+      "go_owner": "`pkg/executor/compiler.go` (`CountStmtNode`)"
     },
     {
       "id": "F02",
@@ -225,7 +232,7 @@
       "id": "X01",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
-      "finding": "SQL/PB signature construction and typed vector execution; Go's build-time argument casts (`WrapWithCastAsJSON`, `isnull`'s JSON-to-string cast) are applied per value at evaluation instead of appearing in the expression tree (and EXPLAIN)",
+      "finding": "SQL/PB signature construction and typed vector execution; Go's build-time argument casts (`WrapWithCastAsJSON`, `isnull`'s JSON-to-string cast) are applied per value at evaluation instead of appearing in the expression tree (and EXPLAIN) The planner's `BuiltinFunctionUsageInc` (`expressionRewriter.newFunction`) is not called: it needs the function's `PbCode`, which a planner-built Rust function only gets at pushdown resolution.",
       "go_owner": "`pkg/expression`"
     },
     {
@@ -291,6 +298,13 @@
       "group": "Expanded subsystem ownership review",
       "finding": "TopSQL: plan-digest attribution, DML write/commit attribution, CPU/RU profiling, reporter lifetime",
       "go_owner": "`pkg/util/topsql`"
+    },
+    {
+      "id": "X03",
+      "status": "open",
+      "group": "Expanded subsystem ownership review",
+      "finding": "A plain EXPLAIN prepares the plan but builds no target executor, where Go `buildExplain` builds it (`explainExec.analyzeExec = b.build(v.TargetPlan)`): the builder's side effects (index-merge and table-lookup telemetry, partition pruning at build) do not happen",
+      "go_owner": "`pkg/executor/builder.go` (`buildExplain`)"
     },
     {
       "id": "Y01",

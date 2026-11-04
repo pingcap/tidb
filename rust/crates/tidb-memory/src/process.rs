@@ -265,7 +265,8 @@ pub fn validate_process_memory_setting(name: &str, value: &str) -> Result<(), St
 /// Parses the SQL/config text form of `tidb_server_memory_limit`.
 pub fn parse_server_memory_limit(text: &str) -> Result<u64, String> {
     let text = text.trim();
-    let total = (text.ends_with('%') || text == "0")
+    let total = text
+        .ends_with('%')
         .then(mem_total)
         .transpose()
         .map_err(|error| error.to_string())?;
@@ -301,12 +302,9 @@ pub fn parse_server_memory_limit(text: &str) -> Result<u64, String> {
             .and_then(|value| value.checked_mul(scale))
             .ok_or_else(|| format!("invalid tidb_server_memory_limit {text:?}"))?
     };
-    let parsed = if parsed == 0 {
-        total.ok_or_else(|| "host memory is required for a zero limit".to_owned())?
-    } else {
-        parsed.max(512 << 20)
-    };
-    Ok(parsed)
+    // Go `parseMemoryLimit`'s deferred floor: a positive limit below
+    // 512MB is raised to it; zero stays zero, Go's unlimited server.
+    Ok(if parsed == 0 { 0 } else { parsed.max(512 << 20) })
 }
 
 /// One live-heap sample from the running allocator:
@@ -484,6 +482,8 @@ mod tests {
     fn explicit_server_memory_limit_observes_the_source_minimum() {
         assert_eq!(parse_server_memory_limit("1GiB").unwrap(), 1 << 30);
         assert_eq!(parse_server_memory_limit("1").unwrap(), 512 << 20);
+        // Go `ServerMemoryLimit` 0: no server memory limit.
+        assert_eq!(parse_server_memory_limit("0").unwrap(), 0);
         assert!(parse_server_memory_limit("100%").is_err());
     }
 }

@@ -21,6 +21,10 @@
 mod result_fields;
 pub use result_fields::*;
 
+/// Go `TelemetryInfo`, `PartitionTelemetryInfo` and
+/// `AccountLockTelemetryInfo`, carried on the statement context.
+pub use tidb_sessionctx::telemetry_info::{AccountLockTelemetryInfo, PartitionTelemetryInfo, TelemetryInfo};
+
 /// The statement kinds `SummaryStmt` special-cases.
 ///
 /// Go: `pkg/executor/adapter.go:2204, 2217`.

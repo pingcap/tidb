@@ -1536,7 +1536,8 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     crate::statement_cop_stats::RuntimeStatsCollSink::new(
                         Arc::clone(coll),
                         self.statement_cop_response_sink(),
-                    ),
+                    )
+                    .with_in_restricted_sql(self.session_vars().restricted_sql),
                 )),
                 None => self.statement_cop_response_sink(),
             };
@@ -1586,6 +1587,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             row_id_shards: Arc::clone(&self.row_id_shards_ref()),
             planned_apply: Arc::clone(&self.planned_apply_ref()),
             read_from_table_cache: Arc::clone(self.read_from_table_cache_ref()),
+            telemetry_info: Arc::clone(self.telemetry_info_ref()),
             sequences: Some(self.sequence_snapshot()),
             sequence_state: Arc::clone(self.sequence_last_values_ref()),
             resource_group_name: self.active_resource_group().to_owned(),
@@ -2313,6 +2315,8 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     fn planned_apply_mut(&mut self) -> &mut Arc<std::sync::atomic::AtomicBool>;
     /// Go `StmtCtx.ReadFromTableCache`'s session cell.
     fn read_from_table_cache_ref(&self) -> &Arc<std::sync::atomic::AtomicBool>;
+    /// Go `ExecStmt.Ti`'s session cell.
+    fn telemetry_info_ref(&self) -> &Arc<std::sync::Mutex<tidb_sessionctx::telemetry_info::TelemetryInfo>>;
     /// Go `SessionVars` / `StmtCtx` state `prepared_params`, read.
     fn prepared_params_ref(&self) -> &Option<Arc<[Datum]>>;
     /// Go `SessionVars` / `StmtCtx` state `prepared_params`, mutably.

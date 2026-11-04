@@ -32,4 +32,5 @@ pub mod server;
 pub mod session;
 pub mod stats;
 pub mod stmtsummary;
+pub mod telemetry;
 pub mod topsql;

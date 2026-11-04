@@ -121,6 +121,14 @@ fn open_memory_arbitrator(
     let limit =
         tidb_memory::parse_server_memory_limit(&config.memory_arbitrator.server_memory_limit)
             .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    // Go `initGlobalMemArbitrator`: an unlimited server arbitrates the
+    // host's memory.
+    let limit = if limit == 0 {
+        tidb_memory::mem_total()
+            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?
+    } else {
+        limit
+    };
     let (soft_bytes, soft_ratio, soft_mode) =
         tidb_memory::parse_soft_limit_text(&config.memory_arbitrator.soft_limit);
     let state_dir = config.spill_storage.path.join("mem-arbitrator");

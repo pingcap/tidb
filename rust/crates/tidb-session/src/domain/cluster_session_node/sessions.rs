@@ -1291,6 +1291,30 @@ impl tidb_domain_core::sys_session::DomainSysSession for ClusterStatsSessionCont
         );
     }
 
+    fn cost_model_version(&self) -> i64 {
+        self.with_session(|session| {
+            Ok(session
+                .session
+                .vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_COST_MODEL_VERSION)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(0))
+        })
+        .unwrap_or(0)
+    }
+
+    fn enable_paging(&self) -> bool {
+        self.with_session(|session| {
+            Ok(session
+                .session
+                .vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_PAGING)
+                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value)))
+        })
+        .unwrap_or(false)
+    }
+
     /// Go `ddlHandlerImpl.HandleDDLEvent`'s subscriber, its statements on
     /// this (the notifier's) session in its transaction.
     fn handle_stats_ddl_event(

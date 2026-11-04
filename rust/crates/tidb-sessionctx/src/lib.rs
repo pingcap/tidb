@@ -23,5 +23,6 @@ pub mod explain_format;
 mod explain_tests;
 pub mod show_retrieval;
 pub mod select_lock;
+pub mod telemetry_info;
 mod stmt_context;
 pub use stmt_context::*;

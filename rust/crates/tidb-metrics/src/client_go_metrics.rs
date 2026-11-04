@@ -389,3 +389,38 @@ pub fn definitions() -> Vec<(String, String, &'static str)> {
         .collect()
 }
 
+
+/// client-go `metrics.TxnCommitCounter`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct TxnCommitCounter {
+    #[serde(rename = "twoPC")]
+    pub two_pc: i64,
+    #[serde(rename = "asyncCommit")]
+    pub async_commit: i64,
+    #[serde(rename = "onePC")]
+    pub one_pc: i64,
+}
+
+impl TxnCommitCounter {
+    /// client-go `TxnCommitCounter.Sub`.
+    #[must_use]
+    pub const fn sub(self, rhs: Self) -> Self {
+        Self {
+            two_pc: self.two_pc - rhs.two_pc,
+            async_commit: self.async_commit - rhs.async_commit,
+            one_pc: self.one_pc - rhs.one_pc,
+        }
+    }
+}
+
+/// client-go `metrics.GetTxnCommitCounter`: the successful commits by
+/// protocol.
+#[must_use]
+pub fn get_txn_commit_counter() -> TxnCommitCounter {
+    let counter = tikv_client::metrics::global_metrics().get_txn_commit_counter();
+    TxnCommitCounter {
+        two_pc: counter.two_pc,
+        async_commit: counter.async_commit,
+        one_pc: counter.one_pc,
+    }
+}

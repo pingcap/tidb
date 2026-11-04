@@ -193,6 +193,7 @@ members = [
     "crates/tidb-owner",
     "crates/tidb-workloadrepo",
     "crates/tidb-workloadlearning",
+    "crates/tidb-telemetry",
     "crates/tidb-protocol",
     "crates/tidb-server-internal-column",
     "crates/tidb-server-internal-dump",
