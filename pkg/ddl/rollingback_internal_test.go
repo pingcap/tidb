@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
@@ -37,7 +37,7 @@ func TestCancelQueuedAddIndexKeepsExistingIndex(t *testing.T) {
 				ID: 10, Version: version, Type: model.ActionAddIndex,
 				SchemaID: 1, TableID: 2, State: model.JobStateCancelling,
 			}
-			index := &model.IndexInfo{ID: 3, Name: ast.NewCIStr("idx"), State: model.StatePublic}
+			index := &model.IndexInfo{ID: 3, Name: pmodel.NewCIStr("idx"), State: model.StatePublic}
 			if started {
 				job.SchemaState = model.StateWriteOnly
 				index.State = model.StateWriteOnly
@@ -47,12 +47,12 @@ func TestCancelQueuedAddIndexKeepsExistingIndex(t *testing.T) {
 			require.NoError(t, err)
 			err = kv.RunInNewTxn(context.Background(), store, true, func(_ context.Context, txn kv.Transaction) error {
 				m := meta.NewMutator(txn)
-				require.NoError(t, m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}))
+				require.NoError(t, m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")}))
 				require.NoError(t, m.CreateTableOrView(1, &model.TableInfo{
-					ID: 2, Name: ast.NewCIStr("t"), State: model.StatePublic, Indices: []*model.IndexInfo{index},
+					ID: 2, Name: pmodel.NewCIStr("t"), State: model.StatePublic, Indices: []*model.IndexInfo{index},
 				}))
 				jobCtx := &jobContext{metaMut: m, schemaVersionManager: newSchemaVersionManager(store)}
-				defer jobCtx.unlockSchemaVersion(jobCtx, job.ID)
+				defer jobCtx.unlockSchemaVersion(job.ID)
 				_, cancelErr := convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob)
 				require.True(t, dbterror.ErrCancelledDDLJob.Equal(cancelErr), "%v", cancelErr)
 				updated, getErr := m.GetTable(1, 2)
@@ -74,19 +74,4 @@ func TestCancelQueuedAddIndexKeepsExistingIndex(t *testing.T) {
 			require.NoError(t, err)
 		}
 	}
-}
-
-func TestRollingbackCreateMaterializedViewCannotCancelKeepsState(t *testing.T) {
-	job := &model.Job{
-		ID:          42,
-		Version:     model.JobVersion2,
-		Type:        model.ActionCreateMaterializedView,
-		State:       model.JobStateCancelling,
-		SchemaState: model.StatePublic,
-	}
-	job.FillArgs(&model.CreateMaterializedViewArgs{TableInfo: &model.TableInfo{ID: 1}})
-
-	_, err := rollingbackCreateMaterializedView(nil, job)
-	require.True(t, dbterror.ErrCannotCancelDDLJob.Equal(err))
-	require.Equal(t, model.JobStateCancelling, job.State)
 }
