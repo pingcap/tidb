@@ -2875,3 +2875,36 @@ func TestIndexScanSeekCost(t *testing.T) {
 	require.Contains(t, tsRows[len(tsRows)-1][0].(string), "TableRangeScan")
 	require.Contains(t, tsRows[len(tsRows)-1][3].(string), "rangeSeek")
 }
+
+func TestIssue72090(t *testing.T) {
+	// column-free predicates must not be pushed below a scalar aggregation: it
+	// emits one row for empty input, while a grouped aggregation emits none.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (k int, c0 int)")
+	tk.MustExec("insert into t values (1, 10), (1, 20), (2, 30)")
+
+	// requirePlanOrder asserts that the first occurrence of `before` comes before
+	// the first occurrence of `after` in the plan tree of the given query.
+	requirePlanOrder := func(t *testing.T, query, before, after string) {
+		plan := fmt.Sprint(tk.MustQuery("explain format = 'plan_tree' " + query).Rows())
+		beforePos := strings.Index(plan, before)
+		afterPos := strings.Index(plan, after)
+		require.NotEqual(t, -1, beforePos, plan)
+		require.NotEqual(t, -1, afterPos, plan)
+		require.Less(t, beforePos, afterPos, plan)
+	}
+
+	t.Run("scalar aggregation without group by", func(t *testing.T) {
+		tk.MustQuery("select count(*) from (select max(c0) as m from t) d where inet_aton('')").Check(testkit.Rows("0"))
+		requirePlanOrder(t, "select * from (select max(c0) as m from t) d where inet_aton('')", "Selection", "Agg")
+	})
+
+	t.Run("group by aggregation", func(t *testing.T) {
+		tk.MustQuery("select count(*) from (select k, max(c0) as m from t group by k) d where inet_aton('')").Check(testkit.Rows("0"))
+		requirePlanOrder(t, "select * from (select k, max(c0) as m from t group by k) d where inet_aton('')", "Agg", "Selection")
+	})
+}
