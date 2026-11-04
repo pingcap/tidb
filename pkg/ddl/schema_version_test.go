@@ -27,7 +27,7 @@ import (
 
 func TestShouldCheckAssumedServer(t *testing.T) {
 	for _, isLegacyNextGen := range []bool{false, true} {
-		mysqlID, tableID := int64(metadef.SystemDatabaseID), int64(metadef.TiDBTableID)
+		mysqlID, tableID := metadef.SystemDatabaseID, metadef.TiDBTableID
 		if isLegacyNextGen {
 			mysqlID, tableID = 1, 9999
 		}
