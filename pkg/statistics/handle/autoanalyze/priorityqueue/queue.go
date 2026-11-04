@@ -56,10 +56,6 @@ const slowLogThreshold = 150 * time.Millisecond
 // Every 15 minutes, at most 1 log will be output.
 var queueSamplerLogger = logutil.SampleLoggerFactory(15*time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
 
-func isTableHandledByPriorityQueue(tblInfo *model.TableInfo) bool {
-	return !tblInfo.IsView() && tblInfo.MaterializedViewLog == nil
-}
-
 // pqHeap is an interface that wraps the methods of a priority queue heap.
 type pqHeap interface {
 	// getByKey returns the job by the given table ID.
@@ -1280,4 +1276,8 @@ func (pq *AnalysisPriorityQueue) resetSyncFields() {
 	pq.syncFields.mustRetryJobs = nil
 	pq.syncFields.lastDMLUpdateFetchTimestamp = 0
 	pq.syncFields.cancel = nil
+}
+
+func isTableHandledByPriorityQueue(tblInfo *model.TableInfo) bool {
+	return !tblInfo.IsView() && tblInfo.MaterializedViewLog == nil
 }

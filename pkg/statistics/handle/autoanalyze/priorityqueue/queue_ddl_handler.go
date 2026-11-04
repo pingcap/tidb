@@ -149,9 +149,6 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJob(
 // For normal tables and dynamic partitioned tables, we only need to recreate the job for the whole table.
 func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionctx.Context, tableInfo *model.TableInfo) error {
 	intest.Assert(tableInfo != nil)
-	if !isTableHandledByPriorityQueue(tableInfo) {
-		return pq.getAndDeleteJob(tableInfo.ID)
-	}
 
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	partitionInfo := tableInfo.GetPartitionInfo()
@@ -186,9 +183,6 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 ) error {
 	tableInfo, idxes, analyzed := event.GetAddIndexInfo()
 	intest.Assert(tableInfo != nil)
-	if !isTableHandledByPriorityQueue(tableInfo) {
-		return pq.getAndDeleteJob(tableInfo.ID)
-	}
 
 	if analyzed {
 		// if an added index is already analyzed in ddl, skip it here.
