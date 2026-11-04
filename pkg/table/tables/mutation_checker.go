@@ -16,6 +16,7 @@ package tables
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -220,6 +221,9 @@ func checkIndexKeys(
 ) error {
 	useNewCollate := t.encoder.UseNewCollate()
 	var indexData []types.Datum
+	// A multi-valued index writes one mutation per array element, so cache each row's sorted array elements
+	// instead of scanning the whole array for every mutation.
+	insertMVElems, removeMVElems := make(mvIndexSortedElems), make(mvIndexSortedElems)
 	for _, m := range indexMutations {
 		var value []byte
 		// Generate correct index id for check.
@@ -283,9 +287,9 @@ func checkIndexKeys(
 
 		// When it is in add index new backfill state.
 		if len(value) == 0 || isTmpIdxValAndDeleted {
-			err = compareIndexData(useNewCollate, tc, t.Columns, indexData, rowToRemove, indexInfo, t.Meta(), extraIndexesLayout.GetIndexLayout(idxID))
+			err = compareIndexDataWithMVCache(useNewCollate, tc, t.Columns, indexData, rowToRemove, indexInfo, t.Meta(), extraIndexesLayout.GetIndexLayout(idxID), removeMVElems)
 		} else {
-			err = compareIndexData(useNewCollate, tc, t.Columns, indexData, rowToInsert, indexInfo, t.Meta(), extraIndexesLayout.GetIndexLayout(idxID))
+			err = compareIndexDataWithMVCache(useNewCollate, tc, t.Columns, indexData, rowToInsert, indexInfo, t.Meta(), extraIndexesLayout.GetIndexLayout(idxID), insertMVElems)
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -373,6 +377,21 @@ func compareIndexData(
 	tableInfo *model.TableInfo,
 	extraIndexLayout table.IndexRowLayoutOption,
 ) error {
+	return compareIndexDataWithMVCache(useNewCollate, tc, cols, indexData, input, indexInfo, tableInfo, extraIndexLayout, nil)
+}
+
+// mvIndexSortedElems maps a column offset in one row to the sorted elements of that row's multi-valued index array.
+type mvIndexSortedElems map[int][]types.BinaryJSON
+
+// compareIndexDataWithMVCache is compareIndexData with an optional cache of sorted multi-valued index arrays for the
+// row in input. With the cache, checking all N mutations of a multi-valued index costs O(N log N) instead of O(N^2).
+func compareIndexDataWithMVCache(
+	useNewCollate bool,
+	tc types.Context, cols []*table.Column, indexData, input []types.Datum, indexInfo *model.IndexInfo,
+	tableInfo *model.TableInfo,
+	extraIndexLayout table.IndexRowLayoutOption,
+	mvElems mvIndexSortedElems,
+) error {
 	for i := range indexData {
 		offsetInRow := indexInfo.Columns[i].Offset
 		if len(extraIndexLayout) > 0 {
@@ -391,9 +410,20 @@ func compareIndexData(
 			cols[offsetInTable].ColumnInfo,
 		)
 
-		comparison, err := CompareIndexAndVal(tc, expectedDatum, decodedMutationDatum,
-			collate.GetCollatorWithCollate(useNewCollate, decodedMutationDatum.Collation()),
-			cols[offsetInTable].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
+		isMVIndexCol := cols[offsetInTable].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON
+		var comparison int
+		var err error
+		if isMVIndexCol && mvElems != nil {
+			sorted, ok := mvElems[offsetInRow]
+			if !ok {
+				sorted = sortedJSONArrayElems(expectedDatum.GetMysqlJSON())
+				mvElems[offsetInRow] = sorted
+			}
+			comparison, err = compareMVIndexValSorted(tc, sorted, expectedDatum, decodedMutationDatum)
+		} else {
+			comparison, err = CompareIndexAndVal(tc, expectedDatum, decodedMutationDatum,
+				collate.GetCollatorWithCollate(useNewCollate, decodedMutationDatum.Collation()), isMVIndexCol)
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -410,6 +440,32 @@ func compareIndexData(
 	return nil
 }
 
+// sortedJSONArrayElems returns the elements of the JSON array bj, sorted by CompareBinaryJSON.
+func sortedJSONArrayElems(bj types.BinaryJSON) []types.BinaryJSON {
+	elems := make([]types.BinaryJSON, 0, bj.GetElemCount())
+	for i := range bj.GetElemCount() {
+		elems = append(elems, bj.ArrayGetElem(i))
+	}
+	slices.SortFunc(elems, types.CompareBinaryJSON)
+	return elems
+}
+
+// compareMVIndexValSorted is CompareIndexAndVal for a multi-valued index, given the row's array elements sorted by
+// CompareBinaryJSON. A binary search finds the indexed value in the usual case. Otherwise it falls back to
+// CompareIndexAndVal, so the result never depends on the sort order.
+func compareMVIndexValSorted(tc types.Context, sorted []types.BinaryJSON, rowVal, idxVal types.Datum) (int, error) {
+	if len(sorted) > 0 && !idxVal.IsNull() {
+		idxJSON, err := idxVal.ToMysqlJSON()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if _, found := slices.BinarySearchFunc(sorted, idxJSON, types.CompareBinaryJSON); found {
+			return 0, nil
+		}
+	}
+	return CompareIndexAndVal(tc, rowVal, idxVal, collate.GetBinaryCollator(), true)
+}
+
 // CompareIndexAndVal compare index valued and row value.
 func CompareIndexAndVal(tc types.Context, rowVal types.Datum, idxVal types.Datum, collator collate.Collator, cmpMVIndex bool) (int, error) {
 	var cmpRes int
@@ -418,12 +474,21 @@ func CompareIndexAndVal(tc types.Context, rowVal types.Datum, idxVal types.Datum
 		// If it is multi-valued index, we should check the JSON contains the indexed value.
 		bj := rowVal.GetMysqlJSON()
 		count := bj.GetElemCount()
+		if count == 0 {
+			return 0, nil
+		}
+		// A JSON value never equals NULL, as in Datum.Compare.
+		if idxVal.IsNull() {
+			return -1, nil
+		}
+		// Convert the indexed value to JSON once rather than once per array element: this is called for every
+		// entry of a multi-valued index, so per-element conversion is quadratic in the array length.
+		idxJSON, err := idxVal.ToMysqlJSON()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
 		for elemIdx := range count {
-			jsonDatum := types.NewJSONDatum(bj.ArrayGetElem(elemIdx))
-			cmpRes, err = jsonDatum.Compare(tc, &idxVal, collate.GetBinaryCollator())
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
+			cmpRes = types.CompareBinaryJSON(bj.ArrayGetElem(elemIdx), idxJSON)
 			if cmpRes == 0 {
 				break
 			}
