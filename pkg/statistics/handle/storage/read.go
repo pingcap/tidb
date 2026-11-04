@@ -667,6 +667,13 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 }
 
 func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
+	// Internal pseudo columns (for example, _tidb_rowid with ID -1) do not have corresponding column metadata/stats.
+	// Skip them defensively in case they leak into the async-load queue.
+	// We need to remove it from the queue explicitly in release-8.5 path.
+	if col.ID <= 0 {
+		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+		return nil
+	}
 	statsTbl, ok := statsHandle.Get(col.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.

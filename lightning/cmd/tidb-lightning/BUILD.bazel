@@ -6,8 +6,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/lightning/cmd/tidb-lightning",
     visibility = ["//visibility:private"],
     deps = [
+        "//lightning/pkg/progress",
         "//lightning/pkg/server",
-        "//lightning/pkg/web",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",

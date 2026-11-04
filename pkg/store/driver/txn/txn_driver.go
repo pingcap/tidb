@@ -311,6 +311,8 @@ func (txn *tikvTxn) SetOption(opt int, val any) {
 		txn.KVTxn.SetSessionID(val.(uint64))
 	case kv.BackgroundGoroutineLifecycleHooks:
 		txn.KVTxn.SetBackgroundGoroutineLifecycleHooks(val.(transaction.LifecycleHooks))
+	case kv.PrewriteEncounterLockPolicy:
+		txn.KVTxn.SetPrewriteEncounterLockPolicy(val.(transaction.PrewriteEncounterLockPolicy))
 	}
 }
 

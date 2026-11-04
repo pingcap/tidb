@@ -243,6 +243,14 @@ func (p *PhysicalLimit) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (
 	for _, item := range p.PartitionBy {
 		limitExec.PartitionBy = append(limitExec.PartitionBy, expression.SortByItemToPB(ctx.GetExprCtx().GetEvalCtx(), client, item.Col.Clone(), item.Desc))
 	}
+	if p.PrefixCol != nil {
+		truncateKeyExprs := []expression.Expression{p.PrefixCol}
+		truncateKeyExprsPB, err := expression.ExpressionsToPBList(ctx.GetExprCtx().GetEvalCtx(), truncateKeyExprs, client)
+		if err != nil {
+			return nil, err
+		}
+		limitExec.TruncateKeyExpr = truncateKeyExprsPB
+	}
 	if storeType == kv.TiFlash {
 		var err error
 		limitExec.Child, err = p.Children()[0].ToPB(ctx, storeType)

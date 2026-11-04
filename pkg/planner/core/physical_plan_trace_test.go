@@ -53,10 +53,10 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		{
 			sql: "select max(b) from t",
 			physicalList: []string{
-				"IndexFullScan_19",
-				"Limit_20",
-				"IndexReader_21",
-				"Limit_14",
+				"IndexFullScan_20",
+				"Limit_21",
+				"IndexReader_22",
+				"Limit_15",
 				"StreamAgg_10",
 				"Projection_8",
 			},
@@ -82,7 +82,8 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
 		require.NotNil(t, otrace)
 		physicalList := getList(otrace)
-		require.True(t, checkList(physicalList, testcase.physicalList))
+		require.Truef(t, checkList(physicalList, testcase.physicalList),
+			"expected %v, got %v", testcase.physicalList, physicalList)
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}
 }

@@ -39,7 +39,6 @@ import (
 	_ "net/http/pprof" // #nosec G108 for pprof
 	"os"
 	"os/user"
-	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -125,6 +124,9 @@ type Server struct {
 
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
+
+	userResLock  sync.RWMutex // userResLock used to protect userResource
+	userResource map[string]*userResourceLimits
 
 	capability uint32
 	dom        *domain.Domain
@@ -247,6 +249,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: util.NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
+		userResource:      make(map[string]*userResourceLimits),
 		internalSessions:  make(map[any]struct{}, 100),
 		health:            uatomic.NewBool(false),
 		inShutdownMode:    uatomic.NewBool(false),
@@ -515,19 +518,16 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 
 		clientConn := s.newConn(conn)
 		if isUnixSocket {
-			var (
-				uc *net.UnixConn
-				ok bool
-			)
-			if clientConn.ppEnabled {
-				// Using reflect to get Raw Conn object from proxy protocol wrapper connection object
-				ppv := reflect.ValueOf(conn)
-				vconn := ppv.Elem().FieldByName("Conn")
-				rconn := vconn.Interface()
-				uc, ok = rconn.(*net.UnixConn)
-			} else {
-				uc, ok = conn.(*net.UnixConn)
+			// When PROXY protocol is enabled the accepted conn may be wrapped by
+			// the PROXY-protocol conn, which exposes NetConn() since
+			// go-proxyprotocol v1.0.8. Unwrap it to reach the underlying
+			// *net.UnixConn; a raw conn (for example when the client address is
+			// not in the allowed networks) is left as-is.
+			sockConn := conn
+			if underlay, ok := sockConn.(proxyprotocol.UnderlayConn); ok {
+				sockConn = underlay.NetConn()
 			}
+			uc, ok := sockConn.(*net.UnixConn)
 			if !ok {
 				logutil.BgLogger().Error("Expected UNIX socket, but got something else")
 				return
@@ -712,12 +712,20 @@ func (s *Server) onConn(conn *clientConn) {
 		return
 	}
 
-	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
+	conn.logConnectionEvent(ctx, "login_success")
 
 	defer func() {
 		terror.Log(conn.Close())
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
+
+	if err := conn.increaseUserConnectionsCount(); err != nil {
+		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+			Warn("failed to increase the count of connections", zap.Error(err),
+				zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
+		return
+	}
+	defer conn.decreaseUserConnectionCount()
 
 	if !s.registerConn(conn) {
 		return
@@ -754,6 +762,16 @@ func (s *Server) onConn(conn *clientConn) {
 	if err != nil {
 		return
 	}
+}
+
+func (cc *clientConn) logConnectionEvent(ctx context.Context, event string) {
+	if !variable.EnableConnectionEventLog.Load() {
+		return
+	}
+	logutil.Logger(ctx).Info("connection event",
+		zap.String("event", event),
+		zap.Stringer("user", cc.getCtx().GetSessionVars().User),
+		zap.String("remoteAddr", cc.bufReadConn.RemoteAddr().String()))
 }
 
 func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
@@ -801,9 +819,7 @@ func (s *Server) checkConnectionCount() error {
 		return nil
 	}
 
-	s.rwlock.RLock()
-	conns := len(s.clients)
-	s.rwlock.RUnlock()
+	conns := s.ConnectionCount()
 
 	if conns >= int(s.cfg.Instance.MaxConnections) {
 		logutil.BgLogger().Error("too many connections",
@@ -959,13 +975,7 @@ func killQuery(conn *clientConn, maxExecutionTime, runaway bool) {
 	} else {
 		sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}
-	conn.mu.RLock()
-	cancelFunc := conn.mu.cancelFunc
-	conn.mu.RUnlock()
-
-	if cancelFunc != nil {
-		cancelFunc()
-	}
+	conn.cancelDispatch()
 	sessVars.SQLKiller.FinishResultSet()
 }
 

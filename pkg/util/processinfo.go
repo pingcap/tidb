@@ -137,20 +137,21 @@ func (pi *ProcessInfo) txnStartTs(tz *time.Location) (txnStart string) {
 func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 	bytesConsumed := int64(0)
 	diskConsumed := int64(0)
-	if pi.StmtCtx != nil {
-		if pi.MemTracker != nil {
-			bytesConsumed = pi.MemTracker.BytesConsumed()
-		}
-		if pi.DiskTracker != nil {
-			diskConsumed = pi.DiskTracker.BytesConsumed()
+	var affectedRows any
+	if pi.RefCountOfStmtCtx != nil && pi.RefCountOfStmtCtx.TryIncrease() {
+		defer pi.RefCountOfStmtCtx.Decrease()
+		if pi.StmtCtx != nil {
+			if pi.MemTracker != nil {
+				bytesConsumed = pi.MemTracker.BytesConsumed()
+			}
+			if pi.DiskTracker != nil {
+				diskConsumed = pi.DiskTracker.BytesConsumed()
+			}
+			affectedRows = pi.StmtCtx.AffectedRows()
 		}
 	}
 
-	var affectedRows any
 	var cpuUsages ppcpuusage.CPUUsages
-	if pi.StmtCtx != nil {
-		affectedRows = pi.StmtCtx.AffectedRows()
-	}
 	if pi.SQLCPUUsage != nil {
 		cpuUsages = pi.SQLCPUUsage.GetCPUUsages()
 	}

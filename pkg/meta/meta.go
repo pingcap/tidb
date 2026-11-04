@@ -979,6 +979,19 @@ func (m *Mutator) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 	return errors.Trace(err)
 }
 
+// IterDatabases iterates all the Databases at once, stop iterate when fn returns an error.
+func (m *Mutator) IterDatabases(fn func(info *model.DBInfo) error) error {
+	err := m.txn.HGetIter(mDBs, func(r structure.HashPair) error {
+		dbInfo := &model.DBInfo{}
+		err := json.Unmarshal(r.Value, dbInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return fn(dbInfo)
+	})
+	return errors.Trace(err)
+}
+
 // IterTables iterates all the table at once, in order to avoid oom.
 func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) error {
 	dbKey := m.dbKey(dbID)
@@ -1030,6 +1043,7 @@ func splitRangeInt64Max(n int64) [][]string {
 
 // IterAllTables iterates all the table at once, in order to avoid oom. It can use at most 15 concurrency to iterate.
 // This function is optimized for 'many databases' scenario. Only 1 concurrency can work for 'many tables in one database' scenario.
+// It calls fn from the worker goroutines, but never concurrently.
 func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

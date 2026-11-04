@@ -290,7 +290,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		if normalized {
 			buffer.WriteString("?")
 		} else {
-			buffer.WriteString(fmt.Sprint(p.AnnIndexExtra.PushDownQueryInfo.TopK))
+			fmt.Fprint(&buffer, p.AnnIndexExtra.PushDownQueryInfo.TopK)
 		}
 		buffer.WriteString(")")
 	}
@@ -483,10 +483,21 @@ func (p *PhysicalLimit) ExplainInfo() string {
 	}
 	if redact == perrors.RedactLogDisable {
 		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
+		if p.PrefixCol != nil {
+			fmt.Fprintf(buffer, ", prefix_col:%v, prefix_len:%v",
+				p.PrefixCol.ColumnExplainInfo(ectx, false), p.PrefixLen)
+		}
 	} else if redact == perrors.RedactLogMarker {
 		fmt.Fprintf(buffer, "offset:‹%v›, count:‹%v›", p.Offset, p.Count)
+		if p.PrefixCol != nil {
+			fmt.Fprintf(buffer, ", prefix_col:‹%v›, prefix_len:‹%v›",
+				p.PrefixCol.ColumnExplainInfo(ectx, false), p.PrefixLen)
+		}
 	} else if redact == perrors.RedactLogEnable {
 		fmt.Fprintf(buffer, "offset:?, count:?")
+		if p.PrefixCol != nil {
+			fmt.Fprintf(buffer, ", prefix_col:?, prefix_len:?")
+		}
 	}
 	return buffer.String()
 }
@@ -790,10 +801,21 @@ func (p *PhysicalTopN) ExplainInfo() string {
 	switch p.SCtx().GetSessionVars().EnableRedactLog {
 	case perrors.RedactLogDisable:
 		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+		if p.PrefixCol != nil {
+			fmt.Fprintf(buffer, ", prefix_col:%v, prefix_len:%v",
+				p.PrefixCol.ColumnExplainInfo(ectx, false), p.PrefixLen)
+		}
 	case perrors.RedactLogMarker:
 		fmt.Fprintf(buffer, ", offset:‹%v›, count:‹%v›", p.Offset, p.Count)
+		if p.PrefixCol != nil {
+			fmt.Fprintf(buffer, ", prefix_col:‹%v›, prefix_len:‹%v›",
+				p.PrefixCol.ColumnExplainInfo(ectx, false), p.PrefixLen)
+		}
 	case perrors.RedactLogEnable:
 		fmt.Fprintf(buffer, ", offset:?, count:?")
+		if p.PrefixCol != nil {
+			fmt.Fprintf(buffer, ", prefix_col:?, prefix_len:?")
+		}
 	}
 	return buffer.String()
 }

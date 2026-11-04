@@ -204,6 +204,50 @@ func TestRealTiKVIndexLookUpPushDown(t *testing.T) {
 	v.RunSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), 0, r.Intn(50)+1)
 }
 
+// TestCorrelatedIndexLookUpPushDownPreservesParentIdx tests the indexlookup push down on correlated subquery,
+// and make sure the parent index is preserved in the plan after push down.
+// See issue: https://github.com/pingcap/tidb/issues/67546
+func TestCorrelatedIndexLookUpPushDownPreservesParentIdx(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table touter (a int, b int, key idx_a(a))")
+	tk.MustExec("create table tinner (a int, b int, key idx_a(a))")
+	tk.MustExec("insert into touter values (20,1),(24,5),(23,9)")
+	tk.MustExec("insert into tinner values (1,1),(3,2),(6,3),(10,4),(12,5),(15,6),(25,7)")
+
+	sql := `select *
+from touter
+where touter.a < (
+	select /*+ INDEX_LOOKUP_PUSHDOWN(tinner, idx_a) */ sum(tinner.b)
+	from tinner use index(idx_a)
+	where tinner.a > touter.b
+)
+order by touter.a, touter.b`
+
+	explainRows := tk.MustQuery("explain format='brief' " + sql).Rows()
+	foundLocalIndexLookUp := false
+	foundIndexScan := false
+	foundTableRowIDScan := false
+	for _, row := range explainRows {
+		rowText := fmt.Sprint(row...)
+		if strings.Contains(rowText, "LocalIndexLookUp") {
+			foundLocalIndexLookUp = true
+		}
+		if strings.Contains(rowText, "idx_a") &&
+			(strings.Contains(rowText, "IndexRangeScan") || strings.Contains(rowText, "IndexFullScan")) {
+			foundIndexScan = true
+		}
+		if strings.Contains(rowText, "TableRowIDScan") {
+			foundTableRowIDScan = true
+		}
+	}
+	require.True(t, foundLocalIndexLookUp)
+	require.True(t, foundIndexScan)
+	require.True(t, foundTableRowIDScan)
+	tk.MustQuery(sql).Check(testkit.Rows("20 1", "24 5"))
+}
+
 func TestRealTiKVCommonHandleIndexLookUpPushDown(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)

@@ -56,6 +56,10 @@ type LazyTxn struct {
 	initCnt       int
 	stagingHandle kv.StagingHandle
 	writeSLI      sli.TxnWriteThroughputSLI
+	// The statement-buffer owner sets this only while Cleanup synchronously
+	// reports its memory footprint. Cleanup must reconcile accounting without
+	// another cancellation or quota action interrupting the rollback.
+	inStmtBufCleanup bool
 
 	enterFairLockingOnValid bool
 
@@ -149,7 +153,12 @@ func (txn *LazyTxn) cleanupStmtBuf() {
 	}
 	buf := txn.Transaction.GetMemBuffer()
 	if !txn.IsPipelined() {
-		buf.Cleanup(txn.stagingHandle)
+		func() {
+			previous := txn.inStmtBufCleanup
+			txn.inStmtBufCleanup = true
+			defer func() { txn.inStmtBufCleanup = previous }()
+			buf.Cleanup(txn.stagingHandle)
+		}()
 	}
 	txn.initCnt = buf.Len()
 
@@ -679,23 +688,23 @@ type txnFuture struct {
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
+	options := []tikv.TxnOption{tikv.WithTxnScope(tf.txnScope)}
 	startTS, err := tf.future.Wait()
 	failpoint.Inject("txnFutureWait", func() {})
 	if err == nil {
-		if tf.pipelined {
-			return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS), tikv.WithPipelinedMemDB())
+		options = append(options, tikv.WithStartTS(startTS))
+	} else {
+		if config.GetGlobalConfig().Store == "unistore" {
+			return nil, err
 		}
-		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS))
-	} else if config.GetGlobalConfig().Store == "unistore" {
-		return nil, err
+		logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	}
 
-	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
-	// It would retry get timestamp.
 	if tf.pipelined {
-		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithPipelinedMemDB())
+		options = append(options, tikv.WithPipelinedMemDB())
 	}
-	return tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
+
+	return tf.store.Begin(options...)
 }
 
 // HasDirtyContent checks whether there's dirty update on the given table.

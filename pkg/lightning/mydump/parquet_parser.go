@@ -523,6 +523,9 @@ func ReadParquetFileRowCountByFile(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	defer func() {
+		_ = r.Close()
+	}()
 
 	reader, err := file.NewParquetReader(&parquetFileWrapper{ReadSeekCloser: r})
 	if err != nil {

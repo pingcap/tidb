@@ -40,17 +40,19 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 )
 
-func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
+func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *router.Region {
 	leader := &metapb.Peer{
 		Id:      regionID,
 		StoreId: 1,
 		Role:    metapb.PeerRole_Voter,
 	}
 
-	return &pd.Region{
+	return &router.Region{
 		Meta: &metapb.Region{
 			Id:       regionID,
 			StartKey: startKey,
@@ -67,16 +69,16 @@ type mockPDClient struct {
 	pd.Client
 
 	nextRegionID  uint64
-	regions       []*pd.Region
+	regions       []*router.Region
 	regionsSorted bool
 }
 
-func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit int, _ ...pd.GetRegionOption) ([]*pd.Region, error) {
+func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit int, _ ...opt.GetRegionOption) ([]*router.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if len(c.regions) == 0 {
-		return []*pd.Region{newMockRegion(1, []byte{}, []byte{0xFF, 0xFF})}, nil
+		return []*router.Region{newMockRegion(1, []byte{}, []byte{0xFF, 0xFF})}, nil
 	}
 
 	if !c.regionsSorted {
@@ -86,11 +88,11 @@ func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit 
 		c.regionsSorted = true
 	}
 
-	regions := []*pd.Region{newMockRegion(1, []byte{}, c.regions[0].Meta.StartKey)}
+	regions := []*router.Region{newMockRegion(1, []byte{}, c.regions[0].Meta.StartKey)}
 	regions = append(regions, c.regions...)
 	regions = append(regions, newMockRegion(2, c.regions[len(c.regions)-1].Meta.EndKey, []byte{0xFF, 0xFF, 0xFF}))
 
-	result := make([]*pd.Region, 0)
+	result := make([]*router.Region, 0)
 	for _, r := range regions {
 		if kv.Key(r.Meta.StartKey).Cmp(endKey) >= 0 {
 			continue
@@ -109,7 +111,7 @@ func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit 
 	return result, nil
 }
 
-func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64, opts ...pd.GetRegionOption) (*pd.Region, error) {
+func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64, opts ...opt.GetRegionOption) (*router.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -121,7 +123,7 @@ func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64, opts 
 	return nil, fmt.Errorf("region %d not found", regionID)
 }
 
-func (c *mockPDClient) GetRegion(ctx context.Context, key []byte, _ ...pd.GetRegionOption) (*pd.Region, error) {
+func (c *mockPDClient) GetRegion(ctx context.Context, key []byte, _ ...opt.GetRegionOption) (*router.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -134,13 +136,13 @@ func (c *mockPDClient) GetRegion(ctx context.Context, key []byte, _ ...pd.GetReg
 	return nil, fmt.Errorf("region not found for key %s", key)
 }
 
-func (c *mockPDClient) BatchScanRegions(ctx context.Context, ranges []pd.KeyRange, limit int, opts ...pd.GetRegionOption) ([]*pd.Region, error) {
+func (c *mockPDClient) BatchScanRegions(ctx context.Context, ranges []router.KeyRange, limit int, opts ...opt.GetRegionOption) ([]*router.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	logutil.BgLogger().Info("BatchScanRegions", zap.Any("ranges", ranges))
 
-	var reg []*pd.Region
+	var reg []*router.Region
 	for _, r := range c.regions {
 		for _, kr := range ranges {
 			if kv.Key(r.Meta.StartKey).Cmp(kr.EndKey) < 0 && kv.Key(r.Meta.EndKey).Cmp(kr.StartKey) > 0 {
@@ -182,7 +184,7 @@ func (c *mockPDClient) addRegion(key, endKey []byte) {
 		Role:    metapb.PeerRole_Voter,
 	}
 
-	c.regions = append(c.regions, &pd.Region{
+	c.regions = append(c.regions, &router.Region{
 		Meta: &metapb.Region{
 			Id:       regionID,
 			StartKey: key,
@@ -217,7 +219,7 @@ func (c *mockPDClient) randomlyMergeRegions() int {
 	r1Idx := rand.IntN(len(c.regions) - 1)
 	r2Idx := r1Idx + 1
 
-	newRegion := &pd.Region{
+	newRegion := &router.Region{
 		Meta: &metapb.Region{
 			Id:       c.regions[r1Idx].Meta.Id,
 			StartKey: c.regions[r1Idx].Meta.StartKey,

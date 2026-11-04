@@ -30,9 +30,11 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -60,6 +62,30 @@ type domainMap struct {
 // TODO decouple domain create from it, it's more clear to create domain explicitly
 // before any usage of it.
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
+	return dm.getWithFilter(store, nil, nil)
+}
+
+// GetOrCreateWithFilter gets or creates the domain for store with a schema filter.
+//
+// Caveat: If there is already a domain opened with your `store`, the filter passed in will be ignored and
+// the actual schema filter of the returned `Domain` is the one when the domain was created.
+func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
+	return dm.getWithFilter(store, filter, nil)
+}
+
+// GetOrCreateBRDomain gets or creates the domain used by standalone BR.
+// An existing domain keeps its original RPC eligibility and schema filter.
+func (dm *domainMap) GetOrCreateBRDomain(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
+	return dm.getWithFilter(store, filter, []infosync.SyncerOption{
+		infosync.WithDisableRPC(),
+	})
+}
+
+func (dm *domainMap) getWithFilter(
+	store kv.Storage,
+	schemaFilter issyncer.Filter,
+	infosyncOpts []infosync.SyncerOption,
+) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -88,13 +114,13 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 			zap.Stringer("stats lease", statisticLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-		d = domain.NewDomain(store, ddlLease, statisticLease, planReplayerGCLease, factory)
+		d = domain.NewDomain(store, ddlLease, statisticLease, planReplayerGCLease, factory, schemaFilter)
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
 			ddlInjector = injector.Injector
 		}
-		err1 = d.Init(sysFactory, ddlInjector)
+		err1 = d.Init(sysFactory, ddlInjector, infosyncOpts...)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
@@ -234,7 +260,12 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		failpoint.Return(errors.New("occur an error after finishStmt"))
 	})
 	sessVars := se.sessionVars
-	if !sql.IsReadOnly(sessVars) {
+	readOnly := sql.IsReadOnly(sessVars)
+	if !readOnly && meetsErr == nil && shouldCheckConnectionAliveBeforeCommit(sessVars, sql) {
+		sessVars.SQLKiller.CheckConnectionAlive()
+		meetsErr = sessVars.SQLKiller.HandleSignal()
+	}
+	if !readOnly {
 		// All the history should be added here.
 		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
 			GetHistory(se).Add(sql, sessVars.StmtCtx)
@@ -265,6 +296,38 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		return err
 	}
 	return checkStmtLimit(ctx, se, true)
+}
+
+// isLoadDataLocal returns true if the statement is LOAD DATA LOCAL INFILE.
+func isLoadDataLocal(sql sqlexec.Statement) bool {
+	if s, ok := sql.GetStmtNode().(*ast.LoadDataStmt); ok {
+		return s.FileLocRef == ast.FileLocClient
+	}
+	return false
+}
+
+// Avoid probing the socket on fast OLTP DML. This matches SQLKiller's normal
+// connection-alive throttle, while still covering long statements that reach
+// the disconnect-before-commit race without hitting another checkpoint.
+const minConnectionAliveCheckBeforeCommitDuration = time.Second
+
+func shouldCheckConnectionAliveBeforeCommit(sessVars *variable.SessionVars, sql sqlexec.Statement) bool {
+	if !sessVars.IsAutocommit() || sessVars.InTxn() {
+		return false
+	}
+	if !sessVars.StartTime.IsZero() && time.Since(sessVars.StartTime) < minConnectionAliveCheckBeforeCommitDuration {
+		return false
+	}
+	stmt, err := resolvePreparedStmt(sql.GetStmtNode(), sessVars)
+	if err != nil || stmt == nil {
+		return false
+	}
+	switch stmt.(type) {
+	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+		return true
+	default:
+		return false
+	}
 }
 
 func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {

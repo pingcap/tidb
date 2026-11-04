@@ -22,8 +22,6 @@ import (
 	"github.com/pingcap/failpoint"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -34,22 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
 )
-
-type storeHelper struct {
-	kvStore tidbkv.Storage
-}
-
-func (*storeHelper) GetTS(_ context.Context) (physical, logical int64, err error) {
-	return 0, 0, nil
-}
-
-func (s *storeHelper) GetTiKVCodec() tikv.Codec {
-	return s.kvStore.GetCodec()
-}
-
-var _ local.StoreHelper = (*storeHelper)(nil)
 
 func checkImportDirEmpty(t *testing.T) {
 	tidbCfg := tidb.GetGlobalConfig()
@@ -103,7 +86,7 @@ func TestImportFromSelectCleanup(t *testing.T) {
 		ctx,
 		controller,
 		"11",
-		&storeHelper{kvStore: store},
+		store,
 	)
 	require.NoError(t, err)
 	ch := make(chan importer.QueryRow)
