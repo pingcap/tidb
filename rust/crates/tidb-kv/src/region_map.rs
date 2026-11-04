@@ -157,6 +157,37 @@ pub trait RegionStore: Send + Sync + std::fmt::Debug {
         Err("region cache unavailable".to_owned())
     }
 
+    /// TiDB `helper.GetMvccByEncodedKey`: TiKV's MVCC record of one
+    /// encoded key, from the region holding it.
+    fn mvcc_get_by_key(
+        &self,
+        encoded_key: &[u8],
+    ) -> Result<tikv_client::proto::kvrpcpb::MvccGetByKeyResponse, String> {
+        let _ = encoded_key;
+        Err("region cache unavailable".to_owned())
+    }
+
+    /// TiDB `helper.GetMvccByStartTs`: the first key of `[start_key,
+    /// end_key)` the transaction `start_ts` wrote, with its region and MVCC
+    /// record, region by region; `None` when it wrote none there.
+    #[allow(clippy::type_complexity)]
+    fn mvcc_get_by_start_ts(
+        &self,
+        start_ts: u64,
+        start_key: &[u8],
+        end_key: &[u8],
+    ) -> Result<Option<(Vec<u8>, u64, tikv_client::proto::kvrpcpb::MvccGetByKeyResponse)>, String> {
+        let _ = (start_ts, start_key, end_key);
+        Err("region cache unavailable".to_owned())
+    }
+
+    /// client-go `RegionCache.LocateKey(bo, key)`'s region id (TiDB
+    /// `TikvHandlerTool.GetRegionIDByKey`).
+    fn region_id_by_key(&self, key: &[u8]) -> Result<u64, String> {
+        let _ = key;
+        Err("region cache unavailable".to_owned())
+    }
+
     /// client-go `RegionCache.LocateKeyRange(bo, start, end)`: the `[start,
     /// end)` bounds of each region covering the range, in key order. Only
     /// asked of a store whose [`Self::tikv_store_count`] answered.

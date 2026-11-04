@@ -5335,6 +5335,7 @@ dependencies = [
  "tidb-terror",
  "tidb-txnkv",
  "tikv-client",
+ "tokio",
 ]
 
 [[package]]

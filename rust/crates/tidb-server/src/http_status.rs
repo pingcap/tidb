@@ -106,6 +106,9 @@ pub struct StatusRoutes {
     /// `/tables/{db}/{table}/{regions,ranges,disk-usage}`, which Go serves
     /// only for a TiKV store.
     pub regions: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
+    /// Go `TikvHandlerTool`'s store for `/mvcc/*`, which Go serves for
+    /// every store.
+    pub mvcc: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
 }
 
 /// Go `StatsHandle().GetPriorityQueueSnapshot()` marshaled.
@@ -639,6 +642,10 @@ fn route_response(
         .or_else(|| {
             let (store, schema) = routes.regions.as_ref().zip(routes.schema.as_ref())?;
             crate::region_routes::region_response(path, store.as_ref(), schema.as_ref())
+        })
+        .or_else(|| {
+            let (store, schema) = routes.mvcc.as_ref().zip(routes.schema.as_ref())?;
+            crate::mvcc_routes::mvcc_response(path, store.as_ref(), schema.as_ref())
         })
     {
         match answer {

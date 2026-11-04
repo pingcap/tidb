@@ -246,6 +246,66 @@ mod tests {
             .unwrap();
     }
 
+    /// Go `MvccTxnHandler` over the embedded store: a row's MVCC record by
+    /// handle, by hex key and by its transaction's start ts.
+    #[test]
+    fn mvcc_routes_answer_like_go() {
+        let stack = stack();
+        let factory = &stack.factory;
+        run(factory, "CREATE TABLE test.mv (id INT PRIMARY KEY, v INT)");
+        run(factory, "INSERT INTO test.mv VALUES (1, 10)");
+        let store = factory.region_store.clone().expect("the embedded store has a region cache");
+        let catalog_factory = Arc::clone(factory);
+        let schema = move || catalog_factory.catalog_snapshot();
+        let answer = |path: &str| crate::mvcc_routes::mvcc_response(path, store.as_ref(), &schema).expect(path);
+        let json = |path: &str| -> serde_json::Value { serde_json::from_str(&answer(path).unwrap()).unwrap() };
+        let table_id = factory
+            .catalog_snapshot()
+            .table_info_by_name("test", "mv")
+            .map(|(_, table)| table.read().id)
+            .unwrap();
+        let key: String = tidb_tablecodec::table_key::encode_row_key_with_handle(
+            table_id,
+            &tidb_tablecodec::table_key::RecordHandle::Int(1),
+        )
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect();
+
+        let by_key = json("/mvcc/key/test/mv/1");
+        assert_eq!(by_key["key"], key);
+        assert!(by_key["region_id"].as_u64().unwrap() > 0);
+        let writes = by_key["value"]["info"]["writes"].as_array().unwrap();
+        assert_eq!(writes.len(), 1, "{by_key}");
+        // A Put write: Go's `omitempty` drops the zero `type`.
+        assert!(writes[0].get("type").is_none());
+        let start_ts = writes[0]["start_ts"].as_u64().unwrap();
+        assert!(writes[0]["commit_ts"].as_u64().unwrap() > start_ts);
+        assert!(writes[0]["short_value"].is_string());
+
+        assert_eq!(json(&format!("/mvcc/hex/{}", key.to_lowercase())), by_key);
+        let by_txn = json(&format!("/mvcc/txn/{start_ts}/test/mv"));
+        assert_eq!(by_txn["key"], key);
+        assert_eq!(by_txn["value"]["info"]["writes"], by_key["value"]["info"]["writes"]);
+        // Go walks region by region from the table's start: a write in a
+        // later region is found too.
+        run(factory, "SPLIT TABLE test.mv BETWEEN (0) AND (100000) REGIONS 2");
+        run(factory, "INSERT INTO test.mv VALUES (60000, 20)");
+        let later = json("/mvcc/key/test/mv/60000");
+        let later_start_ts = later["value"]["info"]["writes"][0]["start_ts"].as_u64().unwrap();
+        let later_by_txn = json(&format!("/mvcc/txn/{later_start_ts}/test/mv"));
+        assert_eq!(later_by_txn["key"], later["key"]);
+        assert_ne!(later_by_txn["region_id"], by_txn["region_id"]);
+        // A start ts that wrote nothing: Go `WriteData(nil)`.
+        assert_eq!(answer("/mvcc/txn/1/test/mv").unwrap(), "null");
+
+        assert_eq!(answer("/mvcc/key/test/mv/abc").unwrap_err(), "strconv.ParseInt: parsing \"abc\": invalid syntax");
+        assert_eq!(answer("/mvcc/hex/zz").unwrap_err(), "encoding/hex: invalid byte: U+007A 'z'");
+        assert_eq!(answer("/mvcc/hex/abc").unwrap_err(), "encoding/hex: odd length hex string");
+        assert_eq!(answer("/mvcc/key/test/nope/1").unwrap_err(), "[schema:1146]Table 'test.nope' doesn't exist");
+        assert_eq!(answer("/mvcc/key/test/mv(p0)/1").unwrap_err(), "mv is not a partitionted table");
+    }
+
     /// Go `RegionHandler` and `TableHandler`'s `regions` / `ranges` over the
     /// embedded store's region cache: the table's regions carry PD's meta,
     /// a region's frames name the table, ranges are the table's key spans.

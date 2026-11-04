@@ -22,8 +22,14 @@
 //! one `KVStore` to region splitting, and asks PD through that store's PD
 //! HTTP client (Go `store.GetPDHTTPClient()`).
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use crate::region_map::{RegionMeta, RegionStore};
 use tidb_txnkv::driver::tikv_store::TikvStore;
+
+/// Go `helper.MaxBackoffTimeoutForMvccGet`.
+const MAX_BACKOFF_TIMEOUT_FOR_MVCC_GET: u64 = 5000;
 
 /// Go `tikv.NewBackofferWithVars(ctx, 20000, nil)` in `getTableRegions`.
 const LOAD_REGIONS_BACKOFF_MS: u64 = 20_000;
@@ -174,6 +180,118 @@ impl<S: tikv_client::PdClient> RegionStore for TikvRegionStore<S> {
             .block_on(async move { pd.load_regions_in_key_range(start, end, &mut backoffer).await })
             .map_err(|error| error.to_string())?;
         Ok(regions.into_iter().map(pd_region).collect())
+    }
+
+    fn mvcc_get_by_key(
+        &self,
+        encoded_key: &[u8],
+    ) -> Result<tikv_client::proto::kvrpcpb::MvccGetByKeyResponse, String> {
+        let backoffer = Arc::new(tokio::sync::Mutex::new(tikv_client::retry::RetryBackoffer::new(
+            tikv_client::async_util::Cancellation::default(),
+            MAX_BACKOFF_TIMEOUT_FOR_MVCC_GET,
+        )));
+        let pd = self.store.store().pd_client();
+        loop {
+            let key = encoded_key.to_vec();
+            let located = Arc::clone(&pd);
+            let key_location = self
+                .block_on(async move { located.region_for_key(&key.into()).await })
+                .map_err(|error| error.to_string())?;
+            let request = tikv_client::transaction::lowering::new_mvcc_get_by_key_request(encoded_key.to_vec().into());
+            let sent = self.block_on(self.store.store().send_req(
+                Arc::clone(&backoffer),
+                request,
+                &key_location.ver_id(),
+                Duration::from_secs(60),
+            ));
+            let mvcc_resp = match sent {
+                Ok(response) => response,
+                Err(tikv_client::Error::RegionError(region_error)) => {
+                    let backoffer = Arc::clone(&backoffer);
+                    self.block_on(async move {
+                        backoffer
+                            .lock()
+                            .await
+                            .backoff(tikv_client::retry::BO_REGION_MISS, format!("{region_error:?}"))
+                            .await
+                    })
+                    .map_err(|error| error.to_string())?;
+                    continue;
+                }
+                Err(error) => return Err(error.to_string()),
+            };
+            if !mvcc_resp.error.is_empty() {
+                return Err(mvcc_resp.error);
+            }
+            if mvcc_resp.info.is_none() {
+                return Err("Invalid mvcc response result, the info field is nil".to_owned());
+            }
+            return Ok(mvcc_resp);
+        }
+    }
+
+    fn mvcc_get_by_start_ts(
+        &self,
+        start_ts: u64,
+        start_key: &[u8],
+        end_key: &[u8],
+    ) -> Result<Option<(Vec<u8>, u64, tikv_client::proto::kvrpcpb::MvccGetByKeyResponse)>, String> {
+        let backoffer = Arc::new(tokio::sync::Mutex::new(tikv_client::retry::RetryBackoffer::new(
+            tikv_client::async_util::Cancellation::default(),
+            5000,
+        )));
+        let pd = self.store.store().pd_client();
+        let mut start_key = start_key.to_vec();
+        loop {
+            let key = start_key.clone();
+            let located = Arc::clone(&pd);
+            let cur_region = self
+                .block_on(async move { located.region_for_key(&key.into()).await })
+                .map_err(|error| error.to_string())?;
+            let mut request = tikv_client::transaction::lowering::new_mvcc_get_by_start_ts_request(
+                <tikv_client::Timestamp as tikv_client::TimestampExt>::from_version(start_ts),
+            );
+            request.context.get_or_insert_with(Default::default).priority =
+                tikv_client::proto::kvrpcpb::CommandPri::Low as i32;
+            let sent = self.block_on(self.store.store().send_req(
+                Arc::clone(&backoffer),
+                request,
+                &cur_region.ver_id(),
+                Duration::from_secs(60 * 60),
+            ));
+            let data = match sent {
+                Ok(data) => data,
+                // Go logs the region error and locates again.
+                Err(tikv_client::Error::RegionError(_)) => continue,
+                Err(error) => return Err(error.to_string()),
+            };
+            if !data.error.is_empty() {
+                return Err(data.error);
+            }
+            if !data.key.is_empty() {
+                let response = tikv_client::proto::kvrpcpb::MvccGetByKeyResponse {
+                    info: data.info,
+                    region_error: data.region_error,
+                    error: data.error,
+                };
+                return Ok(Some((data.key, cur_region.id(), response)));
+            }
+            if !end_key.is_empty() && cur_region.contains(&end_key.to_vec().into()) {
+                return Ok(None);
+            }
+            if cur_region.region.end_key.is_empty() {
+                return Ok(None);
+            }
+            start_key = cur_region.region.end_key.clone();
+        }
+    }
+
+    fn region_id_by_key(&self, key: &[u8]) -> Result<u64, String> {
+        let pd = self.store.store().pd_client();
+        let key = key.to_vec();
+        self.block_on(async move { pd.region_for_key(&key.into()).await })
+            .map(|region| region.id())
+            .map_err(|error| error.to_string())
     }
 
     fn locate_key_range(&self, start: &[u8], end: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {

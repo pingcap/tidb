@@ -2199,13 +2199,9 @@ impl_txn_v2_only_response!(
     }
 );
 
-shardable_key!(kvrpcpb::MvccGetByKeyRequest);
-collect_single!(kvrpcpb::MvccGetByKeyResponse);
-impl SingleKey for kvrpcpb::MvccGetByKeyRequest {
-    fn key(&self) -> &Vec<u8> {
-        &self.key
-    }
-}
+// client-go sends `CmdMvccGetByKey` only through `KVStore.SendReq` to the
+// region its caller located (TiDB `helper.GetMvccByEncodedKeyWithTS`).
+region_pinned!(kvrpcpb::MvccGetByKeyRequest);
 impl HasLocks for kvrpcpb::MvccGetByKeyResponse {}
 
 pub fn new_mvcc_get_by_start_ts_request(start_ts: u64) -> kvrpcpb::MvccGetByStartTsRequest {
@@ -2232,6 +2228,9 @@ impl_txn_v2_only_response!(
     }
 );
 
+// client-go sends `CmdMvccGetByStartTs` only through `KVStore.SendReq` to
+// the region its caller located (TiDB `helper.GetMvccByStartTs`).
+region_pinned!(kvrpcpb::MvccGetByStartTsRequest);
 impl HasLocks for kvrpcpb::MvccGetByStartTsResponse {}
 
 pub fn new_check_lock_observer_request(max_ts: u64) -> kvrpcpb::CheckLockObserverRequest {
