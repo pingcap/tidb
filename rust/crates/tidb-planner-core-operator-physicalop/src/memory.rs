@@ -482,7 +482,7 @@ fn point_plan_keys_usage(
     let values: i64 = rows
         .iter()
         .flat_map(|row| row.iter())
-        .map(|key| key.value.estimated_mem_usage() as i64)
+        .map(|key| key.value.mem_usage())
         .sum();
     values + types
 }

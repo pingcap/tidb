@@ -15,7 +15,7 @@
 //! Go `executorBuilder.build`: instantiate a retained physical SELECT tree.
 //!
 //! Fresh plans and plans rebuilt by `RebuildPlan4CachedPlan` enter the same
-//! constructor switch. This module must not inspect the SQL AST to new_row_sample_collector
+//! constructor switch. This module must not inspect the SQL AST to choose
 //! access, aggregation, join, sort, or reader policy; the AST is used only
 //! for client-visible result-column labels.
 
@@ -1683,9 +1683,35 @@ fn build_mem_table(
             .collect::<Result<Vec<_>, DriverError>>()
     };
     let meta = meta(ctx, plan, plan_schema(plan)?);
+    // Go's builder gives a `memtableRetriever` table's reader a tracker
+    // (`memory.NewTracker(v.ID(), -1)` on the statement's), and the
+    // retriever accounts every row it builds (`recordMemoryConsume`).
+    let memory = (scan.db_name.go_lower_eq("information_schema")
+        && MEMTABLE_RETRIEVER_TABLES
+            .iter()
+            .any(|name| scan.table_name.go_lower_eq(name)))
+    .then(|| ctx.statement_memory().operator_tracker(i64::from(plan.base().base.id())))
+    .filter(|_| {
+        !MEMTABLE_RETRIEVER_UNCHARGED_TABLES
+            .iter()
+            .any(|name| scan.table_name.go_lower_eq(name))
+    });
+    let record_memory_consume = move |rows: &[Vec<tidb_datatype::Datum>]| {
+        if let Some(tracker) = &memory {
+            tracker.consume(rows.iter().map(|row| tidb_datatype::estimated_mem_usage(row, 1)).sum());
+        }
+    };
     Ok(match table.rows() {
         MemoryTableRowsOrRetriever::Rows(rows) => {
-            Box::new(MemTableSourceExec::new(meta, shape(rows)?))
+            let shaped = shape(rows)?;
+            let rows = rows.to_vec();
+            Box::new(MemTableSourceExec::lazy(
+                meta,
+                Box::new(move || {
+                    record_memory_consume(&rows);
+                    Ok(shaped)
+                }),
+            ))
         }
         MemoryTableRowsOrRetriever::Owned(read, retriever) => {
             let (snapshot, ctx) = (catalog.clone(), ctx.clone());
@@ -1695,12 +1721,35 @@ fn build_mem_table(
                     let rows = retriever
                         .retrieve(&read, &snapshot, &ctx)
                         .map_err(retrieval_error)?;
+                    record_memory_consume(&rows);
                     shape(&rows).map_err(retrieval_error)
                 }),
             ))
         }
     })
 }
+
+/// The tables Go's `buildMemTable` serves through a `memtableRetriever`,
+/// whose reader carries a memory tracker.
+const MEMTABLE_RETRIEVER_TABLES: &[&str] = &[
+    "SCHEMATA", "STATISTICS", "TIDB_INDEXES", "VIEWS", "TABLES", "REFERENTIAL_CONSTRAINTS",
+    "SEQUENCES", "PARTITIONS", "ENGINES", "COLLATIONS", "ANALYZE_STATUS", "CLUSTER_INFO",
+    "PROFILING", "CHARACTER_SETS", "KEY_COLUMN_USAGE", "USER_PRIVILEGES", "METRICS_TABLES",
+    "COLLATION_CHARACTER_SET_APPLICABILITY", "PROCESSLIST", "CLUSTER_PROCESSLIST",
+    "TIKV_REGION_STATUS", "TIDB_HOT_REGIONS", "TABLE_CONSTRAINTS", "TIFLASH_REPLICA",
+    "TIDB_SERVERS_INFO", "TIKV_STORE_STATUS", "CLIENT_ERRORS_SUMMARY_GLOBAL",
+    "CLIENT_ERRORS_SUMMARY_BY_USER", "CLIENT_ERRORS_SUMMARY_BY_HOST", "ATTRIBUTES",
+    "PLACEMENT_POLICIES", "TRX_SUMMARY", "VARIABLES_INFO", "USER_ATTRIBUTES",
+    "CLUSTER_TRX_SUMMARY", "MEMORY_USAGE", "MEMORY_USAGE_OPS_HISTORY", "CLUSTER_MEMORY_USAGE",
+    "CLUSTER_MEMORY_USAGE_OPS_HISTORY", "RESOURCE_GROUPS", "RUNAWAY_WATCHES",
+    "CHECK_CONSTRAINTS", "TIDB_CHECK_CONSTRAINTS", "KEYWORDS", "TIDB_INDEX_USAGE",
+    "TIDB_PLAN_CACHE", "CLUSTER_TIDB_PLAN_CACHE", "CLUSTER_TIDB_INDEX_USAGE", "KEYSPACE_META",
+];
+
+/// The `memtableRetriever` tables whose `setData*` never calls
+/// `recordMemoryConsume`.
+const MEMTABLE_RETRIEVER_UNCHARGED_TABLES: &[&str] =
+    &["ANALYZE_STATUS", "USER_PRIVILEGES", "KEYSPACE_META"];
 
 fn aggregate_function(
     descriptor: &AggFuncDesc,
@@ -5170,7 +5219,7 @@ fn with_select_lock(
 /// point plan locks its record keys with inside `Next`, before reading them.
 /// `None` outside a pessimistic transaction's statement (which has no
 /// selected-lock owner) and for a plan that does not lock. A locking
-/// SELECT's own `NOWAIT` / `WAIT n` new_row_sample_collector the wait.
+/// SELECT's own `NOWAIT` / `WAIT n` choose the wait.
 fn point_lock(
     lock: bool,
     select_lock: Option<(tidb_planner_core_operator_logicalop::SelectLockType, u64)>,

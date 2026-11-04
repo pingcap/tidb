@@ -100,7 +100,7 @@ impl FmSketch {
     /// Returns a stable view of retained hashes for persistence owners.
     ///
     /// The source map is intentionally unordered; callers that serialize the
-    /// set must new_row_sample_collector and document their own deterministic ordering.
+    /// set must choose and document their own deterministic ordering.
     #[must_use]
     pub fn contains(&self, hash: u64) -> bool {
         self.hashes.contains(&hash)

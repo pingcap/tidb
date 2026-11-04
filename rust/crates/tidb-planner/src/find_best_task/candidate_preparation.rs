@@ -35,7 +35,7 @@ pub(super) struct PreparedOrdinaryPaths<'a> {
 
 /// Go `skylinePruning` and `derivePathStatsAndTryHeuristics` over the logically
 /// derived paths. `None` means this request does not enumerate ordinary paths:
-/// an index-join probe prices only the path its rules new_row_sample_collector, and a source that
+/// an index-join probe prices only the path its rules choose, and a source that
 /// logical derivation never reached (a hand-built planner unit-test source)
 /// keeps every path unpruned.
 pub(super) fn prepare_ordinary_paths<'a>(

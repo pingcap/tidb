@@ -538,6 +538,9 @@ pub struct StmtContextSessionState {
     /// runs through Go's SQL-executor property; `None` is a context with no
     /// session to run it.
     pub sql_digest_text_retriever: Option<SqlDigestTextRetrieval>,
+    /// Go `kv.Storage.GetMinSafeTS`, which `GetStmtMinSafeTime` asks of the
+    /// session's store; `None` is a context with no store.
+    pub min_safe_ts_provider: Option<MinSafeTsProvider>,
     /// Go `TableLockReadContext`: the table locks this session holds, which
     /// a foreign-key cascade's `CheckTableLock` reads; `None` with table
     /// locks disabled (`enable-table-lock`).
@@ -585,6 +588,7 @@ impl Default for StmtContextSessionState {
             mdl_related_table: None,
             process_privilege: true,
             sql_digest_text_retriever: None,
+            min_safe_ts_provider: None,
             locked_tables: None,
             ddl_sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
                 .map_or(0, |mode| mode.0),
@@ -598,6 +602,9 @@ impl Default for StmtContextSessionState {
 /// while evaluating: `(schema, sequence, insert)` answers whether the session
 /// holds INSERT (`insert`) or SELECT on the sequence.
 pub type SequencePrivilegeCheck = Arc<dyn Fn(&str, &str, bool) -> bool + Send + Sync>;
+
+/// Go `kv.Storage.GetMinSafeTS(txnScope)`.
+pub type MinSafeTsProvider = Arc<dyn Fn(&str) -> u64 + Send + Sync>;
 
 /// Go `SQLDigestTextRetriever.RetrieveGlobal` as `TIDB_DECODE_SQL_DIGESTS`
 /// runs it while evaluating in `StmtContext`: each requested digest's
@@ -841,6 +848,11 @@ pub struct StmtContextData {
     process_privilege: bool,
     /// See [`StmtContextSessionState::sql_digest_text_retriever`].
     sql_digest_text_retriever: Option<SqlDigestTextRetrieval>,
+    /// See [`StmtContextSessionState::min_safe_ts_provider`].
+    min_safe_ts_provider: Option<MinSafeTsProvider>,
+    /// Go `StmtCtx.GetOrStoreStmtCache(StmtSafeTSCacheKey, ...)`: the min
+    /// SafeTS the statement's first `GetStmtMinSafeTime` read.
+    stmt_safe_ts: std::sync::OnceLock<u64>,
     /// See [`StmtContextSessionState::locked_tables`].
     locked_tables: Option<LockedTables>,
     /// Go expression BuildContext.NewCollationEnabled, captured for this task.
@@ -2829,6 +2841,8 @@ impl StmtContext {
             mdl_related_table: session.mdl_related_table,
             process_privilege: session.process_privilege,
             sql_digest_text_retriever: session.sql_digest_text_retriever,
+            min_safe_ts_provider: session.min_safe_ts_provider,
+            stmt_safe_ts: std::sync::OnceLock::new(),
             locked_tables: session.locked_tables,
             new_collation_enabled: tidb_datatype::new_collation_enabled(),
             rand_session: None,
@@ -6379,6 +6393,14 @@ impl Columns for StmtContext {
         self.sql_digest_text_retriever
             .as_ref()
             .map(|retrieve| retrieve(self, digests))
+    }
+
+    fn get_stmt_min_safe_ts(&self) -> u64 {
+        *self.stmt_safe_ts.get_or_init(|| {
+            self.min_safe_ts_provider.as_ref().map_or(0, |provider| {
+                provider(&tidb_config::tikvcfg::get_txn_scope_from_config())
+            })
+        })
     }
 
     fn current_tso(&self) -> i64 {

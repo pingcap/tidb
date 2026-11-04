@@ -1757,7 +1757,7 @@ fn mem_arbitrator() {
         m.hc_last_gc_utime
             .store(m.approx_unix_time_sec() * 1_000_000_000, SeqCst);
         assert!(m.execute_tick(tl_now));
-        assert_eq!(m.mem_magnif(), (875 + 6100) / 2); // new_row_sample_collector 875 over 800
+        assert_eq!(m.mem_magnif(), (875 + 6100) / 2); // choose 875 over 800
         assert_eq!(logs_info.load(SeqCst), 8);
         assert_eq!(m.exec_metrics().action.record_mem_state.succ, 4);
         check_prof_impl(tl_pre, 40000, 50000, 800);
@@ -1885,7 +1885,7 @@ fn mem_arbitrator() {
         assert!(m.execute_tick(tl_now));
         check_prof_impl(tl_pre, 10000, 10000, 1000);
         check_prof(tl_now, 5000, 10000);
-        // new_row_sample_collector 1000 over 199
+        // choose 1000 over 199
         assert_eq!(m.mem_magnif(), (1243 + 1000) / 2);
         assert_eq!(logs_info.load(SeqCst), 20);
         assert_eq!(m.exec_metrics().action.record_mem_state.succ, 8);

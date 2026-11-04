@@ -455,6 +455,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::sql_digest_text_retrieval(self)
     }
 
+    fn min_safe_ts_provider(&self) -> Option<tidb_sessionctx::MinSafeTsProvider> {
+        self.min_safe_ts_provider.clone()
+    }
+
     fn session_privilege_check(&self) -> Option<tidb_sessionctx::SessionPrivilegeCheck> {
         Session::session_privilege_check(self)
     }

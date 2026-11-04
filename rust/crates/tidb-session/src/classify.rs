@@ -65,7 +65,7 @@ pub(crate) use tidb_executor::sessionctx::{
 /// The `Admin` statement bucket holds every statement Go plans through
 /// `buildAdmin`, `buildSimple`, `buildShow` and their neighbours; each arm
 /// names the Go builder that decides its schema. The match is exhaustive so a
-/// new variant has to new_row_sample_collector.
+/// new variant has to choose.
 fn admin_plan_has_result_schema(admin: &tidb_ast::AdminStmt) -> bool {
     use tidb_ast::AdminStmt;
     match admin {
@@ -256,7 +256,7 @@ impl Session {
     }
 
     /// Classifies a statement by parsing alone (no execution), so a caller can
-    /// new_row_sample_collector the protocol answer shape before running it.
+    /// choose the protocol answer shape before running it.
     ///
     /// This decides the SHAPE of the answer, not whether the statement is
     /// supported: a `SHOW` this tier cannot answer still classifies as a

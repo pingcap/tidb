@@ -65,7 +65,7 @@ impl ExchangeCompressionMode {
     /// High-compression ratio (Go `ExchangeCompressionModeHC`;
     /// `tipb.CompressionMode_HIGH_COMPRESSION`).
     pub const HC: ExchangeCompressionMode = ExchangeCompressionMode(2);
-    /// Unspecified; let TiDB new_row_sample_collector (Go `ExchangeCompressionModeUnspecified`).
+    /// Unspecified; let TiDB choose (Go `ExchangeCompressionModeUnspecified`).
     pub const UNSPECIFIED: ExchangeCompressionMode = ExchangeCompressionMode(3);
 
     /// Go `RecommendedExchangeCompressionMode` = `ExchangeCompressionModeFast`.

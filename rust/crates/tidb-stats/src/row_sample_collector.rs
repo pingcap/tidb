@@ -752,7 +752,6 @@ fn sample_column_bytes(column: &Datum) -> Vec<u8> {
 }
 
 fn proto_memory_usage(proto: &RowSampleCollectorProto) -> i64 {
-    const EMPTY_DATUM_SIZE: i64 = 72;
     const EMPTY_RESERVOIR_SAMPLE_ITEM_SIZE: i64 = 48;
     const REFERENCE_SIZE: i64 = 8;
     if proto.samples.is_empty() {
@@ -761,7 +760,7 @@ fn proto_memory_usage(proto: &RowSampleCollectorProto) -> i64 {
     let row_len = proto.samples[0].row.len() as i64;
     let mandatory = (proto.samples.len() as i64).wrapping_mul(
         row_len
-            .wrapping_mul(EMPTY_DATUM_SIZE)
+            .wrapping_mul(tidb_datatype::EMPTY_DATUM_SIZE)
             .wrapping_add(EMPTY_RESERVOIR_SAMPLE_ITEM_SIZE)
             .wrapping_add(REFERENCE_SIZE),
     );

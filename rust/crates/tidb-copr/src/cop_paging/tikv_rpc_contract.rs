@@ -58,7 +58,7 @@ pub struct TikvUnaryRequest {
 /// Constructs the complete unary request owned before network dispatch.
 ///
 /// `predicted_read_bytes` is supplied by the runtime's shared EMA owner. This
-/// function does not new_row_sample_collector an address, query PD/RegionCache, allocate a
+/// function does not choose an address, query PD/RegionCache, allocate a
 /// replica seed, send bytes, or schedule retries.
 #[must_use]
 pub fn build_tikv_unary_request(

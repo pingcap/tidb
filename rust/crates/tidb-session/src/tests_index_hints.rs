@@ -189,7 +189,7 @@ fn error_of(session: &mut Session, sql: &str) -> (u16, String) {
 /// Go plans `IndexReader -> IndexFullScan on idx_b` with a `Selection` for
 /// `eq(a, 2)` pushed to the coprocessor: the hint deletes the table path, and
 /// with it the point get that path would have become, so a far cheaper plan
-/// is simply not available to new_row_sample_collector.
+/// is simply not available to choose.
 #[test]
 fn force_index_constrains_the_access_path() {
     let mut session = hinted_session();

@@ -267,7 +267,7 @@ use tidb_charset::Collation;
     /// `Index`, so an `INVISIBLE` key is maintained (it is in `indexes()`)
     /// and hidden from every access path (it is not in `plan_indexes()`),
     /// which is Go's rule. Hardcoding `visible: true` -- as all three sites
-    /// did -- made the planner new_row_sample_collector an index Go never chooses. The
+    /// did -- made the planner choose an index Go never chooses. The
     /// `CREATE INDEX` and `ADD INDEX` sites are the session's
     /// (`tidb-session/tests/index_ddl_prefix_and_visibility_source.rs`).
     #[test]

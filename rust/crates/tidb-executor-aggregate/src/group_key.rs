@@ -189,7 +189,7 @@ impl GroupKeyBuffer {
             values.capacity() * std::mem::size_of::<Datum>()
                 + values
                     .iter()
-                    .map(|value| value.estimated_mem_usage() - std::mem::size_of::<Datum>())
+                    .map(|value| (value.estimated_mem_usage() - tidb_datatype::EMPTY_DATUM_SIZE) as usize)
                     .sum::<usize>()
         }
         self.encoded.capacity() * std::mem::size_of::<Vec<u8>>()

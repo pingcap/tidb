@@ -1735,7 +1735,7 @@ fn system_variable_scope_errors_reach_text_and_prepare_wire() {
     write_packet(&mut client, 0, &[0x01]);
     drop(client);
     let report = worker.join().unwrap();
-    // Three: the `USE test` every connection now sends to new_row_sample_collector a schema (a
+    // Three: the `USE test` every connection now sends to choose a schema (a
     // handshake carrying none leaves `CurrentDB` empty, as in Go), plus the
     // two this test issues.
     assert_eq!(report.commands.text_query_commands, 3);

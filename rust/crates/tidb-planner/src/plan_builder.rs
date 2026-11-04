@@ -5910,7 +5910,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // Go `buildSelect` (`logical_plan_builder.go:4583`): a derived
             // table's ORDER BY is kept only for the top-level query, when the
             // query has a LIMIT, or when `tidb_remove_orderby_in_subquery` is
-            // off. Dropping it lets the aggregate above the join new_row_sample_collector a
+            // off. Dropping it lets the aggregate above the join choose a
             // HashAgg instead of exploiting a meaningless input order.
             let keep_order_by = self.qb_offset.len() == 1
                 || select.limit.is_some()

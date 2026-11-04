@@ -75,6 +75,7 @@ mod update_generated_assignments_source;
 mod update_ignore_check_constraint_source;
 mod serial_create_table_like_source;
 mod table_lifecycle_job_source;
+mod memtable_memory_source;
 mod parallel_apply_source;
 mod stmt_node_counter_source;
 mod telemetry_test_source;

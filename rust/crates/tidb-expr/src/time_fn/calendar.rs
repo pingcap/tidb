@@ -695,7 +695,7 @@ pub(crate) fn date_add(
 /// `FieldType`s while building the function. A string/numeric date result is
 /// different: its string signature prints no fraction for a whole-second
 /// answer and six digits otherwise, so it returns `None` here and lets the
-/// value new_row_sample_collector that final rendering.
+/// value choose that final rendering.
 pub(crate) fn date_add_result_fsp(
     unit: &str,
     date_type: Option<&tidb_datatype::FieldType>,

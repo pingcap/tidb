@@ -499,7 +499,7 @@ impl FieldTypeCode {
     }
 }
 
-/// The source-backed `FieldType` metadata required to new_row_sample_collector binary versus
+/// The source-backed `FieldType` metadata required to choose binary versus
 /// character string signatures during expression construction.
 ///
 /// The UTF-8 parser-owned charset and collation spellings are independent,

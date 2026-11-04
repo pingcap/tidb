@@ -515,7 +515,7 @@ fn base_physical_join_memory_usage(
         + is_null_eq.len() as i64 * SIZE_OF_BOOL
         + conditions * SIZE_OF_INTERFACE
         + keys * SIZE_OF_POINTER
-        + default_values.len() as i64 * tidb_expr::memory_usage::GO_EMPTY_DATUM_SIZE;
+        + default_values.len() as i64 * tidb_datatype::EMPTY_DATUM_SIZE;
     for list in condition_lists {
         sum += list.iter().map(|c| c.memory_usage()).sum::<i64>();
     }
@@ -523,7 +523,7 @@ fn base_physical_join_memory_usage(
         sum += list.iter().map(|k| k.memory_usage()).sum::<i64>();
     }
     for value in default_values {
-        sum += value.estimated_mem_usage() as i64;
+        sum += value.mem_usage();
     }
     sum
 }

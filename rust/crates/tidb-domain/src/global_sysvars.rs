@@ -629,6 +629,9 @@ impl GlobalSysvars {
             policy.set_tso_rpc_concurrency(tso_rpc_concurrency(&value(
                 tidb_vardef::tidb_vars::TIDB_TSO_CLIENT_RPC_MODE,
             )));
+            policy.set_enable_router_client(enabled(
+                tidb_vardef::tidb_vars::TIDB_ENABLE_BATCH_QUERY_REGION,
+            ));
         }
         drop(resolved);
     }
@@ -1132,6 +1135,7 @@ impl GlobalSysvars {
                 | TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME
                 | TIDB_TSO_CLIENT_RPC_MODE
                 | TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL
+                | TIDB_ENABLE_BATCH_QUERY_REGION
                 | TIDB_CHECK_MB4_VALUE_IN_UTF8
         ) || is_auto_analyze_setting(name)
             || is_resource_control_setting(name)
@@ -1330,7 +1334,8 @@ impl GlobalSysvars {
             | TIDB_ENABLE_TSO_FOLLOWER_PROXY
             | TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME
             | TIDB_TSO_CLIENT_RPC_MODE
-            | TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL => {
+            | TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL
+            | TIDB_ENABLE_BATCH_QUERY_REGION => {
                 // Go `setPDClientDynamicOption`: the store's PD client takes
                 // the new option in place.
                 let policy = self
@@ -1349,6 +1354,7 @@ impl GlobalSysvars {
                             .set_low_resolution_tso_update_interval(low_resolution_tso_update_interval(
                                 value,
                             )),
+                        TIDB_ENABLE_BATCH_QUERY_REGION => policy.set_enable_router_client(on),
                         _ => policy.set_tso_rpc_concurrency(tso_rpc_concurrency(value)),
                     }
                 }

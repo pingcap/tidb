@@ -2759,7 +2759,7 @@ impl PreparedDmlPlan {
 
     /// Binds one EXECUTE's values and checks Go's schema, session, and
     /// parameter-type cache key. A different key is a cache miss, not a
-    /// reason to new_row_sample_collector a different executor implementation.
+    /// reason to choose a different executor implementation.
     #[must_use]
     pub fn bind(
         self: &Arc<Self>,

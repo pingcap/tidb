@@ -3255,7 +3255,7 @@ fn find_best_task_4_logical_data_source_paths(
     let mut best = Task::invalid_task();
     let mut ordinary_candidates = Vec::new();
     // Go `getBestIndexJoinInnerTaskByProp`: an index-join probe prices only
-    // the path its rules new_row_sample_collector -- the common handle path or the integer
+    // the path its rules choose -- the common handle path or the integer
     // handle for a table-range probe, the `indexJoinPathCompare` winner of
     // the index paths otherwise.
     let index_join_result = prop.index_join_prop.as_ref().and_then(|runtime| {
@@ -4343,7 +4343,7 @@ fn find_best_task_4_logical_data_source_paths(
                         // A GLOBAL index is stored in the logical table's
                         // keyspace and carries each row's partition ID, so a
                         // unique-key point read does not need static pruning
-                        // to new_row_sample_collector one physical table first.
+                        // to choose one physical table first.
                         || source_index.read().global
                         // Go `find_best_task.go:2214`: a partitioned table
                         // still converts, one range at a time (a batch

@@ -1128,6 +1128,31 @@ mod pd_region_batch_tests {
         }
     }
 
+    /// Records Go's `opt.EnableRouterClient`.
+    #[derive(Debug, Default)]
+    struct RouterPolicy(std::sync::Mutex<Vec<bool>>);
+    impl PdRegionPolicy for RouterPolicy {
+        fn set_follower_handle(&self, _value: bool) {}
+        fn set_enable_router_client(&self, enabled: bool) {
+            self.0.lock().unwrap().push(enabled);
+        }
+    }
+
+    /// Go `setPDClientDynamicOption`'s `TiDBEnableBatchQueryRegion` arm: the
+    /// variable (default OFF) is the PD client's `EnableRouterClient`, which
+    /// the cache rebuild applies at startup, so the client's own default (ON)
+    /// never survives a node that did not ask for it.
+    #[test]
+    fn batch_query_region_is_the_pd_router_client_option() {
+        let globals = GlobalSysvars::default();
+        let policy = Arc::new(RouterPolicy::default());
+        globals.set_pd_region_policy(policy.clone());
+        let name = tidb_vardef::tidb_vars::TIDB_ENABLE_BATCH_QUERY_REGION;
+        globals.set(name, "ON".to_owned()).unwrap();
+        globals.set(name, "OFF".to_owned()).unwrap();
+        assert_eq!(*policy.0.lock().unwrap(), vec![false, true, false]);
+    }
+
     /// Go maps the `tidb_tso_client_rpc_mode` enum onto a concurrency and
     /// sends THAT to the PD client (`pkg/domain/domain_sysvars.go:92-106`):
     /// `DEFAULT` 1, `PARALLEL` 2, `PARALLEL-FAST` 4. The variable's text

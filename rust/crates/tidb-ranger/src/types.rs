@@ -415,26 +415,6 @@ fn is_boundary_value(d: &Datum, unsigned_int_handle: bool, is_left_side: bool) -
 /// Go `EmptyRangeSize`: `unsafe.Sizeof(Range{})` -- three slice headers
 /// and two padded bools on 64-bit.
 pub const EMPTY_RANGE_SIZE: i64 = 80;
-/// Go `types.EmptyDatumSize`: `unsafe.Sizeof(Datum{})` on 64-bit.
-pub const EMPTY_DATUM_SIZE: i64 = 72;
-
-/// Go `Datum.MemUsage`: the struct size, byte payload and collation name.
-/// Payload length is used without emulating Go allocation capacity. Byte
-/// datums retain the `binary` collation in Go's `SetBytes` and string conversion.
-/// Interface-held payloads (decimals, times) are not counted, like Go's `d.x`.
-#[must_use]
-pub fn datum_mem_usage(datum: &Datum) -> i64 {
-    match datum {
-        Datum::Bytes(bytes) => {
-            EMPTY_DATUM_SIZE + bytes.len() as i64 + Collation::Binary.name().len() as i64
-        }
-        Datum::String(s) => {
-            EMPTY_DATUM_SIZE + s.bytes().len() as i64 + s.collation().name().len() as i64
-        }
-        _ => EMPTY_DATUM_SIZE,
-    }
-}
-
 impl Range {
     /// Go `Range.MemUsage`.
     #[must_use]
@@ -445,7 +425,7 @@ impl Range {
                 .low_val
                 .iter()
                 .chain(self.high_val.iter())
-                .map(datum_mem_usage)
+                .map(Datum::mem_usage)
                 .sum::<i64>()
     }
 }

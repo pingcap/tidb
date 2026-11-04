@@ -56,7 +56,7 @@ impl PackedTime {
     /// This constructor checks only the representable bit widths.  Calendar
     /// validity (for example, April 31) belongs to the temporal type checker,
     /// not this storage boundary.  The error carries the field name so a
-    /// future statement context can new_row_sample_collector strict/warn behavior without this
+    /// future statement context can choose strict/warn behavior without this
     /// type guessing at policy.
     pub fn from_parts(
         year: u16,

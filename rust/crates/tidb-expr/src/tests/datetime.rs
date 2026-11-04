@@ -1462,7 +1462,7 @@ fn an_etdatetime_argument_is_cast_before_the_signature_runs() {
     }
 }
 
-/// Go's `TIMESTAMP` signatures new_row_sample_collector their parser from the argument's static
+/// Go's `TIMESTAMP` signatures choose their parser from the argument's static
 /// type, even though both signatures first evaluate the argument as a string.
 /// The numeric and string parsers agree for packed integers, but differ when a
 /// date-only value carries a fractional suffix. Capture both outcomes here so

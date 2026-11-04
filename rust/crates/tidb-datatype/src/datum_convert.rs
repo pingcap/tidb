@@ -1424,7 +1424,7 @@ pub fn produce_string_with_type(
 }
 
 /// Go `ProduceStrWithSpecifiedTp` with statement diagnostics, without the
-/// charset conversion performed by general `Datum.ConvertTo`. Callers new_row_sample_collector
+/// charset conversion performed by general `Datum.ConvertTo`. Callers choose
 /// whether fixed binary targets should be padded after checking allocation limits.
 pub fn produce_str_with_specified_tp(
     value: Vec<u8>,

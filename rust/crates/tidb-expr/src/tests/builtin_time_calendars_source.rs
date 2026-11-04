@@ -892,6 +892,8 @@ fn tidb_parse_tso_logical_consecutive_tso_counters() {
 /// GO PORT of `builtin_time_test.go:3546 TestTiDBBoundedStaleness`.
 #[test]
 fn tidb_bounded_staleness_safets_windows_and_monotonicity() {
+    // Go's test injects the SafeTS (`injectSafeTS`) as the TSO of a UTC
+    // wall clock and evaluates in UTC.
     struct SafeTsContext {
         safe: Time,
     }
@@ -901,8 +903,27 @@ fn tidb_bounded_staleness_safets_windows_and_monotonicity() {
             None
         }
 
-        fn bounded_staleness_safe_time(&self) -> Option<Time> {
-            Some(self.safe)
+        fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+            tidb_datatype::SessionTimeZone::utc()
+        }
+
+        fn get_stmt_min_safe_ts(&self) -> u64 {
+            let c = self.safe.core_time();
+            let utc = chrono::NaiveDate::from_ymd_opt(
+                c.year() as i32,
+                c.month() as u32,
+                c.day() as u32,
+            )
+            .unwrap()
+            .and_hms_micro_opt(
+                c.hour() as u32,
+                c.minute() as u32,
+                c.second() as u32,
+                c.microsecond() as u32,
+            )
+            .unwrap()
+            .and_utc();
+            tikv_client::oracle::compose_timestamp(utc.timestamp_millis(), 0)
         }
     }
 

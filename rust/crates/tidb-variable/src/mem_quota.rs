@@ -869,9 +869,8 @@ impl WriteMemory {
         self.memory.check()
     }
 
-    fn consume(&self, bytes: usize) {
-        self.tracker
-            .consume(i64::try_from(bytes).unwrap_or(i64::MAX));
+    fn consume(&self, bytes: i64) {
+        self.tracker.consume(bytes);
     }
 }
 

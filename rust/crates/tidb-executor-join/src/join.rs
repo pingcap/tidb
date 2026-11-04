@@ -5896,7 +5896,7 @@ fn filter_index_inner_chunk(chunk: &mut Chunk, offsets: &[usize]) -> Result<(), 
 pub fn row_bytes(row: &[Datum]) -> i64 {
     let mut bytes = i64::try_from(size_of::<Vec<Datum>>()).unwrap_or(i64::MAX);
     for datum in row {
-        bytes += i64::try_from(datum.estimated_mem_usage()).unwrap_or(i64::MAX);
+        bytes += datum.mem_usage();
     }
     bytes
 }

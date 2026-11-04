@@ -19,9 +19,7 @@
 //! The constant terms are Go's `unsafe.Sizeof` of the corresponding struct
 //! on 64-bit, the same convention `FieldType::memory_usage` follows, so a
 //! cached plan is charged what Go charges it rather than what this port's
-//! own layouts happen to weigh. One named departure: a `Datum` payload goes
-//! through `Datum::estimated_mem_usage` (see its own note on Go's
-//! `MemUsage`).
+//! own layouts happen to weigh.
 
 use tidb_size::{SIZE_OF_POINTER, SIZE_OF_SLICE};
 
@@ -46,8 +44,6 @@ pub const GO_EMPTY_LOCAL_COLUMN_POOL_SIZE: i64 = 40;
 /// Go `onceSize` (`builtin.go:1081`): `newBaseBuiltinFunc` always allocates
 /// `childrenVectorizedOnce`.
 pub const GO_ONCE_SIZE: i64 = 12;
-/// Go `types.EmptyDatumSize` (`datum.go:82`).
-pub const GO_EMPTY_DATUM_SIZE: i64 = 72;
 /// Go `emptySchemaSize` (`schema.go:280`): three slice headers.
 pub const GO_EMPTY_SCHEMA_SIZE: i64 = 72;
 
@@ -110,7 +106,7 @@ impl CorrelatedColumn {
             + SIZE_OF_POINTER
             + self.data.as_ref().map_or(0, |data| {
                 data.read()
-                    .map_or(0, |value| value.estimated_mem_usage() as i64)
+                    .map_or(0, |value| value.mem_usage())
             })
     }
 }
@@ -120,7 +116,7 @@ impl Constant {
     #[must_use]
     pub fn memory_usage(&self) -> i64 {
         GO_EMPTY_CONSTANT_SIZE
-            + self.value.estimated_mem_usage() as i64
+            + self.value.mem_usage()
             + self.hashcode_capacity() as i64
             + self
                 .ret_type

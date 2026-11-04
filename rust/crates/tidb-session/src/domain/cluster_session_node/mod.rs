@@ -1880,7 +1880,7 @@ impl<'s> ClusterServerSession<'s> {
         }
         // Plan-cache validation must see the current schema before the read
         // policy is declared. Rebuilding only inside the statement lifecycle
-        // would let a stale row-handle plan new_row_sample_collector MaxTS and then fall back to
+        // would let a stale row-handle plan choose MaxTS and then fall back to
         // a newly rebuilt, potentially multi-read plan.
         self.rebuild_catalog_if_stale();
         let resource_group = match effective {

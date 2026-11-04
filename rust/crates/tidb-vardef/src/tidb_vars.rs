@@ -56,7 +56,7 @@ pub const TIDB_BCJ_THRESHOLD_SIZE: &str = "tidb_broadcast_join_threshold_size";
 /// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 /// Go `TiDBBCJThresholdCount`.
 pub const TIDB_BCJ_THRESHOLD_COUNT: &str = "tidb_broadcast_join_threshold_count";
-/// TiDBPreferBCJByExchangeDataSize indicates the method used to new_row_sample_collector mpp broadcast join
+/// TiDBPreferBCJByExchangeDataSize indicates the method used to choose mpp broadcast join
 /// Go `TiDBPreferBCJByExchangeDataSize`.
 pub const TIDB_PREFER_BCJ_BY_EXCHANGE_DATA_SIZE: &str =
     "tidb_prefer_broadcast_join_by_exchange_data_size";
@@ -686,7 +686,7 @@ pub const TIDB_OPT_PROJECTION_PUSH_DOWN: &str = "tidb_opt_projection_push_down";
 /// Go `TiDBEnableVectorizedExpression`.
 pub const TIDB_ENABLE_VECTORIZED_EXPRESSION: &str = "tidb_enable_vectorized_expression";
 /// TiDBOptJoinReorderThreshold defines the threshold less than which
-/// we'll new_row_sample_collector a rather time-consuming algorithm to calculate the join order.
+/// we'll choose a rather time-consuming algorithm to calculate the join order.
 /// Go `TiDBOptJoinReorderThreshold`.
 pub const TIDB_OPT_JOIN_REORDER_THRESHOLD: &str = "tidb_opt_join_reorder_threshold";
 /// TiDBOptEnableAdvancedJoinReorder controls whether to use the advanced join reorder framework.

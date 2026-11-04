@@ -96,6 +96,9 @@ pub trait PdRegionPolicy: std::fmt::Debug + Send + Sync {
     /// (`tidb_low_resolution_tso_update_interval`): how often the store's
     /// oracle refreshes its low-resolution timestamp.
     fn set_low_resolution_tso_update_interval(&self, _interval: std::time::Duration) {}
+    /// Applies Go `opt.EnableRouterClient` (`tidb_enable_batch_query_region`)
+    /// to the same process PD client.
+    fn set_enable_router_client(&self, _enabled: bool) {}
 }
 
 /// Go `variable.SetGlobalResourceControl`: registered by the domain

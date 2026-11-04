@@ -185,7 +185,7 @@ fn test_apply_exponential_backoff_preserves_go_math_bounds() {
 
 #[test]
 fn test_apply_exponential_backoff_preserves_go_signed_zero_bounds() {
-    // Go's math.Min/math.Max new_row_sample_collector a deterministic zero sign.  Keep these
+    // Go's math.Min/math.Max choose a deterministic zero sign.  Keep these
     // vectors at the public API boundary so a Rust primitive min/max shortcut
     // cannot silently change the planner contract.
     let negative_zero = apply_exponential_backoff(&[-0.0], -0.0, 0.0);

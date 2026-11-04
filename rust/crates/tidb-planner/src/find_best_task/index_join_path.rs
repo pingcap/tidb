@@ -159,7 +159,7 @@ pub(crate) fn index_join_path_build(
         index_join_path_remove_useless_eq_in(&mut tmp, idx_cols, not_key_eq_and_in);
     let matched_key_cnt = tmp.cur_possible_used_keys.len();
     // "If no join key is matched while join keys actually are not empty. We
-    // don't new_row_sample_collector index join for now."
+    // don't choose index join for now."
     if matched_key_cnt == 0 && !info.inner_join_keys.is_empty() {
         return Ok(IndexJoinPathOutcome::NotApplicable);
     }
@@ -602,7 +602,7 @@ fn index_join_path_build_tmp_range(
 fn append_tail_template_range(mut ranges: Ranges, range_max_size: i64) -> (Ranges, bool) {
     if range_max_size > 0
         && tidb_ranger::types::ranges_mem_usage(&ranges)
-            + (tidb_ranger::types::EMPTY_DATUM_SIZE * 2 + 16) * ranges.len() as i64
+            + (tidb_datatype::EMPTY_DATUM_SIZE * 2 + 16) * ranges.len() as i64
             > range_max_size
     {
         return (ranges, true);

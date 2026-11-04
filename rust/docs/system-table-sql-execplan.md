@@ -48,7 +48,8 @@ raw rows. Go's order (`bootstrapSessionImpl`):
 
 1. `initGlobalVarFromSystemDB`: system time zone and new-collation flag from
    `mysql.tidb`, through a session over a temporary system-DB-only domain
-   (Rust: `load_startup_variables_from_cluster`, raw).
+   (Rust: `tidb-domain-core/src/real_tikv_privileges.rs`
+   `load_system_tz_from_cluster` and the bootstrap-state reader, raw).
 2. The domain, its session pools, `dom.Start`.
 3. `LoadPrivilegeLoop(ses[3])`, `LoadSysVarCacheLoop(ses[4])`,
    `InitBindingHandle` (after the sysvar cache), then the statistics loops
@@ -80,14 +81,13 @@ The DDL readers share one layering mismatch. Go `systable.Manager` (and
 the job scheduler, `SwitchMDL`) run their SELECTs on `pkg/ddl/session.Pool`,
 the lowest DDL package. In Rust that pool is the `DdlSessionPool` trait in
 `tidb-ddl-build`, above `tidb-ddl-systable` and `tidb-ddl-jobsubmit`, so the
-manager cannot reach it and reads a `MetaSnapshot` instead; the port of Go's
-`pkg/ddl/session` (`tidb-ddl-session`) has no dependents. The DDL readers'
-unit starts by making `tidb-ddl-session` the pool those crates hold.
+manager cannot reach it and reads a `MetaSnapshot` instead. The port of Go's
+`pkg/ddl/session` (`tidb-ddl-session`) is held only by the node's
+`DdlSessionPool::sess_pool`; the DDL readers' unit starts by making it the
+pool `tidb-ddl-systable` and `tidb-ddl-jobsubmit` hold.
 
 ## Progress
 
-- [x] (2026-11-04) Global-stats merge on a statistics session (async: `prepare` and the IO worker's statements; blocking: `LoadTablePartitionStats`).
-- [x] (2026-11-04) `ReadColumnDistributionStats` on a session; `ClusterStatsLoader` and the test-only raw stats/delta/history/analyze-job row planners deleted.
 - [ ] DDL readers on `tidb-ddl-session`'s pool.
 - [ ] Startup loaders after the domain, each on its session.
 - [ ] The bootstrap on a session (removes the DDL owner's no-session fallbacks).

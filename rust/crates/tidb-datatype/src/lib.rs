@@ -139,7 +139,7 @@ pub use datum::{
     clone_row, datums_contain_null, datums_to_string, datums_to_string_no_error,
     datums_to_string_no_error_smart, estimated_mem_usage, is_printable, sort_datums,
     unwrap_from_single_quotes, wrap_in_single_quotes, Datum, DatumKind, DatumStringError,
-    DatumValueError, StringDatum,
+    DatumValueError, StringDatum, EMPTY_DATUM_SIZE,
 };
 pub use datum_convert::{
     change_reverse_result_by_bound, get_max_value, get_min_value,

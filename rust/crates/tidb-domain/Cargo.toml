@@ -29,7 +29,7 @@ tidb-traceevent = { path = "../tidb-traceevent" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tikv-client.workspace = true
-reqwest = { workspace = true, features = ["blocking"] }
+reqwest = { workspace = true, features = ["blocking", "json"] }
 tidb-fixcontrol = { path = "../tidb-fixcontrol" }
 prometheus = { version = "0.14", default-features = false }
 toml.workspace = true

@@ -34,7 +34,7 @@
 //!   `pkg/executor/show.go`'s `case "CURRENT_TIMESTAMP"` prints it bare, with
 //!   the column's own fsp appended when it has one. The fsp the default is
 //!   WRITTEN with must already equal the column's, which is why the printer
-//!   never has to new_row_sample_collector between them -- see [`func_call_default`].
+//!   never has to choose between them -- see [`func_call_default`].
 //! * `CURRENT_DATE` is also a marker with `DefaultIsExpr` FALSE, but SHOW
 //!   CREATE parenthesizes it while SHOW COLUMNS reports the bare marker.
 //! * every ordinary computed default sets `DefaultIsExpr` TRUE, and the same

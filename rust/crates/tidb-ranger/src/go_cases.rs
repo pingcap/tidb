@@ -2727,9 +2727,8 @@ fn prefix_index_null_ranges_match_go() {
 /// adds its byte payloads and collation-name lengths.
 #[test]
 fn range_mem_usage_matches_go() {
-    use super::types::{
-        datum_mem_usage, ranges_mem_usage, Range, EMPTY_DATUM_SIZE, EMPTY_RANGE_SIZE,
-    };
+    use super::types::{ranges_mem_usage, Range, EMPTY_RANGE_SIZE};
+    use tidb_datatype::EMPTY_DATUM_SIZE;
     let r1 = Range {
         low_val: vec![Datum::Int(0)],
         high_val: vec![Datum::Int(1)],
@@ -2754,7 +2753,7 @@ fn range_mem_usage_matches_go() {
     };
     let mem2 = mem1 + 5 + "utf8mb4_bin".len() as i64 + 5 + "utf8mb4_bin".len() as i64;
     assert_eq!(r2.mem_usage(), mem2);
-    assert_eq!(datum_mem_usage(&Datum::Int(7)), EMPTY_DATUM_SIZE);
+    assert_eq!(Datum::Int(7).mem_usage(), EMPTY_DATUM_SIZE);
     let ranges = vec![r1, r2];
     assert_eq!(ranges_mem_usage(&ranges), mem1 + mem2);
 }

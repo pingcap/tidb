@@ -764,6 +764,9 @@ impl tidb_variable::vars::PdRegionPolicy for ProcessPdRegionPolicy {
             .set_low_resolution_timestamp_update_interval(interval)
             .expect("validated low-resolution TSO update interval");
     }
+    fn set_enable_router_client(&self, enabled: bool) {
+        self.0.set_enable_router_client(enabled);
+    }
 }
 
 /// PD's `ResourceManagerClient` through the store's PD client, for the

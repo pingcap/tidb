@@ -234,7 +234,7 @@ fn test_duration_convert_to_year_from_now() {
         .with_timezone(&Utc);
     let duration = MySqlDuration::new(200, 0, 0, 0, 0).unwrap();
     // Go returns the clamped value beside ErrWarnDataOutOfRange. Keep both
-    // halves so the statement layer can new_row_sample_collector error, warning, or ignore.
+    // halves so the statement layer can choose error, warning, or ignore.
     let converted = duration.convert_to_year_with_event(now, true).unwrap();
     assert_eq!(converted.value, 2155);
     assert_eq!(

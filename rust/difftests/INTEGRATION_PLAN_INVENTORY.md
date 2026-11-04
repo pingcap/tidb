@@ -32,6 +32,7 @@ the derived manifest only after the two prerequisite artifacts are current:
 cargo run --locked -p difftest --bin integration_plan_inventory -- --write
 ```
 
-This inventory proves neither plan output parity nor plan-digest parity. It is
-the complete input/result-artifact queue the future `tidb-planner` oracle must
-replay with TiDB session state, schema, statistics, and deterministic settings.
+This inventory proves neither plan output parity nor plan-digest parity, and
+no test replays it: it is the complete input/result-artifact queue a plan
+oracle would replay with TiDB session state, schema, statistics, and
+deterministic settings.

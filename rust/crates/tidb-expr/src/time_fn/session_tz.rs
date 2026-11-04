@@ -413,13 +413,20 @@ pub(super) fn tidb_parse_tso(vals: &[Datum], cols: &dyn Columns) -> Result<Datum
     if tso <= 0 {
         return Ok(Datum::Null);
     }
-    let physical_ms = tikv_client::oracle::extract_physical(tso as u64);
+    Ok(get_time_from_ts(tso as u64, cols)?.map_or(Datum::Null, Datum::Time))
+}
+
+/// Go `oracle.GetTimeFromTS(ts).In(timeZone)` as a full-precision DATETIME
+/// (`types.FromGoTime`): the TSO's physical milliseconds as the session
+/// zone's wall clock. `None` is an instant chrono cannot place.
+pub(super) fn get_time_from_ts(ts: u64, cols: &dyn Columns) -> Result<Option<Time>, EvalError> {
+    let physical_ms = tikv_client::oracle::extract_physical(ts);
     let secs = physical_ms.div_euclid(1000);
     let micros = (physical_ms.rem_euclid(1000) * 1000) as u32;
     let Some(local) = instant_to_local(secs, micros, &cols.time_zone()) else {
-        return Ok(Datum::Null);
+        return Ok(None);
     };
-    let time = Time::from_date_checked(
+    Time::from_date_checked(
         local.year(),
         local.month() as i32,
         local.day() as i32,
@@ -430,8 +437,8 @@ pub(super) fn tidb_parse_tso(vals: &[Datum], cols: &dyn Columns) -> Result<Datum
         TimeType::DateTime,
         6,
     )
-    .map_err(|_| EvalError::Unsupported("TSO datetime exceeds the native temporal domain"))?;
-    Ok(Datum::Time(time))
+    .map(Some)
+    .map_err(|_| EvalError::Unsupported("TSO datetime exceeds the native temporal domain"))
 }
 
 #[cfg(test)]

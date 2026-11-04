@@ -75,7 +75,7 @@ pub enum RowSizeStore {
 const PSEUDO_COL_SIZE: f64 = 8.0;
 const RECORD_ROW_KEY_LEN: f64 = 19.0;
 
-// Go's built-in min/max propagate NaN and new_row_sample_collector +0 for max(-0,+0), matching
+// Go's built-in min/max propagate NaN and choose +0 for max(-0,+0), matching
 // math.Min/math.Max at the boundaries used by this file.  Rust's f64 methods
 // intentionally have different NaN behavior, so keep these operations local.
 fn go_max(x: f64, y: f64) -> f64 {

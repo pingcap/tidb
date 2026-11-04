@@ -360,7 +360,7 @@ impl<T> GoSharedPointerSlice<T> {
     }
 
     /// Allocates a fresh outer slice and maps non-null pointees through the
-    /// source type's clone operation. Go clone methods new_row_sample_collector different nil
+    /// source type's clone operation. Go clone methods choose different nil
     /// policies, so callers must name it rather than inheriting Rust `Clone`.
     #[must_use]
     pub fn map_clone_with<U>(

@@ -282,7 +282,7 @@ impl<S: PdClient> TikvTxn<S> {
         }
         self.applied_kv_context = context;
     }
-    /// Sets the protocols the client may new_row_sample_collector for this transaction.
+    /// Sets the protocols the client may choose for this transaction.
     pub fn set_commit_protocol(&mut self, protocol: CommitProtocol) {
         let transaction = self.engine.transaction_mut().inner_mut();
         transaction.set_enable_async_commit(protocol.async_commit);

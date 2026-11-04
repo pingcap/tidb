@@ -571,7 +571,7 @@ fn random_uuid() -> String {
     )
 }
 
-/// Go `chooseBestIndexSet`. `None` when there is no set to new_row_sample_collector from.
+/// Go `chooseBestIndexSet`. `None` when there is no set to choose from.
 pub(crate) fn choose_best_index_set(
     query_set: &QuerySet,
     optimizer: &mut dyn Optimizer,

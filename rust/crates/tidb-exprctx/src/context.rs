@@ -20,7 +20,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tidb_datatype::{Datum, Time};
+use tidb_datatype::Datum;
 
 /// The transaction timestamp visible to one SQL session.
 ///
@@ -498,13 +498,12 @@ pub trait Columns {
         Err(EvalError::ParamIndexExceedParamCounts)
     }
 
-    /// Go `GetStmtMinSafeTime`'s statement-cached SafeTS converted to the
-    /// session timezone. A storage-backed statement overrides this seam;
-    /// contexts without a KV store leave it absent, so bounded staleness
-    /// falls back to the lower bound just as a zero SafeTS does for ordinary
-    /// post-epoch timestamps.
-    fn bounded_staleness_safe_time(&self) -> Option<Time> {
-        None
+    /// Go `GetStmtMinSafeTime`'s TSO: the stores' min SafeTS
+    /// (`store.GetMinSafeTS(txnScope)`), cached for the statement
+    /// (`StmtSafeTSCacheKey`) so every evaluation of it agrees. Zero is a
+    /// context with no store, as Go's nil store leaves it.
+    fn get_stmt_min_safe_ts(&self) -> u64 {
+        0
     }
 
     /// The statement's connection charset/collation used by implicit casts.

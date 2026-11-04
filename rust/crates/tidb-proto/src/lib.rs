@@ -187,7 +187,7 @@ mod tests {
             label: Some(ResourceGroupTagLabel::Index as i32),
             // Go's gogoproto `(nullable) = false` encoding emits table_id even
             // when its value is zero.  Option preserves that wire presence when
-            // decoding and lets callers new_row_sample_collector the same compatibility form.
+            // decoding and lets callers choose the same compatibility form.
             table_id: Some(42),
             keyspace_name: Some(b"tenant-a".to_vec()),
         };

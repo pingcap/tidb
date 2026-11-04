@@ -564,6 +564,39 @@ fn read_staleness_is_clamped_by_the_stores_min_safe_ts() {
     );
 }
 
+/// Go `GetStmtMinSafeTime`: `TIDB_BOUNDED_STALENESS` places its window at
+/// the stores' min SafeTS (`calAppropriateTime`), which the statement reads
+/// once (`StmtSafeTSCacheKey`) however often it evaluates the function.
+#[test]
+fn bounded_staleness_reads_the_stores_min_safe_ts_once_per_statement() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut session = Session::new();
+    session.run("SET time_zone = '+00:00'").unwrap();
+    let safe_ms = chrono::NaiveDate::from_ymd_opt(2020, 6, 7)
+        .unwrap()
+        .and_hms_milli_opt(8, 9, 10, 123)
+        .unwrap()
+        .and_utc()
+        .timestamp_millis();
+    let reads = std::sync::Arc::new(AtomicUsize::new(0));
+    let counted = std::sync::Arc::clone(&reads);
+    session.set_min_safe_ts_provider(std::sync::Arc::new(move |_| {
+        counted.fetch_add(1, Ordering::SeqCst);
+        tikv_client::oracle::compose_timestamp(safe_ms, 0)
+    }));
+    let window = "TIDB_BOUNDED_STALENESS('2015-09-21 09:53:04', '2025-01-02 10:00:00')";
+    assert_eq!(
+        crate::tests_support::row_text(session.run(&format!("SELECT {window}, {window}"))),
+        vec![vec!["2020-06-07 08:09:10.123", "2020-06-07 08:09:10.123"]]
+    );
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    session.set_min_safe_ts_provider(std::sync::Arc::new(|_| 0));
+    assert_eq!(
+        crate::tests_support::row_text(session.run(&format!("SELECT {window}"))),
+        vec![vec!["2015-09-21 09:53:04.000"]]
+    );
+}
+
 /// `AS OF TIMESTAMP` on a table reference reads the store's history --
 /// the corpus recipe (`executor/stale_txn`, `TestAsOfTimestampSupportTSO`):
 /// the last commit's TSO comes out of `@@tidb_last_txn_info`, reading AS OF

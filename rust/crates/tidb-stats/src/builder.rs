@@ -829,14 +829,7 @@ fn build_hist(
         }
         processed_count += 1;
         let sample = &samples[i as usize];
-        memory.account_temporary(
-            i64::try_from(
-                histogram.buckets[bucket_idx]
-                    .upper_bound
-                    .estimated_mem_usage(),
-            )
-            .unwrap_or(i64::MAX),
-        );
+        memory.account_temporary(histogram.buckets[bucket_idx].upper_bound.mem_usage());
         let total_count = processed_count as f64 * sample_factor;
         if histogram.buckets[bucket_idx]
             .upper_bound

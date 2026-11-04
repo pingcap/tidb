@@ -1,64 +1,41 @@
 # tidb-rs
 
-Source-first Rust rewrite of TiDB's SQL layer. The complete strategy and
-phasing are defined by
+Source-first Rust rewrite of TiDB's SQL layer. The strategy is defined by
 [`docs/design/2026-07-11-tidb-rust-rewrite.md`](../docs/design/2026-07-11-tidb-rust-rewrite.md).
 
-This workspace builds a standalone SQL node. It never links Go and Rust in one
-process: no cgo, no FFI migration seam. Cross-language compatibility is proved
-through TiDB's serialized protocols and the differential rings.
+This workspace builds a standalone SQL node (`crates/tidb-server`). It never
+links Go and Rust in one process: no cgo, no FFI migration seam.
+Cross-language compatibility is proved through TiDB's serialized protocols and
+the differential tests.
 
-## Start here
+## Rules
 
-The Go implementation is authoritative. Work starts from one complete Go
-package plus its original tests/support; differential output verifies the port
-but does not replace reading or translating the source.
+The Go implementation under `pkg/` is authoritative. A port starts from one
+complete Go package plus its original tests and support files; differential
+output verifies the port but does not replace reading the source.
+Unsupported behavior fails before mutation; it is never approximated with a
+locally convenient rule to make a golden pass.
 
-`Cargo.lock` is checked as part of this application workspace. Validation uses
-`--locked` for reproducibility.
+`Cargo.lock` is checked in. Validation uses `--locked`.
 
-## Workspace
+## Layout
 
-| Path | Ownership | Go source boundary |
-| --- | --- | --- |
-| `crates/tidb-lexer` | scanning and token classes | `pkg/parser/lexer.go`, parser token tables |
-| `crates/tidb-ast` | typed AST and canonical restore | `pkg/parser/ast/**` |
-| `crates/tidb-parser` | recursive-descent grammar | `pkg/parser/**_parser.go` |
-| `crates/tidb-hack` | zero-copy byte views and allocation-aware hash maps | `pkg/util/hack` |
-| `crates/tidb-util` | complete dependency-leaf utility packages | `pkg/util/{backoff,disjointset,zeropool,encrypt,checksum,fastrand,intest,sqlescape,mathutil,naming,slice,size,israce,nocopy,tikvutil}`, followed by whole utility packages only |
-| `crates/tidb-datatype` | SQL scalar representation, charset, and collation | `pkg/parser/charset`, `pkg/util/collate`, `pkg/types/**`, later extracted TiKV query datatypes |
-| `crates/tidb-codec` | byte-compatible comparable scalar and datum-key encoding | dependency-closed paths in `pkg/util/codec/**` |
-| `crates/tidb-txnkv` | complete KV contracts plus real PD/TiKV transaction runtime | `pkg/kv/**`, `pkg/util/{tiflash,trxevents}`, and the required client-go transaction protocols |
-| `crates/tidb-tablecodec` | table row/index formats above codecs and canonical KV handles | `pkg/tablecodec` |
-| `crates/tidb-expr` | expression construction/evaluation | `pkg/expression/**` |
-| `crates/tidb-exec` | seed session/catalog executor | `pkg/session/**`, `pkg/executor/**` |
-| `difftests` | differential infrastructure and parser/lexer comparisons | Go helpers, checked corpora and shared `all` test target |
-| `difftests/result-tests` | result-ring tests | expression, query, and table result parity |
-| `difftests/transaction-tests/fixtures` | shared Go-generated transaction/codec fixtures | Tests run in the owning `tidb-txnkv` and `tidb-distsql` crates |
+| Path | Contents |
+| --- | --- |
+| `crates/tidb-*` | One crate per Go package, named after its path (`pkg/planner/core/operator/physicalop` is `tidb-planner-core-operator-physicalop`); a Go package may span several crates when that gives a cleaner dependency graph |
+| `third_party/tikv-client-rs` | The client-go counterpart the store and transaction crates depend on, as Go TiDB depends on `github.com/tikv/client-go/v2` |
+| `difftests` | Differential infrastructure: lexer/parser rings, Go helpers (`gorun`, `goeval`, `godump`), checked corpora, result and transaction fixtures |
+| `scripts` | Real-TiKV runners, benchmarks and generators (`scripts/README.md`) |
+| `docs/parity/current-audit/structural-findings.{md,json}` | The unresolved structural mismatches with Go; a fixed finding is removed |
+| `docs/system-table-sql-execplan.md` | The active ExecPlan |
 
-The seed executor and evaluator are migration scaffolding, not a parity claim.
-`tidb-txnkv` owns the Rust `pkg/kv` contracts and the existing PD/TiKV region,
-RPC, MVCC, lock, retry, and optimistic-commit runtime; it is migrating onto
-the vendored client-go transcreation in `third_party/tikv-client-rs`, with
-`driver/tikv_mem_buffer` and
-`driver/tikv_transaction` already delegating the transaction buffer and
-two-phase commit the way Go's `pkg/store/driver` delegates to client-go. `tidb-codec` provides
-comparable key encoding, and `tidb-tablecodec` combines those foundations
-without redefining handle ownership. The dependency-leaf table-key framing
-remains in `tidb-codec` because transaction diagnostics also decode those keys.
-The package is accepted only after its complete source, tests, benchmarks,
-support files, direct consumers, and live TiKV checks pass together.
-Unsupported behavior must fail before mutation. It must not be approximated
-with a locally convenient rule just to make a golden pass.
+## Validation
 
-## Unit of work
+```sh
+cargo build --locked -p tidb-server
+cargo nextest run -p <crate>
+cargo test -p tidb-server --lib integration_corpus_matches_recordings -- --ignored
+```
 
-A dependency-closed batch is the unit of work. It should contain as many related
-Go packages as can move coherently. Every included package is still indivisible:
-all implementation, original tests, and support artifacts move together, even
-when the package maps to several Rust crates.
-
-## Development loop
-
-Use the single three-step loop in the design document. There is no separate
-Rust workflow or tracking mechanism.
+The last command replays the integration corpus against its recordings; it is
+a milestone check, not a per-commit one.

@@ -1320,7 +1320,7 @@ fn bit_xor_parameter_count_boundaries() {
 // ---------------------------------------------------------------------------
 
 /// Go `pkg/expression/builtin_op_vec_test.go:166 TestBuiltinUnaryMinusIntSig`
-/// over TYPED COLUMNS: signedness flags new_row_sample_collector the wrap rule, MinInt64 (and
+/// over TYPED COLUMNS: signedness flags choose the wrap rule, MinInt64 (and
 /// the unsigned 2^63+1) OVERFLOW because a column keeps the Int signature
 /// (`c.handleIntOverflow` never sees a Constant), and NULL propagates
 /// untouched.

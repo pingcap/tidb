@@ -21,7 +21,7 @@ use std::collections::HashMap;
 ///
 /// Go's `string([]byte)` preserves arbitrary bytes. Using Rust `String` at the
 /// packet boundary used to replace malformed UTF-8 with U+FFFD and could make
-/// two distinct identities compare equal. Text-only consumers must now new_row_sample_collector
+/// two distinct identities compare equal. Text-only consumers must now choose
 /// explicitly between strict UTF-8 and a lossy diagnostic rendering.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct WireString(Vec<u8>);

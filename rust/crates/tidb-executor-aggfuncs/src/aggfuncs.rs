@@ -2248,8 +2248,7 @@ impl Partial {
         if !retains {
             return 0;
         }
-        let payload = value.map_or(0, tidb_datatype::Datum::estimated_mem_usage);
-        i64::try_from(payload + size_of::<Datum>()).unwrap_or(i64::MAX)
+        value.map_or(0, tidb_datatype::Datum::estimated_mem_usage) + tidb_datatype::EMPTY_DATUM_SIZE
     }
 
     /// [`Partial::finish`] for a state that is about to be dropped: the

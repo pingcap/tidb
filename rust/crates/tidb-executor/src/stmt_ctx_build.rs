@@ -1602,6 +1602,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             mdl_related_table: self.mdl_related_table_recorder(),
             process_privilege: self.has_process_privilege(),
             sql_digest_text_retriever: Some(self.sql_digest_text_retrieval()),
+            min_safe_ts_provider: self.min_safe_ts_provider(),
             locked_tables: self.locked_tables(),
             ddl_sql_mode: sql_mode.0,
             regions: self.region_store(),
@@ -2570,6 +2571,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// [`Self::sql_digest_text_retriever`] as `TIDB_DECODE_SQL_DIGESTS` runs
     /// it from the statement context (Go `RetrieveGlobal`).
     fn sql_digest_text_retrieval(&self) -> crate::SqlDigestTextRetrieval;
+    /// Go `kv.Storage.GetMinSafeTS` of the session's store, which the
+    /// statement's `GetStmtMinSafeTime` reads; `None` without a store.
+    fn min_safe_ts_provider(&self) -> Option<tidb_sessionctx::MinSafeTsProvider>;
     /// Go `privilege.Manager.RequestVerification(activeRoles, ...)` for the
     /// planner: whether this session's account, with its active roles, holds
     /// a privilege. `None` is a session that enforces no privileges.

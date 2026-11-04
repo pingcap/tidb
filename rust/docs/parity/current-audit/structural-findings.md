@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**39 unresolved: 11 open, 28 partial.**
+**36 unresolved: 11 open, 25 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -47,13 +47,11 @@ unresolved until it is restated against its Go owner or closed.
 | X02 | open | No `EMBED_TEXT` runtime or inference provider | `pkg/expression` (embedding), `pkg/domain` |
 | Q01 | open | No Cascades memo exploration/implementation in the production optimizer | `pkg/planner/cascades` |
 | T01 | partial | Writes during non-public, temporary and global-index transitions | `pkg/table/tables` |
-| S04 | partial | `tidb_read_staleness` reads at Go's `CalAppropriateTime` against the stores' min SafeTS, but `TIDB_BOUNDED_STALENESS` still evaluates without it: no statement's evaluation context supplies `GetStmtMinSafeTime` (`Columns::bounded_staleness_safe_time` has no production override), so it always falls back to its lower bound | `pkg/sessiontxn/staleread` |
 
 ### Privileges, wire and administration
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| N03 | partial | Configuration consumers: TSO/router options, RPC concurrency, stream readiness/prewarm, idle recovery | `pkg/config`, client-go |
 | N05 | open | The status port serves only `/status`, `/metrics`, `/settings`, `/config`, `/schema` and `/schema_storage` (`tidb-server/src/http_status.rs`); Go's other routes are absent: `/info`, `/info/all`, `/labels`, `/ddl/history`, `/ddl/owner/resign`, `/mvcc/*`, `/regions/*`, `/tables/*`, `/db-table/{id}`, `/stats/dump/*`, `/plan_replayer/dump`, `/optimize_trace/dump`, `/extract_task/dump`, `/dxf/*`, `/ingest/*`, `/tiflash/replica`, `/upgrade/*`, `/txn-gc-states`, `/debug/*`, test hooks | `pkg/server/http_status.go`, `pkg/server/handler` |
 
 ### Domain and process services
@@ -74,15 +72,14 @@ unresolved until it is restated against its Go owner or closed.
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
 | I01 | partial | Every table Go's `buildMemTable` serves has a provider here (CLUSTER_* through their local sources) except the TiFlash system tables: TIFLASH_TABLES and TIFLASH_SEGMENTS answer no rows and TIFLASH_INDEXES has none, where Go's `tiflashSystemTableRetriever` queries each TiFlash store's system tables over HTTP | `pkg/executor/infoschema_reader.go` |
-| I03 | partial | The memory-table rows a retriever builds charge no memory tracker, where Go's `memtableRetriever` accounts them to the reader's `memTracker` in batches of 1024 (`recordMemoryConsume`) | `pkg/executor/infoschema_reader.go` (`memtableRetriever`) |
+| I05 | partial | SLOW_QUERY and CLUSTER_SLOW_QUERY are parsed in one serial pass over the selected files (`retrieve_slow_query_rows`, `tidb-executor/src/slow_query.rs`) that charges no memory tracker and reports no runtime stats, where Go's `slowQueryRetriever` reads line batches through its worker task list (`parseSlowLog` / `dataForSlowLog`), charges each batch's log size and every parsed row's `EstimatedMemUsage` to the reader's `memTracker`, and reports `slowQueryRuntimeStats` | `pkg/executor/slow_query.go` (`slowQueryRetriever`) |
+| I06 | partial | A CLUSTER_* memory-table read (a `TableReader` over a `cop[tidb]` MemTableScan) reports no memory (`N/A`), where Go's `TableReaderExecutor` charges what its coprocessor result returns to its `memTracker` (326 Bytes for a CLUSTER_MEMORY_USAGE read) | `pkg/executor/table_reader.go` (`TableReaderExecutor.memTracker`) |
 
 ### Transport, PD and MPP
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| T02 | partial | Two region-cache lifecycles (TiDB and the native client): coprocessor RequestSelector, store-health recovery, batch-scan follower reads | client-go `internal/locate` |
-| P03 | partial | PD router transport; primaryless member publication; readiness/prewarm; idle recovery | PD client `pkg/client` |
-| P06 | partial | TSO dispatcher options and stream construction; RPC concurrency | PD client `tso_dispatcher.go` |
+| P03 | partial | PD's `serviceDiscovery` (`servicediscovery/service_discovery.go`) is not one owner here: member updates and the leader connection live in `pd/cluster.rs` / `pd/retry.rs`, with no per-member `serviceClient`, no `apiCandidateNodes` / `GetServiceClientByKind` (how Go picks a follower for a follower-handled region API) and no `checkServiceModeChanged` | PD client `servicediscovery` |
 | M01 | open | The MPP coordinator lowers a hand-built single-fragment scan DAG and refuses every pushed Selection, TopN and aggregation, where Go builds the fragment/task graph from the physical plan (including disaggregated compute placement) | `pkg/planner/core` (MPP fragments), `pkg/executor/mpp_gather.go`, `pkg/store/copr/mpp.go` |
 | M04 | partial | MPP coordinator registration/reporting; exact-epoch RetryRegions invalidation | `pkg/executor/internal/mpp` |
 

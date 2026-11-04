@@ -2,9 +2,9 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 39,
+    "unresolved": 36,
     "open": 11,
-    "partial": 28
+    "partial": 25
   },
   "findings": [
     {
@@ -13,13 +13,6 @@
       "group": "Privilege and account policy owners",
       "finding": "A statement's privilege check plans it a second, logical-only time to collect `visitInfo` (`query_visit_info` / `dml_visit_info`, from `Session` in `identity.rs`), where Go's `optimize` checks the `visitInfo` of the one `PlanBuilder` that builds the statement before optimizing it (`CheckPrivilege`)",
       "go_owner": "`pkg/planner/core` (`visitInfo`, `CheckPrivilege`)"
-    },
-    {
-      "id": "N03",
-      "status": "partial",
-      "group": "Wire and server admission/configuration",
-      "finding": "Configuration consumers: TSO/router options, RPC concurrency, stream readiness/prewarm, idle recovery",
-      "go_owner": "`pkg/config`, client-go"
     },
     {
       "id": "D01",
@@ -95,25 +88,11 @@
       "go_owner": "`pkg/executor/infoschema_reader.go`"
     },
     {
-      "id": "I03",
-      "status": "partial",
-      "group": "Runtime information-schema providers",
-      "finding": "The memory-table rows a retriever builds charge no memory tracker, where Go's `memtableRetriever` accounts them to the reader's `memTracker` in batches of 1024 (`recordMemoryConsume`)",
-      "go_owner": "`pkg/executor/infoschema_reader.go` (`memtableRetriever`)"
-    },
-    {
       "id": "T01",
       "status": "partial",
       "group": "Transaction and routing ownership",
       "finding": "Writes during non-public, temporary and global-index transitions",
       "go_owner": "`pkg/table/tables`"
-    },
-    {
-      "id": "T02",
-      "status": "partial",
-      "group": "Transaction and routing ownership",
-      "finding": "Two region-cache lifecycles (TiDB and the native client): coprocessor RequestSelector, store-health recovery, batch-scan follower reads",
-      "go_owner": "client-go `internal/locate`"
     },
     {
       "id": "O02",
@@ -197,15 +176,8 @@
       "id": "P03",
       "status": "partial",
       "group": "Protocol and PD owners",
-      "finding": "PD router transport; primaryless member publication; readiness/prewarm; idle recovery",
-      "go_owner": "PD client `pkg/client`"
-    },
-    {
-      "id": "P06",
-      "status": "partial",
-      "group": "Protocol and PD owners",
-      "finding": "TSO dispatcher options and stream construction; RPC concurrency",
-      "go_owner": "PD client `tso_dispatcher.go`"
+      "finding": "PD's `serviceDiscovery` (`servicediscovery/service_discovery.go`) is not one owner here: member updates and the leader connection live in `pd/cluster.rs` / `pd/retry.rs`, with no per-member `serviceClient`, no `apiCandidateNodes` / `GetServiceClientByKind` (how Go picks a follower for a follower-handled region API) and no `checkServiceModeChanged`",
+      "go_owner": "PD client `servicediscovery`"
     },
     {
       "id": "Q01",
@@ -243,11 +215,18 @@
       "go_owner": "`pkg/infoschema`"
     },
     {
-      "id": "S04",
+      "id": "I05",
       "status": "partial",
-      "group": "Expanded subsystem ownership review",
-      "finding": "`tidb_read_staleness` reads at Go's `CalAppropriateTime` against the stores' min SafeTS, but `TIDB_BOUNDED_STALENESS` still evaluates without it: no statement's evaluation context supplies `GetStmtMinSafeTime` (`Columns::bounded_staleness_safe_time` has no production override), so it always falls back to its lower bound",
-      "go_owner": "`pkg/sessiontxn/staleread`"
+      "group": "Runtime information-schema providers",
+      "finding": "SLOW_QUERY and CLUSTER_SLOW_QUERY are parsed in one serial pass over the selected files (`retrieve_slow_query_rows`, `tidb-executor/src/slow_query.rs`) that charges no memory tracker and reports no runtime stats, where Go's `slowQueryRetriever` reads line batches through its worker task list (`parseSlowLog` / `dataForSlowLog`), charges each batch's log size and every parsed row's `EstimatedMemUsage` to the reader's `memTracker`, and reports `slowQueryRuntimeStats`",
+      "go_owner": "`pkg/executor/slow_query.go` (`slowQueryRetriever`)"
+    },
+    {
+      "id": "I06",
+      "status": "partial",
+      "group": "Runtime information-schema providers",
+      "finding": "A CLUSTER_* memory-table read (a `TableReader` over a `cop[tidb]` MemTableScan) reports no memory (`N/A`), where Go's `TableReaderExecutor` charges what its coprocessor result returns to its `memTracker` (326 Bytes for a CLUSTER_MEMORY_USAGE read)",
+      "go_owner": "`pkg/executor/table_reader.go` (`TableReaderExecutor.memTracker`)"
     },
     {
       "id": "E07",

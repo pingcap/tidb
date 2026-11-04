@@ -122,13 +122,11 @@ fn current_tso(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     Ok(Datum::Int(cols.current_tso()))
 }
 
-/// Go `builtinTiDBBoundedStalenessSig.evalTime`: new_row_sample_collector a read timestamp from
-/// the requested inclusive window and the statement's SafeTS. The storage
-/// layer publishes the already timezone-adjusted SafeTS through
-/// `Columns::bounded_staleness_safe_time`; a context without storage has no
-/// value and therefore uses the lower bound (the same outcome as a zero
-/// SafeTS for normal post-epoch datetimes). The result is always a DATETIME
-/// with millisecond precision, matching `setDecimalAndFlenForDatetime(3)`.
+/// Go `builtinTiDBBoundedStalenessSig.evalTime`: a read timestamp from the
+/// requested inclusive window and the statement's min SafeTS
+/// (`GetStmtMinSafeTime`, zero without a store), placed by
+/// `calAppropriateTime`. The result is always a DATETIME with millisecond
+/// precision, matching `setDecimalAndFlenForDatetime(3)`.
 fn tidb_bounded_staleness(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     let [left, right] = vals else {
         return Err(EvalError::WrongParameterCount("tidb_bounded_staleness"));
@@ -156,17 +154,31 @@ fn tidb_bounded_staleness(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, E
     if left.compare(*right).is_gt() {
         return Ok(Datum::Null);
     }
-    let mut result = match cols.bounded_staleness_safe_time() {
-        Some(safe) if safe.compare(*left).is_lt() => *left,
-        Some(safe) if safe.compare(*right).is_gt() => *right,
-        Some(safe) => safe,
-        None => *left,
+    let Some(min_safe_time) = session_tz::get_time_from_ts(cols.get_stmt_min_safe_ts(), cols)? else {
+        return Ok(Datum::Null);
     };
+    let mut result = cal_appropriate_time(*left, *right, min_safe_time);
     result.set_kind(tidb_datatype::TimeType::DateTime);
     result
         .set_fsp(3)
         .map_err(|_| EvalError::Unsupported("invalid bounded-staleness result precision"))?;
     Ok(Datum::Time(result))
+}
+
+/// Go `calAppropriateTime`: the SafeTS when it lies in `[min_time,
+/// max_time]`, otherwise the bound it passed.
+fn cal_appropriate_time(
+    min_time: tidb_datatype::Time,
+    max_time: tidb_datatype::Time,
+    min_safe_time: tidb_datatype::Time,
+) -> tidb_datatype::Time {
+    if min_safe_time.compare(min_time).is_lt() {
+        min_time
+    } else if min_safe_time.compare(max_time).is_gt() {
+        max_time
+    } else {
+        min_safe_time
+    }
 }
 
 /// `DATE(expr)`, after Go's declared `ETDatetime` argument cast has produced

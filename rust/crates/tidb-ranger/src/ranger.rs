@@ -127,7 +127,7 @@ fn convert_points_in_place(
 fn points_total_datum_size(points: &[Point]) -> i64 {
     points
         .iter()
-        .map(|p| super::types::datum_mem_usage(&p.value))
+        .map(|p| p.value.mem_usage())
         .sum()
 }
 
@@ -139,7 +139,7 @@ fn ranges_total_datum_size(ranges: &super::types::Ranges) -> i64 {
                 .low_val
                 .iter()
                 .chain(range.high_val.iter())
-                .map(super::types::datum_mem_usage)
+                .map(Datum::mem_usage)
                 .sum::<i64>()
         })
         .sum()

@@ -118,7 +118,7 @@ use tidb_executor_aggfuncs::aggfuncs::input::AggInputMode;
 /// A global aggregate is already one ordered group, so no hash table or row
 /// materialization is needed: each child row is folded into the one vector of
 /// partial results and that vector emits exactly once, including for empty
-/// input. The driver selects this executor only for Go plan shapes that new_row_sample_collector
+/// input. The driver selects this executor only for Go plan shapes that choose
 /// StreamAgg; grouped input continues through [`HashAggExec`].
 pub struct StreamAggExec<C: Columns> {
     meta: ExecutorMeta,

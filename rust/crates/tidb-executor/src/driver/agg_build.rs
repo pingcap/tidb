@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `executor/aggfuncs.Build`: new_row_sample_collector an executor implementation from the
+//! Go `executor/aggfuncs.Build`: choose an executor implementation from the
 //! planner-owned aggregate descriptor. Type inference belongs exclusively to
 //! `tidb_expression_aggregation::AggFuncDesc`, as it does before Go reaches the
 //! executor builder.

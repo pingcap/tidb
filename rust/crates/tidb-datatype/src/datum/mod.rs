@@ -221,7 +221,7 @@ impl StringDatum {
     /// Decodes the payload as UTF-8 without replacement.
     ///
     /// The datum remains byte-preserving when this fails. Callers that need
-    /// character semantics must new_row_sample_collector how the resulting error or warning is
+    /// character semantics must choose how the resulting error or warning is
     /// exposed; this representation layer never silently changes octets.
     pub fn as_utf8(&self) -> Result<&str, std::str::Utf8Error> {
         std::str::from_utf8(&self.bytes)
@@ -618,27 +618,58 @@ impl Datum {
     /// Go `Datum.MemUsage`: `EmptyDatumSize + cap(d.b) + len(d.collation)`.
     ///
     /// Go keeps every variable-length payload in the single `d.b` byte slice
-    /// and every fixed-width one (int, real, decimal, time, duration) inline,
-    /// so walking this enum's variants reproduces the same division. Two named
-    /// departures, both forced by the representation: the constant term is
-    /// this enum's size rather than Go's struct's, and the payload term is a
-    /// LENGTH where Go reads a capacity -- every payload here is built
-    /// exactly-sized, so a datum whose buffer was over-reserved and then
-    /// shortened is under-reported by the slack.
-    pub fn estimated_mem_usage(&self) -> usize {
-        std::mem::size_of::<Self>()
-            + match self {
-                Self::String(value) => value.bytes().len() + value.collation().name().len(),
-                Self::Bytes(value) | Self::Raw(value) => value.len(),
-                Self::BinaryLiteral(value) | Self::Bit(value) => value.as_bytes().len(),
-                Self::Json(value) => value.value().len(),
-                Self::VectorFloat32(value) => value.estimated_mem_usage(),
-                Self::Enum(value, collation) => value.name().len() + collation.name().len(),
-                Self::Set(value, collation) => value.name().len() + collation.name().len(),
-                _ => 0,
-            }
+    /// and every fixed-width one (int, real, decimal, time, duration) inline or
+    /// behind `d.x`, which this does not count either. The collation term is
+    /// the one Go's setters store: `binary` for `SetBytes` and
+    /// `SetBinaryLiteral`, none for a bit value. One named departure: the
+    /// payload term is a LENGTH where Go reads a capacity -- every payload here
+    /// is built exactly-sized, so a datum whose buffer was over-reserved and
+    /// then shortened is under-reported by the slack.
+    #[must_use]
+    pub fn mem_usage(&self) -> i64 {
+        let (payload, collation) = match self {
+            Self::String(value) => (value.bytes().len(), value.collation().name().len()),
+            Self::Bytes(value) => (value.len(), Collation::Binary.name().len()),
+            Self::BinaryLiteral(value) => (value.as_bytes().len(), Collation::Binary.name().len()),
+            Self::Bit(value) => (value.as_bytes().len(), 0),
+            Self::Raw(value) => (value.len(), 0),
+            Self::Json(value) => (value.value().len(), 0),
+            Self::VectorFloat32(value) => (value.serialized_size(), 0),
+            Self::Enum(value, collation) => (value.name().len(), collation.name().len()),
+            Self::Set(value, collation) => (value.name().len(), collation.name().len()),
+            _ => (0, 0),
+        };
+        EMPTY_DATUM_SIZE + (payload + collation) as i64
+    }
+
+    /// Go `Datum.EstimatedMemUsage`: `sizeOfEmptyDatum` plus the decimal or
+    /// time struct, the vector, or the `d.b` payload.
+    #[must_use]
+    pub fn estimated_mem_usage(&self) -> i64 {
+        let payload = match self {
+            Self::Decimal(_) => SIZE_OF_MY_DECIMAL,
+            Self::Time(_) => SIZE_OF_MYSQL_TIME,
+            Self::VectorFloat32(value) => value.estimated_mem_usage(),
+            Self::String(value) => value.bytes().len(),
+            Self::Bytes(value) | Self::Raw(value) => value.len(),
+            Self::BinaryLiteral(value) | Self::Bit(value) => value.as_bytes().len(),
+            Self::Json(value) => value.value().len(),
+            Self::Enum(value, _) => value.name().len(),
+            Self::Set(value, _) => value.name().len(),
+            _ => 0,
+        };
+        EMPTY_DATUM_SIZE + payload as i64
     }
 }
+
+/// Go `types.EmptyDatumSize` (`datum.go:82`): `unsafe.Sizeof(Datum{})` on
+/// 64-bit, the constant every Go memory estimate charges per datum, so a
+/// tracker is charged what Go charges rather than this enum's own layout.
+pub const EMPTY_DATUM_SIZE: i64 = 72;
+/// Go `sizeOfMyDecimal`: `MyDecimalStructSize`.
+const SIZE_OF_MY_DECIMAL: usize = 40;
+/// Go `sizeOfMysqlTime`: `unsafe.Sizeof(ZeroTime)`, one packed `uint64`.
+const SIZE_OF_MYSQL_TIME: usize = 8;
 
 fn datum_encoding(flags: ConversionFlags, charset: &str) -> Option<Encoding> {
     let mut encoding = crate::find_encoding(charset);
@@ -688,12 +719,14 @@ pub fn sort_datums(datums: &mut [Datum]) -> Result<(), DatumValueError> {
     Ok(())
 }
 
-/// Estimates memory for a one- or two-dimensional datum array.
-pub fn estimated_mem_usage(datums: &[Datum], rows: usize) -> usize {
-    if rows == 0 {
+/// Go `types.EstimatedMemUsage`: one row's datums, as many times as there
+/// are rows.
+#[must_use]
+pub fn estimated_mem_usage(array: &[Datum], num_of_rows: usize) -> i64 {
+    if num_of_rows == 0 {
         return 0;
     }
-    datums.iter().map(Datum::estimated_mem_usage).sum::<usize>() * rows
+    array.iter().map(Datum::estimated_mem_usage).sum::<i64>() * num_of_rows as i64
 }
 
 #[cfg(test)]
@@ -705,7 +738,7 @@ mod tests {
     };
     use crate::{
         parse_datetime, parse_enum_value, BinaryJSON, BinaryLiteral, Charset, Collation,
-        ConversionFlags, Decimal, MySqlDuration, Time,
+        ConversionFlags, Decimal, MySqlDuration,
     };
 
     /// Source: `pkg/types/datum.go` (`NewStringDatum`,
@@ -954,20 +987,9 @@ mod tests {
 
     #[test]
     fn test_estimated_mem_usage() {
-        // The Go source row measures a 72-byte Datum, 40-byte MyDecimal,
-        // 8-byte Time, and 5,530 bytes for ten copies. Rust deliberately owns
-        // a different enum/heap representation, so exact byte parity is not a
-        // meaningful contract; pin both measured layouts and the Rust formula.
-        assert_eq!(
-            (
-                std::mem::size_of::<Datum>(),
-                std::mem::size_of::<Decimal>(),
-                std::mem::size_of::<Time>()
-            ),
-            (80, 80, 16)
-        );
-
+        // Go `TestEstimatedMemUsage`.
         let bytes = b"abcd";
+        let enum_value = parse_enum_value(&["a"], 1).unwrap();
         let row = vec![
             Datum::Int(1),
             Datum::Real(1.0),
@@ -975,14 +997,13 @@ mod tests {
             Datum::new_string_datum(bytes),
             Datum::new_bytes_datum(bytes),
             Datum::new_decimal(Decimal::from_signed_literal("1234.1234")),
-            Datum::new_enum(parse_enum_value(&["a"], 1).unwrap(), Collation::Binary),
+            Datum::new_enum(enum_value, Collation::Binary),
         ];
-        assert_eq!(
-            estimated_mem_usage(&row, 10),
-            row.iter().map(Datum::estimated_mem_usage).sum::<usize>() * 10
-        );
+        // Go's sizes on 64-bit: a 72-byte Datum and a 40-byte MyDecimal.
+        let bytes_consumed = 10 * (row.len() as i64 * 72 + 40 + bytes.len() as i64 * 2 + "a".len() as i64);
+        assert_eq!(bytes_consumed, 5_530);
+        assert_eq!(estimated_mem_usage(&row, 10), bytes_consumed);
         assert_eq!(estimated_mem_usage(&row, 0), 0);
-        assert_ne!(estimated_mem_usage(&row, 10), 5_530);
     }
 
     #[test]

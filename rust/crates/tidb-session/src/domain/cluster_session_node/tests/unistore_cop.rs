@@ -8948,7 +8948,7 @@ fn concurrent_global_statistics_and_session_bindings_match_go() {
 }
 
 /// Pinned `globalstats.TestGlobalStatsAndSQLBinding` and its concurrency-two
-/// twin: global statistics new_row_sample_collector the index for hash, range, and list
+/// twin: global statistics choose the index for hash, range, and list
 /// partitions, while a matching session binding's `IGNORE INDEX` moves the
 /// same statements to table scans until the binding is dropped.
 fn assert_global_statistics_and_session_bindings_match_go(

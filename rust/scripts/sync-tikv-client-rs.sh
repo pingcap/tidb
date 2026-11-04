@@ -41,7 +41,6 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SCRATCH_DIR="$REPO_ROOT/third_party/.scratch/tikv-client-rs-src"
 VENDOR_DIR="$REPO_ROOT/third_party/tikv-client-rs"
 PATCH_DIR="$REPO_ROOT/third_party/patches/tikv-client-rs"
-SYNC_LOG="$REPO_ROOT/third_party/tikv-client-rs-SYNC-LOG.md"
 UPSTREAM_URL="https://github.com/ngaut/client-rust.git"
 
 mkdir -p "$REPO_ROOT/third_party/.scratch"
@@ -99,9 +98,5 @@ mkdir -p "$VENDOR_DIR"
 # preserve unchanged destination mtimes so Cargo can reuse valid build outputs.
 rsync -a --checksum --no-times --delete --exclude='/target/' "$STAGING_DIR/source/" "$VENDOR_DIR/"
 
-{
-  echo "- $(date -u +%Y-%m-%dT%H:%M:%SZ): synced to ngaut/client-rust@${SYNCED_COMMIT} (committed ${SYNCED_DATE}), patches: $(ls "$PATCH_DIR" 2>/dev/null | wc -l | tr -d ' ') applied"
-} >> "$SYNC_LOG"
-
-echo "Synced. Tracked copy: $VENDOR_DIR"
+echo "Synced to ngaut/client-rust@${SYNCED_COMMIT} (committed ${SYNCED_DATE}); name it in the commit message. Tracked copy: $VENDOR_DIR"
 echo "Review with: git -C $REPO_ROOT status rust/third_party/tikv-client-rs"

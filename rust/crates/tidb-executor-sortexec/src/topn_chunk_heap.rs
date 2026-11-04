@@ -492,7 +492,7 @@ impl TopNChunkHeap {
             for key in chunk_keys {
                 bytes += i64::try_from(size_of::<Vec<Datum>>()).unwrap_or(i64::MAX);
                 for datum in key {
-                    bytes += i64::try_from(datum.estimated_mem_usage()).unwrap_or(i64::MAX);
+                    bytes += datum.mem_usage();
                 }
             }
         }
