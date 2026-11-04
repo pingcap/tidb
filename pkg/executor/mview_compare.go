@@ -559,7 +559,7 @@ func buildCompareMaterializedViewOutputCreateTableSQL(
 	outputTblInfo.Columns = append(outputTblInfo.Columns, diffTypeCol)
 
 	var tableDef bytes.Buffer
-	if err := ConstructResultOfShowCreateTable(sctx, outputTblInfo, autoid.Allocators{}, &tableDef); err != nil {
+	if err := ConstructResultOfShowCreateTable(sctx, outputTable.Schema, outputTblInfo, autoid.Allocators{}, &tableDef); err != nil {
 		return "", err
 	}
 	sqlMode := sctx.GetSessionVars().SQLMode

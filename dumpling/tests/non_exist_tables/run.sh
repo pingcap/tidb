@@ -16,11 +16,12 @@ run_sql "create table \`$DB_NAME\`.\`$TABLE_NAME1\` (a int);"
 run_sql "insert into \`$DB_NAME\`.\`$TABLE_NAME1\` values (1), (2);"
 
 # Test for specifying --tables-list with non-existing tables, should report an error
-set +e
 rm -rf "$DUMPLING_OUTPUT_DIR"
-run_dumpling --consistency=lock --tables-list "$DB_NAME.$TABLE_NAME2" -L ${DUMPLING_OUTPUT_DIR}/dumpling.log
-set -e
+if run_dumpling --consistency=lock --tables-list "$DB_NAME.$TABLE_NAME2" -L "${DUMPLING_OUTPUT_DIR}/dumpling.log"; then
+	echo "expected dumpling to fail for a non-existing table"
+	exit 1
+fi
 
-actual=$(grep -w "Table 'non_exist_tables.t2' doesn't exist" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
-echo "expected 1 return error when specifying --tables-list with non-existing tables, actual ${actual}"
-[ $actual = 1 ]
+actual=$(grep -F '[ERROR]' "${DUMPLING_OUTPUT_DIR}/dumpling.log" | grep -Fc "Table '$DB_NAME.$TABLE_NAME2' doesn't exist")
+echo "expected 1 ERROR when specifying --tables-list with non-existing tables, actual ${actual}"
+[ "$actual" = 1 ]

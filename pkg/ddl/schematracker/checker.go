@@ -50,7 +50,7 @@ var (
 	ConstructResultOfShowCreateDatabase func(sessionctx.Context, *model.DBInfo, bool, *bytes.Buffer) error
 	// ConstructResultOfShowCreateTable should be assigned to executor.ConstructResultOfShowCreateTable.
 	// It is used to break cycle import.
-	ConstructResultOfShowCreateTable func(sessionctx.Context, *model.TableInfo, autoid.Allocators, *bytes.Buffer) error
+	ConstructResultOfShowCreateTable func(sessionctx.Context, ast.CIStr, *model.TableInfo, autoid.Allocators, *bytes.Buffer) error
 )
 
 func init() {
@@ -147,12 +147,12 @@ func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName ast.C
 	}
 
 	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err := ConstructResultOfShowCreateTable(ctx, tableInfo.Meta(), autoid.Allocators{}, result)
+	err := ConstructResultOfShowCreateTable(ctx, dbName, tableInfo.Meta(), autoid.Allocators{}, result)
 	if err != nil {
 		panic(err)
 	}
 	result2 := bytes.NewBuffer(make([]byte, 0, 512))
-	err = ConstructResultOfShowCreateTable(ctx, tableInfo2, autoid.Allocators{}, result2)
+	err = ConstructResultOfShowCreateTable(ctx, dbName, tableInfo2, autoid.Allocators{}, result2)
 	if err != nil {
 		panic(err)
 	}
