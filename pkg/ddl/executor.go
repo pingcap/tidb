@@ -3639,7 +3639,8 @@ func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	ntMeta := nt.Meta()
-	if isSystemTableInNextGen(ntSchema.Name.L, ntMeta.Name.L) {
+	// Classic also uses reserved IDs for DDL system tables.
+	if metadef.IsReservedID(ntMeta.ID) || isSystemTableInNextGen(ntSchema.Name.L, ntMeta.Name.L) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Exchange partition on system table '%s.%s'", ntSchema.Name.L, ntMeta.Name.L))
 	}
 	err = checkExchangePartition(ptMeta, ntMeta)

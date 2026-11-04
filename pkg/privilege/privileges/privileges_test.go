@@ -871,9 +871,13 @@ func TestExchangePartitionRejectsReservedSystemTableTarget(t *testing.T) {
 		PARTITION p1 VALUES LESS THAN (200)
 	)`)
 
-	err := tk.ExecToErr(`ALTER TABLE exchange_reserved.pt EXCHANGE PARTITION p0 WITH TABLE mysql.tidb_ddl_job`)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Exchange partition on system table 'mysql.tidb_ddl_job'")
+	for _, table := range []string{"mysql.tidb_ddl_job", "mysql.tidb_ddl_reorg", "mysql.tidb_ddl_history"} {
+		t.Run(table, func(t *testing.T) {
+			err := tk.ExecToErr(fmt.Sprintf("ALTER TABLE exchange_reserved.pt EXCHANGE PARTITION p0 WITH TABLE %s", table))
+			require.Error(t, err)
+			require.Contains(t, err.Error(), fmt.Sprintf("Exchange partition on system table '%s'", table))
+		})
+	}
 }
 
 func TestRenameTablesChecksAllPairsPrivileges(t *testing.T) {
