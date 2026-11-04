@@ -448,24 +448,38 @@ func TestKillDuringIndexHashJoinProbe(t *testing.T) {
 	for _, q := range queries {
 		tk.MustHavePlan(q, "IndexHashJoin")
 	}
-	// Hot key, semi join that keeps the outer order: the outer scan keeps order
-	// and no sort is added above the join.
+	// The join keeps the outer order when the outer scan keeps order and no sort
+	// is added above the join.
+	mustKeepOrder := func(q string) {
+		tk.MustHavePlan(q, "IndexHashJoin")
+		tk.MustNotHavePlan(q, "Sort")
+		tk.MustNotHavePlan(q, "TopN")
+		tk.MustQuery("explain format = 'brief' " + q).CheckContain("keep order:true")
+	}
+	// Hot key, semi join that keeps the outer order.
 	ordered := hot("select /*+ INL_HASH_JOIN(i@sel_2) */ o.id from %s o where exists (select 1 from %s i where i.k = o.k and i.id <> o.v) order by o.id")
-	tk.MustHavePlan(ordered, "IndexHashJoin")
-	tk.MustNotHavePlan(ordered, "Sort")
-	tk.MustNotHavePlan(ordered, "TopN")
-	tk.MustQuery("explain format = 'brief' " + ordered).CheckContain("keep order:true")
+	mustKeepOrder(ordered)
 	queries = append(queries, ordered)
 
 	fp := "github.com/pingcap/tidb/pkg/executor/join/killedDuringIndexHashJoinProbe"
 	require.NoError(t, failpoint.Enable(fp, "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable(fp))
-	}()
 	for _, q := range queries {
 		err := tk.QueryToErr(q)
 		require.Equal(t, exeerrors.ErrQueryInterrupted, err, q)
 	}
+	require.NoError(t, failpoint.Disable(fp))
+
+	// Hot key, semi join that keeps the outer order and matches no row, so every
+	// pair is checked when matching the collected inner rows of each outer row.
+	orderedNone := hot("select /*+ INL_HASH_JOIN(i@sel_2) */ o.id from %s o where exists (select 1 from %s i where i.k = o.k and mod(i.id, 2) > mod(o.v, 2) + 5) order by o.id")
+	mustKeepOrder(orderedNone)
+	fp = "github.com/pingcap/tidb/pkg/executor/join/killedDuringIndexHashJoinMatchInOrder"
+	require.NoError(t, failpoint.Enable(fp, "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fp))
+	}()
+	err := tk.QueryToErr(orderedNone)
+	require.Equal(t, exeerrors.ErrQueryInterrupted, err, orderedNone)
 }
 
 // TestIndexHashJoinSemiJoinResult checks that index hash semi joins return the
@@ -475,10 +489,11 @@ func TestIndexHashJoinSemiJoinResult(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@cte_max_recursion_depth = 10000")
 	for _, table := range []string{"t_outer", "t_outer_early", "t_outer_distinct"} {
 		tk.MustExec("create table " + table + " (id int primary key, k int not null, v int)")
 	}
-	for _, table := range []string{"t_inner", "t_inner_distinct"} {
+	for _, table := range []string{"t_inner", "t_inner_distinct", "t_inner_long"} {
 		tk.MustExec("create table " + table + " (id int primary key, k int not null, w int, index(k))")
 	}
 	// Rows with key 2 never match, so no task stops probing early.
@@ -492,7 +507,10 @@ func TestIndexHashJoinSemiJoinResult(t *testing.T) {
 	tk.MustExec("insert into t_outer_distinct with recursive s(n) as (select 1 union all select n + 1 from s where n < 300) select n, n, if(mod(n, 50) = 0, null, n) from s")
 	tk.MustExec("insert into t_inner_distinct with recursive s(n) as (select 1 union all select n + 1 from s where n < 250) select n, n, if(mod(n, 40) = 0, null, n) from s")
 	tk.MustExec("insert into t_inner_distinct with recursive s(n) as (select 1 union all select n + 1 from s where n < 250) select n + 1000, n, if(mod(n, 80) = 0, null, n) from s")
-	tk.MustExec("analyze table t_outer, t_outer_early, t_outer_distinct, t_inner, t_inner_distinct")
+	// 4500 inner rows per key, more than one batch of 2000 when matching in outer
+	// order. The first 2000 of each key never match and one of them is NULL.
+	tk.MustExec("insert into t_inner_long with recursive s(n) as (select 1 union all select n + 1 from s where n < 9000) select n, mod(n, 2), if(n <= 4000, if(n = 7, null, 0), n) from s")
+	tk.MustExec("analyze table t_outer, t_outer_early, t_outer_distinct, t_inner, t_inner_distinct, t_inner_long")
 	// Several tasks, each with more rows per key than fit in a chunk.
 	tk.MustExec("set @@tidb_index_join_batch_size = 256")
 	tk.MustExec("set @@tidb_max_chunk_size = 32")
@@ -506,13 +524,24 @@ func TestIndexHashJoinSemiJoinResult(t *testing.T) {
 		notInSelect = "select /*+ %[1]s(i@sel_2) */ o.id, o.k not in (select i.k from %[3]s i where i.w > mod(o.v, 25)) from %[2]s o"
 	)
 	check := func() {
-		for _, tables := range [][2]string{{"t_outer", "t_inner"}, {"t_outer_early", "t_inner"}, {"t_outer_distinct", "t_inner_distinct"}} {
+		for _, tables := range [][2]string{{"t_outer", "t_inner"}, {"t_outer_early", "t_inner"}, {"t_outer_distinct", "t_inner_distinct"}, {"t_outer", "t_inner_long"}} {
 			for _, q := range []string{exists, notExists, in, notIn, inSelect, notInSelect} {
 				for _, order := range []string{"", " order by o.id"} {
 					inlSQL := fmt.Sprintf(q, "INL_HASH_JOIN", tables[0], tables[1]) + order
 					hashSQL := fmt.Sprintf(q, "HASH_JOIN", tables[0], tables[1]) + order
 					tk.MustHavePlan(inlSQL, "IndexHashJoin")
+					if order != "" {
+						// The join keeps the outer order: no sort above it.
+						tk.MustNotHavePlan(inlSQL, "Sort")
+						tk.MustNotHavePlan(inlSQL, "TopN")
+						tk.MustQuery("explain format = 'brief' " + inlSQL).CheckContain("keep order:true")
+					}
 					tk.MustNotHavePlan(hashSQL, "IndexHashJoin")
+					if order != "" {
+						// o.id is unique, so the order of the rows must match too.
+						tk.MustQuery(inlSQL).Check(tk.MustQuery(hashSQL).Rows())
+						continue
+					}
 					expected := tk.MustQuery(hashSQL).Sort().Rows()
 					tk.MustQuery(inlSQL).Sort().Check(expected)
 				}

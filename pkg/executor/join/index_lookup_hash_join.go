@@ -976,6 +976,8 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 	// TODO: matchedInnerRowPtrs and matchedInnerRows can be moved to inner worker.
 	matchedInnerRows := make([]chunk.Row, 0, len(task.matchedInnerRowPtrs))
 	var hasMatched, hasNull, ok bool
+	isSemiJoin := JoinerType(iw.joiner).IsSemiJoin()
+	loopCnt := 0
 	for chkIdx, innerRowPtrs4Chk := range task.matchedInnerRowPtrs {
 		for outerRowIdx, innerRowPtrs := range innerRowPtrs4Chk {
 			matchedInnerRows, hasMatched, hasNull = matchedInnerRows[:0], false, false
@@ -983,23 +985,41 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 			for _, ptr := range innerRowPtrs {
 				matchedInnerRows = append(matchedInnerRows, task.innerResult.GetRow(ptr))
 			}
-			iw.rowIter.Reset(matchedInnerRows)
-			iter := iw.rowIter
-			for iter.Begin(); iter.Current() != iter.End(); {
-				matched, isNull, err := iw.joiner.TryToMatchInners(outerRow, iter, joinResult.chk)
-				if err != nil {
-					return err
-				}
-				hasMatched, hasNull = matched || hasMatched, isNull || hasNull
-				if joinResult.chk.IsFull() {
-					select {
-					case resultCh <- joinResult:
-					case <-ctx.Done():
-						return ctx.Err()
+			// A semi join matches the inner rows 2000 at a time so a long list can be
+			// killed, and stops at its first match. Other joins match them all at once.
+			sliceLen := len(matchedInnerRows)
+			if isSemiJoin {
+				sliceLen = 2000
+			}
+			for start := 0; start < len(matchedInnerRows) && !(isSemiJoin && hasMatched); start += sliceLen {
+				end := min(start+sliceLen, len(matchedInnerRows))
+				if isSemiJoin {
+					loopCnt += end - start
+					if loopCnt >= 2000 {
+						loopCnt = 0
+						if err := checkSQLKiller(&iw.ctx.GetSessionVars().SQLKiller, "killedDuringIndexHashJoinMatchInOrder"); err != nil {
+							return err
+						}
 					}
-					joinResult, ok = iw.getNewJoinResult(ctx)
-					if !ok {
-						return errors.New("indexHashJoinInnerWorker.doJoinInOrder failed")
+				}
+				iw.rowIter.Reset(matchedInnerRows[start:end])
+				iter := iw.rowIter
+				for iter.Begin(); iter.Current() != iter.End(); {
+					matched, isNull, err := iw.joiner.TryToMatchInners(outerRow, iter, joinResult.chk)
+					if err != nil {
+						return err
+					}
+					hasMatched, hasNull = matched || hasMatched, isNull || hasNull
+					if joinResult.chk.IsFull() {
+						select {
+						case resultCh <- joinResult:
+						case <-ctx.Done():
+							return ctx.Err()
+						}
+						joinResult, ok = iw.getNewJoinResult(ctx)
+						if !ok {
+							return errors.New("indexHashJoinInnerWorker.doJoinInOrder failed")
+						}
 					}
 				}
 			}
