@@ -2663,6 +2663,31 @@ func TestBinCollationRangeForIndex(t *testing.T) {
 }
 
 func TestInvalidTimestampRange(t *testing.T) {
+	t.Run("invalidDateNearDST", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+		tk.MustExec("use test")
+		tk.MustExec("set time_zone = 'Europe/London'")
+		tk.MustExec("create table dst_range (k int, ts timestamp, index idx_ts(ts), index idx(k, ts))")
+		tk.MustExec("insert into dst_range values (0, '2024-03-31 00:00:00'), (1, '2024-03-31 00:00:00'), (1, '2024-03-31 03:00:00')")
+		// Day zero normalizes near the March 31 DST transition. Check the source
+		// date before TIMESTAMP conversion can adjust it to a valid transition time.
+		for _, mode := range []string{"DEFAULT", "'ALLOW_INVALID_DATES'"} {
+			tk.MustExec("set sql_mode = " + mode)
+			for _, bound := range []string{"'2024-04-00'", "cast('2024-04-00' as datetime)", "'0000-00-00 00:00:00'"} {
+				for _, op := range []string{"<", "<=", "=", "!=", ">=", ">"} {
+					query := "select ts from dst_range %s where k = 1 and ts " + op + " " + bound + " order by ts"
+					expected := tk.MustQuery(fmt.Sprintf(query, "ignore index(idx_ts, idx)")).Rows()
+					if op == "<" && bound == "'2024-04-00'" {
+						require.Equal(t, testkit.RowsWithSep("|", "2024-03-31 00:00:00", "2024-03-31 03:00:00"), expected)
+					}
+					for _, index := range []string{"idx_ts", "idx"} {
+						tk.MustQuery(fmt.Sprintf(query, "force index("+index+")")).Check(expected)
+					}
+				}
+			}
+		}
+	})
+
 	t.Run("correlated", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		for _, zone := range []string{"UTC", "+00:00", "+08:00", "America/Goose_Bay"} {

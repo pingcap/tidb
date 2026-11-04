@@ -186,6 +186,17 @@ func convertPointInPlace(sctx *rangerctx.RangerContext, p *point, newTp *types.F
 	case types.KindMaxValue, types.KindMinNotNull:
 		return nil
 	}
+	if p.value.Kind() == types.KindMysqlTime && newTp.GetType() == mysql.TypeTimestamp {
+		t := p.value.GetMysqlTime()
+		// Check before ConvertTo can adjust an invalid date near a DST transition.
+		// UTC checks calendar validity without rejecting valid local DST-gap times.
+		if !t.IsZero() {
+			if _, err := t.GoTime(time.UTC); err != nil {
+				sctx.SetSkipPlanCache(fmt.Sprintf("%s when converting %v", err.Error(), p.value))
+				return errInvalidTimestampRange
+			}
+		}
+	}
 	casted, err := p.value.ConvertTo(sctx.TypeCtx, newTp)
 	if err != nil {
 		// skip plan cache in this case for safety.
@@ -203,12 +214,7 @@ func convertPointInPlace(sctx *rangerctx.RangerContext, p *point, newTp *types.F
 			// tests in TestIndexRange/TestIndexRangeForDecimal
 		} else if p.value.Kind() == types.KindMysqlTime && newTp.GetType() == mysql.TypeTimestamp && terror.ErrorEqual(err, types.ErrWrongValue) {
 			// See issue #28424: query failed after add index
-			// Keep calendar-valid out-of-range values as bounds. Impossible dates cannot be
-			// converted to UTC for index encoding, so fall back and retain the predicate.
-			// Check in UTC to distinguish calendar invalidity from DST transitions.
-			if _, timeErr := casted.GetMysqlTime().GoTime(time.UTC); timeErr != nil {
-				return errInvalidTimestampRange
-			}
+			// Keep calendar-valid out-of-range values as bounds; invalid dates were rejected above.
 		} else if newTp.GetType() == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
 			// Ignore the types.ErrorTruncated when we convert TypeEnum values.
 			// We should cover Enum upper overflow, and convert to the biggest value.
