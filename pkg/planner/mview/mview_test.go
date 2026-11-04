@@ -292,6 +292,18 @@ func TestBuildAvgUsesCountStarForNotNullArg(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("case-insensitive AVG dependencies", func(t *testing.T) {
+		base.Columns[1].SetType(mysql.TypeLong)
+		mlog.Columns[1].SetType(mysql.TypeLong)
+		mv.Columns[2].SetType(mysql.TypeNewDecimal)
+		mv.Columns[3].SetType(mysql.TypeLonglong)
+		mv.MaterializedView.SQLContent = "select a, count(1), avg(B), sum(b) from t group by a"
+		is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+		_, err := mview.Build(sctx.GetPlanCtx(), is, mv, mview.BuildOptions{FromTS: 10}, nil)
+		require.NoError(t, err)
+	})
 }
 
 func TestBuildCountExprSumExpr(t *testing.T) {

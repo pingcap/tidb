@@ -1072,7 +1072,7 @@ func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset m
 			if cand.info.Kind != AggCount || cand.argExpr == nil {
 				continue
 			}
-			if !exprStructuralEqual(ac.argExpr, cand.argExpr) {
+			if !aggregateArgsEqual(ac, cand) {
 				continue
 			}
 			matchIdx = j
@@ -1121,7 +1121,7 @@ func mapAvgDependencies(
 		}
 		sumIdx, countIdx := -1, -1
 		for j, candidate := range aggCols {
-			if candidate.argExpr == nil || !exprStructuralEqual(ac.argExpr, candidate.argExpr) {
+			if candidate.argExpr == nil || !aggregateArgsEqual(ac, candidate) {
 				continue
 			}
 			if sumIdx < 0 && candidate.info.Kind == AggSum {
@@ -1334,6 +1334,15 @@ func stripColumnQualifier(expr ast.ExprNode) ast.ExprNode {
 	}
 	expr.Accept(&columnQualifierStripper{})
 	return stripAllParentheses(expr)
+}
+
+func aggregateArgsEqual(lhs, rhs aggColInfo) bool {
+	// Column arguments have already been resolved against the single base table.
+	// Compare their lowercase names rather than the original spelling in the AST.
+	if lhs.info.ArgColName != "" && rhs.info.ArgColName != "" {
+		return lhs.info.ArgColName == rhs.info.ArgColName
+	}
+	return exprStructuralEqual(lhs.argExpr, rhs.argExpr)
 }
 
 func exprStructuralEqual(lhs, rhs ast.ExprNode) bool {
