@@ -17,17 +17,14 @@ package sessiontest
 import (
 	"fmt"
 	"slices"
-	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNextGenTiKVRegionStatus(t *testing.T) {
+func TestTiKVRegionStatus(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -45,46 +42,6 @@ func TestNextGenTiKVRegionStatus(t *testing.T) {
 		"select region_id from information_schema.tikv_region_status where table_id = %v and is_index = 1", tableID)).Rows()
 	require.Equal(t, showRegions, uniqueSortedRegionIDs(tikvRegions))
 	require.Equal(t, showIndexRegions, uniqueSortedRegionIDs(tikvIndexRegions))
-}
-
-func TestNextGenTiKVRegionStatusDoesNotMixOtherKeyspaces(t *testing.T) {
-	if kerneltype.IsClassic() {
-		t.Skip("only runs in nextgen kernel")
-	}
-
-	runtimes := realtikvtest.PrepareForCrossKSTest(t, "keyspace1")
-	sysTK := testkit.NewTestKit(t, runtimes[keyspace.System].Store)
-	sysTK.MustExec("create database if not exists sys_region_status")
-	sysTK.MustExec("use sys_region_status")
-	sysTK.MustExec("drop table if exists t")
-	sysTK.MustExec("create table t (a int, key idx(a))")
-	sysTK.MustExec("split table t between (0) and (10000) regions 4")
-	sysTK.MustExec("split table t index idx between (0) and (10000) regions 4")
-
-	systemRegionIDs := uniqueSortedRegionIDs(sysTK.MustQuery("show table t regions").Rows())
-	require.NotEmpty(t, systemRegionIDs)
-
-	userTK := testkit.NewTestKit(t, runtimes["keyspace1"].Store)
-	userTK.MustQuery(fmt.Sprintf(
-		"select count(*) from information_schema.tikv_region_status where region_id in (%s)",
-		strings.Join(systemRegionIDs, ","))).Check(testkit.Rows("0"))
-}
-
-func TestTableReaderWithSnapshot(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MockGCSavePoint()
-
-	tk.MustExec("use test")
-	tk.MustExec("create table t(id int);")
-	tk.MustExec("begin")
-	tk.MustExec("set @ts := @@tidb_current_ts;")
-	tk.MustExec("rollback")
-	tk.MustQuery("select sleep(2);")
-	tk.MustExec("drop table t;")
-	tk.MustExec("begin")
-	tk.MustExec("set @@tidb_snapshot=@ts;")
-	tk.MustQuery("SELECT TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='test' AND (TABLE_TYPE='BASE TABLE')").Check(testkit.Rows("t BASE TABLE 0"))
 }
 
 func uniqueSortedRegionIDs(rows [][]any) []string {

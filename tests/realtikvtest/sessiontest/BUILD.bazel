@@ -4,6 +4,7 @@ go_test(
     name = "sessiontest_test",
     timeout = "long",
     srcs = [
+        "infoschema_test.go",
         "infoschema_v2_test.go",
         "main_test.go",
         "paging_test.go",
@@ -11,15 +12,9 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-=======
-    shard_count = 17,
->>>>>>> d2228f612f5 (infoschema: fix `information_schema.tikv_region_status` for nextgen (#67444))
     deps = [
         "//pkg/config",
-        "//pkg/config/kerneltype",
         "//pkg/infoschema",
-        "//pkg/keyspace",
         "//pkg/meta",
         "//pkg/parser/model",
         "//pkg/session",
