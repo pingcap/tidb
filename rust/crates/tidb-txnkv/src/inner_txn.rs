@@ -162,15 +162,15 @@ pub fn report_min_start_ts(
     inner: &InnerTxnStartTsBox,
 ) -> u64 {
     // Go `oracle.GetTimeFromTS`, `GoTimeToLowerLimitStartTS` and `GoTimeToTS`.
-    let now = tikv_client::oracle::get_time_from_timestamp(current_version);
-    let lower = tikv_client::oracle::system_time_to_lower_limit_start_timestamp(
+    let now = tikv_client::oracle::get_time_from_ts(current_version);
+    let lower = tikv_client::oracle::go_time_to_lower_limit_start_ts(
         now,
         i64::try_from(max_wait_seconds.saturating_mul(1000)).unwrap_or(i64::MAX),
     );
     let minimum = active
         .into_iter()
         .filter(|ts| *ts > lower)
-        .fold(tikv_client::oracle::system_time_to_timestamp(now), u64::min);
+        .fold(tikv_client::oracle::go_time_to_ts(now), u64::min);
     inner.get_min_start_ts(now, lower, minimum)
 }
 
@@ -187,7 +187,7 @@ pub struct LongRunningInnerTxn {
 
 /// Converts a TSO to its physical wall-clock time.
 fn tso_time(start_ts: u64) -> SystemTime {
-    tikv_client::oracle::get_time_from_timestamp(start_ts)
+    tikv_client::oracle::get_time_from_ts(start_ts)
 }
 
 /// Returns a long-running observation when the source five-minute threshold is
@@ -354,7 +354,7 @@ mod tests {
 
     /// Go `oracle.GoTimeToTS`: physical milliseconds in the high bits.
     fn go_time_to_ts(unix_millis: u64) -> u64 {
-        unix_millis << 18
+        tikv_client::oracle::go_time_to_ts(std::time::UNIX_EPOCH + std::time::Duration::from_millis(unix_millis))
     }
 
     /// Go `oracle.GoTimeToLowerLimitStartTS`.

@@ -582,7 +582,7 @@ fn bounded_staleness_reads_the_stores_min_safe_ts_once_per_statement() {
     let counted = std::sync::Arc::clone(&reads);
     session.set_min_safe_ts_provider(std::sync::Arc::new(move |_| {
         counted.fetch_add(1, Ordering::SeqCst);
-        tikv_client::oracle::compose_timestamp(safe_ms, 0)
+        tikv_client::oracle::compose_ts(safe_ms, 0)
     }));
     let window = "TIDB_BOUNDED_STALENESS('2015-09-21 09:53:04', '2025-01-02 10:00:00')";
     assert_eq!(

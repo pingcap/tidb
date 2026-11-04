@@ -143,7 +143,7 @@ fn tidb_opt_on(value: &str) -> bool {
 }
 
 fn go_time_to_ts(value: chrono::DateTime<chrono::FixedOffset>) -> u64 {
-    tikv_client::oracle::compose_timestamp(value.timestamp_millis(), 0)
+    tikv_client::oracle::go_time_to_ts(std::time::SystemTime::from(value))
 }
 
 /// Go `model.TSConvert2Time(tso).String()`: the TSO's physical milliseconds

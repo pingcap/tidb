@@ -170,7 +170,7 @@ pub(crate) fn get_time_from_ts(ts: u64) -> DateTime<FixedOffset> {
 
 /// Go `oracle.GoTimeToTS`.
 pub(crate) fn go_time_to_ts(time: DateTime<FixedOffset>) -> u64 {
-    tikv_client::oracle::compose_timestamp(time.timestamp_millis(), 0)
+    tikv_client::oracle::go_time_to_ts(std::time::SystemTime::from(time))
 }
 
 
@@ -1279,7 +1279,7 @@ impl GcJobContext {
         gc_worker_counter("redo_delete_range");
 
         // Check the delete range records deleted about 24 hours ago.
-        let redo_delete_ranges_ts = safe_point.wrapping_sub(tikv_client::oracle::compose_timestamp(
+        let redo_delete_ranges_ts = safe_point.wrapping_sub(tikv_client::oracle::compose_ts(
             GC_REDO_DELETE_RANGE_DELAY.as_secs() as i64 * 1000,
             0,
         ));

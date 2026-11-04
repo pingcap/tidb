@@ -787,7 +787,7 @@ mod tests {
     fn reset_clears_what_restart_installs() {
         let _serialised = serialised();
         let validator = SchemaValidator::new(LEASE);
-        let grant_ts = tikv_client::oracle::compose_timestamp(12_345, 7);
+        let grant_ts = tikv_client::oracle::compose_ts(12_345, 7);
         validator.update(grant_ts, 0, 1, Some(&change(&[1], &[1])));
         validator.restart(9);
         assert_eq!(validator.restart_schema_ver(), 9);
@@ -817,7 +817,7 @@ mod tests {
     fn mdl_skips_the_delta_scan() {
         let _serialised = serialised();
         let validator = SchemaValidator::new(LEASE);
-        let grant_ts = tikv_client::oracle::compose_timestamp(12_345, 7);
+        let grant_ts = tikv_client::oracle::compose_ts(12_345, 7);
         validator.update(grant_ts, 0, 1, Some(&change(&[1], &[1])));
         validator.update(grant_ts, 1, 2, Some(&change(&[1], &[1])));
 

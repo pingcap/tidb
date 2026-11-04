@@ -421,7 +421,7 @@ mod tests {
     use rand::Rng;
 
     use super::*;
-    use crate::oracle::system_time_to_timestamp;
+    use crate::oracle::go_time_to_ts;
 
     static TSO: AtomicU64 = AtomicU64::new(0);
 
@@ -474,7 +474,7 @@ mod tests {
     fn source_test_recycle() {
         let mut latches = Latches::new(8);
         let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        let start = system_time_to_timestamp(now);
+        let start = go_time_to_ts(now);
         let first = latches.new_lock(start, vec![b"a".to_vec(), b"b".to_vec()]);
         let waiting = latches.new_lock(start, vec![b"b".to_vec(), b"c".to_vec()]);
         assert_eq!(latches.acquire(&first), AcquireResult::Success);
@@ -489,7 +489,7 @@ mod tests {
         assert!(latches.slots.iter().any(|slot| !slot.entries.is_empty()));
 
         let expiration =
-            system_time_to_timestamp(now + Duration::from_millis(EXPIRE_DURATION_MS as u64)) + 3;
+            go_time_to_ts(now + Duration::from_millis(EXPIRE_DURATION_MS as u64)) + 3;
         latches.recycle(expiration);
         assert!(latches.slots.iter().all(|slot| slot.entries.is_empty()));
     }

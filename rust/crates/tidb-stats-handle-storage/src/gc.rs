@@ -80,7 +80,7 @@ fn duration_to_ts(duration: Duration) -> u64 {
 
 /// Go `oracle.GoTimeToTS(time.Now())`.
 fn now_ts() -> u64 {
-    tikv_client::oracle::system_time_to_timestamp(SystemTime::now())
+    tikv_client::oracle::go_time_to_ts(SystemTime::now())
 }
 
 /// Go `GCStats`: the statistics of tables (and columns / indexes) dropped

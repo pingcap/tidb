@@ -373,7 +373,7 @@ impl RpcClient {
             let server_min_commit_ts = source
                 .min_commit_ts
                 .max(source.start_ts.saturating_add(1))
-                .max(crate::oracle::system_time_to_timestamp(
+                .max(crate::oracle::go_time_to_ts(
                     std::time::SystemTime::now(),
                 ));
             if source.max_commit_ts != 0 && server_min_commit_ts > source.max_commit_ts {

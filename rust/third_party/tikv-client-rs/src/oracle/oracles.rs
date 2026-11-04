@@ -13,8 +13,8 @@ use tokio::sync::{mpsc, oneshot, Notify};
 use tokio::task::JoinHandle;
 
 use super::{
-    add_wrapping_nanoseconds, extract_physical, get_physical, get_time_from_timestamp,
-    system_time_to_timestamp, Oracle, OracleError, OracleOption, OracleResult,
+    add_wrapping_nanoseconds, extract_physical, get_physical, get_time_from_ts,
+    go_time_to_ts, Oracle, OracleError, OracleOption, OracleResult,
     ReadTimestampValidator, TimestampFuture,
 };
 
@@ -299,7 +299,7 @@ impl PdOracle {
         if elapsed > SLOW_TIMESTAMP_FETCH {
             log::warn!("cost time":% = crate::logutil::go_duration(elapsed); "get timestamp too slow");
         }
-        Ok(super::compose_timestamp(physical, logical))
+        Ok(super::compose_ts(physical, logical))
     }
 
     async fn current_timestamp_for_validation(&self, option: OracleOption) -> OracleResult<u64> {
@@ -357,7 +357,7 @@ impl PdOracle {
     }
 
     fn stale_timestamp_from_last(last: LastTimestamp, previous_seconds: u64) -> OracleResult<u64> {
-        let physical_time = get_time_from_timestamp(last.timestamp);
+        let physical_time = get_time_from_ts(last.timestamp);
         let physical_seconds = extract_physical(last.timestamp).div_euclid(1_000);
         if physical_seconds < 0 || physical_seconds as u64 <= previous_seconds {
             return Err(Box::new(PdOracleError::InvalidPreviousSeconds(
@@ -370,7 +370,7 @@ impl PdOracle {
             elapsed_since_arrival
                 .wrapping_sub((previous_seconds as i64).wrapping_mul(1_000_000_000)),
         );
-        Ok(system_time_to_timestamp(stale_time))
+        Ok(go_time_to_ts(stale_time))
     }
 
     fn configured_update_interval(&self) -> Duration {
@@ -792,7 +792,7 @@ impl Oracle for PdOracle {
         if elapsed > SLOW_TIMESTAMP_FETCH {
             log::warn!("cost time":% = crate::logutil::go_duration(elapsed); "get minimum timestamp too slow");
         }
-        Ok(super::compose_timestamp(physical, logical))
+        Ok(super::compose_ts(physical, logical))
     }
 }
 
@@ -909,7 +909,7 @@ impl ReadTimestampValidator for LocalOracle {
 impl Oracle for LocalOracle {
     async fn get_timestamp(&self, _option: &OracleOption) -> OracleResult<u64> {
         let mut state = self.state.lock().unwrap();
-        let timestamp = system_time_to_timestamp(Self::current_time(&state));
+        let timestamp = go_time_to_ts(Self::current_time(&state));
         if state.last_timestamp == timestamp {
             state.logical = state.logical.wrapping_add(1);
             return Ok(timestamp.wrapping_add(state.logical));
@@ -946,7 +946,7 @@ impl Oracle for LocalOracle {
         _transaction_scope: &str,
         previous_seconds: u64,
     ) -> OracleResult<u64> {
-        Ok(system_time_to_timestamp(subtract_wrapping_seconds(
+        Ok(go_time_to_ts(subtract_wrapping_seconds(
             SystemTime::now(),
             previous_seconds,
         )))
@@ -955,7 +955,7 @@ impl Oracle for LocalOracle {
     fn is_expired(&self, lock_timestamp: u64, ttl: u64, _option: &OracleOption) -> bool {
         let state = self.state.lock().unwrap();
         let now = Self::current_time(&state);
-        let expiration = add_wrapping_millis(get_time_from_timestamp(lock_timestamp), ttl);
+        let expiration = add_wrapping_millis(get_time_from_ts(lock_timestamp), ttl);
         now >= expiration
     }
 
@@ -979,7 +979,7 @@ impl Oracle for LocalOracle {
 
     async fn get_all_tso_keyspace_group_min_timestamp(&self) -> OracleResult<u64> {
         let state = self.state.lock().unwrap();
-        Ok(system_time_to_timestamp(Self::current_time(&state)))
+        Ok(go_time_to_ts(Self::current_time(&state)))
     }
 }
 
@@ -1053,7 +1053,7 @@ impl Oracle for MockOracle {
         if state.stopped {
             return Err(Box::new(StoppedError));
         }
-        let mut timestamp = system_time_to_timestamp(Self::now(&state));
+        let mut timestamp = go_time_to_ts(Self::now(&state));
         if extract_physical(state.last_timestamp) == extract_physical(timestamp) {
             timestamp = state.last_timestamp.wrapping_add(1);
         }
@@ -1088,7 +1088,7 @@ impl Oracle for MockOracle {
         _transaction_scope: &str,
         previous_seconds: u64,
     ) -> OracleResult<u64> {
-        Ok(system_time_to_timestamp(subtract_wrapping_seconds(
+        Ok(go_time_to_ts(subtract_wrapping_seconds(
             SystemTime::now(),
             previous_seconds,
         )))
@@ -1096,13 +1096,13 @@ impl Oracle for MockOracle {
 
     fn is_expired(&self, lock_timestamp: u64, ttl: u64, _option: &OracleOption) -> bool {
         let state = self.state.read().unwrap();
-        let expiration = add_wrapping_millis(get_time_from_timestamp(lock_timestamp), ttl);
+        let expiration = add_wrapping_millis(get_time_from_ts(lock_timestamp), ttl);
         Self::now(&state) >= expiration
     }
 
     fn until_expired(&self, lock_timestamp: u64, ttl: u64, _option: &OracleOption) -> i64 {
         let state = self.state.read().unwrap();
-        let expiration = add_wrapping_millis(get_time_from_timestamp(lock_timestamp), ttl);
+        let expiration = add_wrapping_millis(get_time_from_ts(lock_timestamp), ttl);
         signed_duration_between(expiration, Self::now(&state))
     }
 
@@ -1122,7 +1122,7 @@ impl Oracle for MockOracle {
         if state.stopped {
             return Err(Box::new(StoppedError));
         }
-        Ok(system_time_to_timestamp(Self::now(&state)))
+        Ok(go_time_to_ts(Self::now(&state)))
     }
 }
 
@@ -1317,7 +1317,7 @@ mod tests {
             scope.to_owned(),
             LastTimestamp {
                 timestamp,
-                arrival: get_time_from_timestamp(timestamp),
+                arrival: get_time_from_ts(timestamp),
             },
         );
     }
@@ -1356,7 +1356,7 @@ mod tests {
             .wait()
             .await
             .unwrap();
-        assert_eq!(first, system_time_to_timestamp(fixed));
+        assert_eq!(first, go_time_to_ts(fixed));
         assert_eq!(second, first + 1);
         assert_eq!(third, first + 2);
         assert_eq!(
@@ -1385,7 +1385,7 @@ mod tests {
         let oracle = LocalOracle::new();
         let now = UNIX_EPOCH + Duration::from_millis(10_000);
         oracle.set_current_time(now);
-        let lock = system_time_to_timestamp(now);
+        let lock = go_time_to_ts(now);
         oracle.set_current_time(now + Duration::from_millis(10));
         assert!(oracle.is_expired(lock, 5, &OracleOption::default()));
         assert!(!oracle.is_expired(lock, 200, &OracleOption::default()));
@@ -1397,7 +1397,7 @@ mod tests {
         let oracle = LocalOracle::new();
         let start = UNIX_EPOCH + Duration::from_millis(10_000);
         oracle.set_current_time(start);
-        let lock = system_time_to_timestamp(start);
+        let lock = go_time_to_ts(start);
         oracle.set_current_time(start + Duration::from_millis(10));
         assert_eq!(oracle.until_expired(lock, 6, &OracleOption::default()), -4);
         assert_eq!(oracle.until_expired(lock, 14, &OracleOption::default()), 4);
@@ -1408,7 +1408,7 @@ mod tests {
         let oracle = LocalOracle::new();
         let fixed = UNIX_EPOCH + Duration::from_millis(10_000);
         oracle.set_current_time(fixed);
-        let current = system_time_to_timestamp(fixed);
+        let current = go_time_to_ts(fixed);
         oracle.set_external_timestamp(current).await.unwrap();
         oracle.set_external_timestamp(current).await.unwrap();
         assert_eq!(oracle.get_external_timestamp().await.unwrap(), current);
@@ -1421,14 +1421,14 @@ mod tests {
         let local = LocalOracle::new();
         let fixed = UNIX_EPOCH + Duration::from_secs(10);
         local.set_current_time(fixed);
-        let lock = system_time_to_timestamp(fixed);
+        let lock = go_time_to_ts(fixed);
         assert!(local.is_expired(lock, i64::MAX as u64, &OracleOption::default()));
 
         let stale = local
             .get_stale_timestamp(super::super::GLOBAL_TXN_SCOPE, u64::MAX)
             .await
             .unwrap();
-        let stale_time = get_time_from_timestamp(stale);
+        let stale_time = get_time_from_ts(stale);
         assert!(
             signed_duration_between(stale_time, SystemTime::now() + Duration::from_secs(1))
                 .unsigned_abs()
@@ -1436,7 +1436,7 @@ mod tests {
         );
 
         let mock = MockOracle::new();
-        let lock = system_time_to_timestamp(SystemTime::now());
+        let lock = go_time_to_ts(SystemTime::now());
         let remaining = mock.until_expired(lock, i64::MAX as u64, &OracleOption::default());
         assert!((-5..=0).contains(&remaining), "remaining={remaining}");
     }
@@ -1519,13 +1519,13 @@ mod tests {
         let oracle =
             new_unseeded_pd_oracle_for_test(Arc::new(TestPdSource::new(1_700_000_000_000)));
         let start = SystemTime::now();
-        let start_timestamp = system_time_to_timestamp(start);
+        let start_timestamp = go_time_to_ts(start);
         set_empty_pd_oracle_last_timestamp_for_test(
             &oracle,
             start_timestamp,
             super::super::GLOBAL_TXN_SCOPE,
         );
-        let lock_timestamp = system_time_to_timestamp(start + Duration::from_millis(10)) + 1;
+        let lock_timestamp = go_time_to_ts(start + Duration::from_millis(10)) + 1;
         assert_eq!(
             oracle.until_expired(
                 lock_timestamp,
@@ -1546,7 +1546,7 @@ mod tests {
         let start = SystemTime::now();
         set_empty_pd_oracle_last_timestamp_for_test(
             &oracle,
-            system_time_to_timestamp(start),
+            go_time_to_ts(start),
             super::super::GLOBAL_TXN_SCOPE,
         );
         let timestamp = oracle
@@ -1554,7 +1554,7 @@ mod tests {
             .await
             .unwrap();
         let expected = start - Duration::from_secs(10);
-        let observed = get_time_from_timestamp(timestamp);
+        let observed = get_time_from_ts(timestamp);
         assert!(
             signed_duration_between(observed, expected).unsigned_abs()
                 <= Duration::from_secs(2).as_millis() as u64
@@ -1630,7 +1630,7 @@ mod tests {
             new_unseeded_pd_oracle_for_test(Arc::new(TestPdSource::new(1_700_000_000_000)));
         set_empty_pd_oracle_last_timestamp_for_test(
             &oracle,
-            system_time_to_timestamp(SystemTime::now()),
+            go_time_to_ts(SystemTime::now()),
             super::super::GLOBAL_TXN_SCOPE,
         );
         for iteration in 0..100 {
@@ -1643,7 +1643,7 @@ mod tests {
                     tokio::time::sleep(Duration::from_micros(100)).await;
                     set_empty_pd_oracle_last_timestamp_for_test(
                         &oracle,
-                        system_time_to_timestamp(now),
+                        go_time_to_ts(now),
                         super::super::GLOBAL_TXN_SCOPE,
                     );
                 })
@@ -1653,7 +1653,7 @@ mod tests {
                     .get_stale_timestamp(super::super::GLOBAL_TXN_SCOPE, 0)
                     .await
                     .unwrap();
-                let stale_time = get_time_from_timestamp(timestamp);
+                let stale_time = get_time_from_ts(timestamp);
                 if now.elapsed().unwrap_or_default() < Duration::from_millis(1) {
                     assert!(
                         stale_time < upper_bound,
@@ -1682,7 +1682,7 @@ mod tests {
         let seeded = oracle.get_low_resolution_timestamp(&global).await.unwrap();
         let fetched = oracle.get_timestamp(&global).await.unwrap();
         assert!(fetched > seeded);
-        let forced = super::super::compose_timestamp(1_700_000_000_001, 9);
+        let forced = super::super::compose_ts(1_700_000_000_001, 9);
         oracle.set_last_timestamp_for_test(forced, "test-scope");
         assert_eq!(
             oracle
@@ -1714,7 +1714,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             minimum,
-            super::super::compose_timestamp(1_699_999_999_999, 7)
+            super::super::compose_ts(1_699_999_999_999, 7)
         );
         oracle.set_external_timestamp(42).await.unwrap();
         assert_eq!(oracle.get_external_timestamp().await.unwrap(), 42);
@@ -1738,7 +1738,7 @@ mod tests {
         .unwrap();
         let mut now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let timestamp_before = |now: SystemTime, before: Duration| {
-            super::super::compose_timestamp(get_physical(now - before), 1)
+            super::super::compose_ts(get_physical(now - before), 1)
         };
         let state = || oracle.state.adaptive_state.lock().unwrap().state;
 
@@ -2047,7 +2047,7 @@ mod tests {
         .unwrap();
         let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let timestamp =
-            |before: Duration| super::super::compose_timestamp(get_physical(now - before), 1);
+            |before: Duration| super::super::compose_ts(get_physical(now - before), 1);
 
         oracle.adjust_update_interval_for_staleness(
             timestamp(Duration::from_secs(3)),
@@ -2133,8 +2133,8 @@ mod tests {
         .await
         .unwrap();
         let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000) + Duration::from_micros(1_234);
-        let current = super::super::compose_timestamp(get_physical(now), 1);
-        let read = super::super::compose_timestamp(get_physical(now - Duration::from_secs(1)), 1);
+        let current = super::super::compose_ts(get_physical(now), 1);
+        let read = super::super::compose_ts(get_physical(now - Duration::from_secs(1)), 1);
 
         oracle.adjust_update_interval_for_staleness(read, current, now);
         let expected = UNIX_EPOCH + Duration::from_secs(1_700_000_000) + Duration::from_millis(1);
@@ -2385,7 +2385,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let base = super::super::compose_timestamp(1_700_000_000_000, 0);
+        let base = super::super::compose_ts(1_700_000_000_000, 0);
         let cancel_indices = [None, None, Some(0), Some(1)];
 
         for (case_index, logical) in [100_u64, 200, 300, 400].into_iter().enumerate() {
@@ -2707,11 +2707,11 @@ mod tests {
         source.release.notify_waiters();
         assert_eq!(
             future.wait().await.unwrap(),
-            super::super::compose_timestamp(1_700_000_000_000, 2)
+            super::super::compose_ts(1_700_000_000_000, 2)
         );
 
-        let newer = super::super::compose_timestamp(1_700_000_000_001, 1);
-        let older = super::super::compose_timestamp(1_700_000_000_000, 99);
+        let newer = super::super::compose_ts(1_700_000_000_001, 1);
+        let older = super::super::compose_ts(1_700_000_000_000, 99);
         let mut tasks = Vec::new();
         for _ in 0..100 {
             let oracle = oracle.clone();

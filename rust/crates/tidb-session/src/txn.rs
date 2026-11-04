@@ -477,7 +477,7 @@ impl Session {
         };
         if let Some(seconds) = seconds {
             // Go `oracle.GoTimeToTS`.
-            return Ok(tikv_client::oracle::compose_timestamp((seconds * 1000.0) as i64, 0));
+            return Ok(tikv_client::oracle::compose_ts((seconds * 1000.0) as i64, 0));
         }
         let Ok(tso) = text.parse::<u64>() else {
             return Err(as_of_error(

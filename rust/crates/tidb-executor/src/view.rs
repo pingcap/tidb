@@ -261,7 +261,7 @@ pub fn view_column_list(
 /// an in-process creation records as `TableInfo.UpdateTS` where no timestamp
 /// oracle ran.
 pub(crate) fn current_tso() -> u64 {
-    tikv_client::oracle::system_time_to_timestamp(std::time::SystemTime::now())
+    tikv_client::oracle::go_time_to_ts(std::time::SystemTime::now())
 }
 
 pub fn build_view_table_info(name: &str, view: &crate::ViewDef) -> tidb_model::TableInfo {

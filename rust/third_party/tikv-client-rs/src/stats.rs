@@ -436,7 +436,7 @@ pub(crate) fn record_safe_ts_update(result: &'static str, store: &str, safe_ts: 
     TIKV_SAFE_TS_UPDATE
         .with_label_values(&[result, store])
         .inc();
-    let safe_time = crate::oracle::get_time_from_timestamp(safe_ts);
+    let safe_time = crate::oracle::get_time_from_ts(safe_ts);
     let gap = match std::time::SystemTime::now().duration_since(safe_time) {
         Ok(duration) => duration_to_sec(duration),
         Err(error) => -duration_to_sec(error.duration()),

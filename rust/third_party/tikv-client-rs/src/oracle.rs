@@ -136,27 +136,31 @@ pub struct FutureTimestampReadError {
 #[error("cannot set read ts to max uint64 for stale read")]
 pub struct LatestStaleReadError;
 
+/// client-go `oracle.ComposeTS`.
+///
 /// Compose a timestamp from signed physical and logical parts.
 ///
 /// The arithmetic wraps exactly like client-go's `int64` expression before the
 /// result is converted to `uint64`.
-pub fn compose_timestamp(physical: i64, logical: i64) -> u64 {
+pub fn compose_ts(physical: i64, logical: i64) -> u64 {
     physical
         .wrapping_shl(PHYSICAL_SHIFT_BITS)
         .wrapping_add(logical) as u64
 }
 
-/// Extract a timestamp's physical, millisecond component.
+/// client-go `oracle.ExtractPhysical`: a timestamp's physical, millisecond
+/// component.
 pub fn extract_physical(timestamp: u64) -> i64 {
     (timestamp >> PHYSICAL_SHIFT_BITS) as i64
 }
 
-/// Extract a timestamp's logical component.
+/// client-go `oracle.ExtractLogical`.
 pub fn extract_logical(timestamp: u64) -> i64 {
     (timestamp & LOGICAL_BITS) as i64
 }
 
-/// Return Unix time in milliseconds, truncating sub-millisecond precision.
+/// client-go `oracle.GetPhysical`: Unix time in milliseconds, truncating
+/// sub-millisecond precision.
 pub fn get_physical(time: SystemTime) -> i64 {
     let nanoseconds = match time.duration_since(UNIX_EPOCH) {
         Ok(duration) => duration_as_nanoseconds(duration),
@@ -165,22 +169,25 @@ pub fn get_physical(time: SystemTime) -> i64 {
     (nanoseconds / 1_000_000) as i64
 }
 
-/// Convert a timestamp's physical component to a system time.
-pub fn get_time_from_timestamp(timestamp: u64) -> SystemTime {
+/// client-go `oracle.GetTimeFromTS`: a timestamp's physical component as a
+/// system time.
+pub fn get_time_from_ts(timestamp: u64) -> SystemTime {
     UNIX_EPOCH + Duration::from_millis(extract_physical(timestamp) as u64)
 }
 
-/// Convert a system time to a timestamp with a zero logical component.
-pub fn system_time_to_timestamp(time: SystemTime) -> u64 {
+/// client-go `oracle.GoTimeToTS`: a system time as a timestamp with a zero
+/// logical component.
+pub fn go_time_to_ts(time: SystemTime) -> u64 {
     get_physical(time).wrapping_shl(PHYSICAL_SHIFT_BITS) as u64
 }
 
-/// Return the minimum start timestamp for an uncommitted transaction.
+/// client-go `oracle.GoTimeToLowerLimitStartTS`: the minimum start timestamp
+/// for an uncommitted transaction.
 ///
 /// `max_transaction_time_ms` is the maximum number of milliseconds from begin
 /// to commit. A negative value follows Go duration behavior and moves the lower
 /// limit forward.
-pub fn system_time_to_lower_limit_start_timestamp(
+pub fn go_time_to_lower_limit_start_ts(
     now: SystemTime,
     max_transaction_time_ms: i64,
 ) -> u64 {
@@ -188,7 +195,7 @@ pub fn system_time_to_lower_limit_start_timestamp(
         .wrapping_neg()
         .wrapping_mul(1_000_000);
     let lower_limit = add_wrapping_nanoseconds(now, nanoseconds);
-    system_time_to_timestamp(lower_limit)
+    go_time_to_ts(lower_limit)
 }
 
 pub(crate) fn add_wrapping_nanoseconds(time: SystemTime, nanoseconds: i64) -> SystemTime {
@@ -220,13 +227,13 @@ mod tests {
 
     #[test]
     fn timestamp_parts_match_client_go() {
-        let timestamp = compose_timestamp(1_701_234_567_890, 123_456);
+        let timestamp = compose_ts(1_701_234_567_890, 123_456);
         assert_eq!(extract_physical(timestamp), 1_701_234_567_890);
         assert_eq!(extract_logical(timestamp), 123_456);
 
-        assert_eq!(compose_timestamp(0, -1), u64::MAX);
+        assert_eq!(compose_ts(0, -1), u64::MAX);
         assert_eq!(
-            compose_timestamp(i64::MAX, 0),
+            compose_ts(i64::MAX, 0),
             u64::MAX << PHYSICAL_SHIFT_BITS
         );
         assert_eq!(extract_physical(u64::MAX), (1_i64 << 46) - 1);
@@ -236,11 +243,11 @@ mod tests {
     #[test]
     fn system_time_conversions_use_millisecond_precision() {
         let time = UNIX_EPOCH + Duration::new(1_701_234_567, 890_999_999);
-        let timestamp = system_time_to_timestamp(time);
+        let timestamp = go_time_to_ts(time);
         assert_eq!(get_physical(time), 1_701_234_567_890);
         assert_eq!(extract_logical(timestamp), 0);
         assert_eq!(
-            get_time_from_timestamp(timestamp),
+            get_time_from_ts(timestamp),
             time - Duration::from_nanos(999_999)
         );
 
@@ -255,23 +262,23 @@ mod tests {
     fn lower_limit_shifts_before_truncating_to_milliseconds() {
         let now = UNIX_EPOCH + Duration::from_micros(500);
         assert_eq!(
-            system_time_to_lower_limit_start_timestamp(now, 1),
-            system_time_to_timestamp(UNIX_EPOCH - Duration::from_micros(500))
+            go_time_to_lower_limit_start_ts(now, 1),
+            go_time_to_ts(UNIX_EPOCH - Duration::from_micros(500))
         );
         assert_eq!(
-            system_time_to_lower_limit_start_timestamp(now, -1),
-            system_time_to_timestamp(UNIX_EPOCH + Duration::from_micros(1_500))
+            go_time_to_lower_limit_start_ts(now, -1),
+            go_time_to_ts(UNIX_EPOCH + Duration::from_micros(1_500))
         );
 
         // Go first converts the signed millisecond count to `time.Duration`.
         // Its nanosecond multiplication wraps before `time.Time.Add` runs.
         assert_eq!(
-            system_time_to_lower_limit_start_timestamp(now, i64::MAX),
-            system_time_to_timestamp(now + Duration::from_millis(1))
+            go_time_to_lower_limit_start_ts(now, i64::MAX),
+            go_time_to_ts(now + Duration::from_millis(1))
         );
         assert_eq!(
-            system_time_to_lower_limit_start_timestamp(now, i64::MIN),
-            system_time_to_timestamp(now)
+            go_time_to_lower_limit_start_ts(now, i64::MIN),
+            go_time_to_ts(now)
         );
     }
 

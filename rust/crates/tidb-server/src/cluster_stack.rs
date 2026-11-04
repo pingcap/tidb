@@ -611,7 +611,7 @@ pub fn cluster_session_stack(
                 let internal = processes.internal_session_start_ts(|id| tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(id));
                 // Go `ReportMinStartTS`: `store.CurrentVersion(kv.GlobalTxnScope)`.
                 let version = opener.store().get_timestamp_async().wait()?;
-                let now = tikv_client::oracle::get_time_from_timestamp(version);
+                let now = tikv_client::oracle::get_time_from_ts(version);
                 for ts in internal {
                     let _ = tidb_txnkv::print_long_time_internal_txn(now, ts, false);
                     active.push(ts);

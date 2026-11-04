@@ -9425,7 +9425,7 @@ impl<PdC: PdClient> Committer<PdC> {
         let current_timestamp =
             self.start_version
                 .version()
-                .saturating_add(crate::oracle::compose_timestamp(
+                .saturating_add(crate::oracle::compose_ts(
                     self.start_instant.elapsed().as_millis() as i64,
                     0,
                 ));
@@ -9436,7 +9436,7 @@ impl<PdC: PdClient> Committer<PdC> {
             .safe_window
             .as_millis() as i64;
         self.max_commit_ts =
-            current_timestamp.saturating_add(crate::oracle::compose_timestamp(safe_window_ms, 0));
+            current_timestamp.saturating_add(crate::oracle::compose_ts(safe_window_ms, 0));
         Ok(())
     }
 
@@ -11166,7 +11166,7 @@ mod tests {
                             },
                             Case {
                                 name: "lag too much, fail directly",
-                                commit_wait_offset: crate::oracle::compose_timestamp(10_000, 0),
+                                commit_wait_offset: crate::oracle::compose_ts(10_000, 0),
                                 timestamp_offsets: &[100],
                                 timeout: None,
                                 one_pc: false,
@@ -11184,7 +11184,7 @@ mod tests {
                             },
                             Case {
                                 name: "should also check for 1pc",
-                                commit_wait_offset: crate::oracle::compose_timestamp(10_000, 0),
+                                commit_wait_offset: crate::oracle::compose_ts(10_000, 0),
                                 timestamp_offsets: &[100],
                                 timeout: None,
                                 one_pc: true,
@@ -11193,7 +11193,7 @@ mod tests {
                             },
                             Case {
                                 name: "should also check for causal consistency",
-                                commit_wait_offset: crate::oracle::compose_timestamp(10_000, 0),
+                                commit_wait_offset: crate::oracle::compose_ts(10_000, 0),
                                 timestamp_offsets: &[100],
                                 timeout: None,
                                 one_pc: true,
@@ -11203,7 +11203,7 @@ mod tests {
                         ];
 
                         for case in cases {
-                            let start = crate::oracle::compose_timestamp(1_000, 0);
+                            let start = crate::oracle::compose_ts(1_000, 0);
                             let rpc = Arc::new(MockPdClient::new(
                                 MockKvClient::with_dispatch_hook(|request: &dyn Any| {
                                     if request.downcast_ref::<kvrpcpb::PrewriteRequest>().is_some()

@@ -923,7 +923,7 @@ fn tidb_bounded_staleness_safets_windows_and_monotonicity() {
             )
             .unwrap()
             .and_utc();
-            tikv_client::oracle::compose_timestamp(utc.timestamp_millis(), 0)
+            tikv_client::oracle::compose_ts(utc.timestamp_millis(), 0)
         }
     }
 

@@ -4090,7 +4090,7 @@ mod test {
     #[tokio::test]
     #[allow(non_snake_case)]
     async fn source_go_region_request_TestRegionRequestValidateReadTS() {
-        let current = crate::oracle::compose_timestamp(1_700_000_000_000, 1);
+        let current = crate::oracle::compose_ts(1_700_000_000_000, 1);
         let minute = 60_000_u64 << 18;
         let validator: Arc<dyn crate::oracle::ReadTimestampValidator> =
             Arc::new(SourceReadTimestampValidator {

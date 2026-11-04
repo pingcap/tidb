@@ -251,7 +251,7 @@ pub fn analyze_kv_table_independent_index(
 /// back), with the 18-bit logical counter left zero.
 #[must_use]
 pub fn now_tso_shaped() -> u64 {
-    tikv_client::oracle::system_time_to_timestamp(std::time::SystemTime::now())
+    tikv_client::oracle::go_time_to_ts(std::time::SystemTime::now())
 }
 
 /// Go's `DecodeTopN`, which is the step this tier would otherwise skip.

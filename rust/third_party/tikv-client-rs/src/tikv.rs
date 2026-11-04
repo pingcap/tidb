@@ -506,9 +506,9 @@ impl TxnSafePointCache {
         if start_timestamp < safe_point {
             return Err(crate::error::TransactionAbortedByGcError {
                 transaction_start_timestamp: start_timestamp,
-                transaction_start_time: oracle::get_time_from_timestamp(start_timestamp),
+                transaction_start_time: oracle::get_time_from_ts(start_timestamp),
                 transaction_safe_point: safe_point,
-                transaction_safe_point_time: oracle::get_time_from_timestamp(safe_point),
+                transaction_safe_point_time: oracle::get_time_from_ts(safe_point),
             }
             .into());
         }

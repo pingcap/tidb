@@ -456,7 +456,7 @@ pub(crate) fn get_time_from_ts(ts: u64) -> u64 {
 
 /// Go `oracle.GoTimeToTS`, from Unix milliseconds.
 pub(crate) fn go_time_to_ts(unix_millis: u64) -> u64 {
-    tikv_client::oracle::compose_timestamp(unix_millis as i64, 0)
+    tikv_client::oracle::go_time_to_ts(std::time::UNIX_EPOCH + std::time::Duration::from_millis(unix_millis))
 }
 
 pub(crate) fn unix_millis_now() -> u64 {

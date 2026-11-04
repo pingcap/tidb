@@ -701,7 +701,7 @@ mod tests {
     #[test]
     fn version_to_time_reads_the_tso_physical_half() {
         // 1700000000123 ms since the epoch, shifted into a TSO.
-        let version = tikv_client::oracle::compose_timestamp(1_700_000_000_123, 0);
+        let version = tikv_client::oracle::compose_ts(1_700_000_000_123, 0);
         let time = version_to_time(version, &chrono::Utc).expect("a valid instant");
         assert_eq!(time.kind(), TimeType::DateTime);
         // fsp 0: the 123 ms are not rendered.
@@ -724,7 +724,7 @@ mod tests {
     // WRITTEN test for :108-133: the pseudo skip and the IsAnalyzed branch.
     #[test]
     fn stats_meta_row_nulls_the_analyze_time_when_never_analyzed() {
-        let version = tikv_client::oracle::compose_timestamp(1_700_000_000_000, 0);
+        let version = tikv_client::oracle::compose_ts(1_700_000_000_000, 0);
         let mut stats = Table::default();
         stats.version = version;
         stats.hist_coll.modify_count = 5;
@@ -768,7 +768,7 @@ mod tests {
             id: 3,
             ndv: 42,
             null_count: 7,
-            last_update_version: tikv_client::oracle::compose_timestamp(1_700_000_000_000, 0),
+            last_update_version: tikv_client::oracle::compose_ts(1_700_000_000_000, 0),
             correlation: -0.5,
             ..Histogram::default()
         };

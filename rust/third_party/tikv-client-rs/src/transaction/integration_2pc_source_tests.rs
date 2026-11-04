@@ -2099,7 +2099,7 @@ fn source_go_integration_tests_2pc_test_TestElapsedTTL() {
     source_2pc_run(|| async move {
         let (cluster, pd) = source_integration_store();
         let key = source_2pc_key("elapsed-ttl", "key");
-        let start_ts = crate::oracle::system_time_to_timestamp(
+        let start_ts = crate::oracle::go_time_to_ts(
             SystemTime::now() + Duration::from_secs(10),
         ) + 1;
         let mut transaction = Transaction::new(
@@ -2111,7 +2111,7 @@ fn source_go_integration_tests_2pc_test_TestElapsedTTL() {
             Keyspace::Disable,
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let for_update_ts = crate::oracle::compose_timestamp(
+        let for_update_ts = crate::oracle::compose_ts(
             crate::oracle::extract_physical(start_ts) + 100,
             1,
         );
@@ -2338,7 +2338,7 @@ fn source_go_integration_tests_2pc_test_TestPkNotFound() {
             .await
             .unwrap();
         let start_ts = holder.start_timestamp().version();
-        let current_ts = crate::oracle::system_time_to_timestamp(
+        let current_ts = crate::oracle::go_time_to_ts(
             SystemTime::now() + Duration::from_millis(200),
         );
         let first = cluster

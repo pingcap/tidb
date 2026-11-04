@@ -2478,7 +2478,7 @@ impl Session {
             .map_or(0, |provider| provider(&tidb_config::tikvcfg::get_txn_scope_from_config()));
         let safe_physical = tikv_client::oracle::extract_physical(min_safe_ts);
         let read_physical = safe_physical.clamp(min_physical, now_physical);
-        Ok(Some(tikv_client::oracle::compose_timestamp(read_physical, 0)))
+        Ok(Some(tikv_client::oracle::compose_ts(read_physical, 0)))
     }
 
     fn refuse_pinned_historical_read(&mut self, stmt: &Stmt) -> Result<(), DriverError> {
