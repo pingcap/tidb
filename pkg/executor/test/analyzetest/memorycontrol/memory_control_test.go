@@ -77,7 +77,8 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 	tk0 := testkit.NewTestKit(t, store)
 	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
 	tk0.MustExec("set global tidb_server_memory_limit = 512MB")
-	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+	// 64MB keeps the test session (a few KB) out of MemUsageTop1Tracker, so only the analyze can be killed.
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 64MB")
 
 	sm := newLiveSessionManager(dom, tk0.Session())
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
@@ -107,7 +108,8 @@ func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
 	tk0.MustExec("set global tidb_mem_quota_query = 209715200 ") // 200MB
 	tk0.MustExec("set global tidb_server_memory_limit = 5GB")
-	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+	// 64MB keeps the test session (a few KB) out of MemUsageTop1Tracker, so only the analyze can be killed.
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 64MB")
 
 	sm := newLiveSessionManager(dom, tk0.Session())
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
@@ -150,7 +152,8 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	//originalVal2 := tk.MustQuery("select @@global.tidb_server_memory_limit").Rows()[0][0].(string)
 	tk.MustExec("set global tidb_server_memory_limit = 512MB")
 	originalVal3 := tk.MustQuery("select @@global.tidb_server_memory_limit_sess_min_size").Rows()[0][0].(string)
-	tk.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+	// 64MB keeps the test session (a few KB) out of MemUsageTop1Tracker, so only the analyze can be killed.
+	tk.MustExec("set global tidb_server_memory_limit_sess_min_size = 64MB")
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_mem_oom_action = %v", originalVal1))
 		//tk.MustExec(fmt.Sprintf("set global tidb_server_memory_limit = %v", originalVal2))
