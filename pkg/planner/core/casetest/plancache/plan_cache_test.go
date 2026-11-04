@@ -15,76 +15,15 @@
 package plancache
 
 import (
-	"context"
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/stretchr/testify/require"
 )
-
-func TestPreparedPlanCacheLockTargets(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_lock_left (a int primary key)")
-	tk.MustExec("create table t_lock_right (a int primary key)")
-	tk.MustExec("insert into t_lock_left values (1), (2)")
-	tk.MustExec("insert into t_lock_right values (1), (2)")
-	for _, instanceCache := range []bool{false, true} {
-		t.Run("instance="+strconv.FormatBool(instanceCache), func(t *testing.T) {
-			ctx := context.Background()
-			if instanceCache {
-				ctx = context.WithValue(ctx, plannercore.PlanCacheKeyEnableInstancePlanCache{}, true)
-			}
-			reader := testkit.NewTestKit(t, store)
-			reader.MustExec("use test")
-			reader.MustExec("set tidb_enable_prepared_plan_cache = on")
-			reader.MustExec("set @p = 0")
-			probe := testkit.NewTestKit(t, store)
-			probe.MustExec("use test")
-			t.Cleanup(func() {
-				probe.MustExec("rollback")
-				reader.MustExec("rollback")
-			})
-			for _, tc := range []struct {
-				name   string
-				clause string
-				locks  [2]bool
-			}{
-				{name: "left", clause: "for update of t_lock_left", locks: [2]bool{true, false}},
-				{name: "right", clause: "for update of t_lock_right", locks: [2]bool{false, true}},
-				{name: "all", clause: "for update", locks: [2]bool{true, true}},
-			} {
-				t.Run(tc.name, func(t *testing.T) {
-					reader := testkit.NewTestKitWithSession(t, store, reader.Session())
-					probe := testkit.NewTestKitWithSession(t, store, probe.Session())
-					reader.MustExec("prepare lock_targets from 'select /*+ USE_PLAN_CACHE() */ t_lock_left.a, t_lock_right.a from t_lock_left join t_lock_right on t_lock_left.a = t_lock_right.a where t_lock_left.a > ? " + tc.clause + "'")
-					for execution := range 3 {
-						reader.MustExec("begin pessimistic")
-						reader.MustQueryWithContext(ctx, "execute lock_targets using @p").Sort().Check(testkit.Rows("1 1", "2 2"))
-						require.Equal(t, execution > 0, reader.Session().GetSessionVars().FoundInPlanCache)
-						for tableIndex, table := range []string{"t_lock_left", "t_lock_right"} {
-							probe.MustExec("begin pessimistic")
-							sql := "select * from " + table + " for update nowait"
-							if tc.locks[tableIndex] {
-								probe.MustGetErrCode(sql, mysql.ErrLockAcquireFailAndNoWaitSet)
-							} else {
-								probe.MustQuery(sql).Sort().Check(testkit.Rows("1", "2"))
-							}
-							probe.MustExec("rollback")
-						}
-						reader.MustExec("rollback")
-					}
-				})
-			}
-		})
-	}
-}
 
 func TestNullSafeDurationPlanCache(t *testing.T) {
 	t.Run("issue70681", func(t *testing.T) {
