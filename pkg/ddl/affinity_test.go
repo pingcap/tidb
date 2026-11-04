@@ -392,6 +392,8 @@ func TestAffinityDDLFailsWhenPDDoesNotServeAffinityAPI(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_plain (a int)")
+	tk.MustExec("create table t_aff_old (a int) affinity = 'table'")
+	tk.MustExec("insert into t_aff_old values (1)")
 
 	// A PD without the affinity API answers 404.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -409,4 +411,6 @@ func TestAffinityDDLFailsWhenPDDoesNotServeAffinityAPI(t *testing.T) {
 	tk.MustQuery("show tables like 't_aff'").Check(testkit.Rows())
 	tk.MustContainErrMsg("alter table t_plain affinity = 'table'", affinity.ErrPDNotSupportAffinity.Error())
 	tk.MustQuery("select count(*) from information_schema.tables where table_name = 't_plain' and tidb_affinity is not null").Check(testkit.Rows("0"))
+	tk.MustContainErrMsg("truncate table t_aff_old", affinity.ErrPDNotSupportAffinity.Error())
+	tk.MustQuery("select * from t_aff_old").Check(testkit.Rows("1"))
 }
