@@ -8,6 +8,10 @@ go_test(
         "timeout_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD:pkg/bindinfo/tests/timeout/BUILD.bazel
+=======
+    shard_count = 6,
+>>>>>>> e73d535e340 (parser, planner, executor: support ANALYZE ... WITH DEFAULT <option> (#69956)):pkg/executor/test/analyzetest/options/BUILD.bazel
     deps = [
         "//pkg/bindinfo",
         "//pkg/testkit",
