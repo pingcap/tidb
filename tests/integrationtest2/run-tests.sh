@@ -276,6 +276,7 @@ function start_tidb_server()
     $tidb_server -P "$tidb_port" \
         -status "$tidb_status_port" \
         -config $config_file \
+        -initialize-sql-file init.sql \
         -store tikv \
         -path "${pd_client_addr}" > $log_file 2>&1 &
     SERVER_PID=$!
