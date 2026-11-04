@@ -5443,61 +5443,16 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
     );
 
     rows(&mut session, "DELETE FROM mysql.analyze_jobs");
-    let started_at = tidb_datatype::current_time::utc_now_timestamp()
-        .add_duration(MySqlDuration::from_nanoseconds(-60_000_000_000, 0).unwrap())
-        .unwrap();
-    let handle = ClusterHistoricalStatsHandle {
-        transactions: Arc::clone(&stack.factory.transactions),
-        catalog: Arc::clone(&stack.factory.catalog),
-        global_vars: stack.factory.global_vars.clone(),
-        auto_ids: Arc::clone(&stack.factory.auto_ids),
-        domain: Arc::downgrade(&stack.factory),
-    };
-    let mut job_id = 0;
-    handle
-        .commit_stats_plan(|snapshot, _| {
-            let (created_job_id, plan) = tidb_stats_handle_autoanalyze::analyze_jobs::plan_insert_analyze_job(
-                snapshot,
-                &stack.factory.catalog.get_latest(),
-                "test",
-                "stats_show_analyze_job",
-                "",
-                b"analyze table all columns with 256 buckets, 100 topn, 1 samplerate",
-                "127.0.0.1:4000",
-                78,
-                started_at,
-                Some(stack.factory.auto_ids.as_ref()),
-            )
-            .map_err(|error| error.to_string())?;
-            job_id = created_job_id;
-            Ok(plan)
-        })
-        .expect("pending job commits");
-    handle
-        .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_autoanalyze::analyze_jobs::plan_start_analyze_job(
-                snapshot,
-                &stack.factory.catalog.get_latest(),
-                job_id,
-                started_at,
-                Some(stack.factory.auto_ids.as_ref()),
-            )
-            .map_err(|error| error.to_string())
-        })
-        .expect("running job commits");
-    handle
-        .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_autoanalyze::analyze_jobs::plan_update_analyze_job_progress(
-                snapshot,
-                &stack.factory.catalog.get_latest(),
-                job_id,
-                3,
-                started_at,
-                Some(stack.factory.auto_ids.as_ref()),
-            )
-            .map_err(|error| error.to_string())
-        })
-        .expect("running progress commits");
+    // A running job one minute in, three rows processed (Go
+    // `InsertAnalyzeJob`, `StartAnalyzeJob`, `UpdateAnalyzeJobProgress`).
+    rows(&mut session, "SET time_zone = '+00:00'");
+    rows(
+        &mut session,
+        "INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, \
+         processed_rows, start_time, state, instance, process_id) VALUES ('test', \
+         'stats_show_analyze_job', '', 'analyze table all columns with 256 buckets, 100 topn, 1 samplerate', \
+         3, UTC_TIMESTAMP() - INTERVAL 60 SECOND, 'running', '127.0.0.1:4000', 78)",
+    );
     let running = displayed(rows(
         &mut session,
         "SHOW ANALYZE STATUS WHERE table_name = 'stats_show_analyze_job' AND state = 'running'",
@@ -5539,63 +5494,16 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
         )))
     );
     rows(&mut client, "SET GLOBAL time_zone = 'Europe/Berlin'");
-    let now = tidb_datatype::current_time::utc_now_timestamp();
-    let started_at = now
-        .add_duration(MySqlDuration::from_nanoseconds(-2_000_000_000, 0).unwrap())
-        .unwrap();
-    let handle = ClusterHistoricalStatsHandle {
-        transactions: Arc::clone(&factory.transactions),
-        catalog: Arc::clone(&factory.catalog),
-        global_vars: factory.global_vars.clone(),
-        auto_ids: Arc::clone(&factory.auto_ids),
-        domain: Arc::downgrade(&factory),
-    };
-    let mut job_id = 0;
-    handle
-        .commit_stats_plan(|snapshot, _| {
-            let (created_job_id, plan) = tidb_stats_handle_autoanalyze::analyze_jobs::plan_insert_analyze_job(
-                snapshot,
-                &factory.catalog.get_latest(),
-                "test",
-                "t",
-                "",
-                b"analyze table `test`.`t`",
-                "127.0.0.1:4000",
-                1,
-                started_at,
-                Some(factory.auto_ids.as_ref()),
-            )
-            .map_err(|error| error.to_string())?;
-            job_id = created_job_id;
-            Ok(plan)
-        })
-        .expect("pending job commits");
-    handle
-        .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_autoanalyze::analyze_jobs::plan_start_analyze_job(
-                snapshot,
-                &factory.catalog.get_latest(),
-                job_id,
-                started_at,
-                Some(factory.auto_ids.as_ref()),
-            )
-            .map_err(|error| error.to_string())
-        })
-        .expect("running job commits");
-    handle
-        .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_autoanalyze::analyze_jobs::plan_finish_analyze_job(
-                snapshot,
-                &factory.catalog.get_latest(),
-                job_id,
-                0,
-                Some("simulated failure"),
-                now,
-                Some(factory.auto_ids.as_ref()),
-            )
-            .map_err(|error| error.to_string())
-        })
-        .expect("failed job commits");
+    // A job that failed two seconds after it started (Go `InsertAnalyzeJob`,
+    // `StartAnalyzeJob`, `FinishAnalyzeJob` with an error).
+    rows(&mut client, "SET time_zone = '+00:00'");
+    rows(
+        &mut client,
+        "INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, \
+         start_time, end_time, state, fail_reason, instance, process_id) VALUES ('test', 't', '', \
+         'analyze table `test`.`t`', UTC_TIMESTAMP() - INTERVAL 2 SECOND, UTC_TIMESTAMP(), \
+         'failed', 'simulated failure', '127.0.0.1:4000', NULL)",
+    );
 
     assert_eq!(
         source.scalar("SELECT @@time_zone").unwrap(),
@@ -5645,98 +5553,34 @@ fn corrupted_analyze_job_cleanup_matches_go() {
     );
     let local_instance = local_instance.as_str();
     let now = tidb_datatype::current_time::utc_now_timestamp();
-    let old = now
-        .add_duration(MySqlDuration::from_nanoseconds(-660_000_000_000, 0).unwrap())
-        .unwrap();
-    let handle = ClusterHistoricalStatsHandle {
-        transactions: Arc::clone(&stack.factory.transactions),
-        catalog: Arc::clone(&stack.factory.catalog),
-        global_vars: stack.factory.global_vars.clone(),
-        auto_ids: Arc::clone(&stack.factory.auto_ids),
-        domain: Arc::downgrade(&stack.factory),
+    // Seven jobs, eleven minutes old unless noted: 1 pending; 2 running
+    // with no process (started, finished, restarted); 3 and 4 running under
+    // processes 3 and 4; 5 finished; 6 pending and new; 7 pending on another
+    // instance.
+    rows(&mut session, "SET time_zone = '+00:00'");
+    let insert = |session: &mut _, values: String| {
+        rows(
+            session,
+            &format!(
+                "INSERT INTO mysql.analyze_jobs (id, update_time, table_schema, table_name, \
+                 partition_name, job_info, start_time, end_time, state, instance, process_id) \
+                 VALUES {values}"
+            ),
+        );
     };
-    for (process_id, instance, created_at) in [
-        (1, local_instance, old),
-        (2, local_instance, old),
-        (3, local_instance, old),
-        (4, local_instance, old),
-        (5, local_instance, old),
-        (6, local_instance, now),
-        (7, "10.0.0.1:4000", old),
-    ] {
-        handle
-            .commit_stats_plan(|snapshot, _| {
-                let (_, plan) = tidb_stats_handle_autoanalyze::analyze_jobs::plan_insert_analyze_job(
-                    snapshot,
-                    &stack.factory.catalog.get_latest(),
-                    "test",
-                    "t",
-                    "",
-                    b"job",
-                    instance,
-                    process_id,
-                    created_at,
-                    Some(stack.factory.auto_ids.as_ref()),
-                )
-                .map_err(|error| error.to_string())?;
-                Ok(plan)
-            })
-            .expect("pending job commits");
-    }
-    for id in [2, 3, 4] {
-        handle
-            .commit_stats_plan(|snapshot, _| {
-                tidb_stats_handle_autoanalyze::analyze_jobs::plan_start_analyze_job(
-                    snapshot,
-                    &stack.factory.catalog.get_latest(),
-                    id,
-                    old,
-                    Some(stack.factory.auto_ids.as_ref()),
-                )
-                .map_err(|error| error.to_string())
-            })
-            .expect("running job commits");
-    }
-    handle
-        .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_autoanalyze::analyze_jobs::plan_finish_analyze_job(
-                snapshot,
-                &stack.factory.catalog.get_latest(),
-                2,
-                0,
-                None,
-                old,
-                Some(stack.factory.auto_ids.as_ref()),
-            )
-            .map_err(|error| error.to_string())
-        })
-        .expect("temporary finish commits");
-    handle
-        .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_autoanalyze::analyze_jobs::plan_start_analyze_job(
-                snapshot,
-                &stack.factory.catalog.get_latest(),
-                2,
-                old,
-                Some(stack.factory.auto_ids.as_ref()),
-            )
-            .map_err(|error| error.to_string())
-        })
-        .expect("NULL-process running job commits");
-    handle
-        .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_autoanalyze::analyze_jobs::plan_finish_analyze_job(
-                snapshot,
-                &stack.factory.catalog.get_latest(),
-                5,
-                0,
-                None,
-                old,
-                Some(stack.factory.auto_ids.as_ref()),
-            )
-            .map_err(|error| error.to_string())
-        })
-        .expect("finished job commits");
+    let old = "UTC_TIMESTAMP() - INTERVAL 660 SECOND";
+    insert(
+        &mut session,
+        format!(
+            "(1, {old}, 'test', 't', '', 'job', NULL, NULL, 'pending', '{local_instance}', 1), \
+             (2, {old}, 'test', 't', '', 'job', {old}, {old}, 'running', '{local_instance}', NULL), \
+             (3, {old}, 'test', 't', '', 'job', {old}, NULL, 'running', '{local_instance}', 3), \
+             (4, {old}, 'test', 't', '', 'job', {old}, NULL, 'running', '{local_instance}', 4), \
+             (5, {old}, 'test', 't', '', 'job', {old}, {old}, 'finished', '{local_instance}', NULL), \
+             (6, UTC_TIMESTAMP(), 'test', 't', '', 'job', NULL, NULL, 'pending', '{local_instance}', 6), \
+             (7, {old}, 'test', 't', '', 'job', NULL, NULL, 'pending', '10.0.0.1:4000', 7)"
+        ),
+    );
 
     let processes = stack.factory.processes();
     let _analyze = processes.register(
@@ -6222,6 +6066,60 @@ fn uninitialized_statistics_remain_hidden_and_pseudo() {
             "uninitialized statistics must stay pseudo with the switch {enabled}: {explain:?}"
         );
     }
+}
+
+/// Go's blocking global-stats merge (`tidb_enable_async_merge_global_stats =
+/// OFF`, `MergePartitionStats2GlobalStats`): each partition's statistics are
+/// `statsReadWriter.LoadTablePartitionStats` on a statistics session, so a
+/// re-analyzed partition merges with the others' stored rows. Expected rows
+/// from a Go node.
+#[test]
+fn blocking_global_stats_merge_reads_partitions_like_go() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    let mut session = stack
+        .factory
+        .open_session(session_context(60))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
+    rows(&mut session, "SET SESSION tidb_partition_prune_mode = 'dynamic'");
+    rows(&mut session, "SET SESSION tidb_enable_async_merge_global_stats = OFF");
+    rows(
+        &mut session,
+        "CREATE TABLE gb (a int, b int, KEY(a)) PARTITION BY RANGE (a) (\
+         PARTITION p0 VALUES LESS THAN (10),\
+         PARTITION p1 VALUES LESS THAN (20),\
+         PARTITION p2 VALUES LESS THAN (30))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO gb VALUES (1,1),(2,1),(3,2),(11,2),(12,3),(21,3),(22,4),(23,4)",
+    );
+    let global_meta = "SELECT m.count, m.modify_count FROM mysql.stats_meta m \
+         JOIN information_schema.tables t ON m.table_id = t.tidb_table_id \
+         WHERE t.table_name = 'gb'";
+    let global_histograms = "SELECT h.is_index, h.hist_id, h.distinct_count, h.null_count \
+         FROM mysql.stats_histograms h JOIN information_schema.tables t \
+         ON h.table_id = t.tidb_table_id WHERE t.table_name = 'gb' \
+         ORDER BY h.is_index, h.hist_id";
+
+    rows(&mut session, "ANALYZE TABLE gb");
+    assert_eq!(displayed(rows(&mut session, global_meta)), [["8", "0"]]);
+    assert_eq!(
+        displayed(rows(&mut session, global_histograms)),
+        [["0", "1", "8", "0"], ["0", "2", "4", "0"], ["1", "1", "8", "0"]]
+    );
+
+    rows(&mut session, "INSERT INTO gb VALUES (4,5),(5,6),(1,7)");
+    rows(&mut session, "ANALYZE TABLE gb PARTITION p0");
+    // The merged count is the partitions' stored counts (6 + 2 + 3) with no
+    // modifications, read before any stats delta of the INSERT is flushed.
+    assert_eq!(displayed(rows(&mut session, global_meta)), [["11", "0"]]);
+    assert_eq!(
+        displayed(rows(&mut session, global_histograms)),
+        [["0", "1", "10", "0"], ["0", "2", "7", "0"], ["1", "1", "10", "0"]]
+    );
 }
 
 /// Pinned `pkg/statistics/handle/handletest/handle_test.go::
@@ -7503,11 +7401,10 @@ fn admin_show_ddl_reports_this_node_and_the_followed_version() {
 
 /// Go `dataForTiDBClusterInfo` (`infoschema_reader.go:1842`) over
 /// `GetClusterServerInfo`: one row per node, describing where it is and how
-/// long it has been up.
-///
-/// Only the TiDB source of Go's seven retrievers is implemented here. This
-/// regression checks that no other nodes are fabricated; full cluster discovery
-/// remains an open parity gap.
+/// long it has been up. Over an embedded store the TiDB row is this node and
+/// `GetStoreServerInfo` reads the store's own PD client (a Go mock store
+/// answers `tikv|store1|`); the PD and microservice retrievers find no etcd
+/// members.
 #[test]
 fn cluster_info_reports_this_node() {
     let (stack, _users) = cop_backed_stack();
@@ -7521,7 +7418,12 @@ fn cluster_info_reports_this_node() {
         "SELECT TYPE, INSTANCE, STATUS_ADDRESS, VERSION, GIT_HASH, UPTIME, SERVER_ID \
          FROM information_schema.cluster_info",
     ));
-    assert_eq!(reported.len(), 1, "a single node reports itself alone");
+    assert_eq!(
+        reported.iter().map(|row| row[0].as_str()).collect::<Vec<_>>(),
+        ["tidb", "tikv"],
+        "this node, then the embedded store"
+    );
+    assert_eq!(reported[1][1..3], ["store1", ""], "Go's mock store row");
     let row = &reported[0];
     assert_eq!(row[0], "tidb");
     // Both addresses are host:port, and they are the node's own two ports.
@@ -27502,6 +27404,64 @@ fn the_async_load_drains_the_demand_on_the_domains_sessions_as_go() {
     let column = column.read().unwrap();
     assert!(column.stats_loaded_status.is_full_load());
     assert_eq!(column.top_n.as_ref().map(|top_n| top_n.num()), Some(3));
+}
+
+/// Go `storage.ReadColumnDistributionStats`: one column's metadata, TopN and
+/// histogram read at one fresh snapshot on a statistics session, without the
+/// statistics cache; a column with no histogram row reads as nothing.
+#[test]
+fn column_distribution_stats_read_on_a_statistics_session_as_go() {
+    use tidb_stats_handle_storage::stats_read_writer::StatsSessionPool;
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(312)).unwrap();
+    rows(&mut session, "CREATE TABLE test.distribution (id INT PRIMARY KEY, v INT, w INT)");
+    rows(&mut session, "INSERT INTO test.distribution VALUES (1, 1, 1), (2, 2, 1), (3, 3, 1)");
+    rows(&mut session, "ANALYZE TABLE test.distribution COLUMNS id, v");
+    let catalog = stack.factory.catalog.get_latest();
+    let table = catalog
+        .stored_schemas()
+        .iter()
+        .flat_map(|database| database.read().deprecated_tables.iter_deref())
+        .find(|table| table.read().name.original() == "distribution")
+        .expect("the table is in the catalog");
+    let (table_id, v_info, w_info) = {
+        let table = table.read();
+        let column = |name: &str| {
+            table
+                .columns
+                .iter_deref()
+                .find(|column| column.read().name.original() == name)
+                .expect("the column exists")
+        };
+        (table.id, column("v"), column("w"))
+    };
+    let pool = stack.factory.advanced_sys_session_pool();
+    let stats_pool = tidb_domain_core::sys_session::StatsPool {
+        session_pool: Some(&pool),
+    };
+    let read = |info: &tidb_stats::column::ColumnInfo| {
+        let mut column = None;
+        stats_pool
+            .call_with_sctx(
+                &mut |sctx| {
+                    column = tidb_stats_handle_storage::read::read_column_distribution_stats(
+                        sctx, table_id, info,
+                    )?;
+                    Ok(())
+                },
+                &[],
+            )
+            .expect("the read runs on a statistics session");
+        column
+    };
+    let column = read(&v_info).expect("the analyzed column has a distribution");
+    assert_eq!(column.physical_id, table_id);
+    assert_eq!(column.stats_version, 2);
+    assert!(column.stats_loaded_status.is_full_load());
+    assert_eq!(column.top_n.as_ref().map(|top_n| top_n.num()), Some(3));
+    assert_eq!(column.histogram.ndv, 3);
+    assert_eq!(column.histogram.null_count, 0);
+    assert!(read(&w_info).is_none(), "an unanalyzed column has no distribution");
 }
 
 /// Go `cache.TableRowStatsCache` is one process-wide cache whose

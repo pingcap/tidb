@@ -29,11 +29,9 @@ use std::time::Duration;
 use tidb_datatype::FieldType;
 use tidb_model::table_info::TableInfo;
 use tidb_stats_handle_cache::{StatsMetaRow, StatsRefreshSource, UpdateError};
-use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
-use tidb_stats_handle_storage::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader};
+use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsItem;
 use tidb_syssession::mysql_system_tables::SystemTableError;
-use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use crate::stats_watch::{SharedStats, TableStatsState};
 
 /// One cache-refresh target: the complete schema object Go passes through
@@ -76,46 +74,6 @@ impl StatsTarget {
         }
         targets
     }
-}
-
-
-/// Go `storage.ReadColumnDistributionStats` over real TiKV.
-///
-/// Histogram metadata, TopN, and buckets are read through one read-only
-/// transaction, so a concurrent `ANALYZE` cannot splice two generations into
-/// one column distribution.  This is a direct foreground read and does not
-/// publish anything to the shared statistics cache.
-pub fn read_column_distribution_stats<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
-    timeout: Duration,
-    loader: &ClusterStatsLoader,
-    physical_table_id: i64,
-    table_info: &TableInfo,
-    column_id: i64,
-) -> Result<Option<tidb_stats::Column>, SystemTableError> {
-    let Some(column_type) = table_info.cols().iter_deref().find_map(|column| {
-        let column = column.read();
-        (column.id == column_id).then(|| column.field_type.clone())
-    }) else {
-        return Ok(None);
-    };
-    let mut transaction = opener
-        .begin_read_only()
-        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-    let loaded = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        loader.load_column_distribution_stats(
-            &mut snapshot,
-            physical_table_id,
-            column_id,
-            table_info,
-            &column_type,
-        )
-    };
-    transaction
-        .finish_without_writes()
-        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
-    loaded
 }
 
 

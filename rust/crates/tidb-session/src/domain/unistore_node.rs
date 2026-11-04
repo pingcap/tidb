@@ -619,6 +619,10 @@ pub fn unistore_cluster_session_stack_from(
     let sysvar_publication_fence = tidb_domain_core::cluster_sysvar_seam::SysvarPublicationFence::default();
 
     let peer_store = (*tikv_store).clone();
+    // Go's CLUSTER_INFO retrievers over the embedded store.
+    let store_discovery: Arc<dyn tidb_domain::cluster_topology::ClusterDiscovery> = Arc::new(
+        tidb_domain::cluster_discovery::EmbeddedStoreDiscovery::new((*tikv_store).clone()),
+    );
     let transport_factory = Arc::new(InProcessReadSessionFactory { tikv_store });
     // This node's own server-info record: the id Go mints with `uuid.New()`
     // for its DDL owner, and the address/ports/labels a peer would read.
@@ -730,7 +734,11 @@ pub fn unistore_cluster_session_stack_from(
     )
     .with_kv_client(kv_client)
     .with_region_store(region_store)
-    .with_server_info(server_info)
+    .with_server_info(Arc::clone(&server_info))
+    .with_cluster_topology(Arc::new(tidb_domain::cluster_topology::ClusterTopology::new(
+        server_info,
+        Some(store_discovery),
+    )))
     // No etcd: the standalone server ID, as Go's Domain allocator names.
     .with_connection_ids(tidb_domain_core::connection_ids::new_connection_id_allocator(
         &config.global_config,
@@ -916,9 +924,7 @@ mod meta_txn_tests {
         let mut storage = MetaTxnStorage::new(opener, IN_PROCESS_TIMEOUT);
         let stats = RuStats {
             latest: Some(Box::new(DailyRuStats {
-                end_time: chrono::DateTime::parse_from_rfc3339("2026-10-08T00:00:00Z")
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
+                end_time: chrono::DateTime::parse_from_rfc3339("2026-10-08T00:00:00+08:00").unwrap(),
                 stats: Some(vec![GroupRuStats {
                     id: 3,
                     name: "rg1".to_owned(),

@@ -263,29 +263,7 @@ pub fn tls_policy_of(
                     return Err(invalid(format!("Unsupported cipher suite: {value}")))
                 }
                 T::Issuer(_) | T::Subject(_) => {
-                    for entry in value.split('/').filter(|s| !s.is_empty()) {
-                        let parts: Vec<_> = entry.split('=').collect();
-                        if parts.len() != 2 {
-                            return Err(invalid(format!("invalid X509_NAME input: {value}")));
-                        }
-                        if !matches!(
-                            parts[0],
-                            "C" | "O"
-                                | "OU"
-                                | "CN"
-                                | "SERIALNUMBER"
-                                | "L"
-                                | "ST"
-                                | "STREET"
-                                | "POSTALCODE"
-                                | "emailAddress"
-                        ) {
-                            return Err(invalid(format!(
-                                "Unsupport check '{}' in current version TiDB",
-                                parts[0]
-                            )));
-                        }
-                    }
+                    tidb_privilege::check_support_x509_name_oneline(value).map_err(invalid)?;
                 }
                 T::San(_) => {
                     tidb_privilege::parse_and_check_san(value).map_err(invalid)?;

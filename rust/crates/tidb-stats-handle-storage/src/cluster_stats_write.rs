@@ -27,15 +27,13 @@
 //! cumulative through the bucket; `save.go` subtracts the previous bucket's
 //! count before writing, and `read.go` adds them back up. A writer that
 //! stored the cumulative value would make every bucket after the first look
-//! enormous to a Go server -- and to
-//! [`crate::cluster_stats_load`], which already re-accumulates on read.
+//! enormous to a Go server, whose `read.go` re-accumulates on read.
 //!
 //! **Bounds are stored as blobs, not as datums.** `convertBoundToBlob` is
 //! `Datum.ConvertTo(TypeBlob)`, so a `BIGINT` bound is stored as `"90"` and a
 //! `DATETIME` bound as `"2024-05-05 05:05:05"`. An index bound and a
 //! new-collation string bound are already bytes and convert to themselves.
-//! [`crate::cluster_stats_load::decode_bound`]'s inverse is what this must
-//! satisfy, and the round trip is what the module's tests assert.
+//! `read.go`'s `convertBoundFromBlob` is the inverse this must satisfy.
 //!
 //! # Which handle shape the four tables have
 //!
@@ -54,13 +52,9 @@ use std::ops::Range;
 
 use tidb_datatype::{ConversionFlags, Datum, FieldType, FieldTypeCode, Time, UNSPECIFIED_LENGTH};
 use tidb_model::table_info::TableInfo;
-use tidb_stats::{encode_cmsketch_without_topn, encode_fm_sketch};
 use tidb_sqlescape::{must_escape_sql, must_escape_sql_text, SqlArg};
 
-use tidb_infoschema::cluster_catalog::MetaSnapshot;
-use tidb_infoschema::SessionExtendedInfoSchema;
-use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
-use tidb_syssession::system_row_write::defaults_row;
+use crate::cluster_stats_load::ClusterStatsItem;
 use tidb_syssession::stats_table_rows::*;
 
 /// Go `batchInsertSize` in `pkg/statistics/handle/storage/save.go`.
@@ -68,57 +62,6 @@ const LOADED_STATS_BATCH_INSERT_SIZE: usize = 10;
 
 /// Go `maxInsertLength` in `pkg/statistics/handle/storage/save.go`.
 const LOADED_STATS_MAX_INSERT_LENGTH: usize = 1024 * 1024;
-
-/// Plans the write of one table's statistics.
-///
-/// `snapshot` must be the snapshot `stats` was built from, and the mutations
-/// must be committed on that snapshot's transaction: that is what makes a
-/// concurrent `ANALYZE` on a Go node a write conflict at prewrite rather than
-/// a silent half-overwrite of somebody else's histograms.
-///
-/// The rows this table already has are read and reconciled rather than
-/// blindly inserted, because TiKV's own assertions demand it -- an `Insert`
-/// over an existing key and a `Delete` over an absent one are both rejected --
-/// and because a re-`ANALYZE` that produced fewer buckets than the last one
-/// must retract the buckets it no longer has.
-pub fn plan_stats_write<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    stats: &ClusterTableStats,
-    now: Time,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<StatsWritePlan, StatsWriteError> {
-    plan_stats_write_impl(snapshot, catalog, stats, now, false, row_ids)
-}
-
-/// Plans a full physical-partition ANALYZE write, including FM sketches.
-pub fn plan_partition_stats_write<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    stats: &ClusterTableStats,
-    now: Time,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<StatsWritePlan, StatsWriteError> {
-    plan_stats_write_impl(snapshot, catalog, stats, now, true, row_ids)
-}
-
-fn plan_stats_write_impl<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    stats: &ClusterTableStats,
-    now: Time,
-    dump_fm: bool,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<StatsWritePlan, StatsWriteError> {
-    let mut plan = StatsWritePlan::default();
-    plan_meta(snapshot, catalog, stats, now, &mut plan, row_ids)?;
-    plan_histograms(snapshot, catalog, stats, now, &mut plan, row_ids)?;
-    plan_buckets(snapshot, catalog, stats, now, &mut plan, row_ids)?;
-    plan_topn(snapshot, catalog, stats, now, &mut plan, row_ids)?;
-    plan_fm_sketches(snapshot, catalog, stats, now, dump_fm, &mut plan, row_ids)?;
-    Ok(plan)
-}
-
 
 /// Go `saveTopNToStorage`'s `INSERT mysql.stats_top_n` statements for one
 /// histogram, in its batches (ten rows, the escaped 1 MiB boundary), as
@@ -323,99 +266,6 @@ pub enum InsertTableStatsStatement {
     },
 }
 
-/// Builds pinned Go `InsertTableStats2KV`'s statement sequence.
-#[must_use]
-pub fn insert_table_stats_statements(
-    table: &TableInfo,
-    physical_id: i64,
-) -> Vec<InsertTableStatsStatement> {
-    std::iter::once(InsertTableStatsStatement::Meta { physical_id })
-        .chain(
-            table
-                .columns
-                .iter_deref()
-                .map(|column| InsertTableStatsStatement::Histogram {
-                    physical_id,
-                    is_index: false,
-                    hist_id: column.read().id,
-                }),
-        )
-        .chain(
-            table
-                .indices
-                .iter_deref()
-                .map(|index| InsertTableStatsStatement::Histogram {
-                    physical_id,
-                    is_index: true,
-                    hist_id: index.read().id,
-                }),
-        )
-        .collect()
-}
-
-/// Plans one pinned Go `InsertTableStats2KV` statement.
-pub fn plan_insert_table_stats_statement<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    statement: &InsertTableStatsStatement,
-    version: u64,
-    now: Time,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<StatsWritePlan, StatsWriteError> {
-    let mut plan = StatsWritePlan::default();
-    let (table_name, identity, physical_id, histogram) = match statement {
-        InsertTableStatsStatement::Meta { physical_id } => {
-            ("stats_meta", &["table_id"][..], *physical_id, None)
-        }
-        InsertTableStatsStatement::Histogram {
-            physical_id,
-            is_index,
-            hist_id,
-        } => (
-            "stats_histograms",
-            &["table_id", "is_index", "hist_id"][..],
-            *physical_id,
-            Some((*is_index, *hist_id)),
-        ),
-    };
-    let table = locate(catalog, table_name)?;
-    let table = &*table.read();
-    let mut rows = StatsRows::open(snapshot, table, identity, physical_id)?;
-    let mut values = defaults_row(table, now)?;
-    set(table, &mut values, "table_id", Datum::Int(physical_id));
-    if let Some((is_index, hist_id)) = histogram {
-        set(
-            table,
-            &mut values,
-            "is_index",
-            Datum::Int(i64::from(is_index)),
-        );
-        set(table, &mut values, "hist_id", Datum::Int(hist_id));
-        set(table, &mut values, "distinct_count", Datum::Int(0));
-        set(table, &mut values, "version", Datum::UInt(version));
-        set(table, &mut values, "null_count", Datum::Int(0));
-        set(table, &mut values, "tot_col_size", Datum::Int(0));
-        set(table, &mut values, "modify_count", Datum::Int(0));
-        set(table, &mut values, "cm_sketch", Datum::Null);
-        set(table, &mut values, "stats_ver", Datum::Int(0));
-        set(table, &mut values, "flag", Datum::Int(0));
-        set(table, &mut values, "correlation", Datum::Real(0.0));
-    } else {
-        set(table, &mut values, "version", Datum::UInt(version));
-        set(
-            table,
-            &mut values,
-            "last_stats_histograms_version",
-            Datum::UInt(version),
-        );
-    }
-    let row_identity = identity_of(table, identity, &values)?;
-    if rows.existing_values(&row_identity).is_none() {
-        rows.store_row(catalog, &values, &mut plan, row_ids)?;
-    }
-    Ok(plan)
-}
-
 pub fn signed_value(value: Option<&Datum>) -> Option<i64> {
     match value {
         Some(Datum::Int(value)) => Some(*value),
@@ -547,305 +397,12 @@ fn loaded_bucket_batches(
     Ok(batches)
 }
 
-fn store_fm_sketch(
-    catalog: &SessionExtendedInfoSchema,
-    rows: &mut StatsRows<'_>,
-    table: &TableInfo,
-    table_id: i64,
-    item: &ClusterStatsItem,
-    encoded: Vec<u8>,
-    now: Time,
-    plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<(), StatsWriteError> {
-    let mut values = defaults_row(table, now)?;
-    set(table, &mut values, "table_id", Datum::Int(table_id));
-    set(
-        table,
-        &mut values,
-        "is_index",
-        Datum::Int(i64::from(item.is_index)),
-    );
-    set(table, &mut values, "hist_id", Datum::Int(item.id));
-    set(table, &mut values, "value", Datum::Bytes(encoded));
-    rows.store_row(catalog, &values, plan, row_ids)
-}
-
-fn plan_meta<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    stats: &ClusterTableStats,
-    now: Time,
-    plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<(), StatsWriteError> {
-    let table = locate(catalog, "stats_meta")?;
-    let table = &*table.read();
-    let mut rows = StatsRows::open(snapshot, table, &["table_id"], stats.table_id)?;
-    let mut values = defaults_row(table, now)?;
-    set(table, &mut values, "table_id", Datum::Int(stats.table_id));
-    set(table, &mut values, "version", Datum::UInt(stats.version));
-    set(
-        table,
-        &mut values,
-        "modify_count",
-        Datum::Int(stats.modify_count),
-    );
-    set(table, &mut values, "count", Datum::UInt(stats.row_count));
-    // Go always stores `AnalyzeResults.Snapshot`. The
-    // `tidb_enable_analyze_snapshot` switch changes count reconciliation,
-    // not this metadata field (`save.go:193-250`).
-    set(table, &mut values, "snapshot", Datum::UInt(stats.snapshot));
-    // Added after `mysql.stats_meta` was first defined, so a cluster old
-    // enough not to have it simply does not get it set.
-    set(
-        table,
-        &mut values,
-        "last_stats_histograms_version",
-        Datum::UInt(stats.version),
-    );
-    rows.store_row(catalog, &values, plan, row_ids)?;
-    // Deliberately no retraction: `mysql.stats_meta` holds one row per table
-    // and the identity IS the table, so there is never a leftover. Retracting
-    // here would only be a way to delete a row this `ANALYZE` did not write.
-    Ok(())
-}
-
-fn plan_histograms<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    stats: &ClusterTableStats,
-    now: Time,
-    plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<(), StatsWriteError> {
-    let table = locate(catalog, "stats_histograms")?;
-    let table = &*table.read();
-    let mut rows = StatsRows::open(
-        snapshot,
-        table,
-        &["table_id", "is_index", "hist_id"],
-        stats.table_id,
-    )?;
-    for item in stats.columns.iter().chain(&stats.indexes) {
-        let mut values = defaults_row(table, now)?;
-        set(table, &mut values, "table_id", Datum::Int(stats.table_id));
-        set(
-            table,
-            &mut values,
-            "is_index",
-            Datum::Int(i64::from(item.is_index)),
-        );
-        set(table, &mut values, "hist_id", Datum::Int(item.id));
-        set(
-            table,
-            &mut values,
-            "distinct_count",
-            Datum::Int(item.histogram.ndv),
-        );
-        set(
-            table,
-            &mut values,
-            "null_count",
-            Datum::Int(item.histogram.null_count),
-        );
-        // Go writes `GREATEST(tot_col_size, 0)`.
-        set(
-            table,
-            &mut values,
-            "tot_col_size",
-            Datum::Int(item.histogram.tot_col_size.max(0)),
-        );
-        set(table, &mut values, "modify_count", Datum::Int(0));
-        set(table, &mut values, "version", Datum::UInt(stats.version));
-        // Analyze v2 stores no CMSketch, and Go's encoder turns its nil
-        // sketch into a NULL column.
-        let cm_sketch = if item.stats_ver == 2 {
-            None
-        } else {
-            encode_cmsketch_without_topn(item.cms.as_ref())
-                .map_err(|error| StatsWriteError::Cms(error.to_string()))?
-        };
-        set(table, &mut values, "cm_sketch", cm_sketch.map_or(Datum::Null, Datum::Bytes));
-        set(table, &mut values, "stats_ver", Datum::Int(item.stats_ver));
-        set(table, &mut values, "flag", Datum::Int(item.flag));
-        set(
-            table,
-            &mut values,
-            "correlation",
-            Datum::Real(item.histogram.correlation),
-        );
-        rows.store_row(catalog, &values, plan, row_ids)?;
-        plan.histogram_count += 1;
-    }
-    // A histogram this `ANALYZE` no longer produces -- a dropped index, a
-    // column that became unanalyzable -- must lose its row, or the loader
-    // would keep handing the planner statistics for something that is gone.
-    rows.retract_remaining(plan)?;
-    Ok(())
-}
-
-fn plan_buckets<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    stats: &ClusterTableStats,
-    now: Time,
-    plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<(), StatsWriteError> {
-    let table = locate(catalog, "stats_buckets")?;
-    let table = &*table.read();
-    let mut rows = StatsRows::open(
-        snapshot,
-        table,
-        &["table_id", "is_index", "hist_id", "bucket_id"],
-        stats.table_id,
-    )?;
-    for item in stats.columns.iter().chain(&stats.indexes) {
-        let mut previous_count = 0_i64;
-        for (bucket_id, bucket) in item.histogram.buckets.iter().enumerate() {
-            let mut values = defaults_row(table, now)?;
-            set(table, &mut values, "table_id", Datum::Int(stats.table_id));
-            set(
-                table,
-                &mut values,
-                "is_index",
-                Datum::Int(i64::from(item.is_index)),
-            );
-            set(table, &mut values, "hist_id", Datum::Int(item.id));
-            set(
-                table,
-                &mut values,
-                "bucket_id",
-                Datum::Int(bucket_id as i64),
-            );
-            // The delta, not the cumulative count. See the module doc.
-            set(
-                table,
-                &mut values,
-                "count",
-                Datum::Int(bucket.count - previous_count),
-            );
-            previous_count = bucket.count;
-            set(table, &mut values, "repeats", Datum::Int(bucket.repeat));
-            set(table, &mut values, "ndv", Datum::Int(bucket.ndv));
-            set(
-                table,
-                &mut values,
-                "lower_bound",
-                bound_blob(&bucket.lower_bound)?,
-            );
-            set(
-                table,
-                &mut values,
-                "upper_bound",
-                bound_blob(&bucket.upper_bound)?,
-            );
-            rows.store_row(catalog, &values, plan, row_ids)?;
-            plan.bucket_count += 1;
-        }
-    }
-    // A shorter histogram than last time leaves its tail behind, and a stale
-    // bucket read back as part of this histogram would be a range the table
-    // no longer has.
-    rows.retract_remaining(plan)?;
-    Ok(())
-}
-
-fn plan_topn<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    stats: &ClusterTableStats,
-    now: Time,
-    plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<(), StatsWriteError> {
-    let table = locate(catalog, "stats_top_n")?;
-    let table = &*table.read();
-    // A TopN row is named by its VALUE as well as by its histogram: one
-    // histogram has many of them, and they are not numbered.
-    let mut rows = StatsRows::open(
-        snapshot,
-        table,
-        &["table_id", "is_index", "hist_id", "value"],
-        stats.table_id,
-    )?;
-    for item in stats.columns.iter().chain(&stats.indexes) {
-        let Some(topn) = item.topn.as_ref() else {
-            continue;
-        };
-        for entry in topn.entries() {
-            let mut values = defaults_row(table, now)?;
-            set(table, &mut values, "table_id", Datum::Int(stats.table_id));
-            set(
-                table,
-                &mut values,
-                "is_index",
-                Datum::Int(i64::from(item.is_index)),
-            );
-            set(table, &mut values, "hist_id", Datum::Int(item.id));
-            set(
-                table,
-                &mut values,
-                "value",
-                Datum::Bytes(entry.encoded.clone()),
-            );
-            set(table, &mut values, "count", Datum::UInt(entry.count));
-            rows.store_row(catalog, &values, plan, row_ids)?;
-            plan.topn_count += 1;
-        }
-    }
-    rows.retract_remaining(plan)?;
-    Ok(())
-}
-
-fn plan_fm_sketches<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    stats: &ClusterTableStats,
-    now: Time,
-    dump_fm: bool,
-    plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<(), StatsWriteError> {
-    let table = locate(catalog, "stats_fm_sketch")?;
-    let table = &*table.read();
-    let mut rows = StatsRows::open(
-        snapshot,
-        table,
-        &["table_id", "is_index", "hist_id"],
-        stats.table_id,
-    )?;
-    if dump_fm {
-        for item in stats.columns.iter().chain(&stats.indexes) {
-            let Some(encoded) = encode_fm_sketch(item.fm_sketch.as_ref()) else {
-                continue;
-            };
-            store_fm_sketch(
-                catalog,
-                &mut rows,
-                table,
-                stats.table_id,
-                item,
-                encoded,
-                now,
-                plan,
-                row_ids,
-            )?;
-        }
-    }
-    // Go deletes the previous row for every analyzed item even when this is
-    // a logical/global write and `needDumpFMS` is false.
-    rows.retract_remaining(plan)?;
-    Ok(())
-}
-
 /// Go `convertBoundToBlob`: `Datum.ConvertTo(TypeBlob)`.
 ///
 /// An index bound and a new-collation string bound are already `Bytes` and
 /// convert to themselves; every other column bound becomes its text form,
-/// which is what [`crate::cluster_stats_load::decode_bound`] parses back at
-/// the column's declared type.
+/// which Go's `convertBoundFromBlob` parses back at the column's declared
+/// type.
 pub fn bound_blob(bound: &Datum) -> Result<Datum, StatsWriteError> {
     if bound.is_null() {
         return Ok(Datum::Null);

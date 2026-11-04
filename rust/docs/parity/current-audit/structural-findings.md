@@ -4,7 +4,7 @@ Where the Rust rewrite's structure still differs from the Go owner it ports.
 Re-audited against the tree on 2026-11-04; the [JSON register](structural-findings.json)
 holds the same rows. A repaired finding is removed, not kept.
 
-**48 unresolved: 12 open, 36 partial.**
+**45 unresolved: 13 open, 32 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -16,7 +16,7 @@ unresolved until it is restated against its Go owner or closed.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| Y01 | partial | The global-stats merge after a partitioned ANALYZE reads partitions through the raw `ClusterStatsLoader` (`tidb-executor/src/real_tikv_analyze.rs`); the DDL scheduler, systable manager, history and MDL readers scan records instead of running SQL on `DdlSessionPool::sess_pool`; the bootstrap stages raw rows; accounts load eagerly where Go loads per active user | `pkg/statistics/handle/globalstats`, `pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap, `pkg/privilege/privileges` (`ensureActiveUser`) |
+| Y01 | partial | The DDL scheduler, systable manager, history and MDL readers scan records instead of running SQL on `DdlSessionPool::sess_pool`; the bootstrap stages raw rows; accounts load eagerly where Go loads per active user | `pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap, `pkg/privilege/privileges` (`ensureActiveUser`) |
 | O02 | open | No versioned upgrade: startup knows only bootstrapped or not (`tidb-session/src/mysql_bootstrap`) | `pkg/session/upgrade*.go` |
 | I04 | partial | No lazy InfoSchema V2, schema-cache-size loader/evictor or InfoCache timestamp ranges | `pkg/infoschema` |
 | O09 | partial | The min-start-TS reporter lacks V2 recent-schema reporting and DDL-queue exclusion | `pkg/domain/infosync` |
@@ -40,7 +40,7 @@ unresolved until it is restated against its Go owner or closed.
 | A01 | partial | Some query privilege visits are collected in the executor driver instead of the planner's `visitInfo` | `pkg/planner/core` (`visitInfo`, `CheckPrivilege`) |
 | E02 | partial | Foreign keys: distributed locking, physical cascade sub-statements, runtime stats | `pkg/executor/foreign_key.go` |
 | E03 | partial | UPDATE/DELETE: retained handle metadata and chunk streaming | `pkg/executor/update.go`, `delete.go` |
-| E04 | partial | Restate (parallel Apply) | `pkg/executor/parallel_apply.go` |
+| E04 | partial | `enable_parallel_apply` decides clonability by `supports_apply_worker_clone` (refuses only CTE/CTETable/Shuffle) instead of Go's `SafeClone` over each operator's `Clone` (29 implement it; others such as BatchPointGet refuse, while PhysicalCTE clones), and never appends Go's `Some apply operators can not be executed in parallel` warning | `pkg/planner/core/optimizer.go` (`enableParallelApply`), `physicalop.SafeClone` |
 | E05 | open | IMPORT INTO refuses (`tidb-session/src/dispatch.rs`) | `pkg/executor/importer`, `pkg/disttask/importinto` |
 | E07 | open | BRIE statements are classified but never executed | `pkg/executor/brie.go` |
 | K03 | partial | Datum conversion: source/error taxonomy, unsigned table overflow, ANALYZE adapters | `pkg/types`, `pkg/table/tables` |
@@ -56,9 +56,8 @@ unresolved until it is restated against its Go owner or closed.
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
 | A02 | partial | Restate (account policy lifecycle; overlaps Y01's lazy account loading) | `pkg/privilege/privileges` |
-| A03 | partial | Restate (certificate parsing and algorithm limits) | `pkg/util/misc.go`, `privileges.go` |
 | N03 | partial | Configuration consumers: TSO/router options, RPC concurrency, stream readiness/prewarm, idle recovery | `pkg/config`, client-go |
-| N05 | partial | Restate (status-port administrative handlers; check AutoID service hosting against `tidb-autoid/src/service_rpc.rs`) | `pkg/server/handler`, `pkg/autoid_service` |
+| N05 | open | The status port serves only `/status`, `/metrics`, `/settings`, `/config`, `/schema` and `/schema_storage` (`tidb-server/src/http_status.rs`); Go's other routes are absent: `/info`, `/info/all`, `/labels`, `/ddl/history`, `/ddl/owner/resign`, `/mvcc/*`, `/regions/*`, `/tables/*`, `/db-table/{id}`, `/stats/dump/*`, `/plan_replayer/dump`, `/optimize_trace/dump`, `/extract_task/dump`, `/dxf/*`, `/ingest/*`, `/tiflash/replica`, `/upgrade/*`, `/txn-gc-states`, `/debug/*`, test hooks | `pkg/server/http_status.go`, `pkg/server/handler` |
 
 ### Domain and process services
 
@@ -66,7 +65,6 @@ unresolved until it is restated against its Go owner or closed.
 | --- | --- | --- | --- |
 | O04 | open | No TTL job/task manager (`tidb-ttl` has helpers only) | `pkg/ttl/ttlworker` |
 | O05 | partial | Runaway-query policy (the resource-group controller is installed) | `pkg/resourcegroup/runaway` |
-| O06 | partial | The RU writer persists only read/write RU per group, computes the window on a fixed offset and stores end times in UTC | `pkg/domain` `requestUnitsWriterLoop` |
 | O08 | open | No plan-replayer owner composed | `pkg/domain/plan_replayer*.go` |
 | O10 | open | No DXF scheduler/executor managers composed | `pkg/disttask/framework` |
 | O11 | partial | TopSQL: plan-digest attribution, DML write/commit attribution, CPU/RU profiling, reporter lifetime | `pkg/util/topsql` |
@@ -80,7 +78,6 @@ unresolved until it is restated against its Go owner or closed.
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
 | I01 | partial | Other dynamic memtable providers; internal transactions in TIDB_TRX | `pkg/executor/infoschema_reader.go` |
-| I02 | partial | Restate (CLUSTER_INFO) | `pkg/executor/infoschema_reader.go` |
 | I03 | partial | Other cluster tables and pushed operators; memory accounting | `pkg/executor/memtable_reader.go` |
 
 ### Transport, PD and MPP

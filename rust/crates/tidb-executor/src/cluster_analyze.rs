@@ -22,7 +22,7 @@
 //!
 //! [`crate::analyze`] owns histogram and TopN construction. This
 //! module projects `TableInfo` into its plan and converts its result into
-//! the `mysql.stats_*` representation read by [`tidb_stats_handle_storage::cluster_stats_load`].
+//! the `mysql.stats_*` representation Go's `storage/read.go` statements read.
 //! Unsupported schema/value shapes return [`AnalyzeError`] rather than
 //! publishing approximate encodings as usable statistics.
 
@@ -122,8 +122,7 @@ impl From<AnalyzeError> for crate::DriverError {
 /// What one `ANALYZE TABLE` produced, plus the receipt of how it got there.
 #[derive(Clone, Debug)]
 pub struct AnalyzeReport {
-    /// The statistics, in exactly the shape
-    /// [`tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader`] reads back.
+    /// The statistics, in the shape `storage/read.go` reads back.
     pub stats: ClusterTableStats,
     /// Rows read.
     pub scanned_rows: i64,

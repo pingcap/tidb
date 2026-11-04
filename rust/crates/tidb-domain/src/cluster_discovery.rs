@@ -163,6 +163,45 @@ impl ClusterDiscovery for PdClusterDiscovery {
     }
 }
 
+/// Go's retrievers over an embedded store (Go's mockstore): it has no etcd
+/// members, so `GetPDServerInfo` and the microservice retrievers find
+/// nothing, while `GetStoreServerInfo` still reads the store's own PD client.
+pub struct EmbeddedStoreDiscovery<PdC: tikv_client::PdClient> {
+    store: TikvStore<PdC>,
+}
+
+impl<PdC: tikv_client::PdClient> EmbeddedStoreDiscovery<PdC> {
+    /// Discovery over the embedded `store`.
+    pub fn new(store: TikvStore<PdC>) -> Self {
+        Self { store }
+    }
+}
+
+impl<PdC: tikv_client::PdClient> ClusterDiscovery for EmbeddedStoreDiscovery<PdC> {
+    fn pd_servers(&self, _warnings: &mut Vec<String>) -> Result<Vec<ClusterServer>, String> {
+        Ok(Vec::new())
+    }
+
+    fn stores(&self) -> Result<Vec<ClusterStore>, String> {
+        let pd = self.store.store().pd_client();
+        Ok(self
+            .store
+            .block_on(async move { tikv_client::PdClient::get_all_stores(pd.as_ref()).await })
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter_map(project_store)
+            .collect())
+    }
+
+    fn microservice_servers(
+        &self,
+        _service: &str,
+        _warnings: &mut Vec<String>,
+    ) -> Result<Vec<ClusterServer>, String> {
+        Ok(Vec::new())
+    }
+}
+
 fn project_store(store: metapb::Store) -> Option<ClusterStore> {
     // CLUSTER_INFO excludes tombstones, while adaptive reads also exclude
     // removing/removed nodes. Do not reuse routing's lossy store projection.

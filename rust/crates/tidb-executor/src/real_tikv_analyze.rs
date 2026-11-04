@@ -54,7 +54,7 @@ use crate::cluster_analyze::{
 };
 use tidb_infoschema::cluster_catalog::load_info_schema;
 use tidb_stats_handle_storage::cluster_stats_load::{
-    column_types_of, ClusterStatsItem, ClusterStatsLoader, ClusterTableStats,
+    column_types_of, ClusterStatsItem,
 };
 use tidb_stats_handle_storage::save::{AnalyzeResults, STATS_VERSION_2};
 use tidb_stats_handle_storage::stats_read_writer::{self, StatsSessionPool};
@@ -953,6 +953,9 @@ pub enum ClusterAnalyzeError {
     Mysql(tidb_terror::MysqlError),
     /// A statistics-session statement's error, as the statement raised it.
     Sql(SqlQueryError),
+    /// A statement error inside a statistics-session callback, returned
+    /// through the callback so the pool keeps its MySQL code.
+    StatsRead(Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl fmt::Display for ClusterAnalyzeError {
@@ -967,6 +970,7 @@ impl fmt::Display for ClusterAnalyzeError {
             Self::Other(detail) => formatter.write_str(detail),
             Self::Mysql(error) => formatter.write_str(&error.message),
             Self::Sql(error) => formatter.write_str(&error.message),
+            Self::StatsRead(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -991,19 +995,6 @@ fn global_stats_merge_error(error: GlobalStatsMergeError) -> ClusterAnalyzeError
 #[must_use]
 pub fn record_global_history_enabled(enabled: bool, initialized: bool) -> bool {
     enabled && initialized
-}
-
-/// `mysql.stats_meta.count` as the sample-rate rule reads it.
-///
-/// Go's `RealtimeCount` is an `int64`, so a stored count past `i64::MAX` is
-/// not a number Go can have written and not one this node can believe. It
-/// reads as *no usable count*, which `getAdjustedSampleRate` answers with
-/// `1.0` -- read every row. Saturating to `i64::MAX` instead would drive the
-/// rate to ~1e-14: zero rows kept, yet the NDVs still taken from the
-/// full-scan FM sketch, producing a table the loader accepts as non-pseudo
-/// with empty histograms.
-fn realtime_count_of(row_count: u64) -> i64 {
-    i64::try_from(row_count).unwrap_or(0)
 }
 
 /// Runs and commits one `ANALYZE TABLE`.
@@ -1398,8 +1389,6 @@ fn commit_cluster_global_stats<S: StoreClient>(
             .read()
             .definitions
             .snapshot();
-        let loader = ClusterStatsLoader::locate(&catalog)
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let column_types = column_types_of(&table);
         let column_names = table
             .cols()
@@ -1423,97 +1412,48 @@ fn commit_cluster_global_stats<S: StoreClient>(
             GlobalStatsMergeMode::Blocking
         };
         if mode == GlobalStatsMergeMode::Async {
-            let partitions = prepare_async_global_partitions(
-                &mut snapshot,
-                &loader,
-                definitions
-                    .iter()
-                    .map(|definition| (definition.id, definition.name.original().to_owned())),
-                !column_ids.is_empty(),
-                !index_ids.is_empty(),
-            )?;
-            let total_count = partitions.iter().fold(0_i64, |total, partition| {
-                total.wrapping_add(partition.row_count)
-            });
-            let modify_count = partitions.iter().fold(0_i64, |total, partition| {
-                total.wrapping_add(partition.modify_count)
-            });
-            let items = match &resolved.statement.eval_context.session_zone() {
-                SessionTimeZone::Local => merge_global_items_async(
-                    &table,
-                    &mut snapshot,
-                    &loader,
-                    Some(&chrono::Local),
-                    &partitions,
-                    column_ids,
-                    index_ids,
-                    &column_types,
-                    &column_names,
-                    &index_names,
-                    &resolved.statement,
-                    total_count,
-                    killer,
-                ),
-                SessionTimeZone::Named(zone) => merge_global_items_async(
-                    &table,
-                    &mut snapshot,
-                    &loader,
-                    Some(zone),
-                    &partitions,
-                    column_ids,
-                    index_ids,
-                    &column_types,
-                    &column_names,
-                    &index_names,
-                    &resolved.statement,
-                    total_count,
-                    killer,
-                ),
-                SessionTimeZone::Fixed { offset_secs, .. } => {
-                    let zone = chrono::FixedOffset::east_opt(*offset_secs).ok_or_else(|| {
-                        ClusterAnalyzeError::Other("invalid session timezone offset".to_owned())
-                    })?;
-                    merge_global_items_async(
-                        &table,
-                        &mut snapshot,
-                        &loader,
-                        Some(&zone),
-                        &partitions,
-                        column_ids,
-                        index_ids,
-                        &column_types,
-                        &column_names,
-                        &index_names,
-                        &resolved.statement,
-                        total_count,
-                        killer,
-                    )
-                }
-            }?;
+            // Go `AsyncMergePartitionStats2GlobalStats.MergePartitionStats2GlobalStats`:
+            // `prepare` and the IO worker on one statistics session.
+            let mut merged = Err(ClusterAnalyzeError::Other("global stats merge did not run".to_owned()));
+            stats_pool
+                .call_with_sctx(
+                    &mut |sctx| {
+                        merged = match merge_async_on(
+                            sctx,
+                            &table,
+                            &definitions,
+                            column_ids,
+                            index_ids,
+                            &column_types,
+                            &column_names,
+                            &index_names,
+                            &resolved.statement,
+                            killer,
+                        ) {
+                            Err(ClusterAnalyzeError::StatsRead(error)) => return Err(error),
+                            result => result,
+                        };
+                        Ok(())
+                    },
+                    &[],
+                )
+                .map_err(ClusterAnalyzeError::Sql)?;
+            let (total_count, modify_count, items) = merged?;
             (table.id, total_count, modify_count, items)
         } else {
             let mut partitions = Vec::with_capacity(definitions.len());
             for definition in definitions.iter() {
-                let stats = loader
-                    .load_table_with_fm(&mut snapshot, definition.id, &column_types)
-                    .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+                let stats = load_table_partition_stats(stats_pool, &table, definition.id, stats_lease)?;
                 partitions.push((definition.name.original().to_owned(), stats));
             }
             let total_count = partitions.iter().try_fold(0_i64, |total, (_, stats)| {
-                let count = stats
-                    .as_ref()
-                    .map_or(Ok(0), |stats| i64::try_from(stats.row_count))
-                    .map_err(|_| {
-                        ClusterAnalyzeError::Other(
-                            "partition statistics count exceeds int64".to_owned(),
-                        )
-                    })?;
+                let count = stats.as_ref().map_or(0, |stats| stats.hist_coll.realtime_count);
                 Ok::<_, ClusterAnalyzeError>(total.wrapping_add(count))
             })?;
             let modify_count = partitions
                 .iter()
                 .filter_map(|(_, stats)| stats.as_ref())
-                .fold(0_i64, |total, stats| total.wrapping_add(stats.modify_count));
+                .fold(0_i64, |total, stats| total.wrapping_add(stats.hist_coll.modify_count));
             let items = match &resolved.statement.eval_context.session_zone() {
                 SessionTimeZone::Local => merge_global_items(
                     &table,
@@ -1589,6 +1529,146 @@ fn commit_cluster_global_stats<S: StoreClient>(
     Ok(())
 }
 
+/// The async global-stats merge on one statistics session: Go `prepare`,
+/// then the IO and CPU workers.
+#[allow(clippy::too_many_arguments)]
+fn merge_async_on(
+    sctx: &dyn tidb_stats_handle_util::StatsSessionContext,
+    table: &tidb_model::TableInfo,
+    definitions: &[tidb_model::PartitionDefinition],
+    column_ids: &[i64],
+    index_ids: &[i64],
+    column_types: &std::collections::BTreeMap<i64, FieldType>,
+    column_names: &std::collections::BTreeMap<i64, String>,
+    index_names: &std::collections::BTreeMap<i64, String>,
+    statement: &AnalyzeStatement,
+    killer: &SqlKiller,
+) -> Result<(i64, i64, Vec<ClusterStatsItem>), ClusterAnalyzeError> {
+    let partitions = prepare_async_global_partitions(
+        sctx,
+        definitions
+            .iter()
+            .map(|definition| (definition.id, definition.name.original().to_owned())),
+        !column_ids.is_empty(),
+        !index_ids.is_empty(),
+    )?;
+    let total_count = partitions.iter().fold(0_i64, |total, partition| {
+        total.wrapping_add(partition.row_count)
+    });
+    let modify_count = partitions.iter().fold(0_i64, |total, partition| {
+        total.wrapping_add(partition.modify_count)
+    });
+    let items = match &statement.eval_context.session_zone() {
+        SessionTimeZone::Local => merge_global_items_async(
+            table,
+            sctx,
+            Some(&chrono::Local),
+            &partitions,
+            column_ids,
+            index_ids,
+            column_types,
+            column_names,
+            index_names,
+            statement,
+            total_count,
+            killer,
+        ),
+        SessionTimeZone::Named(zone) => merge_global_items_async(
+            table,
+            sctx,
+            Some(zone),
+            &partitions,
+            column_ids,
+            index_ids,
+            column_types,
+            column_names,
+            index_names,
+            statement,
+            total_count,
+            killer,
+        ),
+        SessionTimeZone::Fixed { offset_secs, .. } => {
+            let zone = chrono::FixedOffset::east_opt(*offset_secs).ok_or_else(|| {
+                ClusterAnalyzeError::Other("invalid session timezone offset".to_owned())
+            })?;
+            merge_global_items_async(
+                table,
+                sctx,
+                Some(&zone),
+                &partitions,
+                column_ids,
+                index_ids,
+                column_types,
+                column_names,
+                index_names,
+                statement,
+                total_count,
+                killer,
+            )
+        }
+    }?;
+    Ok((total_count, modify_count, items))
+}
+
+/// A statistics-session read failure inside the merge's callback.
+fn sql_exec_error(error: Box<dyn std::error::Error + Send + Sync>) -> ClusterAnalyzeError {
+    ClusterAnalyzeError::StatsRead(error)
+}
+
+/// Go `statsReadWriter.LoadTablePartitionStats`: the partition's statistics
+/// with every payload (`TableStatsFromStorage(loadAll)`), `None` without a
+/// `stats_meta` row (Go `ErrPartitionStatsMissing`).
+fn load_table_partition_stats(
+    stats_pool: &dyn StatsSessionPool,
+    table: &tidb_model::TableInfo,
+    partition_id: i64,
+    stats_lease: Duration,
+) -> Result<Option<tidb_stats::Table>, ClusterAnalyzeError> {
+    let mut loaded = None;
+    stats_pool
+        .call_with_sctx(
+            &mut |sctx| {
+                loaded = tidb_stats_handle_storage::read::table_stats_from_storage(
+                    sctx,
+                    0,
+                    table,
+                    partition_id,
+                    true,
+                    stats_lease,
+                    None,
+                )?;
+                Ok(())
+            },
+            &[tidb_stats_handle_util::FLAG_WRAP_TXN],
+        )
+        .map_err(ClusterAnalyzeError::Sql)?;
+    Ok(loaded)
+}
+
+/// Go `Table.GetStatsInfo`: one item's payload, `None` when the partition
+/// has no such item or it is not analyzed.
+fn partition_stats_info(table: &tidb_stats::Table, id: i64, is_index: bool) -> Option<PartitionStatsItem> {
+    if is_index {
+        let index = table.hist_coll.get_index(id)?;
+        let index = index.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        (index.stats_version != 0).then(|| PartitionStatsItem {
+            histogram: index.histogram.clone(),
+            cmsketch: index.cmsketch.clone(),
+            topn: index.top_n.clone(),
+            fm_sketch: index.fm_sketch.clone(),
+        })
+    } else {
+        let column = table.hist_coll.get_column(id)?;
+        let column = column.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        (column.stats_version != 0).then(|| PartitionStatsItem {
+            histogram: column.histogram.clone(),
+            cmsketch: column.cmsketch.clone(),
+            topn: column.top_n.clone(),
+            fm_sketch: column.fm_sketch.clone(),
+        })
+    }
+}
+
 fn write_global_stats_items<T, E>(
     items: impl IntoIterator<Item = T>,
     mut write: impl FnMut(T) -> Result<(u64, usize, usize, usize), E>,
@@ -1624,43 +1704,26 @@ struct AsyncGlobalItem<'a> {
     partitions: Vec<&'a AsyncGlobalPartition>,
 }
 
-fn prepare_async_global_partitions<S: tidb_infoschema::cluster_catalog::MetaSnapshot>(
-    snapshot: &mut S,
-    loader: &ClusterStatsLoader,
+/// Go `AsyncMergePartitionStats2GlobalStats.prepare` on a statistics session.
+fn prepare_async_global_partitions(
+    sctx: &dyn tidb_stats_handle_util::StatsSessionContext,
     definitions: impl IntoIterator<Item = (i64, String)>,
     merge_columns: bool,
     merge_indexes: bool,
 ) -> Result<Vec<AsyncGlobalPartition>, ClusterAnalyzeError> {
     let mut partitions = Vec::new();
     for (id, name) in definitions {
-        let meta = loader
-            .stats_meta_count_and_modify_count(snapshot, id)
-            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        let (modify_count, row_count) = match meta {
-            Some((_, _, modify_count, row_count, _)) => (
-                modify_count,
-                i64::try_from(row_count).map_err(|_| {
-                    ClusterAnalyzeError::Other(
-                        "partition statistics count exceeds int64".to_owned(),
-                    )
-                })?,
-            ),
-            None => (0, 0),
-        };
-        let has_columns = if merge_columns {
-            loader
-                .has_histogram_rows(snapshot, id, false)
-                .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
-        } else {
-            false
-        };
-        let has_indexes = if merge_indexes {
-            loader
-                .has_histogram_rows(snapshot, id, true)
-                .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
-        } else {
-            false
-        };
+        let (count, modify, is_null) =
+            tidb_stats_handle_storage::read::stats_meta_count_and_modify_count(sctx, id, false)
+                .map_err(sql_exec_error)?;
+        // Go: a partition counts once, unless it has no `stats_meta` row.
+        let (modify_count, row_count) = if is_null { (0, 0) } else { (modify, count) };
+        let has_columns = merge_columns
+            && tidb_stats_handle_storage::read::check_skip_partition(sctx, id, false)
+                .map_err(sql_exec_error)?;
+        let has_indexes = merge_indexes
+            && tidb_stats_handle_storage::read::check_skip_partition(sctx, id, true)
+                .map_err(sql_exec_error)?;
         partitions.push(AsyncGlobalPartition {
             id,
             name,
@@ -1674,10 +1737,9 @@ fn prepare_async_global_partitions<S: tidb_infoschema::cluster_catalog::MetaSnap
 }
 
 #[allow(clippy::too_many_arguments)]
-fn merge_global_items_async<S, TZ>(
+fn merge_global_items_async<TZ>(
     table: &tidb_model::TableInfo,
-    snapshot: &mut S,
-    loader: &ClusterStatsLoader,
+    sctx: &dyn tidb_stats_handle_util::StatsSessionContext,
     timezone: Option<&TZ>,
     partitions: &[AsyncGlobalPartition],
     column_ids: &[i64],
@@ -1690,7 +1752,6 @@ fn merge_global_items_async<S, TZ>(
     killer: &SqlKiller,
 ) -> Result<Vec<ClusterStatsItem>, ClusterAnalyzeError>
 where
-    S: tidb_infoschema::cluster_catalog::MetaSnapshot,
     TZ: TimeZone + Sync,
 {
     let mut items = Vec::with_capacity(column_ids.len() + index_ids.len());
@@ -1712,11 +1773,10 @@ where
                 } {
                     continue;
                 }
-                let column_type = (!is_index).then_some(&field_type);
-                let exists = loader
-                    .read_stats_for_one_item(snapshot, partition.id, is_index, id, column_type, false)
-                    .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
-                    .is_some();
+                // Go `skipColumnPartition` (`CheckSkipColumnPartiion`).
+                let exists =
+                    tidb_stats_handle_storage::read::check_skip_column_partition(sctx, partition.id, is_index, id)
+                        .map_err(sql_exec_error)?;
                 if !exists {
                     if statement.skip_missing_partition_stats {
                         continue;
@@ -1830,9 +1890,13 @@ where
         let io_result = catch_unwind(AssertUnwindSafe(|| -> Result<(), ClusterAnalyzeError> {
             for (index, item) in items.iter().enumerate() {
                 for partition in &item.partitions {
-                    let sketch = loader
-                        .load_fm_sketch(snapshot, partition.id, item.is_index, item.id)
-                        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+                    let sketch = tidb_stats_handle_storage::read::fm_sketch_from_storage(
+                        sctx,
+                        partition.id,
+                        item.is_index,
+                        item.id,
+                    )
+                    .map_err(sql_exec_error)?;
                     if fm_sender
                         .as_ref()
                         .expect("FM sender remains open during the FM phase")
@@ -1847,9 +1911,13 @@ where
 
             for (index, item) in items.iter().enumerate() {
                 for partition in &item.partitions {
-                    let sketch = loader
-                        .load_item_cmsketch(snapshot, partition.id, item.is_index, item.id)
-                        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+                    let sketch = tidb_stats_handle_storage::read::cm_sketch_from_storage(
+                        sctx,
+                        partition.id,
+                        item.is_index,
+                        item.id,
+                    )
+                    .map_err(sql_exec_error)?;
                     if cms_sender
                         .as_ref()
                         .expect("CMS sender remains open during the CMS phase")
@@ -1866,26 +1934,31 @@ where
                 let mut histograms = Vec::with_capacity(item.partitions.len());
                 let mut topns = Vec::with_capacity(item.partitions.len());
                 for partition in &item.partitions {
-                    let histogram = loader
-                        .load_item_histogram(
-                            snapshot,
+                    // Go `loadHistogramAndTopN`: `LoadHistogram`, then
+                    // `TopNFromStorage`.
+                    let histogram = tidb_stats_handle_storage::read::load_histogram(
+                        sctx,
+                        partition.id,
+                        item.is_index,
+                        item.id,
+                        table,
+                    )
+                    .map_err(sql_exec_error)?
+                    .ok_or_else(|| {
+                        ClusterAnalyzeError::Other(format!(
+                            "histogram {} disappeared from partition {}",
+                            item.id, partition.id
+                        ))
+                    })?;
+                    histograms.push(histogram);
+                    topns.push(
+                        tidb_stats_handle_storage::read::topn_from_storage(
+                            sctx,
                             partition.id,
                             item.is_index,
                             item.id,
-                            (!item.is_index).then_some(&item.field_type),
                         )
-                        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
-                        .ok_or_else(|| {
-                            ClusterAnalyzeError::Other(format!(
-                                "histogram {} disappeared from partition {} in one snapshot",
-                                item.id, partition.id
-                            ))
-                        })?;
-                    histograms.push(histogram);
-                    topns.push(
-                        loader
-                            .load_item_topn(snapshot, partition.id, item.is_index, item.id)
-                            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?,
+                        .map_err(sql_exec_error)?,
                     );
                 }
                 if !histograms.is_empty() || !topns.is_empty() {
@@ -1975,7 +2048,7 @@ fn join_async_global_worker_results<T>(
 fn merge_global_items<TZ: TimeZone + Sync>(
     table: &tidb_model::TableInfo,
     timezone: Option<&TZ>,
-    partitions: &[(String, Option<ClusterTableStats>)],
+    partitions: &[(String, Option<tidb_stats::Table>)],
     column_ids: &[i64],
     index_ids: &[i64],
     column_types: &std::collections::BTreeMap<i64, FieldType>,
@@ -2008,18 +2081,14 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                 };
                 if mode == GlobalStatsMergeMode::Async
                     && if is_index {
-                        stats.indexes.is_empty()
+                        stats.hist_coll.index_count() == 0
                     } else {
-                        stats.columns.is_empty()
+                        stats.hist_coll.column_count() == 0
                     }
                 {
                     continue;
                 }
-                let item = if is_index {
-                    stats.index(id)
-                } else {
-                    stats.column(id)
-                };
+                let item = partition_stats_info(stats, id, is_index);
                 let Some(item) = item else {
                     if statement.skip_missing_partition_stats {
                         continue;
@@ -2044,7 +2113,7 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                 };
                 let topn_count = item.topn.as_ref().map_or(0, |topn| topn.total_count());
                 if mode == GlobalStatsMergeMode::Blocking
-                    && stats.row_count > 0
+                    && stats.hist_coll.realtime_count > 0
                     && item.histogram.total_row_count() <= 0.0
                     && topn_count == 0
                 {
@@ -2068,12 +2137,7 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                             .into(),
                     );
                 }
-                inputs.push(PartitionStatsItem {
-                    histogram: item.histogram.clone(),
-                    cmsketch: item.cms.clone(),
-                    topn: item.topn.clone(),
-                    fm_sketch: item.fm_sketch.clone(),
-                });
+                inputs.push(item);
             }
             let field_type = if is_index {
                 FieldType::new(FieldTypeCode::Blob)
@@ -2747,6 +2811,11 @@ pub fn cluster_analyze_error(error: ClusterAnalyzeError) -> tidb_store_driver_er
         ClusterAnalyzeError::Other(detail) => tidb_store_driver_error::sql_query_error::SqlQueryError::unknown(detail),
         ClusterAnalyzeError::Mysql(error) => tidb_store_driver_error::sql_query_error::SqlQueryError::from(error),
         ClusterAnalyzeError::Sql(error) => error,
+        // Returned through its callback before it gets here; the pool's own
+        // conversion of an error it does not recognize.
+        ClusterAnalyzeError::StatsRead(error) => {
+            tidb_store_driver_error::sql_query_error::SqlQueryError::unknown(error.to_string())
+        }
     }
 }
 
@@ -2755,7 +2824,7 @@ mod tests {
     use super::{
         analyze_partition_ids, automatic_sample_rate,
         collect_cache_update_physical_ids, fail_analyze_jobs, filter_skipped_column_types,
-        final_column_choice, merge_global_items, realtime_count_of, record_global_history_enabled,
+        final_column_choice, merge_global_items, record_global_history_enabled,
         select_index_tasks,
         write_global_stats_items, AnalyzeJobHandle, AnalyzeJobKind, AnalyzeJobLifecycle,
         AnalyzeJobProgress, AnalyzeJobSpec, ApproximateTableCountProvider, ClusterAnalyzeError,
@@ -2904,21 +2973,15 @@ mod tests {
     }
     use tidb_model::SchemaState;
     use tidb_stats::histogram::{Bucket, Histogram};
-    use tidb_stats::row_sample_collector::get_adjusted_sample_rate;
     use tidb_stats::FmSketch;
     use tidb_stats_handle_globalstats::GlobalStatsMergeMode;
-    use tidb_stats::StatsLoadedStatus;
     use tidb_stats::MAX_SKETCH_SIZE;
     use tidb_txnkv::rpc::UnaryCallContext;
     use tidb_sqlkiller::SqlKiller;
 
-    fn global_partition_item(id: i64, count: i64) -> super::ClusterStatsItem {
-        super::ClusterStatsItem {
-            id,
-            is_index: false,
-            stats_ver: 2,
-            flag: 0,
-            load_status: StatsLoadedStatus::full_load(),
+    fn global_partition_item(id: i64, count: i64) -> (i64, tidb_stats::Column) {
+        (id, tidb_stats::Column {
+            stats_version: 2,
             histogram: Histogram {
                 id,
                 ndv: 2,
@@ -2935,28 +2998,17 @@ mod tests {
                 }],
                 ..Default::default()
             },
-            topn: None,
-            cms: None,
             fm_sketch: Some(FmSketch::from_raw_parts(
                 0,
                 MAX_SKETCH_SIZE,
                 [id as u64, id as u64 + 1],
             )),
-        }
+            ..Default::default()
+        })
     }
 
-    fn global_partition_stats(item: Option<super::ClusterStatsItem>) -> super::ClusterTableStats {
-        super::ClusterTableStats {
-            table_id: 11,
-            version: 7,
-            snapshot: 7,
-            last_analyze_version: 7,
-            last_stats_hist_version: 7,
-            modify_count: 1,
-            row_count: 5,
-            columns: item.into_iter().collect(),
-            indexes: Vec::new(),
-        }
+    fn global_partition_stats(item: Option<(i64, tidb_stats::Column)>) -> tidb_stats::Table {
+        tidb_stats::Table::from_analyzed_items(11, 5, 1, item, [])
     }
 
     fn global_statement(skip_missing: bool) -> AnalyzeStatement {
@@ -3239,8 +3291,8 @@ mod tests {
         let column_types = BTreeMap::from([(1, FieldType::new(FieldTypeCode::LongLong))]);
         let column_names = BTreeMap::from([(1, "a".to_owned())]);
         let mut empty = global_partition_item(1, 0);
-        empty.histogram.buckets.clear();
-        empty.topn = None;
+        empty.1.histogram.buckets.clear();
+        empty.1.top_n = None;
         let partitions = vec![("p0".to_owned(), Some(global_partition_stats(Some(empty))))];
         let error = merge_global_items(
             &TableInfo::default(),
@@ -3480,23 +3532,6 @@ mod tests {
         assert!(
             commit_call.timeout() > Duration::ZERO,
             "the commit mints its own full budget at commit time"
-        );
-    }
-
-    #[test]
-    fn an_unbelievable_stored_row_count_reads_every_row_rather_than_none() {
-        assert_eq!(realtime_count_of(10_000), 10_000);
-        assert_eq!(realtime_count_of(u64::MAX), 0);
-        // The failure this is about: a saturating read would sample at
-        // 110000/i64::MAX and keep nothing, while the FM sketch still reported
-        // NDVs from the full scan.
-        assert!(
-            get_adjusted_sample_rate(Some(realtime_count_of(u64::MAX)), None)
-                > get_adjusted_sample_rate(Some(i64::MAX), None)
-        );
-        assert!(
-            (get_adjusted_sample_rate(Some(realtime_count_of(u64::MAX)), None) - 1.0).abs()
-                < f64::EPSILON
         );
     }
 

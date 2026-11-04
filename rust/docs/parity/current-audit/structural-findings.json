@@ -2,9 +2,9 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 48,
-    "open": 12,
-    "partial": 36
+    "unresolved": 45,
+    "open": 13,
+    "partial": 32
   },
   "findings": [
     {
@@ -20,13 +20,6 @@
       "group": "Privilege and account policy owners",
       "finding": "Restate (account policy lifecycle; overlaps Y01's lazy account loading)",
       "go_owner": "`pkg/privilege/privileges`"
-    },
-    {
-      "id": "A03",
-      "status": "partial",
-      "group": "Privilege and account policy owners",
-      "finding": "Restate (certificate parsing and algorithm limits)",
-      "go_owner": "`pkg/util/misc.go`, `privileges.go`"
     },
     {
       "id": "N03",
@@ -90,8 +83,8 @@
       "id": "E04",
       "status": "partial",
       "group": "DML and executor handoff",
-      "finding": "Restate (parallel Apply)",
-      "go_owner": "`pkg/executor/parallel_apply.go`"
+      "finding": "`enable_parallel_apply` decides clonability by `supports_apply_worker_clone` (refuses only CTE/CTETable/Shuffle) instead of Go's `SafeClone` over each operator's `Clone` (29 implement it; others such as BatchPointGet refuse, while PhysicalCTE clones), and never appends Go's `Some apply operators can not be executed in parallel` warning",
+      "go_owner": "`pkg/planner/core/optimizer.go` (`enableParallelApply`), `physicalop.SafeClone`"
     },
     {
       "id": "E05",
@@ -106,13 +99,6 @@
       "status": "partial",
       "group": "Runtime information-schema providers",
       "finding": "Other dynamic memtable providers; internal transactions in TIDB_TRX",
-      "go_owner": "`pkg/executor/infoschema_reader.go`"
-    },
-    {
-      "id": "I02",
-      "status": "partial",
-      "group": "Runtime information-schema providers",
-      "finding": "Restate (CLUSTER_INFO)",
       "go_owner": "`pkg/executor/infoschema_reader.go`"
     },
     {
@@ -157,13 +143,6 @@
       "group": "Domain and process services",
       "finding": "Runaway-query policy (the resource-group controller is installed)",
       "go_owner": "`pkg/resourcegroup/runaway`"
-    },
-    {
-      "id": "O06",
-      "status": "partial",
-      "group": "Domain and process services",
-      "finding": "The RU writer persists only read/write RU per group, computes the window on a fixed offset and stores end times in UTC",
-      "go_owner": "`pkg/domain` `requestUnitsWriterLoop`"
     },
     {
       "id": "O08",
@@ -314,11 +293,11 @@
     },
     {
       "id": "N05",
-      "status": "partial",
+      "status": "open",
       "group": "Expanded subsystem ownership review",
-      "finding": "Restate (status-port administrative handlers; check AutoID service hosting against `tidb-autoid/src/service_rpc.rs`)",
+      "finding": "The status port serves only `/status`, `/metrics`, `/settings`, `/config`, `/schema` and `/schema_storage` (`tidb-server/src/http_status.rs`); Go's other routes are absent: `/info`, `/info/all`, `/labels`, `/ddl/history`, `/ddl/owner/resign`, `/mvcc/*`, `/regions/*`, `/tables/*`, `/db-table/{id}`, `/stats/dump/*`, `/plan_replayer/dump`, `/optimize_trace/dump`, `/extract_task/dump`, `/dxf/*`, `/ingest/*`, `/tiflash/replica`, `/upgrade/*`, `/txn-gc-states`, `/debug/*`, test hooks",
       "rust_evidence": "`rust/crates/tidb-autoid/src/service_rpc.rs`",
-      "go_owner": "`pkg/server/handler`, `pkg/autoid_service`"
+      "go_owner": "`pkg/server/http_status.go`, `pkg/server/handler`"
     },
     {
       "id": "O10",
@@ -345,9 +324,9 @@
       "id": "Y01",
       "status": "partial",
       "group": "System-table access",
-      "finding": "The global-stats merge after a partitioned ANALYZE reads partitions through the raw `ClusterStatsLoader` (`tidb-executor/src/real_tikv_analyze.rs`); the DDL scheduler, systable manager, history and MDL readers scan records instead of running SQL on `DdlSessionPool::sess_pool`; the bootstrap stages raw rows; accounts load eagerly where Go loads per active user",
+      "finding": "The DDL scheduler, systable manager, history and MDL readers scan records instead of running SQL on `DdlSessionPool::sess_pool`; the bootstrap stages raw rows; accounts load eagerly where Go loads per active user",
       "rust_evidence": "`rust/crates/tidb-executor/src/real_tikv_analyze.rs`",
-      "go_owner": "`pkg/statistics/handle/globalstats`, `pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap, `pkg/privilege/privileges` (`ensureActiveUser`)"
+      "go_owner": "`pkg/ddl` (`systable`, job scheduler), `pkg/session` bootstrap, `pkg/privilege/privileges` (`ensureActiveUser`)"
     }
   ]
 }

@@ -1031,6 +1031,17 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
             Ok(0)
         })
     }
+
+    fn current_ts(&self) -> Result<u64, tidb_sqlexec::SqlExecError> {
+        self.with_session(|session| {
+            session
+                .node
+                .domain
+                .transactions
+                .fresh_timestamp()
+                .map_err(stats_session_error)
+        })
+    }
 }
 
 

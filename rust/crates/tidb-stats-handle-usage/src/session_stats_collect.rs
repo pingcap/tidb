@@ -17,25 +17,14 @@
 //! (`DumpColStatsUsageEntries`) into `mysql.stats_meta` and
 //! `mysql.column_stats_usage`.
 
-use std::collections::BTreeMap;
 use std::time::SystemTime;
 
 use tidb_sqlescape::{must_escape_sql_text, SqlArg};
 use tidb_sqlexec::SqlExecError;
 use tidb_stats_handle_util::{exec_rows, StatsSessionContext};
 
-use tidb_datatype::{
-    Datum, Time,
-};
 use tidb_model::TableItemID;
-use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_infoschema::cluster_catalog::MetaSnapshot;
-use tidb_infoschema::SessionExtendedInfoSchema;
-use tidb_syssession::system_row_write::defaults_row;
-use tidb_table::origin_default::RowEncodeError;
-use tidb_stats_handle_storage::cluster_stats_write::*;
-use tidb_syssession::stats_table_rows::*;
 
 /// One SQL statement in pinned Go `storage.UpdateStatsMeta`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,132 +39,6 @@ pub enum StatsDeltaStatement {
     UpsertUnlockedPositive(Vec<crate::DeltaUpdate>),
     /// Upserts negative unlocked deltas in one statement.
     UpsertUnlockedNegative(Vec<crate::DeltaUpdate>),
-}
-
-/// Builds pinned Go `storage.UpdateStatsMeta`'s nonempty statements in order.
-#[must_use]
-pub fn stats_delta_statements(
-    updates: &[crate::DeltaUpdate],
-) -> Vec<StatsDeltaStatement> {
-    let mut locked_ids = Vec::new();
-    let mut unlocked_ids = Vec::new();
-    let mut locked = Vec::new();
-    let mut positive = Vec::new();
-    let mut negative = Vec::new();
-    for update in updates {
-        if update.is_locked {
-            locked_ids.push(update.table_id);
-            locked.push(*update);
-        } else {
-            unlocked_ids.push(update.table_id);
-            if update.delta.delta < 0 {
-                negative.push(*update);
-            } else {
-                positive.push(*update);
-            }
-        }
-    }
-    let mut statements = Vec::with_capacity(5);
-    if !locked_ids.is_empty() {
-        statements.push(StatsDeltaStatement::LockLocked(locked_ids));
-    }
-    if !unlocked_ids.is_empty() {
-        statements.push(StatsDeltaStatement::LockUnlocked(unlocked_ids));
-    }
-    if !locked.is_empty() {
-        statements.push(StatsDeltaStatement::UpsertLocked(locked));
-    }
-    if !positive.is_empty() {
-        statements.push(StatsDeltaStatement::UpsertUnlockedPositive(positive));
-    }
-    if !negative.is_empty() {
-        statements.push(StatsDeltaStatement::UpsertUnlockedNegative(negative));
-    }
-    statements
-}
-
-/// Plans one pinned Go `storage.UpdateStatsMeta` statement.
-pub fn plan_stats_delta_statement<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    statement: &StatsDeltaStatement,
-    version: u64,
-    now: Time,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<StatsWritePlan, StatsWriteError> {
-    let (table_name, updates, negative) = match statement {
-        StatsDeltaStatement::LockLocked(table_ids)
-        | StatsDeltaStatement::LockUnlocked(table_ids) => {
-            let table_name = if matches!(statement, StatsDeltaStatement::LockLocked(_)) {
-                "stats_table_locked"
-            } else {
-                "stats_meta"
-            };
-            let table = locate(catalog, table_name)?;
-            let table = table.read();
-            let mut plan = StatsWritePlan::default();
-            for table_id in table_ids {
-                let rows = StatsRows::open(snapshot, &table, &["table_id"], *table_id)?;
-                for (key, _) in rows.existing.into_values() {
-                    plan.mutations
-                        .push(BufferMutation::lock_only(key).map_err(|error| {
-                            StatsWriteError::Encode(RowEncodeError(error.to_string()))
-                        })?);
-                }
-            }
-            return Ok(plan);
-        }
-        StatsDeltaStatement::UpsertLocked(updates) => {
-            ("stats_table_locked", updates.as_slice(), false)
-        }
-        StatsDeltaStatement::UpsertUnlockedPositive(updates) => {
-            ("stats_meta", updates.as_slice(), false)
-        }
-        StatsDeltaStatement::UpsertUnlockedNegative(updates) => {
-            ("stats_meta", updates.as_slice(), true)
-        }
-    };
-    let mut grouped = BTreeMap::<i64, Vec<crate::TableDelta>>::new();
-    for update in updates {
-        grouped
-            .entry(update.table_id)
-            .or_default()
-            .push(update.delta);
-    }
-    let mut plan = StatsWritePlan::default();
-    let table = locate(catalog, table_name)?;
-    let table = table.read();
-    for (table_id, deltas) in grouped {
-        let mut rows = StatsRows::open(snapshot, &table, &["table_id"], table_id)?;
-        let mut values = defaults_row(&table, now)?;
-        set(&table, &mut values, "table_id", Datum::Int(table_id));
-        let identity = identity_of(&table, &["table_id"], &values)?;
-        let existed = rows.existing_values(&identity).is_some();
-        if let Some(stored) = rows.existing_values(&identity) {
-            values = stored.clone();
-        }
-        let current_modify =
-            signed_value(values.get(&column_id(&table, "modify_count")?)).unwrap_or_default();
-        let mut count = signed_value(values.get(&column_id(&table, "count")?)).unwrap_or_default();
-        let mut modify_count = current_modify;
-        for (index, delta) in deltas.into_iter().enumerate() {
-            modify_count = modify_count.wrapping_add(delta.count);
-            count = if !negative {
-                count.wrapping_add(delta.delta)
-            } else if existed || index > 0 {
-                count.saturating_sub(delta.delta.wrapping_neg()).max(0)
-            } else {
-                // In one multi-row INSERT, the first missing-key tuple inserts
-                // `-delta`; later tuples for that key take the duplicate path.
-                delta.delta.wrapping_neg()
-            };
-        }
-        set(&table, &mut values, "version", Datum::UInt(version));
-        set(&table, &mut values, "modify_count", Datum::Int(modify_count));
-        set(&table, &mut values, "count", Datum::Int(count));
-        rows.store_row(catalog, &values, &mut plan, row_ids)?;
-    }
-    Ok(plan)
 }
 
 /// One batch of Go `DumpColStatsUsageEntries`: a single upsert that advances

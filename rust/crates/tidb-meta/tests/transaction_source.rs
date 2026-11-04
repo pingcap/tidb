@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use chrono::{TimeZone, Utc};
+use chrono::TimeZone;
 use serde::{Deserialize, Serialize};
 use tidb_ast::CiString;
 use tidb_meta::transaction::{
@@ -2008,12 +2008,17 @@ fn dxf_and_ru_stats_match_go_json_shapes_including_null() {
 
     let stats = RuStats {
         latest: Some(Box::new(DailyRuStats {
-            end_time: Utc.with_ymd_and_hms(2026, 8, 7, 1, 2, 3).unwrap(),
+            end_time: chrono::FixedOffset::east_opt(8 * 3600)
+                .unwrap()
+                .with_ymd_and_hms(2026, 8, 7, 1, 2, 3)
+                .unwrap(),
             stats: Some(vec![GroupRuStats {
                 id: 7,
                 name: "<rg>".to_owned(),
                 ru_consumption: Some(RuConsumption {
                     read_request_units: 1.25,
+                    read_cross_az_traffic_bytes: 9,
+                    tiflash_ru_v2: 0.5,
                     ..Default::default()
                 }),
             }]),
@@ -2025,9 +2030,15 @@ fn dxf_and_ru_stats_match_go_json_shapes_including_null() {
     let stored = meta
         .inspect(|transaction| transaction.entries()[&ru_key].clone())
         .unwrap();
-    assert!(String::from_utf8(stored)
-        .unwrap()
-        .contains("\\u003crg\\u003e"));
+    let stored = String::from_utf8(stored).unwrap();
+    assert!(stored.contains("\\u003crg\\u003e"));
+    // Go `time.Time.MarshalJSON` keeps the offset; `rmpb.Consumption`'s
+    // JSON names every field it carries.
+    assert!(stored.contains(r#""date":"2026-08-07T01:02:03+08:00""#), "{stored}");
+    assert!(
+        stored.contains(r#""ru_consumption":{"r_r_u":1.25,"read_cross_az_traffic_bytes":9,"tiflash_r_u_v2":0.5}"#),
+        "{stored}"
+    );
 
     let mut corrupt_dxf = meta.inspect(Clone::clone).unwrap();
     corrupt_dxf

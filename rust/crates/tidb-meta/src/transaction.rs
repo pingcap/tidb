@@ -27,7 +27,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, FixedOffset, SecondsFormat};
 use serde::{Deserialize, Serialize};
 use tidb_ast::{CiString, MEDIUM_PRIORITY_VALUE};
 use tidb_dxf::schstatus::TtlTuneFactors;
@@ -541,6 +541,21 @@ pub struct RuConsumption {
     /// KV write RPC count.
     #[serde(default, skip_serializing_if = "is_zero_f64")]
     pub kv_write_rpc_count: f64,
+    /// Cross-AZ bytes read.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub read_cross_az_traffic_bytes: u64,
+    /// Cross-AZ bytes written.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub write_cross_az_traffic_bytes: u64,
+    /// Experimental TiKV RU v2.
+    #[serde(rename = "tikv_r_u_v2", default, skip_serializing_if = "is_zero_f64")]
+    pub tikv_ru_v2: f64,
+    /// Experimental TiDB RU v2.
+    #[serde(rename = "tidb_r_u_v2", default, skip_serializing_if = "is_zero_f64")]
+    pub tidb_ru_v2: f64,
+    /// Experimental TiFlash RU v2 (TiFlash RRU + WRU).
+    #[serde(rename = "tiflash_r_u_v2", default, skip_serializing_if = "is_zero_f64")]
+    pub tiflash_ru_v2: f64,
 }
 
 /// Go `GroupRUStats`.
@@ -563,7 +578,9 @@ pub struct DailyRuStats {
         serialize_with = "serialize_go_time",
         deserialize_with = "deserialize_go_time"
     )]
-    pub end_time: DateTime<Utc>,
+    /// Go marshals a `time.Time` with its own offset, which `!=` later
+    /// compares, so the offset is kept.
+    pub end_time: DateTime<FixedOffset>,
     /// `None` preserves a nil Go slice (`null`) separately from an empty slice.
     pub stats: Option<Vec<GroupRuStats>>,
 }

@@ -17,15 +17,9 @@
 //! session, plus the row planners the DDL statistics subscriber still uses.
 
 
-use tidb_datatype::{
-    Datum, Time,
-};
+use tidb_datatype::Datum;
 use tidb_stats_util::JsonTable;
-use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_infoschema::cluster_catalog::MetaSnapshot;
-use tidb_infoschema::SessionExtendedInfoSchema;
-use tidb_syssession::system_row_write::defaults_row;
 use tidb_syssession::stats_table_rows::*;
 
 use tidb_log::{Field, Value};
@@ -33,94 +27,6 @@ use tidb_sqlescape::SqlArg;
 use tidb_sqlexec::SqlExecError;
 use tidb_stats_handle_storage::stats_read_writer::StatsSessionPool;
 use tidb_stats_handle_util::{exec_rows, StatsSessionContext, FLAG_WRAP_TXN};
-use tidb_stats_handle_storage::cluster_stats_write::*;
-
-/// Plans pinned Go `RecordHistoricalStatsMeta`'s `SELECT ... FOR UPDATE`.
-pub fn plan_historical_stats_meta_lock<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    table_id: i64,
-    version: u64,
-) -> Result<((i64, i64), StatsWritePlan), StatsWriteError> {
-    let meta = locate(catalog, "stats_meta")?;
-    let meta = meta.read();
-    let meta_rows = StatsRows::open(snapshot, &meta, &["table_id"], table_id)?;
-    let identity = vec![format!("{:?}", Datum::Int(table_id))];
-    let (key, values) = meta_rows.existing.get(&identity).ok_or_else(|| {
-        StatsWriteError::HistoricalMeta("no historical meta stats can be recorded".to_owned())
-    })?;
-    let stored_version = unsigned_value(values.get(&column_id(&meta, "version")?));
-    if stored_version != Some(version) {
-        return Err(StatsWriteError::HistoricalMeta(
-            "no historical meta stats can be recorded".to_owned(),
-        ));
-    }
-    let modify_count =
-        signed_value(values.get(&column_id(&meta, "modify_count")?)).ok_or_else(|| {
-            StatsWriteError::HistoricalMeta("invalid stats_meta.modify_count".to_owned())
-        })?;
-    let count = signed_value(values.get(&column_id(&meta, "count")?))
-        .ok_or_else(|| StatsWriteError::HistoricalMeta("invalid stats_meta.count".to_owned()))?;
-    let mut plan = StatsWritePlan::default();
-    plan.mutations.push(
-        BufferMutation::lock_only(key.clone())
-            .map_err(|error| StatsWriteError::HistoricalMeta(error.to_string()))?,
-    );
-    Ok(((modify_count, count), plan))
-}
-
-/// Plans pinned Go `RecordHistoricalStatsMeta`'s `REPLACE` statement.
-pub fn plan_historical_stats_meta_replace<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    table_id: i64,
-    modify_count: i64,
-    count: i64,
-    version: u64,
-    source: &str,
-    now: Time,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<StatsWritePlan, StatsWriteError> {
-    let history = locate(catalog, "stats_meta_history")?;
-    let history = history.read();
-    let mut rows = StatsRows::open(snapshot, &history, &["table_id", "version"], table_id)?;
-    let mut history_values = defaults_row(&history, now)?;
-    set(
-        &history,
-        &mut history_values,
-        "table_id",
-        Datum::Int(table_id),
-    );
-    set(
-        &history,
-        &mut history_values,
-        "modify_count",
-        Datum::Int(modify_count),
-    );
-    set(&history, &mut history_values, "count", Datum::Int(count));
-    // `stats_meta_history.version` is a signed BIGINT in Go's schema.
-    set(
-        &history,
-        &mut history_values,
-        "version",
-        Datum::Int(version as i64),
-    );
-    set(
-        &history,
-        &mut history_values,
-        "source",
-        Datum::Bytes(source.as_bytes().to_vec()),
-    );
-    set(
-        &history,
-        &mut history_values,
-        "create_time",
-        Datum::Time(now),
-    );
-    let mut plan = StatsWritePlan::default();
-    rows.store_row(catalog, &history_values, &mut plan, row_ids)?;
-    Ok(plan)
-}
 
 /// Pinned Go `history.RecordHistoricalStatsToStorage`'s preparation before its
 /// per-block `INSERT` statements.
@@ -145,44 +51,6 @@ pub fn historical_stats_data_blocks(
         .map_err(|error| StatsWriteError::HistoricalData(error.to_string()))?;
     Ok((version, blocks))
 }
-
-/// Plans one pinned Go `history.RecordHistoricalStatsToStorage` block
-/// `INSERT ... ON DUPLICATE KEY UPDATE` statement.
-pub fn plan_historical_stats_data_block<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    physical_id: i64,
-    version: u64,
-    sequence: usize,
-    block: &[u8],
-    now: Time,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<StatsWritePlan, StatsWriteError> {
-    let history = locate(catalog, "stats_history")?;
-    let history = history.read();
-    let mut rows = StatsRows::open(
-        snapshot,
-        &history,
-        &["table_id", "version", "seq_no"],
-        physical_id,
-    )?;
-    let mut plan = StatsWritePlan::default();
-    let mut values = defaults_row(&history, now)?;
-    set(&history, &mut values, "table_id", Datum::Int(physical_id));
-    set(
-        &history,
-        &mut values,
-        "stats_data",
-        Datum::Bytes(block.to_vec()),
-    );
-    set(&history, &mut values, "seq_no", Datum::Int(sequence as i64));
-    // `stats_history.version` is a signed BIGINT in Go's schema.
-    set(&history, &mut values, "version", Datum::Int(version as i64));
-    set(&history, &mut values, "create_time", Datum::Time(now));
-    rows.store_row(catalog, &values, &mut plan, row_ids)?;
-    Ok(plan)
-}
-
 
 /// Go `history.RecordHistoricalStatsMeta`: the table's `stats_meta` counts at
 /// `version`, locked, copied into `mysql.stats_meta_history`.

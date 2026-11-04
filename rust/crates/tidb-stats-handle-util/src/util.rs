@@ -96,6 +96,8 @@ pub trait StatsSessionContext: SessionContext {
     fn set_statement_time_zone(&self, value: &str);
     /// Go `Txn(true).StartTS`.
     fn transaction_start_ts(&self, active: bool) -> Result<u64, SqlExecError>;
+    /// Go `GetStore().GetOracle().GetTimestamp`: a fresh timestamp.
+    fn current_ts(&self) -> Result<u64, SqlExecError>;
     /// Go `StmtCtx.AffectedRows()`: the rows the last statement changed.
     fn affected_rows(&self) -> u64;
     /// Go `sctx.GetLatestInfoSchema().TableByID(tableID)`'s `Meta()`; `None`
@@ -705,6 +707,10 @@ mod tests {
 
         fn transaction_start_ts(&self, active: bool) -> Result<u64, SqlExecError> {
             assert!(active);
+            Ok(self.start_ts)
+        }
+
+        fn current_ts(&self) -> Result<u64, SqlExecError> {
             Ok(self.start_ts)
         }
 

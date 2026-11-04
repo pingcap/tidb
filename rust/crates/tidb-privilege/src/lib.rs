@@ -84,7 +84,7 @@ pub mod verification;
 pub mod cluster_privilege_load;
 pub mod cluster_account_write;
 use tls_policy::match_uri_with_wildcard;
-pub use tls_policy::parse_and_check_san;
+pub use tls_policy::{check_support_x509_name_oneline, parse_and_check_san, x509_name_online};
 pub use tls_policy::{certificate_uri, TlsPeerIdentity};
 
 pub use export::*;

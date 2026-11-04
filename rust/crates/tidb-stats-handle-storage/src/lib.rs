@@ -13,9 +13,9 @@
 // limitations under the License.
 
 //! Go `pkg/statistics/handle/storage`: reading a table's statistics out of
-//! `mysql.stats_*` (`cluster_stats_load`, `read`), Go's write statements on a
-//! statistics session (`save`, `update`, `gc`, `stats_read_writer`), the
-//! row planners test fixtures still seed from (`cluster_stats_write`), the
+//! `mysql.stats_*` (`read`), the analyze result types (`cluster_stats_load`),
+//! Go's write statements on a statistics session (`save`, `update`, `gc`,
+//! `stats_read_writer`) and their SQL text (`cluster_stats_write`), the
 //! JSON dump (`json`) and `LoadStatsFromJSON` (`cluster_load_stats`,
 //! `real_tikv_load_stats`).
 

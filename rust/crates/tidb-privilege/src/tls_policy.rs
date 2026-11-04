@@ -25,6 +25,51 @@ pub struct TlsPeerIdentity {
     pub sans: BTreeMap<String, Vec<String>>,
 }
 
+/// Go `pkixAttributeTypeNames`: the name attributes TiDB checks, by OID.
+const PKIX_ATTRIBUTE_TYPE_NAMES: [(&str, &str); 10] = [
+    ("2.5.4.6", "C"),
+    ("2.5.4.10", "O"),
+    ("2.5.4.11", "OU"),
+    ("2.5.4.3", "CN"),
+    ("2.5.4.5", "SERIALNUMBER"),
+    ("2.5.4.7", "L"),
+    ("2.5.4.8", "ST"),
+    ("2.5.4.9", "STREET"),
+    ("2.5.4.17", "POSTALCODE"),
+    ("1.2.840.113549.1.9.1", "emailAddress"),
+];
+
+/// Go `util.X509NameOnline`: a name's `(oid, value)` attributes in their
+/// ASN.1 order, printed in OpenSSL's `X509_NAME_oneline` form; attributes
+/// TiDB does not check are left out, and no supported one prints `""`.
+pub fn x509_name_online<'a>(names: impl IntoIterator<Item = (&'a str, &'a str)>) -> String {
+    let mut oneline = String::new();
+    for (oid, value) in names {
+        if let Some((_, name)) = PKIX_ATTRIBUTE_TYPE_NAMES.iter().find(|(known, _)| *known == oid) {
+            oneline.push('/');
+            oneline.push_str(name);
+            oneline.push('=');
+            oneline.push_str(value);
+        }
+    }
+    oneline
+}
+
+/// Go `util.CheckSupportX509NameOneline`: `oneline` is `X509_NAME_oneline`
+/// text naming only attributes TiDB checks.
+pub fn check_support_x509_name_oneline(oneline: &str) -> Result<(), String> {
+    for entry in oneline.split('/').filter(|entry| !entry.is_empty()) {
+        let kvs: Vec<_> = entry.split('=').collect();
+        if kvs.len() != 2 {
+            return Err(format!("invalid X509_NAME input: {oneline}"));
+        }
+        if !PKIX_ATTRIBUTE_TYPE_NAMES.iter().any(|(_, name)| *name == kvs[0]) {
+            return Err(format!("Unsupport check '{}' in current version TiDB", kvs[0]));
+        }
+    }
+    Ok(())
+}
+
 /// Go `util.ParseAndCheckSAN` over a stored policy's `san` text: each SAN type with its
 /// alternatives.
 pub fn parse_and_check_san(raw: &str) -> Result<BTreeMap<String, Vec<String>>, String> {
@@ -427,5 +472,40 @@ mod tests {
                 "{required:?} vs {given:?}"
             );
         }
+    }
+
+    /// Go `util.TestX509NameParseMatch`.
+    #[test]
+    fn x509_name_parse_match() {
+        assert_eq!(x509_name_online([]), "");
+        let check = [
+            ("2.5.4.6", "SE"),
+            ("2.5.4.8", "Stockholm2"),
+            ("2.5.4.7", "Stockholm"),
+            ("2.5.4.10", "MySQL demo client certificate"),
+            ("2.5.4.11", "testUnit"),
+            ("2.5.4.3", "client"),
+            ("1.2.840.113549.1.9.1", "client@example.com"),
+            // Not a name TiDB checks: left out.
+            ("2.5.4.12", "title"),
+        ];
+        assert_eq!(
+            x509_name_online(check),
+            "/C=SE/ST=Stockholm2/L=Stockholm/O=MySQL demo client certificate/OU=testUnit/CN=client/emailAddress=client@example.com"
+        );
+    }
+
+    /// Go `util.CheckSupportX509NameOneline`'s two refusals.
+    #[test]
+    fn x509_name_oneline_check_refuses_like_go() {
+        assert_eq!(check_support_x509_name_oneline("/C=SE/CN=client"), Ok(()));
+        assert_eq!(
+            check_support_x509_name_oneline("/C=SE/CN"),
+            Err("invalid X509_NAME input: /C=SE/CN".to_owned())
+        );
+        assert_eq!(
+            check_support_x509_name_oneline("/C=SE/title=x"),
+            Err("Unsupport check 'title' in current version TiDB".to_owned())
+        );
     }
 }

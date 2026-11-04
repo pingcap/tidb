@@ -137,6 +137,17 @@ where
                 ru_stats: group.ru_stats.map(|consumption| Consumption {
                     rru: consumption.r_r_u,
                     wru: consumption.w_r_u,
+                    read_bytes: consumption.read_bytes,
+                    write_bytes: consumption.write_bytes,
+                    total_cpu_time_ms: consumption.total_cpu_time_ms,
+                    sql_layer_cpu_time_ms: consumption.sql_layer_cpu_time_ms,
+                    kv_read_rpc_count: consumption.kv_read_rpc_count,
+                    kv_write_rpc_count: consumption.kv_write_rpc_count,
+                    read_cross_az_traffic_bytes: consumption.read_cross_az_traffic_bytes,
+                    write_cross_az_traffic_bytes: consumption.write_cross_az_traffic_bytes,
+                    tikv_ru_v2: consumption.tikv_r_u_v2,
+                    tidb_ru_v2: consumption.tidb_r_u_v2,
+                    tiflash_ru_v2: consumption.tiflash_r_u_v2,
                 }),
             })
             .collect())
@@ -213,12 +224,11 @@ where
     }
 }
 
-/// The meta key's stored form to the writer's. Go keeps the whole
-/// `rmpb.Consumption`; only the read and write request units take part in
-/// the daily totals, which is all the writer's type carries.
+/// The meta key's stored form to the writer's: the whole `rmpb.Consumption`
+/// and the end time with its own offset, as Go round-trips them.
 fn meta_to_domain(stored: tidb_meta::transaction::RuStats) -> RuStats {
     let daily = |day: Box<tidb_meta::transaction::DailyRuStats>| DailyRuStats {
-        end_time: day.end_time.fixed_offset(),
+        end_time: day.end_time,
         stats: day
             .stats
             .unwrap_or_default()
@@ -229,6 +239,17 @@ fn meta_to_domain(stored: tidb_meta::transaction::RuStats) -> RuStats {
                 ru_consumption: group.ru_consumption.map(|consumption| Consumption {
                     rru: consumption.read_request_units,
                     wru: consumption.write_request_units,
+                    read_bytes: consumption.read_bytes,
+                    write_bytes: consumption.write_bytes,
+                    total_cpu_time_ms: consumption.total_cpu_time_ms,
+                    sql_layer_cpu_time_ms: consumption.sql_layer_cpu_time_ms,
+                    kv_read_rpc_count: consumption.kv_read_rpc_count,
+                    kv_write_rpc_count: consumption.kv_write_rpc_count,
+                    read_cross_az_traffic_bytes: consumption.read_cross_az_traffic_bytes,
+                    write_cross_az_traffic_bytes: consumption.write_cross_az_traffic_bytes,
+                    tikv_ru_v2: consumption.tikv_ru_v2,
+                    tidb_ru_v2: consumption.tidb_ru_v2,
+                    tiflash_ru_v2: consumption.tiflash_ru_v2,
                 }),
             })
             .collect(),
@@ -242,7 +263,7 @@ fn meta_to_domain(stored: tidb_meta::transaction::RuStats) -> RuStats {
 fn domain_to_meta(stats: &RuStats) -> tidb_meta::transaction::RuStats {
     let daily = |day: &DailyRuStats| {
         Box::new(tidb_meta::transaction::DailyRuStats {
-            end_time: day.end_time.with_timezone(&chrono::Utc),
+            end_time: day.end_time,
             stats: Some(
                 day.stats
                     .iter()
@@ -253,7 +274,17 @@ fn domain_to_meta(stats: &RuStats) -> tidb_meta::transaction::RuStats {
                             tidb_meta::transaction::RuConsumption {
                                 read_request_units: consumption.rru,
                                 write_request_units: consumption.wru,
-                                ..Default::default()
+                                read_bytes: consumption.read_bytes,
+                                write_bytes: consumption.write_bytes,
+                                total_cpu_time_ms: consumption.total_cpu_time_ms,
+                                sql_layer_cpu_time_ms: consumption.sql_layer_cpu_time_ms,
+                                kv_read_rpc_count: consumption.kv_read_rpc_count,
+                                kv_write_rpc_count: consumption.kv_write_rpc_count,
+                                read_cross_az_traffic_bytes: consumption.read_cross_az_traffic_bytes,
+                                write_cross_az_traffic_bytes: consumption.write_cross_az_traffic_bytes,
+                                tikv_ru_v2: consumption.tikv_ru_v2,
+                                tidb_ru_v2: consumption.tidb_ru_v2,
+                                tiflash_ru_v2: consumption.tiflash_ru_v2,
                             }
                         }),
                     })
@@ -344,7 +375,14 @@ mod tests {
             stats: vec![GroupRuStats {
                 id: 7,
                 name: "rg1".to_owned(),
-                ru_consumption: Some(Consumption { rru, wru: 2.5 }),
+                ru_consumption: Some(Consumption {
+                    rru,
+                    wru: 2.5,
+                    read_bytes: 3.0,
+                    read_cross_az_traffic_bytes: 4,
+                    tiflash_ru_v2: 0.5,
+                    ..Default::default()
+                }),
             }],
         };
         RuStats {
@@ -353,10 +391,10 @@ mod tests {
         }
     }
 
-    /// What the writer persists is what it reads back: the instant, each
-    /// group's identity and both request-unit totals survive the meta key's
-    /// stored form, which is the round trip `needFetchData` and the daily
-    /// difference depend on.
+    /// What the writer persists is what it reads back: the end time with its
+    /// own offset (Go's `needFetchData` compares it with `!=`), each group's
+    /// identity and the whole `rmpb.Consumption` survive the meta key's
+    /// stored form.
     #[test]
     fn ru_stats_survive_the_meta_round_trip() {
         let original = sample();
@@ -370,6 +408,11 @@ mod tests {
             instants(&original),
             "the instants survive"
         );
+        let offsets = |stats: &RuStats| {
+            [&stats.latest, &stats.previous]
+                .map(|day| day.as_ref().map(|day| day.end_time.offset().local_minus_utc()))
+        };
+        assert_eq!(offsets(&restored), [Some(-7 * 3600), Some(-7 * 3600)], "the offsets survive");
         let groups = |stats: &RuStats| {
             [&stats.latest, &stats.previous].map(|day| day.as_ref().unwrap().stats.clone())
         };
@@ -382,7 +425,7 @@ mod tests {
     fn a_day_without_stats_reads_as_empty() {
         let stored = tidb_meta::transaction::RuStats {
             latest: Some(Box::new(tidb_meta::transaction::DailyRuStats {
-                end_time: chrono::Utc::now(),
+                end_time: chrono::Utc::now().fixed_offset(),
                 stats: None,
             })),
             previous: None,

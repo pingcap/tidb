@@ -199,7 +199,7 @@ impl std::fmt::Display for RuStatsError {
 
 impl std::error::Error for RuStatsError {}
 
-/// The two fields of Go `rmpb.Consumption` this file reads.
+/// Go `rmpb.Consumption`, persisted whole in the `RUStats` meta key.
 ///
 /// boundary: Go `github.com/pingcap/kvproto/pkg/resource_manager.Consumption`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -208,6 +208,28 @@ pub struct Consumption {
     pub rru: f64,
     /// Go `Consumption.WRU`: write request units.
     pub wru: f64,
+    /// Go `Consumption.ReadBytes`.
+    pub read_bytes: f64,
+    /// Go `Consumption.WriteBytes`.
+    pub write_bytes: f64,
+    /// Go `Consumption.TotalCpuTimeMs`.
+    pub total_cpu_time_ms: f64,
+    /// Go `Consumption.SqlLayerCpuTimeMs`.
+    pub sql_layer_cpu_time_ms: f64,
+    /// Go `Consumption.KvReadRpcCount`.
+    pub kv_read_rpc_count: f64,
+    /// Go `Consumption.KvWriteRpcCount`.
+    pub kv_write_rpc_count: f64,
+    /// Go `Consumption.ReadCrossAzTrafficBytes`.
+    pub read_cross_az_traffic_bytes: u64,
+    /// Go `Consumption.WriteCrossAzTrafficBytes`.
+    pub write_cross_az_traffic_bytes: u64,
+    /// Go `Consumption.TikvRUV2`.
+    pub tikv_ru_v2: f64,
+    /// Go `Consumption.TidbRUV2`.
+    pub tidb_ru_v2: f64,
+    /// Go `Consumption.TiflashRUV2`.
+    pub tiflash_ru_v2: f64,
 }
 
 impl Consumption {
@@ -1036,6 +1058,7 @@ mod tests {
                     ru_stats: Some(Consumption {
                         rru: 200.0,
                         wru: 150.0,
+                        ..Default::default()
                     }),
                 },
                 ResourceGroupWithRuStats {
@@ -1043,6 +1066,7 @@ mod tests {
                     ru_stats: Some(Consumption {
                         rru: 100.0,
                         wru: 50.0,
+                        ..Default::default()
                     }),
                 },
             ]),
@@ -1091,6 +1115,7 @@ mod tests {
         w.deps.groups.borrow_mut()[1].ru_stats = Some(Consumption {
             rru: 500.0,
             wru: 50.0,
+            ..Default::default()
         });
         w.start_time = at(tz, 2023, 12, 27, 0, 0, 1);
         w.do_write_ru_statistics().unwrap();
@@ -1109,6 +1134,7 @@ mod tests {
         w.deps.groups.borrow_mut()[0].ru_stats = Some(Consumption {
             rru: 200.0,
             wru: 200.0,
+            ..Default::default()
         });
         w.do_write_ru_statistics().unwrap();
         assert_eq!(
@@ -1123,10 +1149,12 @@ mod tests {
         w.deps.groups.borrow_mut()[0].ru_stats = Some(Consumption {
             rru: 1000.0,
             wru: 200.0,
+            ..Default::default()
         });
         w.deps.groups.borrow_mut()[1].ru_stats = Some(Consumption {
             rru: 500.0,
             wru: 2000.0,
+            ..Default::default()
         });
         w.start_time = at(tz, 2023, 12, 29, 1, 0, 0);
         let before = w.deps.statements.borrow().len();
@@ -1259,7 +1287,7 @@ mod tests {
         GroupRuStats {
             id,
             name: name.to_owned(),
-            ru_consumption: Some(Consumption { rru, wru }),
+            ru_consumption: Some(Consumption { rru, wru, ..Default::default() }),
         }
     }
 
@@ -1368,11 +1396,11 @@ mod tests {
             groups: RefCell::new(vec![
                 ResourceGroupWithRuStats {
                     name: "DEFAULT".to_owned(),
-                    ru_stats: Some(Consumption { rru: 1.0, wru: 2.0 }),
+                    ru_stats: Some(Consumption { rru: 1.0, wru: 2.0, ..Default::default() }),
                 },
                 ResourceGroupWithRuStats {
                     name: "gone".to_owned(),
-                    ru_stats: Some(Consumption { rru: 9.0, wru: 9.0 }),
+                    ru_stats: Some(Consumption { rru: 9.0, wru: 9.0, ..Default::default() }),
                 },
             ]),
             infoschema: vec![ResourceGroupInfo {
@@ -1388,7 +1416,7 @@ mod tests {
             vec![GroupRuStats {
                 id: 1,
                 name: "default".to_owned(),
-                ru_consumption: Some(Consumption { rru: 1.0, wru: 2.0 }),
+                ru_consumption: Some(Consumption { rru: 1.0, wru: 2.0, ..Default::default() }),
             }]
         );
     }

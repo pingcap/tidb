@@ -708,29 +708,15 @@ impl ClientStream {
         }
         let cert = stream.conn.peer_certificates()?.first()?;
         let (_, cert) = x509_parser::parse_x509_certificate(cert.as_ref()).ok()?;
+        // Go `util.X509NameOnline(cert.Issuer)` / `(cert.Subject)`.
         let name = |name: &x509_parser::x509::X509Name<'_>| {
-            let mut result = String::new();
-            for attr in name.iter_attributes() {
-                let key = match attr.attr_type().to_id_string().as_str() {
-                    "2.5.4.6" => "C",
-                    "2.5.4.10" => "O",
-                    "2.5.4.11" => "OU",
-                    "2.5.4.3" => "CN",
-                    "2.5.4.5" => "SERIALNUMBER",
-                    "2.5.4.7" => "L",
-                    "2.5.4.8" => "ST",
-                    "2.5.4.9" => "STREET",
-                    "2.5.4.17" => "POSTALCODE",
-                    "1.2.840.113549.1.9.1" => "emailAddress",
-                    _ => continue,
-                };
-                let value = x509_name_value(attr)?;
-                result.push('/');
-                result.push_str(key);
-                result.push('=');
-                result.push_str(&value);
-            }
-            Some(result)
+            let attributes = name
+                .iter_attributes()
+                .map(|attr| Some((attr.attr_type().to_id_string(), x509_name_value(attr)?)))
+                .collect::<Option<Vec<_>>>()?;
+            Some(tidb_privilege::x509_name_online(
+                attributes.iter().map(|(oid, value)| (oid.as_str(), value.as_str())),
+            ))
         };
         let mut sans = std::collections::BTreeMap::<String, Vec<String>>::new();
         if let Some(extension) = cert.subject_alternative_name().ok()? {

@@ -306,8 +306,14 @@ fn is_zero_f64(value: &f64) -> bool {
     *value == 0.0
 }
 
+fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
+}
+
+/// Go `time.Time.MarshalJSON`: RFC 3339 with nanoseconds and the value's own
+/// offset (`Z` at UTC).
 fn serialize_go_time<S: serde::Serializer>(
-    value: &DateTime<Utc>,
+    value: &DateTime<FixedOffset>,
     serializer: S,
 ) -> std::result::Result<S::Ok, S::Error> {
     serializer.serialize_str(&value.to_rfc3339_opts(SecondsFormat::AutoSi, true))
@@ -315,9 +321,7 @@ fn serialize_go_time<S: serde::Serializer>(
 
 fn deserialize_go_time<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
-) -> std::result::Result<DateTime<Utc>, D::Error> {
+) -> std::result::Result<DateTime<FixedOffset>, D::Error> {
     let value = String::deserialize(deserializer)?;
-    DateTime::parse_from_rfc3339(&value)
-        .map(|value| value.with_timezone(&Utc))
-        .map_err(serde::de::Error::custom)
+    DateTime::parse_from_rfc3339(&value).map_err(serde::de::Error::custom)
 }

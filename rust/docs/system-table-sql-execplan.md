@@ -37,11 +37,8 @@ Writes. Every statement-time writer now runs Go's SQL. What is left:
   `analyze_physical_table`: a second, raw-scan sampler that only tests call
   (production samples through `cluster_analyze::sampling`, Go's
   coprocessor analyze requests). It should go with its four tests.
-- Seeding fixtures used only by tests: `plan_stats_write`,
-  `plan_partition_stats_write`, `plan_column_stats_usage_write`, the
-  insert-table-stats, delta and history-meta planners,
-  `plan_historical_stats_data_block`, `plan_sysvar_write`, the analyze-job
-  planners.
+- `plan_sysvar_write` (`tidb-syssession/src/cluster_sysvar_write.rs`),
+  still called by `tidb-ddl/src/worker.rs`.
 
 The startup readers (sysvars, privileges, bindings, initial statistics)
 run before the node has a session: Go builds the domain and its
@@ -73,7 +70,6 @@ directly (`mysql_system_tables::scan_system_table*`):
 | `tidb-syssession/src/cluster_sysvar_load.rs` (the first load only, before the domain) | `Domain.fetchTableValues` (`rebuildSysVarCache`) |
 | `tidb-privilege/src/cluster_privilege_load.rs`, `tidb-session/src/privilege_tables.rs` | `privileges.MySQLPrivilege.LoadAll` (`loadTable`) |
 | `tidb-bindinfo/src/cluster_binding_seam.rs` (only before its session pool is attached; afterwards Go's SELECT) | `bindinfo` `readBindingsFromStorage` |
-| `tidb-executor/src/real_tikv_analyze.rs` global-stats merge (`ClusterStatsLoader`); the unused `read_column_distribution_stats` | `globalstats` (`statsReadWriter.LoadTablePartitionStats`, the async merge's `storage/read.go` statements) |
 | `tidb-infoschema-issyncer/src/mdl_info_load.rs`, `tidb-ddl-systable/src/lib.rs` | MDL `select ... from mysql.tidb_mdl_info` |
 | `tidb-ddl-systable/src/ddl_job_table.rs` | job scheduler `getJob` / `GetAllDDLJobsInQueue` |
 | `tidb-ddl/src/ddl_history_table.rs` | `GetHistoryJobByID` / `GetLastNHistoryDDLJobs` |
@@ -90,7 +86,8 @@ unit starts by making `tidb-ddl-session` the pool those crates hold.
 
 ## Progress
 
-- [ ] Global-stats merge on a statistics session; delete `cluster_stats_load.rs`.
+- [x] (2026-11-04) Global-stats merge on a statistics session (async: `prepare` and the IO worker's statements; blocking: `LoadTablePartitionStats`).
+- [x] (2026-11-04) `ReadColumnDistributionStats` on a session; `ClusterStatsLoader` and the test-only raw stats/delta/history/analyze-job row planners deleted.
 - [ ] DDL readers on `tidb-ddl-session`'s pool.
 - [ ] Startup loaders after the domain, each on its session.
 - [ ] The bootstrap on a session (removes the DDL owner's no-session fallbacks).

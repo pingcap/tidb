@@ -150,31 +150,77 @@ pub fn histogram_from_storage_with_priority<C: StatsSessionContext + ?Sized>(
     corr: f64,
     priority: Priority,
 ) -> Result<Histogram, SqlExecError> {
+    histogram_from_storage_with_params(
+        sctx,
+        &HistogramLoadParams {
+            tp,
+            table_id,
+            hist_id: col_id,
+            ndv: distinct,
+            is_index,
+            version: ver,
+            null_count,
+            tot_col_size,
+            correlation: corr,
+            priority,
+            snapshot: 0,
+        },
+    )
+}
+
+/// Go `histogramLoadParams`.
+struct HistogramLoadParams<'a> {
+    tp: &'a FieldType,
+    table_id: i64,
+    hist_id: i64,
+    ndv: i64,
+    is_index: bool,
+    version: u64,
+    null_count: i64,
+    tot_col_size: i64,
+    correlation: f64,
+    priority: Priority,
+    snapshot: u64,
+}
+
+/// Go `histogramFromStorageWithParams`.
+fn histogram_from_storage_with_params<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    params: &HistogramLoadParams<'_>,
+) -> Result<Histogram, SqlExecError> {
     let sql = format!(
         "{}count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id",
-        stats_select_prefix(priority)
+        stats_select_prefix(params.priority)
     );
     let rows = exec_rows_at_snapshot(
         sctx,
-        0,
+        params.snapshot,
         &sql,
         &[
-            SqlArg::Signed(table_id),
-            SqlArg::Bool(is_index),
-            SqlArg::Signed(col_id),
+            SqlArg::Signed(params.table_id),
+            SqlArg::Bool(params.is_index),
+            SqlArg::Signed(params.hist_id),
         ],
     )?;
     let bucket_size = rows.len();
-    let mut tp = tp.clone();
-    let mut hg = Histogram::new(col_id, distinct, null_count, ver, &tp, bucket_size, tot_col_size);
-    hg.correlation = corr;
+    let mut tp = params.tp.clone();
+    let mut hg = Histogram::new(
+        params.hist_id,
+        params.ndv,
+        params.null_count,
+        params.version,
+        &tp,
+        bucket_size,
+        params.tot_col_size,
+    );
+    hg.correlation = params.correlation;
     let mut total_count = 0_i64;
     for row in &rows {
         let count = datum_i64(row.first());
         let repeats = datum_i64(row.get(1));
         let lower = datum_bytes(row.get(2)).unwrap_or_default().to_vec();
         let upper = datum_bytes(row.get(3)).unwrap_or_default().to_vec();
-        let (lower_bound, upper_bound) = if is_index {
+        let (lower_bound, upper_bound) = if params.is_index {
             (Datum::Bytes(lower), Datum::Bytes(upper))
         } else {
             // For new collation data the stored bound is the collate key,
@@ -206,15 +252,28 @@ pub fn hist_meta_from_storage_with_high_priority<C: StatsSessionContext + ?Sized
     hist_id: i64,
     column_type: Option<&FieldType>,
 ) -> Result<Option<(Histogram, i64)>, SqlExecError> {
+    hist_meta_from_storage(sctx, table_id, is_index, hist_id, column_type, 0, Priority::High)
+}
+
+/// Go `histMetaFromStorage`.
+fn hist_meta_from_storage<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    table_id: i64,
+    is_index: bool,
+    hist_id: i64,
+    column_type: Option<&FieldType>,
+    snapshot: u64,
+    priority: Priority,
+) -> Result<Option<(Histogram, i64)>, SqlExecError> {
     let blob = FieldType::new(FieldTypeCode::Blob);
     let tp = if is_index { &blob } else { column_type.unwrap_or(&blob) };
     let sql = format!(
         "{}distinct_count, version, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?",
-        stats_select_prefix(Priority::High)
+        stats_select_prefix(priority)
     );
     let rows = exec_rows_at_snapshot(
         sctx,
-        0,
+        snapshot,
         &sql,
         &[
             SqlArg::Signed(table_id),
@@ -236,6 +295,186 @@ pub fn hist_meta_from_storage_with_high_priority<C: StatsSessionContext + ?Sized
     );
     hist.correlation = datum_f64(row.get(5));
     Ok(Some((hist, datum_i64(row.get(4)))))
+}
+
+/// Go `ReadColumnDistributionStats`: one column's metadata, TopN and
+/// histogram from one MVCC snapshot with normal priority, without touching
+/// the statistics cache. Any read or decoding failure fails the whole read.
+pub fn read_column_distribution_stats<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    physical_table_id: i64,
+    col_info: &tidb_stats::column::ColumnInfo,
+) -> Result<Option<tidb_stats::Column>, SqlExecError> {
+    let snapshot = sctx.current_ts()?;
+    let (col_id, tp, name) = {
+        let info = col_info.read();
+        (info.id, info.field_type.clone(), info.name.original().to_owned())
+    };
+    let Some((hist_meta, stats_ver)) = hist_meta_from_storage(
+        sctx,
+        physical_table_id,
+        false,
+        col_id,
+        Some(&tp),
+        snapshot,
+        Priority::Normal,
+    )?
+    else {
+        return Ok(None);
+    };
+    if hist_meta.null_count < 0 {
+        return Err(format!(
+            "negative null count {} for physical table {physical_table_id}, column {name}({col_id})",
+            hist_meta.null_count
+        )
+        .into());
+    }
+    let mut column = tidb_stats::Column {
+        physical_id: physical_table_id,
+        info: Some(col_info.clone()),
+        stats_version: stats_ver,
+        stats_loaded_status: tidb_stats::StatsLoadedStatus::full_load(),
+        ..Default::default()
+    };
+    if stats_ver != tidb_stats::stats_version::VERSION_2 {
+        column.histogram = hist_meta;
+        return Ok(Some(column));
+    }
+    column.top_n = topn_from_storage_with_params(
+        sctx,
+        physical_table_id,
+        false,
+        col_id,
+        Priority::Normal,
+        snapshot,
+    )?;
+    column.histogram = histogram_from_storage_with_params(
+        sctx,
+        &HistogramLoadParams {
+            tp: &tp,
+            table_id: physical_table_id,
+            hist_id: col_id,
+            ndv: hist_meta.ndv,
+            is_index: false,
+            version: hist_meta.last_update_version,
+            null_count: hist_meta.null_count,
+            tot_col_size: hist_meta.tot_col_size,
+            correlation: hist_meta.correlation,
+            priority: Priority::Normal,
+            snapshot,
+        },
+    )?;
+    Ok(Some(column))
+}
+
+/// Go `CheckSkipPartition`: whether the partition has any histogram row of
+/// the kind (`false` is Go's `ErrPartitionStatsMissing`).
+pub fn check_skip_partition<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    tbl_id: i64,
+    is_index: bool,
+) -> Result<bool, SqlExecError> {
+    let (rows, _) = exec_rows(
+        sctx,
+        "select distinct_count from mysql.stats_histograms where table_id =%? and is_index = %?",
+        &[SqlArg::Signed(tbl_id), SqlArg::Bool(is_index)],
+    )?;
+    Ok(!rows.is_empty())
+}
+
+/// Go `CheckSkipColumnPartiion`: whether the partition has this item's
+/// histogram row (`false` is Go's `ErrPartitionColumnStatsMissing`).
+pub fn check_skip_column_partition<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    tbl_id: i64,
+    is_index: bool,
+    hist_id: i64,
+) -> Result<bool, SqlExecError> {
+    let (rows, _) = exec_rows(
+        sctx,
+        "select distinct_count from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?",
+        &[SqlArg::Signed(tbl_id), SqlArg::Bool(is_index), SqlArg::Signed(hist_id)],
+    )?;
+    Ok(!rows.is_empty())
+}
+
+/// Go `CMSketchFromStorage`.
+pub fn cm_sketch_from_storage<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    tbl_id: i64,
+    is_index: bool,
+    hist_id: i64,
+) -> Result<Option<CmsSketch>, SqlExecError> {
+    let (rows, _) = exec_rows(
+        sctx,
+        "select cm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?",
+        &[SqlArg::Signed(tbl_id), SqlArg::Bool(is_index), SqlArg::Signed(hist_id)],
+    )?;
+    let Some(row) = rows.first() else {
+        return Ok(None);
+    };
+    tidb_stats::cmsketch::decode_cmsketch(datum_bytes(row.first()).unwrap_or_default()).map_err(boxed)
+}
+
+/// Go `LoadHistogram`: one item's histogram with its buckets, `None` when it
+/// has no row.
+pub fn load_histogram<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    table_id: i64,
+    is_index: bool,
+    hist_id: i64,
+    table_info: &TableInfo,
+) -> Result<Option<Histogram>, SqlExecError> {
+    let (rows, _) = exec_rows(
+        sctx,
+        "select distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?",
+        &[SqlArg::Signed(table_id), SqlArg::Bool(is_index), SqlArg::Signed(hist_id)],
+    )?;
+    let Some(row) = rows.first() else {
+        return Ok(None);
+    };
+    let distinct = datum_i64(row.first());
+    let hist_ver = datum_u64(row.get(1));
+    let null_count = datum_i64(row.get(2));
+    if is_index {
+        return histogram_from_storage_with_priority(
+            sctx,
+            table_id,
+            hist_id,
+            &FieldType::new(FieldTypeCode::Blob),
+            distinct,
+            true,
+            hist_ver,
+            null_count,
+            0,
+            0.0,
+            Priority::Normal,
+        )
+        .map(Some);
+    }
+    let tp = table_info
+        .columns
+        .iter_deref()
+        .find_map(|column| {
+            let column = column.read();
+            (column.id == hist_id).then(|| column.field_type.clone())
+        })
+        // Go's zero `types.FieldType`: a column the table no longer has.
+        .unwrap_or_else(|| FieldType::new(FieldTypeCode::Unspecified));
+    histogram_from_storage_with_priority(
+        sctx,
+        table_id,
+        hist_id,
+        &tp,
+        distinct,
+        false,
+        hist_ver,
+        null_count,
+        datum_i64(row.get(3)),
+        datum_f64(row.get(6)),
+        Priority::Normal,
+    )
+    .map(Some)
 }
 
 /// Go `CMSketchAndTopNFromStorageWithHighPriority`.
@@ -284,12 +523,24 @@ pub fn topn_from_storage<C: StatsSessionContext + ?Sized>(
     is_index: bool,
     hist_id: i64,
 ) -> Result<Option<TopN>, SqlExecError> {
+    topn_from_storage_with_params(sctx, tbl_id, is_index, hist_id, Priority::High, 0)
+}
+
+/// Go `topNFromStorageWithParams`.
+fn topn_from_storage_with_params<C: StatsSessionContext + ?Sized>(
+    sctx: &C,
+    tbl_id: i64,
+    is_index: bool,
+    hist_id: i64,
+    priority: Priority,
+    snapshot: u64,
+) -> Result<Option<TopN>, SqlExecError> {
     let rows = exec_rows_at_snapshot(
         sctx,
-        0,
+        snapshot,
         &format!(
             "{}value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?",
-            stats_select_prefix(Priority::High)
+            stats_select_prefix(priority)
         ),
         &[SqlArg::Signed(tbl_id), SqlArg::Bool(is_index), SqlArg::Signed(hist_id)],
     )?;
@@ -728,4 +979,57 @@ fn convert_bound_from_blob(blob: Vec<u8>, tp: &FieldType) -> Result<Datum, SqlEx
         .convert_to(tp, UTC_WITH_ALLOW_INVALID_DATE)
         .map(|converted| converted.value)
         .map_err(boxed)
+}
+
+#[cfg(test)]
+mod tests {
+    use tidb_datatype::{BinaryLiteral, Datum, FieldType, FieldTypeCode};
+
+    use super::convert_bound_from_blob;
+
+    /// A column bound is stored as the value's text form, not its datum
+    /// encoding: `id BIGINT` bucket bounds "11", "12".
+    #[test]
+    fn a_column_bound_is_the_values_text_form() {
+        let bound = convert_bound_from_blob(b"11".to_vec(), &FieldType::new(FieldTypeCode::LongLong))
+            .expect("the bound converts");
+        assert_eq!(bound, Datum::Int(11));
+    }
+
+    /// `c DECIMAL(10,2)` keeps its stored scale; `d DATETIME` parses back
+    /// from its printed form.
+    #[test]
+    fn decimal_and_datetime_bounds_parse_back_from_their_printed_form() {
+        let mut decimal = FieldType::new(FieldTypeCode::NewDecimal);
+        decimal.set_flen(10);
+        decimal.set_decimal(2);
+        let bound = convert_bound_from_blob(b"11.00".to_vec(), &decimal).expect("the bound converts");
+        assert_eq!(bound.sql_string().unwrap(), "11.00");
+        let bound = convert_bound_from_blob(
+            b"2024-05-05 05:05:05".to_vec(),
+            &FieldType::new(FieldTypeCode::Datetime),
+        )
+        .expect("the bound converts");
+        assert_eq!(bound.sql_string().unwrap(), "2024-05-05 05:05:05");
+    }
+
+    /// Go `handletest.TestLoadStatsForBitColumn`: ANALYZE stores a BIT bound
+    /// as the decimal text of its value.
+    #[test]
+    fn bit_column_bounds_load_from_the_four_go_decimal_storage_cases() {
+        let cases = [
+            (1, b"0".as_slice(), 0_u8, b"1".as_slice(), 1_u8),
+            (2, b"2".as_slice(), 2_u8, b"3".as_slice(), 3_u8),
+            (6, b"48".as_slice(), 48_u8, b"49".as_slice(), 49_u8),
+            (7, b"97".as_slice(), 97_u8, b"98".as_slice(), 98_u8),
+        ];
+        for (flen, lower, expected_lower, upper, expected_upper) in cases {
+            let mut bit = FieldType::new(FieldTypeCode::Bit);
+            bit.set_flen(flen);
+            let lower = convert_bound_from_blob(lower.to_vec(), &bit).expect("lower BIT bound converts");
+            let upper = convert_bound_from_blob(upper.to_vec(), &bit).expect("upper BIT bound converts");
+            assert_eq!(lower, Datum::Bit(BinaryLiteral::from(vec![expected_lower])));
+            assert_eq!(upper, Datum::Bit(BinaryLiteral::from(vec![expected_upper])));
+        }
+    }
 }
