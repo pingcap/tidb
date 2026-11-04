@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -25,8 +26,60 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
+
+func TestIsSessionDoneHandlesWrappedQueryInterrupted(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+
+	done, killed := isSessionDone(sctx)
+	require.True(t, done)
+	require.Equal(t, uint32(1), killed)
+}
+
+func TestConvertKillFlag(t *testing.T) {
+	require.NoError(t, convertKillFlag(0))
+	err := convertKillFlag(1)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
+}
+
+func TestWaitPendingTableThresholdAbortsOnKill(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+
+	finished, _, _, forceCheck, killed := (&executor{}).waitPendingTableThreshold(sctx, 1, 1, 0, 0, 1)
+	require.True(t, finished)
+	require.False(t, forceCheck)
+	require.Equal(t, uint32(1), killed)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(convertKillFlag(killed)))
+}
+
+func TestIsRetryableDDLCancelErr(t *testing.T) {
+	tests := []struct {
+		name  string
+		err   error
+		retry bool
+	}{
+		{name: "finished", err: dbterror.ErrCancelFinishedDDLJob, retry: false},
+		{name: "finished wrapped", err: dbterror.ErrCancelFinishedDDLJob.GenWithStackByArgs(1), retry: false},
+		{name: "cannot cancel", err: dbterror.ErrCannotCancelDDLJob, retry: false},
+		{name: "cannot cancel wrapped", err: dbterror.ErrCannotCancelDDLJob.GenWithStackByArgs(1), retry: false},
+		{name: "not found", err: dbterror.ErrDDLJobNotFound, retry: false},
+		{name: "not found wrapped", err: dbterror.ErrDDLJobNotFound.GenWithStackByArgs(1), retry: false},
+		{name: "retryable processJobs error", err: errors.New("mock failed admin command on ddl jobs"), retry: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.retry, isRetryableDDLCancelErr(tt.err))
+		})
+	}
+}
 
 func TestBuildQueryStringFromJobs(t *testing.T) {
 	testCases := []struct {
@@ -340,4 +393,74 @@ func TestIsUndroppableTable(t *testing.T) {
 			require.Equal(t, tt.want, result, "schema=%s, table=%s, tableID=%d", tt.schema, tt.table, tt.tableID)
 		})
 	}
+}
+
+func TestMaterializedViewPartitionDependencyConstraints(t *testing.T) {
+	t.Run("base table dependencies", func(t *testing.T) {
+		baseWithMLog := &model.TableInfo{
+			MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 1},
+		}
+		err := checkBaseTableMaterializedViewDependencyConstraints(baseWithMLog, "ALTER TABLE ... REMOVE PARTITIONING")
+		require.ErrorContains(t, err, "ALTER TABLE ... REMOVE PARTITIONING with materialized view log")
+
+		baseWithMViews := &model.TableInfo{
+			MaterializedViewBase: &model.MaterializedViewBaseInfo{MViewIDs: []int64{2}},
+		}
+		err = checkBaseTableMaterializedViewDependencyConstraints(baseWithMViews, "ALTER TABLE ... PARTITION BY")
+		require.ErrorContains(t, err, "ALTER TABLE ... PARTITION BY with materialized view dependencies")
+
+		require.NoError(t, checkBaseTableMaterializedViewDependencyConstraints(&model.TableInfo{}, "ALTER TABLE ... PARTITION BY"))
+	})
+
+	t.Run("exchange table roles", func(t *testing.T) {
+		err := checkExchangePartitionMaterializedViewConstraints(
+			&model.TableInfo{MaterializedViewLog: &model.MaterializedViewLogInfo{}},
+			"non-partitioned table",
+		)
+		require.ErrorContains(t, err, "EXCHANGE PARTITION on non-partitioned table with materialized view log")
+
+		err = checkExchangePartitionMaterializedViewConstraints(
+			&model.TableInfo{MaterializedView: &model.MaterializedViewInfo{}},
+			"non-partitioned table",
+		)
+		require.ErrorContains(t, err, "EXCHANGE PARTITION on non-partitioned table materialized view table")
+
+		err = checkExchangePartitionMaterializedViewConstraints(
+			&model.TableInfo{MaterializedViewBase: &model.MaterializedViewBaseInfo{MViewIDs: []int64{2}}},
+			"partitioned table",
+		)
+		require.ErrorContains(t, err, "EXCHANGE PARTITION on partitioned table with materialized view dependencies")
+
+		shadowTable := &model.TableInfo{
+			MaterializedViewShadow: &model.MaterializedViewShadowInfo{SourceMViewID: 42},
+		}
+		err = checkExchangePartitionMaterializedViewConstraints(shadowTable, "partitioned table")
+		require.ErrorContains(t, err, "EXCHANGE PARTITION on partitioned table materialized view shadow table")
+		err = checkTableMaterializedViewConstraints(nil, shadowTable, "DROP TABLE")
+		require.ErrorContains(t, err, "DROP TABLE on materialized view shadow table")
+		baseWithMLog := &model.TableInfo{
+			MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 7},
+		}
+		err = checkTableMaterializedViewConstraints(nil, baseWithMLog, "DROP TABLE")
+		require.ErrorContains(t, err, "DROP TABLE on base table with materialized view log")
+		err = checkTableMaterializedViewConstraints(nil, baseWithMLog, "TRUNCATE TABLE")
+		require.ErrorContains(t, err, "TRUNCATE TABLE on base table with materialized view log")
+		err = CheckIndexOperationMaterializedViewConstraints(nil, shadowTable, "DROP INDEX", false)
+		require.ErrorContains(t, err, "DROP INDEX on materialized view shadow table")
+
+		likeInfo, err := BuildTableInfoWithLike(
+			ast.Ident{Name: ast.NewCIStr("shadow_copy")},
+			shadowTable,
+			&ast.CreateTableStmt{},
+		)
+		require.NoError(t, err)
+		require.Nil(t, likeInfo.MaterializedViewShadow)
+
+		maintenanceVars := &variable.SessionVars{
+			InMViewMaintenance: true,
+			InRestrictedSQL:    true,
+		}
+		require.NoError(t, checkTableMaterializedViewConstraints(maintenanceVars, shadowTable, "DROP TABLE"))
+		require.NoError(t, CheckIndexOperationMaterializedViewConstraints(maintenanceVars, shadowTable, "DROP INDEX", false))
+	})
 }

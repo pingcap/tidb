@@ -4,6 +4,8 @@ go_library(
     name = "util",
     srcs = [
         "buffered_read_conn.go",
+        "conn_alive_other.go",
+        "conn_alive_unix.go",
         "util.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/server/internal/util",
@@ -11,15 +13,35 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/parser/charset",
-    ],
+    ] + select({
+        "@io_bazel_rules_go//go/platform:android": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@io_bazel_rules_go//go/platform:darwin": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@io_bazel_rules_go//go/platform:freebsd": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@io_bazel_rules_go//go/platform:ios": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@io_bazel_rules_go//go/platform:linux": [
+            "@org_golang_x_sys//unix",
+        ],
+        "//conditions:default": [],
+    }),
 )
 
 go_test(
     name = "util_test",
     timeout = "short",
-    srcs = ["util_test.go"],
+    srcs = [
+        "buffered_read_conn_test.go",
+        "util_test.go",
+    ],
     embed = [":util"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 7,
     deps = ["@com_github_stretchr_testify//require"],
 )

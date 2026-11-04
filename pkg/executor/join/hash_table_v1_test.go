@@ -84,6 +84,12 @@ func (h hashCollision) Size() int                         { panic("not implement
 func (h hashCollision) BlockSize() int                    { panic("not implemented") }
 
 func TestHashRowContainer(t *testing.T) {
+	stateContainer := &hashRowContainer{
+		hashTable:        &unsafeHashTable{length: 2},
+		hashNANullBucket: &hashNANullBucket{entries: []*naEntry{{}, {}, {}}},
+	}
+	require.Equal(t, uint64(5), stateContainer.hashStateRows())
+
 	hashFunc := fnv.New64
 	rowContainer, copiedRC := testHashRowContainer(t, hashFunc, false)
 	require.Equal(t, int64(0), rowContainer.stat.probeCollision)
@@ -138,6 +144,7 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 	require.NoError(t, err)
 	err = rowContainer.PutChunk(chk1, nil)
 	require.NoError(t, err)
+	require.Equal(t, uint64(20), rowContainer.hashStateRows())
 	rowContainer.ActionSpill().(*chunk.SpillDiskAction).WaitForTest()
 	require.Equal(t, spill, rowContainer.AlreadySpilledSafeForTest())
 	require.Equal(t, spill, rowContainer.rowContainer.GetMemTracker().BytesConsumed() == 0)

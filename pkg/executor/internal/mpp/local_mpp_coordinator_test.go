@@ -17,10 +17,50 @@ package mpp
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDispatchCancelRace(t *testing.T) {
+	t.Run("cancel wins", func(t *testing.T) {
+		coordinator := &localMppCoordinator{}
+		task := &kv.MPPDispatchRequest{State: kv.MppTaskReady}
+
+		// Hold the coordinator lock so the dispatch goroutine cannot inspect the
+		// task until cancellation has changed its state.
+		coordinator.mu.Lock()
+		dispatchStarted := make(chan struct{})
+		dispatchResult := make(chan bool, 1)
+		go func() {
+			close(dispatchStarted)
+			dispatchResult <- coordinator.tryStartDispatch(task)
+		}()
+		<-dispatchStarted
+		task.State = kv.MppTaskCancelled
+		coordinator.mu.Unlock()
+
+		require.False(t, <-dispatchResult)
+		require.Equal(t, kv.MppTaskCancelled, task.State)
+	})
+
+	t.Run("dispatch wins", func(t *testing.T) {
+		coordinator := &localMppCoordinator{}
+		task := &kv.MPPDispatchRequest{State: kv.MppTaskReady}
+
+		require.True(t, coordinator.tryStartDispatch(task))
+
+		// cancelMppTasks takes the same lock and includes stores for tasks in the
+		// running state before marking all tasks as cancelled.
+		coordinator.mu.Lock()
+		stateWhenCancelStarted := task.State
+		task.State = kv.MppTaskCancelled
+		coordinator.mu.Unlock()
+		require.Equal(t, kv.MppTaskRunning, stateWhenCancelStarted)
+	})
+}
 
 func TestNeedReportExecutionSummary(t *testing.T) {
 	tableScan := &physicalop.PhysicalTableScan{}
@@ -137,4 +177,22 @@ func TestZoneHelperTryQuickFill(t *testing.T) {
 	quickFill, sameZoneFlags = helper.tryQuickFillWithUncertainZones(receiver, slots, sameZoneFlags)
 	require.False(t, quickFill)
 	require.Equal(t, 0, len(sameZoneFlags))
+}
+
+func TestSetMPPEncodeTypeRespectsChunkRPCSetting(t *testing.T) {
+	sctx := mock.NewContext()
+	for _, enabled := range []bool{false, true} {
+		sctx.GetSessionVars().EnableChunkRPC = enabled
+		root := &tipb.DAGRequest{}
+		setMPPEncodeType(sctx, root, true)
+		if enabled {
+			require.Equal(t, tipb.EncodeType_TypeChunk, root.EncodeType)
+		} else {
+			require.Equal(t, tipb.EncodeType_TypeDefault, root.EncodeType)
+		}
+
+		intermediate := &tipb.DAGRequest{}
+		setMPPEncodeType(sctx, intermediate, false)
+		require.Equal(t, tipb.EncodeType_TypeCHBlock, intermediate.EncodeType)
+	}
 }

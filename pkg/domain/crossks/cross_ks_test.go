@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
@@ -53,6 +55,71 @@ import (
 )
 
 var registerUnistoreOnce sync.Once
+
+type failAfterServerInfoPutKV struct {
+	clientv3.KV
+	serverInfoKey   string
+	serverInfoLease clientv3.LeaseID
+	failNextTxn     bool
+}
+
+func (kv *failAfterServerInfoPutKV) Put(
+	ctx context.Context,
+	key, value string,
+	opts ...clientv3.OpOption,
+) (*clientv3.PutResponse, error) {
+	resp, err := kv.KV.Put(ctx, key, value, opts...)
+	if err != nil {
+		return nil, err
+	}
+	const serverInfoPrefix = "/tidb/server/info/"
+	if len(key) >= len(serverInfoPrefix) && key[:len(serverInfoPrefix)] == serverInfoPrefix {
+		getResp, getErr := kv.KV.Get(ctx, key)
+		if getErr != nil {
+			return nil, getErr
+		}
+		if len(getResp.Kvs) == 1 {
+			kv.serverInfoKey = key
+			kv.serverInfoLease = clientv3.LeaseID(getResp.Kvs[0].Lease)
+			kv.failNextTxn = true
+		}
+	}
+	return resp, nil
+}
+
+func (kv *failAfterServerInfoPutKV) Txn(ctx context.Context) clientv3.Txn {
+	if kv.failNextTxn {
+		kv.failNextTxn = false
+		return &failedTxn{err: errors.New("injected schema syncer init failure")}
+	}
+	return kv.KV.Txn(ctx)
+}
+
+type failedTxn struct {
+	err error
+}
+
+func (txn *failedTxn) If(...clientv3.Cmp) clientv3.Txn {
+	return txn
+}
+
+func (txn *failedTxn) Then(...clientv3.Op) clientv3.Txn {
+	return txn
+}
+
+func (txn *failedTxn) Else(...clientv3.Op) clientv3.Txn {
+	return txn
+}
+
+func (txn *failedTxn) Commit() (*clientv3.TxnResponse, error) {
+	return nil, txn.err
+}
+
+func requireLeaseRevoked(t *testing.T, cli *clientv3.Client, leaseID clientv3.LeaseID) {
+	resp, err := cli.TimeToLive(context.Background(), leaseID)
+	require.NoError(t, err)
+	require.Equal(t, int64(-1), resp.TTL)
+}
 
 func registerUnistore(t *testing.T) {
 	var err error
@@ -86,6 +153,7 @@ func TestManager(t *testing.T) {
 		"ks2":           3,
 		"ks3":           4,
 		"ksmdl":         5,
+		"ks-bootstrap":  6,
 	}
 	getETCDCli := func(ks string, ksID uint32) *clientv3.Client {
 		for i := range clientCount {
@@ -95,7 +163,7 @@ func TestManager(t *testing.T) {
 			}
 			// we will close the client.
 			cluster.TakeClient(i)
-			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: ksID, Name: ks})
+			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: ksID}, Name: ks})
 			require.NoError(t, err)
 			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(codec))
 			return cli
@@ -103,11 +171,22 @@ func TestManager(t *testing.T) {
 		require.Fail(t, "cannot find etcd client for keyspace %s", ks)
 		return nil
 	}
+	serverInfoObserver := getETCDCli(keyspace.System, keyspaceIDs[keyspace.System])
+	defer func() {
+		require.NoError(t, serverInfoObserver.Close())
+	}()
+	var failSchemaInitForKS string
+	var faultKV *failAfterServerInfoPutKV
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/injectETCDCli",
 		func(cliP **clientv3.Client, ks string) {
 			id, ok := keyspaceIDs[ks]
 			require.True(t, ok)
-			*cliP = getETCDCli(ks, id)
+			cli := getETCDCli(ks, id)
+			if ks == failSchemaInitForKS {
+				faultKV = &failAfterServerInfoPutKV{KV: cli.KV}
+				cli.KV = faultKV
+			}
+			*cliP = cli
 		},
 	)
 
@@ -120,6 +199,62 @@ func TestManager(t *testing.T) {
 	t.Run("same keyspace access", func(t *testing.T) {
 		_, err := sysKSDom.GetKSSessPool(keyspace.System)
 		require.ErrorContains(t, err, "cross keyspace is not available in classic kernel or current keyspace")
+	})
+
+	t.Run("close removes virtual server info", func(t *testing.T) {
+		const userKS = "ks-server-info"
+		_, userKSDom := testkit.CreateMockStoreAndDomainForKS(t, userKS)
+		sessMgr, ok := userKSDom.GetCrossKSMgr().Get(keyspace.System)
+		require.True(t, ok)
+
+		serverInfoKey := "/tidb/server/info/" + sessMgr.ServerInfoID()
+		resp, err := serverInfoObserver.Get(context.Background(), serverInfoKey)
+		require.NoError(t, err)
+		require.Len(t, resp.Kvs, 1)
+		require.Contains(t, string(resp.Kvs[0].Value), `"assumed_keyspace":"SYSTEM"`)
+		serverInfoLease := clientv3.LeaseID(resp.Kvs[0].Lease)
+
+		userKSDom.GetCrossKSMgr().CloseKS(keyspace.System)
+		resp, err = serverInfoObserver.Get(context.Background(), serverInfoKey)
+		require.NoError(t, err)
+		require.Empty(t, resp.Kvs, "virtual server info should be removed when the runtime closes")
+		requireLeaseRevoked(t, serverInfoObserver, serverInfoLease)
+	})
+
+	t.Run("bootstrap failure removes virtual server info", func(t *testing.T) {
+		const targetKS = "ks-bootstrap"
+		targetStore, err := mockstore.NewMockStore(mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: keyspaceIDs[targetKS]},
+			Name:     targetKS,
+		}))
+		require.NoError(t, err)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeGetStore",
+			func(fnP *func(string) (store kv.Storage, err error)) {
+				*fnP = func(ks string) (kv.Storage, error) {
+					require.Equal(t, targetKS, ks)
+					return targetStore, nil
+				}
+			},
+		)
+		observer := getETCDCli(targetKS, keyspaceIDs[targetKS])
+		defer func() {
+			require.NoError(t, observer.Close())
+		}()
+
+		failSchemaInitForKS = targetKS
+		defer func() {
+			failSchemaInitForKS = ""
+		}()
+		_, err = sysKSDom.GetKSSessPool(targetKS)
+		require.ErrorContains(t, err, "injected schema syncer init failure")
+		require.NotNil(t, faultKV)
+		require.NotEmpty(t, faultKV.serverInfoKey)
+		require.NotZero(t, faultKV.serverInfoLease)
+
+		resp, err := observer.Get(context.Background(), faultKV.serverInfoKey)
+		require.NoError(t, err)
+		require.Empty(t, resp.Kvs, "failed bootstrap should remove its virtual server info")
+		requireLeaseRevoked(t, observer, faultKV.serverInfoLease)
 	})
 
 	t.Run("failed to get store in cross keyspace manager", func(t *testing.T) {
@@ -294,7 +429,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 				continue
 			}
 			cluster.TakeClient(i)
-			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: ksID, Name: ks})
+			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: ksID}, Name: ks})
 			require.NoError(t, err)
 			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(codec))
 			return cli
@@ -302,11 +437,13 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		require.Fail(t, "cannot find etcd client for keyspace %s", ks)
 		return nil
 	}
+	etcdClis := make(map[string]*clientv3.Client, len(keyspaceIDs))
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/injectETCDCli",
 		func(cliP **clientv3.Client, ks string) {
 			id, ok := keyspaceIDs[ks]
 			require.True(t, ok)
 			*cliP = getETCDCli(ks, id)
+			etcdClis[ks] = *cliP
 		},
 	)
 
@@ -342,12 +479,69 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		ksMgr.CloseKS(targetKS)
 	})
 	require.Same(t, targetStore, handle.Store())
+	t.Run("info schema has an auto-ID client", func(t *testing.T) {
+		mgr := storage.NewTaskManager(handle.SysSessionPool())
+		require.NoError(t, mgr.WithNewSession(func(se sessionctx.Context) error {
+			require.True(t, se.IsCrossKS())
+			require.NotNil(t, se.GetInfoSchema().(infoschema.InfoSchema).GetAutoIDRequirement().AutoIDClient())
+			return nil
+		}))
+	})
 
 	crossKSMgr := sysKSDom.GetCrossKSMgr()
 	sessMgr, ok := crossKSMgr.Get(targetKS)
 	require.True(t, ok)
 	require.Same(t, sessMgr.Store(), handle.Store())
 	require.Same(t, sessMgr.SysSessionPool(), handle.SysSessionPool())
+	t.Run("read global variables of target keyspace", func(t *testing.T) {
+		// A runtime that has not read a global variable does not refresh them.
+		require.False(t, sessMgr.GlobalVarRefreshStarted())
+		tk := testkit.NewTestKit(t, targetStore)
+		pool := handle.SysSessionPool()
+		resource, err := pool.Get()
+		require.NoError(t, err)
+		defer pool.Put(resource)
+		vars := resource.(sessionctx.Context).GetSessionVars()
+		requireGlobalVar := func(name, expected string) {
+			var (
+				value string
+				err   error
+			)
+			require.Eventually(t, func() bool {
+				value, err = vars.GlobalVarsAccessor.GetGlobalSysVar(name)
+				return err == nil && value == expected
+			}, 10*time.Second, 50*time.Millisecond, "last value %q, error %v", value, err)
+		}
+		notify := func() {
+			_, err := etcdClis[targetKS].Put(context.Background(), ddlutil.SysVarCacheKey, "")
+			require.NoError(t, err)
+		}
+		tk.MustExec("set global cte_max_recursion_depth = 7")
+		defer tk.MustExec("set global cte_max_recursion_depth = default")
+		notify()
+		requireGlobalVar(vardef.CTEMaxRecursionDepth, "7")
+		require.True(t, sessMgr.GlobalVarRefreshStarted())
+		// A value that does not fit the variable takes the default.
+		tk.MustExec("update mysql.global_variables set variable_value = 'abc' where variable_name = 'cte_max_recursion_depth'")
+		notify()
+		requireGlobalVar(vardef.CTEMaxRecursionDepth, "1000")
+
+		value, err := vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBGCLifetime)
+		require.NoError(t, err)
+		require.Equal(t, "10m0s", value)
+		require.ErrorContains(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.CTEMaxRecursionDepth, "8"), "cannot set")
+
+		// A variable with a GetGlobal hook reads the value of this instance.
+		tk.MustExec("set global tidb_enable_check_constraint = on")
+		defer tk.MustExec("set global tidb_enable_check_constraint = default")
+		vardef.EnableCheckConstraint.Store(false)
+		defer vardef.EnableCheckConstraint.Store(vardef.DefTiDBEnableCheckConstraint)
+		notify()
+		requireGlobalVar(vardef.TiDBEnableCheckConstraint, vardef.On)
+		value, err = vars.GetGlobalSystemVar(context.Background(), vardef.TiDBEnableCheckConstraint)
+		require.NoError(t, err)
+		require.Equal(t, vardef.Off, value)
+	})
 }
 
 func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {
@@ -370,7 +564,7 @@ func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {
 				continue
 			}
 			cluster.TakeClient(i)
-			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: ksID, Name: ks})
+			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: ksID}, Name: ks})
 			require.NoError(t, err)
 			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(codec))
 			return cli

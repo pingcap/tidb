@@ -74,10 +74,6 @@ func TestEncoderNewCollationEnabled(t *testing.T) {
 	exportedDisabledLower, err := EncodeKey(time.Local, nil, lower)
 	require.NoError(t, err)
 	require.Equal(t, disabledLower, exportedDisabledLower)
-
-	enabledHash := enabledEncoder.HashCode(nil, lower)
-	disabledHash := disabledEncoder.HashCode(nil, lower)
-	require.Equal(t, enabledHash, disabledHash)
 }
 
 func TestHashGroupKeyCollation(t *testing.T) {

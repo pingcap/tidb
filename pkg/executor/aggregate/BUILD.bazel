@@ -62,6 +62,7 @@ go_test(
         "//pkg/sessionctx/vardef",
         "//pkg/types",
         "//pkg/util/chunk",
+        "//pkg/util/execdetails",
         "//pkg/util/memory",
         "//pkg/util/mock",
         "@com_github_pingcap_failpoint//:failpoint",

@@ -3,7 +3,6 @@
 package export
 
 import (
-	"bytes"
 	"database/sql"
 	"strings"
 
@@ -52,19 +51,7 @@ type SQLRowIter interface {
 	Close() error
 }
 
-// RowReceiverStringer is a combined interface of RowReceiver and Stringer
-type RowReceiverStringer interface {
-	RowReceiver
-	Stringer
-}
-
-// Stringer is an interface which represents sql types that support writing to buffer.
-type Stringer interface {
-	WriteToBuffer(*bytes.Buffer, bool)
-	GetRawBytes() []sql.RawBytes
-}
-
-// RowReceiver is an interface which represents sql types that support bind address for *sql.Rows
+// RowReceiver is a decode target that binds its columns to *sql.Rows.Scan.
 type RowReceiver interface {
 	BindAddress([]any)
 }

@@ -68,8 +68,8 @@ func TestNewEtcdClientForAllocatorRebaseUsesMetaServiceGroup(t *testing.T) {
 	defer metaCluster.Terminate(t)
 
 	keyspaceMeta := &keyspacepb.KeyspaceMeta{
-		Id:   45,
-		Name: "ks4",
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 45},
+		Name:     "ks4",
 		Config: map[string]string{
 			"gc_management_type":      "keyspace_level",
 			metaservice.GroupIDKey:    "group4",
@@ -107,9 +107,9 @@ func TestNewEtcdClientForAllocatorRebaseUsesMetaServiceGroup(t *testing.T) {
 	require.Contains(t, string(resp.Kvs[0].Key), "rebase-key")
 
 	globalKeyspaceMeta := &keyspacepb.KeyspaceMeta{
-		Id:     46,
-		Name:   "ks-global",
-		Config: map[string]string{"gc_management_type": "keyspace_level"},
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 46},
+		Name:     "ks-global",
+		Config:   map[string]string{"gc_management_type": "keyspace_level"},
 	}
 	globalCodec, err := tikv.NewCodecV2(tikv.ModeTxn, globalKeyspaceMeta)
 	require.NoError(t, err)

@@ -18,18 +18,20 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+
+	"github.com/pingcap/tidb/pkg/dumpformat"
 )
 
 // appendField appends one field's CSV encoding to dst and returns the extended
 // slice. val is the caller-produced raw value bytes; isNull selects NullValue.
-func appendField(dst, val []byte, isNull bool, kind FieldKind, cfg *Config) []byte {
+func appendField(dst, val []byte, isNull bool, kind dumpformat.FieldKind, cfg *Config) []byte {
 	if isNull {
 		return append(dst, cfg.NullValue...)
 	}
 	switch kind {
-	case KindNumber:
+	case dumpformat.KindNumber:
 		return append(dst, val...)
-	case KindBytes:
+	case dumpformat.KindBytes:
 		dst = append(dst, cfg.FieldsEnclosedBy...)
 		switch cfg.BinaryFormat {
 		case BinaryFormatHEX:

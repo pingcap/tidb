@@ -74,6 +74,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/mvservice"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -92,6 +93,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/telemetry"
@@ -228,6 +230,11 @@ type Domain struct {
 	sysExecutorFactory func(*Domain) (pools.Resource, error)
 
 	sysProcesses SysProcesses
+
+	mvService struct {
+		*mvservice.MVService
+		ddlNotify chan struct{}
+	}
 
 	stopAutoAnalyze   atomicutil.Bool
 	minJobIDRefresher *systable.MinJobIDRefresher
@@ -701,6 +708,24 @@ func (do *Domain) Init(
 	)
 	// TODO(lance6716): find a more representative place for subscriber
 	failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
+	// Register MVS DDL handler before DDLNotifier may start.
+	do.mvService.ddlNotify = make(chan struct{}, 1)
+	do.mvService.MVService = mvservice.RegisterMVService(
+		do.ctx,
+		do.ddlNotifier.RegisterHandler,
+		do.sysSessionPool,
+		func() statstypes.StatsHandle {
+			return do.StatsHandle()
+		},
+		&do.sysProcesses,
+		do.stopAutoAnalyze.Load,
+		func() {
+			select {
+			case do.mvService.ddlNotify <- struct{}{}:
+			default:
+			}
+		},
+	)
 
 	d := do.ddl
 	eBak := do.ddlExecutor
@@ -915,6 +940,16 @@ func (do *Domain) GetKSInfoCache(targetKS string) (*infoschema.InfoCache, error)
 		return nil, errors.Trace(err)
 	}
 	return mgr.InfoCache(), nil
+}
+
+// GetKSGlobalVarAccessor returns the global variable accessor of the sessions
+// of the runtime of the given keyspace.
+func (do *Domain) GetKSGlobalVarAccessor(targetKS string) (variable.GlobalVarAccessor, error) {
+	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return mgr.GlobalVarAccessor(), nil
 }
 
 // GetKSSessPool returns the session pool for the given keyspace.
@@ -1495,7 +1530,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 	var watchCh clientv3.WatchChan
 	duration := 30 * time.Second
 	if do.etcdClient != nil {
-		watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
+		watchCh = do.etcdClient.Watch(context.Background(), ddlutil.SysVarCacheKey)
 	}
 
 	do.wg.Run(func() {
@@ -1528,7 +1563,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 
 			if !ok {
 				logutil.BgLogger().Warn("LoadSysVarCacheLoop loop watch channel closed")
-				watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
+				watchCh = do.etcdClient.Watch(context.Background(), ddlutil.SysVarCacheKey)
 				count++
 				if count > 10 {
 					time.Sleep(time.Duration(count) * time.Second)
@@ -1620,8 +1655,7 @@ func (do *Domain) BindingHandle() bindinfo.BindingHandle {
 // InitBindingHandle create a goroutine loads BindInfo in a loop, it should
 // be called only once in BootstrapSession.
 func (do *Domain) InitBindingHandle() error {
-	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool))
-	err := do.BindingHandle().LoadFromStorageToCache(true, false)
+	err := do.LoadBindingHandle()
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -1633,6 +1667,42 @@ func (do *Domain) InitBindingHandle() error {
 		return err
 	}
 	do.globalBindHandleWorkerLoop(owner)
+	return nil
+}
+
+// LoadBindingHandle loads existing bindings without starting binding maintenance.
+func (do *Domain) LoadBindingHandle() error {
+	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool))
+	return do.BindingHandle().LoadFromStorageToCache(true, false)
+}
+
+// LoadBindingLoop loads bindings and periodically refreshes the cache. It only
+// starts the LoadFromStorageToCache path; unlike InitBindingHandle, it does not
+// start binding ownership, GC, or usage persistence.
+func (do *Domain) LoadBindingLoop() error {
+	if err := do.LoadBindingHandle(); err != nil {
+		return err
+	}
+	if bindinfo.Lease == 0 {
+		return nil
+	}
+
+	do.wg.Run(func() {
+		defer util.Recover(metrics.LabelDomain, "loadBindingLoop", nil, false)
+		ticker := time.NewTicker(bindinfo.Lease)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-do.exit:
+				do.BindingHandle().Close()
+				return
+			case <-ticker.C:
+				if err := do.BindingHandle().LoadFromStorageToCache(false, false); err != nil {
+					logutil.BgLogger().Warn("update bindinfo failed", zap.Error(err))
+				}
+			}
+		}
+	}, "loadBindingLoop")
 	return nil
 }
 
@@ -1661,7 +1731,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				bindHandle := do.BindingHandle()
 				err := bindHandle.LoadFromStorageToCache(false, false)
 				if err != nil {
-					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
+					logutil.BgLogger().Warn("update bindinfo failed", zap.Error(err))
 				}
 			case <-gcBindTicker.C:
 				if !owner.IsOwner() {
@@ -2485,7 +2555,6 @@ func (do *Domain) ServerMemoryLimitHandle() *servermemorylimit.Handle {
 
 const (
 	privilegeKey          = "/tidb/privilege"
-	sysVarCacheKey        = "/tidb/sysvars"
 	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
 )
 
@@ -2543,7 +2612,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 // synchronously so that the effect is immediate.
 func (do *Domain) NotifyUpdateSysVarCache(updateLocal bool) {
 	if do.etcdClient != nil {
-		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, etcd.KeyOpDefaultRetryCnt, sysVarCacheKey, "")
+		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, etcd.KeyOpDefaultRetryCnt, ddlutil.SysVarCacheKey, "")
 		if err != nil {
 			logutil.BgLogger().Warn("notify update sysvar cache failed", zap.Error(err))
 		}
@@ -2902,6 +2971,9 @@ func (do *Domain) serverIDKeeper() {
 // StartTTLJobManager creates and starts the ttl job manager when this domain
 // should run it; otherwise it returns without storing a manager instance.
 func (do *Domain) StartTTLJobManager() {
+	failpoint.Inject("skipStartTTLJobManager", func() {
+		failpoint.Return()
+	})
 	role, configured := do.ttlExternalWorkloadRole()
 	if !do.shouldStartTTLJobManager() {
 		fields := make([]zap.Field, 0, 1)
@@ -3130,3 +3202,83 @@ func (s *SysProcesses) KillSysProcess(id uint64) {
 		proc.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}
 }
+
+// StartMVService starts background MV maintenance and cross-server DDL notifications.
+func (do *Domain) StartMVService() error {
+	if do.GetMVService() == nil {
+		return errors.New("failed to register MV service")
+	}
+	runMVServiceLoopWithRecover := func(loopName string, loop func()) {
+		do.wg.RunWithRecover(loop, func(r any) {
+			if r == nil {
+				return
+			}
+			logutil.BgLogger().Error("panic in MVService domain loop",
+				zap.String("loop", loopName),
+				zap.Any("panic", r),
+				zap.Stack("stack"),
+			)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelDomain).Inc()
+			metrics.MVServicePanicGauge.Inc()
+		}, loopName)
+	}
+	runMVServiceLoopWithRecover("mvService", do.mvService.Run)
+	runMVServiceLoopWithRecover("mvServiceNotify", do.notifyMVSMetadataChange)
+	runMVServiceLoopWithRecover("watchMVSMetaChange", do.watchMVSMetaChange)
+	return nil
+}
+
+// GetMVService returns the materialized view maintenance service.
+func (do *Domain) GetMVService() *mvservice.MVService {
+	return do.mvService.MVService
+}
+
+// watchMVSMetaChange reloads service metadata after DDL notifications from any server.
+func (do *Domain) watchMVSMetaChange() {
+	if do.etcdClient == nil {
+		return
+	}
+
+	watchCh := do.etcdClient.Watch(do.ctx, mvsDDLNotifyKey)
+	count := 0
+	for {
+		ok := true
+		select {
+		case <-do.exit:
+			return
+		case _, ok = <-watchCh:
+		}
+		if !ok {
+			logutil.BgLogger().Warn("watch MVS metadata change loop watch channel closed")
+			watchCh = do.etcdClient.Watch(do.ctx, mvsDDLNotifyKey)
+			count++
+			if count > 10 {
+				time.Sleep(time.Duration(count) * time.Second)
+			}
+			continue
+		}
+		count = 0
+		do.mvService.NotifyDDLChange()
+	}
+}
+
+// notifyMVSMetadataChange broadcasts local MV DDL notifications to other servers.
+func (do *Domain) notifyMVSMetadataChange() {
+	if do.etcdClient == nil {
+		return
+	}
+	client := do.etcdClient.KV
+	for {
+		select {
+		case <-do.exit:
+			return
+		case <-do.mvService.ddlNotify:
+			_, err := client.Put(do.ctx, mvsDDLNotifyKey, "")
+			if err != nil && !errors.ErrorEqual(err, context.Canceled) {
+				logutil.BgLogger().Warn("notify mvservice metadata change failed", zap.Error(err))
+			}
+		}
+	}
+}
+
+const mvsDDLNotifyKey = "/tidb/mvservice/ddl"

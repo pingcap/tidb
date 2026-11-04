@@ -47,8 +47,6 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//pkg/types",
         "//pkg/util",
-        "//pkg/util/codec",
-        "//pkg/util/collate",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/mock",

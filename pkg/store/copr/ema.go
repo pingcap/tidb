@@ -34,11 +34,13 @@ type ruEMA struct {
 	lastObsAt time.Time
 }
 
-func newRUEMA(seedReadBytes uint64) *ruEMA {
-	// lastObsAt is intentionally left as the zero time. If there is no seed,
-	// the first Observe gets alpha ~= 1 and seeds value from the first sample;
-	// if there is a byte-budget seed, the first real sample replaces it.
-	return &ruEMA{tau: defaultRUEMATau, value: float64(seedReadBytes)}
+// newRUEMA starts at zero, so RPCs sent before the first observed page carry
+// no pre-charge hint and are settled from their responses. A byte budget only
+// bounds a page, and many scans read far less, so it is not a prediction.
+func newRUEMA() *ruEMA {
+	// lastObsAt is intentionally left as the zero time, so the first Observe
+	// gets alpha ~= 1 and seeds value from the first sample.
+	return &ruEMA{tau: defaultRUEMATau}
 }
 
 func (e *ruEMA) Observe(bytes uint64, now time.Time) {

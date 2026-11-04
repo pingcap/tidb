@@ -56,7 +56,7 @@ func TestDeleter(t *testing.T) {
 	ctx := context.Background()
 	logger := zap.Must(zap.NewDevelopment())
 	tableName := "tc"
-	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: 1})
+	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 1}})
 	require.NoError(t, err)
 	codecs := []struct {
 		name  string

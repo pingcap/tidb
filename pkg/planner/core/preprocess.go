@@ -82,6 +82,12 @@ func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
 	}
 }
 
+// useProvidedInfoSchemaAsIs keeps table resolution on the infoschema selected
+// by the caller instead of upgrading table metadata through MDL.
+func useProvidedInfoSchemaAsIs(p *preprocessor) {
+	p.useInfoSchemaAsIs = true
+}
+
 // TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
 func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 || ctx.GetSessionVars().InRestrictedSQL {
@@ -145,7 +151,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 	if v.PreprocessorReturn == nil {
 		v.PreprocessorReturn = &PreprocessorReturn{}
 	}
-	node.Node.Accept(&v)
+	ast.Walk(node.Node, &v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
 	sctx.GetPlanCtx().SetReadonlyUserVarMap(v.varsReadonly)
@@ -163,7 +169,8 @@ const (
 	// inTxnRetry is set when visiting in transaction retry.
 	inTxnRetry
 	// inCreateOrDropTable is set when visiting create/drop table/view/sequence,
-	// rename table, alter table add foreign key, alter table in prepare stmt, and BR restore.
+	// rename table, complete out-of-place materialized view refresh, alter table add
+	// foreign key, alter table in prepare stmt, and BR restore.
 	// TODO need a better name to clarify it's meaning
 	inCreateOrDropTable
 	// parentIsJoin is set when visiting node's parent is join.
@@ -225,7 +232,7 @@ func (pw *preprocessWith) UpdateCTEConsumerCount(tableName string) {
 	}
 }
 
-// preprocessor is an ast.Visitor that preprocess
+// preprocessor is an ast.InPlaceVisitor that preprocesses
 // ast Nodes parsed from parser.
 type preprocessor struct {
 	ctx    context.Context
@@ -254,9 +261,13 @@ type preprocessor struct {
 	err error
 
 	resolveCtx *resolve.Context
+
+	// useInfoSchemaAsIs keeps table resolution on the infoschema selected by the
+	// caller, instead of upgrading table metadata to the latest domain schema.
+	useInfoSchemaAsIs bool
 }
 
-func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+func (p *preprocessor) Enter(in ast.Node) bool {
 	switch node := in.(type) {
 	case *ast.AdminStmt:
 		p.checkAdminCheckTableGrammar(node)
@@ -268,7 +279,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
 		p.checkSelectNoopFuncs(node)
-		// SelectStmt.Accept visits FROM before LockInfo, so one per-SELECT context can collect FROM
+		// ast.Walk visits FROM before LockInfo, so one per-SELECT context can collect FROM
 		// table refs during traversal and later bind LockInfo targets without re-walking the FROM tree.
 		p.pushLockSelectCtx(node)
 	case *ast.SetOprStmt:
@@ -295,6 +306,16 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.flag |= inCreateOrDropTable
 		p.checkCreateViewGrammar(node)
 		p.checkCreateViewWithSelectGrammar(node)
+	case *ast.CreateMaterializedViewStmt:
+		p.stmtTp = TypeCreate
+		p.flag |= inCreateOrDropTable
+	case *ast.CreateMaterializedViewLogStmt:
+		p.stmtTp = TypeCreate
+	case *ast.DropMaterializedViewStmt:
+		p.stmtTp = TypeDrop
+		p.flag |= inCreateOrDropTable
+	case *ast.DropMaterializedViewLogStmt:
+		p.stmtTp = TypeDrop
 	case *ast.DropTableStmt:
 		p.flag |= inCreateOrDropTable
 		p.stmtTp = TypeDrop
@@ -317,6 +338,26 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 		p.resolveAlterTableStmt(node)
 		p.checkAlterTableGrammar(node)
+	case *ast.AlterMaterializedViewStmt:
+		p.stmtTp = TypeAlter
+		// ALTER MATERIALIZED VIEW validates its target during DDL handling; do not
+		// register it as an ordinary table dependency during preprocessing.
+		p.flag |= inCreateOrDropTable
+	case *ast.AlterMaterializedViewLogStmt:
+		p.stmtTp = TypeAlter
+	case *ast.PurgeMaterializedViewLogStmt:
+		p.stmtTp = TypeAlter
+	case *ast.CompareMaterializedViewStmt:
+		// Resolve the MV and its output table separately from historical data reads.
+		p.flag |= inCreateOrDropTable
+	case *ast.RefreshMaterializedViewStmt:
+		if node.Type == ast.RefreshMaterializedViewTypeComplete &&
+			node.CompleteType == ast.RefreshMaterializedViewCompleteTypeOutOfPlace {
+			// Complete out-of-place refresh validates its target in the refresh
+			// executor and manages cutover separately. Do not register the target as
+			// a normal table dependency in the refresh session's MDL-related table set.
+			p.flag |= inCreateOrDropTable
+		}
 	case *ast.CreateDatabaseStmt:
 		p.stmtTp = TypeCreate
 		p.checkCreateDatabaseGrammar(node)
@@ -337,7 +378,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkSetOprSelectList(node)
 	case *ast.DeleteTableList:
 		p.stmtTp = TypeDelete
-		return in, true
+		return true
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
@@ -348,7 +389,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			EraseLastSemicolon(node.HintedNode)
 			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
 		}
-		return in, true
+		return true
 	case *ast.DropBindingStmt:
 		p.stmtTp = TypeDrop
 		if node.OriginNode != nil {
@@ -358,22 +399,22 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 				p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
 			}
 		}
-		return in, true
+		return true
 	case *ast.RecoverTableStmt:
 		// The specified table in recover table statement maybe already been dropped.
 		// So skip check table name here, otherwise, recover table [table_name] syntax will return
 		// table not exists error. But recover table statement is use to recover the dropped table. So skip children here.
-		return in, true
+		return true
 	case *ast.FlashBackTableStmt:
 		if len(node.NewName) > 0 {
 			p.checkFlashbackTableGrammar(node)
 		}
-		return in, true
+		return true
 	case *ast.FlashBackDatabaseStmt:
 		if len(node.NewName) > 0 {
 			p.checkFlashbackDatabaseGrammar(node)
 		}
-		return in, true
+		return true
 	case *ast.RepairTableStmt:
 		p.stmtTp = TypeRepair
 		// The RepairTable should consist of the logic for creating tables and renaming tables.
@@ -424,8 +465,13 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		with := p.preprocessWith
 		beforeOffset := len(with.cteCanUsed)
 		with.cteBeforeOffset = append(with.cteBeforeOffset, beforeOffset)
-		if cteNode, exist := node.(*ast.CommonTableExpression); exist && cteNode.IsRecursive {
-			with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
+		if cteNode, exist := node.(*ast.CommonTableExpression); exist {
+			// Preprocess can run repeatedly on a prepared statement's AST after schema changes.
+			// Recompute the consumer count instead of accumulating the result from an earlier run.
+			cteNode.ConsumerCount = 0
+			if cteNode.IsRecursive {
+				with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
+			}
 		}
 	case *ast.BeginStmt:
 		// If the begin statement was like following:
@@ -453,8 +499,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.Value != nil {
 			p.varsMutable[nameLower] = struct{}{}
 			delete(p.varsReadonly, nameLower)
-		} else if p.stmtTp == TypeSelect {
-			// Only check the variable in select statement.
+		} else if p.stmtTp == TypeSelect || p.stmtTp == TypeUpdate || p.stmtTp == TypeInsert || p.stmtTp == TypeDelete {
+			// Only check variables in SELECT, UPDATE, INSERT, and DELETE statements.
 			_, ok := p.varsMutable[nameLower]
 			if !ok {
 				p.varsReadonly[nameLower] = struct{}{}
@@ -465,14 +511,15 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkConstraintGrammar(node)
 	case *ast.ColumnName:
 		if node.Name.L == model.ExtraCommitTSName.L &&
-			(p.stmtTp == TypeSelect || p.stmtTp == TypeSetOpr || p.stmtTp == TypeUpdate || p.stmtTp == TypeDelete) {
+			(p.stmtTp == TypeSelect || p.stmtTp == TypeSetOpr || p.stmtTp == TypeUpdate || p.stmtTp == TypeDelete) &&
+			!p.sctx.GetSessionVars().EnableMView {
 			p.err = plannererrors.ErrInternal.GenWithStack("Usage of column name '%s' is not supported for now",
 				model.ExtraCommitTSName.O)
 		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
-	return in, p.err != nil
+	return p.err != nil
 }
 
 // EraseLastSemicolon removes last semicolon of sql.
@@ -550,7 +597,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 	is := p.ensureInfoSchema()
 
 	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
-	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence) {
+	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence || p.showTp == ast.ShowCreateMaterializedView || p.showTp == ast.ShowCreateMaterializedViewLog || p.showTp == ast.ShowMaterializedViewRemainLogs || p.showTp == ast.ShowMaterializedViewLogWaitPurge) {
 		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}
 
@@ -622,8 +669,8 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 		})
 	}
 	aliasChecker := &aliasChecker{}
-	originNode.Accept(aliasChecker)
-	hintedNode.Accept(aliasChecker)
+	ast.Walk(originNode, aliasChecker)
+	ast.Walk(hintedNode, aliasChecker)
 	originSQL, _ := bindinfo.NormalizeStmtForBinding(originNode, defaultDB, false)
 	hintedSQL, _ := bindinfo.NormalizeStmtForBinding(hintedNode, defaultDB, false)
 	if originSQL != hintedSQL {
@@ -631,7 +678,7 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	}
 }
 
-func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (p *preprocessor) Leave(in ast.Node) bool {
 	switch x := in.(type) {
 	case *ast.CreateTableStmt:
 		p.flag &= ^inCreateOrDropTable
@@ -639,12 +686,14 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.checkContainDotColumn(x)
 	case *ast.CreateViewStmt:
 		p.flag &= ^inCreateOrDropTable
-	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
+	case *ast.CreateMaterializedViewStmt:
+		p.flag &= ^inCreateOrDropTable
+	case *ast.AlterMaterializedViewStmt, *ast.DropMaterializedViewStmt, *ast.RefreshMaterializedViewStmt, *ast.CompareMaterializedViewStmt, *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *driver.ParamMarkerExpr:
 		if p.flag&inPrepare == 0 {
 			p.err = parser.ErrSyntax.GenWithStack("syntax error, unexpected '?'")
-			return
+			return false
 		}
 	case *ast.ExplainStmt:
 		if _, ok := x.Stmt.(*ast.ShowStmt); ok {
@@ -748,7 +797,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 	}
 
-	return in, p.err == nil
+	return p.err == nil
 }
 
 func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
@@ -1386,10 +1435,15 @@ func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
 }
 
 func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
-	oldTable := stmt.TableToTables[0].OldTable.Name.String()
-	newTable := stmt.TableToTables[0].NewTable.Name.String()
+	for _, tableToTable := range stmt.TableToTables {
+		oldTable := tableToTable.OldTable.Name.String()
+		newTable := tableToTable.NewTable.Name.String()
 
-	p.checkRenameTable(oldTable, newTable)
+		p.checkRenameTable(oldTable, newTable)
+		if p.err != nil {
+			return
+		}
+	}
 }
 
 func (p *preprocessor) checkRenameTable(oldTable, newTable string) {
@@ -1804,7 +1858,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	if !p.skipLockMDL() {
+	if !p.skipLockMDL() && !p.useInfoSchemaAsIs {
 		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, p.sctx.GetPlanCtx(), ast.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
 		if err != nil {
 			p.err = err
@@ -2354,7 +2408,7 @@ func (p *preprocessor) skipLockMDL() bool {
 //	   so we have to set `tt1` as alias by aliasChecker.
 type aliasChecker struct{}
 
-func (*aliasChecker) Enter(in ast.Node) (ast.Node, bool) {
+func (*aliasChecker) Enter(in ast.Node) bool {
 	if deleteStmt, ok := in.(*ast.DeleteStmt); ok {
 		// 1. check the tableRefs of deleteStmt to find the alias
 		var aliases []*ast.CIStr
@@ -2381,9 +2435,9 @@ func (*aliasChecker) Enter(in ast.Node) (ast.Node, bool) {
 				}
 			}
 		}
-		return in, true
+		return true
 	}
-	return in, false
+	return false
 }
 
 func getTableRefsAlias(tableRefs ast.ResultSetNode) *ast.CIStr {
@@ -2398,6 +2452,6 @@ func getTableRefsAlias(tableRefs ast.ResultSetNode) *ast.CIStr {
 	return nil
 }
 
-func (*aliasChecker) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
+func (*aliasChecker) Leave(ast.Node) bool {
+	return true
 }

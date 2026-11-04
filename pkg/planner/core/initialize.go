@@ -20,6 +20,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
+// Init initializes Analyze.
+func (p Analyze) Init(ctx base.PlanContext, offset int) *Analyze {
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeAnalyze, offset)
+	return &p
+}
+
 // Init initializes LoadData.
 func (p LoadData) Init(ctx base.PlanContext) *LoadData {
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeLoadData, 0)
@@ -29,6 +35,18 @@ func (p LoadData) Init(ctx base.PlanContext) *LoadData {
 // Init initializes ImportInto.
 func (p ImportInto) Init(ctx base.PlanContext) *ImportInto {
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeImportInto, 0)
+	return &p
+}
+
+// Init initializes MViewDeltaMerge.
+func (p MViewDeltaMerge) Init(ctx base.PlanContext) *MViewDeltaMerge {
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeMViewDeltaMerge, 0)
+	return &p
+}
+
+// Init initializes MViewCompleteDeltaApply.
+func (p MViewCompleteDeltaApply) Init(ctx base.PlanContext) *MViewCompleteDeltaApply {
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeMViewCompleteDeltaApply, 0)
 	return &p
 }
 

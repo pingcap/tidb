@@ -277,9 +277,9 @@ func TestNotifyGCV2AfterGCForDedicatedWorker(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, err := mockstore.NewMockStore(mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
-				Id:     1,
-				Name:   "ks",
-				Config: map[string]string{pd.KeyspaceConfigGCManagementType: tc.gcManagementType},
+				Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 1},
+				Name:     "ks",
+				Config:   map[string]string{pd.KeyspaceConfigGCManagementType: tc.gcManagementType},
 			}))
 			require.NoError(t, err)
 			t.Cleanup(func() {
@@ -1573,9 +1573,9 @@ func testResolveLocksWithKeyspacesImpl(t *testing.T, subCaseName string) {
 			gcManagementType = pd.KeyspaceConfigGCManagementTypeUnified
 		}
 		return &keyspacepb.KeyspaceMeta{
-			Id:     id,
-			Name:   name,
-			Config: map[string]string{pd.KeyspaceConfigGCManagementType: gcManagementType},
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: id},
+			Name:     name,
+			Config:   map[string]string{pd.KeyspaceConfigGCManagementType: gcManagementType},
 		}
 	}
 
@@ -2395,6 +2395,74 @@ func TestCalcDeleteRangeConcurrency(t *testing.T) {
 			if result < 1 {
 				t.Errorf("Result should never be less than 1, but got %d", result)
 			}
+		})
+	}
+}
+
+func TestGCPlacementRulesForCreateMaterializedViewRollback(t *testing.T) {
+	s := createGCWorkerSuite(t)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", `return("create-mv-rollback:20")`))
+	historyJobFailpointEnabled := true
+	defer func() {
+		if historyJobFailpointEnabled {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+		}
+	}()
+
+	var gcPlacementRuleCache sync.Map
+	bundleID := "TiDB_DDL_20"
+	bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1, r2"})
+	require.NoError(t, err)
+	bundle.ID = bundleID
+	require.NoError(t, infosync.PutRuleBundles(context.Background(), []*placement.Bundle{bundle}))
+	got, err := infosync.GetRuleBundle(context.Background(), bundleID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.False(t, got.IsEmpty())
+
+	dr := util.DelRangeTask{JobID: 1, ElementID: 20}
+	require.NoError(t, doGCPlacementRules(createSession(s.store), 1, dr, &gcPlacementRuleCache))
+	v, ok := gcPlacementRuleCache.Load(int64(20))
+	require.True(t, ok)
+	require.Equal(t, struct{}{}, v)
+
+	got, err = infosync.GetRuleBundle(context.Background(), bundleID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.True(t, got.IsEmpty())
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+	historyJobFailpointEnabled = false
+
+	for _, test := range []struct {
+		name      string
+		failpoint string
+		tableID   int64
+	}{
+		{name: "drop materialized view", failpoint: "drop-mview:20", tableID: 20},
+		{name: "drop materialized view log", failpoint: "drop-mlog:30", tableID: 30},
+		{name: "out of place materialized view cutover", failpoint: "mview-cutover:40:41", tableID: 40},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", `return("`+test.failpoint+`")`))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+			}()
+
+			bundleID := fmt.Sprintf("TiDB_DDL_%d", test.tableID)
+			bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1, r2"})
+			require.NoError(t, err)
+			bundle.ID = bundleID
+			require.NoError(t, infosync.PutRuleBundles(context.Background(), []*placement.Bundle{bundle}))
+
+			var cache sync.Map
+			dr := util.DelRangeTask{JobID: 1, ElementID: test.tableID}
+			require.NoError(t, doGCPlacementRules(createSession(s.store), 1, dr, &cache))
+			_, ok := cache.Load(test.tableID)
+			require.True(t, ok)
+			got, err := infosync.GetRuleBundle(context.Background(), bundleID)
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			require.True(t, got.IsEmpty())
 		})
 	}
 }

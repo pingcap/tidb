@@ -15,13 +15,108 @@
 package s3store
 
 import (
+	"encoding/base64"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
+
+func TestS3SSEKMSContextFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		input      string
+		normalized string
+		invalid    bool
+	}{
+		{name: "unset"},
+		{name: "empty object", input: `{}`, normalized: `{}`},
+		{name: "normalize", input: " \n { \"tenant\" : \"tenant-a\", \"purpose\":\"backup\" } \t", normalized: `{"purpose":"backup","tenant":"tenant-a"}`},
+		{name: "unicode", input: `{"租户":"租户一","emoji":"😀","escaped":"\u4e2d"}`, normalized: `{"emoji":"😀","escaped":"中","租户":"租户一"}`},
+		{name: "special characters", input: `{"key":"a+b / = & \" \\ \n"}`, normalized: `{"key":"a+b / = \u0026 \" \\ \n"}`},
+		{name: "whitespace", input: " \n\t", invalid: true},
+		{name: "null", input: `null`, invalid: true},
+		{name: "array", input: `[]`, invalid: true},
+		{name: "string", input: `"secret-value"`, invalid: true},
+		{name: "number value", input: `{"secret-value":1}`, invalid: true},
+		{name: "null value", input: `{"secret-value":null}`, invalid: true},
+		{name: "boolean value", input: `{"secret-value":true}`, invalid: true},
+		{name: "nested object", input: `{"secret-value":{}}`, invalid: true},
+		{name: "nested array", input: `{"secret-value":[]}`, invalid: true},
+		{name: "duplicate key", input: `{"key":"secret-value","key":"other"}`, invalid: true},
+		{name: "escaped duplicate key", input: `{"key":"secret-value","\u006bey":"other"}`, invalid: true},
+		{name: "incomplete", input: `{"key":"secret-value"`, invalid: true},
+		{name: "trailing object", input: `{"key":"secret-value"}{}`, invalid: true},
+		{name: "trailing garbage", input: `{"key":"secret-value"}garbage`, invalid: true},
+		{name: "invalid UTF8", input: "{\"key\":\"secret-value\xff\"}", invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+			s3like.DefineS3Flags(flags)
+			require.NoError(t, flags.Set("s3.sse-kms-context", tc.input))
+			require.NoError(t, flags.Set("s3.sse", "aws:kms"))
+			var options s3like.S3BackendOptions
+			require.NoError(t, options.ParseFromFlags(flags))
+			backend := &backuppb.S3{}
+			err := options.Apply(backend)
+			if tc.invalid {
+				require.Error(t, err)
+				require.True(t, berrors.ErrStorageInvalidConfig.Equal(err))
+				require.Contains(t, err.Error(), "sse-kms-context")
+				require.NotContains(t, err.Error(), "secret-value")
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, base64.StdEncoding.EncodeToString([]byte(tc.normalized)), backend.GetSseKmsEncryptionContext())
+			// Context must not introduce defaults for existing options.
+			require.Equal(t, "aws:kms", backend.Sse)
+			require.Empty(t, backend.SseKmsKeyId)
+			require.NoError(t, options.Apply(backend))
+			require.Equal(t, base64.StdEncoding.EncodeToString([]byte(tc.normalized)), backend.GetSseKmsEncryptionContext())
+		})
+	}
+
+	// AWS rejects a context header without explicit SSE-KMS; other providers
+	// keep their own SSE semantics.
+	for _, tc := range []struct {
+		sse, keyID, provider string
+		invalid              bool
+	}{
+		{"", "", "", true},
+		{"", "test-key", "aws", true},
+		{"AES256", "", "", true},
+		{"AES256", "test-key", "aws", true},
+		{"", "test-key", "ceph", false},
+		{"AES256", "", "ceph", false},
+		{"aws:kms", "", "aws", false},
+		{"aws:kms", "test-key", "", false},
+		{"aws:kms:dsse", "test-key", "aws", false},
+	} {
+		flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		s3like.DefineS3Flags(flags)
+		require.NoError(t, flags.Set("s3.sse-kms-context", `{"tenant":"tenant-a"}`))
+		require.NoError(t, flags.Set("s3.sse", tc.sse))
+		require.NoError(t, flags.Set("s3.sse-kms-key-id", tc.keyID))
+		require.NoError(t, flags.Set("s3.provider", tc.provider))
+		var options s3like.S3BackendOptions
+		require.NoError(t, options.ParseFromFlags(flags))
+		backend := &backuppb.S3{}
+		err := options.Apply(backend)
+		if tc.invalid {
+			require.True(t, berrors.ErrStorageInvalidConfig.Equal(err), "%+v", tc)
+			require.Contains(t, err.Error(), "sse-kms-context")
+			require.NotContains(t, err.Error(), "tenant-a")
+			continue
+		}
+		require.NoError(t, err, "%+v", tc)
+		require.Equal(t, tc.sse, backend.Sse)
+		require.Equal(t, tc.keyID, backend.SseKmsKeyId)
+		require.Equal(t, tc.provider, backend.Provider)
+	}
+}
 
 func TestS3ProfileFlag(t *testing.T) {
 	// Test defining S3 flags includes profile flag

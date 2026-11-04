@@ -79,8 +79,8 @@ func (p *QBHintHandler) MaxSelectStmtOffset() int {
 	return p.selectStmtOffset
 }
 
-// Enter implements Visitor interface.
-func (p *QBHintHandler) Enter(in ast.Node) (ast.Node, bool) {
+// Enter implements ast.InPlaceVisitor.
+func (p *QBHintHandler) Enter(in ast.Node) bool {
 	switch node := in.(type) {
 	case *ast.UpdateStmt:
 		p.checkQueryBlockHints(node.TableHints, 0)
@@ -93,16 +93,16 @@ func (p *QBHintHandler) Enter(in ast.Node) (ast.Node, bool) {
 		node.TableHints = p.handleViewHints(node.TableHints, node.QueryBlockOffset)
 		p.checkQueryBlockHints(node.TableHints, node.QueryBlockOffset)
 	case *ast.ExplainStmt:
-		return in, true
+		return true
 	case *ast.CreateBindingStmt:
-		return in, true
+		return true
 	}
-	return in, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (*QBHintHandler) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
+// Leave implements ast.InPlaceVisitor.
+func (*QBHintHandler) Leave(ast.Node) bool {
+	return true
 }
 
 const hintQBName = "qb_name"

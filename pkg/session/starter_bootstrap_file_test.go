@@ -526,8 +526,8 @@ func TestStarterPrivilegeResetWorkflow(t *testing.T) {
 	})
 
 	keyspaceMeta := &keyspacepb.KeyspaceMeta{
-		Id:   42,
-		Name: "restored_keyspace",
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 42},
+		Name:     "restored_keyspace",
 		Config: map[string]string{
 			branchResetDoneKey:  "False",
 			restoreResetDoneKey: "False",
@@ -595,8 +595,8 @@ func TestStarterPrivilegeResetWorkflow(t *testing.T) {
 	require.Equal(t, 2, pdHTTPClient.updateCalls)
 
 	codec.keyspaceMeta = &keyspacepb.KeyspaceMeta{
-		Id:   keyspaceMeta.Id,
-		Name: keyspaceMeta.Name,
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: keyspaceMeta.GetId()},
+		Name:     keyspaceMeta.Name,
 		Config: map[string]string{
 			restoreResetDoneKey: "False",
 		},

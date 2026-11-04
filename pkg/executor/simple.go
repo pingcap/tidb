@@ -2264,7 +2264,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			continue
 		}
 
-		if len(privData) > 0 {
+		// Only touch mysql.global_priv when the statement carries a REQUIRE clause
+		// that maps to a global_priv value; otherwise ALTER USER would clobber the
+		// existing TLS requirements (SUBJECT/SAN/ISSUER/CIPHER) with an empty value.
+		// A token-issuer-only REQUIRE yields empty privData and is stored elsewhere.
+		if len(s.AuthTokenOrTLSOptions) > 0 && len(privData) > 0 {
 			sql := new(strings.Builder)
 			sqlescape.MustFormatSQL(sql, "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
 			_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
@@ -3610,10 +3614,12 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 	// Sending SIGKILL should not be needed as SIGTERM should cause a graceful shutdown after
 	// n seconds as configured by the GracefulWaitBeforeShutdown. This is here in case that doesn't
 	// work for some reason.
-	graceTime := config.GetGlobalConfig().GracefulWaitBeforeShutdown
+	cfg := config.GetGlobalConfig()
+	graceTime := cfg.GracefulWaitBeforeShutdown
 
-	// The shutdown is supposed to start at graceTime and is allowed to take up to 10s.
-	time.Sleep(time.Second * time.Duration(graceTime+10))
+	// The shutdown is supposed to start at graceTime, drain clients for up to GracefulCloseConnectionsTimeout,
+	// and is allowed to take up to 10s more for the rest of the cleanup.
+	time.Sleep(time.Second * time.Duration(graceTime+cfg.GracefulCloseConnectionsTimeout+10))
 	logutil.BgLogger().Info("Killing process as grace period is over", zap.Int("pid", p.Pid), zap.Int("graceTime", graceTime))
 	err = p.Kill()
 	if err != nil {

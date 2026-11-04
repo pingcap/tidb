@@ -79,8 +79,8 @@ func TestNewEtcdCliUsesMetaServiceGroupAndNamespace(t *testing.T) {
 	defer metaCluster.Terminate(t)
 
 	keyspaceMeta := &keyspacepb.KeyspaceMeta{
-		Id:   42,
-		Name: "ks1",
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 42},
+		Name:     "ks1",
 		Config: map[string]string{
 			"gc_management_type":      "keyspace_level",
 			metaservice.GroupIDKey:    "group1",

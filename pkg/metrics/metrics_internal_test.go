@@ -56,71 +56,48 @@ func countCollectedMetrics(collector prometheus.Collector) int {
 	return count
 }
 
-func TestRUV2ExecutorCounterReturnsCachedKnownLabels(t *testing.T) {
-	cases := []struct {
-		level    int
-		label    string
-		expected prometheus.Counter
-	}{
-		{1, "BatchPointGetExec", ruv2ExecutorL1BatchPointGetExec},
-		{1, "PointGetExecutor", ruv2ExecutorL1PointGetExecutor},
-		{1, "LimitExec", ruv2ExecutorL1LimitExec},
-		{2, "ExpandExec", ruv2ExecutorL2ExpandExec},
-		{2, "HashAggExec", ruv2ExecutorL2HashAggExec},
-		{2, "HashJoinExec", ruv2ExecutorL2HashJoinExec},
-		{2, "HashJoinV1Exec", ruv2ExecutorL2HashJoinV1Exec},
-		{2, "HashJoinV2Exec", ruv2ExecutorL2HashJoinV2Exec},
-		{2, "IndexLookUpJoin", ruv2ExecutorL2IndexLookUpJoin},
-		{2, "IndexLookUpMergeJoin", ruv2ExecutorL2IndexLookUpMergeJoin},
-		{2, "IndexNestedLoopHashJoin", ruv2ExecutorL2IndexNestedLoopHashJoin},
-		{2, "IndexLookUpExecutor", ruv2ExecutorL2IndexLookUpExec},
-		{2, "IndexReaderExecutor", ruv2ExecutorL2IndexReaderExec},
-		{2, "MemTableReaderExec", ruv2ExecutorL2MemTableReaderExec},
-		{2, "MergeJoinExec", ruv2ExecutorL2MergeJoinExec},
-		{2, "ProjectionExec", ruv2ExecutorL2ProjectionExec},
-		{2, "SelectionExec", ruv2ExecutorL2SelectionExec},
-		{2, "TableDualExec", ruv2ExecutorL2TableDualExec},
-		{2, "TableReaderExecutor", ruv2ExecutorL2TableReaderExec},
-		{2, "TopNExec", ruv2ExecutorL2TopNExec},
-		{2, "UnionScanExec", ruv2ExecutorL2UnionScanExec},
-		{2, "SelectLockExec", ruv2ExecutorL2SelectLockExec},
-		{2, "WindowExec", ruv2ExecutorL2WindowExec},
-		{3, "SortExec", ruv2ExecutorL3SortExec},
-		{3, "StreamAggExec", ruv2ExecutorL3StreamAggExec},
-	}
-
-	for _, tc := range cases {
-		require.NotNil(t, tc.expected, tc.label)
-		require.True(t, tc.expected == RUV2ExecutorCounter(tc.level, tc.label), tc.label)
-	}
-}
-
-func TestRUV3MetricDefinitions(t *testing.T) {
+func TestRUV2MetricDefinitions(t *testing.T) {
 	require.Equal(t,
 		[]string{"ddl", "read", "write", "analyze", "other"},
 		[]string{LblSQLTypeDDL, LblSQLTypeRead, LblSQLTypeWrite, LblSQLTypeAnalyze, LblSQLTypeOther},
 	)
 	require.Equal(t, []string{"tikv", "tiflash"}, []string{LblEngineTiKV, LblEngineTiFlash})
 
-	InitRUV3Metrics()
-	RUV3Total.Add(1)
-	RUV3BySQLType.WithLabelValues(LblSQLTypeRead).Add(2)
-	RUV3ByEngine.WithLabelValues(LblEngineTiKV).Add(3)
+	InitRUV2Metrics()
+	RUV2Total.Add(1)
+	RUV2TTLTotal.Add(1)
+	RUV2BySQLTypeDDL.Add(2)
+	RUV2ByEngineTiKV.Add(3)
+	RUV2BySQLType.WithLabelValues("select").Add(2)
+	AddRUV2Results(3, 4, 5, 12, "select")
+	RUV2Unit.WithLabelValues("tikv", "hash_agg", LblRUV2UnitCPUWork).Add(5)
+	RUV2Statements.WithLabelValues("success", "incomplete").Inc()
 
 	registry := prometheus.NewRegistry()
-	require.NoError(t, registry.Register(RUV3Total))
-	require.NoError(t, registry.Register(RUV3BySQLType))
-	require.NoError(t, registry.Register(RUV3ByEngine))
+	require.NoError(t, registry.Register(RUV2Total))
+	require.NoError(t, registry.Register(RUV2TTLTotal))
+	require.NoError(t, registry.Register(RUV2BySQLType))
+	require.NoError(t, registry.Register(RUV2ByEngine))
+	require.NoError(t, registry.Register(RUV2Unit))
+	require.NoError(t, registry.Register(RUV2Statements))
 	families, err := registry.Gather()
 	require.NoError(t, err)
 
-	require.NotNil(t, findMetricFamily(families, "tidb_ruv3_ru_total"))
+	require.NotNil(t, findMetricFamily(families, "tidb_ruv2_ru_total"))
+	require.NotNil(t, findMetricFamily(families, "tidb_ruv2_ttl_ru_total"))
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_ru_by_sql_type_total", LblSQLType, LblSQLTypeDDL)
 	requireMetricFamilyHasLabel(
-		t, families, "tidb_ruv3_ru_by_sql_type_total", LblSQLType, LblSQLTypeRead,
+		t, families, "tidb_ruv2_ru_by_sql_type_total", LblSQLType, "select",
 	)
 	requireMetricFamilyHasLabel(
-		t, families, "tidb_ruv3_ru_by_engine_total", LblEngine, LblEngineTiKV,
+		t, families, "tidb_ruv2_ru_by_engine_total", LblEngine, LblEngineTiKV,
 	)
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_ru_by_engine_total", LblEngine, "tidb")
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_unit_total", LblEngine, "tikv")
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_unit_total", "opclass", "hash_agg")
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_unit_total", LblRUV2Unit, LblRUV2UnitCPUWork)
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_statements_total", "status", "success")
+	requireMetricFamilyHasLabel(t, families, "tidb_ruv2_statements_total", "reason", "incomplete")
 }
 
 func requireMetricFamilyHasLabel(t *testing.T, families []*dto.MetricFamily, familyName, labelName, labelValue string) {

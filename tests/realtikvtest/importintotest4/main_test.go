@@ -18,8 +18,10 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -57,6 +59,12 @@ func (s *mockGCSSuite) SetupSuite() {
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
 	s.Require().True(*realtikvtest.WithRealTiKV)
 	testutil.ReduceCheckInterval(s.T())
+	// The expired-file cleanup interval is captured when the domain starts.
+	originalExpiredFileCleanInterval := scheduler.DefaultExpiredFileCleanInterval
+	scheduler.DefaultExpiredFileCleanInterval = 100 * time.Millisecond
+	s.T().Cleanup(func() {
+		scheduler.DefaultExpiredFileCleanInterval = originalExpiredFileCleanInterval
+	})
 	var err error
 	opt := fakestorage.Options{
 		Scheme:     "http",

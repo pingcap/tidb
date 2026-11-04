@@ -105,7 +105,7 @@ func prepareModifyTaskTest(t *testing.T, nodeCount int) (*testutil.TestDXFContex
 		}).AnyTimes()
 		return executor, nil
 	})
-	testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleanUpRoutine(c.MockCtrl))
+	testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleaner(c.MockCtrl))
 	return c, runtimeInfo, subtaskCh, modifyWaitCh, &testModifyWhenSubtaskRun
 }
 

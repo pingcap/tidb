@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -62,8 +61,6 @@ type blockParser struct {
 	// so it's ok, see readQuotedField.
 	pos int64
 
-	// cache
-	remainBuf *bytes.Buffer
 	// holds the cached parsable data after last readBlock. all data inside is
 	// unparsed at the moment of the return of last readBlock, for current unparsed
 	// data, use buf.
@@ -75,6 +72,12 @@ type blockParser struct {
 
 	checkRowLen bool
 	rowStartPos int64
+	// maxRowSize is the maximum size, in source-text bytes, that a single row
+	// may occupy before the parser rejects it. The CSV parser sets it to the
+	// entry size limit, while the SQL parser allows up to twice that because
+	// binary values may be written as hex literals or escaped strings. A
+	// non-positive value disables the check.
+	maxRowSize int64
 }
 
 func makeBlockParser(
@@ -83,18 +86,19 @@ func makeBlockParser(
 	ioWorkers *worker.Pool,
 	metrics *metric.Metrics,
 	logger log.Logger,
+	maxRowSize int64,
 ) blockParser {
 	pool := zeropool.New[[]types.Datum](func() []types.Datum {
 		return make([]types.Datum, 0, 16)
 	})
 	return blockParser{
-		reader:    MakePooledReader(reader, ioWorkers),
-		blockBuf:  make([]byte, blockBufSize*config.BufferSizeScale),
-		remainBuf: &bytes.Buffer{},
-		appendBuf: &bytes.Buffer{},
-		Logger:    logger,
-		rowPool:   &pool,
-		metrics:   metrics,
+		reader:     MakePooledReader(reader, ioWorkers),
+		blockBuf:   make([]byte, blockBufSize*config.BufferSizeScale),
+		appendBuf:  &bytes.Buffer{},
+		Logger:     logger,
+		rowPool:    &pool,
+		metrics:    metrics,
+		maxRowSize: maxRowSize,
 	}
 }
 
@@ -160,6 +164,13 @@ type Parser interface {
 	SetRowID(rowID int64)
 }
 
+// sqlRowTextLenRatio is the maximum ratio between the source text length of an
+// SQL row and the size of the encoded values. A binary/blob value is usually
+// written as a hex literal (0x..., x'...') or an escaped string, so the source
+// text of a row can be up to twice the size of the underlying value. Enforce
+// the source text limit accordingly, else valid data would be rejected.
+const sqlRowTextLenRatio = 2
+
 // NewChunkParser creates a new parser which can read chunks out of a file.
 func NewChunkParser(
 	ctx context.Context,
@@ -174,8 +185,11 @@ func NewChunkParser(
 	}
 	metrics, _ := metric.FromContext(ctx)
 	return &ChunkParser{
-		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.Wrap(logutil.Logger(ctx))),
-		escFlavor:   escFlavor,
+		blockParser: makeBlockParser(
+			reader, blockBufSize, ioWorkers, metrics, log.Wrap(logutil.Logger(ctx)),
+			int64(LargestEntryLimit)*sqlRowTextLenRatio,
+		),
+		escFlavor: escFlavor,
 	}
 }
 
@@ -186,6 +200,13 @@ func (parser *blockParser) beginRowLenCheck() {
 
 func (parser *blockParser) endRowLenCheck() {
 	parser.checkRowLen = false
+}
+
+func (parser *blockParser) rowLenExceedsLimit(rowBytes int64) error {
+	if parser.maxRowSize > 0 && parser.checkRowLen && rowBytes > parser.maxRowSize {
+		return parsedef.ErrRowTooLarge
+	}
+	return nil
 }
 
 // SetPos changes the reported position and row ID.
@@ -312,12 +333,13 @@ func (parser *blockParser) readBlock() error {
 		parser.isLastChunk = true
 		fallthrough
 	case nil:
-		// `parser.buf` reference to `appendBuf.Bytes`, so should use remainBuf to
-		// hold the `parser.buf` rest data to prevent slice overlap
-		parser.remainBuf.Reset()
-		parser.remainBuf.Write(parser.buf)
+		// `parser.buf` references `appendBuf`'s backing array, so compact the
+		// unparsed remainder to the front of `appendBuf` and then append the newly
+		// read block, reusing the same buffer. `bytes.Buffer.Write` copies with
+		// `copy`, which handles the overlapping source and destination correctly,
+		// and this keeps only one buffer sized to the longest row.
 		parser.appendBuf.Reset()
-		parser.appendBuf.Write(parser.remainBuf.Bytes())
+		parser.appendBuf.Write(parser.buf)
 		blockData := parser.blockBuf[:n]
 		if parser.pos == 0 {
 			bomCleanedData := bom.Clean(blockData)
@@ -326,6 +348,9 @@ func (parser *blockParser) readBlock() error {
 		}
 		parser.appendBuf.Write(blockData)
 		parser.buf = parser.appendBuf.Bytes()
+		if err := parser.rowLenExceedsLimit(parser.pos - parser.rowStartPos + int64(len(parser.buf))); err != nil {
+			return err
+		}
 		if parser.metrics != nil {
 			parser.metrics.ChunkParserReadBlockSecondsHistogram.Observe(time.Since(startTime).Seconds())
 		}
@@ -335,14 +360,11 @@ func (parser *blockParser) readBlock() error {
 	}
 }
 
-var chunkParserUnescapeRegexp = regexp.MustCompile(`(?s)\\.`)
-
 func unescape(
 	input string,
 	delim string,
 	escFlavor escapeFlavor,
 	escChar byte,
-	unescapeRegexp *regexp.Regexp,
 ) string {
 	if len(delim) > 0 {
 		delim2 := delim + delim
@@ -350,36 +372,70 @@ func unescape(
 			input = strings.ReplaceAll(input, delim2, delim)
 		}
 	}
-	if escFlavor != escapeFlavorNone && strings.IndexByte(input, escChar) != -1 {
-		input = unescapeRegexp.ReplaceAllStringFunc(input, func(substr string) string {
-			switch substr[1] {
-			case '0':
-				return "\x00"
-			case 'b':
-				return "\b"
-			case 'n':
-				return "\n"
-			case 'r':
-				return "\r"
-			case 't':
-				return "\t"
-			case 'Z':
-				return "\x1a"
-			default:
-				return substr[1:]
-			}
-		})
+	if escFlavor != escapeFlavorNone {
+		input = unescapeByChar(input, escChar)
 	}
 	return input
+}
+
+// unescapeByChar rewrites every escChar-prefixed pair in input. An escChar with
+// no byte after it is left as-is, whether it is the only one or the last of
+// several: an escape sequence is two bytes, and a single trailing byte cannot
+// form one.
+func unescapeByChar(input string, escChar byte) string {
+	first := strings.IndexByte(input, escChar)
+	if first < 0 || first+1 == len(input) {
+		return input
+	}
+
+	var result strings.Builder
+	result.Grow(len(input) - 1)
+	result.WriteString(input[:first])
+
+	remaining := input[first:]
+	for len(remaining) > 1 {
+		result.WriteByte(escapedCharToByte(remaining[1]))
+		remaining = remaining[2:]
+
+		next := strings.IndexByte(remaining, escChar)
+		if next < 0 {
+			result.WriteString(remaining)
+			return result.String()
+		}
+		result.WriteString(remaining[:next])
+		remaining = remaining[next:]
+	}
+
+	result.WriteString(remaining)
+	return result.String()
+}
+
+func escapedCharToByte(input byte) byte {
+	switch input {
+	case '0':
+		return 0
+	case 'b':
+		return '\b'
+	case 'n':
+		return '\n'
+	case 'r':
+		return '\r'
+	case 't':
+		return '\t'
+	case 'Z':
+		return '\x1a'
+	default:
+		return input
+	}
 }
 
 func (parser *ChunkParser) unescapeString(input string) string {
 	if len(input) >= 2 {
 		switch input[0] {
 		case '\'', '"':
-			return unescape(input[1:len(input)-1], input[:1], parser.escFlavor, '\\', chunkParserUnescapeRegexp)
+			return unescape(input[1:len(input)-1], input[:1], parser.escFlavor, '\\')
 		case '`':
-			return unescape(input[1:len(input)-1], "`", escapeFlavorNone, '\\', chunkParserUnescapeRegexp)
+			return unescape(input[1:len(input)-1], "`", escapeFlavorNone, '\\')
 		}
 	}
 	return input
@@ -484,6 +540,8 @@ func (parser *ChunkParser) ReadRow() error {
 	row := &parser.lastRow
 	st := stateValues
 	row.Length = 0
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
 
 	for {
 		tok, content, err := parser.lex()

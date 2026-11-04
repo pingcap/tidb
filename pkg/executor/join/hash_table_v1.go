@@ -532,6 +532,17 @@ func (c *hashRowContainer) Len() uint64 {
 	return c.hashTable.Len()
 }
 
+// hashStateRows returns rows admitted to completed lookup structures. Rows
+// sharing a key count separately; ordinary null-key rows rejected from the
+// hash table do not count, while NAAJ rows retained in its null bucket do.
+func (c *hashRowContainer) hashStateRows() uint64 {
+	rows := c.Len()
+	if c.hashNANullBucket == nil {
+		return rows
+	}
+	return rows + uint64(len(c.hashNANullBucket.entries))
+}
+
 func (c *hashRowContainer) Close() error {
 	failpoint.Inject("issue60926", nil)
 
