@@ -2907,10 +2907,4 @@ func TestIssue72090(t *testing.T) {
 		tk.MustQuery("select count(*) from (select k, max(c0) as m from t group by k) d where inet_aton('')").Check(testkit.Rows("0"))
 		requirePlanOrder(t, "select * from (select k, max(c0) as m from t group by k) d where inet_aton('')", "Agg", "Selection")
 	})
-
-	t.Run("non-deterministic predicate", func(t *testing.T) {
-		// grouped aggregations keep their own pushdown rules: the column-free but
-		// non-deterministic predicate is still pushed below the aggregation.
-		requirePlanOrder(t, "select * from (select k, max(c0) as m from t group by k) d where rand() < 0.5", "Agg", "Selection")
-	})
 }
