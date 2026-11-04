@@ -16,7 +16,9 @@ struct LockKeysDetailsContextKey;
 struct ExecDetailsContextKey;
 struct RuDetailsContextKey;
 
-pub type SharedCommitDetails = Arc<Mutex<CommitDetails>>;
+/// client-go's `CommitDetailCtxKey` value, a `**util.CommitDetails`: unset
+/// until a commit publishes its details into it.
+pub type SharedCommitDetails = Arc<Mutex<Option<CommitDetails>>>;
 pub type SharedLockKeysDetails = Arc<Mutex<LockKeysDetails>>;
 
 pub fn context_with_commit_details(

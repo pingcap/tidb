@@ -11,5 +11,6 @@ description = "TiDB pkg/session/txninfo: transaction info and summaries (Rust)."
 workspace = true
 
 [dependencies]
+tikv-client.workspace = true
 serde_json = { workspace = true }
 tidb-datatype = { path = "../tidb-datatype" }

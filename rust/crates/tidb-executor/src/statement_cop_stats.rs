@@ -54,6 +54,12 @@ impl StatementCopStats {
         self.exec_details.exec_details()
     }
 
+    /// Go `StmtCtx.MergeExecDetails(nil, commitDetail)`, which `doCommit`
+    /// runs after the commit.
+    pub fn merge_commit_details(&self, commit_details: &tidb_execdetails::exec_details::CommitDetails) {
+        self.exec_details.merge_exec_details(Some(commit_details));
+    }
+
     /// Go `StmtCtx.CopTasksDetails`: `None` when no cop task reported.
     #[must_use]
     pub fn cop_tasks_details(&self) -> Option<CopTasksDetails> {

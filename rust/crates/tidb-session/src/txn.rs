@@ -440,7 +440,6 @@ impl Session {
     /// integer or a string of digits. A raw TSO whose physical half is
     /// before 2013-01-01 refuses with Go's own message.
     pub(crate) fn calculate_as_of_ts_expr(&mut self, expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
-        const TSO_LOGICAL_BITS: u32 = 18;
         // 2013-01-01 00:00:00 UTC in milliseconds, Go's `minTSO` bound.
         const MIN_PHYSICAL_MS: u64 = 1_356_998_400_000;
         let value = self.eval_value(expr)?;
@@ -474,7 +473,8 @@ impl Session {
             _ => None,
         };
         if let Some(seconds) = seconds {
-            return Ok(((seconds * 1000.0) as u64) << TSO_LOGICAL_BITS);
+            // Go `oracle.GoTimeToTS`.
+            return Ok(tikv_client::oracle::compose_timestamp((seconds * 1000.0) as i64, 0));
         }
         let Ok(tso) = text.parse::<u64>() else {
             return Err(as_of_error(
@@ -483,7 +483,7 @@ impl Session {
         };
         // Only a raw TSO is bounded (util.go:77-80); a datetime before 2013
         // is a valid read timestamp that the GC safe point then refuses.
-        if (tso >> TSO_LOGICAL_BITS) <= MIN_PHYSICAL_MS {
+        if tikv_client::oracle::extract_physical(tso) <= MIN_PHYSICAL_MS as i64 {
             return Err(as_of_error(
                 "invalid TSO timestamp: TSO is before 2013-01-01",
             ));

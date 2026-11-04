@@ -2,9 +2,9 @@
   "date": "2026-11-04",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 42,
-    "open": 13,
-    "partial": 29
+    "unresolved": 45,
+    "open": 14,
+    "partial": 31
   },
   "findings": [
     {
@@ -121,6 +121,27 @@
       "group": "Transaction and routing ownership",
       "finding": "Two region-cache lifecycles (TiDB and the native client): coprocessor RequestSelector, store-health recovery, batch-scan follower reads",
       "go_owner": "client-go `internal/locate`"
+    },
+    {
+      "id": "T04",
+      "status": "partial",
+      "group": "Transaction and routing ownership",
+      "finding": "client-rust's committer fills `CommitDetails`' write keys/size and prewrite, latest-ts, commit-ts, commit and local-latch times (published through `CommitDetailCtxKey` and merged into the statement), but not client-go's prewrite/commit backoff time and types, per-request `MergePrewriteReqDetails`/`MergeCommitReqDetails`, prewrite region and request counts, resolve-lock detail or binlog wait",
+      "go_owner": "client-go `txnkv/transaction` (`twoPhaseCommitter` detail), `pkg/session` (`doCommit`), `pkg/util/execdetails`"
+    },
+    {
+      "id": "T05",
+      "status": "open",
+      "group": "Transaction and routing ownership",
+      "finding": "client-rust's `LockKeysDetails` carries the locked-key count, total time and fair-locking counts, but not client-go's region count, lock RPC time/count, retry count, backoff time/types or resolve-lock detail",
+      "go_owner": "client-go `txnkv/transaction` (`pessimisticLockMutations`, `LockKeys`), `util.LockKeysDetails`"
+    },
+    {
+      "id": "T06",
+      "status": "partial",
+      "group": "Transaction and routing ownership",
+      "finding": "`tidb-txnkv::retry::RegionBackoffBudget`/`RegionBackoffKind` wrap client-rust's Backoffer under their own names, where Go TiDB's copr/MPP/lock callers use client-go `backoff.NewBackofferWithVars` and its configs directly",
+      "go_owner": "client-go `config/retry`, `pkg/store/copr`"
     },
     {
       "id": "O02",

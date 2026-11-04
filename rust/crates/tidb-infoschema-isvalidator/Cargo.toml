@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB schema validator: Go pkg/infoschema/isvalidator (Rust rewrite)."
 
 [dependencies]
+tikv-client.workspace = true
 tidb-vardef = { path = "../tidb-vardef" }
 
 [lints]

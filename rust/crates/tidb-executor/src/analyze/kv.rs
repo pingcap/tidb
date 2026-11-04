@@ -251,11 +251,7 @@ pub fn analyze_kv_table_independent_index(
 /// back), with the 18-bit logical counter left zero.
 #[must_use]
 pub fn now_tso_shaped() -> u64 {
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| since.as_millis() as u64)
-        .unwrap_or_default();
-    millis << crate::show_stats::PHYSICAL_SHIFT_BITS
+    tikv_client::oracle::system_time_to_timestamp(std::time::SystemTime::now())
 }
 
 /// Go's `DecodeTopN`, which is the step this tier would otherwise skip.

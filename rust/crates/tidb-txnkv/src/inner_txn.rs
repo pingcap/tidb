@@ -161,13 +161,17 @@ pub fn report_min_start_ts(
     active: impl IntoIterator<Item = u64>,
     inner: &InnerTxnStartTsBox,
 ) -> u64 {
-    let now_ms = current_version >> 18;
-    let lower = now_ms.saturating_sub(max_wait_seconds.saturating_mul(1000)) << 18;
+    // Go `oracle.GetTimeFromTS`, `GoTimeToLowerLimitStartTS` and `GoTimeToTS`.
+    let now = tikv_client::oracle::get_time_from_timestamp(current_version);
+    let lower = tikv_client::oracle::system_time_to_lower_limit_start_timestamp(
+        now,
+        i64::try_from(max_wait_seconds.saturating_mul(1000)).unwrap_or(i64::MAX),
+    );
     let minimum = active
         .into_iter()
         .filter(|ts| *ts > lower)
-        .fold(now_ms << 18, u64::min);
-    inner.get_min_start_ts(UNIX_EPOCH + Duration::from_millis(now_ms), lower, minimum)
+        .fold(tikv_client::oracle::system_time_to_timestamp(now), u64::min);
+    inner.get_min_start_ts(now, lower, minimum)
 }
 
 /// One long-running inner transaction observation.
@@ -183,8 +187,7 @@ pub struct LongRunningInnerTxn {
 
 /// Converts a TSO to its physical wall-clock time.
 fn tso_time(start_ts: u64) -> SystemTime {
-    // TiDB TSO reserves 18 logical bits below the physical milliseconds.
-    UNIX_EPOCH + Duration::from_millis(start_ts >> 18)
+    tikv_client::oracle::get_time_from_timestamp(start_ts)
 }
 
 /// Returns a long-running observation when the source five-minute threshold is

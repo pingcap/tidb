@@ -4929,6 +4929,7 @@ dependencies = [
  "tidb-vardef",
  "tidb-variable",
  "tidb-vitess",
+ "tikv-client",
 ]
 
 [[package]]
@@ -5069,6 +5070,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "tidb-go-time-layout",
+ "tidb-model",
  "tidb-vardef",
  "tikv-client",
 ]
@@ -5245,6 +5247,7 @@ name = "tidb-infoschema-isvalidator"
 version = "0.0.0"
 dependencies = [
  "tidb-vardef",
+ "tikv-client",
 ]
 
 [[package]]
@@ -6973,6 +6976,7 @@ dependencies = [
  "tidb-util",
  "tidb-vardef",
  "tidb-variable",
+ "tikv-client",
 ]
 
 [[package]]
@@ -7217,6 +7221,7 @@ dependencies = [
  "tidb-model",
  "tidb-stats",
  "tidb-stats-handle-util",
+ "tikv-client",
 ]
 
 [[package]]
@@ -7443,6 +7448,7 @@ dependencies = [
  "tidb-table",
  "tidb-variable",
  "tidb-worker-stack",
+ "tikv-client",
 ]
 
 [[package]]
@@ -7910,6 +7916,7 @@ dependencies = [
  "tidb-model",
  "tidb-ttl",
  "tidb-vardef",
+ "tikv-client",
 ]
 
 [[package]]
@@ -8149,6 +8156,7 @@ version = "0.0.0"
 dependencies = [
  "serde_json",
  "tidb-datatype",
+ "tikv-client",
 ]
 
 [[package]]

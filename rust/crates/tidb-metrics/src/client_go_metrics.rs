@@ -274,37 +274,6 @@ pub fn is_internal_request(request_source: &str) -> bool {
     request_source.starts_with("internal")
 }
 
-/// Go `metrics.TwoPCTxnCounter*` commit-protocol counter shortcuts.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TxnCommitProtocol {
-    /// Classic two-phase commit.
-    TwoPc,
-    /// Async-commit protocol.
-    AsyncCommit,
-    /// One-phase commit inside prewrite.
-    OnePc,
-}
-
-/// Go `twoPhaseCommitter.execute`'s deferred counters
-/// (`2pc.go:1755-1795`): exactly one ok/err shortcut fires per commit
-/// attempt, chosen by protocol and terminal classification. The 2PC arm
-/// counts `committed || undetermined` as ok; the 1PC and async-commit arms
-/// count any error as err.
-pub fn record_txn_commit(protocol: TxnCommitProtocol, succeeded: bool) {
-    let source_name = match (protocol, succeeded) {
-        (TxnCommitProtocol::TwoPc, true) => "TwoPCTxnCounterOk",
-        (TxnCommitProtocol::TwoPc, false) => "TwoPCTxnCounterError",
-        (TxnCommitProtocol::AsyncCommit, true) => "AsyncCommitTxnCounterOk",
-        (TxnCommitProtocol::AsyncCommit, false) => "AsyncCommitTxnCounterError",
-        (TxnCommitProtocol::OnePc, true) => "OnePCTxnCounterOk",
-        (TxnCommitProtocol::OnePc, false) => "OnePCTxnCounterError",
-    };
-    if let Some(tikv_client::metrics::ClientGoShortcut::Counter(counter)) =
-        tikv_client::metrics::global_metrics().shortcut(source_name)
-    {
-        counter.inc();
-    }
-}
 
 /// Go `storeMetrics.updateRPCMetrics` (`client.go:894-928`): charges one RPC
 /// attempt's wall time to `tidb_tikvclient_request_seconds` (histogram) and
@@ -387,40 +356,4 @@ pub fn definitions() -> Vec<(String, String, &'static str)> {
             Some((fq, spec.help.to_owned(), kind))
         })
         .collect()
-}
-
-
-/// client-go `metrics.TxnCommitCounter`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
-pub struct TxnCommitCounter {
-    #[serde(rename = "twoPC")]
-    pub two_pc: i64,
-    #[serde(rename = "asyncCommit")]
-    pub async_commit: i64,
-    #[serde(rename = "onePC")]
-    pub one_pc: i64,
-}
-
-impl TxnCommitCounter {
-    /// client-go `TxnCommitCounter.Sub`.
-    #[must_use]
-    pub const fn sub(self, rhs: Self) -> Self {
-        Self {
-            two_pc: self.two_pc - rhs.two_pc,
-            async_commit: self.async_commit - rhs.async_commit,
-            one_pc: self.one_pc - rhs.one_pc,
-        }
-    }
-}
-
-/// client-go `metrics.GetTxnCommitCounter`: the successful commits by
-/// protocol.
-#[must_use]
-pub fn get_txn_commit_counter() -> TxnCommitCounter {
-    let counter = tikv_client::metrics::global_metrics().get_txn_commit_counter();
-    TxnCommitCounter {
-        two_pc: counter.two_pc,
-        async_commit: counter.async_commit,
-        one_pc: counter.one_pc,
-    }
 }

@@ -162,8 +162,7 @@ pub struct GcConcurrency {
 
 /// Go `oracle.GetTimeFromTS`.
 pub(crate) fn time_from_ts(ts: u64) -> DateTime<FixedOffset> {
-    let physical_ms = (ts >> 18) as i64;
-    DateTime::from_timestamp_millis(physical_ms)
+    DateTime::from_timestamp_millis(tikv_client::oracle::extract_physical(ts))
         .expect("a TSO's physical part is a valid instant")
         .with_timezone(&Local)
         .fixed_offset()
@@ -171,13 +170,9 @@ pub(crate) fn time_from_ts(ts: u64) -> DateTime<FixedOffset> {
 
 /// Go `oracle.GoTimeToTS`.
 pub(crate) fn go_time_to_ts(time: DateTime<FixedOffset>) -> u64 {
-    (time.timestamp_millis() as u64) << 18
+    tikv_client::oracle::compose_timestamp(time.timestamp_millis(), 0)
 }
 
-/// Go `oracle.ComposeTS`.
-fn compose_ts(physical: i64, logical: i64) -> u64 {
-    ((physical << 18) + logical) as u64
-}
 
 /// Go `time.Now().String()`: the wall clock and the monotonic reading.
 fn go_time_now_string() -> String {
@@ -1284,7 +1279,7 @@ impl GcJobContext {
         gc_worker_counter("redo_delete_range");
 
         // Check the delete range records deleted about 24 hours ago.
-        let redo_delete_ranges_ts = safe_point.wrapping_sub(compose_ts(
+        let redo_delete_ranges_ts = safe_point.wrapping_sub(tikv_client::oracle::compose_timestamp(
             GC_REDO_DELETE_RANGE_DELAY.as_secs() as i64 * 1000,
             0,
         ));

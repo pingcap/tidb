@@ -108,6 +108,9 @@ pub struct TikvTransactionDriver<PdC: PdClient> {
     start_ts: u64,
     pipelined_dml: bool,
     read_only: bool,
+    /// Go `ctx.Value(util.CommitDetailCtxKey)` of the statement that
+    /// commits.
+    commit_details: Option<tikv_client::util::SharedCommitDetails>,
 }
 
 impl<PdC: PdClient> TikvTransactionDriver<PdC> {
@@ -146,6 +149,7 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
             start_ts,
             pipelined_dml,
             read_only,
+            commit_details: None,
         };
         driver.set_size_limits(tidb_txnkv::txn_entry_size_limit(), tidb_txnkv::txn_total_size_limit());
         driver
@@ -312,9 +316,32 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
     /// Runs client-go two-phase commit over the staged buffer. Returns the
     /// commit timestamp for a transaction that wrote anything.
     pub fn commit(&mut self) -> Result<Option<u64>, TikvTransactionError> {
+        let commit_details = self.commit_details.clone();
         Ok(self
-            .run(|transaction| transaction.commit())?
+            .run(move |transaction| async move {
+                match commit_details {
+                    // Go `doCommit`'s `context.WithValue(ctx,
+                    // util.CommitDetailCtxKey, &commitDetail)`.
+                    Some(slot) => {
+                        let context = tikv_client::util::context_with_commit_details(
+                            &tikv_client::trace::current_trace_context(),
+                            slot,
+                        );
+                        // The client's commit state machine is large; keep it
+                        // off the stack of the thread that blocks on it.
+                        tikv_client::trace::with_trace_context(context, Box::pin(transaction.commit()))
+                            .await
+                    }
+                    None => Box::pin(transaction.commit()).await,
+                }
+            })?
             .map(|timestamp| timestamp.version()))
+    }
+
+    /// Sets the statement's `CommitDetailCtxKey` slot a commit publishes
+    /// into.
+    pub fn set_commit_details(&mut self, slot: Option<tikv_client::util::SharedCommitDetails>) {
+        self.commit_details = slot;
     }
 
     /// Rolls the transaction back; staged entries never reach the store.

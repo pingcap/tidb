@@ -379,9 +379,8 @@ pub fn exec_with_opts_with_ctx<C: StatsSessionContext + ?Sized>(
 
 /// Go `DurationToTS`. `duration_nanoseconds` is the signed representation of
 /// Go `time.Duration`.
-pub const fn duration_to_ts(duration_nanoseconds: i64) -> u64 {
-    let physical_milliseconds = duration_nanoseconds / 1_000_000;
-    (physical_milliseconds << 18) as u64
+pub fn duration_to_ts(duration_nanoseconds: i64) -> u64 {
+    tikv_client::oracle::compose_timestamp(duration_nanoseconds / 1_000_000, 0)
 }
 
 /// Go `IsSpecialGlobalIndex` over the package-owned model types.

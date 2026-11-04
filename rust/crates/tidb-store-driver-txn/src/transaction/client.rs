@@ -259,6 +259,9 @@ impl<S: PdClient> RealTransaction<S> {
                     .set_exec_details(Arc::clone(exec_details));
             }
         }
+        // The slot is per statement; a statement without one commits without
+        // publishing details.
+        self.engine.set_commit_details(context.commit_details.clone());
         if let Some(tagger) = &context.resource_group_tagger {
             let applied = self.applied_kv_context.resource_group_tagger.as_ref();
             // Go: a pipelined transaction may already flush in the

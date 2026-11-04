@@ -70,9 +70,6 @@ use tidb_vardef::defaults::DEF_TIDB_MAX_DELTA_SCHEMA_COUNT;
 /// One millisecond, in the nanosecond unit this module keeps instants in.
 const NANOS_PER_MILLI: i64 = 1_000_000;
 
-/// Bits `oracle.ComposeTS` shifts the physical millisecond by.
-const PHYSICAL_SHIFT_BITS: u32 = 18;
-
 /// Go `oracle.GetTimeFromTS`: the physical half of a TSO, as nanoseconds
 /// since the Unix epoch.
 ///
@@ -82,8 +79,7 @@ const PHYSICAL_SHIFT_BITS: u32 = 18;
 /// millisecond compare equal here exactly as they do in Go.
 #[must_use]
 pub fn get_time_from_ts(ts: u64) -> i64 {
-    let physical_ms = i64::try_from(ts >> PHYSICAL_SHIFT_BITS).unwrap_or(i64::MAX);
-    physical_ms.saturating_mul(NANOS_PER_MILLI)
+    tikv_client::oracle::extract_physical(ts).saturating_mul(NANOS_PER_MILLI)
 }
 
 /// The schema change carried alongside a version bump.
@@ -791,7 +787,7 @@ mod tests {
     fn reset_clears_what_restart_installs() {
         let _serialised = serialised();
         let validator = SchemaValidator::new(LEASE);
-        let grant_ts = (12_345u64 << PHYSICAL_SHIFT_BITS) | 7;
+        let grant_ts = tikv_client::oracle::compose_timestamp(12_345, 7);
         validator.update(grant_ts, 0, 1, Some(&change(&[1], &[1])));
         validator.restart(9);
         assert_eq!(validator.restart_schema_ver(), 9);
@@ -821,7 +817,7 @@ mod tests {
     fn mdl_skips_the_delta_scan() {
         let _serialised = serialised();
         let validator = SchemaValidator::new(LEASE);
-        let grant_ts = (12_345u64 << PHYSICAL_SHIFT_BITS) | 7;
+        let grant_ts = tikv_client::oracle::compose_timestamp(12_345, 7);
         validator.update(grant_ts, 0, 1, Some(&change(&[1], &[1])));
         validator.update(grant_ts, 1, 2, Some(&change(&[1], &[1])));
 

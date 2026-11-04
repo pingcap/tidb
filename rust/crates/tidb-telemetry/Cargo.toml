@@ -14,6 +14,7 @@ workspace = true
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tikv-client.workspace = true
 tidb-br = { path = "../tidb-br" }
 tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }

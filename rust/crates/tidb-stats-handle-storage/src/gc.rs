@@ -73,17 +73,14 @@ pub fn delete_table_stats_from_kv<C: StatsSessionContext + ?Sized>(
 /// Go `gcLastTSVarName`.
 const GC_LAST_TS_VAR_NAME: &str = "tidb_stats_gc_last_ts";
 
-/// Go `util.DurationToTS`: the duration's milliseconds as a TSO.
+/// Go `util.DurationToTS`.
 fn duration_to_ts(duration: Duration) -> u64 {
-    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX >> 18) << 18
+    tidb_stats_handle_util::duration_to_ts(i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX))
 }
 
 /// Go `oracle.GoTimeToTS(time.Now())`.
 fn now_ts() -> u64 {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_millis());
-    u64::try_from(millis).unwrap_or(u64::MAX >> 18) << 18
+    tikv_client::oracle::system_time_to_timestamp(SystemTime::now())
 }
 
 /// Go `GCStats`: the statistics of tables (and columns / indexes) dropped

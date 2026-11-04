@@ -451,12 +451,12 @@ pub(crate) fn lease_from_ts(ts: u64, lease_duration: Duration) -> u64 {
 
 /// Go `oracle.GetTimeFromTS`, as Unix milliseconds.
 pub(crate) fn get_time_from_ts(ts: u64) -> u64 {
-    ts >> 18
+    tikv_client::oracle::extract_physical(ts) as u64
 }
 
 /// Go `oracle.GoTimeToTS`, from Unix milliseconds.
 pub(crate) fn go_time_to_ts(unix_millis: u64) -> u64 {
-    unix_millis << 18
+    tikv_client::oracle::compose_timestamp(unix_millis as i64, 0)
 }
 
 pub(crate) fn unix_millis_now() -> u64 {

@@ -805,6 +805,9 @@ pub struct Session {
     /// Go `StmtCtx.ReadFromTableCache` of the statement now running, which
     /// `FinishExecuteStmt` counts.
     read_from_table_cache: Arc<std::sync::atomic::AtomicBool>,
+    /// Go `doCommit`'s `CommitDetailCtxKey` value for the running
+    /// statement, merged into its exec details when it finishes.
+    statement_commit_details: tikv_client::util::SharedCommitDetails,
     /// Go `TxnCtx.FairLockingUsed` / `TxnCtx.FairLockingEffective` of the
     /// open transaction.
     txn_fair_locking: (bool, bool),
@@ -1004,6 +1007,7 @@ impl Session {
             client_local_file_reader: None,
             planned_apply: Arc::default(),
             read_from_table_cache: Arc::default(),
+            statement_commit_details: Arc::default(),
             txn_fair_locking: (false, false),
             telemetry_info: Arc::default(),
             builtin_function_usage: Arc::default(),

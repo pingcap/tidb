@@ -27679,3 +27679,65 @@ fn the_sysvar_reload_reads_a_peers_row_through_the_domains_sessions_as_go() {
         [["536870912"]]
     );
 }
+
+/// Go `doCommit`'s `CommitDetailCtxKey`: client-go fills the committing
+/// statement's `CommitDetails` -- its write keys and the prewrite and commit
+/// phases -- and the statement summary reports them. An explicit
+/// transaction's details belong to its COMMIT, not to the writes before it.
+#[test]
+fn a_commit_reports_its_commit_details_in_the_statement_summary() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1191)).unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
+    session
+        .node_conn()
+        .execute_write("SET GLOBAL tidb_enable_stmt_summary = 1")
+        .unwrap();
+    session
+        .node_conn()
+        .execute_write("CREATE TABLE commit_details_auto (a int)")
+        .unwrap();
+    session
+        .node_conn()
+        .execute_write("CREATE TABLE commit_details_txn (a int)")
+        .unwrap();
+    session
+        .node_conn()
+        .execute_write("INSERT INTO commit_details_auto VALUES (1), (2), (3)")
+        .unwrap();
+    session.node_conn().control_transaction("BEGIN").unwrap();
+    session
+        .node_conn()
+        .execute_write("INSERT INTO commit_details_txn VALUES (1), (2)")
+        .unwrap();
+    session.node_conn().control_transaction("COMMIT").unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT max_write_keys, max_prewrite_time > 0, max_commit_time > 0 \
+             FROM information_schema.statements_summary \
+             WHERE digest_text LIKE 'insert into `commit_details_auto`%'",
+        )),
+        [["3", "1", "1"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT max_write_keys FROM information_schema.statements_summary \
+             WHERE digest_text LIKE 'insert into `commit_details_txn`%'",
+        )),
+        [["0"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT max_write_keys, max_commit_time > 0 FROM information_schema.statements_summary \
+             WHERE digest_text = 'commit'",
+        )),
+        [["2", "1"]]
+    );
+    session
+        .node_conn()
+        .execute_write("SET GLOBAL tidb_enable_stmt_summary = DEFAULT")
+        .unwrap();
+}

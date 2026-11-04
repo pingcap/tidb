@@ -90,10 +90,6 @@ use tidb_stats::{Histogram, TopN};
 
 use tidb_stats::Table;
 
-/// Go `oracle.physicalShiftBits`: a TSO's low 18 bits are its logical
-/// counter, so the physical half is milliseconds since the Unix epoch.
-pub const PHYSICAL_SHIFT_BITS: u64 = 18;
-
 /// Go `(*ShowExec).versionToTime` (:280): `oracle.GetTimeFromTS` then
 /// `types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, 0)`.
 ///
@@ -106,7 +102,7 @@ pub const PHYSICAL_SHIFT_BITS: u64 = 18;
 /// (`oracle.GetTimeFromTS` calls `time.Unix`), not the session zone; the
 /// caller supplies the zone here so that choice stays visible.
 pub fn version_to_time<TZ: chrono::TimeZone>(version: u64, zone: &TZ) -> Option<Time> {
-    let physical_millis = i64::try_from(version >> PHYSICAL_SHIFT_BITS).ok()?;
+    let physical_millis = tikv_client::oracle::extract_physical(version);
     let instant = chrono::DateTime::from_timestamp_millis(physical_millis)?;
     let core = core_time_from_datetime(instant.with_timezone(zone));
     Time::new(core, TimeType::DateTime, 0).ok()
@@ -705,7 +701,7 @@ mod tests {
     #[test]
     fn version_to_time_reads_the_tso_physical_half() {
         // 1700000000123 ms since the epoch, shifted into a TSO.
-        let version = 1_700_000_000_123u64 << PHYSICAL_SHIFT_BITS;
+        let version = tikv_client::oracle::compose_timestamp(1_700_000_000_123, 0);
         let time = version_to_time(version, &chrono::Utc).expect("a valid instant");
         assert_eq!(time.kind(), TimeType::DateTime);
         // fsp 0: the 123 ms are not rendered.
@@ -728,7 +724,7 @@ mod tests {
     // WRITTEN test for :108-133: the pseudo skip and the IsAnalyzed branch.
     #[test]
     fn stats_meta_row_nulls_the_analyze_time_when_never_analyzed() {
-        let version = 1_700_000_000_000u64 << PHYSICAL_SHIFT_BITS;
+        let version = tikv_client::oracle::compose_timestamp(1_700_000_000_000, 0);
         let mut stats = Table::default();
         stats.version = version;
         stats.hist_coll.modify_count = 5;
@@ -772,7 +768,7 @@ mod tests {
             id: 3,
             ndv: 42,
             null_count: 7,
-            last_update_version: 1_700_000_000_000u64 << PHYSICAL_SHIFT_BITS,
+            last_update_version: tikv_client::oracle::compose_timestamp(1_700_000_000_000, 0),
             correlation: -0.5,
             ..Histogram::default()
         };

@@ -181,7 +181,7 @@ impl TransactionHistoryRecorder {
         digests: Vec<String>,
         now: std::time::SystemTime,
     ) {
-        let start = std::time::UNIX_EPOCH + std::time::Duration::from_millis(start_ts >> 18);
+        let start = tikv_client::oracle::get_time_from_timestamp(start_ts);
         let mut state = self
             .state
             .lock()

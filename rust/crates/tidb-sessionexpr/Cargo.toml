@@ -11,6 +11,7 @@ description = "TiDB pkg/expression/sessionexpr (Rust)."
 workspace = true
 
 [dependencies]
+tikv-client.workspace = true
 tidb-expropt = { path = "../tidb-expropt" }
 tidb-exprstatic = { path = "../tidb-exprstatic" }
 tidb-exprctx = { path = "../tidb-exprctx" }

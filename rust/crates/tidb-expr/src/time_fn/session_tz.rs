@@ -413,7 +413,7 @@ pub(super) fn tidb_parse_tso(vals: &[Datum], cols: &dyn Columns) -> Result<Datum
     if tso <= 0 {
         return Ok(Datum::Null);
     }
-    let physical_ms = tso >> 18;
+    let physical_ms = tikv_client::oracle::extract_physical(tso as u64);
     let secs = physical_ms.div_euclid(1000);
     let micros = (physical_ms.rem_euclid(1000) * 1000) as u32;
     let Some(local) = instant_to_local(secs, micros, &cols.time_zone()) else {

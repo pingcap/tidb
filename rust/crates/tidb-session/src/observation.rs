@@ -364,6 +364,10 @@ impl Session {
         self.statement_ended_txn_start_ts = None;
         self.statement_began_txn = false;
         self.statement_committed_txn = false;
+        *self
+            .statement_commit_details
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         self.statement_observation = Some(StatementObservation {
             sql: sql.to_owned(),
             text,
@@ -467,6 +471,7 @@ impl Session {
                         .set_sql_digest(sql_digest);
                     tagger.encode_tag_with_key(key)
                 })),
+                commit_details: Some(Arc::clone(&self.statement_commit_details)),
             });
     }
 
@@ -712,6 +717,16 @@ impl Session {
         let Some(observation) = self.statement_observation.take() else {
             return;
         };
+        // Go `doCommit`: `StmtCtx.MergeExecDetails(nil, commitDetail)` once
+        // the commit (with its retries) returned.
+        if let Some(commit_details) = self
+            .statement_commit_details
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            observation.cop_stats.merge_commit_details(&commit_details);
+        }
         // Go observes compiled statements, not a parser failure without an AST.
         if observation.label.is_empty() {
             return;

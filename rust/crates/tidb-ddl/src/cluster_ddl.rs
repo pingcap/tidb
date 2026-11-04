@@ -8312,7 +8312,9 @@ fn add_history_ddl_job(
         quote(&job.schema_id.to_string()),
         quote(&job.table_id.to_string()),
         // Go `model.TSConvert2Time(job.StartTS).String()`.
-        quote(&tidb_go_time_layout::go_unix_milli_string((job.start_ts >> 18) as i64)),
+        quote(&tidb_go_time_layout::go_unix_milli_string(
+            tidb_model::GoTime::from_tso(job.start_ts).unix_millis(),
+        )),
     );
     if let Err(error) = session.execute(start_ts, &sql, &[]) {
         tidb_ddl_logutil::ddl_logger().info(

@@ -11,6 +11,7 @@ description = "TiDB auto-analyze priority queue package."
 workspace = true
 
 [dependencies]
+tikv-client.workspace = true
 tidb-goruntime = { path = "../tidb-goruntime" }
 chrono = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

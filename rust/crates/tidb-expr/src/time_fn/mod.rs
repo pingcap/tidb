@@ -628,10 +628,6 @@ fn week_of_year_builtin(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Eva
     Ok(Datum::Int(week_of_year(date.0, date.1, date.2, 3, false).1))
 }
 
-/// The low 18 bits of a TSO carry its logical component (`oracle`'s
-/// `physicalShiftBits = 18`, `logicalBits = (1<<18)-1`).
-const TSO_LOGICAL_BITS: i64 = (1 << 18) - 1;
-
 /// `TIDB_PARSE_TSO_LOGICAL(tso)`. Port of `builtinTidbParseTsoLogicalSig` =
 /// `oracle.ExtractLogical`: the low 18 bits of the timestamp oracle value. A
 /// non-positive or NULL argument yields NULL. Session-independent (the physical
@@ -648,7 +644,7 @@ fn tidb_parse_tso_logical(vals: &[Datum]) -> Result<Datum, EvalError> {
     if tso <= 0 {
         return Ok(Datum::Null);
     }
-    Ok(Datum::Int(tso & TSO_LOGICAL_BITS))
+    Ok(Datum::Int(tikv_client::oracle::extract_logical(tso as u64)))
 }
 
 /// The `GET_FORMAT` lookup table. `format_type` is one of `DATE`/`DATETIME`/

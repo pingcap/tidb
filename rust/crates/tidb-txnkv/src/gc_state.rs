@@ -81,7 +81,7 @@ impl std::error::Error for VisibilityError {}
 /// `oracle.GetTimeFromTS(ts)` is a `time.Local` value, so `time.Time.String()`
 /// renders it in the process's zone with the zone's abbreviation.
 fn get_time_from_ts_string(ts: u64) -> String {
-    tidb_go_time_layout::go_unix_milli_string((ts >> 18) as i64)
+    tidb_go_time_layout::go_unix_milli_string(tikv_client::oracle::extract_physical(ts))
 }
 
 impl VisibilityError {

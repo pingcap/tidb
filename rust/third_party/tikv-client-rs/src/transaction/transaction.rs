@@ -4379,6 +4379,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             )));
         }
 
+        let mut local_latch_time = Duration::ZERO;
         let latch = if self.is_pipelined() || self.is_pessimistic() {
             None
         } else if let Some(scheduler) = &self.latches {
@@ -4386,7 +4387,10 @@ impl<PdC: PdClient> Transaction<PdC> {
                 .iter()
                 .map(|mutation| mutation.key.clone())
                 .collect();
+            let started = Instant::now();
             let latch = scheduler.lock(self.timestamp.version(), keys).await;
+            // client-go `commitDetail.LocalLatchTime`.
+            local_latch_time = started.elapsed();
             if latch.is_stale() {
                 return Err(crate::error::WriteConflictInLatchError {
                     start_timestamp: self.timestamp.version(),
@@ -4400,6 +4404,7 @@ impl<PdC: PdClient> Transaction<PdC> {
 
         let trace_context = crate::trace::current_trace_context();
         let commit_details = crate::util::commit_details_from_context(&trace_context).cloned();
+        let write_keys = mutations.len();
         let auto_heartbeat_starter = self.auto_heartbeat_starter(None);
         let presume_key_not_exists_keys = self.buffer.presume_key_not_exists_keys();
         let committer = Committer::new(
@@ -4427,10 +4432,20 @@ impl<PdC: PdClient> Transaction<PdC> {
         .with_for_update_ts_constraints(self.for_update_ts_constraints.clone())
         .with_stashed_assertion(stashed_assertion)
         .with_auto_heartbeat_starter(auto_heartbeat_starter)
-        .with_commit_details(commit_details);
+        .with_commit_detail(write_keys, write_size as usize, local_latch_time);
+        let detail = Arc::clone(&committer.detail);
         let res = committer
             .commit_with_value_discard(|| self.buffer.mem_buffer().discard_values())
             .await;
+        // client-go `KVTxn.Commit`'s deferred publication into
+        // `CommitDetailCtxKey`: a retried commit only counts the retry.
+        if let Some(slot) = commit_details {
+            let mut slot = slot.lock().unwrap();
+            match slot.as_mut() {
+                Some(published) => published.transaction_retry += 1,
+                None => *slot = Some(detail.lock().unwrap().clone()),
+            }
+        }
 
         if let (Some(latch), Ok(Some(commit_timestamp))) = (&latch, &res) {
             latch.set_commit_timestamp(commit_timestamp.version());
@@ -7036,8 +7051,9 @@ struct Committer<PdC: PdClient = PdRpcClient> {
     stashed_assertion: Option<kvrpcpb::AssertionFailed>,
     #[new(default)]
     auto_heartbeat_starter: Option<AutoHeartbeatStarter>,
+    /// client-go `twoPhaseCommitter.detail`.
     #[new(default)]
-    commit_details: Option<crate::util::SharedCommitDetails>,
+    detail: Arc<Mutex<crate::util::CommitDetails>>,
     start_instant: Instant,
 }
 
@@ -7075,7 +7091,7 @@ impl<PdC: PdClient> Clone for Committer<PdC> {
             for_update_ts_constraints: self.for_update_ts_constraints.clone(),
             stashed_assertion: self.stashed_assertion.clone(),
             auto_heartbeat_starter: self.auto_heartbeat_starter.clone(),
-            commit_details: self.commit_details.clone(),
+            detail: self.detail.clone(),
             start_instant: self.start_instant,
         }
     }
@@ -7202,8 +7218,15 @@ impl<PdC: PdClient> Committer<PdC> {
         self
     }
 
-    fn with_commit_details(mut self, details: Option<crate::util::SharedCommitDetails>) -> Self {
-        self.commit_details = details;
+    /// client-go `twoPhaseCommitter.initKeysAndMutations`' `CommitDetails`:
+    /// the transaction's write keys and size.
+    fn with_commit_detail(mut self, write_keys: usize, write_size: usize, local_latch_time: Duration) -> Self {
+        self.detail = Arc::new(Mutex::new(crate::util::CommitDetails {
+            write_keys,
+            write_size,
+            local_latch_time,
+            ..Default::default()
+        }));
         self
     }
 
@@ -7412,10 +7435,13 @@ impl<PdC: PdClient> Committer<PdC> {
         if (self.options.async_commit || self.options.try_one_pc)
             && (!self.settings.causal_consistency || self.settings.commit_wait_until_tso > 0)
         {
+            let started = Instant::now();
             let latest = self
                 .get_timestamp_for_commit_with_bo(&prewrite_bo)
                 .await?
                 .version();
+            // client-go `commitDetail.GetLatestTsTime`.
+            self.detail.lock().unwrap().get_latest_ts_time = started.elapsed();
             self.min_commit_ts
                 .try_update(latest.saturating_add(1), WriteAccessLevel::TwoPc);
         }
@@ -7435,8 +7461,11 @@ impl<PdC: PdClient> Committer<PdC> {
                 None => None,
             }
         };
+        let prewrite_started = Instant::now();
         let (prewrite_result, binlog_result) =
             tokio::join!(self.prewrite_with_bo(&prewrite_bo), binlog_prewrite);
+        // client-go `commitDetail.PrewriteTime`.
+        self.detail.lock().unwrap().prewrite_time = prewrite_started.elapsed();
         if let Some(binlog_result) = binlog_result {
             self.binlog_skipped = binlog_result.skipped();
             if let Some(error) = binlog_result.get_error() {
@@ -9220,8 +9249,8 @@ impl<PdC: PdClient> Committer<PdC> {
 
         let wait_time = started.elapsed();
         crate::stats::observe_commit_ts_lag(wait_time, attempts, result.is_ok());
-        if let Some(details) = &self.commit_details {
-            details.lock().unwrap().lag_details = crate::util::CommitTsLagDetails {
+        {
+            self.detail.lock().unwrap().lag_details = crate::util::CommitTsLagDetails {
                 wait_time,
                 backoff_count: attempts.saturating_sub(1).try_into().unwrap_or(i32::MAX),
                 first_lag_ts: first.version(),
@@ -9688,7 +9717,10 @@ impl<PdC: PdClient> Committer<PdC> {
 
     async fn prepare_primary_commit_timestamp(&self) -> Result<Timestamp> {
         crate::trace::client_span_event(|| "start get commit ts".to_owned());
+        let started = Instant::now();
         let commit_version = self.get_timestamp_for_commit().await?;
+        // client-go `commitDetail.GetCommitTsTime`.
+        self.detail.lock().unwrap().get_commit_ts_time = started.elapsed();
         crate::trace::client_span_event(|| "finish get commit ts".to_owned());
         crate::trace::client_span_tag("commitTs", || commit_version.version().to_string());
         // Standard 2PC validates schema before transaction lifetime and the
@@ -9701,7 +9733,10 @@ impl<PdC: PdClient> Committer<PdC> {
 
     async fn prepare_txn_file_commit_timestamp(&self) -> Result<Timestamp> {
         crate::trace::client_span_event(|| "start get commit ts".to_owned());
+        let started = Instant::now();
         let commit_version = self.get_timestamp_for_commit().await?;
+        // client-go `txn_file.go`'s `commitDetail.GetCommitTsTime`.
+        self.detail.lock().unwrap().get_commit_ts_time = started.elapsed();
         crate::trace::client_span_event(|| "finish get commit ts".to_owned());
         crate::trace::client_span_tag("commitTs", || commit_version.version().to_string());
         // Txn-file source order is observable: schema rejection prevents both
@@ -9898,6 +9933,7 @@ impl<PdC: PdClient> Committer<PdC> {
             None => crate::trace::BoSpanSlot::from_current(),
         };
         let span = commit_bo.start_span("twoPhaseCommitter.commitMutations");
+        let started = Instant::now();
         let result = crate::trace::with_bo_span_slot(
             commit_bo.clone(),
             self.commit_mutations(
@@ -9908,6 +9944,8 @@ impl<PdC: PdClient> Committer<PdC> {
             ),
         )
         .await;
+        // client-go `commitTxn`'s `commitDetail.CommitTime`.
+        self.detail.lock().unwrap().commit_time = started.elapsed();
         drop(span);
         result
     }
@@ -11076,8 +11114,8 @@ mod tests {
                                 transaction.set_commit_wait_until_tso_timeout(timeout);
                             }
 
-                            let details =
-                                Arc::new(Mutex::new(crate::util::CommitDetails::default()));
+                            let details: crate::util::SharedCommitDetails =
+                                Arc::new(Mutex::new(None));
                             let context = crate::util::context_with_commit_details(
                                 &crate::trace::TraceContext::new(),
                                 details.clone(),
@@ -11115,7 +11153,7 @@ mod tests {
                                     "{}",
                                     case.name
                                 );
-                                let details = details.lock().unwrap().clone();
+                                let details = details.lock().unwrap().clone().unwrap_or_default();
                                 if case.timestamp_offsets.len() == 1 {
                                     assert_eq!(increments, [0, 0, 0, 0], "{}", case.name);
                                     assert_eq!(

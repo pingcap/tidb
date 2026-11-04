@@ -2267,7 +2267,7 @@ pub fn parse_read_timestamp(
         .core_time()
         .to_datetime(zone)
         .map_err(|_| invalid())?;
-    Ok((instant.timestamp_millis() as u64) << 18)
+    Ok(tikv_client::oracle::compose_timestamp(instant.timestamp_millis(), 0))
 }
 
 

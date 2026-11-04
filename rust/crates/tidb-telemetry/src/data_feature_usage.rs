@@ -20,7 +20,7 @@ use std::sync::{Mutex, PoisonError};
 
 use serde::Serialize;
 use tidb_log::{Field, Value};
-use tidb_metrics::client_go_metrics::{get_txn_commit_counter, TxnCommitCounter};
+use tikv_client::metrics::{get_txn_commit_counter, TxnCommitCounter};
 use tidb_metrics::telemetry as m;
 use tidb_model::{TableCacheStatusType, TempTableType};
 use tidb_vardef::tidb_vars;
@@ -333,7 +333,7 @@ pub fn get_txn_usage_info(ctx: &dyn Session) -> TxnUsage {
     let async_commit_used = global_on(ctx, tidb_vars::TIDB_ENABLE_ASYNC_COMMIT);
     let one_pc_used = global_on(ctx, tidb_vars::TIDB_ENABLE1_PC);
     let initial = initial();
-    let diff = get_txn_commit_counter().sub(initial.txn_commit);
+    let diff = get_txn_commit_counter().subtract(initial.txn_commit);
     let mutation_checker_used = global_on(ctx, tidb_vars::TIDB_ENABLE_MUTATION_CHECKER);
     let assertion_used = ctx.get_global_sys_var(tidb_vars::TIDB_TXN_ASSERTION_LEVEL).unwrap_or_default();
     let rc_check_ts_used = global_on(ctx, tidb_vars::TIDB_RC_READ_CHECK_TS);

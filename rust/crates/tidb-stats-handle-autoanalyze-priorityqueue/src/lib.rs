@@ -1769,8 +1769,9 @@ impl AnalysisJobFactory {
         if !stats.is_analyzed() {
             return UNANALYZED_LAST_ANALYSIS_DURATION;
         }
-        let current_ms = self.current_ts >> 18;
-        let analyzed_ms = stats.last_analyze_version >> 18;
+        // Go `oracle.GetTimeFromTS` of both versions.
+        let current_ms = tikv_client::oracle::extract_physical(self.current_ts);
+        let analyzed_ms = tikv_client::oracle::extract_physical(stats.last_analyze_version);
         let milliseconds = i128::from(current_ms) - i128::from(analyzed_ms);
         i64::try_from(milliseconds.saturating_mul(1_000_000)).unwrap_or_else(|_| {
             if milliseconds.is_negative() {

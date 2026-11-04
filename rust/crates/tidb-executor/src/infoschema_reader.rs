@@ -1385,7 +1385,7 @@ pub fn update_time_datum(update_ts: u64, zone: &tidb_datatype::SessionTimeZone) 
     // Go `TSConvert2Time`: a table that never recorded a TSO (the seeded
     // `metrics_schema` ones) reads as the epoch in the session zone.
     let Some(moment) = zone
-        .timestamp_millis_opt((update_ts >> 18) as i64)
+        .timestamp_millis_opt(tidb_model::GoTime::from_tso(update_ts).unix_millis())
         .single()
         .map(|moment| moment.naive_local())
     else {

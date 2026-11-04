@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+tidb-model = { path = "../tidb-model" }
 tidb-go-time-layout = { path = "../tidb-go-time-layout" }
 chrono = "0.4"
 tikv-client.workspace = true

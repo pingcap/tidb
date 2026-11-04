@@ -526,7 +526,7 @@ use tidb_charset::Collation;
                     .and_then(|digest| texts.get(digest))
                     .filter(|text| !text.is_empty())
                     .cloned();
-                let start = DateTime::from_timestamp_millis((transaction.start_ts >> 18) as i64)
+                let start = DateTime::from_timestamp_millis(tikv_client::oracle::extract_physical(transaction.start_ts))
                     .map(DateTime::<Local>::from)
                     .map(|value| {
                         Datum::new_time(

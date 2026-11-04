@@ -259,8 +259,7 @@ pub trait PrivilegeManager: Send + Sync {
 #[must_use]
 pub fn get_time_from_ts(ts: u64) -> DateTime<Utc> {
     #[allow(clippy::cast_possible_wrap)]
-    let millis = (ts >> 18) as i64;
-    DateTime::from_timestamp_millis(millis).unwrap_or_else(Utc::now)
+    DateTime::from_timestamp_millis(tikv_client::oracle::extract_physical(ts)).unwrap_or_else(Utc::now)
 }
 
 /// The single sink Go reaches by handing the statement context's warning

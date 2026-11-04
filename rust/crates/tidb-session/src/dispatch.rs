@@ -2457,9 +2457,12 @@ impl Session {
         let ts = self.calculate_as_of_ts_expr(&tidb_ast::Expr::String(
             now.sql_string().unwrap_or_default(),
         ))?;
-        Ok(Some(
-            ((ts >> 18).saturating_sub(seconds.unsigned_abs().saturating_mul(1000))) << 18,
-        ))
+        // Go `oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(readStaleness))`.
+        let staleness_ms = i64::try_from(seconds.unsigned_abs().saturating_mul(1000)).unwrap_or(i64::MAX);
+        Ok(Some(tikv_client::oracle::compose_timestamp(
+            tikv_client::oracle::extract_physical(ts).saturating_sub(staleness_ms).max(0),
+            0,
+        )))
     }
 
     fn refuse_pinned_historical_read(&mut self, stmt: &Stmt) -> Result<(), DriverError> {

@@ -308,6 +308,9 @@ pub struct StatementKvContext {
     pub resource_group_tagger: Option<StatementResourceGroupTagger>,
     /// Go `lockCtx.ResourceGroupTagger`.
     pub pessimistic_lock_resource_group_tagger: Option<PessimisticLockResourceGroupTagger>,
+    /// Go `ctx.Value(util.CommitDetailCtxKey)`, which `doCommit` sets and
+    /// merges into the statement's exec details after the commit.
+    pub commit_details: Option<tikv_client::util::SharedCommitDetails>,
 }
 
 impl std::fmt::Debug for StatementKvContext {
@@ -325,6 +328,7 @@ impl std::fmt::Debug for StatementKvContext {
                 "pessimistic_lock_resource_group_tagger",
                 &self.pessimistic_lock_resource_group_tagger.is_some(),
             )
+            .field("commit_details", &self.commit_details.is_some())
             .finish()
     }
 }
