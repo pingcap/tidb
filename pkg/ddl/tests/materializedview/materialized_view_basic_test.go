@@ -48,6 +48,15 @@ func TestCreateMaterializedViewValidationCoverage(t *testing.T) {
 	tk.MustExec("create materialized view mv_count_column (a, cnt_b, cnt) as select a, count(b), count(1) from t_mv_validation group by a")
 	tk.MustQuery("select a, cnt_b, cnt from mv_count_column order by a").Check(testkit.Rows("1 2 2", "2 1 1"))
 
+	// AVG maintains its value from the explicit SUM and COUNT state.
+	tk.MustExec("create materialized view mv_avg_column (a, avg_b, sum_b, cnt_b, cnt) as select a, avg(b), sum(b), count(b), count(1) from t_mv_validation group by a")
+	tk.MustQuery("select a, avg_b, sum_b, cnt_b, cnt from mv_avg_column order by a").Check(testkit.Rows("1 7.5000 15 2 2", "2 7.0000 7 1 1"))
+	tk.MustExec("create materialized view mv_avg_not_null (a, avg_b, sum_b, cnt) as select a, avg(b), sum(b), count(1) from t_mv_validation group by a")
+	tk.MustQuery("select a, avg_b, sum_b, cnt from mv_avg_not_null order by a").Check(testkit.Rows("1 7.5000 15 2", "2 7.0000 7 1"))
+	mvAvgTable, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv_avg_column"))
+	require.NoError(t, err)
+	require.Equal(t, tk.Session().GetSessionVars().GetDivPrecisionIncrement(), mvAvgTable.Meta().MaterializedView.DefinitionDivPrecisionIncrement)
+
 	// Aggregate function names are case-insensitive.
 	tk.MustExec("create materialized view mv_upper_aggregate (a, s, cnt) as select a, SUM(b), COUNT(1) from t_mv_validation group by a")
 	tk.MustQuery("select a, s, cnt from mv_upper_aggregate order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
@@ -55,7 +64,7 @@ func TestCreateMaterializedViewValidationCoverage(t *testing.T) {
 	// MIN/MAX still require a supporting base-table index, regardless of function case.
 	tk.MustExec("create table t_mv_minmax_validation (a int not null, b int not null, c int not null, index idx_cab(c, a, b))")
 	tk.MustExec("create materialized view log on t_mv_minmax_validation (a, b, c)")
-	err := tk.ExecToErr("create materialized view mv_upper_min (a, b, minc, cnt) as select a, b, MIN(c), COUNT(1) from t_mv_minmax_validation group by a, b")
+	err = tk.ExecToErr("create materialized view mv_upper_min (a, b, minc, cnt) as select a, b, MIN(c), COUNT(1) from t_mv_minmax_validation group by a, b")
 	require.ErrorContains(t, err, "requires base table index whose leading columns cover all GROUP BY columns")
 
 	// Every referenced column must be present in the materialized view log.

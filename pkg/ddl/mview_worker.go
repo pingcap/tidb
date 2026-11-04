@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
@@ -577,6 +578,13 @@ func (w *worker) hasCreateMaterializedViewBuildRows(ctx context.Context, schemaN
 func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *model.Job, mviewTableInfo *model.TableInfo, currentDB string) (func(), error) {
 	if job == nil || job.ReorgMeta == nil {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing reorg metadata")
+	}
+	if mviewTableInfo == nil || mviewTableInfo.MaterializedView == nil {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing materialized view metadata")
+	}
+	mviewInfo := mviewTableInfo.MaterializedView
+	if mviewInfo.DefinitionDivPrecisionIncrement < 0 || mviewInfo.DefinitionDivPrecisionIncrement > vardef.MaxDivPrecisionIncrement {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid maintenance numeric metadata")
 	}
 	sessVars := sessCtx.GetSessionVars() //nolint:forbidigo
 	restore := restoreSessCtx(sessCtx)

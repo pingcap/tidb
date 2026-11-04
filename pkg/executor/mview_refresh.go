@@ -1515,6 +1515,9 @@ func initRefreshMaterializedViewSession(
 		return nil, errors.Annotate(err, "refresh materialized view: invalid definition timezone")
 	}
 
+	if mviewInfo.DefinitionDivPrecisionIncrement < 0 || mviewInfo.DefinitionDivPrecisionIncrement > vardef.MaxDivPrecisionIncrement {
+		return nil, errors.New("refresh materialized view: invalid maintenance numeric metadata")
+	}
 	origEnableMView := sessVars.EnableMView
 	if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, "on"); err != nil {
 		return nil, errors.Annotate(err, "refresh materialized view: failed to enable materialized view support")
