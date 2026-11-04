@@ -1231,8 +1231,9 @@ func (n *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
 type SetPwdStmt struct {
 	stmtNode
 
-	User     *auth.UserIdentity
-	Password string
+	User                  *auth.UserIdentity
+	Password              string
+	RetainCurrentPassword bool
 }
 
 // Restore implements Node interface.
@@ -1246,12 +1247,24 @@ func (n *SetPwdStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain("=")
 	ctx.WriteString(n.Password)
+	if n.RetainCurrentPassword {
+		ctx.WriteKeyWord(" RETAIN CURRENT PASSWORD")
+	}
 	return nil
 }
 
 // SecureText implements SensitiveStatement interface.
 func (n *SetPwdStmt) SecureText() string {
-	return fmt.Sprintf("set password for user %s", n.User)
+	// n.User can be nil for the current-user form (`SET PASSWORD = '...'`),
+	// matching Restore's handling. Avoid leaking `<nil>` into redacted SQL.
+	base := "set password"
+	if n.User != nil {
+		base = fmt.Sprintf("set password for user %s", n.User)
+	}
+	if n.RetainCurrentPassword {
+		return base + " RETAIN CURRENT PASSWORD"
+	}
+	return base
 }
 
 // Accept implements Node Accept interface.
@@ -1406,9 +1419,10 @@ func (n *SetDefaultRoleStmt) Accept(v Visitor) (Node, bool) {
 
 // UserSpec is used for parsing create user statement.
 type UserSpec struct {
-	User    *auth.UserIdentity
-	AuthOpt *AuthOption
-	IsRole  bool
+	User               *auth.UserIdentity
+	AuthOpt            *AuthOption
+	DualPasswordOption DualPasswordOptionType
+	IsRole             bool
 }
 
 // Restore implements Node interface.
@@ -1422,10 +1436,19 @@ func (n *UserSpec) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotate(err, "An error occurred while restore UserSpec.AuthOpt")
 		}
 	}
+	if n.DualPasswordOption != 0 {
+		ctx.WritePlain(" ")
+		if err := n.DualPasswordOption.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore UserSpec.DualPasswordOption")
+		}
+	}
 	return nil
 }
 
-// SecurityString formats the UserSpec without password information.
+// SecurityString formats the UserSpec without password information. The
+// dual-password clause (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD) is
+// non-secret and is surfaced verbatim so the redacted output preserves the
+// fact that the statement targets the secondary-password slot.
 func (n *UserSpec) SecurityString() string {
 	withPassword := false
 	if opt := n.AuthOpt; opt != nil {
@@ -1433,8 +1456,18 @@ func (n *UserSpec) SecurityString() string {
 			withPassword = true
 		}
 	}
+	dualClause := ""
+	switch n.DualPasswordOption {
+	case DualPasswordRetainCurrent:
+		dualClause = " RETAIN CURRENT PASSWORD"
+	case DualPasswordDiscardOld:
+		dualClause = " DISCARD OLD PASSWORD"
+	}
 	if withPassword {
-		return fmt.Sprintf("{%s password = ***}", n.User)
+		return fmt.Sprintf("{%s password = ***%s}", n.User, dualClause)
+	}
+	if dualClause != "" {
+		return fmt.Sprintf("{%s%s}", n.User, dualClause)
 	}
 	return n.User.String()
 }
@@ -1614,6 +1647,36 @@ const (
 	UserResourceGroupName
 )
 
+// DualPasswordOptionType identifies the per-UserSpec MySQL 8.0 dual-password
+// clause (RETAIN CURRENT PASSWORD or DISCARD OLD PASSWORD). The grammar
+// attaches it to the UserSpec rather than to AlterUserStmt because MySQL
+// allows different dual-password actions per spec inside a multi-user ALTER
+// USER statement. Dedicated to dual-password semantics so the AST does not
+// conflate it with PasswordOrLockOption (account lock, expiration,
+// failed-login policy, etc.) which has different per-statement scoping rules.
+// The zero value means "no dual-password clause".
+type DualPasswordOptionType int
+
+const (
+	// DualPasswordRetainCurrent corresponds to RETAIN CURRENT PASSWORD.
+	DualPasswordRetainCurrent DualPasswordOptionType = iota + 1
+	// DualPasswordDiscardOld corresponds to DISCARD OLD PASSWORD.
+	DualPasswordDiscardOld
+)
+
+// Restore implements Node interface.
+func (t DualPasswordOptionType) Restore(ctx *format.RestoreCtx) error {
+	switch t {
+	case DualPasswordRetainCurrent:
+		ctx.WriteKeyWord("RETAIN CURRENT PASSWORD")
+	case DualPasswordDiscardOld:
+		ctx.WriteKeyWord("DISCARD OLD PASSWORD")
+	default:
+		return errors.Errorf("Unsupported DualPasswordOptionType %d", t)
+	}
+	return nil
+}
+
 type PasswordOrLockOption struct {
 	Type  int
 	Count int64
@@ -1792,14 +1855,20 @@ func (n *CreateUserStmt) SecureText() string {
 type AlterUserStmt struct {
 	stmtNode
 
-	IfExists                 bool
-	CurrentAuth              *AuthOption
-	Specs                    []*UserSpec
-	AuthTokenOrTLSOptions    []*AuthTokenOrTLSOption
-	ResourceOptions          []*ResourceOption
-	PasswordOrLockOptions    []*PasswordOrLockOption
-	CommentOrAttributeOption *CommentOrAttributeOption
-	ResourceGroupNameOption  *ResourceGroupNameOption
+	IfExists    bool
+	CurrentAuth *AuthOption
+	// CurrentDualPasswordOption carries the dual-password clause attached to the
+	// `ALTER USER USER() ...` (current-user) form. The named-user form stores
+	// its dual-password clause on the per-UserSpec DualPasswordOption instead.
+	// The executor must propagate this into the synthetic UserSpec it builds
+	// from CurrentAuth so downstream code paths only need to inspect Specs.
+	CurrentDualPasswordOption DualPasswordOptionType
+	Specs                     []*UserSpec
+	AuthTokenOrTLSOptions     []*AuthTokenOrTLSOption
+	ResourceOptions           []*ResourceOption
+	PasswordOrLockOptions     []*PasswordOrLockOption
+	CommentOrAttributeOption  *CommentOrAttributeOption
+	ResourceGroupNameOption   *ResourceGroupNameOption
 }
 
 // Restore implements Node interface.
@@ -1813,6 +1882,19 @@ func (n *AlterUserStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("() ")
 		if err := n.CurrentAuth.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AlterUserStmt.CurrentAuth")
+		}
+		if n.CurrentDualPasswordOption != 0 {
+			ctx.WritePlain(" ")
+			if err := n.CurrentDualPasswordOption.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore AlterUserStmt.CurrentDualPasswordOption")
+			}
+		}
+	} else if n.CurrentDualPasswordOption != 0 {
+		// Standalone DISCARD OLD PASSWORD on the current-user form (no IDENTIFIED BY).
+		ctx.WriteKeyWord("USER")
+		ctx.WritePlain("() ")
+		if err := n.CurrentDualPasswordOption.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AlterUserStmt.CurrentDualPasswordOption")
 		}
 	}
 	for i, v := range n.Specs {
