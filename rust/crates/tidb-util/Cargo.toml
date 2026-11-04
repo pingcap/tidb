@@ -19,6 +19,7 @@ tidb-errno = { path = "../tidb-errno" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-metrics = { path = "../tidb-metrics" }
 
 [dev-dependencies]
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }

@@ -51,7 +51,7 @@ unresolved until it is restated against its Go owner or closed.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| N05 | partial | The status port serves `/status`, `/metrics`, `/settings`, `/config`, `/schema`, `/schema_storage`, `/db-table/{tableID}`, `/tables/{colID}/{colTp}/{colFlag}/{colLen}` and `/labels` (`tidb-server/src/http_status.rs`); Go's other routes are absent: `/info` and `/info/all` (the status server has no DDL owner manager, and `gogc` has no Rust source), `/ddl/history`, `/ddl/owner/resign`, `/mvcc/*`, `/regions/*`, `/tables/{db}/{table}/{regions,ranges,scatter,stop-scatter,disk-usage}`, `/stats/dump/*`, `/plan_replayer/dump`, `/optimize_trace/dump`, `/extract_task/dump`, `/dxf/*`, `/ingest/*`, `/tiflash/replica`, `/upgrade/*`, `/txn-gc-states`, `/debug/*`, test hooks | `pkg/server/http_status.go`, `pkg/server/handler` |
+| N05 | partial | The status port serves `/status`, `/metrics`, `/settings`, `/config`, `/schema`, `/schema_storage`, `/db-table/{tableID}`, `/tables/{colID}/{colTp}/{colFlag}/{colLen}`, `/labels`, `/info`, `/info/all`, `/ddl/history` and `/ddl/owner/resign` (`tidb-server/src/http_status.rs`); Go's other routes are absent: `/mvcc/*`, `/regions/*`, `/tables/{db}/{table}/{regions,ranges,scatter,stop-scatter,disk-usage}`, `/stats/dump/*`, `/stats/priority-queue`, `/plan_replayer/dump`, `/optimize_trace/dump`, `/extract_task/dump`, `/dxf/*`, `/ddl/check/*`, `/ingest/*`, `/tiflash/replica` (and `-deprecated`), `/upgrade/*`, `/txn-gc-states`, `/owner_manager/auto_id_service`, `/metrics/profile`, `/debug/*`, test hooks | `pkg/server/http_status.go`, `pkg/server/handler` |
 
 ### Domain and process services
 

@@ -72,4 +72,12 @@ where
         let _ = NewTxnTransaction::rollback(&mut transaction);
         Ok((running, history?))
     }
+
+    fn scan_history_ddl_jobs(&self, start_job_id: i64, limit: i32) -> Result<Vec<Job>, String> {
+        let mut storage = MetaTxnStorage::new(&self.opener, self.timeout);
+        let mut transaction = storage.begin().map_err(|error| error.to_string())?;
+        let jobs = tidb_ddl::ddl_history::scan_history_ddl_jobs(&Mutator::new(&mut transaction), start_job_id, limit);
+        let _ = NewTxnTransaction::rollback(&mut transaction);
+        jobs
+    }
 }

@@ -33,6 +33,7 @@ tidb-autoid = { path = "../tidb-autoid" }
 tidb-domain-affinity = { path = "../tidb-domain-affinity" }
 tidb-domain-infosync = { path = "../tidb-domain-infosync" }
 tidb-owner = { path = "../tidb-owner" }
+tidb-util = { path = "../tidb-util" }
 tidb-stats-handle-lockstats = { path = "../tidb-stats-handle-lockstats" }
 tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 tidb-table = { path = "../tidb-table" }

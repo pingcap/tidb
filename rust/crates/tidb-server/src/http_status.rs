@@ -82,6 +82,11 @@ pub struct StatusRoutes {
     /// Go `infosync`'s server-info syncer, which `/labels` republishes the
     /// labels through.
     pub server_info: Option<Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>>,
+    /// Go `do.DDL().OwnerManager()`, which `/info`, `/info/all` and
+    /// `/ddl/owner/resign` ask.
+    pub ddl_owner: Option<Arc<dyn tidb_owner::Manager>>,
+    /// The DDL history `/ddl/history` scans (Go reads the store's meta).
+    pub ddl_history: Option<Arc<dyn tidb_ddl::ddl_history::DdlJobHistoryStore>>,
 }
 
 /// Bind HTTP and generated gRPC routes on Go's shared status port.
@@ -263,6 +268,9 @@ fn route_response(
         .and_then(|source| db_table_response(path, source.as_ref()))
         .or_else(|| value_response(path))
         .or_else(|| labels_response(path, request, routes.server_info.as_deref()))
+        .or_else(|| info_response(path, routes.server_info.as_deref(), routes.ddl_owner.as_deref()))
+        .or_else(|| ddl_resign_owner_response(path, request, routes.ddl_owner.as_deref()))
+        .or_else(|| ddl_history_response(path, routes.ddl_history.as_deref()))
     {
         match answer {
             Ok(body) => (200, "application/json", body),
@@ -572,6 +580,147 @@ fn settings_response(
             Ok(String::new())
         }),
     )
+}
+
+/// Go `ServerInfoHandler` (`/info`) and `AllServerInfoHandler`
+/// (`/info/all`).
+fn info_response(
+    path: &str,
+    server_info: Option<&tidb_domain_serverinfo::serverinfo_syncer::Syncer>,
+    ddl_owner: Option<&dyn tidb_owner::Manager>,
+) -> Option<Result<String, String>> {
+    let route = path.split_once('?').map_or(path, |(route, _)| route);
+    match route {
+        "/info" => Some((|| {
+            // Go `infosync.GetServerInfo` without a syncer.
+            let syncer = server_info.ok_or_else(|| "infoSyncer is not initialized".to_owned())?;
+            let info = serde_json::to_string(&syncer.get_local_server_info()).map_err(|error| error.to_string())?;
+            // Go's `ServerInfo{IsOwner, MaxProcs, GOGC, *serverinfo.ServerInfo}`:
+            // the three fields, then the embedded info's.
+            let fields = info.strip_prefix('{').unwrap_or("}");
+            Ok(format!(
+                "{{\"is_owner\":{},\"max_procs\":{},\"gogc\":{}{}{fields}",
+                ddl_owner.is_some_and(|owner| owner.is_owner()),
+                tidb_txnkv::rpc::go_max_procs(),
+                tidb_util::gogc::get_gogc(),
+                if fields == "}" { "" } else { "," },
+            ))
+        })()),
+        "/info/all" => Some((|| {
+            let not_found = || "ddl server information not found".to_owned();
+            let all = server_info.ok_or_else(not_found)?.get_all_server_info().map_err(|_| not_found())?;
+            let owner_id = ddl_owner
+                .ok_or_else(not_found)?
+                .get_owner_id(&tidb_owner::Context::with_timeout(std::time::Duration::from_secs(3)))
+                .map_err(|_| not_found())?;
+            // Go ranges over a map here; the servers are taken by ID.
+            let all: std::collections::BTreeMap<_, _> = all.into_iter().collect();
+            let mut versions = Vec::new();
+            for info in all.values() {
+                if !versions.contains(&info.static_info.version_info) {
+                    versions.push(info.static_info.version_info.clone());
+                }
+            }
+            let mut out = String::from("{");
+            if !all.is_empty() {
+                out.push_str(&format!("\"servers_num\":{},", all.len()));
+            }
+            out.push_str(&format!("\"owner_id\":{}", serde_json::to_string(&owner_id).map_err(|error| error.to_string())?));
+            let consistent = versions.len() == 1;
+            if consistent {
+                out.push_str(",\"is_all_server_version_consistent\":true");
+            } else if !versions.is_empty() {
+                out.push_str(&format!(",\"all_servers_diff_versions\":{}", serde_json::to_string(&versions).map_err(|error| error.to_string())?));
+            }
+            if !all.is_empty() {
+                out.push_str(&format!(",\"all_servers_info\":{}", serde_json::to_string(&all).map_err(|error| error.to_string())?));
+            }
+            out.push('}');
+            Ok(out)
+        })()),
+        _ => None,
+    }
+}
+
+/// Go `DDLHistoryJobHandler` (`/ddl/history`): `ScanHistoryDDLJobs` with
+/// the `start_job_id` and `limit` form values, as a JSON array of jobs.
+fn ddl_history_response(
+    path: &str,
+    store: Option<&dyn tidb_ddl::ddl_history::DdlJobHistoryStore>,
+) -> Option<Result<String, String>> {
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    if route != "/ddl/history" {
+        return None;
+    }
+    let form = |name: &str| {
+        query
+            .split('&')
+            .find_map(|pair| pair.split_once('=').filter(|(key, _)| *key == name).map(|(_, value)| value))
+            .filter(|value| !value.is_empty())
+    };
+    // Go `strconv.Atoi`.
+    let atoi = |value: &str| {
+        value.parse::<i64>().map_err(|error| match error.kind() {
+            std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow => format!(
+                "strconv.Atoi: parsing {}: value out of range",
+                tidb_go_strconv::quote_bytes(value.as_bytes())
+            ),
+            _ => format!("strconv.Atoi: parsing {}: invalid syntax", tidb_go_strconv::quote_bytes(value.as_bytes())),
+        })
+    };
+    Some((|| {
+        let mut job_id = 0;
+        if let Some(value) = form("start_job_id") {
+            job_id = atoi(value)?;
+            if job_id < 1 {
+                return Err("ddl history start_job_id must be greater than 0".to_owned());
+            }
+        }
+        let mut limit = 0;
+        if let Some(value) = form("limit") {
+            limit = atoi(value)?;
+            if limit < 1 || limit > i64::from(tidb_ddl::ddl_history::DEF_NUM_GET_DDL_HISTORY_JOBS) {
+                return Err(format!(
+                    "ddl history limit must be greater than 0 and less than or equal to {}",
+                    tidb_ddl::ddl_history::DEF_NUM_GET_DDL_HISTORY_JOBS
+                ));
+            }
+        }
+        let store = store.ok_or_else(|| "this node has no store to read DDL jobs from".to_owned())?;
+        let jobs = store.scan_history_ddl_jobs(job_id, limit as i32)?;
+        let mut out = String::from("[");
+        for (index, mut job) in jobs.into_iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            let bytes = job.encode(false).map_err(|error| error.to_string())?;
+            out.push_str(&String::from_utf8(bytes).map_err(|error| error.to_string())?);
+        }
+        out.push(']');
+        Ok(out)
+    })())
+}
+
+/// Go `DDLResignOwnerHandler` (`/ddl/owner/resign`): POST resigns this
+/// node's DDL ownership.
+fn ddl_resign_owner_response(
+    path: &str,
+    request: &str,
+    ddl_owner: Option<&dyn tidb_owner::Manager>,
+) -> Option<Result<String, String>> {
+    let route = path.split_once('?').map_or(path, |(route, _)| route);
+    if route != "/ddl/owner/resign" {
+        return None;
+    }
+    if request.split_whitespace().next() != Some("POST") {
+        return Some(Err("This api only support POST method".to_owned()));
+    }
+    Some(match ddl_owner {
+        Some(owner) => owner
+            .resign_owner(&tidb_owner::Context::background())
+            .map(|()| "\"success!\"".to_owned()),
+        None => Err("DDL owner manager is not initialized".to_owned()),
+    })
 }
 
 /// Go `LabelHandler.ServeHTTP` (`/labels`): a POSTed JSON object of labels
@@ -1045,6 +1194,103 @@ mod schema_route_tests {
         assert_eq!(labels_response("/labels", &post("{}"), None).unwrap().unwrap(), r#"{"host":"h2","zone":"z1"}"#);
         assert!(labels_response("/labels", &post("nope"), None).unwrap().is_err());
         assert!(labels_response("/labelsx", &post("{}"), None).is_none());
+    }
+
+    /// Go `ServerInfoHandler` / `AllServerInfoHandler` /
+    /// `DDLResignOwnerHandler`: `/info` is the local server info with the
+    /// DDL ownership, `GOMAXPROCS` and GOGC first; `/info/all` the cluster's
+    /// infos with the owner ID and one consistent version; resigning is POST
+    /// only and answers `"success!"`.
+    #[test]
+    fn the_info_routes_answer_the_server_and_its_ddl_owner() {
+        let info = tidb_domain_serverinfo::serverinfo::ServerInfo {
+            static_info: tidb_domain_serverinfo::serverinfo::StaticInfo {
+                id: "node-1".to_owned(),
+                ip: "127.0.0.1".to_owned(),
+                port: 4000,
+                version_info: tidb_domain_serverinfo::serverinfo::VersionInfo {
+                    version: "8.0.11-TiDB-v9.0.0".to_owned(),
+                    git_hash: "abc".to_owned(),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let syncer = tidb_domain_serverinfo::serverinfo_syncer::Syncer::new(info, None);
+        let owner = tidb_owner::MockManager::new(tidb_owner::Context::background(), "node-1", None, "/tidb/ddl/fg/owner");
+        tidb_owner::Manager::campaign_owner(&owner, &[]).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !tidb_owner::Manager::is_owner(&owner) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let manager: &dyn tidb_owner::Manager = &owner;
+        let one: serde_json::Value =
+            serde_json::from_str(&info_response("/info", Some(&syncer), Some(manager)).unwrap().unwrap()).unwrap();
+        assert_eq!(one["is_owner"], true);
+        assert_eq!(one["gogc"], tidb_util::gogc::get_gogc());
+        assert_eq!(one["max_procs"], tidb_txnkv::rpc::go_max_procs());
+        assert_eq!(one["ddl_id"], "node-1", "{one}");
+        assert_eq!(one["listening_port"], 4000, "{one}");
+        let body = info_response("/info", Some(&syncer), Some(manager)).unwrap().unwrap();
+        assert!(body.starts_with("{\"is_owner\":true,\"max_procs\":"), "{body}");
+        let all: serde_json::Value =
+            serde_json::from_str(&info_response("/info/all", Some(&syncer), Some(manager)).unwrap().unwrap()).unwrap();
+        assert_eq!(all["servers_num"], 1, "{all}");
+        assert_eq!(all["owner_id"], "node-1");
+        assert_eq!(all["is_all_server_version_consistent"], true);
+        assert!(all.get("all_servers_diff_versions").is_none());
+        assert_eq!(all["all_servers_info"]["node-1"]["ddl_id"], "node-1", "{all}");
+        assert_eq!(info_response("/info/all", Some(&syncer), None).unwrap().unwrap_err(), "ddl server information not found");
+        assert_eq!(info_response("/info", None, None).unwrap().unwrap_err(), "infoSyncer is not initialized");
+        assert_eq!(
+            ddl_resign_owner_response("/ddl/owner/resign", "GET / HTTP/1.1\r\n\r\n", Some(manager)).unwrap().unwrap_err(),
+            "This api only support POST method"
+        );
+        assert_eq!(
+            ddl_resign_owner_response("/ddl/owner/resign", "POST / HTTP/1.1\r\n\r\n", Some(manager)).unwrap().unwrap(),
+            "\"success!\""
+        );
+    }
+
+    /// A DDL history that records each scan's arguments.
+    #[derive(Default)]
+    struct RecordingHistory(std::sync::Mutex<Vec<(i64, i32)>>);
+
+    impl tidb_ddl::ddl_history::DdlJobHistoryStore for RecordingHistory {
+        fn all_ddl_jobs(&self) -> Result<(Vec<tidb_model::Job>, Vec<tidb_model::Job>), String> {
+            Ok((Vec::new(), Vec::new()))
+        }
+        fn scan_history_ddl_jobs(&self, start_job_id: i64, limit: i32) -> Result<Vec<tidb_model::Job>, String> {
+            self.0.lock().unwrap().push((start_job_id, limit));
+            let mut job = tidb_model::Job::default();
+            job.id = 7;
+            Ok(vec![job])
+        }
+    }
+
+    /// Go `DDLHistoryJobHandler`: `start_job_id` and `limit` are form values
+    /// Go bounds before it scans; the answer is the jobs' JSON array.
+    #[test]
+    fn the_ddl_history_route_checks_its_form_values_like_go() {
+        let store = RecordingHistory::default();
+        let body = ddl_history_response("/ddl/history?start_job_id=7&limit=1", Some(&store)).unwrap().unwrap();
+        let jobs: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(jobs[0]["id"], 7, "{body}");
+        ddl_history_response("/ddl/history", Some(&store)).unwrap().unwrap();
+        assert_eq!(*store.0.lock().unwrap(), [(7, 1), (0, 0)]);
+        assert_eq!(
+            ddl_history_response("/ddl/history?start_job_id=0", Some(&store)).unwrap().unwrap_err(),
+            "ddl history start_job_id must be greater than 0"
+        );
+        assert_eq!(
+            ddl_history_response("/ddl/history?limit=2049", Some(&store)).unwrap().unwrap_err(),
+            "ddl history limit must be greater than 0 and less than or equal to 2048"
+        );
+        assert_eq!(
+            ddl_history_response("/ddl/history?limit=x", Some(&store)).unwrap().unwrap_err(),
+            "strconv.Atoi: parsing \"x\": invalid syntax"
+        );
+        assert!(ddl_history_response("/ddl/historyx", Some(&store)).is_none());
     }
 
     /// Go `TestDecodeColumnValue`: each column of a new-format row decodes

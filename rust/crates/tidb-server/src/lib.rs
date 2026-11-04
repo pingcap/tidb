@@ -379,11 +379,8 @@ fn install_server_boot_gauges() {
         .map(|count| count.get())
         .unwrap_or(1);
     tidb_metrics::server::MAXPROCS.set(parallelism as i64);
-    let gogc = std::env::var("GOGC")
-        .ok()
-        .and_then(|value| value.parse::<i64>().ok())
-        .unwrap_or(100);
-    tidb_metrics::server::GOGC.set(gogc);
+    // Go `util`'s `init` sets the gauge with `gogcValue`.
+    tidb_util::gogc::get_gogc();
     let config = tidb_config::config_tree::config::get_global_config();
     tidb_metrics::server::CONFIG_STATUS
         .with_label_values(&["token-limit"])

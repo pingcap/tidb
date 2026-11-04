@@ -16,5 +16,6 @@
 //! Every `pkg/util/*` subpackage is its own crate (`tidb-memory`,
 //! `tidb-logutil`, ...); Go's build tags are `tidb-build-tags`' features.
 
+pub mod gogc;
 pub mod misc;
 pub mod prefix_helper;

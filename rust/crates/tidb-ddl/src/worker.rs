@@ -90,6 +90,11 @@ pub trait ClusterDdl: Send + Sync {
         false
     }
 
+    /// Go `do.DDL().OwnerManager()`, absent before a DDL starts.
+    fn owner_manager(&self) -> Option<Arc<dyn tidb_owner::Manager>> {
+        None
+    }
+
     /// Go `infoschema.GetTiFlashStoreCount(ctx.GetStore())`: the TiFlash
     /// stores PD lists, which `checkTiFlashReplicaCount` bounds a replica
     /// count by.
@@ -2765,6 +2770,10 @@ where
 {
     fn is_owner(&self) -> bool {
         self.owner.is_owner()
+    }
+
+    fn owner_manager(&self) -> Option<Arc<dyn tidb_owner::Manager>> {
+        Some(Arc::clone(&self.owner))
     }
 
     fn tiflash_store_count(&self) -> Result<u64, SqlQueryError> {
