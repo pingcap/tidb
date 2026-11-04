@@ -17,11 +17,91 @@ package mviewutil
 import (
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
+
+// RewriteAvgToColumnTypes finalizes decimal AVG from SUM/COUNT using the physical
+// MV column type. It mutates a fresh maintenance SELECT, never the definition.
+// Computing the quotient directly avoids rounding AVG to its inferred query scale
+// before rounding it again to the physical scale. FAST uses the same state and type.
+func RewriteAvgToColumnTypes(sel *ast.SelectStmt, mv *model.TableInfo) (bool, error) {
+	if sel == nil || sel.Fields == nil || mv == nil {
+		return false, errors.New("materialized view has invalid select metadata")
+	}
+	changed := false
+	for i, field := range sel.Fields.Fields {
+		if field == nil {
+			return false, errors.New("materialized view select field is missing")
+		}
+		agg, ok := field.Expr.(*ast.AggregateFuncExpr)
+		if !ok || !strings.EqualFold(agg.F, ast.AggFuncAvg) {
+			continue
+		}
+		if i >= len(mv.Columns) || mv.Columns[i] == nil {
+			return false, errors.New("materialized view AVG output column is missing")
+		}
+		ft := &mv.Columns[i].FieldType
+		if ft.GetType() != mysql.TypeNewDecimal {
+			continue
+		}
+		if ft.GetDecimal() < 0 || ft.GetDecimal() > mysql.MaxDecimalScale ||
+			ft.GetFlen() <= 0 || ft.GetFlen() < ft.GetDecimal() || ft.GetFlen() > mysql.MaxDecimalWidth {
+			return false, errors.New("materialized view AVG has invalid physical DECIMAL type")
+		}
+		if agg.Distinct || len(agg.Args) != 1 {
+			return false, errors.New("materialized view AVG requires one non-DISTINCT argument")
+		}
+		sum := &ast.AggregateFuncExpr{F: ast.AggFuncSum, Args: agg.Args}
+		count := &ast.AggregateFuncExpr{F: ast.AggFuncCount, Args: agg.Args}
+		// NULLIF preserves AVG(NULL) semantics without division-by-zero warnings.
+		divisor := &ast.FuncCallExpr{
+			Tp:     ast.FuncCallExprTypeGeneric,
+			FnName: ast.NewCIStr("NULLIF"),
+			Args:   []ast.ExprNode{count, ast.NewValueExpr(int64(0), "", "")},
+		}
+		quotient := &ast.BinaryOperationExpr{Op: opcode.Div, L: sum, R: divisor}
+		field.Expr = &ast.FuncCastExpr{Expr: quotient, Tp: ft.Clone(), FunctionType: ast.CastFunction}
+		changed = true
+	}
+	return changed, nil
+}
+
+// BuildMaintenanceSelectSQL restores the defining query with decimal AVG outputs
+// converted to the physical MV column types. Queries without decimal AVG retain
+// their original SQL text.
+func BuildMaintenanceSelectSQL(mv *model.TableInfo) (string, error) {
+	if mv == nil || mv.MaterializedView == nil || mv.MaterializedView.SQLContent == "" {
+		return "", errors.New("materialized view has invalid select SQL")
+	}
+	p := parser.New()
+	p.SetSQLMode(mv.MaterializedView.DefinitionSQLMode)
+	node, err := p.ParseOneStmt(mv.MaterializedView.SQLContent, "", "")
+	if err != nil {
+		// Parser errors can echo literals from the stored user query.
+		return "", errors.New("cannot parse materialized view maintenance query")
+	}
+	sel, ok := node.(*ast.SelectStmt)
+	if !ok || sel.Fields == nil {
+		return "", errors.New("materialized view definition is not a SELECT")
+	}
+	changed, err := RewriteAvgToColumnTypes(sel, mv)
+	if err != nil {
+		return "", err
+	}
+	if !changed {
+		return mv.MaterializedView.SQLContent, nil
+	}
+	var sb strings.Builder
+	err = sel.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreStringWithoutCharset, &sb))
+	return sb.String(), err
+}
 
 // CheckMaterializedViewSelect checks the SELECT clauses that are not supported
 // by materialized views. It is called before the planner builds the SELECT so

@@ -906,6 +906,25 @@ func TestBuildCreateMaterializedViewImportSQL(t *testing.T) {
 	sql, err = buildCreateMaterializedViewImportSQL("test", mvTblInfo, 12, "64gib")
 	require.NoError(t, err)
 	require.Contains(t, sql, "WITH disable_precheck, thread=12, disk_quota='64gib'")
+
+	avgCol := &model.ColumnInfo{Name: ast.NewCIStr("av")}
+	avgCol.SetType(mysql.TypeNewDecimal)
+	avgCol.SetFlen(65)
+	avgCol.SetDecimal(30)
+	mvTblInfo.Columns = []*model.ColumnInfo{{Name: ast.NewCIStr("a")}, avgCol}
+	mvTblInfo.MaterializedView.SQLContent = "select a, avg(b) from t group by a"
+	sql, err = buildCreateMaterializedViewImportSQL("test", mvTblInfo, 0, "")
+	require.NoError(t, err)
+	require.Contains(t, sql, "CAST(SUM(`b`)/`NULLIF`(COUNT(`b`), 0) AS DECIMAL(65, 30))")
+	sql, err = buildCreateMaterializedViewInsertSQL("test", mvTblInfo)
+	require.NoError(t, err)
+	require.Contains(t, sql, "CAST(SUM(`b`)/`NULLIF`(COUNT(`b`), 0) AS DECIMAL(65, 30))")
+	require.Equal(t, "select a, avg(b) from t group by a", mvTblInfo.MaterializedView.SQLContent)
+
+	mvTblInfo.MaterializedView.SQLContent = "select 'private-query-literal' from"
+	_, err = buildCreateMaterializedViewImportSQL("test", mvTblInfo, 0, "")
+	require.ErrorContains(t, err, "cannot parse materialized view maintenance query")
+	require.NotContains(t, err.Error(), "private-query-literal")
 }
 
 func TestNormalizeMVDefinitionHintDBNames(t *testing.T) {

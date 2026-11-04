@@ -269,6 +269,7 @@ go_library(
         "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/metricsutil",
+        "//pkg/util/mviewutil",
         "//pkg/util/parser",
         "//pkg/util/password-validation",
         "//pkg/util/plancodec",

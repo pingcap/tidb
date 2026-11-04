@@ -574,6 +574,18 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	for i, rf := range resultFields {
 		ft := rf.Column.FieldType
 		ft.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag)
+		if agg, ok := sel.Fields.Fields[i].Expr.(*ast.AggregateFuncExpr); ok && strings.EqualFold(agg.F, ast.AggFuncAvg) {
+			if arg, ok := agg.Args[0].(*ast.ColumnNameExpr); ok {
+				baseCol := baseTable.Meta().FindPublicColumnByName(arg.Name.Name.L)
+				if baseCol != nil && baseCol.GetType() == mysql.TypeNewDecimal {
+					// Query AVG metadata may exceed the physical DECIMAL scale limit.
+					// Preserve the input's integer digits when capping the fractional part.
+					scale := min(baseCol.GetDecimal()+definitionDivPrecisionIncrement, mysql.MaxDecimalScale)
+					ft.SetDecimal(scale)
+					ft.SetFlen(min(baseCol.GetFlen()-baseCol.GetDecimal()+scale, mysql.MaxDecimalWidth))
+				}
+			}
+		}
 		colDefs = append(colDefs, &ast.ColumnDef{
 			Name: &ast.ColumnName{Name: s.Cols[i]},
 			Tp:   &ft,

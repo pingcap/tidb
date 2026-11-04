@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
 )
@@ -520,8 +521,12 @@ func buildCreateMaterializedViewImportSQL(schemaName string, mviewTableInfo *mod
 	if mviewTableInfo.MaterializedView == nil || mviewTableInfo.MaterializedView.SQLContent == "" {
 		return "", dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid select sql")
 	}
+	selectSQL, err := mviewutil.BuildMaintenanceSelectSQL(mviewTableInfo)
+	if err != nil {
+		return "", err
+	}
 	prefix := sqlescape.MustEscapeSQL("IMPORT INTO %n.%n FROM ", schemaName, mviewTableInfo.Name.O)
-	return prefix + "(" + mviewTableInfo.MaterializedView.SQLContent + ") WITH " + strings.Join(BuildMViewImportIntoOptions(threadCnt, diskQuota), ", "), nil
+	return prefix + "(" + selectSQL + ") WITH " + strings.Join(BuildMViewImportIntoOptions(threadCnt, diskQuota), ", "), nil
 }
 
 func getCreateMaterializedViewBuildReadTS(ctx context.Context, ddlSess *sess.Session) (uint64, error) {
@@ -557,7 +562,11 @@ func buildCreateMaterializedViewInsertSQL(schemaName string, mviewTableInfo *mod
 	if mviewTableInfo.MaterializedView == nil || mviewTableInfo.MaterializedView.SQLContent == "" {
 		return "", dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid select sql")
 	}
-	return sqlescape.MustEscapeSQL("REPLACE INTO %n.%n ", schemaName, mviewTableInfo.Name.O) + mviewTableInfo.MaterializedView.SQLContent, nil
+	selectSQL, err := mviewutil.BuildMaintenanceSelectSQL(mviewTableInfo)
+	if err != nil {
+		return "", err
+	}
+	return sqlescape.MustEscapeSQL("REPLACE INTO %n.%n ", schemaName, mviewTableInfo.Name.O) + selectSQL, nil
 }
 
 func (w *worker) hasCreateMaterializedViewBuildRows(ctx context.Context, schemaName, mvTableName string) (bool, error) {
