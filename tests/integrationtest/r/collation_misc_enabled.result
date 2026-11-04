@@ -1,4 +1,3 @@
-SET GLOBAL tidb_redact_log = OFF;
 create table t1(a varchar(20) charset utf8);
 insert into t1 values ("t1_value");
 alter table t1 collate uTf8mB4_uNiCoDe_Ci charset Utf8mB4 charset uTF8Mb4 collate UTF8MB4_BiN;
@@ -221,4 +220,3 @@ id	task	access object	operator info
 IndexReader	root		index:Selection
 └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t.uuid, "7dce58ba-ba84-4297-94cf-c23cf3a39ed3")
   └─IndexRangeScan	cop[tikv]	table:t, index:idx_uuid(uuid)	range:["7dce58ba-ba84-4297-94cf-c23cf3a39ed3","7dce58ba-ba84-4297-94cf-c23cf3a39ed3"], keep order:false, stats:pseudo
-SET GLOBAL tidb_redact_log = DEFAULT;

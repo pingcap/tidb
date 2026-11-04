@@ -1905,6 +1905,8 @@ func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string)
 	}
 
 	sctx := coretestsdk.MockContext()
+	// Plan assertions inspect literal frame bounds.
+	sctx.GetSessionVars().EnableRedactLog = vardef.Off
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
