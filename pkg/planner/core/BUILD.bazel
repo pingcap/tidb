@@ -317,6 +317,7 @@ go_test(
         "//pkg/store/copr",
         "//pkg/store/mockstore",
         "//pkg/table",
+        "//pkg/table/tables",
         "//pkg/testkit",
         "//pkg/testkit/ddlhelper",
         "//pkg/testkit/external",
