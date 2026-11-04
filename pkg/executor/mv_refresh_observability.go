@@ -785,7 +785,14 @@ func (e *RefreshMaterializedViewDryRunExec) prepareMVRefreshObserveInternalSessi
 		return nil, errors.Annotate(err, "dry run refresh materialized view: failed to enable materialized view support")
 	}
 	restoreObserve := enableMVRefreshObserveMaintenanceFlags(sctx)
+	// Plans use the borrowed session's context, so follow the caller's redaction mode.
+	planVars := sctx.GetPlanCtx().GetSessionVars()
+	origRedactLog, origPlanRedactLog := sessVars.EnableRedactLog, planVars.EnableRedactLog
+	sessVars.EnableRedactLog = e.Ctx().GetSessionVars().EnableRedactLog
+	planVars.EnableRedactLog = sessVars.EnableRedactLog
 	return func() {
+		planVars.EnableRedactLog = origPlanRedactLog
+		sessVars.EnableRedactLog = origRedactLog
 		restoreObserve()
 		if err := sessVars.SetSystemVar(vardef.TiDBMViewEnable, variable.BoolToOnOff(origEnableMView)); err != nil {
 			logutil.BgLogger().Warn("dry run refresh materialized view: failed to restore materialized view enablement", zap.Error(err))
